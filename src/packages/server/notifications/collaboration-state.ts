@@ -7,7 +7,7 @@ import {
   lockCollaborationNotificationAttention,
   pruneCollaborationNotificationEvents,
   seedCollaborationNotificationJobs,
-} from "@cocalc/database/postgres/collaborators-notifications";
+} from "@cocalc/database/postgres/collaborators/collaborators-notifications";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import type { CollaborationNotificationOutboxStore } from "@cocalc/util/collaboration-attention";
 import { runCollaborationNotificationOutboxPass } from "./collaboration-outbox";
@@ -16,7 +16,7 @@ export {
   appendCollaborationNotificationEvents,
   ensureCollaborationNotificationSchema,
   readCollaborationNotificationPage,
-} from "@cocalc/database/postgres/collaborators-notifications";
+} from "@cocalc/database/postgres/collaborators/collaborators-notifications";
 
 /** The collaboration service supplies its trusted owner route/fabric call. The database
  * owns ingestion, leases/cursors and attention; this layer owns notification policy

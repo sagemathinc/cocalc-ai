@@ -5,8 +5,8 @@ import {
   runCollaboratorsMaintenance,
   runCollaboratorsAccessMaintenance,
 } from "./maintenance";
-import { syncCollaboratorsSchema } from "@cocalc/database/postgres/collaborators-common";
-import { ensureCollaborationNotificationSchema } from "@cocalc/database/postgres/collaborators-notifications";
+import { syncCollaboratorsSchema } from "@cocalc/database/postgres/collaborators/collaborators-common";
+import { ensureCollaborationNotificationSchema } from "@cocalc/database/postgres/collaborators/collaborators-notifications";
 import { SCHEMA } from "@cocalc/util/db-schema";
 
 // This fixture integrates the SQL owner/home pipeline, not a persist server.

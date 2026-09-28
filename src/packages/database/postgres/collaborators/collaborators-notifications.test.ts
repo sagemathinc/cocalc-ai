@@ -1,12 +1,12 @@
-import type { PoolClient } from "../pool";
+import type { PoolClient } from "../../pool";
 import type { CollaborationNotificationDelivery } from "@cocalc/util/collaboration-attention";
 import type { CollaborationResource } from "@cocalc/util/collaborators";
 import { SCHEMA } from "@cocalc/util/schema";
-import { syncSchema } from "./schema";
+import { syncSchema } from "../schema";
 import {
   assertProjectNotRehoming,
   ProjectRehomeInProgressError,
-} from "./project-rehome-fence";
+} from "../project-rehome-fence";
 import {
   appendCollaborationNotificationEvents,
   ensureCollaborationNotificationSchema,
@@ -24,21 +24,21 @@ const mockDb = {
   query: mockQuery,
   release: mockRelease,
 } as unknown as PoolClient;
-jest.mock("../pool", () => ({
+jest.mock("../../pool", () => ({
   __esModule: true,
   default: () => ({ query: mockQuery, connect: async () => mockDb }),
 }));
-jest.mock("./account-rehome-fence", () => ({
+jest.mock("../account-rehome-fence", () => ({
   withAccountRehomeWriteFence: async ({ fn }) => fn(mockDb),
 }));
 jest.mock("./collaborators-account-maintenance", () => ({
   lockCollaborationMaintenanceAccounts: async (_db, ids) => new Set(ids),
 }));
-jest.mock("./project-rehome-fence", () => ({
+jest.mock("../project-rehome-fence", () => ({
   assertProjectNotRehoming: jest.fn(),
   ProjectRehomeInProgressError: class extends Error {},
 }));
-jest.mock("./schema", () => ({ syncSchema: jest.fn() }));
+jest.mock("../schema", () => ({ syncSchema: jest.fn() }));
 
 const account_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const project_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";

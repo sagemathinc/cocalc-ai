@@ -1,7 +1,7 @@
 import getPool from "@cocalc/database/pool";
 import { withAccountRehomeWriteFence } from "@cocalc/database/postgres/account-rehome-fence";
-import { uuid } from "@cocalc/database/postgres/collaborators-common";
-import { bumpCollaborationRevision } from "@cocalc/database/postgres/collaborators-changes";
+import { uuid } from "@cocalc/database/postgres/collaborators/collaborators-common";
+import { bumpCollaborationRevision } from "@cocalc/database/postgres/collaborators/collaborators-changes";
 import {
   MAX_PERSON_ALIASES,
   normalizePrivateAlias,

@@ -4,8 +4,8 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
-import { syncCollaboratorsSchema } from "@cocalc/database/postgres/collaborators-common";
-import { initializeCollaborationProjectionAttention } from "@cocalc/database/postgres/collaborators-notifications";
+import { syncCollaboratorsSchema } from "@cocalc/database/postgres/collaborators/collaborators-common";
+import { initializeCollaborationProjectionAttention } from "@cocalc/database/postgres/collaborators/collaborators-notifications";
 import { assertAccountNotRehoming } from "@cocalc/database/postgres/account-rehome-fence";
 import type {
   AccountCollaborationHandoff,

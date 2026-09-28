@@ -2,16 +2,16 @@ import { randomUUID } from "node:crypto";
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { withAccountRehomeWriteFence } from "@cocalc/database/postgres/account-rehome-fence";
-import { applyCollaborationAccess } from "@cocalc/database/postgres/collaborators-access";
+import { applyCollaborationAccess } from "@cocalc/database/postgres/collaborators/collaborators-access";
 import {
   entryKey,
   syncCollaboratorsSchema,
-} from "@cocalc/database/postgres/collaborators-common";
+} from "@cocalc/database/postgres/collaborators/collaborators-common";
 import {
   collaborationNotificationStore,
   lockCollaborationNotificationAttention,
-} from "@cocalc/database/postgres/collaborators-notifications";
-import { listCollaborationProjects } from "@cocalc/database/postgres/collaborators-discovery";
+} from "@cocalc/database/postgres/collaborators/collaborators-notifications";
+import { listCollaborationProjects } from "@cocalc/database/postgres/collaborators/collaborators-discovery";
 import type { CollaborationNotificationDelivery } from "@cocalc/util/collaboration-attention";
 
 beforeAll(async () => {

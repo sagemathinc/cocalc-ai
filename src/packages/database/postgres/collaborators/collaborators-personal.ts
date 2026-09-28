@@ -5,7 +5,7 @@
 import getPool from "@cocalc/database/pool";
 import { collaborationAgentPersonalResource } from "./collaborators-agent-personal";
 import type { PoolClient } from "@cocalc/database/pool";
-import { withAccountRehomeWriteFence } from "./account-rehome-fence";
+import { withAccountRehomeWriteFence } from "../account-rehome-fence";
 import { entryKey, hash, MAX_ARTIFACT_ENTRY_IDS } from "./collaborators-common";
 import type { CollaborationOwnedResource } from "@cocalc/conat/inter-bay/collaborators";
 import { PERSONAL_LIBRARY_MAX_PINS } from "@cocalc/util/personal-library";

@@ -8,14 +8,14 @@ import {
   registerCollaborationSource,
   ingestCollaborationSnapshot,
   getOwnedCollaborationResource,
-} from "@cocalc/database/postgres/collaborators-owner";
+} from "@cocalc/database/postgres/collaborators/collaborators-owner";
 import {
   applyArtifactCatalogSnapshot,
   registerArtifactCatalogSource,
   readProjectArtifactCatalog,
   readArtifactCatalogEntry,
 } from "@cocalc/database/postgres/artifact-catalog";
-import { entryKey } from "@cocalc/database/postgres/collaborators-common";
+import { entryKey } from "@cocalc/database/postgres/collaborators/collaborators-common";
 import type { CollaborationResource } from "@cocalc/util/collaborators";
 import type { ProjectCollaborationRehomePage } from "@cocalc/util/project-collaboration-rehome";
 import {

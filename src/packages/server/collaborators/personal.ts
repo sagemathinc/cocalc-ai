@@ -11,7 +11,7 @@ import {
   integer,
   transaction,
   uuid,
-} from "@cocalc/database/postgres/collaborators-common";
+} from "@cocalc/database/postgres/collaborators/collaborators-common";
 import {
   AGENT_ORGANIZATION_SETTING,
   agentPinnedIds,
@@ -19,11 +19,11 @@ import {
   legacyCollaborationPersonalState,
   clearCollaborationAgentFallback,
   reconcileCollaborationArtifactPersonalState,
-} from "@cocalc/database/postgres/collaborators-personal";
+} from "@cocalc/database/postgres/collaborators/collaborators-personal";
 import {
   getCollaborationPersonalState,
   setCollaborationPersonalState,
-} from "@cocalc/database/postgres/collaborators-discovery";
+} from "@cocalc/database/postgres/collaborators/collaborators-discovery";
 import { personalLibraryApi } from "@cocalc/server/artifacts/personal-library-api";
 import { clearPersonalLibraryAlias } from "@cocalc/server/artifacts/personal-library-store";
 import { nameAgent, retireNamedAgent } from "@cocalc/server/agents/personal";
@@ -32,7 +32,7 @@ import { assertPersonalAccountAuthority } from "@cocalc/server/agents/personal-r
 import {
   collaborationAgentPersonalResource,
   reconcileCollaborationAgentPersonalState,
-} from "@cocalc/database/postgres/collaborators-agent-personal";
+} from "@cocalc/database/postgres/collaborators/collaborators-agent-personal";
 
 export async function collaborationPersonalState(
   account_id: string,

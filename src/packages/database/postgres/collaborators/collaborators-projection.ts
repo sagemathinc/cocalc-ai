@@ -11,7 +11,7 @@ import { moveCollaborationAgentPersonalState } from "./collaborators-agent-perso
 import {
   assertAccountNotRehoming,
   assertAccountWriteOnHomeBay,
-} from "./account-rehome-fence";
+} from "../account-rehome-fence";
 import { bumpCollaborationRevision } from "./collaborators-changes";
 import { initializeCollaborationProjectionAttention } from "./collaborators-notifications";
 import {

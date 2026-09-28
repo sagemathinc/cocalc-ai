@@ -11,14 +11,14 @@ import {
   cleanCollaborationProjections,
   failCollaborationProjection,
   seedCollaborationProjectionJobs,
-} from "@cocalc/database/postgres/collaborators-projection";
-import { syncCollaboratorsSchema } from "@cocalc/database/postgres/collaborators-common";
-import { compactNextCollaborationProject } from "@cocalc/database/postgres/collaborators-owner";
+} from "@cocalc/database/postgres/collaborators/collaborators-projection";
+import { syncCollaboratorsSchema } from "@cocalc/database/postgres/collaborators/collaborators-common";
+import { compactNextCollaborationProject } from "@cocalc/database/postgres/collaborators/collaborators-owner";
 import {
   applyCollaborationAccess,
   claimCollaborationAccess,
   failCollaborationAccess,
-} from "@cocalc/database/postgres/collaborators-access";
+} from "@cocalc/database/postgres/collaborators/collaborators-access";
 import {
   fetchCollaborationProjection,
   fetchCollaborationAccessBatches,

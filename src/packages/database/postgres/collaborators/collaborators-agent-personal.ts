@@ -8,7 +8,7 @@ import {
   agentReferenceIds,
   canonicalAgentResource,
 } from "@cocalc/util/collaboration-agent-identity";
-import { withAccountRehomeWriteFence } from "./account-rehome-fence";
+import { withAccountRehomeWriteFence } from "../account-rehome-fence";
 import { bumpCollaborationRevision } from "./collaborators-changes";
 import { entryKey, uuid, validateResource } from "./collaborators-common";
 

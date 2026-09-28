@@ -7,9 +7,12 @@ jest.mock("@cocalc/database/pool", () => ({
 jest.mock("@cocalc/database/postgres/account-rehome-fence", () => ({
   withAccountRehomeWriteFence: (opts) => fence(opts),
 }));
-jest.mock("@cocalc/database/postgres/collaborators-changes", () => ({
-  bumpCollaborationRevision: jest.fn(),
-}));
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-changes",
+  () => ({
+    bumpCollaborationRevision: jest.fn(),
+  }),
+);
 import {
   chatAliasTarget,
   readPersonAliases,

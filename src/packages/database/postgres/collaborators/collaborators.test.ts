@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 // Source-only notification adapter and compiled schema setup must share PGlite.
-jest.mock("../pool", () => jest.requireActual("@cocalc/database/pool"));
+jest.mock("../../pool", () => jest.requireActual("@cocalc/database/pool"));
 import "@cocalc/util/db-schema/collaborators-workspace";
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { testCleanup } from "@cocalc/database/test-utils";
@@ -23,7 +23,7 @@ import {
   applyArtifactCatalogSnapshot,
   registerArtifactCatalogSource,
   readArtifactCatalogEntry,
-} from "./artifact-catalog";
+} from "../artifact-catalog";
 import { checkCollaborationRevision } from "./collaborators-changes";
 import {
   collaborationArtifactPin,

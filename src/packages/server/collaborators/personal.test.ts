@@ -12,13 +12,16 @@ const legacy = jest.fn();
 const libraryClear = jest.fn();
 const clearFallback = jest.fn();
 const reconcileAgent = jest.fn();
-jest.mock("@cocalc/database/postgres/collaborators-agent-personal", () => ({
-  ...jest.requireActual(
-    "@cocalc/database/postgres/collaborators-agent-personal",
-  ),
-  reconcileCollaborationAgentPersonalState: (...args) =>
-    reconcileAgent(...args),
-}));
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-agent-personal",
+  () => ({
+    ...jest.requireActual(
+      "@cocalc/database/postgres/collaborators/collaborators-agent-personal",
+    ),
+    reconcileCollaborationAgentPersonalState: (...args) =>
+      reconcileAgent(...args),
+  }),
+);
 jest.mock("@cocalc/server/agents/personal", () => ({
   nameAgent: (...a) => name(...a),
   retireNamedAgent: (...a) => retire(...a),
@@ -38,15 +41,23 @@ jest.mock("@cocalc/server/artifacts/personal-library-api", () => ({
 jest.mock("@cocalc/server/artifacts/personal-library-store", () => ({
   clearPersonalLibraryAlias: (...a) => libraryClear(...a),
 }));
-jest.mock("@cocalc/database/postgres/collaborators-discovery", () => ({
-  getCollaborationPersonalState: async () => ({}),
-  setCollaborationPersonalState: (...a) => generic(...a),
-}));
-jest.mock("@cocalc/database/postgres/collaborators-personal", () => ({
-  ...jest.requireActual("@cocalc/database/postgres/collaborators-personal"),
-  legacyCollaborationPersonalState: (...a) => legacy(...a),
-  clearCollaborationAgentFallback: (...a) => clearFallback(...a),
-}));
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-discovery",
+  () => ({
+    getCollaborationPersonalState: async () => ({}),
+    setCollaborationPersonalState: (...a) => generic(...a),
+  }),
+);
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-personal",
+  () => ({
+    ...jest.requireActual(
+      "@cocalc/database/postgres/collaborators/collaborators-personal",
+    ),
+    legacyCollaborationPersonalState: (...a) => legacy(...a),
+    clearCollaborationAgentFallback: (...a) => clearFallback(...a),
+  }),
+);
 const account_id = randomUUID();
 const resource: CollaborationResource = {
   project_id: randomUUID(),

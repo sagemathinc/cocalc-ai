@@ -2,9 +2,9 @@ import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import {
   applyCollaborationProjection,
   claimCollaborationProjectionJobs,
-} from "@cocalc/database/postgres/collaborators-projection";
-import { syncCollaboratorsSchema } from "@cocalc/database/postgres/collaborators-common";
-import { claimCollaborationAccess } from "@cocalc/database/postgres/collaborators-access";
+} from "@cocalc/database/postgres/collaborators/collaborators-projection";
+import { syncCollaboratorsSchema } from "@cocalc/database/postgres/collaborators/collaborators-common";
+import { claimCollaborationAccess } from "@cocalc/database/postgres/collaborators/collaborators-access";
 import { fetchCollaborationNotificationPage } from "@cocalc/server/collaborators/api";
 import {
   runCollaboratorsMaintenance,
@@ -23,24 +23,36 @@ jest.mock("@cocalc/database/settings/server-settings", () => ({
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => "home",
 }));
-jest.mock("@cocalc/database/postgres/collaborators-projection", () => ({
-  applyCollaborationProjection: jest.fn(),
-  claimCollaborationProjectionJobs: jest.fn(),
-  cleanCollaborationProjections: jest.fn(),
-  failCollaborationProjection: jest.fn(),
-  seedCollaborationProjectionJobs: jest.fn(),
-}));
-jest.mock("@cocalc/database/postgres/collaborators-common", () => ({
-  syncCollaboratorsSchema: jest.fn(),
-}));
-jest.mock("@cocalc/database/postgres/collaborators-owner", () => ({
-  compactNextCollaborationProject: jest.fn(),
-}));
-jest.mock("@cocalc/database/postgres/collaborators-access", () => ({
-  applyCollaborationAccess: jest.fn(),
-  claimCollaborationAccess: jest.fn(),
-  failCollaborationAccess: jest.fn(),
-}));
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-projection",
+  () => ({
+    applyCollaborationProjection: jest.fn(),
+    claimCollaborationProjectionJobs: jest.fn(),
+    cleanCollaborationProjections: jest.fn(),
+    failCollaborationProjection: jest.fn(),
+    seedCollaborationProjectionJobs: jest.fn(),
+  }),
+);
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-common",
+  () => ({
+    syncCollaboratorsSchema: jest.fn(),
+  }),
+);
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-owner",
+  () => ({
+    compactNextCollaborationProject: jest.fn(),
+  }),
+);
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-access",
+  () => ({
+    applyCollaborationAccess: jest.fn(),
+    claimCollaborationAccess: jest.fn(),
+    failCollaborationAccess: jest.fn(),
+  }),
+);
 jest.mock("@cocalc/server/collaborators/api", () => ({
   fetchCollaborationProjection: jest.fn(),
   fetchCollaborationAccessBatches: jest.fn(),

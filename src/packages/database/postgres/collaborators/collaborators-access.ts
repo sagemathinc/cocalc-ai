@@ -9,7 +9,7 @@ import { bumpCollaborationRevision } from "./collaborators-changes";
 import {
   assertAccountNotRehoming,
   assertAccountWriteOnHomeBay,
-} from "./account-rehome-fence";
+} from "../account-rehome-fence";
 
 export interface CollaborationAccessJob {
   account_id: string;

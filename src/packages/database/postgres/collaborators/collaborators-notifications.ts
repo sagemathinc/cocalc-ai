@@ -5,17 +5,17 @@
 import { createHash, randomUUID } from "node:crypto";
 import { homeParticipation } from "./collaborators-relations-projection";
 import { uuidsha1 } from "@cocalc/util/misc";
-import getPool from "../pool";
-import type { PoolClient } from "../pool";
-import { withAccountRehomeWriteFence } from "./account-rehome-fence";
+import getPool from "../../pool";
+import type { PoolClient } from "../../pool";
+import { withAccountRehomeWriteFence } from "../account-rehome-fence";
 import { lockCollaborationMaintenanceAccounts } from "./collaborators-account-maintenance";
 import {
   assertProjectNotRehoming,
   ProjectRehomeInProgressError,
-} from "./project-rehome-fence";
+} from "../project-rehome-fence";
 import { bumpCollaborationRevision } from "./collaborators-changes";
 import { rememberCollaborationArtifactBindings } from "./collaborators-personal";
-import { syncSchema } from "./schema";
+import { syncSchema } from "../schema";
 import { SCHEMA } from "@cocalc/util/schema";
 import {
   collaborationAccountId,

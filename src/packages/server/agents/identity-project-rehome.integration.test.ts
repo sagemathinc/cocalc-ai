@@ -8,7 +8,7 @@ import { ProjectRehomeInProgressError } from "@cocalc/database/postgres/project-
 import {
   registerCollaborationSource,
   ingestCollaborationSnapshot,
-} from "@cocalc/database/postgres/collaborators-owner";
+} from "@cocalc/database/postgres/collaborators/collaborators-owner";
 import {
   ensureProjectCollaborationRehomeSchema,
   freezeProjectCollaborationExport,

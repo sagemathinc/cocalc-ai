@@ -6,7 +6,7 @@
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { uuid } from "@cocalc/util/misc";
 import { SCHEMA } from "@cocalc/util/db-schema";
-import { syncCollaboratorsSchema } from "@cocalc/database/postgres/collaborators-common";
+import { syncCollaboratorsSchema } from "@cocalc/database/postgres/collaborators/collaborators-common";
 
 // Exercise the current source inventory even when linked package outputs predate it.
 jest.mock("@cocalc/server/projects/hard-delete-tables", () =>

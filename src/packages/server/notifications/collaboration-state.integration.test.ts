@@ -17,17 +17,17 @@ import {
   initializeCollaborationProjectionAttention,
   collaborationNotificationStore,
   pruneCollaborationNotificationEvents,
-} from "@cocalc/database/postgres/collaborators-notifications";
+} from "@cocalc/database/postgres/collaborators/collaborators-notifications";
 import {
   ingestCollaborationSnapshot,
   readCollaborationProjection,
-} from "@cocalc/database/postgres/collaborators-owner";
-import { applyCollaborationProjection } from "@cocalc/database/postgres/collaborators-projection";
-import { setCollaborationPersonalState } from "@cocalc/database/postgres/collaborators-discovery";
+} from "@cocalc/database/postgres/collaborators/collaborators-owner";
+import { applyCollaborationProjection } from "@cocalc/database/postgres/collaborators/collaborators-projection";
+import { setCollaborationPersonalState } from "@cocalc/database/postgres/collaborators/collaborators-discovery";
 import { withAccountRehomeWriteFence } from "@cocalc/database/postgres/account-rehome-fence";
-import { syncCollaboratorsSchema } from "@cocalc/database/postgres/collaborators-common";
-import { applyCollaborationAccess } from "@cocalc/database/postgres/collaborators-access";
-import { checkCollaborationRevision } from "@cocalc/database/postgres/collaborators-changes";
+import { syncCollaboratorsSchema } from "@cocalc/database/postgres/collaborators/collaborators-common";
+import { applyCollaborationAccess } from "@cocalc/database/postgres/collaborators/collaborators-access";
+import { checkCollaborationRevision } from "@cocalc/database/postgres/collaborators/collaborators-changes";
 import { SCHEMA } from "@cocalc/util/db-schema";
 
 const hash = (value: string) =>

@@ -103,8 +103,8 @@ async function bootstrapDb() {
     throw Error("acceptance worker requires its isolated database");
   pool = require("@cocalc/database/pool").default({ ensureExists: false });
   await require("@cocalc/database/postgres/schema").syncSchema();
-  await require("@cocalc/database/postgres/collaborators-common").syncCollaboratorsSchema();
-  await require("@cocalc/database/postgres/collaborators-notifications").ensureCollaborationNotificationSchema();
+  await require("@cocalc/database/postgres/collaborators/collaborators-common").syncCollaboratorsSchema();
+  await require("@cocalc/database/postgres/collaborators/collaborators-notifications").ensureCollaborationNotificationSchema();
   await pool.query(
     "INSERT INTO server_settings(name,value) VALUES('collaborators_enabled','yes') ON CONFLICT(name) DO UPDATE SET value='yes'",
   );

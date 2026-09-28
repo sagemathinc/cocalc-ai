@@ -3,7 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { randomUUID, webcrypto } from "node:crypto";
-jest.mock("../pool", () => jest.requireActual("@cocalc/database/pool"));
+jest.mock("../../pool", () => jest.requireActual("@cocalc/database/pool"));
 import "@cocalc/util/db-schema/collaborators-workspace";
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { testCleanup } from "@cocalc/database/test-utils";

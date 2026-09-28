@@ -4,7 +4,7 @@
  */
 import getPool from "@cocalc/database/pool";
 import { homeParticipation } from "./collaborators-relations-projection";
-import { withAccountRehomeWriteFence } from "./account-rehome-fence";
+import { withAccountRehomeWriteFence } from "../account-rehome-fence";
 import {
   collaborationAgentPins,
   EFFECTIVE_ALIAS,

@@ -9,20 +9,20 @@ import {
   readPersonAliases,
   writePersonAlias,
 } from "./aliases";
-import { stageCollaborationRelationPage } from "@cocalc/database/postgres/collaborators-relations-owner";
+import { stageCollaborationRelationPage } from "@cocalc/database/postgres/collaborators/collaborators-relations-owner";
 import {
   listCollaborationParticipants,
   listCollaborationReferences,
-} from "@cocalc/database/postgres/collaborators-relations-query";
+} from "@cocalc/database/postgres/collaborators/collaborators-relations-query";
 import {
   getCollaborationRoom,
   replaceCollaborationRoom,
-} from "@cocalc/database/postgres/collaborators-room-replacement";
+} from "@cocalc/database/postgres/collaborators/collaborators-room-replacement";
 import {
   collaborationDiscoveryForHost,
   getCollaborationDiscovery,
   reportCollaborationDiscovery,
-} from "@cocalc/database/postgres/collaborators-census";
+} from "@cocalc/database/postgres/collaborators/collaborators-census";
 import {
   discoveryCoverage,
   validateDiscoveryReport,
@@ -37,11 +37,11 @@ import type {
 import {
   readCollaborationProjectPage,
   overlayCollaborationProjectPage,
-} from "@cocalc/database/postgres/collaborators-project-page";
-import { collaborationCheckpointPage } from "@cocalc/database/postgres/collaborators-checkpoint";
-import { requestCollaborationSource } from "@cocalc/database/postgres/collaborators-adoption";
-import { readCollaborationAccess } from "@cocalc/database/postgres/collaborators-access";
-import type { CollaborationAccessJob } from "@cocalc/database/postgres/collaborators-access";
+} from "@cocalc/database/postgres/collaborators/collaborators-project-page";
+import { collaborationCheckpointPage } from "@cocalc/database/postgres/collaborators/collaborators-checkpoint";
+import { requestCollaborationSource } from "@cocalc/database/postgres/collaborators/collaborators-adoption";
+import { readCollaborationAccess } from "@cocalc/database/postgres/collaborators/collaborators-access";
+import type { CollaborationAccessJob } from "@cocalc/database/postgres/collaborators/collaborators-access";
 import getPool from "@cocalc/database/pool";
 import { accountProjectPins } from "@cocalc/backend/collaborators/project-pins";
 import { conat } from "@cocalc/backend/conat";
@@ -49,14 +49,14 @@ import { withAccountRehomeWriteFence } from "@cocalc/database/postgres/account-r
 import {
   checkCollaborationRevision,
   bumpCollaborationRevision,
-} from "@cocalc/database/postgres/collaborators-changes";
+} from "@cocalc/database/postgres/collaborators/collaborators-changes";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import {
   uuid,
   validateSnapshot,
   validateSource,
   validateTarget,
-} from "@cocalc/database/postgres/collaborators-common";
+} from "@cocalc/database/postgres/collaborators/collaborators-common";
 import {
   collaborationRoomForHost,
   collaborationSourcePage,
@@ -68,12 +68,12 @@ import {
   registerCollaborationSource,
   relocateCollaborationSource,
   markCollaborationRoomInitialized,
-} from "@cocalc/database/postgres/collaborators-owner";
+} from "@cocalc/database/postgres/collaborators/collaborators-owner";
 import {
   listCollaborationPeople,
   listCollaborationProjects,
   listCollaborationResources,
-} from "@cocalc/database/postgres/collaborators-discovery";
+} from "@cocalc/database/postgres/collaborators/collaborators-discovery";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import {
@@ -82,7 +82,7 @@ import {
 } from "@cocalc/server/inter-bay/directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import type { CollaborationNotificationJob } from "@cocalc/util/collaboration-attention";
-import { readCollaborationNotificationPage } from "@cocalc/database/postgres/collaborators-notifications";
+import { readCollaborationNotificationPage } from "@cocalc/database/postgres/collaborators/collaborators-notifications";
 import {
   collaborationPersonalState,
   updateCollaborationPersonalState,

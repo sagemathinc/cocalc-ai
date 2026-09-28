@@ -6,28 +6,55 @@ import {
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { createInterBayCollaboratorsClient } from "@cocalc/conat/inter-bay/collaborators";
-import { readCollaborationNotificationPage } from "@cocalc/database/postgres/collaborators-notifications";
+import { readCollaborationNotificationPage } from "@cocalc/database/postgres/collaborators/collaborators-notifications";
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: jest.fn(),
 }));
-jest.mock("@cocalc/database/postgres/collaborators-changes", () => ({}));
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-changes",
+  () => ({}),
+);
 jest.mock("@cocalc/database/settings/server-settings", () => ({
   getServerSettings: async () => ({ collaborators_enabled: true }),
 }));
-jest.mock("@cocalc/database/postgres/collaborators-common", () => ({
-  uuid: jest.fn(),
-}));
-jest.mock("@cocalc/database/postgres/collaborators-owner", () => ({}));
-jest.mock("@cocalc/database/postgres/collaborators-discovery", () => ({}));
-jest.mock("@cocalc/database/postgres/collaborators-access", () => ({}));
-jest.mock("@cocalc/database/postgres/collaborators-project-page", () => ({}));
-jest.mock("@cocalc/database/postgres/collaborators-checkpoint", () => ({}));
-jest.mock("@cocalc/database/postgres/collaborators-adoption", () => ({}));
-jest.mock("@cocalc/database/postgres/collaborators-notifications", () => ({
-  readCollaborationNotificationPage: jest.fn(),
-}));
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-common",
+  () => ({
+    uuid: jest.fn(),
+  }),
+);
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-owner",
+  () => ({}),
+);
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-discovery",
+  () => ({}),
+);
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-access",
+  () => ({}),
+);
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-project-page",
+  () => ({}),
+);
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-checkpoint",
+  () => ({}),
+);
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-adoption",
+  () => ({}),
+);
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-notifications",
+  () => ({
+    readCollaborationNotificationPage: jest.fn(),
+  }),
+);
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: jest.fn(),
 }));

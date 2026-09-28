@@ -4,18 +4,22 @@
  */
 import { randomUUID } from "node:crypto";
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
-import { syncCollaboratorsSchema } from "@cocalc/database/postgres/collaborators-common";
+import { syncCollaboratorsSchema } from "@cocalc/database/postgres/collaborators/collaborators-common";
 import {
   collaborationNotificationStore,
   seedCollaborationNotificationJobs,
   pruneCollaborationNotificationEvents,
-} from "@cocalc/database/postgres/collaborators-notifications";
+} from "@cocalc/database/postgres/collaborators/collaborators-notifications";
 import { ensureCollaborationAccountRehomeSchema } from "./collaboration-account-rehome";
 
 // Exercise new DB sources before the coordinated package build, with one shared
 // isolated pool rather than separate source/dist PGlite instances.
-jest.mock("@cocalc/database/postgres/collaborators-notifications", () =>
-  jest.requireActual("../../database/postgres/collaborators-notifications"),
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-notifications",
+  () =>
+    jest.requireActual(
+      "../../database/postgres/collaborators/collaborators-notifications",
+    ),
 );
 jest.mock("../../database/pool", () =>
   jest.requireActual("@cocalc/database/pool"),

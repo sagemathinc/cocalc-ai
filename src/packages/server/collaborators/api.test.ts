@@ -51,25 +51,34 @@ const references = jest.fn();
 const getRoom = jest.fn();
 const replaceRoom = jest.fn();
 jest.mock(
-  "@cocalc/database/postgres/collaborators-room-replacement",
+  "@cocalc/database/postgres/collaborators/collaborators-room-replacement",
   () => ({
     getCollaborationRoom: (...args) => getRoom(...args),
     replaceCollaborationRoom: (...args) => replaceRoom(...args),
   }),
   { virtual: true },
 );
-jest.mock("@cocalc/database/postgres/collaborators-relations-owner", () => ({
-  stageCollaborationRelationPage: (...args) => stageRelations(...args),
-}));
-jest.mock("@cocalc/database/postgres/collaborators-relations-query", () => ({
-  listCollaborationParticipants: (...args) => participants(...args),
-  listCollaborationReferences: (...args) => references(...args),
-}));
-jest.mock("@cocalc/database/postgres/collaborators-census", () => ({
-  getCollaborationDiscovery: (...args) => discovery(...args),
-  collaborationDiscoveryForHost: (...args) => discoveryWriter(...args),
-  reportCollaborationDiscovery: (...args) => discoveryReport(...args),
-}));
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-relations-owner",
+  () => ({
+    stageCollaborationRelationPage: (...args) => stageRelations(...args),
+  }),
+);
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-relations-query",
+  () => ({
+    listCollaborationParticipants: (...args) => participants(...args),
+    listCollaborationReferences: (...args) => references(...args),
+  }),
+);
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-census",
+  () => ({
+    getCollaborationDiscovery: (...args) => discovery(...args),
+    collaborationDiscoveryForHost: (...args) => discoveryWriter(...args),
+    reportCollaborationDiscovery: (...args) => discoveryReport(...args),
+  }),
+);
 jest.mock("@cocalc/backend/conat", () => ({ conat: () => "local-client" }));
 jest.mock("@cocalc/backend/collaborators/project-pins", () => ({
   accountProjectPins: () => ({
@@ -132,38 +141,59 @@ jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: () => ({ query: (...a) => dbQuery(...a) }),
 }));
-jest.mock("@cocalc/database/postgres/collaborators-owner", () => ({
-  ingestCollaborationSnapshot: (...a) => ingest(...a),
-  collaborationRoomForHost: (...a) => room(...a),
-  collaborationWriterState: (...a) => writerState(...a),
-  getOwnedCollaborationResource: (...a) => ownedResource(...a),
-  registerCollaborationSource: (...a) => register(...a),
-}));
-jest.mock("@cocalc/database/postgres/collaborators-access", () => ({
-  readCollaborationAccess: (...a) => access(...a),
-  claimCollaborationAccess: (...a) => claimAccess(...a),
-}));
-jest.mock("@cocalc/database/postgres/collaborators-project-page", () => ({
-  overlayCollaborationProjectPage: (...a) => overlay(...a),
-}));
-jest.mock("@cocalc/database/postgres/collaborators-discovery", () => ({
-  listCollaborationPeople: (...a) => people(...a),
-  listCollaborationResources: (...a) => list(...a),
-  listCollaborationProjects: (...a) => projects(...a),
-}));
-jest.mock("@cocalc/database/postgres/collaborators-projection", () => ({
-  seedCollaborationProjectionJobs: (...a) => seed(...a),
-}));
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-owner",
+  () => ({
+    ingestCollaborationSnapshot: (...a) => ingest(...a),
+    collaborationRoomForHost: (...a) => room(...a),
+    collaborationWriterState: (...a) => writerState(...a),
+    getOwnedCollaborationResource: (...a) => ownedResource(...a),
+    registerCollaborationSource: (...a) => register(...a),
+  }),
+);
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-access",
+  () => ({
+    readCollaborationAccess: (...a) => access(...a),
+    claimCollaborationAccess: (...a) => claimAccess(...a),
+  }),
+);
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-project-page",
+  () => ({
+    overlayCollaborationProjectPage: (...a) => overlay(...a),
+  }),
+);
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-discovery",
+  () => ({
+    listCollaborationPeople: (...a) => people(...a),
+    listCollaborationResources: (...a) => list(...a),
+    listCollaborationProjects: (...a) => projects(...a),
+  }),
+);
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-projection",
+  () => ({
+    seedCollaborationProjectionJobs: (...a) => seed(...a),
+  }),
+);
 jest.mock("./personal", () => ({
   collaborationPersonalState: (...a) => personal(...a),
   updateCollaborationPersonalState: (...a) => updatePersonal(...a),
 }));
-jest.mock("@cocalc/database/postgres/collaborators-checkpoint", () => ({
-  collaborationCheckpointPage: (...a) => checkpoint(...a),
-}));
-jest.mock("@cocalc/database/postgres/collaborators-adoption", () => ({
-  requestCollaborationSource: (...a) => adoption(...a),
-}));
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-checkpoint",
+  () => ({
+    collaborationCheckpointPage: (...a) => checkpoint(...a),
+  }),
+);
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-adoption",
+  () => ({
+    requestCollaborationSource: (...a) => adoption(...a),
+  }),
+);
 
 const account_id = randomUUID();
 const project_id = randomUUID();

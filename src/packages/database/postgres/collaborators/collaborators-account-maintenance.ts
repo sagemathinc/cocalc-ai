@@ -2,7 +2,7 @@
  * This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
  * License: MS-RSL - see LICENSE.md for details
  */
-import type { PoolClient } from "../pool";
+import type { PoolClient } from "../../pool";
 
 /** Caller holds a transaction. Acquire account fences BEFORE cursor row locks,
  * without waiting on an in-flight snapshot or another maintenance worker. The

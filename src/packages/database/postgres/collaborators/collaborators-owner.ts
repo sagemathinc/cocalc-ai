@@ -16,7 +16,7 @@ import {
   saveCollaborationAgentBindings,
   upsertCollaborationAgent,
 } from "./collaborators-agent-identity";
-import { assertProjectNotRehoming } from "./project-rehome-fence";
+import { assertProjectNotRehoming } from "../project-rehome-fence";
 import {
   appendCollaborationNotificationEvents,
   readCollaborationNotificationAttention,

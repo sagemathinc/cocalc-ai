@@ -17,7 +17,7 @@ Implementation entry points:
 
 - `packages/util/collaborators.ts` and `collaboration-references.ts`: shared
   discovery contracts and stable typed reference codecs.
-- `packages/database/postgres/collaborators-*.ts` and
+- `packages/database/postgres/collaborators/collaborators-*.ts` and
   `packages/server/collaborators/`: owner catalogs, account-home projections,
   routed APIs, capacity limits, access leases, and independent personal state.
 - `packages/backend/collaborators/` and `packages/project-host/collaborators*.ts`:

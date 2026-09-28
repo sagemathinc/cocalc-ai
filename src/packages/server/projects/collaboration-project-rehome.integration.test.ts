@@ -8,17 +8,17 @@ import {
   syncCollaboratorsSchema,
   sourceKey,
   entryKey,
-} from "@cocalc/database/postgres/collaborators-common";
+} from "@cocalc/database/postgres/collaborators/collaborators-common";
 import { assertProjectNotRehoming } from "@cocalc/database/postgres/project-rehome-fence";
 import {
   appendCollaborationNotificationEvents,
   readCollaborationNotificationPage,
-} from "@cocalc/database/postgres/collaborators-notifications";
+} from "@cocalc/database/postgres/collaborators/collaborators-notifications";
 import {
   registerCollaborationSource,
   ingestCollaborationSnapshot,
-} from "@cocalc/database/postgres/collaborators-owner";
-import { replaceCollaborationRoom } from "@cocalc/database/postgres/collaborators-room-replacement";
+} from "@cocalc/database/postgres/collaborators/collaborators-owner";
+import { replaceCollaborationRoom } from "@cocalc/database/postgres/collaborators/collaborators-room-replacement";
 import { PROJECT_COLLABORATION_REHOME_TABLES as TABLES } from "@cocalc/util/project-collaboration-rehome";
 import type {
   ProjectCollaborationRehomeHeader as Header,

@@ -181,7 +181,7 @@ claim names in the endpoint registry. Attention choices remain independent.
 Host-produced `notification_events` are validated, preserved in the snapshot
 replay hash, and appended transactionally after writer/sequence checks, even
 when resource metadata is unchanged. The bounded owner event log in
-[`database/postgres/collaborators-notifications.ts`](../../database/postgres/collaborators-notifications.ts)
+[`database/postgres/collaborators/collaborators-notifications.ts`](../../database/postgres/collaborators/collaborators-notifications.ts)
 and account-home consumer in [`server/notifications`](../notifications)
 deliver through the existing notification graph/outbox, not a second
 feed. Snapshot scans never manufacture message events. Explicit follow/mute
@@ -209,7 +209,7 @@ in [`backend/collaborators`](../../backend/collaborators/README.md).
 [`project-host/collaborators-service.ts`](../../project-host/collaborators-service.ts)
 owns canonical room initialization and content sends through the authenticated
 host chat service. Explicit source adoption is implemented in
-[`database/postgres/collaborators-adoption.ts`](../../database/postgres/collaborators-adoption.ts)
+[`database/postgres/collaborators/collaborators-adoption.ts`](../../database/postgres/collaborators/collaborators-adoption.ts)
 under the shared project-owner authorization/rehome fence. Client revision polling,
 cache invalidation and selected-content mounting belong to
 [`frontend/collaborators`](../../frontend/collaborators).
