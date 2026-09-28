@@ -6,6 +6,7 @@ import { Button } from "antd";
 import { useState } from "react";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { ProjectThemeAvatar } from "@cocalc/frontend/projects/theme";
+import { VirtualCollectionList } from "@cocalc/frontend/components/virtual-collection";
 import type { MouseEvent } from "react";
 import type {
   CollaborationResource,
@@ -148,18 +149,19 @@ export function Overview({
           <h3>Shared projects</h3>
           <DirectoryResults label="Shared projects" result={projects}>
             {(items) => (
-              <ul className="collaborators-list">
-                {items.map((item) => (
-                  <li key={item.project_id}>
-                    <Button
-                      onClick={(event) => onProject(item.project_id, event)}
-                    >
-                      <ProjectThemeAvatar theme={item.theme} size={24} border />{" "}
-                      {item.title || "Untitled project"}
-                    </Button>
-                  </li>
-                ))}
-              </ul>
+              <VirtualCollectionList
+                className="collaborators-list"
+                items={items}
+                itemId={(item) => item.project_id}
+                renderItem={(item) => (
+                  <Button
+                    onClick={(event) => onProject(item.project_id, event)}
+                  >
+                    <ProjectThemeAvatar theme={item.theme} size={24} border />{" "}
+                    {item.title || "Untitled project"}
+                  </Button>
+                )}
+              />
             )}
           </DirectoryResults>
           {people.error && (
@@ -182,23 +184,22 @@ export function Overview({
             empty="No other collaborators. Invite someone to work together in this project."
           >
             {(items) => (
-              <ul className="collaborators-list">
-                {items.map((item) => (
-                  <li key={item.account_id}>
-                    <Button
-                      onClick={(event) => onPerson(item.account_id, event)}
-                    >
-                      <Avatar
-                        account_id={item.account_id}
-                        display_name={item.display_name}
-                        size={24}
-                        no_tooltip
-                      />{" "}
-                      {item.display_name || "Collaborator"}
-                    </Button>
-                  </li>
-                ))}
-              </ul>
+              <VirtualCollectionList
+                className="collaborators-list"
+                items={items}
+                itemId={(item) => item.account_id}
+                renderItem={(item) => (
+                  <Button onClick={(event) => onPerson(item.account_id, event)}>
+                    <Avatar
+                      account_id={item.account_id}
+                      display_name={item.display_name}
+                      size={24}
+                      no_tooltip
+                    />{" "}
+                    {item.display_name || "Collaborator"}
+                  </Button>
+                )}
+              />
             )}
           </DirectoryResults>
         </>

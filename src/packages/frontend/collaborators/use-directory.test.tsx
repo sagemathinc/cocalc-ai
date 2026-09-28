@@ -18,6 +18,111 @@ const page = (name: string, next?: string): CollaborationPage<string> => ({
   next,
 });
 
+test("concurrent end-of-list notifications make one request and deduplicate overlapping pages", async () => {
+  const later =
+    deferred<CollaborationPage<{ account_id: string; name: string }>>();
+  const load = jest
+    .fn()
+    .mockResolvedValueOnce({
+      items: [{ account_id: "a", name: "old" }],
+      next: "next",
+      coverage: "complete",
+    })
+    .mockReturnValueOnce(later.promise);
+  const { result } = renderHook(() => useDirectory("people", load));
+  await waitFor(() => expect(result.current.page).toBeDefined());
+  act(() => {
+    result.current.next();
+    result.current.next();
+    result.current.next();
+  });
+  await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+  expect(result.current.loadingMore).toBe(true);
+  await act(async () =>
+    later.resolve({
+      items: [
+        { account_id: "a", name: "updated" },
+        { account_id: "b", name: "new" },
+      ],
+      coverage: "complete",
+    }),
+  );
+  expect(result.current.page?.items).toEqual([
+    { account_id: "a", name: "updated" },
+    { account_id: "b", name: "new" },
+  ]);
+  act(() => result.current.next());
+  expect(load).toHaveBeenCalledTimes(2);
+});
+
+test("refresh revalidates the loaded prefix atomically, including removal of old rows", async () => {
+  const freshSecond = deferred<CollaborationPage<string>>();
+  const load = jest
+    .fn()
+    .mockResolvedValueOnce(page("old-first", "c1"))
+    .mockResolvedValueOnce(page("old-second"))
+    .mockResolvedValueOnce(page("fresh-first", "c2"))
+    .mockReturnValueOnce(freshSecond.promise);
+  const { result } = renderHook(() => useDirectory("all", load));
+  await waitFor(() => expect(result.current.page).toBeDefined());
+  act(() => result.current.next());
+  await waitFor(() =>
+    expect(result.current.page?.items).toEqual(["old-first", "old-second"]),
+  );
+  act(() => result.current.refresh());
+  await waitFor(() => expect(load).toHaveBeenCalledTimes(4));
+  expect(load).toHaveBeenLastCalledWith("c2", expect.any(AbortSignal));
+  expect(result.current.page?.items).toEqual(["old-first", "old-second"]);
+  await act(async () => freshSecond.resolve(page("fresh-second")));
+  expect(result.current.page?.items).toEqual(["fresh-first", "fresh-second"]);
+});
+
+test("late next-page results cannot leak across a filter change", async () => {
+  const later = deferred<CollaborationPage<string>>();
+  const load = jest
+    .fn()
+    .mockResolvedValueOnce(page("a", "next"))
+    .mockReturnValueOnce(later.promise)
+    .mockResolvedValueOnce(page("b"));
+  const { result, rerender } = renderHook(
+    ({ key }) => useDirectory(key, load),
+    { initialProps: { key: "a" } },
+  );
+  await waitFor(() => expect(result.current.page).toBeDefined());
+  act(() => result.current.next());
+  rerender({ key: "b" });
+  await waitFor(() => expect(result.current.page?.items).toEqual(["b"]));
+  await act(async () => later.resolve(page("secret-a")));
+  expect(result.current.page?.items).toEqual(["b"]);
+});
+
+test("a failed access-bound next page clears earlier results", async () => {
+  const load = jest
+    .fn()
+    .mockResolvedValueOnce(page("authorized", "next"))
+    .mockRejectedValueOnce(Error("access changed"));
+  const { result } = renderHook(() => useDirectory("all", load));
+  await waitFor(() => expect(result.current.page).toBeDefined());
+  act(() => result.current.next());
+  await waitFor(() => expect(result.current.error).toContain("access changed"));
+  expect(result.current.page).toBeUndefined();
+});
+
+test("a nonadvancing cursor stops instead of repeatedly fetching", async () => {
+  const load = jest
+    .fn()
+    .mockResolvedValueOnce(page("a", "next"))
+    .mockResolvedValueOnce(page("b", "next"));
+  const { result } = renderHook(() => useDirectory("all", load));
+  await waitFor(() => expect(result.current.page).toBeDefined());
+  act(() => result.current.next());
+  await waitFor(() =>
+    expect(result.current.error).toContain("cursor did not advance"),
+  );
+  act(() => result.current.next());
+  expect(load).toHaveBeenCalledTimes(2);
+});
+
 test("late responses cannot cross an account/filter key, including A-B-A navigation", async () => {
   const first = deferred<CollaborationPage<string>>();
   const second = deferred<CollaborationPage<string>>();
@@ -44,7 +149,7 @@ test("late responses cannot cross an account/filter key, including A-B-A navigat
   expect(result.current.page?.items).toEqual(["fresh-a"]);
 });
 
-test("pagination replaces a bounded page and binds cursors to the filters", async () => {
+test("lazy loading appends pages and binds cursors to the filters", async () => {
   const load = jest.fn(async (cursor?: string) =>
     cursor ? page("second") : page("first", "next-1"),
   );
@@ -54,7 +159,9 @@ test("pagination replaces a bounded page and binds cursors to the filters", asyn
   );
   await waitFor(() => expect(result.current.page?.items).toEqual(["first"]));
   act(() => result.current.next());
-  await waitFor(() => expect(result.current.page?.items).toEqual(["second"]));
+  await waitFor(() =>
+    expect(result.current.page?.items).toEqual(["first", "second"]),
+  );
   expect(load).toHaveBeenLastCalledWith("next-1", expect.any(AbortSignal));
   expect(result.current.pageNumber).toBe(2);
   rerender({ key: "project-filter" });

@@ -2,11 +2,16 @@
  * This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
  * License: MS-RSL - see LICENSE.md for details
  */
-import { useLayoutEffect, useRef, useState } from "react";
+import { useContext, useLayoutEffect, useRef, useState } from "react";
 import type { ComponentRef, ReactNode } from "react";
 import { Button, Dropdown } from "antd";
 import { Icon } from "./icon";
 import { DragHandle, SortableItem, SortableList } from "./sortable-list";
+
+import {
+  VirtualCollectionContext,
+  VirtualCollectionItems,
+} from "./virtual-collection";
 
 export type CollectionView = "list" | "grid";
 export interface CollectionMenuAction {
@@ -80,6 +85,7 @@ export function Collection<T>({
   pinLabel?: (item: T) => string;
   busyIds?: string[];
 }) {
+  const virtual = useContext(VirtualCollectionContext);
   const root = useRef<HTMLDivElement>(null);
   const focus = useRef<
     { id: string; pinned: boolean; element: HTMLElement } | undefined
@@ -94,20 +100,71 @@ export function Collection<T>({
       document.activeElement !== pending.element
     )
       return;
-    Array.from(
+    const replacement = Array.from(
       root.current?.querySelectorAll<HTMLElement>("[data-collection-pin]") ??
         [],
-    )
-      .find((element) => element.dataset.collectionPin === pending.id)
-      ?.focus({ preventScroll: true });
+    ).find((element) => element.dataset.collectionPin === pending.id);
+    // Unpinning can move the row outside the virtual window. Keep a keyboard
+    // anchor in the collection rather than dropping focus onto the document.
+    (replacement ?? root.current)?.focus({ preventScroll: true });
   }, [pins]);
   const positions = new Map(pins.map((id, index) => [id, index]));
   const pinnedItems = items
     .filter((item) => positions.has(itemId(item)))
     .sort((a, b) => positions.get(itemId(a))! - positions.get(itemId(b))!);
   const others = items.filter((item) => !positions.has(itemId(item)));
+  const renderMember = (item: T) => {
+    const id = itemId(item);
+    const pinned = positions.has(id);
+    const title = itemTitle(item);
+    const reorder = pinned && !!onMove;
+    const row = (
+      <div role="listitem">
+        {renderItem(item, {
+          pinned,
+          dragHandle: reorder ? (
+            <DragHandle
+              id={id}
+              ariaLabel={`Drag ${title} to reorder`}
+              title="Drag to reorder within this group. Keyboard: Space, arrow keys, then Space to drop or Escape to cancel."
+              style={{ padding: 4, touchAction: "none" }}
+            />
+          ) : null,
+          pinButton: onPin ? (
+            <Button
+              type="text"
+              data-collection-pin={id}
+              aria-label={`${pinned ? "Unpin" : "Pin"} ${pinLabel(item)}`}
+              aria-pressed={pinned}
+              aria-disabled={busyIds.includes(id)}
+              icon={<Icon name={pinned ? "pushpin-filled" : "pushpin"} />}
+              onClick={(event) => {
+                if (busyIds.includes(id)) return;
+                focus.current = {
+                  id,
+                  pinned: !pinned,
+                  element: event.currentTarget,
+                };
+                onPin(item, !pinned);
+              }}
+            />
+          ) : null,
+          menu: (actions, label) => (
+            <CollectionMenu label={label} actions={actions} />
+          ),
+        })}
+      </div>
+    );
+    return reorder ? (
+      <SortableItem key={id} id={id} hideActive={false}>
+        {row}
+      </SortableItem>
+    ) : (
+      <div key={id}>{row}</div>
+    );
+  };
   return (
-    <div ref={root}>
+    <div ref={root} tabIndex={-1}>
       {[
         { key: "pinned", title: "Pinned", items: pinnedItems },
         { key: "other", title: otherTitle, items: others },
@@ -123,7 +180,13 @@ export function Collection<T>({
           return (
             <section key={section.key} aria-label={section.title}>
               {pinnedItems.length > 0 && (
-                <h2 style={{ fontSize: 18, margin: "16px 0 8px" }}>
+                <h2
+                  className="collection-group-heading"
+                  style={{
+                    fontSize: "var(--collection-heading-size, 18px)",
+                    margin: "16px 0 8px",
+                  }}
+                >
                   {section.title}
                 </h2>
               )}
@@ -155,75 +218,28 @@ export function Collection<T>({
                       <div
                         role="list"
                         style={
-                          view === "grid"
+                          view === "grid" &&
+                          !(virtual && section.key !== "pinned")
                             ? {
                                 display: "grid",
                                 gridTemplateColumns:
-                                  "repeat(auto-fill, minmax(min(100%, 190px), 1fr))",
+                                  "repeat(auto-fill, minmax(min(100%, var(--collection-grid-min-width, 190px)), 1fr))",
                                 gap: 8,
                               }
                             : undefined
                         }
                       >
-                        {members.map((item) => {
-                          const id = itemId(item);
-                          const pinned = positions.has(id);
-                          const title = itemTitle(item);
-                          const reorder = pinned && !!onMove;
-                          const row = (
-                            <div role="listitem">
-                              {renderItem(item, {
-                                pinned,
-                                dragHandle: reorder ? (
-                                  <DragHandle
-                                    id={id}
-                                    ariaLabel={`Drag ${title} to reorder`}
-                                    title="Drag to reorder within this group. Keyboard: Space, arrow keys, then Space to drop or Escape to cancel."
-                                    style={{ padding: 4, touchAction: "none" }}
-                                  />
-                                ) : null,
-                                pinButton: onPin ? (
-                                  <Button
-                                    type="text"
-                                    data-collection-pin={id}
-                                    aria-label={`${pinned ? "Unpin" : "Pin"} ${pinLabel(item)}`}
-                                    aria-pressed={pinned}
-                                    aria-disabled={busyIds.includes(id)}
-                                    icon={
-                                      <Icon
-                                        name={
-                                          pinned ? "pushpin-filled" : "pushpin"
-                                        }
-                                      />
-                                    }
-                                    onClick={(event) => {
-                                      if (busyIds.includes(id)) return;
-                                      focus.current = {
-                                        id,
-                                        pinned: !pinned,
-                                        element: event.currentTarget,
-                                      };
-                                      onPin(item, !pinned);
-                                    }}
-                                  />
-                                ) : null,
-                                menu: (actions, label) => (
-                                  <CollectionMenu
-                                    label={label}
-                                    actions={actions}
-                                  />
-                                ),
-                              })}
-                            </div>
-                          );
-                          return reorder ? (
-                            <SortableItem key={id} id={id} hideActive={false}>
-                              {row}
-                            </SortableItem>
-                          ) : (
-                            <div key={id}>{row}</div>
-                          );
-                        })}
+                        {virtual && section.key !== "pinned" ? (
+                          <VirtualCollectionItems
+                            {...virtual}
+                            items={members}
+                            itemId={itemId}
+                            renderItem={renderMember}
+                            view={view}
+                          />
+                        ) : (
+                          members.map(renderMember)
+                        )}
                       </div>
                     </SortableList>
                   </section>

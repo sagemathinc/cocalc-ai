@@ -111,7 +111,10 @@ function DirectoryCollectionContent<T>({
     }
   }
   return (
-    <div className="collaborators-list">
+    <div
+      className="collaborators-list collaborators-collection"
+      data-view={view}
+    >
       {showViewControl && (
         <div className="collaborators-actions">
           <CollectionViewControl
@@ -136,7 +139,9 @@ function DirectoryCollectionContent<T>({
         itemTitle={itemTitle}
         pins={pins}
         view={view}
-        otherTitle={`Other ${label.toLowerCase()}`}
+        otherTitle={
+          label === "Conversations" ? "Recent" : `Other ${label.toLowerCase()}`
+        }
         pinLabel={pinLabel}
         busyIds={busyIds}
         onPin={(item, value) => void toggle(item, value)}
@@ -145,15 +150,12 @@ function DirectoryCollectionContent<T>({
         }
         renderItem={(item, controls) => (
           <div
+            className="collaborators-collection-item"
             style={{
               display: "flex",
               flexDirection: view === "grid" ? "column" : "row",
               alignItems: "center",
-              border: `1px solid ${UI_COLORS.border}`,
-              borderRadius: 8,
-              background: UI_COLORS.surface,
               color: UI_COLORS.text,
-              marginBottom: 8,
               minWidth: 0,
               ...itemStyle?.(item),
             }}
@@ -161,7 +163,10 @@ function DirectoryCollectionContent<T>({
             <div style={{ flex: 1, width: "100%", minWidth: 0 }}>
               {renderItem(item)}
             </div>
-            <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+            <div
+              className="collaborators-row-controls"
+              style={{ display: "flex", gap: 4, flexShrink: 0 }}
+            >
               {controls.dragHandle}
               {controls.pinButton}
             </div>

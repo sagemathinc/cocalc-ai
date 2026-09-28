@@ -4,6 +4,26 @@ import React from "react";
 
 import { SelectProject } from "./select-project";
 
+test("server project choices fetch more only near the dropdown end", () => {
+  const onLoadMore = jest.fn();
+  render(
+    <SelectProject
+      onChange={jest.fn()}
+      onLoadMore={onLoadMore}
+      projects={[{ id: "project", title: "Project" }]}
+    />,
+  );
+  const list = screen.getByRole("combobox", { name: "Project" });
+  Object.defineProperties(list, {
+    scrollHeight: { value: 1000 },
+    clientHeight: { value: 200 },
+  });
+  fireEvent.scroll(list, { target: { scrollTop: 0 } });
+  expect(onLoadMore).not.toHaveBeenCalled();
+  fireEvent.scroll(list, { target: { scrollTop: 750 } });
+  expect(onLoadMore).toHaveBeenCalledTimes(1);
+});
+
 jest.mock("antd", () => {
   const actual = jest.requireActual("antd");
   const Select = ({
@@ -25,6 +45,7 @@ jest.mock("antd", () => {
         multiple={mode === "multiple"}
         value={value}
         disabled={disabled}
+        onScroll={props.onPopupScroll}
         onChange={(event) =>
           onChange(
             mode === "multiple"

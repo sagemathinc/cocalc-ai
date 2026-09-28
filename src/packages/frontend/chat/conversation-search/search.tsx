@@ -147,6 +147,7 @@ export function ConversationSearch({
   history,
   onSelect,
   active,
+  triggerLayout = "sidebar",
 }: {
   accountId: string;
   scope: "agent" | "human";
@@ -159,6 +160,7 @@ export function ConversationSearch({
   history?: (target: ConversationSearchTarget) => Promise<string[]>;
   onSelect: (result: ConversationSearchHit) => Promise<void>;
   active: boolean;
+  triggerLayout?: "sidebar" | "inline";
 }) {
   const store = conversationSearchStore(accountId, scope);
   const trigger = useRef<ComponentRef<typeof Button>>(null);
@@ -246,13 +248,22 @@ export function ConversationSearch({
     <>
       <Button
         ref={trigger}
-        block
-        type="text"
-        style={{ justifyContent: "flex-start" }}
+        className={
+          triggerLayout === "inline" ? "conversation-search-inline" : undefined
+        }
+        aria-label="Search conversations"
+        title="Search conversation contents"
+        block={triggerLayout === "sidebar"}
+        type={triggerLayout === "sidebar" ? "text" : "default"}
+        style={
+          triggerLayout === "sidebar"
+            ? { justifyContent: "flex-start" }
+            : undefined
+        }
         icon={<Icon name="search" />}
         onClick={() => store.set({ open: true })}
       >
-        Search conversations
+        <span className="conversation-search-label">Search conversations</span>
       </Button>
       <Drawer
         title={

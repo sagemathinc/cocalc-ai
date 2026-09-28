@@ -12,6 +12,8 @@ import userEvent from "@testing-library/user-event";
 import { CollaboratorsPage } from "./page";
 import type { CollaboratorsRoute } from "./workspace-types";
 
+jest.mock("react-virtuoso", () => require("../test/mocks/virtuoso-list"));
+
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: () => null,
   TimeAgo: () => null,
@@ -62,6 +64,7 @@ jest.mock("@cocalc/frontend/agents/project-settings-drawer", () => ({
     ) : null,
 }));
 jest.mock("@cocalc/frontend/app-framework", () => ({
+  useAccountOtherSetting: () => false,
   useTypedRedux: (store: string, key: string) =>
     store === "account"
       ? key === "other_settings"
@@ -233,7 +236,7 @@ test("compact tabs support arrow navigation and contextual actions", async () =>
 test("filters are contextual, dismiss with Escape, and restore focus", async () => {
   const user = userEvent.setup();
   render(<Workspace initial={{ view: "people" }} />);
-  const filters = screen.getByRole("button", { name: "Filters", exact: true });
+  const filters = screen.getByRole("button", { name: /^Filters/, exact: true });
   expect(
     screen.queryByRole("button", { name: "Filter by project" }),
   ).toBeNull();
@@ -347,7 +350,7 @@ test("People navigation uses shared projects, but inviting allows the first coll
   );
   await user.click(within(views).getByRole("tab", { name: "Collaborators" }));
   await user.click(
-    screen.getByRole("button", { name: "Filters", exact: true }),
+    screen.getByRole("button", { name: /^Filters/, exact: true }),
   );
   await user.click(screen.getByRole("button", { name: "Filter by project" }));
   await waitFor(() =>
@@ -447,7 +450,7 @@ test("Shared projects uses both theme colors and passes image and icon to the sh
   render(<Workspace initial={{ view: "projects" }} />);
   const avatar = await screen.findByTestId("project-theme");
   expect(JSON.parse(avatar.getAttribute("data-theme")!)).toEqual(theme);
-  const card = avatar.closest("button")?.parentElement?.parentElement;
+  const card = avatar.closest(".collaborators-collection-item");
   expect(card).toHaveStyle({ borderColor: "#123456" });
   expect(card?.getAttribute("style")).toContain("#abcdef");
 });
@@ -575,7 +578,7 @@ test.each(["Escape", "Cancel"])(
     const user = userEvent.setup();
     render(<Workspace />);
     const trigger = screen.getByRole("button", {
-      name: "Filters",
+      name: /^Filters/,
       exact: true,
     });
     trigger.focus();
@@ -614,7 +617,7 @@ test.each(["Escape", "Cancel"])(
     );
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Filters", exact: true }),
+        screen.getByRole("button", { name: /^Filters/, exact: true }),
       ).toHaveFocus(),
     );
     await user.click(
@@ -631,7 +634,7 @@ test.each(["Escape", "Cancel"])(
   },
 );
 
-test("shows indexing coverage, cursor paging, and errors without fabricating empty success", async () => {
+test("keeps coverage inside Filters, loads more by keyboard, and surfaces errors", async () => {
   const user = userEvent.setup();
   mockApi.listResources
     .mockResolvedValueOnce(
@@ -643,9 +646,13 @@ test("shows indexing coverage, cursor paging, and errors without fabricating emp
     )
     .mockRejectedValueOnce(Error("Directory offline"));
   render(<Workspace />);
-  expect(await screen.findByText("About these results")).toBeInTheDocument();
+  await screen.findByRole("button", { name: /Office hours.*Geometry Lab/ });
+  expect(screen.queryByText("About these results")).toBeNull();
+  await user.click(screen.getByRole("button", { name: /^Filters/ }));
+  await user.click(screen.getByText("About these results"));
   expect(screen.getByText("Legacy sources pending")).toBeInTheDocument();
-  const next = screen.getByRole("button", { name: "Next" });
+  await user.keyboard("{Escape}");
+  const next = screen.getByRole("button", { name: "Load more" });
   next.focus();
   await user.keyboard("{Enter}");
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -768,7 +775,7 @@ test("My collection includes agent and artifact shortcuts without changing follo
   const user = userEvent.setup();
   render(<Workspace />);
   await user.click(
-    screen.getByRole("button", { name: "Filters", exact: true }),
+    screen.getByRole("button", { name: /^Filters/, exact: true }),
   );
   await user.selectOptions(
     screen.getByRole("combobox", { name: "Show" }),
@@ -795,10 +802,12 @@ test("project views bind server filters, reset cursors, and preserve view on det
     role: "owner",
     pinned: true,
   };
-  mockApi.listProjects.mockResolvedValue(page([project], { next: "page-two" }));
+  mockApi.listProjects.mockImplementation(async ({ after }) =>
+    page([project], { next: after ? undefined : "page-two" }),
+  );
   render(<Workspace initial={{ view: "projects" }} />);
   await screen.findByRole("button", { name: /Geometry Lab Research/ });
-  const next = screen.getByRole("button", { name: "Next", exact: true });
+  const next = screen.getByRole("button", { name: "Load more", exact: true });
   next.focus();
   await user.keyboard("{Enter}");
   await waitFor(() =>
@@ -807,7 +816,7 @@ test("project views bind server filters, reset cursors, and preserve view on det
     ),
   );
   await user.click(
-    screen.getByRole("button", { name: "Filters", exact: true }),
+    screen.getByRole("button", { name: /^Filters/, exact: true }),
   );
   const pinned = screen.getByRole("button", {
     name: "Pinned projects",
@@ -843,7 +852,7 @@ test("project views bind server filters, reset cursors, and preserve view on det
   await waitFor(() => expect(row).toHaveFocus());
   expect(
     screen.getByRole("button", {
-      name: "Clear pinned projects filter: Pinned projects",
+      name: "Filters · Pinned",
     }),
   ).toBeInTheDocument();
   expect(mockApi.ensureRoom).not.toHaveBeenCalled();
@@ -886,7 +895,7 @@ test("keyboard pin and unpin refresh bounded results and restore focus after rem
     pinned: true,
   });
   await user.click(
-    screen.getByRole("button", { name: "Filters", exact: true }),
+    screen.getByRole("button", { name: /^Filters/, exact: true }),
   );
   await user.click(
     screen.getByRole("button", { name: "Pinned projects", exact: true }),
@@ -914,7 +923,10 @@ test("changed-favorites cursor errors offer a keyboard-operable restart without 
     )
     .mockResolvedValue(page([]));
   render(<Workspace initial={{ view: "projects" }} />);
-  const next = await screen.findByRole("button", { name: "Next", exact: true });
+  const next = await screen.findByRole("button", {
+    name: "Load more",
+    exact: true,
+  });
   next.focus();
   await user.keyboard("{Enter}");
   const restart = await screen.findByRole("button", {

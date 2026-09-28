@@ -1,156 +1,123 @@
 import { render, screen } from "@testing-library/react";
-import { fromJS } from "immutable";
+import userEvent from "@testing-library/user-event";
 import type { CollaborationResource } from "@cocalc/util/collaborators";
 import { emptyCollaborationPersonalState } from "@cocalc/util/collaborators";
 import { ResourceList } from "./resource-list";
 
-const author = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-let mockUsers = fromJS({});
-let mockAccount = "viewer";
-const mockFetch = jest.fn().mockResolvedValue(undefined);
-jest.mock("@cocalc/frontend/app-framework", () => ({
-  useTypedRedux: (store: string) =>
-    store === "users" ? mockUsers : mockAccount,
-  redux: { getActions: () => ({ fetch_non_collaborator: mockFetch }) },
+let mockAbsolute = false;
+jest.mock("@cocalc/frontend/app/use-context", () => ({
+  __esModule: true,
+  default: () => ({ timeAgoAbsolute: mockAbsolute }),
+}));
+jest.mock("@cocalc/frontend/account/avatar/avatar", () => ({
+  Avatar: ({ account_id }) => <span data-testid={`avatar-${account_id}`} />,
 }));
 beforeEach(() => {
-  mockUsers = fromJS({});
-  mockAccount = "viewer";
-  mockFetch.mockClear();
+  mockAbsolute = false;
 });
 
 const resource: CollaborationResource = {
   project_id: "project",
+  project_title: "Geometry Lab",
   resource_id: "thread",
   thread_id: "thread",
   kind: "conversation",
   title: "Shared work",
   chat_path: "/room.chat",
-  participant_ids: [],
+  participant_ids: ["alice", "bob"],
   created_at: 1,
-  updated_at: 1,
+  updated_at: Date.now() - 3600_000,
   activity: 4,
   reason: "mention",
   personal: {
     ...emptyCollaborationPersonalState(),
+    alias: "work",
     following: true,
     muted: true,
   },
 };
 
 test.each(["agent", "artifact"] as const)(
-  "%s never displays conversation attention tags or reasons",
+  "%s never displays conversation attention indicators",
   (kind) => {
     render(<ResourceList items={[{ ...resource, kind }]} onOpen={jest.fn()} />);
     expect(screen.getByRole("button", { name: /Shared work/ })).toBeEnabled();
-    for (const label of [
-      "Unread",
-      "Mention",
-      "Following",
-      "Muted",
-      "You were mentioned",
-    ])
-      expect(screen.queryByText(label, { exact: true })).toBeNull();
+    expect(screen.queryByRole("img", { name: "Unread" })).toBeNull();
+    expect(
+      screen.queryByRole("img", { name: "You were mentioned" }),
+    ).toBeNull();
   },
 );
 
-test("human conversations retain attention tags and reasons", () => {
+test("compact conversation rows show identity, avatars and meaningful unread state without redundant prose", () => {
   render(<ResourceList items={[resource]} onOpen={jest.fn()} />);
-  for (const label of [
-    "Unread",
-    "Mention",
-    "Following",
-    "Muted",
-    "You were mentioned",
-  ])
-    expect(screen.getByText(label, { exact: true })).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", {
+      name: /Shared work @work Geometry Lab 2 participants/,
+    }),
+  ).toBeEnabled();
+  expect(screen.getByTestId("avatar-alice")).toBeInTheDocument();
+  expect(screen.getByTestId("avatar-bob")).toBeInTheDocument();
+  expect(screen.getByRole("img", { name: "Unread" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("img", { name: "You were mentioned" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByText(/Following|Latest message by|You follow this/),
+  ).toBeNull();
 });
 
-test("conversation row names the latest sender through the existing account display-name surface", () => {
-  mockUsers = fromJS({
-    [author]: {
-      display_name: "Dr. Alice",
-      first_name: "Old",
-      last_name: "Name",
-    },
-  });
+test("keyboard selection and timestamp focus are separate; dates honor the existing user preference", async () => {
+  const user = userEvent.setup();
+  const onOpen = jest.fn();
+  const { rerender } = render(
+    <ResourceList items={[resource]} onOpen={onOpen} />,
+  );
+  const row = screen.getByRole("button", { name: /Shared work/ });
+  expect(row.querySelector("button,a,[tabindex]")).toBeNull();
+  row.focus();
+  await user.keyboard("{Enter}");
+  expect(onOpen).toHaveBeenCalledTimes(1);
+  await user.tab();
+  expect(screen.getByLabelText(/^Last activity:/)).toHaveFocus();
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    new Date(resource.updated_at!).toLocaleString(),
+  );
+  expect(screen.getByText("1 hour ago")).toBeInTheDocument();
+  mockAbsolute = true;
+  rerender(
+    <ResourceList
+      items={[{ ...resource, updated_at: resource.updated_at! + 1 }]}
+      onOpen={onOpen}
+    />,
+  );
+  expect(
+    screen.getAllByText(new Date(resource.updated_at! + 1).toLocaleString())
+      .length,
+  ).toBeGreaterThan(0);
+});
+
+test("read and message-free conversations do not invent activity or unread state", () => {
+  render(
+    <ResourceList items={[{ ...resource, activity: 0 }]} onOpen={jest.fn()} />,
+  );
+  expect(screen.queryByRole("img", { name: "Unread" })).toBeNull();
+  expect(screen.queryByLabelText(/^Last activity:/)).toBeNull();
+});
+
+test("bounded avatars preserve the full participant count", () => {
   render(
     <ResourceList
-      items={[{ ...resource, latest_message_author_id: author }]}
+      items={[
+        { ...resource, participant_count: 120, participants_truncated: true },
+      ]}
       onOpen={jest.fn()}
     />,
   );
   expect(
-    screen.getByRole("button", { name: /Latest message by Dr\. Alice/ }),
-  ).toBeEnabled();
-  expect(screen.queryByText(author, { exact: false })).toBeNull();
-});
-
-test.each([undefined, author])(
-  "unavailable latest author %s is honest, never creator or raw ID",
-  (latest_message_author_id) => {
-    mockUsers = fromJS({ creator: { display_name: "Thread creator" } });
-    render(
-      <ResourceList
-        items={[
-          { ...resource, created_by: "creator", latest_message_author_id },
-        ]}
-        onOpen={jest.fn()}
-      />,
-    );
-    expect(
-      screen.getByRole("button", { name: /Latest message by Unknown author/ }),
-    ).toBeEnabled();
-    expect(screen.queryByText(/Thread creator/)).toBeNull();
-    expect(screen.queryByText(author, { exact: false })).toBeNull();
-  },
-);
-
-test("legacy first/last names render, while message-free and nonconversation rows omit the label", () => {
-  mockUsers = fromJS({
-    [author]: { first_name: "Alice", last_name: "Example" },
-  });
-  const { rerender } = render(
-    <ResourceList
-      items={[{ ...resource, latest_message_author_id: author }]}
-      onOpen={jest.fn()}
-    />,
-  );
-  expect(
-    screen.getByRole("button", { name: /Latest message by Alice Example/ }),
-  ).toBeEnabled();
-  for (const item of [
-    { ...resource, activity: 0 },
-    { ...resource, kind: "agent" as const },
-    { ...resource, kind: "artifact" as const },
-  ]) {
-    rerender(<ResourceList items={[item]} onOpen={jest.fn()} />);
-    expect(screen.queryByText(/Latest message by/)).toBeNull();
-  }
-});
-
-test("uncached authors resolve without duplicate requests or interactive children", () => {
-  const items = [
-    { ...resource, latest_message_author_id: author },
-    { ...resource, resource_id: "second", latest_message_author_id: author },
-  ];
-  const view = render(<ResourceList items={items} onOpen={jest.fn()} />);
-  expect(mockFetch).toHaveBeenCalledTimes(1);
-  expect(mockFetch).toHaveBeenCalledWith(author);
-  mockUsers = fromJS({ unrelated: { display_name: "Someone else" } });
-  view.rerender(<ResourceList items={[...items]} onOpen={jest.fn()} />);
-  expect(mockFetch).toHaveBeenCalledTimes(1);
-  mockUsers = fromJS({ [author]: { display_name: "Resolved author" } });
-  view.rerender(<ResourceList items={items} onOpen={jest.fn()} />);
-  expect(
-    screen.getAllByRole("button", {
-      name: /Latest message by Resolved author/,
+    screen.getByRole("img", {
+      name: "120 participants (partial participant preview)",
     }),
-  ).toHaveLength(2);
-  expect(screen.queryByRole("link")).toBeNull();
-  expect(mockFetch).toHaveBeenCalledTimes(1);
-  mockAccount = "another-viewer";
-  mockUsers = fromJS({});
-  view.rerender(<ResourceList items={items} onOpen={jest.fn()} />);
-  expect(mockFetch).toHaveBeenCalledTimes(2);
+  ).toBeInTheDocument();
+  expect(screen.getByText("+118")).toBeInTheDocument();
 });

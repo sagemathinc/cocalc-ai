@@ -12,6 +12,7 @@ import { DirectoryCollection } from "./directory-collection";
 import type { DirectoryCollectionPreferences } from "./directory-collection";
 import { ProjectThemeAvatar } from "@cocalc/frontend/projects/theme";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { ActivityTime } from "./activity-time";
 
 export function ProjectViewControls({
   view,
@@ -79,23 +80,27 @@ export function ProjectList({
         onPinChange(project.project_id);
       }}
       renderItem={(project) => (
-        <Button
-          type="text"
-          className="collaborators-row"
-          onClick={(event) => onOpen(project, event)}
-        >
-          <ProjectThemeAvatar theme={project.theme} size={40} border />
-          <span className="collaborators-row-title">
-            {project.title || "Untitled project"}
-          </span>
-          <span>{project.description}</span>
-          <span>
-            {project.role === "owner" ? "Owner" : "Collaborator"}
-            {project.last_activity_at
-              ? ` · Active ${new Date(project.last_activity_at).toLocaleDateString()}`
-              : ""}
-          </span>
-        </Button>
+        <div className="collaborators-conversation-row">
+          <Button
+            type="text"
+            className="collaborators-row collaborators-person-row"
+            onClick={(event) => onOpen(project, event)}
+          >
+            <ProjectThemeAvatar theme={project.theme} size={40} border />
+            <span>
+              <span className="collaborators-row-title">
+                {project.title || "Untitled project"}
+              </span>
+              <span className="collaborators-person-meta">
+                {project.description}
+              </span>
+              <span className="collaborators-person-meta">
+                {project.role === "owner" ? "Owner" : "Collaborator"}
+              </span>
+            </span>
+          </Button>
+          <ActivityTime timestamp={project.last_activity_at} />
+        </div>
       )}
     />
   );

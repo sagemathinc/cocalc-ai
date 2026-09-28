@@ -27,7 +27,7 @@ import {
   useDirectoryRevision,
 } from "./use-directory-revision";
 import { useDirectory, useDirectorySearch } from "./use-directory";
-import { DirectoryResults } from "./directory-results";
+import { DirectoryResults, DirectoryResultOptions } from "./directory-results";
 import { DirectorySplitView } from "./directory-split-view";
 import {
   canonicalizeCollaboratorsAlias,
@@ -363,6 +363,7 @@ function CollaboratorsWorkspace({
           <h1>People</h1>
         </div>
         <WorkspaceToolbar
+          resultOptions={<DirectoryResultOptions result={result} inline />}
           conversationSearch={
             <HumanConversationSearch
               api={api}
@@ -488,6 +489,7 @@ function CollaboratorsWorkspace({
             />
           )}
           <DirectoryResults
+            hideOptions
             result={result}
             onRestart={
               view === "projects"
@@ -563,7 +565,7 @@ function CollaboratorsWorkspace({
                   renderItem={(item) => (
                     <Button
                       type="text"
-                      className="collaborators-row"
+                      className="collaborators-row collaborators-person-row"
                       onClick={(event) =>
                         navigate(
                           {
@@ -581,14 +583,16 @@ function CollaboratorsWorkspace({
                         size={40}
                         no_tooltip
                       />
-                      <span className="collaborators-row-title">
-                        {item.display_name || "Collaborator"}
-                      </span>
                       <span>
-                        {item.common_project_count} shared{" "}
-                        {item.common_project_count === 1
-                          ? "project"
-                          : "projects"}
+                        <span className="collaborators-row-title">
+                          {item.display_name || "Collaborator"}
+                        </span>
+                        <span className="collaborators-person-meta">
+                          {item.common_project_count} shared{" "}
+                          {item.common_project_count === 1
+                            ? "project"
+                            : "projects"}
+                        </span>
                       </span>
                     </Button>
                   )}

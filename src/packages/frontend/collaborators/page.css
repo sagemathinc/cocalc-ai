@@ -68,7 +68,7 @@
 .collaborators-toolbar .collaborators-search {
   flex: 1 1 200px;
   min-width: 0;
-  max-width: 440px;
+  max-width: 400px;
   margin-right: auto;
 }
 .collaborators-filter-chips {
@@ -146,8 +146,169 @@
   padding: 12px;
 }
 .collaborators-row-title {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 500;
+}
+.collaborators-list .collaborators-person-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+.collaborators-person-row > span:last-child {
+  min-width: 0;
+}
+.collaborators-person-row .collaborators-row-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.collaborators-person-meta {
+  display: block;
+  color: var(--cocalc-ui-secondary);
+  font-size: 12px;
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.collaborators-collection {
+  --collection-heading-size: 14px;
+  --collection-grid-min-width: 220px;
+}
+.collaborators-collection-item {
+  border-radius: 6px;
+  padding: 2px 8px 2px 0;
+}
+.collaborators-collection[data-view="list"] .collaborators-collection-item {
+  border-bottom: 1px solid var(--cocalc-ui-border);
+}
+.collaborators-collection-item:hover,
+.collaborators-collection-item:focus-within {
+  background: var(--cocalc-ui-inset);
+}
+.collaborators-collection[data-view="grid"] .collaborators-collection-item {
+  /* VirtuosoGrid requires equal-height tiles, including long titles. */
+  height: 180px;
+  box-sizing: border-box;
+  border: 1px solid var(--cocalc-ui-border);
+  padding: 8px;
+  background: var(--cocalc-ui-surface);
+}
+.collaborators-collection .collection-group-heading {
+  font-size: 14px;
+  color: var(--cocalc-ui-secondary);
+  font-weight: 500;
+}
+.collaborators-conversation-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  min-height: 68px;
+}
+.collaborators-conversation-title,
+.collaborators-conversation-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+}
+.collaborators-conversation-title .collaborators-row-title,
+.collaborators-row-alias,
+.collaborators-project-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.collaborators-row-alias {
+  font-size: 13px;
+  color: var(--cocalc-ui-secondary);
+  flex-shrink: 2;
+}
+.collaborators-conversation-meta,
+.collaborators-row-time {
+  color: var(--cocalc-ui-secondary);
+  font-size: 12px;
+}
+.collaborators-row-time {
+  margin-top: 13px;
+  max-width: 180px;
+  text-align: right;
+}
+.collaborators-conversation-row[data-unread] .collaborators-row-title {
+  font-weight: 650;
+}
+.collaborators-unread-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--cocalc-ui-link);
+}
+.collaborators-row-controls {
+  align-self: center;
+}
+@media (hover: hover) and (pointer: fine) {
+  .collaborators-row-controls {
+    opacity: 0;
+  }
+  .collaborators-collection-item:hover .collaborators-row-controls,
+  .collaborators-collection-item:focus-within .collaborators-row-controls {
+    opacity: 1;
+  }
+}
+.collaborators-row-time:focus-visible {
+  outline: 2px solid var(--cocalc-ui-link);
+  outline-offset: 2px;
+}
+.collaborators-collection[data-view="grid"] .collaborators-conversation-row {
+  display: flex;
+  flex-direction: column;
+  min-height: 100px;
+}
+.collaborators-collection[data-view="grid"] .collaborators-row-time {
+  margin: 0 12px 6px;
+  text-align: left;
+}
+.collaborators-collection[data-view="grid"] .collaborators-conversation-title {
+  flex-wrap: wrap;
+}
+.collaborators-load-more {
+  text-align: center;
+  padding: 12px;
+  color: var(--cocalc-ui-secondary);
+}
+.collaborators-results {
+  container-type: inline-size;
+}
+@container (max-width: 500px) {
+  .collaborators-toolbar .conversation-search-label,
+  .collaborators-toolbar .collaborators-action-label,
+  .collaborators-toolbar .collaborators-filter-prefix {
+    display: none;
+  }
+  .collaborators-toolbar .conversation-search-inline,
+  .collaborators-toolbar .collaborators-primary-action {
+    padding-inline: 8px;
+  }
+  .collaborators-conversation-row {
+    position: relative;
+    display: block;
+  }
+  .collaborators-conversation-row .collaborators-row {
+    padding-bottom: 26px;
+  }
+  .collaborators-conversation-row .collaborators-row-time {
+    display: block;
+    text-align: left;
+    margin: -24px 12px 6px;
+    position: relative;
+  }
+  .collaborators-conversation-title {
+    flex-wrap: wrap;
+    gap: 4px 8px;
+  }
 }
 .collaborators-preferences {
   padding: 12px 0;

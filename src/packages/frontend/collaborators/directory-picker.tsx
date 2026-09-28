@@ -14,6 +14,7 @@ import { DirectoryResults } from "./directory-results";
 import { CollaboratorsModal } from "./modal";
 import { useDirectory, useDirectorySearch } from "./use-directory";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
+import { VirtualCollectionList } from "@cocalc/frontend/components/virtual-collection";
 
 export function DirectoryPicker({
   api,
@@ -108,7 +109,8 @@ export function DirectoryPicker({
             ariaLabel="Search projects"
             autoFocus
             fullCollaboratorOnly
-            maxResults={25}
+            maxResults={result.page?.items.length || 25}
+            onLoadMore={result.next}
             onSearch={(value) => setInput(value.slice(0, 200))}
             projects={(
               (result.page?.items ?? []) as CollaborationProject[]
@@ -128,32 +130,36 @@ export function DirectoryPicker({
           />
         )}
         <DirectoryResults
+          autoLoad={kind !== "project"}
           result={result}
           label={kind === "project" ? "Projects" : "People"}
         >
           {(items) =>
             kind === "project" ? null : (
-              <ul className="collaborators-list">
-                {items.map((item) => {
+              <VirtualCollectionList
+                className="collaborators-list"
+                items={items}
+                itemId={(item) =>
+                  "project_id" in item ? item.project_id : item.account_id
+                }
+                renderItem={(item) => {
                   const id =
                     "project_id" in item ? item.project_id : item.account_id;
                   const title =
                     "title" in item ? item.title : item.display_name;
                   return (
-                    <li key={id}>
-                      <Button
-                        block
-                        onClick={() => {
-                          onSelect({ id, title });
-                          restoreFocus();
-                        }}
-                      >
-                        {title || "Untitled"}
-                      </Button>
-                    </li>
+                    <Button
+                      block
+                      onClick={() => {
+                        onSelect({ id, title });
+                        restoreFocus();
+                      }}
+                    >
+                      {title || "Untitled"}
+                    </Button>
                   );
-                })}
-              </ul>
+                }}
+              />
             )
           }
         </DirectoryResults>

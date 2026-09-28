@@ -59,6 +59,7 @@ export function HumanConversationSearch({
 }) {
   return (
     <ConversationSearch
+      triggerLayout="inline"
       accountId={accountId}
       scope="human"
       active={active}

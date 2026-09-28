@@ -49,6 +49,7 @@ export function WorkspaceToolbar({
   controlsTarget,
   compact = false,
   conversationSearch,
+  resultOptions,
 }: {
   active: boolean;
   id: string;
@@ -71,6 +72,7 @@ export function WorkspaceToolbar({
   controlsTarget?: HTMLElement | null;
   compact?: boolean;
   conversationSearch?: ReactNode;
+  resultOptions?: ReactNode;
 }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const filterButton = useRef<ComponentRef<typeof Button>>(null);
@@ -103,18 +105,6 @@ export function WorkspaceToolbar({
       name: "Clear person filter",
       clear: onClearPerson,
     },
-    view === "conversations" &&
-      scope !== "all" && {
-        label: SCOPES[scope],
-        name: "Clear conversation filter",
-        clear: () => onScope("all"),
-      },
-    view === "projects" &&
-      projectView === "pinned" && {
-        label: "Pinned projects",
-        name: "Clear pinned projects filter",
-        clear: () => onProjectView("recent"),
-      },
   ].filter(
     (item): item is { label: string; name: string; clear: () => void } =>
       !!item,
@@ -125,6 +115,12 @@ export function WorkspaceToolbar({
     filterButton.current?.focus();
     action();
   }
+  const filterTitle =
+    view === "conversations" && scope !== "all"
+      ? `Filters · ${SCOPES[scope]}`
+      : view === "projects" && projectView === "pinned"
+        ? "Filters · Pinned"
+        : "Filters";
   const placeControls = (controls: ReactNode) =>
     controlsTarget ? createPortal(controls, controlsTarget) : controls;
   return (
@@ -175,7 +171,6 @@ export function WorkspaceToolbar({
       </div>
       {placeControls(
         <div className="collaborators-list-controls">
-          {view === "conversations" && conversationSearch}
           <div className="collaborators-toolbar">
             <Input
               className="collaborators-search"
@@ -190,6 +185,7 @@ export function WorkspaceToolbar({
                   : `${search}...`
               }
             />
+            {view === "conversations" && conversationSearch}
             <Popover
               trigger="click"
               placement="bottomRight"
@@ -271,6 +267,7 @@ export function WorkspaceToolbar({
                           )}
                         </>
                       )}
+                      {resultOptions}
                     </div>
                   )}
                 </KeyboardBoundary>
@@ -278,12 +275,21 @@ export function WorkspaceToolbar({
             >
               <Button
                 ref={filterButton}
-                aria-label="Filters"
+                aria-label={filterTitle}
                 aria-haspopup="dialog"
                 aria-expanded={filtersOpen}
                 icon={<Icon name="sliders" />}
               >
-                Filters
+                {filterTitle === "Filters" ? (
+                  "Filters"
+                ) : (
+                  <>
+                    <span className="collaborators-filter-prefix">
+                      Filters ·{" "}
+                    </span>
+                    {filterTitle.slice("Filters · ".length)}
+                  </>
+                )}
               </Button>
             </Popover>
             {!compact && (
@@ -300,13 +306,16 @@ export function WorkspaceToolbar({
               />
             )}
             <Button
+              className="collaborators-primary-action"
               type="primary"
               aria-label={action}
-              title={compact ? action : undefined}
+              title={action}
               icon={<Icon name="plus" />}
               onClick={onAction}
             >
-              {!compact && action}
+              {!compact && (
+                <span className="collaborators-action-label">{action}</span>
+              )}
             </Button>
           </div>
           {!!filters.length && (

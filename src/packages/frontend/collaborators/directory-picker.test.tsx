@@ -59,7 +59,7 @@ it("reuses the project selector with bounded, shared-only, person-filtered queri
     id: "shared",
     title: "Shared project",
   });
-  await user.click(screen.getByRole("button", { name: "Next" }));
+  await user.click(screen.getByRole("button", { name: "Load more" }));
   await waitFor(() =>
     expect(api.listProjects).toHaveBeenLastCalledWith(
       expect.objectContaining({ after: "next", shared_only: true, limit: 25 }),
@@ -96,3 +96,4 @@ it("keeps search mounted and focused after zero results and allows another searc
   );
   expect(selector).toHaveFocus();
 });
+jest.mock("react-virtuoso", () => require("../test/mocks/virtuoso-list"));

@@ -95,7 +95,7 @@ test("incomplete project results offer a keyboard-operated bounded owner fallbac
   });
   await within(account).findByRole("button", { name: /Account first/ });
   expect(api.listProjectResources).not.toHaveBeenCalled();
-  await user.click(within(account).getByRole("button", { name: "Next" }));
+  await user.click(within(account).getByRole("button", { name: "Load more" }));
   await within(account).findByRole("button", { name: /Account second/ });
   const fallback = screen.getByRole("button", {
     name: "Browse owner indexed conversations",
@@ -118,12 +118,24 @@ test("incomplete project results offer a keyboard-operated bounded owner fallbac
     screen.queryByRole("button", { name: /Account second/ }),
   ).not.toBeInTheDocument();
   expect(
-    within(owner).getByText("Owner index: legacy sources are not all indexed."),
-  ).toBeInTheDocument();
-  expect(
     screen.getByRole("button", { name: "Use account index for conversations" }),
   ).toHaveFocus();
-  await user.click(within(owner).getByRole("button", { name: "Next" }));
+  const options = within(owner).getByRole("button", {
+    name: "Results options",
+  });
+  options.focus();
+  await user.keyboard("{Enter}");
+  expect(
+    await screen.findByRole("dialog", { name: "Results options" }),
+  ).toHaveFocus();
+  await waitFor(() =>
+    expect(
+      screen.getByText("Owner index: legacy sources are not all indexed."),
+    ).toBeVisible(),
+  );
+  await user.keyboard("{Escape}");
+  expect(options).toHaveFocus();
+  await user.click(within(owner).getByRole("button", { name: "Load more" }));
   await within(owner).findByRole("button", { name: /Owner second/ });
   expect(api.listProjectResources).toHaveBeenLastCalledWith(
     expect.objectContaining({ after: "owner-cursor", limit: 25 }),
@@ -192,3 +204,4 @@ test("owner authorization failures stay explicit and permit return to the accoun
   );
   expect(api.listProjectResources).toHaveBeenCalledTimes(1);
 });
+jest.mock("react-virtuoso", () => require("../test/mocks/virtuoso-list"));

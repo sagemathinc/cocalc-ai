@@ -26,6 +26,7 @@ interface CommonProps {
   // A bounded server-filtered page, e.g. the People shared-project directory.
   projects?: ProjectSelectionList;
   onSearch?: (search: string) => void;
+  onLoadMore?: () => void;
   maxResults?: number;
   maxSelections?: number;
   autoFocus?: boolean;
@@ -69,6 +70,7 @@ export function SelectProject(props: Props) {
     multiple = false,
     projects,
     onSearch,
+    onLoadMore,
     maxResults = 100,
     maxSelections,
     autoFocus,
@@ -208,6 +210,11 @@ export function SelectProject(props: Props) {
             onSearch?.(next);
           }}
           filterOption={false}
+          onPopupScroll={(event) => {
+            const list = event.currentTarget;
+            if (list.scrollHeight - list.scrollTop - list.clientHeight < 100)
+              onLoadMore?.();
+          }}
         >
           {visible.map((v) => (
             <Select.Option key={v.id} value={v.id}>
