@@ -27,6 +27,7 @@ On phones, open **Chat tools** using the ellipsis button, then choose
 
 ## Find the right guide
 
+- [Compare all integrated agent features](/docs/ai/agent-features).
 - [Start and review work in Agents](/docs/ai/my-agents).
 - [Use Claude Code (experimental preview)](/docs/ai/claude-code).
 - [Connect access and choose funding](/docs/ai/connect-credentials).
@@ -101,7 +102,9 @@ the conversation and artifacts remain, but that agent becomes unavailable to
 its Agent Networks.
 
 For project-chat controls and access setup, see [Open Codex chat](/docs/ai/codex-chat)
-and [Connect AI access](/docs/ai/connect-credentials).
+and [Connect AI access](/docs/ai/connect-credentials). For the complete workflow
+index, Agent Networks, workbench results, and Claude differences, see
+[Agent features: Codex and Claude Code](/docs/ai/agent-features).
 `;
 
 export const AI_CREDENTIALS_BODY = String.raw`

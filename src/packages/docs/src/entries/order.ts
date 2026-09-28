@@ -31,6 +31,7 @@ export const DOCS_ENTRY_IDS = [
   "admin.sso",
   "projects.create-project",
   "ai.my-agents",
+  "ai.agent-features",
   "projects.research-handoff",
   "research.reproduce-analysis",
   "research.streaming-analysis",

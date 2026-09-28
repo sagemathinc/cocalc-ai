@@ -11,6 +11,9 @@ experimental preview: availability depends on the site's configuration, and
 some capabilities differ from Codex. Start in a project whose files you can
 restore and whose collaborators and code you trust.
 
+See [Agent features: Codex and Claude Code](/docs/ai/agent-features) for the
+feature-by-feature comparison, including known messaging limitations.
+
 ## Start a conversation
 
 1. Open **Agents**, choose **New Agent**, and select a project.
@@ -31,10 +34,11 @@ model advertised by the current session.
 
 ## Composer settings and subscription usage
 
-The composer shows **Claude Code**, the advertised model and effort selectors,
-and the payment method for your next turn. **Fast on** appears only when fast
-mode is selected. Click **Claude Code** or the payment method to open settings.
-Model options load automatically when needed; **Refresh model options** retries
+The composer shows the project and working directory, advertised model and
+effort selectors, and payment method for your next turn. **Fast on** appears
+only when fast mode is selected. Use the settings icon or payment method to
+open settings. **Speed** offers **Standard** and **Fast** where available.
+Model options load automatically when needed; **Refresh** in settings retries
 discovery. If the host cannot report the model, CoCalc says it is unavailable
 rather than guessing. Settings do not change a turn already running or queued.
 
@@ -112,11 +116,11 @@ from accessing project files or using other credentials exposed inside the
 project.
 
 Work accepted by this agent consumes the selected subscription's usage
-allowance. This includes work initiated by authorized Agent Network messages;
-a separate human confirmation is not required for each such turn. Creating or
-joining a network therefore has a usage consequence. Review network members
-and remove access when it is no longer intended. Messages do not grant access
-outside the receiving agent's existing authority.
+allowance. Agent Network authorization and recipient payment authorization
+are separate requirements: a valid sender identity does not select a recipient's
+subscription. Do not assume authorized Agent Network messages can currently
+start Claude subscription turns end to end; see the limitations below. Never
+work around a rejected delivery by borrowing another account's credentials.
 
 CoCalc checks credential authority when admitting and running work and before
 mediated project commands. Disconnect prevents future authorized use; it
@@ -155,8 +159,11 @@ services have a separate lifecycle and may require separate cleanup.
   and goal workflows are not yet supported by this integration.
 - A background subprocess finishing does not automatically wake a completed
   CoCalc turn. Ask Claude to wait for completion or explicitly check its status.
-- Authorized Agent Network subscription turns are supported. Account API-key
-  network turns are currently rejected by admission.
+- Registered Claude agents can discover network peers through project tools on
+  updated hosts. End-to-end Agent Network delivery is not yet qualified: the live
+  recipient path rejects ACP guidance, and queued subscription delivery remains
+  unverified. Account API-key network turns are rejected by admission. See the
+  [coordination comparison](/docs/ai/agent-features#agent-coordination).
 
 ## Troubleshooting and agent-readable help
 
