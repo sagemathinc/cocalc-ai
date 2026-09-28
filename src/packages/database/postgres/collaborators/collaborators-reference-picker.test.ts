@@ -107,6 +107,51 @@ test("private alias prefix search works without depending on indexed title text"
   ).toEqual([]);
 });
 
+test("all-project results annotate participant visibility without broadening viewer access", async () => {
+  const opts = {
+    account_id,
+    shared_with: source,
+    include_unshared: true,
+    limit: 1,
+  };
+  const first = await listCollaborationResources(opts);
+  expect(first.items).toMatchObject([
+    { project_id: projects[2], shared_with_all_participants: false },
+  ]);
+  const second = await listCollaborationResources({
+    ...opts,
+    after: first.next,
+  });
+  expect(second.items).toMatchObject([
+    { project_id: projects[1], shared_with_all_participants: true },
+  ]);
+  await expect(
+    listCollaborationResources({
+      ...opts,
+      include_unshared: false,
+      after: first.next,
+    }),
+  ).rejects.toThrow("cursor");
+  const all = await listCollaborationResources({ ...opts, limit: 25 });
+  expect(all.items.map((r) => r.project_id)).not.toContain(projects[3]);
+  try {
+    await getPool().query(
+      "UPDATE collaboration_index SET relations_complete=false WHERE entry_key=$1",
+      [entryKey(source)],
+    );
+    const unknown = await listCollaborationResources({ ...opts, limit: 25 });
+    expect(unknown.items).toHaveLength(3);
+    expect(
+      unknown.items.every((r) => r.shared_with_all_participants === false),
+    ).toBe(true);
+  } finally {
+    await getPool().query(
+      "UPDATE collaboration_index SET relations_complete=true WHERE entry_key=$1",
+      [entryKey(source)],
+    );
+  }
+});
+
 test.each([
   "incomplete",
   "source access",

@@ -48,7 +48,7 @@ export function ReferencePicker({
       title={
         intent === "share-artifact"
           ? "Choose an artifact to link"
-          : "Insert link"
+          : "Link to CoCalc content"
       }
       onCancel={onClose}
       afterClose={afterClose}
@@ -103,7 +103,7 @@ export function ReferencePickerButton(
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button onClick={() => setOpen(true)}>Insert link</Button>
+      <Button onClick={() => setOpen(true)}>Link to CoCalc content</Button>
       <ReferencePicker {...props} open={open} onClose={() => setOpen(false)} />
     </>
   );

@@ -63,6 +63,11 @@ function query(input: CollaborationResourceQuery, mode: string) {
     if (input.shared_with.kind !== "conversation")
       throw Error("shared_with must be a human conversation");
   }
+  if (
+    input.include_unshared != null &&
+    typeof input.include_unshared !== "boolean"
+  )
+    throw Error("invalid include_unshared");
   const search = boundedText(input.search ?? "", "search", 128, true).trim();
   if (input.shared_only != null && typeof input.shared_only !== "boolean")
     throw Error("invalid shared_only");
@@ -97,6 +102,7 @@ function query(input: CollaborationResourceQuery, mode: string) {
       !!input.include_archived,
       !!input.shared_only,
       input.shared_with ? entryKey(input.shared_with) : null,
+      !!input.include_unshared,
     ]),
   );
   let after: { order: number; key: string } | undefined;
@@ -260,10 +266,11 @@ export async function listCollaborationResources(
     "r.generation=COALESCE(x.granted_generation,x.generation)",
   ];
   if (q.shared_only) access.push(SHARED);
+  let sharedWith = "";
   if (q.shared_with) {
     // The home projection is complete only after all participant pages arrive.
     // Both source and candidate retain the ordinary owner-validated access lease.
-    access.push(`EXISTS(SELECT 1 FROM collaboration_index source
+    sharedWith = `EXISTS(SELECT 1 FROM collaboration_index source
       JOIN collaboration_access sx ON sx.account_id=source.account_id AND sx.project_id=source.project_id
       JOIN account_project_index sp ON sp.account_id=sx.account_id AND sp.project_id=sx.project_id
       WHERE source.account_id=$1 AND source.entry_key=${param(entryKey(q.shared_with))}
@@ -274,7 +281,8 @@ export async function listCollaborationResources(
       AND sp.users_summary #>> ARRAY[$1::text,'group'] IN ('owner','collaborator')
       AND NOT EXISTS(SELECT 1 FROM collaboration_participant_index cp
         WHERE cp.account_id=source.account_id AND cp.entry_key=source.entry_key AND cp.set_key=source.relation_set
-        AND COALESCE(p.users_summary #>> ARRAY[cp.participant_id::text,'group'],'') NOT IN ('owner','collaborator'))) `);
+        AND COALESCE(p.users_summary #>> ARRAY[cp.participant_id::text,'group'],'') NOT IN ('owner','collaborator'))) `;
+    if (!q.include_unshared) access.push(sharedWith);
   }
   const where = ["r.account_id=$1"];
   if (q.project_id) where.push(`r.project_id=${param(q.project_id)}::uuid`);
@@ -364,6 +372,7 @@ export async function listCollaborationResources(
   where.splice(0, where.length, "TRUE");
   const { rows } = await getPool().query(
     `${matches} SELECT r.entry_key,r.activity,r.metadata,left(p.title,128) AS project_title,${homeParticipation("r", "$1")} AS participated,
+    ${sharedWith ? `${sharedWith} AS shared_with_all_participants,` : ""}
     ${EFFECTIVE_ALIAS} AS alias,${collected} AS collected,s.following,s.muted,s.read_through,s.last_mention,s.notify_after FROM ${from}
     ${accessJoin}
     LEFT JOIN collaboration_personal s ON s.account_id=r.account_id AND s.entry_key=r.entry_key
@@ -374,7 +383,15 @@ export async function listCollaborationResources(
   return page(
     rows,
     q,
-    (row) => resource(row),
+    (row) => ({
+      ...resource(row),
+      ...(sharedWith
+        ? {
+            shared_with_all_participants:
+              row.shared_with_all_participants === true,
+          }
+        : {}),
+    }),
     (row) => Number(row.activity),
     (row) => row.entry_key,
   );

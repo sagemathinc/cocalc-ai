@@ -26,6 +26,8 @@ export interface CollaborationPersonalState {
 export interface CollaborationResource extends CollaborationTarget {
   title: string;
   project_title?: string;
+  /** Advisory membership check for shared_with; false also covers unknown participants. */
+  shared_with_all_participants?: boolean;
   chat_path: string;
   thread_id: string;
   created_by?: string;
@@ -85,6 +87,8 @@ export interface CollaborationProjectQuery extends CollaborationQuery {
 export interface CollaborationResourceQuery extends CollaborationQuery {
   /** Projects shared by every indexed participant of this conversation. */
   shared_with?: CollaborationTarget;
+  /** Annotate rather than exclude projects not shared with all participants. */
+  include_unshared?: boolean;
   kind?: CollaborationResourceKind;
   scope?: "all" | "for-you" | "following" | "collected";
   include_archived?: boolean;

@@ -47,6 +47,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 
 import { ReferencePicker, ReferencePickerButton } from "./reference-picker";
 import { ReferencePickerComposer } from "./reference-picker-composer";
+import { DirectoryRevisionContext } from "./use-directory-revision";
 import { parseCollaborationReference } from "@cocalc/util/collaboration-references";
 
 const project_id = "11111111-1111-4111-8111-111111111111";
@@ -67,7 +68,9 @@ beforeEach(() => {
   mockListResources
     .mockReset()
     .mockResolvedValue({ items, coverage: "complete" });
-  mockGetResource.mockReset();
+  mockGetResource
+    .mockReset()
+    .mockImplementation(async (target) => ({ ...base, ...target }));
   mockWriteDraft.mockReset().mockResolvedValue("draft plus reference");
 });
 
@@ -75,13 +78,15 @@ test("keyboard opens picker, exposes type/project disambiguation, selects stable
   const onSelect = jest.fn();
   render(<ReferencePickerButton projectId={project_id} onSelect={onSelect} />);
   await userEvent.tab();
-  const trigger = screen.getByRole("button", { name: "Insert link" });
+  const trigger = screen.getByRole("button", {
+    name: "Link to CoCalc content",
+  });
   expect(trigger).toHaveFocus();
   await userEvent.keyboard("{Enter}");
   expect(
-    (await screen.findByRole("dialog", { name: "Insert link" })).closest(
-      ".collaborators-modal",
-    ),
+    (
+      await screen.findByRole("dialog", { name: "Link to CoCalc content" })
+    ).closest(".collaborators-modal"),
   ).not.toBeNull();
   const search = await screen.findByRole("textbox", {
     name: "Search titles or aliases",
@@ -115,14 +120,20 @@ test("keyboard opens picker, exposes type/project disambiguation, selects stable
     display_fallback: "Shared work",
     alias: "same",
   });
-  expect(mockGetResource).not.toHaveBeenCalled();
+  expect(mockGetResource).toHaveBeenCalledWith({
+    project_id,
+    kind: "conversation",
+    resource_id: "target-1",
+  });
   await waitFor(() => expect(trigger).toHaveFocus());
 });
 
 test("Escape cancels without selecting and restores trigger focus", async () => {
   const onSelect = jest.fn();
   render(<ReferencePickerButton onSelect={onSelect} />);
-  const trigger = screen.getByRole("button", { name: "Insert link" });
+  const trigger = screen.getByRole("button", {
+    name: "Link to CoCalc content",
+  });
   await userEvent.click(trigger);
   await screen.findByRole("textbox", { name: "Search titles or aliases" });
   await userEvent.keyboard("{Escape}");
@@ -239,7 +250,9 @@ test("shared scope uses a stable conversation identity, resets paging and is rem
   const view = render(<ReferencePicker {...props} />);
   await screen.findByRole("button", { name: /\(Conversation\)/ });
   await userEvent.click(screen.getByRole("combobox", { name: "Search in" }));
-  await userEvent.click(screen.getByText("Projects shared by participants"));
+  await userEvent.click(
+    screen.getByText("Projects shared by all participants"),
+  );
   await waitFor(() =>
     expect(mockListResources).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -294,6 +307,102 @@ test("changing search immediately hides old results and ignores late responses",
   ).not.toBeInTheDocument();
 });
 
+test("background refresh preserves focused results and selection rechecks access", async () => {
+  let generation = 1;
+  let resolve!: (value: unknown) => void;
+  const onSelect = jest.fn();
+  const view = () => (
+    <DirectoryRevisionContext.Provider value={{ generation, ready: true }}>
+      <ReferencePicker open onSelect={onSelect} onClose={jest.fn()} />
+    </DirectoryRevisionContext.Provider>
+  );
+  const { rerender } = render(view());
+  await waitFor(() =>
+    expect(
+      screen.getByRole("textbox", { name: "Search titles or aliases" }),
+    ).toHaveFocus(),
+  );
+  const choice = await screen.findByRole("button", {
+    name: /Shared work \(Agent\)/,
+  });
+  choice.focus();
+  mockListResources.mockImplementationOnce(
+    () =>
+      new Promise((done) => {
+        resolve = done;
+      }),
+  );
+  generation++;
+  rerender(view());
+  await waitFor(() => expect(mockListResources).toHaveBeenCalledTimes(2));
+  expect(choice).toHaveFocus();
+  expect(choice).toBeInTheDocument();
+  expect(screen.queryByText("Loading references...")).not.toBeInTheDocument();
+  mockGetResource.mockResolvedValue(null);
+  await userEvent.keyboard("{Enter}");
+  await screen.findByRole("alert");
+  expect(onSelect).not.toHaveBeenCalled();
+  await act(async () => resolve({ items: [], coverage: "complete" }));
+  expect(choice).not.toBeInTheDocument();
+});
+
+test("all-project scope warns only when sharing with every participant is not confirmed", async () => {
+  sessionStorage.setItem("reference-scope:viewer", "all");
+  mockListResources.mockResolvedValue({
+    items: [
+      {
+        ...base,
+        kind: "artifact",
+        resource_id: "shared",
+        title: "Shared artifact",
+        shared_with_all_participants: true,
+      },
+      {
+        ...base,
+        kind: "artifact",
+        resource_id: "private",
+        title: "Private artifact",
+        shared_with_all_participants: false,
+      },
+      {
+        ...base,
+        kind: "artifact",
+        resource_id: "unknown",
+        title: "Unknown visibility",
+      },
+    ],
+    coverage: "complete",
+  });
+  const conversation = {
+    project_id,
+    kind: "conversation" as const,
+    resource_id: "source",
+  };
+  render(
+    <ReferencePicker
+      open
+      conversation={conversation}
+      projectId={project_id}
+      onSelect={jest.fn()}
+      onClose={jest.fn()}
+    />,
+  );
+  const shared = await screen.findByRole("button", { name: /Shared artifact/ });
+  expect(shared).not.toHaveTextContent("May not be visible");
+  expect(
+    screen.getByRole("button", { name: /Private artifact/ }),
+  ).toHaveTextContent("May not be visible to all participants");
+  expect(
+    screen.getByRole("button", { name: /Unknown visibility/ }),
+  ).toHaveAccessibleDescription(/may not be visible to all participants/);
+  expect(mockListResources).toHaveBeenCalledWith(
+    expect.objectContaining({
+      shared_with: conversation,
+      include_unshared: true,
+    }),
+  );
+});
+
 test("errors are announced and can be retried without exposing server details", async () => {
   mockListResources.mockRejectedValueOnce(Error("Sensitive metadata"));
   render(<ReferencePicker open onSelect={jest.fn()} onClose={jest.fn()} />);
@@ -317,7 +426,9 @@ test("composer inserts a bound reference at the saved cursor without invoking an
       inputControlRef={{ current: control }}
     />,
   );
-  await userEvent.click(screen.getByRole("button", { name: "Insert link" }));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Link to CoCalc content" }),
+  );
   await userEvent.click(
     await screen.findByRole("button", {
       name: "@same: Shared work (Agent)",
@@ -335,7 +446,11 @@ test("composer inserts a bound reference at the saved cursor without invoking an
   });
   expect(position).toEqual({ line: 2, ch: 4 });
   await waitFor(() => expect(control.focus).toHaveBeenCalled());
-  expect(mockGetResource).not.toHaveBeenCalled();
+  expect(mockGetResource).toHaveBeenCalledWith({
+    project_id,
+    kind: "agent",
+    resource_id: "target-1",
+  });
 });
 
 test.each(["agent", "artifact", "conversation"])(
@@ -402,8 +517,10 @@ test("menu-hosted reference picker returns to the composer on cancellation", asy
       )}
     />,
   );
-  await user.click(screen.getByRole("button", { name: "Insert link" }));
-  await screen.findByRole("dialog", { name: "Insert link" });
+  await user.click(
+    screen.getByRole("button", { name: "Link to CoCalc content" }),
+  );
+  await screen.findByRole("dialog", { name: "Link to CoCalc content" });
   await user.keyboard("{Escape}");
   await waitFor(() => expect(control.focus).toHaveBeenCalled());
   expect(control.insertText).not.toHaveBeenCalled();
@@ -508,7 +625,9 @@ test.each(["account", "composer"])(
         inputControlRef={inputControlRef}
       />,
     );
-    await userEvent.click(screen.getByRole("button", { name: "Insert link" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Link to CoCalc content" }),
+    );
     const choice = await screen.findByRole("button", {
       name: /Shared work \(Agent\)/,
     });
@@ -516,6 +635,10 @@ test.each(["account", "composer"])(
     else inputControlRef.current = { ...control };
     await userEvent.click(choice);
     expect(control.insertText).not.toHaveBeenCalled();
-    expect(screen.getByRole("alert")).toHaveTextContent("conversation changed");
+    if (changed === "composer")
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "conversation changed",
+      );
+    else expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   },
 );

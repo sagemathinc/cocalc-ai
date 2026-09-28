@@ -67,12 +67,30 @@ test("shared-participant scope requires complete relations and excludes imported
   expect(
     await store.api.listResources({ ...local, shared_with }),
   ).toMatchObject({ items: [], coverage: "indexing" });
+  expect(
+    (
+      await store.api.listResources({
+        ...local,
+        shared_with,
+        include_unshared: true,
+      })
+    ).items,
+  ).toMatchObject([{ shared_with_all_participants: false }]);
   await ingestCompleteRelations(2, [
     resource("thread-a", { participant_ids: [account_id] }),
   ]);
   expect(
     (await store.api.listResources({ ...local, shared_with })).items,
   ).toHaveLength(1);
+  expect(
+    (
+      await store.api.listResources({
+        ...local,
+        shared_with,
+        include_unshared: true,
+      })
+    ).items,
+  ).toMatchObject([{ shared_with_all_participants: true }]);
   await ingestCompleteRelations(3, [
     resource("thread-a", {
       participant_ids: [account_id, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"],
@@ -81,6 +99,15 @@ test("shared-participant scope requires complete relations and excludes imported
   expect(
     (await store.api.listResources({ ...local, shared_with })).items,
   ).toEqual([]);
+  expect(
+    (
+      await store.api.listResources({
+        ...local,
+        shared_with,
+        include_unshared: true,
+      })
+    ).items,
+  ).toMatchObject([{ shared_with_all_participants: false }]);
 });
 
 test("private chat aliases reuse local personal state and people cannot invent membership", async () => {

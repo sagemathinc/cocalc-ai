@@ -8,9 +8,13 @@ let mockAiDisabled = false;
 const mockGetResource = jest.fn();
 const mockOpenCollaborators = jest.fn();
 const mockOpenLibrary = jest.fn();
+const mockOpenProject = jest.fn();
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: () => mockAccountId,
-  redux: { getStore: () => ({ getIn: () => mockAiDisabled }) },
+  redux: {
+    getStore: () => ({ getIn: () => mockAiDisabled }),
+    getActions: () => ({ open_project: mockOpenProject }),
+  },
 }));
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
@@ -60,6 +64,7 @@ beforeEach(() => {
   mockGetResource.mockReset().mockResolvedValue(resource);
   mockOpenCollaborators.mockReset();
   mockOpenLibrary.mockReset();
+  mockOpenProject.mockReset().mockResolvedValue(undefined);
 });
 
 test("viewer alias is resolved by identity and keyboard activation reauthorizes before navigation", async () => {
@@ -118,6 +123,29 @@ test("unavailable or identity-mismatched metadata never replaces the authored la
     screen.getByRole("button", { name: "Open conversation @old-alias" }),
   ).toBeInTheDocument();
   expect(screen.queryByText("Wrong identity")).not.toBeInTheDocument();
+});
+
+test("unavailable references offer the existing project invitation/access-request page", async () => {
+  mockGetResource.mockResolvedValue(null);
+  render(<CollaborationReferenceLink reference={reference} />);
+  const access = await screen.findByRole("button", {
+    name: "Request project access",
+  });
+  expect(mockOpenProject).not.toHaveBeenCalled();
+  access.focus();
+  await userEvent.keyboard("{Enter}");
+  expect(mockOpenProject).toHaveBeenCalledWith({
+    project_id: reference.target.project_id,
+  });
+  // An invitation accepted later needs no rebinding: activating the original link rechecks access.
+  mockGetResource.mockResolvedValue(resource);
+  await userEvent.click(
+    screen.getByRole("button", { name: "Open conversation @old-alias" }),
+  );
+  await waitFor(() => expect(mockOpenCollaborators).toHaveBeenCalled());
+  expect(
+    screen.queryByRole("button", { name: "Request project access" }),
+  ).not.toBeInTheDocument();
 });
 
 test("artifact opens the authorized catalog target, never an alias", async () => {
@@ -246,7 +274,7 @@ test.each(["agent", "artifact", "conversation"] as const)(
     ]) {
       if (result instanceof Error) mockGetResource.mockRejectedValue(result);
       else mockGetResource.mockResolvedValue(result);
-      await userEvent.click(screen.getByRole("button"));
+      await userEvent.click(screen.getByRole("button", { name: /^Open / }));
       if (result instanceof Error) await screen.findByRole("alert");
       else await screen.findByRole("status");
       expect(mockOpenLibrary).not.toHaveBeenCalled();

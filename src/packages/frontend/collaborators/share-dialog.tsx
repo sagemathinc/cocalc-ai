@@ -206,6 +206,7 @@ function ShareContents({
         </>
       ) : (
         <ResourcePicker
+          revalidateOnSelect={false}
           accountId={accountId}
           projectId={reference.target.project_id}
           conversation={

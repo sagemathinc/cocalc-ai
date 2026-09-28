@@ -2,7 +2,7 @@
  * This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
  * License: MS-RSL - see LICENSE.md for details
  */
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { Input, Radio, Select } from "antd";
 import type { InputRef } from "antd";
@@ -19,6 +19,7 @@ import type {
 import type { ReferencePickerApi } from "./reference-picker-api";
 import { DirectoryResults } from "./directory-results";
 import { useDirectory, useDirectorySearch } from "./use-directory";
+import { shareSessionIsCurrent } from "./share-to-conversation";
 
 type Scope = "project" | "participants" | "all";
 function readScope(accountId?: string): Scope {
@@ -45,6 +46,7 @@ export function ResourcePicker({
   searchRef,
   onSelect,
   accept,
+  revalidateOnSelect = true,
   label = "References",
 }: {
   accountId?: string;
@@ -55,6 +57,8 @@ export function ResourcePicker({
   searchRef: RefObject<InputRef | null>;
   onSelect: (resource: CollaborationResource) => void;
   accept?: (resource: CollaborationResource) => boolean;
+  /** False only when the caller reauthorizes before its explicit confirmation. */
+  revalidateOnSelect?: boolean;
   label?: string;
 }) {
   const id = useId();
@@ -75,12 +79,61 @@ export function ResourcePicker({
   const search = useDirectorySearch(text);
   const query = {
     project_id: scope === "project" ? projectId : undefined,
-    shared_with: scope === "participants" ? conversation : undefined,
+    shared_with: scope !== "project" ? conversation : undefined,
+    include_unshared: scope === "all" && !!conversation ? true : undefined,
     kind: kind ?? selectedKind,
     search: search.replace(/^@/, ""),
   };
+  const key = JSON.stringify([accountId, query]);
+  const activeKey = useRef(key);
+  activeKey.current = key;
+  useEffect(() => {
+    activeKey.current = key;
+    return () => {
+      activeKey.current = "";
+    };
+  }, [key]);
+  const [selection, setSelection] = useState<{
+    key: string;
+    busy?: boolean;
+    error?: string;
+  }>();
+  async function select(resource: CollaborationResource) {
+    if (!revalidateOnSelect) {
+      onSelect(resource);
+      return;
+    }
+    if (!accountId || (selection?.key === key && selection.busy)) return;
+    const sessionCurrent = shareSessionIsCurrent(accountId);
+    const current = () => activeKey.current === key && sessionCurrent();
+    setSelection({ key, busy: true });
+    try {
+      const fresh = await api.getResource({
+        project_id: resource.project_id,
+        kind: resource.kind,
+        resource_id: resource.resource_id,
+      });
+      if (!current()) return;
+      if (
+        !fresh ||
+        fresh.archived ||
+        (accept && !accept(fresh)) ||
+        collaborationTargetKey(fresh) !== collaborationTargetKey(resource)
+      )
+        throw Error("unavailable");
+      setSelection({ key });
+      onSelect(fresh);
+    } catch {
+      if (current())
+        setSelection({
+          key,
+          error:
+            "This content could not be opened. It may be unavailable or your access may have changed. Select it to retry.",
+        });
+    }
+  }
   const result = useDirectory<CollaborationResource>(
-    JSON.stringify([accountId, query]),
+    key,
     async (after) => {
       try {
         const page = await api.listResources({
@@ -98,7 +151,7 @@ export function ResourcePicker({
       }
     },
     !!accountId && search === text.trim(),
-    false,
+    true,
   );
   return (
     <div
@@ -137,7 +190,7 @@ export function ResourcePicker({
             ? [
                 {
                   value: "participants",
-                  label: "Projects shared by participants",
+                  label: "Projects shared by all participants",
                 },
               ]
             : []),
@@ -146,9 +199,19 @@ export function ResourcePicker({
       />
       {scope === "participants" && (
         <small>
-          Shared by current participants. Access can change; links do not grant
-          access.
+          Shared by all current participants. Access can change; links do not
+          grant access.
         </small>
+      )}
+      {scope === "all" && conversation && (
+        <small id={`${id}-visibility-warning`}>
+          Flagged items may not be visible to all participants. You can invite
+          people afterward; recipients can also request project access. Links do
+          not grant access.
+        </small>
+      )}
+      {selection?.key === key && selection.error && (
+        <p role="alert">{selection.error}</p>
       )}
       {!kind && (
         <Radio.Group
@@ -204,7 +267,17 @@ export function ResourcePicker({
                   <button
                     type="button"
                     aria-label={`${resource.personal?.alias ? `@${resource.personal.alias}: ` : ""}${resource.title || types[resource.kind]} (${types[resource.kind]})${scope !== "project" ? `, ${resource.project_title || "Untitled project"}` : ""}`}
-                    onClick={() => onSelect(resource)}
+                    aria-describedby={
+                      scope === "all" &&
+                      conversation &&
+                      resource.shared_with_all_participants !== true
+                        ? `${id}-visibility-warning`
+                        : undefined
+                    }
+                    aria-disabled={
+                      (selection?.key === key && selection.busy) || undefined
+                    }
+                    onClick={() => void select(resource)}
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -250,6 +323,19 @@ export function ResourcePicker({
                           {resource.project_title || "Untitled project"}
                         </small>
                       )}
+                      {scope === "all" &&
+                        conversation &&
+                        resource.shared_with_all_participants !== true && (
+                          <small
+                            style={{
+                              display: "block",
+                              color: UI_COLORS.secondary,
+                            }}
+                          >
+                            <Icon name="exclamation-circle" /> May not be
+                            visible to all participants
+                          </small>
+                        )}
                     </span>
                   </button>
                 )}

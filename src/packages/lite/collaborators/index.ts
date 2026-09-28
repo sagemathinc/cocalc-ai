@@ -1370,6 +1370,11 @@ export class LiteCollaborators {
     await this.assertHuman(opts.account_id);
     this.agentPins.refresh();
     if (opts.kind !== undefined) validate.kind(opts.kind);
+    if (
+      opts.include_unshared != null &&
+      typeof opts.include_unshared !== "boolean"
+    )
+      throw Error("invalid include_unshared");
     let sharedKey: string | undefined;
     if (opts.shared_with) {
       if (opts.shared_with.kind !== "conversation")
@@ -1378,13 +1383,15 @@ export class LiteCollaborators {
         ...opts.shared_with,
         account_id: opts.account_id,
       });
+      sharedKey = context.key;
       if (
-        !context.key ||
-        this.relations.participants(
-          context.key,
-          { limit: 1 },
-          context.thread_id,
-        ).coverage !== "complete"
+        !opts.include_unshared &&
+        (!context.key ||
+          this.relations.participants(
+            context.key,
+            { limit: 1 },
+            context.thread_id,
+          ).coverage !== "complete")
       )
         return {
           items: [],
@@ -1413,6 +1420,7 @@ export class LiteCollaborators {
       limit,
       sharedTitlesOnly,
       opts.shared_with ?? null,
+      !!opts.include_unshared,
     ]);
     const projectPins = (await this.options.projectPins?.revision()) ?? "";
     await this.assertHuman(opts.account_id);
@@ -1421,6 +1429,7 @@ export class LiteCollaborators {
       // Capture before querying: later commits must invalidate this page.
       const token = this.revisionToken(revision, projectPins);
       if (
+        !opts.include_unshared &&
         sharedKey &&
         (!this.db
           .prepare(
@@ -1439,7 +1448,21 @@ export class LiteCollaborators {
         };
       const clauses = ["r.deleted=0"];
       const args: SQLInputValue[] = [];
-      if (sharedKey) {
+      const sharedWithAll =
+        !!sharedKey &&
+        !!this.db
+          .prepare(
+            "SELECT 1 FROM collaboration_resources WHERE resource_key=? AND deleted=0 AND archived=0",
+          )
+          .get(sharedKey) &&
+        this.relations.participants(sharedKey, { limit: 1 }).coverage ===
+          "complete" &&
+        !this.db
+          .prepare(
+            "SELECT 1 FROM collaboration_full_participants WHERE resource_key=? AND account_id<>? LIMIT 1",
+          )
+          .get(sharedKey, this.options.account_id);
+      if (sharedKey && !opts.include_unshared) {
         // Lite has only one authenticated human. Imported other participants
         // are not members of this local project.
         clauses.push(
@@ -1504,6 +1527,8 @@ export class LiteCollaborators {
       let bytes = 8192; // Reserve worst-case UTF-8 envelope, cursor and coverage bytes.
       for (const row of rows.slice(0, limit)) {
         const resource = this.resource(row, scope === "for-you");
+        if (opts.shared_with)
+          resource.shared_with_all_participants = sharedWithAll;
         const size = Buffer.byteLength(JSON.stringify(resource));
         if (bytes + size > validate.MAX_PAGE_BYTES) break;
         items.push(resource);

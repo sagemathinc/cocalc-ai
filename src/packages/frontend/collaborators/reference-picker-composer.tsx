@@ -71,7 +71,7 @@ export function ReferencePickerComposer({
         renderActions([
           {
             key: "reference",
-            label: "Insert link",
+            label: "Link to CoCalc content",
             onClick: () => showPicker("insert"),
           },
           ...(allowShareToConversation
@@ -87,7 +87,7 @@ export function ReferencePickerComposer({
       ) : (
         <>
           <Button size="small" onClick={() => showPicker("insert")}>
-            Insert link
+            Link to CoCalc content
           </Button>
           {allowShareToConversation && (
             <Button size="small" onClick={() => showPicker("share-artifact")}>

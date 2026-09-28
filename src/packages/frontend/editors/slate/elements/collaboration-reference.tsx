@@ -11,7 +11,7 @@ import {
 } from "@cocalc/util/collaboration-references";
 import type { CollaborationResource } from "@cocalc/util/collaborators";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   openResolvedCollaborationReference,
   resolveCollaborationReference,
@@ -121,6 +121,22 @@ export function CollaborationReferenceLink({
         });
     }
   }
+  async function projectAccess() {
+    try {
+      // Reuse the project landing page's invite acceptance and access-request
+      // workflow. Opening it neither grants access nor submits a request.
+      await redux
+        .getActions("projects")
+        .open_project({ project_id: reference.target.project_id });
+    } catch {
+      if (activeKey.current === key)
+        setState({
+          key,
+          resource: null,
+          error: "Could not open project access options. Try again.",
+        });
+    }
+  }
   return (
     <>
       <button
@@ -143,7 +159,20 @@ export function CollaborationReferenceLink({
       >
         {label}
       </button>
-      {resource === null && <span role="status"> Unavailable reference</span>}
+      {(resource === null || current?.error) && (
+        <>
+          {resource === null && (
+            <span role="status"> Unavailable reference. </span>
+          )}
+          <button
+            type="button"
+            onClick={() => void projectAccess()}
+            title="Open project access options to accept an invitation or request collaborator access."
+          >
+            Request project access
+          </button>
+        </>
+      )}
       {current?.error && <span role="alert"> {current.error}</span>}
     </>
   );
