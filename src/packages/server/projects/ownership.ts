@@ -13,6 +13,8 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { hardDeleteProject } from "@cocalc/server/projects/hard-delete";
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 import { isValidUUID } from "@cocalc/util/misc";
+import { v4 as uuid } from "uuid";
+import { assertOwnershipRecipient } from "./ownership-recipient";
 
 const log = getLogger("server:projects:ownership");
 
@@ -25,6 +27,9 @@ type Queryable = {
 
 type ProjectOwnershipRow = {
   project_id: string;
+  owning_bay_id?: string | null;
+  deleted?: boolean;
+  course?: { type?: string; account_id?: string } | null;
   title: string | null;
   users: any;
   last_active: Record<string, unknown> | null;
@@ -203,6 +208,9 @@ async function loadProjectForUpdate(
     `
       SELECT
         project_id,
+        owning_bay_id,
+        deleted,
+        course,
         title,
         users,
         last_active,
@@ -271,15 +279,40 @@ async function removeProjectMember({
   });
 }
 
-export async function transferProjectOwnership({
-  project_id,
-  from_account_id,
-  to_account_id,
-}: {
+type TransferOptions = {
   project_id: string;
   from_account_id: string;
   to_account_id: string;
-}): Promise<ProjectOwnershipTransferResult> {
+};
+
+// Legacy leave/account-deletion callers intentionally remove the old owner.
+export async function transferProjectOwnership(opts: TransferOptions) {
+  return await transferOwnership(opts);
+}
+
+// Called only on the owning bay after fresh auth at the actor's home bay.
+export async function transferProjectOwnershipExplicitly({
+  account_id,
+  trusted_admin = false,
+  ...opts
+}: TransferOptions & { account_id: string; trusted_admin?: boolean }) {
+  assertUuid(account_id, "account_id");
+  if (account_id !== opts.from_account_id && trusted_admin !== true) {
+    throw Object.assign(
+      new Error(
+        "only the project owner or an administrator can transfer ownership",
+      ),
+      { status: 403, code: "forbidden" },
+    );
+  }
+  return await transferOwnership(opts, { account_id, trusted_admin });
+}
+
+async function transferOwnership(
+  { project_id, from_account_id, to_account_id }: TransferOptions,
+  actor?: { account_id: string; trusted_admin: boolean },
+): Promise<ProjectOwnershipTransferResult> {
+  const preserveOldOwner = actor != null;
   assertUuid(project_id, "project_id");
   assertUuid(from_account_id, "from_account_id");
   assertUuid(to_account_id, "to_account_id");
@@ -307,22 +340,55 @@ export async function transferProjectOwnership({
     if (`${users[to_account_id]?.group ?? ""}` !== "collaborator") {
       throw new Error("to_account_id must be a project collaborator");
     }
+    if (preserveOldOwner) {
+      if (
+        (row.owning_bay_id ?? getConfiguredBayId()) !== getConfiguredBayId()
+      ) {
+        throw new Error("project is not owned by this bay; refresh and retry");
+      }
+      if (row.deleted) {
+        throw new Error("cannot transfer a deleted project");
+      }
+    }
 
     const newOwnerInfo = {
       ...users[to_account_id],
       group: "owner",
     };
-    delete users[from_account_id];
+    if (preserveOldOwner) {
+      users[from_account_id] = {
+        ...users[from_account_id],
+        group: "collaborator",
+      };
+    } else {
+      delete users[from_account_id];
+    }
     users[to_account_id] = newOwnerInfo;
 
-    const usageAccountId =
-      row.usage_account_id == null || row.usage_account_id === from_account_id
+    const currentUsageAccountId =
+      row.usage_account_id ??
+      (row.course?.type === "student" ? row.course.account_id : undefined) ??
+      from_account_id;
+    const usageAccountId = preserveOldOwner
+      ? currentUsageAccountId === from_account_id
+        ? to_account_id
+        : currentUsageAccountId
+      : row.usage_account_id == null || row.usage_account_id === from_account_id
         ? to_account_id
         : row.usage_account_id;
     const runtimeSponsorAccountId =
       row.runtime_sponsor_account_id === from_account_id
         ? to_account_id
         : row.runtime_sponsor_account_id;
+
+    if (preserveOldOwner) {
+      await assertOwnershipRecipient({
+        account_id: to_account_id,
+        project_id,
+        current_usage_account_id: currentUsageAccountId,
+        resulting_usage_account_id: usageAccountId,
+      });
+    }
 
     await client.query(
       `
@@ -346,6 +412,27 @@ export async function transferProjectOwnership({
       project_id,
       default_bay_id: getConfiguredBayId(),
     });
+    if (actor) {
+      await client.query(
+        "INSERT INTO central_log(id, event, value, time) VALUES($1, $2, $3::jsonb, NOW())",
+        [
+          uuid(),
+          "project-ownership-transfer",
+          JSON.stringify({
+            project_id,
+            actor_account_id: actor.account_id,
+            authorized_as_admin: actor.trusted_admin,
+            from_account_id,
+            to_account_id,
+            old_owner_retained: true,
+            previous_usage_account_id: row.usage_account_id,
+            usage_account_id: usageAccountId,
+            previous_runtime_sponsor_account_id: row.runtime_sponsor_account_id,
+            runtime_sponsor_account_id: runtimeSponsorAccountId,
+          }),
+        ],
+      );
+    }
     await client.query("COMMIT");
     result = {
       project_id,
@@ -363,7 +450,7 @@ export async function transferProjectOwnership({
 
   await publishMembershipChanged({
     project_id,
-    old_owner_account_id: from_account_id,
+    old_owner_account_id: preserveOldOwner ? undefined : from_account_id,
   });
   log.info("transferred project ownership", result);
   return result;

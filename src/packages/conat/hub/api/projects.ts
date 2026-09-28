@@ -1,5 +1,6 @@
 import {
   authFirstRequireAccount,
+  authFirstRequireAccountWithBoundSession,
   authFirstRequireHostWithAccountTarget,
   authFirstRequireProject,
 } from "./util";
@@ -50,6 +51,18 @@ import type {
   HostRootfsBuildStatusResponse,
 } from "@cocalc/conat/project-host/api";
 import type { ProjectBackupIndexStoreConfig } from "./hosts";
+
+export interface ProjectOwnershipTransferRequest {
+  project_id: string;
+  // Expected current owner; rejects stale confirmations and retries.
+  from_account_id: string;
+  to_account_id: string;
+}
+
+export interface ProjectOwnershipTransferResult extends ProjectOwnershipTransferRequest {
+  usage_account_id: string | null;
+  runtime_sponsor_account_id: string | null;
+}
 
 export interface ProjectRecoveryStatus {
   project_id: string;
@@ -1293,6 +1306,7 @@ export const projects = {
   updateAuthorizedKeysOnHost: authFirstRequireAccount,
   hardDeleteProject: authFirstRequireAccount,
   leaveOrDeleteProjects: authFirstRequireAccount,
+  transferProjectOwnership: authFirstRequireAccountWithBoundSession,
   setProjectHidden: authFirstRequireAccount,
   setProjectsHidden: authFirstRequireAccount,
   setProjectSshKey: authFirstRequireAccount,
@@ -2332,6 +2346,13 @@ export interface Projects {
     project_id: string;
     enabled: boolean;
   }) => Promise<{ project_id: string; deletion_protection: boolean }>;
+  // Explicit transfer keeps the former owner as a collaborator.
+  transferProjectOwnership: (
+    opts: ProjectOwnershipTransferRequest & {
+      browser_id?: string;
+    },
+  ) => Promise<ProjectOwnershipTransferResult>;
+
   leaveOrDeleteProjects: (opts: {
     account_id?: string;
     browser_id?: string | null;

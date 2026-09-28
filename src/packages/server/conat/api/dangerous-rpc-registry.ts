@@ -1096,6 +1096,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "bulk project leave/delete",
   },
+  "projects.transferProjectOwnership": {
+    decision: "fresh-auth-required",
+    reason:
+      "explicit project owner and owner-derived billing attribution transfer",
+  },
   "projects.moveProject": {
     decision: "fresh-auth-required",
     reason: "project move/rehome mutation",
