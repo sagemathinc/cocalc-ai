@@ -338,6 +338,47 @@ test("composer inserts a bound reference at the saved cursor without invoking an
   expect(mockGetResource).not.toHaveBeenCalled();
 });
 
+test.each(["agent", "artifact", "conversation"])(
+  "keyboard inserts an unaliased %s as a bound link",
+  async (kind) => {
+    mockListResources.mockResolvedValue({
+      items: [{ ...base, kind, personal: undefined }],
+      coverage: "complete",
+    });
+    const control = {
+      captureSelection: jest.fn(() => ({ line: 0, ch: 0 })),
+      insertText: jest.fn(() => true),
+      focus: jest.fn(() => true),
+    };
+    render(
+      <ReferencePickerComposer
+        projectId={project_id}
+        inputControlRef={{ current: control }}
+      />,
+    );
+    await userEvent.tab();
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("textbox", { name: "Search titles or aliases" }),
+      ).toHaveFocus(),
+    );
+    const choice = await screen.findByRole("button", {
+      name: new RegExp(`^Shared work \\(${kind}\\)$`, "i"),
+    });
+    choice.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(control.insertText).toHaveBeenCalledTimes(1);
+    const markup = (control.insertText.mock.calls[0] as unknown as [string])[0];
+    expect(parseCollaborationReference(markup.trim())).toMatchObject({
+      target: { project_id, kind, resource_id: "target-1" },
+      display_fallback: "Shared work",
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await waitFor(() => expect(control.focus).toHaveBeenCalled());
+  },
+);
+
 test("menu-hosted reference picker returns to the composer on cancellation", async () => {
   const user = userEvent.setup();
   const control = {

@@ -190,6 +190,15 @@ export default function ChatInput({
   const narrow = useNarrowChatViewport();
   const intl = useIntl();
   const controlRef = useRef<any>(null);
+  const publishedControlRef = useRef<
+    | {
+        sessionToken?: number;
+        projectId?: string;
+        cacheId?: string;
+        control: ChatInputControl;
+      }
+    | undefined
+  >(undefined);
   const getValueRef = useRef<() => string>(() => propsInput ?? "");
   const [input, setInput] = useState<string>(propsInput ?? "");
   const [editorResetEpoch, setEditorResetEpoch] = useState(0);
@@ -408,18 +417,29 @@ export default function ChatInput({
   }, [focusInput, propsInput, sessionToken]);
 
   useEffect(() => {
-    const control: ChatInputControl = {
+    const methods: ChatInputControl = {
       getValue: () => getValueRef.current(),
       focus: focusInput,
       captureSelection,
       insertText,
     };
+    const previous = publishedControlRef.current;
+    // Pickers hold this identity while open. Callback changes do not mean the
+    // draft changed, but a new composer session must invalidate the selection.
+    const control =
+      previous &&
+      previous.sessionToken === sessionToken &&
+      previous.projectId === projectId &&
+      previous.cacheId === cacheId
+        ? Object.assign(previous.control, methods)
+        : methods;
+    publishedControlRef.current = { sessionToken, projectId, cacheId, control };
     if (inputControlRef != null) {
       inputControlRef.current = control;
     }
     onControlReady?.(control);
     return () => {
-      if (inputControlRef?.current?.focus === focusInput) {
+      if (inputControlRef?.current === control) {
         inputControlRef.current = null;
       }
       onControlReady?.(null);
@@ -430,6 +450,9 @@ export default function ChatInput({
     inputControlRef,
     insertText,
     onControlReady,
+    sessionToken,
+    projectId,
+    cacheId,
   ]);
 
   return (

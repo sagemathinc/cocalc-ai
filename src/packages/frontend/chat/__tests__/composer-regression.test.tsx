@@ -53,6 +53,48 @@ jest.mock("use-debounce", () => ({
 }));
 
 describe("ChatInput send lifecycle regressions", () => {
+  it("keeps the picker control stable across rerenders, but not across sessions", () => {
+    const inputControlRef = { current: null as ChatInputControl | null };
+    const firstChange = jest.fn();
+    const latestChange = jest.fn();
+    const props = {
+      input: "draft",
+      inputControlRef,
+      on_send: jest.fn(),
+      syncdb: undefined,
+      date: 0,
+      sessionToken: 1,
+    };
+    const { rerender, unmount } = render(
+      <ChatInput {...props} onChange={firstChange} onControlReady={() => {}} />,
+    );
+    const selectedControl = inputControlRef.current!;
+    rerender(
+      <ChatInput
+        {...props}
+        onChange={latestChange}
+        onControlReady={() => {}}
+      />,
+    );
+    expect(inputControlRef.current).toBe(selectedControl);
+    act(() => {
+      expect(selectedControl.insertText(" link", { line: 0, ch: 5 })).toBe(
+        true,
+      );
+    });
+    expect(firstChange).not.toHaveBeenCalled();
+    expect(latestChange).toHaveBeenCalledWith("draft link", 1);
+    rerender(<ChatInput {...props} sessionToken={2} onChange={latestChange} />);
+    expect(inputControlRef.current).not.toBe(selectedControl);
+    latestChange.mockClear();
+    expect(selectedControl.insertText("stale reference")).toBe(false);
+    expect(latestChange).not.toHaveBeenCalled();
+    const currentControl = inputControlRef.current!;
+    unmount();
+    expect(inputControlRef.current).toBeNull();
+    expect(currentControl.insertText("after unmount")).toBe(false);
+  });
+
   it.each([
     [undefined, undefined, false],
     ["auto", undefined, false],
