@@ -94,6 +94,17 @@ function limit(n: number) {
     throw Error("invalid collaboration page limit");
 }
 
+/** Count work, not historical clean sources. UNION deduplicates dirty deliveries. */
+export const collaborationCensusProgressSql = `SELECT
+  (SELECT count(*) FROM (
+    SELECT chat_path FROM sources WHERE project_id=? AND (dirty<>0 OR epoch='')
+    UNION
+    SELECT d.chat_path FROM deliveries d JOIN sources s
+      ON s.project_id=d.project_id AND s.chat_path=d.chat_path WHERE d.project_id=?
+  ) p WHERE NOT EXISTS(SELECT 1 FROM source_redirects r WHERE r.project_id=? AND r.chat_path=p.chat_path)) pending,
+  (SELECT count(*) FROM sources s WHERE s.project_id=? AND s.failures>0
+    AND NOT EXISTS(SELECT 1 FROM source_redirects r WHERE r.project_id=s.project_id AND r.chat_path=s.chat_path)) errors`;
+
 /** Host-private durable intent, one pending delivery per source, never transcripts. */
 export class CollaborationJournal {
   private readonly db: DatabaseSync;
@@ -126,6 +137,8 @@ export class CollaborationJournal {
         failures INTEGER NOT NULL DEFAULT 0, activity TEXT NOT NULL DEFAULT '{}',
         PRIMARY KEY(project_id,chat_path));
       CREATE INDEX IF NOT EXISTS sources_ready ON sources(dirty,retry_at);
+      CREATE INDEX IF NOT EXISTS sources_census_pending ON sources(project_id,chat_path) WHERE dirty<>0 OR epoch='';
+      CREATE INDEX IF NOT EXISTS sources_census_errors ON sources(project_id,chat_path) WHERE failures>0;
       CREATE TABLE IF NOT EXISTS census_receipts (
         project_id TEXT NOT NULL, chat_path TEXT NOT NULL, run_id TEXT NOT NULL,
         PRIMARY KEY(project_id,chat_path));
@@ -401,13 +414,8 @@ export class CollaborationJournal {
     source_errors: number;
   } {
     const row = this.db
-      .prepare(
-        `SELECT
-      COALESCE(SUM(s.dirty<>0 OR s.epoch='' OR EXISTS(SELECT 1 FROM deliveries d WHERE d.project_id=s.project_id AND d.chat_path=s.chat_path)),0) pending,
-      COALESCE(SUM(s.failures>0),0) errors FROM sources s WHERE s.project_id=?
-      AND NOT EXISTS(SELECT 1 FROM source_redirects r WHERE r.project_id=s.project_id AND r.chat_path=s.chat_path)`,
-      )
-      .get(project_id)!;
+      .prepare(collaborationCensusProgressSql)
+      .get(project_id, project_id, project_id, project_id)!;
     return {
       source_pending: Number(row.pending),
       source_errors: Number(row.errors),

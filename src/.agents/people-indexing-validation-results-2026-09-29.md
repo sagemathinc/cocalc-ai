@@ -2050,3 +2050,23 @@ Host/reference typecheck, 10 backend reporting/integration tests and 21 host/cen
 tests pass. New cases cover seven simulated quiet days and store reopen without
 report writes/RPCs, changed progress, lost-ACK ordering and explicit host wiring.
 No deployment flags changed and no load/capacity claim follows from these tests.
+
+### Indexed Local Source Progress
+
+The journal's progress query previously visited every source in a project to
+count dirty/unregistered sources, pending deliveries and failures. It now counts
+indexed pending/error subsets and joins pending deliveries to existing sources.
+The union deduplicates sources that are both dirty and awaiting delivery;
+redirected sources and orphan deliveries retain their previous exclusion rules.
+Partial indexes are installed additively when opening the host-private journal.
+
+A real SQLite test seeds 20,000 clean source rows across two projects, checks the
+exact production query plan uses both partial indexes without full source or
+delivery scans, and verifies counts across dirty, registration, delivery, error
+and redirect transitions. This is access-path evidence, not a DAU benchmark.
+Backend/reference typecheck and all 274 backend collaborators tests pass.
+
+Progress counting now scales with relevant pending/error work rather than the
+clean catalog size. Large pending backlogs still cost proportional work, and the
+reporter's bounded project traversal/cursor persistence remains; a durable
+change-driven reporting queue and demand-aware freshness are not yet implemented.
