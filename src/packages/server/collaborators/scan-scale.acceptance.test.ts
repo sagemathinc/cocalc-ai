@@ -113,6 +113,65 @@ acceptance("scan blocked backlog query cost", () => {
         env.project,
       ]);
   }, 120000);
+  test("retirement racing admission and execution preserves live work", async () => {
+    const call = (operation: string, request: object) =>
+      env.worker("owner").call("scanRace", { operation, request });
+    for (let iteration = 0; iteration < 8; iteration++) {
+      const request = {
+        project_id: env.project,
+        account_id: env.accounts[0],
+        request_id: randomUUID(),
+        mode: "check",
+      };
+      const old = await call("admit", request);
+      await env.sql(
+        "owner",
+        "UPDATE collaboration_scan_receipts SET expires_at=clock_timestamp()-interval '1 day' WHERE project_id=$1",
+        [env.project],
+      );
+      const fresh = { ...request, request_id: randomUUID() };
+      const oldJob = { project_id: env.project, job_id: old.job_id };
+      const [retired, receipt] = await Promise.all([
+        call("retire", oldJob),
+        call("admit", fresh),
+      ]);
+      expect(receipt.admission).toBe(retired ? "accepted" : "coalesced");
+      if (retired) expect(receipt.job_id).not.toBe(old.job_id);
+      else expect(receipt.job_id).toBe(old.job_id);
+      expect(
+        await env.sql(
+          "owner",
+          "SELECT job_id,state FROM collaboration_scan_jobs WHERE project_id=$1",
+          [env.project],
+        ),
+      ).toEqual([{ job_id: receipt.job_id, state: "queued" }]);
+      const job = { ...fresh, job_id: receipt.job_id };
+      const [started, ...retirements] = await Promise.all([
+        call("start", job),
+        ...Array.from({ length: 8 }, () => call("retire", job)),
+      ]);
+      expect(started).toMatchObject({
+        job_id: receipt.job_id,
+        replayed: false,
+      });
+      expect(retirements).toEqual(Array(8).fill(false));
+      expect(
+        await env.sql(
+          "owner",
+          "SELECT state FROM collaboration_scan_jobs WHERE job_id=$1",
+          [receipt.job_id],
+        ),
+      ).toEqual([{ state: "running" }]);
+      for (const table of [
+        "collaboration_scan_jobs",
+        "collaboration_scan_receipts",
+        "collaboration_scan_budget",
+      ])
+        await env.sql("owner", `DELETE FROM ${table} WHERE project_id=$1`, [
+          env.project,
+        ]);
+    }
+  }, 120000);
   test("authenticated fabric routes actor reservation at home to the project owner", async () => {
     const request = {
       project_id: env.project,

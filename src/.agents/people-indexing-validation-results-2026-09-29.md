@@ -982,3 +982,14 @@ fresh statistics. All four PostgreSQL acceptance cases, 22 store tests, and the
 server build pass. These remain synthetic selection measurements, not a timing
 guarantee for retirement transactions, worst-case per-job receipt counts, or DAU
 capacity. The regression cases are retained in the acceptance suite.
+
+### Retirement Admission And Execution Races
+
+The isolated PostgreSQL suite now runs eight rounds racing retirement of expired
+queued work with a fresh admission. It accepts either valid lock ordering but
+requires that the returned job exists, has the correct new/coalesced identity,
+and remains startable. Each round then races start with eight retirement calls,
+requiring all retirement calls to preserve the live job and the final row to be
+running. All five acceptance cases and the server build pass. This validates
+concurrent transactions in one owner fixture process; it neither forces both
+lock orderings nor establishes multi-process load or rehome recovery behavior.

@@ -860,6 +860,7 @@ async function command(name, args = {}) {
         start: scan.startCollaborationScan,
         claim: scan.claimCollaborationScanDispatch,
         release: scan.releaseCollaborationScanDispatch,
+        retire: scan.retireExpiredQueuedCollaborationScan,
       };
       if (!operations[args.operation])
         throw Error("unknown scan fixture operation");
