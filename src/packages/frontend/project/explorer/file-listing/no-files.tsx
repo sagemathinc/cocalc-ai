@@ -8,6 +8,7 @@ import { useMemo, useState } from "react";
 import { redux } from "@cocalc/frontend/app-framework";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import type { IconName } from "@cocalc/frontend/components/icon";
+import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { file_associations } from "@cocalc/frontend/file-associations";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { NEW_FILETYPE_ICONS } from "@cocalc/frontend/project/new/consts";
@@ -31,6 +32,10 @@ export default function NoFiles({
   canCreateFiles = true,
   openUploadFiles,
 }: Props) {
+  // Course and exam projects can turn off terminals and uploads; the tiles
+  // below must not offer what the project refuses.
+  const studentProjectFunctionality =
+    useStudentProjectFunctionality(project_id);
   let actions:
     | Pick<
         ProjectActions,
@@ -129,6 +134,8 @@ export default function NoFiles({
       openNewPage={openNewPage}
       createFile={createFile}
       aiAllowed={aiAllowed}
+      terminalAllowed={!studentProjectFunctionality.disableTerminals}
+      uploadAllowed={!studentProjectFunctionality.disableUploads}
       canCreateFiles={canCreateFiles}
       openUploadFiles={openUploadFiles}
       context={isProjectHome ? "project" : "folder"}
@@ -138,10 +145,30 @@ export default function NoFiles({
 
 type EmptyDirectoryContext = "project" | "folder";
 
+// Name only what this project allows: course and exam projects can turn off
+// terminals and uploads.
+export function emptyDirectoryDescription({
+  context,
+  terminalAllowed,
+  uploadAllowed,
+}: {
+  context: EmptyDirectoryContext;
+  terminalAllowed: boolean;
+  uploadAllowed: boolean;
+}): string {
+  const items = terminalAllowed
+    ? "Create a notebook, terminal, folder"
+    : "Create a notebook, folder";
+  const last = uploadAllowed ? ", or upload files" : ", or another file";
+  return items + last + (context === "project" ? " to get started." : " here.");
+}
+
 function EmptyDirectoryWelcome({
   createFile,
   openNewPage,
   aiAllowed,
+  terminalAllowed = true,
+  uploadAllowed = true,
   canCreateFiles,
   openUploadFiles,
   context,
@@ -149,6 +176,8 @@ function EmptyDirectoryWelcome({
   createFile: (ext: string) => void;
   openNewPage: () => void;
   aiAllowed: boolean;
+  terminalAllowed?: boolean;
+  uploadAllowed?: boolean;
   canCreateFiles: boolean;
   openUploadFiles?: () => void;
   context: EmptyDirectoryContext;
@@ -156,10 +185,11 @@ function EmptyDirectoryWelcome({
   const [showMoreFileTypes, setShowMoreFileTypes] = useState(false);
   const heading =
     context === "project" ? "No files yet" : "This folder is empty";
-  const description =
-    context === "project"
-      ? "Create a notebook, terminal, folder, or upload files to get started."
-      : "Create a notebook, terminal, folder, or upload files here.";
+  const description = emptyDirectoryDescription({
+    context,
+    terminalAllowed,
+    uploadAllowed,
+  });
   const actions: {
     title: string;
     description: string;
@@ -186,21 +216,29 @@ function EmptyDirectoryWelcome({
           },
         ]
       : []),
-    {
-      title: "Terminal",
-      description: "Shell",
-      tooltip: "Open a shell in this project environment.",
-      icon: NEW_FILETYPE_ICONS.term,
-      onClick: () => createFile("term"),
-    },
-    {
-      title: "Upload",
-      description: "Files",
-      tooltip: "Add files from your computer to this project.",
-      icon: "cloud-upload",
-      onClick: openUploadFiles ?? openNewPage,
-      className: "upload-button",
-    },
+    ...(terminalAllowed
+      ? [
+          {
+            title: "Terminal",
+            description: "Shell",
+            tooltip: "Open a shell in this project environment.",
+            icon: NEW_FILETYPE_ICONS.term,
+            onClick: () => createFile("term"),
+          },
+        ]
+      : []),
+    ...(uploadAllowed
+      ? [
+          {
+            title: "Upload",
+            description: "Files",
+            tooltip: "Add files from your computer to this project.",
+            icon: "cloud-upload" as IconName,
+            onClick: openUploadFiles ?? openNewPage,
+            className: "upload-button",
+          },
+        ]
+      : []),
     {
       title: "LaTeX",
       description: "Document",
