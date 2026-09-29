@@ -658,3 +658,20 @@ current authorized host, preserve this job identity across ambiguous outcomes,
 and implement leases, settlement, and durable last-execution cooldown after
 completed jobs leave the active slots. Ten focused PGlite tests and the database
 TypeScript build validate this checkpoint, not end-to-end execution.
+
+### Follow-up Admission Versus Execution Cooldown
+
+Corrected the prototype to admit one follow-up immediately behind running work
+(subject to project tokens), rather than requiring the caller to retry after
+five minutes. A durable `last_started_at` in the project budget now enforces the
+five-minute execution cooldown independently of active-job retention. Stable
+start retries do not change that timestamp. Both check and reconcile use this
+conservative limit until a no-change proof is validated.
+
+Free slots are selected explicitly, so after slot zero settles and slot one
+starts, a newer follow-up can occupy slot zero without a key collision. Eleven
+PGlite tests and the database build pass, including simulated settlement showing
+that deleting the old job does not bypass cooldown and that alternating slots
+remain bounded to one running and one queued. Actual settlement and host
+dispatch are still absent; this test deliberately deletes the old job directly
+and is not end-to-end completion evidence.

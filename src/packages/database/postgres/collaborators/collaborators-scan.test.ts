@@ -78,7 +78,7 @@ describeDb("owner scan admission prototype", () => {
       ).rows,
     ).toHaveLength(1);
   });
-  test("running work is throttled before one follow-up can be queued", async () => {
+  test("running work allows one immediate follow-up queue", async () => {
     const request = await fixture();
     await admitCollaborationScan(request, authority);
     await getPool().query(
@@ -86,14 +86,8 @@ describeDb("owner scan admission prototype", () => {
       [request.project_id],
     );
     const next = { ...request, request_id: randomUUID() };
-    expect(await admitCollaborationScan(next, authority)).toMatchObject({
-      admission: "throttled",
-      retry_after_ms: expect.any(Number),
-    });
-    expect(await inspectCollaborationScan(next, authority)).toBeNull();
-    await getPool().query(
-      "UPDATE collaboration_scan_jobs SET created_at=clock_timestamp()-interval '6 minutes' WHERE project_id=$1",
-      [request.project_id],
+    expect((await admitCollaborationScan(next, authority)).admission).toBe(
+      "accepted",
     );
     await getPool().query(
       "UPDATE collaboration_scan_budget SET updated_at=clock_timestamp()-interval '6 minutes' WHERE project_id=$1",
@@ -275,6 +269,54 @@ describeDb("owner scan admission prototype", () => {
         )
       ).rows[0].state,
     ).toBe("queued");
+  });
+  test("execution cooldown survives active-job removal and slots alternate safely", async () => {
+    const request = await fixture();
+    const first = await admitCollaborationScan(request, authority);
+    if (!("job_id" in first)) throw Error("expected admission");
+    await startCollaborationScan(
+      { ...request, job_id: first.job_id },
+      authority,
+    );
+    const next = { ...request, request_id: randomUUID() };
+    const second = await admitCollaborationScan(next, authority);
+    if (!("job_id" in second)) throw Error("expected follow-up");
+    // Simulate settlement; no dispatcher is wired yet.
+    await getPool().query(
+      "DELETE FROM collaboration_scan_jobs WHERE job_id=$1",
+      [first.job_id],
+    );
+    expect(
+      await startCollaborationScan(
+        { ...next, job_id: second.job_id },
+        authority,
+      ),
+    ).toBeNull();
+    await getPool().query(
+      "UPDATE collaboration_scan_budget SET last_started_at=clock_timestamp()-interval '6 minutes',updated_at=clock_timestamp()-interval '6 minutes' WHERE project_id=$1",
+      [request.project_id],
+    );
+    expect(
+      await startCollaborationScan(
+        { ...next, job_id: second.job_id },
+        authority,
+      ),
+    ).toMatchObject({ replayed: false });
+    const third = await admitCollaborationScan(
+      { ...request, request_id: randomUUID() },
+      authority,
+    );
+    expect(third.admission).toBe("accepted");
+    const rows = (
+      await getPool().query(
+        "SELECT slot,state FROM collaboration_scan_jobs WHERE project_id=$1 ORDER BY slot",
+        [request.project_id],
+      )
+    ).rows;
+    expect(rows).toEqual([
+      { slot: 0, state: "queued" },
+      { slot: 1, state: "running" },
+    ]);
   });
   test("new admissions reclaim at most 64 expired receipts without touching live retries", async () => {
     const request = await fixture();

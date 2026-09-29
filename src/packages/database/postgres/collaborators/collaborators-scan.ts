@@ -47,6 +47,8 @@ export async function syncCollaborationScanSchema(
     project_id UUID PRIMARY KEY REFERENCES projects(project_id) ON DELETE CASCADE,
     tokens DOUBLE PRECISION NOT NULL CHECK(tokens>=0 AND tokens<=2),
     updated_at TIMESTAMPTZ NOT NULL)`);
+  await db.query(`ALTER TABLE collaboration_scan_budget
+    ADD COLUMN IF NOT EXISTS last_started_at TIMESTAMPTZ`);
   await db.query(`CREATE TABLE IF NOT EXISTS collaboration_scan_receipts (
     project_id UUID NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
     account_id UUID NOT NULL, request_id UUID NOT NULL, mode TEXT NOT NULL,
@@ -102,16 +104,6 @@ export async function admitCollaborationScan(
       )
     ).rows;
     let job = jobs.find((row) => row.state === "queued");
-    if (!job && jobs.length) {
-      // Raw generation equality is not a validated no-change proof: checks
-      // currently require the same conservative work/cooldown as reconciliation.
-      const remaining =
-        (jobs[0].started_at ?? jobs[0].created_at).getTime() +
-        COOLDOWN_MS -
-        now;
-      if (remaining > 0)
-        return { admission: "throttled" as const, retry_after_ms: remaining };
-    }
     // The project row is already locked. All actors share this bucket, and a
     // replay returns above without spending a token. Failed transactions do
     // not consume capacity. Actor-wide budgets belong at account home.
@@ -166,7 +158,7 @@ export async function admitCollaborationScan(
     );
     const admission = job ? "coalesced" : "accepted";
     if (!job) {
-      const slot = jobs.length ? 1 : 0;
+      const slot = jobs.some((row) => row.slot === 0) ? 1 : 0;
       job = (
         await db.query(
           "INSERT INTO collaboration_scan_jobs(project_id,slot,job_id,state,created_at) VALUES($1,$2,$3,'queued',$4) RETURNING *",
@@ -256,10 +248,30 @@ export async function startCollaborationScan(
       [opts.project_id],
     );
     if (running.rows.length) return null;
+    // Admission may queue a newer boundary immediately. Execution cooldown
+    // survives removal of completed active jobs and cannot be reset by callers.
+    // Until a no-change proof exists, check and reconcile both spend this work.
+    const clock = (
+      await db.query(
+        `SELECT clock_timestamp() AS now,last_started_at FROM collaboration_scan_budget
+      WHERE project_id=$1`,
+        [opts.project_id],
+      )
+    ).rows[0];
+    if (!clock) throw Error("scan admission budget missing");
+    if (
+      clock.last_started_at &&
+      clock.last_started_at.getTime() + COOLDOWN_MS > clock.now.getTime()
+    )
+      return null;
     const result = await db.query(
-      `UPDATE collaboration_scan_jobs SET state='running',started_at=clock_timestamp()
+      `UPDATE collaboration_scan_jobs SET state='running',started_at=$3
       WHERE project_id=$1 AND job_id=$2 AND state='queued' RETURNING started_at`,
-      [opts.project_id, opts.job_id],
+      [opts.project_id, opts.job_id, clock.now],
+    );
+    await db.query(
+      "UPDATE collaboration_scan_budget SET last_started_at=$2 WHERE project_id=$1",
+      [opts.project_id, clock.now],
     );
     return {
       job_id: job.job_id,
