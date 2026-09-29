@@ -7,15 +7,15 @@ Date: 2026-09-29. This is an initial gate report, not a completed scaling rollou
 Recent Scan store/worker checks do not establish completion of the full design.
 The seven implementation gates remain distinct:
 
-| Plan gate               | Evidence and remaining work                                                                                                                                                                                                                                                                        |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Baseline/contracts      | Isolated baseline, metrics and authority work exist. Full workload cost/freshness curves remain unproven.                                                                                                                                                                                          |
-| Filesystem proof/reuse  | The raw btrfs generation proof failed. No safe generation-equality shortcut is enabled; validated cold-scan avoidance remains unresolved.                                                                                                                                                          |
-| Vertical prototype      | Owner/home and Scan components have focused integration tests, but the complete source-change, active-view, sleep, offline-event, return sequence with all failure cases is not proven.                                                                                                            |
-| Demand/event decoupling | Demand scheduling and offline-event work exist behind prototype gates. Owner revision interests and shared per-home-bay delta fetching still need implementation/validation. The consumer cap currently counts grace rows as well as live consumers, unlike the plan's stated live-consumer limit. |
-| Bounded Scan service    | Internal admission, host dispatch, receipt retention and queued cleanup are tested. Public principal binding, reviewed agent scope, host/bay/global budgets, status throttling, complete watermarks and CLI/UI controls are not established.                                                       |
-| Recovery/lifecycle      | Rehome guards remain necessary. Full canonical rebuild, transfer/rollback, restore and retention/deletion coverage are not proven.                                                                                                                                                                 |
-| Scale/canary            | Query fixtures are not DAU traces. The 10k/100k workloads, burst/fanout matrix, 24-hour soak, six-month churn simulation, browser matrix and explicit enablement decision remain outstanding.                                                                                                      |
+| Plan gate               | Evidence and remaining work                                                                                                                                                                                                                                                              |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Baseline/contracts      | Isolated baseline, metrics and authority work exist. Full workload cost/freshness curves remain unproven.                                                                                                                                                                                |
+| Filesystem proof/reuse  | The raw btrfs generation proof failed. No safe generation-equality shortcut is enabled; validated cold-scan avoidance remains unresolved.                                                                                                                                                |
+| Vertical prototype      | Owner/home and Scan components have focused integration tests, but the complete source-change, active-view, sleep, offline-event, return sequence with all failure cases is not proven.                                                                                                  |
+| Demand/event decoupling | Demand scheduling and offline-event work exist behind prototype gates. Owner revision-interest stores have focused coverage, but delivery and shared per-home-bay delta fetching remain unfinished. Live demand is capped at 16 separately from a 256-record retained-grace churn bound. |
+| Bounded Scan service    | Internal admission, host dispatch, receipt retention and queued cleanup are tested. Public principal binding, reviewed agent scope, host/bay/global budgets, status throttling, complete watermarks and CLI/UI controls are not established.                                             |
+| Recovery/lifecycle      | Rehome guards remain necessary. Full canonical rebuild, transfer/rollback, restore and retention/deletion coverage are not proven.                                                                                                                                                       |
+| Scale/canary            | Query fixtures are not DAU traces. The 10k/100k workloads, burst/fanout matrix, 24-hour soak, six-month churn simulation, browser matrix and explicit enablement decision remain outstanding.                                                                                            |
 
 The next implementation frontier should address selective revision delivery and
 the complete vertical path, not treat further Scan cleanup tests as a substitute
@@ -132,12 +132,13 @@ tokens fence delayed releases of previous registrations. Inspection reports
 active/grace/cold scheduling interest, not whether content is caught up or
 authorized. The integrated scheduler must distinguish catching-up from warm.
 
-The prototype conservatively caps live **plus retained grace registrations** at
+The initial prototype conservatively capped live **plus retained grace registrations** at
 16 per account, bounding rapid acquire/release churn as well as live tabs. A
 client can reuse a consumer registration after release. This is stricter than
 the plan's live-consumer-only ceiling; reassess during UI integration rather
 than silently allowing unbounded grace rows. An expiry index supports bounded
-500-row cleanup without enumerating historical accounts.
+500-row cleanup without enumerating historical accounts. This initial combined
+cap is superseded by the separate live/retained bounds described below.
 
 Five real-PostgreSQL acceptance tests pass: idempotent acquisition/throttled
 renewal, release/expiry/stale-token behavior, concurrent admission bounds,
@@ -359,8 +360,8 @@ quota, renewal, expiry, grace, wrong-home, and banned-account cases.
 
 Next remains activation/catch-up scheduling and visible-view integration, then
 retiring universal enumeration/renewal. The prototype's 16-registration cap
-still includes grace rows; revisit that stricter policy against the planned
-16-live-consumer contract during aggregation work. No account sleep or scale
+included grace rows at this checkpoint; that mismatch is now addressed below.
+No account sleep or scale
 gate is passed by admission alone.
 
 ## Bounded Demand Activation
@@ -525,8 +526,8 @@ Lease calls retain the existing account/client binding. Effect transitions
 serialize acquisition, renewal, and release so a late acquire is released before
 a returning view reuses its consumer. A failed best-effort release falls back to
 server expiry. The same mounted consumer is reused across hide/show transitions;
-the existing store's stricter grace-inclusive consumer cap still needs revision
-and churn validation for repeated full component remounts.
+the then-existing grace-inclusive cap needed revision for repeated component
+remounts. Separate live/retained admission bounds are now covered below.
 
 Validation: server and frontend TypeScript builds, frontend lint, 50 focused
 frontend tests, 30 server API tests, and 12 real-PostgreSQL demand tests pass.
@@ -1159,3 +1160,24 @@ entirely acknowledged first page, continuation to pending homes, replay without
 ACK mutation, generation replacement discovered by a new sweep, expired hints
 and stale owner rejection. Durable home acceptance, transport dispatch,
 shared delta fetching, sweep scheduling and expiry cleanup remain unfinished.
+
+### Separate Live Demand And Grace Limits
+
+Demand admission now enforces sixteen live consumers, excluding released and
+expired registrations. Reacquiring an existing non-live ID must pass the same
+live-cap check; previously that path could bypass the combined row-count cap.
+Retries for a still-live lease remain idempotent at capacity.
+
+A separate 256-record retained-state ceiling bounds acquire/release churn.
+It does not evict or shorten existing five-minute grace scopes. At this larger
+ceiling, clients must reuse an existing consumer or wait for expiry; the error
+distinguishes retained-state pressure from the live-consumer cap. This is a
+starting churn policy, not a measured capacity claim or complete RPC rate limit.
+All admissions still serialize under the authoritative account-home fence.
+
+Server TypeScript build and sixteen authenticated PostgreSQL/fabric acceptance
+tests pass. New cases fill sixteen live slots alongside a released registration,
+reject old-ID reacquisition at the live cap, permit replacement after release,
+and verify bounded retained state with reusable IDs at 256 grace records. This
+addresses the combined live/grace cap mismatch; workload-scale churn and
+browser remount validation remain separate gates.

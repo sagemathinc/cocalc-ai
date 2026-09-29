@@ -220,6 +220,68 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
     ).rejects.toThrow(/scope/);
   });
 
+  test("grace does not consume live slots and old IDs cannot bypass the live cap", async () => {
+    const retired = await demand("acquire", {
+      consumer_id: randomUUID(),
+      scope: { kind: "all" },
+    });
+    await demand("release", retired);
+    const results = await Promise.allSettled(
+      Array.from({ length: 16 }, () =>
+        demand("acquire", {
+          consumer_id: randomUUID(),
+          scope: { kind: "all" },
+        }),
+      ),
+    );
+    expect(results.every((result) => result.status === "fulfilled")).toBe(true);
+    expect((await demand("inspect")).active_consumers).toBe(16);
+    await expect(
+      demand("acquire", {
+        consumer_id: retired.consumer_id,
+        scope: { kind: "all" },
+      }),
+    ).rejects.toThrow("live consumer capacity");
+    const live = results[0];
+    if (live.status !== "fulfilled") throw Error("expected live consumer");
+    await demand("release", live.value);
+    const replacement = await demand("acquire", {
+      consumer_id: retired.consumer_id,
+      scope: { kind: "all" },
+    });
+    expect(replacement.lease_id).not.toBe(retired.lease_id);
+    expect((await demand("inspect")).active_consumers).toBe(16);
+  });
+
+  test("retained grace has a separate churn bound without dropping scopes", async () => {
+    await env.sql(
+      "a",
+      `INSERT INTO collaboration_demand(account_id,consumer_id,lease_id,scope,expires_at,renew_after,grace_until,released)
+      SELECT $1,md5(n::text)::uuid,md5(('lease-'||n)::text)::uuid,'{"kind":"all"}'::jsonb,
+      clock_timestamp()-interval '1 second',clock_timestamp(),clock_timestamp()+interval '5 minutes',TRUE
+      FROM generate_series(1,256) AS n`,
+      [env.accounts[0]],
+    );
+    await expect(
+      demand("acquire", { consumer_id: randomUUID(), scope: { kind: "all" } }),
+    ).rejects.toThrow("retained consumer capacity");
+    expect((await demand("inspect")).state).toBe("grace");
+    const [row] = await env.sql(
+      "a",
+      "SELECT consumer_id FROM collaboration_demand ORDER BY consumer_id LIMIT 1",
+    );
+    await demand("acquire", {
+      consumer_id: row.consumer_id,
+      scope: { kind: "all" },
+    });
+    expect((await demand("inspect")).active_consumers).toBe(1);
+    const [count] = await env.sql(
+      "a",
+      "SELECT count(*)::integer AS n FROM collaboration_demand",
+    );
+    expect(count.n).toBe(256);
+  });
+
   test("wrong home and banned accounts cannot acquire demand", async () => {
     const opts = { consumer_id: randomUUID(), scope: { kind: "all" } };
     await env.sql("a", "UPDATE accounts SET banned=TRUE WHERE account_id=$1", [

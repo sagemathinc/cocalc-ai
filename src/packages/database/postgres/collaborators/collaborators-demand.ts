@@ -18,6 +18,8 @@ export const DEMAND_LEASE_MS = 120_000;
 export const DEMAND_RENEW_MS = 30_000;
 export const DEMAND_GRACE_MS = 300_000;
 export const DEMAND_CONSUMERS = 16;
+// Separate churn bound: grace records must not consume ordinary live slots.
+export const DEMAND_RETAINED_CONSUMERS = 256;
 
 export function demandSchedulingEnabled() {
   return (
@@ -207,10 +209,16 @@ export async function acquireCollaborationDemand(opts: {
       );
       return receipt(prior); // Retries neither renew nor consume another slot.
     }
-    // Bound grace state as well as live tabs, even under rapid acquire/release.
-    if (!prior && rows.length >= DEMAND_CONSUMERS)
+    const live = rows.filter(
+      (row) => !row.released && new Date(row.expires_at).getTime() > now,
+    ).length;
+    // Reacquiring an expired/released ID is a new live admission too.
+    if (live >= DEMAND_CONSUMERS)
+      throw Error("demand live consumer capacity reached");
+    // Preserve promised grace rather than evicting scopes under churn pressure.
+    if (!prior && rows.length >= DEMAND_RETAINED_CONSUMERS)
       throw Error(
-        "demand consumer capacity reached; reuse a consumer or wait for grace expiry",
+        "demand retained consumer capacity reached; reuse a consumer or wait for grace expiry",
       );
     const result = await db.query(
       `INSERT INTO collaboration_demand
