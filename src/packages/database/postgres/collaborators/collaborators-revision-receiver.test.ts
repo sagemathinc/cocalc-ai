@@ -83,6 +83,7 @@ describeDb("shared home revision receiver", () => {
     await arm(old);
     const next = { ...old, lease_id: randomUUID() };
     expect(await arm(next, old.lease_id)).toBe(true);
+    expect(await arm(next, next.lease_id)).toBe(true);
     expect(await arm({ ...old, lease_id: randomUUID() }, old.lease_id)).toBe(
       false,
     );

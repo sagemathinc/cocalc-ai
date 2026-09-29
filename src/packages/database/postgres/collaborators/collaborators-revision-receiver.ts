@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import type { PoolClient } from "@cocalc/database/pool";
+import getPool from "@cocalc/database/pool";
 import { boundedText, transaction, uuid } from "./collaborators-common";
 
 /** Explicit prototype installation. Remote projects need not exist locally. */
@@ -31,6 +32,20 @@ function validate(opts: ReceiverLease) {
   boundedText(opts.owner_bay_id, "receiver owner", 128);
 }
 
+/** Snapshot for the registration CAS, never a metadata/access lookup. */
+export async function readCollaborationRevisionReceiverLease(
+  project_id: string,
+  home_bay_id: string,
+): Promise<string | null> {
+  uuid(project_id, "receiver project");
+  boundedText(home_bay_id, "receiver home", 128);
+  const { rows } = await getPool().query(
+    "SELECT lease_id FROM collaboration_revision_receivers WHERE project_id=$1 AND home_bay_id=$2",
+    [project_id, home_bay_id],
+  );
+  return rows[0]?.lease_id ?? null;
+}
+
 /** Internal home worker only. Caller must verify current owner registration and
  * local demand, bound ttl_ms by both demand and owner lease remaining time,
  * deduct elapsed RPC time, and route to this home.
@@ -56,6 +71,15 @@ export async function armCollaborationRevisionReceiver(
     );
     const ttl = Math.min(120000, opts.ttl_ms - (performance.now() - started));
     if (ttl <= 0) throw Error("receiver demand expired");
+    if (opts.expected_lease_id === opts.lease_id) {
+      const existing = await db.query(
+        `SELECT 1 FROM collaboration_revision_receivers
+        WHERE project_id=$1 AND home_bay_id=$2 AND owner_bay_id=$3 AND lease_id=$4
+        AND expires_at>clock_timestamp()`,
+        [opts.project_id, opts.home_bay_id, opts.owner_bay_id, opts.lease_id],
+      );
+      if (existing.rows.length) return true;
+    }
     const { rows } =
       opts.expected_lease_id === null
         ? await db.query(

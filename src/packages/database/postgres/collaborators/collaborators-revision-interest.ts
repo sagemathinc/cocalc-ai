@@ -62,6 +62,7 @@ export async function registerCollaborationRevisionInterest(
       opts.account_id,
       authority,
     );
+    const sampled = performance.now();
     const now = (
       await db.query("SELECT clock_timestamp() AS now")
     ).rows[0].now.getTime();
@@ -114,6 +115,10 @@ export async function registerCollaborationRevisionInterest(
       lease_id: row.lease_id as string,
       expires_at: row.expires_at.getTime() as number,
       renew_after: row.renew_after.getTime() as number,
+      remaining_ms: Math.max(
+        0,
+        row.expires_at.getTime() - now - (performance.now() - sampled),
+      ),
       watermark: catalog
         ? {
             generation: catalog.generation as string,

@@ -36,7 +36,10 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
       scope: { kind: "projects", project_ids: [env.project] },
     });
     const first = await invoke();
-    expect(await invoke()).toEqual(first);
+    expect(await invoke()).toEqual({
+      ...first,
+      remaining_ms: expect.any(Number),
+    });
     expect(
       await env.sql(
         "owner",
@@ -105,6 +108,9 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
     expect(interest.expires_at).toBeGreaterThan(Date.now());
   }, 60000);
   test("revision dispatch durably wakes the registered home before acknowledging", async () => {
+    await expect(
+      env.worker("b").call("registerRevisionReceiver"),
+    ).rejects.toThrow("no home demand");
     await env.sql(
       "owner",
       "DELETE FROM collaboration_revision_interests WHERE project_id=$1",
@@ -135,16 +141,14 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
       [env.project],
     );
     expect(unacked.ack_generation).toBeNull();
-    expect(
-      await env
-        .worker("a")
-        .call("armRevisionReceiver", {
-          ...request,
-          owner_bay_id: env.bays[0],
-          expected_lease_id: null,
-          ttl_ms: 60000,
-        }),
-    ).toBe(true);
+    expect(await env.worker("b").call("registerRevisionReceiver")).toEqual({
+      armed: true,
+      lease_id: lease.lease_id,
+    });
+    expect(await env.worker("b").call("registerRevisionReceiver")).toEqual({
+      armed: true,
+      lease_id: lease.lease_id,
+    });
     await env.sql(
       "owner",
       "UPDATE collaboration_revision_interests SET delivery_until=clock_timestamp()-interval '1 second' WHERE project_id=$1",

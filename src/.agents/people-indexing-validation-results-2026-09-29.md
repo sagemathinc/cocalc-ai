@@ -1252,3 +1252,26 @@ without advancing owner ACK, then verifies that a retried dispatch leaves a
 durable dirty home record before owner settlement. A repeated dispatch has no
 pending claim. This does not establish shared delta application, process-crash
 recovery, rehome/restore behavior or scale readiness.
+
+### Routed Demand-To-Receiver Registration
+
+Added an internal home-routed registration operation. It resolves and registers
+with the current project owner, then rechecks account-home routing and relevant
+project demand before conditionally arming the shared local receiver. Receiver
+expiry is bounded by both remaining home demand and the owner's returned lease
+duration, with elapsed RPC time deducted. Owner registration now includes a
+remaining-duration field; absolute cross-bay clocks are not compared.
+
+The receiver snapshots its prior lease before the RPC and uses CAS on return.
+Conflicts report `armed:false` rather than overwriting another registration.
+Same-live-lease retries do not extend expiry or repeatedly mark catch-up dirty.
+Expiry and re-registration still require catch-up. Account-home and membership
+changes during the distributed operation remain subject to eventual bounded
+lease expiry and protected-read reauthorization, not a distributed transaction.
+
+Server build, ten store tests, 36 API/dispatch tests and seventeen authenticated
+fabric acceptance cases pass. The delivery test now uses this routed operation
+instead of manually supplying receiver TTL; it covers cold-demand rejection,
+same-lease retries and subsequent durable wakeup delivery. The explicit method
+is not yet scheduled automatically from demand activation. Shared delta fetch,
+automatic renewal/retry, cold cleanup and full lifecycle/scale gates remain open.

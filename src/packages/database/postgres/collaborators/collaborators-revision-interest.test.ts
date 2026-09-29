@@ -254,7 +254,7 @@ describeDb("owner project/home revision interests", () => {
     expect(await release(renewed.lease_id, "another-home")).toBe(false);
     expect(
       await registerCollaborationRevisionInterest(request, authority),
-    ).toEqual(renewed);
+    ).toEqual({ ...renewed, remaining_ms: expect.any(Number) });
     await expect(
       releaseCollaborationRevisionInterest(
         { ...request, lease_id: renewed.lease_id },
@@ -352,7 +352,7 @@ describeDb("owner project/home revision interests", () => {
         { ...request, account_id: peer },
         authority,
       ),
-    ).toEqual(first);
+    ).toEqual({ ...first, remaining_ms: expect.any(Number) });
     const other = await registerCollaborationRevisionInterest(
       { ...request, home_bay_id: "home-b" },
       authority,

@@ -843,10 +843,17 @@ async function command(name, args = {}) {
       process.env.COCALC_PEOPLE_DEMAND_PROTOTYPE = "1";
       return true;
     }
-    case "armRevisionReceiver":
-      return require("@cocalc/database/postgres/collaborators/collaborators-revision-receiver").armCollaborationRevisionReceiver(
-        args,
-      );
+    case "registerRevisionReceiver": {
+      const api =
+        require("@cocalc/conat/inter-bay/collaborators").createInterBayCollaboratorsClient(
+          { client: fabric, bay_id: config.bays[1] },
+        );
+      return api.registerRevisionReceiver({
+        project_id: config.project,
+        account_id: config.accounts[0],
+        route: { bay_id: config.bays[1] },
+      });
+    }
     case "dispatchRevisionHint":
       return require("@cocalc/server/collaborators/revision-dispatch").dispatchCollaborationRevisionHint(
         args,

@@ -458,6 +458,48 @@ export async function sourcePage(opts: {
 
 /** Trusted fabric only; reject stale destinations rather than forwarding loops. */
 export const collaboratorsControl: InterBayCollaboratorsApi = {
+  async registerRevisionReceiver(opts) {
+    if (process.env.COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE !== "1")
+      throw Error("revision interest prototype disabled");
+    await demandEnabled();
+    await checkHome(opts.account_id, opts.route);
+    const home_bay_id = getConfiguredBayId();
+    const {
+      readCollaborationRevisionReceiverLease,
+      armCollaborationRevisionReceiver,
+    } =
+      await import("@cocalc/database/postgres/collaborators/collaborators-revision-receiver");
+    const expected_lease_id = await readCollaborationRevisionReceiverLease(
+      opts.project_id,
+      home_bay_id,
+    );
+    const started = performance.now();
+    const registration = await owner(opts.project_id, async (api, route) => ({
+      receipt: await api.registerRevisionInterest({ ...opts, route }),
+      owner_bay_id: route.bay_id,
+    }));
+    await checkHome(opts.account_id, opts.route);
+    const demandStarted = performance.now();
+    const demand = await inspectCollaborationProjectDemand(
+      opts.account_id,
+      opts.project_id,
+    );
+    const ttl_ms = Math.min(
+      registration.receipt.remaining_ms - (performance.now() - started),
+      demand.remaining_ms - (performance.now() - demandStarted),
+    );
+    if (!Number.isFinite(ttl_ms) || ttl_ms <= 0)
+      throw Error("project has no home demand");
+    const armed = await armCollaborationRevisionReceiver({
+      project_id: opts.project_id,
+      home_bay_id,
+      owner_bay_id: registration.owner_bay_id,
+      lease_id: registration.receipt.lease_id,
+      expected_lease_id,
+      ttl_ms,
+    });
+    return { armed, lease_id: registration.receipt.lease_id };
+  },
   async receiveRevisionWakeup(opts) {
     if (process.env.COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE !== "1")
       throw Error("revision interest prototype disabled");
