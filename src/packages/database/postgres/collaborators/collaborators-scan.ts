@@ -465,15 +465,46 @@ export async function listCollaborationScanDispatchCandidates(
   }>
 > {
   return transaction(async (db) => {
+    const id = `scan-dispatch:${authority.owning_bay_id}`;
+    await db.query(
+      "INSERT INTO collaboration_maintenance(id,cursor) VALUES($1,'{}') ON CONFLICT DO NOTHING",
+      [id],
+    );
+    const cursor = (
+      await db.query(
+        "SELECT cursor FROM collaboration_maintenance WHERE id=$1 FOR UPDATE",
+        [id],
+      )
+    ).rows[0].cursor;
+    let page = (
+      await db.query(scanDispatchPageSql, [cursor.job_id ?? ZERO_SCAN_JOB])
+    ).rows;
+    if (!page.length && cursor.job_id)
+      page = (await db.query(scanDispatchPageSql, [ZERO_SCAN_JOB])).rows;
+    await db.query(
+      "UPDATE collaboration_maintenance SET cursor=$2::jsonb WHERE id=$1",
+      [
+        id,
+        JSON.stringify(
+          page.length ? { job_id: page[page.length - 1].job_id } : {},
+        ),
+      ],
+    );
     const { rows } = await db.query(scanDispatchCandidatesSql, [
       authority.owning_bay_id,
+      page.map((row) => row.job_id),
     ]);
     return rows;
   });
 }
 
-export const scanDispatchCandidatesSql = `SELECT j.project_id,j.job_id,r.account_id,r.request_id
-      FROM collaboration_scan_jobs j JOIN projects p USING(project_id)
+const ZERO_SCAN_JOB = "00000000-0000-0000-0000-000000000000";
+export const scanDispatchPageSql = `SELECT job_id FROM collaboration_scan_jobs
+  WHERE job_id>$1::uuid ORDER BY job_id LIMIT 20`;
+export const scanDispatchCandidatesSql = `WITH page AS MATERIALIZED (
+      SELECT * FROM collaboration_scan_jobs WHERE job_id=ANY($2::uuid[])
+      ) SELECT j.project_id,j.job_id,r.account_id,r.request_id
+      FROM page j JOIN projects p USING(project_id)
       JOIN collaboration_scan_budget b USING(project_id)
       JOIN LATERAL (
         SELECT account_id,request_id FROM collaboration_scan_receipts r
@@ -488,7 +519,7 @@ export const scanDispatchCandidatesSql = `SELECT j.project_id,j.job_id,r.account
         AND (j.state='running' AND j.host_id=p.host_id OR j.state='queued'
           AND (b.last_started_at IS NULL OR b.last_started_at<=statement_timestamp()-interval '5 minutes')
           AND NOT EXISTS(SELECT 1 FROM collaboration_scan_jobs running
-            WHERE running.project_id=j.project_id AND running.state='running'))
+            WHERE running.project_id=j.project_id AND running.state='running' OFFSET 0))
       ORDER BY COALESCE(j.last_dispatch_at,j.created_at),j.job_id LIMIT 20`;
 
 export async function releaseCollaborationScanDispatch(

@@ -1,4 +1,7 @@
-import { scanDispatchCandidatesSql } from "@cocalc/database/postgres/collaborators/collaborators-scan";
+import {
+  scanDispatchCandidatesSql,
+  scanDispatchPageSql,
+} from "@cocalc/database/postgres/collaborators/collaborators-scan";
 import { MultibayAcceptance } from "./acceptance/harness";
 const acceptance =
   process.env.COCALC_COLLABORATORS_ACCEPTANCE === "1"
@@ -36,15 +39,23 @@ acceptance("scan blocked backlog query cost", () => {
       "collaboration_scan_receipts",
     ])
       await env.sql("owner", `ANALYZE ${table}`);
+    const page = await env.sql("owner", scanDispatchPageSql, [
+      "00000000-0000-0000-0000-000000000000",
+    ]);
+    expect(page).toHaveLength(20);
     const rows = await env.sql(
       "owner",
       `EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) ${scanDispatchCandidatesSql}`,
-      [env.bays[0]],
+      [env.bays[0], page.map((row) => row.job_id)],
     );
     const explain = rows[0]["QUERY PLAN"][0];
     process.stdout.write(
       JSON.stringify({ scenario: "10000-no-live-receipt", explain }) + "\n",
     );
     expect(explain.Plan["Actual Rows"]).toBe(0);
+    expect(
+      (explain.Plan["Shared Hit Blocks"] ?? 0) +
+        (explain.Plan["Shared Read Blocks"] ?? 0),
+    ).toBeLessThan(2000);
   }, 120000);
 });

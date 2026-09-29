@@ -802,3 +802,23 @@ The server build and isolated acceptance case pass; the test currently asserts
 the empty result and emits the full measured plan, not a performance ceiling.
 The remaining correction must add a regression ceiling after redesign and
 exercise both blocked backlogs and eligible jobs beyond the first page.
+
+### Bounded Scan Queue Examination
+
+Replaced whole-queue eligibility search with a durable per-owner cursor in the
+existing maintenance table. Each transaction selects 20 job IDs by an indexed
+keyset, advances regardless of eligibility, and evaluates only that materialized
+page. An empty tail wraps once. Running-job exclusion remains a correlated
+per-project lookup rather than a global hashed running-job scan. Within-page
+ordering still prefers older attempts; global traversal is now round-robin by
+job ID, not a global oldest-first sort.
+
+On the same isolated PostgreSQL 10,000-blocked-job fixture, eligibility work
+fell to 20 jobs, 119 shared-buffer hits and 0.315 ms (baseline 39,996 hits and
+39.786 ms). The acceptance test now imposes a 2,000-buffer ceiling on eligibility
+evaluation. This measurement excludes cursor transaction/page-query overhead
+and is not a DAU capacity result. Eighteen PGlite store tests, three worker/store
+integration tests, the PostgreSQL case, and the server build pass. New coverage
+proves the cursor reaches an eligible job beyond a blocked first page and wraps.
+Large receipt populations and total time to revisit a heavily blocked queue
+still require measurement and lifecycle cleanup; automatic scheduling stays off.

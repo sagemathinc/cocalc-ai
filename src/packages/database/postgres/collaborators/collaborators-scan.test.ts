@@ -32,6 +32,14 @@ describeDb("owner scan admission prototype", () => {
   afterAll(async () => {
     await getPool().end();
   });
+  beforeEach(async () => {
+    await getPool().query(
+      "TRUNCATE collaboration_scan_jobs,collaboration_scan_receipts,collaboration_scan_budget",
+    );
+    await getPool().query(
+      "DELETE FROM collaboration_maintenance WHERE id LIKE 'scan-dispatch:%'",
+    );
+  });
   async function fixture() {
     const request = {
       project_id: randomUUID(),
@@ -59,6 +67,43 @@ describeDb("owner scan admission prototype", () => {
     await expect(
       admitCollaborationScan({ ...request, mode: "check" }, authority),
     ).rejects.toThrow("different arguments");
+  });
+  test("cursor advances past a blocked page to eligible work and wraps", async () => {
+    await getPool().query(
+      "TRUNCATE collaboration_scan_jobs,collaboration_scan_receipts,collaboration_scan_budget",
+    );
+    await getPool().query("DELETE FROM collaboration_maintenance WHERE id=$1", [
+      `scan-dispatch:${authority.owning_bay_id}`,
+    ]);
+    const requests: Array<
+      Awaited<ReturnType<typeof fixture>> & { job_id: string }
+    > = [];
+    for (let n = 0; n < 25; n++) {
+      const request = await fixture();
+      const receipt = await admitCollaborationScan(request, authority);
+      if (!("job_id" in receipt)) throw Error("expected admission");
+      requests.push({ ...request, job_id: receipt.job_id });
+    }
+    requests.sort((a, b) => a.job_id.localeCompare(b.job_id));
+    const eligible = requests[24];
+    await getPool().query(
+      "UPDATE projects SET users='{}'::jsonb WHERE project_id=ANY($1::uuid[])",
+      [requests.slice(0, 24).map((r) => r.project_id)],
+    );
+    expect(await listCollaborationScanDispatchCandidates(authority)).toEqual(
+      [],
+    );
+    expect(
+      await listCollaborationScanDispatchCandidates(authority),
+    ).toContainEqual({
+      project_id: eligible.project_id,
+      job_id: eligible.job_id,
+      account_id: eligible.account_id,
+      request_id: eligible.request_id,
+    });
+    expect(await listCollaborationScanDispatchCandidates(authority)).toEqual(
+      [],
+    );
   });
   test("queue selection respects owner, receipts, membership, and recent dispatch", async () => {
     const request = await fixture();
