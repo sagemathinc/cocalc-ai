@@ -5,6 +5,7 @@
 import getLogger from "@cocalc/backend/logger";
 import { createSharedProjectionFetcher } from "./projection-batch";
 import { runRevisionHintRepair } from "./revision-repair";
+import { runRevisionWakeupScheduling } from "./revision-wakeup";
 import { registerProjectionRevisionReceivers } from "./revision-registration";
 import {
   runRevisionReceiverCleanup,
@@ -128,6 +129,11 @@ export async function runCollaboratorsMaintenance() {
     const bay_id = getConfiguredBayId();
     await runRevisionReceiverCleanup();
     await runRevisionInterestCleanup();
+    try {
+      await runRevisionWakeupScheduling();
+    } catch {
+      logger.warn("revision wakeup scheduling failed; durable work retained");
+    }
     if (process.env.COCALC_PEOPLE_DEMAND_PROTOTYPE === "1") {
       const activation = await runCollaborationDemandActivation(bay_id);
       indexingWork.inc(

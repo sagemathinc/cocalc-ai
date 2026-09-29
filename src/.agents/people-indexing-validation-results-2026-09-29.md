@@ -1643,3 +1643,25 @@ lease replacement and unchanged projection-completion state. The page worker
 must still be integrated, must retain pages with busy/failed accounts, and must
 not claim view freshness from this scheduling state. Real concurrency, contention
 budgets and full catch-up/scale validation remain open.
+
+### Automatic Wakeup Page Scheduling
+
+Gated maintenance now traverses receiver rows and handles at most one project
+demand page per pass, containing at most twenty eligible accounts. Per-project
+continuation remains durable; the process-level project cursor supplies bounded
+traversal across projects. Completed scheduling states are skipped. The worker
+stops starting account operations after five seconds, but an in-flight database
+operation may outlast that budget.
+
+Each account is rechecked through the home-fenced scheduling operation. Busy or
+failed accounts retain the entire page for retry; other accounts on that page
+may still be scheduled. Only a fully handled page attempts the CAS continuation
+advance. Missing/newer receiver state cannot be cleared by that stale update.
+The worker does not update `applied_seq` and does not assert view freshness.
+Existing projection polling remains in place.
+
+Server typecheck and thirty-eight worker/API tests pass. Focused tests cover
+schedule-before-advance ordering, busy/failure retention, empty filtered-page
+continuation and completed/disabled suppression. Authenticated wakeup-to-applied
+projection validation, restart/concurrency behavior, cold-index GC and the full
+source-to-sleep-to-return and capacity gates remain open.
