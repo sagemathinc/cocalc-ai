@@ -84,14 +84,23 @@ the same `--billing-worker` command with a lifetime exclusive lock and set
 3. Drain billing via the existing operator API and wait for active work to finish.
    Roll hub workers to the new release. The hub-only/full upgrade paths restart
    the singleton after rolling workers; static-only updates do not restart it.
-4. The upgrade now runs `bay-billing-health --wait` after restarting billing.
+4. The upgrade captures `bay-billing-health --generation` before restarting
+   billing, then runs `bay-billing-health --wait --after-generation N` using that
+   captured generation. A snapshot query failure aborts the deployment; it does
+   not substitute a guessed generation. An unready authority can still supply
+   its generation, allowing a deliberately drained service to be upgraded.
    On an enabled seed/standalone bay it requires an active systemd unit and the
-   existing database-backed authority health to report ready. It waits up to
+   database-backed authority health to report ready on a strictly newer
+   generation. A predecessor's still-fresh heartbeat cannot pass this gate.
+   Launcher and health check use the same JavaScript trim/lowercase enablement
+   semantics as the hub, including uppercase and padded legacy systemd values.
+   It waits up to
    `COCALC_BAY_BILLING_START_TIMEOUT_S` (default 90 seconds); failures exit the
    deployment without restarting hubs or automatically resuming billing.
    If deliberately drained, resume via the operator API once the new hubs and
    executor are installed, during that wait. If the wait expires, resume and
-   rerun `bay-billing-health --wait` before declaring the release healthy.
+   rerun `bay-billing-health --wait --after-generation N` with the same captured
+   generation before declaring the release healthy.
    This gate is separate from general bay/peer liveness so a billing failure
    does not take unrelated services out of routing.
    Verify a non-mutating billing command,

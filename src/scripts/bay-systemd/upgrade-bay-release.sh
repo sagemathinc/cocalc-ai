@@ -679,8 +679,9 @@ roll_worker() {
 for worker_id in $(seq 1 "$COCALC_BAY_WORKER_COUNT"); do
   roll_worker "$worker_id"
 done
+billing_generation="$(/opt/cocalc/bay/current/bin/bay-billing-health --generation)"
 systemctl restart cocalc-bay-billing.service
-/opt/cocalc/bay/current/bin/bay-billing-health --wait
+/opt/cocalc/bay/current/bin/bay-billing-health --wait --after-generation "$billing_generation"
 /opt/cocalc/bay/current/bin/bay-status
 /opt/cocalc/bay/current/bin/bay-health
 EOF
@@ -733,8 +734,9 @@ roll_worker() {
 for worker_id in $(seq 1 "$COCALC_BAY_WORKER_COUNT"); do
   roll_worker "$worker_id"
 done
+billing_generation="$(/opt/cocalc/bay/current/bin/bay-billing-health --generation)"
 systemctl restart cocalc-bay-billing.service
-/opt/cocalc/bay/current/bin/bay-billing-health --wait
+/opt/cocalc/bay/current/bin/bay-billing-health --wait --after-generation "$billing_generation"
 /opt/cocalc/bay/current/bin/bay-status
 /opt/cocalc/bay/current/bin/bay-health
 EOF
