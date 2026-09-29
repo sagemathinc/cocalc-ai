@@ -15,11 +15,11 @@ const MAX_TUNNELS_PER_SESSION = 32;
 const TUNNEL_IDLE_TIMEOUT_MS = 35 * 60_000;
 // Raw connections across all sessions, counted before authentication.
 const MAX_CONNECTIONS = 256;
-// A client must finish its CONNECT request, and later its TLS ClientHello,
-// within these bounds.
-const PREAUTH_TIMEOUT_MS = 10_000;
+// Absolute deadline from accept until a verified tunnel: the CONNECT request,
+// the upstream connection and the client's TLS ClientHello. Trickling bytes
+// does not extend it.
+const SETUP_TIMEOUT_MS = 10_000;
 const MAX_HEADER_BYTES = 8 * 1024;
-const CLIENT_HELLO_TIMEOUT_MS = 10_000;
 const MAX_CLIENT_HELLO_BYTES = 64 * 1024;
 
 // Keep this deliberately narrow. This proxy exists only so Codex authentication
@@ -102,8 +102,7 @@ export function isAllowedCodexEgressTarget(rawTarget: string): boolean {
 
 export interface RestrictedCodexEgressProxyOptions {
   maxConnections?: number;
-  preauthTimeoutMs?: number;
-  clientHelloTimeoutMs?: number;
+  setupTimeoutMs?: number;
   // Tests substitute a local upstream.
   connectUpstream?: (port: number, hostname: string) => Socket;
 }
@@ -114,7 +113,11 @@ export class RestrictedCodexEgressProxy {
   ) {}
 
   private readonly sessions = new Map<string, Session>();
-  private readonly connections = new Set<Socket>();
+  // Raw connections, each with its setup deadline until its tunnel is verified.
+  private readonly connections = new Map<
+    Socket,
+    ReturnType<typeof setTimeout> | undefined
+  >();
   private server?: ReturnType<typeof createServer>;
   private port?: number;
   private listening?: Promise<number>;
@@ -204,16 +207,41 @@ export class RestrictedCodexEgressProxy {
       socket.destroy();
       return;
     }
-    this.connections.add(socket);
-    socket.once("close", () => this.connections.delete(socket));
-    // Replaced by the tunnel idle timeout once a tunnel is established.
-    socket.setTimeout(this.options.preauthTimeoutMs ?? PREAUTH_TIMEOUT_MS, () =>
-      closeSocket(socket),
+    this.connections.set(
+      socket,
+      setTimeout(
+        () => closeSocket(socket),
+        this.options.setupTimeoutMs ?? SETUP_TIMEOUT_MS,
+      ),
     );
+    socket.once("close", () => {
+      clearTimeout(this.connections.get(socket));
+      this.connections.delete(socket);
+    });
+  }
+
+  /** A verified tunnel trades its setup deadline for an idle timeout. */
+  private tunnelEstablished(socket: Socket): void {
+    clearTimeout(this.connections.get(socket));
+    if (this.connections.has(socket)) this.connections.set(socket, undefined);
+    socket.setTimeout(TUNNEL_IDLE_TIMEOUT_MS, () => closeSocket(socket));
+  }
+
+  /** For tests: raw connections and pending setup deadlines. */
+  stateForTesting(): { connections: number; pendingDeadlines: number } {
+    return {
+      connections: this.connections.size,
+      pendingDeadlines: [...this.connections.values()].filter(
+        (timer) => timer != null,
+      ).length,
+    };
   }
 
   async shutdown(): Promise<void> {
-    for (const socket of this.connections) closeSocket(socket);
+    for (const [socket, timer] of this.connections) {
+      clearTimeout(timer);
+      closeSocket(socket);
+    }
     this.connections.clear();
     for (const session of this.sessions.values()) {
       session.closed = true;
@@ -292,7 +320,7 @@ export class RestrictedCodexEgressProxy {
           closeSocket(client);
           return;
         }
-        client.setTimeout(TUNNEL_IDLE_TIMEOUT_MS);
+        this.tunnelEstablished(client);
         upstream.write(hello);
         client.pipe(upstream);
         upstream.pipe(client);
@@ -300,6 +328,11 @@ export class RestrictedCodexEgressProxy {
     });
   }
 
+  /**
+   * Read the client's ClientHello; call onVerified with the buffered bytes
+   * only if it names exactly `hostname`. The connection's setup deadline
+   * bounds the wait; a closed client cancels it.
+   */
   private awaitClientHello(
     client: Socket,
     head: Buffer,
@@ -311,14 +344,18 @@ export class RestrictedCodexEgressProxy {
     const finish = (verified: boolean, reason?: string) => {
       if (finished) return;
       finished = true;
-      clearTimeout(timer);
       client.off("data", onData);
+      client.off("end", onClose);
+      client.off("close", onClose);
       if (verified) {
         client.pause();
         onVerified(received);
         return;
       }
-      logger.debug("restricted egress tunnel rejected", { hostname, reason });
+      received = Buffer.alloc(0);
+      if (reason) {
+        logger.debug("restricted egress tunnel rejected", { hostname, reason });
+      }
       closeSocket(client);
     };
     const check = () => {
@@ -336,11 +373,11 @@ export class RestrictedCodexEgressProxy {
       received = Buffer.concat([received, chunk]);
       check();
     };
-    const timer = setTimeout(
-      () => finish(false, "ClientHello timeout"),
-      this.options.clientHelloTimeoutMs ?? CLIENT_HELLO_TIMEOUT_MS,
-    );
+    // HTTP server sockets are half-open: a client FIN ends the wait too.
+    const onClose = () => finish(false);
     client.on("data", onData);
+    client.once("end", onClose);
+    client.once("close", onClose);
     check();
   }
 }

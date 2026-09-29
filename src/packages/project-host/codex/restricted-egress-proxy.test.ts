@@ -143,6 +143,7 @@ async function localProxy(options = {}) {
   const parsed = new URL(session.proxyUrl);
   return {
     received,
+    proxy,
     port: Number(parsed.port),
     authorization: `Proxy-Authorization: Basic ${Buffer.from(
       `${decodeURIComponent(parsed.username)}:${decodeURIComponent(parsed.password)}`,
@@ -192,7 +193,7 @@ async function tunnel(
 
 describe("restricted egress tunnels verify the TLS destination", () => {
   it("forwards nothing when the ClientHello names a different host", async () => {
-    const proxy = await localProxy({ clientHelloTimeoutMs: 2000 });
+    const proxy = await localProxy({ setupTimeoutMs: 2000 });
     try {
       const hello = await captureClientHello("example.com");
       await expect(tunnel(proxy, "chatgpt.com:443", hello)).resolves.toEqual({
@@ -206,7 +207,7 @@ describe("restricted egress tunnels verify the TLS destination", () => {
   });
 
   it("forwards non-TLS data never", async () => {
-    const proxy = await localProxy({ clientHelloTimeoutMs: 2000 });
+    const proxy = await localProxy({ setupTimeoutMs: 2000 });
     try {
       await expect(
         tunnel(proxy, "chatgpt.com:443", Buffer.from("GET / HTTP/1.1\r\n\r\n")),
@@ -231,7 +232,7 @@ describe("restricted egress tunnels verify the TLS destination", () => {
 
 describe("restricted egress connections are bounded before authentication", () => {
   it("closes a connection that never completes its CONNECT request", async () => {
-    const proxy = await localProxy({ preauthTimeoutMs: 200 });
+    const proxy = await localProxy({ setupTimeoutMs: 200 });
     try {
       const socket = connect(proxy.port, "127.0.0.1");
       socket.on("error", () => {});
@@ -266,5 +267,82 @@ describe("restricted egress connections are bounded before authentication", () =
       for (const socket of sockets) socket.destroy();
       await proxy.close();
     }
+  });
+});
+
+describe("setup is bounded by an absolute deadline", () => {
+  it("closes a client that trickles its CONNECT request", async () => {
+    const proxy = await localProxy({ setupTimeoutMs: 200 });
+    try {
+      const socket = connect(proxy.port, "127.0.0.1");
+      socket.on("error", () => {});
+      const request = Buffer.from(
+        "CONNECT chatgpt.com:443 HTTP/1.1\r\nHost: x",
+      );
+      let sent = 0;
+      const trickle = setInterval(() => {
+        if (!socket.destroyed && sent < request.length)
+          socket.write(request.subarray(sent, ++sent));
+      }, 50);
+      const started = Date.now();
+      await new Promise((resolve) => socket.once("close", resolve));
+      clearInterval(trickle);
+      expect(Date.now() - started).toBeLessThan(1000);
+      expect(sent).toBeLessThan(request.length);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it("releases a client that disconnects before its ClientHello", async () => {
+    const proxy = await localProxy({ setupTimeoutMs: 60_000 });
+    try {
+      for (let i = 0; i < 5; i++) {
+        const socket = connect(proxy.port, "127.0.0.1");
+        socket.on("error", () => {});
+        await new Promise<void>((resolve) => {
+          socket.on("data", (chunk) => {
+            if (chunk.toString("latin1").startsWith("HTTP/1.1 200")) {
+              socket.destroy();
+              resolve();
+            }
+          });
+          socket.once("connect", () =>
+            socket.write(
+              `CONNECT chatgpt.com:443 HTTP/1.1\r\nHost: chatgpt.com:443\r\n${proxy.authorization}\r\n`,
+            ),
+          );
+        });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(proxy.proxy.stateForTesting()).toEqual({
+        connections: 0,
+        pendingDeadlines: 0,
+      });
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it("leaves nothing pending after shutdown during a ClientHello wait", async () => {
+    const proxy = await localProxy({ setupTimeoutMs: 60_000 });
+    const socket = connect(proxy.port, "127.0.0.1");
+    socket.on("error", () => {});
+    await new Promise<void>((resolve) => {
+      socket.on("data", (chunk) => {
+        if (chunk.toString("latin1").startsWith("HTTP/1.1 200")) resolve();
+      });
+      socket.once("connect", () =>
+        socket.write(
+          `CONNECT chatgpt.com:443 HTTP/1.1\r\nHost: chatgpt.com:443\r\n${proxy.authorization}\r\n`,
+        ),
+      );
+    });
+    await proxy.close();
+    expect(proxy.proxy.stateForTesting()).toEqual({
+      connections: 0,
+      pendingDeadlines: 0,
+    });
+    await new Promise((resolve) => socket.once("close", resolve));
   });
 });

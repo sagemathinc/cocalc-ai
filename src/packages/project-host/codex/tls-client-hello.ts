@@ -104,6 +104,8 @@ export function readClientHelloServerName(data: Buffer): ClientHelloResult {
     if (reader.remaining === 0)
       return { state: "invalid", reason: "ClientHello has no extensions" };
     const extensions = new Reader(reader.take(reader.u16()));
+    if (reader.remaining !== 0)
+      return { state: "invalid", reason: "trailing bytes after extensions" };
     let serverName: string | undefined;
     while (extensions.remaining > 0) {
       const type = extensions.u16();
@@ -112,11 +114,18 @@ export function readClientHelloServerName(data: Buffer): ClientHelloResult {
       if (serverName != null)
         return { state: "invalid", reason: "duplicate server_name extension" };
       const list = new Reader(body.take(body.u16()));
+      if (body.remaining !== 0)
+        return { state: "invalid", reason: "trailing bytes after server_name" };
       const names: string[] = [];
       while (list.remaining > 0) {
         const nameType = list.u8();
         const name = list.take(list.u16());
-        if (nameType === HOST_NAME) names.push(name.toString("ascii"));
+        if (nameType !== HOST_NAME) continue;
+        // Compare exact bytes: "ascii" decoding would mask high bits and
+        // alias e.g. 0xe3 "hatgpt.com" to "chatgpt.com".
+        if (name.some((byte) => byte > 0x7f))
+          return { state: "invalid", reason: "non-ASCII server name" };
+        names.push(name.toString("latin1"));
       }
       if (names.length !== 1)
         return { state: "invalid", reason: "expected exactly one host name" };

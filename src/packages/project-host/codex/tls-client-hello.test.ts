@@ -63,6 +63,15 @@ test("waits for a ClientHello split across reads and records", async () => {
   });
 });
 
+/** Offset of the ClientHello extensions length in a single-record hello. */
+function extensionsLengthOffset(hello: Buffer): number {
+  let offset = 5 + 4 + 2 + 32;
+  offset += 1 + hello[offset];
+  offset += 2 + hello.readUInt16BE(offset);
+  offset += 1 + hello[offset];
+  return offset;
+}
+
 test("fails closed without a usable server name", async () => {
   const noSni = await captureClientHello();
   expect(readClientHelloServerName(noSni).state).toBe("invalid");
@@ -70,13 +79,35 @@ test("fails closed without a usable server name", async () => {
     readClientHelloServerName(Buffer.from("GET / HTTP/1.1\r\n\r\n")).state,
   ).toBe("invalid");
   const hello = await captureClientHello("chatgpt.com");
-  const corrupt = Buffer.from(hello);
-  // Claim a longer extensions block than the message contains.
-  corrupt.writeUInt16BE(0xffff, corrupt.length - 2);
-  expect(["invalid", "complete"]).toContain(
-    readClientHelloServerName(corrupt).state,
-  );
   const wrongHandshake = Buffer.from(hello);
   wrongHandshake[5] = 0x02; // ServerHello
   expect(readClientHelloServerName(wrongHandshake).state).toBe("invalid");
+});
+
+test("an extensions length beyond the message is invalid", async () => {
+  const hello = await captureClientHello("chatgpt.com");
+  const corrupt = Buffer.from(hello);
+  const offset = extensionsLengthOffset(corrupt);
+  corrupt.writeUInt16BE(corrupt.readUInt16BE(offset) + 1, offset);
+  expect(readClientHelloServerName(corrupt).state).toBe("invalid");
+});
+
+test("trailing bytes after the extensions are invalid", async () => {
+  const hello = await captureClientHello("chatgpt.com");
+  // One extra byte inside the handshake and record, after the extensions.
+  const extended = Buffer.concat([hello, Buffer.from([0])]);
+  extended.writeUInt16BE(extended.readUInt16BE(3) + 1, 3);
+  extended.writeUIntBE(extended.readUIntBE(6, 3) + 1, 6, 3);
+  expect(readClientHelloServerName(extended).state).toBe("invalid");
+});
+
+test("a server name byte above 0x7f never aliases an ASCII name", async () => {
+  const hello = await captureClientHello("chatgpt.com");
+  const at = hello.indexOf("chatgpt.com");
+  expect(at).toBeGreaterThan(0);
+  const aliased = Buffer.from(hello);
+  aliased[at] = 0xe3; // "c" | 0x80
+  expect(readClientHelloServerName(aliased)).toMatchObject({
+    state: "invalid",
+  });
 });
