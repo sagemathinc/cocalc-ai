@@ -304,16 +304,16 @@ const surfaces = [
   {
     label: "notifications",
     chunks: [...initial, ...notifications],
-    // Resolver single-flight and end-to-end request deadlines add about 1.5 KiB
-    // to this session-backed route (499.9 -> 501.4 KiB Brotli in PR #730).
-    max: 503 * KiB,
+    // The released connector/runtime integration measures 504.3 KiB Brotli.
+    // Keep a narrow margin instead of failing every unrelated PR on that base.
+    max: 506 * KiB,
   },
   {
     label: "Essential Docs",
     chunks: [...initial, ...docs],
-    // The course-sponsored compute and exam scratchpad guides add substantial
-    // operational instructions to the non-admin documentation bundle.
-    max: 310 * KiB,
+    // Connector, Claude, and exam guides expand the non-admin documentation;
+    // the released baseline is 320.6 KiB Brotli before the exam UI updates.
+    max: 325 * KiB,
   },
   {
     label: "minimal project settings",
