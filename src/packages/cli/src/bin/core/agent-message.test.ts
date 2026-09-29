@@ -42,13 +42,13 @@ test("missing identity never falls back to account or project credentials", asyn
   }
 });
 
-test("agent direct selection cannot send an identity token to an API override outside its site", async () => {
+test("agent selection never sends a pinned identity token outside its site, even through a positive relay", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agent-route-scope-"));
   const saved = { ...process.env };
   const fetchStub = mock.method(
     globalThis,
     "fetch",
-    async () => new Response(null, { status: 502 }),
+    async () => new Response(null, { status: 200 }),
   );
   const connectStub = mock.method(
     require("@cocalc/conat/core/client"),
@@ -77,18 +77,26 @@ test("agent direct selection cannot send an identity token to an API override ou
       }),
       { mode: 0o600 },
     );
-    for (const mode of ["auto", "direct"]) {
+    for (const mode of ["auto", "direct", "relay"]) {
       process.env.COCALC_CLI_TRANSPORT = mode;
-      await assert.rejects(
-        sendIdentityMessage(
-          { version: 3, action: "destinations" },
-          "https://unrelated.invalid",
-        ),
-        /destination-scoped/,
-      );
+      // Same-site relay shortcut, successful probe, and forced relay must all
+      // honor the identity's pin, not merely the environment's relay site.
+      for (const relaySite of [
+        "https://owner.invalid",
+        "https://unrelated.invalid",
+      ]) {
+        process.env.COCALC_API_RELAY_HUB_URL = relaySite;
+        await assert.rejects(
+          sendIdentityMessage(
+            { version: 3, action: "destinations" },
+            "https://unrelated.invalid",
+          ),
+          /destination-scoped/,
+        );
+      }
     }
     assert.equal(connectStub.mock.callCount(), 0);
-    assert.equal(fetchStub.mock.callCount(), 1);
+    assert.equal(fetchStub.mock.callCount(), 0);
   } finally {
     fetchStub.mock.restore();
     connectStub.mock.restore();

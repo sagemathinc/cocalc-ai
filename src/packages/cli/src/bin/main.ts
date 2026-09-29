@@ -68,6 +68,11 @@ import {
 } from "../core/auth-config";
 import { resolveAgentTokenFromEnv } from "../core/agent-token";
 import {
+  defaultApiBaseUrl,
+  loadLiteConnectionInfo,
+} from "../core/default-api-url";
+import type { LiteConnectionInfo } from "../core/default-api-url";
+import {
   buildCookieHeader,
   cookieNameFor,
   normalizeSecretValue,
@@ -507,24 +512,6 @@ function daemonContextKey(globals: GlobalOptions): string {
     bearer: globals.bearer ?? null,
     hub_password: globals.hubPassword ?? null,
   });
-}
-
-function defaultApiBaseUrl(): string {
-  const fromEnv =
-    process.env.COCALC_API_URL ??
-    process.env.BASE_URL ??
-    (process.env.COCALC_API_RELAY === "1"
-      ? process.env.COCALC_API_RELAY_HUB_URL
-      : undefined);
-  if (fromEnv?.trim()) {
-    return normalizeUrl(fromEnv);
-  }
-  const info = loadLiteConnectionInfo();
-  if (info?.url?.trim()) {
-    return normalizeUrl(info.url);
-  }
-  const raw = `http://127.0.0.1:${process.env.HUB_PORT ?? process.env.PORT ?? "9100"}`;
-  return normalizeUrl(raw);
 }
 
 function defaultAccountApiBaseUrl(): string {
@@ -1114,48 +1101,12 @@ main().finally(() => process.exit(0));
   return;
 }
 
-type LiteConnectionInfo = {
-  url?: string;
-  protocol?: string;
-  host?: string;
-  port?: number;
-  agent_token?: string;
-  account_id?: string;
-};
-
 const LOCAL_DEV_SIGN_IN_COOKIE_MAX_AGE_MS = 12 * 3600 * 1000;
 
 function isLoopbackHostName(hostname: string): boolean {
   const host = `${hostname ?? ""}`.trim().toLowerCase();
   if (!host) return false;
   return host === "localhost" || host === "::1" || host.startsWith("127.");
-}
-
-function liteConnectionInfoPath(): string {
-  const explicit =
-    process.env.COCALC_LITE_CONNECTION_INFO ??
-    process.env.COCALC_WRITE_CONNECTION_INFO;
-  if (explicit?.trim()) return explicit.trim();
-  return join(
-    process.env.HOME?.trim() || process.cwd(),
-    ".local",
-    "share",
-    "cocalc-lite",
-    "connection-info.json",
-  );
-}
-
-function loadLiteConnectionInfo(): LiteConnectionInfo | undefined {
-  const path = liteConnectionInfoPath();
-  if (!existsSync(path)) return undefined;
-  try {
-    const raw = readFileSync(path, "utf8");
-    const parsed = JSON.parse(raw) as LiteConnectionInfo;
-    if (!parsed || typeof parsed !== "object") return undefined;
-    return parsed;
-  } catch {
-    return undefined;
-  }
 }
 
 function matchesLiteConnection({

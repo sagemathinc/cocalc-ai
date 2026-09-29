@@ -7,6 +7,7 @@ import {
 } from "@cocalc/conat/project-host/api-relay";
 import { resolveProjectScopedAuth } from "./auth-cookies";
 import { normalizeUrl } from "./utils";
+import { defaultApiBaseUrl } from "./default-api-url";
 
 export function apiTransportMode(
   env = process.env,
@@ -33,19 +34,22 @@ export async function selectProjectApiRelayTransport(
   const env = options.env ?? process.env;
   const mode = apiTransportMode(env);
   const hub = normalizeApiRelayHubUrl(options.apiBaseUrl);
-  const assertDirectScope = () => {
+  const assertCredentialScope = () => {
     const scope =
       options.credentialSite ??
       env.COCALC_API_RELAY_HUB_URL ??
-      env.COCALC_API_URL;
+      defaultApiBaseUrl(env);
     if (!scope || normalizeApiRelayHubUrl(scope) !== hub) {
       throw Error(
-        "direct transport requires destination-scoped credentials; use a matching profile or disable environment auth defaults with explicit credentials",
+        "transport requires destination-scoped credentials; use a matching profile or disable environment auth defaults with explicit credentials",
       );
     }
   };
+  // A relay allowlist authorizes a route, not forwarding a credential issued
+  // for another site. Enforce explicit pins even on successful relay paths.
+  if (options.credentialSite !== undefined) assertCredentialScope();
   if (mode === "direct") {
-    assertDirectScope();
+    assertCredentialScope();
     return;
   }
   const relay = projectApiRelayTransport({ ...options, host: undefined });
@@ -93,7 +97,7 @@ export async function selectProjectApiRelayTransport(
     routeProbes.set(key, probe);
   }
   if (await probe.result) return projectApiRelayTransport(options);
-  assertDirectScope();
+  assertCredentialScope();
   return;
 }
 

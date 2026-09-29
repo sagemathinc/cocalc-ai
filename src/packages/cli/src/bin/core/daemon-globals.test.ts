@@ -35,6 +35,33 @@ test("freezing ambient daemon auth preserves its site rather than trusting an AP
     /destination-scoped/,
   );
 });
+
+test("freezing daemon auth retains BASE_URL and Lite defaults even with an API override", async () => {
+  for (const settings of [
+    {
+      env: { BASE_URL: "https://base.test" },
+      defaultApiBaseUrl: () => "http://127.0.0.1:7001",
+      expected: "https://base.test",
+    },
+    {
+      env: {},
+      defaultApiBaseUrl: () => "http://127.0.0.1:7001",
+      expected: "http://127.0.0.1:7001",
+    },
+  ]) {
+    for (const api of [undefined, "https://override.test"]) {
+      const globals = effectiveDaemonGlobals({ api }, settings);
+      assert.equal(globals.directAuthSite, settings.expected);
+      const selection = selectProjectApiRelayTransport({
+        apiBaseUrl: globals.api!,
+        credentialSite: globals.directAuthSite,
+        env: { COCALC_CLI_TRANSPORT: "direct" },
+      });
+      if (api) await assert.rejects(selection, /destination-scoped/);
+      else assert.equal(await selection, undefined);
+    }
+  }
+});
 import { applyAuthProfile } from "../../core/auth-config";
 
 test("manual and managed file-backed keys use the daemon", () => {

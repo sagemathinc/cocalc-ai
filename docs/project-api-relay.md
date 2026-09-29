@@ -28,6 +28,11 @@ remain bound to the configured local site. An `--api` override alone does not
 authorize forwarding those credentials elsewhere. Explicit credentials can be
 used with `--disable-env-auth-defaults`; agent identity credentials stay pinned
 to their issuing site. Daemon requests retain this scope when freezing defaults.
+Explicit credential pins are checked before selecting either transport, including
+same-site, forced, and successfully probed relay routes. A relay allowlist match
+does not authorize forwarding a credential pinned to a different site. Default
+direct scope uses the same BASE_URL, Lite connection-info, and loopback defaults
+as CLI endpoint selection, independently of an `--api` override.
 The CLI never retries the actual operation on another transport after failure.
 An upstream timeout can still mean a mutation executed; inspect its outcome
 instead of blindly resubmitting. Same-site relay failures remain failures in auto

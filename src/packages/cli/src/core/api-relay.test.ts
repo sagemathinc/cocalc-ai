@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createServer } from "node:http";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -28,6 +28,138 @@ const env: NodeJS.ProcessEnv = {
   COCALC_PROJECT_SECRET: "local-secret",
   CONAT_SERVER: "http://10.206.0.1:9102/",
 };
+
+test("explicit credential pins apply before every relay or direct route decision", async () => {
+  const originalFetch = globalThis.fetch;
+  let probes = 0;
+  try {
+    globalThis.fetch = async () => {
+      probes++;
+      return new Response(null, { status: 200 });
+    };
+    const target = "https://allowed-bay-scope.test";
+    // Prime the successful probe cache with an independently scoped credential.
+    assert.ok(
+      await selectProjectApiRelayTransport({
+        env,
+        apiBaseUrl: target,
+        credentialSite: target,
+      }),
+    );
+    assert.equal(probes, 1);
+    for (const routeEnv of [
+      env,
+      { ...env, COCALC_API_RELAY_HUB_URL: target },
+      { ...env, COCALC_CLI_TRANSPORT: "relay" },
+      { ...env, COCALC_CLI_TRANSPORT: "direct" },
+      { ...env, COCALC_API_RELAY: "0" },
+    ]) {
+      for (const apiBaseUrl of [target, "https://uncached-bay-scope.test"]) {
+        await assert.rejects(
+          selectProjectApiRelayTransport({
+            env: routeEnv,
+            apiBaseUrl,
+            credentialSite: "https://credential-owner.test",
+          }),
+          /destination-scoped/,
+        );
+      }
+    }
+    assert.equal(probes, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("HTTP pinned cookies and bearer tokens cannot cross sites through a positive relay", async () => {
+  const saved = { ...process.env };
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  try {
+    Object.assign(process.env, env);
+    globalThis.fetch = async () => {
+      calls++;
+      return new Response(null, { status: 200 });
+    };
+    for (const mode of ["auto", "relay", "direct"]) {
+      process.env.COCALC_CLI_TRANSPORT = mode;
+      for (const headers of [
+        new Headers({ Cookie: "pinned-cookie" }),
+        new Headers({ Authorization: "Bearer pinned-token" }),
+      ]) {
+        for (const target of [
+          env.COCALC_API_RELAY_HUB_URL!,
+          "https://allowed-http-bay.test",
+        ]) {
+          await assert.rejects(
+            fetchWithProjectApiRelay(
+              `${target}/api/v2/auth/status`,
+              { headers },
+              undefined,
+              { credentialSite: "https://credential-owner.test" },
+            ),
+            /destination-scoped/,
+          );
+        }
+      }
+    }
+    assert.equal(calls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const name of Object.keys(process.env))
+      if (!(name in saved)) delete process.env[name];
+    Object.assign(process.env, saved);
+  }
+});
+
+test("direct ambient scope follows BASE_URL, Lite connection info and loopback defaults, never --api", async () => {
+  const home = await mkdtemp(join(tmpdir(), "relay-default-scope-"));
+  const info = join(home, "lite.json");
+  try {
+    await writeFile(
+      info,
+      JSON.stringify({
+        url: "http://127.0.0.1:7001",
+        agent_token: "fixture-only",
+      }),
+    );
+    const cases = [
+      {
+        settings: { BASE_URL: "https://base.test/site/" },
+        target: "https://base.test/site",
+      },
+      {
+        settings: { COCALC_LITE_CONNECTION_INFO: info },
+        target: "http://127.0.0.1:7001",
+      },
+      { settings: { HUB_PORT: "7002" }, target: "http://127.0.0.1:7002" },
+      { settings: {}, target: "http://127.0.0.1:9100" },
+    ];
+    for (const { settings, target } of cases) {
+      const routeEnv = {
+        HOME: home,
+        COCALC_CLI_TRANSPORT: "direct",
+        ...settings,
+      };
+      assert.equal(
+        await selectProjectApiRelayTransport({
+          env: routeEnv,
+          apiBaseUrl: target,
+        }),
+        undefined,
+      );
+      await assert.rejects(
+        selectProjectApiRelayTransport({
+          env: routeEnv,
+          apiBaseUrl: "https://unrelated-default.test",
+        }),
+        /destination-scoped/,
+      );
+    }
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
 
 test("relay transport preserves the requested API endpoint for host-side allowlist validation", () => {
   assert.equal(
