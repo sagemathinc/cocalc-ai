@@ -6,6 +6,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { artifactCatalogKey } from "@cocalc/util/artifact-catalog";
 import { posix } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { CollaborationProgressSignals } from "./progress-signals";
 import { RoomReplacementJournal } from "./room-replacement-journal";
 import type { CollaborationRoom } from "@cocalc/util/collaborators";
 import { SourceRelations } from "./relations";
@@ -107,6 +108,11 @@ export const collaborationCensusProgressSql = `SELECT
 
 /** Host-private durable intent, one pending delivery per source, never transcripts. */
 export class CollaborationJournal {
+  private progressSignals?: CollaborationProgressSignals;
+  /** Explicit prototype installation; durable capture remains after opt-out. */
+  progressSignalQueue(): CollaborationProgressSignals {
+    return (this.progressSignals ??= new CollaborationProgressSignals(this.db));
+  }
   private readonly db: DatabaseSync;
   private readonly notifications: SourceNotifications;
   private readonly activity: SourceActivity;

@@ -2091,3 +2091,33 @@ Backend/reference typecheck and the focused real SQLite signal, progress-query
 and combined handoff tests pass. Signal coverage includes transactional rollback,
 coalescing, stale acknowledgement, reopen, source/delivery/redirect removal and
 bounded paging. No production installation or capacity claim was made.
+
+### Queue-Driven Change-Only Reporting
+
+The explicit host prototype now lazily installs the journal signal primitive and
+a census report queue when change-only reporting first runs. Census mutations
+enqueue transactionally; report-checkpoint writes do not trigger themselves.
+Queue rows coalesce by project while preserving retry deadlines, and exact-token
+settlement cannot erase newer progress. Existing census runs are adopted once,
+not on every reopen. Removing a run cascades its queue row.
+
+The consumer handles a bounded journal-signal page, durably enqueues census work,
+then acknowledges the exact journal token. A lost acknowledgement can safely
+repeat the handoff. Sources without a census have no report target; a later census
+insertion creates its own work. Due report pages replace historical-project
+traversal. Uncertain sends keep their original payload and cooldown; after a
+successful send, one post-cooldown comparison retires unchanged progress.
+
+Tests verify that settled projects receive no status/progress reads, inventory
+lookups or persisted traversal-cursor writes across simulated quiet days. Other
+cases cover transactional rollback, backoff preservation, stale settlement,
+reopen, deletion, due-index selection, lost cross-store acknowledgement and
+disablement during report preparation. Host/reference typecheck, all 279 backend
+collaborators tests and 21 focused host tests pass.
+
+This supersedes the earlier unwired-primitive notes. Capture persists after first
+installation even if the consumer is disabled. Installation/adoption and trigger
+overhead still need realistic load measurement, cross-store process-kill tests
+remain open, and owner status still becomes stale after 30 minutes of silence.
+No deployment flags were enabled; demand-aware freshness, rebuild/rehome and the
+full workload/soak gates remain required before broad use.

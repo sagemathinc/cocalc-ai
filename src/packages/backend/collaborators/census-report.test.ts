@@ -138,6 +138,86 @@ test("change-only mode retries an uncertain report exactly before publishing new
   await report(journal);
   expect(send).toHaveBeenCalledTimes(3);
 });
+
+test("settled change-only reporting does not inspect quiet projects", async () => {
+  let now = 0;
+  const report = censusReporter({
+    store,
+    send: async () => {},
+    current: async () => ({ run_id: null }),
+    now: () => now,
+    reporting: "changes",
+  });
+  await report(journal);
+  now = 30000;
+  await report(journal);
+  const status = jest.spyOn(store, "status");
+  const progress = jest.spyOn(journal, "censusProgress");
+  const cursor = jest.spyOn(store, "setCheckpoint");
+  const inventory = jest.spyOn(store, "nextProject");
+  for (let i = 0; i < 20; i++) {
+    now += 86400000;
+    await report(journal);
+  }
+  expect(status).not.toHaveBeenCalled();
+  expect(progress).not.toHaveBeenCalled();
+  expect(cursor).not.toHaveBeenCalled();
+  expect(inventory).not.toHaveBeenCalled();
+  journal.touch({ project_id, chat_path: "/home/user/wakeup.chat" });
+  await report(journal);
+  expect(status).toHaveBeenCalledTimes(1);
+});
+
+test("lost cross-store handoff ACK retains the journal signal and retries safely", async () => {
+  let now = 0;
+  journal.touch({ project_id, chat_path: "/home/user/known.chat" });
+  const queue = store.reportWorkQueue();
+  const enqueue = queue.enqueue.bind(queue);
+  jest.spyOn(queue, "enqueue").mockImplementationOnce((id) => {
+    enqueue(id);
+    throw Error("handoff ACK lost");
+  });
+  const send = jest.fn(async () => {});
+  const report = censusReporter({
+    store,
+    send,
+    current: async () => ({ run_id: null }),
+    now: () => now,
+    reporting: "changes",
+  });
+  await expect(report(journal)).rejects.toThrow("handoff ACK lost");
+  expect(journal.progressSignalQueue().page()).toHaveLength(1);
+  expect(send).toHaveBeenCalledTimes(1);
+  now = 30000;
+  await report(journal);
+  expect(journal.progressSignalQueue().page()).toEqual([]);
+  expect(queue.due(now)).toEqual([]);
+  expect(send).toHaveBeenCalledTimes(1);
+});
+
+test("disable during report preparation retains unsent durable work", async () => {
+  let now = 0,
+    enabled = true;
+  const send = jest.fn(async () => {});
+  const report = censusReporter({
+    store,
+    send,
+    current: async () => {
+      enabled = false;
+      return { run_id: null };
+    },
+    enabled: () => enabled,
+    now: () => now,
+    reporting: "changes",
+  });
+  await report(journal);
+  expect(send).not.toHaveBeenCalled();
+  expect(store.reportWorkQueue().due(30000)).toHaveLength(1);
+  enabled = true;
+  now = 30000;
+  await report(journal);
+  expect(send).toHaveBeenCalledTimes(1);
+});
 test("registration and extraction failures cannot be called a complete census", async () => {
   journal.touch({ project_id, chat_path: "/home/user/missing.chat" });
   journal.defer(journal.registrations()[0], 0);

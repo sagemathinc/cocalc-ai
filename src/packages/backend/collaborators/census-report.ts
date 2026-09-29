@@ -44,7 +44,7 @@ export function censusReporter(options: {
       : undefined;
     if (checkpoint && checkpoint.write.report.run_id !== status.run.run_id)
       checkpoint = undefined;
-    if (checkpoint && now() < checkpoint.retry_at) return;
+    if (checkpoint && now() < checkpoint.retry_at) return checkpoint.retry_at;
     if (!checkpoint || checkpoint.acknowledged) {
       const progress = journal.censusProgress(project_id);
       const expected_run_id = checkpoint
@@ -89,7 +89,8 @@ export function censusReporter(options: {
     // Persist before sending, including backoff if process exits during the RPC.
     checkpoint.retry_at = now() + 30_000;
     options.store.setReportCheckpoint(project_id, JSON.stringify(checkpoint));
-    if (options.enabled && !(await options.enabled())) return;
+    if (options.enabled && !(await options.enabled()))
+      return checkpoint.retry_at;
     try {
       await options.send(checkpoint.write);
     } catch (error) {
@@ -110,9 +111,45 @@ export function censusReporter(options: {
     }
     checkpoint.acknowledged = true;
     options.store.setReportCheckpoint(project_id, JSON.stringify(checkpoint));
+    // One later comparison retires unchanged progress after the send cooldown.
+    return checkpoint.retry_at;
   }
+  let signalAfter = "";
   return async (journal: CollaborationJournal) => {
     const start = now();
+    if (options.reporting === "changes") {
+      if (options.enabled && !(await options.enabled())) return;
+      const queue = options.store.reportWorkQueue();
+      const signals = journal.progressSignalQueue();
+      const page = signals.page(signalAfter, batchSize);
+      let examined = 0;
+      let failure: unknown;
+      for (const signal of page) {
+        if (now() - start >= budgetMs) break;
+        if (options.enabled && !(await options.enabled())) break;
+        signalAfter = signal.project_id;
+        examined++;
+        try {
+          queue.enqueue(signal.project_id);
+          signals.acknowledge(signal);
+        } catch (error) {
+          failure ??= error;
+        }
+      }
+      if (examined === page.length && page.length < batchSize) signalAfter = "";
+      for (const work of queue.due(now(), batchSize)) {
+        if (now() - start >= budgetMs) break;
+        if (options.enabled && !(await options.enabled())) break;
+        try {
+          queue.settle(work, await publish(journal, work.project_id));
+        } catch (error) {
+          queue.settle(work, now() + 30_000);
+          failure ??= error;
+        }
+      }
+      if (failure) throw failure;
+      return;
+    }
     const visited = new Set<string>();
     let failure: unknown;
     for (

@@ -4,6 +4,7 @@
  */
 import { posix } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { CensusReportQueue } from "./census-report-queue";
 import {
   CensusQuotaError,
   DEFAULT_CENSUS_LIMITS,
@@ -84,6 +85,11 @@ function retryAt(now: number, failures: number) {
 
 /** Host-private metadata only. No method opens project files or starts a worker. */
 export class CollaborationCensusStore {
+  private reportQueue?: CensusReportQueue;
+  /** Explicit prototype installation; one queue row fits the per-run reserve. */
+  reportWorkQueue(): CensusReportQueue {
+    return (this.reportQueue ??= new CensusReportQueue(this.db));
+  }
   private readonly db: DatabaseSync;
   private readonly lock: DatabaseSync;
   private closed = false;
