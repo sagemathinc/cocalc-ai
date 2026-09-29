@@ -1488,6 +1488,19 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
       "Prototype expiring project/home-bay scheduling hints, never access grants. Rehome remains guarded pending epoch/cutover validation.",
   }),
 
+  ...adHocEntries(["collaboration_revision_receivers"], {
+    ownership: "ephemeral",
+    authority: "local",
+    portability: "rebuildable",
+    source:
+      "database/postgres/collaborators/collaborators-revision-receiver.ts",
+    migrate_to_schema: true,
+    notes:
+      "Prototype shared home-bay wakeup state, never metadata authority or access grants. No automatic scheduling enabled.",
+    rebuild:
+      "Re-arm from current demand and owner registration, requiring catalog catch-up even if hints were lost. No identity, personal state or notification obligation is stored here.",
+  }),
+
   ...adHocEntries(
     ["collaboration_scan_actor_budget", "collaboration_scan_actor_receipts"],
     {

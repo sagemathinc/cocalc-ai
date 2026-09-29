@@ -1203,3 +1203,31 @@ exclusion, exact-watermark settlement, unknown-outcome expiry/reclaim, stale
 claim and renewed-lease fencing, and generation replacement. Cross-process
 crash/transport injection and actual durable home receipt processing remain
 unverified. No automatic worker or public API was enabled.
+
+### Shared Home Wakeup Store
+
+Added explicitly installed `collaboration_revision_receivers`, one row per
+remote project in the destination home bay, with no foreign key to a locally
+owned project or account. It contains only a bound owner/interest lease,
+expiry, and dirty/applied sequences. Registration replacement is conditional
+on the previous lease, preventing delayed responses from overwriting a newer
+registration. Initial arming always requires catch-up.
+
+Trusted receipt increments a durable dirty sequence only for the exact live
+owner/home/lease tuple. Catch-up completion compares that sequence, so a hint
+arriving during work cannot be cleared by the older worker. Duplicate hints
+may cause redundant catch-up, but cannot regress protected catalog state.
+Sequences remain decimal strings across JavaScript boundaries. A keyset page
+examines at most twenty local receiver records before selecting pending work.
+
+The store is classified as rebuildable local scheduling state. Rebuilding must
+re-arm and catch up from current demand/owner state; no canonical identities,
+personal state or notification obligations are stored here. The routing layer
+must still bind authority and remaining lifetimes before arming, and protected
+delta reads must recheck membership. These callers are not yet wired. Expiry
+cleanup, shared delta fetch/application, crash-injected transport and repair
+scheduling remain open; no automatic schema installation or worker was enabled.
+
+Server build, two PGlite receiver tests and seven table-ownership tests pass.
+Tests cover initial pending catch-up, hints during completion, duplicate hints,
+stale registration responses, wrong owner/home/lease and expired receivers.
