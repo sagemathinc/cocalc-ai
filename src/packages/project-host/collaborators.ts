@@ -83,8 +83,10 @@ export function startCollaborators(
   filesystem = getFilesystem;
   const directory = join(data, "collaborators");
   mkdirSync(directory, { recursive: true, mode: 0o700 });
+  // Known-source indexing is the default. Legacy inventory sweeps require an
+  // explicit opt-in; inventory alone is not evidence that source bytes changed.
   const explicitDiscovery =
-    process.env.COCALC_PEOPLE_CENSUS_EXPLICIT_PROTOTYPE === "1";
+    process.env.COCALC_PEOPLE_CENSUS_EXPLICIT_PROTOTYPE !== "0";
   let afterProject = "",
     after: string | undefined,
     currentProject: string | undefined;
@@ -245,7 +247,7 @@ export function startCollaborators(
         }),
       discover: async (): Promise<CollaborationSource[]> => {
         // Explicit reconciliation and mediated writes own dirty admission in
-        // this prototype. Inventory is not evidence that a source changed.
+        // mode. Inventory is not evidence that a source changed.
         if (explicitDiscovery) return [];
         if (Date.now() < nextRoundAt) return [];
         if (localRound) {

@@ -3,6 +3,7 @@ import { getProject } from "./sqlite/projects";
 import { assertProjectVolumeLifecycleGeneration } from "./project-volume-lifecycle";
 import { readCollaborationSource } from "@cocalc/backend/collaborators/filesystem";
 import { extractCollaborationMetadata } from "@cocalc/chat";
+import { createHostedCollaborationCensus } from "./collaborators-census";
 import { readCollaborationRelationSource } from "@cocalc/backend/collaborators/relations-source";
 import {
   assertArtifactCollaborationSourceReady,
@@ -13,10 +14,10 @@ import {
 
 jest.mock("node:fs", () => ({ mkdirSync: jest.fn() }));
 jest.mock("./collaborators-census", () => ({
-  createHostedCollaborationCensus: () => ({
+  createHostedCollaborationCensus: jest.fn(() => ({
     store: {},
     producer: { step: jest.fn(), pause: jest.fn(), close: jest.fn() },
-  }),
+  })),
 }));
 jest.mock("./collaborators-copy", () => ({
   initializeCopiedCollaboration: jest.fn(),
@@ -281,6 +282,7 @@ test("host identity binds RPCs and recovery never replaces another same-host wri
   expect(await options.recoverWriter(source, "epoch-1")).toBeUndefined();
 });
 test("bounded discovery follows owner room locators without creating a default source", async () => {
+  process.env[explicitFlag] = "0";
   const getFilesystem = jest.fn();
   startCollaborators(getFilesystem);
   const movedRoom = {
@@ -301,19 +303,26 @@ test("bounded discovery follows owner room locators without creating a default s
   );
   expect(getFilesystem).not.toHaveBeenCalled();
 });
-test("explicit discovery never polls owner or retained inventory", async () => {
-  process.env[explicitFlag] = "1";
-  const getFilesystem = jest.fn();
-  const runtime = startCollaborators(getFilesystem);
-  const retained = jest.spyOn(runtime.journal, "sources");
-  // Scheduling is fixed for this service lifetime, like the census producer.
-  delete process.env[explicitFlag];
-  for (let pass = 0; pass < 20; pass++)
-    expect(await options.discover()).toEqual([]);
-  expect(callHub).not.toHaveBeenCalled();
-  expect(retained).not.toHaveBeenCalled();
-  expect(getFilesystem).not.toHaveBeenCalled();
-});
+test.each([undefined, "1"])(
+  "explicit discovery (%s) never polls owner or retained inventory",
+  async (value) => {
+    if (value === undefined) delete process.env[explicitFlag];
+    else process.env[explicitFlag] = value;
+    const getFilesystem = jest.fn();
+    const runtime = startCollaborators(getFilesystem);
+    expect(createHostedCollaborationCensus).toHaveBeenCalledWith(
+      expect.objectContaining({ scheduling: "explicit" }),
+    );
+    const retained = jest.spyOn(runtime.journal, "sources");
+    // Scheduling is fixed for this service lifetime, like the census producer.
+    process.env[explicitFlag] = "0";
+    for (let pass = 0; pass < 20; pass++)
+      expect(await options.discover()).toEqual([]);
+    expect(callHub).not.toHaveBeenCalled();
+    expect(retained).not.toHaveBeenCalled();
+    expect(getFilesystem).not.toHaveBeenCalled();
+  },
+);
 test("activity checkpoints and relocation use host-bound owner APIs, preserving epoch and operation fencing", async () => {
   startCollaborators(jest.fn());
   const items = [

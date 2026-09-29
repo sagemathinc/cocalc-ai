@@ -2856,3 +2856,29 @@ disposable scheduling state, not canonical user data. It does not validate
 project-owner moves, scan receipt migration, receiver/outbox handoff, interrupted
 rehome with demand in flight, or returning to a former home before old leases
 expire. Those cases remain open under the original plan.
+
+### Known-Source Host Default
+
+The host previously selected recurring inventory discovery unless
+`COCALC_PEOPLE_CENSUS_EXPLICIT_PROTOTYPE=1` was explicitly set. That default
+conflicted with the approved smaller release. Host startup now selects explicit
+census/known-source discovery when the variable is unset or `1`; only an explicit
+`0` selects the legacy inventory mode. The mode is captured for the service
+lifetime. This prevents both owner/retained-source inventory polling and new
+periodic volume census admission. Already queued work may drain; no queue or
+durable receipt is discarded. Known-source dirty hooks remain unchanged.
+
+Public Scan admission and privileged host reconciliation controls retain their
+existing opt-in gates. This change does not implicitly enable Scan, demand
+scheduling or automatic demand-triggered discovery. In particular, keep
+`COCALC_PEOPLE_DISCOVERY_BOOTSTRAP_PROTOTYPE` unset for the initial release.
+Legacy `COCALC_PEOPLE_CENSUS_EXPLICIT_PROTOTYPE=0` is outside the initial-release
+configuration and remains available for legacy validation only.
+
+Host/reference typecheck and 35 focused tests pass. The default and explicit-1
+tests assert census scheduling is explicit and 20 discovery passes invoke no
+owner RPC, retained-source enumeration or filesystem open. The real multibay
+retention-return test passes in 47.329 seconds with the host flag unset; normal
+thread/message hooks still populate the catalog, notify and rebuild the view.
+This is not the full disabled-after-data/rollback or mixed-load release gate.
+No running projects, host processes or production settings were changed.
