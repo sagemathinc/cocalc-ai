@@ -8,6 +8,7 @@ import {
   claimCollaborationScanDispatch,
   releaseCollaborationScanDispatch,
   adoptCollaborationScanPredecessor,
+  deferCollaborationScanDispatch,
 } from "@cocalc/database/postgres/collaborators/collaborators-scan";
 import type { CollaborationOwnerAuthority } from "@cocalc/database/postgres/collaborators/collaborators-owner";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
@@ -81,8 +82,30 @@ export async function dispatchCollaborationScan(
       scan.expected_run_id = status.current_run_id;
     }
     const admission = await host.requestCollaborationReconciliation(scan);
-    if (admission.admission === "accepted" && admission.run_id !== run.job_id)
+    if (admission.run_id !== run.job_id)
       throw Error("scan host accepted a different run");
+    if (admission.admission !== "accepted") {
+      await deferCollaborationScanDispatch(
+        {
+          project_id: request.project_id,
+          job_id: run.job_id,
+          token: token!,
+          reason:
+            admission.admission === "throttled"
+              ? "host_throttled"
+              : admission.reason === "BUSY"
+                ? "host_busy"
+                : admission.reason === "REPORT_PENDING"
+                  ? "report_pending"
+                  : "host_deferred",
+          retry_after_ms:
+            admission.admission === "throttled"
+              ? admission.retry_after_ms
+              : 30000,
+        },
+        { ...authority, host_id: run.host_id },
+      );
+    }
     return {
       state:
         admission.admission === "accepted"

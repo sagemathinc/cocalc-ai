@@ -2458,3 +2458,33 @@ two-account, zoom or dark-mode audit; those remain required before enablement.
 Automatic demand-triggered discovery, missed-write fallback, richer progress
 watermarks, agent scopes, lifecycle and full scale/soak gates remain unfinished.
 No production flag was enabled.
+
+### Durable Host Deferral And Retry Hints
+
+Host reconciliation previously returned busy/report-pending/cooldown results
+that the owner discarded, leaving the UI reporting running work and retrying at
+the ordinary five-second dispatch interval. The owner now stores a safe reason
+and retry deadline on the active job, fenced by current project ownership, host,
+run identity and an unexpired dispatch token. Stale workers cannot extend a newer
+claim. Unknown host reason text maps to `host_deferred`; raw host diagnostics are
+not included in public status. Every admission reply must match the exact run,
+not only successful replies.
+
+Both candidate selection and lease acquisition honor the durable deadline.
+Host hints are clamped to five seconds through five minutes; busy/report-pending
+responses use thirty seconds. After the deadline, a successful claim clears the
+old reason. Authorized status reads retain the existing own-live-receipt and
+current-membership checks and return the remaining delay without contacting the
+host or creating work. The UI explains the wait and respects the greater of the
+status-poll and host-cooldown hints. A transport exception remains an unknown
+outcome with the existing lease; it is not converted into a failed Scan.
+
+Focused validation passes: 23 database tests, 21 dispatcher/worker unit tests,
+5 durable worker integration tests, and 7 frontend interaction tests. Server and
+frontend reference typechecks pass. The new tests cover deferral bounds, stale
+tokens/hosts, selection and claim suppression, clearing expired deferrals, safe
+reason mapping, mismatched runs, durable retry suppression and UI cooldown copy.
+All eight real PostgreSQL selection and hosted execution acceptance cases pass
+in 111.6 seconds; frontend lint is clean. This adds truthful wait information, not complete progress counters,
+view-applied watermarks or a production capacity claim. Broader plan gates remain
+open and production flags are unchanged.

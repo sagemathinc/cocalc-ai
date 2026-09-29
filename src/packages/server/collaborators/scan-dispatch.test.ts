@@ -5,6 +5,7 @@ import {
   claimCollaborationScanDispatch,
   releaseCollaborationScanDispatch,
   adoptCollaborationScanPredecessor,
+  deferCollaborationScanDispatch,
 } from "@cocalc/database/postgres/collaborators/collaborators-scan";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 jest.mock("@cocalc/database/postgres/collaborators/collaborators-scan", () => ({
@@ -13,6 +14,7 @@ jest.mock("@cocalc/database/postgres/collaborators/collaborators-scan", () => ({
   claimCollaborationScanDispatch: jest.fn(),
   releaseCollaborationScanDispatch: jest.fn(),
   adoptCollaborationScanPredecessor: jest.fn(),
+  deferCollaborationScanDispatch: jest.fn(),
 }));
 jest.mock("@cocalc/server/project-host/client", () => ({
   getRoutedHostControlClient: jest.fn(),
@@ -107,6 +109,54 @@ test("timeout does not settle or retry with a fresh identity", async () => {
   );
   expect(admit).toHaveBeenCalledTimes(1);
   expect(settleCollaborationScanDiscovery).not.toHaveBeenCalled();
+});
+test.each([
+  [
+    { admission: "throttled", retry_after_ms: 120000 },
+    "host_throttled",
+    120000,
+  ],
+  [{ admission: "deferred", reason: "BUSY" }, "host_busy", 30000],
+  [
+    { admission: "deferred", reason: "REPORT_PENDING" },
+    "report_pending",
+    30000,
+  ],
+  [
+    { admission: "deferred", reason: "/private/host/path" },
+    "host_deferred",
+    30000,
+  ],
+])(
+  "persists bounded safe host deferral %j",
+  async (reply, reason, retry_after_ms) => {
+    admit.mockResolvedValue({ ...reply, run_id: "job" });
+    expect(await dispatchCollaborationScan(request, authority)).toEqual({
+      state: "deferred",
+    });
+    expect(deferCollaborationScanDispatch).toHaveBeenCalledWith(
+      {
+        project_id: "project",
+        job_id: "job",
+        token: "lease",
+        reason,
+        retry_after_ms,
+      },
+      { ...authority, host_id: "host" },
+    );
+    expect(releaseCollaborationScanDispatch).toHaveBeenCalled();
+  },
+);
+test("a deferral for another run cannot delay this job", async () => {
+  admit.mockResolvedValue({
+    admission: "throttled",
+    run_id: "other",
+    retry_after_ms: 60000,
+  });
+  await expect(dispatchCollaborationScan(request, authority)).rejects.toThrow(
+    "different run",
+  );
+  expect(deferCollaborationScanDispatch).not.toHaveBeenCalled();
 });
 test("discovered with pending candidates does not settle", async () => {
   status.mockResolvedValue({

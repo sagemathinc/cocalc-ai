@@ -54,6 +54,7 @@ import type {
   ScanAdmissionRequest,
   ScanReceipt,
   ScanDiscoveryStatus,
+  ScanDeferralReason,
 } from "@cocalc/util/collaboration-scan";
 export type {
   ScanAdmissionRequest,
@@ -79,7 +80,8 @@ export async function readCollaborationScanStatus(
     );
     const row = (
       await db.query(
-        `SELECT r.result,j.state,j.started_at,j.host_id,p.host_id AS current_host
+        `SELECT r.result,j.state,j.started_at,j.host_id,p.host_id AS current_host,
+          j.deferred_reason,GREATEST(0,EXTRACT(EPOCH FROM (j.deferred_until-clock_timestamp()))*1000) AS retry_after_ms
       FROM collaboration_scan_receipts r
       JOIN projects p ON p.project_id=r.project_id
       LEFT JOIN collaboration_scan_jobs j ON j.project_id=r.project_id
@@ -102,7 +104,18 @@ export async function readCollaborationScanStatus(
       row.started_at &&
       row.host_id === row.current_host
     ) {
-      return { state: "running", started_at: row.started_at.getTime() };
+      return {
+        state: "running",
+        started_at: row.started_at.getTime(),
+        ...(row.deferred_reason
+          ? {
+              deferred: {
+                reason: row.deferred_reason,
+                retry_after_ms: Number(row.retry_after_ms),
+              },
+            }
+          : {}),
+      };
     }
     return { state: "unknown" };
   });
@@ -133,6 +146,9 @@ export async function syncCollaborationScanSchema(
   await db.query(`ALTER TABLE collaboration_scan_jobs
     ADD COLUMN IF NOT EXISTS dispatch_token UUID,
     ADD COLUMN IF NOT EXISTS dispatch_until TIMESTAMPTZ`);
+  await db.query(`ALTER TABLE collaboration_scan_jobs
+    ADD COLUMN IF NOT EXISTS deferred_reason TEXT,
+    ADD COLUMN IF NOT EXISTS deferred_until TIMESTAMPTZ`);
   await db.query(
     `ALTER TABLE collaboration_scan_jobs ADD COLUMN IF NOT EXISTS last_dispatch_at TIMESTAMPTZ`,
   );
@@ -465,9 +481,10 @@ export async function claimCollaborationScanDispatch(
     const token = randomUUID();
     const result = await db.query(
       `UPDATE collaboration_scan_jobs j
-      SET dispatch_token=$4,dispatch_until=clock_timestamp()+interval '90 seconds',last_dispatch_at=clock_timestamp()
+      SET dispatch_token=$4,dispatch_until=clock_timestamp()+interval '90 seconds',last_dispatch_at=clock_timestamp(),deferred_reason=NULL,deferred_until=NULL
       WHERE project_id=$1 AND job_id=$2 AND state='running'
       AND (dispatch_until IS NULL OR dispatch_until<=clock_timestamp())
+      AND (deferred_until IS NULL OR deferred_until<=clock_timestamp())
       AND EXISTS(SELECT 1 FROM collaboration_scan_receipts r WHERE r.project_id=j.project_id
         AND r.account_id=$3 AND r.receipt->>'job_id'=j.job_id::text AND r.expires_at>clock_timestamp())
       RETURNING job_id`,
@@ -584,12 +601,64 @@ export const scanDispatchCandidatesSql = `WITH page AS MATERIALIZED (
       ) r ON true
       WHERE p.owning_bay_id=$1 AND NOT COALESCE(p.deleted,false) AND p.host_id IS NOT NULL
         AND (j.dispatch_until IS NULL OR j.dispatch_until<=statement_timestamp())
+        AND (j.deferred_until IS NULL OR j.deferred_until<=statement_timestamp())
         AND (j.last_dispatch_at IS NULL OR j.last_dispatch_at<=statement_timestamp()-interval '5 seconds')
         AND (j.state='running' AND j.host_id=p.host_id OR j.state='queued'
           AND (b.last_started_at IS NULL OR b.last_started_at<=statement_timestamp()-interval '5 minutes')
           AND NOT EXISTS(SELECT 1 FROM collaboration_scan_jobs running
             WHERE running.project_id=j.project_id AND running.state='running' OFFSET 0))
       ORDER BY COALESCE(j.last_dispatch_at,j.created_at),j.job_id LIMIT 20`;
+
+/** Only the live dispatch holder at the current host can delay this job.
+ * Bound host hints so a malformed response cannot suspend work indefinitely.
+ */
+export async function deferCollaborationScanDispatch(
+  opts: {
+    project_id: string;
+    job_id: string;
+    token: string;
+    reason: ScanDeferralReason;
+    retry_after_ms: number;
+  },
+  authority: CollaborationWriterAuthority,
+): Promise<boolean> {
+  uuid(opts.job_id, "scan job");
+  uuid(opts.token, "dispatch token");
+  if (
+    ![
+      "host_busy",
+      "report_pending",
+      "host_throttled",
+      "host_deferred",
+    ].includes(opts.reason) ||
+    !Number.isFinite(opts.retry_after_ms) ||
+    opts.retry_after_ms < 0
+  )
+    throw Error("invalid scan deferral");
+  const delay = Math.min(
+    300000,
+    Math.max(5000, Math.ceil(opts.retry_after_ms)),
+  );
+  return transaction(async (db) => {
+    await assertCollaborationWriterAuthority(db, opts.project_id, authority);
+    const { rows } = await db.query(
+      `UPDATE collaboration_scan_jobs SET deferred_reason=$4,
+        deferred_until=clock_timestamp()+$5::double precision*interval '1 millisecond'
+       WHERE project_id=$1 AND job_id=$2 AND dispatch_token=$3
+         AND dispatch_until>clock_timestamp() AND state='running' AND host_id=$6
+       RETURNING job_id`,
+      [
+        opts.project_id,
+        opts.job_id,
+        opts.token,
+        opts.reason,
+        delay,
+        authority.host_id,
+      ],
+    );
+    return rows.length > 0;
+  });
+}
 
 export async function releaseCollaborationScanDispatch(
   opts: {

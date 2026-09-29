@@ -145,6 +145,35 @@ test("an older API does not expose the control", () => {
   expect(screen.queryByRole("button", { name: "Scan project" })).toBeNull();
 });
 
+test("host cooldown has an explanation and prevents immediate status polling", async () => {
+  const { api, user, renderScan } = setup();
+  api.getScanStatus.mockResolvedValue({
+    allowed: true,
+    value: {
+      state: "running",
+      deferred: { reason: "host_throttled", retry_after_ms: 120000 },
+    },
+    poll_after_ms: 1000,
+  });
+  renderScan();
+  await user.click(screen.getByRole("button", { name: "Scan project" }));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent("Scan queued"),
+  );
+  await advance();
+  const status = screen.getByRole("button", { name: "Check Scan status" });
+  await waitFor(() => expect(status).toBeEnabled());
+  await user.click(status);
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "host's reconciliation cooldown",
+    ),
+  );
+  expect(status).toBeDisabled();
+  expect(api.requestScan).toHaveBeenCalledTimes(1);
+  expect(api.getScanStatus).toHaveBeenCalledTimes(1);
+});
+
 test("saved recovery identifiers are scoped to the current account and project", () => {
   const { api } = setup();
   sessionStorage.setItem(storageKey, "00000000-0000-4000-8000-000000000001");

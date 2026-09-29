@@ -127,6 +127,27 @@ describeDb("scan worker with durable owner store", () => {
       }),
     );
   });
+  test("host cooldown persists through release and prevents another dispatch", async () => {
+    const { request, receipt } = await fixture();
+    admit.mockResolvedValue({
+      admission: "throttled",
+      run_id: receipt.job_id,
+      retry_after_ms: 120000,
+    });
+    expect((await runCollaborationScanPass()).deferred).toBe(1);
+    expect(
+      await readCollaborationScanStatus(
+        { ...request, job_id: receipt.job_id },
+        authority,
+      ),
+    ).toMatchObject({
+      state: "running",
+      deferred: { reason: "host_throttled" },
+    });
+    await makeDue(request.project_id);
+    expect((await runCollaborationScanPass()).attempted).toBe(0);
+    expect(admit).toHaveBeenCalledTimes(1);
+  });
   test("ambiguous admission waits for lease then inspects the same host run", async () => {
     const { request, receipt } = await fixture();
     admit.mockRejectedValue(Error("response lost after acceptance"));

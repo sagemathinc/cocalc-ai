@@ -17,6 +17,7 @@ import {
   retireExpiredQueuedCollaborationScan,
   listCollaborationScanRetirementCandidates,
   syncCollaborationScanSchema,
+  deferCollaborationScanDispatch,
 } from "./collaborators-scan";
 
 const describeDb =
@@ -61,6 +62,62 @@ describeDb("owner scan admission prototype", () => {
     );
     return request;
   }
+  test("host deferral is lease fenced, bounded, visible and respected by selection and claim", async () => {
+    const request = await fixture();
+    const receipt = await admitCollaborationScan(request, authority);
+    if (!("job_id" in receipt)) throw Error("expected admission");
+    const job = { ...request, job_id: receipt.job_id };
+    await startCollaborationScan(job, authority);
+    const token = await claimCollaborationScanDispatch(job, authority);
+    if (!token) throw Error("expected claim");
+    const deferred = {
+      ...job,
+      token,
+      reason: "host_throttled" as const,
+      retry_after_ms: 99999999,
+    };
+    const writer = { ...authority, host_id };
+    expect(
+      await deferCollaborationScanDispatch(
+        { ...deferred, token: randomUUID() },
+        writer,
+      ),
+    ).toBe(false);
+    await expect(
+      deferCollaborationScanDispatch(deferred, {
+        ...writer,
+        host_id: randomUUID(),
+      }),
+    ).rejects.toThrow();
+    expect(await deferCollaborationScanDispatch(deferred, writer)).toBe(true);
+    const status = await readCollaborationScanStatus(job, authority);
+    if (status.state !== "running" || !status.deferred)
+      throw Error("expected deferral");
+    expect(status.deferred.reason).toBe("host_throttled");
+    expect(status.deferred.retry_after_ms).toBeGreaterThan(290000);
+    expect(status.deferred.retry_after_ms).toBeLessThanOrEqual(300000);
+    await releaseCollaborationScanDispatch({ ...job, token }, authority);
+    await getPool().query(
+      "UPDATE collaboration_scan_jobs SET last_dispatch_at=clock_timestamp()-interval '6 seconds' WHERE project_id=$1",
+      [job.project_id],
+    );
+    expect(await listCollaborationScanDispatchCandidates(authority)).toEqual(
+      [],
+    );
+    expect(await claimCollaborationScanDispatch(job, authority)).toBeNull();
+    expect(await deferCollaborationScanDispatch(deferred, writer)).toBe(false);
+    await getPool().query(
+      "UPDATE collaboration_scan_jobs SET deferred_until=clock_timestamp()-interval '1 second' WHERE project_id=$1",
+      [job.project_id],
+    );
+    expect(
+      await listCollaborationScanDispatchCandidates(authority),
+    ).toHaveLength(1);
+    expect(await claimCollaborationScanDispatch(job, authority)).toBeTruthy();
+    expect(
+      await readCollaborationScanStatus(job, authority),
+    ).not.toHaveProperty("deferred");
+  });
   test("retirement preserves live coalesced receipts and expired retry history", async () => {
     const request = await fixture();
     const receipt = await admitCollaborationScan(request, authority);

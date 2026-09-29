@@ -22,8 +22,18 @@ export type ScanAdmissionResult =
 export type ScanDiscoveryStatus =
   | { state: "unknown" }
   | { state: "queued" }
-  | { state: "running"; started_at: number }
+  | {
+      state: "running";
+      started_at: number;
+      deferred?: { reason: ScanDeferralReason; retry_after_ms: number };
+    }
   | { state: "discovered" | "failed"; settled_at: number };
+
+export type ScanDeferralReason =
+  | "host_busy"
+  | "report_pending"
+  | "host_throttled"
+  | "host_deferred";
 
 export type ScanInspectionRequest = Omit<ScanAdmissionRequest, "mode">;
 export interface ScanStatusRequest {

@@ -151,6 +151,22 @@ export function ProjectScan({
                 "Scan failed. You can request another Scan after the cooldown.",
             }[state],
           );
+          if (result.value.state === "running" && result.value.deferred) {
+            const deferred = result.value.deferred;
+            setMessage(
+              {
+                host_busy:
+                  "Scan is waiting for another discovery run on this project.",
+                report_pending:
+                  "Scan is waiting for the previous discovery report to be acknowledged.",
+                host_throttled:
+                  "Scan is waiting for the host's reconciliation cooldown.",
+                host_deferred:
+                  "The host deferred this Scan. It will be retried without creating another request.",
+              }[deferred.reason],
+            );
+            delay(Math.max(result.poll_after_ms, deferred.retry_after_ms));
+          }
           if (
             state === "discovered" ||
             state === "failed" ||
