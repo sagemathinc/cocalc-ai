@@ -1430,3 +1430,22 @@ of the atomic return handoff. Owner hint dispatch, receiver catch-up completion,
 expired-state cleanup scheduling, cross-cohort reuse and scale validation remain
 open. Projection polling is intentionally retained until that integration is
 verified end to end.
+
+### Scheduled Receiver Expiry Cleanup
+
+The existing maintenance lifecycle now calls receiver cleanup when the demand
+scheduler and revision-interest prototype are enabled and People is enabled.
+At most one call runs in-process, with a monotonic thirty-second cooldown even
+after failure. Each store transaction deletes at most one hundred expired local
+home receiver rows using the existing expiry index and SKIP LOCKED semantics.
+There is no new timer, historical membership scan or account activation.
+Failures retain state and do not abort projection maintenance. Fixed-label
+counters record deleted rows and failed cleanup attempts.
+
+Server typecheck and forty-one focused maintenance, registration and API tests
+pass, including gate checks, local-home routing, cooldown, failure isolation and
+overlapping-call suppression. The store's existing expiry/recreation fences
+remain unchanged. The cooldown is per process, not a distributed bay quota;
+concurrent processes rely on row locks for correctness. Large-backlog drain
+rates still need workload validation. Owner interest cleanup, hint dispatch,
+catch-up completion and the full cold-return lifecycle remain open.
