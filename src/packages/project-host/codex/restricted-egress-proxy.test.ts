@@ -1,5 +1,7 @@
-import { connect } from "node:net";
+import { connect, createServer, type Socket } from "node:net";
+import { connect as tlsConnect } from "node:tls";
 import {
+  RestrictedCodexEgressProxy,
   isAllowedCodexEgressTarget,
   shutdownRestrictedCodexEgressProxyForTesting,
   startRestrictedCodexEgressProxySession,
@@ -96,6 +98,173 @@ describe("restricted Codex egress proxy", () => {
       ).resolves.toContain("403 Forbidden");
     } finally {
       session.close();
+    }
+  });
+});
+
+/** The exact bytes Node's TLS client sends first. */
+async function captureClientHello(servername: string): Promise<Buffer> {
+  return await new Promise<Buffer>((resolve, reject) => {
+    const server = createServer((socket) => {
+      socket.once("data", (data) => {
+        socket.destroy();
+        server.close();
+        resolve(data);
+      });
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as { port: number };
+      tlsConnect({
+        host: "127.0.0.1",
+        port,
+        servername,
+        rejectUnauthorized: false,
+      }).on("error", () => {});
+    });
+    server.on("error", reject);
+  });
+}
+
+/** A proxy whose upstream is a local server recording what it receives. */
+async function localProxy(options = {}) {
+  const received: Buffer[] = [];
+  const upstreamServer = createServer((socket) => {
+    socket.on("data", (data) => received.push(data));
+  });
+  await new Promise<void>((resolve) =>
+    upstreamServer.listen(0, "127.0.0.1", resolve),
+  );
+  const upstreamPort = (upstreamServer.address() as { port: number }).port;
+  const proxy = new RestrictedCodexEgressProxy({
+    connectUpstream: () => connect(upstreamPort, "127.0.0.1"),
+    ...options,
+  });
+  const session = await proxy.startSession();
+  const parsed = new URL(session.proxyUrl);
+  return {
+    received,
+    port: Number(parsed.port),
+    authorization: `Proxy-Authorization: Basic ${Buffer.from(
+      `${decodeURIComponent(parsed.username)}:${decodeURIComponent(parsed.password)}`,
+    ).toString("base64")}\r\n`,
+    close: async () => {
+      session.close();
+      await proxy.shutdown();
+      await new Promise((resolve) => upstreamServer.close(resolve));
+    },
+  };
+}
+
+/** CONNECT, wait for 200, send `payload`; resolve when the proxy closes. */
+async function tunnel(
+  proxy: Awaited<ReturnType<typeof localProxy>>,
+  target: string,
+  payload: Buffer,
+): Promise<{ established: boolean; closed: boolean }> {
+  const socket = connect(proxy.port, "127.0.0.1");
+  let established = false;
+  let response = "";
+  return await new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      socket.destroy();
+      resolve({ established, closed: false });
+    }, 3000);
+    socket.on("data", (chunk) => {
+      if (established) return;
+      response += chunk.toString("latin1");
+      if (response.includes("\r\n\r\n")) {
+        established = response.startsWith("HTTP/1.1 200");
+        socket.write(payload);
+      }
+    });
+    socket.once("close", () => {
+      clearTimeout(timer);
+      resolve({ established, closed: true });
+    });
+    socket.on("error", () => {});
+    socket.once("connect", () =>
+      socket.write(
+        `CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n${proxy.authorization}\r\n`,
+      ),
+    );
+  });
+}
+
+describe("restricted egress tunnels verify the TLS destination", () => {
+  it("forwards nothing when the ClientHello names a different host", async () => {
+    const proxy = await localProxy({ clientHelloTimeoutMs: 2000 });
+    try {
+      const hello = await captureClientHello("example.com");
+      await expect(tunnel(proxy, "chatgpt.com:443", hello)).resolves.toEqual({
+        established: true,
+        closed: true,
+      });
+      expect(Buffer.concat(proxy.received).length).toBe(0);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it("forwards non-TLS data never", async () => {
+    const proxy = await localProxy({ clientHelloTimeoutMs: 2000 });
+    try {
+      await expect(
+        tunnel(proxy, "chatgpt.com:443", Buffer.from("GET / HTTP/1.1\r\n\r\n")),
+      ).resolves.toMatchObject({ closed: true });
+      expect(Buffer.concat(proxy.received).length).toBe(0);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it("forwards the exact ClientHello for the allowed host", async () => {
+    const proxy = await localProxy();
+    try {
+      const hello = await captureClientHello("chatgpt.com");
+      await tunnel(proxy, "chatgpt.com:443", hello);
+      expect(Buffer.concat(proxy.received).equals(hello)).toBe(true);
+    } finally {
+      await proxy.close();
+    }
+  });
+});
+
+describe("restricted egress connections are bounded before authentication", () => {
+  it("closes a connection that never completes its CONNECT request", async () => {
+    const proxy = await localProxy({ preauthTimeoutMs: 200 });
+    try {
+      const socket = connect(proxy.port, "127.0.0.1");
+      socket.on("error", () => {});
+      socket.once("connect", () =>
+        socket.write("CONNECT chatgpt.com:443 HTTP/1.1\r\n"),
+      );
+      const started = Date.now();
+      await new Promise((resolve) => socket.once("close", resolve));
+      expect(Date.now() - started).toBeLessThan(2000);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it("refuses connections beyond the global cap", async () => {
+    const proxy = await localProxy({ maxConnections: 3 });
+    const sockets: Socket[] = [];
+    try {
+      for (let i = 0; i < 3; i++) {
+        const socket = connect(proxy.port, "127.0.0.1");
+        socket.on("error", () => {});
+        sockets.push(socket);
+        await new Promise((resolve) => socket.once("connect", resolve));
+      }
+      // Let the server register them.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const extra = connect(proxy.port, "127.0.0.1");
+      extra.on("error", () => {});
+      await new Promise((resolve) => extra.once("close", resolve));
+      for (const socket of sockets) expect(socket.destroyed).toBe(false);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await proxy.close();
     }
   });
 });
