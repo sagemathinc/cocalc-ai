@@ -510,19 +510,21 @@ export async function listCollaborationScanRetirementCandidates(
       db,
       `scan-retire:${authority.owning_bay_id}`,
     );
-    const { rows } = await db.query(
-      `WITH page AS MATERIALIZED (
-         SELECT * FROM collaboration_scan_jobs WHERE job_id=ANY($2::uuid[])
-       ) SELECT j.project_id,j.job_id FROM page j JOIN projects p USING(project_id)
-       WHERE p.owning_bay_id=$1 AND j.state='queued'
-       AND NOT EXISTS (SELECT 1 FROM collaboration_scan_receipts r
-         WHERE r.project_id=j.project_id AND r.receipt->>'job_id'=j.job_id::text
-         AND r.expires_at>statement_timestamp())`,
-      [authority.owning_bay_id, page.map((row) => row.job_id)],
-    );
+    const { rows } = await db.query(scanRetirementCandidatesSql, [
+      authority.owning_bay_id,
+      page.map((row) => row.job_id),
+    ]);
     return rows;
   });
 }
+
+export const scanRetirementCandidatesSql = `WITH page AS MATERIALIZED (
+  SELECT * FROM collaboration_scan_jobs WHERE job_id=ANY($2::uuid[])
+) SELECT j.project_id,j.job_id FROM page j JOIN projects p USING(project_id)
+WHERE p.owning_bay_id=$1 AND j.state='queued'
+AND NOT EXISTS (SELECT 1 FROM collaboration_scan_receipts r
+  WHERE r.project_id=j.project_id AND r.receipt->>'job_id'=j.job_id::text
+  AND r.expires_at>statement_timestamp())`;
 
 async function scanJobPage(
   db: PoolClient,

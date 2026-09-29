@@ -952,3 +952,18 @@ disable-before-cleanup, and real-store retirement without host transport.
 Cleanup query plans at scale and PostgreSQL coalescing/start-versus-retirement
 races remain unverified. Sustained dispatch that exhausts each pass's deadline
 can delay cleanup; eventual cleanup latency is not yet a measured guarantee.
+
+### Retirement Candidate Query Cost
+
+The real PostgreSQL acceptance fixture now measures the exact exported cleanup
+candidate SQL against 10,000 queued jobs, first with no receipts and then with
+100,000 live receipts (ten per job). For a twenty-job page, the measured plans
+used 80 shared-buffer hits / 0.174 ms and 79 hits / 0.152 ms respectively. The
+receipt-heavy plan used twenty indexed receipt lookups rather than traversing
+the full receipt table. The test asserts the expected result counts and fewer
+than 2,000 shared hit/read blocks in both cases. All four acceptance cases and
+the server build pass.
+
+These timings exclude cursor selection/updates, retirement transactions, host
+work and concurrent load. Expired-receipt-heavy distributions, stale statistics,
+race validation and end-to-end cleanup latency remain separate gates.

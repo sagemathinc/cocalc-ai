@@ -1,6 +1,7 @@
 import {
   scanDispatchCandidatesSql,
   scanDispatchPageSql,
+  scanRetirementCandidatesSql,
 } from "@cocalc/database/postgres/collaborators/collaborators-scan";
 import { MultibayAcceptance } from "./acceptance/harness";
 import { randomUUID } from "node:crypto";
@@ -199,5 +200,33 @@ acceptance("scan blocked backlog query cost", () => {
       (explain.Plan["Shared Hit Blocks"] ?? 0) +
         (explain.Plan["Shared Read Blocks"] ?? 0),
     ).toBeLessThan(2000);
+    const measureRetirement = async (
+      scenario: string,
+      expectedRows: number,
+    ) => {
+      const rows = await env.sql(
+        "owner",
+        `EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) ${scanRetirementCandidatesSql}`,
+        [env.bays[0], page.map((row) => row.job_id)],
+      );
+      const explain = rows[0]["QUERY PLAN"][0];
+      process.stdout.write(JSON.stringify({ scenario, explain }) + "\n");
+      expect(explain.Plan["Actual Rows"]).toBe(expectedRows);
+      expect(
+        (explain.Plan["Shared Hit Blocks"] ?? 0) +
+          (explain.Plan["Shared Read Blocks"] ?? 0),
+      ).toBeLessThan(2000);
+    };
+    await measureRetirement("retirement-10000-no-receipts", 20);
+    await env.sql(
+      "owner",
+      `INSERT INTO collaboration_scan_receipts(project_id,account_id,request_id,mode,receipt,expires_at)
+      SELECT md5('scan-scale-'||n)::uuid,$1,md5('receipt-'||n||'-'||r)::uuid,'check',
+        jsonb_build_object('job_id',md5('scan-job-'||n)::uuid),now()+interval '1 day'
+      FROM generate_series(1,10000) n CROSS JOIN generate_series(1,10) r`,
+      [env.accounts[0]],
+    );
+    await env.sql("owner", "ANALYZE collaboration_scan_receipts");
+    await measureRetirement("retirement-10000-jobs-100000-live-receipts", 0);
   }, 120000);
 });
