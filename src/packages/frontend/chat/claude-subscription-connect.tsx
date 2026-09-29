@@ -240,11 +240,14 @@ export function ClaudeSubscriptionConnect({
       )}
     </Space>
   );
+  // Compact with the sign-in in a modal sits in a row of settings: stay
+  // inline and one line high there.
+  const inline = compact && modal;
   return (
     <Space
-      orientation="vertical"
-      size={12}
-      style={{ width: "100%", minWidth: 0 }}
+      orientation={inline ? "horizontal" : "vertical"}
+      size={inline ? 4 : 12}
+      style={inline ? { minWidth: 0 } : { width: "100%", minWidth: 0 }}
     >
       {hasConnection && !compact && (
         <Typography.Text type="secondary">
@@ -261,7 +264,12 @@ export function ClaudeSubscriptionConnect({
         </Button>
       )}
       <Button
-        style={{ maxWidth: "100%", height: "auto", whiteSpace: "normal" }}
+        size={inline ? "small" : undefined}
+        style={
+          inline
+            ? { maxWidth: "100%" }
+            : { maxWidth: "100%", height: "auto", whiteSpace: "normal" }
+        }
         aria-haspopup={modal ? "dialog" : undefined}
         disabled={disabled || signingIn}
         loading={busy}
