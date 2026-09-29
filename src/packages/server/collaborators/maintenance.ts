@@ -16,6 +16,7 @@ import {
   indexingPages,
   indexingPageSeconds,
   indexingPageBytes,
+  measureOwnerProjectionFetch,
 } from "./indexing-metrics";
 import { runPeopleInvitationMaintenance } from "./invitations-runtime";
 import { runPeopleInviteMaintenance } from "@cocalc/server/people/invite-maintenance";
@@ -135,11 +136,15 @@ export async function runCollaboratorsMaintenance() {
     const fetchPage =
       demandSchedulingEnabled() &&
       process.env.COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE === "1"
-        ? createSharedProjectionFetcher(
-            jobs,
-            fetchCollaborationSharedProjection,
+        ? createSharedProjectionFetcher(jobs, (request) =>
+            measureOwnerProjectionFetch("shared", () =>
+              fetchCollaborationSharedProjection(request),
+            ),
           )
-        : fetchCollaborationProjection;
+        : (job: (typeof jobs)[number]) =>
+            measureOwnerProjectionFetch("individual", () =>
+              fetchCollaborationProjection(job),
+            );
     // At most eight bounded metadata pages in flight, with durable claims and
     // no waiting queue. Each page revalidates current owner membership.
     await Promise.all(

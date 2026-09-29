@@ -1383,3 +1383,22 @@ catalog result and applies it to both account projections, while leaving the
 cold row unclaimed. Jest reported a transient open-handle warning and then
 exited successfully without intervention. This is component integration, not
 proof of the full source-to-sleep-to-return or 10k/100k scaling gates.
+
+### Shared Fetch Measurement Boundary
+
+Maintenance now measures serialized owner responses at the fetch boundary,
+before splitting a shared response into per-account pages. The new
+`cocalc_people_indexing_owner_response_bytes_total` counter counts each response
+once, labeled only by shared/individual mode. The existing page-bytes counter
+remains logical per-account apply volume, with its help text corrected.
+`cocalc_people_indexing_owner_fetches_total` distinguishes attempted, received,
+and failed invocations. These are application fetch counts and JSON payload
+bytes, not transport framing bytes or internal route-retry counts. Received
+denials count as responses; thrown/unknown outcomes do not fabricate bytes.
+
+Server typecheck and forty focused metrics, shared-fetcher and API tests pass.
+Coverage verifies one shared measurement for two recipients, failed fetch error
+preservation without received bytes, and independent UTF-8 individual payload
+measurement. This supplies an honest measurement boundary for future scaling
+experiments; no capacity, cross-cohort caching, or lifecycle gate is closed by
+these tests.
