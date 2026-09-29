@@ -14,7 +14,7 @@ export type CollaborationReconciliationAdmission =
   | { admission: "deferred"; run_id: string; reason: string }
   | { admission: "throttled"; run_id: string; retry_after_ms: number };
 export type CollaborationReconciliationStatus =
-  | { state: "unknown" }
+  | { state: "unknown"; current_run_id?: string }
   | {
       /** Discovery only: does not assert extraction or owner ingestion. */
       state: "indexing" | "partial" | "discovered";

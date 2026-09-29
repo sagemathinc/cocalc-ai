@@ -543,3 +543,39 @@ export async function releaseCollaborationScanDispatch(
     );
   });
 }
+
+/** Adopt an initial host census only under the current dispatch lease. Never
+ * overwrite an already recorded predecessor after a race or restart.
+ */
+export async function adoptCollaborationScanPredecessor(
+  opts: {
+    project_id: string;
+    job_id: string;
+    token: string;
+    predecessor: string;
+  },
+  authority: CollaborationWriterAuthority,
+) {
+  uuid(opts.job_id, "scan job");
+  uuid(opts.token, "dispatch token");
+  uuid(opts.predecessor, "scan predecessor");
+  if (opts.job_id === opts.predecessor)
+    throw Error("scan cannot replace itself");
+  return transaction(async (db) => {
+    await assertCollaborationWriterAuthority(db, opts.project_id, authority);
+    const { rows } = await db.query(
+      `UPDATE collaboration_scan_jobs SET expected_run_id=$4
+      WHERE project_id=$1 AND job_id=$2 AND dispatch_token=$3 AND dispatch_until>clock_timestamp()
+      AND state='running' AND host_id=$5 AND (expected_run_id IS NULL OR expected_run_id=$4)
+      RETURNING job_id`,
+      [
+        opts.project_id,
+        opts.job_id,
+        opts.token,
+        opts.predecessor,
+        authority.host_id,
+      ],
+    );
+    return rows.length > 0;
+  });
+}

@@ -7,6 +7,7 @@ import {
   settleCollaborationScanDiscovery,
   claimCollaborationScanDispatch,
   releaseCollaborationScanDispatch,
+  adoptCollaborationScanPredecessor,
 } from "@cocalc/database/postgres/collaborators/collaborators-scan";
 import type { CollaborationOwnerAuthority } from "@cocalc/database/postgres/collaborators/collaborators-owner";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
@@ -65,6 +66,19 @@ export async function dispatchCollaborationScan(
         };
       }
       return { state: "running" as const };
+    }
+    if (status.current_run_id && !scan.expected_run_id) {
+      const adopted = await adoptCollaborationScanPredecessor(
+        {
+          project_id: request.project_id,
+          job_id: run.job_id,
+          token: token!,
+          predecessor: status.current_run_id,
+        },
+        { ...authority, host_id: run.host_id },
+      );
+      if (!adopted) return { state: "deferred" as const };
+      scan.expected_run_id = status.current_run_id;
     }
     const admission = await host.requestCollaborationReconciliation(scan);
     if (admission.admission === "accepted" && admission.run_id !== run.job_id)

@@ -178,6 +178,9 @@ test("explicit status is authorized, inert, and distinguishes discovery from ing
   expect(census!.store.status(project_id)).toBeUndefined();
   expect(options.getFilesystem).not.toHaveBeenCalled();
   await census!.requestReconciliation(request);
+  expect(
+    await census!.reconciliationStatus({ project_id, run_id: randomUUID() }),
+  ).toEqual({ state: "unknown", current_run_id: request.run_id });
   expect(await census!.reconciliationStatus(request)).toMatchObject({
     state: "indexing",
     run_id: request.run_id,

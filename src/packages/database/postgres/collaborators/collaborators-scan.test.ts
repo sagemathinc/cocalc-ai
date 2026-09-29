@@ -13,6 +13,7 @@ import {
   claimCollaborationScanDispatch,
   releaseCollaborationScanDispatch,
   listCollaborationScanDispatchCandidates,
+  adoptCollaborationScanPredecessor,
   syncCollaborationScanSchema,
 } from "./collaborators-scan";
 
@@ -67,6 +68,33 @@ describeDb("owner scan admission prototype", () => {
     await expect(
       admitCollaborationScan({ ...request, mode: "check" }, authority),
     ).rejects.toThrow("different arguments");
+  });
+  test("predecessor adoption is lease-fenced and cannot rewrite an established boundary", async () => {
+    const request = await fixture();
+    const receipt = await admitCollaborationScan(request, authority);
+    if (!("job_id" in receipt)) throw Error("expected admission");
+    const job = { ...request, job_id: receipt.job_id };
+    await startCollaborationScan(job, authority);
+    const token = (await claimCollaborationScanDispatch(job, authority))!;
+    const opts = { ...job, token, predecessor: randomUUID() };
+    const writer = { ...authority, host_id };
+    expect(
+      await adoptCollaborationScanPredecessor(
+        { ...opts, token: randomUUID() },
+        writer,
+      ),
+    ).toBe(false);
+    expect(await adoptCollaborationScanPredecessor(opts, writer)).toBe(true);
+    expect(await adoptCollaborationScanPredecessor(opts, writer)).toBe(true);
+    expect(
+      await adoptCollaborationScanPredecessor(
+        { ...opts, predecessor: randomUUID() },
+        writer,
+      ),
+    ).toBe(false);
+    expect(await startCollaborationScan(job, authority)).toMatchObject({
+      expected_run_id: opts.predecessor,
+    });
   });
   test("cursor advances past a blocked page to eligible work and wraps", async () => {
     await getPool().query(

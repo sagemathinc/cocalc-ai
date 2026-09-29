@@ -884,3 +884,19 @@ already exists. All three PostgreSQL acceptance cases and the server build pass.
 This proves the internal home-to-owner path in the synthetic cluster, not public
 principal binding, agent grants, live project-host execution, or production
 rollout. Broader budgets, recovery and capacity gates remain outstanding.
+
+### Initial Host Census Adoption
+
+Authorized internal host status now returns its current run ID when the requested
+run is unknown, after validating the stored run's local scope. For an owner job
+with no predecessor, dispatch persists that ID under the live lease and current
+host authority before requesting replacement. An established predecessor cannot
+be overwritten. Host busy, cooldown and expected-run comparison still govern
+replacement; no unconditional replace or filesystem traversal was added.
+
+The project-host build and 36 focused tests pass (19 store, ten host census,
+seven dispatcher). New coverage verifies durable predecessor replay, wrong-token
+rejection, refusal to change an established predecessor, and inert authorized
+host disclosure. Mixed-version hosts without the new optional field still fail
+closed on a conflicting census. Real owner/host adoption transport and recovery
+after volume/host replacement remain to be validated.

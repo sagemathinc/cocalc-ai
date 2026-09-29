@@ -298,9 +298,10 @@ export function createHostedCollaborationCensus(options: {
     )
       throw unavailable("ESTALE");
     const status = store.status(opts.project_id);
-    if (!status || status.run.run_id !== opts.run_id)
-      return { state: "unknown" };
+    if (!status) return { state: "unknown" };
     assertLocal(status.run);
+    if (status.run.run_id !== opts.run_id)
+      return { state: "unknown", current_run_id: status.run.run_id };
     return {
       state: status.coverage === "complete" ? "discovered" : status.coverage,
       run_id: status.run.run_id,
