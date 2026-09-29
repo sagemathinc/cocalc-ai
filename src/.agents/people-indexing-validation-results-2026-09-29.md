@@ -1074,3 +1074,19 @@ after membership revocation because relinquishing a scheduling hint grants no
 access. Four store tests and the database build pass, including renewal fencing,
 wrong-home no-op, wrong-owner rejection and repeated release. Authenticated
 aggregate-home routing is still a caller contract, not an exposed transport API.
+
+### Coalesced Revision Hint Store
+
+Live-interest inspection now compares the current catalog generation/revision
+with an acknowledged hint watermark, rather than creating one pending row per
+edit. Inspection rechecks membership and does not renew demand. Acknowledgment
+is lease-fenced, monotone within the current generation, and rejects future
+revisions or an old generation. Active renewal preserves acknowledgment state;
+expired reacquisition resets it. An acknowledgment represents a wakeup accepted
+durably at home, never an assertion that a user view has caught up.
+
+Database build and five store tests pass, including an intervening revision,
+out-of-order acknowledgment, future/wrong-generation rejection, renewal lease
+replacement, generation rotation and expiry. Transport delivery, durable home
+acceptance, batch selection and lost-hint repair remain unwired; these store
+tests do not establish the full snapshot/subscription handoff.

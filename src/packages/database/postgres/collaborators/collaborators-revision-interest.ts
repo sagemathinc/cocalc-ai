@@ -4,7 +4,12 @@
  */
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "@cocalc/database/pool";
-import { transaction, boundedText, uuid } from "./collaborators-common";
+import {
+  transaction,
+  boundedText,
+  uuid,
+  integer,
+} from "./collaborators-common";
 import {
   assertCollaborationAccountAuthority,
   assertCollaborationOwnerAuthority,
@@ -21,6 +26,9 @@ export async function syncCollaborationRevisionInterestSchema(
     PRIMARY KEY(project_id,home_bay_id))`);
   await db.query(`CREATE INDEX IF NOT EXISTS collaboration_revision_interests_expiry
     ON collaboration_revision_interests(expires_at,project_id,home_bay_id)`);
+  await db.query(`ALTER TABLE collaboration_revision_interests
+    ADD COLUMN IF NOT EXISTS ack_generation UUID,
+    ADD COLUMN IF NOT EXISTS ack_revision BIGINT NOT NULL DEFAULT 0`);
 }
 
 /** Internal owner-side prototype, not a public API. The caller must authenticate
@@ -56,13 +64,16 @@ export async function registerCollaborationRevisionInterest(
         await db.query(
           `INSERT INTO collaboration_revision_interests(project_id,home_bay_id,lease_id,expires_at,renew_after)
          VALUES($1,$2,$3,$4,$5) ON CONFLICT(project_id,home_bay_id) DO UPDATE SET
-         lease_id=excluded.lease_id,expires_at=excluded.expires_at,renew_after=excluded.renew_after RETURNING *`,
+         lease_id=excluded.lease_id,expires_at=excluded.expires_at,renew_after=excluded.renew_after,
+         ack_generation=CASE WHEN collaboration_revision_interests.expires_at<=$6 THEN NULL ELSE collaboration_revision_interests.ack_generation END,
+         ack_revision=CASE WHEN collaboration_revision_interests.expires_at<=$6 THEN 0 ELSE collaboration_revision_interests.ack_revision END RETURNING *`,
           [
             opts.project_id,
             opts.home_bay_id,
             lease_id,
             new Date(now + 120000),
             new Date(now + 30000),
+            new Date(now),
           ],
         )
       ).rows[0];
@@ -86,6 +97,78 @@ export async function registerCollaborationRevisionInterest(
           }
         : null,
     };
+  });
+}
+
+type InterestLookup = {
+  project_id: string;
+  account_id: string;
+  home_bay_id: string;
+  lease_id: string;
+};
+
+/** Read-only coalesced wakeup, not a delta or an access grant. Registration's
+ * authenticated-home binding applies here too. No expiry or renewal mutation.
+ */
+export async function readCollaborationRevisionHint(
+  opts: InterestLookup,
+  authority: CollaborationOwnerAuthority,
+) {
+  boundedText(opts.home_bay_id, "interest home bay", 128);
+  uuid(opts.lease_id, "interest lease");
+  return transaction(async (db) => {
+    await assertCollaborationAccountAuthority(
+      db,
+      opts.project_id,
+      opts.account_id,
+      authority,
+    );
+    const row = (
+      await db.query(
+        `SELECT c.generation,c.revision FROM collaboration_revision_interests i
+       JOIN collaboration_projects c USING(project_id)
+       WHERE i.project_id=$1 AND i.home_bay_id=$2 AND i.lease_id=$3 AND i.expires_at>clock_timestamp()
+       AND (i.ack_generation IS DISTINCT FROM c.generation OR i.ack_revision<c.revision)`,
+        [opts.project_id, opts.home_bay_id, opts.lease_id],
+      )
+    ).rows[0];
+    return row
+      ? { generation: row.generation as string, revision: Number(row.revision) }
+      : null;
+  });
+}
+
+/** Acknowledges only the hint accepted durably at home, never view freshness. */
+export async function acknowledgeCollaborationRevisionHint(
+  opts: InterestLookup & { generation: string; revision: number },
+  authority: CollaborationOwnerAuthority,
+): Promise<boolean> {
+  boundedText(opts.home_bay_id, "interest home bay", 128);
+  uuid(opts.lease_id, "interest lease");
+  uuid(opts.generation, "catalog generation");
+  integer(opts.revision, "catalog revision");
+  return transaction(async (db) => {
+    await assertCollaborationAccountAuthority(
+      db,
+      opts.project_id,
+      opts.account_id,
+      authority,
+    );
+    const { rows } = await db.query(
+      `UPDATE collaboration_revision_interests i SET ack_generation=$4,
+       ack_revision=CASE WHEN i.ack_generation=$4 THEN GREATEST(i.ack_revision,$5) ELSE $5 END
+       FROM collaboration_projects c WHERE c.project_id=i.project_id
+       AND i.project_id=$1 AND i.home_bay_id=$2 AND i.lease_id=$3 AND i.expires_at>clock_timestamp()
+       AND c.generation=$4 AND c.revision>=$5 RETURNING i.lease_id`,
+      [
+        opts.project_id,
+        opts.home_bay_id,
+        opts.lease_id,
+        opts.generation,
+        opts.revision,
+      ],
+    );
+    return rows.length > 0;
   });
 }
 
