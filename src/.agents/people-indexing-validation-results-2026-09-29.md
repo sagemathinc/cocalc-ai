@@ -1609,3 +1609,20 @@ single-row pagination across two active accounts, end-of-traversal behavior,
 wrong-home exclusion, page-limit validation and removal of current demand while
 the reverse row remains. Receiver wakeup scheduling, durable traversal completion,
 expiry cleanup and PostgreSQL scale validation for this reader remain open.
+
+### Home-Fenced Wakeup Scheduling Operation
+
+Added a scheduling operation that re-enters the existing account-home/rehome
+fence, takes the account queue before project access locks, and rechecks current
+project demand and projected membership through the existing membership-demand
+scheduler. It returns `scheduled`, `inactive`, or `busy`. Live projection or
+access claims return busy rather than advancing due times that an in-flight
+apply could overwrite. A consumer must retain/retry that work; scheduling is
+not completed projection catch-up.
+
+Server typecheck and fifty projection-store tests pass. Assertions cover a live
+claim refusing scheduling, removed demand remaining inactive, and an eligible
+idle account/project moving from a future due time to due now. Jest emitted its
+open-handle warning and exited successfully. Receiver durable traversal and
+completion integration, cross-process races, expiry GC and scale gates remain
+open; this operation is not yet called automatically for received hints.

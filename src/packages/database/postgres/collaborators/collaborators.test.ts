@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   syncCollaborationDemandSchema,
   readCollaborationProjectDemandPage,
+  scheduleCollaborationRevisionDemand,
   acquireCollaborationDemand,
   runCollaborationDemandActivation,
 } from "./collaborators-demand";
@@ -333,6 +334,9 @@ test("shared demand claiming selects compatible work across active accounts with
       [account_id, other_id].sort(),
     );
     expect(jobs.every((j) => j.project_id === project_id)).toBe(true);
+    expect(
+      await scheduleCollaborationRevisionDemand(account_id, project_id),
+    ).toBe("busy");
     const reverse = await getPool().query(
       `SELECT p.account_id, p.grace_until=(SELECT MAX(d.grace_until)
        FROM collaboration_demand d WHERE d.account_id=p.account_id) AS bounded
@@ -429,6 +433,21 @@ test("shared demand claiming selects compatible work across active accounts with
         })
       ).account_ids,
     ).toEqual([account_id]);
+    expect(
+      await scheduleCollaborationRevisionDemand(other_id, project_id),
+    ).toBe("inactive");
+    await getPool().query(
+      "UPDATE collaboration_access SET due_at=clock_timestamp()+interval '1 day',claim_until=NULL,lease_claim_until=NULL WHERE account_id=$1 AND project_id=$2",
+      [account_id, project_id],
+    );
+    expect(
+      await scheduleCollaborationRevisionDemand(account_id, project_id),
+    ).toBe("scheduled");
+    const scheduled = await getPool().query(
+      "SELECT due_at<=clock_timestamp() AS due FROM collaboration_access WHERE account_id=$1 AND project_id=$2",
+      [account_id, project_id],
+    );
+    expect(scheduled.rows[0].due).toBe(true);
   } finally {
     flags.forEach((n, i) => {
       if (prior[i] === undefined) delete process.env[n];

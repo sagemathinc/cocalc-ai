@@ -197,7 +197,7 @@ export async function scheduleCollaborationMembershipDemand(
   account_id: string,
   project_id: string,
 ) {
-  if (!demandSchedulingEnabled()) return;
+  if (!demandSchedulingEnabled()) return false;
   const { rows } = await db.query(
     `INSERT INTO collaboration_demand_activation(account_id,projection_due,access_due)
     SELECT p.account_id,clock_timestamp(),clock_timestamp()
@@ -214,7 +214,7 @@ export async function scheduleCollaborationMembershipDemand(
     RETURNING account_id`,
     [account_id, project_id],
   );
-  if (!rows.length) return;
+  if (!rows.length) return false;
   await db.query(
     `INSERT INTO collaboration_access(account_id,project_id,due_at,lease_due_at)
     VALUES($1,$2,clock_timestamp(),clock_timestamp())
@@ -223,6 +223,38 @@ export async function scheduleCollaborationMembershipDemand(
       lease_due_at=LEAST(collaboration_access.lease_due_at,excluded.lease_due_at)`,
     [account_id, project_id],
   );
+  return true;
+}
+
+/** Home-side wakeup scheduling, not projection completion. A live claim must
+ * finish before rescheduling so its apply cannot overwrite the new due time.
+ */
+export async function scheduleCollaborationRevisionDemand(
+  account_id: string,
+  project_id: string,
+): Promise<"scheduled" | "busy" | "inactive"> {
+  uuid(project_id, "revision demand project");
+  if (!demandSchedulingEnabled()) return "inactive";
+  return onHome(account_id, async (db) => {
+    // Match activation/claim lock order: account queue, then project access.
+    await db.query(
+      "SELECT account_id FROM collaboration_demand_activation WHERE account_id=$1 FOR UPDATE",
+      [account_id],
+    );
+    const { rows } = await db.query(
+      `SELECT (claim_until>clock_timestamp() OR lease_claim_until>clock_timestamp()) AS busy
+       FROM collaboration_access WHERE account_id=$1 AND project_id=$2 FOR UPDATE`,
+      [account_id, project_id],
+    );
+    if (rows[0]?.busy) return "busy";
+    return (await scheduleCollaborationMembershipDemand(
+      db,
+      account_id,
+      project_id,
+    ))
+      ? "scheduled"
+      : "inactive";
+  });
 }
 
 function scopeOf(value: CollaborationDemandScope): CollaborationDemandScope {
