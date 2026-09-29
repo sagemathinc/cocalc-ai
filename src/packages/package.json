@@ -6,9 +6,7 @@
     "lint:frontend": "oxlint --config .oxlintrc.jsonc frontend && pnpm --dir frontend check:antd-tooltip-imports",
     "lint:non-frontend": "oxlint --config .oxlintrc.non-frontend.jsonc .",
     "tsc:prepare": "pnpm --filter @cocalc/cdn build && pnpm --filter @cocalc/frontend i18n:compile",
-    "tsc:build": "pnpm tsc:prepare && pnpm tsc:6",
-    "tsc:6": "node --max-old-space-size=6144 node_modules/typescript/bin/tsc --build tsconfig.solution.json",
-    "tsc:7": "typescript-native/node_modules/.bin/tsc --build tsconfig.solution.json",
+    "tsc:build": "pnpm tsc:prepare && tsc --build tsconfig.solution.json",
     "tsc:watch": "tsc --build --watch --pretty --preserveWatchOutput tsconfig.solution.json"
   },
   "devDependencies": {
@@ -52,14 +50,15 @@
     "@cocalc/test": "workspace:*",
     "@cocalc/util": "workspace:*",
     "@types/jest": "^30.0.0",
+    "@typescript/native": "npm:typescript@^7.0.2",
     "check-dependency-version-consistency": "^5.0.0",
     "depcheck": "^1.4.7",
     "jest": "^30.0.5",
     "jest-junit": "^16.0.0",
     "oxlint": "^1.57.0",
     "prettier": "3.8.1",
-    "ts-jest": "29.4.9",
-    "typescript": "^6.0.3"
+    "ts-jest": "29.4.14",
+    "typescript": "npm:@typescript/typescript6@^6.0.2"
   },
   "dependencies": {
     "encoding": "^0.1.13"

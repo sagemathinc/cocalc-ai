@@ -5,6 +5,7 @@ import {
   checkTsconfig,
   missingWorkspaceLinks,
   removedOptionErrors,
+  typescriptDependencyErrors,
 } from "./check-tsconfig.mjs";
 
 test("flags compiler options removed in TypeScript 7", () => {
@@ -37,7 +38,6 @@ test("requires root workspace links for every @cocalc package", () => {
       "@cocalc/util",
       "@cocalc/sync",
       "@cocalc/conat",
-      "@cocalc/typescript-native",
       "some-vendored-package",
     ]),
     [
@@ -45,6 +45,23 @@ test("requires root workspace links for every @cocalc package", () => {
       'src/packages/package.json: add "@cocalc/conat": "workspace:*" to devDependencies',
     ],
   );
+});
+
+test("keeps typescript as the TypeScript 6 API and tsc as TypeScript 7", () => {
+  const ok = {
+    devDependencies: {
+      "@typescript/native": "npm:typescript@^7.0.2",
+      typescript: "npm:@typescript/typescript6@^6.0.2",
+    },
+  };
+  assert.deepEqual(typescriptDependencyErrors("p/package.json", ok), []);
+  const bad = {
+    devDependencies: {
+      "@typescript/native": "npm:typescript@^6.0.3",
+      typescript: "^7.0.2",
+    },
+  };
+  assert.equal(typescriptDependencyErrors("p/package.json", bad).length, 2);
 });
 
 test("the repository passes", () => {

@@ -1,8 +1,11 @@
-// Guards the TypeScript 7 migration (src/.agents/typescript-7-migration-plan-2026-07-15.md):
+// Guards the TypeScript 7 setup (src/.agents/typescript-7-migration-plan-2026-07-15.md):
 // - no tsconfig may use compiler options that TypeScript 7 removed;
 // - the workspace root must declare every @cocalc package, because the shared
 //   "@cocalc/*" paths mapping in packages/tsconfig.json resolves workspace
-//   imports to source through packages/node_modules/@cocalc.
+//   imports to source through packages/node_modules/@cocalc;
+// - "typescript" must stay the TypeScript 6 compatibility package, which only
+//   provides the compiler API that ts-jest and a few scripts need. The tsc
+//   compiler is TypeScript 7, installed as "@typescript/native".
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -20,8 +23,8 @@ const REMOVED_OPTIONS = [
   ],
 ];
 
-// This helper package only installs the TypeScript 7 compiler; nothing imports it.
-const NOT_LINKED = new Set(["@cocalc/typescript-native"]);
+const TYPESCRIPT_API = /^npm:@typescript\/typescript6@/;
+const TYPESCRIPT_NATIVE = /^npm:typescript@\^?7\./;
 
 // Mirrors the exclusions in packages/pnpm-workspace.yaml.
 function isOutsideWorkspace(path) {
@@ -54,12 +57,31 @@ export function missingWorkspaceLinks(rootPackage, workspaceNames) {
     ...rootPackage.devDependencies,
   };
   return workspaceNames
-    .filter((name) => name.startsWith("@cocalc/") && !NOT_LINKED.has(name))
+    .filter((name) => name.startsWith("@cocalc/"))
     .filter((name) => declared[name] !== "workspace:*")
     .map(
       (name) =>
         `src/packages/package.json: add "${name}": "workspace:*" to devDependencies`,
     );
+}
+
+export function typescriptDependencyErrors(path, pkg) {
+  const errors = [];
+  for (const section of ["dependencies", "devDependencies"]) {
+    const deps = pkg[section] ?? {};
+    if (deps.typescript != null && !TYPESCRIPT_API.test(deps.typescript)) {
+      errors.push(
+        `${path}: "typescript" must be "npm:@typescript/typescript6@..." (the compiler API for ts-jest); tsc is "@typescript/native"`,
+      );
+    }
+    const native = deps["@typescript/native"];
+    if (native != null && !TYPESCRIPT_NATIVE.test(native)) {
+      errors.push(
+        `${path}: "@typescript/native" must be "npm:typescript@^7..."`,
+      );
+    }
+  }
+  return errors;
 }
 
 export function checkTsconfig(root = ROOT) {

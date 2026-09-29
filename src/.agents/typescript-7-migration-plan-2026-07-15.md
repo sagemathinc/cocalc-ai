@@ -92,9 +92,20 @@ Observations:
    of TypeScript 7-removed options (`moduleResolution: "node"`/`node10`/
    `classic`, `baseUrl`, `downlevelIteration`) and on `@cocalc` packages the
    workspace root does not link.
-5. **Compiler API.** Keep TS6 as the `typescript` package for tooling. Revisit
-   when TS7.1 is released; that is not a prerequisite for using TS7 as the
-   build compiler.
+5. **TypeScript 7 is the only compiler (decided 2026-09-29, superseding the
+   side-by-side transition period in Phases 1 and 9).** `tsc` everywhere is
+   TS 7, installed as `"@typescript/native": "npm:typescript@^7.0.2"`. There
+   is no TS6 build, script, or CI path and no rollback script. TS 7.0 has no
+   JavaScript compiler API, so `"typescript"` is
+   `"npm:@typescript/typescript6@^6.0.2"`: a library, never run as a compiler,
+   that provides the API for ts-jest, formatjs, Expo, and the AST scripts. This
+   is the layout documented by Microsoft and by ts-jest (29.4.12+, which also
+   filters its own `node10` deprecation diagnostic, so `ignoreDeprecations` is
+   gone). Diagnostics produced by ts-jest during test transforms come from TS6;
+   TS7 builds are authoritative. Revisit when TypeScript ships a stable
+   programmatic API and ts-jest supports it (kulshekhar/ts-jest#5366; the
+   maintainer expects TS 7.1, with no committed date), or move Jest to a
+   transpiler without a TypeScript dependency such as `@swc/jest`.
 
 ### Revised Order Of Work
 
@@ -951,3 +962,10 @@ The migration is complete only when all of the following are true:
   `pnpm install-sandbox-tools` in a fresh worktree and then pass.
 - Remaining: Phase 9 default switch after live Lite/hub smoke tests and
   staging; revisit dropping TS6 when TS7.1 ships a compiler API.
+- 2026-09-29: Switched fully to TypeScript 7 (Decision 5). Removed
+  `packages/typescript-native`, the `tsc:6`/`tsc:7` scripts, the separate CI
+  job, `ignoreDeprecations`, and TS-specific Node heap flags (the native
+  compiler does not use the V8 heap). ts-jest 29.4.9 -> 29.4.14. `pnpm tsc`
+  from a clean tree: 25 s including prepare steps, 0 errors. The guard now
+  also requires `typescript` to be the TS6 compatibility alias and
+  `@typescript/native` to be TS 7.
