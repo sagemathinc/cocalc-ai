@@ -41,8 +41,7 @@ import CopyButton, {
 import type { MenuItems } from "@cocalc/frontend/components/dropdown-menu";
 import { EditableMarkdown } from "@cocalc/frontend/editors/slate/editable-markdown";
 import StaticMarkdown, { formatMarkdownPage } from "./bounded-static-markdown";
-import { MAX_RENDERED_TEXT_CHARS, PagedText } from "./paged-text";
-import type { TextSource } from "./text-source";
+import { PagedText } from "./paged-text";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
 import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspaces/use-effective-editor-theme";
 import { resolveGitTurnDirectory } from "./git-turn-context";
@@ -56,12 +55,9 @@ import { isLanguageModelService } from "@cocalc/util/db-schema/ai-models";
 import { unreachable } from "@cocalc/util/misc";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
-  deriveAcpLogRefs,
   getBestResponseText,
-  getLiveResponseBlocks,
   getInterruptedResponseMarkdown,
   getLiveResponseMarkdown,
-  getMountedIntermediateResponseBlocks,
   type InlineCodeLink,
   type CodexThreadConfig,
 } from "@cocalc/chat";
@@ -110,7 +106,6 @@ import {
   AttachedSteerStatusList,
   type AttachedSteerMessage,
 } from "./agent-message-status";
-import { useCodexLog } from "./use-codex-log";
 import { recordCodexFirstResponseVisible } from "./codex-ux-latency";
 import { recordOnboardingOutput } from "@cocalc/frontend/monitoring/onboarding";
 import { GitCommitDrawer } from "./git-commit-drawer";
@@ -136,12 +131,8 @@ import {
   resolveMessageGitBrowserRequest,
 } from "./git-commit-links";
 import {
-  canUseCompletedCachedCodexActivity,
-  codexActivityTextSource,
-  codexActivityWindow,
   computeAcpStateToRender,
   acpMessageStatePresentation,
-  DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT,
   getAcpMessageDeliveryLabel,
   getQueuedMessageEditHelpText,
   resolveCodexOverflowMenuLocation,
@@ -149,17 +140,13 @@ import {
   resolveEditedMessageForSave,
   resolveEffectiveGenerating,
   resolveInlineCodexActivityMode,
-  resolveLiveCodexActivityBlocks,
-  reconcileActivityGuidance,
   resolveMessageBodyMode,
   resolveRenderedMessageValue,
-  shouldLoadCodexPreviewBody,
   shouldShowAcpResubmitToAgentButton,
   shouldShowQueuedMessageEditedVersionSent,
   shouldSuppressAcpPlaceholderBody,
   shouldUseSelectableMessageBody,
   shouldUseCodexSelectToolbar,
-  trimCompletedCachedCodexActivityBlocks,
   type InlineCodexActivityBlock,
 } from "./message-state";
 import {
@@ -170,6 +157,16 @@ import {
   agentMessageFence,
   stripAgentRpcPrompt,
 } from "./agent-message-presentation";
+import {
+  TurnActivityTimeline,
+  type TurnTimelineContext,
+} from "./turn-activity-timeline";
+import type { TurnTimelineRow } from "./turn-timeline";
+import {
+  EMPTY_TURN_ACTIVITY,
+  useFedTurnActivity,
+  useTurnActivity,
+} from "./turn-activity";
 
 const EDIT_MARKDOWN_MIN_HEIGHT = 120;
 
@@ -379,6 +376,9 @@ interface Props {
   onCachedCodexActivityBlocksChange?: (
     blocks: InlineCodexActivityBlock[] | undefined,
   ) => void;
+  // The chat log feeds this turn's activity and renders its rows as list
+  // rows, so the message does not load the log or render the rows itself.
+  activityFeed?: boolean;
 }
 
 function getLatestCodexActivityAtMs(
@@ -483,6 +483,7 @@ export default function Message({
   allowAsyncCompletedCodexActivityLoad = false,
   cachedCodexActivityBlocks,
   onCachedCodexActivityBlocksChange,
+  activityFeed = false,
 }: Props) {
   const intl = useIntl();
   const narrow = useNarrowChatViewport();
@@ -497,7 +498,6 @@ export default function Message({
   const edited_message_ref = useRef(edited_message);
 
   const [show_history, set_show_history] = useState(false);
-  const [codexActivityPageEnd, setCodexActivityPageEnd] = useState<number>();
 
   const historyEntries = useMemo(() => historyArray(message), [message]);
   const firstHistoryEntry = useMemo(
@@ -839,34 +839,6 @@ export default function Message({
     });
   }, [actions, acpInterrupted, effectiveGenerating, acpState, message]);
 
-  // Resolve log identifiers deterministically (shared with backend) so we never
-  // invent subjects/keys in multiple places.
-  const fallbackLogRefs = useMemo(() => {
-    const turn_message_id =
-      `${field<string>(message, "message_id") ?? ""}`.trim();
-    const normalizedThreadId = `${messageThreadId ?? ""}`.trim();
-
-    const derived =
-      project_id && path && normalizedThreadId && turn_message_id
-        ? deriveAcpLogRefs({
-            project_id,
-            path,
-            thread_id: normalizedThreadId,
-            message_id: turn_message_id,
-          })
-        : undefined;
-
-    return {
-      thread: derived?.thread,
-      turn: derived?.turn,
-      store: derived?.store,
-      key: derived?.key,
-      subject: derived?.subject,
-      liveStream: derived?.liveStream,
-      previewStream: derived?.previewStream,
-    };
-  }, [message, project_id, path, messageThreadId]);
-
   const showCodexActivity = hasAcpAssistantMetadata;
   const inlineCodexActivityMode = useMemo(
     () =>
@@ -887,65 +859,34 @@ export default function Message({
   }, [showCodexActivity, openActivityToken]);
 
   const rowMessageValue = useMemo(() => newest_content(message), [message]);
-  const logStore = useMemo(
-    () => field<string>(message, "acp_log_store") ?? fallbackLogRefs.store,
-    [message, fallbackLogRefs.store],
+  // In the chat log a feed outside the virtualized list owns this turn's log
+  // and activity rows, since this row may be unmounted while they stream.
+  const fedTurnActivity = useFedTurnActivity(
+    activityFeed ? field<string>(message, "message_id") : undefined,
   );
-  const logKey = useMemo(
-    () => field<string>(message, "acp_log_key") ?? fallbackLogRefs.key,
-    [message, fallbackLogRefs.key],
-  );
-  const logSubject = useMemo(
-    () => field<string>(message, "acp_log_subject") ?? fallbackLogRefs.subject,
-    [message, fallbackLogRefs.subject],
-  );
-  const liveLogStream = useMemo(
-    () =>
-      field<string>(message, "acp_live_log_stream") ??
-      fallbackLogRefs.liveStream,
-    [message, fallbackLogRefs.liveStream],
-  );
-  const livePreviewStream = useMemo(() => {
-    const preview = field<string>(message, "acp_live_preview_stream");
-    if (preview) return preview;
-    const full = field<string>(message, "acp_live_log_stream");
-    if (full) return full;
-    return fallbackLogRefs.previewStream;
-  }, [message, fallbackLogRefs.previewStream]);
-  const livePreviewIsProjection = useMemo(() => {
-    if (field<string>(message, "acp_live_preview_stream")) return true;
-    // Older turns only stored the full stream and use it as a compatibility
-    // fallback above. Derived preview refs are projections; explicit full refs
-    // are not.
-    return !field<string>(message, "acp_live_log_stream");
-  }, [message]);
-  const loadPreviewBody = useMemo(() => {
-    return shouldLoadCodexPreviewBody({
-      showCodexActivity,
-      projectId: project_id,
-      generating: effectiveGenerating,
-      interrupted: acpInterrupted,
-      allowAsyncCompletedCodexActivityLoad,
-      rowMessageValue,
-    });
-  }, [
-    acpInterrupted,
-    allowAsyncCompletedCodexActivityLoad,
-    effectiveGenerating,
+  const ownTurnActivity = useTurnActivity({
+    message,
+    actions,
     project_id,
-    rowMessageValue,
-    showCodexActivity,
-  ]);
-  const codexPreviewLog = useCodexLog({
-    projectId: project_id,
-    logStore,
-    logKey,
-    logSubject,
-    liveLogStream: livePreviewStream,
-    liveStreamIsProjection: livePreviewIsProjection,
-    generating: effectiveGenerating,
-    enabled: loadPreviewBody,
+    path,
+    isCodexThread,
+    activitySteers,
+    expandedCodexActivity,
+    allowAsyncCompletedCodexActivityLoad,
+    cachedCodexActivityBlocks,
+    onCachedCodexActivityBlocksChange,
+    enabled: !activityFeed,
   });
+  const turnActivity = activityFeed
+    ? (fedTurnActivity ?? EMPTY_TURN_ACTIVITY)
+    : ownTurnActivity;
+  const codexPreviewLog = turnActivity.log;
+  const {
+    store: logStore,
+    key: logKey,
+    subject: logSubject,
+    liveStream: liveLogStream,
+  } = ownTurnActivity.logRefs;
   const lastCodexLoadErrorRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (codexPreviewLog.loadState !== "error") {
@@ -995,122 +936,9 @@ export default function Message({
     codexPreviewLog.events,
     effectiveGenerating,
   ]);
-  const liveInterleavedCodexBlocks = useMemo(() => {
-    if (
-      !showCodexActivity ||
-      !effectiveGenerating ||
-      ((!Array.isArray(codexPreviewLog.events) ||
-        codexPreviewLog.events.length === 0) &&
-        !activitySteers?.length)
-    ) {
-      return undefined;
-    }
-    const steerItems = Array.isArray(activitySteers)
-      ? activitySteers.filter(
-          (steer) =>
-            typeof steer?.text === "string" && steer.text.trim().length > 0,
-        )
-      : [];
-    const blocks = getLiveResponseBlocks(
-      (codexPreviewLog.events ?? []) as any,
-      steerItems.map(({ date, text, state }) => ({ date, text, state })),
-    ) as InlineCodexActivityBlock[];
-    return blocks.length > 0 ? blocks : undefined;
-  }, [
-    activitySteers,
-    codexPreviewLog.events,
-    effectiveGenerating,
-    showCodexActivity,
-  ]);
-  const resolvedLiveInterleavedCodexBlocks = useMemo(
-    () =>
-      resolveLiveCodexActivityBlocks({
-        previewBlocks: liveInterleavedCodexBlocks,
-        cachedBlocks: cachedCodexActivityBlocks,
-      }),
-    [cachedCodexActivityBlocks, liveInterleavedCodexBlocks],
-  );
-  const completedCodexActivityBlocksFromEvents = useMemo(() => {
-    if (
-      (!Array.isArray(codexPreviewLog.events) ||
-        codexPreviewLog.events.length === 0) &&
-      !activitySteers?.length
-    ) {
-      return undefined;
-    }
-    const steerItems = Array.isArray(activitySteers)
-      ? activitySteers.filter(
-          (steer) =>
-            typeof steer?.text === "string" && steer.text.trim().length > 0,
-        )
-      : [];
-    const blocks = (
-      getMountedIntermediateResponseBlocks(
-        (codexPreviewLog.events ?? []) as any,
-        steerItems.map(({ date, text, state }) => ({ date, text, state })),
-      ) as InlineCodexActivityBlock[]
-    ).filter(
-      (block) => typeof block.text === "string" && block.text.trim().length > 0,
-    );
-    return blocks.length > 0 ? blocks : undefined;
-  }, [activitySteers, codexPreviewLog.events]);
-  const completedCodexActivityBlocks = useMemo(() => {
-    if (inlineCodexActivityMode !== "completed") {
-      return undefined;
-    }
-    const trimmedCachedBlocks = trimCompletedCachedCodexActivityBlocks(
-      cachedCodexActivityBlocks,
-      rowMessageValue,
-    );
-    if (
-      canUseCompletedCachedCodexActivity({
-        liveStatus: codexPreviewLog.liveStatus,
-      }) &&
-      trimmedCachedBlocks != null
-    ) {
-      return reconcileActivityGuidance(
-        trimmedCachedBlocks,
-        (activitySteers ?? []).map(({ date, text, state }) => ({
-          kind: "guidance",
-          time: date,
-          text,
-          state,
-        })),
-      );
-    }
-    if (
-      allowAsyncCompletedCodexActivityLoad &&
-      completedCodexActivityBlocksFromEvents != null
-    ) {
-      return completedCodexActivityBlocksFromEvents;
-    }
-    if (activitySteers?.length) {
-      return activitySteers.map(({ date, text, state }) => ({
-        kind: "guidance" as const,
-        time: date,
-        text,
-        state,
-      }));
-    }
-    return undefined;
-  }, [
-    activitySteers,
-    allowAsyncCompletedCodexActivityLoad,
-    cachedCodexActivityBlocks,
-    codexPreviewLog.liveStatus,
-    completedCodexActivityBlocksFromEvents,
-    inlineCodexActivityMode,
-    rowMessageValue,
-  ]);
-  useEffect(() => {
-    if (
-      resolvedLiveInterleavedCodexBlocks == null ||
-      !onCachedCodexActivityBlocksChange
-    ) {
-      return;
-    }
-    onCachedCodexActivityBlocksChange(resolvedLiveInterleavedCodexBlocks);
-  }, [onCachedCodexActivityBlocksChange, resolvedLiveInterleavedCodexBlocks]);
+  const completedCodexActivityBlocks = turnActivity.completedBlocks;
+  const timelineRows = turnActivity.rows;
+  const showsActivityTimeline = timelineRows.length > 0;
   const lastCodexActivityAtMs = useMemo(
     () => getLatestCodexActivityAtMs(codexPreviewLog.events),
     [codexPreviewLog.events],
@@ -1353,6 +1181,49 @@ export default function Message({
       </AgentMessageFileContext>
     );
   }
+
+  const timelineMessageId = field<string>(message, "message_id") ?? `${date}`;
+  const timelineInlineCodeLinks = field<InlineCodeLink[]>(
+    message,
+    "inline_code_links",
+  );
+  const timelineMessageClass = message_colors(
+    rpcAttribution ? "" : account_id,
+    message,
+  ).message_class;
+  const timelineContext = useMemo<TurnTimelineContext>(
+    () => ({
+      actions,
+      projectId: project_id,
+      path,
+      threadId: messageThreadId,
+      messageId: timelineMessageId,
+      readOnly: read_only,
+      markdownStyle: MARKDOWN_STYLE,
+      className: timelineMessageClass,
+      editorTheme,
+      highlightQuery: searchHighlight,
+      inlineCodeLinks: Array.isArray(timelineInlineCodeLinks)
+        ? timelineInlineCodeLinks
+        : undefined,
+      inlineCodeProjectRoot: activityBasePath,
+      formatAgentMarkdown: is_viewers_message ? undefined : linkifyCommitHashes,
+    }),
+    [
+      actions,
+      project_id,
+      path,
+      messageThreadId,
+      timelineMessageId,
+      read_only,
+      timelineMessageClass,
+      editorTheme,
+      searchHighlight,
+      timelineInlineCodeLinks,
+      activityBasePath,
+      is_viewers_message,
+    ],
+  );
 
   const feedbackMap = useMemo(() => field<any>(message, "feedback"), [message]);
 
@@ -2167,23 +2038,14 @@ export default function Message({
     value,
     message_class,
     style,
-    followTail = false,
-    pageKey,
   }: {
-    value: string | TextSource;
+    value: string;
     message_class?: string;
     style?: CSSProperties;
-    followTail?: boolean;
-    pageKey?: string | number;
   }) {
     return (
       <div className={message_class} data-chat-selectable-message="true">
-        <PagedText
-          key={pageKey}
-          value={value}
-          followTail={followTail}
-          renderRanges
-        >
+        <PagedText value={value}>
           {(part) => (
             <EditableMarkdown
               value={formatMarkdownPage(
@@ -2273,98 +2135,19 @@ export default function Message({
   }
 
   function renderInterleavedCodexBody({
-    blocks,
-    message_class,
     openCommitFromMessage,
     showQuotaHelp = true,
   }: {
-    blocks: Array<{
-      kind: "agent" | "guidance";
-      text: string;
-      time?: number;
-      state?: "saved" | "sending" | "sent" | "queued" | "not-sent";
-    }>;
-    message_class?: string;
     openCommitFromMessage: (e: any) => void;
     showQuotaHelp?: boolean;
   }) {
-    const { end, hiddenCount, visibleBlocks } = codexActivityWindow(
-      blocks,
-      codexActivityPageEnd,
-    );
-    const selectableActivityMarkdown = codexActivityTextSource(visibleBlocks);
+    const lastAgentText = lastTimelineAgentText(timelineRows);
     const body = (
       <div onClickCapture={openCommitFromMessage}>
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 8,
-          }}
-        >
-          {blocks.length > DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT ? (
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "center",
-                gap: 8,
-                flexWrap: "wrap",
-              }}
-            >
-              <Button
-                size="small"
-                disabled={hiddenCount === 0}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setCodexActivityPageEnd(hiddenCount);
-                }}
-              >
-                Show {Math.min(hiddenCount, DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT)}
-                {" earlier activity items"}
-              </Button>
-              <Button
-                size="small"
-                disabled={end === blocks.length}
-                onClick={() =>
-                  setCodexActivityPageEnd(
-                    Math.min(
-                      blocks.length,
-                      end + DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT,
-                    ),
-                  )
-                }
-              >
-                Later activity items
-              </Button>
-              <Button
-                size="small"
-                disabled={codexActivityPageEnd == null}
-                onClick={() => setCodexActivityPageEnd(undefined)}
-              >
-                Latest activity items
-              </Button>
-            </div>
-          ) : null}
-          {selectableActivityMarkdown.length > 0
-            ? renderSelectableMarkdownBody({
-                value: selectableActivityMarkdown,
-                followTail: effectiveGenerating && codexActivityPageEnd == null,
-                pageKey: codexActivityPageEnd ?? "latest",
-                message_class,
-                style: MARKDOWN_STYLE,
-              })
-            : null}
-        </div>
+        <TurnActivityTimeline rows={timelineRows} context={timelineContext} />
         {showQuotaHelp ? (
           <CodexQuotaHelp
-            message={selectableActivityMarkdown.slice(
-              Math.max(
-                0,
-                selectableActivityMarkdown.length - MAX_RENDERED_TEXT_CHARS,
-              ),
-              selectableActivityMarkdown.length,
-            )}
+            message={lastAgentText}
             projectId={project_id}
             isError={showCodexErrorHelp}
           />
@@ -2372,7 +2155,7 @@ export default function Message({
       </div>
     );
     // Keep the same wrapper during and after streaming so completion does not
-    // remount Slate, clear a selection, or insert a heading above the reader.
+    // remount the rows, clear a selection, or insert a heading above the reader.
     return renderCodexSectionChrome({
       label: "Agent activity",
       accentColor: UI_COLORS.secondary,
@@ -2407,15 +2190,7 @@ export default function Message({
       message,
       "inline_code_links",
     );
-    const activityBlocksToRender =
-      inlineCodexActivityMode === "live"
-        ? resolvedLiveInterleavedCodexBlocks
-        : inlineCodexActivityMode === "completed"
-          ? completedCodexActivityBlocks
-          : undefined;
-    const shouldRenderInterleavedCodexActivityBody =
-      Array.isArray(activityBlocksToRender) &&
-      activityBlocksToRender.length > 0;
+    const shouldRenderInterleavedCodexActivityBody = showsActivityTimeline;
     const shouldRenderCompletedFinalResponse =
       inlineCodexActivityMode === "completed" &&
       shouldRenderInterleavedCodexActivityBody &&
@@ -2564,14 +2339,21 @@ export default function Message({
             </span>
           </div>
         ) : null}
-        {shouldRenderInterleavedCodexActivityBody
+        {shouldRenderInterleavedCodexActivityBody && !activityFeed
           ? renderInterleavedCodexBody({
-              blocks: activityBlocksToRender,
-              message_class,
               openCommitFromMessage: openResultFromMessage,
               showQuotaHelp: !shouldRenderCompletedFinalResponse,
             })
           : null}
+        {shouldRenderInterleavedCodexActivityBody &&
+        activityFeed &&
+        !shouldRenderCompletedFinalResponse ? (
+          <CodexQuotaHelp
+            message={lastTimelineAgentText(timelineRows)}
+            projectId={project_id}
+            isError={showCodexErrorHelp}
+          />
+        ) : null}
         {shouldRenderCompletedFinalResponse ? (
           renderCodexSectionChrome({
             label: "Final response",
@@ -2859,11 +2641,13 @@ export default function Message({
             : withMessageFileContext(renderMessageBody({ message_class }))}
           {renderEditingMeta()}
           <ArtifactFeedbackNotice value={field(message, "artifact_feedback")} />
-          <ArtifactCards
-            actions={actions}
-            threadId={field<string>(message, "thread_id")}
-            messageId={field<string>(message, "message_id")}
-          />
+          {turnActivity.artifactsInline ? null : (
+            <ArtifactCards
+              actions={actions}
+              threadId={field<string>(message, "thread_id")}
+              messageId={field<string>(message, "message_id")}
+            />
+          )}
           {renderMessageActions()}
         </div>
         {renderHistory()}
@@ -3336,6 +3120,14 @@ export default function Message({
       ) : undefined}
     </Row>
   );
+}
+
+function lastTimelineAgentText(rows: TurnTimelineRow[]): string {
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    const row = rows[i];
+    if (row.kind === "agent") return row.text;
+  }
+  return "";
 }
 
 // Used for exporting chat to markdown file

@@ -87,7 +87,7 @@ describe("buildTurnTimelineRows", () => {
     });
     expect(rows.map((row) => row.id)).toEqual([
       "agent:0:0",
-      "guidance:1500:0",
+      "guidance:1500:0:0",
       "agent:1:0",
       "artifact:plan",
       "agent:2:0",
@@ -105,5 +105,30 @@ describe("buildTurnTimelineRows", () => {
       maxChars: 70,
     });
     expect(rows.map((row) => row.id)).toEqual(["agent:0:0", "agent:0:1"]);
+  });
+
+  it("reuses the split of unchanged agent blocks", () => {
+    const text = Array.from({ length: 4 }, () => "y".repeat(30)).join("\n\n");
+    const splitCache = new Map();
+    const first = buildTurnTimelineRows({
+      blocks: [{ kind: "agent", text }],
+      maxChars: 70,
+      splitCache,
+    });
+    const cached = splitCache.get(0);
+    const second = buildTurnTimelineRows({
+      blocks: [
+        { kind: "agent", text },
+        { kind: "agent", text: "next" },
+      ],
+      maxChars: 70,
+      splitCache,
+    });
+    expect(splitCache.get(0)).toBe(cached);
+    expect(second.slice(0, first.length)).toEqual(first);
+    expect(second[second.length - 1]).toMatchObject({
+      id: "agent:1:0",
+      text: "next",
+    });
   });
 });

@@ -123,14 +123,21 @@ function publicationTime(publication: ArtifactPublication): number {
   return Number.isFinite(time) ? time : Number.POSITIVE_INFINITY;
 }
 
+// Remembers how each agent block was split so a long turn's finished output
+// is not re-split on every streamed update. Keyed by block position; a block
+// whose text changed is split again.
+export type AgentSplitCache = Map<number, { text: string; parts: string[] }>;
+
 export function buildTurnTimelineRows({
   blocks,
   artifacts = [],
   maxChars = MAX_TIMELINE_ROW_CHARS,
+  splitCache,
 }: {
   blocks: readonly InlineCodexActivityBlock[];
   artifacts?: readonly ArtifactPublication[];
   maxChars?: number;
+  splitCache?: AgentSplitCache;
 }): TurnTimelineRow[] {
   const rows: TurnTimelineRow[] = [];
   // Artifacts are placed before the first block last updated after they were
@@ -158,16 +165,26 @@ export function buildTurnTimelineRows({
       const base = `guidance:${block.time ?? ""}`;
       const n = guidanceIds.get(base) ?? 0;
       guidanceIds.set(base, n + 1);
-      rows.push({
-        kind: "guidance",
-        id: `${base}:${n}`,
-        text,
-        time: block.time,
-        state: block.state,
+      // Long guidance (e.g. a pasted log) is bounded like agent output.
+      splitAgentMarkdown(text, maxChars).forEach((part, part_index) => {
+        rows.push({
+          kind: "guidance",
+          id: `${base}:${n}:${part_index}`,
+          text: part,
+          time: block.time,
+          state: block.state,
+        });
       });
       continue;
     }
-    const parts = splitAgentMarkdown(text, maxChars);
+    let parts =
+      splitCache?.get(agentIndex)?.text === text
+        ? splitCache.get(agentIndex)!.parts
+        : undefined;
+    if (parts == null) {
+      parts = splitAgentMarkdown(text, maxChars);
+      splitCache?.set(agentIndex, { text, parts });
+    }
     parts.forEach((part, part_index) => {
       rows.push({
         kind: "agent",

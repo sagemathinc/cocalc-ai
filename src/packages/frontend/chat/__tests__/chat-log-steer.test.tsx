@@ -90,6 +90,18 @@ jest.mock("../codex-attention-card", () => ({
   ),
 }));
 
+// Key of the assistant message row (date 2000), wherever activity rows put it.
+function assistantRowKey() {
+  const index = latestVirtuosoProps.data.findIndex(
+    (row: any) => row.key === "2000",
+  );
+  expect(index).toBeGreaterThanOrEqual(0);
+  return latestVirtuosoProps.computeItemKey(
+    index,
+    latestVirtuosoProps.data[index],
+  );
+}
+
 describe("ChatLog immediate steer rendering", () => {
   it("caps and centers message rows on wide viewports", () => {
     render(
@@ -1064,10 +1076,7 @@ describe("ChatLog immediate steer rendering", () => {
     );
     const stableItemRenderer = latestVirtuosoProps.itemContent;
     const beforeGuidanceData = latestVirtuosoProps.data;
-    const beforeGuidanceKey = latestVirtuosoProps.computeItemKey(
-      1,
-      beforeGuidanceData[1],
-    );
+    const beforeGuidanceKey = assistantRowKey();
     const itemCount = latestVirtuosoProps.totalCount;
 
     const sendingMessages = new Map(messages);
@@ -1089,12 +1098,10 @@ describe("ChatLog immediate steer rendering", () => {
       />,
     );
     const whileSendingData = latestVirtuosoProps.data;
-    const whileSendingKey = latestVirtuosoProps.computeItemKey(
-      1,
-      whileSendingData[1],
-    );
+    const whileSendingKey = assistantRowKey();
 
-    expect(latestVirtuosoProps.totalCount).toBe(itemCount);
+    // The guidance is shown as an activity row before the agent's message.
+    expect(latestVirtuosoProps.totalCount).toBe(itemCount + 1);
     expect(latestVirtuosoProps.data).not.toBe(beforeGuidanceData);
     expect(latestVirtuosoProps.data[0]).not.toBe(beforeGuidanceData[0]);
     expect(latestVirtuosoProps.itemContent).toBe(stableItemRenderer);
@@ -1117,13 +1124,11 @@ describe("ChatLog immediate steer rendering", () => {
       />,
     );
 
-    expect(latestVirtuosoProps.totalCount).toBe(itemCount);
+    expect(latestVirtuosoProps.totalCount).toBe(itemCount + 1);
     expect(latestVirtuosoProps.itemContent).toBe(stableItemRenderer);
     expect(latestVirtuosoProps.data).not.toBe(whileSendingData);
     expect(latestVirtuosoProps.data[0]).not.toBe(whileSendingData[0]);
-    expect(
-      latestVirtuosoProps.computeItemKey(1, latestVirtuosoProps.data[1]),
-    ).toBe(whileSendingKey);
+    expect(assistantRowKey()).toBe(whileSendingKey);
     expect(lastRenderedMessageProps("assistant-1")?.activitySteers).toEqual([
       expect.objectContaining({
         messageId: "steer-1",
@@ -1137,10 +1142,7 @@ describe("ChatLog immediate steer rendering", () => {
       ...correctedDeliveryMessages.get("3000"),
       acp_guidance_delivered_at_ms: 5000,
     });
-    const sentKey = latestVirtuosoProps.computeItemKey(
-      1,
-      latestVirtuosoProps.data[1],
-    );
+    const sentKey = assistantRowKey();
     rerender(
       <ChatLog
         {...props}
@@ -1148,9 +1150,7 @@ describe("ChatLog immediate steer rendering", () => {
         messages={correctedDeliveryMessages}
       />,
     );
-    expect(
-      latestVirtuosoProps.computeItemKey(1, latestVirtuosoProps.data[1]),
-    ).toBe(sentKey);
+    expect(assistantRowKey()).toBe(sentKey);
     expect(lastRenderedMessageProps("assistant-1")?.activitySteers).toEqual([
       expect.objectContaining({
         messageId: "steer-1",
@@ -1213,10 +1213,7 @@ describe("ChatLog immediate steer rendering", () => {
         docVersion={1}
       />,
     );
-    const firstKey = latestVirtuosoProps.computeItemKey(
-      1,
-      latestVirtuosoProps.data[1],
-    );
+    const firstKey = assistantRowKey();
 
     messages.set("4000", {
       date: 4000,
@@ -1245,9 +1242,7 @@ describe("ChatLog immediate steer rendering", () => {
       expect.objectContaining({ messageId: "steer-1", state: "sent" }),
       expect.objectContaining({ messageId: "steer-2", state: "sending" }),
     ]);
-    expect(
-      latestVirtuosoProps.computeItemKey(1, latestVirtuosoProps.data[1]),
-    ).toBe(firstKey);
+    expect(assistantRowKey()).toBe(firstKey);
   });
 
   it("propagates live activity updates through a mounted virtual row", () => {
