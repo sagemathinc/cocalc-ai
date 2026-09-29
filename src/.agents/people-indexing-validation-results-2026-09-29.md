@@ -1742,3 +1742,24 @@ Server/reference typecheck, eight maintenance tests and all five PostgreSQL
 expiry tests pass. Demand activation-row retention, distributed cleanup budgets,
 long-running churn, and independent lease/interest renewal remain separate open
 gates; this does not establish full cold-account lifecycle completion.
+
+### Dormant Scheduler Queue Cost
+
+Activation and account-claim candidate selection now use a stable transaction
+time bound, allowing the due-time indexes to exclude future rows. Actual demand
+eligibility and rescheduling continue to use current clock time; this change
+does not extend demand or access validity. Exported SQL is shared by production
+and the query-plan tests.
+
+The dormant scale fixture now includes activation queue rows as well as historical
+memberships/access rows. Half of the queue rows are retired (null due times) and
+half are future-due. At both 100,000 and one million rows, activation, projection
+claim and access claim each touch three buffers when no work is due. Existing
+bounded cleanup checks also pass, and maintenance produces no owner RPCs or new
+access grants for the dormant population.
+
+Server/reference typecheck and all three real PostgreSQL dormant-scale cases
+(zero, 100,000 and one million memberships) pass; the full fixture took about
+321 seconds. This verifies no-due query behavior, not a due backlog, foreign-home
+or banned-account skew, contention, active DAU throughput, or a churn soak.
+Retired queue-row storage retention remains open.

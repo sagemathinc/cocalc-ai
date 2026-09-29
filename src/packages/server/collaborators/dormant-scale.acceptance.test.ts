@@ -7,6 +7,10 @@ import {
   cleanupStaleSql,
 } from "@cocalc/database/postgres/collaborators/collaborators-projection";
 import { MultibayAcceptance } from "./acceptance/harness";
+import {
+  claimDemandAccountsSql,
+  demandActivationCandidatesSql,
+} from "@cocalc/database/postgres/collaborators/collaborators-demand";
 
 const acceptance =
   process.env.COCALC_COLLABORATORS_ACCEPTANCE === "1" &&
@@ -56,18 +60,36 @@ acceptance("dormant population query plans (isolated PostgreSQL)", () => {
           FROM generate_series($2::integer,$3::integer) n`,
           [env.project, populated + 1, end],
         );
+        await env.sql(
+          "a",
+          `INSERT INTO collaboration_demand_activation(account_id,due_at,projection_due,access_due)
+          SELECT md5('dormant-scale-' || n)::uuid,
+            CASE WHEN n%2=0 THEN NULL ELSE now()+interval '1 day' END,
+            CASE WHEN n%2=0 THEN NULL ELSE now()+interval '1 day' END,
+            CASE WHEN n%2=0 THEN NULL ELSE now()+interval '1 day' END
+          FROM generate_series($1::integer,$2::integer) n`,
+          [populated + 1, end],
+        );
         populated = end;
       }
       for (const table of [
         "accounts",
         "account_project_index",
         "collaboration_access",
+        "collaboration_demand_activation",
       ])
         await env.sql("a", `ANALYZE ${table}`);
       const zero = "00000000-0000-0000-0000-000000000000";
       const candidates = await env.sql("a", cleanupCandidatesSql, [zero, zero]);
       for (const [name, sql, params] of [
         ["candidates", cleanupCandidatesSql, [zero, zero]],
+        ["activation", demandActivationCandidatesSql, [env.bays[1]]],
+        [
+          "projection-claim",
+          claimDemandAccountsSql("projection"),
+          [env.bays[1], 8],
+        ],
+        ["access-claim", claimDemandAccountsSql("access"), [env.bays[1], 8]],
         [
           "stale",
           cleanupStaleSql(true),

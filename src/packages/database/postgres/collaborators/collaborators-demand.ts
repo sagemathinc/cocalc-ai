@@ -159,6 +159,20 @@ export async function claimDemandAccount(
   return (await claimDemandAccounts(db, bay_id, kind, 1))[0];
 }
 
+export function claimDemandAccountsSql(kind: "projection" | "access") {
+  const field = kind === "projection" ? "projection_due" : "access_due";
+  return `WITH candidate AS MATERIALIZED (
+    SELECT q.account_id FROM collaboration_demand_activation q JOIN accounts a USING(account_id)
+    WHERE q.${field}<=now() AND COALESCE(a.home_bay_id,'bay-0')=$1
+    AND a.deleted IS NOT TRUE AND a.banned IS NOT TRUE
+    ORDER BY q.${field},q.account_id LIMIT $2 FOR UPDATE OF q SKIP LOCKED),
+    interest AS MATERIALIZED (SELECT c.account_id,EXISTS(SELECT 1 FROM collaboration_demand d
+      WHERE d.account_id=c.account_id AND d.grace_until>clock_timestamp()) AS warm FROM candidate c)
+    UPDATE collaboration_demand_activation q SET ${field}=CASE WHEN i.warm
+      THEN clock_timestamp()+interval '1 second' ELSE NULL END FROM interest i
+    WHERE q.account_id=i.account_id RETURNING q.account_id,i.warm`;
+}
+
 export async function claimDemandAccounts(
   db: PoolClient,
   bay_id: string,
@@ -167,20 +181,10 @@ export async function claimDemandAccounts(
 ): Promise<string[]> {
   if (!Number.isInteger(limit) || limit < 1 || limit > 8)
     throw Error("invalid demand cohort limit");
-  const field = kind === "projection" ? "projection_due" : "access_due";
-  const { rows } = await db.query(
-    `WITH candidate AS MATERIALIZED (
-    SELECT q.account_id FROM collaboration_demand_activation q JOIN accounts a USING(account_id)
-    WHERE q.${field}<=clock_timestamp() AND COALESCE(a.home_bay_id,'bay-0')=$1
-    AND a.deleted IS NOT TRUE AND a.banned IS NOT TRUE
-    ORDER BY q.${field},q.account_id LIMIT $2 FOR UPDATE OF q SKIP LOCKED),
-    interest AS MATERIALIZED (SELECT c.account_id,EXISTS(SELECT 1 FROM collaboration_demand d
-      WHERE d.account_id=c.account_id AND d.grace_until>clock_timestamp()) AS warm FROM candidate c)
-    UPDATE collaboration_demand_activation q SET ${field}=CASE WHEN i.warm
-      THEN clock_timestamp()+interval '1 second' ELSE NULL END FROM interest i
-    WHERE q.account_id=i.account_id RETURNING q.account_id,i.warm`,
-    [bay_id, limit],
-  );
+  const { rows } = await db.query(claimDemandAccountsSql(kind), [
+    bay_id,
+    limit,
+  ]);
   return rows.filter((row) => row.warm).map((row) => row.account_id as string);
 }
 
@@ -473,15 +477,16 @@ export async function activateCollaborationDemand(
 /** Dispatch only explicitly queued accounts. Dormant account/membership tables
  * are not swept to discover work. The home fence rechecks ownership per page.
  */
-export async function runCollaborationDemandActivation(bay_id: string) {
-  const { rows } = await getPool().query(
-    `SELECT q.account_id
+export const demandActivationCandidatesSql = `SELECT q.account_id
     FROM collaboration_demand_activation q JOIN accounts a USING(account_id)
-    WHERE q.due_at<=clock_timestamp() AND COALESCE(a.home_bay_id,'bay-0')=$1
+    WHERE q.due_at<=now() AND COALESCE(a.home_bay_id,'bay-0')=$1
     AND a.deleted IS NOT TRUE AND a.banned IS NOT TRUE
-    ORDER BY q.due_at,q.account_id LIMIT 8`,
-    [bay_id],
-  );
+    ORDER BY q.due_at,q.account_id LIMIT 8`;
+
+export async function runCollaborationDemandActivation(bay_id: string) {
+  const { rows } = await getPool().query(demandActivationCandidatesSql, [
+    bay_id,
+  ]);
   let scheduled = 0;
   for (const row of rows)
     scheduled += (await activateCollaborationDemand(row.account_id)).scheduled;
