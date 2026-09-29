@@ -1874,3 +1874,18 @@ acknowledgment. Receiver-wide projection completion remains separate.
 There is still no automatic startup installation or drain scheduler. Indexed
 candidate discovery, fair multi-project scheduling, disabled-after-install and
 restart/rehome/unknown-outcome integration tests remain required before rollout.
+
+### Bounded Outbox Candidate Discovery
+
+Added an expiry/due-index-oriented keyset reader for outbox scheduling. Each page
+selects at most twenty due rows before joining project ownership and checking
+claim availability. Foreign, deleted or busy candidates still advance the cursor;
+discovery never grants authority and dispatch must retain its owner-fenced claim.
+The cursor retains the database timestamp text to avoid losing microseconds.
+Due-time mutation can cause revisits, which remain safe through claim checks.
+
+Database/reference typecheck and all six PGlite outbox tests pass. New coverage
+places twenty foreign projects before a valid project with microsecond-separated
+due times, verifies continuation through that prefix, and confirms that claiming
+the valid project removes it from immediate due discovery. Real query-plan cost,
+concurrency and automatic scheduler integration remain open.

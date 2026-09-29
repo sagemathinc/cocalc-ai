@@ -4,6 +4,7 @@ import {
   syncCollaborationRevisionOutboxSchema,
   claimCollaborationRevisionOutbox,
   settleCollaborationRevisionOutbox,
+  readCollaborationRevisionOutboxPage,
 } from "./collaborators-revision-outbox";
 
 const describeDb =
@@ -42,6 +43,53 @@ describeDb("atomic owner catalog revision intent", () => {
         [id],
       )
     ).rows;
+
+  test("discovery bounds candidates before filtering and preserves timestamp precision", async () => {
+    // Isolate the candidate ordering from other tests' retained markers.
+    await getPool().query(
+      "UPDATE collaboration_revision_outbox SET due_at=now()+interval '1 day'",
+    );
+    const ids: string[] = [];
+    for (let i = 0; i < 21; i++) {
+      const id = await fixture();
+      ids.push(id);
+      await getPool().query(
+        "UPDATE collaboration_revision_outbox SET due_at='2000-01-01 00:00:00.000001+00'::timestamptz+$2::integer*interval '1 microsecond' WHERE project_id=$1",
+        [id, i],
+      );
+      if (i < 20)
+        await getPool().query(
+          "UPDATE projects SET owning_bay_id='foreign' WHERE project_id=$1",
+          [id],
+        );
+    }
+    const first = await readCollaborationRevisionOutboxPage(
+      authority.owning_bay_id,
+    );
+    expect(first.complete).toBe(false);
+    expect(first.candidates).toHaveLength(20);
+    expect(first.candidates.every((c) => !c.eligible)).toBe(true);
+    const next = await readCollaborationRevisionOutboxPage(
+      authority.owning_bay_id,
+      first.candidates[19].cursor,
+    );
+    expect(next.complete).toBe(true);
+    expect(next.candidates).toHaveLength(1);
+    expect(next.candidates[0]).toMatchObject({
+      cursor: { project_id: ids[20] },
+      eligible: true,
+    });
+    const job = await claimCollaborationRevisionOutbox(ids[20], authority);
+    expect(job).not.toBeNull();
+    expect(
+      (
+        await readCollaborationRevisionOutboxPage(
+          authority.owning_bay_id,
+          first.candidates[19].cursor,
+        )
+      ).candidates,
+    ).toEqual([]);
+  });
 
   test("claims are owner fenced and continuation is token conditional", async () => {
     const id = await fixture();

@@ -60,6 +60,50 @@ export interface RevisionOutboxClaim {
   after_home_bay: string | null;
 }
 
+export interface RevisionOutboxCursor {
+  due_at: string;
+  project_id: string;
+}
+
+/** Discovery is not authority. Limit before ownership checks and retain skipped
+ * rows in the cursor so one foreign or busy prefix cannot starve later projects.
+ * Mutated due times may cause revisits; claims are rechecked under the owner fence.
+ */
+export async function readCollaborationRevisionOutboxPage(
+  owning_bay_id: string,
+  after?: RevisionOutboxCursor,
+) {
+  boundedText(owning_bay_id, "outbox owner", 128);
+  if (after) {
+    boundedText(after.due_at, "outbox due cursor", 128);
+    uuid(after.project_id, "outbox project cursor");
+  }
+  return transaction(async (db) => {
+    await db.query("SET LOCAL statement_timeout='2s'");
+    const { rows } = await db.query(
+      `WITH candidates AS MATERIALIZED (
+        SELECT project_id,due_at,claim_until FROM collaboration_revision_outbox
+        WHERE due_at<=now() ${after ? "AND (due_at,project_id)>($2::timestamptz,$3::uuid)" : ""}
+        ORDER BY due_at,project_id LIMIT 20)
+       SELECT c.project_id,c.due_at::text,
+         (COALESCE(p.owning_bay_id,'bay-0')=$1 AND p.deleted IS NOT TRUE
+          AND (c.claim_until IS NULL OR c.claim_until<=clock_timestamp())) AS eligible
+       FROM candidates c JOIN projects p USING(project_id) ORDER BY c.due_at,c.project_id`,
+      after ? [owning_bay_id, after.due_at, after.project_id] : [owning_bay_id],
+    );
+    return {
+      complete: rows.length < 20,
+      candidates: rows.map((row) => ({
+        cursor: {
+          project_id: row.project_id as string,
+          due_at: row.due_at as string,
+        },
+        eligible: row.eligible === true,
+      })),
+    };
+  });
+}
+
 /** Internal scheduling primitive; callers resolve current ownership first.
  * Unknown delivery outcomes retain the claim until its bounded retry deadline.
  */
