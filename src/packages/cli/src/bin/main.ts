@@ -502,6 +502,7 @@ function daemonContextKey(globals: GlobalOptions): string {
     api_key_file: globals.apiKeyFile ?? null,
     managed_connector: globals.managedConnector ?? null,
     auth_project_id: globals.authProjectId ?? null,
+    direct_auth_site: globals.directAuthSite ?? null,
     cookie: globals.cookie ?? null,
     bearer: globals.bearer ?? null,
     hub_password: globals.hubPassword ?? null,
