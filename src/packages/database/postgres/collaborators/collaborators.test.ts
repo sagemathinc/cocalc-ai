@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   syncCollaborationDemandSchema,
+  readCollaborationProjectDemandPage,
   acquireCollaborationDemand,
   runCollaborationDemandActivation,
 } from "./collaborators-demand";
@@ -342,6 +343,34 @@ test("shared demand claiming selects compatible work across active accounts with
       [account_id, other_id].sort(),
     );
     expect(reverse.rows.every((r) => r.bounded)).toBe(true);
+    const readDemand = (after?: { grace_until: string; account_id: string }) =>
+      readCollaborationProjectDemandPage({
+        project_id,
+        home_bay_id: "bay-test",
+        limit: 1,
+        after,
+      });
+    const firstDemand = await readDemand();
+    const secondDemand = await readDemand(firstDemand.next_after!);
+    expect(
+      [...firstDemand.account_ids, ...secondDemand.account_ids].sort(),
+    ).toEqual([account_id, other_id].sort());
+    expect((await readDemand(secondDemand.next_after!)).examined).toBe(0);
+    expect(
+      (
+        await readCollaborationProjectDemandPage({
+          project_id,
+          home_bay_id: "wrong",
+        })
+      ).account_ids,
+    ).toEqual([]);
+    await expect(
+      readCollaborationProjectDemandPage({
+        project_id,
+        home_bay_id: "bay-test",
+        limit: 21,
+      }),
+    ).rejects.toThrow("limit");
     expect(await claimCollaborationProjectionJobs("bay-test")).toEqual([]);
     await ingestCollaborationSnapshot(snapshot(), authority);
     const shared = await readCollaborationSharedProjection(
@@ -388,6 +417,18 @@ test("shared demand claiming selects compatible work across active accounts with
         )
       ).rows[0].claim_id,
     ).toBeNull();
+    await getPool().query(
+      "DELETE FROM collaboration_demand WHERE account_id=$1",
+      [other_id],
+    );
+    expect(
+      (
+        await readCollaborationProjectDemandPage({
+          project_id,
+          home_bay_id: "bay-test",
+        })
+      ).account_ids,
+    ).toEqual([account_id]);
   } finally {
     flags.forEach((n, i) => {
       if (prior[i] === undefined) delete process.env[n];

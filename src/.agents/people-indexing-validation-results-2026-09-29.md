@@ -1593,3 +1593,19 @@ tests pass. The cohort test verifies reverse entries for both active accounts,
 their matching demand horizons, and no entry for the cold historical account.
 An initial parameter-type ambiguity was caught and corrected with explicit UUID
 casts. Jest emitted its open-handle warning but exited successfully.
+
+### Bounded Reverse Demand Reader
+
+Added a project-scoped keyset reader over live reverse-demand rows. Candidate
+selection is capped at twenty before current-home, banned/deleted-account,
+current project-scoped demand and projected-membership checks. Its expiry/account
+cursor preserves database timestamp precision, and filtered candidates still
+advance pagination. Reads grant no access or scheduling authority across later
+state changes. Renewal can move a candidate after the cursor, so consumers must
+tolerate duplicates and repeat a traversal when needed.
+
+Database typecheck and fifty projection-store tests pass. New assertions cover
+single-row pagination across two active accounts, end-of-traversal behavior,
+wrong-home exclusion, page-limit validation and removal of current demand while
+the reverse row remains. Receiver wakeup scheduling, durable traversal completion,
+expiry cleanup and PostgreSQL scale validation for this reader remain open.

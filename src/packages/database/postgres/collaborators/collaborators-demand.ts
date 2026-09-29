@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import type { PoolClient } from "@cocalc/database/pool";
 import { withAccountRehomeWriteFence } from "../account-rehome-fence";
-import { uuid } from "./collaborators-common";
+import { uuid, boundedText, transaction } from "./collaborators-common";
 
 import type {
   CollaborationDemandScope,
@@ -80,6 +80,72 @@ export async function rememberCollaborationProjectDemand(
      ON CONFLICT(account_id,project_id) DO UPDATE SET grace_until=excluded.grace_until`,
     [account_id, project_id],
   );
+}
+
+export interface ProjectDemandCursor {
+  grace_until: string;
+  account_id: string;
+}
+
+/** Scheduling candidates only. Renewals may move rows past the cursor, so
+ * consumers must tolerate duplicates and restart after a completed traversal.
+ */
+export async function readCollaborationProjectDemandPage(opts: {
+  project_id: string;
+  home_bay_id: string;
+  after?: ProjectDemandCursor;
+  limit?: number;
+}) {
+  uuid(opts.project_id, "project demand project");
+  boundedText(opts.home_bay_id, "project demand home", 128);
+  if (opts.after) {
+    uuid(opts.after.account_id, "project demand account cursor");
+    boundedText(opts.after.grace_until, "project demand expiry cursor", 128);
+  }
+  const limit = opts.limit ?? 20;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 20)
+    throw Error("invalid project demand page limit");
+  return transaction(async (db) => {
+    await db.query("SET LOCAL statement_timeout='2s'");
+    const { rows } = await db.query(
+      `WITH candidates AS MATERIALIZED (
+        SELECT account_id,grace_until FROM collaboration_project_demand
+        WHERE project_id=$1 AND grace_until>now()
+        ${opts.after ? "AND (grace_until,account_id)>($4::timestamptz,$5::uuid)" : ""}
+        ORDER BY grace_until,account_id LIMIT $3)
+      SELECT x.account_id,x.grace_until::text,
+        (COALESCE(a.home_bay_id,'bay-0')=$2 AND a.deleted IS NOT TRUE AND a.banned IS NOT TRUE
+        AND EXISTS(SELECT 1 FROM collaboration_demand d WHERE d.account_id=x.account_id
+          AND d.grace_until>now() AND (d.scope->>'kind'='all' OR d.scope->'project_ids' ? $1::uuid::text))
+        AND EXISTS(SELECT 1 FROM account_project_index p WHERE p.account_id=x.account_id AND p.project_id=$1
+          AND p.users_summary #>> ARRAY[x.account_id::text,'group'] IN ('owner','collaborator'))) AS eligible
+      FROM candidates x JOIN accounts a USING(account_id)
+      ORDER BY x.grace_until,x.account_id`,
+      opts.after
+        ? [
+            opts.project_id,
+            opts.home_bay_id,
+            limit,
+            opts.after.grace_until,
+            opts.after.account_id,
+          ]
+        : [opts.project_id, opts.home_bay_id, limit],
+    );
+    const last = rows.at(-1);
+    return {
+      examined: rows.length,
+      account_ids: rows
+        .filter((r) => r.eligible)
+        .map((r) => r.account_id as string),
+      next_after:
+        rows.length === limit && last
+          ? {
+              grace_until: last.grace_until as string,
+              account_id: last.account_id as string,
+            }
+          : null,
+    };
+  });
 }
 
 /** Called in the claiming transaction. A cold account is retired from this
