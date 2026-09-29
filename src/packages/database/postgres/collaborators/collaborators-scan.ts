@@ -107,6 +107,11 @@ export async function syncCollaborationScanSchema(
   await db.query(`ALTER TABLE collaboration_scan_jobs
     ADD COLUMN IF NOT EXISTS dispatch_token UUID,
     ADD COLUMN IF NOT EXISTS dispatch_until TIMESTAMPTZ`);
+  await db.query(
+    `ALTER TABLE collaboration_scan_jobs ADD COLUMN IF NOT EXISTS last_dispatch_at TIMESTAMPTZ`,
+  );
+  await db.query(`CREATE INDEX IF NOT EXISTS collaboration_scan_jobs_fair
+    ON collaboration_scan_jobs((COALESCE(last_dispatch_at,created_at)),job_id)`);
   await db.query(`CREATE TABLE IF NOT EXISTS collaboration_scan_budget (
     project_id UUID PRIMARY KEY REFERENCES projects(project_id) ON DELETE CASCADE,
     tokens DOUBLE PRECISION NOT NULL CHECK(tokens>=0 AND tokens<=2),
@@ -434,7 +439,7 @@ export async function claimCollaborationScanDispatch(
     const token = randomUUID();
     const result = await db.query(
       `UPDATE collaboration_scan_jobs j
-      SET dispatch_token=$4,dispatch_until=clock_timestamp()+interval '90 seconds'
+      SET dispatch_token=$4,dispatch_until=clock_timestamp()+interval '90 seconds',last_dispatch_at=clock_timestamp()
       WHERE project_id=$1 AND job_id=$2 AND state='running'
       AND (dispatch_until IS NULL OR dispatch_until<=clock_timestamp())
       AND EXISTS(SELECT 1 FROM collaboration_scan_receipts r WHERE r.project_id=j.project_id
@@ -443,6 +448,45 @@ export async function claimCollaborationScanDispatch(
       [opts.project_id, opts.job_id, opts.account_id, token],
     );
     return result.rows.length ? token : null;
+  });
+}
+
+/** Bounded result discovery from active jobs, never historical memberships.
+ * Selection is only a hint: start/claim recheck authority and serialize work.
+ */
+export async function listCollaborationScanDispatchCandidates(
+  authority: CollaborationOwnerAuthority,
+): Promise<
+  Array<{
+    project_id: string;
+    job_id: string;
+    account_id: string;
+    request_id: string;
+  }>
+> {
+  return transaction(async (db) => {
+    const { rows } = await db.query(
+      `SELECT j.project_id,j.job_id,r.account_id,r.request_id
+      FROM collaboration_scan_jobs j JOIN projects p USING(project_id)
+      JOIN collaboration_scan_budget b USING(project_id)
+      JOIN LATERAL (
+        SELECT account_id,request_id FROM collaboration_scan_receipts r
+        WHERE r.project_id=j.project_id AND r.receipt->>'job_id'=j.job_id::text
+          AND r.expires_at>statement_timestamp()
+          AND p.users->r.account_id::text->>'group' IN ('owner','collaborator')
+        ORDER BY r.expires_at DESC LIMIT 1
+      ) r ON true
+      WHERE p.owning_bay_id=$1 AND NOT COALESCE(p.deleted,false) AND p.host_id IS NOT NULL
+        AND (j.dispatch_until IS NULL OR j.dispatch_until<=statement_timestamp())
+        AND (j.last_dispatch_at IS NULL OR j.last_dispatch_at<=statement_timestamp()-interval '5 seconds')
+        AND (j.state='running' AND j.host_id=p.host_id OR j.state='queued'
+          AND (b.last_started_at IS NULL OR b.last_started_at<=statement_timestamp()-interval '5 minutes')
+          AND NOT EXISTS(SELECT 1 FROM collaboration_scan_jobs running
+            WHERE running.project_id=j.project_id AND running.state='running'))
+      ORDER BY COALESCE(j.last_dispatch_at,j.created_at),j.job_id LIMIT 20`,
+      [authority.owning_bay_id],
+    );
+    return rows;
   });
 }
 

@@ -12,6 +12,7 @@ import {
   readCollaborationScanStatus,
   claimCollaborationScanDispatch,
   releaseCollaborationScanDispatch,
+  listCollaborationScanDispatchCandidates,
   syncCollaborationScanSchema,
 } from "./collaborators-scan";
 
@@ -58,6 +59,52 @@ describeDb("owner scan admission prototype", () => {
     await expect(
       admitCollaborationScan({ ...request, mode: "check" }, authority),
     ).rejects.toThrow("different arguments");
+  });
+  test("queue selection respects owner, receipts, membership, and recent dispatch", async () => {
+    const request = await fixture();
+    const receipt = await admitCollaborationScan(request, authority);
+    if (!("job_id" in receipt)) throw Error("expected admission");
+    const candidate = {
+      project_id: request.project_id,
+      job_id: receipt.job_id,
+      account_id: request.account_id,
+      request_id: request.request_id,
+    };
+    expect(
+      await listCollaborationScanDispatchCandidates(authority),
+    ).toContainEqual(candidate);
+    expect(
+      await listCollaborationScanDispatchCandidates({ owning_bay_id: "other" }),
+    ).not.toContainEqual(candidate);
+    await startCollaborationScan(
+      { ...request, job_id: receipt.job_id },
+      authority,
+    );
+    const token = await claimCollaborationScanDispatch(candidate, authority);
+    expect(
+      await listCollaborationScanDispatchCandidates(authority),
+    ).not.toContainEqual(candidate);
+    await releaseCollaborationScanDispatch(
+      { ...candidate, token: token! },
+      authority,
+    );
+    expect(
+      await listCollaborationScanDispatchCandidates(authority),
+    ).not.toContainEqual(candidate);
+    await getPool().query(
+      "UPDATE collaboration_scan_jobs SET last_dispatch_at=clock_timestamp()-interval '6 seconds' WHERE project_id=$1",
+      [request.project_id],
+    );
+    expect(
+      await listCollaborationScanDispatchCandidates(authority),
+    ).toContainEqual(candidate);
+    await getPool().query(
+      "UPDATE projects SET users='{}'::jsonb WHERE project_id=$1",
+      [request.project_id],
+    );
+    expect(
+      await listCollaborationScanDispatchCandidates(authority),
+    ).not.toContainEqual(candidate);
   });
   test("dispatch lease excludes concurrent workers and stale release cannot clear takeover", async () => {
     const request = await fixture();

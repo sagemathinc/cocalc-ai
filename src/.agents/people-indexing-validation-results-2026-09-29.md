@@ -741,3 +741,19 @@ Coverage includes queued-job denial, concurrent claim, expiry takeover, stale
 release, and no host calls while a lease is held. This is not yet a queue worker:
 fair selection, adaptive polling/backoff, budgets and live crash validation are
 still outstanding, as is the broader indexing plan.
+
+### Active-job Queue Selection
+
+Added owner-local selection of at most 20 dispatch candidates from active Scan
+jobs, not historical accounts or memberships. Eligibility requires a current
+host, a live receipt belonging to a current collaborator, no active dispatch
+lease, and no execution cooldown/running predecessor conflict. Dispatch claims
+record their attempt time; candidate ordering prefers least recently attempted
+work and enforces a five-second selection interval. Selection is a hint only;
+execution and lease acquisition retain their authorization checks.
+
+Seventeen PGlite tests and the database build pass. New coverage verifies owner
+isolation, visibility before dispatch, lease/recent-poll exclusion, later
+eligibility, and revocation. Returned work is bounded, but PostgreSQL query cost
+with a large blocked active queue has not been measured. This is not yet a
+scheduled worker or proof of the plan's fairness/load targets.
