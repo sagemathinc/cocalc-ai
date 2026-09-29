@@ -1,9 +1,9 @@
 # Demand-Driven People Indexing: Design And Validation
 
 Date: 2026-09-29.
-Status: initial execution underway; worker metrics and isolated baseline/proof
-fixtures implemented. Scheduling changes are not enabled. The raw live btrfs
-generation candidate failed the no-change proof spike; see the
+Status: user approved the smaller initial-release contract below. Implementation
+and validation are incomplete; this decision is not production enablement.
+The raw live btrfs generation candidate failed the no-change proof spike; see the
 [execution results](people-indexing-validation-results-2026-09-29.md).
 No capacity claims are made by this document.
 Inspected baseline: `a60a05e8809ebb1e44a7038599b40170d079f408`.
@@ -17,10 +17,16 @@ Related plans:
 
 ## 1. Decision And Scope
 
-Keep the project-owned catalog and account-home ownership model. Replace eager
-all-account refresh and unconditional historical rescanning with demand-driven
-account views, durable change signals, and generation-aware reconciliation.
-Keep `collaborators_enabled` during implementation and measured rollout.
+**Approved initial-release contract:** People is an eventually consistent
+discovery cache of known collaboration resources. It may omit resources until
+they are opened or explicitly scanned. It never determines permission to access
+them. Keep project-owned catalogs, account-home personal state, and
+`collaborators_enabled` during implementation and measured rollout.
+
+This section and the initial-release gates below supersede broader requirements
+in sections 2-13 for this release. Those sections are retained as historical
+design and optional future work, not an automatic implementation backlog.
+Do not keep pursuing their larger scope without a separate user decision.
 
 The cost model must approach:
 
@@ -35,10 +41,77 @@ actually invites or mentions it, when its permissions change, or during bounded
 retention/deletion maintenance. Its existence alone must not require recurring
 per-project RPCs, access-lease writes, or notification polling.
 
-This plan includes an explicit, throttled **Scan RPC** available to authorized
-users and, through explicit scoped authorization, agents. Snapshots can accelerate
-change discovery but are not required to be created on schedule or available.
-Evaluate narrow reuse of `reflect-sync`; do not introduce a second synchronizer.
+### Initial-Release Behavior
+
+- Index supported resources through normal CoCalc open/write registration and
+  existing dirty-source signals. Terminal-created files, restores and external
+  edits need not be discovered automatically. Opening a resource or requesting
+  Scan is the recovery path; catalog catch-up is distinct from filesystem discovery.
+- Refresh account views only with live visible-view demand and bounded grace.
+  Returning users catch up from retained project catalogs, not a filesystem scan
+  of every project. Keep bounded repair of known catalog state; do not trigger
+  full filesystem discovery merely because a view opens or an hour passes.
+- Dormant accounts mainly cost storage. Genuine invitations/mentions, membership
+  changes and bounded cleanup may still cause work. Offline delivery must not
+  depend on an open People view or warm resource projection.
+- Explicit human Scan is authorized, throttled and best-effort under concurrent
+  writes. Finished traversal does not certify a point-in-time filesystem snapshot,
+  current-byte equality, or that every resource has reached every home view.
+  Show unavailable, truncated, deferred and failed outcomes honestly. No scan
+  starts project compute implicitly. Agent Scan stays denied until its scope is
+  separately reviewed; it is not an initial-release requirement.
+- Cached metadata may be stale or incomplete, but protected metadata and actions
+  remain subject to current authorization under the existing reviewed policy.
+  Never weaken authorization leases/fences to make discovery cheaper.
+- Preserve canonical identities, aliases, pins/collection, follow/mute/read
+  state, invitation lifecycle and pending notification obligations. Derived
+  indexes and demand leases can be discarded and rebuilt after moves/restores.
+  Do not transfer transient work simply to preserve seamless UX.
+- Outstanding Scan work may be explicitly interrupted by topology changes, but
+  never silently replayed or reported failed solely because of a timeout. Keep
+  existing rehome guards until interruption/receipt handling is implemented and
+  tested; this contract change does not authorize dropping durable receipts.
+
+### Explicitly Deferred
+
+Automatic discovery of arbitrary filesystem changes; provably unchanged-volume
+scan avoidance; a stronger btrfs generation proof; snapshot-delta optimization;
+reflect-sync integration; automatic initial/periodic full-volume scans; seamless
+migration of scan jobs; and the full 100,000-DAU capacity/24-hour-soak program are
+not initial-release gates. Do not claim any of those guarantees from the smaller
+release. Revisit measured capacity before substantially expanding rollout.
+
+### Initial-Release Gates And Next Work
+
+1. **Audit and simplify the enabled path.** Inventory feature flags and worker
+   startup. Keep automatic discovery bootstrap/periodic filesystem repair off;
+   ensure the selected host mode does not retain legacy periodic full traversal.
+   Remove or isolate unnecessary experimental machinery rather than enable it
+   because it has tests. Existing implementations are not proof of alignment.
+2. **Known-source vertical path.** Validate open/write -> project catalog -> active
+   home view, missed-signal recovery via opening/explicit Scan, sleep and return.
+   Unknown files may remain absent. No filesystem-completeness assertion needed.
+3. **Security and durable state.** Preserve recipient binding, reviewed-send
+   idempotency, authorization, private state and offline notification deduplication.
+   Verify revoked access and expired catalog cursors on return. Keep unsupported
+   canonical-state portability guarded; disposable demand must reacquire safely.
+4. **Explicit Scan and honest UI.** Validate authorization, budgets, timeout
+   inspection, retry identity, unavailable storage and concurrent writes. Copy
+   must distinguish scan completion from snapshot consistency and view freshness.
+   Check the actual browser flow and accessibility, not only component tests.
+5. **Bounded cost and rollback.** Run identical active workloads against dormant
+   populations, verify no recurring per-dormant-membership work, and measure a
+   representative mixed workload at the intended initial rollout size. Exercise
+   disable-after-data and reenable without an automatic scan storm. Report the
+   measured envelope rather than claim 10k/100k DAU capacity.
+6. **Release review.** Relevant package checks, development build, independent
+   review of the actual enabled paths and an explicit canary decision are still
+   required. No production enablement follows automatically from this document.
+
+Current validation is useful but does not close these gates. In particular,
+timer-driven automatic discovery tests validate a now-deferred path; they are
+not a reason to ship that path. Demand-return and disposable-demand rehome tests
+remain relevant. See the current audit in the execution results for open work.
 
 Not included: a full-text index of arbitrary project files, automatic content
 copying, changed project permissions, implicit agent execution, or a new global
@@ -46,6 +119,10 @@ database containing everybody's files. Username session binding/throttling and
 the public-identity rollout decision remain separate security-review follow-ups.
 
 ## 2. Baseline And Cost Model
+
+**Historical extended design follows.** Sections 2-13 describe the original,
+larger scope. Requirements conflicting with section 1 are deferred, not release
+obligations. Technical observations and strict authority rules remain useful.
 
 These are code observations, not production measurements:
 

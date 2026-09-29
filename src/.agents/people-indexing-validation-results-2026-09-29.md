@@ -4,8 +4,34 @@ Date: 2026-09-29. This is an initial gate report, not a completed scaling rollou
 
 ## Current Completion Audit
 
-The prototype and acceptance checks do not establish completion of the full design.
-The seven implementation gates remain distinct:
+The user approved the smaller initial-release contract in section 1 of the
+[design plan](people-indexing-design-validation-2026-09-29.md). It supersedes the
+original broad gates; this is a scope decision, not evidence of completion.
+
+The next step is an enabled-path audit and simplification, not additional
+automatic filesystem-discovery machinery. Automatic discovery bootstrap and
+periodic full-volume repair are deferred. Demand-driven catch-up of known
+catalog resources, explicit best-effort Scan, strict authorization, and durable
+personal/invitation/notification state remain in scope.
+
+| Initial-release gate        | Current evidence and outstanding work                                                                                                                                                                                       |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Enabled-path simplification | Prototype paths exist but selected flags/host startup and legacy recurring traversal still need auditing against the smaller contract. Do not enable automatic bootstrap/repair.                                            |
+| Known-source vertical path  | Source/projection tests exist; validate the selected known-source-only configuration end to end, including explicit recovery of missed writes.                                                                              |
+| Security and durable state  | Retention return and disposable-demand account-rehome acceptance pass. Preserve existing authority and canonical-state portability guards; review the actual release diff.                                                  |
+| Explicit Scan and UI        | Admission, dispatch and component tests exist. Best-effort completion wording, real browser flow and disabled/unavailable cases need final validation. Agent Scan remains denied and deferred.                              |
+| Bounded cost and rollback   | One-project activation has identical measured logical work at 0/100k/1m dormant memberships. Representative mixed load, full enabled-path idle behavior and disable/reenable validation remain open. No DAU capacity claim. |
+| Release review              | Full development build, independent review of selected paths and explicit canary decision remain required. No rollout is authorized by the plan revision.                                                                   |
+
+The following extended-scope audit and chronological results are historical
+evidence, not instructions to continue implementing deferred work. The failed
+btrfs marker proof remains a reason not to use that shortcut; obtaining a better
+marker is no longer a release prerequisite. No existing code or guard was
+removed merely by changing this document.
+
+## Historical Extended-Scope Audit
+
+Before the user-approved scope reduction, the seven implementation gates were:
 
 | Plan gate               | Evidence and remaining work                                                                                                                                                                                                                     |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
