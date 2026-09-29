@@ -746,6 +746,15 @@ async function command(name, args = {}) {
     }
     case "indexingMetrics":
       return require("prom-client").register.getMetricsAsJSON();
+    case "notificationTick":
+      await pool.query(
+        "UPDATE collaboration_notification_cursors SET due_at=now() WHERE project_id=$1",
+        [config.project],
+      );
+      return require("@cocalc/server/notifications/collaboration-state").runCollaborationNotificationMaintenance(
+        require("@cocalc/server/collaborators/api")
+          .fetchCollaborationNotificationPage,
+      );
     case "demand": {
       const demand = require("@cocalc/database/postgres/collaborators/collaborators-demand");
       if (args.operation === "install")

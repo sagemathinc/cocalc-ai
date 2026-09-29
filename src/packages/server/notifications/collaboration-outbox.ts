@@ -6,6 +6,7 @@ import {
   COLLABORATION_NOTIFICATION_BATCH_LIMIT,
   collaborationAccountId,
   validateCollaborationMessageEvent,
+  validateCollaborationNotificationAttention,
 } from "@cocalc/util/collaboration-attention";
 import type {
   CollaborationNotificationJob,
@@ -89,6 +90,12 @@ function validatePage(
   const ids = new Set<string>();
   for (const entry of page.entries) {
     const event = validateCollaborationMessageEvent(entry.event);
+    if (
+      entry.attention !== undefined &&
+      validateCollaborationNotificationAttention(entry.attention).generation !==
+        page.generation
+    )
+      throw Error("notification attention membership mismatch");
     const key = JSON.stringify([
       event.room_id,
       event.thread_id,
@@ -158,7 +165,7 @@ export async function runCollaborationNotificationOutboxPass({
       };
       assertFresh();
       if (page.allowed && !page.reset) {
-        for (const { event, authority } of page.entries) {
+        for (const { event, authority, attention } of page.entries) {
           assertFresh();
           const delivered = await receiveCollaborationMessageNotification(
             {
@@ -166,6 +173,7 @@ export async function runCollaborationNotificationOutboxPass({
               account_id: job.account_id,
               access_generation: page.access_generation,
               grant_request_id: job.grant_request_id,
+              ...(attention === undefined ? {} : { attention }),
             },
             {
               authorize: async () => {

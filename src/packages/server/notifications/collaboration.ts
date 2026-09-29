@@ -15,6 +15,7 @@ import {
   collaborationNotificationKey,
   collaborationNotificationReason,
   validateCollaborationMessageEvent,
+  validateCollaborationNotificationAttention,
 } from "@cocalc/util/collaboration-attention";
 import type {
   CollaborationAttentionState,
@@ -39,7 +40,9 @@ export interface CollaborationNotificationHooks {
    * transaction. Lock access + attention rows, compare generation with the owner
    * result, and reconcile/persist legacy state and the membership starting boundary.
    * Read/follow/mute writes and membership invalidation must use the same row lock.
-   * Return null only for definitive revocation; throw if projection is not ready.
+   * Owner-supplied attention can replace the resource projection, but never the
+   * access fence. Return null only for definitive revocation; throw if required
+   * authorization state (or a legacy owner's projection) is not ready.
    * No RPC inside this callback. Do not mark activity read merely by delivering it.
    */
   lockAttention(input: {
@@ -121,6 +124,13 @@ export async function receiveCollaborationMessageNotification(
     event: validateCollaborationMessageEvent(input.event),
     account_id: collaborationAccountId(input.account_id),
     access_generation: generation(input.access_generation),
+    ...(input.attention === undefined
+      ? {}
+      : {
+          attention: validateCollaborationNotificationAttention(
+            input.attention,
+          ),
+        }),
     ...(input.grant_request_id === undefined
       ? {}
       : {

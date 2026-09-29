@@ -16,8 +16,9 @@ Date: 2026-09-29. This is an initial gate report, not a completed scaling rollou
   and removes only its own temporary fixture; it never freezes a volume, changes
   mount flags, forces a filesystem-wide sync, or creates/deletes snapshots.
 
-Production scheduling, access leases, notification delivery, and scan policy are
-unchanged. No demand or Scan mutation API has been enabled.
+Production scheduling, access leases, and scan policy are unchanged. Notification
+delivery now supports owner-supplied attention without a resource projection, as
+described below. No demand or Scan mutation API has been enabled.
 
 ## Measured Results
 
@@ -68,7 +69,7 @@ demonstrate independent offline delivery before changing this policy.
 
 Gate 1 is partially implemented, not closed: full table-by-table retention
 inventory, query/WAL instrumentation, and load/freshness curves remain. Gate 2
-has identified a failed candidate proof. Gates 3-7 are not implemented: integrated
+has identified a failed candidate proof. Gates 3-7 remain open: integrated
 demand/offline delivery prototype, bounded Scan RPC/CLI/UI, recovery/rehome,
 100,000-DAU load testing, and the 24-hour soak remain outstanding. No capacity or
 merge-readiness claim follows from these small tests.
@@ -130,3 +131,31 @@ COCALC_COLLABORATORS_ACCEPTANCE=1 pnpm exec jest --runInBand --runTestsByPath co
 The integrated gate remains open. Next: establish durable offline event delivery
 without projection leases, then wire authenticated demand admission and indexed
 scheduling into the two-home prototype. No scale/rollout gate has been passed.
+
+## Notification Resource-Projection Independence
+
+Owner-routed notification pages now include bounded recipient-specific attention
+facts: membership epoch, history floor, full participation result, and legacy
+follow/mute defaults. The home receiver validates the membership epoch and uses
+these facts instead of requiring the conversation resource index to be current.
+Explicit personal follow/mute choices remain authoritative. Older owner replies
+without these facts retain the existing projection-based path.
+
+This does **not** bypass authorization: the home access row is still locked and
+its captured request ID, granted generation, and database-time expiry are still
+checked. The owner still checks current ownership, room, actor, recipient, and
+membership history. There is no new public notification endpoint. Deleted
+catalog conversations are skipped rather than exposed through retained events.
+
+An isolated real-PostgreSQL two-home test creates a followed conversation, deletes
+the recipient's resource index, sends a live reply, and runs notification work
+without projection maintenance. It receives exactly one notification, leaves the
+resource index empty, preserves the follow preference, and creates no duplicate
+on retry. All six existing multibay/historical acceptance tests also pass.
+Focused database, server, and util suites pass (25, 37, and 20 tests respectively).
+
+Remaining dependency: access rows/leases and recurring cursor polling. The next
+step is a durable owner event-to-recipient work handoff with event-triggered
+authorization, not suspending access renewal prematurely. The new acceptance
+test proves independence from the resource index only; it does not prove cold
+accounts incur zero recurring work or that offline obligations survive retention.

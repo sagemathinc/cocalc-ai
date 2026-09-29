@@ -3,7 +3,10 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { createHash, randomUUID } from "node:crypto";
-import { homeParticipation } from "./collaborators-relations-projection";
+import {
+  homeParticipation,
+  ownerParticipation,
+} from "./collaborators-relations-projection";
 import { uuidsha1 } from "@cocalc/util/misc";
 import getPool from "../../pool";
 import type { PoolClient } from "../../pool";
@@ -22,6 +25,7 @@ import {
   collaborationActivity,
   reconcileCollaborationAttention,
   validateCollaborationMessageEvent,
+  validateCollaborationNotificationAttention,
 } from "@cocalc/util/collaboration-attention";
 import type {
   CollaborationNotificationDelivery,
@@ -389,8 +393,40 @@ export async function readCollaborationNotificationPage(
         room?.room_id === event.room_id &&
         member(project.users?.[event.actor_account_id]?.group)
       ) {
+        const resource = (
+          await db.query(
+            `SELECT metadata,${ownerParticipation("c", "$3")} AS participated
+           FROM collaboration_catalog c WHERE project_id=$1 AND entry_key=$2 AND deleted_at IS NULL AND kind='conversation'`,
+            [
+              job.project_id,
+              entryKey(job.project_id, event.thread_id),
+              job.account_id,
+            ],
+          )
+        ).rows[0];
+        if (!resource) {
+          cursor = String(row.position);
+          continue;
+        }
+        const boundary = await readCollaborationNotificationAttention(db, {
+          project_id: job.project_id,
+          account_id: job.account_id,
+          resources: [resource.metadata],
+        });
+        const legacy = reconcileCollaborationAttention({
+          account_id: job.account_id,
+          initial_activity: 0,
+          legacy: resource.metadata,
+        });
         const entry = {
           event,
+          attention: {
+            generation: boundary.generation,
+            initial_activity: boundary.floors[resource.metadata.resource_id],
+            participating: !!resource.participated,
+            legacy_following: legacy.following,
+            legacy_muted: legacy.muted,
+          },
           authority: {
             project_id: event.project_id,
             room_id: event.room_id,
@@ -578,14 +614,23 @@ export async function lockCollaborationNotificationAttention({
   ).rows.length;
   if (!visible) return null;
   const key = entryKey(event.project_id, event.thread_id);
-  const indexed = (
-    await db.query(
-      `SELECT metadata,${homeParticipation("i", "$1")} AS participated FROM collaboration_index i
+  const ownerAttention =
+    delivery.attention === undefined
+      ? undefined
+      : validateCollaborationNotificationAttention(delivery.attention);
+  const indexed = ownerAttention
+    ? undefined
+    : (
+        await db.query(
+          `SELECT metadata,${homeParticipation("i", "$1")} AS participated FROM collaboration_index i
       WHERE account_id=$1 AND entry_key=$2 AND generation=$3 AND kind='conversation'`,
-      [account_id, key, delivery.access_generation],
-    )
-  ).rows[0];
-  if (!indexed || Number(indexed.metadata.activity) < event.activity)
+          [account_id, key, delivery.access_generation],
+        )
+      ).rows[0];
+  if (
+    !ownerAttention &&
+    (!indexed || Number(indexed.metadata.activity) < event.activity)
+  )
     throw Error("notification conversation projection not ready");
   await db.query(
     "INSERT INTO collaboration_personal(account_id,entry_key,project_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
@@ -599,7 +644,7 @@ export async function lockCollaborationNotificationAttention({
   ).rows[0];
   const state = reconcileCollaborationAttention({
     account_id,
-    initial_activity: 0,
+    initial_activity: ownerAttention?.initial_activity ?? 0,
     state: {
       following:
         personal.legacy_migrated ||
@@ -611,15 +656,35 @@ export async function lockCollaborationNotificationAttention({
         personal.legacy_migrated || personal.muted_explicit || personal.muted
           ? personal.muted
           : undefined,
-      read_through: Number(personal.read_through),
-      notify_after: Number(personal.notify_after),
+      read_through: Math.max(
+        Number(personal.read_through),
+        ownerAttention &&
+          personal.attention_generation !== ownerAttention.generation
+          ? ownerAttention.initial_activity
+          : 0,
+      ),
+      notify_after: Math.max(
+        Number(personal.notify_after),
+        ownerAttention &&
+          personal.attention_generation !== ownerAttention.generation
+          ? ownerAttention.initial_activity
+          : 0,
+      ),
       last_mention: Number(personal.last_mention),
       legacy_migrated: personal.legacy_migrated,
-      participating: !!indexed.participated,
+      participating: ownerAttention?.participating ?? !!indexed?.participated,
     },
     legacy: {
-      notification_followers: indexed.metadata.notification_followers,
-      notification_muted: indexed.metadata.notification_muted,
+      notification_followers: ownerAttention
+        ? ownerAttention.legacy_following
+          ? [account_id]
+          : []
+        : indexed.metadata.notification_followers,
+      notification_muted: ownerAttention
+        ? ownerAttention.legacy_muted
+          ? [account_id]
+          : []
+        : indexed.metadata.notification_muted,
     },
   });
   if (
@@ -629,7 +694,8 @@ export async function lockCollaborationNotificationAttention({
     state.last_mention = Math.max(state.last_mention, event.activity);
   await db.query(
     `UPDATE collaboration_personal SET following=$3,muted=$4,legacy_migrated=true,
-     notify_after=$5,last_mention=GREATEST(last_mention,$6)
+     notify_after=$5,last_mention=GREATEST(last_mention,$6),
+     read_through=GREATEST(read_through,$7),attention_generation=COALESCE($8,attention_generation)
      WHERE account_id=$1 AND entry_key=$2`,
     [
       account_id,
@@ -638,6 +704,8 @@ export async function lockCollaborationNotificationAttention({
       state.muted,
       state.notify_after,
       state.last_mention,
+      state.read_through,
+      ownerAttention?.generation ?? null,
     ],
   );
   return { access_generation: access.generation, state };

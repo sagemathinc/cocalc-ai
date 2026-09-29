@@ -56,6 +56,37 @@ export interface CollaborationNotificationDelivery {
   access_generation: string;
   /** Required by the concrete account-home attention adapter. */
   grant_request_id?: string | null;
+  /** Owner-derived per-recipient facts, not a cached account projection. */
+  attention?: CollaborationNotificationAttention;
+}
+
+export interface CollaborationNotificationAttention {
+  generation: string;
+  initial_activity: number;
+  participating: boolean;
+  legacy_following: boolean;
+  legacy_muted: boolean;
+}
+
+export function validateCollaborationNotificationAttention(
+  value: CollaborationNotificationAttention,
+): CollaborationNotificationAttention {
+  collaborationAccountId(value?.generation);
+  collaborationActivity(value?.initial_activity);
+  for (const key of [
+    "participating",
+    "legacy_following",
+    "legacy_muted",
+  ] as const)
+    if (typeof value[key] !== "boolean")
+      throw Error("invalid notification attention");
+  return {
+    generation: value.generation,
+    initial_activity: value.initial_activity,
+    participating: value.participating,
+    legacy_following: value.legacy_following,
+    legacy_muted: value.legacy_muted,
+  };
 }
 
 export type CollaborationNotificationPage =
@@ -74,6 +105,7 @@ export type CollaborationNotificationPage =
       entries: {
         event: CollaborationMessageEvent;
         authority: CollaborationNotificationAuthority;
+        attention?: CollaborationNotificationAttention;
       }[];
     };
 

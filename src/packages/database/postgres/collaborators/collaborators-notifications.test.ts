@@ -407,22 +407,100 @@ it.each([null, project_id])(
   },
 );
 
-it("checks lease expiration after obtaining the access lock", async () => {
-  mockQuery.mockResolvedValueOnce({
-    rows: [
-      {
-        generation,
-        granted_generation: generation,
-        grant_request_id: account_id,
-      },
-    ],
+it.each([false, true])(
+  "checks lease expiration after obtaining the access lock (owner attention: %s)",
+  async (ownerAttention) => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          generation,
+          granted_generation: generation,
+          grant_request_id: account_id,
+        },
+      ],
+    });
+    await expect(
+      lockCollaborationNotificationAttention({
+        db: mockDb,
+        delivery: {
+          ...delivery,
+          ...(ownerAttention
+            ? {
+                attention: {
+                  generation,
+                  initial_activity: 0,
+                  participating: false,
+                  legacy_following: false,
+                  legacy_muted: false,
+                },
+              }
+            : {}),
+        },
+      }),
+    ).rejects.toThrow("lease expired");
+    expect(mockQuery).toHaveBeenCalledTimes(2);
+    expect(mockQuery.mock.calls[0][0]).toContain("FOR UPDATE");
+    expect(mockQuery.mock.calls[1][0]).toContain(
+      "lease_until>clock_timestamp()",
+    );
+  },
+);
+
+it("owner attention avoids the resource index while preserving explicit mute and membership floor", async () => {
+  mockQuery.mockImplementation(async (sql) => {
+    if (sql.includes("FROM collaboration_access"))
+      return {
+        rows: [
+          {
+            generation,
+            granted_generation: generation,
+            grant_request_id: account_id,
+          },
+        ],
+      };
+    if (sql.includes("FROM account_project_index")) return { rows: [{}] };
+    if (sql.includes("SELECT * FROM collaboration_personal"))
+      return {
+        rows: [
+          {
+            read_through: 1,
+            notify_after: 0,
+            last_mention: 0,
+            muted: true,
+            muted_explicit: true,
+            following: false,
+            legacy_migrated: false,
+          },
+        ],
+      };
+    return { rows: [] };
   });
-  await expect(
-    lockCollaborationNotificationAttention({ db: mockDb, delivery }),
-  ).rejects.toThrow("lease expired");
-  expect(mockQuery).toHaveBeenCalledTimes(2);
-  expect(mockQuery.mock.calls[0][0]).toContain("FOR UPDATE");
-  expect(mockQuery.mock.calls[1][0]).toContain("lease_until>clock_timestamp()");
+  const result = await lockCollaborationNotificationAttention({
+    db: mockDb,
+    delivery: {
+      ...delivery,
+      attention: {
+        generation,
+        initial_activity: 1,
+        participating: true,
+        legacy_following: true,
+        legacy_muted: false,
+      },
+    },
+  });
+  expect(result?.state).toMatchObject({
+    muted: true,
+    following: true,
+    participating: true,
+    read_through: 1,
+    notify_after: 1,
+    last_mention: 2,
+  });
+  expect(
+    mockQuery.mock.calls.some(([sql]) =>
+      sql.includes("FROM collaboration_index"),
+    ),
+  ).toBe(false);
 });
 
 it("does not apply a stale denied response after a newer grant request", async () => {

@@ -78,6 +78,37 @@ const run = (options: { now?: () => number } = {}) =>
     ...options,
   });
 
+it("binds owner attention to the recipient membership epoch before delivery", async () => {
+  page.entries[0].attention = {
+    generation: account_id,
+    initial_activity: 0,
+    participating: false,
+    legacy_following: false,
+    legacy_muted: false,
+  };
+  expect(await run()).toMatchObject({ failed: 1, acknowledged: 0 });
+  expect(receive).not.toHaveBeenCalled();
+  expect(store.acknowledge).not.toHaveBeenCalled();
+});
+
+it("passes validated owner attention without requiring an account projection", async () => {
+  page.generation = account_id;
+  store.claim = jest.fn(async () => [{ ...job, generation: account_id }]);
+  const attention = {
+    generation: account_id,
+    initial_activity: 0,
+    participating: true,
+    legacy_following: false,
+    legacy_muted: false,
+  };
+  page.entries[0].attention = attention;
+  expect(await run()).toMatchObject({ created: 1, failed: 0, acknowledged: 1 });
+  expect(receive).toHaveBeenCalledWith(
+    expect.objectContaining({ attention }),
+    expect.anything(),
+  );
+});
+
 it("claims bounded pages and acknowledges only after every delivery completes", async () => {
   const result = await run();
   expect(store.claim).toHaveBeenCalledWith(8);
