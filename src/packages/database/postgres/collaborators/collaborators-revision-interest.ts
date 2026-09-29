@@ -26,6 +26,8 @@ export async function syncCollaborationRevisionInterestSchema(
     PRIMARY KEY(project_id,home_bay_id))`);
   await db.query(`CREATE INDEX IF NOT EXISTS collaboration_revision_interests_expiry
     ON collaboration_revision_interests(expires_at,project_id,home_bay_id)`);
+  await db.query(`CREATE INDEX IF NOT EXISTS collaboration_revision_interests_project_expiry
+    ON collaboration_revision_interests(project_id,expires_at,home_bay_id)`);
   await db.query(`ALTER TABLE collaboration_revision_interests
     ADD COLUMN IF NOT EXISTS ack_generation UUID,
     ADD COLUMN IF NOT EXISTS ack_revision BIGINT NOT NULL DEFAULT 0,
@@ -357,5 +359,31 @@ export async function releaseCollaborationRevisionInterest(
       [opts.project_id, opts.home_bay_id, opts.lease_id],
     );
     return rows.length > 0;
+  });
+}
+
+/** Internal owner maintenance. Serialize with registration and rehome before
+ * deleting expired scheduling state; never delete a renewed live interest.
+ */
+export async function pruneCollaborationRevisionInterests(
+  project_id: string,
+  authority: CollaborationOwnerAuthority,
+): Promise<number> {
+  return transaction(async (db) => {
+    await db.query("SET LOCAL lock_timeout='1s'");
+    await db.query("SET LOCAL statement_timeout='2s'");
+    await assertCollaborationOwnerAuthority(db, project_id, authority);
+    const { rows } = await db.query(
+      `WITH expired AS MATERIALIZED (
+        SELECT home_bay_id,lease_id FROM collaboration_revision_interests
+        WHERE project_id=$1 AND expires_at<=clock_timestamp()
+        ORDER BY expires_at,home_bay_id LIMIT 100 FOR UPDATE SKIP LOCKED)
+      DELETE FROM collaboration_revision_interests i USING expired e
+      WHERE i.project_id=$1 AND i.home_bay_id=e.home_bay_id
+        AND i.lease_id=e.lease_id AND i.expires_at<=clock_timestamp()
+      RETURNING i.home_bay_id`,
+      [project_id],
+    );
+    return rows.length;
   });
 }

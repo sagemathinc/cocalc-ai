@@ -1449,3 +1449,20 @@ remain unchanged. The cooldown is per process, not a distributed bay quota;
 concurrent processes rely on row locks for correctness. Large-backlog drain
 rates still need workload validation. Owner interest cleanup, hint dispatch,
 catch-up completion and the full cold-return lifecycle remain open.
+
+### Owner Interest Expiry Primitive
+
+Added an internal per-project expiry operation under the existing owner/rehome
+fence. It deletes at most one hundred expired interest rows, with one-second
+lock and two-second statement timeouts. A project/expiry/home index supports
+the bounded selection. Registration and cleanup share the project fence;
+deletion also matches the selected lease and rechecks expiry. Live renewed
+interests survive, and cleanup does not require a remaining human member.
+
+Database typecheck and nine interest-store tests pass. The new case verifies
+wrong-owner rejection, a 105-row backlog draining as 100/5/0, preservation of a
+renewed lease, and cleanup after membership removal. These are PGlite component
+tests, not a concurrent production PostgreSQL query-plan or rehome proof.
+This operation is not yet automatically scheduled: bounded owner candidate
+selection and lifecycle wiring remain necessary, along with the other open
+hint-delivery and scaling gates.

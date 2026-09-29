@@ -9,6 +9,7 @@ import {
   readCollaborationRevisionFanoutPage,
   claimCollaborationRevisionHint,
   settleCollaborationRevisionHint,
+  pruneCollaborationRevisionInterests,
 } from "./collaborators-revision-interest";
 
 const describeDb =
@@ -51,6 +52,60 @@ describeDb("owner project/home revision interests", () => {
       peer,
     };
   }
+  test("owner expiry cleanup is bounded and preserves renewed interests", async () => {
+    const { request } = await fixture();
+    const initial = await registerCollaborationRevisionInterest(
+      request,
+      authority,
+    );
+    await getPool().query(
+      `UPDATE collaboration_revision_interests SET expires_at=clock_timestamp()-interval '1 second'
+       WHERE project_id=$1`,
+      [request.project_id],
+    );
+    const renewed = await registerCollaborationRevisionInterest(
+      request,
+      authority,
+    );
+    expect(renewed.lease_id).not.toBe(initial.lease_id);
+    await getPool().query(
+      `INSERT INTO collaboration_revision_interests(project_id,home_bay_id,lease_id,expires_at,renew_after)
+       SELECT $1,'expired-' || n,gen_random_uuid(),clock_timestamp()-interval '1 second',clock_timestamp()
+       FROM generate_series(1,105) AS n`,
+      [request.project_id],
+    );
+    await expect(
+      pruneCollaborationRevisionInterests(request.project_id, {
+        owning_bay_id: "wrong",
+      }),
+    ).rejects.toThrow("owner");
+    expect(
+      await pruneCollaborationRevisionInterests(request.project_id, authority),
+    ).toBe(100);
+    expect(
+      await pruneCollaborationRevisionInterests(request.project_id, authority),
+    ).toBe(5);
+    expect(
+      await pruneCollaborationRevisionInterests(request.project_id, authority),
+    ).toBe(0);
+    const { rows } = await getPool().query(
+      "SELECT lease_id FROM collaboration_revision_interests WHERE project_id=$1",
+      [request.project_id],
+    );
+    expect(rows).toEqual([{ lease_id: renewed.lease_id }]);
+    // Expiry cleanup is independent of remaining human membership.
+    await getPool().query(
+      "UPDATE projects SET users='{}' WHERE project_id=$1",
+      [request.project_id],
+    );
+    await getPool().query(
+      "UPDATE collaboration_revision_interests SET expires_at=clock_timestamp()-interval '1 second' WHERE project_id=$1",
+      [request.project_id],
+    );
+    expect(
+      await pruneCollaborationRevisionInterests(request.project_id, authority),
+    ).toBe(1);
+  });
   test("delivery claims survive unknown outcomes and fence stale settlements", async () => {
     const { request } = await fixture();
     const lease = await registerCollaborationRevisionInterest(
