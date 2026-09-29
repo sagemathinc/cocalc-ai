@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import type { PoolClient } from "@cocalc/database/pool";
+import { createHash } from "node:crypto";
 import type {
   CollaborationResource,
   CollaborationSourceSnapshot,
@@ -218,17 +219,23 @@ async function retainCollaborationRelations(
   const previous = set_key
     ? (
         await db.query(
-          `SELECT c.relation_thread,c.relation_count,c.metadata->'participant_ids' AS participant_ids
+          `SELECT c.relation_thread,c.relation_count,
+            CASE WHEN c.relation_digest_set=c.relation_set THEN c.relation_digest END AS relation_digest,
+            c.metadata->'participant_ids' AS participant_ids
           FROM collaboration_catalog c JOIN collaboration_relation_sets s ON s.set_key=c.relation_set
-          WHERE c.source_id=$1 AND c.relation_set=$2 AND c.deleted_at IS NULL AND s.manifest IS NOT NULL
-          AND c.metadata->>'chat_path'=$3 AND c.relation_thread IS NOT NULL`,
-          [sourceKey(snapshot), set_key, snapshot.chat_path],
+          WHERE c.source_id=$1 AND c.deleted_at IS NULL AND s.manifest IS NOT NULL
+          AND c.metadata->>'chat_path'=$2 AND c.relation_thread IS NOT NULL`,
+          [sourceKey(snapshot), snapshot.chat_path],
         )
       ).rows
     : [];
   const byThread = new Map(previous.map((r) => [r.relation_thread, r]));
-  const bindings: { entry_key: string; thread_key: string; count: number }[] =
-    [];
+  const bindings: {
+    entry_key: string;
+    thread_key: string;
+    count: number;
+    digest: string | null;
+  }[] = [];
   const normalized = resources.map((resource) => {
     const raw = nativeResource(snapshot, resource);
     if (!raw) return resource;
@@ -237,7 +244,12 @@ async function retainCollaborationRelations(
     if (!retained) return resource;
     const count = Number(retained.relation_count),
       ids = retained.participant_ids as string[];
-    bindings.push({ entry_key: entryKey(resource), thread_key, count });
+    bindings.push({
+      entry_key: entryKey(resource),
+      thread_key,
+      count,
+      digest: retained.relation_digest,
+    });
     return {
       ...resource,
       participant_ids: ids,
@@ -282,6 +294,7 @@ export async function activateCollaborationRelations(
     snapshot.resources.map((r) => [relationThreadKey(r), r]),
   );
   const counts = new Map<string, { count: number; ids: string[] }>();
+  const digests = new Map<string, ReturnType<typeof createHash>>();
   async function* pages() {
     let after = -1;
     for (;;) {
@@ -297,6 +310,9 @@ export async function activateCollaborationRelations(
           const key = relationThreadKey(row.source);
           if (!native.has(key))
             throw Error("relation source thread is absent from snapshot");
+          let digest = digests.get(key);
+          if (!digest) digests.set(key, (digest = createHash("sha256")));
+          digest.update(JSON.stringify(row) + "\n");
           if (row.kind === "participant") {
             const summary = counts.get(key) ?? { count: 0, ids: [] };
             summary.count++;
@@ -325,8 +341,12 @@ export async function activateCollaborationRelations(
       manifest.participant_count + manifest.reference_count,
     ],
   );
-  const bindings: { entry_key: string; thread_key: string; count: number }[] =
-    [];
+  const bindings: {
+    entry_key: string;
+    thread_key: string;
+    count: number;
+    digest: string;
+  }[] = [];
   const normalized = resources.map((resource) => {
     // Registered identities may collapse several input threads. Only the actual
     // current thread binds; a predecessor must not lend participation to it.
@@ -338,6 +358,7 @@ export async function activateCollaborationRelations(
       entry_key: entryKey(resource),
       thread_key,
       count: summary.count,
+      digest: digests.get(thread_key)?.copy().digest("hex") ?? hash(""),
     });
     return {
       ...resource,

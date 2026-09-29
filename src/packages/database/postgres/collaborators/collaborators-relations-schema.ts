@@ -33,7 +33,9 @@ export async function syncCollaborationRelationsSchema(
     CREATE INDEX IF NOT EXISTS collaboration_participant_index_project ON collaboration_participant_index(account_id,project_id);
     ALTER TABLE collaboration_sources ADD COLUMN IF NOT EXISTS relation_set TEXT;
     ALTER TABLE collaboration_catalog ADD COLUMN IF NOT EXISTS relation_set TEXT,
-      ADD COLUMN IF NOT EXISTS relation_thread TEXT,ADD COLUMN IF NOT EXISTS relation_count BIGINT NOT NULL DEFAULT 0;
+      ADD COLUMN IF NOT EXISTS relation_thread TEXT,ADD COLUMN IF NOT EXISTS relation_count BIGINT NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS relation_digest TEXT,
+      ADD COLUMN IF NOT EXISTS relation_digest_set TEXT;
     ALTER TABLE collaboration_access ADD COLUMN IF NOT EXISTS relation_after JSONB;
     ALTER TABLE collaboration_index ADD COLUMN IF NOT EXISTS relation_set TEXT,ADD COLUMN IF NOT EXISTS relation_thread TEXT,
       ADD COLUMN IF NOT EXISTS relation_budget BIGINT NOT NULL DEFAULT 0,

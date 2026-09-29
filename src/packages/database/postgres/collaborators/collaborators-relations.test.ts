@@ -223,6 +223,54 @@ afterAll(async () => {
   await testCleanup();
 });
 
+test("adding another conversation preserves unchanged revision and immutable relations", async () => {
+  const edges = rows();
+  await publish(await prepare(1, edges));
+  const read = async () =>
+    (
+      await getPool().query(
+        "SELECT revision,relation_set,relation_digest FROM collaboration_catalog WHERE entry_key=$1",
+        [entryKey(resource())],
+      )
+    ).rows[0];
+  const before = await read();
+  expect(before.relation_digest).toMatch(/^[a-f0-9]{64}$/);
+  const second = { ...resource(), resource_id: "second", thread_id: "second" };
+  await publish(await prepare(2, edges, [resource(), second]));
+  expect(await read()).toEqual(before);
+  // A missing manifest after a mixed-set update must retain the old thread's
+  // complete participants, even though the source now points to a newer set.
+  await ingestCollaborationSnapshot(
+    {
+      ...source,
+      epoch,
+      sequence: 3,
+      resources: [{ ...resource(), title: "Renamed" }, second],
+    },
+    authority,
+  );
+  const [retained] = (
+    await getPool().query(
+      "SELECT relation_count,metadata->>'title' AS title FROM collaboration_catalog WHERE entry_key=$1",
+      [entryKey(resource())],
+    )
+  ).rows;
+  expect(Number(retained.relation_count)).toBe(1000);
+  expect(retained.title).toBe("Renamed");
+  const beforeStaleDigest = await read();
+  await getPool().query(
+    "UPDATE collaboration_catalog SET relation_digest_set='older-writer' WHERE entry_key=$1",
+    [entryKey(resource())],
+  );
+  await publish(
+    await prepare(4, edges, [
+      { ...resource(), title: "Renamed" },
+      { ...second, title: "Changed second" },
+    ]),
+  );
+  expect((await read()).revision).not.toBe(beforeStaleDigest.revision);
+});
+
 test("1000 participants page through owner and home; preview never bounds For You/person membership", async () => {
   const prepared = await prepare();
   await publish(prepared);

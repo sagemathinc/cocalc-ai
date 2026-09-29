@@ -366,6 +366,33 @@ export async function ingestCollaborationSnapshot(
       metadata: resource,
       activity: resource.updated_at,
     }));
+    // Keep unchanged conversation revisions and their immutable relation sets.
+    // A source-wide upload identity changing is not a change to every thread.
+    const relationDigests = new Map(
+      relations.bindings.map((b) => [b.entry_key, b.digest]),
+    );
+    const unchanged = new Set<string>(
+      (
+        await db.query(
+          `SELECT c.entry_key FROM collaboration_catalog c
+       JOIN jsonb_to_recordset($2::jsonb) AS e(entry_key text,metadata jsonb,digest text)
+         ON c.entry_key=e.entry_key
+       WHERE c.source_id=$1 AND c.kind='conversation' AND c.deleted_at IS NULL
+         AND c.metadata=e.metadata AND e.digest IS NOT NULL AND c.relation_digest=e.digest
+         AND c.relation_digest_set=c.relation_set`,
+          [
+            source_id,
+            JSON.stringify(
+              entries.map((e) => ({
+                ...e,
+                digest: relationDigests.get(e.entry_key) ?? null,
+              })),
+            ),
+          ],
+        )
+      ).rows.map((r) => r.entry_key),
+    );
+    const changedEntries = entries.filter((e) => !unchanged.has(e.entry_key));
     if (
       entries.some((entry) => {
         const old = previous.get(entry.entry_key);
@@ -405,18 +432,28 @@ export async function ingestCollaborationSnapshot(
         '{created_at}',COALESCE(collaboration_catalog.metadata->'created_at',excluded.metadata->'created_at')),
         resource_id=excluded.resource_id,activity_floor=GREATEST(collaboration_catalog.activity_floor,excluded.activity_floor),
         source_id=excluded.source_id,revision=excluded.revision,activity=excluded.activity,deleted_at=NULL`,
-      [source_id, snapshot.project_id, revision, JSON.stringify(entries)],
+      [
+        source_id,
+        snapshot.project_id,
+        revision,
+        JSON.stringify(changedEntries),
+      ],
     );
     await saveCollaborationAgentBindings(db, bindings, revision);
     await db.query(
-      "UPDATE collaboration_catalog SET relation_set=NULL,relation_thread=NULL,relation_count=0 WHERE source_id=$1",
-      [source_id],
+      "UPDATE collaboration_catalog SET relation_set=NULL,relation_thread=NULL,relation_count=0,relation_digest=NULL,relation_digest_set=NULL WHERE source_id=$1 AND NOT(entry_key=ANY($2::text[]))",
+      [source_id, [...unchanged]],
     );
     if (relations.set_key)
       await db.query(
-        `UPDATE collaboration_catalog c SET relation_set=$1,relation_thread=e.thread_key,relation_count=e.count
-      FROM jsonb_to_recordset($2::jsonb) AS e(entry_key text,thread_key text,count bigint) WHERE c.entry_key=e.entry_key AND c.deleted_at IS NULL`,
-        [relations.set_key, JSON.stringify(relations.bindings)],
+        `UPDATE collaboration_catalog c SET relation_set=$1,relation_thread=e.thread_key,relation_count=e.count,relation_digest=e.digest,relation_digest_set=$1
+      FROM jsonb_to_recordset($2::jsonb) AS e(entry_key text,thread_key text,count bigint,digest text) WHERE c.entry_key=e.entry_key AND c.deleted_at IS NULL`,
+        [
+          relations.set_key,
+          JSON.stringify(
+            relations.bindings.filter((b) => !unchanged.has(b.entry_key)),
+          ),
+        ],
       );
     const size = (
       await db.query(

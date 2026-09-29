@@ -41,6 +41,19 @@ acceptance("synthetic active-account scheduler burst", () => {
       FROM unnest($1::uuid[]) id`,
       [accounts, env.project, env.bays[0]],
     );
+    await env.hub("a", "ensureRoom", {
+      project_id: env.project,
+      request_id: randomUUID(),
+    });
+    await env.send("a", "initialize", { request_id: randomUUID() });
+    const resources: string[] = [];
+    for (let i = 0; i < 24; i++) {
+      const thread = await env.send("a", "createThread", {
+        request_id: randomUUID(),
+        title: `Burst conversation ${i}`,
+      });
+      resources.push(thread.thread_id);
+    }
     // These are trusted fixture store calls, not simulated browser identities.
     await env.worker("a").call("demand", { operation: "install" });
     await env.worker("a").call("demand", {
@@ -54,17 +67,20 @@ acceptance("synthetic active-account scheduler burst", () => {
       await env.worker(role).call("startRevisionMaintenance");
     let ready = 0;
     const samples: { elapsed_ms: number; ready: number }[] = [];
-    while (Date.now() - started < 30000) {
+    while (Date.now() - started < 120000) {
       const [row] = await env.sql(
         "a",
-        `SELECT count(*)::integer AS n FROM collaboration_access
-        WHERE account_id=ANY($1::uuid[]) AND generation IS NOT NULL AND lease_until>clock_timestamp()`,
-        [accounts],
+        `SELECT count(*)::integer AS n FROM collaboration_access a
+        WHERE account_id=ANY($1::uuid[]) AND generation IS NOT NULL AND lease_until>clock_timestamp()
+        AND (SELECT count(*) FROM collaboration_index i
+          WHERE i.account_id=a.account_id AND i.project_id=a.project_id
+          AND i.metadata->>'resource_id'=ANY($2::text[]))=$3`,
+        [accounts, resources, resources.length],
       );
       ready = row.n;
       samples.push({ elapsed_ms: Date.now() - started, ready });
       if (ready === accounts.length) break;
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      await new Promise((resolve) => setTimeout(resolve, 1000));
     }
     const after = (await env.worker("owner").call("inspect")).counters
       .ownerCalls;
@@ -76,13 +92,94 @@ acceptance("synthetic active-account scheduler burst", () => {
     );
     process.stdout.write(
       JSON.stringify({
-        workload: "100-account-one-project-activation",
+        workload: "100-account-24-conversation-activation",
         samples,
         calls,
       }) + "\n",
     );
+    if (ready !== accounts.length)
+      process.stdout.write(
+        JSON.stringify({
+          owner: await env.sql(
+            "owner",
+            "SELECT count(*)::integer AS n FROM collaboration_catalog",
+          ),
+          home: await env.sql(
+            "a",
+            "SELECT count(*)::integer AS n FROM collaboration_index",
+          ),
+          jobs: await env.sql(
+            "a",
+            "SELECT * FROM collaboration_access WHERE account_id=$1",
+            [accounts[0]],
+          ),
+        }) + "\n",
+      );
     expect(ready).toBe(accounts.length);
+    const updateStarted = Date.now();
+    const update = await env.send("a", "createThread", {
+      request_id: randomUUID(),
+      title: "After activation",
+    });
+    let updated = 0;
+    let ownerObservedMs: number | undefined;
+    let firstHomeObservedMs: number | undefined;
+    while (Date.now() - updateStarted < 30000) {
+      if (ownerObservedMs === undefined) {
+        const rows = await env.sql(
+          "owner",
+          "SELECT 1 FROM collaboration_catalog WHERE metadata->>'resource_id'=$1",
+          [update.thread_id],
+        );
+        if (rows.length) ownerObservedMs = Date.now() - updateStarted;
+      }
+      const [row] = await env.sql(
+        "a",
+        `SELECT count(*)::integer AS n
+        FROM collaboration_index WHERE account_id=ANY($1::uuid[])
+        AND metadata->>'resource_id'=$2`,
+        [accounts, update.thread_id],
+      );
+      updated = row.n;
+      if (updated && firstHomeObservedMs === undefined)
+        firstHomeObservedMs = Date.now() - updateStarted;
+      if (updated === accounts.length) break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    process.stdout.write(
+      JSON.stringify({
+        workload: "100-account-later-conversation",
+        elapsed_ms: Date.now() - updateStarted,
+        updated,
+        ownerObservedMs,
+        firstHomeObservedMs,
+      }) + "\n",
+    );
+    if (updated !== accounts.length)
+      process.stdout.write(
+        JSON.stringify({
+          ownerUpdate: await env.sql(
+            "owner",
+            "SELECT revision,metadata->>'resource_id' AS resource_id FROM collaboration_catalog WHERE metadata->>'resource_id'=$1",
+            [update.thread_id],
+          ),
+          receiver: await env.sql(
+            "a",
+            "SELECT * FROM collaboration_revision_receivers",
+          ),
+          jobs: await env.sql(
+            "a",
+            "SELECT revision,complete,last_error,count(*)::integer AS n FROM collaboration_access GROUP BY revision,complete,last_error",
+          ),
+          activation: await env.sql(
+            "a",
+            "SELECT * FROM collaboration_demand_activation WHERE account_id=$1",
+            [accounts[0]],
+          ),
+        }) + "\n",
+      );
+    expect(updated).toBe(accounts.length);
     for (const role of ["owner", "a"] as const)
       expect((await env.worker(role).call("inspect")).counters.starts).toBe(0);
-  }, 90000);
+  }, 180000);
 });

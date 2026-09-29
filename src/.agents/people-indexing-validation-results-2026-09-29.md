@@ -2375,6 +2375,79 @@ open.
 
 ### Synthetic 100-Account Activation Burst
 
+**Historical populated-workload failures, before the delta fix below.** With 24
+normally created conversations, two runs reached zero fully caught-up accounts
+within 30 seconds. Diagnostics from the second run showed all 24 owner catalog
+rows, 836 home projection rows and no error on the sampled job. The owner reader
+currently ends a page at a resource with participant relations, so conversation
+pages can contain only one resource.
+
+A 120-second measurement window subsequently observed all 100 accounts holding
+all 24 resources after 79,030 ms, with 720 shared-page calls, 59 access refreshes
+and three revision registrations. A newly created 25th conversation then reached
+zero of those projections within 30,150 ms, failing the follow-up assertion.
+An unchanged-production diagnostic rerun completed initial projection in 88,311
+ms (615 shared-page calls, 90 access refreshes, three revision registrations),
+then delivered the later conversation to all 100 homes in 24,323 ms. The suite
+passed in 157.752 seconds. This pass does not erase the previous 30-second miss:
+the concern is intermittent latency rather than a demonstrated permanent stall.
+Intermediate owner-ingestion and first-home timestamps are being added to the
+pending test to distinguish the stages on subsequent runs.
+
+The instrumented run failed again: initial convergence took 78,634 ms, then the
+new conversation reached the owner after 2,362 ms but zero homes after 30,168 ms.
+The receiver had dirty sequence 6 with scheduling sequence 6 complete; all 100
+projection jobs had reached revision 2 but were incomplete, with no last error.
+Thus this observation localizes the delay downstream of source ingestion and
+revision wakeup admission, in catalog replay/projection work.
+
+Inspection of `collaborators-owner.ts` identifies write amplification:
+`ingest` skips only an identical whole-source metadata hash. Otherwise its catalog
+upsert assigns the new revision to every source resource, and replaces every
+resource's relation-set binding. `readCollaborationSharedProjection` ends a page
+at a resource with participant relations. Adding conversation 25 consequently
+replays existing conversations to every demanded home. Fixing this requires
+per-resource change detection covering normalized metadata, agent bindings and
+participant/reference content, not merely comparing titles or preserving old
+revisions while silently changing relation pointers. No such production fix has
+yet been applied; the populated regression remains unresolved.
+
+#### Conversation Delta Fix
+
+The later implementation now hashes each thread's verified participant/reference
+rows and stores the digest with its immutable relation-set identity. Conversation
+catalog rows keep their revision and old relation pointer when both JSONB
+metadata and verified relation content are unchanged. Unrecognized or mismatched
+digest/set identities conservatively force an update. Missing-manifest retention
+reads each thread's actual retained set rather than assuming every thread uses
+the source's newest set. Registered-agent binding behavior is unchanged; this
+optimization is deliberately conversation-specific.
+
+This fixes update amplification, not source parsing cost or initial projection
+paging. With the final guarded implementation, all 100 accounts received the
+25th conversation in 7,663 ms: owner ingestion was observed at 1,092 ms and the
+first home at 2,105 ms. The prior implementation of this fix, before adding the
+digest/set compatibility guard, measured 7,662 ms. Initial 24-conversation
+projection still took 83,698 ms in the final run, with 733 shared-page calls.
+That initial-load cost remains a performance concern, not a closed scaling gate.
+
+Validation: server/reference typecheck; 50 core collaborator and 18 relation
+tests; an additional rerun of the 18 relation tests after strengthening the
+mixed-set/missing-manifest regression; and the final real multibay burst test
+(135.016 seconds including setup/cleanup) all pass. PGlite emitted its VM-module
+warning and some runs emitted Jest's delayed-exit warning, but processes exited
+successfully. No production settings changed. Browser, independent review and
+representative sustained-load/resource-cost gates remain open.
+
+This does not yet isolate the fault to ingestion, revision delivery or home
+scheduling. Do not use the earlier empty-catalog result as evidence that populated
+views meet a release latency target. The pending test should stay failing until
+the cause is understood, not be weakened to advertise a capacity result.
+
+The user does not have a predetermined canary concurrency: derive an operating
+envelope from measured indexing duration and backlog/resource behavior rather
+than treating a supplied concurrency number as a prerequisite.
+
 `active-burst.acceptance.test.ts` adds 100 synthetic accounts on one home bay,
 all authorized on one owner-bay project, and acquires project demand through a
 bounded fixture-only store helper. These are not 100 authenticated browser
