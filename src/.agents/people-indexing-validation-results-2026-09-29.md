@@ -2562,3 +2562,19 @@ evidence for automatic home/owner scheduling, not a browser lifecycle test,
 host-timer proof, sustained cold-account cost measurement, or DAU capacity result.
 The cold population shares one project; high project fanout and long-duration
 churn remain separate validation requirements. No production settings changed.
+
+### Timer-Only Initial Discovery Acceptance
+
+Removed the last manual host extraction tick from the same multibay acceptance
+case. The fixture starts the production host service, whose normal two-second
+timer drives extraction. After acquiring demand, the test now only reads state;
+home, owner, and host production timers drive registration, admission, discovery,
+extraction, publication, projection, and terminal receipt settlement. The case
+passes in 56.539 seconds, retaining the cold-membership and zero-compute-start
+assertions. Server/reference typecheck passes.
+
+This supersedes the explicit-host-tick limitation above for initial discovery.
+It still uses a synthetic source, isolated transport/database processes and
+direct demand acquisition, not a browser session or production workload. Later
+unmediated-write recovery, sustained cold-account cost, lifecycle portability,
+and the broader scale/soak gates are not established by this test.

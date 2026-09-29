@@ -100,9 +100,7 @@ acceptance("demand-triggered initial discovery over real fabric", () => {
       ),
     ).toEqual([{ n: 1 }]);
     await eventually(async () => {
-      // Host extraction is ticked explicitly; home/owner scheduling and Scan
-      // dispatch use their production timers, with no due-time rewrites.
-      await env.worker("host").call("tick");
+      // All scheduling uses production timers; polling only observes the view.
       const page = await env.hub("a", "listResources", {
         project_id: env.project,
       });
