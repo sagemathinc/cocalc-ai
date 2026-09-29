@@ -168,7 +168,7 @@ export function ProjectScan({
               running:
                 "Discovering project metadata. No completion estimate is available yet.",
               discovered:
-                "Discovery finished. People views may still be catching up; this is not a guarantee that every view is current.",
+                "Discovery finished. Files changed during the scan may need another scan; this is not a point-in-time snapshot. People views may still be catching up.",
               failed:
                 "Scan failed. You can request another Scan after the cooldown.",
             }[state],

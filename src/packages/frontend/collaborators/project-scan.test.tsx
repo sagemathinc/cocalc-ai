@@ -79,6 +79,12 @@ test("keyboard admission and status distinguish discovery from projection", asyn
   expect(screen.getByRole("status")).toHaveTextContent(
     "People views may still be catching up",
   );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Files changed during the scan may need another scan",
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "this is not a point-in-time snapshot",
+  );
   expect(screen.getByRole("status")).toHaveFocus();
   expect(sessionStorage.getItem(storageKey)).toBeNull();
   await advance();
