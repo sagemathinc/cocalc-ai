@@ -30,6 +30,7 @@ export type CollaborationProjectResourceQuery = Omit<
 import type {
   CollaborationNotificationJob,
   CollaborationNotificationPage,
+  CollaborationNotificationObligation,
 } from "@cocalc/util/collaboration-attention";
 
 export interface CollaborationRoute {
@@ -129,6 +130,17 @@ export type InterBayCollaboratorsApi = RoutedApi & {
     limit: number;
     route: CollaborationRoute;
   }): Promise<CollaborationNotificationPage>;
+  notificationObligation(
+    opts: CollaborationNotificationObligation & {
+      route: CollaborationRoute;
+    },
+  ): Promise<
+    | Extract<
+        CollaborationNotificationPage,
+        { allowed: true }
+      >["entries"][number]
+    | null
+  >;
   refreshAccess(opts: {
     route: CollaborationRoute;
     requests: CollaborationAccessRequest[];

@@ -98,6 +98,26 @@ acceptance("durable owner notification fanout (isolated PostgreSQL)", () => {
       [],
     );
     expect(await env.sql("b", "SELECT * FROM collaboration_index")).toEqual([]);
+    const obligation = obligations[0];
+    const authorize = (overrides: object = {}) =>
+      env.worker("b").call("notificationFanout", {
+        operation: "authorize",
+        id: obligation.id,
+        account_id: obligation.account_id,
+        membership_epoch: obligation.membership_epoch,
+        ...overrides,
+      });
+    const authorized = await authorize();
+    expect(authorized.event).toEqual(events[0].event_json);
+    expect(authorized.attention.generation).toBe(obligation.membership_epoch);
+    expect(authorized.authority.owning_bay_id).toBe(env.bays[0]);
+    expect(await authorize({ account_id: env.accounts[0] })).toBeNull();
+    expect(await authorize({ membership_epoch: randomUUID() })).toBeNull();
+    expect(await authorize({ id: randomUUID() })).toBeNull();
+    expect(await env.sql("b", "SELECT * FROM collaboration_access")).toEqual(
+      [],
+    );
+    expect(await env.sql("b", "SELECT * FROM collaboration_index")).toEqual([]);
     await env.send("a", "send", request);
     await env.worker("host").call("tick");
     expect(
@@ -106,6 +126,23 @@ acceptance("durable owner notification fanout (isolated PostgreSQL)", () => {
         "SELECT id FROM collaboration_notification_recipients",
       ),
     ).toHaveLength(1);
+    // A remove/rejoin creates a new membership epoch; an old retained obligation
+    // must not regain authority just because the same account is a member again.
+    await env.sql(
+      "owner",
+      "UPDATE projects SET users=users-$2::text WHERE project_id=$1",
+      [env.project, env.accounts[1]],
+    );
+    expect(await authorize()).toBeNull();
+    await env.sql(
+      "owner",
+      "UPDATE projects SET users=users || $2::jsonb WHERE project_id=$1",
+      [
+        env.project,
+        JSON.stringify({ [env.accounts[1]]: { group: "collaborator" } }),
+      ],
+    );
+    expect(await authorize()).toBeNull();
     // Simulate successful handoff only in the owned fixture. The production
     // receiver/claim acknowledgement protocol is not enabled yet.
     await env.sql(

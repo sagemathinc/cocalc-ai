@@ -757,6 +757,15 @@ async function command(name, args = {}) {
       );
     case "notificationFanout": {
       const fanout = require("@cocalc/database/postgres/collaborators/collaborators-notification-fanout");
+      if (args.operation === "authorize")
+        return require("@cocalc/server/collaborators/api").fetchCollaborationNotificationObligation(
+          {
+            project_id: config.project,
+            id: args.id,
+            account_id: args.account_id,
+            membership_epoch: args.membership_epoch,
+          },
+        );
       if (args.operation === "enable") {
         process.env.COCALC_PEOPLE_EVENT_FANOUT_PROTOTYPE = "1";
         return null;

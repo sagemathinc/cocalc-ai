@@ -82,8 +82,14 @@ import {
   resolveProjectBays,
 } from "@cocalc/server/inter-bay/directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
-import type { CollaborationNotificationJob } from "@cocalc/util/collaboration-attention";
-import { readCollaborationNotificationPage } from "@cocalc/database/postgres/collaborators/collaborators-notifications";
+import type {
+  CollaborationNotificationJob,
+  CollaborationNotificationObligation,
+} from "@cocalc/util/collaboration-attention";
+import {
+  readCollaborationNotificationPage,
+  readCollaborationNotificationObligation,
+} from "@cocalc/database/postgres/collaborators/collaborators-notifications";
 import {
   collaborationPersonalState,
   updateCollaborationPersonalState,
@@ -766,6 +772,13 @@ export const collaboratorsControl: InterBayCollaboratorsApi = {
       opts.limit,
     );
   },
+  async notificationObligation(opts) {
+    await enabled();
+    return readCollaborationNotificationObligation(
+      opts,
+      await checkOwner(opts.project_id, opts.route),
+    );
+  },
 };
 
 /** Resolve once per batch; each owner receives only its own bounded membership checks. */
@@ -816,5 +829,14 @@ export async function fetchCollaborationNotificationPage(
 ) {
   return owner(job.project_id, (api, route) =>
     api.notificationPage({ job, limit, route }),
+  );
+}
+
+/** Exact durable intent lookup, only over the authenticated inter-bay fabric. */
+export async function fetchCollaborationNotificationObligation(
+  input: CollaborationNotificationObligation,
+) {
+  return owner(input.project_id, (api, route) =>
+    api.notificationObligation({ ...input, route }),
   );
 }

@@ -262,6 +262,15 @@ test("room inspection and replacement use explicit project ownership, not accoun
   ).rejects.toThrow("host_id");
   settings.mockResolvedValue({ collaborators_enabled: false });
   await expect(
+    collaboratorsControl.notificationObligation({
+      project_id,
+      account_id,
+      id: randomUUID(),
+      membership_epoch: randomUUID(),
+      route: { bay_id: "owner" },
+    }),
+  ).rejects.toThrow("not enabled");
+  await expect(
     collaboratorsApi.getRoom({ project_id, account_id }),
   ).rejects.toThrow("not enabled");
   await expect(collaboratorsApi.replaceRoomForHost(write)).rejects.toThrow(

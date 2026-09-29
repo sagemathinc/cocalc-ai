@@ -89,6 +89,13 @@ export function validateCollaborationNotificationAttention(
   };
 }
 
+export interface CollaborationNotificationObligation {
+  project_id: string;
+  id: string;
+  account_id: string;
+  membership_epoch: string;
+}
+
 export type CollaborationNotificationPage =
   | { allowed: false }
   | {

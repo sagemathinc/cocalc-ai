@@ -224,3 +224,28 @@ real-PostgreSQL fanout tests pass, including concurrent bounded claims, expired
 and superseded tokens, retry delay, wrong-owner rejection, and a running-rehome
 fence on both claim and acknowledgment. No end-to-end routing or scale gate is
 claimed by these tests.
+
+## Exact-Obligation Owner Authorization
+
+An internal inter-bay method now resolves a single retained obligation at the
+current project owner rather than advancing a recipient view cursor. It binds
+the obligation ID to project, account, and membership epoch; checks current
+recipient/actor membership, the join cutover, room identity, and a live canonical
+conversation; and returns persisted source intent with current attention facts.
+Missing source data for a pending obligation throws for retry rather than being
+treated as successful delivery. The service checks the feature flag and current
+directory route before the database ownership/rehome fence. No public account or
+project-host method exposes it.
+
+The isolated two-home PostgreSQL test calls this method over the inter-bay
+fabric from the recipient home while its access and resource indexes are empty.
+It checks exact event identity, mismatched recipient/epoch/ID rejection, and
+removal followed by rejoin without reviving old-epoch work. All three fanout
+acceptance tests, 29 API tests (including disabled-feature rejection), and the
+server TypeScript build pass.
+
+This supplies owner authorization, not a replacement home authorization lock.
+Next is the recipient-home transaction that reconciles this result with current
+invalidation and personal attention state, commits the existing notification
+graph idempotently, and only then permits owner acknowledgment. Capture remains
+default-off; no cold-account or overall scale gate is complete.

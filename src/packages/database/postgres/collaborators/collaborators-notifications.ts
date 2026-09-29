@@ -33,6 +33,7 @@ import type {
   CollaborationNotificationJob,
   CollaborationNotificationOutboxStore,
   CollaborationNotificationPage,
+  CollaborationNotificationObligation,
   LegacyCollaborationAttention,
 } from "@cocalc/util/collaboration-attention";
 import type {
@@ -463,6 +464,116 @@ export async function readCollaborationNotificationPage(
       complete,
       reset: false,
       entries,
+    };
+  });
+}
+
+/** Authorize exactly one durable obligation at the current project owner. This
+ * internal lookup is independent of recipient view cursors and access leases.
+ * Null is definitive absence/revocation; unavailable authority throws for retry.
+ */
+export async function readCollaborationNotificationObligation(
+  input: CollaborationNotificationObligation,
+  authority: { owning_bay_id: string },
+): Promise<
+  | Extract<CollaborationNotificationPage, { allowed: true }>["entries"][number]
+  | null
+> {
+  for (const value of [
+    input.project_id,
+    input.id,
+    input.account_id,
+    input.membership_epoch,
+  ])
+    collaborationAccountId(value);
+  return transaction(async (db) => {
+    await assertProjectNotRehoming({
+      db,
+      project_id: input.project_id,
+      action: "authorize notification obligation",
+    });
+    const project = (
+      await db.query(
+        `SELECT p.users,p.deleted,c.generation FROM projects p
+       JOIN collaboration_projects c USING(project_id)
+       WHERE p.project_id=$1 AND p.owning_bay_id=$2 FOR SHARE OF p,c`,
+        [input.project_id, authority.owning_bay_id],
+      )
+    ).rows[0];
+    if (!project) throw Error("notification project owner unavailable");
+    if (project.deleted || !member(project.users?.[input.account_id]?.group))
+      return null;
+    const pending = (
+      await db.query(
+        `SELECT e.event_json,e.position,m.epoch,m.notification_position
+       FROM collaboration_notification_recipients r
+       LEFT JOIN collaboration_notification_events e ON e.event_id=r.event_id AND e.project_id=r.project_id
+       JOIN collaboration_memberships m ON m.project_id=r.project_id AND m.account_id=r.account_id
+       WHERE r.id=$1 AND r.project_id=$2 AND r.account_id=$3 AND r.membership_epoch=$4`,
+        [input.id, input.project_id, input.account_id, input.membership_epoch],
+      )
+    ).rows[0];
+    if (pending && !pending.event_json)
+      throw Error("pending notification source missing");
+    if (
+      !pending ||
+      pending.epoch !== input.membership_epoch ||
+      BigInt(pending.position) <= BigInt(pending.notification_position)
+    )
+      return null;
+    const event = validateCollaborationMessageEvent(pending.event_json);
+    if (event.project_id !== input.project_id)
+      throw Error("notification source project mismatch");
+    if (!member(project.users?.[event.actor_account_id]?.group)) return null;
+    const room = (
+      await db.query(
+        "SELECT room_id,chat_path FROM collaboration_rooms WHERE project_id=$1",
+        [input.project_id],
+      )
+    ).rows[0];
+    if (!room || room.room_id !== event.room_id) return null;
+    const resource = (
+      await db.query(
+        `SELECT metadata,${ownerParticipation("c", "$3")} AS participated
+       FROM collaboration_catalog c WHERE project_id=$1 AND entry_key=$2
+       AND deleted_at IS NULL AND kind='conversation'`,
+        [
+          input.project_id,
+          entryKey(input.project_id, event.thread_id),
+          input.account_id,
+        ],
+      )
+    ).rows[0];
+    if (!resource) return null;
+    const boundary = await readCollaborationNotificationAttention(db, {
+      project_id: input.project_id,
+      account_id: input.account_id,
+      resources: [resource.metadata],
+    });
+    const legacy = reconcileCollaborationAttention({
+      account_id: input.account_id,
+      initial_activity: 0,
+      legacy: resource.metadata,
+    });
+    return {
+      event,
+      attention: {
+        generation: boundary.generation,
+        initial_activity: boundary.floors[resource.metadata.resource_id],
+        participating: !!resource.participated,
+        legacy_following: legacy.following,
+        legacy_muted: legacy.muted,
+      },
+      authority: {
+        project_id: event.project_id,
+        room_id: event.room_id,
+        thread_id: event.thread_id,
+        owning_bay_id: authority.owning_bay_id,
+        chat_path: room.chat_path,
+        access_generation: project.generation,
+        actor_role: project.users[event.actor_account_id].group,
+        recipient_role: project.users[input.account_id].group,
+      },
     };
   });
 }
