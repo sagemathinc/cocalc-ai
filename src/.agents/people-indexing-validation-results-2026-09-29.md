@@ -2977,3 +2977,28 @@ The previously running scoped `browser files` request terminated with exit code
 1 and a 408 remote `listOpenFiles` timeout. It supplied no browser validation
 evidence. No alternate credentials, session discovery, or service restart was
 attempted. Actual rendered Scan behavior remains an open gate.
+
+### Known-Source Timers With Active And Cold Recipients
+
+`known-source.acceptance.test.ts` exercises the selected demand, fanout, revision
+interest and outbox switches together on the isolated owner/two-home/host fabric.
+Scan dispatch is installed, but automatic discovery bootstrap remains unset.
+The harness whitelists its environment, so live shell prototype flags cannot
+silently enable bootstrap. An unmediated chat file is deliberately present.
+
+Production maintenance timers, not manual ticks or advanced due timestamps,
+deliver eight normally created conversations to an authenticated active view.
+One subsequent message reaches a following recipient with no demand and no
+resource projection. The unmediated file remains absent from the observed view;
+no Scan jobs or receipts are admitted. Of 1,000 synthetic cold memberships plus
+the active account, only the active account receives access rows. No project
+compute starts are recorded. This is a bounded observation during convergence,
+not a claim about indefinite idle behavior or arbitrary filesystem completeness.
+
+The focused acceptance test passes in 57.17 seconds, including isolated process
+and PostgreSQL setup/cleanup. Server/reference typecheck, formatting and
+whitespace checks pass. The fixture checks canonical resource IDs and real
+notification targets. It is a mixed-behavior smoke test, not representative
+mixed-load capacity: only one account views one project, and no throughput,
+latency percentile, CPU, I/O or WAL envelope is established. Browser validation,
+larger measured load and independent release review remain open.
