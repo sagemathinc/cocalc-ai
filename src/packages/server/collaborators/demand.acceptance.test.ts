@@ -27,6 +27,7 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
   });
 
   test("authenticated demand calls bind the caller and cannot release another account's lease", async () => {
+    expect((await env.hub("a", "check", {})).demand_supported).toBeUndefined();
     const first = await env.hub("a", "acquireDemand", {
       account_id: env.accounts[1],
       consumer_id: randomUUID(),
@@ -368,6 +369,7 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
 
   test("membership feeds wake only the affected demanded project without granting access", async () => {
     await demand("enableScheduler");
+    expect((await env.hub("a", "check", {})).demand_supported).toBe(true);
     const joined = randomUUID();
     const outside = randomUUID();
     const consumer_id = randomUUID();

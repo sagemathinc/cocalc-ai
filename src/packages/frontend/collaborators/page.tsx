@@ -125,7 +125,42 @@ export function CollaboratorsPage(props: CollaboratorsPageProps) {
 
 function AccountCollaboratorsPage(props: CollaboratorsPageProps) {
   const [api] = useState(() => boundCollaboratorsApi(props.accountId));
-  const revision = useDirectoryRevision(api, props.active);
+  const view = props.view ?? "conversations";
+  const selected =
+    props.resourceId ||
+    (view === "people"
+      ? (props.contactId ?? props.personId)
+      : view === "projects"
+        ? props.projectId
+        : undefined);
+  // Match the retained list filters while a detail pane is selected: the
+  // resource locator must not put the still-visible global list to sleep.
+  const demandList = useRef({
+    view,
+    projects: props.projectIds ?? (props.projectId ? [props.projectId] : []),
+  });
+  if (!selected || demandList.current.view !== view)
+    demandList.current = {
+      view,
+      projects: props.projectIds ?? (props.projectId ? [props.projectId] : []),
+    };
+  const demandProjects = demandList.current.projects.length
+    ? [
+        ...new Set([
+          ...demandList.current.projects,
+          ...(selected && props.projectId ? [props.projectId] : []),
+        ]),
+      ].sort()
+    : [];
+  const revision = useDirectoryRevision(
+    api,
+    props.active,
+    view === "invites"
+      ? undefined
+      : demandProjects.length
+        ? { kind: "projects", project_ids: demandProjects }
+        : { kind: "all" },
+  );
   return (
     <DirectoryRevisionContext.Provider value={revision}>
       <CollaboratorsWorkspace {...props} api={api} revision={revision} />

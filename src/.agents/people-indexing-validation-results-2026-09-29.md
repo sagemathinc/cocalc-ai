@@ -484,3 +484,35 @@ Coverage includes post-activation membership arrival, duplicate feed delivery,
 scope/role/expiry exclusion, no issued grant, preservation of the completed
 activation cursor, and rollback of membership plus queue writes when an
 injected access-job constraint failure occurs, followed by successful retry.
+
+## Visible People View Demand
+
+The account-home revision check advertises optional `demand_supported` only
+when all three scheduler prototype switches are enabled. The People page now
+uses that capability to acquire account-bound discovery demand, renew every
+30 seconds while visible, and release when hidden, inactive, unmounted, or
+changing scope. Server lease admission/expiry remain authoritative. Revision
+polling also stops while the document is hidden and resnapshots on return.
+
+Demand follows the retained visible list's project filters, including its
+selected project when needed; opening a detail pane must not put a still-visible
+global list to sleep. The Invites-only view requests no discovery demand.
+Neither login nor global badge code acquires a lease through this integration.
+Legacy servers and Lite do not advertise the capability and retain their
+existing path. This is not mixed-version rollout approval.
+
+Lease calls retain the existing account/client binding. Effect transitions
+serialize acquisition, renewal, and release so a late acquire is released before
+a returning view reuses its consumer. A failed best-effort release falls back to
+server expiry. The same mounted consumer is reused across hide/show transitions;
+the existing store's stricter grace-inclusive consumer cap still needs revision
+and churn validation for repeated full component remounts.
+
+Validation: server and frontend TypeScript builds, frontend lint, 50 focused
+frontend tests, 30 server API tests, and 12 real-PostgreSQL demand tests pass.
+Coverage includes hidden polling suspension, renewal cadence, release/reacquire,
+late acquisition ordering, no admission for Invites/legacy capability, account
+switches, and prototype-only capability advertisement. Existing page interaction
+tests also pass; no new controls or focus behavior were introduced. Live browser
+and multi-tab/multi-account demand tests remain outstanding, as do programmatic
+query sessions, owner revision subscriptions, and the broader validation gates.

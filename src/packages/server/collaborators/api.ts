@@ -8,6 +8,7 @@ import {
   renewCollaborationDemand,
   releaseCollaborationDemand,
   inspectCollaborationDemand,
+  demandSchedulingEnabled,
 } from "@cocalc/database/postgres/collaborators/collaborators-demand";
 import { invitationPublicApi, invitationControlApi } from "./invitations-api";
 import { receiveCollaborationNotificationObligation } from "@cocalc/server/notifications/collaboration-obligation";
@@ -670,7 +671,10 @@ export const collaboratorsControl: InterBayCollaboratorsApi = {
   },
   async check(opts) {
     await checkHome(opts.account_id, opts.route);
-    return accountRevision(opts.account_id!, opts.since);
+    return {
+      ...(await accountRevision(opts.account_id!, opts.since)),
+      ...(demandSchedulingEnabled() ? { demand_supported: true } : {}),
+    };
   },
   async listPeople(opts) {
     await checkHome(opts.account_id, opts.route);

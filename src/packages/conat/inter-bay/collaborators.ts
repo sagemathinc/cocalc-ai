@@ -168,7 +168,12 @@ export type InterBayCollaboratorsApi = RoutedApi & {
     account_id?: string;
     since?: string;
     route: CollaborationRoute;
-  }): Promise<{ revision: string; reset: boolean; poll_after_ms: number }>;
+  }): Promise<{
+    revision: string;
+    reset: boolean;
+    poll_after_ms: number;
+    demand_supported?: boolean;
+  }>;
   writerState(opts: {
     project_id: string;
     chat_path: string;

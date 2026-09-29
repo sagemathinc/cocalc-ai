@@ -120,7 +120,12 @@ export interface CollaboratorsApi
   check(opts: {
     account_id?: string;
     since?: string;
-  }): Promise<{ revision: string; reset: boolean; poll_after_ms: number }>;
+  }): Promise<{
+    revision: string;
+    reset: boolean;
+    poll_after_ms: number;
+    demand_supported?: boolean;
+  }>;
   listPeople(
     opts: CollaborationQuery,
   ): Promise<CollaborationPage<CollaborationPerson>>;

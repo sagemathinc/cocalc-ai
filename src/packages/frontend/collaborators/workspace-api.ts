@@ -24,7 +24,10 @@ export type DirectoryApi = Pick<
   | "ensureRoom"
   | "getRoom"
   | "check"
->;
+> &
+  Partial<
+    Pick<CollaboratorsApi, "acquireDemand" | "renewDemand" | "releaseDemand">
+  >;
 
 export function boundCollaboratorsApi(accountId: string): DirectoryApi {
   const client = webapp_client.conat_client;
@@ -47,6 +50,18 @@ export function boundCollaboratorsApi(accountId: string): DirectoryApi {
     return value;
   }
   return {
+    acquireDemand: (opts) =>
+      call((service) =>
+        service.acquireDemand({ ...opts, account_id: accountId }),
+      ),
+    renewDemand: (opts) =>
+      call((service) =>
+        service.renewDemand({ ...opts, account_id: accountId }),
+      ),
+    releaseDemand: (opts) =>
+      call((service) =>
+        service.releaseDemand({ ...opts, account_id: accountId }),
+      ),
     resolveChatAlias: (opts) =>
       call((service) =>
         service.resolveChatAlias({ ...opts, account_id: accountId }),

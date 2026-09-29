@@ -5,6 +5,7 @@ const mockList = jest.fn();
 const mockWrite = jest.fn();
 const mockProjectList = jest.fn();
 const mockPin = jest.fn();
+const mockDemand = jest.fn();
 const mockRefreshAgents = jest.fn();
 const mockRefreshLibrary = jest.fn();
 let mockClient = {
@@ -14,6 +15,9 @@ let mockClient = {
       listProjectResources: mockProjectList,
       setPersonalState: mockWrite,
       setProjectPinned: mockPin,
+      acquireDemand: mockDemand,
+      renewDemand: mockDemand,
+      releaseDemand: mockDemand,
     },
   },
 };
@@ -38,6 +42,28 @@ beforeEach(() => {
   mockAccount = "alice";
   jest.clearAllMocks();
 });
+
+test.each(["acquireDemand", "renewDemand", "releaseDemand"] as const)(
+  "%s binds the account and rejects a late account-switch response",
+  async (method) => {
+    let resolve!: (value: unknown) => void;
+    mockDemand.mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
+    const pending = boundCollaboratorsApi("alice")[method]!({
+      account_id: "bob",
+      consumer_id: "consumer",
+      lease_id: "lease",
+      scope: { kind: "all" },
+    });
+    expect(mockDemand.mock.calls[0][0].account_id).toBe("alice");
+    mockAccount = "bob";
+    resolve({});
+    await expect(pending).rejects.toThrow("session changed");
+  },
+);
 
 test("binds requests to the signed-in account, never a caller-supplied account", async () => {
   mockList.mockResolvedValue({ items: [], coverage: "complete" });
