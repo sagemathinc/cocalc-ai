@@ -4,6 +4,37 @@ Date: 2026-09-29. This is an initial gate report, not a completed scaling rollou
 
 ## Current Completion Audit
 
+### Recovery Checkpoint: Host Upgrade Blocked
+
+The latest standard development build passed at `4007f1df95`; the browser loaded
+that frontend and retained the original Scan request across reload. The newer
+results below supersede older open items in the historical audit table:
+four-project contention, sampled CPU/RSS/WAL, and a 60-second idle observation
+have been measured. These bounded fixtures are not production capacity proof.
+
+A separate `pnpm build:bundle` in `src/packages/project-host` completed on
+2026-09-29, producing `build/bundle` with identity
+`20260929T200736Z-5c32e8af1d08-dirty-e3b0c442`. No host upgrade was executed.
+After refreshing the development hub environment, the supported CLI's read-only
+`host get` failed with `project API relay requires the current project's local
+connection and secret`. Do not substitute broader credentials to bypass this
+failure. Resolve the supported CLI routing/authentication before upgrading only
+the selected development host's project-host artifact.
+
+Another browser status inspection retained request
+`7725e62a-c1b3-4ad2-9acc-ce55e11e69d6` and job
+`66da4168-707c-4d52-8104-95df4ab9d833`, still without confirmed completion.
+No replacement request or retry was submitted. The selected host remains an
+older-version compatibility concern, not a proven diagnosis of the timeout.
+
+Remaining release gates: terminal live Scan and browser failure-state validation
+on compatible services, independent review of the final implementation, and a
+measured operating-envelope/canary decision. The smaller contract remains in
+effect; automatic discovery, filesystem completeness proofs and broad scale
+claims are not needed to finish these gates.
+
+### Original Audit And Subsequent Evidence
+
 The user approved the smaller initial-release contract in section 1 of the
 [design plan](people-indexing-design-validation-2026-09-29.md). It supersedes the
 original broad gates; this is a scope decision, not evidence of completion.
