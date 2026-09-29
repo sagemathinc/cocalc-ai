@@ -346,6 +346,43 @@ describeDb("people contacts/lifecycle storage (isolated PostgreSQL)", () => {
     expect(page.items[0].status).toBe("expired");
     expect(page.pending.sent).toBe(0);
   });
+  test("coverage reports the actual limitation and ignores other accounts' queued projections", async () => {
+    const initial = await listInvitationHistoryLocal({ account_id: sender });
+    expect(initial.coverage).toBe("partial");
+    expect(initial.coverage_message).toContain("Older invitations");
+    await backfillPeopleInvites();
+    const observer = randomUUID();
+    await getPool().query(
+      "INSERT INTO accounts(account_id,home_bay_id) VALUES($1,'people-test')",
+      [observer],
+    );
+    await getPool().query(
+      `INSERT INTO project_collab_invites(invite_id,project_id,inviter_account_id,invitee_account_id,status,created,updated)
+      VALUES($1,$2,$3,$4,'pending',now(),now())`,
+      [randomUUID(), project, sender, recipient],
+    );
+    for (const account_id of [sender, recipient]) {
+      const queued = await listInvitationHistoryLocal({ account_id });
+      expect(queued.coverage).toBe("partial");
+      expect(queued.coverage_message).toContain(
+        "1 invitation history update(s) for your account",
+      );
+    }
+    expect(
+      (await listInvitationHistoryLocal({ account_id: observer })).coverage,
+    ).toBe("complete");
+    await drainPeopleInviteOutbox();
+    const settled = await listInvitationHistoryLocal({ account_id: sender });
+    expect(settled.coverage).toBe("complete");
+    expect(settled.coverage_message).toBeUndefined();
+    jest.mocked(isMultiBayCluster).mockReturnValue(true);
+    const unverified = await listInvitationHistoryLocal({ account_id: sender });
+    expect(unverified.coverage).toBe("partial");
+    expect(unverified.coverage_message).toContain(
+      "Waiting or refreshing does not establish full coverage",
+    );
+  });
+
   test("canonical lifecycle transaction commits/rolls back with token-free outbox; bounded backfill and delivery", async () => {
     const id = randomUUID();
     const db = await getPool().connect();

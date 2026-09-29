@@ -1,4 +1,10 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { InvitationHistory } from "./invitation-history";
 import type {
@@ -70,7 +76,7 @@ test("compact cards use shared collection views without pinning and expand with 
   expect(screen.getByText("Research")).toBeVisible();
   expect(
     screen.queryByRole("button", { name: "Copy invitation link" }),
-  ).toBeNull();
+  ).toBeVisible();
   expect(screen.queryByRole("button", { name: /Pin / })).toBeNull();
   toggle.focus();
   await user.keyboard("{Enter}");
@@ -150,9 +156,6 @@ test("copy is an explicit action and does not resend invitations", async () => {
   const user = userEvent.setup();
   const service = api();
   render(<InvitationHistory api={service} />);
-  await user.click(
-    await screen.findByRole("button", { name: "Details and actions" }),
-  );
   const copy = await screen.findByRole("button", {
     name: "Copy invitation link",
   });
@@ -161,6 +164,76 @@ test("copy is an explicit action and does not resend invitations", async () => {
   expect(service.manage).toHaveBeenCalledWith(invitation, "copy");
   expect(await screen.findByText("Invitation link copied.")).toBeVisible();
   expect(copy).toHaveFocus();
+  expect(
+    screen.getByRole("button", { name: "Details and actions" }),
+  ).toHaveAttribute("aria-expanded", "false");
+});
+
+test.each([
+  ["email", "pending", true],
+  ["course_email", "pending", true],
+  ["account", "pending", false],
+  ["email", "expired", false],
+] as const)(
+  "copy-link availability for %s invitations with status %s",
+  async (invite_source, status, available) => {
+    const service = api();
+    service.listInvitationHistory.mockResolvedValue(
+      page([{ ...invitation, invite_source, status }]),
+    );
+    render(<InvitationHistory api={service} />);
+    await screen.findByText(/301 matching/);
+    expect(
+      !!screen.queryByRole("button", { name: "Copy invitation link" }),
+    ).toBe(available);
+    expect(screen.queryByRole("button", { name: /Renew/ })).toBeNull();
+  },
+);
+
+test("defaults to unanswered access invitations, while work-together and history have appropriate filters", async () => {
+  const user = userEvent.setup();
+  const service = api();
+  render(<InvitationHistory api={service} />);
+  await screen.findByText(/301 matching/);
+  expect(service.listInvitationHistory).toHaveBeenLastCalledWith(
+    expect.objectContaining({ status: "pending" }),
+  );
+  const kind = screen.getByRole("combobox", { name: "Invitation kind" });
+  act(() => kind.focus());
+  fireEvent.keyDown(kind, { key: "ArrowDown", keyCode: 40 });
+  fireEvent.keyDown(kind, { key: "ArrowDown", keyCode: 40 });
+  fireEvent.keyDown(kind, { key: "ArrowDown", keyCode: 40 });
+  fireEvent.keyDown(kind, { key: "Enter", keyCode: 13 });
+  await waitFor(() =>
+    expect(service.listInvitationHistory).toHaveBeenLastCalledWith(
+      expect.objectContaining({ kind: "collaboration", status: "active" }),
+    ),
+  );
+  await user.click(screen.getByRole("tab", { name: "History" }));
+  await waitFor(() =>
+    expect(service.listInvitationHistory).toHaveBeenLastCalledWith(
+      expect.objectContaining({ view: "history", status: undefined }),
+    ),
+  );
+});
+
+test("partial coverage explains the limitation without claiming synchronization is running", async () => {
+  const service = api();
+  service.listInvitationHistory.mockResolvedValue(
+    page([invitation], {
+      coverage: "partial",
+      coverage_message:
+        "History from all project servers has not been verified.",
+    }),
+  );
+  render(<InvitationHistory api={service} />);
+  expect(
+    await screen.findByText("Invitation history may be incomplete"),
+  ).toBeVisible();
+  expect(
+    screen.getByText("History from all project servers has not been verified."),
+  ).toBeVisible();
+  expect(screen.queryByText(/still being synchronized/)).toBeNull();
 });
 
 test("a notification deep link selects Received and the exact invitation until explicitly cleared", async () => {

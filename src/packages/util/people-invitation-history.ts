@@ -98,12 +98,13 @@ export interface PeopleInvitationCounts {
   unread: number | null;
   revision: string;
   coverage: "partial" | "complete";
+  /** Explanation of incomplete coverage, not a claim that a worker is running. */
+  coverage_message?: string;
 }
 export interface PeopleInvitationHistoryPage extends PeopleInvitationCounts {
   items: PeopleInvitationHistoryRow[];
   total: number;
   next?: string;
-  coverage_message?: string;
 }
 export interface PeopleContactQuery {
   account_id: string;

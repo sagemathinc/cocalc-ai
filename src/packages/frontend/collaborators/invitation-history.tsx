@@ -23,6 +23,18 @@ import type {
 } from "@cocalc/util/people-invitation-history";
 import { onCollabInvitesChanged } from "./invite-events";
 import { InvitationContentLink } from "./invitation-content-link";
+import "./invitation-history.css";
+
+const statusLabels: Record<PeopleInvitationHistoryRow["status"], string> = {
+  pending: "Pending",
+  accepted: "Accepted",
+  declined: "Declined",
+  blocked: "Blocked",
+  expired: "Expired",
+  canceled: "Revoked",
+  active: "Work together (active)",
+  withdrawn: "Withdrawn",
+};
 
 export interface InvitationHistoryApi {
   listInvitationHistory(
@@ -65,7 +77,9 @@ export function InvitationHistory({
   );
   const [focusedId, setFocusedId] = useState(invitationId);
   const [kind, setKind] = useState<"access" | "collaboration">();
-  const [status, setStatus] = useState<PeopleInvitationHistoryRow["status"]>();
+  const [status, setStatus] = useState<
+    PeopleInvitationHistoryRow["status"] | undefined
+  >(invitationId ? undefined : "pending");
   const [refresh, setRefresh] = useState(0);
   const [page, setPage] = useState<PeopleInvitationHistoryPage>();
   const [loading, setLoading] = useState(false);
@@ -146,7 +160,10 @@ export function InvitationHistory({
   useEffect(() => onCollabInvitesChanged(() => setRefresh((n) => n + 1)), []);
   useEffect(() => {
     setFocusedId(invitationId);
-    if (invitationId) setView("received");
+    if (invitationId) {
+      setView("received");
+      setStatus(undefined);
+    }
   }, [invitationId]);
   const shown = active && visibleKey.current === queryKey ? page : undefined;
 
@@ -178,6 +195,8 @@ export function InvitationHistory({
   return (
     <section
       aria-label="Invitation history"
+      className="invitation-history"
+      data-view={collectionView}
       style={{ padding: 12, minWidth: 0 }}
     >
       <Tabs
@@ -185,7 +204,13 @@ export function InvitationHistory({
         activeKey={view}
         onChange={(key) => {
           setView(key as typeof view);
-          setStatus(undefined);
+          setStatus(
+            key === "history"
+              ? undefined
+              : kind === "collaboration"
+                ? "active"
+                : "pending",
+          );
         }}
         items={[
           { key: "sent", label: "Sent" },
@@ -197,13 +222,20 @@ export function InvitationHistory({
         <Select
           aria-label="Invitation kind"
           value={kind ?? "all"}
-          onChange={(value) =>
+          onChange={(value) => {
             setKind(
               value === "all"
                 ? undefined
                 : (value as "access" | "collaboration"),
-            )
-          }
+            );
+            setStatus(
+              view === "history"
+                ? undefined
+                : value === "collaboration"
+                  ? "active"
+                  : "pending",
+            );
+          }}
           options={[
             { value: "all", label: "All invitation kinds" },
             { value: "access", label: "Project access" },
@@ -234,7 +266,7 @@ export function InvitationHistory({
               "withdrawn",
             ].map((value) => ({
               value,
-              label: value === "canceled" ? "Revoked" : value,
+              label: statusLabels[value],
             })),
           ]}
           style={{ minWidth: 140 }}
@@ -247,7 +279,10 @@ export function InvitationHistory({
         <summary>About invitations</summary>
         <p>
           Access offers and invitations to work together are separate.
-          Acceptance history does not guarantee current project access.
+          Acceptance history does not guarantee current project access. Pending
+          means an access invitation is awaiting a response. Active means a
+          work-together notification, which does not require acceptance. Choose
+          Expired to find unanswered invitations whose links have expired.
         </p>
       </details>
       {focusedId && (
@@ -280,8 +315,8 @@ export function InvitationHistory({
           {shown.coverage !== "complete" && (
             <Alert
               role="status"
-              type="warning"
-              title="Invitation history is still being synchronized"
+              type="info"
+              title="Invitation history may be incomplete"
               description={
                 shown.coverage_message ||
                 "Some invitations may not be listed yet."
@@ -303,16 +338,14 @@ export function InvitationHistory({
             view={collectionView}
             otherTitle="Invitations"
             renderItem={(row) => (
-              <Card size="small" style={{ marginBottom: 10 }}>
-                <InvitationHistoryItem
-                  row={row}
-                  direction={view}
-                  busy={busy === row.invitation_id}
-                  onAction={(action) => void manage(row, action)}
-                  onOpen={onOpen ? () => onOpen(row) : undefined}
-                  projectTitle={projectTitle?.(row.project_id)}
-                />
-              </Card>
+              <InvitationHistoryItem
+                row={row}
+                direction={view}
+                busy={busy === row.invitation_id}
+                onAction={(action) => void manage(row, action)}
+                onOpen={onOpen ? () => onOpen(row) : undefined}
+                projectTitle={projectTitle?.(row.project_id)}
+              />
             )}
           />
           {shown.next && (
@@ -347,36 +380,58 @@ function InvitationHistoryItem({
       ? `From ${row.sender_label || "a collaborator"}`
       : `To ${row.recipient_label || (row.recipient_account_id ? "a collaborator" : "email contact")}`;
   return (
-    <>
-      <Space wrap>
-        <strong style={{ overflowWrap: "anywhere" }}>
+    <Card
+      size="small"
+      className="invitation-history-card"
+      data-expanded={expanded}
+    >
+      <div className="invitation-history-heading">
+        <strong className="invitation-history-title">
           {row.kind === "collaboration" && row.target?.label
             ? row.target.label
             : projectTitle || "Project invitation"}
         </strong>
-        <Tag>{row.status === "canceled" ? "Revoked" : row.status}</Tag>
-      </Space>
-      <Typography.Paragraph type="secondary" style={{ margin: "4px 0" }}>
+        <Tag>
+          {row.status === "active" ? "Active" : statusLabels[row.status]}
+        </Tag>
+      </div>
+      <Typography.Paragraph
+        type="secondary"
+        className="invitation-history-meta"
+      >
         {person} ·{" "}
         {row.kind === "access" ? `${row.role} access` : "Work together"} ·{" "}
         {new Date(row.created_at).toLocaleDateString()}
       </Typography.Paragraph>
-      {row.message && (
-        <Typography.Paragraph
-          ellipsis={{ rows: 1 }}
-          style={{ margin: "4px 0" }}
-        >
-          {row.message}
-        </Typography.Paragraph>
-      )}
-      <Button
-        type="link"
-        size="small"
-        aria-expanded={expanded}
-        onClick={() => setExpanded(!expanded)}
+      <Typography.Paragraph
+        ellipsis={{ rows: 1 }}
+        className="invitation-history-message"
       >
-        {expanded ? "Hide details" : "Details and actions"}
-      </Button>
+        {row.message}
+      </Typography.Paragraph>
+      <div className="invitation-history-actions">
+        {row.kind === "access" &&
+          row.status === "pending" &&
+          direction === "sent" &&
+          ["email", "course_email"].includes(row.invite_source) && (
+            <Button
+              type="primary"
+              size="small"
+              disabled={busy}
+              onClick={() => onAction("copy")}
+            >
+              Copy invitation link
+            </Button>
+          )}
+        <Button
+          type="link"
+          size="small"
+          aria-expanded={expanded}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? "Hide details" : "Details and actions"}
+        </Button>
+      </div>
       {expanded && (
         <div style={{ marginTop: 8, overflowWrap: "anywhere" }}>
           <p>Project: {projectTitle || row.project_id}</p>
@@ -461,11 +516,6 @@ function InvitationHistoryItem({
                       <Button disabled={busy}>Resend email</Button>
                     </Popconfirm>
                   )}
-                  {row.invite_source === "email" && (
-                    <Button disabled={busy} onClick={() => onAction("copy")}>
-                      Copy invitation link
-                    </Button>
-                  )}
                 </>
               )}
             {row.kind === "collaboration" &&
@@ -502,6 +552,6 @@ function InvitationHistoryItem({
           </details>
         </div>
       )}
-    </>
+    </Card>
   );
 }

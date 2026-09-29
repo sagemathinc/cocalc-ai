@@ -204,24 +204,53 @@ async function counts(
       n.archived,
       n.missing,
     ].join(":"),
-    coverage: await coverage(db),
+    ...(await coverage(db, account_id)),
   };
 }
-async function coverage(db: PeopleDb): Promise<"partial" | "complete"> {
-  if (isMultiBayCluster()) return "partial";
+async function coverage(
+  db: PeopleDb,
+  account_id: string,
+): Promise<Pick<PeopleInvitationCounts, "coverage" | "coverage_message">> {
+  const partial = (coverage_message: string) => ({
+    coverage: "partial" as const,
+    coverage_message,
+  });
+  // A home bay cannot prove that every remote project owner has finished
+  // publishing its history. This is a coverage limitation, not live progress.
+  if (isMultiBayCluster())
+    return partial(
+      "History from all project servers has not been verified. The invitations shown are available, but older invitations may be missing. Waiting or refreshing does not establish full coverage.",
+    );
   const source = (
     await db.query(
       "SELECT to_regclass('public.people_invite_backfill') AS name",
     )
   ).rows[0]?.name;
-  if (!source) return "partial";
-  const ready = (
-    await db.query(`SELECT complete AND
-    NOT EXISTS(SELECT 1 FROM people_invite_outbox WHERE delivered_at IS NULL) AND
-    NOT EXISTS(SELECT 1 FROM people_collaboration_outbox WHERE delivered_at IS NULL) AS ready
+  if (!source)
+    return partial(
+      "Invitation history initialization has not completed. If this persists, contact support.",
+    );
+  const complete = (
+    await db.query(`SELECT complete
     FROM people_invite_backfill WHERE singleton`)
-  ).rows[0]?.ready;
-  if (!ready) return "partial";
+  ).rows[0]?.complete;
+  if (!complete)
+    return partial(
+      "Older invitations have not finished being indexed. Refresh to check again; if this persists, contact support.",
+    );
+  const queued = (
+    await db.query(
+      `SELECT
+      (SELECT count(*) FROM people_invite_outbox WHERE delivered_at IS NULL AND $1::uuid=ANY(audience)) +
+      (SELECT count(*) FROM people_collaboration_outbox WHERE delivered_at IS NULL
+        AND (account_id=$1 OR invitation->>'recipient_account_id'=$1::text)) AS pending`,
+      [account_id],
+    )
+  ).rows[0];
+  if (Number(queued?.pending))
+    return partial(
+      `${queued.pending} invitation history update(s) for your account are awaiting synchronization. Refresh to check again; if this persists, contact support. This is not an email delivery status.`,
+    );
   if (
     (
       await db.query(
@@ -230,12 +259,15 @@ async function coverage(db: PeopleDb): Promise<"partial" | "complete"> {
     ).rows[0]?.name &&
     (
       await db.query(
-        "SELECT 1 FROM people_invitation_operations WHERE pending LIMIT 1",
+        "SELECT 1 FROM people_invitation_operations WHERE pending AND account_id=$1 LIMIT 1",
+        [account_id],
       )
     ).rows.length
   )
-    return "partial";
-  return "complete";
+    return partial(
+      "An invitation operation for your account is still unresolved. Check its send results before retrying; refreshing this list does not resend it.",
+    );
+  return { coverage: "complete" };
 }
 const notificationJoin = `LEFT JOIN account_notification_index n ON n.account_id=i.account_id
   AND i.recipient_account_id=i.account_id AND i.invitation->>'kind'='collaboration'
@@ -418,12 +450,6 @@ export async function listInvitationHistoryLocal(
       ...totals,
       items,
       total,
-      ...(totals.coverage === "partial"
-        ? {
-            coverage_message:
-              "Invitation backfill or delivery is outstanding, or all-owner coverage has not been verified.",
-          }
-        : {}),
       ...(rows.length > limit
         ? {
             next: await encodePeopleCursor(
