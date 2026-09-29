@@ -144,9 +144,22 @@ function escapeTableSeparatorPipes(s: string): string {
 export function markdownEscape(
   s: string,
   isFirstChild: boolean = false,
+  // Escape < and > only where Markdown would read them as HTML or a
+  // blockquote. For Markdown that people read (copying and quoting), not for
+  // saved documents, whose serialized form must stay stable.
+  readable: boolean = false,
 ): string {
   // The 1-character replacements we make in any text.
-  s = s.replace(/[\\`<>$]/g, (m) => MAP[m]);
+  if (readable) {
+    s = s.replace(/[\\`$]/g, (m) => MAP[m]);
+    s = s.replace(/<(?=[A-Za-z/!?])/g, MAP["<"]);
+    s = s.replace(
+      isFirstChild ? /(^|\n)([ \t]*)>/g : /(\n)([ \t]*)>/g,
+      (_, start, ws) => `${start}${ws}${MAP[">"]}`,
+    );
+  } else {
+    s = s.replace(/[\\`<>$]/g, (m) => MAP[m]);
+  }
   // Version of the above, but with some keys from the map purposely missing here,
   // since overescaping makes the generated markdown ugly. We still escape
   // enough characters to avoid accidental auto-formatting during collab.

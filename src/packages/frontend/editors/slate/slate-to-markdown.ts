@@ -11,6 +11,7 @@ export interface Info {
   parent?: Node; // the parent of the node being serialized (if there is a parent)
   index?: number; // index of this node among its siblings
   no_escape: boolean; // if true, do not escape text in this node.
+  readableEscapes?: boolean; // see markdownEscape
   preserveBlankLines?: boolean;
   hook?: (Node) => undefined | ((string) => string);
   lastChild: boolean; // true if this is the last child among its siblings.
@@ -36,6 +37,8 @@ export function slate_to_markdown(
   slate: Node[],
   options?: {
     no_escape?: boolean;
+    // Minimal escaping for Markdown that people read, e.g. copied selections.
+    readableEscapes?: boolean;
     hook?: (Node) => undefined | ((string) => string);
     cache?;
     noCache?: Set<number>;
@@ -73,6 +76,7 @@ export function slate_to_markdown(
     if (isSpacerParagraph(slate[i])) continue;
     markdown += serialize(slate[i], {
       no_escape: !!options?.no_escape,
+      readableEscapes: options?.readableEscapes,
       hook: options?.hook,
       preserveBlankLines,
       index: i,
