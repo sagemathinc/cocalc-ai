@@ -27,3 +27,4 @@ export const ComposerConnectors = ({
 }: {
   children: (extraMenuItems: unknown[]) => ReactNode;
 }) => <>{children([])}</>;
+export const ClaudeThreadInternetNotice = () => null;

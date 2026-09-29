@@ -179,6 +179,10 @@ import {
 } from "./api";
 import { agentNameProblem } from "./agent-name-input";
 import { NewAgentNamePill } from "./new-agent-name-pill";
+import {
+  claudeNeedsProjectInternet,
+  ClaudeProjectInternetNotice,
+} from "./claude-internet-notice";
 import { CopyAgentModal } from "./copy-agent-modal";
 import { FreshConversationModal } from "./fresh-conversation-modal";
 import { cachedAgentNameContext } from "./name-context";
@@ -1146,11 +1150,20 @@ function NewAgentPanel({
   // An empty request creates the agent without a first task (not on first
   // run, which starts with a task).
   const emptyRequest = !firstRequest.trim();
+  // Claude Code that talks to Anthropic from inside the project cannot work
+  // when the project's internet access is blocked (free projects).
+  const [projectInternetBlocked, setProjectInternetBlocked] = useState(false);
+  const checkClaudeInternet =
+    runtimeKind === "claude-code" &&
+    !!projectId &&
+    claudeNeedsProjectInternet(claudeCredential?.mode);
+  const claudeBlocked = checkClaudeInternet && projectInternetBlocked;
   const canCreateWithoutTask = (request: string | undefined) =>
     !isFirstRun && !`${request ?? ""}`.trim();
 
   async function create(requestValue?: string, withoutTask = false) {
     if (runtimeKind === "claude-code" && !claudeCredentialsLoaded) return;
+    if (claudeBlocked) return;
     const request = (
       requestValue ??
       inputControlRef.current?.getValue?.() ??
@@ -1716,7 +1729,9 @@ function NewAgentPanel({
                     atLimit ||
                     (!projectId &&
                       (!projectMap || emailVerificationRequired)) ||
-                    (runtimeKind === "claude-code" && !claudeCredentialsLoaded)
+                    (runtimeKind === "claude-code" &&
+                      !claudeCredentialsLoaded) ||
+                    claudeBlocked
                   }
                   onClick={() => {
                     const request =
@@ -1973,6 +1988,12 @@ function NewAgentPanel({
               <NamedAgentUsage directory={namedAgentDirectory} />
             </span>
           </div>
+        )}
+        {checkClaudeInternet && projectId && (
+          <ClaudeProjectInternetNotice
+            projectId={projectId}
+            onBlockedChange={setProjectInternetBlocked}
+          />
         )}
         {/* Always rendered: its line is reserved so starting does not shift the
             centered page, and its live region exists before announcing. */}

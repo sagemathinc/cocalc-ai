@@ -45,6 +45,7 @@ import {
 import { namedAgentReference } from "@cocalc/frontend/agents/api";
 import { AgentFileAttachment } from "./agent-file-attachment";
 import { ComposerConnectors } from "@cocalc/frontend/agents/composer-connectors";
+import { ClaudeThreadInternetNotice } from "@cocalc/frontend/agents/claude-internet-notice";
 import { CodexConfigButton } from "./codex";
 import { useChatEmbeddingOptions } from "./embedding-options";
 import { ComposerDeliverySelector } from "./composer-delivery";
@@ -184,6 +185,8 @@ export function ChatRoomComposer({
     ? actions?.getThreadMetadata?.(selectedThread.key)
     : undefined;
   const isGenericHarness = threadMetadata?.agent_runtime?.kind === "acp";
+  const isClaudeThread =
+    threadMetadata?.agent_runtime?.profile?.id === "claude-code";
   const supportsLiveGuidance =
     !isGenericHarness ||
     (threadMetadata?.agent_runtime?.profile?.version === 2 &&
@@ -695,6 +698,14 @@ export function ChatRoomComposer({
         data-testid="chat-composer"
         style={composerStyle}
       >
+        {isClaudeThread && selectedThread && project_id && (
+          <div style={{ marginBottom: 6 }}>
+            <ClaudeThreadInternetNotice
+              projectId={project_id}
+              threadKey={selectedThread.key}
+            />
+          </div>
+        )}
         <div data-testid="chat-composer-box" style={composerBoxStyle}>
           <div
             style={{
