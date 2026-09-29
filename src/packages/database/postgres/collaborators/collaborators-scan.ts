@@ -465,8 +465,14 @@ export async function listCollaborationScanDispatchCandidates(
   }>
 > {
   return transaction(async (db) => {
-    const { rows } = await db.query(
-      `SELECT j.project_id,j.job_id,r.account_id,r.request_id
+    const { rows } = await db.query(scanDispatchCandidatesSql, [
+      authority.owning_bay_id,
+    ]);
+    return rows;
+  });
+}
+
+export const scanDispatchCandidatesSql = `SELECT j.project_id,j.job_id,r.account_id,r.request_id
       FROM collaboration_scan_jobs j JOIN projects p USING(project_id)
       JOIN collaboration_scan_budget b USING(project_id)
       JOIN LATERAL (
@@ -483,12 +489,7 @@ export async function listCollaborationScanDispatchCandidates(
           AND (b.last_started_at IS NULL OR b.last_started_at<=statement_timestamp()-interval '5 minutes')
           AND NOT EXISTS(SELECT 1 FROM collaboration_scan_jobs running
             WHERE running.project_id=j.project_id AND running.state='running'))
-      ORDER BY COALESCE(j.last_dispatch_at,j.created_at),j.job_id LIMIT 20`,
-      [authority.owning_bay_id],
-    );
-    return rows;
-  });
-}
+      ORDER BY COALESCE(j.last_dispatch_at,j.created_at),j.job_id LIMIT 20`;
 
 export async function releaseCollaborationScanDispatch(
   opts: {

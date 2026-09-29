@@ -826,6 +826,11 @@ async function command(name, args = {}) {
         },
       );
     }
+    case "installScan": {
+      const scan = require("@cocalc/database/postgres/collaborators/collaborators-scan");
+      await scan.syncCollaborationScanSchema(pool);
+      return true;
+    }
     case "demand": {
       const demand = require("@cocalc/database/postgres/collaborators/collaborators-demand");
       if (args.operation === "install") {

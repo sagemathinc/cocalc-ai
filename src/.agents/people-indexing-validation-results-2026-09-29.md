@@ -786,3 +786,19 @@ lease expiry, and revocation before transport. The server build and these three
 cases pass. This is stronger than isolated dispatcher mocks, but still does not
 exercise real PostgreSQL locking across processes, authenticated inter-bay
 transport, filesystem census, or the plan's load and rollout gates.
+
+### Real PostgreSQL Blocked Scan Queue Baseline
+
+An isolated PostgreSQL acceptance case populated 10,000 queued jobs with no
+live receipts and ran EXPLAIN ANALYZE BUFFERS on the exact exported production
+selection SQL. It returned zero candidates but visited all 10,000 jobs and
+performed 10,000 project lookups: 39,996 shared-buffer hits, zero shared reads,
+39.786 ms execution on this development host. This contradicts any claim that
+the 20-result limit bounds examination work. It is a baseline measurement, not
+a passing capacity gate. Selection needs bounded candidate examination and
+resumable progress past blocked jobs before automatic polling is appropriate.
+
+The server build and isolated acceptance case pass; the test currently asserts
+the empty result and emits the full measured plan, not a performance ceiling.
+The remaining correction must add a regression ceiling after redesign and
+exercise both blocked backlogs and eligible jobs beyond the first page.
