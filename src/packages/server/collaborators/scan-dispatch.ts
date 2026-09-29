@@ -22,6 +22,7 @@ export async function dispatchCollaborationScan(
     account_id: string;
     request_id: string;
     job_id: string;
+    batch_id?: string;
   },
   authority: CollaborationOwnerAuthority,
 ) {
@@ -54,6 +55,7 @@ export async function dispatchCollaborationScan(
       if (status.run_id !== run.job_id)
         throw Error("scan host returned a different run");
       if (status.state === "discovered" && status.pending_candidates === 0) {
+        if (request.batch_id) return { state: "discovered" as const };
         const settled = await settleCollaborationScanDiscovery(
           {
             project_id: request.project_id,
@@ -82,7 +84,7 @@ export async function dispatchCollaborationScan(
       scan.expected_run_id = status.current_run_id;
     }
     const admission = await host.requestCollaborationReconciliation(scan);
-    if (admission.run_id !== run.job_id)
+    if (admission.admission === "accepted" && admission.run_id !== run.job_id)
       throw Error("scan host accepted a different run");
     if (admission.admission !== "accepted") {
       await deferCollaborationScanDispatch(
@@ -107,6 +109,15 @@ export async function dispatchCollaborationScan(
       );
     }
     return {
+      ...(request.batch_id && admission.admission !== "accepted"
+        ? {
+            host_deferred: true,
+            retry_after_ms:
+              admission.admission === "throttled"
+                ? admission.retry_after_ms
+                : 30000,
+          }
+        : {}),
       state:
         admission.admission === "accepted"
           ? ("running" as const)

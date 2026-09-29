@@ -33,6 +33,7 @@ describe("hub API response handling", () => {
 describe("hub API argument transforms", () => {
   it.each([
     "check",
+    "scanProjects",
     "requestScan",
     "inspectScan",
     "getScanStatus",

@@ -28,6 +28,7 @@ test("path-free operator revision recovers a blocked walk after cleanup and is s
   const journal = new CollaborationJournal(join(directory, "journal.sqlite"));
   const env = { COCALC_COLLABORATORS_CENSUS_DIRECTORY_ENTRIES: "1" };
   const options = {
+    inventory: true,
     filename: join(directory, "census.sqlite"),
     root,
     project_id,
@@ -96,6 +97,7 @@ test("Lite scope changes replace compacted summaries without reusing old run aut
   const project_id = randomUUID();
   const journal = new CollaborationJournal(join(directory, "journal.sqlite"));
   const options = {
+    inventory: true,
     filename: join(directory, "census.sqlite"),
     root,
     project_id,

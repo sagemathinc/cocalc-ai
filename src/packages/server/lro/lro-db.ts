@@ -448,6 +448,7 @@ export async function expireDueLros({
         WHERE status = ANY($1::text[])
           AND dismissed_at IS NULL
           AND expires_at <= now()
+          AND kind <> 'people-project-scan'
           ${kindClause}
         ORDER BY expires_at
         FOR UPDATE SKIP LOCKED
@@ -698,6 +699,7 @@ export async function claimLroOps({
   limit = 10,
   lease_ms = 120_000,
   input_not_before_key,
+  queued_first = true,
 }: {
   kind: string;
   owner_type: "hub" | "host";
@@ -705,6 +707,7 @@ export async function claimLroOps({
   limit?: number;
   lease_ms?: number;
   input_not_before_key?: string;
+  queued_first?: boolean;
 }): Promise<LroSummary[]> {
   await ensureLroSchema();
   const client = await pool().connect();
@@ -731,7 +734,7 @@ export async function claimLroOps({
               )
             )
           ORDER BY
-            CASE WHEN status='queued' THEN 0 ELSE 1 END,
+            CASE WHEN NOT $7::boolean OR status='queued' THEN 0 ELSE 1 END,
             updated_at
           FOR UPDATE SKIP LOCKED
           LIMIT $3
@@ -754,6 +757,7 @@ export async function claimLroOps({
         owner_type,
         owner_id,
         input_not_before_key ?? null,
+        queued_first,
       ],
     );
     await client.query("COMMIT");

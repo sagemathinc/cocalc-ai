@@ -274,7 +274,7 @@ beforeEach(() => {
   ingest.mockResolvedValue({ revision: 1, replayed: false });
 });
 
-test("Scan capability is default off and requires API and dispatch flags", async () => {
+test("Scan inspection stays available when the admission flag is disabled", async () => {
   const flags = [
     "COCALC_PEOPLE_SCAN_API_PROTOTYPE",
     "COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE",
@@ -289,7 +289,7 @@ test("Scan capability is default off and requires API and dispatch flags", async
     process.env[flags[1]] = "1";
     expect((await check()).scan_supported).toBe(true);
     delete process.env[flags[0]];
-    expect((await check()).scan_supported).toBeUndefined();
+    expect((await check()).scan_supported).toBe(true);
   } finally {
     flags.forEach((flag, i) => {
       if (prior[i] === undefined) delete process.env[flag];
@@ -475,7 +475,7 @@ test("public Scan uses authoritative routes, typed results and default-off admis
     };
     delete process.env.COCALC_PEOPLE_SCAN_API_PROTOTYPE;
     await expect(collaboratorsApi.requestScan(request)).rejects.toThrow(
-      "not enabled",
+      "Use Scan projects",
     );
     expect(scanReserve).not.toHaveBeenCalled();
     flags.forEach((flag) => (process.env[flag] = "1"));
@@ -486,8 +486,10 @@ test("public Scan uses authoritative routes, typed results and default-off admis
       expires_at: 123,
     };
     remote.scanAtOwner.mockResolvedValue(receipt);
-    expect(await collaboratorsApi.requestScan(request)).toEqual(receipt);
-    expect(remote.scanAtOwner).toHaveBeenCalledWith({ ...request, route });
+    await expect(collaboratorsApi.requestScan(request)).rejects.toThrow(
+      "Use Scan projects",
+    );
+    expect(remote.scanAtOwner).not.toHaveBeenCalled();
     delete process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE;
     remote.inspectScanAtOwner.mockResolvedValue(receipt);
     expect(await collaboratorsApi.inspectScan(request)).toEqual({
@@ -514,7 +516,7 @@ test("public Scan uses authoritative routes, typed results and default-off admis
       poll_after_ms: 1000,
     });
     await expect(collaboratorsApi.requestScan(request)).rejects.toThrow(
-      "disabled",
+      "Use Scan projects",
     );
     settings.mockResolvedValue({ collaborators_enabled: false });
     await expect(collaboratorsApi.inspectScan(request)).rejects.toThrow(
@@ -710,49 +712,23 @@ test("owner scan inspection preserves access failures, unknown results and routi
   expect(scanAdmit).not.toHaveBeenCalled();
 });
 
-test("internal scan reserves at home before routing to the project owner", async () => {
-  const previous = process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE;
+test("legacy internal scan cannot bypass batch admission or reenable automatic discovery", async () => {
   process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE = "1";
-  try {
-    const request = {
-      project_id,
-      account_id,
-      request_id: randomUUID(),
-      mode: "check" as const,
-      route: { bay_id: "home" },
-    };
-    scanReserve.mockResolvedValue({ reserved: false, retry_after_ms: 500 });
-    expect(await collaboratorsControl.scanAtHome(request)).toEqual({
-      admission: "throttled",
-      retry_after_ms: 500,
-    });
-    expect(remote.scanAtOwner).not.toHaveBeenCalled();
-    scanReserve.mockResolvedValue({
-      reserved: true,
-      expires_at: Date.now() + 10000,
-    });
-    remote.scanAtOwner.mockResolvedValue({
-      admission: "accepted",
-      job_id: "job",
-      expires_at: 123,
-    });
-    expect(await collaboratorsControl.scanAtHome(request)).toMatchObject({
-      admission: "accepted",
-    });
-    expect(remote.scanAtOwner).toHaveBeenCalledWith({ ...request, route });
-    await expect(
-      collaboratorsControl.scanAtHome({
-        ...request,
-        route: { bay_id: "wrong" },
-      }),
-    ).rejects.toThrow("stale");
-    settings.mockResolvedValue({ collaborators_enabled: false });
-    await expect(collaboratorsControl.scanAtHome(request)).rejects.toThrow();
-  } finally {
-    if (previous === undefined)
-      delete process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE;
-    else process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE = previous;
-  }
+  const request = {
+    project_id,
+    account_id,
+    request_id: randomUUID(),
+    mode: "check" as const,
+    route: { bay_id: "home" },
+  };
+  await expect(collaboratorsControl.scanAtHome(request)).rejects.toThrow(
+    "manual Scan batch",
+  );
+  await expect(collaboratorsControl.scanAtOwner(request)).rejects.toThrow(
+    "manual Scan batch",
+  );
+  expect(scanReserve).not.toHaveBeenCalled();
+  expect(scanAdmit).not.toHaveBeenCalled();
 });
 
 test("room inspection and replacement use explicit project ownership, not account-home authority", async () => {

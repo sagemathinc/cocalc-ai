@@ -44,7 +44,7 @@ import { HumanConversationSearch } from "./conversation-search";
 import type { ConversationSearchHit } from "../chat/conversation-search/runner";
 import { NewConversation } from "./new-conversation";
 import { InvitationHistory } from "./invitation-history";
-import { ProjectScan } from "./project-scan";
+import { ScanProjects } from "./scan-projects";
 import { boundPeopleHistoryApi } from "./people-history-api";
 import { ContactOverview, PeopleContacts } from "./people-contacts";
 import type { PeopleContact } from "@cocalc/util/people-invitation-history";
@@ -609,6 +609,9 @@ function CollaboratorsWorkspace({
                 ref={setConversationToolbar}
               />
             )}
+            {active && revision.ready && revision.scanSupported && (
+              <ScanProjects key={accountId} api={api} accountId={accountId} />
+            )}
             <DirectoryResults
               hideOptions
               result={result}
@@ -749,19 +752,6 @@ function CollaboratorsWorkspace({
                   <Button onClick={back}>Back to results</Button>
                 </div>
               )}
-              {active &&
-                revision.ready &&
-                revision.scanSupported &&
-                view === "projects" &&
-                projectId &&
-                !resourceId && (
-                  <ProjectScan
-                    key={JSON.stringify([accountId, projectId])}
-                    api={api}
-                    accountId={accountId}
-                    projectId={projectId}
-                  />
-                )}
               {active &&
                 revision.ready &&
                 (contactId ? (

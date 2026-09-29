@@ -49,6 +49,7 @@ linux(
     const create = () =>
       createHostedCollaborationCensus({
         filename: join(directory, "census.sqlite"),
+        scheduling: "inventory",
         now: () => now,
         enabled: async () => true,
         authorize: async () => {},
@@ -180,4 +181,112 @@ linux(
     }
   },
   180_000,
+);
+
+linux(
+  "manual mixed-project traversal measures bounded work and cancellation",
+  async () => {
+    const directory = mkdtempSync(join(tmpdir(), "manual-scan-cost-"));
+    const ids = Array.from({ length: 4 }, () => randomUUID());
+    const journal = new CollaborationJournal(join(directory, "journal.sqlite"));
+    const errors: unknown[] = [];
+    let opened = 0;
+    resetProjectVolumeLifecycleForTesting();
+    (getProject as jest.Mock).mockReturnValue({ state: "stopped" });
+    const options = {
+      filename: join(directory, "census.sqlite"),
+      scheduling: "explicit" as const,
+      enabled: async () => true,
+      authorize: async () => {},
+      current: async () => ({ run_id: null }),
+      report: async () => {},
+      onError: (error: unknown) => errors.push(error),
+      getFilesystem: async (id: string) => {
+        opened++;
+        const root = join(directory, id);
+        return {
+          openDirectoryStream: (path: string) =>
+            openSandboxDirectoryStream(
+              root,
+              join(root, posix.relative("/home/user", path)),
+            ),
+          close: () => {},
+        } as any;
+      },
+    };
+    let census = createHostedCollaborationCensus(options);
+    try {
+      for (const id of ids) {
+        mkdirSync(join(directory, id));
+        for (let i = 0; i < 1000; i++)
+          writeFileSync(
+            join(directory, id, `source-${i}.${i < 50 ? "chat" : "txt"}`),
+            "",
+          );
+      }
+      for (let i = 0; i < 10; i++) await census.producer.step(journal);
+      expect(opened).toBe(0);
+      const runs = ids.map((project_id) => ({
+        project_id,
+        run_id: randomUUID(),
+      }));
+      const cpu = process.cpuUsage(),
+        start = performance.now();
+      for (const run of runs) await census.requestReconciliation(run);
+      await census.producer.step(journal);
+      const cancelStart = performance.now();
+      await census.cancelReconciliation(runs[0]);
+      const cancelMs = performance.now() - cancelStart;
+      const before = census.store.status(ids[0])!.entries;
+      await census.producer.close();
+      census = createHostedCollaborationCensus(options);
+      let passes = 0;
+      for (; passes < 250; passes++) {
+        await census.producer.step(journal);
+        if (
+          ids.slice(1).every((id) => {
+            const s = census.store.status(id)!;
+            return s.traversal_complete && !s.pending_candidates;
+          })
+        )
+          break;
+      }
+      expect(passes).toBeLessThan(250);
+      expect(errors).toEqual([]);
+      expect(census.store.status(ids[0])!.entries).toBe(before);
+      expect(await census.reconciliationStatus(runs[0])).toEqual({
+        state: "cancelled",
+        run_id: runs[0].run_id,
+      });
+      for (const id of ids.slice(1))
+        expect(census.store.status(id)).toMatchObject({
+          entries: 1000,
+          candidates: 50,
+          traversal_complete: true,
+          pending_candidates: 0,
+        });
+      const usage = process.cpuUsage(cpu);
+      process.stdout.write(
+        JSON.stringify({
+          manual_scan_fixture: {
+            selected_projects: 4,
+            completed_projects: 3,
+            cancelled_projects: 1,
+            entries: 3000,
+            sources: 150,
+            passes,
+            elapsed_ms: Math.round(performance.now() - start),
+            cancel_ms: Math.round(cancelMs * 100) / 100,
+            cpu_ms: Math.round((usage.user + usage.system) / 1000),
+            census_bytes: census.store.usage().bytes,
+          },
+        }) + "\n",
+      );
+    } finally {
+      await census.producer.close();
+      journal.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+  60000,
 );

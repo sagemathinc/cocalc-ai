@@ -434,3 +434,150 @@ test("operator policy change drains retained handoffs before resetting a quota-b
   await census.producer.step(journal);
   expect(census.store.status(project_id)).toEqual(reset);
 });
+
+test("cancellation fences a delayed request and survives host restart while disabled", async () => {
+  const { options } = setup(Date.now, "explicit");
+  const request = { project_id, run_id: randomUUID() };
+  await census!.cancelReconciliation(request);
+  await expect(census!.requestReconciliation(request)).rejects.toMatchObject({
+    code: "CANCELLED",
+  });
+  await census!.producer.close();
+  census = createHostedCollaborationCensus(options);
+  options.enabled.mockResolvedValue(false);
+  expect(await census.reconciliationStatus(request)).toEqual({
+    state: "cancelled",
+    run_id: request.run_id,
+  });
+  await census.cancelReconciliation(request);
+  expect(options.getFilesystem).not.toHaveBeenCalled();
+});
+
+test("cancel during an awaited directory read fences commits and releases handles", async () => {
+  const { options, stream } = setup(Date.now, "explicit");
+  const request = { project_id, run_id: randomUUID() };
+  await census!.requestReconciliation(request);
+  let resolveRead!: (value: any) => void;
+  let reading!: () => void;
+  const started = new Promise<void>((resolve) => {
+    reading = resolve;
+  });
+  stream.read.mockImplementationOnce(() => {
+    reading();
+    return new Promise((resolve) => {
+      resolveRead = resolve;
+    });
+  });
+  const traversal = census!.producer.step(journal);
+  await started;
+  let acknowledged = false;
+  const cancelled = census!.cancelReconciliation(request).then(() => {
+    acknowledged = true;
+  });
+  await Promise.resolve();
+  expect(acknowledged).toBe(false);
+  resolveRead({
+    name: "late.chat",
+    isFile: () => true,
+    isDirectory: () => false,
+    isSymbolicLink: () => false,
+  });
+  await traversal;
+  await cancelled;
+  expect(stream.close).toHaveBeenCalled();
+  expect(census!.store.status(project_id)?.candidates).toBe(0);
+  await census!.producer.step(journal);
+  await census!.producer.report!(journal);
+  expect(options.report).not.toHaveBeenCalled();
+  expect(journal.sources()).toEqual([]);
+});
+
+test("cancel waits for a report already sent before acknowledging", async () => {
+  const { options } = setup(Date.now, "explicit");
+  const request = { project_id, run_id: randomUUID() };
+  await census!.requestReconciliation(request);
+  await census!.producer.step(journal);
+  let finish!: () => void;
+  let sending!: () => void;
+  const started = new Promise<void>((resolve) => {
+    sending = resolve;
+  });
+  options.report.mockImplementationOnce(() => {
+    sending();
+    return new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+  });
+  const reporting = census!.producer.report!(journal);
+  await started;
+  let stopped = false;
+  const cancellation = census!.cancelReconciliation(request).then(() => {
+    stopped = true;
+  });
+  await Promise.resolve();
+  expect(stopped).toBe(false);
+  finish();
+  await reporting;
+  await cancellation;
+  expect(stopped).toBe(true);
+  await census!.producer.report!(journal);
+  expect(options.report).toHaveBeenCalledTimes(1);
+});
+
+test("switching from inventory to manual mode quarantines unrequested legacy traversal", async () => {
+  const { options, stream } = setup(Date.now, "inventory");
+  stream.read.mockImplementation(async () => ({
+    name: "file.txt",
+    isFile: () => true,
+    isDirectory: () => false,
+    isSymbolicLink: () => false,
+  }));
+  await census!.producer.step(journal);
+  const run = census!.store.status(project_id)!.run;
+  await census!.producer.close();
+  census = createHostedCollaborationCensus({
+    ...options,
+    scheduling: "explicit",
+  });
+  const reads = stream.read.mock.calls.length;
+  await census.producer.step(journal);
+  expect(stream.read).toHaveBeenCalledTimes(reads);
+  expect(census.store.status(project_id)?.blocked_reason).toBe(
+    "manual_required",
+  );
+  // Only an exact owner-held execution receipt can recover already admitted work.
+  await census.reconciliationStatus({ project_id, run_id: run.run_id });
+  await census.producer.step(journal);
+  expect(stream.read.mock.calls.length).toBeGreaterThan(reads);
+});
+
+test("new manual admission replaces quarantined inventory without replaying it", async () => {
+  let now = 100000;
+  const { options, stream } = setup(() => now, "inventory");
+  stream.read.mockImplementation(async () => ({
+    name: "old.chat",
+    isFile: () => true,
+    isDirectory: () => false,
+    isSymbolicLink: () => false,
+  }));
+  await census!.producer.step(journal);
+  const prior = census!.store.status(project_id)!.run;
+  await census!.producer.close();
+  census = createHostedCollaborationCensus({
+    ...options,
+    scheduling: "explicit",
+  });
+  await census.producer.report!(journal);
+  expect(options.report).not.toHaveBeenCalled();
+  now += 300001;
+  const run_id = randomUUID();
+  await expect(
+    census.requestReconciliation({
+      project_id,
+      run_id,
+      expected_run_id: prior.run_id,
+    }),
+  ).resolves.toMatchObject({ admission: "accepted", run_id });
+  expect(census.store.isCancelled(prior)).toBe(true);
+  expect(census.store.status(project_id)?.run.run_id).toBe(run_id);
+});

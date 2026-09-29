@@ -147,17 +147,21 @@ test.each([
     expect(releaseCollaborationScanDispatch).toHaveBeenCalled();
   },
 );
-test("a deferral for another run cannot delay this job", async () => {
+test("a busy predecessor defers this job without claiming its run identity", async () => {
   admit.mockResolvedValue({
     admission: "throttled",
     run_id: "other",
     retry_after_ms: 60000,
   });
-  await expect(dispatchCollaborationScan(request, authority)).rejects.toThrow(
-    "different run",
+  await expect(dispatchCollaborationScan(request, authority)).resolves.toEqual({
+    state: "deferred",
+  });
+  expect(deferCollaborationScanDispatch).toHaveBeenCalledWith(
+    expect.objectContaining({ job_id: "job", reason: "host_throttled" }),
+    { ...authority, host_id: "host" },
   );
-  expect(deferCollaborationScanDispatch).not.toHaveBeenCalled();
 });
+
 test("discovered with pending candidates does not settle", async () => {
   status.mockResolvedValue({
     state: "discovered",

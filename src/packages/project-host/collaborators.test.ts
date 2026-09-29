@@ -281,29 +281,7 @@ test("host identity binds RPCs and recovery never replaces another same-host wri
   });
   expect(await options.recoverWriter(source, "epoch-1")).toBeUndefined();
 });
-test("bounded discovery follows owner room locators without creating a default source", async () => {
-  process.env[explicitFlag] = "0";
-  const getFilesystem = jest.fn();
-  startCollaborators(getFilesystem);
-  const movedRoom = {
-    ...source,
-    chat_path: "/home/user/moved-human-room.chat",
-  };
-  (callHub as jest.Mock).mockResolvedValueOnce({
-    paths: [source.chat_path, movedRoom.chat_path],
-  });
-  expect(await options.discover()).toEqual([source, movedRoom]);
-  expect(callHub).toHaveBeenLastCalledWith(
-    expect.objectContaining({ name: "collaborators.sourcePage" }),
-  );
-  (callHub as jest.Mock).mockResolvedValueOnce({ paths: [] });
-  await options.discover();
-  expect(callHub).toHaveBeenLastCalledWith(
-    expect.objectContaining({ name: "artifactCatalog.sourcePage" }),
-  );
-  expect(getFilesystem).not.toHaveBeenCalled();
-});
-test.each([undefined, "1"])(
+test.each([undefined, "1", "0"])(
   "explicit discovery (%s) never polls owner or retained inventory",
   async (value) => {
     if (value === undefined) delete process.env[explicitFlag];

@@ -132,6 +132,10 @@ export async function syncCollaborationScanSchema(
     slot INTEGER NOT NULL CHECK(slot IN (0,1)), job_id UUID NOT NULL UNIQUE,
     state TEXT NOT NULL CHECK(state IN ('queued','running')),
     created_at TIMESTAMPTZ NOT NULL, PRIMARY KEY(project_id,slot))`);
+  await db.query(`ALTER TABLE collaboration_scan_jobs
+    ADD COLUMN IF NOT EXISTS batch_id UUID,
+    ADD COLUMN IF NOT EXISTS cancel_requested BOOLEAN NOT NULL DEFAULT false,
+    ADD COLUMN IF NOT EXISTS progress JSONB`);
   await db.query(`CREATE INDEX IF NOT EXISTS collaboration_scan_jobs_due
     ON collaboration_scan_jobs(state,created_at,project_id)`);
   await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS collaboration_scan_jobs_state
@@ -159,7 +163,8 @@ export async function syncCollaborationScanSchema(
     tokens DOUBLE PRECISION NOT NULL CHECK(tokens>=0 AND tokens<=2),
     updated_at TIMESTAMPTZ NOT NULL)`);
   await db.query(`ALTER TABLE collaboration_scan_budget
-    ADD COLUMN IF NOT EXISTS last_started_at TIMESTAMPTZ`);
+    ADD COLUMN IF NOT EXISTS last_started_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS last_admitted_at TIMESTAMPTZ`);
   await db.query(
     `ALTER TABLE collaboration_scan_budget ADD COLUMN IF NOT EXISTS last_job_id UUID`,
   );
@@ -354,7 +359,7 @@ export async function startCollaborationScan(
       JOIN collaboration_scan_receipts r ON r.project_id=j.project_id
       AND r.receipt->>'job_id'=j.job_id::text
       WHERE j.project_id=$1 AND j.job_id=$2 AND r.account_id=$3
-      AND r.request_id=$4 AND r.expires_at>clock_timestamp()`,
+      AND r.request_id=$4 AND r.expires_at>clock_timestamp() AND NOT j.cancel_requested`,
       [opts.project_id, opts.job_id, opts.account_id, opts.request_id],
     );
     const job = rows[0];
@@ -377,6 +382,17 @@ export async function startCollaborationScan(
         expected_run_id: job.expected_run_id ?? undefined,
       };
     }
+    await db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      `scan-execution:${authority.owning_bay_id}`,
+    ]);
+    const capacity = (
+      await db.query(
+        `SELECT count(*)::int AS bay,
+      count(*) FILTER (WHERE host_id=$1)::int AS host FROM collaboration_scan_jobs WHERE state='running'`,
+        [host],
+      )
+    ).rows[0];
+    if (capacity.bay >= 8 || capacity.host >= 2) return null;
     const running = await db.query(
       "SELECT 1 FROM collaboration_scan_jobs WHERE project_id=$1 AND state='running'",
       [opts.project_id],
@@ -482,7 +498,7 @@ export async function claimCollaborationScanDispatch(
     const result = await db.query(
       `UPDATE collaboration_scan_jobs j
       SET dispatch_token=$4,dispatch_until=clock_timestamp()+interval '90 seconds',last_dispatch_at=clock_timestamp(),deferred_reason=NULL,deferred_until=NULL
-      WHERE project_id=$1 AND job_id=$2 AND state='running'
+      WHERE project_id=$1 AND job_id=$2 AND state='running' AND NOT cancel_requested
       AND (dispatch_until IS NULL OR dispatch_until<=clock_timestamp())
       AND (deferred_until IS NULL OR deferred_until<=clock_timestamp())
       AND EXISTS(SELECT 1 FROM collaboration_scan_receipts r WHERE r.project_id=j.project_id
@@ -599,7 +615,7 @@ export const scanDispatchCandidatesSql = `WITH page AS MATERIALIZED (
           AND p.users->r.account_id::text->>'group' IN ('owner','collaborator')
         ORDER BY r.expires_at DESC LIMIT 1
       ) r ON true
-      WHERE p.owning_bay_id=$1 AND NOT COALESCE(p.deleted,false) AND p.host_id IS NOT NULL
+      WHERE j.batch_id IS NULL AND p.owning_bay_id=$1 AND NOT COALESCE(p.deleted,false) AND p.host_id IS NOT NULL
         AND (j.dispatch_until IS NULL OR j.dispatch_until<=statement_timestamp())
         AND (j.deferred_until IS NULL OR j.deferred_until<=statement_timestamp())
         AND (j.last_dispatch_at IS NULL OR j.last_dispatch_at<=statement_timestamp()-interval '5 seconds')

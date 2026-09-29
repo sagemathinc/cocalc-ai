@@ -28,6 +28,7 @@ export function createCensusProducer(options: {
   const engine = new CollaborationCensus(options);
   const now = options.now ?? Date.now;
   let stopped = false;
+  let reporting: Promise<void> | undefined;
   return {
     async step(journal) {
       if (stopped || !(await options.enabled())) return;
@@ -56,10 +57,13 @@ export function createCensusProducer(options: {
       }
       options.store.compactCompleted();
     },
-    pause: () => engine.pause(),
+    async pause() {
+      await engine.pause();
+      await reporting;
+    },
     async report(journal) {
       if (!stopped && (await options.enabled()))
-        await options.publish?.(journal);
+        await (reporting = Promise.resolve(options.publish?.(journal)));
     },
     async close() {
       stopped = true;

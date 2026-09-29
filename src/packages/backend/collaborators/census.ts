@@ -136,6 +136,7 @@ export class CollaborationCensus {
       let complete = false;
       while (
         !this.stopped &&
+        store.isCurrent(work.run) &&
         examined < this.entriesPerStep &&
         this.now() - start < this.stepMs
       ) {

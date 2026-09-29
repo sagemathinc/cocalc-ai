@@ -69,7 +69,7 @@ function chat(path: string) {
       .join("\n"),
   );
 }
-test("historical nested source absent all inventories is adopted only by the explicit worker", async () => {
+test("historical sources stay undiscovered through startup, worker ticks, and restart", async () => {
   mkdirSync(join(directory, "node_modules"));
   const path = join(directory, "node_modules", "unnamed.chat");
   chat(path);
@@ -80,28 +80,20 @@ test("historical nested source absent all inventories is adopted only by the exp
   });
   expect(sourcePage).not.toHaveBeenCalled();
   await runtime!.service.runOnce();
-  // One bounded step visits multiple directories; replay after restart also works
-  // if the cooperative wall clock budget ended before reaching the candidate.
   await runtime!.close();
   runtime = undefined;
   jest.spyOn(Date, "now").mockReturnValue(Date.now() + 30_001);
   setup();
   await runtime!.service.runOnce();
   const page = await runtime!.api.listResources({ account_id });
-  expect(page.items).toEqual([
-    expect.objectContaining({
-      resource_id: thread_id,
-      chat_path: path,
-      title: "Previously unknown",
-    }),
-  ]);
-  const discovery = await runtime!.api.getDiscovery({ account_id, project_id });
-  expect(discovery.report?.candidates).toBe(1);
-  expect(JSON.stringify(discovery)).not.toContain(directory);
-  expect(JSON.stringify(discovery)).not.toContain("Never copy");
+  expect(page.items).toEqual([]);
+  expect(runtime!.service.journal.sources()).toEqual([]);
+  expect(await runtime!.api.getDiscovery({ account_id, project_id })).toEqual({
+    status: "pending",
+  });
   expect(page.coverage).not.toBe("complete");
 });
-test("disabled runtime cannot census or report and symlink scope remains partial", async () => {
+test("reenabling indexing does not admit an automatic scan", async () => {
   chat(join(directory, "existing.chat"));
   symlinkSync(directory, join(directory, "linked"));
   let enabled = false;
@@ -112,10 +104,10 @@ test("disabled runtime cannot census or report and symlink scope remains partial
   enabled = true;
   await runtime!.service.runOnce();
   const discovery = await runtime!.api.getDiscovery({ account_id, project_id });
-  expect(discovery).toMatchObject({
-    status: "partial",
-    report: { skipped_symlinks: 1 },
-  });
+  expect(discovery).toEqual({ status: "pending" });
+  expect(runtime!.service.journal.sources()).toEqual([]);
+  // Existing known catalog lookup is allowed; it cannot find this unknown file.
+  expect(sourcePage).toHaveBeenCalledTimes(1);
   await expect(
     runtime!.api.getDiscovery({ account_id: randomUUID(), project_id }),
   ).rejects.toThrow();

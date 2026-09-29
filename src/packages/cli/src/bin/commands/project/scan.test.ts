@@ -21,12 +21,12 @@ function setup(fail = false) {
   const calls: { method: string; input: any }[] = [];
   let output: any;
   const collaborators = Object.fromEntries(
-    ["requestScan", "inspectScan", "getScanStatus"].map((method) => [
+    ["scanProjects", "inspectScan", "getScanStatus"].map((method) => [
       method,
       async (input: any) => {
         calls.push({ method, input });
         if (fail) throw Error("transport timeout");
-        return method === "requestScan"
+        return method === "scanProjects"
           ? { admission: "accepted", job_id, expires_at: 123 }
           : { allowed: false, retry_after_ms: 1000 };
       },
@@ -52,7 +52,7 @@ test("request reports stable identity before sending and never retries unknown o
     let message = "";
     const stderr = mock.method(process.stderr, "write", (chunk: any) => {
       assert.equal(
-        f.calls.some((c) => c.method === "requestScan"),
+        f.calls.some((c) => c.method === "scanProjects"),
         false,
       );
       message += chunk;
@@ -74,12 +74,12 @@ test("request reports stable identity before sending and never retries unknown o
         f.calls.filter((c) => c.method !== "context"),
         [
           {
-            method: "requestScan",
+            method: "scanProjects",
             input: {
               account_id: f.account_id,
-              project_id: f.project_id,
+              project_ids: [f.project_id],
               request_id,
-              mode: "reconcile",
+              action: "start",
             },
           },
         ],
@@ -100,10 +100,10 @@ test("generated request identity is printed before submission and returned", asy
   });
   try {
     await f.run(["request"]);
-    const sent = f.calls.find((call) => call.method === "requestScan")!.input;
+    const sent = f.calls.find((call) => call.method === "scanProjects")!.input;
     assert.match(sent.request_id, /^[0-9a-f-]{36}$/);
     assert.ok(message.includes(sent.request_id));
-    assert.equal(sent.mode, "check");
+    assert.equal(sent.action, "start");
     assert.equal(f.output().request_id, sent.request_id);
   } finally {
     stderr.mock.restore();
@@ -142,6 +142,10 @@ test("inspection and status return throttling unchanged without submitting or po
 
 test("invalid input and agent identity fail before authentication", async () => {
   for (const args of [
+    ["start"],
+    ["start", "--all", "--projects", randomUUID()],
+    ["start", "--projects", "bad"],
+    ["cancel"],
     ["request", "--mode", "force"],
     ["request", "--request-id", "bad"],
     ["inspect", "--request-id", "bad"],
@@ -154,11 +158,70 @@ test("invalid input and agent identity fail before authentication", async () => 
   process.env.COCALC_AGENT_IDENTITY_FILE = "/identity";
   for (const args of [
     ["request"],
+    ["start", "--all"],
+    ["batch-status"],
+    ["cancel", "--op-id", randomUUID()],
     ["inspect", "--request-id", randomUUID()],
     ["status", "--job-id", randomUUID()],
   ]) {
     const f = setup();
     await assert.rejects(f.run(args), /human account/);
     assert.deepEqual(f.calls, []);
+  }
+});
+
+test("batch commands preserve explicit selection, identity, and cancellation target", async () => {
+  const stderr = mock.method(process.stderr, "write", () => true);
+  try {
+    for (const all of [false, true]) {
+      const f = setup(),
+        request_id = randomUUID(),
+        second = randomUUID();
+      await f.run([
+        "start",
+        ...(all ? ["--all"] : ["--projects", `${f.project_id},${second}`]),
+        "--request-id",
+        request_id,
+      ]);
+      assert.deepEqual(
+        f.calls.filter((c) => c.method !== "context"),
+        [
+          {
+            method: "scanProjects",
+            input: {
+              account_id: f.account_id,
+              action: "start",
+              request_id,
+              project_ids: all ? "all" : [f.project_id, second],
+            },
+          },
+        ],
+      );
+    }
+    for (const action of ["status", "cancel"]) {
+      const f = setup(),
+        op_id = randomUUID();
+      await f.run([
+        action === "status" ? "batch-status" : "cancel",
+        "--op-id",
+        op_id,
+      ]);
+      assert.deepEqual(
+        f.calls.filter((c) => c.method !== "context"),
+        [
+          {
+            method: "scanProjects",
+            input: {
+              account_id: f.account_id,
+              action,
+              op_id,
+              ...(action === "status" ? { after: undefined } : {}),
+            },
+          },
+        ],
+      );
+    }
+  } finally {
+    stderr.mock.restore();
   }
 });

@@ -53,6 +53,7 @@ export function createHostedCollaborationCensus(options: {
     options.filename,
     options.capacity ?? censusCapacityFromEnvironment(),
   );
+  if (options.scheduling !== "inventory") store.suspendLegacyInventory();
   const now = options.now ?? Date.now;
   function scope(project_id: string) {
     const project = getProject(project_id);
@@ -95,7 +96,7 @@ export function createHostedCollaborationCensus(options: {
     }),
     validate,
     prepare: async () => {
-      if (options.scheduling === "explicit") return;
+      if (options.scheduling !== "inventory") return;
       const nextRound = Number(store.checkpoint("host-next-round") ?? 0);
       if (now() < nextRound) return;
       const after = store.checkpoint("host-project") ?? "";
@@ -212,6 +213,7 @@ export function createHostedCollaborationCensus(options: {
     expected_run_id?: string;
   }) {
     if (!(await options.enabled())) throw unavailable("DISABLED");
+    if (store.isCancelled(opts)) throw unavailable("CANCELLED");
     const current = scope(opts.project_id);
     const generation = currentProjectVolumeLifecycleGeneration(opts.project_id);
     const request: CensusRun = {
@@ -230,10 +232,12 @@ export function createHostedCollaborationCensus(options: {
       if (!(await options.enabled())) throw unavailable("DISABLED");
       assertProjectVolumeLifecycleGeneration(opts.project_id, generation);
       assertLocal(request);
+      if (store.isCancelled(opts)) throw unavailable("CANCELLED");
       const prior = store.status(opts.project_id);
       if (prior?.run.run_id === opts.run_id) {
         // begin performs canonical argument comparison for an idempotent retry.
         store.begin(request, opts.expected_run_id, now());
+        store.resumeManualRun(request);
         return {
           admission: "accepted" as const,
           run_id: opts.run_id,
@@ -242,6 +246,9 @@ export function createHostedCollaborationCensus(options: {
       }
       if (prior && prior.run.run_id !== opts.expected_run_id)
         throw Error("census replacement requires the current run id");
+      // The owner supplied a new admitted identity and explicitly named this
+      // predecessor. Retire quarantined automatic inventory without resuming it.
+      if (prior?.blocked_reason === "manual_required") store.cancel(prior.run);
       const sameScope =
         prior?.run.authority === request.authority &&
         prior.run.volume_id === request.volume_id &&
@@ -249,6 +256,7 @@ export function createHostedCollaborationCensus(options: {
       if (
         prior &&
         sameScope &&
+        !store.isCancelled(prior.run) &&
         (!prior.traversal_complete || prior.pending_candidates)
       )
         return {
@@ -266,7 +274,7 @@ export function createHostedCollaborationCensus(options: {
           retry_after_ms,
         };
       const run =
-        prior && sameScope
+        prior && sameScope && !store.isCancelled(prior.run)
           ? store.rescan(request, prior.run.run_id, now())
           : store.begin(request, opts.expected_run_id, now());
       if (!run)
@@ -275,6 +283,7 @@ export function createHostedCollaborationCensus(options: {
           reason: "REPORT_PENDING",
           run_id: prior!.run.run_id,
         };
+      store.resumeManualRun(run);
       return {
         admission: "accepted" as const,
         run_id: run.run_id,
@@ -286,7 +295,10 @@ export function createHostedCollaborationCensus(options: {
     project_id: string;
     run_id: string;
   }): Promise<CollaborationReconciliationStatus> {
-    if (!(await options.enabled())) throw unavailable("DISABLED");
+    if (store.isCancelled(opts)) {
+      await producer.pause();
+      return { state: "cancelled", run_id: opts.run_id };
+    }
     const current = scope(opts.project_id);
     const generation = currentProjectVolumeLifecycleGeneration(opts.project_id);
     await options.authorize(opts.project_id);
@@ -298,15 +310,20 @@ export function createHostedCollaborationCensus(options: {
       after.volume_id !== current.volume_id
     )
       throw unavailable("ESTALE");
-    const status = store.status(opts.project_id);
+    let status = store.status(opts.project_id);
     if (!status) return { state: "unknown" };
     assertLocal(status.run);
     if (status.run.run_id !== opts.run_id)
       return { state: "unknown", current_run_id: status.run.run_id };
+    store.resumeManualRun(status.run);
+    status = store.status(opts.project_id)!;
     return {
       state: status.coverage === "complete" ? "discovered" : status.coverage,
       run_id: status.run.run_id,
       started_at: status.started_at,
+      traversal_complete: status.traversal_complete,
+      blocked_directories: status.blocked_directories,
+      blocked_reason: status.blocked_reason,
       directories: status.directories,
       completed_directories: status.completed_directories,
       entries: status.entries,
@@ -315,5 +332,20 @@ export function createHostedCollaborationCensus(options: {
       errors: status.errors,
     };
   }
-  return { store, producer, requestReconciliation, reconciliationStatus };
+  async function cancelReconciliation(opts: {
+    project_id: string;
+    run_id: string;
+  }) {
+    // Privileged owner RPC, deliberately available while new admissions are disabled.
+    store.cancel(opts);
+    await producer.pause();
+    return { state: "cancelled" as const, run_id: opts.run_id };
+  }
+  return {
+    store,
+    producer,
+    requestReconciliation,
+    reconciliationStatus,
+    cancelReconciliation,
+  };
 }

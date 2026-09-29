@@ -136,7 +136,9 @@ export function createLiteCollaborators(
     excluded_paths: options.directory.startsWith(home + "/")
       ? [options.directory]
       : [],
-    enabled,
+    // Standalone Lite has no manual batch admission. Retain old frontiers
+    // without resuming their formerly automatic filesystem work.
+    enabled: async () => false,
     createFilesystem,
     current: (project_id) => store.discoveryForProducer(project_id),
     report: (write) => store.reportDiscovery(write),

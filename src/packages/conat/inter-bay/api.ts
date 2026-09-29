@@ -2974,6 +2974,7 @@ export type HostControlMethod =
   | "delete-rootfs-image"
   | "scan-rootfs-release"
   | "request-collaboration-reconciliation"
+  | "cancel-collaboration-reconciliation"
   | "get-collaboration-reconciliation-status"
   | "scan-project-rootfs"
   | "list-host-ssh-authorized-keys"
@@ -4408,6 +4409,12 @@ export interface InterBayHostControlApi {
   }) => Promise<
     Awaited<ReturnType<HostControlApi["requestCollaborationReconciliation"]>>
   >;
+  cancelCollaborationReconciliation: (opts: {
+    host_id: string;
+    scan: HostControlArg<"cancelCollaborationReconciliation">;
+  }) => Promise<
+    Awaited<ReturnType<HostControlApi["cancelCollaborationReconciliation"]>>
+  >;
   getCollaborationReconciliationStatus: (opts: {
     host_id: string;
     scan: HostControlArg<"getCollaborationReconciliationStatus">;
@@ -5660,6 +5667,10 @@ const HOST_CONTROL_METHOD_SPECS = [
   {
     name: "requestCollaborationReconciliation",
     method: "request-collaboration-reconciliation",
+  },
+  {
+    name: "cancelCollaborationReconciliation",
+    method: "cancel-collaboration-reconciliation",
   },
   {
     name: "getCollaborationReconciliationStatus",

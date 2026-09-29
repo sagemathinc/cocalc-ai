@@ -27,7 +27,7 @@ import type { CollaborationRoomReplacementRequest } from "@cocalc/util/collabora
 import { withCollaborationCopyLock } from "@cocalc/backend/collaborators/copy-locks";
 import { getMasterConatClient } from "./master-conat-client";
 import { getLocalHostId } from "./sqlite/hosts";
-import { getProject, nextCollaborationCensusProject } from "./sqlite/projects";
+import { getProject } from "./sqlite/projects";
 import { createHostedCollaborationCensus } from "./collaborators-census";
 import type { CollaborationCensusStore } from "@cocalc/backend/collaborators/census-store";
 import { initializeCopiedCollaboration } from "./collaborators-copy";
@@ -44,6 +44,9 @@ let service: CollaboratorsService | undefined;
 let censusStore: CollaborationCensusStore | undefined;
 let censusRequest:
   | ReturnType<typeof createHostedCollaborationCensus>["requestReconciliation"]
+  | undefined;
+let censusCancel:
+  | ReturnType<typeof createHostedCollaborationCensus>["cancelReconciliation"]
   | undefined;
 let censusStatus:
   | ReturnType<typeof createHostedCollaborationCensus>["reconciliationStatus"]
@@ -83,17 +86,6 @@ export function startCollaborators(
   filesystem = getFilesystem;
   const directory = join(data, "collaborators");
   mkdirSync(directory, { recursive: true, mode: 0o700 });
-  // Known-source indexing is the default. Legacy inventory sweeps require an
-  // explicit opt-in; inventory alone is not evidence that source bytes changed.
-  const explicitDiscovery =
-    process.env.COCALC_PEOPLE_CENSUS_EXPLICIT_PROTOTYPE !== "0";
-  let afterProject = "",
-    after: string | undefined,
-    currentProject: string | undefined;
-  let inventory: "collaborators" | "artifactCatalog" = "collaborators";
-  let localAfter = "",
-    localRound = false,
-    nextRoundAt = 0;
   let enabled = false,
     refreshEnabledAt = 0;
   const isEnabled = async () => {
@@ -115,7 +107,7 @@ export function startCollaborators(
   };
   const census = createHostedCollaborationCensus({
     filename: join(directory, "census.sqlite"),
-    scheduling: explicitDiscovery ? "explicit" : "inventory",
+    scheduling: "explicit",
     getFilesystem,
     enabled: isEnabled,
     authorize: async (project_id) => {
@@ -140,6 +132,7 @@ export function startCollaborators(
   censusStore = census.store;
   censusRequest = census.requestReconciliation;
   censusStatus = census.reconciliationStatus;
+  censusCancel = census.cancelReconciliation;
   try {
     service = new CollaboratorsService({
       filename: join(directory, "journal.sqlite"),
@@ -245,63 +238,9 @@ export function startCollaborators(
             fs.close();
           }
         }),
-      discover: async (): Promise<CollaborationSource[]> => {
-        // Explicit reconciliation and mediated writes own dirty admission in
-        // mode. Inventory is not evidence that a source changed.
-        if (explicitDiscovery) return [];
-        if (Date.now() < nextRoundAt) return [];
-        if (localRound) {
-          const page = service!.journal.sources(localAfter);
-          localAfter = page.length
-            ? `${page[page.length - 1].project_id}:${page[page.length - 1].chat_path}`
-            : "";
-          if (!localAfter) {
-            localRound = false;
-            nextRoundAt = Date.now() + 30_000;
-          }
-          return page.filter(({ project_id }) => {
-            const p = getProject(project_id);
-            return p && !p.local_only;
-          });
-        }
-        if (!currentProject) {
-          currentProject = nextCollaborationCensusProject(afterProject);
-          if (!currentProject) {
-            afterProject = "";
-            localRound = true;
-            return [];
-          }
-        }
-        const project_id = currentProject;
-        try {
-          // Existing inventory is chat-source based, including unnamed agents.
-          const page = await request(project_id, `${inventory}.sourcePage`, {
-            project_id,
-            after,
-          });
-          if (!Array.isArray(page.paths) || page.paths.length > 100)
-            throw Error("invalid source inventory page");
-          after = page.next;
-          if (!after) {
-            if (inventory === "collaborators") inventory = "artifactCatalog";
-            else {
-              inventory = "collaborators";
-              afterProject = project_id;
-              currentProject = undefined;
-            }
-          }
-          return page.paths.map((chat_path: string) => ({
-            project_id,
-            chat_path,
-          }));
-        } catch (err) {
-          afterProject = project_id;
-          currentProject = undefined;
-          after = undefined;
-          inventory = "collaborators";
-          throw err;
-        }
-      },
+      // Known-source writes and explicit Scan own admission. Inventory alone
+      // must never enqueue another filesystem read.
+      discover: async (): Promise<CollaborationSource[]> => [],
       onError: (source, err) =>
         logger.warn("collaboration indexing deferred", {
           source,
@@ -312,6 +251,7 @@ export function startCollaborators(
     censusStore = undefined;
     censusRequest = undefined;
     censusStatus = undefined;
+    censusCancel = undefined;
     void census.producer
       .close()
       .catch((err) =>
@@ -334,6 +274,14 @@ export async function requestHostedCollaborationReconciliation(
 ) {
   if (!censusRequest) throw Error("collaboration census is not running");
   return censusRequest(opts);
+}
+
+export async function cancelHostedCollaborationReconciliation(opts: {
+  project_id: string;
+  run_id: string;
+}) {
+  if (!censusCancel) throw Error("collaboration census is not running");
+  return censusCancel(opts);
 }
 
 export async function hostedCollaborationReconciliationStatus(opts: {
@@ -447,5 +395,6 @@ export async function stopCollaborators() {
     censusStore = undefined;
     censusRequest = undefined;
     censusStatus = undefined;
+    censusCancel = undefined;
   }
 }

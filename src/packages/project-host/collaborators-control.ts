@@ -8,10 +8,11 @@ import { isValidUUID } from "@cocalc/util/misc";
 import {
   requestHostedCollaborationReconciliation,
   hostedCollaborationReconciliationStatus,
+  cancelHostedCollaborationReconciliation,
 } from "./collaborators";
 
-function validate(opts: CollaborationReconciliationRequest) {
-  if (process.env.COCALC_PEOPLE_CENSUS_EXPLICIT_PROTOTYPE !== "1")
+function validate(opts: CollaborationReconciliationRequest, admission = false) {
+  if (admission && process.env.COCALC_PEOPLE_CENSUS_EXPLICIT_PROTOTYPE !== "1")
     throw Error("explicit collaboration census prototype disabled");
   if (opts?.protocol_version !== 1)
     throw Error("unsupported reconciliation protocol");
@@ -28,10 +29,16 @@ function validate(opts: CollaborationReconciliationRequest) {
  */
 export const collaborationReconciliationControl: Pick<
   HostControlApi,
-  "requestCollaborationReconciliation" | "getCollaborationReconciliationStatus"
+  | "requestCollaborationReconciliation"
+  | "getCollaborationReconciliationStatus"
+  | "cancelCollaborationReconciliation"
 > = {
-  async requestCollaborationReconciliation(opts) {
+  async cancelCollaborationReconciliation(opts) {
     validate(opts);
+    return cancelHostedCollaborationReconciliation(opts);
+  },
+  async requestCollaborationReconciliation(opts) {
+    validate(opts, true);
     return requestHostedCollaborationReconciliation({
       project_id: opts.project_id,
       run_id: opts.run_id,

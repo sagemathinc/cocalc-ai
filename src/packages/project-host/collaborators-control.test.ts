@@ -37,7 +37,8 @@ test.each([
   "%s rejects disabled and unsupported/invalid protocol requests",
   async (method) => {
     delete process.env.COCALC_PEOPLE_CENSUS_EXPLICIT_PROTOTYPE;
-    await expect(api[method](opts)).rejects.toThrow("disabled");
+    if (method === "requestCollaborationReconciliation")
+      await expect(api[method](opts)).rejects.toThrow("disabled");
     process.env.COCALC_PEOPLE_CENSUS_EXPLICIT_PROTOTYPE = "1";
     await expect(
       api[method]({ ...opts, protocol_version: 2 as any }),

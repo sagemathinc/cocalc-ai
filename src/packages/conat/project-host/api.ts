@@ -723,6 +723,9 @@ export interface HostControlApi {
   requestCollaborationReconciliation(
     opts: CollaborationReconciliationRequest,
   ): Promise<CollaborationReconciliationAdmission>;
+  cancelCollaborationReconciliation(
+    opts: Omit<CollaborationReconciliationRequest, "expected_run_id">,
+  ): Promise<{ state: "cancelled"; run_id: string }>;
   getCollaborationReconciliationStatus(
     opts: Omit<CollaborationReconciliationRequest, "expected_run_id">,
   ): Promise<CollaborationReconciliationStatus>;

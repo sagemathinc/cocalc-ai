@@ -3471,3 +3471,121 @@ branch. A development browser/project target has been requested. No live flags,
 credentials or service processes were changed; rendered UI validation remains
 open. The QA preflight flags only the two existing untracked security-review
 documents, which were left untouched.
+
+## Manual Scan LRO Delivery
+
+Implemented against baseline `6cf05d515c71631e4bc734d78fa2c5e4fea76072` on
+2026-09-29. This implements the approved manual-only project-selection contract;
+it does not enable production Scan or the deferred automatic-discovery design.
+
+### Delivered Behavior And Ownership
+
+- People has a **Scan projects** dialog with project search, paginated selection,
+  select-all, reviewed selection count, start, progress, cancel, and explicit
+  selection of unsuccessful projects for retry. Select-all is resolved once on
+  submission across all pages, with a maximum of 10,000 projects; larger sets
+  are rejected rather than silently truncated. Result pages contain 25 projects.
+- Account home owns the existing `long_running_operations` record, immutable
+  selection, submission receipts and child identities. Each project owner checks
+  current membership, serializes project admission and routes traversal/cancel to
+  the host's bay. Hubs receive bounded progress, never file contents. No operation
+  starts compute. Missing storage ends unavailable.
+- PostgreSQL account fences plus a partial unique LRO index enforce one active
+  batch across tabs/workers. Duplicate identities return their original operation;
+  a different submission while active aliases the existing operation without
+  extending its selection. Project scans across accounts defer rather than share
+  execution or cancellation ownership.
+- Initial guardrails: 60-second account admission interval, 300-second project
+  interval measured from admission/start, at most 8 running scans per owner bay
+  and 2 per host, 2 batch claims and 8 children per batch per worker pass. Public
+  scan calls retain the 32-global/2-per-account in-process concurrency bound.
+  These are conservative implementation limits, not production capacity claims.
+- Batch children adapt the existing owner job/receipt/dispatch tables. Cancellation
+  persists intent, stops undispatched children, then sends the exact running ID
+  to the host. Host SQLite tombstones fence even delayed requests; cancellation
+  drains active traversal and reporting before acknowledgment. Unknown transport
+  outcomes retain the original identity and remain active/cancelling. Stale LRO
+  attempts cannot publish. Generic LRO cancellation delegates to this protocol;
+  generic expiry cannot release unresolved Scan admission.
+- Explicit host rejection/defer becomes unavailable/deferred only after fencing
+  the new identity. Traversal exclusions/limits become truncated, bounded repeated
+  traversal failures become failed, and successful traversal remains distinct
+  from downstream catalog/home-view catch-up. Actual entries/candidates and
+  separate outcome counts are shown; there is no guessed file percentage or ETA.
+- The dialog saves submission identity before sending, observes on reopen/reload,
+  and offers same-request recovery after an unknown outcome. Retry of unsuccessful
+  projects loads every result page and requires another explicit Start.
+- `project scan start --all|--projects ...`, `batch-status`, and `cancel --op-id`
+  expose the same human-only batch API. The old `request` command adapts to one
+  selected project; old `inspect`/`status` remain legacy receipt inspection.
+  Delegated-agent admission remains denied at both CLI and hub boundaries.
+
+### Enabled Paths And Rollback
+
+`people_scan_enabled` defaults to **no**. New admission additionally requires
+`collaborators_enabled` and `COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE=1`.
+Turning off `people_scan_enabled` keeps existing operations inspectable and
+cancellable and leaves ordinary indexing intact. Disabling the entire
+collaborators service or its execution-worker flag can pause recovery; durable
+identities remain retained until workers resume. Do not treat service shutdown
+as cancellation acknowledgment.
+
+People demand no longer triggers discovery bootstrap. Legacy public/internal
+single-project admission rejects new requests in favor of the batch API, while
+retained legacy execution remains recoverable. Hosted production services always
+use explicit discovery; the old environment opt-out cannot restore automatic
+inventory polling. Inventory scheduling remains only an explicitly selected
+low-level test fixture. Old unrequested SQLite frontiers are quarantined on
+startup; an exact owner-held receipt can recover retained authorized work, or a
+new manual admission can fence and replace quarantined inventory. Standalone
+Lite retains known-source indexing but does not admit/resume filesystem census;
+the hosted batch feature is not presented as a Lite implementation.
+
+Account/project rehome guards retain scan identities and receipts. This delivery
+does not implement seamless migration, automatic cleanup of ambiguous executions,
+or deletion of receipt state. Long-lived receipt/tombstone retention is an
+intentional recovery tradeoff; future compaction must preserve delayed-request
+fences before relaxing these guards.
+
+### Validation And Measurements
+
+- Full `build:dev` passed. Subsequent final adjustments receive package/reference
+  typechecks. Frontend lint, focused UI/accessibility tests, CLI tests, real
+  PGlite batch tests, legacy dispatch/recovery tests, backend census tests and
+  hosted/Lite adapter tests cover the changed boundaries.
+- PGlite tests exercise simultaneous starts, 31-project select-all across pages,
+  fixed selection, cooldown through queued cancellation, duplicate/late requests,
+  cross-account conflicts, current membership loss, stale-worker publication,
+  lost acknowledgments, unreachable cancellation, honest partial outcomes,
+  explicit host deferral, disabled admissions and exclusion from generic expiry.
+- Real separate-process PostgreSQL/fabric tests exercise account-home routing,
+  two owner bays, host traversal, concurrent submissions, successful plus
+  unavailable results, generic progress/cancel, durable replay and cross-account
+  isolation with zero compute starts. The Scan and independent known-source
+  suites passed together (3 tests, 157.641 seconds including setup/cleanup).
+  Ordinary two-human known-source indexing and cold notification delivery still
+  work without Scan. The expired-demand observation recorded zero relevant owner
+  RPC increments over 60.031 seconds with 1,000 dormant fixture accounts.
+- `node src/scripts/accessibility/manual-scan.mjs` renders the actual dialog,
+  Ant controls and keyboard boundary in Chromium against deterministic RPC
+  responses. Keyboard start/select-all/cancel, reload observation, disabled
+  admissions, result pagination, unavailable/truncated/failed results, explicit
+  retry and Escape focus restoration pass in light/dark at 100%/200% zoom and
+  an effective 320 CSS-pixel width. Axe WCAG A/AA reports no violations in the
+  audited dialog. This caught and fixed a missing progressbar accessible name
+  and a scrollable project list lacking keyboard focus when controls are disabled.
+- The filesystem-backed manual cost fixture selects four 1,000-entry projects,
+  completes three and cancels one, restarts the producer and verifies idle ticks
+  open no additional filesystem readers. It recorded 3,000 examined entries,
+  150 supported sources, 32 cooperative passes, 3,254/3,368 ms elapsed,
+  2,546/2,519 ms CPU, 1,164,814 census SQLite/WAL bytes and 3.1/2.61 ms local
+  cancellation latency over two runs. These are local fixture measurements, not remote cancellation latency,
+  production throughput, a fairness guarantee or a DAU capacity estimate.
+
+The scoped live development-browser probe could not run: the installed CLI
+returned `project API relay requires the current project's local connection and
+secret`. No broader login or credential substitution was attempted. The standalone
+browser fixture validates the actual component but does not replace end-to-end
+validation against a reachable deployed browser/hub/host combination. Live canary
+validation, independent release review and production enablement remain explicit
+release tasks; neither a deployment nor a production flag change was performed.

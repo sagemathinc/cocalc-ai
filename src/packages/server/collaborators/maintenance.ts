@@ -256,6 +256,7 @@ export async function startCollaboratorsMaintenance() {
     if (scanEnabled) {
       await syncCollaborationScanSchema(getPool());
       await syncCollaborationScanActorSchema(getPool());
+      await (await import("./scan-batch")).ensureScanBatchSchema();
     }
     if (process.env.COCALC_PEOPLE_DEMAND_PROTOTYPE === "1")
       await syncCollaborationDemandSchema(getPool());
@@ -284,8 +285,10 @@ export async function startCollaboratorsMaintenance() {
           process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE === "1" &&
           (await getServerSettings()).collaborators_enabled &&
           active()
-        )
+        ) {
+          await (await import("./api")).runRoutedScanBatchPass(active);
           await runCollaborationScanPass(active);
+        }
       } catch {
         logger.warn("scan maintenance failed; durable work retained");
       } finally {

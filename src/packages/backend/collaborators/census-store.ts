@@ -122,6 +122,8 @@ export class CollaborationCensusStore {
           started_at INTEGER NOT NULL DEFAULT 0,
           compact_status TEXT, previous_status TEXT, reserved_bytes INTEGER NOT NULL DEFAULT 0,
           blocked_reason TEXT);
+        CREATE TABLE IF NOT EXISTS census_cancellations (
+          project_id TEXT NOT NULL, run_id TEXT NOT NULL, PRIMARY KEY(project_id,run_id));
         CREATE TABLE IF NOT EXISTS census_checkpoints (key TEXT PRIMARY KEY, value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS census_reports (
           project_id TEXT PRIMARY KEY REFERENCES census_runs(project_id) ON DELETE CASCADE,
@@ -155,6 +157,10 @@ export class CollaborationCensusStore {
           "ALTER TABLE census_runs ADD COLUMN started_at INTEGER NOT NULL DEFAULT 0",
         );
       const columns = this.db.prepare("PRAGMA table_info(census_runs)").all();
+      if (!columns.some((column) => column.name === "manual_requested"))
+        this.db.exec(
+          "ALTER TABLE census_runs ADD COLUMN manual_requested INTEGER NOT NULL DEFAULT 0",
+        );
       if (!columns.some((column) => column.name === "compact_status"))
         this.db.exec("ALTER TABLE census_runs ADD COLUMN compact_status TEXT");
       if (!columns.some((column) => column.name === "previous_status"))
@@ -200,8 +206,56 @@ export class CollaborationCensusStore {
       .get(project_id);
   }
 
+  /** Quarantine legacy inventory frontiers until an owner presents the exact
+   * retained receipt. Switching to manual mode must not replay an old sweep. */
+  suspendLegacyInventory() {
+    this.db.exec(
+      "UPDATE census_runs SET blocked_reason='manual_required' WHERE manual_requested=0 AND blocked_reason IS DISTINCT FROM 'cancelled' AND compact_status IS NULL",
+    );
+  }
+
+  resumeManualRun(run: Pick<CensusRun, "project_id" | "run_id">) {
+    this.db
+      .prepare(
+        "UPDATE census_runs SET manual_requested=1,blocked_reason=CASE WHEN blocked_reason='manual_required' THEN NULL ELSE blocked_reason END WHERE project_id=? AND run_id=?",
+      )
+      .run(run.project_id, run.run_id);
+  }
+
+  /** A durable tombstone also fences a request that has not arrived yet. */
+  cancel(run: Pick<CensusRun, "project_id" | "run_id">) {
+    bounded(run.project_id, 200);
+    bounded(run.run_id, 200);
+    this.transaction(() => {
+      this.db
+        .prepare("INSERT OR IGNORE INTO census_cancellations VALUES(?,?)")
+        .run(run.project_id, run.run_id);
+      if (this.row(run.project_id)?.run_id !== run.run_id) return;
+      this.db
+        .prepare(
+          "UPDATE census_runs SET blocked_reason='cancelled' WHERE project_id=?",
+        )
+        .run(run.project_id);
+      this.db
+        .prepare(
+          "DELETE FROM census_candidates WHERE project_id=? AND acknowledged=0",
+        )
+        .run(run.project_id);
+    });
+  }
+
+  isCancelled(run: Pick<CensusRun, "project_id" | "run_id">): boolean {
+    return !!this.db
+      .prepare(
+        "SELECT 1 FROM census_cancellations WHERE project_id=? AND run_id=?",
+      )
+      .get(run.project_id, run.run_id);
+  }
+
   isCurrent(run: Pick<CensusRun, "project_id" | "run_id">): boolean {
-    return this.row(run.project_id)?.run_id === run.run_id;
+    return (
+      !this.isCancelled(run) && this.row(run.project_id)?.run_id === run.run_id
+    );
   }
 
   canContinue(work: CensusWork): boolean {
@@ -221,6 +275,7 @@ export class CollaborationCensusStore {
     previous?: CensusPreviousRun,
   ): CensusRun {
     const run = normalized(request);
+    if (this.isCancelled(run)) throw Error("census run cancelled");
     const json = JSON.stringify(run);
     const priorSummary = previous ? JSON.stringify(previous) : null;
     if (priorSummary && Buffer.byteLength(priorSummary) > 2048)
@@ -637,13 +692,19 @@ export class CollaborationCensusStore {
           "UPDATE census_directories SET state=?,error=?,failures=?,retry_at=? WHERE project_id=? AND path=?",
         )
         .run(
-          quota ? "blocked" : "pending",
+          quota || failures >= 2 ? "blocked" : "pending",
           quota?.reason ?? censusErrorCode(error),
           Math.min(30, failures + 1),
           retryAt(now, failures),
           work.run.project_id,
           work.path,
         );
+      if (failures >= 2 && !quota)
+        this.db
+          .prepare(
+            "UPDATE census_runs SET blocked_reason='retry_limit' WHERE project_id=?",
+          )
+          .run(work.run.project_id);
       if (quota?.entireRun)
         this.db
           .prepare("UPDATE census_runs SET blocked_reason=? WHERE project_id=?")
@@ -657,7 +718,7 @@ export class CollaborationCensusStore {
     return this.db
       .prepare(
         `SELECT c.project_id,r.run_id,c.chat_path FROM census_candidates c
-      JOIN census_runs r USING(project_id) WHERE c.acknowledged=0 AND c.retry_at<=?
+      JOIN census_runs r USING(project_id) WHERE (r.blocked_reason IS NULL OR r.blocked_reason NOT IN ('cancelled','manual_required')) AND c.acknowledged=0 AND c.retry_at<=?
       ORDER BY c.retry_at,c.project_id,c.chat_path LIMIT ?`,
       )
       .all(now, limit) as unknown as CensusCandidate[];
@@ -688,6 +749,12 @@ export class CollaborationCensusStore {
       )
       .get(candidate.project_id, candidate.chat_path);
     if (!row) return false;
+    if (Number(row.failures) >= 2)
+      this.db
+        .prepare(
+          "UPDATE census_runs SET blocked_reason='retry_limit' WHERE project_id=?",
+        )
+        .run(candidate.project_id);
     this.db
       .prepare(
         "UPDATE census_candidates SET failures=?,retry_at=?,error=? WHERE project_id=? AND chat_path=?",

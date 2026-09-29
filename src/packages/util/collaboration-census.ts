@@ -15,11 +15,15 @@ export type CollaborationReconciliationAdmission =
   | { admission: "throttled"; run_id: string; retry_after_ms: number };
 export type CollaborationReconciliationStatus =
   | { state: "unknown"; current_run_id?: string }
+  | { state: "cancelled"; run_id: string }
   | {
       /** Discovery only: does not assert extraction or owner ingestion. */
       state: "indexing" | "partial" | "discovered";
       run_id: string;
       started_at: number;
+      traversal_complete?: boolean;
+      blocked_directories?: number;
+      blocked_reason?: string;
       directories: number;
       completed_directories: number;
       entries: number;

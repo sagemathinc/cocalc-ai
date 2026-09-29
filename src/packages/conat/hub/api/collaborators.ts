@@ -2,6 +2,11 @@
  * This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
  * License: MS-RSL - see LICENSE.md for details
  */
+import type {
+  ScanProjectsRequest,
+  ScanProjectsResponse,
+} from "@cocalc/util/collaboration-scan-batch";
+
 import {
   authFirstRequireAccount,
   authFirstRequireHost,
@@ -61,6 +66,7 @@ export interface CollaboratorsApi
     PeopleInvitationsApi,
     PeopleInvitationDiscoveryApi,
     CollaborationDemandApi {
+  scanProjects(opts: ScanProjectsRequest): Promise<ScanProjectsResponse>;
   requestScan(
     opts: Omit<ScanAdmissionRequest, "account_id"> & { account_id?: string },
   ): Promise<ScanAdmissionResult>;
@@ -252,6 +258,7 @@ export interface CollaboratorsApi
 }
 
 export const collaborators = {
+  scanProjects: authFirstRequireAccount,
   requestScan: authFirstRequireAccount,
   inspectScan: authFirstRequireAccount,
   getScanStatus: authFirstRequireAccount,

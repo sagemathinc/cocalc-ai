@@ -217,8 +217,7 @@ async function publicScan<T>(
   fn: (account_id: string) => Promise<T>,
 ) {
   uuid(account_id, "authenticated account_id");
-  if (process.env.COCALC_PEOPLE_SCAN_API_PROTOTYPE !== "1")
-    throw Error("Scan API prototype is not enabled");
+
   const actor = account_id!.toLowerCase();
   const count = scanActors.get(actor) ?? 0;
   if (scanCalls >= 32 || count >= 2) throw Error("Scan API busy; retry later");
@@ -236,17 +235,16 @@ async function publicScan<T>(
 }
 
 export const collaboratorsApi: CollaboratorsApi = {
-  requestScan(opts) {
+  scanProjects(opts) {
     return publicScan(opts.account_id, (account_id) =>
       home(account_id, (api, route) =>
-        api.scanAtHome({
-          account_id,
-          project_id: opts.project_id,
-          request_id: opts.request_id,
-          mode: opts.mode,
-          route,
-        }),
+        api.scanProjects({ ...opts, account_id, route }),
       ),
+    );
+  },
+  async requestScan(_opts) {
+    throw Error(
+      "Use Scan projects to start a scoped, cancellable scan operation",
     );
   },
   inspectScan(opts) {
@@ -562,48 +560,6 @@ export const collaboratorsControl: InterBayCollaboratorsApi = {
       expected_lease_id,
       ttl_ms,
     });
-    if (
-      armed &&
-      process.env.COCALC_PEOPLE_DISCOVERY_BOOTSTRAP_PROTOTYPE === "1"
-    ) {
-      const { bootstrapDemandDiscovery } =
-        await import("./discovery-bootstrap");
-      // Discovery/repair failure must not discard a valid revision receiver.
-      // Durable request identities are reused on a later active renewal.
-      await bootstrapDemandDiscovery(
-        {
-          project_id: opts.project_id,
-          home_bay_id,
-          owner_bay_id: registration.owner_bay_id,
-          lease_id: registration.receipt.lease_id,
-        },
-        {
-          discovery: () =>
-            owner(opts.project_id, (api, route) =>
-              api.getDiscovery({
-                account_id: opts.account_id,
-                project_id: opts.project_id,
-                route,
-              }),
-            ),
-          admit: async (request_id) => {
-            const current = await inspectCollaborationProjectDemand(
-              opts.account_id,
-              opts.project_id,
-            );
-            if (current.remaining_ms <= 0)
-              throw Error("project has no home demand");
-            return collaboratorsControl.scanAtHome({
-              account_id: opts.account_id,
-              project_id: opts.project_id,
-              request_id,
-              mode: "check",
-              route: opts.route,
-            });
-          },
-        },
-      ).catch(() => undefined);
-    }
     return { armed, lease_id: registration.receipt.lease_id };
   },
   async receiveRevisionWakeup(opts) {
@@ -657,30 +613,50 @@ export const collaboratorsControl: InterBayCollaboratorsApi = {
       authority,
     );
   },
-  async scanAtHome(opts) {
-    if (process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE !== "1")
-      throw Error("scan prototype disabled");
+  async scanProjects(opts) {
     await checkHome(opts.account_id, opts.route);
-    const { reserveCollaborationScanActor } =
-      await import("@cocalc/database/postgres/collaborators/collaborators-scan-actor");
-    const reservation = await reserveCollaborationScanActor(opts);
-    if (!reservation.reserved)
-      return {
-        admission: "throttled",
-        retry_after_ms: reservation.retry_after_ms,
-      };
-    return owner(opts.project_id, (api, route) =>
-      api.scanAtOwner({ ...opts, route }),
+    const { scanProjectsAtHome } = await import("./scan-batch");
+    return scanProjectsAtHome(opts, (project_id) =>
+      owner(project_id, (api, route) =>
+        api.scanEligibleProject({
+          account_id: opts.account_id!,
+          project_id,
+          route,
+        }),
+      ),
     );
   },
-  async scanAtOwner(opts) {
-    if (process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE !== "1")
-      throw Error("scan prototype disabled");
-    await enabled();
+  async scanEligibleProject(opts) {
     const authority = await checkOwner(opts.project_id, opts.route);
-    const { admitCollaborationScan } =
-      await import("@cocalc/database/postgres/collaborators/collaborators-scan");
-    return admitCollaborationScan(opts, authority);
+    const { transaction } =
+      await import("@cocalc/database/postgres/collaborators/collaborators-common");
+    const { assertCollaborationOwnerAuthority } =
+      await import("@cocalc/database/postgres/collaborators/collaborators-owner");
+    return transaction(async (db) => {
+      await assertCollaborationOwnerAuthority(db, opts.project_id, authority);
+      const row = (
+        await db.query(
+          "SELECT project_id,title,users,deleted FROM projects WHERE project_id=$1",
+          [opts.project_id],
+        )
+      ).rows[0];
+      return row &&
+        !row.deleted &&
+        ["owner", "collaborator"].includes(row.users?.[opts.account_id]?.group)
+        ? { project_id: row.project_id, title: row.title ?? "Untitled project" }
+        : null;
+    });
+  },
+  async scanChild(opts) {
+    const authority = await checkOwner(opts.project_id, opts.route);
+    const { stepScanChild } = await import("./scan-child");
+    return stepScanChild(opts, authority);
+  },
+  async scanAtHome(_opts) {
+    throw Error("Use the manual Scan batch API");
+  },
+  async scanAtOwner(_opts) {
+    throw Error("Use the manual Scan batch API");
   },
   async inspectScanAtHome(opts) {
     await checkHome(opts.account_id, opts.route);
@@ -944,8 +920,7 @@ export const collaboratorsControl: InterBayCollaboratorsApi = {
     return {
       ...(await accountRevision(opts.account_id!, opts.since)),
       ...(demandSchedulingEnabled() ? { demand_supported: true } : {}),
-      ...(process.env.COCALC_PEOPLE_SCAN_API_PROTOTYPE === "1" &&
-      process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE === "1"
+      ...(process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE === "1"
         ? { scan_supported: true }
         : {}),
     };
@@ -1234,5 +1209,16 @@ export async function deliverCollaborationNotificationObligation(
 ) {
   return home(input.account_id, (api, route) =>
     api.deliverNotificationObligation({ ...input, route }),
+  );
+}
+
+export async function runRoutedScanBatchPass(active: () => boolean) {
+  const { runScanBatchPass } = await import("./scan-batch");
+  await runScanBatchPass(
+    (request) =>
+      owner(request.project_id, (api, route) =>
+        api.scanChild({ ...request, route }),
+      ),
+    active,
   );
 }

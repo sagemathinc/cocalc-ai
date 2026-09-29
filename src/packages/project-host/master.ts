@@ -1895,6 +1895,13 @@ export async function startMasterRegistration({
         opts,
       );
     },
+    async cancelCollaborationReconciliation(opts) {
+      const { collaborationReconciliationControl } =
+        await import("./collaborators-control");
+      return collaborationReconciliationControl.cancelCollaborationReconciliation(
+        opts,
+      );
+    },
     async getCollaborationReconciliationStatus(opts) {
       const { collaborationReconciliationControl } =
         await import("./collaborators-control");

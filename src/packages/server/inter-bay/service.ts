@@ -3570,6 +3570,10 @@ async function startHostControlService(): Promise<void> {
       await (
         await getHostClient(host_id, 30_000)
       ).requestCollaborationReconciliation(scan),
+    cancelCollaborationReconciliation: async ({ host_id, scan }) =>
+      (await getHostClient(host_id, 30_000)).cancelCollaborationReconciliation(
+        scan,
+      ),
     getCollaborationReconciliationStatus: async ({ host_id, scan }) =>
       await (
         await getHostClient(host_id, 30_000)

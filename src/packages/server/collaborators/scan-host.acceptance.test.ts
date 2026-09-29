@@ -1,54 +1,82 @@
 import { randomUUID } from "node:crypto";
 import { MultibayAcceptance } from "./acceptance/harness";
-
 const acceptance =
   process.env.COCALC_COLLABORATORS_ACCEPTANCE === "1"
     ? describe
     : describe.skip;
-acceptance("explicit Scan through real hosted census and catalog", () => {
+acceptance("manual scan batches across real owner/home/host services", () => {
   let env: MultibayAcceptance;
+  const second = randomUUID();
   beforeAll(async () => {
     env = new MultibayAcceptance({ explicitCensus: true });
     await env.start();
-    await env.worker("owner").call("installScan");
-    await env.worker("a").call("installScan");
-    // Exercise the supported owner-bay control subject, without a direct-host
-    // URL. The host authenticates and subscribes to its own control service.
+    for (const role of ["owner", "a", "b"] as const)
+      await env.worker(role).call("installManualScan");
     await env.sql(
       "owner",
       "INSERT INTO project_hosts(id,bay_id) VALUES($1,$2)",
       [env.host, "acceptance-owner"],
     );
+    // A second owner bay with unavailable storage exercises routed partial results.
+    for (const role of ["owner", "b"] as const)
+      await env.sql(
+        role,
+        "INSERT INTO projects(project_id,owning_bay_id,users,title) VALUES($1,$2,$3::jsonb,'Second owner project')",
+        [
+          second,
+          "acceptance-b",
+          JSON.stringify({ [env.accounts[0]]: { group: "collaborator" } }),
+        ],
+      );
+    await env.sql(
+      "a",
+      "INSERT INTO account_project_index(account_id,project_id,owning_bay_id,users_summary,title,sort_key) VALUES($1,$2,$3,$4::jsonb,'Second owner project',now())",
+      [
+        env.accounts[0],
+        second,
+        "acceptance-b",
+        JSON.stringify({ [env.accounts[0]]: { group: "collaborator" } }),
+      ],
+    );
   }, 240000);
   afterAll(async () => env?.close(), 60000);
-  test("unmediated source discovery reaches an authorized home without starting compute", async () => {
+  const scan = (request: object) =>
+    env.worker("b").call("scanPublic", { method: "scanProjects", request });
+  test("selection, real traversal, progress, authorization and partial results without compute", async () => {
     const source = await env.worker("host").call("explicitCensusFixture");
+    const projects = await scan({ action: "projects" });
+    expect(projects.projects.map((p: any) => p.project_id).sort()).toEqual(
+      [env.project, second].sort(),
+    );
     const request = {
-      project_id: env.project,
+      action: "start",
       request_id: randomUUID(),
-      mode: "reconcile",
+      project_ids: "all",
     };
-    const receipt = await env
-      .worker("b")
-      .call("scanPublic", { method: "requestScan", request });
-    expect(receipt.admission).toBe("accepted");
-    const scan: {
-      protocol_version: number;
-      project_id: string;
-      run_id: string;
-      expected_run_id?: string;
-    } = {
-      protocol_version: 1,
-      project_id: env.project,
-      run_id: receipt.job_id,
-    };
-    const control = (method: string) =>
-      env.worker("host").call("hostCensusControl", { method, request: scan });
-    expect(await env.worker("owner").call("scanDispatch")).toMatchObject({
-      attempted: 1,
-      pending: 1,
-      unknown: 0,
+    const started = await scan(request);
+    expect(started.operation.total).toBe(2);
+    const identity = started.operation.op_id;
+    const aliases = await Promise.all(
+      Array.from({ length: 2 }, () =>
+        scan({ ...request, request_id: randomUUID(), project_ids: [second] }),
+      ),
+    );
+    expect(aliases.every((value) => value.operation.op_id === identity)).toBe(
+      true,
+    );
+    // Start the normal maintenance worker; no direct Scan execution ticks thereafter.
+    await env.worker("a").call("startScanMaintenance");
+    await env.converge(async () => {
+      const result = await scan({ action: "status", op_id: identity });
+      return result.operation.processed === 2;
     });
+    const final = await scan({ action: "status", op_id: identity });
+    expect(final.operation.counts).toMatchObject({
+      successful: 1,
+      unavailable: 1,
+    });
+    expect(final.operation.status).toBe("failed");
+    expect((await scan(request)).operation.op_id).toBe(identity);
     await env.converge(async () => {
       const page = await env.hub("a", "listResources", {
         project_id: env.project,
@@ -57,37 +85,40 @@ acceptance("explicit Scan through real hosted census and catalog", () => {
         (item: any) => item.chat_path === source.chat_path,
       );
     });
-    await env.converge(
-      async () =>
-        (await control("getCollaborationReconciliationStatus")).state ===
-        "discovered",
-    );
-    expect(await control("getCollaborationReconciliationStatus")).toMatchObject(
-      { state: "discovered", run_id: receipt.job_id, pending_candidates: 0 },
-    );
-    // Observe the real dispatch cooldown rather than rewriting durable clocks.
-    await new Promise((resolve) => setTimeout(resolve, 5100));
-    expect(await env.worker("owner").call("scanDispatch")).toMatchObject({
-      attempted: 1,
-      discovered: 1,
-      unknown: 0,
-    });
     expect(
-      await env.worker("b").call("scanPublic", {
-        method: "getScanStatus",
-        request: { project_id: env.project, job_id: receipt.job_id },
-      }),
-    ).toMatchObject({ allowed: true, value: { state: "discovered" } });
-    expect(await env.worker("owner").call("scanDispatch")).toMatchObject({
-      attempted: 0,
-      unknown: 0,
-    });
-    expect(await control("requestCollaborationReconciliation")).toMatchObject({
-      admission: "accepted",
-      run_id: receipt.job_id,
-      replayed: true,
-    });
+      (
+        await env.hub("b", "scanProjects", {
+          action: "status",
+          op_id: identity,
+        })
+      ).operation,
+    ).toBeUndefined();
+    await expect(
+      env
+        .worker("b")
+        .call("scanPublic", { method: "scanProjects", request, agent: true }),
+    ).rejects.toThrow();
     for (const role of ["owner", "a", "b"] as const)
       expect((await env.worker(role).call("inspect")).counters.starts).toBe(0);
   }, 180000);
+  test("another human can cancel queued work without traversal and recover through LRO", async () => {
+    const operation = (
+      await env.hub("b", "scanProjects", {
+        action: "start",
+        request_id: randomUUID(),
+        project_ids: [env.project],
+      })
+    ).operation;
+    await env.hub("b", "scanProjects", {
+      action: "cancel",
+      op_id: operation.op_id,
+    });
+    await env.worker("b").call("scanBatchPass");
+    const result = await env.hub("b", "scanProjects", {
+      action: "status",
+      op_id: operation.op_id,
+    });
+    expect(result.operation.status).toBe("canceled");
+    expect(result.operation.counts.cancelled).toBe(1);
+  }, 60000);
 });

@@ -2,8 +2,10 @@
 
 Date: 2026-09-29.
 Status: user approved manual-only, scoped, cancellable Scan LROs on 2026-09-29,
-in addition to the smaller initial-release contract below. Implementation
-and validation are incomplete; this decision is not production enablement.
+in addition to the smaller initial-release contract below. The manual Scan
+implementation and local validation are delivered; see the manual Scan delivery
+section in the execution results for coverage and the remaining live deployment
+validation. This is not production enablement.
 The raw live btrfs generation candidate failed the no-change proof spike; see the
 [execution results](people-indexing-validation-results-2026-09-29.md).
 No capacity claims are made by this document.
@@ -186,11 +188,11 @@ guards until interruption and fencing are verified.
    validation independent: create -> invite/link -> accept -> collaborate ->
    find again must work without Scan.
 
-This is a plan revision, not a claim that existing Scan code satisfies these
-requirements. The previous single-project control and tests are reusable evidence
-only where their behavior matches this contract. No deployment, live Scan,
-automatic goal continuation, or production enablement is authorized by updating
-this document.
+The manual Scan implementation now replaces new admissions through the previous
+single-project control. Existing per-project receipts remain authoritative for
+retained work. See the execution results for the delivered implementation,
+measured fixture envelope, and validation limitations. No deployment, live Scan,
+automatic goal continuation, or production enablement follows from this document.
 
 ### Explicitly Deferred
 

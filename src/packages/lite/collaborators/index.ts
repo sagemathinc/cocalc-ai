@@ -301,6 +301,9 @@ export class LiteCollaborators {
       },
     });
     this.api = {
+      scanProjects: async () => {
+        throw Error("Scan projects requires a hosted project");
+      },
       requestScan: async () => {
         throw Error("People Scan is not supported in standalone Lite");
       },

@@ -33,6 +33,8 @@ export function createLiteCollaborationCensus(options: {
   now?: () => number;
   capacity?: CensusCapacity;
   policy?: CensusPolicy;
+  /** Isolated legacy test harness only; production never enables inventory. */
+  inventory?: boolean;
 }) {
   const policy = options.policy ?? censusPolicyFromEnvironment();
   const store = new CollaborationCensusStore(
@@ -80,6 +82,7 @@ export function createLiteCollaborationCensus(options: {
       enabled: options.enabled,
     }),
     prepare: async () => {
+      if (!options.inventory) return;
       let volume_id: string;
       try {
         volume_id = await identity();

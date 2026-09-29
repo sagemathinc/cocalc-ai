@@ -2,6 +2,10 @@
  * This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
  * License: MS-RSL - see LICENSE.md for details
  */
+import type {
+  ScanChild,
+  ScanChildRequest,
+} from "@cocalc/util/collaboration-scan-batch";
 import type { Client } from "@cocalc/conat/core/client";
 import type {
   ScanAdmissionRequest,
@@ -175,6 +179,14 @@ export type InterBayCollaboratorsApi = RoutedApi & {
     watermark: { generation: string; revision: number } | null;
     remaining_ms: number;
   }>;
+  scanEligibleProject(opts: {
+    account_id: string;
+    project_id: string;
+    route: CollaborationRoute;
+  }): Promise<{ project_id: string; title: string } | null>;
+  scanChild(
+    opts: ScanChildRequest & { route: CollaborationRoute },
+  ): Promise<ScanChild>;
   scanAtHome(
     opts: ScanAdmissionRequest & { route: CollaborationRoute },
   ): Promise<ScanAdmissionResult>;

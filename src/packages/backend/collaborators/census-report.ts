@@ -38,6 +38,11 @@ export function censusReporter(options: {
     throw Error("invalid census report budget");
   async function publish(journal: CollaborationJournal, project_id: string) {
     const status = options.store.status(project_id)!;
+    if (
+      options.store.isCancelled(status.run) ||
+      status.blocked_reason === "manual_required"
+    )
+      return;
     const previous = options.store.reportCheckpoint(project_id);
     let checkpoint: Checkpoint | undefined = previous
       ? JSON.parse(previous)
@@ -91,6 +96,11 @@ export function censusReporter(options: {
     options.store.setReportCheckpoint(project_id, JSON.stringify(checkpoint));
     if (options.enabled && !(await options.enabled()))
       return checkpoint.retry_at;
+    if (
+      options.store.isCancelled(status.run) ||
+      status.blocked_reason === "manual_required"
+    )
+      return;
     try {
       await options.send(checkpoint.write);
     } catch (error) {

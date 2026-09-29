@@ -16,6 +16,8 @@ export async function assertNoPeopleAccountStateForRehome(
     "people_collaboration_outbox",
     "people_invitation_drafts",
     "people_invitation_operations",
+    "collaboration_scan_batch_accounts",
+    "collaboration_scan_batch_requests",
     "collaboration_scan_actor_budget",
     "collaboration_scan_actor_receipts",
   ]) {

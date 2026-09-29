@@ -1027,6 +1027,28 @@ async function command(name, args = {}) {
       process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE = "1";
       return true;
     }
+    case "installManualScan": {
+      await require("@cocalc/database/postgres/collaborators/collaborators-scan").syncCollaborationScanSchema(
+        pool,
+      );
+      await require("@cocalc/server/collaborators/scan-batch").ensureScanBatchSchema();
+      await pool.query(
+        "INSERT INTO server_settings(name,value) VALUES('people_scan_enabled','yes') ON CONFLICT(name) DO UPDATE SET value='yes'",
+      );
+      require("@cocalc/database/settings/server-settings").resetServerSettingsCache();
+      process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE = "1";
+      return true;
+    }
+    case "startScanMaintenance": {
+      await require("@cocalc/server/collaborators/maintenance").startCollaboratorsMaintenance();
+      return true;
+    }
+    case "scanBatchPass": {
+      await require("@cocalc/server/collaborators/api").runRoutedScanBatchPass(
+        () => true,
+      );
+      return true;
+    }
     case "scanDispatch": {
       if (config.role !== "owner") throw Error("owner fixture required");
       return require("@cocalc/server/collaborators/scan-worker").runCollaborationScanPass();
@@ -1108,7 +1130,12 @@ async function command(name, args = {}) {
       });
     }
     case "scanPublic": {
-      const methods = ["requestScan", "inspectScan", "getScanStatus"];
+      const methods = [
+        "scanProjects",
+        "requestScan",
+        "inspectScan",
+        "getScanStatus",
+      ];
       if (!methods.includes(args.method))
         throw Error("invalid fixture Scan method");
       process.env.COCALC_PEOPLE_SCAN_API_PROTOTYPE = "1";

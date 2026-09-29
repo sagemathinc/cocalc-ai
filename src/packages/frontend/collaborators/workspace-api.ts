@@ -31,6 +31,7 @@ export type DirectoryApi = Pick<
       | "acquireDemand"
       | "renewDemand"
       | "releaseDemand"
+      | "scanProjects"
       | "requestScan"
       | "inspectScan"
       | "getScanStatus"
@@ -58,6 +59,10 @@ export function boundCollaboratorsApi(accountId: string): DirectoryApi {
     return value;
   }
   return {
+    scanProjects: (opts) =>
+      call((service) =>
+        service.scanProjects({ ...opts, account_id: accountId }),
+      ),
     requestScan: (opts) =>
       call((service) =>
         service.requestScan({ ...opts, account_id: accountId }),
