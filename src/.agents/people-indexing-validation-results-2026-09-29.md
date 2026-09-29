@@ -837,3 +837,20 @@ Both PostgreSQL acceptance cases and the server build pass. The blocked queue
 eligibility regression remained below its ceiling (139 buffer hits, 0.252 ms in
 this run). This adds real database contention evidence but does not establish
 multi-hub failure recovery, transport correctness, or the broader capacity gates.
+
+### Account-home Actor Reservations
+
+Added an explicitly installed account-home Scan reservation store under the
+existing account rehome fence. All projects share one burst-two, one-token-per-
+minute actor bucket. Canonical project/request/mode retries reuse a seven-day
+reservation without charging again; changed mode fails. Owner rejection does
+not refund an attempt. Reservations are not project authorization, and no public
+API or forwarding path is wired to them yet.
+
+The store uses bounded opportunistic expired-receipt reclamation and an 11,000
+receipt cap, with no cold-account timer. Durable actor budget/receipt state is
+classified account-home, blocks unsupported rehome, and participates in existing
+deleted-account cleanup. Two focused PGlite cases validate shared-project burst,
+free replay, argument binding, wrong-home rejection, and banned-account replay
+denial. The server build passes. Cross-bay forwarding, actor concurrency/load
+coverage, status budgets, and transfer support remain outstanding.

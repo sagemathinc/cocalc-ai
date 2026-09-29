@@ -16,6 +16,8 @@ export async function assertNoPeopleAccountStateForRehome(
     "people_collaboration_outbox",
     "people_invitation_drafts",
     "people_invitation_operations",
+    "collaboration_scan_actor_budget",
+    "collaboration_scan_actor_receipts",
   ]) {
     if (
       !(await db.query("SELECT to_regclass($1) AS name", [`public.${table}`]))
@@ -93,6 +95,8 @@ export async function purgeDeletedPeopleAccounts(limit = 100) {
       "people_collaboration_outbox",
       "people_invitation_drafts",
       "people_invitation_operations",
+      "collaboration_scan_actor_budget",
+      "collaboration_scan_actor_receipts",
     ]) {
       if (
         (await db.query("SELECT to_regclass($1) AS name", [`public.${table}`]))

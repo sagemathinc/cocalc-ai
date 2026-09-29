@@ -1477,6 +1477,18 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
     },
   ),
 
+  ...adHocEntries(
+    ["collaboration_scan_actor_budget", "collaboration_scan_actor_receipts"],
+    {
+      ownership: "account-home",
+      authority: "account_id",
+      portability: "unsupported",
+      source: "database/postgres/collaborators/collaborators-scan-actor.ts",
+      migrate_to_schema: true,
+      notes:
+        "Explicit prototype actor-wide Scan reservations. Rehome is guarded until durable budget/receipt transfer is implemented.",
+    },
+  ),
   ...adHocEntries(["membership_trial_claims"], {
     ownership: "seed-global",
     authority: "seed",
