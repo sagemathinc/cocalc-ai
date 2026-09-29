@@ -301,6 +301,15 @@ export class LiteCollaborators {
       },
     });
     this.api = {
+      requestScan: async () => {
+        throw Error("People Scan is not supported in standalone Lite");
+      },
+      inspectScan: async () => {
+        throw Error("People Scan is not supported in standalone Lite");
+      },
+      getScanStatus: async () => {
+        throw Error("People Scan is not supported in standalone Lite");
+      },
       acquireDemand: async () => {
         throw Error(
           "People demand scheduling is not supported in standalone Lite",

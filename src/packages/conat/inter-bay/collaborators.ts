@@ -110,7 +110,10 @@ export type CollaborationProjectionPage =
       }[];
     };
 type RoutedApi = {
-  [K in keyof CollaboratorsApi]: (
+  [K in Exclude<
+    keyof CollaboratorsApi,
+    "requestScan" | "inspectScan" | "getScanStatus"
+  >]: (
     opts: Parameters<CollaboratorsApi[K]>[0] & { route: CollaborationRoute },
   ) => ReturnType<CollaboratorsApi[K]>;
 };

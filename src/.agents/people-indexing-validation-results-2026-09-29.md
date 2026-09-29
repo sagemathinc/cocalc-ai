@@ -2286,3 +2286,38 @@ These checks do not establish load capacity or bound an attacker’s total DB
 traffic: transport-level admission/concurrency limits and real multi-process
 contention validation remain required. Public API/CLI/UI and scoped-agent
 authorization remain open; no production flags were changed.
+
+### Public Human Scan RPC Surface
+
+Added `collaborators.requestScan`, `inspectScan`, and `getScanStatus` to the
+typed hub API and server exports. All require authenticated account identity
+injected by the standard auth transform; agent/project/host/anonymous principals
+are rejected. Wrappers explicitly reconstruct the request instead of forwarding
+caller-supplied routing fields. Admission routes through account-home reservation
+and project-owner authorization; inspection uses the shared home polling budget.
+
+Public access additionally requires `COCALC_PEOPLE_SCAN_API_PROTOTYPE=1` and
+`collaborators_enabled`. New admissions also require the existing dispatch
+prototype flag. For an isolated fixture, initialize maintenance with
+`COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE=1` to install both schemas before enabling
+API access; pausing dispatch afterward still permits receipt/status inspection.
+No configuration was enabled in this change. Public Scan wrappers are excluded
+from the automatic public-to-inter-bay method mapping because Scan has explicit
+home/owner service methods, not duplicate public wrappers on every bay.
+
+An ingress process allows at most 32 in-flight Scan calls and two per account
+across all three methods, with no waiting queue. Slots are released on success
+or failure; durable account/owner budgets remain authoritative across processes.
+This bounds concurrent ingress work, not total rejected-request traffic or
+cluster-wide ingress concurrency. No fresh-auth/browser-only requirement was
+added: the boundary is account authentication plus ordinary project access.
+Delegated-agent support still requires its explicit reviewed scope. Standalone
+Lite returns a clear unsupported error for these owner-routed operations.
+
+Server and Lite/reference typechecks pass, along with 79 Conat auth/API tests,
+39 server routing tests and 41 Lite store tests. New coverage verifies identity
+binding/principal rejection, default-off behavior, authoritative routing,
+inspection while dispatch is paused, per-account/global in-flight limits,
+failure-slot release, and Lite rejection. These are not live multi-bay or
+scoped-agent acceptance tests. CLI/UI, demand/bootstrap integration and the
+remaining design/validation gates are still open.

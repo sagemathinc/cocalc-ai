@@ -27,6 +27,18 @@ let store: LiteCollaborators;
 let epoch: string;
 let enabled: boolean;
 
+test("standalone Lite explicitly rejects owner-routed Scan operations", async () => {
+  await expect(
+    store.api.requestScan({ ...local, request_id: account_id, mode: "check" }),
+  ).rejects.toThrow("not supported in standalone Lite");
+  await expect(
+    store.api.inspectScan({ ...local, request_id: account_id }),
+  ).rejects.toThrow("not supported in standalone Lite");
+  await expect(
+    store.api.getScanStatus({ ...local, job_id: account_id }),
+  ).rejects.toThrow("not supported in standalone Lite");
+});
+
 function resource(
   id = "thread-a",
   changes: Partial<CollaborationResource> = {},

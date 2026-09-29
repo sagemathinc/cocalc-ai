@@ -8,6 +8,15 @@ import {
   authFirstRequireAccountWithBoundSession,
 } from "./util";
 import type { PeopleInvitationsApi } from "@cocalc/util/people-invitations";
+import type {
+  ScanAdmissionRequest,
+  ScanAdmissionResult,
+  ScanInspectionRequest,
+  ScanStatusRequest,
+  ScanReceipt,
+  ScanDiscoveryStatus,
+  ScanReadResult,
+} from "@cocalc/util/collaboration-scan";
 import type { CollaborationDemandApi } from "@cocalc/util/collaboration-demand";
 import type { PeopleInvitationDiscoveryApi } from "@cocalc/util/people-invitation-discovery";
 import type {
@@ -52,6 +61,15 @@ export interface CollaboratorsApi
     PeopleInvitationsApi,
     PeopleInvitationDiscoveryApi,
     CollaborationDemandApi {
+  requestScan(
+    opts: Omit<ScanAdmissionRequest, "account_id"> & { account_id?: string },
+  ): Promise<ScanAdmissionResult>;
+  inspectScan(
+    opts: Omit<ScanInspectionRequest, "account_id"> & { account_id?: string },
+  ): Promise<ScanReadResult<ScanReceipt | null>>;
+  getScanStatus(
+    opts: Omit<ScanStatusRequest, "account_id"> & { account_id?: string },
+  ): Promise<ScanReadResult<ScanDiscoveryStatus>>;
   listPeopleContacts(
     opts: Omit<PeopleContactQuery, "account_id"> & { account_id?: string },
   ): Promise<PeopleContactPage>;
@@ -117,10 +135,7 @@ export interface CollaboratorsApi
     opts: CollaborationDiscoveryWrite,
   ): Promise<{ replayed: boolean }>;
   /** Bounded account-wide invalidation. Reset means discard pages and resnapshot. */
-  check(opts: {
-    account_id?: string;
-    since?: string;
-  }): Promise<{
+  check(opts: { account_id?: string; since?: string }): Promise<{
     revision: string;
     reset: boolean;
     poll_after_ms: number;
@@ -236,6 +251,9 @@ export interface CollaboratorsApi
 }
 
 export const collaborators = {
+  requestScan: authFirstRequireAccount,
+  inspectScan: authFirstRequireAccount,
+  getScanStatus: authFirstRequireAccount,
   resolveInvitationRecipient: authFirstRequireAccount,
   listInvitationProjects: authFirstRequireAccount,
   prepareInvitation: authFirstRequireAccountWithBoundSession,

@@ -4,6 +4,9 @@
  */
 import { collaboratorsApi } from "@cocalc/server/collaborators/api";
 export const {
+  requestScan,
+  inspectScan,
+  getScanStatus,
   acquireDemand,
   renewDemand,
   releaseDemand,

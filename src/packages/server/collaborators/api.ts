@@ -210,7 +210,69 @@ async function writer<T>(
 }
 
 /** Public hub calls already have their principal injected by auth-first handlers. */
+let scanCalls = 0;
+const scanActors = new Map<string, number>();
+async function publicScan<T>(
+  account_id: string | undefined,
+  fn: (account_id: string) => Promise<T>,
+) {
+  uuid(account_id, "authenticated account_id");
+  if (process.env.COCALC_PEOPLE_SCAN_API_PROTOTYPE !== "1")
+    throw Error("Scan API prototype is not enabled");
+  const actor = account_id!.toLowerCase();
+  const count = scanActors.get(actor) ?? 0;
+  if (scanCalls >= 32 || count >= 2) throw Error("Scan API busy; retry later");
+  scanCalls++;
+  scanActors.set(actor, count + 1);
+  try {
+    await enabled();
+    return await fn(actor);
+  } finally {
+    scanCalls--;
+    const remaining = scanActors.get(actor)! - 1;
+    if (remaining) scanActors.set(actor, remaining);
+    else scanActors.delete(actor);
+  }
+}
+
 export const collaboratorsApi: CollaboratorsApi = {
+  requestScan(opts) {
+    return publicScan(opts.account_id, (account_id) =>
+      home(account_id, (api, route) =>
+        api.scanAtHome({
+          account_id,
+          project_id: opts.project_id,
+          request_id: opts.request_id,
+          mode: opts.mode,
+          route,
+        }),
+      ),
+    );
+  },
+  inspectScan(opts) {
+    return publicScan(opts.account_id, (account_id) =>
+      home(account_id, (api, route) =>
+        api.inspectScanAtHome({
+          account_id,
+          project_id: opts.project_id,
+          request_id: opts.request_id,
+          route,
+        }),
+      ),
+    );
+  },
+  getScanStatus(opts) {
+    return publicScan(opts.account_id, (account_id) =>
+      home(account_id, (api, route) =>
+        api.scanStatusAtHome({
+          account_id,
+          project_id: opts.project_id,
+          job_id: opts.job_id,
+          route,
+        }),
+      ),
+    );
+  },
   async acquireDemand(opts) {
     await demandEnabled();
     return home(opts.account_id, (api, route) =>

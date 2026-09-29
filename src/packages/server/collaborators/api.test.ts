@@ -435,6 +435,150 @@ test("revision interests derive the home and require project-scoped demand", asy
     });
   }
 });
+test("public Scan uses authoritative routes, typed results and default-off admission", async () => {
+  const flags = [
+    "COCALC_PEOPLE_SCAN_API_PROTOTYPE",
+    "COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE",
+  ];
+  const prior = flags.map((flag) => process.env[flag]);
+  try {
+    const request = {
+      account_id,
+      project_id,
+      request_id: randomUUID(),
+      mode: "check" as const,
+      route: { bay_id: "forged" },
+    };
+    delete process.env.COCALC_PEOPLE_SCAN_API_PROTOTYPE;
+    await expect(collaboratorsApi.requestScan(request)).rejects.toThrow(
+      "not enabled",
+    );
+    expect(scanReserve).not.toHaveBeenCalled();
+    flags.forEach((flag) => (process.env[flag] = "1"));
+    scanReserve.mockResolvedValue({ reserved: true, expires_at: 123 });
+    const receipt = {
+      admission: "accepted",
+      job_id: randomUUID(),
+      expires_at: 123,
+    };
+    remote.scanAtOwner.mockResolvedValue(receipt);
+    expect(await collaboratorsApi.requestScan(request)).toEqual(receipt);
+    expect(remote.scanAtOwner).toHaveBeenCalledWith({ ...request, route });
+    delete process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE;
+    remote.inspectScanAtOwner.mockResolvedValue(receipt);
+    expect(await collaboratorsApi.inspectScan(request)).toEqual({
+      allowed: true,
+      value: receipt,
+      poll_after_ms: 1000,
+    });
+    expect(remote.inspectScanAtOwner).toHaveBeenCalledWith({
+      account_id,
+      project_id,
+      request_id: request.request_id,
+      route,
+    });
+    remote.scanStatusAtOwner.mockResolvedValue({ state: "queued" });
+    expect(
+      await collaboratorsApi.getScanStatus({
+        account_id,
+        project_id,
+        job_id: receipt.job_id,
+      }),
+    ).toEqual({
+      allowed: true,
+      value: { state: "queued" },
+      poll_after_ms: 1000,
+    });
+    await expect(collaboratorsApi.requestScan(request)).rejects.toThrow(
+      "disabled",
+    );
+    settings.mockResolvedValue({ collaborators_enabled: false });
+    await expect(collaboratorsApi.inspectScan(request)).rejects.toThrow(
+      "not enabled",
+    );
+  } finally {
+    flags.forEach((flag, i) => {
+      if (prior[i] === undefined) delete process.env[flag];
+      else process.env[flag] = prior[i];
+    });
+  }
+});
+
+test("public Scan shares bounded in-flight slots and releases them on failure", async () => {
+  const prior = process.env.COCALC_PEOPLE_SCAN_API_PROTOTYPE;
+  process.env.COCALC_PEOPLE_SCAN_API_PROTOTYPE = "1";
+  let finish!: (value: { collaborators_enabled: boolean }) => void;
+  const pending = new Promise<{ collaborators_enabled: boolean }>(
+    (resolve) => (finish = resolve),
+  );
+  settings.mockReturnValueOnce(pending).mockReturnValueOnce(pending);
+  const request = { account_id, project_id, request_id: randomUUID() };
+  const first = collaboratorsApi.inspectScan(request);
+  const second = collaboratorsApi.inspectScan(request);
+  try {
+    await expect(
+      collaboratorsApi.getScanStatus({
+        account_id,
+        project_id,
+        job_id: randomUUID(),
+      }),
+    ).rejects.toThrow("busy");
+    finish({ collaborators_enabled: false });
+    await expect(first).rejects.toThrow("not enabled");
+    await expect(second).rejects.toThrow("not enabled");
+    remote.inspectScanAtOwner.mockResolvedValue(null);
+    expect(await collaboratorsApi.inspectScan(request)).toEqual({
+      allowed: true,
+      value: null,
+      poll_after_ms: 1000,
+    });
+  } finally {
+    finish({ collaborators_enabled: false });
+    await Promise.allSettled([first, second]);
+    if (prior === undefined)
+      delete process.env.COCALC_PEOPLE_SCAN_API_PROTOTYPE;
+    else process.env.COCALC_PEOPLE_SCAN_API_PROTOTYPE = prior;
+  }
+});
+
+test("public Scan bounds concurrent work across distinct accounts", async () => {
+  const prior = process.env.COCALC_PEOPLE_SCAN_API_PROTOTYPE;
+  process.env.COCALC_PEOPLE_SCAN_API_PROTOTYPE = "1";
+  let finish!: (value: { collaborators_enabled: boolean }) => void;
+  const pending = new Promise<{ collaborators_enabled: boolean }>(
+    (resolve) => (finish = resolve),
+  );
+  settings.mockReturnValue(pending);
+  const requests = Array.from({ length: 32 }, () =>
+    collaboratorsApi.inspectScan({
+      account_id: randomUUID(),
+      project_id,
+      request_id: randomUUID(),
+    }),
+  );
+  const outcomes = Promise.allSettled(requests);
+  try {
+    await expect(
+      collaboratorsApi.inspectScan({
+        account_id: randomUUID(),
+        project_id,
+        request_id: randomUUID(),
+      }),
+    ).rejects.toThrow("busy");
+    expect(home).not.toHaveBeenCalled();
+    finish({ collaborators_enabled: false });
+    expect(
+      (await outcomes).every((result) => result.status === "rejected"),
+    ).toBe(true);
+  } finally {
+    finish({ collaborators_enabled: false });
+    await outcomes;
+    if (prior === undefined)
+      delete process.env.COCALC_PEOPLE_SCAN_API_PROTOTYPE;
+    else process.env.COCALC_PEOPLE_SCAN_API_PROTOTYPE = prior;
+  }
+});
+
 test("scan inspection routes exact identities without admission or token reservation", async () => {
   const prior = process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE;
   delete process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE;
