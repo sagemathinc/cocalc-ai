@@ -106,6 +106,7 @@ async function bootstrapDb() {
   await require("@cocalc/database/postgres/schema").syncSchema();
   await require("@cocalc/database/postgres/collaborators/collaborators-common").syncCollaboratorsSchema();
   await require("@cocalc/database/postgres/collaborators/collaborators-notifications").ensureCollaborationNotificationSchema();
+  if (config.resume) return;
   await pool.query(
     "INSERT INTO server_settings(name,value) VALUES('collaborators_enabled','yes') ON CONFLICT(name) DO UPDATE SET value='yes'",
   );
@@ -639,6 +640,11 @@ async function historicalFixture(args) {
 
 async function command(name, args = {}) {
   switch (name) {
+    case "bootProcessor":
+      config = { ...args, resume: true };
+      await bootstrapDb();
+      await configureFabric();
+      return true;
     case "boot":
       config = args;
       if (config.role === "host") return startHost();
@@ -869,6 +875,17 @@ async function command(name, args = {}) {
         ? "1"
         : "0";
       return true;
+    case "claimRevisionOutbox":
+      return require("@cocalc/database/postgres/collaborators/collaborators-revision-outbox").claimCollaborationRevisionOutbox(
+        config.project,
+        { owning_bay_id: config.bays[0] },
+      );
+    case "settleRevisionOutbox":
+      return require("@cocalc/database/postgres/collaborators/collaborators-revision-outbox").settleCollaborationRevisionOutbox(
+        args.claim,
+        null,
+        { owning_bay_id: config.bays[0] },
+      );
     case "dispatchRevisionOutbox":
     case "runRevisionOutbox":
     case "claimActiveProjection":

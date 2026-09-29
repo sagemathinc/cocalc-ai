@@ -174,6 +174,73 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
       await env.worker("owner").call("dispatchRevisionHint", request),
     ).toEqual({ state: "deferred" });
   }, 60000);
+  test("outbox survives a processor crash and resumes after claim expiry", async () => {
+    await env.sql("owner", "DELETE FROM collaboration_revision_interests");
+    await env.sql("a", "DELETE FROM collaboration_revision_receivers");
+    await env.sql(
+      "owner",
+      `INSERT INTO collaboration_projects(project_id,generation,revision) VALUES($1,$2,1)
+       ON CONFLICT(project_id) DO UPDATE SET revision=collaboration_projects.revision+1`,
+      [env.project, randomUUID()],
+    );
+    await demand("acquire", {
+      consumer_id: randomUUID(),
+      scope: { kind: "all" },
+    });
+    await env.worker("b").call("registerRevisionReceiver");
+    const [before] = await env.sql(
+      "a",
+      "SELECT dirty_seq::text FROM collaboration_revision_receivers WHERE project_id=$1",
+      [env.project],
+    );
+    await env.sql(
+      "owner",
+      "UPDATE collaboration_projects SET revision=revision+1 WHERE project_id=$1",
+      [env.project],
+    );
+    const first = await env.restartOwnerProcessor();
+    await first.call("installRevisionInterest");
+    await first.call("installRevisionOutbox");
+    const claim = await first.call("claimRevisionOutbox");
+    expect(claim).toMatchObject({ project_id: env.project });
+    const next = await env.restartOwnerProcessor();
+    expect(next.child.pid).not.toBe(first.child.pid);
+    expect(first.child.signalCode).toBe("SIGKILL");
+    await next.call("installRevisionInterest");
+    await next.call("installRevisionOutbox");
+    expect(
+      await env.sql(
+        "owner",
+        "SELECT token,claim_id FROM collaboration_revision_outbox WHERE project_id=$1",
+        [env.project],
+      ),
+    ).toEqual([{ token: claim.token, claim_id: claim.claim_id }]);
+    expect(await next.call("runRevisionOutbox")).toBe(0);
+    // Simulate the lease deadline, not process loss: the latter is a real kill.
+    await env.sql(
+      "owner",
+      `UPDATE collaboration_revision_outbox SET claim_until=now()-interval '1 second',
+       due_at=now()-interval '1 second' WHERE project_id=$1`,
+      [env.project],
+    );
+    expect(await next.call("settleRevisionOutbox", { claim })).toBe(false);
+    expect(await next.call("runRevisionOutbox")).toBe(1);
+    expect(
+      await env.sql(
+        "owner",
+        "SELECT token FROM collaboration_revision_outbox WHERE project_id=$1",
+        [env.project],
+      ),
+    ).toEqual([]);
+    const [after] = await env.sql(
+      "a",
+      "SELECT dirty_seq::text FROM collaboration_revision_receivers WHERE project_id=$1",
+      [env.project],
+    );
+    expect(BigInt(after.dirty_seq)).toBe(BigInt(before.dirty_seq) + 1n);
+    expect(await next.call("runRevisionOutbox")).toBe(0);
+  }, 120000);
+
   test("outbox delivers changed watermarks through the fabric and repair ignores acknowledged or expired interests", async () => {
     await env.sql(
       "owner",

@@ -1931,3 +1931,20 @@ worker before a catalog edit, verifies pending intent and no wakeup from that
 disabled pass, then reenables and verifies delivery through home application.
 This does not yet test a real process restart or timer lifecycle, and rehome,
 restore, distributed budgets and workload/soak gates remain open.
+
+### Revision Outbox Process-Loss Recovery
+
+The isolated PostgreSQL/fabric fixture now supports a separate owner processor
+using the same durable database and live transport. A new acceptance case claims
+a catalog revision marker, kills that processor with SIGKILL, and boots a fresh
+process. The marker token and claim survive; maintenance does not dispatch while
+the claim is live. After advancing its deadline in fixture SQL, stale settlement
+is rejected and discovery-driven maintenance delivers the watermark to the real
+account-home receiver. The marker is removed, dirty sequence advances exactly
+once, and a subsequent pass finds no pending delivery.
+
+Server/reference typecheck and all 21 real PostgreSQL/fabric demand tests pass.
+Process loss is real; lease expiry is simulated for bounded test duration. This
+does not exercise shared transport loss, automatic timer startup, recipient-page
+cursor recovery, database restart, rehome or restore. Those lifecycle cases and
+the broader scale/soak gates remain open; no production settings were changed.

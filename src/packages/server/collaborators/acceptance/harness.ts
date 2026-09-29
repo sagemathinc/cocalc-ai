@@ -28,7 +28,7 @@ export class AcceptanceWorker {
   readonly exited: Promise<void>;
   constructor(
     readonly role: Role,
-    env: NodeJS.ProcessEnv,
+    readonly env: NodeJS.ProcessEnv,
   ) {
     this.child = fork(join(__dirname, "worker.cjs"), [], {
       env,
@@ -116,6 +116,7 @@ export class MultibayAcceptance {
   readonly host = randomUUID();
   readonly bays = ["acceptance-owner", "acceptance-a", "acceptance-b"];
   readonly workers = new Map<Role, AcceptanceWorker>();
+  private ownerProcessor?: AcceptanceWorker;
   private readonly prefix = `collab_acceptance_${randomBytes(5).toString("hex")}`;
   private readonly accountSecrets = [randomUUID(), randomUUID()];
   private readonly hostSecret = randomUUID();
@@ -139,6 +140,7 @@ export class MultibayAcceptance {
       directory: this.root,
       pids: [
         this.pgPid,
+        this.ownerProcessor?.child.pid,
         ...[...this.workers.values()].map((worker) => worker.child.pid),
       ].filter((pid): pid is number => pid != null),
     };
@@ -328,6 +330,23 @@ export class MultibayAcceptance {
     ).address;
     return { oldPid: old.child.pid, newPid: host.child.pid };
   }
+  async restartOwnerProcessor() {
+    const old = this.ownerProcessor;
+    if (old) {
+      old.child.kill("SIGKILL");
+      await Promise.race([
+        old.exited,
+        pause(5000).then(() => {
+          throw Error("fixture owner processor did not exit after SIGKILL");
+        }),
+      ]);
+    }
+    // Keep the fixture transport alive; only the processor loses memory.
+    const worker = new AcceptanceWorker("owner", this.worker("owner").env);
+    this.ownerProcessor = worker;
+    await worker.call("bootProcessor", this.config("owner"), 90000);
+    return worker;
+  }
   async retrySend(role: "a" | "b", method: string, opts: object) {
     for (let attempt = 0; attempt < 30; attempt++) {
       try {
@@ -374,6 +393,8 @@ export class MultibayAcceptance {
     return this.worker(role).call<any[]>("sql", { sql, params });
   }
   async close() {
+    await this.ownerProcessor?.close();
+    this.ownerProcessor = undefined;
     // Stop ingress/host first, then account workers, and seed/fabric last.
     for (const role of ["host", "b", "a", "owner"] as const)
       await this.workers.get(role)?.close();
