@@ -43,6 +43,33 @@ This supersedes the older build checkpoint for the current implementation.
 Independent review, actual browser validation, broader mixed-load/resource-cost
 measurements and the explicit canary decision remain outstanding.
 
+### Combined Release-Path Acceptance Check
+
+At `72d39aa9bb98befdeb6f8fff24efa0bb0326d9bf`, the following command from
+`src/packages/server` passed all six suites/tests in 356.234 seconds:
+
+```sh
+COCALC_COLLABORATORS_ACCEPTANCE=1 pnpm exec jest --runInBand --runTestsByPath \
+  collaborators/scan-host.acceptance.test.ts \
+  collaborators/returning-demand.acceptance.test.ts \
+  collaborators/demand-rehome.acceptance.test.ts \
+  collaborators/notification-projection-independence.acceptance.test.ts \
+  collaborators/multi-project-load.acceptance.test.ts \
+  collaborators/known-source.acceptance.test.ts
+```
+
+This reruns explicit host Scan/replay without compute startup, retention return
+and revocation/disable behavior, disposable demand across account rehome,
+projection-independent offline notification delivery, competing catalog sizes,
+and known-source demand expiry after the latest scheduling changes. Each suite
+uses its own isolated services. This is a combined regression run, not one
+simultaneous mixed workload or browser test. The idle observation was 60.032
+seconds with no observed owner RPC increase; the four-project fixture again
+converged in under seven seconds per observed phase/project.
+
+No live deployment, production setting or credential was changed. Browser
+validation, independent review and the rollout decision remain unverified.
+
 ## Historical Extended-Scope Audit
 
 Before the user-approved scope reduction, the seven implementation gates were:
