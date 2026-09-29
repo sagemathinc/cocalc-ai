@@ -626,7 +626,7 @@ describe("ChatLog immediate steer rendering", () => {
     },
   );
 
-  it("folds midturn post-only comments into collapsible activity without claiming delivery", () => {
+  it("keeps midturn post-only comments as editable rows below the turn", () => {
     const messages = midturnMessages();
     messages.set("2000", {
       ...messages.get("2000"),
@@ -645,11 +645,14 @@ describe("ChatLog immediate steer rendering", () => {
       history: [{ content: "A note during the turn" }],
     });
     render(midturnChat(messages));
-    expect(screen.queryByText("posted-comment")).not.toBeInTheDocument();
+    expect(screen.getByText("posted-comment")).toBeInTheDocument();
     expect(
-      lastRenderedMessageProps("assistant-1").activitySteers,
-    ).toContainEqual(
-      expect.objectContaining({ messageId: "posted-comment", state: "saved" }),
+      lastRenderedMessageProps("posted-comment").compactActivityMessage,
+    ).toBe(false);
+    expect(
+      lastRenderedMessageProps("assistant-1").activitySteers ?? [],
+    ).not.toContainEqual(
+      expect.objectContaining({ messageId: "posted-comment" }),
     );
   });
 
@@ -702,7 +705,7 @@ describe("ChatLog immediate steer rendering", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("keeps queued bodies in the current activity until their own assistant actually starts", () => {
+  it("shows queued prompts below the running turn, not in its activity", () => {
     const messages = midturnMessages();
     messages.set("3000", { ...messages.get("3000"), acp_state: "queued" });
     messages.set("6000", {
@@ -718,11 +721,13 @@ describe("ChatLog immediate steer rendering", () => {
     });
     const view = render(midturnChat(messages));
     expect(lastRenderedMessageProps("network-1").compactActivityMessage).toBe(
-      true,
+      false,
     );
-    expect(lastRenderedMessageProps("assistant-1").activitySteers[0]).toEqual(
-      expect.objectContaining({ messageId: "network-1", state: "queued" }),
-    );
+    expect(
+      (lastRenderedMessageProps("assistant-1").activitySteers ?? []).some(
+        ({ messageId }) => messageId === "network-1",
+      ),
+    ).toBe(false);
     messages.set("6000", {
       ...messages.get("6000"),
       acp_state: "running",
@@ -760,15 +765,14 @@ describe("ChatLog immediate steer rendering", () => {
     render(midturnChat(messages));
     for (const id of ["network-1", "answer-1", "network-2"])
       expect(screen.getByText(id)).toBeInTheDocument();
-    expect(lastRenderedMessageProps("assistant-1").activitySteers).toEqual([
-      expect.objectContaining({ messageId: "network-1", state: "queued" }),
-      expect.objectContaining({ messageId: "answer-1", state: "not-sent" }),
-    ]);
+    expect(
+      lastRenderedMessageProps("assistant-1").activitySteers ?? [],
+    ).toEqual([]);
     expect(lastRenderedMessageProps("network-1").compactActivityMessage).toBe(
-      true,
+      false,
     );
     expect(lastRenderedMessageProps("answer-1").compactActivityMessage).toBe(
-      true,
+      false,
     );
     expect(lastRenderedMessageProps("network-2").compactActivityMessage).toBe(
       false,
@@ -1021,7 +1025,7 @@ describe("ChatLog immediate steer rendering", () => {
     expect(steer.text).not.toContain("Agent-provided content");
   });
 
-  it("invalidates a mounted virtual row when guidance state changes", () => {
+  it("updates a mounted virtual row in place when guidance state changes", () => {
     freezeVirtuosoRows = true;
     const messages = new Map([
       [
@@ -1094,7 +1098,7 @@ describe("ChatLog immediate steer rendering", () => {
     expect(latestVirtuosoProps.data).not.toBe(beforeGuidanceData);
     expect(latestVirtuosoProps.data[0]).not.toBe(beforeGuidanceData[0]);
     expect(latestVirtuosoProps.itemContent).toBe(stableItemRenderer);
-    expect(whileSendingKey).not.toBe(beforeGuidanceKey);
+    expect(whileSendingKey).toBe(beforeGuidanceKey);
     expect(lastRenderedMessageProps("assistant-1")?.activitySteers).toEqual([
       expect.objectContaining({ messageId: "steer-1", state: "sending" }),
     ]);
@@ -1119,7 +1123,7 @@ describe("ChatLog immediate steer rendering", () => {
     expect(latestVirtuosoProps.data[0]).not.toBe(whileSendingData[0]);
     expect(
       latestVirtuosoProps.computeItemKey(1, latestVirtuosoProps.data[1]),
-    ).not.toBe(whileSendingKey);
+    ).toBe(whileSendingKey);
     expect(lastRenderedMessageProps("assistant-1")?.activitySteers).toEqual([
       expect.objectContaining({
         messageId: "steer-1",
@@ -1146,7 +1150,7 @@ describe("ChatLog immediate steer rendering", () => {
     );
     expect(
       latestVirtuosoProps.computeItemKey(1, latestVirtuosoProps.data[1]),
-    ).not.toBe(sentKey);
+    ).toBe(sentKey);
     expect(lastRenderedMessageProps("assistant-1")?.activitySteers).toEqual([
       expect.objectContaining({
         messageId: "steer-1",
@@ -1243,7 +1247,7 @@ describe("ChatLog immediate steer rendering", () => {
     ]);
     expect(
       latestVirtuosoProps.computeItemKey(1, latestVirtuosoProps.data[1]),
-    ).not.toBe(firstKey);
+    ).toBe(firstKey);
   });
 
   it("propagates live activity updates through a mounted virtual row", () => {

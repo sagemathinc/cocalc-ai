@@ -68,6 +68,7 @@ import { getUserName } from "./user-name";
 import { getSortedDates } from "./sorted-dates";
 import { useActivityVisibility } from "./activity-visibility";
 import { agentRpcMessageMarkdown } from "./agent-message-presentation";
+import { canMovePostedMessageToAgent } from "./post-to-agent";
 import {
   CodexAttentionCard,
   type CodexAttentionDraft,
@@ -309,6 +310,17 @@ function ReactiveActivitySteersMessage({
   );
 }
 
+function isAwaitingExplicitSend(
+  message: ChatMessageTyped,
+  state: AttachedSteerMessage["state"],
+): boolean {
+  return (
+    state === "queued" ||
+    state === "not-sent" ||
+    (state === "saved" && canMovePostedMessageToAgent(message))
+  );
+}
+
 function collectSteers({
   messages,
   visibleKeys,
@@ -425,6 +437,9 @@ function collectSteers({
             ? "not-sent"
             : "saved";
     if (!state || (immediate && !anchoredParentId)) continue;
+    // Posted and queued messages are not part of a turn until they are sent.
+    // Leave them as ordinary rows below it, where they can still be edited.
+    if (!immediate && isAwaitingExplicitSend(message, state)) continue;
     const deliveredAtMs = Number(
       field(message, "acp_guidance_delivered_at_ms"),
     );
@@ -1780,38 +1795,15 @@ export function MessageList({
     key: string;
     render: () => ReactNode;
   };
-  const steerRowKey = (date: string): string => {
-    const message = getMessageAtDate({
-      messages,
-      date: parseFloat(date),
-    });
-    const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
-    if (!messageId) return date;
-    const activitySteers =
-      activitySteersByAssistantMessageId?.get(messageId) ?? [];
-    const attachedSteers =
-      attachedSteersByParentMessageId?.get(messageId) ?? [];
-    const revision = [
-      ...activitySteers.map(
-        ({ messageId, state, date }) =>
-          `activity:${messageId}:${state}:${date}`,
-      ),
-      ...attachedSteers.map(
-        ({ messageId, state, date }) =>
-          `attached:${messageId}:${state}:${date}`,
-      ),
-    ].join("|");
-    return revision ? `${date}:${revision}` : date;
-  };
-  // Virtuoso memoizes mounted items. The key includes guidance revisions so an
-  // existing assistant activity row remounts when guidance is added, delivered,
-  // or changes state, without remounting the rest of the chat history.
+  // Keys stay stable when guidance changes: remounting a live turn would drop
+  // the reader's selection and re-measure its whole activity. Mounted rows get
+  // new render functions through `data`, and guidance through context.
   const virtuosoData: ChatVirtualRow[] = Array.from(
     { length: sortedDates.length + 1 },
     (_, index) => {
       const date = sortedDates[index];
       return {
-        key: date == null ? "end" : steerRowKey(date),
+        key: date ?? "end",
         render:
           index === sortedDates.length
             ? () => (
