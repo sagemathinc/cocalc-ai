@@ -1553,3 +1553,20 @@ interest-store tests pass. Coverage includes attempt limits, continuation and
 wrap, inactive candidates, failure isolation, disabled gates, owner filtering,
 pending catalog state and suppression while a delivery claim is live. Full
 authenticated scheduled lifecycle and large-scale repair latency remain unproven.
+
+### Authenticated Revision Repair Delivery
+
+Extended the isolated PostgreSQL/fabric harness to invoke the repair worker,
+not just a hand-selected dispatch call. The new case registers home demand and
+a receiver, changes the owner watermark, runs repair, and verifies both the
+owner's current acknowledgement and exactly one durable home dirty-sequence
+increment. A second pass sends nothing; expiry followed by another catalog
+change also sends nothing. The receiver's applied sequence remains zero,
+explicitly distinguishing durable wakeup receipt from completed projection work.
+
+The worker fixture temporarily enables repair scheduler flags and restores
+them afterward. Server typecheck passed. The full nineteen-case demand suite
+passed, then the final independent setup was validated by running the new case
+alone (one passed, eighteen skipped). This demonstrates real routed repair
+delivery, not timer timing, source-write triggering, home projection catch-up,
+or capacity under a large interest population.

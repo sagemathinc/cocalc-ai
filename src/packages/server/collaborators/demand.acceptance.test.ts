@@ -167,6 +167,72 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
       await env.worker("owner").call("dispatchRevisionHint", request),
     ).toEqual({ state: "deferred" });
   }, 60000);
+  test("repair delivers changed watermarks through the fabric and ignores acknowledged or expired interests", async () => {
+    await env.sql(
+      "owner",
+      "DELETE FROM collaboration_revision_interests WHERE project_id=$1",
+      [env.project],
+    );
+    await env.sql(
+      "a",
+      "DELETE FROM collaboration_revision_receivers WHERE project_id=$1",
+      [env.project],
+    );
+    await env.sql(
+      "owner",
+      `INSERT INTO collaboration_projects(project_id,generation,revision) VALUES($1,$2,1)
+      ON CONFLICT(project_id) DO NOTHING`,
+      [env.project, randomUUID()],
+    );
+    await demand("acquire", {
+      consumer_id: randomUUID(),
+      scope: { kind: "all" },
+    });
+    await env.worker("b").call("registerRevisionReceiver");
+    const [before] = await env.sql(
+      "a",
+      "SELECT dirty_seq::text FROM collaboration_revision_receivers WHERE project_id=$1",
+      [env.project],
+    );
+    await env.sql(
+      "owner",
+      "UPDATE collaboration_projects SET revision=revision+1 WHERE project_id=$1",
+      [env.project],
+    );
+    expect(await env.worker("owner").call("repairRevisionHints")).toBe(1);
+    const [ack] = await env.sql(
+      "owner",
+      `SELECT i.ack_generation=c.generation AND i.ack_revision=c.revision AS current
+      FROM collaboration_revision_interests i JOIN collaboration_projects c USING(project_id)
+      WHERE i.project_id=$1`,
+      [env.project],
+    );
+    expect(ack.current).toBe(true);
+    const read = () =>
+      env.sql(
+        "a",
+        "SELECT dirty_seq::text,applied_seq::text FROM collaboration_revision_receivers WHERE project_id=$1",
+        [env.project],
+      );
+    const expected = [
+      { dirty_seq: String(BigInt(before.dirty_seq) + 1n), applied_seq: "0" },
+    ];
+    expect(await read()).toEqual(expected);
+    expect(await env.worker("owner").call("repairRevisionHints")).toBe(0);
+    expect(await read()).toEqual(expected);
+    await env.sql(
+      "owner",
+      "UPDATE collaboration_revision_interests SET expires_at=clock_timestamp()-interval '1 second' WHERE project_id=$1",
+      [env.project],
+    );
+    await env.sql(
+      "owner",
+      "UPDATE collaboration_projects SET revision=revision+1 WHERE project_id=$1",
+      [env.project],
+    );
+    expect(await env.worker("owner").call("repairRevisionHints")).toBe(0);
+    expect(await read()).toEqual(expected);
+  }, 60000);
   test("shared catalog transport rejects cold and cross-home batches", async () => {
     await expect(env.worker("a").call("sharedProjectPage")).rejects.toThrow(
       "no demand",

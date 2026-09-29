@@ -858,6 +858,22 @@ async function command(name, args = {}) {
       return require("@cocalc/server/collaborators/revision-dispatch").dispatchCollaborationRevisionHint(
         args,
       );
+    case "repairRevisionHints": {
+      const flags = [
+        "COCALC_PEOPLE_DEMAND_SCHEDULER_PROTOTYPE",
+        "COCALC_PEOPLE_EVENT_FANOUT_PROTOTYPE",
+      ];
+      const previous = flags.map((name) => process.env[name]);
+      try {
+        flags.forEach((name) => (process.env[name] = "1"));
+        return await require("@cocalc/server/collaborators/revision-repair").runRevisionHintRepair();
+      } finally {
+        flags.forEach((name, i) => {
+          if (previous[i] === undefined) delete process.env[name];
+          else process.env[name] = previous[i];
+        });
+      }
+    }
     case "registerRevisionInterest": {
       const route =
         await require("@cocalc/server/inter-bay/directory").resolveProjectBay(
