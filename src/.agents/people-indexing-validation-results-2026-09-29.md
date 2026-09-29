@@ -1275,3 +1275,23 @@ instead of manually supplying receiver TTL; it covers cold-demand rejection,
 same-lease retries and subsequent durable wakeup delivery. The explicit method
 is not yet scheduled automatically from demand activation. Shared delta fetch,
 automatic renewal/retry, cold cleanup and full lifecycle/scale gates remain open.
+
+### Bounded Receiver Expiry Cleanup
+
+Added home-scoped expiry-indexed cleanup of at most 100 receiver rows per call,
+using row locks with `SKIP LOCKED` and local lock/statement timeouts. It deletes
+only expired scheduling hints, never canonical or personal data. Periodic
+maintenance integration and production-sized query/race measurements remain
+unfinished; this alone does not establish zero recurring cold-project cost.
+
+Cleanup required an additional stale-worker fence: each newly inserted receiver
+now has a random `receiver_id`, included in pending work and required to finish
+catch-up. Without this identity, deleting and recreating a row under the same
+still-valid owner lease could reset its sequence to a value held by an old
+worker. The old worker can no longer clear the recreated receiver's catch-up.
+
+Server build and three PGlite receiver tests pass. Coverage recreates a receiver
+under the same lease, rejects completion with the previous identity, processes
+105 expired rows in 100/5/0 cleanup batches, and preserves a live receiver.
+Real-PostgreSQL concurrent cleanup/rearm and automatic cleanup scheduling are
+not established by these store tests.

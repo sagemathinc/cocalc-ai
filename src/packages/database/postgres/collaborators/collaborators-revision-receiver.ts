@@ -17,6 +17,10 @@ export async function syncCollaborationRevisionReceiverSchema(
     applied_seq BIGINT NOT NULL DEFAULT 0)`);
   await db.query(`CREATE INDEX IF NOT EXISTS collaboration_revision_receivers_expiry
     ON collaboration_revision_receivers(expires_at,project_id)`);
+  await db.query(`ALTER TABLE collaboration_revision_receivers
+    ADD COLUMN IF NOT EXISTS receiver_id UUID NOT NULL DEFAULT gen_random_uuid()`);
+  await db.query(`CREATE INDEX IF NOT EXISTS collaboration_revision_receivers_home_expiry
+    ON collaboration_revision_receivers(home_bay_id,expires_at,project_id)`);
 }
 
 type ReceiverLease = {
@@ -159,6 +163,7 @@ export async function readCollaborationRevisionReceiverPage(opts: {
           owner_bay_id: row.owner_bay_id as string,
           lease_id: row.lease_id as string,
           dirty_seq: row.sequence as string,
+          receiver_id: row.receiver_id as string,
         })),
     };
   });
@@ -168,9 +173,10 @@ export async function readCollaborationRevisionReceiverPage(opts: {
  * pending. Sequences stay decimal strings to avoid BIGINT precision loss.
  */
 export async function finishCollaborationRevisionWakeup(
-  opts: ReceiverLease & { dirty_seq: string },
+  opts: ReceiverLease & { dirty_seq: string; receiver_id: string },
 ): Promise<boolean> {
   validate(opts);
+  uuid(opts.receiver_id, "receiver identity");
   if (
     !/^[1-9][0-9]{0,18}$/.test(opts.dirty_seq) ||
     BigInt(opts.dirty_seq) > 9223372036854775807n
@@ -182,15 +188,39 @@ export async function finishCollaborationRevisionWakeup(
     const { rows } = await db.query(
       `UPDATE collaboration_revision_receivers SET applied_seq=dirty_seq
       WHERE project_id=$1 AND home_bay_id=$2 AND owner_bay_id=$3 AND lease_id=$4
-      AND expires_at>clock_timestamp() AND dirty_seq=$5 RETURNING project_id`,
+      AND expires_at>clock_timestamp() AND dirty_seq=$5 AND receiver_id=$6 RETURNING project_id`,
       [
         opts.project_id,
         opts.home_bay_id,
         opts.owner_bay_id,
         opts.lease_id,
         opts.dirty_seq,
+        opts.receiver_id,
       ],
     );
     return rows.length > 0;
+  });
+}
+
+/** Expired scheduling state only; no membership or historical-account scan.
+ * Row locks serialize expiry deletion with rearming and skip busy receivers.
+ */
+export async function pruneCollaborationRevisionReceivers(
+  home_bay_id: string,
+): Promise<number> {
+  boundedText(home_bay_id, "receiver home", 128);
+  return transaction(async (db) => {
+    await db.query("SET LOCAL lock_timeout='1s'");
+    await db.query("SET LOCAL statement_timeout='2s'");
+    const { rows } = await db.query(
+      `WITH expired AS MATERIALIZED (
+      SELECT project_id FROM collaboration_revision_receivers
+      WHERE home_bay_id=$1 AND expires_at<=clock_timestamp()
+      ORDER BY expires_at,project_id LIMIT 100 FOR UPDATE SKIP LOCKED)
+      DELETE FROM collaboration_revision_receivers r USING expired e
+      WHERE r.project_id=e.project_id RETURNING r.project_id`,
+      [home_bay_id],
+    );
+    return rows.length;
   });
 }
