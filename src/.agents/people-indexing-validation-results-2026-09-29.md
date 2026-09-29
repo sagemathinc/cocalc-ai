@@ -396,3 +396,23 @@ and out-of-scope projects from both claim paths, clear queues on grace expiry,
 and run two maintenance passes over 1,000 eligible cold membership/access rows
 without seed work, grant claims, or project-page/access-refresh/notification-page
 RPCs. Source-writer traffic is independent and is not counted as account refresh.
+
+## Bounded Historical Cleanup Prototype
+
+With all three prototype switches enabled, projection cleanup now persists a
+keyset cursor and examines at most 20 candidate access keys per minute. An
+immediate maintenance retry preserves the cursor rather than traversing more
+historical memberships. Exhausting the keyspace resets the cursor for a later
+repair pass; skipped row locks are revisited on a subsequent cycle. Access
+leases continue to gate reads independently of eventual metadata deletion.
+The default legacy path is unchanged.
+
+This is a logical candidate and cadence bound, not yet a measured physical I/O
+bound: PostgreSQL query plans at 100k/1M dormant memberships still need validation.
+It does not implement retention GC, account lifecycle cleanup, or the remaining
+catalog and membership-change integration.
+
+Validation: server TypeScript build and all ten real-PostgreSQL demand tests
+pass. The 1,000-cold-membership maintenance test additionally verifies that the
+first pass advances exactly 20 ordered keys and an immediate second pass leaves
+the persisted cursor unchanged. Formatting and diff whitespace checks pass.

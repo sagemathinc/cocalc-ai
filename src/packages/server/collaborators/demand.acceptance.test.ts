@@ -390,8 +390,28 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
     );
     const before = (await env.worker("owner").call("inspect")).counters
       .ownerCalls;
+    const firstPage = await env.sql(
+      "a",
+      "SELECT account_id,project_id FROM collaboration_access ORDER BY account_id,project_id LIMIT 20",
+    );
     await demand("maintenance");
+    const cleanup = (
+      await env.sql(
+        "a",
+        "SELECT cursor FROM collaboration_maintenance WHERE id='cleanup'",
+      )
+    )[0].cursor;
+    expect(cleanup.account_id).toBe(firstPage.at(-1)!.account_id);
+    expect(cleanup.project_id).toBe(firstPage.at(-1)!.project_id);
     await demand("maintenance");
+    expect(
+      (
+        await env.sql(
+          "a",
+          "SELECT cursor FROM collaboration_maintenance WHERE id='cleanup'",
+        )
+      )[0].cursor,
+    ).toEqual(cleanup);
     const after = (await env.worker("owner").call("inspect")).counters
       .ownerCalls;
     for (const method of ["projectPage", "refreshAccess", "notificationPage"])

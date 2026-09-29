@@ -358,14 +358,53 @@ export async function failCollaborationProjection(
 /** Bounded deletion of inaccessible metadata; leases already gate reads. */
 export async function cleanCollaborationProjections(bay_id: string) {
   return transaction(async (db) => {
+    let candidates: { account_id: string; project_id: string }[] | undefined;
+    if (demandSchedulingEnabled()) {
+      await db.query(
+        "INSERT INTO collaboration_maintenance(id,cursor) VALUES('cleanup','{}') ON CONFLICT DO NOTHING",
+      );
+      const state = (
+        await db.query(
+          "SELECT cursor FROM collaboration_maintenance WHERE id='cleanup' FOR UPDATE",
+        )
+      ).rows[0].cursor;
+      const now = (await db.query("SELECT clock_timestamp() AS now")).rows[0]
+        .now as Date;
+      if (state.next_at && new Date(state.next_at).getTime() > now.getTime())
+        return 0;
+      candidates = (
+        await db.query(
+          `SELECT account_id,project_id FROM collaboration_access
+        WHERE (account_id,project_id)>($1::uuid,$2::uuid)
+        ORDER BY account_id,project_id LIMIT 20`,
+          [
+            state.account_id ?? "00000000-0000-0000-0000-000000000000",
+            state.project_id ?? "00000000-0000-0000-0000-000000000000",
+          ],
+        )
+      ).rows;
+      // A skipped row lock is revisited on the next bounded repair cycle. This
+      // cursor is not an access authorization or a proof of complete cleanup.
+      await db.query(
+        "UPDATE collaboration_maintenance SET cursor=$1::jsonb WHERE id='cleanup'",
+        [
+          JSON.stringify({
+            ...(candidates!.length === 20 ? candidates!.at(-1) : {}),
+            next_at: new Date(now.getTime() + 60_000).toISOString(),
+          }),
+        ],
+      );
+      if (!candidates!.length) return 0;
+    }
     const { rows } = await db.query(
       `SELECT x.account_id,x.project_id FROM collaboration_access x
+      ${candidates ? `JOIN jsonb_to_recordset($2::jsonb) AS c(account_id uuid,project_id uuid) USING(account_id,project_id)` : ""}
       WHERE NOT EXISTS(SELECT 1 FROM account_project_index p JOIN accounts a USING(account_id)
         WHERE p.account_id=x.account_id AND p.project_id=x.project_id
         AND COALESCE(a.home_bay_id,'bay-0')=$1 AND NOT COALESCE(a.deleted,FALSE) AND NOT COALESCE(a.banned,FALSE)
         AND p.users_summary #>> ARRAY[p.account_id::text,'group'] IN ('owner','collaborator'))
       LIMIT 20 FOR UPDATE OF x SKIP LOCKED`,
-      [bay_id],
+      candidates ? [bay_id, JSON.stringify(candidates)] : [bay_id],
     );
     for (const row of rows) {
       await rememberCollaborationArtifactBindings(
