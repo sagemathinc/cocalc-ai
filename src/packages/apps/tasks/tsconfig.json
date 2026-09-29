@@ -6,8 +6,8 @@
     "module": "commonjs",
     "target": "es2020",
     "lib": ["es2020", "dom"],
-    "baseUrl": ".",
     "paths": {
+      "@cocalc/*": ["../../node_modules/@cocalc/*"],
       "@cocalc/conat": ["../../conat"],
       "@cocalc/conat/*": ["../../conat/*"],
       "@cocalc/sync": ["../../sync"],
