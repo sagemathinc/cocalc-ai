@@ -755,6 +755,23 @@ async function command(name, args = {}) {
         require("@cocalc/server/collaborators/api")
           .fetchCollaborationNotificationPage,
       );
+    case "notificationFanout": {
+      if (args.operation === "enable") {
+        process.env.COCALC_PEOPLE_EVENT_FANOUT_PROTOTYPE = "1";
+        return null;
+      }
+      if (args.operation === "prune")
+        return require("@cocalc/database/postgres/collaborators/collaborators-notifications").pruneCollaborationNotificationEvents(
+          config.bays[0],
+        );
+      return require("@cocalc/database/postgres/collaborators/collaborators-notification-fanout").expandCollaborationNotificationEvent(
+        {
+          event_id: args.event_id,
+          bay_id: args.bay_id ?? config.bays[0],
+          limit: args.limit,
+        },
+      );
+    }
     case "demand": {
       const demand = require("@cocalc/database/postgres/collaborators/collaborators-demand");
       if (args.operation === "install")

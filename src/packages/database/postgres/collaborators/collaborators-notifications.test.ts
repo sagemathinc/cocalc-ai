@@ -90,6 +90,8 @@ it("synchronizes the canonical schema rather than maintaining runtime table DDL"
   await ensureCollaborationNotificationSchema();
   expect(syncSchema).toHaveBeenCalledWith({
     collaboration_notification_events: SCHEMA.collaboration_notification_events,
+    collaboration_notification_recipients:
+      SCHEMA.collaboration_notification_recipients,
     collaboration_notification_floors: SCHEMA.collaboration_notification_floors,
     collaboration_notification_cursors:
       SCHEMA.collaboration_notification_cursors,

@@ -445,6 +445,10 @@ Table({
     pg_indexes: ["project_id, position", "created_at"],
     pg_custom_indexes: [
       {
+        name: "collaboration_notification_fanout_due",
+        query: "(fanout_due,event_id) WHERE fanout_pending",
+      },
+      {
         name: "collaboration_notification_thread_position",
         query: "(project_id,(event_json->>'thread_id'),position)",
       },
@@ -457,12 +461,37 @@ Table({
     position: { type: "integer", pg_type: "BIGSERIAL", not_null: true },
     event_json: { type: "map" },
     event_hash: text,
+    fanout_pending: { type: "boolean", pg_default: "FALSE", not_null: true },
+    fanout_after: uuid,
+    fanout_due: { ...time, pg_type: "TIMESTAMPTZ" },
     created_at: {
       ...time,
       pg_type: "TIMESTAMPTZ",
       pg_default: "now()",
       not_null: true,
     },
+  },
+});
+Table({
+  name: "collaboration_notification_recipients",
+  rules: {
+    primary_key: "id",
+    pg_indexes: ["project_id", "event_id", "due_at,id"],
+  },
+  fields: {
+    id: uuid,
+    event_id: uuid,
+    project_id: uuid,
+    account_id: uuid,
+    membership_epoch: uuid,
+    due_at: {
+      ...time,
+      pg_type: "TIMESTAMPTZ",
+      pg_default: "now()",
+      not_null: true,
+    },
+    claim_id: uuid,
+    claim_until: { ...time, pg_type: "TIMESTAMPTZ" },
   },
 });
 Table({

@@ -74,6 +74,7 @@ export async function ensureCollaborationNotificationSchema() {
     Object.fromEntries(
       [
         "collaboration_notification_events",
+        "collaboration_notification_recipients",
         "collaboration_notification_floors",
         "collaboration_notification_cursors",
         "collaboration_personal",
@@ -206,11 +207,18 @@ export async function appendCollaborationNotificationEvents(
     // Positions are project-local cursors. A rehomed project's retained positions
     // may be ahead of this bay's sequence; never place new intent behind them.
     await db.query(
-      `INSERT INTO collaboration_notification_events(event_id,project_id,generation,event_json,event_hash,position)
-       VALUES($1,$2,$3,$4::jsonb,$5,GREATEST(
+      `INSERT INTO collaboration_notification_events(event_id,project_id,generation,event_json,event_hash,fanout_pending,fanout_due,position)
+       VALUES($1,$2,$3,$4::jsonb,$5,$6,CASE WHEN $6 THEN now() ELSE NULL END,GREATEST(
          COALESCE((SELECT max(position) FROM collaboration_notification_events WHERE project_id=$2),0),
          COALESCE((SELECT position FROM collaboration_notification_floors WHERE project_id=$2),0))+1)`,
-      [id, event.project_id, project.generation, event_json, event_hash],
+      [
+        id,
+        event.project_id,
+        project.generation,
+        event_json,
+        event_hash,
+        process.env.COCALC_PEOPLE_EVENT_FANOUT_PROTOTYPE === "1",
+      ],
     );
   }
 }
@@ -1021,7 +1029,12 @@ export async function pruneCollaborationNotificationEvents(
       );
       const expired = (
         await db.query(
-          "SELECT event_id,position::text FROM collaboration_notification_events WHERE project_id=$1 AND created_at<now()-interval '30 days' ORDER BY position LIMIT $2",
+          `SELECT event_id,position::text FROM collaboration_notification_events e
+           WHERE project_id=$1 AND created_at<now()-interval '30 days'
+           AND position < COALESCE((SELECT min(held.position) FROM collaboration_notification_events held
+             WHERE held.project_id=$1 AND (held.fanout_pending OR EXISTS(
+               SELECT 1 FROM collaboration_notification_recipients r WHERE r.event_id=held.event_id))),9223372036854775807)
+           ORDER BY position LIMIT $2`,
           [project_id, 200 - removed],
         )
       ).rows;

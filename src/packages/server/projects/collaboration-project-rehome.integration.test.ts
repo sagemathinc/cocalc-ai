@@ -250,6 +250,14 @@ describeDb(
           [op.project_id, String(high - 10n)],
         );
         await getPool().query(
+          "UPDATE collaboration_notification_events SET fanout_pending=TRUE,fanout_after=$2,fanout_due=now() WHERE event_id=$1",
+          [event_id, account],
+        );
+        await getPool().query(
+          "INSERT INTO collaboration_notification_recipients(id,event_id,project_id,account_id,membership_epoch) VALUES($1,$2,$3,$4,$5)",
+          [randomUUID(), event_id, op.project_id, account, membership],
+        );
+        await getPool().query(
           "INSERT INTO collaboration_source_requests(project_id,chat_path,requested_by) VALUES($1,'/home/user/pending.chat',$2)",
           [op.project_id, account],
         );
@@ -593,6 +601,11 @@ describeDb(
         (p) => p.table === "collaboration_notification_events",
       )!.rows[0];
       expect(event.position).toBe(String(high));
+      expect(event.fanout_pending).toBe(true);
+      expect(
+        pages.find((p) => p.table === "collaboration_notification_recipients")!
+          .rows,
+      ).toHaveLength(1);
       expect(await freeze(f.op)).toEqual(header);
       expect(await readHeader(f.op.op_id)).toEqual(header);
       const home = (

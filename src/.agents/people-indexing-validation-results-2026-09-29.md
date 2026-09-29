@@ -159,3 +159,41 @@ step is a durable owner event-to-recipient work handoff with event-triggered
 authorization, not suspending access renewal prematurely. The new acceptance
 test proves independence from the resource index only; it does not prove cold
 accounts incur zero recurring work or that offline obligations survive retention.
+
+## Durable Owner Fanout Prototype
+
+Live event ingestion can now capture fanout intent in the same transaction as
+the event, under `COCALC_PEOPLE_EVENT_FANOUT_PROTOTYPE=1` (default off).
+Owner-side expansion uses bounded keyset pages, stable recipient obligation IDs,
+and membership epochs/history floors. It excludes the actor and later joiners.
+A per-project pending-obligation cap defers expansion without advancing its
+cursor. This prototype expands eligible project members; selective follower
+fanout and its scaling costs remain to be addressed.
+
+Retention holds the contiguous event-log prefix at the earliest unexpanded event
+or pending recipient obligation. Rehome serialization includes expansion state
+and recipient obligations. The new queue is not yet drained by an authenticated
+recipient-home delivery/acknowledgment service, and capture must remain opt-in
+until that service and its failure behavior are validated.
+
+Two isolated real-PostgreSQL acceptance tests pass: live ingestion captures one
+obligation without recipient projection work, retries deduplicate, wrong-owner
+expansion fails, and aged pending events cannot be pruned. A synthetic paging
+seam checks multi-page expansion and excludes a post-event joiner. The retention
+test deletes an obligation directly in its fixture to simulate handoff; this is
+not proof of a production acknowledgment path.
+
+Validation: server TypeScript build, 25 database notification tests, 7 ownership
+manifest tests, 8 populated rehome transfer tests, and 20 rehome preflight/legacy
+tests pass. The five-test multibay suite initially had a post-rehome convergence
+failure, then passed on rerun. Its cause is not established; bounded fixture
+diagnostics were added to capture access/index state if it recurs.
+
+The ownership inventory now also classifies ten existing runtime People tables.
+Canonical private state and delivery/idempotency obligations remain explicitly
+unsupported for rehome until a tested handoff exists; existing guards remain.
+
+Next: authenticated routed recipient delivery and durable acknowledgment,
+event-triggered authorization independent of projection leases, demand/scheduler
+integration, and disabled/mixed-version recovery. Scan, filesystem reconciliation,
+scale/soak validation, and the overall rollout gates remain incomplete.

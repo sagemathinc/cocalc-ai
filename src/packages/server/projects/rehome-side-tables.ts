@@ -82,6 +82,12 @@ export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
     reason:
       "Notification replay floors transfer atomically with the owner's retained message events and recipient cutovers.",
   },
+  collaboration_notification_recipients: {
+    table: "collaboration_notification_recipients",
+    status: "portable",
+    reason:
+      "Pending event-recipient obligations move with the fenced owner event log; they are not disposable account projections.",
+  },
   collaboration_notification_cursors: {
     table: "collaboration_notification_cursors",
     status: "account-home-excluded",

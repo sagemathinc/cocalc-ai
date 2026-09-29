@@ -347,7 +347,28 @@ export class MultibayAcceptance {
       if (await check()) return;
       await pause(100);
     }
-    throw Error("acceptance projections did not converge in 40 bounded passes");
+    const diagnostics: Record<string, unknown> = {};
+    for (const role of ["a", "b"] as const) {
+      try {
+        diagnostics[role] = await this.worker(role).call(
+          "sql",
+          {
+            sql: `SELECT x.generation,x.revision,x.complete,x.last_error,x.failures,
+            x.lease_until>now() AS authorized,
+            (SELECT jsonb_agg(jsonb_build_object('kind',i.kind,'activity',i.metadata->>'activity'))
+              FROM collaboration_index i WHERE i.account_id=x.account_id AND i.project_id=x.project_id) AS resources
+            FROM collaboration_access x WHERE x.project_id=$1 LIMIT 4`,
+            params: [this.project],
+          },
+          5000,
+        );
+      } catch {
+        diagnostics[role] = "diagnostic unavailable";
+      }
+    }
+    throw Error(
+      `acceptance projections did not converge in 40 bounded passes: ${JSON.stringify(diagnostics)}`,
+    );
   }
   sql(role: "owner" | "a" | "b", sql: string, params: unknown[] = []) {
     return this.worker(role).call<any[]>("sql", { sql, params });

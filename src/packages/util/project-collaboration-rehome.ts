@@ -14,6 +14,7 @@ export const PROJECT_COLLABORATION_REHOME_TABLES = [
   "collaboration_room_replacements",
   "collaboration_memberships",
   "collaboration_notification_events",
+  "collaboration_notification_recipients",
   "collaboration_notification_floors",
   "collaboration_source_requests",
   "collaboration_relocations",

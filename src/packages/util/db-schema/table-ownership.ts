@@ -65,6 +65,76 @@ function entries(
   );
 }
 
+const PEOPLE_TABLE_OWNERSHIP = {
+  ...adHocEntries(
+    [
+      "people_contacts",
+      "people_account_state",
+      "people_invitation_drafts",
+      "people_invitation_operations",
+      "people_collaboration_outbox",
+    ],
+    {
+      ownership: "account-home",
+      authority: "account_id",
+      portability: "unsupported",
+      source:
+        "server/people/schema.ts; server/collaborators/invitations-store.ts",
+      migrate_to_schema: true,
+      notes:
+        "Canonical private People state, reviewed operation receipts and pending delivery intent. The People rehome guard blocks movement until these families and their encryption bindings have a tested handoff; do not discard as cold cache.",
+    },
+  ),
+  ...adHocEntries(["people_invitation_index"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
+    source: "server/people/schema.ts",
+    migrate_to_schema: true,
+    secondary_reference_fields: {
+      project_id:
+        "Invitation target; history is materialized privately at the viewing account's home.",
+    },
+    notes:
+      "Private invitation history. Reconstruction from retained canonical operations is not yet proven; the People rehome guard remains required.",
+  }),
+  ...adHocEntries(["people_invite_outbox"], {
+    ownership: "project-owning",
+    authority: "project_id",
+    portability: "unsupported",
+    source: "server/people/schema.ts",
+    migrate_to_schema: true,
+    notes:
+      "Durable coalesced access-invitation lifecycle intent, including deletion tombstones and audience. Protected by the People project rehome guard until transfer is implemented.",
+  }),
+  ...adHocEntries(
+    ["people_invitation_action_receipts", "people_invite_resend_operations"],
+    {
+      ownership: "project-owning",
+      authority: "project_id",
+      portability: "unsupported",
+      source:
+        "server/people/invitation-action-store.ts; server/projects/people-invite-resend.ts",
+      migrate_to_schema: true,
+      secondary_reference_fields: {
+        account_id:
+          "Requesting actor and idempotency namespace, not the storage authority for the project action.",
+      },
+      notes:
+        "Project-side action and resend idempotency receipts. The People project rehome guard prevents losing replay evidence during movement.",
+    },
+  ),
+  ...adHocEntries(["people_invite_backfill"], {
+    ownership: "stable-bay",
+    authority: "local",
+    portability: "stable",
+    source: "server/people/schema.ts",
+    migrate_to_schema: true,
+    notes:
+      "Local resumable access-invitation backfill cursor; not authoritative invitation or account state.",
+  }),
+};
+
 export const TABLE_OWNERSHIP = {
   ...entries(["collaboration_relation_pages"], {
     ownership: "stable-bay",
@@ -110,6 +180,17 @@ export const TABLE_OWNERSHIP = {
     },
     notes:
       "Per-recipient membership epochs survive the fenced catalog handoff with notification cutovers. Access leases are separately rebuilt from the destination owner.",
+  }),
+  ...entries(["collaboration_notification_recipients"], {
+    ownership: "project-owning",
+    authority: "project_id",
+    portability: "portable",
+    secondary_reference_fields: {
+      account_id:
+        "Recipient reference; delivery routes to its current home. The obligation remains owned by the project event authority.",
+    },
+    notes:
+      "Durable unacknowledged event-recipient obligations transfer with the source event log and preserve membership epochs.",
   }),
   ...entries(["collaboration_personal", "collaboration_artifact_bindings"], {
     ownership: "account-home",
@@ -919,6 +1000,7 @@ function adHocEntries(
 }
 
 export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
+  ...PEOPLE_TABLE_OWNERSHIP,
   ...adHocEntries(["api_key_action_requests"], {
     ownership: "account-home",
     authority: "account_id",
