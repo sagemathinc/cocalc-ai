@@ -94,3 +94,39 @@ baseline tests passed; the btrfs observation test passed and reported an unsafe
 generation-equality candidate; all six existing multibay/historical acceptance
 tests passed. Formatting and `git diff --check` passed. No full development build,
 browser test, large-scale load test, or soak was run.
+
+## Demand Store Preparation
+
+Added `packages/database/postgres/collaborators/collaborators-demand.ts` as an
+explicitly installed prototype store. It is not registered in production schema
+startup, exposed as a public RPC, or consumed by maintenance yet. It does not
+change notification delivery or grant access to any project.
+
+The store uses the account-home/rehome transaction fence, samples database wall
+time after acquiring the lock, and supports canonical project scopes (up to 100
+IDs per consumer) or global interest. Leases last 120 seconds, with renewal no
+more frequently than 30 seconds and five minutes of grace. Acquisition retries
+do not extend active leases; expired/released leases cannot renew. New lease
+tokens fence delayed releases of previous registrations. Inspection reports
+active/grace/cold scheduling interest, not whether content is caught up or
+authorized. The integrated scheduler must distinguish catching-up from warm.
+
+The prototype conservatively caps live **plus retained grace registrations** at
+16 per account, bounding rapid acquire/release churn as well as live tabs. A
+client can reuse a consumer registration after release. This is stricter than
+the plan's live-consumer-only ceiling; reassess during UI integration rather
+than silently allowing unbounded grace rows. An expiry index supports bounded
+500-row cleanup without enumerating historical accounts.
+
+Five real-PostgreSQL acceptance tests pass: idempotent acquisition/throttled
+renewal, release/expiry/stale-token behavior, concurrent admission bounds,
+wrong-home/banned-account rejection, and scope aggregation/account isolation.
+Database and server typechecks pass. Reproduce with:
+
+```sh
+COCALC_COLLABORATORS_ACCEPTANCE=1 pnpm exec jest --runInBand --runTestsByPath collaborators/demand.acceptance.test.ts
+```
+
+The integrated gate remains open. Next: establish durable offline event delivery
+without projection leases, then wire authenticated demand admission and indexed
+scheduling into the two-home prototype. No scale/rollout gate has been passed.

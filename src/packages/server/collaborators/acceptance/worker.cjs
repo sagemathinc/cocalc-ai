@@ -746,6 +746,32 @@ async function command(name, args = {}) {
     }
     case "indexingMetrics":
       return require("prom-client").register.getMetricsAsJSON();
+    case "demand": {
+      const demand = require("@cocalc/database/postgres/collaborators/collaborators-demand");
+      if (args.operation === "install")
+        return demand.syncCollaborationDemandSchema(pool);
+      const account_id = config.accounts[config.role === "a" ? 0 : 1];
+      switch (args.operation) {
+        case "acquire":
+          return demand.acquireCollaborationDemand({
+            ...args.opts,
+            account_id,
+          });
+        case "renew":
+          return demand.renewCollaborationDemand({ ...args.opts, account_id });
+        case "release":
+          return demand.releaseCollaborationDemand({
+            ...args.opts,
+            account_id,
+          });
+        case "inspect":
+          return demand.inspectCollaborationDemand(account_id);
+        case "prune":
+          return demand.pruneCollaborationDemand();
+        default:
+          throw Error("unknown fixture demand operation");
+      }
+    }
     case "tick":
       if (config.role === "host") {
         await journalService.runOnce();
