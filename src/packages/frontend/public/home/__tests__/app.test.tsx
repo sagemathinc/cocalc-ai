@@ -208,7 +208,7 @@ describe("PublicHomeApp", () => {
       }),
     ).not.toBeNull();
     expect(agents.textContent ?? "").toMatch(
-      /Use integrated Codex, or run Claude Code and other shell-based agents in project terminals/i,
+      /Use the integrated Codex agent or Claude Code, or run other command-line agents in project terminals/i,
     );
     expect(
       within(agents).getByRole("link", { name: "See agent workflows" }),

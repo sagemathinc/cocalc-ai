@@ -17,7 +17,8 @@ files, run commands, work with notebooks, and make changes.
 3. Start a Codex thread.
 4. Ask a concrete task, including relevant files and constraints.
 
-For terminal-native agents such as Claude Code or opencode, install and run them
+Claude Code is also integrated, as an experimental preview on sites that enable
+it. For other terminal-native agents such as opencode, install and run them
 inside a normal project terminal with compatible software and permissions.
 Hosted project images and local CoCalc Plus can provide different operating
 systems and installed tools; terminal-native agents provide their own interface.
