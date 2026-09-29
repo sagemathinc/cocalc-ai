@@ -4,7 +4,10 @@
  */
 import { randomUUID } from "node:crypto";
 import { entryKey as resourceEntryKey } from "@cocalc/database/postgres/collaborators/collaborators-common";
-import { claimDemandAccountsSql } from "@cocalc/database/postgres/collaborators/collaborators-demand";
+import {
+  claimDemandAccountsSql,
+  demandActivationCandidatesSql,
+} from "@cocalc/database/postgres/collaborators/collaborators-demand";
 import type { CollaborationResource } from "@cocalc/util/collaborators";
 import { MultibayAcceptance } from "./acceptance/harness";
 
@@ -338,8 +341,8 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
         );
         await env.sql(
           "a",
-          `INSERT INTO collaboration_demand_activation(account_id,projection_due,access_due)
-          VALUES($1,now()-interval '1 day'+$2::integer*interval '1 second',now()-interval '1 day'+$2::integer*interval '1 second')`,
+          `INSERT INTO collaboration_demand_activation(account_id,projection_due,access_due,due_at)
+          SELECT $1,t,t,t FROM (SELECT now()-interval '1 day'+$2::integer*interval '1 second' AS t) s`,
           [ids[i], i],
         );
         await env.sql(
@@ -367,6 +370,23 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
           "a",
           `SELECT count(*)::integer AS n FROM collaboration_demand_activation
         WHERE account_id=ANY($1::uuid[]) AND projection_due IS NULL AND access_due IS NULL`,
+          [ids.slice(0, 16)],
+        ),
+      ).toEqual([{ n: 16 }]);
+      expect(
+        await env.sql("a", demandActivationCandidatesSql, [env.bays[1]]),
+      ).toEqual([]);
+      expect(
+        await env.sql("a", demandActivationCandidatesSql, [env.bays[1]]),
+      ).toEqual([]);
+      expect(
+        await env.sql("a", demandActivationCandidatesSql, [env.bays[1]]),
+      ).toEqual([{ account_id: ids[16] }]);
+      expect(
+        await env.sql(
+          "a",
+          `SELECT count(*)::integer AS n FROM collaboration_demand_activation
+        WHERE account_id=ANY($1::uuid[]) AND due_at IS NULL`,
           [ids.slice(0, 16)],
         ),
       ).toEqual([{ n: 16 }]);

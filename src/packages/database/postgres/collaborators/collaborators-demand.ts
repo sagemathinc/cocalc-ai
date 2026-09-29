@@ -482,11 +482,18 @@ export async function activateCollaborationDemand(
 /** Dispatch only explicitly queued accounts. Dormant account/membership tables
  * are not swept to discover work. The home fence rechecks ownership per page.
  */
-export const demandActivationCandidatesSql = `SELECT q.account_id
-    FROM collaboration_demand_activation q JOIN accounts a USING(account_id)
-    WHERE q.due_at<=now() AND COALESCE(a.home_bay_id,'bay-0')=$1
-    AND a.deleted IS NOT TRUE AND a.banned IS NOT TRUE
-    ORDER BY q.due_at,q.account_id LIMIT 8`;
+export const demandActivationCandidatesSql = `WITH candidate AS MATERIALIZED (
+    SELECT q.account_id,q.due_at FROM collaboration_demand_activation q
+    WHERE q.due_at<=now() ORDER BY q.due_at,q.account_id
+    LIMIT 8 FOR UPDATE SKIP LOCKED),
+    eligibility AS MATERIALIZED (
+      SELECT c.account_id,c.due_at,
+        (COALESCE(a.home_bay_id,'bay-0')=$1 AND a.deleted IS NOT TRUE AND a.banned IS NOT TRUE) AS eligible
+      FROM candidate c JOIN accounts a USING(account_id)),
+    retired AS (
+      UPDATE collaboration_demand_activation q SET due_at=NULL
+      FROM eligibility e WHERE q.account_id=e.account_id AND NOT e.eligible)
+    SELECT account_id FROM eligibility WHERE eligible ORDER BY due_at,account_id`;
 
 export async function runCollaborationDemandActivation(bay_id: string) {
   const { rows } = await getPool().query(demandActivationCandidatesSql, [

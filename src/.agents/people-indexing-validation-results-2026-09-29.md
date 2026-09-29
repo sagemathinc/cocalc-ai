@@ -1781,3 +1781,18 @@ retire the ineligible hints and the next reaches the warm account for both claim
 kinds. This is functional skew evidence, not a large-skew throughput benchmark.
 Activation dispatch still needs equivalent bounded-before-filter handling; the
 full-tip large-population suite and contention/rehome races remain open.
+
+### Bounded Activation Dispatch
+
+Activation dispatch now also limits and locks eight due candidates before
+checking account eligibility. A data-modifying CTE retires foreign-home, banned
+or deleted local hints by clearing their activation due time; eligible rows are
+returned in due order and still enter the account-home-fenced activation path.
+No remote account state or project permissions are changed.
+
+Server/reference typecheck and all twenty real PostgreSQL demand acceptance
+tests pass. The ineligible-backlog case now exercises the exact activation SQL:
+two bounded passes retire sixteen foreign/banned hints, then the next selects
+the eligible account. These are functional bounded-progress checks. Large-skew
+query plans, concurrent rehome/activation and full-tip workload/soak validation
+remain open; prior million-row measurements predate this query revision.
