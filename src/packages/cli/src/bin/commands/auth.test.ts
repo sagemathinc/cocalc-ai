@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { beforeEach, afterEach } from "node:test";
 import { Command } from "commander";
 import { createHash, randomUUID } from "node:crypto";
 import { readExternalAgentCredential } from "../core/external-agent-profile";
@@ -10,6 +10,22 @@ import { readExternalAgentCredential } from "../core/external-agent-profile";
 import { registerAuthCommand, type AuthCommandDeps } from "./auth";
 import { sanitizeProfileName } from "../../core/auth-config";
 import { cookieNameFor, normalizeSecretValue } from "../../core/auth-cookies";
+
+let savedTransport: string | undefined;
+let savedRelay: string | undefined;
+beforeEach(() => {
+  // These tests mock upstream auth endpoints, not the project relay.
+  savedTransport = process.env.COCALC_CLI_TRANSPORT;
+  savedRelay = process.env.COCALC_API_RELAY;
+  process.env.COCALC_CLI_TRANSPORT = "auto";
+  delete process.env.COCALC_API_RELAY;
+});
+afterEach(() => {
+  if (savedTransport === undefined) delete process.env.COCALC_CLI_TRANSPORT;
+  else process.env.COCALC_CLI_TRANSPORT = savedTransport;
+  if (savedRelay === undefined) delete process.env.COCALC_API_RELAY;
+  else process.env.COCALC_API_RELAY = savedRelay;
+});
 
 function makeDeps(
   capture: { data?: any },

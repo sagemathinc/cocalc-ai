@@ -317,6 +317,8 @@ async function resolveDocsSpawnTargetUrl({
       {
         headers: { Cookie: cookie },
       },
+      undefined,
+      { credentialSite: globals.disableEnvAuthDefaults ? apiUrl : undefined },
     );
     if (!response.ok) return undefined;
     const bootstrap = (await response.json()) as {

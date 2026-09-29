@@ -8,6 +8,7 @@ import {
   type ManagedConnectorCredential,
 } from "./managed-connector-auth";
 import { resolveApiKeyFileGlobals } from "./api-key-file";
+import { defaultApiBaseUrl as configuredApiBaseUrl } from "../../core/default-api-url";
 
 export type DaemonGlobalAuthOptions = {
   profile?: string;
@@ -21,6 +22,7 @@ export type DaemonGlobalAuthOptions = {
   hubPassword?: string;
   noDaemon?: boolean;
   disableEnvAuthDefaults?: boolean;
+  directAuthSite?: string;
   managedConnector?: ManagedConnectorCredential;
   authProjectId?: string;
 };
@@ -74,6 +76,14 @@ export function effectiveDaemonGlobals<T extends DaemonGlobalAuthOptions>(
   if (next.disableEnvAuthDefaults) {
     return next;
   }
+
+  // Frozen ambient credentials are not newly authorized for an --api override.
+  next.directAuthSite ??=
+    env.COCALC_API_RELAY_HUB_URL ??
+    env.COCALC_API_URL ??
+    env.BASE_URL ??
+    defaultApiBaseUrl?.() ??
+    configuredApiBaseUrl(env);
 
   const managedConnector = managedConnectorCredentialFromEnv(env);
   if (managedConnector) {
