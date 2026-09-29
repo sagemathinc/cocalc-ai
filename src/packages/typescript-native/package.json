@@ -1,0 +1,14 @@
+{
+  "name": "@cocalc/typescript-native",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TypeScript 7 native compiler for the side-by-side migration. It lives in its own package so the workspace-level tsc binary stays TypeScript 6; see src/.agents/typescript-7-migration-plan-2026-07-15.md.",
+  "scripts": {
+    "preinstall": "npx only-allow pnpm"
+  },
+  "devDependencies": {
+    "@typescript/native": "npm:typescript@^7.0.2"
+  },
+  "author": "SageMath, Inc.",
+  "license": "SEE LICENSE.md"
+}
