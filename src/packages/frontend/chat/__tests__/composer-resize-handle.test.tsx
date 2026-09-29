@@ -148,12 +148,15 @@ function renderComposer(
 }
 
 describe("ChatRoomComposer resize handle", () => {
-  it("uses a manually sized composer in .chat files", () => {
+  it("fits the text by default in .chat files", () => {
     renderComposer();
     const composer = screen.getByTestId("chat-composer");
     expect(composer.style.maxWidth).toBe("1120px");
-    expect(lastChatInputProps.height).toBe("120px");
-    expect(lastChatInputProps.autoGrow).toBe(false);
+    expect(lastChatInputProps.height).toBeUndefined();
+    expect(lastChatInputProps.autoGrow).toBe(true);
+    expect(lastChatInputProps.autoGrowMinHeight).toBe(40);
+    // 40% of jsdom's 768px viewport.
+    expect(lastChatInputProps.autoGrowMaxHeight).toBe(307);
     expect(lastChatInputProps.compactModeSwitch).toBe(true);
     expect(lastChatInputProps.softFocus).toBe(true);
     expect(screen.getByTestId("chat-composer-actions").style.borderTop).toBe(
@@ -171,23 +174,23 @@ describe("ChatRoomComposer resize handle", () => {
     expect(lastChatInputProps.autoGrow).toBe(false);
   });
 
-  it("centers a manually sized Agents composer", () => {
+  it("centers an automatically sized Agents composer", () => {
     renderComposer(
       { hasInput: true, input: "draft" },
       { agentWorkspace: true },
     );
     const composer = screen.getByTestId("chat-composer");
     expect(composer.style.maxWidth).toBe("1120px");
-    expect(composer.style.margin).toBe("0px auto 8px");
-    expect(lastChatInputProps.height).toBe("120px");
-    expect(lastChatInputProps.autoGrow).toBe(false);
+    expect(composer.style.margin).toBe("0px auto 6px");
+    expect(lastChatInputProps.height).toBeUndefined();
+    expect(lastChatInputProps.autoGrow).toBe(true);
     expect(lastChatInputProps.compactModeSwitch).toBe(true);
     expect(lastChatInputProps.softFocus).toBe(true);
   });
 
-  it("shows focus on the Agents outer shell without an extra shadow", () => {
+  it("shows focus on the Agents composer box without an extra shadow", () => {
     renderComposer({}, { agentWorkspace: true });
-    const composer = screen.getByTestId("chat-composer");
+    const composer = screen.getByTestId("chat-composer-box");
     expect(composer.style.border).toContain("var(--cocalc-ui-border)");
     fireEvent.focus(screen.getByTestId("chat-input-focus-probe"));
     expect(composer.style.border).toContain("var(--cocalc-ui-focus)");
@@ -538,18 +541,26 @@ describe("ChatRoomComposer resize handle", () => {
     expect(screen.getByTestId("chat-input-focus-probe")).toBeInTheDocument();
   });
 
-  it("allows keyboard resizing even when the composer is empty", async () => {
+  it("keyboard resizing fixes the height from its current size; Home fits the text", async () => {
     const user = userEvent.setup();
     renderComposer();
+    jest
+      .spyOn(screen.getByTestId("chat-composer-input"), "getBoundingClientRect")
+      .mockReturnValue({ height: 50 } as DOMRect);
     const handle = screen.getByRole("separator", { name: "Resize composer" });
+    expect(handle).toHaveAttribute("aria-valuetext", "Fits the text");
     handle.focus();
     await user.keyboard("{ArrowUp}");
-    expect(lastChatInputProps.height).toBe("140px");
-    expect(handle).toHaveAttribute("aria-valuenow", "140");
+    expect(lastChatInputProps.height).toBe("70px");
+    expect(lastChatInputProps.autoGrow).toBe(false);
+    expect(handle).toHaveAttribute("aria-valuenow", "70");
+    // Down to about one line, not below.
     await user.keyboard("{ArrowDown}{ArrowDown}");
-    expect(lastChatInputProps.height).toBe("100px");
+    expect(lastChatInputProps.height).toBe("40px");
     await user.keyboard("{Home}");
-    expect(lastChatInputProps.height).toBe("120px");
+    expect(lastChatInputProps.height).toBeUndefined();
+    expect(lastChatInputProps.autoGrow).toBe(true);
+    expect(handle).toHaveAttribute("aria-valuetext", "Fits the text");
     expect(handle).toHaveFocus();
   });
 
@@ -1147,12 +1158,21 @@ describe("ChatRoomComposer resize handle", () => {
       expect(options).not.toContainElement(submit);
       for (const name of [
         "Add files and more",
-        "Codex settings",
         "Agent Prompt",
         "Message delivery: To Agent",
       ]) {
         expect(within(options).getByRole("button", { name })).toBeEnabled();
       }
+      // Conversation settings are below the message box, not among its actions.
+      const settings = screen.getByRole("group", {
+        name: "Conversation settings",
+      });
+      expect(
+        within(settings).getByRole("button", { name: "Codex settings" }),
+      ).toBeEnabled();
+      expect(screen.getByTestId("chat-composer-box")).not.toContainElement(
+        settings,
+      );
       const user = userEvent.setup();
       const delivery = within(options).getByRole("button", {
         name: "Message delivery: To Agent",

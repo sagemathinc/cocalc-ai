@@ -166,3 +166,176 @@ test("fullscreen keeps formatting, settings popovers and modals interactive", as
     .toBe(true);
   await expect(page.getByRole("textbox")).toContainText("Unsent draft");
 });
+
+// The chat composer fits its text: about one line when empty, growing to 40%
+// of the viewport (288px at Playwright's default 720px), then scrolling.
+const ONE_LINE_MAX = 70;
+const AUTO_CAP = 288;
+
+async function composerInputHeight(page) {
+  return Math.round(
+    (await page.getByTestId("chat-composer-input").boundingBox())!.height,
+  );
+}
+
+async function pageScrollTop(page) {
+  return page.evaluate(() => document.scrollingElement?.scrollTop ?? 0);
+}
+
+for (const editorMode of ["editor", "markdown"] as const) {
+  test(`chat composer (${editorMode}) fits its text, caps, and shrinks back`, async ({
+    page,
+  }) => {
+    await page.goto(`/?mode=composer&editorMode=${editorMode}`);
+    const empty = await composerInputHeight(page);
+    expect(empty).toBeLessThanOrEqual(ONE_LINE_MAX);
+
+    const focusEditor = async () => {
+      if (editorMode === "editor") await page.getByRole("textbox").click();
+      else await page.locator(".CodeMirror-code").click();
+    };
+    await focusEditor();
+    for (let line = 0; line < 5; line++) {
+      await page.keyboard.type(`Line ${line}`);
+      await page.keyboard.press("Enter");
+    }
+    await expect
+      .poll(() => composerInputHeight(page))
+      .toBeGreaterThan(empty + 60);
+
+    for (let line = 5; line < 40; line++) {
+      await page.keyboard.type(`Line ${line}`);
+      await page.keyboard.press("Enter");
+    }
+    await page.keyboard.type("last line");
+    await expect
+      .poll(() => composerInputHeight(page))
+      .toBeGreaterThan(AUTO_CAP - 40);
+    expect(await composerInputHeight(page)).toBeLessThanOrEqual(AUTO_CAP + 12);
+
+    // The caret stays visible inside the capped editor.
+    const caretVisible = await page.evaluate((mode) => {
+      const input = document.querySelector(
+        '[data-testid="chat-composer-input"]',
+      )!;
+      const box = input.getBoundingClientRect();
+      let caret: DOMRect | undefined;
+      if (mode === "editor") {
+        caret = window.getSelection()?.getRangeAt(0).getBoundingClientRect();
+      } else {
+        const cm = (document.querySelector(".CodeMirror") as any).CodeMirror;
+        const c = cm.cursorCoords(cm.getDoc().getCursor(), "window");
+        caret = { top: c.top, bottom: c.bottom } as DOMRect;
+      }
+      return (
+        caret != null &&
+        caret.top >= box.top - 2 &&
+        caret.bottom <= box.bottom + 2
+      );
+    }, editorMode);
+    expect(caretVisible).toBe(true);
+    expect(await pageScrollTop(page)).toBe(0);
+
+    await page.keyboard.press("ControlOrMeta+a");
+    await page.keyboard.press("Delete");
+    await expect
+      .poll(() => composerInputHeight(page))
+      .toBeLessThanOrEqual(ONE_LINE_MAX);
+  });
+}
+
+for (const editorMode of ["editor", "markdown"] as const) {
+  test(`chat composer (${editorMode}) sizes to a draft set all at once`, async ({
+    page,
+  }) => {
+    // Pasting, restoring a draft, or quoting replaces the value, not typing.
+    await page.goto(`/?mode=composer&editorMode=${editorMode}`);
+    await page.evaluate(() =>
+      window.__chatComposerTest?.setInputRaw(
+        Array.from({ length: 30 }, (_, i) => `Pasted line ${i}`).join("\n\n"),
+      ),
+    );
+    await expect
+      .poll(() => composerInputHeight(page))
+      .toBeGreaterThan(AUTO_CAP - 40);
+    expect(await composerInputHeight(page)).toBeLessThanOrEqual(AUTO_CAP + 12);
+    expect(await pageScrollTop(page)).toBe(0);
+    await page.evaluate(() => window.__chatComposerTest?.setInputRaw("short"));
+    await expect
+      .poll(() => composerInputHeight(page))
+      .toBeLessThanOrEqual(ONE_LINE_MAX);
+  });
+}
+
+test("a dragged composer height is kept until reset to fit the text", async ({
+  page,
+}) => {
+  await page.goto("/?mode=composer&editorMode=editor");
+  const empty = await composerInputHeight(page);
+  const resize = page.getByRole("separator", { name: "Resize composer" });
+  await expect(resize).toHaveAttribute("aria-valuetext", "Fits the text");
+  await resize.focus();
+  for (let i = 0; i < 5; i++) await resize.press("ArrowUp");
+  await expect
+    .poll(() => composerInputHeight(page))
+    .toBeGreaterThan(empty + 80);
+  await resize.press("Home");
+  await expect(resize).toHaveAttribute("aria-valuetext", "Fits the text");
+  await expect
+    .poll(() => composerInputHeight(page))
+    .toBeLessThanOrEqual(ONE_LINE_MAX);
+});
+
+test("conversation settings sit below the composer box", async ({ page }) => {
+  await page.goto("/?mode=composer-settings&editorMode=editor");
+  const box = page.getByTestId("chat-composer-box");
+  const settings = page.getByRole("group", { name: "Conversation settings" });
+  await expect(settings).toBeVisible();
+  expect(
+    await settings.evaluate(
+      (node) =>
+        !document
+          .querySelector('[data-testid="chat-composer-box"]')!
+          .contains(node),
+    ),
+  ).toBe(true);
+  await expect(
+    settings.getByRole("button", { name: "Model settings", exact: true }),
+  ).toBeVisible();
+  await expect(box.getByTestId("chat-composer-send")).toBeVisible();
+  const boxBottom = (await box.boundingBox())!;
+  const settingsTop = (await settings.boundingBox())!.y;
+  expect(settingsTop).toBeGreaterThanOrEqual(boxBottom.y + boxBottom.height);
+});
+
+test.describe("on a phone", () => {
+  test.use({ viewport: { width: 390, height: 740 } });
+
+  test("the chat composer stays small and settings take one line", async ({
+    page,
+  }) => {
+    await page.goto("/?mode=composer-settings&editorMode=editor&mobile=1");
+    const input = page.getByTestId("chat-composer-input");
+    expect((await input.boundingBox())!.height).toBeLessThanOrEqual(
+      ONE_LINE_MAX,
+    );
+    // The whole composer, settings included, is a small part of the screen.
+    const composer = (await page.getByTestId("chat-composer").boundingBox())!;
+    expect(composer.height).toBeLessThanOrEqual(740 * 0.25);
+    const settings = page.getByRole("group", { name: "Conversation settings" });
+    expect((await settings.boundingBox())!.height).toBeLessThanOrEqual(40);
+
+    await page.getByRole("textbox").click();
+    for (let line = 0; line < 30; line++) {
+      await page.keyboard.type(`Line ${line}`);
+      await page.keyboard.press("Enter");
+    }
+    // Grows to 30% of the phone's height, then scrolls.
+    await expect
+      .poll(async () => (await input.boundingBox())!.height)
+      .toBeGreaterThan(740 * 0.3 - 40);
+    expect((await input.boundingBox())!.height).toBeLessThanOrEqual(
+      740 * 0.3 + 12,
+    );
+  });
+});
