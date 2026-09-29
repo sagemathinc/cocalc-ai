@@ -100,17 +100,34 @@ export function harnessSessionControls(session: {
   return result;
 }
 
-/** Migrate Claude's old default sentinel only when its adapter resolves it. */
+const ONE_MILLION_CONTEXT = "[1m]";
+
+/**
+ * Migrate saved Claude values the current adapter no longer advertises: the
+ * old default sentinel, and a model saved with or without the 1M-context
+ * suffix (e.g. `opus[1m]` from an older adapter that now offers `opus`).
+ */
 export function resolveClaudeConfigValue(
   control: HarnessSelectControl,
   value: string,
 ): string {
-  return value === "default" &&
+  const advertised = (candidate: string | undefined) =>
+    candidate != null &&
+    control.options.some((option) => option.value === candidate);
+  if (advertised(value)) return value;
+  if (
+    value === "default" &&
     ["model", "effort"].includes(control.id) &&
-    !control.options.some((option) => option.value === "default") &&
-    control.options.some((option) => option.value === control.recommendedValue)
-    ? control.recommendedValue!
-    : value;
+    advertised(control.recommendedValue)
+  )
+    return control.recommendedValue!;
+  if (control.id === "model") {
+    const alternate = value.endsWith(ONE_MILLION_CONTEXT)
+      ? value.slice(0, -ONE_MILLION_CONTEXT.length)
+      : `${value}${ONE_MILLION_CONTEXT}`;
+    if (advertised(alternate)) return alternate;
+  }
+  return value;
 }
 
 export function parseHarnessSessionSettings(
