@@ -15,6 +15,7 @@ const hostRequire = require("node:module").createRequire(
 );
 
 let config, pool, fabric, human, hostClient, hostService, journalService;
+let fixtureFilesystem;
 const closeables = [];
 const counters = { starts: 0, ownerCalls: {}, hubCalls: {}, rehomeCalls: {} };
 let closing;
@@ -510,6 +511,7 @@ async function startHost() {
     return new SandboxedFilesystem(home, fsOptions);
   };
   const collaborators = hostRequire("@cocalc/project-host/collaborators");
+  fixtureFilesystem = getFilesystem;
   journalService = collaborators.startCollaborators(getFilesystem);
   own(
     await require("@cocalc/backend/conat/files/local-path").localPathFileserver(
@@ -998,6 +1000,59 @@ async function command(name, args = {}) {
       );
       process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE = "1";
       return true;
+    }
+    case "explicitCensusFixture": {
+      if (config.role !== "host") throw Error("host fixture required");
+      const collaborators = hostRequire("@cocalc/project-host/collaborators");
+      await collaborators.stopCollaborators();
+      process.env.COCALC_PEOPLE_CENSUS_EXPLICIT_PROTOTYPE = "1";
+      hostRequire(
+        "@cocalc/project-host/sqlite/project-volumes",
+      ).recordProjectVolume({
+        project_id: config.project,
+        volume_kind: "home",
+        mountpoint: join(config.directory, "volume"),
+        relative_path: "volume",
+        identity: {
+          filesystem_uuid: config.project,
+          volume_uuid: config.host,
+          subvolume_id: 1,
+        },
+      });
+      // Deliberately bypass mediated-write hooks: explicit discovery must find it.
+      await writeFile(
+        join(config.directory, "volume/scan-only.chat"),
+        JSON.stringify({
+          event: "chat",
+          date: "2026-09-01T00:00:00.000Z",
+          sender_id: config.accounts[0],
+          message_id: config.project,
+          thread_id: config.host,
+          history: [
+            {
+              author_id: config.accounts[0],
+              date: "2026-09-01T00:00:00.000Z",
+              content: "Explicit scan fixture",
+            },
+          ],
+        }) + "\n",
+      );
+      journalService = collaborators.startCollaborators(fixtureFilesystem);
+      return { chat_path: "/home/user/scan-only.chat" };
+    }
+    case "hostCensusControl": {
+      if (config.role !== "host") throw Error("host fixture required");
+      const control = hostRequire(
+        "@cocalc/project-host/collaborators-control",
+      ).collaborationReconciliationControl;
+      if (
+        ![
+          "requestCollaborationReconciliation",
+          "getCollaborationReconciliationStatus",
+        ].includes(args.method)
+      )
+        throw Error("invalid census fixture method");
+      return control[args.method](args.request);
     }
     case "scanHome": {
       const api =

@@ -111,6 +111,7 @@ export class AcceptanceWorker {
 
 /** Owns its cluster; never connects to PGHOST/PGDATABASE inherited from the caller. */
 export class MultibayAcceptance {
+  constructor(private readonly options: { explicitCensus?: boolean } = {}) {}
   readonly accounts = [randomUUID(), randomUUID()];
   readonly project = randomUUID();
   readonly host = randomUUID();
@@ -252,6 +253,9 @@ export class MultibayAcceptance {
       TZ: "UTC",
       NODE_ENV: "test",
       COCALC_TEST_MODE: "true",
+      ...(this.options.explicitCensus
+        ? { COCALC_PEOPLE_CENSUS_EXPLICIT_PROTOTYPE: "1" }
+        : {}),
       BASE_PATH: "/",
       COCALC_DATA_DIR: directory,
       SECRETS: join(directory, "secrets"),

@@ -2369,3 +2369,31 @@ stops at queued work rather than host traversal/extraction or home projection.
 It is routing/receipt evidence, not full vertical Scan completion or a capacity
 claim. Live CLI/host execution, UI, scoped-agent authorization and the remaining
 plan gates remain open.
+
+### Explicit Hosted Discovery Through Owner And Home
+
+Added an isolated host acceptance case starting the host in explicit census mode.
+It seeds a chat file directly in the fixture volume, bypassing mediated-write
+hooks, obtains a real public Scan receipt through the home/owner path, and invokes
+the production host reconciliation control adapter with that run identity. Real
+sandboxed traversal, journal extraction, owner ingestion and account-home
+projection then produce the discovered resource. The test also waits for the
+host's `discovered` state with zero pending candidates, replays the same run ID,
+and verifies zero compute-start calls on all bays.
+
+`COCALC_COLLABORATORS_ACCEPTANCE=1 pnpm exec jest --runInBand --runTestsByPath
+collaborators/scan-host.acceptance.test.ts` passes in 47.5 seconds. Project-host
+and server/reference typechecks pass. An initial test switched an already-running
+legacy inventory host into explicit mode and correctly hit ENODEV on its old
+unavailable-volume census. The fixture now selects explicit mode at startup;
+no production stale-volume fence was weakened to make the test pass.
+
+This uses real isolated PostgreSQL, SQLite, inter-bay traffic, sandboxed local
+files and production indexing code. The directory has a synthetic recorded
+volume identity: it is not evidence of btrfs generation or restore correctness.
+The host-control adapter is invoked through parent fixture IPC, not the full
+owner dispatcher/privileged host-control transport, and owner receipt settlement
+is not claimed by this test. Ticks are driven by the acceptance harness. Full
+timer/transport/settlement integration, installed CLI/browser execution, UI,
+agent scopes and the remaining plan gates remain open. Production settings are
+unchanged.
