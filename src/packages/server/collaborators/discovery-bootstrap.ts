@@ -67,7 +67,7 @@ export async function bootstrapDemandDiscovery(
   }
   return (await acknowledgeRevisionBootstrap({
     ...receiver,
-    receiver_id: request_id,
+    request_id,
   }))
     ? "done"
     : "deferred";

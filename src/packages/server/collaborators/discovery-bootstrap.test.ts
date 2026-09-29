@@ -63,7 +63,7 @@ test("admission reuses the durable receiver identity and acknowledges only succe
   expect(admit).toHaveBeenCalledWith("durable-id");
   expect(acknowledgeRevisionBootstrap).toHaveBeenCalledWith({
     ...receiver,
-    receiver_id: "durable-id",
+    request_id: "durable-id",
   });
 });
 test("timeout retains the identity for retry", async () => {

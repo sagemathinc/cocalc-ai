@@ -61,17 +61,20 @@ describeDb("shared home revision receiver", () => {
     const renewed = { ...opts, lease_id: randomUUID() };
     await arm(renewed, opts.lease_id);
     expect(await readRevisionBootstrap(renewed)).toBe(receiver_id);
-    expect(await acknowledgeRevisionBootstrap({ ...opts, receiver_id })).toBe(
-      false,
-    );
+    expect(
+      await acknowledgeRevisionBootstrap({ ...opts, request_id: receiver_id }),
+    ).toBe(false);
     expect(
       await acknowledgeRevisionBootstrap({
         ...renewed,
-        receiver_id: randomUUID(),
+        request_id: randomUUID(),
       }),
     ).toBe(false);
     expect(
-      await acknowledgeRevisionBootstrap({ ...renewed, receiver_id }),
+      await acknowledgeRevisionBootstrap({
+        ...renewed,
+        request_id: receiver_id,
+      }),
     ).toBe(true);
     expect(await readRevisionBootstrap(renewed)).toBeNull();
     const moved = {
@@ -86,9 +89,40 @@ describeDb("shared home revision receiver", () => {
       [opts.project_id],
     );
     expect(await readRevisionBootstrap(moved)).toBeNull();
-    expect(await acknowledgeRevisionBootstrap({ ...moved, receiver_id })).toBe(
-      false,
+    expect(
+      await acknowledgeRevisionBootstrap({ ...moved, request_id: receiver_id }),
+    ).toBe(false);
+  });
+  test("bootstrap rollover preserves receiver fences and rejects late request acknowledgments", async () => {
+    const opts = lease();
+    await arm(opts);
+    const receiver_id = await identity(opts.project_id);
+    const old = (await readRevisionBootstrap(opts))!;
+    expect(old).toBe(receiver_id);
+    await getPool().query(
+      "UPDATE collaboration_revision_receivers SET bootstrap_requested_at=clock_timestamp()-interval '6 days' WHERE project_id=$1",
+      [opts.project_id],
     );
+    expect(await readRevisionBootstrap(opts)).toBe(old);
+    await getPool().query(
+      "UPDATE collaboration_revision_receivers SET bootstrap_requested_at=clock_timestamp()-interval '8 days' WHERE project_id=$1",
+      [opts.project_id],
+    );
+    const state = (await readRevisionSchedulingState(
+      opts.project_id,
+      opts.home_bay_id,
+    ))!;
+    const next = (await readRevisionBootstrap(opts))!;
+    expect(next).not.toBe(old);
+    expect(await identity(opts.project_id)).toBe(receiver_id);
+    expect(await advanceRevisionScheduling(state, null)).toBe(true);
+    expect(
+      await acknowledgeRevisionBootstrap({ ...opts, request_id: old }),
+    ).toBe(false);
+    expect(await readRevisionBootstrap(opts)).toBe(next);
+    expect(
+      await acknowledgeRevisionBootstrap({ ...opts, request_id: next }),
+    ).toBe(true);
   });
   test("repair is due-only, stable across renewal, and acknowledged with jitter", async () => {
     const opts = lease();
@@ -101,7 +135,7 @@ describeDb("shared home revision receiver", () => {
     expect(await readOrCreateRevisionRepair(opts)).toBeNull();
     await acknowledgeRevisionBootstrap({
       ...opts,
-      receiver_id: await identity(opts.project_id),
+      request_id: (await readRevisionBootstrap(opts))!,
     });
     const request_id = (await readOrCreateRevisionRepair(opts))!;
     expect(request_id).toBeTruthy();

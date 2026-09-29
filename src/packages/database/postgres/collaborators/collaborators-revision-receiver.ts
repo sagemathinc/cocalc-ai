@@ -23,6 +23,9 @@ export async function syncCollaborationRevisionReceiverSchema(
   await db.query(`ALTER TABLE collaboration_revision_receivers
     ADD COLUMN IF NOT EXISTS bootstrap_admitted BOOLEAN NOT NULL DEFAULT FALSE`);
   await db.query(`ALTER TABLE collaboration_revision_receivers
+    ADD COLUMN IF NOT EXISTS bootstrap_request_id UUID,
+    ADD COLUMN IF NOT EXISTS bootstrap_requested_at TIMESTAMPTZ`);
+  await db.query(`ALTER TABLE collaboration_revision_receivers
     ADD COLUMN IF NOT EXISTS repair_request_id UUID,
     ADD COLUMN IF NOT EXISTS repair_requested_at TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS repair_after TIMESTAMPTZ NOT NULL
@@ -67,35 +70,44 @@ function validate(opts: ReceiverLease) {
   boundedText(opts.owner_bay_id, "receiver owner", 128);
 }
 
-/** Durable idempotency identity for first discovery, not a freshness claim. */
+/** Durable request identity for first discovery, separate from the receiver's
+ * projection fence. Unknown-age legacy work keeps its original receiver UUID.
+ * Still-pending work after seven days gets a new background request generation.
+ */
 export async function readRevisionBootstrap(
   opts: ReceiverLease,
 ): Promise<string | null> {
   validate(opts);
   const { rows } = await getPool().query(
-    `SELECT receiver_id FROM collaboration_revision_receivers
+    `UPDATE collaboration_revision_receivers SET bootstrap_request_id=CASE
+       WHEN bootstrap_requested_at<=clock_timestamp()-interval '7 days'
+       THEN gen_random_uuid() ELSE COALESCE(bootstrap_request_id,receiver_id) END,
+       bootstrap_requested_at=CASE
+       WHEN bootstrap_requested_at IS NULL OR bootstrap_requested_at<=clock_timestamp()-interval '7 days'
+       THEN clock_timestamp() ELSE bootstrap_requested_at END
      WHERE project_id=$1 AND home_bay_id=$2 AND owner_bay_id=$3 AND lease_id=$4
-       AND expires_at>clock_timestamp() AND NOT bootstrap_admitted`,
+       AND expires_at>clock_timestamp() AND NOT bootstrap_admitted
+       RETURNING bootstrap_request_id`,
     [opts.project_id, opts.home_bay_id, opts.owner_bay_id, opts.lease_id],
   );
-  return rows[0]?.receiver_id ?? null;
+  return rows[0]?.bootstrap_request_id ?? null;
 }
 
 export async function acknowledgeRevisionBootstrap(
-  opts: ReceiverLease & { receiver_id: string },
+  opts: ReceiverLease & { request_id: string },
 ): Promise<boolean> {
   validate(opts);
-  uuid(opts.receiver_id, "bootstrap receiver");
+  uuid(opts.request_id, "bootstrap request");
   const { rows } = await getPool().query(
     `UPDATE collaboration_revision_receivers SET bootstrap_admitted=TRUE
      WHERE project_id=$1 AND home_bay_id=$2 AND owner_bay_id=$3 AND lease_id=$4
-       AND receiver_id=$5 AND expires_at>clock_timestamp() RETURNING project_id`,
+       AND bootstrap_request_id=$5 AND expires_at>clock_timestamp() RETURNING project_id`,
     [
       opts.project_id,
       opts.home_bay_id,
       opts.owner_bay_id,
       opts.lease_id,
-      opts.receiver_id,
+      opts.request_id,
     ],
   );
   return rows.length > 0;

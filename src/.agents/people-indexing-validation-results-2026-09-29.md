@@ -2689,3 +2689,25 @@ timestamp, verify ordinary retries do not extend its horizon, and reject old-ID
 acknowledgments after rollover. This is not a seven-day soak or a multibay
 receipt-expiry acceptance result. Initial-bootstrap identity expiry remains a
 separate recovery gap; cold repair, lifecycle and capacity gates remain open.
+
+### Initial Discovery Request Generations
+
+Initial discovery now has separate durable request-ID and request-age columns.
+The first request keeps the receiver UUID for compatibility with already issued
+requests. After seven days of still-pending work, a new request generation is
+allocated without rotating the receiver identity used by projection scheduling
+and revision-delivery fences. Unknown-age requests acquire an observation time
+without changing their ID. Acknowledgment matches the current request ID as well
+as the live owner/lease, so an old reply cannot acknowledge a newer generation.
+
+This applies the same bounded background-work policy as periodic repair. It
+does not infer failure from timeout or cancel prior owner work. Explicit user
+Scan receipt/retry semantics are unchanged. Keep the prototype disabled during
+a mixed-version rollout: old workers do not understand rotated bootstrap IDs.
+
+Eleven receiver database tests, 62 server tests, and server/reference typecheck
+pass. The rollover test also commits preexisting projection scheduling state
+after rotating the bootstrap request, proving these identities stay independent.
+The timer-driven bootstrap/cross-home acceptance rerun passes in 101.999 seconds;
+the opt-in long missed-write case is skipped in this rerun. This is not yet real
+cross-bay seven-day expiry recovery evidence or a long-duration soak.
