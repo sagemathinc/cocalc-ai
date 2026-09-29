@@ -28,7 +28,11 @@ export async function syncCollaborationRevisionInterestSchema(
     ON collaboration_revision_interests(expires_at,project_id,home_bay_id)`);
   await db.query(`ALTER TABLE collaboration_revision_interests
     ADD COLUMN IF NOT EXISTS ack_generation UUID,
-    ADD COLUMN IF NOT EXISTS ack_revision BIGINT NOT NULL DEFAULT 0`);
+    ADD COLUMN IF NOT EXISTS ack_revision BIGINT NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS delivery_claim UUID,
+    ADD COLUMN IF NOT EXISTS delivery_until TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS delivery_generation UUID,
+    ADD COLUMN IF NOT EXISTS delivery_revision BIGINT`);
 }
 
 /** Internal owner-side prototype, not a public API. The caller must authenticate
@@ -84,6 +88,7 @@ export async function registerCollaborationRevisionInterest(
           `INSERT INTO collaboration_revision_interests(project_id,home_bay_id,lease_id,expires_at,renew_after)
          VALUES($1,$2,$3,$4,$5) ON CONFLICT(project_id,home_bay_id) DO UPDATE SET
          lease_id=excluded.lease_id,expires_at=excluded.expires_at,renew_after=excluded.renew_after,
+         delivery_claim=NULL,delivery_until=NULL,delivery_generation=NULL,delivery_revision=NULL,
          ack_generation=CASE WHEN collaboration_revision_interests.expires_at<=$6 THEN NULL ELSE collaboration_revision_interests.ack_generation END,
          ack_revision=CASE WHEN collaboration_revision_interests.expires_at<=$6 THEN 0 ELSE collaboration_revision_interests.ack_revision END RETURNING *`,
           [
@@ -125,6 +130,96 @@ type InterestLookup = {
   home_bay_id: string;
   lease_id: string;
 };
+
+type FanoutLease = {
+  project_id: string;
+  home_bay_id: string;
+  lease_id: string;
+};
+
+/** Durable worker claim, not proof of delivery or authorization to fetch data.
+ * Unknown transport outcomes leave the claim intact until expiry. The next
+ * claim samples the current catalog, coalescing changes during the retry wait.
+ */
+export async function claimCollaborationRevisionHint(
+  opts: FanoutLease,
+  authority: CollaborationOwnerAuthority,
+) {
+  boundedText(opts.home_bay_id, "interest home bay", 128);
+  uuid(opts.lease_id, "interest lease");
+  return transaction(async (db) => {
+    await db.query("SET LOCAL lock_timeout='1s'");
+    await db.query("SET LOCAL statement_timeout='2s'");
+    await assertCollaborationOwnerAuthority(db, opts.project_id, authority);
+    const claim_id = randomUUID();
+    const { rows } = await db.query(
+      `WITH clock AS MATERIALIZED (SELECT clock_timestamp() AS t)
+       UPDATE collaboration_revision_interests i SET delivery_claim=$4,
+       delivery_generation=c.generation,delivery_revision=c.revision,
+       delivery_until=LEAST(i.expires_at,clock.t+interval '15 seconds')
+       FROM collaboration_projects c,clock
+       WHERE c.project_id=i.project_id AND i.project_id=$1 AND i.home_bay_id=$2
+       AND i.lease_id=$3 AND i.expires_at>clock.t
+       AND (i.delivery_until IS NULL OR i.delivery_until<=clock.t)
+       AND (i.ack_generation IS DISTINCT FROM c.generation OR i.ack_revision<c.revision)
+       RETURNING c.generation,c.revision,i.delivery_until`,
+      [opts.project_id, opts.home_bay_id, opts.lease_id, claim_id],
+    );
+    return rows.length
+      ? {
+          project_id: opts.project_id,
+          home_bay_id: opts.home_bay_id,
+          lease_id: opts.lease_id,
+          claim_id,
+          generation: rows[0].generation as string,
+          revision: Number(rows[0].revision),
+          claim_until: rows[0].delivery_until.getTime() as number,
+        }
+      : null;
+  });
+}
+
+/** Settle only after the destination home durably accepted this wakeup.
+ * A stale worker cannot settle a replacement claim, lease or catalog generation.
+ */
+export async function settleCollaborationRevisionHint(
+  opts: FanoutLease & {
+    claim_id: string;
+    generation: string;
+    revision: number;
+  },
+  authority: CollaborationOwnerAuthority,
+): Promise<boolean> {
+  boundedText(opts.home_bay_id, "interest home bay", 128);
+  uuid(opts.lease_id, "interest lease");
+  uuid(opts.claim_id, "delivery claim");
+  uuid(opts.generation, "catalog generation");
+  integer(opts.revision, "catalog revision");
+  return transaction(async (db) => {
+    await db.query("SET LOCAL lock_timeout='1s'");
+    await db.query("SET LOCAL statement_timeout='2s'");
+    await assertCollaborationOwnerAuthority(db, opts.project_id, authority);
+    const { rows } = await db.query(
+      `UPDATE collaboration_revision_interests i SET ack_generation=$5,
+       ack_revision=CASE WHEN i.ack_generation=$5 THEN GREATEST(i.ack_revision,$6) ELSE $6 END,
+       delivery_claim=NULL,delivery_until=NULL,delivery_generation=NULL,delivery_revision=NULL
+       FROM collaboration_projects c WHERE c.project_id=i.project_id
+       AND i.project_id=$1 AND i.home_bay_id=$2 AND i.lease_id=$3 AND i.delivery_claim=$4
+       AND i.delivery_generation=$5 AND i.delivery_revision=$6
+       AND i.expires_at>clock_timestamp() AND i.delivery_until>clock_timestamp()
+       AND c.generation=$5 AND c.revision>=$6 RETURNING i.lease_id`,
+      [
+        opts.project_id,
+        opts.home_bay_id,
+        opts.lease_id,
+        opts.claim_id,
+        opts.generation,
+        opts.revision,
+      ],
+    );
+    return rows.length > 0;
+  });
+}
 
 /** Internal owner worker page. Limit candidate rows BEFORE filtering pending
  * hints so an idle/expired population cannot turn one page into a full scan.

@@ -1181,3 +1181,25 @@ reject old-ID reacquisition at the live cap, permit replacement after release,
 and verify bounded retained state with reusable IDs at 256 grace records. This
 addresses the combined live/grace cap mismatch; workload-scale churn and
 browser remount validation remain separate gates.
+
+### Durable Owner Hint Delivery Claims
+
+Revision interests now carry an exact delivery claim and claimed catalog
+generation/revision. A worker can claim a still-live lease for at most fifteen
+seconds, additionally capped by the interest expiry. Concurrent attempts see
+the outstanding claim rather than starting a new delivery. An unknown outcome
+does not clear or acknowledge it; a later attempt after expiry samples the
+latest catalog revision. Renewing an interest fences and clears the old claim.
+
+Settlement requires the exact lease, delivery claim and claimed watermark,
+plus unexpired deadlines and matching current catalog generation. A successful
+settlement advances the ACK monotonically, retaining any later catalog change
+as pending work. These worker-only store methods do not themselves establish
+destination acceptance: the eventual dispatcher must settle only after a
+durable home receipt. They expose no resource metadata or access grants.
+
+Server build and eight PGlite store tests pass, including outstanding-claim
+exclusion, exact-watermark settlement, unknown-outcome expiry/reclaim, stale
+claim and renewed-lease fencing, and generation replacement. Cross-process
+crash/transport injection and actual durable home receipt processing remain
+unverified. No automatic worker or public API was enabled.

@@ -7,6 +7,8 @@ import {
   acknowledgeCollaborationRevisionHint,
   syncCollaborationRevisionInterestSchema,
   readCollaborationRevisionFanoutPage,
+  claimCollaborationRevisionHint,
+  settleCollaborationRevisionHint,
 } from "./collaborators-revision-interest";
 
 const describeDb =
@@ -49,6 +51,81 @@ describeDb("owner project/home revision interests", () => {
       peer,
     };
   }
+  test("delivery claims survive unknown outcomes and fence stale settlements", async () => {
+    const { request } = await fixture();
+    const lease = await registerCollaborationRevisionInterest(
+      request,
+      authority,
+    );
+    const lookup = { ...request, lease_id: lease.lease_id };
+    const generation = randomUUID();
+    await getPool().query(
+      "INSERT INTO collaboration_projects(project_id,generation,revision) VALUES($1,$2,7)",
+      [request.project_id, generation],
+    );
+    const first = await claimCollaborationRevisionHint(lookup, authority);
+    expect(first).not.toBeNull();
+    expect(first!.claim_until).toBeLessThanOrEqual(lease.expires_at);
+    expect(await claimCollaborationRevisionHint(lookup, authority)).toBeNull();
+    await getPool().query(
+      "UPDATE collaboration_projects SET revision=9 WHERE project_id=$1",
+      [request.project_id],
+    );
+    expect(
+      await settleCollaborationRevisionHint(
+        { ...first!, revision: 9 },
+        authority,
+      ),
+    ).toBe(false);
+    expect(await settleCollaborationRevisionHint(first!, authority)).toBe(true);
+    expect(await settleCollaborationRevisionHint(first!, authority)).toBe(
+      false,
+    );
+    const second = await claimCollaborationRevisionHint(lookup, authority);
+    expect(second!.revision).toBe(9);
+    // A transport timeout is not a failed delivery. No settlement occurs; a
+    // later worker can reclaim only after the durable deadline.
+    await getPool().query(
+      "UPDATE collaboration_revision_interests SET delivery_until=clock_timestamp()-interval '1 second' WHERE project_id=$1",
+      [request.project_id],
+    );
+    const retry = await claimCollaborationRevisionHint(lookup, authority);
+    expect(retry!.claim_id).not.toBe(second!.claim_id);
+    expect(await settleCollaborationRevisionHint(second!, authority)).toBe(
+      false,
+    );
+    expect(await settleCollaborationRevisionHint(retry!, authority)).toBe(true);
+    expect(await claimCollaborationRevisionHint(lookup, authority)).toBeNull();
+    await getPool().query(
+      "UPDATE collaboration_projects SET revision=10 WHERE project_id=$1",
+      [request.project_id],
+    );
+    const pending = await claimCollaborationRevisionHint(lookup, authority);
+    await getPool().query(
+      "UPDATE collaboration_revision_interests SET renew_after=clock_timestamp()-interval '1 second' WHERE project_id=$1",
+      [request.project_id],
+    );
+    const renewed = await registerCollaborationRevisionInterest(
+      request,
+      authority,
+    );
+    expect(await settleCollaborationRevisionHint(pending!, authority)).toBe(
+      false,
+    );
+    expect(await claimCollaborationRevisionHint(lookup, authority)).toBeNull();
+    const current = await claimCollaborationRevisionHint(
+      { ...lookup, lease_id: renewed.lease_id },
+      authority,
+    );
+    expect(current!.revision).toBe(10);
+    await getPool().query(
+      "UPDATE collaboration_projects SET generation=$2 WHERE project_id=$1",
+      [request.project_id, randomUUID()],
+    );
+    expect(await settleCollaborationRevisionHint(current!, authority)).toBe(
+      false,
+    );
+  });
   test("fanout bounds examined rows even when the first page is entirely idle", async () => {
     const { request } = await fixture();
     const generation = randomUUID();
