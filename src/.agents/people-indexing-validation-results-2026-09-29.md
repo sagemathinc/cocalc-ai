@@ -1815,3 +1815,24 @@ This establishes bounded query work for the measured ineligible backlog, not
 whole-backlog drain latency, concurrent state changes, distributed budgets or
 active-user throughput. The atomic catalog invalidation/source-write path and
 the remaining recovery, workload and soak gates are still unfinished.
+
+### Atomic Catalog Invalidation Prototype
+
+Added an explicitly installed, project-owned revision outbox with one coalesced
+row per changed project. A trigger on catalog-state insert and generation/revision
+updates commits the latest watermark and a replacement token in the same
+transaction as the catalog mutation. Repeated edits retain the earliest due time
+and reset recipient traversal; unchanged watermarks do not change the token.
+The token is intended to fence future drain acknowledgments, including generation
+resets where revision numbers are not comparable.
+
+Database/reference typecheck, three PGlite outbox tests and seven ownership-registry
+tests pass. Tests cover idempotent installation, coalescing, no-op preservation,
+generation reset, rollback and project deletion. The ownership registry marks
+portability unsupported pending explicit rehome/restore validation.
+
+There is deliberately no startup installation or drain worker yet. This is the
+atomic intent primitive, not completed source-change delivery: owner-fenced claims,
+bounded destination traversal, token-conditional settlement, retry/unknown outcomes,
+disabled-after-install behavior, real PostgreSQL concurrency and routed delivery
+must precede enabling it. Existing repair remains unchanged.

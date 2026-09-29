@@ -1495,6 +1495,16 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
       "Prototype expiring project/home-bay scheduling hints, never access grants. Rehome remains guarded pending epoch/cutover validation.",
   }),
 
+  ...adHocEntries(["collaboration_revision_outbox"], {
+    ownership: "project-owning",
+    authority: "project_id",
+    portability: "unsupported",
+    source: "database/postgres/collaborators/collaborators-revision-outbox.ts",
+    migrate_to_schema: true,
+    notes:
+      "Explicit prototype coalesced catalog invalidation intent. Not installed by startup; owner-fenced drain, rehome and restore behavior require validation before rollout.",
+  }),
+
   ...adHocEntries(["collaboration_revision_receivers"], {
     ownership: "ephemeral",
     authority: "local",
