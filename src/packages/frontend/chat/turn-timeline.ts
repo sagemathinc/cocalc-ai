@@ -14,8 +14,8 @@ import type { ArtifactPublication } from "@cocalc/chat";
 import { markdownBlockBoundaries } from "@cocalc/chat";
 import type { InlineCodexActivityBlock } from "./message-state";
 
-// Large enough for a few paragraphs or a sizable code block, small enough that
-// parsing and laying out one row stays cheap.
+// Target size, not a hard limit: non-code markdown blocks stay intact so their
+// links, tables, and math still render correctly in independently parsed rows.
 export const MAX_TIMELINE_ROW_CHARS = 4_000;
 
 export type TurnTimelineRow =
@@ -31,24 +31,31 @@ export type TurnTimelineRow =
 
 const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 
-// Hard-split one oversized markdown block at line boundaries. A fenced code
+// Split oversized fenced code at line boundaries. A fenced code
 // block is closed and reopened around each cut so every part still renders
 // as code with the same language.
 function splitOversizedBlock(block: string, maxChars: number): string[] {
   const lines = block.split("\n");
   const fence = FENCE.exec(lines[0] ?? "");
-  let open = "";
-  let close = "";
-  let body = lines;
-  if (fence) {
-    const closing = lines.length > 1 ? lines[lines.length - 1] : "";
-    const closes =
-      closing.trim().startsWith(fence[1]) &&
-      closing.trim().replace(/[`~]/g, "") === "";
-    open = lines[0];
-    close = fence[1];
-    body = lines.slice(1, closes ? -1 : undefined);
-  }
+  // Arbitrary cuts can bisect even a short link within a long paragraph, and
+  // tables/math cannot be rendered independently without their block context.
+  if (!fence) return [block];
+  const closingIndex = lines.findIndex((line, index) => {
+    if (index === 0) return false;
+    const match = FENCE.exec(line);
+    return (
+      match != null &&
+      match[1][0] === fence[1][0] &&
+      match[1].length >= fence[1].length &&
+      match[2].trim() === ""
+    );
+  });
+  // A blank-line block can contain prose or another fence after the code.
+  // Do not reinterpret that trailing content as part of this code block.
+  if (closingIndex >= 0 && closingIndex < lines.length - 1) return [block];
+  const open = lines[0];
+  const close = fence[1];
+  const body = lines.slice(1, closingIndex >= 0 ? closingIndex : undefined);
   const budget = Math.max(1, maxChars - open.length - close.length - 2);
   const parts: string[] = [];
   let current: string[] = [];
@@ -56,7 +63,7 @@ function splitOversizedBlock(block: string, maxChars: number): string[] {
   const flush = () => {
     if (current.length === 0) return;
     const text = current.join("\n");
-    parts.push(fence ? `${open}\n${text}\n${close}` : text);
+    parts.push(`${open}\n${text}\n${close}`);
     current = [];
     size = 0;
   };
@@ -78,7 +85,15 @@ function splitLongLine(line: string, maxChars: number): string[] {
   while (start < line.length) {
     let end = Math.min(line.length, start + maxChars);
     // Never split a surrogate pair.
-    if (end < line.length && /[\uD800-\uDBFF]/.test(line[end - 1])) end -= 1;
+    if (
+      end < line.length &&
+      /[\uD800-\uDBFF]/.test(line[end - 1]) &&
+      /[\uDC00-\uDFFF]/.test(line[end])
+    ) {
+      // With a one-unit budget, keep the pair and exceed the soft limit rather
+      // than retreating to start and looping forever.
+      end += end - start === 1 ? 1 : -1;
+    }
     pieces.push(line.slice(start, end));
     start = end;
   }
@@ -86,7 +101,7 @@ function splitLongLine(line: string, maxChars: number): string[] {
 }
 
 // Split agent markdown into row-sized parts at top-level block boundaries,
-// greedily packing whole blocks. Only oversized single blocks are cut inside.
+// greedily packing whole blocks. Only oversized fenced code is cut inside.
 export function splitAgentMarkdown(
   text: string,
   maxChars = MAX_TIMELINE_ROW_CHARS,
@@ -165,7 +180,7 @@ export function buildTurnTimelineRows({
       const base = `guidance:${block.time ?? ""}`;
       const n = guidanceIds.get(base) ?? 0;
       guidanceIds.set(base, n + 1);
-      // Long guidance (e.g. a pasted log) is bounded like agent output.
+      // Long guidance uses the same soft row limit as agent output.
       splitAgentMarkdown(text, maxChars).forEach((part, part_index) => {
         rows.push({
           kind: "guidance",

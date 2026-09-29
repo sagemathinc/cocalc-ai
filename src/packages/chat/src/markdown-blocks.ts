@@ -5,7 +5,7 @@
 
 // Top-level markdown block boundaries, found with a line scanner instead of a
 // full parser so callers can run it on every streamed update of a long turn.
-// A boundary is a run of blank lines outside fenced code that is followed by
+// A boundary is a run of blank lines outside fenced code/display math followed by
 // an unindented line; indented lines usually continue a list item, so they are
 // not treated as a new block.
 
@@ -17,6 +17,7 @@ export interface MarkdownBlockBoundary {
 }
 
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+const DISPLAY_MATH = /^ {0,3}(\$\$|\\\[|\\begin\{([a-z]+\*?)\})/;
 
 export function markdownBlockBoundaries(
   text: string,
@@ -24,6 +25,7 @@ export function markdownBlockBoundaries(
 ): MarkdownBlockBoundary[] {
   const boundaries: MarkdownBlockBoundary[] = [];
   let fence: { char: string; length: number } | undefined;
+  let mathClose: string | undefined;
   let blankStart: number | undefined;
   let sawContent = false;
   let offset = 0;
@@ -32,6 +34,11 @@ export function markdownBlockBoundaries(
     const lineEnd = newline < 0 ? text.length : newline;
     const line = text.slice(offset, lineEnd);
     const next = newline < 0 ? text.length : newline + 1;
+    if (mathClose != null) {
+      if (line.includes(mathClose)) mathClose = undefined;
+      offset = next;
+      continue;
+    }
     if (fence != null) {
       const match = FENCE.exec(line);
       if (
@@ -60,6 +67,17 @@ export function markdownBlockBoundaries(
     const match = FENCE.exec(line);
     if (match) {
       fence = { char: match[1][0], length: match[1].length };
+    } else {
+      const math = DISPLAY_MATH.exec(line);
+      if (math) {
+        const close =
+          math[1] === "$$"
+            ? "$$"
+            : math[1] === "\\["
+              ? "\\]"
+              : `\\end{${math[2]}}`;
+        if (!line.slice(math[0].length).includes(close)) mathClose = close;
+      }
     }
     offset = next;
   }

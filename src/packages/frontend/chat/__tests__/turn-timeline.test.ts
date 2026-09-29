@@ -58,6 +58,70 @@ describe("splitAgentMarkdown", () => {
     }
   });
 
+  it("makes progress with a surrogate pair and a one-unit code budget", () => {
+    const open = "```" + "x".repeat(3994);
+    const text = `${open}\n\u{1F600}\n\`\`\``;
+    expect(splitAgentMarkdown(text)).toEqual([text]);
+    expect(splitAgentMarkdown(`${open}\n\u{1F600}\u{1F600}\n\`\`\``)).toEqual([
+      text,
+      text,
+    ]);
+  });
+
+  it("does not bisect surrogate pairs at ordinary code row boundaries", () => {
+    const parts = splitAgentMarkdown("```\nab\u{1F600}cd\n```", 11);
+    expect(parts).toEqual([
+      "```\nab\n```",
+      "```\n\u{1F600}c\n```",
+      "```\nd\n```",
+    ]);
+  });
+
+  it("keeps a short link intact across the target row boundary", () => {
+    const paragraph = "x".repeat(3990) + " [docs](https://example.com)";
+    expect(splitAgentMarkdown(`${paragraph}\n\nafter`)).toEqual([
+      paragraph,
+      "after",
+    ]);
+  });
+
+  it.each(["after", "~~~md\n[docs](https://example.com)\n~~~"])(
+    "keeps code followed by other markdown intact (%s)",
+    (tail) => {
+      const text = `\`\`\`ts\n${"x\n".repeat(50)}\`\`\`\n${tail}`;
+      expect(splitAgentMarkdown(text, 40)).toEqual([text]);
+    },
+  );
+
+  it("does not mistake a mixed-marker code line for a closing fence", () => {
+    const text = "```\n" + "x\n".repeat(50) + "```~";
+    const parts = splitAgentMarkdown(text, 40);
+    expect(parts[parts.length - 1]).toContain("\n```~\n```");
+  });
+
+  it("keeps oversized tables with their header and delimiter row", () => {
+    const table =
+      "| Name | Value |\n| --- | --- |\n" + "| a | b |\n".repeat(500);
+    expect(splitAgentMarkdown(`before\n\n${table}\nafter`)).toEqual([
+      "before",
+      table.trimEnd(),
+      "after",
+    ]);
+  });
+
+  it.each([
+    ["$$", "$$"],
+    ["\\[", "\\]"],
+    ["\\begin{align*}", "\\end{align*}"],
+  ])("keeps oversized display math intact (%s)", (open, close) => {
+    const math = `${open}\n${"x + ".repeat(1100)}\n\ny\n${close}`;
+    expect(splitAgentMarkdown(`before\n\n${math}\n\nafter`)).toEqual([
+      "before",
+      math,
+      "after",
+    ]);
+  });
+
   it("keeps finished parts unchanged as the output grows", () => {
     const paragraphs = Array.from({ length: 20 }, (_, i) =>
       `paragraph ${i} `.repeat(5),
