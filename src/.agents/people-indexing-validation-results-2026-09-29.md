@@ -2321,3 +2321,26 @@ inspection while dispatch is paused, per-account/global in-flight limits,
 failure-slot release, and Lite rejection. These are not live multi-bay or
 scoped-agent acceptance tests. CLI/UI, demand/bootstrap integration and the
 remaining design/validation gates are still open.
+
+### Scan CLI Commands
+
+Registered `project scan request`, `project scan inspect`, and `project scan
+status` using the existing account-context and project-resolution paths. Request
+accepts an optional stable request UUID and `check`/`reconcile` mode, prints the
+exact identity before submission, and includes it in structured output.
+Inspection requires the request UUID; status requires the receipt's job UUID.
+Neither command submits, retries or automatically polls. Server throttling and
+polling guidance remain structured, and discovery completion is not presented
+as owner/home indexing completion. Invalid inputs fail before authentication.
+An agent-runtime identity explicitly fails before context creation, avoiding
+credential fallback while delegated Scan scope remains unimplemented.
+
+CLI/reference build and test compilation pass. Nine focused CLI tests pass,
+including adjacent room commands and new coverage for generated/stable identity,
+ambiguous submission without retry, read-only throttled inspection/status,
+invalid input and agent rejection. Dependencies and transport are mocked in
+these command tests. No live Scan was requested and no production configuration
+was changed. User-facing recovery semantics are documented in the CLI README.
+Live CLI-to-owner/host validation, UI, delegated-agent authorization,
+demand/bootstrap integration and the broader workload/lifecycle gates remain
+open.
