@@ -642,12 +642,8 @@ function featureRouteMetadata(
     return {
       canonicalPath: publicPath(`features/${page.slug}`, options),
       description: page.metadataSummary ?? page.summary,
-      // The AI page is a broad entry point, and its page image is an older
-      // code-fix screenshot, so its link preview uses the brand card.
       imagePath: publicPath(
-        page.slug === "ai"
-          ? FEATURE_SOCIAL_IMAGE
-          : (page.image ?? FEATURE_SOCIAL_IMAGE),
+        page.metadataImage ?? page.image ?? FEATURE_SOCIAL_IMAGE,
         options,
       ),
       title: pageTitle(page.metadataTitle ?? page.title, siteName),

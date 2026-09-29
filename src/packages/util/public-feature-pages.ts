@@ -15,6 +15,8 @@ export interface PublicFeaturePage {
   docsUrl?: string;
   image?: string;
   index: boolean;
+  // Link preview image, when it should differ from the page image.
+  metadataImage?: string;
   metadataSummary?: string;
   metadataTitle?: string;
   // Short label for the feature sub-navigation (side rail and the
@@ -309,6 +311,7 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
     metadataSummary:
       "Use integrated Codex near files, notebooks, terminals, screenshots, patches, review notes, and live notebook state, or run other agents as terminal tools.",
     image: "/public/features/chatgpt-fix-code.png",
+    metadataImage: "/public/landing/cocalc-brand-social-20260925.png",
     docsUrl: "/docs/ai/codex-chat",
     index: true,
     sections: [
