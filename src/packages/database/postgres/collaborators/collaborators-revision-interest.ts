@@ -362,6 +362,17 @@ export async function releaseCollaborationRevisionInterest(
   });
 }
 
+// Stable candidate cutoff permits an index range. Expiry after transaction
+// start waits for the next pass; the final delete still rechecks current time.
+export const revisionInterestPruneSql = `WITH expired AS MATERIALIZED (
+        SELECT home_bay_id,lease_id FROM collaboration_revision_interests
+        WHERE project_id=$1 AND expires_at<=now()
+        ORDER BY expires_at,home_bay_id LIMIT 100 FOR UPDATE SKIP LOCKED)
+      DELETE FROM collaboration_revision_interests i USING expired e
+      WHERE i.project_id=$1 AND i.home_bay_id=e.home_bay_id
+        AND i.lease_id=e.lease_id AND i.expires_at<=clock_timestamp()
+      RETURNING i.home_bay_id`;
+
 /** Internal owner maintenance. Serialize with registration and rehome before
  * deleting expired scheduling state; never delete a renewed live interest.
  */
@@ -373,17 +384,7 @@ export async function pruneCollaborationRevisionInterests(
     await db.query("SET LOCAL lock_timeout='1s'");
     await db.query("SET LOCAL statement_timeout='2s'");
     await assertCollaborationOwnerAuthority(db, project_id, authority);
-    const { rows } = await db.query(
-      `WITH expired AS MATERIALIZED (
-        SELECT home_bay_id,lease_id FROM collaboration_revision_interests
-        WHERE project_id=$1 AND expires_at<=clock_timestamp()
-        ORDER BY expires_at,home_bay_id LIMIT 100 FOR UPDATE SKIP LOCKED)
-      DELETE FROM collaboration_revision_interests i USING expired e
-      WHERE i.project_id=$1 AND i.home_bay_id=e.home_bay_id
-        AND i.lease_id=e.lease_id AND i.expires_at<=clock_timestamp()
-      RETURNING i.home_bay_id`,
-      [project_id],
-    );
+    const { rows } = await db.query(revisionInterestPruneSql, [project_id]);
     return rows.length;
   });
 }

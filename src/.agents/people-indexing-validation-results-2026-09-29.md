@@ -1490,3 +1490,26 @@ foreign ownership, project coalescing, cursor wrap, deadline interruption,
 failure isolation and disabled gates. Full PostgreSQL query-plan/concurrency
 validation, distributed bay quotas and churn backlog throughput remain open;
 this does not establish the complete lifecycle or scale gates.
+
+### PostgreSQL Owner Expiry Query Cost
+
+The new `revision-expiry.acceptance.test.ts` exercises the exact exported
+production deletion SQL on isolated PostgreSQL with 100,000 live interests and
+a 105-row expired backlog. The first run failed: the volatile
+`expires_at <= clock_timestamp()` candidate predicate inspected all 100,000 live
+rows, using 21,371 buffers when nothing expired and 21,417 for the final five-row
+batch. A LIMIT on deleted rows did not bound lookup work.
+
+Changed candidate selection to the conservative transaction-stable `now()`
+cutoff. The final delete still rechecks current-time expiry, exact lease and
+project identity; the production caller retains the owner/rehome fence. Rows
+expiring after transaction start wait for another pass. PostgreSQL now includes
+expiry in the project-expiry index condition. Measured buffer counts were 3
+(nothing expired), 715 (100 deleted), 51 (5 deleted), and 5 (backlog drained).
+Observed execution times were 0.081, 0.423, 0.080 and 0.056 milliseconds; these
+are local measurements, not latency guarantees. Tests assert fewer than 2,000
+buffers per case and preservation of all 100,000 live rows.
+
+Server typecheck, both PostgreSQL acceptance cases and nine PGlite store tests
+pass. This validates this deletion query shape, not 100,000 DAU, concurrent
+renewal/rehome behavior, receiver cleanup query cost or full-system churn.
