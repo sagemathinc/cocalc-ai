@@ -56,6 +56,19 @@ export interface LineSource {
   lineCount(): number;
 }
 
+/** Half-open `[from, to)` range of whole lines. */
+interface LineRange {
+  from: number;
+  to: number;
+}
+
+function lineInRanges(line: number, ranges: LineRange[]): boolean {
+  for (const r of ranges) {
+    if (line >= r.from && line < r.to) return true;
+  }
+  return false;
+}
+
 /**
  * Equivalent of `cm.getRange(from, to)` built purely from a
  * `LineSource`, joining intervening whole lines with `\n`. Used by the
@@ -732,8 +745,35 @@ function scanIncludegraphics(
   }
 }
 
+const VERB = "\\verb";
+
+/**
+ * Match `\verb<delim>…<delim>` (or `\verb*…`) whose backslash is at
+ * `idx`. Returns null when `text` has no `\verb` at `idx`, the
+ * delimiter is not a valid one, or the closing delimiter is missing
+ * from the line. The caller is responsible for the escape check.
+ */
+function matchVerb(
+  text: string,
+  idx: number,
+): { delim: string; starred: boolean; after: number; end: number } | null {
+  if (!text.startsWith(VERB, idx)) return null;
+  let after = idx + VERB.length;
+  let starred = false;
+  if (text[after] === "*") {
+    starred = true;
+    after++;
+  }
+  const delim = text[after];
+  if (delim == null || /[A-Za-z\s]/.test(delim) || delim === "*") {
+    return null;
+  }
+  const end = text.indexOf(delim, after + 1);
+  if (end === -1) return null;
+  return { delim, starred, after, end };
+}
+
 function scanVerb(text: string, line: number, out: WidgetDescriptor[]): void {
-  const VERB = "\\verb";
   let i = 0;
   while (true) {
     const idx = text.indexOf(VERB, i);
@@ -742,22 +782,12 @@ function scanVerb(text: string, line: number, out: WidgetDescriptor[]): void {
       i = idx + VERB.length;
       continue;
     }
-    let after = idx + VERB.length;
-    let starred = false;
-    if (text[after] === "*") {
-      starred = true;
-      after++;
-    }
-    const delim = text[after];
-    if (delim == null || /[A-Za-z\s]/.test(delim) || delim === "*") {
+    const verb = matchVerb(text, idx);
+    if (verb == null) {
       i = idx + VERB.length;
       continue;
     }
-    const end = text.indexOf(delim, after + 1);
-    if (end === -1) {
-      i = idx + VERB.length;
-      continue;
-    }
+    const { delim, starred, after, end } = verb;
     out.push({
       type: "verb",
       from: { line, ch: idx },
@@ -773,7 +803,8 @@ function scanVerb(text: string, line: number, out: WidgetDescriptor[]): void {
  * Index of the next unescaped inline-math `$` in `text` at or after
  * `start`, or -1. Outside inline math, `$$` pairs are skipped for the
  * display-math scanner; inside inline math, the first `$` closes it,
- * even when another `$` immediately follows.
+ * even when another `$` immediately follows. A `\verb<delim>…<delim>`
+ * span is opaque to TeX, so any `$` inside it is skipped.
  */
 function findInlineDollar(
   text: string,
@@ -783,7 +814,10 @@ function findInlineDollar(
   let k = start;
   while (k < text.length) {
     if (text[k] === "\\") {
-      k += 2;
+      // Escape pairs are consumed left to right, so this backslash is
+      // never itself escaped.
+      const verb = matchVerb(text, k);
+      k = verb == null ? k + 2 : verb.end + 1;
       continue;
     }
     if (text[k] === "$") {
@@ -803,8 +837,14 @@ function findInlineDollar(
  * formula cannot cross a blank line, so only the current paragraph
  * needs to be inspected. This gives viewport-scoped parses the same
  * delimiter state as a parse that started at the formula's opener.
+ * Lines in `rawTextRanges` (verbatim / code-listing bodies) are
+ * skipped, exactly as in the forward scan.
  */
-function startsInsideInlineDollarMath(src: LineSource, line: number): boolean {
+function startsInsideInlineDollarMath(
+  src: LineSource,
+  line: number,
+  rawTextRanges: LineRange[],
+): boolean {
   let paragraphStart = line;
   while (paragraphStart > 0 && src.getLine(paragraphStart - 1).trim() !== "") {
     paragraphStart--;
@@ -812,6 +852,7 @@ function startsInsideInlineDollarMath(src: LineSource, line: number): boolean {
 
   let inInlineMath = false;
   for (let l = paragraphStart; l < line; l++) {
+    if (lineInRanges(l, rawTextRanges)) continue;
     const text = getLineStripped(src, l);
     let i = 0;
     while (i < text.length) {
@@ -937,24 +978,33 @@ function matchInnerEnvDollarMath(
  * state matters when a line contains the closing `$` of an unsupported
  * multi-line formula followed by the opening `$` of a supported one,
  * or when the first closer belongs to a formula above the viewport.
+ *
+ * Verbatim and code-listing bodies (`rawTextRanges`, from
+ * `scanEnvBlocks`) are opaque to TeX, so their lines are skipped: a
+ * literal `$` in e.g. `echo $HOME` must not flip the delimiter state
+ * for the prose that follows `\end{lstlisting}`. The ranges are whole
+ * lines, so text on the `\begin` / `\end` lines themselves is still
+ * scanned.
  */
 function scanInlineDollarMath(
   src: LineSource,
   fromLine: number,
   toLine: number,
   out: WidgetDescriptor[],
+  rawTextRanges: LineRange[],
 ): void {
   const maxSearchLine = Math.min(
     src.lineCount() - 1,
     toLine + ENV_SEARCH_MAX_LINES,
   );
-  let inInlineMath = startsInsideInlineDollarMath(src, fromLine);
+  let inInlineMath = startsInsideInlineDollarMath(src, fromLine, rawTextRanges);
   let ordinaryOpen: CodeMirror.Position | null = null;
   // Where a matched inner-environment formula ended. Scanning resumes
   // exactly there, so its body and closing `$` are not re-scanned.
   let resume = { line: fromLine, ch: 0 };
   for (let line = fromLine; line < toLine; line++) {
     if (line < resume.line) continue;
+    if (lineInRanges(line, rawTextRanges)) continue;
     if (src.getLine(line).trim() === "") {
       // A paragraph break terminates `$…$` math in LaTeX.
       inInlineMath = false;
@@ -1485,6 +1535,10 @@ function parseTabular(source: string, envName: string): TabularData | null {
  * suppress inner widgets via `dropOverlaps`, so we need the
  * explicit filter.
  *
+ * `rawTextRanges` (output): the subset of `protectedRanges` that are
+ * verbatim / code-listing bodies, whose text TeX treats as opaque.
+ * `scanInlineDollarMath` skips these lines when tracking `$` state.
+ *
  * Approximations:
  *  - We only scan back `ENV_SCAN_LOOKBACK` lines, so a list env
  *    whose `\begin{…}` is more than 200 lines above the viewport
@@ -1498,7 +1552,8 @@ function scanEnvBlocks(
   fromLine: number,
   toLine: number,
   out: WidgetDescriptor[],
-  protectedRanges: Array<{ from: number; to: number }>,
+  protectedRanges: LineRange[],
+  rawTextRanges: LineRange[],
 ): void {
   interface StackEntry {
     envName: string;
@@ -1540,6 +1595,13 @@ function scanEnvBlocks(
   // existing nested-scan behavior.
   const isRawTextEnv = (envName: string): boolean =>
     VERBATIM_ENV_NAMES.has(envName) || CODE_LISTING_ENV_NAMES.has(envName);
+
+  // Protect a raw-text body from the per-line scanners AND mark it
+  // opaque for the inline `$` delimiter walk.
+  const protectRawText = (range: LineRange): void => {
+    protectedRanges.push(range);
+    rawTextRanges.push(range);
+  };
 
   type Event =
     | {
@@ -1653,7 +1715,7 @@ function scanEnvBlocks(
   // `maxSearchLine + 1`).
   for (const open of stack) {
     if (isRawTextEnv(open.envName) && maxSearchLine > open.beginLine + 1) {
-      protectedRanges.push({
+      protectRawText({
         from: open.beginLine + 1,
         to: maxSearchLine + 1,
       });
@@ -1765,7 +1827,7 @@ function scanEnvBlocks(
           // Half-open: protects beginLine+1 through endLine-1
           // inclusive, leaving the \begin and \end lines alone.
           if (line > begin.beginLine + 1) {
-            protectedRanges.push({ from: begin.beginLine + 1, to: line });
+            protectRawText({ from: begin.beginLine + 1, to: line });
           }
         } else if (
           ABSTRACT_ENV_NAMES.has(begin.envName) ||
@@ -1811,7 +1873,7 @@ function scanEnvBlocks(
             });
           }
           if (line > begin.beginLine + 1) {
-            protectedRanges.push({ from: begin.beginLine + 1, to: line });
+            protectRawText({ from: begin.beginLine + 1, to: line });
           }
         } else if (TABULAR_ENV_NAMES.has(begin.envName)) {
           // Tabular: fail-open. Only treat it as a table if the colspec
@@ -1896,7 +1958,11 @@ export function parseLines(
   // by scanEnvBlocks; consulted at the end to drop descriptors that
   // landed inside raw-text blocks whose `\begin` is above the
   // expanded viewport (no covering descriptor to subsume them).
-  const protectedRanges: Array<{ from: number; to: number }> = [];
+  const protectedRanges: LineRange[] = [];
+  // The verbatim / code-listing subset of `protectedRanges`, which the
+  // inline `$` delimiter walk treats as opaque. scanEnvBlocks must run
+  // before scanInlineDollarMath to populate it.
+  const rawTextRanges: LineRange[] = [];
   // Multi-line constructs first — their multi-line spans need to be
   // in `out` before single-line scanners run so `dropOverlaps`
   // correctly subsumes any inner widgets. List envs emit only narrow
@@ -1905,8 +1971,8 @@ export function parseLines(
   scanMathEnvs(src, fromLine, toLine, out);
   scanBracketDisplayMath(src, fromLine, toLine, out);
   scanDoubleDollarMath(src, fromLine, toLine, out);
-  scanInlineDollarMath(src, fromLine, toLine, out);
-  scanEnvBlocks(src, fromLine, toLine, out, protectedRanges);
+  scanEnvBlocks(src, fromLine, toLine, out, protectedRanges, rawTextRanges);
+  scanInlineDollarMath(src, fromLine, toLine, out, rawTextRanges);
   for (let line = fromLine; line < toLine; line++) {
     const raw = src.getLine(line);
     if (raw.length === 0) continue;
@@ -1973,15 +2039,10 @@ export function parseViewport(
  */
 function filterProtected(
   descriptors: WidgetDescriptor[],
-  ranges: Array<{ from: number; to: number }>,
+  ranges: LineRange[],
 ): WidgetDescriptor[] {
   if (ranges.length === 0) return descriptors;
-  return descriptors.filter((d) => {
-    for (const r of ranges) {
-      if (d.from.line >= r.from && d.from.line < r.to) return false;
-    }
-    return true;
-  });
+  return descriptors.filter((d) => !lineInRanges(d.from.line, ranges));
 }
 
 function dropOverlaps(descriptors: WidgetDescriptor[]): WidgetDescriptor[] {
