@@ -1295,3 +1295,27 @@ under the same lease, rejects completion with the previous identity, processes
 105 expired rows in 100/5/0 cleanup batches, and preserves a live receiver.
 Real-PostgreSQL concurrent cleanup/rearm and automatic cleanup scheduling are
 not established by these store tests.
+
+### Shared Owner Catalog Read With Recipient Overlays
+
+Factored the owner projection reader into a bounded shared read for up to
+sixteen recipients using one compatible generation/revision/relation cursor.
+It selects catalog metadata/tombstones and relation continuation once under
+the project fence, then independently checks each recipient and computes their
+notification membership cutover floors. The common catalog is separate from
+recipient authorization and attention data; it is not an access grant. An
+all-denied batch returns no catalog. Page sizing reserves space for recipient
+floor maps rather than assuming metadata is the only response payload.
+
+The existing single-recipient reader now wraps this shared core and attaches
+only its own attention generation/floors. No batch transport endpoint or shared
+home cache is exposed yet. Home routing must group only compatible active
+consumers and apply each authorized overlay separately; incompatible cursors,
+relation continuations and membership boundaries cannot simply be merged.
+
+Server build and 66 projection/relation tests pass. The new case compares each
+authorized recipient with the single-recipient result, verifies the common
+items contain no recipient floor, checks mixed/all-denied batches and enforces
+the recipient bound. Jest briefly reported open handles after test completion,
+then the same process exited successfully. Full cross-bay batch transport,
+load/byte-boundary measurements and shared home application remain unfinished.

@@ -842,14 +842,70 @@ export async function readCollaborationProjection(
   opts: CollaborationProjectionRequest,
   authority: CollaborationOwnerAuthority,
 ): Promise<CollaborationProjectionPage> {
-  uuid(opts.account_id, "account_id");
+  const batch = await readCollaborationSharedProjection(
+    { ...opts, account_ids: [opts.account_id] },
+    authority,
+  );
+  const recipient = batch.recipients[0];
+  if (!batch.catalog || !recipient.allowed) return { allowed: false };
+  return {
+    allowed: true,
+    ...batch.catalog,
+    attention_generation: recipient.attention_generation,
+    items: batch.catalog.items.map((item) => ({
+      ...item,
+      ...(item.resource
+        ? { initial_activity: recipient.floors[item.resource.resource_id] }
+        : {}),
+    })),
+  };
+}
+
+/** Internal shared catalog read. Recipients have independent authorization and
+ * notification cutover floors; the common catalog alone is never an access grant.
+ * All recipients use one compatible catalog/relation cursor under one owner fence.
+ */
+export async function readCollaborationSharedProjection(
+  opts: Omit<CollaborationProjectionRequest, "account_id"> & {
+    account_ids: string[];
+  },
+  authority: CollaborationOwnerAuthority,
+) {
+  if (
+    !Array.isArray(opts.account_ids) ||
+    !opts.account_ids.length ||
+    opts.account_ids.length > 16
+  )
+    throw Error("invalid shared projection recipient count");
+  for (const id of opts.account_ids) uuid(id, "account_id");
+  const account_ids = [
+    ...new Set(opts.account_ids.map((id) => id.toLowerCase())),
+  ];
   integer(opts.revision, "projection revision");
   boundedText(opts.after_key, "projection cursor", 64, true);
   if (opts.generation != null) uuid(opts.generation, "generation");
   return transaction(async (db) => {
     const p = await project(db, opts.project_id, authority);
-    if (p.deleted || !collaboratorRole(p.users?.[opts.account_id]?.group))
-      return { allowed: false };
+    const allowed = account_ids.filter(
+      (id) => !p.deleted && collaboratorRole(p.users?.[id]?.group),
+    );
+    type Recipient =
+      | { account_id: string; allowed: false }
+      | {
+          account_id: string;
+          allowed: true;
+          attention_generation: string;
+          floors: Record<string, number>;
+        };
+    const recipients: Recipient[] = [];
+    if (!allowed.length)
+      return {
+        catalog: null,
+        recipients: account_ids.map((account_id) => ({
+          account_id,
+          allowed: false as const,
+        })),
+      };
     const state = (
       await db.query(
         "SELECT generation,revision FROM collaboration_projects WHERE project_id=$1",
@@ -867,7 +923,7 @@ export async function readCollaborationProjection(
         ? [opts.project_id, revision, after_key]
         : [opts.project_id, revision],
     );
-    let bytes = 1024;
+    let bytes = 1024 + account_ids.length * 256;
     const items: NonNullable<
       Extract<CollaborationProjectionPage, { allowed: true }>["items"]
     > = [];
@@ -888,7 +944,13 @@ export async function readCollaborationProjection(
             }
           : null,
       };
-      const size = Buffer.byteLength(JSON.stringify(item)) + 64;
+      const size =
+        Buffer.byteLength(JSON.stringify(item)) +
+        64 +
+        account_ids.length *
+          (item.resource
+            ? Buffer.byteLength(JSON.stringify(item.resource.resource_id)) + 32
+            : 0);
       if (bytes + size > PAGE_BYTES) break;
       items.push(item);
       bytes += size;
@@ -902,30 +964,40 @@ export async function readCollaborationProjection(
     );
     const complete = !relation.next && items.length === rows.length;
     const last = items[items.length - 1];
-    const attention = await readCollaborationNotificationAttention(db, {
-      project_id: opts.project_id,
-      account_id: opts.account_id,
-      resources: items.flatMap((item) =>
-        item.resource ? [item.resource] : [],
-      ),
-    });
-    for (const item of items)
-      if (item.resource)
-        item.initial_activity = attention.floors[item.resource.resource_id];
+    for (const account_id of account_ids) {
+      if (!allowed.includes(account_id)) {
+        recipients.push({ account_id, allowed: false });
+        continue;
+      }
+      const attention = await readCollaborationNotificationAttention(db, {
+        project_id: opts.project_id,
+        account_id,
+        resources: items.flatMap((item) =>
+          item.resource ? [item.resource] : [],
+        ),
+      });
+      recipients.push({
+        account_id,
+        allowed: true,
+        attention_generation: attention.generation,
+        floors: attention.floors,
+      });
+    }
     return {
-      allowed: true,
-      generation: state.generation,
-      attention_generation: attention.generation,
-      reset,
-      items,
-      complete,
-      revision: relation.next
-        ? revision
-        : complete
-          ? Number(state.revision)
-          : last.revision,
-      after_key: relation.next ? after_key : complete ? "" : last.entry_key,
-      ...(relation.next ? { relation_after: relation.next } : {}),
+      recipients,
+      catalog: {
+        generation: state.generation,
+        reset,
+        items,
+        complete,
+        revision: relation.next
+          ? revision
+          : complete
+            ? Number(state.revision)
+            : last.revision,
+        after_key: relation.next ? after_key : complete ? "" : last.entry_key,
+        ...(relation.next ? { relation_after: relation.next } : {}),
+      },
     };
   });
 }

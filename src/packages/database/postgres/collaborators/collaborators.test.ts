@@ -49,6 +49,7 @@ import {
   getOwnedCollaborationResource,
   ingestCollaborationSnapshot,
   readCollaborationProjection,
+  readCollaborationSharedProjection,
   registerCollaborationSource,
   reconcileCollaborationAgents,
   relocateCollaborationSource,
@@ -289,6 +290,47 @@ beforeEach(async () => {
   );
 });
 
+test("shared projection keeps catalog data separate from recipient attention and denial", async () => {
+  await ingestCollaborationSnapshot(snapshot(), authority);
+  const denied = randomUUID();
+  const cursor = { project_id, generation: null, revision: 0, after_key: "" };
+  const shared = await readCollaborationSharedProjection(
+    { ...cursor, account_ids: [account_id, other_id, denied] },
+    authority,
+  );
+  expect(shared.catalog?.items).toHaveLength(1);
+  expect(shared.catalog?.items[0]).not.toHaveProperty("initial_activity");
+  expect(shared.recipients.find((r) => r.account_id === denied)).toEqual({
+    account_id: denied,
+    allowed: false,
+  });
+  for (const id of [account_id, other_id]) {
+    const personal = shared.recipients.find((r) => r.account_id === id);
+    const single = await readCollaborationProjection(
+      { ...cursor, account_id: id },
+      authority,
+    );
+    if (!personal?.allowed || !single.allowed)
+      throw Error("expected authorized recipient");
+    expect(single.attention_generation).toBe(personal.attention_generation);
+    expect(single.items[0].initial_activity).toBe(personal.floors.thread);
+    expect(single.items[0].resource).toEqual(shared.catalog!.items[0].resource);
+  }
+  expect(
+    (
+      await readCollaborationSharedProjection(
+        { ...cursor, account_ids: [denied] },
+        authority,
+      )
+    ).catalog,
+  ).toBeNull();
+  await expect(
+    readCollaborationSharedProjection(
+      { ...cursor, account_ids: Array.from({ length: 17 }, () => account_id) },
+      authority,
+    ),
+  ).rejects.toThrow("recipient count");
+});
 test("batched leases make 1000 cold projects browsable without catalog pages and remain bounded", async () => {
   const ids = Array.from({ length: 999 }, () => randomUUID());
   const users = JSON.stringify({ [account_id]: { group: "collaborator" } });
