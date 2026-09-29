@@ -16,6 +16,7 @@ jest.mock("../agent-message-status", () => ({
   AttachedSteerStatusList: () => null,
 }));
 jest.mock("../git-commit-drawer", () => ({ GitCommitDrawer: () => null }));
+jest.mock("../input", () => ({ __esModule: true, default: () => null }));
 jest.mock("@cocalc/frontend/editors/markdown-input/mentionable-users", () => ({
   useMentionableUsers: () => () => [],
 }));
@@ -91,5 +92,12 @@ test("a posted message offers Edit and Send like a queued one", async () => {
 test("a delivered post keeps its receipt instead of send controls", () => {
   renderPosted({ acp_guidance_delivered_at_ms: 5000 });
   expect(screen.getByText("Received by agent")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
+});
+
+test("while editing, a posted message keeps its tag without actions", () => {
+  renderPosted({ editing: ["viewer"] });
+  expect(screen.getByText("posted")).toBeTruthy();
+  expect(screen.queryByText(/Not sent to agent/)).toBeNull();
   expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
 });

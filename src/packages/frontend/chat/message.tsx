@@ -2911,12 +2911,17 @@ export default function Message({
     }
   }
 
-  const canSendPostedMessage =
+  // Posted messages the viewer can still edit and send (not while editing).
+  const isOwnPendingPost =
     canMovePostedMessageToAgent(message) &&
-    showEditButton &&
+    sender_is_viewer(account_id, message) &&
+    !read_only &&
+    project_id != null &&
+    path != null &&
     isCodexThread &&
     !!messageThreadId &&
     actions != null;
+  const canSendPostedMessage = isOwnPendingPost && !isEditing;
   const sendPostedMessage = () => {
     if (!canSendPostedMessage || !actions || !messageThreadId) return;
     void movePostedMessageToAgent({
@@ -2987,21 +2992,25 @@ export default function Message({
   );
 
   const renderAcpState = () => {
-    if (canSendPostedMessage) {
+    if (isOwnPendingPost) {
       // Like a queued message: say what it is and offer what can be done.
       return (
         <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
           <Tooltip title="Posted to the chat; not sent to the agent">
             <Tag>posted</Tag>
           </Tooltip>
-          <Button size="small" type="text" onClick={edit_message}>
-            Edit
-          </Button>
-          <Tooltip title="Send this message to the agent">
-            <Button size="small" type="text" onClick={sendPostedMessage}>
-              Send
-            </Button>
-          </Tooltip>
+          {canSendPostedMessage ? (
+            <>
+              <Button size="small" type="text" onClick={edit_message}>
+                Edit
+              </Button>
+              <Tooltip title="Send this message to the agent">
+                <Button size="small" type="text" onClick={sendPostedMessage}>
+                  Send
+                </Button>
+              </Tooltip>
+            </>
+          ) : null}
         </span>
       );
     }
