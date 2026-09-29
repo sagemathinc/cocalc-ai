@@ -294,7 +294,9 @@ describe("project-host exam admission page", () => {
 describe("project-host exam admission script", () => {
   const STORAGE_KEY = "cocalc-exam-admission-token";
 
-  type FetchResult = { status: number; body?: string } | Error;
+  type FetchResult =
+    | { status: number; body?: string | Promise<string> }
+    | Error;
 
   function runAdmissionScript({
     hash = "",
@@ -306,6 +308,7 @@ describe("project-host exam admission script", () => {
     fetchResults = [],
     rejected = false,
     noFetch = false,
+    abortSupported = false,
   }: {
     hash?: string;
     withInput?: boolean;
@@ -313,11 +316,12 @@ describe("project-host exam admission script", () => {
     store?: Map<string, string>;
     waiting?: boolean;
     storageThrows?: boolean;
-    fetchResults?: FetchResult[];
+    fetchResults?: Array<FetchResult | Promise<FetchResult>>;
     // The page answers a submitted token that the host rejected as invalid.
     rejected?: boolean;
     // An engine without fetch.
     noFetch?: boolean;
+    abortSupported?: boolean;
   }) {
     // Submitting runs the form's submit listeners, if the script added any.
     const submitListeners: Array<() => void> = [];
@@ -332,7 +336,13 @@ describe("project-host exam admission script", () => {
     class FakeTime {}
     const input = withInput ? new FakeInput() : null;
     const listeners: Record<string, Array<() => void>> = {};
-    const timers: Array<{ ms: number; callback: () => void }> = [];
+    const timers: Array<{ id: number; ms: number; callback: () => void }> = [];
+    let timerId = 0;
+    const abort = jest.fn();
+    class FakeAbortController {
+      signal = {};
+      abort = abort;
+    }
     const location = {
       hash,
       pathname: "/",
@@ -344,7 +354,7 @@ describe("project-host exam admission script", () => {
       location.hash = "";
     });
     const fetch = jest.fn(async () => {
-      const next = fetchResults.shift() ?? new Error("no response");
+      const next = await (fetchResults.shift() ?? new Error("no response"));
       if (next instanceof Error) throw next;
       return {
         status: next.status,
@@ -365,12 +375,18 @@ describe("project-host exam admission script", () => {
         return sessionStorage;
       },
       fetch: noFetch ? undefined : fetch,
+      AbortController: abortSupported ? FakeAbortController : undefined,
       addEventListener: (type: string, listener: () => void) => {
         (listeners[type] ??= []).push(listener);
       },
       setTimeout: (callback: () => void, ms: number) => {
-        timers.push({ ms, callback });
-        return timers.length;
+        const id = ++timerId;
+        timers.push({ id, ms, callback });
+        return id;
+      },
+      clearTimeout: (id: number) => {
+        const index = timers.findIndex((timer) => timer.id === id);
+        if (index !== -1) timers.splice(index, 1);
       },
       setInterval: jest.fn(),
     };
@@ -408,6 +424,8 @@ describe("project-host exam admission script", () => {
       listeners,
       timers,
       fetch,
+      abort,
+      flush,
       submit: () => submitListeners.forEach((listener) => listener()),
       runNextCheck,
     };
@@ -587,6 +605,73 @@ describe("project-host exam admission script", () => {
     expect(page.timers).toHaveLength(1);
     expect(page.location.replace).not.toHaveBeenCalled();
     expect(page.location.reload).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["fetch", "open"],
+    ["fetch", "waiting"],
+    ["fetch", "reject"],
+    ["body", "open"],
+    ["body", "waiting"],
+    ["body", "reject"],
+  ])(
+    "bounds a stalled %s and ignores its late %s result",
+    async (phase, late) => {
+      let resolve!: (body: string) => void;
+      let reject!: (error: Error) => void;
+      const pending = new Promise<string>((yes, no) => {
+        resolve = yes;
+        reject = no;
+      });
+      const page = runAdmissionScript({
+        waiting: true,
+        fetchResults: [
+          phase === "fetch"
+            ? pending.then((body) => ({ status: 200, body }))
+            : { status: 200, body: pending },
+          { status: 200, body: getExamJoinPage({ admission_open: true }) },
+        ],
+      });
+      await page.runNextCheck();
+      expect(page.fetch).toHaveBeenCalledTimes(1);
+      expect(page.timers.map((timer) => timer.ms)).toEqual([10_000]);
+      expect(page.location.replace).not.toHaveBeenCalled();
+
+      await page.runNextCheck(); // Expire the whole request/body deadline.
+      expect(page.timers).toHaveLength(1);
+      expect(page.timers[0].ms).toBeGreaterThanOrEqual(30_000);
+      expect(page.timers[0].ms).toBeLessThan(40_000);
+      await page.runNextCheck(); // A fresh poll can still open admission.
+      expect(page.fetch).toHaveBeenCalledTimes(2);
+      expect(page.location.replace).toHaveBeenCalledTimes(1);
+      expect(page.timers).toHaveLength(0);
+
+      if (late === "reject") reject(new Error("late network failure"));
+      else resolve(getExamJoinPage({ admission_open: late === "open" }));
+      await page.flush();
+      await page.flush();
+      expect(page.location.replace).toHaveBeenCalledTimes(1);
+      expect(page.location.reload).not.toHaveBeenCalled();
+      expect(page.timers).toHaveLength(0);
+    },
+  );
+
+  it("aborts a timed-out body when AbortController is available", async () => {
+    const page = runAdmissionScript({
+      waiting: true,
+      abortSupported: true,
+      fetchResults: [{ status: 200, body: new Promise<string>(() => {}) }],
+    });
+    await page.runNextCheck();
+    expect(page.fetch).toHaveBeenCalledWith("/", {
+      cache: "no-store",
+      credentials: "same-origin",
+      signal: {},
+    });
+    expect(page.abort).not.toHaveBeenCalled();
+    await page.runNextCheck();
+    expect(page.abort).toHaveBeenCalledTimes(1);
+    expect(page.timers).toHaveLength(1);
   });
 
   it("keeps waiting while access is closed and after failed checks", async () => {

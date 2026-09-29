@@ -127,19 +127,42 @@ export const EXAM_ADMISSION_SCRIPT = `(() => {
   // keeps a whole class from checking at the same moment.
   if (document.querySelector("[data-exam-waiting]")) {
     const check = () => {
+      let settled = false;
+      const controller = typeof window.AbortController === "function"
+        ? new window.AbortController()
+        : null;
+      const finish = () => {
+        if (settled) return false;
+        settled = true;
+        window.clearTimeout(deadline);
+        return true;
+      };
+      const retry = () => {
+        if (finish()) schedule();
+      };
+      // Bound headers AND body reading. Older engines need only the watchdog;
+      // late results must not navigate or schedule a second polling loop.
+      const deadline = window.setTimeout(() => {
+        if (!finish()) return;
+        if (controller) controller.abort();
+        schedule();
+      }, 10000);
       let request;
       try {
-        request = window.fetch("/", {
+        const options = {
           cache: "no-store",
           credentials: "same-origin",
-        });
+        };
+        if (controller) options.signal = controller.signal;
+        request = window.fetch("/", options);
       } catch (err) {
-        schedule();
+        retry();
         return;
       }
       request
-        .then((response) => (response.ok ? response.text() : null))
+        .then((response) => (!settled && response.ok ? response.text() : null))
         .then((html) => {
+          if (!finish()) return;
           if (html !== null && html.indexOf("data-exam-waiting") === -1) {
             // A token that only the address holds (this tab could not keep
             // it) must survive: reloading keeps the fragment, and only a page
@@ -154,7 +177,7 @@ export const EXAM_ADMISSION_SCRIPT = `(() => {
             schedule();
           }
         })
-        .catch(() => schedule());
+        .catch(retry);
     };
     const schedule = () => {
       window.setTimeout(check, 30000 + Math.floor(Math.random() * 10000));
