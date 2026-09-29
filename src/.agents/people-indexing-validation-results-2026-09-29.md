@@ -2781,3 +2781,34 @@ hot-worker cost gate: SQL/CPU/I/O costs, sustained edits, shared-project fanout,
 heavy accounts, GC/retention churn, DAU traces and a mixed-workload soak remain
 unmeasured by this case. Existing query-plan measurements cover only their named
 queries, not every statement in this active workload.
+
+### Returning Demand After Catalog Compaction
+
+Added `returning-demand.acceptance.test.ts` using the isolated real PostgreSQL
+owner/two-home/host harness and authenticated human APIs. It creates two live
+conversations, stores an explicit alias/collection/follow preference, sends a
+real message, waits for its notification, and records a nonzero read-through
+position. The fixture then expires demand by six months and supplies an aged
+canonical tombstone for the other conversation. The actual owner compactor
+removes the tombstone and rotates the catalog generation.
+
+Home maintenance while demand is cold makes no additional owner RPCs. Acquiring
+fresh scoped demand rebuilds the home projection against the new generation,
+removes the deleted conversation, preserves the retained conversation's full
+explicit personal row, and leaves the preexisting notification IDs unchanged.
+A second expired-demand return after owner membership changes to viewer yields
+no visible resources despite the stale home membership view; explicit personal
+state remains intact. No project compute starts are observed.
+
+The final extended test passes in 48.237 seconds; server/reference typecheck and
+whitespace checks pass. An initial assertion incorrectly required disposable
+default attention state for the deleted conversation to survive; it was narrowed
+to the explicit personal state that the contract requires preserving. The final
+case also includes actual historical message/notification data, rather than an
+empty-history no-replay assertion.
+
+This simulates the retention boundary with database timestamps and invokes real
+compaction/rebuild paths. It is not a six-month soak, source-filesystem deletion
+detection, a multipage/heavy-account resnapshot, or offline-event delivery beyond
+notification retention. Those remain separate gates, as do restore/rehome of the
+new prototype state families and the complete mixed-load churn cycle.

@@ -777,6 +777,12 @@ async function command(name, args = {}) {
     }
     case "indexingMetrics":
       return require("prom-client").register.getMetricsAsJSON();
+    case "compactCatalog":
+      if (config.role !== "owner") throw Error("owner fixture required");
+      return require("@cocalc/database/postgres/collaborators/collaborators-owner").compactCollaborationProject(
+        config.project,
+        { owning_bay_id: config.bays[0] },
+      );
     case "notificationTick":
       await pool.query(
         "UPDATE collaboration_notification_cursors SET due_at=now() WHERE project_id=$1",
