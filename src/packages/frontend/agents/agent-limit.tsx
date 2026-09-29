@@ -55,8 +55,9 @@ export function NamedAgentLimitAlert({
   );
 }
 
-// A quiet bar that is easy to ignore with few agents and draws attention
-// (and shows the count) as the limit gets close.
+// Hidden while the count does not matter; a quiet bar from half the limit,
+// drawing attention (and showing the count) as the limit gets close.
+const VISIBLE_FRACTION = 0.5;
 const WARNING_FRACTION = 0.8;
 const DANGER_FRACTION = 0.95;
 
@@ -69,6 +70,7 @@ export function NamedAgentUsage({
   const usage = directory?.usage;
   if (!usage || usage.active >= usage.limit) return null;
   const fraction = usage.limit > 0 ? usage.active / usage.limit : 0;
+  if (fraction < VISIBLE_FRACTION) return null;
   return (
     <>
       <Tooltip

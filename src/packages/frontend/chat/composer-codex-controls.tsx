@@ -96,7 +96,8 @@ export const ComposerProjectDirectoryButton = forwardRef<
     >
       <span
         style={{
-          flex: "0 1 110px",
+          flex: "0 1 auto",
+          maxWidth: 110,
           minWidth: 24,
           overflow: "hidden",
           textOverflow: "ellipsis",
@@ -110,8 +111,9 @@ export const ComposerProjectDirectoryButton = forwardRef<
       </Text>
       <span
         style={{
-          flex: "1 1 70px",
-          minWidth: 50,
+          flex: "0 1 auto",
+          maxWidth: 120,
+          minWidth: "1.5em",
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
