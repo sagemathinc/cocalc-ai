@@ -5,6 +5,8 @@
 import {
   startCollaborationScan,
   settleCollaborationScanDiscovery,
+  claimCollaborationScanDispatch,
+  releaseCollaborationScanDispatch,
 } from "@cocalc/database/postgres/collaborators/collaborators-scan";
 import type { CollaborationOwnerAuthority } from "@cocalc/database/postgres/collaborators/collaborators-owner";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
@@ -25,42 +27,53 @@ export async function dispatchCollaborationScan(
     throw Error("scan dispatch disabled");
   const run = await startCollaborationScan(request, authority);
   if (!run) return { state: "deferred" as const };
-  const host = await getRoutedHostControlClient({
-    host_id: run.host_id,
-    timeout: 30000,
-  });
-  const scan = {
-    protocol_version: 1 as const,
-    project_id: request.project_id,
-    run_id: run.job_id,
-    expected_run_id: run.expected_run_id,
-  };
-  const status = await host.getCollaborationReconciliationStatus(scan);
-  if (status.state !== "unknown") {
-    if (status.run_id !== run.job_id)
-      throw Error("scan host returned a different run");
-    if (status.state === "discovered" && status.pending_candidates === 0) {
-      const settled = await settleCollaborationScanDiscovery(
-        {
-          project_id: request.project_id,
-          job_id: run.job_id,
-          state: "discovered",
-        },
-        { ...authority, host_id: run.host_id },
-      );
-      return {
-        state: settled ? ("discovered" as const) : ("deferred" as const),
-      };
+  const token = await claimCollaborationScanDispatch(request, authority);
+  if (!token) return { state: "deferred" as const };
+  // On transport failure leave the lease to expire, avoiding immediate retry
+  // storms while the remote result is unknown. Successful steps release it.
+  const result = await step();
+  await releaseCollaborationScanDispatch({ ...request, token }, authority);
+  return result;
+
+  async function step() {
+    if (!run) throw Error("missing scan run");
+    const host = await getRoutedHostControlClient({
+      host_id: run.host_id,
+      timeout: 30000,
+    });
+    const scan = {
+      protocol_version: 1 as const,
+      project_id: request.project_id,
+      run_id: run.job_id,
+      expected_run_id: run.expected_run_id,
+    };
+    const status = await host.getCollaborationReconciliationStatus(scan);
+    if (status.state !== "unknown") {
+      if (status.run_id !== run.job_id)
+        throw Error("scan host returned a different run");
+      if (status.state === "discovered" && status.pending_candidates === 0) {
+        const settled = await settleCollaborationScanDiscovery(
+          {
+            project_id: request.project_id,
+            job_id: run.job_id,
+            state: "discovered",
+          },
+          { ...authority, host_id: run.host_id },
+        );
+        return {
+          state: settled ? ("discovered" as const) : ("deferred" as const),
+        };
+      }
+      return { state: "running" as const };
     }
-    return { state: "running" as const };
+    const admission = await host.requestCollaborationReconciliation(scan);
+    if (admission.admission === "accepted" && admission.run_id !== run.job_id)
+      throw Error("scan host accepted a different run");
+    return {
+      state:
+        admission.admission === "accepted"
+          ? ("running" as const)
+          : ("deferred" as const),
+    };
   }
-  const admission = await host.requestCollaborationReconciliation(scan);
-  if (admission.admission === "accepted" && admission.run_id !== run.job_id)
-    throw Error("scan host accepted a different run");
-  return {
-    state:
-      admission.admission === "accepted"
-        ? ("running" as const)
-        : ("deferred" as const),
-  };
 }

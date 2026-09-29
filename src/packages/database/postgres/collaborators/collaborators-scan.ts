@@ -104,6 +104,9 @@ export async function syncCollaborationScanSchema(
   await db.query(
     `ALTER TABLE collaboration_scan_jobs ADD COLUMN IF NOT EXISTS expected_run_id UUID`,
   );
+  await db.query(`ALTER TABLE collaboration_scan_jobs
+    ADD COLUMN IF NOT EXISTS dispatch_token UUID,
+    ADD COLUMN IF NOT EXISTS dispatch_until TIMESTAMPTZ`);
   await db.query(`CREATE TABLE IF NOT EXISTS collaboration_scan_budget (
     project_id UUID PRIMARY KEY REFERENCES projects(project_id) ON DELETE CASCADE,
     tokens DOUBLE PRECISION NOT NULL CHECK(tokens>=0 AND tokens<=2),
@@ -410,5 +413,61 @@ export async function settleCollaborationScanDiscovery(
       [opts.project_id, opts.job_id],
     );
     return true;
+  });
+}
+
+/** A bounded transport lease, not a new host run identity. Expired workers can
+ * still have in-flight RPCs; host run-id idempotency remains essential.
+ */
+export async function claimCollaborationScanDispatch(
+  opts: { project_id: string; account_id: string; job_id: string },
+  authority: CollaborationOwnerAuthority,
+): Promise<string | null> {
+  uuid(opts.job_id, "scan job");
+  return transaction(async (db) => {
+    await assertCollaborationAccountAuthority(
+      db,
+      opts.project_id,
+      opts.account_id,
+      authority,
+    );
+    const token = randomUUID();
+    const result = await db.query(
+      `UPDATE collaboration_scan_jobs j
+      SET dispatch_token=$4,dispatch_until=clock_timestamp()+interval '90 seconds'
+      WHERE project_id=$1 AND job_id=$2 AND state='running'
+      AND (dispatch_until IS NULL OR dispatch_until<=clock_timestamp())
+      AND EXISTS(SELECT 1 FROM collaboration_scan_receipts r WHERE r.project_id=j.project_id
+        AND r.account_id=$3 AND r.receipt->>'job_id'=j.job_id::text AND r.expires_at>clock_timestamp())
+      RETURNING job_id`,
+      [opts.project_id, opts.job_id, opts.account_id, token],
+    );
+    return result.rows.length ? token : null;
+  });
+}
+
+export async function releaseCollaborationScanDispatch(
+  opts: {
+    project_id: string;
+    account_id: string;
+    job_id: string;
+    token: string;
+  },
+  authority: CollaborationOwnerAuthority,
+) {
+  uuid(opts.job_id, "scan job");
+  uuid(opts.token, "dispatch token");
+  return transaction(async (db) => {
+    await assertCollaborationAccountAuthority(
+      db,
+      opts.project_id,
+      opts.account_id,
+      authority,
+    );
+    await db.query(
+      `UPDATE collaboration_scan_jobs SET dispatch_token=NULL,dispatch_until=NULL
+      WHERE project_id=$1 AND job_id=$2 AND dispatch_token=$3`,
+      [opts.project_id, opts.job_id, opts.token],
+    );
   });
 }

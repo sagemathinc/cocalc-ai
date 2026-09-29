@@ -10,6 +10,8 @@ import {
   startCollaborationScan,
   settleCollaborationScanDiscovery,
   readCollaborationScanStatus,
+  claimCollaborationScanDispatch,
+  releaseCollaborationScanDispatch,
   syncCollaborationScanSchema,
 } from "./collaborators-scan";
 
@@ -56,6 +58,34 @@ describeDb("owner scan admission prototype", () => {
     await expect(
       admitCollaborationScan({ ...request, mode: "check" }, authority),
     ).rejects.toThrow("different arguments");
+  });
+  test("dispatch lease excludes concurrent workers and stale release cannot clear takeover", async () => {
+    const request = await fixture();
+    const receipt = await admitCollaborationScan(request, authority);
+    if (!("job_id" in receipt)) throw Error("expected admission");
+    const job = { ...request, job_id: receipt.job_id };
+    expect(await claimCollaborationScanDispatch(job, authority)).toBeNull();
+    await startCollaborationScan(job, authority);
+    const claims = await Promise.all([
+      claimCollaborationScanDispatch(job, authority),
+      claimCollaborationScanDispatch(job, authority),
+    ]);
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    const first = claims.find(Boolean)!;
+    await getPool().query(
+      "UPDATE collaboration_scan_jobs SET dispatch_until=clock_timestamp()-interval '1 second' WHERE project_id=$1",
+      [request.project_id],
+    );
+    const second = await claimCollaborationScanDispatch(job, authority);
+    expect(second).not.toBeNull();
+    expect(second).not.toBe(first);
+    await releaseCollaborationScanDispatch({ ...job, token: first }, authority);
+    expect(await claimCollaborationScanDispatch(job, authority)).toBeNull();
+    await releaseCollaborationScanDispatch(
+      { ...job, token: second! },
+      authority,
+    );
+    expect(await claimCollaborationScanDispatch(job, authority)).not.toBeNull();
   });
   test("status follows discovery lifecycle without mutating receipts or budget", async () => {
     const request = await fixture();

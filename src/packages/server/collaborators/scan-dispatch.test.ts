@@ -2,11 +2,15 @@ import { dispatchCollaborationScan } from "./scan-dispatch";
 import {
   startCollaborationScan,
   settleCollaborationScanDiscovery,
+  claimCollaborationScanDispatch,
+  releaseCollaborationScanDispatch,
 } from "@cocalc/database/postgres/collaborators/collaborators-scan";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 jest.mock("@cocalc/database/postgres/collaborators/collaborators-scan", () => ({
   startCollaborationScan: jest.fn(),
   settleCollaborationScanDiscovery: jest.fn(),
+  claimCollaborationScanDispatch: jest.fn(),
+  releaseCollaborationScanDispatch: jest.fn(),
 }));
 jest.mock("@cocalc/server/project-host/client", () => ({
   getRoutedHostControlClient: jest.fn(),
@@ -24,6 +28,7 @@ const prior = process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE;
 beforeEach(() => {
   jest.resetAllMocks();
   process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE = "1";
+  (claimCollaborationScanDispatch as jest.Mock).mockResolvedValue("lease");
   (startCollaborationScan as jest.Mock).mockResolvedValue({
     job_id: "job",
     host_id: "host",
@@ -47,6 +52,13 @@ test("disabled never prepares work", async () => {
     "disabled",
   );
   expect(startCollaborationScan).not.toHaveBeenCalled();
+});
+test("busy lease makes no host calls", async () => {
+  (claimCollaborationScanDispatch as jest.Mock).mockResolvedValue(null);
+  expect(await dispatchCollaborationScan(request, authority)).toEqual({
+    state: "deferred",
+  });
+  expect(getRoutedHostControlClient).not.toHaveBeenCalled();
 });
 test("unknown run admits exact persistent identity and predecessor", async () => {
   expect(await dispatchCollaborationScan(request, authority)).toEqual({

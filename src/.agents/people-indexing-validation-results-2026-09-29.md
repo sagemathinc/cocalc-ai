@@ -726,3 +726,18 @@ and adoption/recovery of an already-existing host census remain outstanding.
 In particular the first owner job cannot replace an unrelated host run without
 explicit predecessor reconciliation; no unsafe unconditional replacement was
 added. Real authenticated transport and end-to-end validation are still needed.
+
+### Dispatch Lease
+
+Added a 90-second database-time dispatch lease on running jobs. Acquisition
+rechecks project access and a caller-owned live receipt; concurrent acquisition
+has one winner. Release is token-fenced, so an expired worker cannot release its
+successor's lease. Successful dispatch steps release; unknown transport outcomes
+retain the lease until expiry instead of immediately retrying. Expiry cannot
+cancel an in-flight RPC: persistent host run-ID deduplication remains required.
+
+Sixteen PGlite store tests, six dispatcher tests, and the server build pass.
+Coverage includes queued-job denial, concurrent claim, expiry takeover, stale
+release, and no host calls while a lease is held. This is not yet a queue worker:
+fair selection, adaptive polling/backoff, budgets and live crash validation are
+still outstanding, as is the broader indexing plan.
