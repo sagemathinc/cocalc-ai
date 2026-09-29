@@ -2812,3 +2812,21 @@ compaction/rebuild paths. It is not a six-month soak, source-filesystem deletion
 detection, a multipage/heavy-account resnapshot, or offline-event delivery beyond
 notification retention. Those remain separate gates, as do restore/rehome of the
 new prototype state families and the complete mixed-load churn cycle.
+
+### Disposable Demand Across Account Rehome
+
+Added `demand-rehome.acceptance.test.ts` to exercise the existing disposable-lease
+contract through the real account-rehome RPC between independent home databases.
+A live demand lease stays out of the destination transfer. After cutover, direct
+old-home renewal fails, routed renewal of the old lease fails, and old-home
+maintenance makes no owner RPCs. The same authenticated consumer reacquires at
+the destination with a different lease UUID. Releasing the old lease cannot
+release that replacement. No project compute starts occur.
+
+The isolated PostgreSQL case passes in 47.82 seconds; server/reference typecheck
+and whitespace checks pass. This adds validation, not a new handoff protocol or
+a relaxation of existing portability guards. It supports treating demand as
+disposable scheduling state, not canonical user data. It does not validate
+project-owner moves, scan receipt migration, receiver/outbox handoff, interrupted
+rehome with demand in flight, or returning to a former home before old leases
+expire. Those cases remain open under the original plan.
