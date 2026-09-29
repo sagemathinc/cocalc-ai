@@ -911,3 +911,14 @@ removes at most 64 expired receipts. Throttled requests and live retries leave
 expired receipts untouched. These tests exercise the real store with synthetic
 timestamps, not concurrent PostgreSQL actors or production churn throughput;
 those validation gates remain outstanding.
+
+### Concurrent Actor Reservations In PostgreSQL
+
+The isolated PostgreSQL acceptance suite now races twelve identical actor-home
+reservations, then twelve distinct projects against the same actor's remaining
+token. All retries return the same reservation; exactly one competing project
+reserves, eleven receive positive retry timing, and exactly two durable receipts
+exist. A subsequent original retry remains free. All four Scan acceptance cases
+and the server TypeScript build pass. This exercises concurrent transactions in
+one home-bay process, not multiple home-bay processes or sustained load. No
+production runtime or feature flags were changed.

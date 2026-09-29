@@ -845,6 +845,12 @@ async function command(name, args = {}) {
         route: { bay_id: args.bay_id },
       });
     }
+    case "scanActorRace": {
+      if (config.role !== "a") throw Error("account home fixture required");
+      return await require("@cocalc/database/postgres/collaborators/collaborators-scan-actor").reserveCollaborationScanActor(
+        args.request,
+      );
+    }
     case "scanRace": {
       if (config.role !== "owner") throw Error("owner fixture required");
       const scan = require("@cocalc/database/postgres/collaborators/collaborators-scan");

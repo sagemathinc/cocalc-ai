@@ -17,6 +17,46 @@ acceptance("scan blocked backlog query cost", () => {
     await env.worker("a").call("installScan");
   }, 240000);
   afterAll(async () => await env?.close(), 60000);
+  test("actor budget serializes retries and competing projects in PostgreSQL", async () => {
+    const request = {
+      account_id: env.accounts[0],
+      project_id: randomUUID(),
+      request_id: randomUUID(),
+      mode: "check",
+    };
+    const reserve = (value: object) =>
+      env.worker("a").call("scanActorRace", { request: value });
+    const retries = await Promise.all(
+      Array.from({ length: 12 }, () => reserve(request)),
+    );
+    expect(retries[0].reserved).toBe(true);
+    for (const result of retries) expect(result).toEqual(retries[0]);
+    const competing = await Promise.all(
+      Array.from({ length: 12 }, () =>
+        reserve({ ...request, project_id: randomUUID() }),
+      ),
+    );
+    expect(competing.filter((result) => result.reserved)).toHaveLength(1);
+    const throttled = competing.filter((result) => !result.reserved);
+    expect(throttled).toHaveLength(11);
+    for (const result of throttled)
+      expect(result.retry_after_ms).toBeGreaterThan(0);
+    expect(await reserve(request)).toEqual(retries[0]);
+    expect(
+      await env.sql(
+        "a",
+        "SELECT count(*)::integer AS n FROM collaboration_scan_actor_receipts WHERE account_id=$1",
+        [request.account_id],
+      ),
+    ).toEqual([{ n: 2 }]);
+    for (const table of [
+      "collaboration_scan_actor_receipts",
+      "collaboration_scan_actor_budget",
+    ])
+      await env.sql("a", `DELETE FROM ${table} WHERE account_id=$1`, [
+        request.account_id,
+      ]);
+  }, 120000);
   test("real PostgreSQL serializes admission and lease races", async () => {
     const request = {
       project_id: env.project,
