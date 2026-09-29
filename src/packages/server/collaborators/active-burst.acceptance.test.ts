@@ -179,6 +179,71 @@ acceptance("synthetic active-account scheduler burst", () => {
         }) + "\n",
       );
     expect(updated).toBe(accounts.length);
+    const streamStarted = Date.now();
+    const sent = new Map<string, number>();
+    const completed = new Map<string, number>();
+    const backlog: { elapsed_ms: number; pending_projections: number }[] = [];
+    const observe = async () => {
+      const rows = await env.sql(
+        "a",
+        `SELECT metadata->>'resource_id' AS id,
+        count(*)::integer AS n FROM collaboration_index
+        WHERE account_id=ANY($1::uuid[]) AND metadata->>'resource_id'=ANY($2::text[])
+        GROUP BY metadata->>'resource_id'`,
+        [accounts, [...sent.keys()]],
+      );
+      const now = Date.now();
+      let applied = 0;
+      for (const row of rows) {
+        applied += row.n;
+        if (row.n === accounts.length && !completed.has(row.id))
+          completed.set(row.id, now - sent.get(row.id)!);
+      }
+      backlog.push({
+        elapsed_ms: now - streamStarted,
+        pending_projections: sent.size * accounts.length - applied,
+      });
+    };
+    const streamBefore = (await env.worker("owner").call("inspect")).counters
+      .ownerCalls;
+    for (let i = 0; i < 30; i++) {
+      const delay = streamStarted + i * 1000 - Date.now();
+      if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+      const began = Date.now();
+      const thread = await env.send("a", "createThread", {
+        request_id: randomUUID(),
+        title: `Streaming ${i}`,
+      });
+      sent.set(thread.thread_id, began);
+      await observe();
+    }
+    const sendingMs = Date.now() - streamStarted;
+    const drainDeadline = Date.now() + 60000;
+    while (completed.size < sent.size && Date.now() < drainDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      await observe();
+    }
+    const streamAfter = (await env.worker("owner").call("inspect")).counters
+      .ownerCalls;
+    const latencies = [...completed.values()].sort((a, b) => a - b);
+    process.stdout.write(
+      JSON.stringify({
+        workload: "100-account-30-conversations-one-per-second",
+        sending_ms: sendingMs,
+        elapsed_ms: Date.now() - streamStarted,
+        completed: completed.size,
+        backlog,
+        all_accounts_latency_ms: latencies,
+        calls: Object.fromEntries(
+          Object.keys(streamAfter).map((name) => [
+            name,
+            streamAfter[name] - (streamBefore[name] ?? 0),
+          ]),
+        ),
+      }) + "\n",
+    );
+    expect(completed.size).toBe(sent.size);
+    expect(backlog.at(-1)?.pending_projections).toBe(0);
     for (const role of ["owner", "a"] as const)
       expect((await env.worker(role).call("inspect")).counters.starts).toBe(0);
   }, 180000);

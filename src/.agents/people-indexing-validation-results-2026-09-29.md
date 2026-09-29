@@ -2464,6 +2464,32 @@ The acceptance suite takes 65.427 seconds including setup/cleanup. This is one
 project with small per-thread relation sets, not a sustained mixed workload or
 10k/100k DAU capacity result. No production configuration was changed.
 
+#### Paced Source Changes With 100 Demanded Accounts
+
+Extended the same real-timer fixture with 30 new conversations at a one-second
+target cadence, without waiting for each projection to finish. Actual sending
+completed at 29,052 ms; individual sends sometimes ran late and the fixture
+caught up to its target schedule. SQL observations measured outstanding
+account-resource projections and the time each new conversation reached all 100
+accounts. No worker deadlines were advanced or manually ticked.
+
+All 3,000 new projections completed by 35,650 ms, about 6.6 seconds after the
+last send finished. Sampled outstanding work peaked at 759 projections and
+ended at zero. Observed all-account completion latencies ranged from 5,049 to
+25,047 ms (observation intervals were approximately one second during sending
+and half a second while draining, plus query/send delays). Owner counter deltas
+were 151 shared-page calls, 259 access refreshes and one revision registration.
+The initial phase again converged in 7,437 ms and its standalone later update
+in 7,708 ms. The suite passed in 91.659 seconds including setup/cleanup;
+server/reference typecheck passed.
+
+This gives an observed small sustained envelope, not a production limit: one
+source file, one project, one active home bay, small relation sets, no injected
+network failures and only 30 seconds of offered writes. It does not measure
+CPU/I/O/WAL, arbitrary large-source parsing, multi-project skew or simultaneous
+invitation traffic. The high access-refresh count deserves inspection before
+expanding the envelope. Browser and independent review gates remain open.
+
 This does not yet isolate the fault to ingestion, revision delivery or home
 scheduling. Do not use the earlier empty-catalog result as evidence that populated
 views meet a release latency target. The pending test should stay failing until
