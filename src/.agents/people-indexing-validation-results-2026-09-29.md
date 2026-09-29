@@ -70,6 +70,30 @@ converged in under seven seconds per observed phase/project.
 No live deployment, production setting or credential was changed. Browser
 validation, independent review and the rollout decision remain unverified.
 
+### Live Browser Precondition Failure
+
+The user supplied a signed-in Chromium browser on local CDP port 9222.
+Read-only inspection found the development site at `lite1b.cocalc.ai`. After
+reloading and navigating to People, the rendered page reported `Unable to
+refresh collaboration access`: `collaborators.check` returned 503 with
+`hub api low-priority request budget is exhausted`. Agent directory/network
+requests also timed out. No Scan request was submitted.
+
+The local hub log corroborated admission saturation: 931 active requests against
+an 800 low-priority ceiling. An account-level pending-method summary included
+46 `hosts.resolveHostConnection` calls and an oldest age of 919,510 ms. These
+observations do not identify which downstream dependency is stuck or establish
+that indexing caused the saturation. The current host-connection implementation
+coalesces callers onto an in-flight promise; a stalled dependency could retain
+multiple API callers, but that remains a hypothesis, not a demonstrated fix.
+
+The page also reported its served frontend build as `408f6c2b0fb0`, older than
+the current source checkpoint. Browser access itself is now working; backend
+health and deployed-code provenance must be resolved before claiming the Scan
+UI gate. No limits, credentials or service processes were changed. Inspection
+of the existing independent-review attempt returned unknown with no
+authoritative response; it was not resubmitted.
+
 ## Historical Extended-Scope Audit
 
 Before the user-approved scope reduction, the seven implementation gates were:
