@@ -5,6 +5,7 @@
 import { randomUUID } from "node:crypto";
 import {
   claimDemandAccount,
+  claimDemandAccounts,
   demandSchedulingEnabled,
   demandScopePredicate,
 } from "./collaborators-demand";
@@ -87,20 +88,42 @@ export async function claimCollaborationProjectionJobs(
 ): Promise<CollaborationProjectionJob[]> {
   return transaction(async (db) => {
     const demand = demandSchedulingEnabled();
-    const demandedAccount = demand
-      ? await claimDemandAccount(db, bay_id, "projection")
-      : undefined;
-    if (demand && !demandedAccount) return [];
-    const { rows } = await db.query(
-      `SELECT x.account_id,x.project_id,x.generation,x.revision,x.after_key,x.relation_after
+    const shared =
+      demand && process.env.COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE === "1";
+    const cohort = shared
+      ? await claimDemandAccounts(db, bay_id, "projection")
+      : [];
+    if (shared && !cohort.length) return [];
+    const demandedAccount =
+      demand && !shared
+        ? await claimDemandAccount(db, bay_id, "projection")
+        : undefined;
+    if (demand && !shared && !demandedAccount) return [];
+    const { rows } = shared
+      ? await db.query(
+          `SELECT x.* FROM unnest($2::uuid[]) AS q(account_id)
+       CROSS JOIN LATERAL (
+         SELECT x.account_id,x.project_id,x.generation,x.revision,x.after_key,x.relation_after
+         FROM collaboration_access x JOIN accounts a USING(account_id)
+         WHERE x.account_id=q.account_id AND x.due_at<=clock_timestamp()
+         AND (x.claim_until IS NULL OR x.claim_until<clock_timestamp())
+         AND (x.lease_claim_until IS NULL OR x.lease_claim_until<clock_timestamp())
+         AND ${demandScopePredicate}
+         AND COALESCE(a.home_bay_id,'bay-0')=$1 AND a.deleted IS NOT TRUE AND a.banned IS NOT TRUE
+         ORDER BY x.due_at,x.project_id LIMIT $3 FOR UPDATE OF x SKIP LOCKED
+       ) x`,
+          [bay_id, cohort, Math.floor(8 / cohort.length)],
+        )
+      : await db.query(
+          `SELECT x.account_id,x.project_id,x.generation,x.revision,x.after_key,x.relation_after
       FROM collaboration_access x JOIN accounts a USING(account_id)
       WHERE x.due_at<=now() AND (x.claim_until IS NULL OR x.claim_until<now())
       AND (x.lease_claim_until IS NULL OR x.lease_claim_until<now())
       ${demand ? `AND x.account_id=$2 AND ${demandScopePredicate}` : ""}
       AND COALESCE(a.home_bay_id,'bay-0')=$1 AND NOT COALESCE(a.deleted,FALSE) AND NOT COALESCE(a.banned,FALSE)
       ORDER BY x.due_at,x.account_id,x.project_id LIMIT 8 FOR UPDATE OF x SKIP LOCKED`,
-      demand ? [bay_id, demandedAccount] : [bay_id],
-    );
+          demand ? [bay_id, demandedAccount] : [bay_id],
+        );
     const result: CollaborationProjectionJob[] = [];
     for (const row of rows) {
       const claim_id = randomUUID();

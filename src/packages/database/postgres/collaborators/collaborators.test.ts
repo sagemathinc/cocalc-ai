@@ -1,4 +1,9 @@
 import { randomUUID } from "node:crypto";
+import {
+  syncCollaborationDemandSchema,
+  acquireCollaborationDemand,
+  runCollaborationDemandActivation,
+} from "./collaborators-demand";
 // Source-only notification adapter and compiled schema setup must share PGlite.
 jest.mock("../../pool", () => jest.requireActual("@cocalc/database/pool"));
 import "@cocalc/util/db-schema/collaborators-workspace";
@@ -290,6 +295,96 @@ beforeEach(async () => {
   );
 });
 
+test("shared demand claiming selects compatible work across active accounts without warming cold accounts", async () => {
+  const flags = [
+    "COCALC_PEOPLE_DEMAND_PROTOTYPE",
+    "COCALC_PEOPLE_DEMAND_SCHEDULER_PROTOTYPE",
+    "COCALC_PEOPLE_EVENT_FANOUT_PROTOTYPE",
+    "COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE",
+  ];
+  const prior = flags.map((n) => process.env[n]);
+  flags.forEach((n) => (process.env[n] = "1"));
+  try {
+    await syncCollaborationDemandSchema(getPool());
+    await getPool().query(
+      `INSERT INTO account_project_index(account_id,project_id,owning_bay_id,title,users_summary,sort_key)
+      SELECT $2,project_id,owning_bay_id,title,users_summary,sort_key FROM account_project_index WHERE account_id=$1`,
+      [account_id, other_id],
+    );
+    for (const id of [account_id, other_id])
+      await acquireCollaborationDemand({
+        account_id: id,
+        consumer_id: randomUUID(),
+        scope: { kind: "all" },
+      });
+    await runCollaborationDemandActivation("bay-test");
+    const cold = randomUUID();
+    await getPool().query(
+      "INSERT INTO accounts(account_id,home_bay_id) VALUES($1,'bay-test')",
+      [cold],
+    );
+    await getPool().query(
+      "INSERT INTO collaboration_access(account_id,project_id,due_at) VALUES($1,$2,clock_timestamp()-interval '1 day')",
+      [cold, project_id],
+    );
+    const jobs = await claimCollaborationProjectionJobs("bay-test");
+    expect(jobs.map((j) => j.account_id).sort()).toEqual(
+      [account_id, other_id].sort(),
+    );
+    expect(jobs.every((j) => j.project_id === project_id)).toBe(true);
+    expect(await claimCollaborationProjectionJobs("bay-test")).toEqual([]);
+    await ingestCollaborationSnapshot(snapshot(), authority);
+    const shared = await readCollaborationSharedProjection(
+      { ...jobs[0], account_ids: jobs.map((j) => j.account_id) },
+      authority,
+    );
+    if (!shared.catalog) throw Error("missing shared catalog");
+    for (const job of jobs) {
+      const recipient = shared.recipients.find(
+        (r) => r.account_id === job.account_id,
+      );
+      if (!recipient?.allowed) throw Error("expected active recipient");
+      expect(
+        await applyCollaborationProjection(
+          job,
+          {
+            allowed: true,
+            ...shared.catalog,
+            attention_generation: recipient.attention_generation,
+            items: shared.catalog.items.map((item) => ({
+              ...item,
+              initial_activity: item.resource
+                ? recipient.floors[item.resource.resource_id]
+                : undefined,
+            })),
+          },
+          Date.now(),
+        ),
+      ).toBe(true);
+    }
+    expect(
+      (
+        await getPool().query(
+          "SELECT account_id FROM collaboration_index WHERE project_id=$1 ORDER BY account_id",
+          [project_id],
+        )
+      ).rows.map((row) => row.account_id),
+    ).toEqual([account_id, other_id].sort());
+    expect(
+      (
+        await getPool().query(
+          "SELECT claim_id FROM collaboration_access WHERE account_id=$1",
+          [cold],
+        )
+      ).rows[0].claim_id,
+    ).toBeNull();
+  } finally {
+    flags.forEach((n, i) => {
+      if (prior[i] === undefined) delete process.env[n];
+      else process.env[n] = prior[i];
+    });
+  }
+});
 test("shared projection keeps catalog data separate from recipient attention and denial", async () => {
   await ingestCollaborationSnapshot(snapshot(), authority);
   const denied = randomUUID();

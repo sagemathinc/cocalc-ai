@@ -1359,3 +1359,27 @@ The current demand claimant selects one account per pass, so this integration
 does not yet demonstrate cross-account RPC savings. Project-grouped fair claim
 selection, demand registration/renewal scheduling and receiver completion after
 all relevant catch-up remain necessary before claiming the shared-fetch gate.
+
+### Bounded Active-Account Projection Cohorts
+
+With the revision prototype and demand scheduler enabled, projection claiming
+now takes up to eight due accounts from the existing demand queue and divides
+the eight-job budget between them. Account-local lateral selections retain
+scope, home, ban/deletion, access-claim and projection-claim checks. Cold accounts
+without demand are not selected by scanning historical access rows. The legacy
+single-account path remains unchanged outside the prototype.
+
+This permits compatible jobs from different accounts to reach the shared
+fetcher in one pass. It does not yet provide a reusable project catalog cache:
+large groups split across cohorts can still fetch the same catalog again, and
+accounts with different due projects may form no shared group at all. Unused
+budget in a small/idle cohort is not filled by an unbounded search. Large-scale
+fairness and throughput remain to be measured.
+
+Server build, fifty projection-store tests and eighteen authenticated demand
+acceptance tests pass. The new store case creates two active accounts plus an
+older cold access row, claims both compatible active jobs, reads one shared
+catalog result and applies it to both account projections, while leaving the
+cold row unclaimed. Jest reported a transient open-handle warning and then
+exited successfully without intervention. This is component integration, not
+proof of the full source-to-sleep-to-return or 10k/100k scaling gates.
