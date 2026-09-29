@@ -859,6 +859,7 @@ async function command(name, args = {}) {
         args,
       );
     case "claimActiveProjection":
+    case "applyActiveProjection":
     case "scheduleRevisionWakeups":
     case "repairRevisionHints": {
       const flags = [
@@ -872,6 +873,29 @@ async function command(name, args = {}) {
           return await require("@cocalc/database/postgres/collaborators/collaborators-projection").claimCollaborationProjectionJobs(
             config.bays[config.role === "a" ? 1 : 2],
           );
+        if (name === "applyActiveProjection") {
+          const projection = require("@cocalc/database/postgres/collaborators/collaborators-projection");
+          const jobs = await projection.claimCollaborationProjectionJobs(
+            config.bays[config.role === "a" ? 1 : 2],
+          );
+          const requestedAt = Date.now();
+          const fetchPage =
+            require("@cocalc/server/collaborators/projection-batch").createSharedProjectionFetcher(
+              jobs,
+              require("@cocalc/server/collaborators/api")
+                .fetchCollaborationSharedProjection,
+            );
+          return await Promise.all(
+            jobs.map(async (job) => ({
+              project_id: job.project_id,
+              applied: await projection.applyCollaborationProjection(
+                job,
+                await fetchPage(job),
+                requestedAt,
+              ),
+            })),
+          );
+        }
         if (name === "scheduleRevisionWakeups")
           return await require("@cocalc/server/collaborators/revision-wakeup").runRevisionWakeupScheduling();
         return await require("@cocalc/server/collaborators/revision-repair").runRevisionHintRepair();

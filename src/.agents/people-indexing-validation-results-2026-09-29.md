@@ -1680,3 +1680,20 @@ Server typecheck and all nineteen demand acceptance cases pass. An initial
 fixture command typo was corrected before the final full-suite run. This extends
 real-system evidence through job scheduling, not actual catalog application,
 receiver catch-up completion, restart/concurrency or capacity validation.
+
+### Authenticated Wakeup To Catalog Application
+
+The real PostgreSQL/fabric test now adds a conversation resource at the changed
+owner catalog revision. After the routed hint schedules the account, a fixture
+command claims the due job and uses the production shared projection fetcher,
+routed owner API and projection apply function. The home index must contain the
+exact resource metadata. No fixture update makes the job due after the wakeup.
+Applying this recipient page leaves receiver `applied_seq` unchanged: it is not
+proof that all recipients have caught up.
+
+Server typecheck and all nineteen demand acceptance tests pass. The initial run
+rejected an invalid fixture entry key with the expected projection identity
+guard; the corrected fixture uses the production canonical key function. This
+validates catalog-to-home application, not source extraction, the full maintenance
+loop, receiver-wide completion, restart/rehome recovery or capacity. Those gates
+remain open and the prototype remains disabled by default.

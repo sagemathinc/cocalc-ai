@@ -3,6 +3,8 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { randomUUID } from "node:crypto";
+import { entryKey as resourceEntryKey } from "@cocalc/database/postgres/collaborators/collaborators-common";
+import type { CollaborationResource } from "@cocalc/util/collaborators";
 import { MultibayAcceptance } from "./acceptance/harness";
 
 const acceptance =
@@ -204,6 +206,28 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
       "UPDATE collaboration_projects SET revision=revision+1 WHERE project_id=$1",
       [env.project],
     );
+    const resourceId = `wakeup-${randomUUID()}`;
+    const resource: CollaborationResource = {
+      project_id: env.project,
+      kind: "conversation",
+      resource_id: resourceId,
+      thread_id: resourceId,
+      chat_path: "/home/user/wakeup.chat",
+      title: "Metadata delivered after a revision wakeup",
+      participant_ids: [],
+      created_by: env.accounts[0],
+      created_at: 1000,
+      updated_at: 2000,
+      activity: 1,
+    };
+    const entryKey = resourceEntryKey(resource);
+    await env.sql(
+      "owner",
+      `INSERT INTO collaboration_catalog(entry_key,project_id,kind,resource_id,metadata,revision,activity)
+      SELECT $1,project_id,'conversation',$4,$3::jsonb,revision,1
+      FROM collaboration_projects WHERE project_id=$2`,
+      [entryKey, env.project, JSON.stringify(resource), resourceId],
+    );
     expect(await env.worker("owner").call("repairRevisionHints")).toBe(1);
     const [ack] = await env.sql(
       "owner",
@@ -254,6 +278,18 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
         [env.accounts[0], env.project],
       ),
     ).toEqual([{ due: true }]);
+    expect(await env.worker("a").call("applyActiveProjection")).toEqual([
+      { project_id: env.project, applied: true },
+    ]);
+    expect(
+      await env.sql(
+        "a",
+        "SELECT metadata FROM collaboration_index WHERE account_id=$1 AND entry_key=$2",
+        [env.accounts[0], entryKey],
+      ),
+    ).toEqual([{ metadata: resource }]);
+    // Applying a recipient page must not falsely acknowledge the whole receiver.
+    expect(await read()).toEqual(expected);
     expect(await env.worker("owner").call("repairRevisionHints")).toBe(0);
     expect(await read()).toEqual(expected);
     await env.sql(
