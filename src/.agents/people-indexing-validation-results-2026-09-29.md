@@ -1796,3 +1796,22 @@ two bounded passes retire sixteen foreign/banned hints, then the next selects
 the eligible account. These are functional bounded-progress checks. Large-skew
 query plans, concurrent rehome/activation and full-tip workload/soak validation
 remain open; prior million-row measurements predate this query revision.
+
+### Current Scheduler Large-Backlog Measurements
+
+The complete dormant-scale suite was rerun after bounded-before-filter changes.
+At one million historical memberships/queue rows, activation, projection claims
+and access claims each still touch three buffers when no work is due. Maintenance
+still produces no dormant-account owner RPCs or new access grants.
+
+The fixture then marks 100,000 of those accounts banned and makes all three
+queue fields due. Exact production queries touch 66 buffers for activation,
+242 for projection claiming and 234 for access claiming. Each retires exactly
+eight ineligible hints. All four scale cases and server/reference typecheck pass;
+the fixture took about 324 seconds. These measurements supersede the earlier
+note that the million-row evidence predates the query revision.
+
+This establishes bounded query work for the measured ineligible backlog, not
+whole-backlog drain latency, concurrent state changes, distributed budgets or
+active-user throughput. The atomic catalog invalidation/source-write path and
+the remaining recovery, workload and soak gates are still unfinished.

@@ -146,4 +146,60 @@ acceptance("dormant population query plans (isolated PostgreSQL)", () => {
     },
     600000,
   );
+  test("100000 ineligible due accounts do not turn scheduling into a population scan", async () => {
+    for (let start = 1; start <= 100000; start += 10000) {
+      const ids = `SELECT md5('dormant-scale-' || n)::uuid FROM generate_series($1::integer,$2::integer) n`;
+      const params = [start, start + 9999];
+      await env.sql(
+        "a",
+        `UPDATE accounts SET banned=TRUE WHERE account_id IN (${ids})`,
+        params,
+      );
+      await env.sql(
+        "a",
+        `UPDATE collaboration_demand_activation
+        SET due_at=now()-interval '1 day',projection_due=now()-interval '1 day',access_due=now()-interval '1 day'
+        WHERE account_id IN (${ids})`,
+        params,
+      );
+    }
+    await env.sql("a", "ANALYZE accounts");
+    await env.sql("a", "ANALYZE collaboration_demand_activation");
+    for (const [name, sql, params] of [
+      ["activation", demandActivationCandidatesSql, [env.bays[1]]],
+      ["projection", claimDemandAccountsSql("projection"), [env.bays[1], 8]],
+      ["access", claimDemandAccountsSql("access"), [env.bays[1], 8]],
+    ] as const) {
+      const rows = await env.sql(
+        "a",
+        `EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) ${sql}`,
+        [...params],
+      );
+      const explain = rows[0]["QUERY PLAN"][0];
+      const blocks =
+        (explain.Plan["Shared Hit Blocks"] ?? 0) +
+        (explain.Plan["Shared Read Blocks"] ?? 0);
+      process.stdout.write(
+        JSON.stringify({
+          count: 100000,
+          query: `ineligible-${name}`,
+          blocks,
+          execution_ms: explain["Execution Time"],
+          plan: explain.Plan,
+        }) + "\n",
+      );
+      expect(blocks).toBeLessThan(2000);
+      expect(explain.Plan["Actual Rows"]).toBe(name === "activation" ? 0 : 8);
+    }
+    expect(
+      await env.sql(
+        "a",
+        `SELECT
+      count(*) FILTER (WHERE q.due_at IS NULL)::integer AS activation,
+      count(*) FILTER (WHERE q.projection_due IS NULL)::integer AS projection,
+      count(*) FILTER (WHERE q.access_due IS NULL)::integer AS access
+      FROM collaboration_demand_activation q JOIN accounts a USING(account_id) WHERE a.banned IS TRUE`,
+      ),
+    ).toEqual([{ activation: 8, projection: 8, access: 8 }]);
+  }, 600000);
 });
