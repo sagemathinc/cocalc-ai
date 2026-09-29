@@ -3,7 +3,11 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import getLogger from "@cocalc/backend/logger";
-import { listCollaborationScanDispatchCandidates } from "@cocalc/database/postgres/collaborators/collaborators-scan";
+import {
+  listCollaborationScanDispatchCandidates,
+  listCollaborationScanRetirementCandidates,
+  retireExpiredQueuedCollaborationScan,
+} from "@cocalc/database/postgres/collaborators/collaborators-scan";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { dispatchCollaborationScan } from "./scan-dispatch";
 
@@ -20,6 +24,8 @@ export async function runCollaborationScanPass() {
     deferred: 0,
     pending: 0,
     unknown: 0,
+    retired: 0,
+    retirement_errors: 0,
   };
   if (process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE !== "1") return result;
   const owning_bay_id = getConfiguredBayId();
@@ -49,6 +55,27 @@ export async function runCollaborationScanPass() {
         logger.debug("scan dispatch outcome unknown", {
           job_id: request.job_id,
         });
+      }
+    }
+    if (
+      Date.now() < deadline &&
+      process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE === "1"
+    ) {
+      const stale = await listCollaborationScanRetirementCandidates(authority);
+      for (const job of stale.slice(0, 20)) {
+        if (
+          Date.now() >= deadline ||
+          process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE !== "1"
+        )
+          break;
+        try {
+          if (await retireExpiredQueuedCollaborationScan(job, authority))
+            result.retired++;
+        } catch {
+          // The cursor already advanced. A fenced project cannot starve its peers.
+          result.retirement_errors++;
+          logger.debug("scan retirement deferred", { job_id: job.job_id });
+        }
       }
     }
     return result;

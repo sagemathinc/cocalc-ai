@@ -935,3 +935,20 @@ worker; bounded cleanup traversal and real PostgreSQL retirement/start races
 remain necessary. Database build and all 21 Scan store tests pass, including
 live coalesced receipt preservation, wrong-owner rejection, idempotent retirement,
 expired retry preservation, and refusal to retire running work.
+
+### Bounded Worker Retirement
+
+The explicit Scan worker now follows dispatch with a separately cursored cleanup
+page, examining at most 20 active job IDs and retiring only expired queued work.
+Candidate selection commits its cursor before individual fenced retirement
+transactions, so a project in rehome cannot starve later candidates. The pass
+shares its existing deadline and disable check with cleanup; running jobs and
+retained receipts remain untouched. No automatic timer was enabled.
+
+Server build and 31 focused tests pass (22 store, five mocked worker, four
+worker/store integration). Coverage verifies 20/5-page traversal and wrap with an
+independent dispatch cursor, bounded attempts despite a retirement error,
+disable-before-cleanup, and real-store retirement without host transport.
+Cleanup query plans at scale and PostgreSQL coalescing/start-versus-retirement
+races remain unverified. Sustained dispatch that exhausts each pass's deadline
+can delay cleanup; eventual cleanup latency is not yet a measured guarantee.

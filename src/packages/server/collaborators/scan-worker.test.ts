@@ -1,8 +1,14 @@
 import { runCollaborationScanPass } from "./scan-worker";
-import { listCollaborationScanDispatchCandidates } from "@cocalc/database/postgres/collaborators/collaborators-scan";
+import {
+  listCollaborationScanDispatchCandidates,
+  listCollaborationScanRetirementCandidates,
+  retireExpiredQueuedCollaborationScan,
+} from "@cocalc/database/postgres/collaborators/collaborators-scan";
 import { dispatchCollaborationScan } from "./scan-dispatch";
 jest.mock("@cocalc/database/postgres/collaborators/collaborators-scan", () => ({
   listCollaborationScanDispatchCandidates: jest.fn(),
+  listCollaborationScanRetirementCandidates: jest.fn(),
+  retireExpiredQueuedCollaborationScan: jest.fn(),
 }));
 jest.mock("./scan-dispatch", () => ({ dispatchCollaborationScan: jest.fn() }));
 jest.mock("@cocalc/server/bay-config", () => ({
@@ -18,6 +24,9 @@ const request = {
 beforeEach(() => {
   jest.resetAllMocks();
   process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE = "1";
+  (listCollaborationScanRetirementCandidates as jest.Mock).mockResolvedValue(
+    [],
+  );
   (listCollaborationScanDispatchCandidates as jest.Mock).mockResolvedValue([
     request,
   ]);
@@ -48,6 +57,8 @@ test("caps sequential attempts and preserves unknown outcomes", async () => {
     pending: 19,
     deferred: 0,
     discovered: 0,
+    retired: 0,
+    retirement_errors: 0,
   });
   expect(dispatchCollaborationScan).toHaveBeenCalledWith(request, {
     owning_bay_id: "owner",
@@ -63,6 +74,20 @@ test("disable between steps stops the pass", async () => {
     return { state: "discovered" };
   });
   expect((await runCollaborationScanPass()).attempted).toBe(1);
+  expect(listCollaborationScanRetirementCandidates).not.toHaveBeenCalled();
+});
+test("retirement is bounded and a fenced job does not stop its peers", async () => {
+  (listCollaborationScanRetirementCandidates as jest.Mock).mockResolvedValue(
+    Array(30).fill(request),
+  );
+  (retireExpiredQueuedCollaborationScan as jest.Mock)
+    .mockResolvedValue(true)
+    .mockRejectedValueOnce(Error("rehoming"));
+  expect(await runCollaborationScanPass()).toMatchObject({
+    retired: 19,
+    retirement_errors: 1,
+  });
+  expect(retireExpiredQueuedCollaborationScan).toHaveBeenCalledTimes(20);
 });
 test("overlapping pass skips work and guard is released after selection failure", async () => {
   let finish!: (value: unknown) => void;

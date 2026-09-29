@@ -153,4 +153,28 @@ describeDb("scan worker with durable owner store", () => {
     expect((await runCollaborationScanPass()).attempted).toBe(0);
     expect(getRoutedHostControlClient).not.toHaveBeenCalled();
   });
+  test("worker retires expired unstarted work without contacting a host", async () => {
+    const { request, receipt } = await fixture();
+    await getPool().query(
+      "UPDATE collaboration_scan_receipts SET expires_at=clock_timestamp()-interval '1 second' WHERE project_id=$1",
+      [request.project_id],
+    );
+    expect(await runCollaborationScanPass()).toMatchObject({
+      attempted: 0,
+      retired: 1,
+    });
+    expect(getRoutedHostControlClient).not.toHaveBeenCalled();
+    expect(
+      (
+        await getPool().query(
+          "SELECT job_id FROM collaboration_scan_jobs WHERE job_id=$1",
+          [receipt.job_id],
+        )
+      ).rows,
+    ).toEqual([]);
+    await expect(admitCollaborationScan(request, authority)).rejects.toThrow(
+      "expired",
+    );
+    expect((await runCollaborationScanPass()).retired).toBe(0);
+  });
 });

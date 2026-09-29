@@ -15,6 +15,7 @@ import {
   listCollaborationScanDispatchCandidates,
   adoptCollaborationScanPredecessor,
   retireExpiredQueuedCollaborationScan,
+  listCollaborationScanRetirementCandidates,
   syncCollaborationScanSchema,
 } from "./collaborators-scan";
 
@@ -39,7 +40,7 @@ describeDb("owner scan admission prototype", () => {
       "TRUNCATE collaboration_scan_jobs,collaboration_scan_receipts,collaboration_scan_budget",
     );
     await getPool().query(
-      "DELETE FROM collaboration_maintenance WHERE id LIKE 'scan-dispatch:%'",
+      "DELETE FROM collaboration_maintenance WHERE id LIKE 'scan-dispatch:%' OR id LIKE 'scan-retire:%'",
     );
   });
   async function fixture() {
@@ -121,6 +122,31 @@ describeDb("owner scan admission prototype", () => {
         )
       ).rows,
     ).toEqual([{ state: "running" }]);
+  });
+  test("retirement cursor examines bounded pages and wraps independently of dispatch", async () => {
+    const jobs: string[] = [];
+    for (let i = 0; i < 25; i++) {
+      const request = await fixture();
+      const receipt = await admitCollaborationScan(request, authority);
+      if (!("job_id" in receipt)) throw Error("expected admission");
+      jobs.push(receipt.job_id);
+    }
+    await getPool().query(
+      "UPDATE collaboration_scan_receipts SET expires_at=clock_timestamp()-interval '1 second'",
+    );
+    const first = await listCollaborationScanRetirementCandidates(authority);
+    expect(first).toHaveLength(20);
+    await listCollaborationScanDispatchCandidates(authority);
+    const second = await listCollaborationScanRetirementCandidates(authority);
+    expect(second).toHaveLength(5);
+    expect([...first, ...second].map((job) => job.job_id).sort()).toEqual(
+      jobs.sort(),
+    );
+    expect(
+      (await listCollaborationScanRetirementCandidates(authority))
+        .map((job) => job.job_id)
+        .sort(),
+    ).toEqual(first.map((job) => job.job_id).sort());
   });
   test("stable retry and changed-argument rejection", async () => {
     const request = await fixture();

@@ -487,30 +487,9 @@ export async function listCollaborationScanDispatchCandidates(
   }>
 > {
   return transaction(async (db) => {
-    const id = `scan-dispatch:${authority.owning_bay_id}`;
-    await db.query(
-      "INSERT INTO collaboration_maintenance(id,cursor) VALUES($1,'{}') ON CONFLICT DO NOTHING",
-      [id],
-    );
-    const cursor = (
-      await db.query(
-        "SELECT cursor FROM collaboration_maintenance WHERE id=$1 FOR UPDATE",
-        [id],
-      )
-    ).rows[0].cursor;
-    let page = (
-      await db.query(scanDispatchPageSql, [cursor.job_id ?? ZERO_SCAN_JOB])
-    ).rows;
-    if (!page.length && cursor.job_id)
-      page = (await db.query(scanDispatchPageSql, [ZERO_SCAN_JOB])).rows;
-    await db.query(
-      "UPDATE collaboration_maintenance SET cursor=$2::jsonb WHERE id=$1",
-      [
-        id,
-        JSON.stringify(
-          page.length ? { job_id: page[page.length - 1].job_id } : {},
-        ),
-      ],
+    const page = await scanJobPage(
+      db,
+      `scan-dispatch:${authority.owning_bay_id}`,
     );
     const { rows } = await db.query(scanDispatchCandidatesSql, [
       authority.owning_bay_id,
@@ -518,6 +497,62 @@ export async function listCollaborationScanDispatchCandidates(
     ]);
     return rows;
   });
+}
+
+/** Examine at most twenty active jobs, including ineligible ones. Retirement
+ * rechecks under a project fence in its own transaction after this cursor commits.
+ */
+export async function listCollaborationScanRetirementCandidates(
+  authority: CollaborationOwnerAuthority,
+): Promise<Array<{ project_id: string; job_id: string }>> {
+  return transaction(async (db) => {
+    const page = await scanJobPage(
+      db,
+      `scan-retire:${authority.owning_bay_id}`,
+    );
+    const { rows } = await db.query(
+      `WITH page AS MATERIALIZED (
+         SELECT * FROM collaboration_scan_jobs WHERE job_id=ANY($2::uuid[])
+       ) SELECT j.project_id,j.job_id FROM page j JOIN projects p USING(project_id)
+       WHERE p.owning_bay_id=$1 AND j.state='queued'
+       AND NOT EXISTS (SELECT 1 FROM collaboration_scan_receipts r
+         WHERE r.project_id=j.project_id AND r.receipt->>'job_id'=j.job_id::text
+         AND r.expires_at>statement_timestamp())`,
+      [authority.owning_bay_id, page.map((row) => row.job_id)],
+    );
+    return rows;
+  });
+}
+
+async function scanJobPage(
+  db: PoolClient,
+  id: string,
+): Promise<Array<{ job_id: string }>> {
+  await db.query(
+    "INSERT INTO collaboration_maintenance(id,cursor) VALUES($1,'{}') ON CONFLICT DO NOTHING",
+    [id],
+  );
+  const cursor = (
+    await db.query(
+      "SELECT cursor FROM collaboration_maintenance WHERE id=$1 FOR UPDATE",
+      [id],
+    )
+  ).rows[0].cursor;
+  let page = (
+    await db.query(scanDispatchPageSql, [cursor.job_id ?? ZERO_SCAN_JOB])
+  ).rows;
+  if (!page.length && cursor.job_id)
+    page = (await db.query(scanDispatchPageSql, [ZERO_SCAN_JOB])).rows;
+  await db.query(
+    "UPDATE collaboration_maintenance SET cursor=$2::jsonb WHERE id=$1",
+    [
+      id,
+      JSON.stringify(
+        page.length ? { job_id: page[page.length - 1].job_id } : {},
+      ),
+    ],
+  );
+  return page;
 }
 
 const ZERO_SCAN_JOB = "00000000-0000-0000-0000-000000000000";
