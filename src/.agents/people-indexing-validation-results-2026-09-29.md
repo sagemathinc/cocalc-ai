@@ -1948,3 +1948,19 @@ Process loss is real; lease expiry is simulated for bounded test duration. This
 does not exercise shared transport loss, automatic timer startup, recipient-page
 cursor recovery, database restart, rehome or restore. Those lifecycle cases and
 the broader scale/soak gates remain open; no production settings were changed.
+
+### Maintenance Timer Lifecycle Boundaries
+
+Seven focused fake-timer cases now exercise the actual maintenance startup/stop
+functions with mocked storage and delivery dependencies. They verify idempotent
+startup, explicit outbox schema opt-in, retry after initialization failure,
+stop during initialization, isolation of fanout/outbox failures from repair, and
+epoch fencing of both delayed startup failures and in-flight passes across
+stop/restart. Stopping clears every tracked timer; an old callback cannot start
+another repair pass or create a second recurring timer in the new lifecycle.
+
+Server/reference typecheck and 20 focused lifecycle/dispatcher/scheduler tests
+pass. This proves timer control flow, not live timer-to-database integration or
+cancellation of already-started remote work. The separate real process-loss test
+still supplies durable-claim evidence. Shared transport/database restart,
+recipient-page cursor recovery, rehome/restore and scale/soak remain open.
