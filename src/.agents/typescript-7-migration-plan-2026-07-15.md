@@ -933,3 +933,21 @@ The migration is complete only when all of the following are true:
   paths.
 - 2026-09-29: No bundler or runtime tool reads tsconfig `paths` (only
   type-checking does), so the mapping does not change runtime resolution.
+- 2026-09-29: TS6 emit on this branch vs TS6 emit on `main` (built twice to
+  get past the cycle errors): all 5,785 `.js` files are byte-identical. The
+  13 `.d.ts` differences are the intended source changes, union ordering, and
+  equivalent import paths. The configuration change therefore does not
+  change the runtime output of today's TS6 build.
+- 2026-09-29: Validation. `pnpm -C src test:checks` passes (includes lint,
+  version check, and `check-tsconfig`). Jest results on the branch: util
+  1,884, sync 150, conat 939, jupyter 193, chat 141, chat-client 66,
+  document-build 32, notebook 6, export 14, ai 146, lite 632, project-host
+  1,376, and frontend 7,140 tests passing; apps/tasks `node:test` passing.
+  Remaining failures are identical on `main` in the same environment:
+  backend conat socket/stream suites (6), project
+  `system.managed-vm-ssh-config` and `formatters/format` (2), frontend
+  `chat/__tests__/message-completion` (1), and server suites that need a
+  PostgreSQL test database (5). Backend sandbox suites need
+  `pnpm install-sandbox-tools` in a fresh worktree and then pass.
+- Remaining: Phase 9 default switch after live Lite/hub smoke tests and
+  staging; revisit dropping TS6 when TS7.1 ships a compiler API.
