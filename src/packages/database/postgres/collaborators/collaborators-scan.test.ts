@@ -14,6 +14,7 @@ import {
   releaseCollaborationScanDispatch,
   listCollaborationScanDispatchCandidates,
   adoptCollaborationScanPredecessor,
+  retireExpiredQueuedCollaborationScan,
   syncCollaborationScanSchema,
 } from "./collaborators-scan";
 
@@ -59,6 +60,68 @@ describeDb("owner scan admission prototype", () => {
     );
     return request;
   }
+  test("retirement preserves live coalesced receipts and expired retry history", async () => {
+    const request = await fixture();
+    const receipt = await admitCollaborationScan(request, authority);
+    if (!("job_id" in receipt)) throw Error("expected admission");
+    const job = { project_id: request.project_id, job_id: receipt.job_id };
+    const follow = { ...request, request_id: randomUUID() };
+    await admitCollaborationScan(follow, authority);
+    await getPool().query(
+      "UPDATE collaboration_scan_receipts SET expires_at=clock_timestamp()-interval '1 second' WHERE request_id=$1",
+      [request.request_id],
+    );
+    expect(await retireExpiredQueuedCollaborationScan(job, authority)).toBe(
+      false,
+    );
+    await getPool().query(
+      "UPDATE collaboration_scan_receipts SET expires_at=clock_timestamp()-interval '1 second' WHERE project_id=$1",
+      [request.project_id],
+    );
+    await expect(
+      retireExpiredQueuedCollaborationScan(job, { owning_bay_id: "wrong" }),
+    ).rejects.toThrow();
+    expect(await retireExpiredQueuedCollaborationScan(job, authority)).toBe(
+      true,
+    );
+    expect(await retireExpiredQueuedCollaborationScan(job, authority)).toBe(
+      false,
+    );
+    expect(
+      (
+        await getPool().query(
+          "SELECT count(*)::integer AS n FROM collaboration_scan_receipts WHERE project_id=$1",
+          [request.project_id],
+        )
+      ).rows[0].n,
+    ).toBe(2);
+    expect(await inspectCollaborationScan(request, authority)).toBeNull();
+    await expect(admitCollaborationScan(request, authority)).rejects.toThrow(
+      "expired",
+    );
+  });
+  test("expired running work cannot be retired as an unstarted queue entry", async () => {
+    const request = await fixture();
+    const receipt = await admitCollaborationScan(request, authority);
+    if (!("job_id" in receipt)) throw Error("expected admission");
+    const job = { ...request, job_id: receipt.job_id };
+    await startCollaborationScan(job, authority);
+    await getPool().query(
+      "UPDATE collaboration_scan_receipts SET expires_at=clock_timestamp()-interval '1 second' WHERE project_id=$1",
+      [request.project_id],
+    );
+    expect(await retireExpiredQueuedCollaborationScan(job, authority)).toBe(
+      false,
+    );
+    expect(
+      (
+        await getPool().query(
+          "SELECT state FROM collaboration_scan_jobs WHERE job_id=$1",
+          [receipt.job_id],
+        )
+      ).rows,
+    ).toEqual([{ state: "running" }]);
+  });
   test("stable retry and changed-argument rejection", async () => {
     const request = await fixture();
     const receipt = await admitCollaborationScan(request, authority);

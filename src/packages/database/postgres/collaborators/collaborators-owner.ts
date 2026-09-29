@@ -103,6 +103,14 @@ export async function assertCollaborationWriterAuthority(
 ): Promise<void> {
   await project(db, project_id, authority, authority.host_id, false);
 }
+/** Internal maintenance fence; does not require a remaining human member. */
+export async function assertCollaborationOwnerAuthority(
+  db: PoolClient,
+  project_id: string,
+  authority: CollaborationOwnerAuthority,
+): Promise<void> {
+  await project(db, project_id, authority, undefined, false);
+}
 export async function assertCollaborationAccountAuthority(
   db: PoolClient,
   project_id: string,

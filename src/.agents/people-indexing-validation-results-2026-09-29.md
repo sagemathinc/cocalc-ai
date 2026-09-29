@@ -922,3 +922,16 @@ exist. A subsequent original retry remains free. All four Scan acceptance cases
 and the server TypeScript build pass. This exercises concurrent transactions in
 one home-bay process, not multiple home-bay processes or sustained load. No
 production runtime or feature flags were changed.
+
+### Expired Queued Job Retirement
+
+Added an internal owner-maintenance operation that retires one queued Scan job
+only when no live admission receipt remains. It takes the same project/rehome
+fence as admission and execution, so coalescing or starting cannot race deletion.
+It neither initializes catalog state nor requires a remaining human member.
+Running jobs are never inferred abandoned from receipt expiry, and retained
+receipts are not deleted or rewritten. The operation is not yet invoked by the
+worker; bounded cleanup traversal and real PostgreSQL retirement/start races
+remain necessary. Database build and all 21 Scan store tests pass, including
+live coalesced receipt preservation, wrong-owner rejection, idempotent retirement,
+expired retry preservation, and refusal to retire running work.

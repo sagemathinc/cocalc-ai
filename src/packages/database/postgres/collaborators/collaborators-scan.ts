@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import type { PoolClient } from "@cocalc/database/pool";
 import {
   assertCollaborationAccountAuthority,
+  assertCollaborationOwnerAuthority,
   assertCollaborationWriterAuthority,
 } from "./collaborators-owner";
 import type { CollaborationWriterAuthority } from "./collaborators-owner";
@@ -17,6 +18,31 @@ const COOLDOWN_MS = 300000;
 // Seven days at one admission/minute, plus the initial burst and headroom.
 const MAX_RECEIPTS = 11000;
 const TOKEN_INTERVAL_MS = 60000;
+
+/** Retire only unstarted work with no live admission receipts. The project lock
+ * serializes this with coalescing and start; running work needs host recovery,
+ * not an inference from expired receipts. Retry history is retained unchanged.
+ */
+export async function retireExpiredQueuedCollaborationScan(
+  opts: { project_id: string; job_id: string },
+  authority: CollaborationOwnerAuthority,
+): Promise<boolean> {
+  uuid(opts.job_id, "scan job");
+  return transaction(async (db) => {
+    await assertCollaborationOwnerAuthority(db, opts.project_id, authority);
+    const { rows } = await db.query(
+      `DELETE FROM collaboration_scan_jobs j
+       WHERE j.project_id=$1 AND j.job_id=$2 AND j.state='queued'
+       AND NOT EXISTS (
+         SELECT 1 FROM collaboration_scan_receipts r
+         WHERE r.project_id=j.project_id AND r.receipt->>'job_id'=j.job_id::text
+           AND r.expires_at>clock_timestamp()
+       ) RETURNING job_id`,
+      [opts.project_id, opts.job_id],
+    );
+    return rows.length > 0;
+  });
+}
 import type {
   ScanAdmissionRequest,
   ScanReceipt,
