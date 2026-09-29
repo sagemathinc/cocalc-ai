@@ -1,9 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createServer } from "node:http";
+import { execFile } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { promisify } from "node:util";
+import { buildCookieHeader } from "./auth-cookies";
 import {
   projectApiRelayTransport,
   fetchWithProjectApiRelay,
+  selectProjectApiRelayTransport,
+  apiTransportMode,
 } from "./api-relay";
 import {
   API_RELAY_PATH,
@@ -20,6 +28,138 @@ const env: NodeJS.ProcessEnv = {
   COCALC_PROJECT_SECRET: "local-secret",
   CONAT_SERVER: "http://10.206.0.1:9102/",
 };
+
+test("explicit credential pins apply before every relay or direct route decision", async () => {
+  const originalFetch = globalThis.fetch;
+  let probes = 0;
+  try {
+    globalThis.fetch = async () => {
+      probes++;
+      return new Response(null, { status: 200 });
+    };
+    const target = "https://allowed-bay-scope.test";
+    // Prime the successful probe cache with an independently scoped credential.
+    assert.ok(
+      await selectProjectApiRelayTransport({
+        env,
+        apiBaseUrl: target,
+        credentialSite: target,
+      }),
+    );
+    assert.equal(probes, 1);
+    for (const routeEnv of [
+      env,
+      { ...env, COCALC_API_RELAY_HUB_URL: target },
+      { ...env, COCALC_CLI_TRANSPORT: "relay" },
+      { ...env, COCALC_CLI_TRANSPORT: "direct" },
+      { ...env, COCALC_API_RELAY: "0" },
+    ]) {
+      for (const apiBaseUrl of [target, "https://uncached-bay-scope.test"]) {
+        await assert.rejects(
+          selectProjectApiRelayTransport({
+            env: routeEnv,
+            apiBaseUrl,
+            credentialSite: "https://credential-owner.test",
+          }),
+          /destination-scoped/,
+        );
+      }
+    }
+    assert.equal(probes, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("HTTP pinned cookies and bearer tokens cannot cross sites through a positive relay", async () => {
+  const saved = { ...process.env };
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  try {
+    Object.assign(process.env, env);
+    globalThis.fetch = async () => {
+      calls++;
+      return new Response(null, { status: 200 });
+    };
+    for (const mode of ["auto", "relay", "direct"]) {
+      process.env.COCALC_CLI_TRANSPORT = mode;
+      for (const headers of [
+        new Headers({ Cookie: "pinned-cookie" }),
+        new Headers({ Authorization: "Bearer pinned-token" }),
+      ]) {
+        for (const target of [
+          env.COCALC_API_RELAY_HUB_URL!,
+          "https://allowed-http-bay.test",
+        ]) {
+          await assert.rejects(
+            fetchWithProjectApiRelay(
+              `${target}/api/v2/auth/status`,
+              { headers },
+              undefined,
+              { credentialSite: "https://credential-owner.test" },
+            ),
+            /destination-scoped/,
+          );
+        }
+      }
+    }
+    assert.equal(calls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const name of Object.keys(process.env))
+      if (!(name in saved)) delete process.env[name];
+    Object.assign(process.env, saved);
+  }
+});
+
+test("direct ambient scope follows BASE_URL, Lite connection info and loopback defaults, never --api", async () => {
+  const home = await mkdtemp(join(tmpdir(), "relay-default-scope-"));
+  const info = join(home, "lite.json");
+  try {
+    await writeFile(
+      info,
+      JSON.stringify({
+        url: "http://127.0.0.1:7001",
+        agent_token: "fixture-only",
+      }),
+    );
+    const cases = [
+      {
+        settings: { BASE_URL: "https://base.test/site/" },
+        target: "https://base.test/site",
+      },
+      {
+        settings: { COCALC_LITE_CONNECTION_INFO: info },
+        target: "http://127.0.0.1:7001",
+      },
+      { settings: { HUB_PORT: "7002" }, target: "http://127.0.0.1:7002" },
+      { settings: {}, target: "http://127.0.0.1:9100" },
+    ];
+    for (const { settings, target } of cases) {
+      const routeEnv = {
+        HOME: home,
+        COCALC_CLI_TRANSPORT: "direct",
+        ...settings,
+      };
+      assert.equal(
+        await selectProjectApiRelayTransport({
+          env: routeEnv,
+          apiBaseUrl: target,
+        }),
+        undefined,
+      );
+      await assert.rejects(
+        selectProjectApiRelayTransport({
+          env: routeEnv,
+          apiBaseUrl: "https://unrelated-default.test",
+        }),
+        /destination-scoped/,
+      );
+    }
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
 
 test("relay transport preserves the requested API endpoint for host-side allowlist validation", () => {
   assert.equal(
@@ -125,11 +265,270 @@ test("HTTP transport retains canonical paths and original credentials and reject
     assert.equal(await bayResponse.text(), "ok");
     assert.equal(seen[2].hub, "https://home-bay.example/site");
     assert.equal(seen[2].url, `${API_RELAY_PATH}/hub/api/v2/auth/status`);
+    assert.equal(seen.length, 4); // HEAD probe, then the actual request.
   } finally {
     for (const name of Object.keys(process.env))
       if (!(name in saved)) delete process.env[name];
     Object.assign(process.env, saved);
     server.closeAllConnections();
     await new Promise<void>((done) => server.close(() => done()));
+  }
+});
+
+test("direct override requires no project secret and invalid modes fail", async () => {
+  assert.equal(
+    await selectProjectApiRelayTransport({
+      apiBaseUrl: "https://prod.test",
+      credentialSite: "https://prod.test",
+      env: { COCALC_CLI_TRANSPORT: "direct", COCALC_API_RELAY: "1" },
+    }),
+    undefined,
+  );
+  assert.throws(
+    () => apiTransportMode({ COCALC_CLI_TRANSPORT: "invalid" }),
+    /transport/,
+  );
+  await assert.rejects(
+    selectProjectApiRelayTransport({
+      apiBaseUrl: "https://prod.test",
+      env: { COCALC_CLI_TRANSPORT: "relay" },
+    }),
+    /not configured/,
+  );
+});
+
+test("auto probes unknown hubs once, without credentials, and never replays a mutation", async () => {
+  const saved = { ...process.env };
+  const originalFetch = globalThis.fetch;
+  const calls: { url: string; init?: RequestInit }[] = [];
+  try {
+    Object.assign(process.env, env);
+    delete process.env.COCALC_CLI_TRANSPORT;
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), init });
+      if (init?.method === "HEAD") return new Response(null, { status: 502 });
+      return new Response("ambiguous failure", { status: 502 });
+    };
+    const target = "https://outside.test/api/v2/create";
+    const response = await fetchWithProjectApiRelay(
+      target,
+      {
+        method: "POST",
+        headers: { Cookie: "caller-cookie" },
+        body: "mutation",
+      },
+      undefined,
+      { credentialSite: "https://outside.test" },
+    );
+    assert.equal(response.status, 502);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].init?.method, "HEAD");
+    assert.equal(calls[0].init?.body, undefined);
+    assert.equal(new Headers(calls[0].init?.headers).get("cookie"), null);
+    assert.equal(calls[1].url, target);
+    assert.equal(
+      new Headers(calls[1].init?.headers).get(API_RELAY_SECRET_HEADER),
+      null,
+    );
+    assert.equal(
+      new Headers(calls[1].init?.headers).get("cookie"),
+      "caller-cookie",
+    );
+    assert.equal(
+      await selectProjectApiRelayTransport({
+        apiBaseUrl: "https://outside.test",
+        credentialSite: "https://outside.test",
+      }),
+      undefined,
+    );
+    assert.equal(calls.length, 2);
+    // Cross-site project-host routing uses the same site choice.
+    assert.equal(
+      await selectProjectApiRelayTransport({
+        apiBaseUrl: "https://outside.test",
+        credentialSite: "https://outside.test",
+        host: { host_id: projectId, project_id: projectId },
+      }),
+      undefined,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const name of Object.keys(process.env))
+      if (!(name in saved)) delete process.env[name];
+    Object.assign(process.env, saved);
+  }
+});
+
+test("same-site and forced relay skip probes; other bays retain relay and coalesce probes", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  try {
+    globalThis.fetch = async () => {
+      calls++;
+      return new Response(null, { status: 404 });
+    };
+    assert.ok(
+      await selectProjectApiRelayTransport({
+        env,
+        apiBaseUrl: env.COCALC_API_RELAY_HUB_URL!,
+      }),
+    );
+    assert.ok(
+      await selectProjectApiRelayTransport({
+        env: { ...env, COCALC_CLI_TRANSPORT: "relay" },
+        apiBaseUrl: "https://forced.test",
+      }),
+    );
+    assert.equal(calls, 0);
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () =>
+        selectProjectApiRelayTransport({
+          env,
+          apiBaseUrl: "https://other-bay.test",
+        }),
+      ),
+    );
+    assert.ok(results.every(Boolean));
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("probe transport failure selects direct, but a failed relay operation is never replayed", async () => {
+  const saved = { ...process.env };
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  try {
+    Object.assign(process.env, env, { COCALC_CLI_TRANSPORT: "auto" });
+    globalThis.fetch = async (_url, init) => {
+      calls++;
+      assert.equal(init?.method, "HEAD");
+      assert.ok(init.signal instanceof AbortSignal);
+      throw Error("unreachable relay");
+    };
+    assert.equal(
+      await selectProjectApiRelayTransport({
+        apiBaseUrl: "https://unreachable.test",
+        credentialSite: "https://unreachable.test",
+      }),
+      undefined,
+    );
+    assert.equal(calls, 1);
+    globalThis.fetch = async (url, init) => {
+      calls++;
+      assert.match(String(url), /\/hub\/api\/v2\/create$/);
+      assert.equal(init?.method, "POST");
+      throw Error("ambiguous timeout");
+    };
+    await assert.rejects(
+      fetchWithProjectApiRelay("https://site.example/site/api/v2/create", {
+        method: "POST",
+        body: "mutation",
+      }),
+      /ambiguous timeout/,
+    );
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const name of Object.keys(process.env))
+      if (!(name in saved)) delete process.env[name];
+    Object.assign(process.env, saved);
+  }
+});
+
+test("CLI transport flag overrides the environment before authentication", async () => {
+  const home = await mkdtemp(join(tmpdir(), "cli-transport-"));
+  const entrypoint = resolve(__dirname, "../bin/cocalc.js");
+  const fixture = `
+    const assert = require('node:assert/strict');
+    globalThis.fetch = async (url, init) => {
+      assert.equal(process.env.COCALC_CLI_TRANSPORT, 'direct');
+      assert.ok(['https://outside.test/api/v2/accounts/profile',
+        'https://outside.test/api/v2/auth/cli/session-status'].includes(String(url)));
+      assert.equal(new Headers(init?.headers).get('${API_RELAY_SECRET_HEADER}'), null);
+      return new Response(JSON.stringify({profile: {account_id: '${projectId}'}}));
+    };
+    process.argv.splice(1, 0, ${JSON.stringify(entrypoint)});
+    require(${JSON.stringify(entrypoint)});
+  `;
+  try {
+    const { stdout } = await promisify(execFile)(
+      process.execPath,
+      [
+        "-e",
+        fixture,
+        "--",
+        "--transport",
+        "direct",
+        "--api",
+        "https://outside.test",
+        "--cookie",
+        "remember_me=fixture-cookie",
+        "--no-daemon",
+        "--disable-env-auth-defaults",
+        "auth",
+        "status",
+        "--check",
+        "--json",
+      ],
+      {
+        timeout: 15_000,
+        cwd: resolve(__dirname, "../.."),
+        env: {
+          PATH: process.env.PATH,
+          HOME: home,
+          COCALC_PROFILE: "_env",
+          COCALC_CLI_TRANSPORT: "relay",
+          COCALC_API_RELAY: "1",
+          DEBUG_CONSOLE: "no",
+          DEBUG_FILE: "",
+        },
+      },
+    );
+    assert.equal(JSON.parse(stdout).data.check.ok, true);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("unrelated direct selection never transmits inherited project, API key or hub credentials", async () => {
+  const saved = { ...process.env };
+  const originalFetch = globalThis.fetch;
+  try {
+    Object.assign(process.env, env);
+    for (const mode of ["auto", "direct"]) {
+      process.env.COCALC_CLI_TRANSPORT = mode;
+      for (const extra of [
+        {},
+        { COCALC_API_KEY: "ambient-key" },
+        { COCALC_HUB_PASSWORD: "ambient-password" },
+      ]) {
+        let probes = 0;
+        globalThis.fetch = async (url, init) => {
+          probes++;
+          assert.match(String(url), /10\.206\.0\.1:9102/);
+          assert.equal(init?.method, "HEAD");
+          assert.equal(new Headers(init?.headers).get("cookie"), null);
+          assert.equal(new Headers(init?.headers).get("authorization"), null);
+          return new Response(null, { status: 502 });
+        };
+        const target = `https://${mode}-${Object.keys(extra)[0] ?? "project"}.invalid`;
+        const cookie = buildCookieHeader(target, {}, {}, { ...env, ...extra });
+        assert.ok(cookie);
+        await assert.rejects(
+          fetchWithProjectApiRelay(`${target}/api/v2/auth/bootstrap`, {
+            headers: { Cookie: cookie },
+          }),
+          /destination-scoped/,
+        );
+        assert.equal(probes, mode === "auto" ? 1 : 0);
+      }
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const name of Object.keys(process.env))
+      if (!(name in saved)) delete process.env[name];
+    Object.assign(process.env, saved);
   }
 });

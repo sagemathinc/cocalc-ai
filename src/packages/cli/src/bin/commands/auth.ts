@@ -128,11 +128,13 @@ export function registerAuthCommand(
     endpoint,
     body,
     cookieHeader,
+    credentialSite,
   }: {
     apiBaseUrl: string;
     endpoint: string;
     body: object;
     cookieHeader?: string;
+    credentialSite?: string;
   }): Promise<T> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -147,6 +149,8 @@ export function registerAuthCommand(
         headers,
         body: JSON.stringify(body),
       },
+      undefined,
+      { credentialSite },
     );
     const json = await response.json();
     if (json?.error) {
@@ -280,6 +284,7 @@ export function registerAuthCommand(
         endpoint: "accounts/profile",
         body: {},
         cookieHeader,
+        credentialSite: apiBaseUrl,
       });
       const next = response?.profile ?? {};
       const nextAccountId = `${next.account_id ?? ""}`.trim();
@@ -386,6 +391,9 @@ export function registerAuthCommand(
                 endpoint: "accounts/profile",
                 body: {},
                 cookieHeader,
+                credentialSite: effective.disableEnvAuthDefaults
+                  ? apiBaseUrl
+                  : undefined,
               });
               const sessionStatus = await postCliAuthApi<{
                 auth_client?: string;
@@ -398,6 +406,9 @@ export function registerAuthCommand(
                 endpoint: "auth/cli/session-status",
                 body: {},
                 cookieHeader,
+                credentialSite: effective.disableEnvAuthDefaults
+                  ? apiBaseUrl
+                  : undefined,
               });
               check = {
                 ok: true,
@@ -893,6 +904,10 @@ export function registerAuthCommand(
           duration: freshAuthDuration,
         },
         cookieHeader,
+        credentialSite:
+          !opts.dev && effective.disableEnvAuthDefaults
+            ? apiBaseUrl
+            : undefined,
       });
       return {
         account_id: getExplicitAccountId(effective) ?? null,
@@ -915,6 +930,7 @@ export function registerAuthCommand(
           : {}),
       },
       cookieHeader,
+      credentialSite: effective.disableEnvAuthDefaults ? apiBaseUrl : undefined,
     });
     if (codexAttentionContext) {
       if (start.attention_registered !== true) {
@@ -974,6 +990,7 @@ export function registerAuthCommand(
       endpoint: "accounts/profile",
       body: {},
       cookieHeader,
+      credentialSite: effective.disableEnvAuthDefaults ? apiBaseUrl : undefined,
     });
     const sessionStatus = await postCliAuthApi<{
       auth_client?: string;
@@ -986,6 +1003,7 @@ export function registerAuthCommand(
       endpoint: "auth/cli/session-status",
       body: {},
       cookieHeader,
+      credentialSite: effective.disableEnvAuthDefaults ? apiBaseUrl : undefined,
     });
     return {
       ok: true,

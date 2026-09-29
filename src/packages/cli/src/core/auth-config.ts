@@ -35,6 +35,8 @@ export type GlobalAuthOptions = {
   bearer?: string;
   hubPassword?: string;
   disableEnvAuthDefaults?: boolean;
+  // Preserve credential provenance when a daemon freezes environment defaults.
+  directAuthSite?: string;
 };
 
 const DEFAULT_PROFILE = "default";

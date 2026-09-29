@@ -11,6 +11,57 @@ import {
   prepareDaemonAuthGlobals,
   shouldUseFileOpsDaemon,
 } from "./daemon-globals";
+import { selectProjectApiRelayTransport } from "../../core/api-relay";
+
+test("freezing ambient daemon auth preserves its site rather than trusting an API override", async () => {
+  const env = {
+    COCALC_API_URL: "https://local.test",
+    COCALC_API_RELAY_HUB_URL: "https://local.test",
+    COCALC_CLI_TRANSPORT: "direct",
+    COCALC_BEARER_TOKEN: "ambient-token",
+  };
+  const globals = effectiveDaemonGlobals(
+    { api: "https://other.test" },
+    { env },
+  );
+  assert.equal(globals.disableEnvAuthDefaults, true);
+  assert.equal(globals.directAuthSite, "https://local.test");
+  await assert.rejects(
+    selectProjectApiRelayTransport({
+      apiBaseUrl: globals.api!,
+      credentialSite: globals.directAuthSite,
+      env,
+    }),
+    /destination-scoped/,
+  );
+});
+
+test("freezing daemon auth retains BASE_URL and Lite defaults even with an API override", async () => {
+  for (const settings of [
+    {
+      env: { BASE_URL: "https://base.test" },
+      defaultApiBaseUrl: () => "http://127.0.0.1:7001",
+      expected: "https://base.test",
+    },
+    {
+      env: {},
+      defaultApiBaseUrl: () => "http://127.0.0.1:7001",
+      expected: "http://127.0.0.1:7001",
+    },
+  ]) {
+    for (const api of [undefined, "https://override.test"]) {
+      const globals = effectiveDaemonGlobals({ api }, settings);
+      assert.equal(globals.directAuthSite, settings.expected);
+      const selection = selectProjectApiRelayTransport({
+        apiBaseUrl: globals.api!,
+        credentialSite: globals.directAuthSite,
+        env: { COCALC_CLI_TRANSPORT: "direct" },
+      });
+      if (api) await assert.rejects(selection, /destination-scoped/);
+      else assert.equal(await selection, undefined);
+    }
+  }
+});
 import { applyAuthProfile } from "../../core/auth-config";
 
 test("manual and managed file-backed keys use the daemon", () => {

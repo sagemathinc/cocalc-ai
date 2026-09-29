@@ -7,6 +7,99 @@ import {
 } from "@cocalc/conat/project-host/api-relay";
 import { resolveProjectScopedAuth } from "./auth-cookies";
 import { normalizeUrl } from "./utils";
+import { defaultApiBaseUrl } from "./default-api-url";
+
+export function apiTransportMode(
+  env = process.env,
+): "auto" | "direct" | "relay" {
+  const mode = env.COCALC_CLI_TRANSPORT ?? "auto";
+  if (mode === "auto" || mode === "direct" || mode === "relay") return mode;
+  throw Error("CLI transport must be auto, direct, or relay");
+}
+
+// Transport policy is not an authorization boundary: host egress controls and
+// upstream credentials apply to direct connections too. Never retry an actual
+// operation on another transport after an ambiguous response or timeout.
+const routeProbes = new Map<
+  string,
+  { expires: number; result: Promise<boolean> }
+>();
+
+export async function selectProjectApiRelayTransport(
+  options: Parameters<typeof projectApiRelayTransport>[0] & {
+    // Set only after resolving destination-scoped auth, not merely --api.
+    credentialSite?: string;
+  },
+): Promise<ReturnType<typeof projectApiRelayTransport>> {
+  const env = options.env ?? process.env;
+  const mode = apiTransportMode(env);
+  const hub = normalizeApiRelayHubUrl(options.apiBaseUrl);
+  const assertCredentialScope = () => {
+    const scope =
+      options.credentialSite ??
+      env.COCALC_API_RELAY_HUB_URL ??
+      defaultApiBaseUrl(env);
+    if (!scope || normalizeApiRelayHubUrl(scope) !== hub) {
+      throw Error(
+        "transport requires destination-scoped credentials; use a matching profile or disable environment auth defaults with explicit credentials",
+      );
+    }
+  };
+  // A relay allowlist authorizes a route, not forwarding a credential issued
+  // for another site. Enforce explicit pins even on successful relay paths.
+  if (options.credentialSite !== undefined) assertCredentialScope();
+  if (mode === "direct") {
+    assertCredentialScope();
+    return;
+  }
+  const relay = projectApiRelayTransport({ ...options, host: undefined });
+  if (!relay) {
+    if (mode === "relay") throw Error("project API relay is not configured");
+    return;
+  }
+  const localSite = env.COCALC_API_RELAY_HUB_URL;
+  if (
+    mode === "relay" ||
+    (localSite && normalizeApiRelayHubUrl(localSite) === hub)
+  ) {
+    return projectApiRelayTransport(options);
+  }
+  // Unknown endpoints may be other bays in this cluster, so do not infer
+  // cluster membership from DNS suffixes. Probe only a read-only HEAD, without
+  // upstream cookies/tokens or caller payload, using the existing router API.
+  const key = JSON.stringify([relay.address, relay.extraHeaders]);
+  let probe = routeProbes.get(key);
+  if (!probe || probe.expires <= Date.now()) {
+    if (routeProbes.size >= 128) routeProbes.clear();
+    probe = {
+      expires: Date.now() + 30_000,
+      result: (async () => {
+        try {
+          const response = await fetch(`${relay.address}/api/v2/auth/status`, {
+            method: "HEAD",
+            headers: relay.extraHeaders,
+            redirect: "manual",
+            signal: AbortSignal.timeout(3_000),
+          });
+          await response.body?.cancel();
+          // An upstream 404/405 is normal for a HEAD-only reachability probe.
+          // Relay denial, overload or unavailability selects direct transport
+          // before any authenticated operation is sent.
+          return (
+            response.status < 500 &&
+            ![301, 302, 303, 307, 308, 403, 429].includes(response.status)
+          );
+        } catch {
+          return false;
+        }
+      })(),
+    };
+    routeProbes.set(key, probe);
+  }
+  if (await probe.result) return projectApiRelayTransport(options);
+  assertCredentialScope();
+  return;
+}
 
 export function projectApiRelayTransport({
   apiBaseUrl,
@@ -17,7 +110,8 @@ export function projectApiRelayTransport({
   host?: { host_id: string; project_id: string };
   env?: NodeJS.ProcessEnv;
 }): { address: string; extraHeaders: Record<string, string> } | undefined {
-  if (env.COCALC_API_RELAY !== "1") return;
+  if (apiTransportMode(env) === "direct" || env.COCALC_API_RELAY !== "1")
+    return;
   const hub = normalizeApiRelayHubUrl(apiBaseUrl);
   const auth = resolveProjectScopedAuth(env);
   if (!auth || !env.CONAT_SERVER) {
@@ -55,15 +149,24 @@ export async function fetchWithProjectApiRelay(
   input: string | URL,
   init?: RequestInit,
   hostTarget?: { apiBaseUrl: string; host_id: string; project_id: string },
+  authScope?: { credentialSite?: string },
 ): Promise<Response> {
   const url = new URL(input);
-  if (process.env.COCALC_API_RELAY !== "1") return await fetch(input, init);
   const apiOffset = url.pathname.indexOf("/api/v2/");
   if (!hostTarget && apiOffset < 0) return await fetch(input, init);
-  const relay = projectApiRelayTransport({
-    apiBaseUrl:
-      hostTarget?.apiBaseUrl ??
-      `${url.origin}${url.pathname.slice(0, apiOffset)}`,
+  const apiBaseUrl =
+    hostTarget?.apiBaseUrl ??
+    `${url.origin}${url.pathname.slice(0, apiOffset)}`;
+  const requestHeaders = new Headers(init?.headers);
+  const relay = await selectProjectApiRelayTransport({
+    apiBaseUrl,
+    // Login challenges without inherited auth can target a new site. Authenticated
+    // HTTP callers must carry the scope used when constructing their headers.
+    credentialSite:
+      authScope?.credentialSite ??
+      (!requestHeaders.has("cookie") && !requestHeaders.has("authorization")
+        ? apiBaseUrl
+        : undefined),
     host: hostTarget,
   });
   if (!relay) return await fetch(input, init);

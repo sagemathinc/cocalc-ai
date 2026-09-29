@@ -7,6 +7,44 @@ Internet access or implement HTTP CONNECT.
 
 ## Routes and Trust
 
+### CLI transport selection
+
+The CLI defaults to `--transport auto` (also configurable with
+`COCALC_CLI_TRANSPORT=auto`). With a project relay configured, it keeps the
+configured local site on the relay. For an unfamiliar site or home bay it first
+sends a read-only HEAD probe through the relay, bounded to three seconds. This
+probe carries local relay admission credentials, but no upstream credentials or
+caller payload. Supported endpoints stay on the relay; unavailable or rejected routes
+select direct transport before sending the actual operation. Probe decisions are
+coalesced and cached for 30 seconds in a bounded, process-local cache.
+
+Use `--transport direct` for explicit direct access, or `--transport relay` to
+require relay routing without automatic selection. These choices preserve caller
+credentials, TLS validation, destination authorization, and host-enforced egress
+restrictions. Direct mode cannot give a network-disabled project Internet access.
+Direct selection also requires matching credential scope: an explicit profile
+disables ambient credential inheritance, while project/environment credentials
+remain bound to the configured local site. An `--api` override alone does not
+authorize forwarding those credentials elsewhere. Explicit credentials can be
+used with `--disable-env-auth-defaults`; agent identity credentials stay pinned
+to their issuing site. Daemon requests retain this scope when freezing defaults.
+Runtime agent credentials that omit `api_url` are pinned to the runtime's
+`COCALC_API_URL`. Without either scope, agent messaging fails before connecting;
+neither `--api` nor a relay allowlist match can establish an issuing site.
+Explicit credential pins are checked before selecting either transport, including
+same-site, forced, and successfully probed relay routes. A relay allowlist match
+does not authorize forwarding a credential pinned to a different site. Default
+direct scope uses the same BASE_URL, Lite connection-info, and loopback defaults
+as CLI endpoint selection, independently of an `--api` override.
+The CLI never retries the actual operation on another transport after failure.
+An upstream timeout can still mean a mutation executed; inspect its outcome
+instead of blindly resubmitting. Same-site relay failures remain failures in auto
+mode; direct mode is available for operator diagnosis when egress permits it.
+
+The relay allowlist is unchanged. Selecting direct transport does not make the
+relay forward to external sites. Daemon reuse includes the transport selection,
+so a daemon created for one mode cannot silently serve another mode.
+
 The relay is attached only to the existing host-local router listener. Projects
 already reach that listener through their container network gateway. No firewall
 or public ingress exception is added.

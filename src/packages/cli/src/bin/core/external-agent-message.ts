@@ -1,5 +1,5 @@
 import { connect } from "@cocalc/conat/core/client";
-import { projectApiRelayTransport } from "../../core/api-relay";
+import { selectProjectApiRelayTransport } from "../../core/api-relay";
 import {
   externalAgentInbox,
   externalAgentSubject,
@@ -84,7 +84,10 @@ export async function sendExternalAgentMessage(
     );
   const credential = readExternalAgentCredential(profile);
   const { account_id, installation_id } = credential.source;
-  const relay = projectApiRelayTransport({ apiBaseUrl: credential.api_url });
+  const relay = await selectProjectApiRelayTransport({
+    apiBaseUrl: credential.api_url,
+    credentialSite: credential.api_url,
+  });
   const client = connect({
     address: relay?.address ?? credential.api_url,
     extraHeaders: relay?.extraHeaders,
