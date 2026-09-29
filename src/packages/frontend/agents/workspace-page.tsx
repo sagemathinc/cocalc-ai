@@ -51,9 +51,8 @@ import { agentProjectTitle } from "./project-title";
 import { claimOnboardingName } from "./claim-onboarding-name";
 import { OnboardingAttempt } from "@cocalc/frontend/monitoring/onboarding";
 import type { OnboardingPhase } from "@cocalc/util/onboarding-metrics";
-import { AgentArtifactBrowser } from "./artifact-browser";
+import { WorkspaceCollectionPanels } from "./workspace-collection-panels";
 import { LibraryEntry } from "./library-entry";
-import { CollaboratorsPage } from "@cocalc/frontend/collaborators/page";
 import type { CollaboratorsRoute } from "@cocalc/frontend/collaborators/workspace-types";
 import { openCollaborators } from "@cocalc/frontend/collaborators/navigation";
 import {
@@ -4380,64 +4379,58 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           ...(isNarrow && mobileList ? { display: "none" } : {}),
         }}
       >
-        {personalUrlBlocked && personalUrl && (
-          <div>
-            {libraryNavigationControl()}
-            <PersonalUrlStatus
-              key={`${accountId}:${personalUrl}`}
-              url={personalUrl}
-              loading={
-                personalUrlStatus !== "error" || personalUrlViewer !== accountId
-              }
-              error={personalUrlError}
-              projectId={
-                personalUrlViewer === accountId
-                  ? personalUrlProjectId
-                  : undefined
-              }
-            />
-          </div>
-        )}
-        {accountId &&
-          !personalUrlBlocked &&
-          (collaboratorsEnabled ? (
-            <CollaboratorsPage
-              key={accountId}
-              accountId={accountId}
-              active={active && collaboratorsOpen && (!isNarrow || !mobileList)}
-              {...retainedCollaborators.current.route}
-              routeError={retainedCollaborators.current.error}
-              navigation={libraryNavigationControl()}
-              headerActions={<AgentsWorkspaceNavigation />}
-              onNavigate={(route) => {
-                searchNavigation.current++;
-                openCollaborators(route);
-              }}
-            />
-          ) : collaboratorsOpen ? (
-            <div style={{ padding: 24 }} role="status">
-              {libraryNavigationControl()}
-              The People workspace is not enabled on this site.
-            </div>
-          ) : null)}
-        {accountId && (
-          <AgentArtifactBrowser
-            key={accountId}
-            accountId={accountId}
-            agents={agents}
-            activeAgent={selected}
-            active={
+        <WorkspaceCollectionPanels
+          accountId={accountId}
+          blocked={personalUrlBlocked}
+          status={
+            personalUrlBlocked &&
+            personalUrl && (
+              <div>
+                {libraryNavigationControl()}
+                <PersonalUrlStatus
+                  key={`${accountId}:${personalUrl}`}
+                  url={personalUrl}
+                  loading={
+                    personalUrlStatus !== "error" ||
+                    personalUrlViewer !== accountId
+                  }
+                  error={personalUrlError}
+                  projectId={
+                    personalUrlViewer === accountId
+                      ? personalUrlProjectId
+                      : undefined
+                  }
+                />
+              </div>
+            )
+          }
+          collaboratorsEnabled={collaboratorsEnabled}
+          collaboratorsOpen={collaboratorsOpen}
+          collaborators={{
+            ...retainedCollaborators.current.route,
+            active: active && collaboratorsOpen && (!isNarrow || !mobileList),
+            routeError: retainedCollaborators.current.error,
+            navigation: libraryNavigationControl(),
+            headerActions: <AgentsWorkspaceNavigation />,
+            onNavigate: (route) => {
+              searchNavigation.current++;
+              openCollaborators(route);
+            },
+          }}
+          artifacts={{
+            agents,
+            activeAgent: selected,
+            active:
               active &&
               libraryOpen &&
               !artifactOpen &&
-              (!isNarrow || !mobileList)
-            }
-            navigation={libraryNavigationControl()}
-            headerActions={<AgentsWorkspaceNavigation />}
-            onSelect={openLibraryHit}
-            onShowConversation={(result) => openLibraryHit(result, true)}
-          />
-        )}
+              (!isNarrow || !mobileList),
+            navigation: libraryNavigationControl(),
+            headerActions: <AgentsWorkspaceNavigation />,
+            onSelect: openLibraryHit,
+            onShowConversation: (result) => openLibraryHit(result, true),
+          }}
+        />
         {active &&
           !personalUrlBlocked &&
           artifactOpen &&
