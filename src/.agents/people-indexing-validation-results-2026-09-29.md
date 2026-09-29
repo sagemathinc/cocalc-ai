@@ -2138,3 +2138,32 @@ does not cleanly close either WAL. Clock advancement is simulated, and the send
 callback records bytes locally rather than contacting a live owner. This closes
 the local cross-store process-kill gap, not remote acceptance, rehome/restore,
 installation cost or scale/soak gates. No deployment changes were made.
+
+### Dormant Report Queue Cost Fixture
+
+`COCALC_PEOPLE_SCALE_ACCEPTANCE=1 pnpm exec jest --runInBand --runTestsByPath
+collaborators/census-report-scale.test.ts` (backend package) now measures isolated
+SQLite reporting with 0, 10,000 and 100,000 historical project/source rows. Bulk
+fixture insertion is excluded. First-install adoption is measured separately;
+the fixture then directly drains adoption rows to model settled history, not to
+claim initial delivery throughput. Each sample runs 100 real idle reporter calls.
+
+| Historical projects | Queue adoption ms | Idle p50 ms | Idle p95 ms | 1,000 mutations without signals ms | With signals ms |
+| ------------------- | ----------------: | ----------: | ----------: | ---------------------------------: | --------------: |
+| 0                   |              5.88 |       0.037 |       0.066 |                                n/a |             n/a |
+| 10,000              |             47.06 |       0.037 |       0.061 |                               6.53 |            9.60 |
+| 100,000             |            463.83 |       0.037 |       0.060 |                               9.00 |            9.62 |
+
+Mutation timings are 1,000 dirty-bit toggles for one source in a **single
+transaction**, not independent fsynced writes. They measure a narrow trigger
+microbenchmark and are not ingestion throughput. All idle cases assert zero
+project-status/progress reads, persisted traversal-cursor writes and owner RPCs.
+A final dirty signal for one project produces exactly one status/progress read
+and one report, independent of the historical population.
+
+Backend/reference typecheck and all three gated scale cases pass. These numbers
+describe this local warm-cache SQLite fixture only; they do not establish DAU
+capacity, realistic per-host density, cold-cache behavior, concurrent source-write
+cost, initial adoption delivery latency or six-month storage growth. Startup
+adoption remains linear and needs a bounded migration policy before large-scale
+enablement. The full workload matrix and soak remain open.
