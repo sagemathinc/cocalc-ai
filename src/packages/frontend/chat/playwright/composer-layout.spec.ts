@@ -368,6 +368,48 @@ test.describe("on a phone", () => {
   });
 });
 
+test("320px settings keep the model trigger visible beside a maximum-length name", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 740 });
+  const name = "w".repeat(32);
+  await page.goto(
+    `/?mode=composer-settings&editorMode=editor&mobile=1&agentName=${name}`,
+  );
+  const settings = page.getByRole("group", { name: "Conversation settings" });
+  const model = settings.getByRole("button", {
+    name: "Model settings",
+    exact: true,
+  });
+  const rename = settings.getByRole("button", { name: `Rename @${name}` });
+  for (const control of [model, rename]) {
+    await expect(control).toBeVisible();
+    const bounds = (await control.boundingBox())!;
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(320);
+    expect(
+      await control.evaluate((node) => {
+        const rect = node.getBoundingClientRect();
+        return node.contains(
+          document.elementFromPoint(
+            rect.x + rect.width / 2,
+            rect.y + rect.height / 2,
+          ),
+        );
+      }),
+    ).toBe(true);
+  }
+  expect((await model.boundingBox())!.width).toBeGreaterThan(80);
+  await model.focus();
+  await model.press("Enter");
+  await expect(
+    page.getByRole("button", { name: "Choose model" }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBeLessThanOrEqual(320);
+});
+
 for (const editorMode of ["editor", "markdown"] as const) {
   test(`an empty composer (${editorMode}) is one compact line`, async ({
     page,

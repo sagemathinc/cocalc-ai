@@ -3,13 +3,14 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useState } from "react";
+import { useId, useRef, useState } from "react";
 import { Popover } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { Tooltip } from "@cocalc/frontend/components/tip";
 import { ComposerPillButton } from "@cocalc/frontend/chat/composer-codex-controls";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { AgentNameInput } from "./agent-name-input";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 
 // The agent's name, auto-generated and easy to change later, as a pill in
 // the settings line. An invalid name is flagged on the pill itself.
@@ -25,6 +26,12 @@ export function NewAgentNamePill({
   busy?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const id = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const close = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
   const invalid = !!problem;
   return (
     // The tooltip wraps a span: CoCalc's Tooltip does not forward the
@@ -34,25 +41,47 @@ export function NewAgentNamePill({
         <Popover
           open={open}
           onOpenChange={setOpen}
+          afterOpenChange={(visible) => {
+            if (visible) document.getElementById(`${id}-name`)?.focus();
+          }}
           trigger="click"
           placement="bottomLeft"
+          destroyOnHidden
           content={
-            <div style={{ width: 280 }}>
+            <KeyboardBoundary
+              id={`${id}-dialog`}
+              role="dialog"
+              aria-label="Change agent name"
+              style={{ width: 280, maxWidth: "calc(100vw - 48px)" }}
+              onKeyDown={(event) => {
+                if (
+                  event.key === "Escape" ||
+                  (event.key === "Enter" &&
+                    event.target instanceof HTMLInputElement)
+                ) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  close();
+                }
+              }}
+            >
               <AgentNameInput
-                id="new-agent-name"
+                id={`${id}-name`}
                 label="Name"
                 value={name}
                 onChange={onChange}
                 problem={name.trim() ? problem : undefined}
                 busy={busy}
-                onEnter={() => setOpen(false)}
               />
-            </div>
+            </KeyboardBoundary>
           }
         >
           <ComposerPillButton
+            ref={triggerRef}
             aria-label={`Agent name: ${name || "none"}. Change name`}
             aria-haspopup="dialog"
+            aria-expanded={open}
+            aria-controls={open ? `${id}-dialog` : undefined}
             aria-invalid={invalid || undefined}
             disabled={busy}
             style={{

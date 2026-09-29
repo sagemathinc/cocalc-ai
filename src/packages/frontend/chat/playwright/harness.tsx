@@ -233,8 +233,10 @@ function ComposerHarness({
         set_cursor_locs: () => undefined,
       },
       deleteDraft: () => undefined,
+      getThreadMetadata: () =>
+        withSettings ? { agent_kind: "acp" } : undefined,
     }),
-    [],
+    [withSettings],
   );
 
   const hasInput = input.trim().length > 0;

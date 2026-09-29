@@ -1073,6 +1073,7 @@ export function ChatRoomComposer({
             aria-label="Conversation settings"
             style={{
               display: "flex",
+              flexWrap: "wrap",
               alignItems: "center",
               gap: 12,
               minWidth: 0,
@@ -1084,8 +1085,10 @@ export function ChatRoomComposer({
               <div
                 style={{
                   display: "flex",
-                  flex: "1 1 auto",
+                  // Wrap the identity instead of shrinking settings out of view.
+                  flex: "1 0 auto",
                   minWidth: 0,
+                  maxWidth: "100%",
                   overflow: "hidden",
                 }}
               >
@@ -1112,7 +1115,9 @@ export function ChatRoomComposer({
                   alignItems: "center",
                   gap: 12,
                   flex: "0 1 auto",
+                  flexWrap: "wrap",
                   minWidth: 0,
+                  maxWidth: "100%",
                 }}
               >
                 {hasAgentControls && selectedThread && (
@@ -1124,6 +1129,9 @@ export function ChatRoomComposer({
                     threadId={selectedThread.key}
                     threadTitle={threadLabel}
                     initiallyOpen={nameAfterPreparation}
+                    triggerButtonProps={{
+                      style: { maxWidth: "100%", overflow: "hidden" },
+                    }}
                   />
                 )}
                 {!selectedThread &&
