@@ -900,3 +900,14 @@ rejection, refusal to change an established predecessor, and inert authorized
 host disclosure. Mixed-version hosts without the new optional field still fail
 closed on a conflicting census. Real owner/host adoption transport and recovery
 after volume/host replacement remain to be validated.
+
+### Actor Budget Boundary Validation
+
+Five PGlite actor reservation tests and the database TypeScript build pass.
+New deterministic coverage verifies that a future stored budget timestamp does
+not mint tokens, a long idle interval refills only the two-token burst, retained
+expired retries neither charge nor clean receipts, and a fresh admitted request
+removes at most 64 expired receipts. Throttled requests and live retries leave
+expired receipts untouched. These tests exercise the real store with synthetic
+timestamps, not concurrent PostgreSQL actors or production churn throughput;
+those validation gates remain outstanding.
