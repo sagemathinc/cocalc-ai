@@ -1970,9 +1970,9 @@ function NewAgentPanel({
             </span>
           </div>
         )}
-        {(isFirstRun || busy) && (
-          <PreparationStatus active={busy} phase={preparationPhase} />
-        )}
+        {/* Always rendered: its line is reserved so starting does not shift the
+            centered page, and its live region exists before announcing. */}
+        <PreparationStatus active={busy} phase={preparationPhase} />
         {runtimeKind === "codex-native" && paymentSourceError && (
           <Alert
             role="alert"

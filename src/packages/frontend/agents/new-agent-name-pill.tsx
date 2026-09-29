@@ -5,6 +5,7 @@
 
 import { useState } from "react";
 import { Popover } from "antd";
+import { Icon } from "@cocalc/frontend/components/icon";
 import { Tooltip } from "@cocalc/frontend/components/tip";
 import { ComposerPillButton } from "@cocalc/frontend/chat/composer-codex-controls";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
@@ -26,41 +27,56 @@ export function NewAgentNamePill({
   const [open, setOpen] = useState(false);
   const invalid = !!problem;
   return (
-    <Popover
-      open={open}
-      onOpenChange={setOpen}
-      trigger="click"
-      placement="bottomLeft"
-      content={
-        <div style={{ width: 280 }}>
-          <AgentNameInput
-            id="new-agent-name"
-            label="Name"
-            value={name}
-            onChange={onChange}
-            problem={name.trim() ? problem : undefined}
-            busy={busy}
-            onEnter={() => setOpen(false)}
-          />
-        </div>
-      }
-    >
-      <Tooltip title={problem ?? "Change the agent's name"}>
-        <ComposerPillButton
-          aria-label={`Agent name: ${name || "none"}. Change name`}
-          aria-haspopup="dialog"
-          aria-invalid={invalid || undefined}
-          disabled={busy}
-          style={{
-            color: invalid ? UI_COLORS.danger : undefined,
-            maxWidth: 180,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
+    // The tooltip wraps a span: CoCalc's Tooltip does not forward the
+    // popover's click and ref to its child.
+    <Tooltip title={problem ?? "Change the agent's name"}>
+      <span style={{ display: "inline-flex", minWidth: 0 }}>
+        <Popover
+          open={open}
+          onOpenChange={setOpen}
+          trigger="click"
+          placement="bottomLeft"
+          content={
+            <div style={{ width: 280 }}>
+              <AgentNameInput
+                id="new-agent-name"
+                label="Name"
+                value={name}
+                onChange={onChange}
+                problem={name.trim() ? problem : undefined}
+                busy={busy}
+                onEnter={() => setOpen(false)}
+              />
+            </div>
+          }
         >
-          @{name || "name"}
-        </ComposerPillButton>
-      </Tooltip>
-    </Popover>
+          <ComposerPillButton
+            aria-label={`Agent name: ${name || "none"}. Change name`}
+            aria-haspopup="dialog"
+            aria-invalid={invalid || undefined}
+            disabled={busy}
+            style={{
+              alignItems: "center",
+              color: invalid ? UI_COLORS.danger : UI_COLORS.text,
+              display: "inline-flex",
+              gap: 4,
+              maxWidth: 200,
+              minWidth: 0,
+            }}
+          >
+            <span
+              style={{
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              @{name || "name"}
+            </span>
+            <Icon name="pencil" style={{ color: UI_COLORS.secondary }} />
+          </ComposerPillButton>
+        </Popover>
+      </span>
+    </Tooltip>
   );
 }
