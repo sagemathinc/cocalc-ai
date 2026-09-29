@@ -283,3 +283,34 @@ only after that settlement. The original projection-independent path also passes
 Additional rehome and concurrent invalidation end-to-end cases remain necessary;
 unit tests reject expired, superseded-token, and changed-generation responses
 before any personal-state write.
+
+## Opt-In Owner Notification Scheduler
+
+Live ingestion now marks a project-owned notification due time in its event
+transaction. An indexed due-project query selects at most eight projects, skips
+known frozen rehomes, and claims each under the project ownership fence. Each
+pass expands one bounded recipient page and delivers at most four recipients
+concurrently. All attempts are awaited; settlement failure retains work. The
+project claim retries after 60 seconds, and successful completion recomputes its
+next due time from pending expansion/recipient obligations or clears the marker.
+No account or membership population is enumerated to find due delivery work.
+
+The maintenance service has a separate one-second fanout timer, gated by both
+`collaborators_enabled` and the prototype environment switch. It does not wait
+for the discovery maintenance loop. Scheduler fields are included in project
+rehome serialization. The new queue remains opt-in, and existing recurring
+discovery/access workers are not yet replaced by demand scheduling.
+
+The controlled real-PostgreSQL maintenance-pass test follows a live source write
+through scheduling, expansion, home delivery and acknowledgment, leaving the
+recipient resource index empty and the finished project marker null. Populated
+rehome transfer coverage preserves the due time and claim. This is not a scale,
+timer-load, or broad disabled-after-data validation gate. Older prototype data
+without project due markers still needs an explicit bounded repair/migration
+path before any mixed-version enablement.
+
+Validation: server TypeScript build, 37 API/rehome tests, and four real-PostgreSQL
+scheduler/fanout acceptance tests pass. The scheduler test also passes with an
+explicit disable after ingestion and reenable before delivery, preserving queued
+work. The completed project returns no job on another maintenance pass. These
+tests do not establish fairness or throughput under the planned load matrix.

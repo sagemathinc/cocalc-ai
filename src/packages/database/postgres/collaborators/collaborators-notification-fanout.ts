@@ -5,12 +5,103 @@
 import { uuidsha1 } from "@cocalc/util/misc";
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "@cocalc/database/pool";
+import getPool from "@cocalc/database/pool";
 import type { CollaborationMessageEvent } from "@cocalc/util/collaboration-attention";
 import { validateCollaborationMessageEvent } from "@cocalc/util/collaboration-attention";
-import { assertProjectNotRehoming } from "../project-rehome-fence";
+import {
+  assertProjectNotRehoming,
+  ProjectRehomeInProgressError,
+} from "../project-rehome-fence";
 import { transaction, uuid } from "./collaborators-common";
 
 export const MAX_NOTIFICATION_RECIPIENTS_PER_PROJECT = 50_000;
+
+export interface NotificationProjectJob {
+  project_id: string;
+  claim_id: string;
+}
+
+/** Indexed queue of projects with real work, never an account/membership scan.
+ * Project ownership/rehome is checked again by every mutating work operation.
+ */
+export async function claimNotificationProjects(
+  bay_id: string,
+): Promise<NotificationProjectJob[]> {
+  const tables = (
+    await getPool()
+      .query(`SELECT to_regclass('public.project_rehome_operations') AS operations,
+    to_regclass('public.project_collaboration_rehome_transfers') AS transfers`)
+  ).rows[0];
+  const candidates = await getPool().query(
+    `SELECT c.project_id
+    FROM collaboration_projects c JOIN projects p USING(project_id)
+    WHERE c.notification_due<=clock_timestamp() AND p.owning_bay_id=$1
+    ${tables.operations ? "AND NOT EXISTS(SELECT 1 FROM project_rehome_operations o WHERE o.project_id=p.project_id AND o.status='running')" : ""}
+    ${
+      tables.transfers
+        ? `AND NOT EXISTS(SELECT 1 FROM project_collaboration_rehome_transfers t WHERE t.project_id=p.project_id
+      AND ((t.direction='export' AND t.state IN ('exporting','exported')) OR (t.direction='import' AND t.state IN ('staging','ready'))))`
+        : ""
+    }
+    ORDER BY c.notification_due,c.project_id LIMIT 8`,
+    [bay_id],
+  );
+  const jobs: NotificationProjectJob[] = [];
+  for (const row of candidates.rows) {
+    try {
+      const job = await transaction(async (db) => {
+        await lockOwner(db, row.project_id, bay_id);
+        const claim_id = randomUUID();
+        const claimed = await db.query(
+          `UPDATE collaboration_projects SET notification_claim=$2,
+          notification_due=clock_timestamp()+interval '60 seconds'
+          WHERE project_id=$1 AND notification_due<=clock_timestamp() RETURNING project_id`,
+          [row.project_id, claim_id],
+        );
+        return claimed.rows.length
+          ? { project_id: row.project_id, claim_id }
+          : null;
+      });
+      if (job) jobs.push(job);
+    } catch (err) {
+      if (!(err instanceof ProjectRehomeInProgressError)) throw err;
+    }
+  }
+  return jobs;
+}
+
+export async function finishNotificationProject(
+  job: NotificationProjectJob,
+  bay_id: string,
+) {
+  await transaction(async (db) => {
+    await lockOwner(db, job.project_id, bay_id);
+    await db.query(
+      `UPDATE collaboration_projects SET notification_claim=NULL,
+      notification_due=(SELECT CASE WHEN due IS NULL THEN NULL
+        ELSE GREATEST(due,clock_timestamp()+interval '1 second') END FROM (
+        SELECT min(due) AS due FROM (
+          SELECT min(fanout_due) AS due FROM collaboration_notification_events
+            WHERE project_id=$1 AND fanout_pending
+          UNION ALL SELECT min(due_at) FROM collaboration_notification_recipients WHERE project_id=$1
+        ) work) schedule)
+      WHERE project_id=$1 AND notification_claim=$2`,
+      [job.project_id, job.claim_id],
+    );
+  });
+}
+
+export async function nextNotificationExpansion(
+  project_id: string,
+): Promise<string | undefined> {
+  const { rows } = await getPool().query(
+    `SELECT event_id FROM collaboration_notification_events
+    WHERE project_id=$1 AND fanout_pending AND fanout_due<=clock_timestamp()
+    ORDER BY fanout_due,event_id LIMIT 1`,
+    [project_id],
+  );
+  return rows[0]?.event_id;
+}
 
 async function lockOwner(db: PoolClient, project_id: string, bay_id: string) {
   await assertProjectNotRehoming({

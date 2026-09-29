@@ -221,6 +221,12 @@ export async function appendCollaborationNotificationEvents(
         process.env.COCALC_PEOPLE_EVENT_FANOUT_PROTOTYPE === "1",
       ],
     );
+    if (process.env.COCALC_PEOPLE_EVENT_FANOUT_PROTOTYPE === "1")
+      await db.query(
+        `UPDATE collaboration_projects SET
+        notification_due=LEAST(notification_due,clock_timestamp()) WHERE project_id=$1`,
+        [event.project_id],
+      );
   }
 }
 

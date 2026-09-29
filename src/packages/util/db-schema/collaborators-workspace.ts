@@ -126,13 +126,18 @@ Table({
 });
 Table({
   name: "collaboration_projects",
-  rules: { primary_key: "project_id" },
+  rules: {
+    primary_key: "project_id",
+    pg_indexes: ["notification_due,project_id"],
+  },
   fields: {
     project_id: uuid,
     generation: uuid,
     revision: bigint,
     window_start: time,
     work_units: bigint,
+    notification_due: { ...time, pg_type: "TIMESTAMPTZ" },
+    notification_claim: uuid,
   },
 });
 Table({

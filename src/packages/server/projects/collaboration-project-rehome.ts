@@ -68,6 +68,8 @@ const columns: Record<Table, string[]> = {
     "revision",
     "window_start",
     "work_units",
+    "notification_due",
+    "notification_claim",
   ],
   collaboration_sources: [
     "source_id",

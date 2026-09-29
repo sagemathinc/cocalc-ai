@@ -7,6 +7,7 @@ import {
 import {
   runCollaboratorsMaintenance,
   runCollaboratorsAccessMaintenance,
+  runCollaboratorsFanoutMaintenance,
 } from "./maintenance";
 
 const owner = jest.fn();
@@ -492,6 +493,15 @@ test("disabled rollout does not enumerate or backfill account projections", asyn
   settings.mockResolvedValue({ collaborators_enabled: false });
   await runCollaboratorsMaintenance();
   await runCollaboratorsAccessMaintenance();
+  const previous = process.env.COCALC_PEOPLE_EVENT_FANOUT_PROTOTYPE;
+  process.env.COCALC_PEOPLE_EVENT_FANOUT_PROTOTYPE = "1";
+  try {
+    expect(await runCollaboratorsFanoutMaintenance()).toBe(0);
+  } finally {
+    if (previous === undefined)
+      delete process.env.COCALC_PEOPLE_EVENT_FANOUT_PROTOTYPE;
+    else process.env.COCALC_PEOPLE_EVENT_FANOUT_PROTOTYPE = previous;
+  }
   expect(seed).not.toHaveBeenCalled();
   expect(claimAccess).not.toHaveBeenCalled();
 });

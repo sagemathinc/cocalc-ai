@@ -757,6 +757,8 @@ async function command(name, args = {}) {
       );
     case "notificationFanout": {
       const fanout = require("@cocalc/database/postgres/collaborators/collaborators-notification-fanout");
+      if (args.operation === "tick")
+        return require("@cocalc/server/collaborators/maintenance").runCollaboratorsFanoutMaintenance();
       if (args.operation === "drain")
         return require("@cocalc/server/notifications/collaboration-fanout").deliverCollaborationNotificationFanout(
           {
@@ -792,6 +794,10 @@ async function command(name, args = {}) {
         );
       if (args.operation === "enable") {
         process.env.COCALC_PEOPLE_EVENT_FANOUT_PROTOTYPE = "1";
+        return null;
+      }
+      if (args.operation === "disable") {
+        delete process.env.COCALC_PEOPLE_EVENT_FANOUT_PROTOTYPE;
         return null;
       }
       if (args.operation === "prune")

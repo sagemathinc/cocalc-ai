@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import getLogger from "@cocalc/backend/logger";
+import { runCollaborationFanoutPass } from "@cocalc/server/notifications/collaboration-fanout";
 import {
   indexingWork,
   indexingPages,
@@ -31,6 +32,7 @@ import {
   fetchCollaborationProjection,
   fetchCollaborationAccessBatches,
   fetchCollaborationNotificationPage,
+  deliverCollaborationNotificationObligation,
 } from "./api";
 import {
   ensureCollaborationNotificationSchema,
@@ -39,10 +41,23 @@ import {
 
 const logger = getLogger("server:collaborators:maintenance");
 let timer: ReturnType<typeof setTimeout> | undefined;
+let fanoutTimer: ReturnType<typeof setTimeout> | undefined;
 let stopped = true;
 let running = false;
 let lifecycle = 0;
 const accessTimers = new Set<ReturnType<typeof setTimeout>>();
+
+export async function runCollaboratorsFanoutMaintenance() {
+  if (
+    process.env.COCALC_PEOPLE_EVENT_FANOUT_PROTOTYPE !== "1" ||
+    !(await getServerSettings()).collaborators_enabled
+  )
+    return 0;
+  return runCollaborationFanoutPass(
+    getConfiguredBayId(),
+    deliverCollaborationNotificationObligation,
+  );
+}
 
 export async function runCollaboratorsAccessMaintenance() {
   if (!(await getServerSettings()).collaborators_enabled) return 0;
@@ -155,6 +170,23 @@ export async function startCollaboratorsMaintenance() {
     throw err;
   }
   if (stopped || lifecycle !== cycle) return;
+  const fanoutTick = async () => {
+    if (stopped || lifecycle !== cycle) return;
+    try {
+      await runCollaboratorsFanoutMaintenance();
+    } catch {
+      logger.warn(
+        "notification fanout maintenance failed; durable work retained",
+      );
+    } finally {
+      if (!stopped && lifecycle === cycle) {
+        fanoutTimer = setTimeout(fanoutTick, 1000);
+        fanoutTimer.unref();
+      }
+    }
+  };
+  fanoutTimer = setTimeout(fanoutTick, 0);
+  fanoutTimer.unref();
   for (let i = 0; i < 8; i++) {
     const accessTick = async () => {
       if (stopped || lifecycle !== cycle) return;
@@ -205,6 +237,8 @@ export function stopCollaboratorsMaintenance() {
   lifecycle++;
   if (timer) clearTimeout(timer);
   timer = undefined;
+  if (fanoutTimer) clearTimeout(fanoutTimer);
+  fanoutTimer = undefined;
   for (const handle of accessTimers) clearTimeout(handle);
   accessTimers.clear();
 }

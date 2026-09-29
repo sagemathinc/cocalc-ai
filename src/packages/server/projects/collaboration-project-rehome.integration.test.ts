@@ -171,7 +171,7 @@ describeDb(
       );
       if (populated) {
         await getPool().query(
-          "INSERT INTO collaboration_projects(project_id,generation,revision,work_units) VALUES($1,$2,73,19)",
+          "INSERT INTO collaboration_projects(project_id,generation,revision,work_units,notification_due,notification_claim) VALUES($1,$2,73,19,now(),$2)",
           [op.project_id, generation],
         );
         await getPool().query(
@@ -602,6 +602,10 @@ describeDb(
       )!.rows[0];
       expect(event.position).toBe(String(high));
       expect(event.fanout_pending).toBe(true);
+      const scheduler = pages.find((p) => p.table === "collaboration_projects")!
+        .rows[0];
+      expect(scheduler.notification_claim).toBe(scheduler.generation);
+      expect(scheduler.notification_due).toBeTruthy();
       expect(
         pages.find((p) => p.table === "collaboration_notification_recipients")!
           .rows,
