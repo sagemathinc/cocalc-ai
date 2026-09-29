@@ -596,6 +596,26 @@ export async function inspectCollaborationProjectDemand(
 }
 
 /** Expiry-indexed bounded cleanup, not a scan of historical accounts. */
+export const projectDemandPruneSql = `WITH expired AS MATERIALIZED (
+  SELECT account_id,project_id FROM collaboration_project_demand
+  WHERE grace_until<=now() ORDER BY grace_until,account_id,project_id
+  LIMIT 100 FOR UPDATE SKIP LOCKED)
+  DELETE FROM collaboration_project_demand d USING expired e
+  WHERE d.account_id=e.account_id AND d.project_id=e.project_id
+    AND d.grace_until<=clock_timestamp() RETURNING d.project_id`;
+
+/** Local disposable scheduling hints only, including stale copies after rehome.
+ * Row locks serialize renewal; no account state, access or catalog is removed.
+ */
+export async function pruneCollaborationProjectDemand(): Promise<number> {
+  return transaction(async (db) => {
+    await db.query("SET LOCAL lock_timeout='1s'");
+    await db.query("SET LOCAL statement_timeout='2s'");
+    return (await db.query(projectDemandPruneSql)).rows.length;
+  });
+}
+
+/** Expiry-indexed bounded cleanup, not a scan of historical accounts. */
 export async function pruneCollaborationDemand() {
   const { rows } = await getPool().query(`WITH expired AS (
     SELECT account_id,consumer_id FROM collaboration_demand WHERE grace_until<=clock_timestamp()

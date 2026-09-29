@@ -1015,6 +1015,28 @@ async function command(name, args = {}) {
     }
     case "demand": {
       const demand = require("@cocalc/database/postgres/collaborators/collaborators-demand");
+      if (args.operation === "pruneProjectDuringRenewal") {
+        const db = await pool.connect();
+        try {
+          await db.query("BEGIN");
+          await db.query(
+            `UPDATE collaboration_project_demand SET grace_until=now()+interval '1 day'
+            WHERE account_id=$1 AND project_id=$2`,
+            [config.accounts[0], config.project],
+          );
+          const deleted = await demand.pruneCollaborationProjectDemand();
+          await db.query("COMMIT");
+          return {
+            deleted,
+            afterCommit: await demand.pruneCollaborationProjectDemand(),
+          };
+        } catch (err) {
+          await db.query("ROLLBACK");
+          throw err;
+        } finally {
+          db.release();
+        }
+      }
       if (args.operation === "install") {
         await demand.syncCollaborationDemandSchema(pool);
         process.env.COCALC_PEOPLE_DEMAND_PROTOTYPE = "1";

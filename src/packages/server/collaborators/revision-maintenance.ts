@@ -4,7 +4,10 @@
  */
 import getLogger from "@cocalc/backend/logger";
 import { pruneCollaborationRevisionReceivers } from "@cocalc/database/postgres/collaborators/collaborators-revision-receiver";
-import { demandSchedulingEnabled } from "@cocalc/database/postgres/collaborators/collaborators-demand";
+import {
+  demandSchedulingEnabled,
+  pruneCollaborationProjectDemand,
+} from "@cocalc/database/postgres/collaborators/collaborators-demand";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { indexingWork } from "./indexing-metrics";
@@ -94,6 +97,15 @@ export async function runRevisionReceiverCleanup(): Promise<number> {
     const count =
       await pruneCollaborationRevisionReceivers(getConfiguredBayId());
     indexingWork.inc({ kind: "revision_receivers_pruned" }, count);
+    try {
+      indexingWork.inc(
+        { kind: "project_demand_pruned" },
+        await pruneCollaborationProjectDemand(),
+      );
+    } catch {
+      indexingWork.inc({ kind: "project_demand_cleanup_failed" });
+      logger.warn("project demand cleanup failed; expired hints retained");
+    }
     return count;
   } catch {
     indexingWork.inc({ kind: "revision_receiver_cleanup_failed" });

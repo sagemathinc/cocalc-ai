@@ -1697,3 +1697,27 @@ guard; the corrected fixture uses the production canonical key function. This
 validates catalog-to-home application, not source extraction, the full maintenance
 loop, receiver-wide completion, restart/rehome recovery or capacity. Those gates
 remain open and the prototype remains disabled by default.
+
+### Reverse-Demand Expiry Lifecycle
+
+The gated receiver-maintenance cadence now also prunes up to 100 expired local
+`collaboration_project_demand` hints, with a 30-second per-process cooldown and
+no new timer. The query uses the expiry index, a stable `now()` candidate bound,
+row locking with `SKIP LOCKED`, an exact expiry recheck, and transaction-local
+one-second lock/two-second statement timeouts. This is disposable scheduling
+state, including obsolete local copies after rehome; it does not delete canonical
+account state or access grants. Failed reverse cleanup retains hints and does not
+discard the successful receiver-cleanup result.
+
+Server/reference typecheck, seven maintenance tests and four real PostgreSQL
+expiry acceptance tests pass. With 100,000 live reverse hints, production SQL
+touches 3 buffers for no expired rows, 739 for a 100-row deletion, 75 for the
+remaining 5 rows and 5 after draining. All live rows remain. A separate connection
+holds an uncommitted renewal of an expired row while the production cleanup
+function runs; it skips that row and preserves it after renewal commits.
+
+This closes the reverse-hint deletion gap, not the full demand lifecycle. Reverse
+hints are still refreshed through claimed projection jobs. Independent renewal,
+removing polling, receiver-wide catch-up and rehome/restart validation remain
+open. The cooldown is not a distributed bay quota; backlog drain rate and
+multi-worker churn still need capacity/soak measurements before rollout.
