@@ -2488,3 +2488,20 @@ All eight real PostgreSQL selection and hosted execution acceptance cases pass
 in 111.6 seconds; frontend lint is clean. This adds truthful wait information, not complete progress counters,
 view-applied watermarks or a production capacity claim. Broader plan gates remain
 open and production flags are unchanged.
+
+### Expired Receipt UI Recovery
+
+Closed a UI dead end after reload with an expired saved request: inspection can
+return no live receipt while retrying the same ID is rejected as expired. After
+a successful empty inspection, the user can now explicitly forget the local
+saved request. The explanation warns that earlier work may still be running;
+forgetting neither cancels that work nor submits another request. Starting a new
+Scan requires a separate action and saves a fresh identity before transmission.
+An ambiguous inspection does not enable forgetting, and a new inspection clears
+the previous empty-result affordance until it succeeds. Stored IDs now use the
+shared UUID validator rather than a permissive character-only check.
+
+Nine focused frontend tests pass, including keyboard reset, restored focus,
+fresh-ID submission only after a separate action, and timeout identity retention.
+Frontend typecheck and lint pass. This is component-level recovery evidence;
+live browser and the broader indexing-plan validation gates remain open.

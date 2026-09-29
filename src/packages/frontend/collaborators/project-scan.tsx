@@ -4,7 +4,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { Button, Space } from "antd";
-import { uuid } from "@cocalc/util/misc";
+import { isValidUUID, uuid } from "@cocalc/util/misc";
 import type { DirectoryApi } from "./workspace-api";
 
 /** Mount with an account/project key. Reads are manual, never background work. */
@@ -21,7 +21,7 @@ export function ProjectScan({
   const [requestId, setRequestId] = useState(() => {
     try {
       const saved = sessionStorage.getItem(key);
-      return saved && /^[0-9a-f-]{36}$/i.test(saved) ? saved : undefined;
+      return saved && isValidUUID(saved) ? saved : undefined;
     } catch {
       return undefined;
     }
@@ -38,6 +38,7 @@ export function ProjectScan({
   const [until, setUntil] = useState(0);
   const [now, setNow] = useState(Date.now());
   const [finished, setFinished] = useState(false);
+  const [canForget, setCanForget] = useState(false);
   const statusRef = useRef<HTMLParagraphElement>(null);
   const wasFinished = useRef(false);
   useEffect(() => {
@@ -68,10 +69,28 @@ export function ProjectScan({
     setNow(time);
     setUntil(time + Math.max(1000, ms));
   };
+  function forget() {
+    if (locked.current || Date.now() < until) return;
+    try {
+      sessionStorage.removeItem(key);
+    } catch {
+      setMessage(
+        "The saved request could not be removed. No new Scan was started.",
+      );
+      return;
+    }
+    setRequestId(undefined);
+    setJobId(undefined);
+    setFinished(false);
+    setCanForget(false);
+    setMessage("Ready to request another Scan. No new Scan has been sent.");
+    statusRef.current?.focus();
+  }
   async function run(action: "send" | "inspect") {
     if (locked.current || Date.now() < until) return;
     locked.current = true;
     setBusy(true);
+    setCanForget(false);
     try {
       if (action === "send") {
         const id = requestId ?? uuid();
@@ -117,14 +136,17 @@ export function ProjectScan({
             "Status checks are throttled. Wait before checking again.",
           );
         else if (result.value) {
+          setCanForget(false);
           setJobId(result.value.job_id);
           setMessage(
             "Scan receipt recovered. Check status for discovery progress.",
           );
-        } else
+        } else {
+          setCanForget(true);
           setMessage(
-            "No live receipt found. It may be unsubmitted or expired. Retrying uses the same request ID.",
+            "No live receipt found. It may be unsubmitted or expired; earlier work may still be running. Retry the same request, or forget it to prepare a new Scan. Forgetting does not cancel earlier work or submit a new Scan.",
           );
+        }
       } else {
         const result = await api.getScanStatus!({
           project_id: projectId,
@@ -200,15 +222,7 @@ export function ProjectScan({
       </p>
       <Space wrap>
         {finished ? (
-          <Button
-            disabled={busy || cooldown > 0}
-            onClick={() => {
-              setRequestId(undefined);
-              setJobId(undefined);
-              setFinished(false);
-              setMessage("Ready to request another Scan.");
-            }}
-          >
+          <Button disabled={busy || cooldown > 0} onClick={forget}>
             New Scan
           </Button>
         ) : (
@@ -225,6 +239,11 @@ export function ProjectScan({
                 onClick={() => void run("inspect")}
               >
                 Check Scan status
+              </Button>
+            )}
+            {canForget && (
+              <Button disabled={busy || cooldown > 0} onClick={forget}>
+                Forget saved request
               </Button>
             )}
           </>

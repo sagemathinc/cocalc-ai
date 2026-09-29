@@ -145,6 +145,61 @@ test("an older API does not expose the control", () => {
   expect(screen.queryByRole("button", { name: "Scan project" })).toBeNull();
 });
 
+test("missing receipt allows explicit forgetting without silently submitting work", async () => {
+  const { api, user, renderScan } = setup();
+  const previous = "00000000-0000-4000-8000-000000000001";
+  sessionStorage.setItem(storageKey, previous);
+  api.inspectScan.mockResolvedValue({
+    allowed: true,
+    value: null,
+    poll_after_ms: 1000,
+  });
+  renderScan();
+  expect(
+    screen.queryByRole("button", { name: "Forget saved request" }),
+  ).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Check Scan status" }));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "earlier work may still be running",
+    ),
+  );
+  await advance(1100);
+  const forget = screen.getByRole("button", { name: "Forget saved request" });
+  await waitFor(() => expect(forget).toBeEnabled());
+  forget.focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Scan project" })).toBeEnabled(),
+  );
+  expect(screen.getByRole("status")).toHaveFocus();
+  expect(sessionStorage.getItem(storageKey)).toBeNull();
+  expect(api.requestScan).not.toHaveBeenCalled();
+  await user.tab();
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(api.requestScan).toHaveBeenCalledTimes(1));
+  expect(api.requestScan.mock.calls[0][0].request_id).not.toBe(previous);
+});
+
+test("an ambiguous inspection does not offer to forget the saved identity", async () => {
+  const { api, user, renderScan } = setup();
+  const previous = "00000000-0000-4000-8000-000000000001";
+  sessionStorage.setItem(storageKey, previous);
+  api.inspectScan.mockRejectedValue(Error("timeout"));
+  renderScan();
+  await user.click(screen.getByRole("button", { name: "Check Scan status" }));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "could not be confirmed",
+    ),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Forget saved request" }),
+  ).toBeNull();
+  expect(sessionStorage.getItem(storageKey)).toBe(previous);
+  expect(api.requestScan).not.toHaveBeenCalled();
+});
+
 test("host cooldown has an explanation and prevents immediate status polling", async () => {
   const { api, user, renderScan } = setup();
   api.getScanStatus.mockResolvedValue({
