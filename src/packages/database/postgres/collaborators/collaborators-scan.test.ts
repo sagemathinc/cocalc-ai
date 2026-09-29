@@ -9,6 +9,7 @@ import {
   inspectCollaborationScan,
   startCollaborationScan,
   settleCollaborationScanDiscovery,
+  readCollaborationScanStatus,
   syncCollaborationScanSchema,
 } from "./collaborators-scan";
 
@@ -55,6 +56,89 @@ describeDb("owner scan admission prototype", () => {
     await expect(
       admitCollaborationScan({ ...request, mode: "check" }, authority),
     ).rejects.toThrow("different arguments");
+  });
+  test("status follows discovery lifecycle without mutating receipts or budget", async () => {
+    const request = await fixture();
+    expect(
+      await readCollaborationScanStatus(
+        { ...request, job_id: randomUUID() },
+        authority,
+      ),
+    ).toEqual({ state: "unknown" });
+    const receipt = await admitCollaborationScan(request, authority);
+    if (!("job_id" in receipt)) throw Error("expected admission");
+    const status = { ...request, job_id: receipt.job_id };
+    const budget = (
+      await getPool().query(
+        "SELECT * FROM collaboration_scan_budget WHERE project_id=$1",
+        [request.project_id],
+      )
+    ).rows;
+    expect(await readCollaborationScanStatus(status, authority)).toEqual({
+      state: "queued",
+    });
+    const started = await startCollaborationScan(status, authority);
+    expect(await readCollaborationScanStatus(status, authority)).toEqual({
+      state: "running",
+      started_at: started?.started_at,
+    });
+    await settleCollaborationScanDiscovery(
+      { ...status, state: "discovered" },
+      { ...authority, host_id },
+    );
+    const result = await readCollaborationScanStatus(status, authority);
+    expect(result).toEqual({
+      state: "discovered",
+      settled_at: expect.any(Number),
+    });
+    expect(await readCollaborationScanStatus(status, authority)).toEqual(
+      result,
+    );
+    expect(await inspectCollaborationScan(request, authority)).toEqual(receipt);
+    const after = (
+      await getPool().query(
+        "SELECT * FROM collaboration_scan_budget WHERE project_id=$1",
+        [request.project_id],
+      )
+    ).rows;
+    expect(after[0].tokens).toBe(budget[0].tokens);
+    expect(after[0].updated_at).toEqual(budget[0].updated_at);
+    await getPool().query(
+      "UPDATE collaboration_scan_receipts SET expires_at=clock_timestamp()-interval '1 second' WHERE project_id=$1",
+      [request.project_id],
+    );
+    expect(await readCollaborationScanStatus(status, authority)).toEqual({
+      state: "unknown",
+    });
+  });
+  test("status requires the caller's own receipt and current membership", async () => {
+    const request = await fixture();
+    const receipt = await admitCollaborationScan(request, authority);
+    if (!("job_id" in receipt)) throw Error("expected admission");
+    const other = randomUUID();
+    await getPool().query(
+      "UPDATE projects SET users=users || $2::jsonb WHERE project_id=$1",
+      [
+        request.project_id,
+        JSON.stringify({ [other]: { group: "collaborator" } }),
+      ],
+    );
+    expect(
+      await readCollaborationScanStatus(
+        { ...request, account_id: other, job_id: receipt.job_id },
+        authority,
+      ),
+    ).toEqual({ state: "unknown" });
+    await getPool().query(
+      "UPDATE projects SET users='{}'::jsonb WHERE project_id=$1",
+      [request.project_id],
+    );
+    await expect(
+      readCollaborationScanStatus(
+        { ...request, job_id: receipt.job_id },
+        authority,
+      ),
+    ).rejects.toThrow();
   });
   test("host discovery settlement preserves receipts and rejects conflicting or stale reports", async () => {
     const request = await fixture();

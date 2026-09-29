@@ -692,3 +692,19 @@ repeated/conflicting reports, slot release, and unchanged admission replay.
 This store is still not wired to host transport or a worker. Host migration
 recovery, real dispatch/settlement, and final ingestion/view watermarks remain
 required; no end-to-end Scan completion is claimed.
+
+### Read-only Discovery Status
+
+Added internal job-ID status inspection with current owner/member authorization
+and a caller-owned live receipt. It distinguishes unknown, queued, running,
+discovered, and failed without host RPC, admission, retention mutation, or token
+charging. Running status becomes unknown after host replacement. Historical
+discovery results remain readable during receipt retention, but never claim
+that owner ingestion or the user's view has caught up.
+
+Fifteen focused PGlite tests and the database build pass. Lifecycle coverage
+reads status before admission, while queued/running, after settlement, and after
+expiry; separate coverage denies revoked access and hides jobs from a current
+collaborator without their own receipt. This internal store still needs public
+status rate limits, richer progress/freshness state, worker integration, and
+live validation before the plan's Scan contract is complete.

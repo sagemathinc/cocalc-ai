@@ -29,6 +29,58 @@ export interface ScanReceipt {
   admission: "accepted" | "coalesced";
   expires_at: number;
 }
+export type ScanDiscoveryStatus =
+  | { state: "unknown" }
+  | { state: "queued" }
+  | { state: "running"; started_at: number }
+  | { state: "discovered" | "failed"; settled_at: number };
+
+/** Read-only internal status. Requires a current member's own live receipt,
+ * rather than disclosing another requester's retained job by UUID alone.
+ * No host calls, new work, token charging, or retention cleanup.
+ */
+export async function readCollaborationScanStatus(
+  opts: { project_id: string; account_id: string; job_id: string },
+  authority: CollaborationOwnerAuthority,
+): Promise<ScanDiscoveryStatus> {
+  uuid(opts.job_id, "scan job");
+  return transaction(async (db) => {
+    await assertCollaborationAccountAuthority(
+      db,
+      opts.project_id,
+      opts.account_id,
+      authority,
+    );
+    const row = (
+      await db.query(
+        `SELECT r.result,j.state,j.started_at,j.host_id,p.host_id AS current_host
+      FROM collaboration_scan_receipts r
+      JOIN projects p ON p.project_id=r.project_id
+      LEFT JOIN collaboration_scan_jobs j ON j.project_id=r.project_id
+        AND j.job_id::text=r.receipt->>'job_id'
+      WHERE r.project_id=$1 AND r.account_id=$2 AND r.receipt->>'job_id'=$3
+        AND r.expires_at>clock_timestamp() LIMIT 1`,
+        [opts.project_id, opts.account_id, opts.job_id],
+      )
+    ).rows[0];
+    if (!row) return { state: "unknown" };
+    if (row.result?.state === "discovered" || row.result?.state === "failed") {
+      return {
+        state: row.result.state,
+        settled_at: new Date(row.result.settled_at).getTime(),
+      };
+    }
+    if (row.state === "queued") return { state: "queued" };
+    if (
+      row.state === "running" &&
+      row.started_at &&
+      row.host_id === row.current_host
+    ) {
+      return { state: "running", started_at: row.started_at.getTime() };
+    }
+    return { state: "unknown" };
+  });
+}
 
 /** Explicit prototype installation only. These receipts are not rebuildable
  * view caches; movement must remain guarded until their transfer is supported.
