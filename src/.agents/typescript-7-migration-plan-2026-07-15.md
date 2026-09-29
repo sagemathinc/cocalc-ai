@@ -960,8 +960,7 @@ The migration is complete only when all of the following are true:
   `chat/__tests__/message-completion` (1), and server suites that need a
   PostgreSQL test database (5). Backend sandbox suites need
   `pnpm install-sandbox-tools` in a fresh worktree and then pass.
-- Remaining: Phase 9 default switch after live Lite/hub smoke tests and
-  staging; revisit dropping TS6 when TS7.1 ships a compiler API.
+- Superseded 2026-09-29: the default switch landed as Decision 5.
 - 2026-09-29: Switched fully to TypeScript 7 (Decision 5). Removed
   `packages/typescript-native`, the `tsc:6`/`tsc:7` scripts, the separate CI
   job, `ignoreDeprecations`, and TS-specific Node heap flags (the native
@@ -969,3 +968,14 @@ The migration is complete only when all of the following are true:
   from a clean tree: 25 s including prepare steps, 0 errors. The guard now
   also requires `typescript` to be the TS6 compatibility alias and
   `@typescript/native` to be TS 7.
+- 2026-09-29: Live qualification on lite2b.cocalc.ai (launchpad dev stack,
+  three bays, three project hosts) from this branch: `pnpm build` (TS7,
+  including the static production bundle) 320 s; `scripts/dev/upgrade-all.sh`
+  succeeded (hub restart; all hosts reported "upgrade complete"). Browser smoke
+  tests: projects list, project open, and Markdown, terminal, Jupyter, tasks,
+  and chat editors load without application console errors; a terminal
+  command ran end to end. Jupyter notebooks and terminals were also checked
+  manually and work.
+- Remaining after merge: watch the first staging/production deploy; revisit
+  the TS6 API alias when TypeScript ships a stable programmatic API and
+  ts-jest supports it (kulshekhar/ts-jest#5366), or move Jest to `@swc/jest`.
