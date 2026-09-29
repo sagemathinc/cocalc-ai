@@ -3,6 +3,10 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import type { DatabaseSync } from "node:sqlite";
+import {
+  adoptProgressPage,
+  installProgressAdoption,
+} from "./progress-adoption";
 
 export interface CensusReportWork {
   project_id: string;
@@ -55,15 +59,22 @@ export class CensusReportQueue {
           WHEN ${fields.map((field) => `OLD.${field} IS NOT NEW.${field}`).join(" OR ")}
           BEGIN ${fields.includes("project_id") ? mark("OLD", "OLD.project_id IS NOT NEW.project_id") : ""} ${mark("NEW")} END`);
       }
-      if (!installed)
-        db.exec(`INSERT INTO census_report_queue(project_id,token)
-          SELECT project_id,lower(hex(randomblob(16))) FROM census_runs WHERE 1
-          ON CONFLICT(project_id) DO NOTHING`);
+      installProgressAdoption(db, "census_report_queue", installed);
       db.exec("COMMIT");
     } catch (error) {
       db.exec("ROLLBACK");
       throw error;
     }
+    this.adopt();
+  }
+
+  adopt(limit = 16) {
+    return adoptProgressPage(
+      this.db,
+      "census_report_queue",
+      "census_runs",
+      limit,
+    );
   }
 
   /** The caller acknowledges its journal signal only after this durable handoff.

@@ -121,6 +121,8 @@ export function censusReporter(options: {
       if (options.enabled && !(await options.enabled())) return;
       const queue = options.store.reportWorkQueue();
       const signals = journal.progressSignalQueue();
+      queue.adopt(batchSize);
+      signals.adopt(batchSize);
       const page = signals.page(signalAfter, batchSize);
       let examined = 0;
       let failure: unknown;

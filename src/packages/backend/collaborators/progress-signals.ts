@@ -3,6 +3,10 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import type { DatabaseSync } from "node:sqlite";
+import {
+  adoptProgressPage,
+  installProgressAdoption,
+} from "./progress-adoption";
 
 export interface CollaborationProgressSignal {
   project_id: string;
@@ -46,16 +50,22 @@ export class CollaborationProgressSignals {
           WHEN ${columns.map((column) => `OLD.${column} IS NOT NEW.${column}`).join(" OR ")}
           BEGIN ${mark("OLD", "OLD.project_id IS NOT NEW.project_id")} ${mark("NEW")} END`);
       }
-      // One-time adoption only. Reopening must not redirty every historical project.
-      if (!installed)
-        db.exec(`INSERT INTO collaboration_progress_signals(project_id,token)
-          SELECT project_id,lower(hex(randomblob(16))) FROM
-            (SELECT DISTINCT project_id FROM sources)`);
+      installProgressAdoption(db, "collaboration_progress_signals", installed);
       db.exec("COMMIT");
     } catch (error) {
       db.exec("ROLLBACK");
       throw error;
     }
+    this.adopt();
+  }
+
+  adopt(limit = 16) {
+    return adoptProgressPage(
+      this.db,
+      "collaboration_progress_signals",
+      "sources",
+      limit,
+    );
   }
 
   page(after = "", limit = 16): CollaborationProgressSignal[] {

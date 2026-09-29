@@ -2167,3 +2167,37 @@ capacity, realistic per-host density, cold-cache behavior, concurrent source-wri
 cost, initial adoption delivery latency or six-month storage growth. Startup
 adoption remains linear and needs a bounded migration policy before large-scale
 enablement. The full workload matrix and soak remain open.
+
+### Bounded Historical Report Adoption
+
+The preceding one-shot adoption implementation is now replaced by persisted
+keyset adoption. Each queue constructor admits at most 16 historical projects;
+each change-only reporter call subsequently admits at most `batchSize` per queue
+(default 16, maximum 100). Its first call can therefore admit constructor plus
+reporter pages. Each project uses an indexed seek past the previous project,
+rather than traversing all source rows with DISTINCT. Completion makes subsequent
+adoption calls read-only. Installation enables transactional change capture before
+adoption; conflict handling preserves newer tokens and retry deadlines. Existing
+fully seeded queue schemas migrate as already adopted.
+
+Backend/reference typecheck and all 281 backend collaborators tests pass. New
+coverage checks partial adoption across reopen, no replay of acknowledged rows,
+preservation of newer signals, writes behind the cursor, a project with 1,000
+extra sources, indexed seeks, invalid bounds and migration from the old schema.
+All three gated scale fixtures also pass:
+
+| Historical projects | Initial install ms | Remaining adoption ms | Paired 100-project pages | Idle p50 ms | Idle p95 ms |
+| ------------------- | -----------------: | --------------------: | -----------------------: | ----------: | ----------: |
+| 0                   |              14.69 |                  0.38 |                        1 |       0.065 |       0.098 |
+| 10,000              |              12.92 |                697.17 |                      100 |       0.061 |       0.091 |
+| 100,000             |              92.32 |               6534.71 |                     1000 |       0.064 |       0.107 |
+
+Remaining adoption is deliberately run to completion in this fixture, not in a
+production timer pass. Total migration still costs O(projects), with more
+transactions than the former one-shot seed, but no single adoption page visits
+the whole historical population. The row bound is not a wall-clock deadline:
+schema installation, SQLite lock waits and commits can exceed the cooperative
+reporter time budget. Initial installation timings are not constant-time claims.
+Fixture draining still bypasses delivery, so these results establish neither
+initial delivery latency nor DAU capacity. No production mode was enabled. The
+full workload matrix, lifecycle integration and soak gates remain open.

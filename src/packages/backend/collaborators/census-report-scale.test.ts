@@ -79,7 +79,20 @@ scale.each([0, 10000, 100000])(
       const installStart = performance.now();
       const queue = store.reportWorkQueue();
       const signals = journal.progressSignalQueue();
-      const adoption_ms = performance.now() - installStart;
+      const initial_install_ms = performance.now() - installStart;
+      expect(signals.page("", 100)).toHaveLength(Math.min(population, 16));
+      expect(queue.due(0, 100)).toHaveLength(Math.min(population, 16));
+      const adoptionStart = performance.now();
+      let adoption_pages = 0;
+      for (;;) {
+        const reportPage = queue.adopt(100);
+        const signalPage = signals.adopt(100);
+        adoption_pages++;
+        expect(reportPage.examined).toBeLessThanOrEqual(100);
+        expect(signalPage.examined).toBeLessThanOrEqual(100);
+        if (reportPage.complete && signalPage.complete) break;
+      }
+      const adoption_ms = performance.now() - adoptionStart;
       expect(
         censusDb.prepare("SELECT count(*) n FROM census_report_queue").get()!.n,
       ).toBe(population);
@@ -134,6 +147,8 @@ scale.each([0, 10000, 100000])(
         JSON.stringify({
           scenario: "census-report-dormant",
           population,
+          initial_install_ms,
+          adoption_pages,
           adoption_ms,
           baseline_mutation_ms,
           triggered_mutation_ms,
