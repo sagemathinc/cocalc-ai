@@ -1137,6 +1137,12 @@ function NewAgentPanel({
     });
   }
 
+  // An empty request creates the agent without a first task (not on first
+  // run, which starts with a task).
+  const emptyRequest = !firstRequest.trim();
+  const canCreateWithoutTask = (request: string | undefined) =>
+    !isFirstRun && !`${request ?? ""}`.trim();
+
   async function create(requestValue?: string, withoutTask = false) {
     if (runtimeKind === "claude-code" && !claudeCredentialsLoaded) return;
     const request = (
@@ -1605,7 +1611,9 @@ function NewAgentPanel({
               cacheId={`new-agent:${boundAccount.accountId ?? "account"}`}
               input={firstRequest}
               onChange={setFirstRequest}
-              on_send={(value) => void create(value)}
+              on_send={(value) =>
+                void create(value, canCreateWithoutTask(value))
+              }
               autoFocus
               fontSize={16}
               autoGrowMinHeight={40}
@@ -1687,20 +1695,30 @@ function NewAgentPanel({
             <Button
               type="primary"
               shape="circle"
-              aria-label="Start agent"
-              title="Start agent (Shift+Enter)"
-              icon={<Icon name="arrow-up" />}
+              aria-label={
+                emptyRequest ? "Create agent without a task" : "Start agent"
+              }
+              title={
+                emptyRequest
+                  ? "Create agent without a task (Shift+Enter)"
+                  : "Start agent (Shift+Enter)"
+              }
+              icon={<Icon name={emptyRequest ? "plus" : "arrow-up"} />}
               style={{ height: 32, minWidth: 32, width: 32 }}
               loading={busy}
               disabled={
                 uploading ||
                 !!problem ||
-                !firstRequest.trim() ||
+                (isFirstRun && emptyRequest) ||
                 atLimit ||
                 (!projectId && (!projectMap || emailVerificationRequired)) ||
                 (runtimeKind === "claude-code" && !claudeCredentialsLoaded)
               }
-              onClick={() => void create()}
+              onClick={() => {
+                const request =
+                  inputControlRef.current?.getValue?.() ?? firstRequest;
+                void create(request, canCreateWithoutTask(request));
+              }}
             />
           </div>
         </div>
@@ -1954,16 +1972,11 @@ function NewAgentPanel({
               justifyContent: "space-between",
             }}
           >
-            <Space size={4} wrap>
-              <Text type="secondary">Shift+Enter to start</Text>
-              <Button
-                type="link"
-                disabled={busy || uploading || !!problem || atLimit}
-                onClick={() => void create(undefined, true)}
-              >
-                Create without a task
-              </Button>
-            </Space>
+            <Text type="secondary">
+              {emptyRequest
+                ? "Shift+Enter to create without a task"
+                : "Shift+Enter to start"}
+            </Text>
             <Space>
               <NamedAgentUsage directory={namedAgentDirectory} />
               {agents.length > 0 && (
