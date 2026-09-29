@@ -42,6 +42,9 @@ import {
 const logger = getLogger("project-host:collaborators");
 let service: CollaboratorsService | undefined;
 let censusStore: CollaborationCensusStore | undefined;
+let censusRequest:
+  | ReturnType<typeof createHostedCollaborationCensus>["requestReconciliation"]
+  | undefined;
 let filesystem:
   | ((project_id: string) => Promise<SandboxedFilesystem>)
   | undefined;
@@ -105,6 +108,10 @@ export function startCollaborators(
   };
   const census = createHostedCollaborationCensus({
     filename: join(directory, "census.sqlite"),
+    scheduling:
+      process.env.COCALC_PEOPLE_CENSUS_EXPLICIT_PROTOTYPE === "1"
+        ? "explicit"
+        : "inventory",
     getFilesystem,
     enabled: isEnabled,
     authorize: async (project_id) => {
@@ -127,6 +134,7 @@ export function startCollaborators(
       logger.warn("collaboration census deferred", { error: `${error}` }),
   });
   censusStore = census.store;
+  censusRequest = census.requestReconciliation;
   try {
     service = new CollaboratorsService({
       filename: join(directory, "journal.sqlite"),
@@ -294,6 +302,7 @@ export function startCollaborators(
     });
   } catch (error) {
     censusStore = undefined;
+    censusRequest = undefined;
     void census.producer
       .close()
       .catch((err) =>
@@ -308,6 +317,14 @@ export function startCollaborators(
 /** Local metadata-only diagnostic seam; never schedules work or opens a volume. */
 export function collaborationCensusStatus(project_id: string) {
   return censusStore?.status(project_id);
+}
+
+/** Internal owner adapter only; does not expose public/agent Scan authority. */
+export async function requestHostedCollaborationReconciliation(
+  opts: Parameters<NonNullable<typeof censusRequest>>[0],
+) {
+  if (!censusRequest) throw Error("collaboration census is not running");
+  return censusRequest(opts);
 }
 
 export function withCollaborators(fs: SandboxedFilesystem, project_id: string) {
@@ -411,5 +428,6 @@ export async function stopCollaborators() {
     service = undefined;
     filesystem = undefined;
     censusStore = undefined;
+    censusRequest = undefined;
   }
 }

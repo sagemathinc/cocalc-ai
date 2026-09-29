@@ -516,3 +516,38 @@ switches, and prototype-only capability advertisement. Existing page interaction
 tests also pass; no new controls or focus behavior were introduced. Live browser
 and multi-tab/multi-account demand tests remain outstanding, as do programmatic
 query sessions, owner revision subscriptions, and the broader validation gates.
+
+## Explicit Host Census Adapter
+
+Added an explicit-only scheduling mode to the existing host census producer,
+selected by `COCALC_PEOPLE_CENSUS_EXPLICIT_PROTOTYPE=1`. In this mode inventory
+enumeration and the hourly automatic rescan loop do not admit work. Already
+admitted bounded traversal and candidate/report handoff still run. The default
+inventory mode is unchanged. Do not deploy this switch as a complete cutover:
+first-use demand, dirty-path reconciliation, and owner Scan admission still need
+to feed it before historical discovery can be disabled safely.
+
+The internal host adapter accepts a fixed-root reconciliation request with a
+stable run ID and replacement CAS. It rechecks enabled state, host/owner
+authorization, persistent volume identity, and lifecycle generation before
+admission; only the background worker opens files. Existing run IDs replay
+without resetting work, replacements share a five-minute project cooldown,
+pending traversal/candidates return busy, and unacknowledged report intent
+defers replacement. A busy run is not claimed to cover a newer request boundary.
+Store capacity and normal traversal limits remain in force. Missing volumes
+are not provisioned, compute is not started, and no snapshot is requested.
+
+This is an internal building block, not the public Scan contract. It does not
+yet supply actor quotas, seven-day admission receipts, cross-request coalescing
+and follow-up watermarks, bay/global admission, public RPC/CLI/UI, or scoped
+agent authorization. Nor does it treat the failed raw btrfs generation candidate
+as a no-change proof. Explicit reconciliation still uses conservative traversal.
+
+Validation: project-host TypeScript build and 19 focused host tests pass,
+including the existing 1,000-stopped-project discovery/restart fixture. New
+cases advance the cold explicit-mode clock over three days without inventory
+enumeration or file access, admit work without opening files, verify replay
+across restart, enforce busy/cooldown/replacement behavior, and reject disabled,
+owner-denied, missing-volume, and replaced-volume requests. These use the real
+SQLite census store; filesystem/owner boundaries in the new admission tests are
+controlled mocks, not a live owner-to-host RPC or btrfs proof.

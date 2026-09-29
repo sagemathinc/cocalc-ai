@@ -45,7 +45,10 @@ afterEach(async () => {
   journal.close();
   rmSync(directory, { recursive: true, force: true });
 });
-function setup(now = Date.now) {
+function setup(
+  now = Date.now,
+  scheduling: "inventory" | "explicit" = "inventory",
+) {
   const stream = {
     read: jest
       .fn()
@@ -72,10 +75,99 @@ function setup(now = Date.now) {
     report: jest.fn(async () => {}),
     onError: jest.fn(),
     now,
+    scheduling,
   };
   census = createHostedCollaborationCensus(options);
   return { options, fs, stream };
 }
+test("explicit mode leaves cold inventory untouched and only a requested run opens files", async () => {
+  let now = 0;
+  const { options } = setup(() => now, "explicit");
+  for (let day = 0; day < 3; day++) {
+    now += 86400000;
+    await census!.producer.step(journal);
+  }
+  expect(nextCollaborationCensusProject).not.toHaveBeenCalled();
+  expect(options.getFilesystem).not.toHaveBeenCalled();
+  expect(census!.store.status(project_id)).toBeUndefined();
+  const request = { project_id, run_id: randomUUID() };
+  expect(await census!.requestReconciliation(request)).toEqual({
+    admission: "accepted",
+    run_id: request.run_id,
+    replayed: false,
+  });
+  expect(options.getFilesystem).not.toHaveBeenCalled();
+  expect(await census!.requestReconciliation(request)).toEqual({
+    admission: "accepted",
+    run_id: request.run_id,
+    replayed: true,
+  });
+  expect(
+    await census!.requestReconciliation({
+      project_id,
+      run_id: randomUUID(),
+      expected_run_id: request.run_id,
+    }),
+  ).toMatchObject({ admission: "deferred", reason: "BUSY" });
+  await census!.producer.step(journal);
+  expect(options.getFilesystem).toHaveBeenCalledTimes(1);
+  expect(
+    await census!.requestReconciliation({
+      project_id,
+      run_id: randomUUID(),
+      expected_run_id: request.run_id,
+    }),
+  ).toMatchObject({ admission: "throttled", retry_after_ms: 300000 });
+  now += 300000;
+  const next = {
+    project_id,
+    run_id: randomUUID(),
+    expected_run_id: request.run_id,
+  };
+  expect(await census!.requestReconciliation(next)).toMatchObject({
+    admission: "accepted",
+    run_id: next.run_id,
+  });
+  await expect(census!.requestReconciliation(request)).rejects.toThrow(
+    "current run id",
+  );
+  await census!.producer.close();
+  census = createHostedCollaborationCensus(options);
+  expect(await census.requestReconciliation(next)).toMatchObject({
+    admission: "accepted",
+    replayed: true,
+  });
+  expect(options.getFilesystem).toHaveBeenCalledTimes(1);
+});
+
+test("explicit requests recheck disabled, owner denial, missing volume, and replacement fences", async () => {
+  const { options } = setup(() => 0, "explicit");
+  const request = { project_id, run_id: randomUUID() };
+  options.enabled.mockResolvedValueOnce(false);
+  await expect(census!.requestReconciliation(request)).rejects.toMatchObject({
+    code: "DISABLED",
+  });
+  options.authorize.mockRejectedValueOnce(Error("owner denied"));
+  await expect(census!.requestReconciliation(request)).rejects.toThrow(
+    "owner denied",
+  );
+  (getRecordedProjectVolumeIdentity as jest.Mock).mockReturnValueOnce(
+    undefined,
+  );
+  await expect(census!.requestReconciliation(request)).rejects.toMatchObject({
+    code: "ENODEV",
+  });
+  options.authorize.mockImplementationOnce(async () => {
+    (getRecordedProjectVolumeIdentity as jest.Mock).mockReturnValue(
+      "replaced-volume",
+    );
+  });
+  await expect(census!.requestReconciliation(request)).rejects.toMatchObject({
+    code: "ESTALE",
+  });
+  expect(census!.store.status(project_id)).toBeUndefined();
+  expect(options.getFilesystem).not.toHaveBeenCalled();
+});
 test("stopped existing volume is streamed only by worker, and metadata reads are inert", async () => {
   const { options, fs } = setup();
   expect(census!.store.status(project_id)).toBeUndefined();

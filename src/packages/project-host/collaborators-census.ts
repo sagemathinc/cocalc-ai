@@ -27,6 +27,7 @@ import {
 const ROOT = "/home/user";
 const EXCLUDED = [ROOT + "/.snapshots", ROOT + "/.trash"];
 const RECHECK_MS = 60 * 60_000;
+const RECONCILE_COOLDOWN_MS = 5 * 60_000;
 function unavailable(code: string) {
   return Object.assign(Error(`collaboration census ${code}`), { code });
 }
@@ -43,6 +44,8 @@ export function createHostedCollaborationCensus(options: {
   now?: () => number;
   capacity?: CensusCapacity;
   policy?: CensusPolicy;
+  /** Prototype cutover: inventory alone must not create discovery work. */
+  scheduling?: "inventory" | "explicit";
 }) {
   const policy = options.policy ?? censusPolicyFromEnvironment();
   const store = new CollaborationCensusStore(
@@ -90,6 +93,7 @@ export function createHostedCollaborationCensus(options: {
     }),
     validate,
     prepare: async () => {
+      if (options.scheduling === "explicit") return;
       const nextRound = Number(store.checkpoint("host-next-round") ?? 0);
       if (now() < nextRound) return;
       const after = store.checkpoint("host-project") ?? "";
@@ -196,5 +200,85 @@ export function createHostedCollaborationCensus(options: {
       };
     },
   });
-  return { store, producer };
+  /** Trusted owner adapter only. Public actor admission, durable request
+   * receipts, and a follow-up boundary belong above this host entry point.
+   * A busy scan is not coalesced: its captured scope may precede new writes.
+   */
+  async function requestReconciliation(opts: {
+    project_id: string;
+    run_id: string;
+    expected_run_id?: string;
+  }) {
+    if (!(await options.enabled())) throw unavailable("DISABLED");
+    const current = scope(opts.project_id);
+    const generation = currentProjectVolumeLifecycleGeneration(opts.project_id);
+    const request: CensusRun = {
+      project_id: opts.project_id,
+      run_id: opts.run_id,
+      ...current,
+      root: ROOT,
+      policy_version: policy.version,
+      limits: policy.limits,
+      excluded_paths: EXCLUDED,
+    };
+    await validate(request);
+    return withProjectVolumeLifecycleLock(opts.project_id, async () => {
+      assertProjectVolumeLifecycleGeneration(opts.project_id, generation);
+      assertLocal(request);
+      if (!(await options.enabled())) throw unavailable("DISABLED");
+      assertProjectVolumeLifecycleGeneration(opts.project_id, generation);
+      assertLocal(request);
+      const prior = store.status(opts.project_id);
+      if (prior?.run.run_id === opts.run_id) {
+        // begin performs canonical argument comparison for an idempotent retry.
+        store.begin(request, opts.expected_run_id, now());
+        return {
+          admission: "accepted" as const,
+          run_id: opts.run_id,
+          replayed: true,
+        };
+      }
+      if (prior && prior.run.run_id !== opts.expected_run_id)
+        throw Error("census replacement requires the current run id");
+      const sameScope =
+        prior?.run.authority === request.authority &&
+        prior.run.volume_id === request.volume_id &&
+        prior.run.root === request.root;
+      if (
+        prior &&
+        sameScope &&
+        (!prior.traversal_complete || prior.pending_candidates)
+      )
+        return {
+          admission: "deferred" as const,
+          reason: "BUSY",
+          run_id: prior.run.run_id,
+        };
+      const retry_after_ms = prior
+        ? prior.started_at + RECONCILE_COOLDOWN_MS - now()
+        : 0;
+      if (retry_after_ms > 0)
+        return {
+          admission: "throttled" as const,
+          run_id: prior!.run.run_id,
+          retry_after_ms,
+        };
+      const run =
+        prior && sameScope
+          ? store.rescan(request, prior.run.run_id, now())
+          : store.begin(request, opts.expected_run_id, now());
+      if (!run)
+        return {
+          admission: "deferred" as const,
+          reason: "REPORT_PENDING",
+          run_id: prior!.run.run_id,
+        };
+      return {
+        admission: "accepted" as const,
+        run_id: run.run_id,
+        replayed: false,
+      };
+    });
+  }
+  return { store, producer, requestReconciliation };
 }
