@@ -1448,7 +1448,7 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
     },
   ),
 
-  ...adHocEntries(["collaboration_demand"], {
+  ...adHocEntries(["collaboration_demand", "collaboration_demand_activation"], {
     ownership: "account-home",
     authority: "account_id",
     portability: "rebuildable",

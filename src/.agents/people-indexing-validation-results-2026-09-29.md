@@ -342,3 +342,28 @@ retiring universal enumeration/renewal. The prototype's 16-registration cap
 still includes grace rows; revisit that stricter policy against the planned
 16-live-consumer contract during aggregation work. No account sleep or scale
 gate is passed by admission alone.
+
+## Bounded Demand Activation
+
+New demand admission atomically queues an account-local keyset cursor. An indexed
+dispatcher visits at most eight due accounts, and each account transaction
+schedules at most 100 authorized memberships within its live/grace scope. Scope
+IDs alone cannot create access: the base membership projection must list the
+account as owner/collaborator. Scheduling creates no granted generation or lease.
+
+Admission retries preserve an existing cursor; if ephemeral activation state was
+lost, reacquisition recreates it without extending the lease. Demand expiry
+before a pending page cancels activation. A completed cursor has no due time,
+so idle accounts are not revisited by this dispatcher. The activation table is
+classified alongside ephemeral demand in the ownership inventory.
+
+Opt-in maintenance now runs activation, but deliberately still runs the legacy
+seed/refresh path. Demand-aware projection/access job selection, membership
+change signals, visible-view renewal, state cleanup, and atomic catalog-interest
+handoff remain to be integrated before removing that path. This checkpoint does
+not establish zero recurring cost for cold accounts or the full return protocol.
+
+Validation: server TypeScript build, 30 API tests, seven ownership tests, and
+eight real-PostgreSQL demand tests pass. New cases cover one-project pages,
+scope/membership filtering, retry cursor preservation, expiry cancellation,
+idle dispatcher behavior, and reacquisition after activation-state loss.

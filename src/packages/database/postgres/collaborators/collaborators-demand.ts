@@ -31,6 +31,11 @@ export async function syncCollaborationDemandSchema(
     PRIMARY KEY(account_id,consumer_id))`);
   await db.query(`CREATE INDEX IF NOT EXISTS collaboration_demand_expiry
     ON collaboration_demand(grace_until,account_id,consumer_id)`);
+  await db.query(`CREATE TABLE IF NOT EXISTS collaboration_demand_activation (
+    account_id UUID PRIMARY KEY REFERENCES accounts(account_id) ON DELETE CASCADE,
+    after_project UUID, due_at TIMESTAMPTZ)`);
+  await db.query(`CREATE INDEX IF NOT EXISTS collaboration_demand_activation_due
+    ON collaboration_demand_activation(due_at,account_id)`);
 }
 
 function scopeOf(value: CollaborationDemandScope): CollaborationDemandScope {
@@ -113,6 +118,13 @@ export async function acquireCollaborationDemand(opts: {
     ) {
       if (JSON.stringify(scopeOf(prior.scope)) !== JSON.stringify(scope))
         throw Error("demand consumer scope conflict");
+      // Recreate lost ephemeral activation state without restarting an existing
+      // cursor on ordinary admission retries.
+      await db.query(
+        `INSERT INTO collaboration_demand_activation(account_id,due_at)
+        VALUES($1,clock_timestamp()) ON CONFLICT DO NOTHING`,
+        [opts.account_id],
+      );
       return receipt(prior); // Retries neither renew nor consume another slot.
     }
     // Bound grace state as well as live tabs, even under rapid acquire/release.
@@ -137,8 +149,111 @@ export async function acquireCollaborationDemand(opts: {
         new Date(now + DEMAND_LEASE_MS + DEMAND_GRACE_MS),
       ],
     );
+    await db.query(
+      `INSERT INTO collaboration_demand_activation(account_id,due_at)
+      VALUES($1,clock_timestamp()) ON CONFLICT(account_id) DO UPDATE
+      SET after_project=NULL,due_at=excluded.due_at`,
+      [opts.account_id],
+    );
     return receipt(result.rows[0]);
   });
+}
+
+/** A new consumer queues bounded catch-up, not a synchronous global fanout.
+ * Account fencing serializes cursor updates with admission/release/rehome.
+ * This schedules existing authorized memberships only; demand grants no access.
+ */
+export async function activateCollaborationDemand(
+  account_id: string,
+  limit = 100,
+) {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100)
+    throw Error("invalid demand activation page limit");
+  return onHome(account_id, async (db, now) => {
+    const queued = (
+      await db.query(
+        `SELECT after_project,due_at FROM collaboration_demand_activation
+      WHERE account_id=$1 FOR UPDATE`,
+        [account_id],
+      )
+    ).rows[0];
+    if (!queued || queued.due_at === null)
+      return { scheduled: 0, complete: true };
+    if (new Date(queued.due_at).getTime() > now)
+      return { scheduled: 0, complete: false };
+    const scopes = (
+      await db.query(
+        `SELECT scope FROM collaboration_demand
+      WHERE account_id=$1 AND grace_until>$2`,
+        [account_id, new Date(now)],
+      )
+    ).rows;
+    if (!scopes.length) {
+      await db.query(
+        "DELETE FROM collaboration_demand_activation WHERE account_id=$1",
+        [account_id],
+      );
+      return { scheduled: 0, complete: true };
+    }
+    const all = scopes.some((row) => row.scope.kind === "all");
+    const projects = [
+      ...new Set(scopes.flatMap((row) => row.scope.project_ids ?? [])),
+    ];
+    const members = (
+      await db.query(
+        `SELECT project_id FROM account_project_index
+      WHERE account_id=$1 AND project_id>$2::uuid
+      AND ($3::boolean OR project_id=ANY($4::uuid[]))
+      AND users_summary #>> ARRAY[$1::text,'group'] IN ('owner','collaborator')
+      ORDER BY project_id LIMIT $5`,
+        [
+          account_id,
+          queued.after_project ?? "00000000-0000-0000-0000-000000000000",
+          all,
+          projects,
+          limit + 1,
+        ],
+      )
+    ).rows;
+    const page = members.slice(0, limit);
+    await db.query(
+      `INSERT INTO collaboration_access(account_id,project_id,due_at,lease_due_at)
+      SELECT $1,id,$3,$3 FROM unnest($2::uuid[]) ids(id)
+      ON CONFLICT(account_id,project_id) DO UPDATE SET
+      due_at=LEAST(collaboration_access.due_at,excluded.due_at),
+      lease_due_at=LEAST(collaboration_access.lease_due_at,excluded.lease_due_at)`,
+      [account_id, page.map((row) => row.project_id), new Date(now)],
+    );
+    const complete = members.length <= limit;
+    await db.query(
+      `UPDATE collaboration_demand_activation SET after_project=COALESCE($2,after_project),
+      due_at=$3 WHERE account_id=$1`,
+      [
+        account_id,
+        page.at(-1)?.project_id ?? null,
+        complete ? null : new Date(now + 100),
+      ],
+    );
+    return { scheduled: page.length, complete };
+  });
+}
+
+/** Dispatch only explicitly queued accounts. Dormant account/membership tables
+ * are not swept to discover work. The home fence rechecks ownership per page.
+ */
+export async function runCollaborationDemandActivation(bay_id: string) {
+  const { rows } = await getPool().query(
+    `SELECT q.account_id
+    FROM collaboration_demand_activation q JOIN accounts a USING(account_id)
+    WHERE q.due_at<=clock_timestamp() AND COALESCE(a.home_bay_id,'bay-0')=$1
+    AND a.deleted IS NOT TRUE AND a.banned IS NOT TRUE
+    ORDER BY q.due_at,q.account_id LIMIT 8`,
+    [bay_id],
+  );
+  let scheduled = 0;
+  for (const row of rows)
+    scheduled += (await activateCollaborationDemand(row.account_id)).scheduled;
+  return { accounts: rows.length, scheduled };
 }
 
 export async function renewCollaborationDemand(opts: {

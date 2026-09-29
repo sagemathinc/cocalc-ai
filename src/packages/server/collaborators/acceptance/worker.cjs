@@ -835,6 +835,15 @@ async function command(name, args = {}) {
       }
       const account_id = config.accounts[config.role === "a" ? 0 : 1];
       switch (args.operation) {
+        case "activationPass":
+          return demand.runCollaborationDemandActivation(
+            config.bays[config.role === "a" ? 1 : 2],
+          );
+        case "activate":
+          return demand.activateCollaborationDemand(
+            account_id,
+            args.opts?.limit,
+          );
         case "acquire":
           return demand.acquireCollaborationDemand({
             ...args.opts,

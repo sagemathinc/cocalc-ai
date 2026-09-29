@@ -22,6 +22,8 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
   afterAll(async () => await env?.close(), 60000);
   beforeEach(async () => {
     await env.sql("a", "DELETE FROM collaboration_demand");
+    await env.sql("a", "DELETE FROM collaboration_demand_activation");
+    await env.sql("a", "DELETE FROM collaboration_access");
   });
 
   test("authenticated demand calls bind the caller and cannot release another account's lease", async () => {
@@ -190,5 +192,116 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
     expect(await env.sql("a", "SELECT * FROM collaboration_access")).toEqual(
       [],
     );
+  });
+
+  test("activation is scoped, bounded and idempotent; expired demand schedules nothing", async () => {
+    const others = [randomUUID(), randomUUID()];
+    for (const project_id of others)
+      await env.sql(
+        "a",
+        `INSERT INTO account_project_index
+      (account_id,project_id,owning_bay_id,users_summary) VALUES($1,$2,$3,$4)`,
+        [
+          env.accounts[0],
+          project_id,
+          env.bays[0],
+          JSON.stringify({ [env.accounts[0]]: { group: "collaborator" } }),
+        ],
+      );
+    const request = {
+      consumer_id: randomUUID(),
+      scope: {
+        kind: "projects",
+        project_ids: [env.project, others[0], randomUUID()],
+      },
+    };
+    const lease = await demand("acquire", request);
+    expect(await demand("activate", { limit: 1 })).toEqual({
+      scheduled: 1,
+      complete: false,
+    });
+    const cursor = await env.sql(
+      "a",
+      "SELECT after_project,due_at FROM collaboration_demand_activation",
+    );
+    expect(await demand("acquire", request)).toEqual(lease);
+    expect(
+      await env.sql(
+        "a",
+        "SELECT after_project,due_at FROM collaboration_demand_activation",
+      ),
+    ).toEqual(cursor);
+    await env.sql(
+      "a",
+      "UPDATE collaboration_demand_activation SET due_at=clock_timestamp()-interval '1 second'",
+    );
+    expect(await demand("activate", { limit: 1 })).toEqual({
+      scheduled: 1,
+      complete: true,
+    });
+    expect(await demand("activate", { limit: 1 })).toEqual({
+      scheduled: 0,
+      complete: true,
+    });
+    const scheduled = await env.sql(
+      "a",
+      "SELECT project_id,generation,lease_until FROM collaboration_access ORDER BY project_id",
+    );
+    expect(scheduled.map((row) => row.project_id)).toEqual(
+      [env.project, others[0]].sort(),
+    );
+    expect(
+      scheduled.every(
+        (row) => row.generation === null && row.lease_until === null,
+      ),
+    ).toBe(true);
+    await demand("release", lease);
+    await demand("acquire", {
+      consumer_id: request.consumer_id,
+      scope: { kind: "all" },
+    });
+    await env.sql(
+      "a",
+      "UPDATE collaboration_demand SET grace_until=clock_timestamp()-interval '1 second'",
+    );
+    expect(await demand("activate", { limit: 1 })).toEqual({
+      scheduled: 0,
+      complete: true,
+    });
+    expect(
+      await env.sql("a", "SELECT * FROM collaboration_demand_activation"),
+    ).toEqual([]);
+    expect(
+      await env.sql("a", "SELECT project_id FROM collaboration_access"),
+    ).toHaveLength(2);
+  });
+
+  test("activation dispatcher visits only explicitly queued accounts", async () => {
+    expect(await demand("activationPass")).toEqual({
+      accounts: 0,
+      scheduled: 0,
+    });
+    const request = {
+      consumer_id: randomUUID(),
+      scope: { kind: "projects", project_ids: [env.project] },
+    };
+    const receipt = await demand("acquire", request);
+    expect(await demand("activationPass")).toEqual({
+      accounts: 1,
+      scheduled: 1,
+    });
+    expect(await demand("activationPass")).toEqual({
+      accounts: 0,
+      scheduled: 0,
+    });
+    expect(
+      await env.worker("b").call("demand", { operation: "activationPass" }),
+    ).toEqual({ accounts: 0, scheduled: 0 });
+    await env.sql("a", "DELETE FROM collaboration_demand_activation");
+    expect(await demand("acquire", request)).toEqual(receipt);
+    expect(await demand("activationPass")).toEqual({
+      accounts: 1,
+      scheduled: 1,
+    });
   });
 });
