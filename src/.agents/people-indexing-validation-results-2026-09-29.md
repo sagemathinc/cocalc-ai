@@ -871,3 +871,16 @@ case verifies actor-throttle short circuit, owner forwarding, stale-home
 rejection and People disable. This is not authenticated transport or full
 multi-bay admission evidence; host/bay/global limits and reviewed agent scope
 remain required before exposing the flow.
+
+### Authenticated Multi-bay Admission Acceptance
+
+Extended the isolated multi-bay harness to invoke `scanAtHome` from a third bay
+over the authenticated inter-bay fabric, with actual home reservation and owner
+admission stores. The test verifies exactly one home receipt and one owner
+receipt across retry, stale-home rejection, changed-mode rejection, and owner
+access denial after project membership revocation even when the home reservation
+already exists. All three PostgreSQL acceptance cases and the server build pass.
+
+This proves the internal home-to-owner path in the synthetic cluster, not public
+principal binding, agent grants, live project-host execution, or production
+rollout. Broader budgets, recovery and capacity gates remain outstanding.

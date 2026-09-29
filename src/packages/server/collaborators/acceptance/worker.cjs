@@ -829,7 +829,21 @@ async function command(name, args = {}) {
     case "installScan": {
       const scan = require("@cocalc/database/postgres/collaborators/collaborators-scan");
       await scan.syncCollaborationScanSchema(pool);
+      await require("@cocalc/database/postgres/collaborators/collaborators-scan-actor").syncCollaborationScanActorSchema(
+        pool,
+      );
+      process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE = "1";
       return true;
+    }
+    case "scanHome": {
+      const api =
+        require("@cocalc/conat/inter-bay/collaborators").createInterBayCollaboratorsClient(
+          { client: fabric, bay_id: args.bay_id },
+        );
+      return api.scanAtHome({
+        ...args.request,
+        route: { bay_id: args.bay_id },
+      });
     }
     case "scanRace": {
       if (config.role !== "owner") throw Error("owner fixture required");

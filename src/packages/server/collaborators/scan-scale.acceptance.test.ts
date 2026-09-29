@@ -14,6 +14,7 @@ acceptance("scan blocked backlog query cost", () => {
     env = new MultibayAcceptance();
     await env.start();
     await env.worker("owner").call("installScan");
+    await env.worker("a").call("installScan");
   }, 240000);
   afterAll(async () => await env?.close(), 60000);
   test("real PostgreSQL serializes admission and lease races", async () => {
@@ -62,6 +63,51 @@ acceptance("scan blocked backlog query cost", () => {
     expect(next).not.toBe(first);
     await call("release", { ...job, token: first });
     expect(await call("claim", job)).toBeNull();
+    for (const table of [
+      "collaboration_scan_jobs",
+      "collaboration_scan_receipts",
+      "collaboration_scan_budget",
+    ])
+      await env.sql("owner", `DELETE FROM ${table} WHERE project_id=$1`, [
+        env.project,
+      ]);
+  }, 120000);
+  test("authenticated fabric routes actor reservation at home to the project owner", async () => {
+    const request = {
+      project_id: env.project,
+      account_id: env.accounts[0],
+      request_id: randomUUID(),
+      mode: "check",
+    };
+    const invoke = (value: object, bay_id = env.bays[1]) =>
+      env.worker("b").call("scanHome", { request: value, bay_id });
+    const receipt = await invoke(request);
+    expect(receipt.admission).toBe("accepted");
+    expect(await invoke(request)).toEqual(receipt);
+    expect(
+      await env.sql(
+        "a",
+        "SELECT count(*)::integer AS n FROM collaboration_scan_actor_receipts WHERE account_id=$1",
+        [request.account_id],
+      ),
+    ).toEqual([{ n: 1 }]);
+    expect(
+      await env.sql(
+        "owner",
+        "SELECT count(*)::integer AS n FROM collaboration_scan_receipts WHERE project_id=$1",
+        [env.project],
+      ),
+    ).toEqual([{ n: 1 }]);
+    await expect(invoke(request, env.bays[0])).rejects.toThrow("stale");
+    await expect(invoke({ ...request, mode: "reconcile" })).rejects.toThrow(
+      "different arguments",
+    );
+    await env.sql(
+      "owner",
+      "UPDATE projects SET users=users-$2 WHERE project_id=$1",
+      [env.project, request.account_id],
+    );
+    await expect(invoke(request)).rejects.toThrow("access denied");
     for (const table of [
       "collaboration_scan_jobs",
       "collaboration_scan_receipts",
