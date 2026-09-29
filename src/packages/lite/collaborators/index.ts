@@ -259,6 +259,14 @@ export class LiteCollaborators {
     const localOnly = async (): Promise<never> => {
       throw Error("Lite collaborators ingestion is service-local only");
     };
+    const invitationsUnavailable = async (opts: {
+      account_id?: string;
+    }): Promise<never> => {
+      await this.assertHuman(opts.account_id);
+      throw Error(
+        "Invitations are not available in standalone, single-user Lite",
+      );
+    };
     this.library = new LibraryCompatibility({
       db: this.db,
       account_id: options.account_id,
@@ -293,6 +301,35 @@ export class LiteCollaborators {
       },
     });
     this.api = {
+      // Standalone Lite has no other accounts or project invitation service.
+      listPeopleContacts: async (opts) => {
+        await this.assertHuman(opts.account_id);
+        return { items: [], total: 0, revision: this.revisionToken() };
+      },
+      getPeopleContact: async (opts) => {
+        await this.assertHuman(opts.account_id);
+        return null;
+      },
+      getInvitationCounts: async (opts) => {
+        await this.assertHuman(opts.account_id);
+        return {
+          pending: { sent: 0, received: 0 },
+          unread: 0,
+          revision: this.revisionToken(),
+          coverage: "complete",
+        };
+      },
+      listInvitationHistory: async (opts) => ({
+        ...(await this.api.getInvitationCounts(opts)),
+        items: [],
+        total: 0,
+      }),
+      resolveInvitationRecipient: invitationsUnavailable,
+      listInvitationProjects: invitationsUnavailable,
+      prepareInvitation: invitationsUnavailable,
+      reviewInvitation: invitationsUnavailable,
+      sendInvitation: invitationsUnavailable,
+      getInvitationOperation: invitationsUnavailable,
       resolveChatAlias: (opts) => this.resolveChatAlias(opts),
       resolvePersonAlias: async (opts) => {
         await this.assertHuman(opts.account_id);
