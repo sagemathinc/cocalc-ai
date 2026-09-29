@@ -21,8 +21,19 @@ const acceptance =
 acceptance("dormant population query plans (isolated PostgreSQL)", () => {
   let env: MultibayAcceptance;
   let populated = 0;
-  const demand = (operation: string) =>
-    env.worker("a").call("demand", { operation });
+  let activeBaseline: Record<string, number> | undefined;
+  let workBaseline: Record<string, number> | undefined;
+  const demand = (operation: string, opts = {}) =>
+    env.worker("a").call("demand", { operation, opts });
+  const workCounters = async (): Promise<Record<string, number>> => {
+    const metrics = await env.worker("a").call<any[]>("indexingMetrics");
+    return Object.fromEntries(
+      (
+        metrics.find((m) => m.name === "cocalc_people_indexing_work_total")
+          ?.values ?? []
+      ).map((v) => [v.labels.kind, v.value]),
+    );
+  };
   beforeAll(async () => {
     env = new MultibayAcceptance();
     await env.start();
@@ -143,6 +154,71 @@ acceptance("dormant population query plans (isolated PostgreSQL)", () => {
           "SELECT count(*)::integer AS n FROM collaboration_access",
         ),
       ).toEqual([{ n: count }]);
+
+      // Identical cold-to-active request at each population size. Reset only
+      // this fixture account afterwards; dormant scheduling state stays intact.
+      const activeBefore = (await env.worker("owner").call("inspect")).counters
+        .ownerCalls;
+      const workBefore = await workCounters();
+      await demand("acquire", {
+        consumer_id: "00000000-0000-4000-8000-000000000001",
+        scope: { kind: "projects", project_ids: [env.project] },
+      });
+      await demand("activationPass");
+      await demand("maintenance");
+      await demand("maintenance");
+      const activeAfter = (await env.worker("owner").call("inspect")).counters
+        .ownerCalls;
+      const workAfter = await workCounters();
+      const work = Object.fromEntries(
+        Object.keys(workAfter)
+          .sort()
+          .map((kind) => [kind, workAfter[kind] - (workBefore[kind] ?? 0)]),
+      );
+      const operations = Object.fromEntries(
+        [
+          ...new Set([
+            ...Object.keys(activeBefore),
+            ...Object.keys(activeAfter),
+          ]),
+        ]
+          .sort()
+          .map((method) => [
+            method,
+            (activeAfter[method] ?? 0) - (activeBefore[method] ?? 0),
+          ]),
+      );
+      process.stdout.write(
+        JSON.stringify({
+          count,
+          workload: "one-project-activation",
+          operations,
+          work,
+        }) + "\n",
+      );
+      const dormantGrants = await env.sql(
+        "a",
+        "SELECT count(*)::integer AS n FROM collaboration_access WHERE account_id<>$1 AND grant_request_id IS NOT NULL",
+        [env.accounts[0]],
+      );
+      for (const table of [
+        "collaboration_access",
+        "collaboration_index",
+        "collaboration_demand",
+        "collaboration_demand_activation",
+        "collaboration_project_demand",
+      ]) {
+        await env.sql("a", `DELETE FROM ${table} WHERE account_id=$1`, [
+          env.accounts[0],
+        ]);
+      }
+      expect(dormantGrants).toEqual([{ n: 0 }]);
+      expect(operations.projectPage).toBe(1);
+      expect(work.projection_claimed).toBe(1);
+      if (activeBaseline == null) activeBaseline = operations;
+      else expect(operations).toEqual(activeBaseline);
+      if (workBaseline == null) workBaseline = work;
+      else expect(work).toEqual(workBaseline);
     },
     600000,
   );

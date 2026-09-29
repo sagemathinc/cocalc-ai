@@ -2749,3 +2749,35 @@ Requested an independent review of the recent bootstrap/repair work at this SHA.
 The message was saved, but exact-attempt inspection still reports unknown
 execution after a payment/subscription/usage-limit launch error. No automatic
 resend was made, and no independent approval is claimed.
+
+### Fixed Active Activation Across Dormant Populations
+
+Extended the dormant-scale fixture with the same one-account, one-project
+cold-to-active workload after each idle measurement. Each case acquires scoped
+demand, runs activation, and runs production home maintenance twice. It compares
+owner RPC deltas and `cocalc_people_indexing_work_total` deltas with the zero-row
+baseline, asserts one project-page fetch and one projection claim, and checks
+that dormant accounts still acquire no grants. Only the synthetic active
+account's projection/access/demand state is removed between population sizes;
+dormant rows remain intact.
+
+The full isolated PostgreSQL suite passes all four tests in 342.725 seconds.
+At 0, 100,000 and 1,000,000 dormant memberships the active deltas are identical:
+one `projectPage` RPC, one `projection_claimed`, and zero `access_claimed`.
+`demand_memberships_scheduled` is zero in the measured maintenance counters
+because this fixture explicitly runs activation before maintenance. Project-page
+responses renew access, so a separate `refreshAccess` RPC is not required.
+The original bounded-query, no-idle-RPC and ineligible-backlog assertions pass
+unchanged. Server/reference typecheck and diff whitespace checks also pass.
+
+The first test iteration incorrectly required a separate access-refresh RPC;
+it failed at the zero-population case and consequently left fixture state for
+later cases. The assertion now follows the actual combined projection/access
+path, and cleanup precedes comparison assertions.
+
+This provides a fixed active activation regression, with zero measured logical
+work amplification from dormant population. It does not establish the full 5%
+hot-worker cost gate: SQL/CPU/I/O costs, sustained edits, shared-project fanout,
+heavy accounts, GC/retention churn, DAU traces and a mixed-workload soak remain
+unmeasured by this case. Existing query-plan measurements cover only their named
+queries, not every statement in this active workload.
