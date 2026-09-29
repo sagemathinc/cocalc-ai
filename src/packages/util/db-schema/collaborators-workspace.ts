@@ -268,6 +268,8 @@ Table({
       "due_at, account_id, project_id",
       "lease_due_at, account_id, project_id",
       "account_id, lease_until",
+      "account_id, due_at, project_id",
+      "account_id, lease_due_at, project_id",
     ],
   },
   fields: {

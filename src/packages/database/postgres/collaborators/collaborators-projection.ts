@@ -4,6 +4,11 @@
  */
 import { randomUUID } from "node:crypto";
 import {
+  claimDemandAccount,
+  demandSchedulingEnabled,
+  demandScopePredicate,
+} from "./collaborators-demand";
+import {
   applyHomeParticipantProjection,
   sameParticipantContinuation,
 } from "./collaborators-relations-projection";
@@ -81,14 +86,20 @@ export async function claimCollaborationProjectionJobs(
   bay_id: string,
 ): Promise<CollaborationProjectionJob[]> {
   return transaction(async (db) => {
+    const demand = demandSchedulingEnabled();
+    const demandedAccount = demand
+      ? await claimDemandAccount(db, bay_id, "projection")
+      : undefined;
+    if (demand && !demandedAccount) return [];
     const { rows } = await db.query(
       `SELECT x.account_id,x.project_id,x.generation,x.revision,x.after_key,x.relation_after
       FROM collaboration_access x JOIN accounts a USING(account_id)
       WHERE x.due_at<=now() AND (x.claim_until IS NULL OR x.claim_until<now())
       AND (x.lease_claim_until IS NULL OR x.lease_claim_until<now())
+      ${demand ? `AND x.account_id=$2 AND ${demandScopePredicate}` : ""}
       AND COALESCE(a.home_bay_id,'bay-0')=$1 AND NOT COALESCE(a.deleted,FALSE) AND NOT COALESCE(a.banned,FALSE)
       ORDER BY x.due_at,x.account_id,x.project_id LIMIT 8 FOR UPDATE OF x SKIP LOCKED`,
-      [bay_id],
+      demand ? [bay_id, demandedAccount] : [bay_id],
     );
     const result: CollaborationProjectionJob[] = [];
     for (const row of rows) {

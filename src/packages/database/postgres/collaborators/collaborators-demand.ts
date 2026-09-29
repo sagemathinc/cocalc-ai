@@ -19,6 +19,14 @@ export const DEMAND_RENEW_MS = 30_000;
 export const DEMAND_GRACE_MS = 300_000;
 export const DEMAND_CONSUMERS = 16;
 
+export function demandSchedulingEnabled() {
+  return (
+    process.env.COCALC_PEOPLE_DEMAND_SCHEDULER_PROTOTYPE === "1" &&
+    process.env.COCALC_PEOPLE_DEMAND_PROTOTYPE === "1" &&
+    process.env.COCALC_PEOPLE_EVENT_FANOUT_PROTOTYPE === "1"
+  );
+}
+
 /** Prototype store: installation is explicit until offline delivery is decoupled. */
 export async function syncCollaborationDemandSchema(
   db: Pick<PoolClient, "query">,
@@ -36,7 +44,42 @@ export async function syncCollaborationDemandSchema(
     after_project UUID, due_at TIMESTAMPTZ)`);
   await db.query(`CREATE INDEX IF NOT EXISTS collaboration_demand_activation_due
     ON collaboration_demand_activation(due_at,account_id)`);
+  await db.query(`ALTER TABLE collaboration_demand_activation
+    ADD COLUMN IF NOT EXISTS projection_due TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS access_due TIMESTAMPTZ`);
+  for (const field of ["projection_due", "access_due"])
+    await db.query(`CREATE INDEX IF NOT EXISTS collaboration_demand_${field}
+      ON collaboration_demand_activation(${field},account_id)`);
 }
+
+/** Called in the claiming transaction. A cold account is retired from this
+ * queue once; selection starts with due account rows, not historical access rows.
+ */
+export async function claimDemandAccount(
+  db: PoolClient,
+  bay_id: string,
+  kind: "projection" | "access",
+) {
+  const field = kind === "projection" ? "projection_due" : "access_due";
+  const { rows } = await db.query(
+    `WITH candidate AS MATERIALIZED (
+    SELECT q.account_id FROM collaboration_demand_activation q JOIN accounts a USING(account_id)
+    WHERE q.${field}<=clock_timestamp() AND COALESCE(a.home_bay_id,'bay-0')=$1
+    AND a.deleted IS NOT TRUE AND a.banned IS NOT TRUE
+    ORDER BY q.${field},q.account_id LIMIT 1 FOR UPDATE OF q SKIP LOCKED),
+    interest AS MATERIALIZED (SELECT c.account_id,EXISTS(SELECT 1 FROM collaboration_demand d
+      WHERE d.account_id=c.account_id AND d.grace_until>clock_timestamp()) AS warm FROM candidate c)
+    UPDATE collaboration_demand_activation q SET ${field}=CASE WHEN i.warm
+      THEN clock_timestamp()+interval '1 second' ELSE NULL END FROM interest i
+    WHERE q.account_id=i.account_id RETURNING q.account_id,i.warm`,
+    [bay_id],
+  );
+  return rows[0]?.warm ? (rows[0].account_id as string) : undefined;
+}
+
+export const demandScopePredicate = `EXISTS(SELECT 1 FROM collaboration_demand d
+  WHERE d.account_id=x.account_id AND d.grace_until>clock_timestamp()
+  AND (d.scope->>'kind'='all' OR d.scope->'project_ids' ? x.project_id::text))`;
 
 function scopeOf(value: CollaborationDemandScope): CollaborationDemandScope {
   if (value?.kind === "all") return { kind: "all" };
@@ -224,6 +267,13 @@ export async function activateCollaborationDemand(
       lease_due_at=LEAST(collaboration_access.lease_due_at,excluded.lease_due_at)`,
       [account_id, page.map((row) => row.project_id), new Date(now)],
     );
+    if (page.length)
+      await db.query(
+        `UPDATE collaboration_demand_activation SET
+      projection_due=LEAST(projection_due,clock_timestamp()),
+      access_due=LEAST(access_due,clock_timestamp()) WHERE account_id=$1`,
+        [account_id],
+      );
     const complete = members.length <= limit;
     await db.query(
       `UPDATE collaboration_demand_activation SET after_project=COALESCE($2,after_project),

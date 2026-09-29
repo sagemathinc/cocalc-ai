@@ -835,6 +835,22 @@ async function command(name, args = {}) {
       }
       const account_id = config.accounts[config.role === "a" ? 0 : 1];
       switch (args.operation) {
+        case "maintenance":
+          await require("@cocalc/server/collaborators/maintenance").runCollaboratorsMaintenance();
+          await require("@cocalc/server/collaborators/maintenance").runCollaboratorsAccessMaintenance();
+          return null;
+        case "enableScheduler":
+          process.env.COCALC_PEOPLE_EVENT_FANOUT_PROTOTYPE = "1";
+          process.env.COCALC_PEOPLE_DEMAND_SCHEDULER_PROTOTYPE = "1";
+          return null;
+        case "claimProjection":
+          return require("@cocalc/database/postgres/collaborators/collaborators-projection").claimCollaborationProjectionJobs(
+            config.bays[config.role === "a" ? 1 : 2],
+          );
+        case "claimAccess":
+          return require("@cocalc/database/postgres/collaborators/collaborators-access").claimCollaborationAccess(
+            config.bays[config.role === "a" ? 1 : 2],
+          );
         case "activationPass":
           return demand.runCollaborationDemandActivation(
             config.bays[config.role === "a" ? 1 : 2],

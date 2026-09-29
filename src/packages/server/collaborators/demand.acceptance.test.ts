@@ -304,4 +304,115 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
       scheduled: 1,
     });
   });
+
+  test("demand scheduler ignores cold and out-of-scope access rows and retires expired queues", async () => {
+    await demand("enableScheduler");
+    const cold = randomUUID();
+    const outside = randomUUID();
+    await env.sql(
+      "a",
+      "INSERT INTO accounts(account_id,home_bay_id) VALUES($1,$2)",
+      [cold, env.bays[1]],
+    );
+    await env.sql(
+      "a",
+      `INSERT INTO collaboration_access(account_id,project_id,due_at,lease_due_at)
+      VALUES($1,$3,now()-interval '1 day',now()-interval '1 day'),($2,$4,now()-interval '1 day',now()-interval '1 day')`,
+      [cold, env.accounts[0], env.project, outside],
+    );
+    await demand("acquire", {
+      consumer_id: randomUUID(),
+      scope: { kind: "projects", project_ids: [env.project] },
+    });
+    await demand("activationPass");
+    expect(
+      (await demand("claimProjection")).map((job) => [
+        job.account_id,
+        job.project_id,
+      ]),
+    ).toEqual([[env.accounts[0], env.project]]);
+    expect(
+      (await demand("claimAccess")).map((job) => [
+        job.account_id,
+        job.project_id,
+      ]),
+    ).toEqual([[env.accounts[0], env.project]]);
+    expect(
+      await env.sql(
+        "a",
+        "SELECT grant_request_id FROM collaboration_access WHERE account_id=$1 OR project_id=$2",
+        [cold, outside],
+      ),
+    ).toEqual([{ grant_request_id: null }, { grant_request_id: null }]);
+    await env.sql(
+      "a",
+      "UPDATE collaboration_demand SET grace_until=clock_timestamp()-interval '1 second'",
+    );
+    await env.sql(
+      "a",
+      "UPDATE collaboration_demand_activation SET projection_due=clock_timestamp()-interval '1 second',access_due=clock_timestamp()-interval '1 second'",
+    );
+    await env.sql(
+      "a",
+      "UPDATE collaboration_access SET claim_until=NULL,lease_claim_until=NULL",
+    );
+    expect(await demand("claimProjection")).toEqual([]);
+    expect(await demand("claimAccess")).toEqual([]);
+    expect(
+      await env.sql(
+        "a",
+        "SELECT projection_due,access_due FROM collaboration_demand_activation",
+      ),
+    ).toEqual([{ projection_due: null, access_due: null }]);
+  });
+
+  test("cutover maintenance makes no owner RPC or seed work for 1000 cold memberships", async () => {
+    await demand("enableScheduler");
+    await env.sql(
+      "a",
+      `INSERT INTO accounts(account_id,home_bay_id)
+      SELECT md5('demand-cold-' || n)::uuid,$1 FROM generate_series(1,1000) n`,
+      [env.bays[1]],
+    );
+    await env.sql(
+      "a",
+      `INSERT INTO account_project_index(account_id,project_id,owning_bay_id,users_summary)
+      SELECT md5('demand-cold-' || n)::uuid,$1,$2,
+      jsonb_build_object((md5('demand-cold-' || n)::uuid)::text,jsonb_build_object('group','collaborator'))
+      FROM generate_series(1,1000) n`,
+      [env.project, env.bays[0]],
+    );
+    await env.sql(
+      "a",
+      `INSERT INTO collaboration_access(account_id,project_id,due_at,lease_due_at)
+      SELECT md5('demand-cold-' || n)::uuid,$1,now()-interval '1 day',now()-interval '1 day' FROM generate_series(1,1000) n`,
+      [env.project],
+    );
+    const before = (await env.worker("owner").call("inspect")).counters
+      .ownerCalls;
+    await demand("maintenance");
+    await demand("maintenance");
+    const after = (await env.worker("owner").call("inspect")).counters
+      .ownerCalls;
+    for (const method of ["projectPage", "refreshAccess", "notificationPage"])
+      expect(after[method] ?? 0).toBe(before[method] ?? 0);
+    expect(
+      await env.sql(
+        "a",
+        "SELECT * FROM collaboration_maintenance WHERE id='seed'",
+      ),
+    ).toEqual([]);
+    expect(
+      await env.sql(
+        "a",
+        "SELECT grant_request_id FROM collaboration_access WHERE grant_request_id IS NOT NULL",
+      ),
+    ).toEqual([]);
+    expect(
+      await env.sql(
+        "a",
+        "SELECT count(*)::integer AS n FROM collaboration_access",
+      ),
+    ).toEqual([{ n: 1000 }]);
+  }, 60000);
 });

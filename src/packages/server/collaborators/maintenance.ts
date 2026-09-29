@@ -7,6 +7,7 @@ import getPool from "@cocalc/database/pool";
 import {
   syncCollaborationDemandSchema,
   runCollaborationDemandActivation,
+  demandSchedulingEnabled,
 } from "@cocalc/database/postgres/collaborators/collaborators-demand";
 import { runCollaborationFanoutPass } from "@cocalc/server/notifications/collaboration-fanout";
 import {
@@ -117,10 +118,11 @@ export async function runCollaboratorsMaintenance() {
         activation.scheduled,
       );
     }
-    indexingWork.inc(
-      { kind: "memberships_enumerated" },
-      await seedCollaborationProjectionJobs(bay_id),
-    );
+    if (!demandSchedulingEnabled())
+      indexingWork.inc(
+        { kind: "memberships_enumerated" },
+        await seedCollaborationProjectionJobs(bay_id),
+      );
     await cleanCollaborationProjections(bay_id);
     await compactNextCollaborationProject(bay_id);
     const jobs = await claimCollaborationProjectionJobs(bay_id);
@@ -163,9 +165,10 @@ export async function runCollaboratorsMaintenance() {
     );
     // Notifications consume only after metadata/attention projections have had a
     // chance to catch up; missing projections retain the durable retry cursor.
-    await runCollaborationNotificationMaintenance(
-      fetchCollaborationNotificationPage,
-    );
+    if (!demandSchedulingEnabled())
+      await runCollaborationNotificationMaintenance(
+        fetchCollaborationNotificationPage,
+      );
   } finally {
     running = false;
   }

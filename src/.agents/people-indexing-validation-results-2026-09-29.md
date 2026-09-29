@@ -367,3 +367,32 @@ Validation: server TypeScript build, 30 API tests, seven ownership tests, and
 eight real-PostgreSQL demand tests pass. New cases cover one-project pages,
 scope/membership filtering, retry cursor preservation, expiry cancellation,
 idle dispatcher behavior, and reacquisition after activation-state loss.
+
+## Demand-Aware Job Selection Prototype
+
+Activation now marks separate account projection/access due queues. Claims begin
+with one indexed due account, then select bounded project jobs within current
+live/grace scope using account-leading indexes. Expired interest clears that
+account's due marker instead of repeatedly revisiting its historical access
+rows. Demand still grants no access: ordinary owner validation and lease limits
+remain unchanged.
+
+An additional `COCALC_PEOPLE_DEMAND_SCHEDULER_PROTOTYPE=1` switch, together with
+both prior demand and event-fanout switches, opts into this selection and skips
+the legacy membership seed and cursor-notification polling. Missing any switch
+retains the old behavior. This cutover is for isolated prototype validation,
+not mixed-version deployment: pre-cutover intent repair, membership-change
+signals, and client visible-view demand are still prerequisites.
+
+The existing cleanup query still examines historical projection rows, and
+catalog compaction/other maintenance has not been redesigned here. Therefore
+absence of seed work or owner RPCs is not evidence of zero dormant database
+cost. Bounded lifecycle cleanup, fair-load measurements, and the full 100k/1M
+dormant fixtures remain required before claiming that scaling invariant.
+
+Validation: server TypeScript build, 30 API tests, nine PGlite access-fence tests,
+and ten real-PostgreSQL demand tests pass. The new cases exclude cold accounts
+and out-of-scope projects from both claim paths, clear queues on grace expiry,
+and run two maintenance passes over 1,000 eligible cold membership/access rows
+without seed work, grant claims, or project-page/access-refresh/notification-page
+RPCs. Source-writer traffic is independent and is not counted as account refresh.

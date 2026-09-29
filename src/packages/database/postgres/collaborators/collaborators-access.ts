@@ -3,6 +3,11 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import getPool from "@cocalc/database/pool";
+import {
+  claimDemandAccount,
+  demandSchedulingEnabled,
+  demandScopePredicate,
+} from "./collaborators-demand";
 import type { CollaborationAccessGrant } from "@cocalc/conat/inter-bay/collaborators";
 import { ACCESS_LEASE_MS, transaction, uuid } from "./collaborators-common";
 import { bumpCollaborationRevision } from "./collaborators-changes";
@@ -20,6 +25,25 @@ export interface CollaborationAccessJob {
 export async function claimCollaborationAccess(
   bay_id: string,
 ): Promise<CollaborationAccessJob[]> {
+  if (demandSchedulingEnabled())
+    return transaction(async (db) => {
+      const account_id = await claimDemandAccount(db, bay_id, "access");
+      if (!account_id) return [];
+      const { rows } = await db.query(
+        `WITH due AS MATERIALIZED (
+      SELECT x.account_id,x.project_id FROM collaboration_access x
+      WHERE x.account_id=$1 AND x.lease_due_at<=clock_timestamp()
+      AND (x.lease_claim_until IS NULL OR x.lease_claim_until<clock_timestamp())
+      AND ${demandScopePredicate}
+      ORDER BY x.lease_due_at,x.project_id LIMIT 50 FOR UPDATE OF x SKIP LOCKED)
+      UPDATE collaboration_access x SET grant_request_id=gen_random_uuid(),
+        lease_claim_until=clock_timestamp()+interval '20 seconds'
+      FROM due WHERE x.account_id=due.account_id AND x.project_id=due.project_id
+      RETURNING x.account_id,x.project_id,x.grant_request_id`,
+        [account_id],
+      );
+      return rows;
+    });
   const { rows } = await getPool().query(
     `WITH due AS MATERIALIZED (
     SELECT x.account_id,x.project_id FROM collaboration_access x JOIN accounts a USING(account_id)
