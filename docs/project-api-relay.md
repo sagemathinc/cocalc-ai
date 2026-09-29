@@ -28,6 +28,9 @@ remain bound to the configured local site. An `--api` override alone does not
 authorize forwarding those credentials elsewhere. Explicit credentials can be
 used with `--disable-env-auth-defaults`; agent identity credentials stay pinned
 to their issuing site. Daemon requests retain this scope when freezing defaults.
+Runtime agent credentials that omit `api_url` are pinned to the runtime's
+`COCALC_API_URL`. Without either scope, agent messaging fails before connecting;
+neither `--api` nor a relay allowlist match can establish an issuing site.
 Explicit credential pins are checked before selecting either transport, including
 same-site, forced, and successfully probed relay routes. A relay allowlist match
 does not authorize forwarding a credential pinned to a different site. Default

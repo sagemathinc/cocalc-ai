@@ -107,11 +107,17 @@ export async function sendIdentityMessage(
   if ("version" in request) validateAgentRpcRequest(request);
   else validateAgentInspection(request);
   const credential = await readIdentityCredential();
-  const address = apiUrl || credential.api_url || process.env.COCALC_API_URL;
-  if (!address) throw new Error("COCALC_API_URL or --api is required");
+  // Current runtime issuance omits api_url. Bind those credentials to the
+  // runtime's configured API, never to a caller-supplied --api or relay route.
+  const credentialSite = credential.api_url ?? process.env.COCALC_API_URL;
+  if (!credentialSite?.trim())
+    throw new Error(
+      "agent identity requires an issuing api_url or runtime COCALC_API_URL; --api cannot establish credential scope",
+    );
+  const address = apiUrl || credentialSite;
   const relay = await selectProjectApiRelayTransport({
     apiBaseUrl: address,
-    credentialSite: credential.api_url,
+    credentialSite,
   });
   const client = connect({
     address: relay?.address ?? address,
