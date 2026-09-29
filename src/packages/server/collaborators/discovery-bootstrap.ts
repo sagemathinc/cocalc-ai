@@ -37,8 +37,15 @@ export async function bootstrapDemandDiscovery(
   if (!request_id) {
     const repair_id = await readOrCreateRevisionRepair(receiver);
     if (!repair_id) return "done";
-    const result = await operations.admit(repair_id);
-    if (result.admission === "throttled") return "deferred";
+    const discovery = await operations.discovery();
+    // Share the owner's completed run across homes. Heartbeat/progress report
+    // timestamps must not indefinitely postpone reconciliation of missed writes.
+    const recentCompletedRun =
+      discovery.report?.coverage === "complete" && recentRun(discovery);
+    if (!recentCompletedRun) {
+      const result = await operations.admit(repair_id);
+      if (result.admission === "throttled") return "deferred";
+    }
     return (await acknowledgeRevisionRepair({
       ...receiver,
       request_id: repair_id,
@@ -49,11 +56,7 @@ export async function bootstrapDemandDiscovery(
   const discovery = await operations.discovery();
   // Returning demand must not postpone repair forever by recreating receivers.
   // Report age is a scheduling hint, never proof that source bytes are current.
-  const staleReport =
-    discovery.report != null &&
-    discovery.updated_at != null &&
-    Number.isFinite(discovery.updated_at) &&
-    discovery.updated_at <= Date.now() - 60 * 60_000;
+  const staleReport = discovery.report != null && !recentRun(discovery);
   // Unavailable without a report may mean a changed host: do not reinterpret it
   // as permission to replace an unknown run here.
   if (discovery.status !== "pending" && !discovery.report) return "deferred";
@@ -68,4 +71,15 @@ export async function bootstrapDemandDiscovery(
   }))
     ? "done"
     : "deferred";
+}
+
+function recentRun(discovery: CollaborationDiscoveryState): boolean {
+  const observed = discovery.run_observed_at;
+  const now = Date.now();
+  return (
+    observed != null &&
+    Number.isFinite(observed) &&
+    observed <= now &&
+    observed > now - 60 * 60_000
+  );
 }

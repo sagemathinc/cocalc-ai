@@ -66,8 +66,10 @@ export async function reportCollaborationDiscovery(
       throw Error("stale discovery run");
     }
     await db.query(
-      `INSERT INTO collaboration_discovery(project_id,writer_host_id,run_id,sequence,report,updated_at)
-      VALUES($1,$2,$3,$4,$5::jsonb,now()) ON CONFLICT(project_id) DO UPDATE SET writer_host_id=excluded.writer_host_id,
+      `INSERT INTO collaboration_discovery(project_id,writer_host_id,run_id,sequence,report,updated_at,run_observed_at)
+      VALUES($1,$2,$3,$4,$5::jsonb,now(),now()) ON CONFLICT(project_id) DO UPDATE SET writer_host_id=excluded.writer_host_id,
+      run_observed_at=CASE WHEN collaboration_discovery.run_id=excluded.run_id
+        THEN collaboration_discovery.run_observed_at ELSE excluded.run_observed_at END,
       run_id=excluded.run_id,sequence=excluded.sequence,report=excluded.report,updated_at=excluded.updated_at`,
       [
         input.project_id,
@@ -95,7 +97,7 @@ export async function getCollaborationDiscovery(
     );
     const row = (
       await db.query(
-        `SELECT d.report,d.updated_at,d.writer_host_id=p.host_id AS current,
+        `SELECT d.report,d.updated_at,d.run_observed_at,d.writer_host_id=p.host_id AS current,
       d.updated_at>now()-interval '30 minutes' AS fresh FROM collaboration_discovery d
       JOIN projects p USING(project_id) WHERE d.project_id=$1`,
         [input.project_id],
@@ -108,6 +110,9 @@ export async function getCollaborationDiscovery(
       status: row.fresh ? report.coverage : "unavailable",
       report,
       updated_at: new Date(row.updated_at).getTime(),
+      ...(row.run_observed_at == null
+        ? {}
+        : { run_observed_at: new Date(row.run_observed_at).getTime() }),
     };
   });
 }

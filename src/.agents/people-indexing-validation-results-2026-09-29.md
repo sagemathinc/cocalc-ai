@@ -4,23 +4,25 @@ Date: 2026-09-29. This is an initial gate report, not a completed scaling rollou
 
 ## Current Completion Audit
 
-Recent Scan store/worker checks do not establish completion of the full design.
+The prototype and acceptance checks do not establish completion of the full design.
 The seven implementation gates remain distinct:
 
-| Plan gate               | Evidence and remaining work                                                                                                                                                                                                                                                              |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Baseline/contracts      | Isolated baseline, metrics and authority work exist. Full workload cost/freshness curves remain unproven.                                                                                                                                                                                |
-| Filesystem proof/reuse  | The raw btrfs generation proof failed. No safe generation-equality shortcut is enabled; validated cold-scan avoidance remains unresolved.                                                                                                                                                |
-| Vertical prototype      | Owner/home and Scan components have focused integration tests, but the complete source-change, active-view, sleep, offline-event, return sequence with all failure cases is not proven.                                                                                                  |
-| Demand/event decoupling | Demand scheduling and offline-event work exist behind prototype gates. Owner revision-interest stores have focused coverage, but delivery and shared per-home-bay delta fetching remain unfinished. Live demand is capped at 16 separately from a 256-record retained-grace churn bound. |
-| Bounded Scan service    | Internal admission, host dispatch, receipt retention and queued cleanup are tested. Public principal binding, reviewed agent scope, host/bay/global budgets, status throttling, complete watermarks and CLI/UI controls are not established.                                             |
-| Recovery/lifecycle      | Rehome guards remain necessary. Full canonical rebuild, transfer/rollback, restore and retention/deletion coverage are not proven.                                                                                                                                                       |
-| Scale/canary            | Query fixtures are not DAU traces. The 10k/100k workloads, burst/fanout matrix, 24-hour soak, six-month churn simulation, browser matrix and explicit enablement decision remain outstanding.                                                                                            |
+| Plan gate               | Evidence and remaining work                                                                                                                                                                                                                     |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Baseline/contracts      | Isolated baseline, metrics and authority work exist. Full workload cost/freshness curves remain unproven.                                                                                                                                       |
+| Filesystem proof/reuse  | The raw btrfs generation proof failed. No safe generation-equality shortcut is enabled; validated cold-scan avoidance remains unresolved.                                                                                                       |
+| Vertical prototype      | Timer-driven initial discovery and later active-demand repair pass isolated multibay acceptance, including 1,000 cold memberships and no compute starts. The complete sleep/offline-event/return matrix and failure cases remain open.          |
+| Demand/event decoupling | Demand scheduling, durable revision delivery and shared page fetching have prototype coverage; this is not a production capacity result. Live demand is capped at 16 separately from a 256-record retained-grace churn bound.                   |
+| Bounded Scan service    | Human admission/routing, status budgets, durable host dispatch, CLI and accessible component-level UI controls are implemented and tested. Agent scope, complete progress/watermarks, cold-volume repair and whole-system capacity remain open. |
+| Recovery/lifecycle      | Rehome guards remain necessary. Full canonical rebuild, transfer/rollback, restore and retention/deletion coverage are not proven.                                                                                                              |
+| Scale/canary            | Query fixtures are not DAU traces. The 10k/100k workloads, burst/fanout matrix, 24-hour soak, six-month churn simulation, browser matrix and explicit enablement decision remain outstanding.                                                   |
 
-The next implementation frontier should address selective revision delivery and
-the complete vertical path, not treat further Scan cleanup tests as a substitute
-for those contracts. Keep default-off behavior and portability guards until the
-corresponding gates actually pass.
+The remaining frontier includes generation-aware/cold-volume reconciliation,
+full lifecycle recovery, reviewed agent scope, live browser validation, and
+workload/soak measurements. Keep default-off behavior and portability guards
+until the corresponding gates actually pass. The chronological sections below
+retain earlier limitations as historical observations; later sections may
+supersede them, but do not imply that a whole gate is complete.
 
 ## Implemented
 
@@ -2636,3 +2638,32 @@ This is a conservative active-project fallback, not the final generation-aware
 service. Cold-volume inventory hints/backoff, shared cross-home repair suppression,
 receipt-expiry recovery after very long ambiguous outcomes, measured scan cost,
 and lifecycle/scale gates remain open. No production flags were enabled.
+
+### Owner Run Age And Cross-Home Repair Sharing
+
+Added nullable owner-held `run_observed_at` to discovery metadata. It records
+the first accepted report for a new run, remains fixed through progress reports
+and replay, and resets only on run replacement. Existing rows stay unknown;
+schema installation and later same-run reports do not fabricate a recent age.
+It is not the host's scan-start time or evidence that current bytes are unchanged.
+
+A due home receiver now reads owner discovery before requesting repair. A
+completed run first observed within the past hour lets that receiver postpone
+repair without creating an actor reservation or owner Scan receipt. Unknown,
+future or old run ages and partial reports do not enable this optimization.
+Returning-demand checks likewise use run age instead of a progress/heartbeat
+timestamp, so frequent reports cannot indefinitely postpone repair. Explicit
+user Scan requests are unchanged. Owner lookup failure leaves the durable repair
+identity pending for retry.
+
+This avoids sequential cross-home redundant work, not every concurrency race:
+homes observing an old report together still use existing owner job coalescing
+and budgets. Postponement uses the receiver's bounded jittered deadline, so this
+does not establish a one-hour freshness SLO. Mixed-version rows with unknown
+age conservatively request repair rather than claiming freshness.
+
+Focused checks pass: 62 server tests, five discovery database tests, and server
+typecheck. Both extended real multibay cases pass in 349.98 seconds. The first
+brings a second home online, advances its repair deadline, and verifies no new actor/owner receipt
+for the recent shared run. Its later missed-write phase ages the owner run as
+well as the home deadline, retaining real dispatch and host cooldowns.

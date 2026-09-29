@@ -49,6 +49,8 @@ export interface CollaborationDiscoveryState {
   status: "pending" | "unavailable" | "indexing" | "partial" | "complete";
   report?: CollaborationDiscoveryReport;
   updated_at?: number;
+  /** Owner's first observation of this run, not source freshness or host time. */
+  run_observed_at?: number;
 }
 export interface CollaborationDiscoveryWrite {
   project_id: string;

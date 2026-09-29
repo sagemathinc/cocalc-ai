@@ -124,6 +124,58 @@ acceptance("demand-triggered initial discovery over real fabric", () => {
         "SELECT DISTINCT account_id FROM collaboration_scan_actor_receipts",
       ),
     ).toEqual([{ account_id: env.accounts[0] }]);
+    await env.worker("b").call("installScan");
+    await env.worker("b").call("installRevisionReceiver");
+    await env.worker("b").call("demand", { operation: "install" });
+    await env.worker("b").call("enableDiscoveryBootstrap");
+    await env.worker("b").call("startRevisionMaintenance");
+    await env.worker("b").call("demand", {
+      operation: "acquire",
+      opts: {
+        consumer_id: randomUUID(),
+        scope: { kind: "projects", project_ids: [env.project] },
+      },
+    });
+    await eventually(
+      async () =>
+        (
+          await env.sql(
+            "b",
+            `SELECT 1 FROM collaboration_revision_receivers
+      WHERE project_id=$1 AND bootstrap_admitted`,
+            [env.project],
+          )
+        ).length === 1,
+    );
+    await env.sql(
+      "b",
+      `UPDATE collaboration_revision_receivers
+      SET repair_after=clock_timestamp()-interval '1 second' WHERE project_id=$1`,
+      [env.project],
+    );
+    await eventually(
+      async () =>
+        (
+          await env.sql(
+            "b",
+            `SELECT 1 FROM collaboration_revision_receivers
+      WHERE project_id=$1 AND repair_after>clock_timestamp()`,
+            [env.project],
+          )
+        ).length === 1,
+    );
+    expect(
+      await env.sql(
+        "b",
+        "SELECT request_id FROM collaboration_scan_actor_receipts",
+      ),
+    ).toEqual([]);
+    expect(
+      await env.sql(
+        "owner",
+        "SELECT count(*)::integer AS n FROM collaboration_scan_receipts",
+      ),
+    ).toEqual([{ n: 1 }]);
     await env.sql(
       "a",
       "UPDATE collaboration_demand SET grace_until=clock_timestamp()-interval '1 second'",
@@ -152,8 +204,14 @@ acceptance("demand-triggered initial discovery over real fabric", () => {
           scope: { kind: "projects", project_ids: [env.project] },
         },
       });
-      // Advance only the hourly repair deadline. Admission/dispatch/host cooldowns
-      // and all worker scheduling remain real; no manual worker ticks are used.
+      // Age the owner run and advance the hourly repair deadline. Admission,
+      // dispatch and host cooldowns remain real; no manual worker ticks are used.
+      await env.sql(
+        "owner",
+        `UPDATE collaboration_discovery
+        SET run_observed_at=clock_timestamp()-interval '2 hours' WHERE project_id=$1`,
+        [env.project],
+      );
       await env.sql(
         "a",
         `UPDATE collaboration_revision_receivers

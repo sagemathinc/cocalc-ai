@@ -12,4 +12,6 @@ export async function syncCollaborationCensusSchema(
     project_id UUID PRIMARY KEY, writer_host_id UUID, run_id UUID,
     sequence BIGINT NOT NULL DEFAULT 0, report JSONB, updated_at TIMESTAMP WITH TIME ZONE
   )`);
+  await db.query(`ALTER TABLE collaboration_discovery
+    ADD COLUMN IF NOT EXISTS run_observed_at TIMESTAMPTZ`);
 }

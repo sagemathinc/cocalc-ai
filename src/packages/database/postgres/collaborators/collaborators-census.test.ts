@@ -160,3 +160,53 @@ test("wrong host/bay, revoked member and host reassignment are fenced", async ()
     ),
   ).rejects.toThrow();
 });
+
+test("run observation time survives progress and replay, but changes with the run", async () => {
+  const report = { ...base, run_id: randomUUID() };
+  const write = { project_id, expected_run_id: null, report };
+  await reportCollaborationDiscovery(write, authority);
+  const read = () =>
+    getCollaborationDiscovery({ project_id, account_id }, authority);
+  expect((await read()).run_observed_at).toBeGreaterThan(0);
+  await getPool().query(
+    "UPDATE collaboration_discovery SET run_observed_at=now()-interval '2 hours' WHERE project_id=$1",
+    [project_id],
+  );
+  const observed = (await read()).run_observed_at;
+  await reportCollaborationDiscovery(write, authority);
+  expect((await read()).run_observed_at).toBe(observed);
+  await reportCollaborationDiscovery(
+    { ...write, report: { ...report, sequence: 2 } },
+    authority,
+  );
+  const progress = await read();
+  expect(progress.run_observed_at).toBe(observed);
+  expect(progress.updated_at!).toBeGreaterThan(observed!);
+  await reportCollaborationDiscovery(
+    {
+      ...write,
+      expected_run_id: report.run_id,
+      report: { ...base, run_id: randomUUID() },
+    },
+    authority,
+  );
+  expect((await read()).run_observed_at!).toBeGreaterThan(observed!);
+});
+
+test("legacy unknown run age stays unknown across progress reports", async () => {
+  const report = { ...base, run_id: randomUUID() };
+  const write = { project_id, expected_run_id: null, report };
+  await reportCollaborationDiscovery(write, authority);
+  await getPool().query(
+    "UPDATE collaboration_discovery SET run_observed_at=NULL WHERE project_id=$1",
+    [project_id],
+  );
+  await syncCollaborationCensusSchema(getPool());
+  await reportCollaborationDiscovery(
+    { ...write, report: { ...report, sequence: 2 } },
+    authority,
+  );
+  expect(
+    await getCollaborationDiscovery({ project_id, account_id }, authority),
+  ).not.toHaveProperty("run_observed_at");
+});

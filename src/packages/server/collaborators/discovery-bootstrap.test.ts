@@ -78,13 +78,13 @@ test("throttling leaves bootstrap retryable", async () => {
   expect(await run()).toBe("deferred");
   expect(acknowledgeRevisionBootstrap).not.toHaveBeenCalled();
 });
-test("existing report avoids first-discovery work, without asserting freshness", async () => {
+test("legacy report without run age requests bounded repair", async () => {
   discovery.mockResolvedValue({
     status: "unavailable",
     report: { coverage: "partial" },
   });
   expect(await run()).toBe("done");
-  expect(admit).not.toHaveBeenCalled();
+  expect(admit).toHaveBeenCalledWith("durable-id");
 });
 test("unknown host state does not replace a run", async () => {
   discovery.mockResolvedValue({ status: "unavailable" });
@@ -96,6 +96,7 @@ test("returning demand repairs an old owner report rather than restarting an hou
     status: "unavailable",
     report: { coverage: "complete" },
     updated_at: Date.now() - 2 * 60 * 60_000,
+    run_observed_at: Date.now() - 2 * 60 * 60_000,
   });
   expect(await run()).toBe("done");
   expect(admit).toHaveBeenCalledWith("durable-id");
@@ -105,6 +106,7 @@ test("recent owner report avoids redundant return-time repair", async () => {
     status: "complete",
     report: { coverage: "complete" },
     updated_at: Date.now(),
+    run_observed_at: Date.now(),
   });
   expect(await run()).toBe("done");
   expect(admit).not.toHaveBeenCalled();
@@ -125,7 +127,7 @@ test("due repair reuses admission and retains its identity after unknown outcome
   expect(acknowledgeRevisionRepair).not.toHaveBeenCalled();
   expect(await run()).toBe("done");
   expect(admit.mock.calls).toEqual([["repair-id"], ["repair-id"]]);
-  expect(discovery).not.toHaveBeenCalled();
+  expect(discovery).toHaveBeenCalledTimes(2);
   expect(acknowledgeRevisionRepair).toHaveBeenCalledWith({
     ...receiver,
     request_id: "repair-id",
@@ -143,4 +145,64 @@ test("throttled repair stays due; stale acknowledgment does not report done", as
   expect(acknowledgeRevisionRepair).not.toHaveBeenCalled();
   (acknowledgeRevisionRepair as jest.Mock).mockResolvedValue(false);
   expect(await run()).toBe("deferred");
+});
+
+test("due receiver shares a recent completed owner run without another admission", async () => {
+  (readRevisionBootstrap as jest.Mock).mockResolvedValue(null);
+  (readOrCreateRevisionRepair as jest.Mock).mockResolvedValue("repair-id");
+  discovery.mockResolvedValue({
+    status: "complete",
+    report: { coverage: "complete" },
+    run_observed_at: Date.now(),
+    updated_at: Date.now(),
+  });
+  expect(await run()).toBe("done");
+  expect(admit).not.toHaveBeenCalled();
+  expect(acknowledgeRevisionRepair).toHaveBeenCalledWith({
+    ...receiver,
+    request_id: "repair-id",
+  });
+});
+
+test.each([
+  undefined,
+  Date.now() - 2 * 60 * 60_000,
+  Date.now() + 2 * 60 * 60_000,
+])(
+  "recent heartbeat cannot suppress repair with unknown, old or future run age %s",
+  async (run_observed_at) => {
+    (readRevisionBootstrap as jest.Mock).mockResolvedValue(null);
+    (readOrCreateRevisionRepair as jest.Mock).mockResolvedValue("repair-id");
+    discovery.mockResolvedValue({
+      status: "complete",
+      report: { coverage: "complete" },
+      run_observed_at,
+      updated_at: Date.now(),
+    });
+    expect(await run()).toBe("done");
+    expect(admit).toHaveBeenCalledWith("repair-id");
+  },
+);
+
+test("recent partial run does not suppress due repair", async () => {
+  (readRevisionBootstrap as jest.Mock).mockResolvedValue(null);
+  (readOrCreateRevisionRepair as jest.Mock).mockResolvedValue("repair-id");
+  discovery.mockResolvedValue({
+    status: "partial",
+    report: { coverage: "partial" },
+    run_observed_at: Date.now(),
+  });
+  expect(await run()).toBe("done");
+  expect(admit).toHaveBeenCalledWith("repair-id");
+});
+
+test("owner lookup timeout leaves due repair unacknowledged and retryable", async () => {
+  (readRevisionBootstrap as jest.Mock).mockResolvedValue(null);
+  (readOrCreateRevisionRepair as jest.Mock).mockResolvedValue("repair-id");
+  discovery.mockRejectedValueOnce(Error("owner timeout"));
+  await expect(run()).rejects.toThrow("owner timeout");
+  expect(admit).not.toHaveBeenCalled();
+  expect(acknowledgeRevisionRepair).not.toHaveBeenCalled();
+  expect(await run()).toBe("done");
+  expect(admit).toHaveBeenCalledWith("repair-id");
 });
