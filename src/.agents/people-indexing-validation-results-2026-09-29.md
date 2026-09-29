@@ -2898,3 +2898,25 @@ warning. No unrelated permissions were changed. This is build integration
 evidence, not a production deployment, full test suite, browser validation or
 capacity result. The remaining initial-release gates in the current audit stay
 open.
+
+### Disable And Reenable After Personal State Exists
+
+Extended the real multibay retention-return case with a site-setting toggle
+after conversations, a delivered notification, personal preferences and live
+demand exist. A fixture-only command updates `collaborators_enabled` in the
+isolated bay database and resets that process's settings cache. Owner and both
+home settings are disabled, then reenabled; no live site is involved.
+
+Once the setting is observed, authenticated metadata reads, demand acquisition
+and demand renewal reject. Two home maintenance passes make no owner RPCs, and
+the explicit personal row is unchanged. Reenable permits renewal of the same
+still-valid lease. The subsequent expired-demand resnapshot, no-notification-
+replay and revoked-membership return assertions still pass. The combined case
+passes in 49.499 seconds; server/reference typecheck and whitespace checks pass.
+
+The explicit cache reset models an observed setting change, not instantaneous
+cluster-wide propagation. Normal bay settings may remain cached for 15 seconds
+(three seconds in development), and host enablement has its own cache. In-flight
+host Scan work across toggle, natural cache-delay behavior and population-scale
+reenablement are not established by this fixture. It does not remove any release
+guard or enable prototype settings in production.

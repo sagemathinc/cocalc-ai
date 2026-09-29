@@ -769,6 +769,15 @@ async function command(name, args = {}) {
         .data;
     case "sql":
       return (await pool.query(args.sql, args.params)).rows;
+    case "setCollaboratorsEnabled":
+      if (config.role === "host" || typeof args.enabled !== "boolean")
+        throw Error("bay fixture and boolean required");
+      await pool.query(
+        "UPDATE server_settings SET value=$1 WHERE name='collaborators_enabled'",
+        [args.enabled ? "yes" : "no"],
+      );
+      require("@cocalc/database/settings/server-settings").resetServerSettingsCache();
+      return null;
     case "indexingSeed": {
       const projection = require("@cocalc/database/postgres/collaborators/collaborators-projection");
       return projection.seedCollaborationProjectionJobs(

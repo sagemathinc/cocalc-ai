@@ -78,6 +78,43 @@ acceptance("return after catalog retention (isolated PostgreSQL)", () => {
     )[0].generation;
     await demand("install");
     await demand("enableScheduler");
+    const existingLease = await env.hub("b", "acquireDemand", {
+      consumer_id: randomUUID(),
+      scope: { kind: "projects", project_ids: [env.project] },
+    });
+    for (const role of ["owner", "a", "b"] as const)
+      await env
+        .worker(role)
+        .call("setCollaboratorsEnabled", { enabled: false });
+    const disabledBefore = (await env.worker("owner").call("inspect")).counters
+      .ownerCalls;
+    await expect(env.hub("b", "listResources")).rejects.toThrow(/not enabled/);
+    await expect(env.hub("b", "renewDemand", existingLease)).rejects.toThrow(
+      /not enabled/,
+    );
+    await expect(
+      env.hub("b", "acquireDemand", {
+        consumer_id: randomUUID(),
+        scope: { kind: "all" },
+      }),
+    ).rejects.toThrow(/not enabled/);
+    await demand("maintenance");
+    await demand("maintenance");
+    expect(
+      (await env.worker("owner").call("inspect")).counters.ownerCalls,
+    ).toEqual(disabledBefore);
+    expect(
+      await env.sql(
+        "b",
+        "SELECT * FROM collaboration_personal WHERE account_id=$1 AND alias='my-kept-name'",
+        [env.accounts[1]],
+      ),
+    ).toEqual(personal);
+    for (const role of ["owner", "a", "b"] as const)
+      await env.worker(role).call("setCollaboratorsEnabled", { enabled: true });
+    expect((await env.hub("b", "renewDemand", existingLease)).lease_id).toBe(
+      existingLease.lease_id,
+    );
     await demand("acquire", {
       consumer_id: randomUUID(),
       scope: { kind: "projects", project_ids: [env.project] },
