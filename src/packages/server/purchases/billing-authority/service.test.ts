@@ -142,10 +142,13 @@ describe("billing authority service boundary", () => {
 
   it("fail-stops rather than continuing after lease-safety failure", () => {
     const calls: number[] = [];
+    const report = jest.fn();
     expect(() =>
       __test__.failStopBillingAuthorityWorker({
         err: new Error("lease lost"),
+        report,
         exit: (code): never => {
+          expect(report).toHaveBeenCalledTimes(1);
           calls.push(code);
           throw new Error("worker exited");
         },
@@ -154,6 +157,27 @@ describe("billing authority service boundary", () => {
     expect(calls).toEqual([1]);
     expect(__test__.runtime.stopping).toBe(true);
     expect(__test__.runtime.local_deadline_ms).toBe(0);
+    expect(JSON.parse(report.mock.calls[0][0])).toMatchObject({
+      event: "billing_authority_fail_stop",
+      pid: process.pid,
+      reason: "lease lost",
+    });
+  });
+
+  it("still fail-stops if synchronous journal reporting fails", () => {
+    const exit = jest.fn((): never => {
+      throw Error("worker exited");
+    });
+    expect(() =>
+      __test__.failStopBillingAuthorityWorker({
+        err: new Error("lease lost"),
+        report: () => {
+          throw Error("stderr closed");
+        },
+        exit,
+      }),
+    ).toThrow("worker exited");
+    expect(exit).toHaveBeenCalledWith(1);
   });
 
   it("marks provider ambiguity and post-provider failures uncertain", () => {
