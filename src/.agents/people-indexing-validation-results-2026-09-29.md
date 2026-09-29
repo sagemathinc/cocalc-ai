@@ -3589,3 +3589,38 @@ browser fixture validates the actual component but does not replace end-to-end
 validation against a reachable deployed browser/hub/host combination. Live canary
 validation, independent release review and production enablement remain explicit
 release tasks; neither a deployment nor a production flag change was performed.
+
+### Completion Audit Follow-Up: Durable Outcomes And Real-Service Browser
+
+A host fence acknowledgment can be lost after a truncated/failed scan stops.
+Previously the next poll saw only the host's cancellation tombstone and could
+mislabel that partial result as cancelled. The owner now persists `finish_result`
+in its existing job before requesting the fence, retains it through retries, and
+commits the receipt only after exact acknowledgment. Stale success publication
+cannot bypass a pending terminal fence. Regression tests cover both entry-limit
+truncation and retry-limit failure with retained counters after a lost reply.
+Human cancellation also persists each dispatched child's `cancelling` state
+before RPC, so an unreachable host leaves both aggregate and per-project progress
+honest.
+
+`scan-browser.acceptance.test.ts` now connects the actual dialog in Chromium to
+separate-process home/owner/host services and isolated PostgreSQL over a loopback
+bridge with fixture-bound human principals. Scan RPC responses are real. The
+browser searches projects, starts a fixed all-project set spanning two owner
+bays, observes successful/unavailable results, reloads without submission,
+waits out the actual 60-second account cooldown without editing deadlines, and
+explicitly retries only the unsuccessful project. A second authenticated human
+cancels queued work, observes normal worker recovery, and reloads the same result.
+No project compute starts. The suite passed in 113.69 seconds including startup
+and cleanup. This strengthens the earlier controlled-response browser audit;
+it does not simulate a production browser login or the surrounding People shell.
+
+The shared browser bundle is used by both audits. Light/dark, narrow-width and
+200% zoom accessibility cases still pass. The focused batch/dispatch/legacy
+recovery suites pass (31 tests), as does server/reference typechecking.
+
+The user chose manual live-site validation instead of providing a browser target.
+The published [manual checklist](manual-scan-checklist-2026-09-29.md) specifies
+selection, two-tab behavior, reload, cancellation, partial results/retry,
+disable/reenable, keyboard/display and ordinary collaboration checks. Results
+are pending; do not infer completion of those live-site checks from the fixtures.

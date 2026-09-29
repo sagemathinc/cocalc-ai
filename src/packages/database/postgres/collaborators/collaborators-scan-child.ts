@@ -19,7 +19,9 @@ import { SCAN_PROJECT_INTERVAL_MS } from "@cocalc/util/collaboration-scan-batch"
 export async function prepareScanChild(
   opts: ScanChildRequest,
   authority: CollaborationOwnerAuthority,
-): Promise<ScanChild & { host_id?: string; job_id?: string }> {
+): Promise<
+  ScanChild & { host_id?: string; job_id?: string; finish_result?: ScanChild }
+> {
   uuid(opts.account_id, "scan account");
   uuid(opts.request_id, "scan request");
   uuid(opts.batch_id, "scan batch");
@@ -33,7 +35,7 @@ export async function prepareScanChild(
     ).rows[0];
     const prior = (
       await db.query(
-        `SELECT r.receipt,r.result,j.state,j.host_id,j.cancel_requested,j.progress
+        `SELECT r.receipt,r.result,j.state,j.host_id,j.cancel_requested,j.progress,j.finish_result
       FROM collaboration_scan_receipts r LEFT JOIN collaboration_scan_jobs j ON j.job_id::text=r.receipt->>'job_id'
       WHERE r.project_id=$1 AND r.account_id=$2 AND r.request_id=$3`,
         [opts.project_id, opts.account_id, opts.request_id],
@@ -65,6 +67,7 @@ export async function prepareScanChild(
         state: cancelling ? "cancelling" : "running",
         host_id: prior.host_id,
         job_id: prior.receipt.job_id,
+        finish_result: prior.finish_result ?? undefined,
       };
     }
     if (cancelling || (prior && !project.host_id)) {
@@ -154,6 +157,35 @@ async function receipt(
     ],
   );
 }
+/** Persist why the exact run is being fenced before sending the RPC. A host
+ * tombstone cannot reconstruct partial results after its acknowledgment is lost. */
+export async function stageScanChildFinish(
+  opts: ScanChildRequest,
+  authority: CollaborationOwnerAuthority,
+  result: ScanChild,
+): Promise<ScanChild> {
+  return transaction(async (db) => {
+    await assertCollaborationOwnerAuthority(db, opts.project_id, authority);
+    const prior = (
+      await db.query(
+        `SELECT receipt,result FROM collaboration_scan_receipts WHERE project_id=$1 AND account_id=$2 AND request_id=$3`,
+        [opts.project_id, opts.account_id, opts.request_id],
+      )
+    ).rows[0];
+    if (!prior || prior.receipt.batch_id !== opts.batch_id)
+      throw Error("scan child receipt missing");
+    if (prior.result) return prior.result;
+    const job = (
+      await db.query(
+        `UPDATE collaboration_scan_jobs SET finish_result=COALESCE(finish_result,$3::jsonb)
+       WHERE project_id=$1 AND job_id=$2 AND state='running' RETURNING finish_result`,
+        [opts.project_id, opts.request_id, JSON.stringify(result)],
+      )
+    ).rows[0];
+    if (!job) throw Error("scan execution missing before fence");
+    return job.finish_result;
+  });
+}
 /** Only after the host has acknowledged the fence (or bounded traversal ended).
  * Hold the same project lock as dispatch and admission, preserving cooldown.
  */
@@ -161,6 +193,7 @@ export async function finishScanChild(
   opts: ScanChildRequest,
   authority: CollaborationOwnerAuthority,
   result: ScanChild,
+  fenced = false,
 ) {
   return transaction(async (db) => {
     await assertCollaborationOwnerAuthority(db, opts.project_id, authority);
@@ -173,6 +206,16 @@ export async function finishScanChild(
     if (!prior || prior.receipt.batch_id !== opts.batch_id)
       throw Error("scan child receipt missing");
     if (prior.result) return prior.result as ScanChild;
+    const pending = (
+      await db.query(
+        "SELECT finish_result FROM collaboration_scan_jobs WHERE project_id=$1 AND job_id=$2",
+        [opts.project_id, opts.request_id],
+      )
+    ).rows[0]?.finish_result;
+    if (pending) {
+      if (!fenced) throw Error("scan terminal fence not acknowledged");
+      result = pending;
+    }
     await receipt(db, opts, result);
     await db.query(
       "DELETE FROM collaboration_scan_jobs WHERE project_id=$1 AND job_id=$2",

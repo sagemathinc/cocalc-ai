@@ -6,6 +6,7 @@ import getPool from "@cocalc/database/pool";
 import {
   prepareScanChild,
   finishScanChild,
+  stageScanChildFinish,
 } from "@cocalc/database/postgres/collaborators/collaborators-scan-child";
 import type { CollaborationOwnerAuthority } from "@cocalc/database/postgres/collaborators/collaborators-owner";
 import type {
@@ -24,7 +25,7 @@ export async function stepScanChild(
   if (scanChildTerminal(child.state) || opts.action === "inspect") return child;
   let unavailable = false;
   let deferredUntil: number | undefined;
-  if (child.state !== "cancelling") {
+  if (child.state !== "cancelling" && !child.finish_result) {
     try {
       const dispatch = await dispatchCollaborationScan(
         { ...opts, job_id: opts.request_id },
@@ -55,13 +56,20 @@ export async function stepScanChild(
     project_id: opts.project_id,
     run_id: child.job_id,
   };
-  if (child.state === "cancelling" || unavailable || deferredUntil) {
+  async function finishAfterFence(result: ScanChild) {
+    const pending = await stageScanChildFinish(opts, authority, result);
     const stopped = await host.cancelCollaborationReconciliation(request);
-    if (stopped.state !== "cancelled" || stopped.run_id !== child.job_id)
+    if (stopped.state !== "cancelled" || stopped.run_id !== request.run_id)
       throw Error("scan cancellation not acknowledged");
-    return finishScanChild(opts, authority, {
+    return finishScanChild(opts, authority, pending, true);
+  }
+  if (child.finish_result) return finishAfterFence(child.finish_result);
+  if (child.state === "cancelling" || unavailable || deferredUntil) {
+    return finishAfterFence({
       project_id: opts.project_id,
       request_id: opts.request_id,
+      entries: child.entries,
+      candidates: child.candidates,
       state:
         child.state === "cancelling"
           ? "cancelled"
@@ -105,10 +113,7 @@ export async function stepScanChild(
   ) {
     // Bounded partial traversal is a terminal, honest outcome. Fence retries
     // before freeing admission; do not leave blocked traversal running forever.
-    const stopped = await host.cancelCollaborationReconciliation(request);
-    if (stopped.run_id !== child.job_id || stopped.state !== "cancelled")
-      throw Error("partial scan fence not acknowledged");
-    return finishScanChild(opts, authority, {
+    return finishAfterFence({
       project_id: opts.project_id,
       request_id: opts.request_id,
       ...progress,

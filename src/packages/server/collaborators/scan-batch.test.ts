@@ -5,7 +5,10 @@
 import { randomUUID } from "node:crypto";
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { syncCollaborationScanSchema } from "@cocalc/database/postgres/collaborators/collaborators-scan";
-import { prepareScanChild } from "@cocalc/database/postgres/collaborators/collaborators-scan-child";
+import {
+  prepareScanChild,
+  finishScanChild,
+} from "@cocalc/database/postgres/collaborators/collaborators-scan-child";
 import {
   ensureScanBatchSchema,
   scanProjectsAtHome,
@@ -184,6 +187,9 @@ describeDb("manual scan LRO durability", () => {
     await due();
     await runScanBatchPass(step);
     expect((await api({ action: "status" })).operation?.cancelling).toBe(true);
+    expect((await api({ action: "status" })).operation?.children[0].state).toBe(
+      "cancelling",
+    );
     expect((await start()).operation?.op_id).toBe(result.operation?.op_id);
     await due();
     await runScanBatchPass(step);
@@ -382,4 +388,52 @@ describeDb("manual scan LRO durability", () => {
       ).rows,
     ).toHaveLength(0);
   });
+  test.each(["entry_limit", "retry_limit"])(
+    "lost terminal-fence acknowledgment preserves %s outcome and counters",
+    async (reason) => {
+      const result = await start();
+      await runScanBatchPass(step);
+      const run_id = result.operation!.children[0].request_id;
+      status.mockResolvedValue({
+        state: "partial",
+        run_id,
+        blocked_reason: reason,
+        entries: 100,
+        candidates: 3,
+      });
+      cancel.mockImplementationOnce(async () => {
+        status.mockResolvedValue({ state: "cancelled", run_id });
+        throw Error("acknowledgment lost after host stopped");
+      });
+      await due();
+      await runScanBatchPass(step);
+      expect((await api({ action: "status" })).operation?.status).toBe(
+        "running",
+      );
+      expect((await start()).operation?.op_id).toBe(result.operation!.op_id);
+      await expect(
+        finishScanChild(
+          {
+            account_id,
+            project_id,
+            request_id: run_id,
+            batch_id: result.operation!.op_id,
+            action: "start",
+          },
+          authority,
+          { project_id, request_id: run_id, state: "successful" },
+        ),
+      ).rejects.toThrow("fence not acknowledged");
+      await due();
+      await runScanBatchPass(step);
+      const final = (await api({ action: "status" })).operation!;
+      expect(final.status).toBe("failed");
+      expect(final.children[0]).toMatchObject({
+        state: reason === "retry_limit" ? "failed" : "truncated",
+        entries: 100,
+        candidates: 3,
+      });
+      expect(cancel).toHaveBeenCalledTimes(2);
+    },
+  );
 });

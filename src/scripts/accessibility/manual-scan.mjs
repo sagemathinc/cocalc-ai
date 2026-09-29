@@ -1,14 +1,11 @@
 // Render the real Scan dialog and keyboard boundary with a deterministic RPC
 // fixture. This validates browser behavior, not a deployed hub or host.
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { createServer } from "node:http";
-const root = resolve(import.meta.dirname, "../..");
-const require = createRequire(join(root, "packages/frontend/package.json"));
-const { build } = require("esbuild");
+import { root, require, scanBrowserBundle } from "./manual-scan-bundle.mjs";
 const { chromium } = require("@playwright/test");
 const temp = await mkdtemp(join(tmpdir(), "manual-scan-browser-"));
 const projects = Array.from({ length: 30 }, (_, i) => ({
@@ -20,61 +17,7 @@ let operation,
 const starts = [];
 let server, browser;
 try {
-  await build({
-    stdin: {
-      contents: `
-      import React from 'react'; import {createRoot} from 'react-dom/client';
-      import {ConfigProvider,theme} from 'antd';
-      import {ScanProjects} from '${join(root, "packages/frontend/collaborators/scan-projects.tsx")}';
-      const dark=new URL(location.href).searchParams.has('dark');
-      document.body.style.background=dark?'#141414':'white';document.body.style.color=dark?'white':'black';
-      createRoot(document.getElementById('root')).render(<ConfigProvider theme={{algorithm:dark?theme.darkAlgorithm:theme.defaultAlgorithm,token:{motion:false}}}>
-      <ScanProjects accountId="fixture" api={{scanProjects:async input=>{const r=await fetch('/rpc',{method:'POST',body:JSON.stringify(input)});return r.json();}}}/></ConfigProvider>);
-    `,
-      loader: "tsx",
-      resolveDir: join(root, "packages/frontend"),
-    },
-    outfile: join(temp, "app.js"),
-    bundle: true,
-    platform: "browser",
-    jsx: "automatic",
-    define: { "process.env.NODE_ENV": '"production"' },
-    plugins: [
-      {
-        name: "fixture-dependencies",
-        setup(build) {
-          build.onResolve(
-            { filter: /^@cocalc\/frontend\/app-framework$/ },
-            () => ({ path: "redux", namespace: "fixture" }),
-          );
-          build.onResolve({ filter: /^@cocalc\/util\/misc$/ }, () => ({
-            path: "uuid",
-            namespace: "fixture",
-          }));
-          build.onLoad({ filter: /.*/, namespace: "fixture" }, (args) => ({
-            contents:
-              args.path === "redux"
-                ? "export const redux={getActions:()=>undefined};"
-                : "export const uuid=()=>crypto.randomUUID();",
-          }));
-          build.onResolve({ filter: /^@cocalc\/frontend\// }, async (args) => {
-            const name = join(
-              root,
-              "packages/frontend",
-              args.path.replace("@cocalc/frontend/", ""),
-            );
-            for (const ext of [".tsx", ".ts"]) {
-              try {
-                await readFile(name + ext);
-                return { path: name + ext };
-              } catch {}
-            }
-          });
-        },
-      },
-    ],
-  });
-  const bundle = await readFile(join(temp, "app.js"));
+  const bundle = await scanBrowserBundle(temp);
   const axe = await readFile(
     join(root, "node_modules/axe-core/axe.min.js"),
     "utf8",

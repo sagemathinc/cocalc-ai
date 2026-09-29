@@ -135,7 +135,8 @@ export async function syncCollaborationScanSchema(
   await db.query(`ALTER TABLE collaboration_scan_jobs
     ADD COLUMN IF NOT EXISTS batch_id UUID,
     ADD COLUMN IF NOT EXISTS cancel_requested BOOLEAN NOT NULL DEFAULT false,
-    ADD COLUMN IF NOT EXISTS progress JSONB`);
+    ADD COLUMN IF NOT EXISTS progress JSONB,
+    ADD COLUMN IF NOT EXISTS finish_result JSONB`);
   await db.query(`CREATE INDEX IF NOT EXISTS collaboration_scan_jobs_due
     ON collaboration_scan_jobs(state,created_at,project_id)`);
   await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS collaboration_scan_jobs_state

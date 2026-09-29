@@ -377,8 +377,8 @@ export async function runScanBatchPass(
           return;
         }
         await db.query(
-          "UPDATE collaboration_scan_batch_children SET dispatched=true,updated_at=now() WHERE op_id=$1 AND project_id=$2",
-          [op.op_id, child.project_id],
+          "UPDATE collaboration_scan_batch_children SET dispatched=true,state=CASE WHEN $3 THEN 'cancelling' ELSE state END,updated_at=now() WHERE op_id=$1 AND project_id=$2",
+          [op.op_id, child.project_id, !!current.input.cancel_requested],
         );
         return current.input.cancel_requested
           ? ("cancel" as const)
