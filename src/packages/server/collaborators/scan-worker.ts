@@ -34,6 +34,29 @@ export async function runCollaborationScanPass() {
   const deadline = Date.now() + 60_000;
   try {
     const authority = { owning_bay_id };
+    // Give cold queued work a bounded opportunity before slow host RPCs.
+    const cleanupDeadline = Date.now() + 5_000;
+    const stale = await listCollaborationScanRetirementCandidates(authority);
+    for (const job of stale.slice(0, 20)) {
+      if (
+        Date.now() >= cleanupDeadline ||
+        process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE !== "1"
+      )
+        break;
+      try {
+        if (await retireExpiredQueuedCollaborationScan(job, authority))
+          result.retired++;
+      } catch {
+        // The cursor already advanced. A fenced project cannot starve its peers.
+        result.retirement_errors++;
+        logger.debug("scan retirement deferred", { job_id: job.job_id });
+      }
+    }
+    if (
+      Date.now() >= deadline ||
+      process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE !== "1"
+    )
+      return result;
     const candidates = await listCollaborationScanDispatchCandidates(authority);
     for (const request of candidates.slice(0, 20)) {
       // This bounds new starts, not the duration of an already in-flight RPC.
@@ -55,27 +78,6 @@ export async function runCollaborationScanPass() {
         logger.debug("scan dispatch outcome unknown", {
           job_id: request.job_id,
         });
-      }
-    }
-    if (
-      Date.now() < deadline &&
-      process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE === "1"
-    ) {
-      const stale = await listCollaborationScanRetirementCandidates(authority);
-      for (const job of stale.slice(0, 20)) {
-        if (
-          Date.now() >= deadline ||
-          process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE !== "1"
-        )
-          break;
-        try {
-          if (await retireExpiredQueuedCollaborationScan(job, authority))
-            result.retired++;
-        } catch {
-          // The cursor already advanced. A fenced project cannot starve its peers.
-          result.retirement_errors++;
-          logger.debug("scan retirement deferred", { job_id: job.job_id });
-        }
       }
     }
     return result;

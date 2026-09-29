@@ -993,3 +993,15 @@ requiring all retirement calls to preserve the live job and the final row to be
 running. All five acceptance cases and the server build pass. This validates
 concurrent transactions in one owner fixture process; it neither forces both
 lock orderings nor establishes multi-process load or rehome recovery behavior.
+
+### Cleanup Opportunity Before Host Dispatch
+
+Cleanup now runs before host dispatch, removing the earlier possibility that
+every pass spends its deadline on host calls and never visits stale queued jobs.
+It keeps the twenty-entry cap and stops starting retirements after five seconds,
+leaving the remainder of the sixty-second pass window for dispatch. New fake-clock
+tests verify cleanup occurs before a host call consumes the deadline and that
+cleanup stops additional attempts while dispatch can still proceed. Server build
+and all eleven worker/unit-store integration tests pass. The deadline does not
+cancel in-flight database queries; hard query timeouts, sustained contention and
+eventual cleanup latency remain unvalidated.

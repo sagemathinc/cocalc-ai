@@ -43,6 +43,7 @@ test("disabled does not query", async () => {
   delete process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE;
   expect((await runCollaborationScanPass()).attempted).toBe(0);
   expect(listCollaborationScanDispatchCandidates).not.toHaveBeenCalled();
+  expect(listCollaborationScanRetirementCandidates).not.toHaveBeenCalled();
 });
 test("caps sequential attempts and preserves unknown outcomes", async () => {
   (listCollaborationScanDispatchCandidates as jest.Mock).mockResolvedValue(
@@ -74,7 +75,7 @@ test("disable between steps stops the pass", async () => {
     return { state: "discovered" };
   });
   expect((await runCollaborationScanPass()).attempted).toBe(1);
-  expect(listCollaborationScanRetirementCandidates).not.toHaveBeenCalled();
+  expect(listCollaborationScanRetirementCandidates).toHaveBeenCalledTimes(1);
 });
 test("retirement is bounded and a fenced job does not stop its peers", async () => {
   (listCollaborationScanRetirementCandidates as jest.Mock).mockResolvedValue(
@@ -106,4 +107,52 @@ test("overlapping pass skips work and guard is released after selection failure"
   );
   await expect(runCollaborationScanPass()).rejects.toThrow("database");
   expect((await runCollaborationScanPass()).attempted).toBe(1);
+});
+test("cleanup precedes a host call that exhausts the pass deadline", async () => {
+  let now = 0;
+  const clock = jest.spyOn(Date, "now").mockImplementation(() => now);
+  try {
+    (listCollaborationScanRetirementCandidates as jest.Mock).mockResolvedValue([
+      request,
+    ]);
+    (retireExpiredQueuedCollaborationScan as jest.Mock).mockResolvedValue(true);
+    (listCollaborationScanDispatchCandidates as jest.Mock).mockResolvedValue([
+      request,
+      request,
+    ]);
+    (dispatchCollaborationScan as jest.Mock).mockImplementation(async () => {
+      expect(retireExpiredQueuedCollaborationScan).toHaveBeenCalledTimes(1);
+      now = 61000;
+      return { state: "running" };
+    });
+    expect(await runCollaborationScanPass()).toMatchObject({
+      retired: 1,
+      attempted: 1,
+    });
+  } finally {
+    clock.mockRestore();
+  }
+});
+test("cleanup stops new attempts after five seconds and leaves time for dispatch", async () => {
+  let now = 0;
+  const clock = jest.spyOn(Date, "now").mockImplementation(() => now);
+  try {
+    (listCollaborationScanRetirementCandidates as jest.Mock).mockResolvedValue([
+      request,
+      request,
+    ]);
+    (retireExpiredQueuedCollaborationScan as jest.Mock).mockImplementation(
+      async () => {
+        now = 5001;
+        return true;
+      },
+    );
+    expect(await runCollaborationScanPass()).toMatchObject({
+      retired: 1,
+      attempted: 1,
+    });
+    expect(retireExpiredQueuedCollaborationScan).toHaveBeenCalledTimes(1);
+  } finally {
+    clock.mockRestore();
+  }
 });
