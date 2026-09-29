@@ -1231,3 +1231,24 @@ scheduling remain open; no automatic schema installation or worker was enabled.
 Server build, two PGlite receiver tests and seven table-ownership tests pass.
 Tests cover initial pending catch-up, hints during completion, duplicate hints,
 stale registration responses, wrong owner/home/lease and expired receivers.
+
+### Owner-To-Home Revision Dispatch
+
+Added an explicit, default-off dispatch step and trusted inter-bay wakeup
+endpoint. Dispatch claims the exact owner interest, sends a metadata-free
+wakeup to its home, and settles only after a positive durable receiver result.
+Transport exceptions and missing/unarmed receivers retain the delivery claim
+until expiry. Stale settlement returns deferred, never acknowledgment.
+
+The receiving endpoint checks the local destination bay, current project-owner
+directory route, and exact live receiver lease through the store. Both sides
+require People and demand/revision prototype gates. No public API or automatic
+dispatch timer was added. Receiver arming is still an explicit test setup;
+production demand-to-registration-to-arming orchestration remains unfinished.
+
+Server build, 36 API/dispatch tests and seventeen isolated authenticated-fabric
+acceptance cases pass. The new fabric case first rejects an unarmed receiver
+without advancing owner ACK, then verifies that a retried dispatch leaves a
+durable dirty home record before owner settlement. A repeated dispatch has no
+pending claim. This does not establish shared delta application, process-crash
+recovery, rehome/restore behavior or scale readiness.

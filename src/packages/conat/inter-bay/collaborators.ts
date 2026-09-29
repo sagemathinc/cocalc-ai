@@ -110,6 +110,12 @@ type RoutedApi = {
   ) => ReturnType<CollaboratorsApi[K]>;
 };
 export type InterBayCollaboratorsApi = RoutedApi & {
+  receiveRevisionWakeup(opts: {
+    project_id: string;
+    owner_bay_id: string;
+    lease_id: string;
+    route: CollaborationRoute;
+  }): Promise<{ accepted: boolean }>;
   inspectProjectDemand(opts: {
     project_id: string;
     account_id: string;

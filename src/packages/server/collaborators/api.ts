@@ -458,6 +458,28 @@ export async function sourcePage(opts: {
 
 /** Trusted fabric only; reject stale destinations rather than forwarding loops. */
 export const collaboratorsControl: InterBayCollaboratorsApi = {
+  async receiveRevisionWakeup(opts) {
+    if (process.env.COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE !== "1")
+      throw Error("revision interest prototype disabled");
+    await demandEnabled();
+    uuid(opts.project_id, "project_id");
+    uuid(opts.lease_id, "interest lease");
+    const home_bay_id = getConfiguredBayId();
+    if (opts.route?.bay_id !== home_bay_id)
+      throw Error("stale revision receiver route");
+    const owner = await resolveProjectBay(opts.project_id);
+    if (!owner || owner.bay_id !== opts.owner_bay_id)
+      throw Error("stale revision sender route");
+    const { receiveCollaborationRevisionWakeup } =
+      await import("@cocalc/database/postgres/collaborators/collaborators-revision-receiver");
+    const sequence = await receiveCollaborationRevisionWakeup({
+      project_id: opts.project_id,
+      home_bay_id,
+      owner_bay_id: owner.bay_id,
+      lease_id: opts.lease_id,
+    });
+    return { accepted: sequence !== null };
+  },
   async registerRevisionInterest(opts) {
     if (process.env.COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE !== "1")
       throw Error("revision interest prototype disabled");

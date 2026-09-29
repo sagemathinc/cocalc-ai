@@ -14,6 +14,13 @@ const owner = jest.fn();
 const scanReserve = jest.fn();
 const scanAdmit = jest.fn();
 const revisionInterest = jest.fn();
+const revisionWakeup = jest.fn();
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-revision-receiver",
+  () => ({
+    receiveCollaborationRevisionWakeup: (...args) => revisionWakeup(...args),
+  }),
+);
 jest.mock(
   "@cocalc/database/postgres/collaborators/collaborators-revision-interest",
   () => ({
@@ -254,6 +261,57 @@ beforeEach(() => {
   ingest.mockResolvedValue({ revision: 1, replayed: false });
 });
 
+test("revision wakeups bind the receiving home and current project owner", async () => {
+  const flags = [
+    "COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE",
+    "COCALC_PEOPLE_DEMAND_PROTOTYPE",
+  ];
+  const prior = flags.map((name) => process.env[name]);
+  flags.forEach((name) => (process.env[name] = "1"));
+  const request = {
+    project_id,
+    lease_id: randomUUID(),
+    owner_bay_id: "owner",
+    route: { bay_id: "home" },
+  };
+  try {
+    revisionWakeup.mockResolvedValue("2");
+    expect(await collaboratorsControl.receiveRevisionWakeup(request)).toEqual({
+      accepted: true,
+    });
+    expect(revisionWakeup).toHaveBeenCalledWith({
+      project_id,
+      lease_id: request.lease_id,
+      owner_bay_id: "owner",
+      home_bay_id: "home",
+    });
+    revisionWakeup.mockResolvedValue(null);
+    expect(await collaboratorsControl.receiveRevisionWakeup(request)).toEqual({
+      accepted: false,
+    });
+    await expect(
+      collaboratorsControl.receiveRevisionWakeup({
+        ...request,
+        owner_bay_id: "wrong",
+      }),
+    ).rejects.toThrow("stale revision sender");
+    await expect(
+      collaboratorsControl.receiveRevisionWakeup({
+        ...request,
+        route: { bay_id: "wrong" },
+      }),
+    ).rejects.toThrow("stale revision receiver");
+    delete process.env.COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE;
+    await expect(
+      collaboratorsControl.receiveRevisionWakeup(request),
+    ).rejects.toThrow("disabled");
+  } finally {
+    flags.forEach((name, i) => {
+      if (prior[i] === undefined) delete process.env[name];
+      else process.env[name] = prior[i];
+    });
+  }
+});
 test("revision interests derive the home and require project-scoped demand", async () => {
   const flags = [
     "COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE",

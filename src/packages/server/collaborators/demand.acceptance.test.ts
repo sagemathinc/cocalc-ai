@@ -19,6 +19,7 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
     await demand("install");
     await env.worker("b").call("demand", { operation: "install" });
     await env.worker("owner").call("installRevisionInterest");
+    await env.worker("a").call("installRevisionReceiver");
   }, 240000);
   afterAll(async () => await env?.close(), 60000);
   beforeEach(async () => {
@@ -102,6 +103,65 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
       new Date(row.grace_until).getTime(),
     );
     expect(interest.expires_at).toBeGreaterThan(Date.now());
+  }, 60000);
+  test("revision dispatch durably wakes the registered home before acknowledging", async () => {
+    await env.sql(
+      "owner",
+      "DELETE FROM collaboration_revision_interests WHERE project_id=$1",
+      [env.project],
+    );
+    await demand("acquire", {
+      consumer_id: randomUUID(),
+      scope: { kind: "all" },
+    });
+    const lease = await env.worker("b").call("registerRevisionInterest");
+    await env.sql(
+      "owner",
+      `INSERT INTO collaboration_projects(project_id,generation,revision) VALUES($1,$2,1)
+      ON CONFLICT(project_id) DO UPDATE SET revision=collaboration_projects.revision+1`,
+      [env.project, randomUUID()],
+    );
+    const request = {
+      project_id: env.project,
+      home_bay_id: env.bays[1],
+      lease_id: lease.lease_id,
+    };
+    expect(
+      await env.worker("owner").call("dispatchRevisionHint", request),
+    ).toEqual({ state: "deferred" });
+    const [unacked] = await env.sql(
+      "owner",
+      "SELECT ack_generation FROM collaboration_revision_interests WHERE project_id=$1",
+      [env.project],
+    );
+    expect(unacked.ack_generation).toBeNull();
+    expect(
+      await env
+        .worker("a")
+        .call("armRevisionReceiver", {
+          ...request,
+          owner_bay_id: env.bays[0],
+          expected_lease_id: null,
+          ttl_ms: 60000,
+        }),
+    ).toBe(true);
+    await env.sql(
+      "owner",
+      "UPDATE collaboration_revision_interests SET delivery_until=clock_timestamp()-interval '1 second' WHERE project_id=$1",
+      [env.project],
+    );
+    expect(
+      await env.worker("owner").call("dispatchRevisionHint", request),
+    ).toEqual({ state: "acknowledged" });
+    const [received] = await env.sql(
+      "a",
+      "SELECT dirty_seq::text,applied_seq::text FROM collaboration_revision_receivers WHERE project_id=$1",
+      [env.project],
+    );
+    expect(received).toEqual({ dirty_seq: "2", applied_seq: "0" });
+    expect(
+      await env.worker("owner").call("dispatchRevisionHint", request),
+    ).toEqual({ state: "deferred" });
   }, 60000);
   test("authenticated demand calls bind the caller and cannot release another account's lease", async () => {
     expect((await env.hub("a", "check", {})).demand_supported).toBeUndefined();

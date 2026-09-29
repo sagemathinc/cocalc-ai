@@ -835,6 +835,22 @@ async function command(name, args = {}) {
       process.env.COCALC_PEOPLE_DEMAND_PROTOTYPE = "1";
       return true;
     }
+    case "installRevisionReceiver": {
+      await require("@cocalc/database/postgres/collaborators/collaborators-revision-receiver").syncCollaborationRevisionReceiverSchema(
+        pool,
+      );
+      process.env.COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE = "1";
+      process.env.COCALC_PEOPLE_DEMAND_PROTOTYPE = "1";
+      return true;
+    }
+    case "armRevisionReceiver":
+      return require("@cocalc/database/postgres/collaborators/collaborators-revision-receiver").armCollaborationRevisionReceiver(
+        args,
+      );
+    case "dispatchRevisionHint":
+      return require("@cocalc/server/collaborators/revision-dispatch").dispatchCollaborationRevisionHint(
+        args,
+      );
     case "registerRevisionInterest": {
       const route =
         await require("@cocalc/server/inter-bay/directory").resolveProjectBay(
