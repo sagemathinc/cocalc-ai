@@ -3,6 +3,8 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import getLogger from "@cocalc/backend/logger";
+import getPool from "@cocalc/database/pool";
+import { syncCollaborationDemandSchema } from "@cocalc/database/postgres/collaborators/collaborators-demand";
 import { runCollaborationFanoutPass } from "@cocalc/server/notifications/collaboration-fanout";
 import {
   indexingWork,
@@ -165,6 +167,8 @@ export async function startCollaboratorsMaintenance() {
   try {
     await syncCollaboratorsSchema();
     await ensureCollaborationNotificationSchema();
+    if (process.env.COCALC_PEOPLE_DEMAND_PROTOTYPE === "1")
+      await syncCollaborationDemandSchema(getPool());
   } catch (err) {
     if (lifecycle === cycle) stopped = true;
     throw err;

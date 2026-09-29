@@ -314,3 +314,31 @@ scheduler/fanout acceptance tests pass. The scheduler test also passes with an
 explicit disable after ingestion and reenable before delivery, preserving queued
 work. The completed project returns no job on another maintenance pass. These
 tests do not establish fairness or throughput under the planned load matrix.
+
+## Authenticated Demand Admission
+
+Shared types and account-authenticated acquire/renew/release/inspect methods now
+route demand to the current account home. Both public admission and internal
+home methods require the People flag and `COCALC_PEOPLE_DEMAND_PROTOTYPE=1`.
+Maintenance startup installs the prototype store only when opted in. The
+transport binds the caller's account ID and rejects anonymous, project, host,
+and agent principals; scoped programmatic agent admission remains a separate
+unfinished requirement, not implicit authority granted by this API.
+
+Demand still registers interest only. It does not create access rows, enumerate
+memberships, or grant metadata access. Standalone Lite reports the operation as
+unsupported. The ownership manifest classifies leases as rebuildable ephemeral
+account-home scheduling state; clients reacquire at the current home rather
+than treating old-home leases as durable user state.
+
+Validation: server and Lite TypeScript builds, seven transport-policy tests,
+30 server API tests, seven ownership tests, and six isolated PostgreSQL demand
+tests pass. The authenticated path ignores forged account IDs and prevents a
+second account from releasing the first account's lease. Store coverage retains
+quota, renewal, expiry, grace, wrong-home, and banned-account cases.
+
+Next remains activation/catch-up scheduling and visible-view integration, then
+retiring universal enumeration/renewal. The prototype's 16-registration cap
+still includes grace rows; revisit that stricter policy against the planned
+16-live-consumer contract during aggregation work. No account sleep or scale
+gate is passed by admission alone.

@@ -1448,6 +1448,18 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
     },
   ),
 
+  ...adHocEntries(["collaboration_demand"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "rebuildable",
+    source: "database/postgres/collaborators/collaborators-demand.ts",
+    migrate_to_schema: true,
+    notes:
+      "Short-lived view scheduling leases, never access grants or canonical user state. Home routing and account rehome fences guard admission.",
+    rebuild:
+      "Consumers reacquire bounded interest at the current home after expiry or rehome; old-home leases may expire without transfer.",
+  }),
+
   ...adHocEntries(["membership_trial_claims"], {
     ownership: "seed-global",
     authority: "seed",

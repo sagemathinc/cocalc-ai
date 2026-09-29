@@ -8,6 +8,7 @@ import {
   authFirstRequireAccountWithBoundSession,
 } from "./util";
 import type { PeopleInvitationsApi } from "@cocalc/util/people-invitations";
+import type { CollaborationDemandApi } from "@cocalc/util/collaboration-demand";
 import type { PeopleInvitationDiscoveryApi } from "@cocalc/util/people-invitation-discovery";
 import type {
   PeopleContactQuery,
@@ -47,7 +48,10 @@ import type {
 } from "@cocalc/util/collaborators";
 
 export interface CollaboratorsApi
-  extends PeopleInvitationsApi, PeopleInvitationDiscoveryApi {
+  extends
+    PeopleInvitationsApi,
+    PeopleInvitationDiscoveryApi,
+    CollaborationDemandApi {
   listPeopleContacts(
     opts: Omit<PeopleContactQuery, "account_id"> & { account_id?: string },
   ): Promise<PeopleContactPage>;
@@ -237,6 +241,10 @@ export const collaborators = {
   getPeopleContact: authFirstRequireAccount,
   listInvitationHistory: authFirstRequireAccount,
   getInvitationCounts: authFirstRequireAccount,
+  acquireDemand: authFirstRequireAccount,
+  renewDemand: authFirstRequireAccount,
+  releaseDemand: authFirstRequireAccount,
+  inspectDemand: authFirstRequireAccount,
   resolveChatAlias: authFirstRequireAccount,
   resolvePersonAlias: authFirstRequireAccount,
   getPersonAlias: authFirstRequireAccount,

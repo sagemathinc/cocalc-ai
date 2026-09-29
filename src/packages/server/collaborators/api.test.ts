@@ -505,6 +505,30 @@ test("disabled rollout does not enumerate or backfill account projections", asyn
   expect(seed).not.toHaveBeenCalled();
   expect(claimAccess).not.toHaveBeenCalled();
 });
+
+test("demand admission remains disabled until explicit prototype opt-in", async () => {
+  const previous = process.env.COCALC_PEOPLE_DEMAND_PROTOTYPE;
+  delete process.env.COCALC_PEOPLE_DEMAND_PROTOTYPE;
+  try {
+    await expect(
+      collaboratorsApi.acquireDemand({
+        account_id,
+        consumer_id: randomUUID(),
+        scope: { kind: "all" },
+      }),
+    ).rejects.toThrow("prototype is not enabled");
+    await expect(
+      collaboratorsControl.inspectDemand({
+        account_id,
+        route: { bay_id: "home" },
+      }),
+    ).rejects.toThrow("prototype is not enabled");
+    expect(home).not.toHaveBeenCalled();
+  } finally {
+    if (previous !== undefined)
+      process.env.COCALC_PEOPLE_DEMAND_PROTOTYPE = previous;
+  }
+});
 test("disabled source registration supplies the atomic no-new-sources fence", async () => {
   settings.mockResolvedValue({ collaborators_enabled: false });
   bay = "owner";

@@ -24,6 +24,30 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
     await env.sql("a", "DELETE FROM collaboration_demand");
   });
 
+  test("authenticated demand calls bind the caller and cannot release another account's lease", async () => {
+    const first = await env.hub("a", "acquireDemand", {
+      account_id: env.accounts[1],
+      consumer_id: randomUUID(),
+      scope: { kind: "all" },
+    });
+    expect((await env.hub("a", "inspectDemand", {})).active_consumers).toBe(1);
+    expect((await env.hub("b", "inspectDemand", {})).active_consumers).toBe(0);
+    expect(
+      await env.hub("b", "releaseDemand", {
+        ...first,
+        account_id: env.accounts[0],
+      }),
+    ).toEqual({ released: false });
+    expect((await env.hub("a", "renewDemand", first)).renewed).toBe(false);
+    expect(await env.hub("a", "releaseDemand", first)).toEqual({
+      released: true,
+    });
+    expect((await env.hub("a", "inspectDemand", {})).state).toBe("grace");
+    expect(await env.sql("a", "SELECT * FROM collaboration_access")).toEqual(
+      [],
+    );
+  });
+
   test("retry and early renewal do not extend the lease; scopes are canonical", async () => {
     const consumer_id = randomUUID();
     const opts = {

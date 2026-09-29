@@ -3,6 +3,12 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import type { CollaboratorsApi } from "@cocalc/conat/hub/api/collaborators";
+import {
+  acquireCollaborationDemand,
+  renewCollaborationDemand,
+  releaseCollaborationDemand,
+  inspectCollaborationDemand,
+} from "@cocalc/database/postgres/collaborators/collaborators-demand";
 import { invitationPublicApi, invitationControlApi } from "./invitations-api";
 import { receiveCollaborationNotificationObligation } from "@cocalc/server/notifications/collaboration-obligation";
 import { normalizePrivateAlias } from "@cocalc/util/private-alias";
@@ -100,6 +106,11 @@ async function enabled() {
   if (!(await getServerSettings()).collaborators_enabled)
     throw Error("Collaborators is not enabled on this server");
 }
+async function demandEnabled() {
+  await enabled();
+  if (process.env.COCALC_PEOPLE_DEMAND_PROTOTYPE !== "1")
+    throw Error("People demand prototype is not enabled");
+}
 async function accountRevision(account_id: string, since?: string) {
   const pins = await accountProjectPins(conat(), account_id).revision();
   return checkCollaborationRevision(account_id, since, pins);
@@ -196,6 +207,30 @@ async function writer<T>(
 
 /** Public hub calls already have their principal injected by auth-first handlers. */
 export const collaboratorsApi: CollaboratorsApi = {
+  async acquireDemand(opts) {
+    await demandEnabled();
+    return home(opts.account_id, (api, route) =>
+      api.acquireDemand({ ...opts, route }),
+    );
+  },
+  async renewDemand(opts) {
+    await demandEnabled();
+    return home(opts.account_id, (api, route) =>
+      api.renewDemand({ ...opts, route }),
+    );
+  },
+  async releaseDemand(opts) {
+    await demandEnabled();
+    return home(opts.account_id, (api, route) =>
+      api.releaseDemand({ ...opts, route }),
+    );
+  },
+  async inspectDemand(opts) {
+    await demandEnabled();
+    return home(opts.account_id, (api, route) =>
+      api.inspectDemand({ ...opts, route }),
+    );
+  },
   ...invitationPublicApi,
   async resolveChatAlias(opts) {
     await enabled();
@@ -421,6 +456,32 @@ export async function sourcePage(opts: {
 
 /** Trusted fabric only; reject stale destinations rather than forwarding loops. */
 export const collaboratorsControl: InterBayCollaboratorsApi = {
+  async acquireDemand(opts) {
+    await demandEnabled();
+    await checkHome(opts.account_id, opts.route);
+    return acquireCollaborationDemand({
+      ...opts,
+      account_id: opts.account_id!,
+    });
+  },
+  async renewDemand(opts) {
+    await demandEnabled();
+    await checkHome(opts.account_id, opts.route);
+    return renewCollaborationDemand({ ...opts, account_id: opts.account_id! });
+  },
+  async releaseDemand(opts) {
+    await demandEnabled();
+    await checkHome(opts.account_id, opts.route);
+    return releaseCollaborationDemand({
+      ...opts,
+      account_id: opts.account_id!,
+    });
+  },
+  async inspectDemand(opts) {
+    await demandEnabled();
+    await checkHome(opts.account_id, opts.route);
+    return inspectCollaborationDemand(opts.account_id!);
+  },
   ...invitationControlApi,
   async resolveChatAlias(opts) {
     await checkHome(opts.account_id, opts.route);

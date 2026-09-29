@@ -828,8 +828,11 @@ async function command(name, args = {}) {
     }
     case "demand": {
       const demand = require("@cocalc/database/postgres/collaborators/collaborators-demand");
-      if (args.operation === "install")
-        return demand.syncCollaborationDemandSchema(pool);
+      if (args.operation === "install") {
+        await demand.syncCollaborationDemandSchema(pool);
+        process.env.COCALC_PEOPLE_DEMAND_PROTOTYPE = "1";
+        return null;
+      }
       const account_id = config.accounts[config.role === "a" ? 0 : 1];
       switch (args.operation) {
         case "acquire":

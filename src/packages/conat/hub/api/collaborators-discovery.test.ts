@@ -5,6 +5,10 @@
 import { initHubApi, transformArgs } from "./index";
 
 test.each([
+  ["acquireDemand", { consumer_id: "consumer", scope: { kind: "all" } }],
+  ["renewDemand", { consumer_id: "consumer", lease_id: "lease" }],
+  ["releaseDemand", { consumer_id: "consumer", lease_id: "lease" }],
+  ["inspectDemand", {}],
   ["resolveInvitationRecipient", { query: "Ada" }],
   [
     "listInvitationProjects",

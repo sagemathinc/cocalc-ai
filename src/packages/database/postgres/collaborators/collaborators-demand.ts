@@ -8,9 +8,11 @@ import type { PoolClient } from "@cocalc/database/pool";
 import { withAccountRehomeWriteFence } from "../account-rehome-fence";
 import { uuid } from "./collaborators-common";
 
-export type CollaborationDemandScope =
-  | { kind: "all" }
-  | { kind: "projects"; project_ids: string[] };
+import type {
+  CollaborationDemandScope,
+  CollaborationDemandState,
+} from "@cocalc/util/collaboration-demand";
+export type { CollaborationDemandScope } from "@cocalc/util/collaboration-demand";
 
 export const DEMAND_LEASE_MS = 120_000;
 export const DEMAND_RENEW_MS = 30_000;
@@ -196,7 +198,9 @@ export async function releaseCollaborationDemand(opts: {
 }
 
 /** Scheduling interest only. This must never grant metadata or content access. */
-export async function inspectCollaborationDemand(account_id: string) {
+export async function inspectCollaborationDemand(
+  account_id: string,
+): Promise<CollaborationDemandState> {
   return onHome(account_id, async (db, now) => {
     const { rows } = await db.query(
       "SELECT * FROM collaboration_demand WHERE account_id=$1 AND grace_until>$2",

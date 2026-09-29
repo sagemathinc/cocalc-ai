@@ -301,6 +301,26 @@ export class LiteCollaborators {
       },
     });
     this.api = {
+      acquireDemand: async () => {
+        throw Error(
+          "People demand scheduling is not supported in standalone Lite",
+        );
+      },
+      renewDemand: async () => {
+        throw Error(
+          "People demand scheduling is not supported in standalone Lite",
+        );
+      },
+      releaseDemand: async () => {
+        throw Error(
+          "People demand scheduling is not supported in standalone Lite",
+        );
+      },
+      inspectDemand: async () => {
+        throw Error(
+          "People demand scheduling is not supported in standalone Lite",
+        );
+      },
       // Standalone Lite has no other accounts or project invitation service.
       listPeopleContacts: async (opts) => {
         await this.assertHuman(opts.account_id);
