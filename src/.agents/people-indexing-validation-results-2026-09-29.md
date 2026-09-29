@@ -2201,3 +2201,33 @@ reporter time budget. Initial installation timings are not constant-time claims.
 Fixture draining still bypasses delivery, so these results establish neither
 initial delivery latency nor DAU capacity. No production mode was enabled. The
 full workload matrix, lifecycle integration and soak gates remain open.
+
+### Independently Scheduled Scan Dispatch
+
+`startCollaboratorsMaintenance` now installs the Scan schema and a separate
+one-second-after-completion timer when `COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE=1`
+at startup. No timer or Scan schema is installed without that explicit opt-in.
+Each tick also checks the current prototype flag and `collaborators_enabled`.
+Scan RPC latency does not serialize invitation fanout, projection maintenance,
+or access renewal behind this worker. This schedules existing admitted jobs;
+it does not enumerate historical projects or admit new requests.
+
+The worker receives a lifecycle predicate and checks it before new bounded
+retirement/dispatch steps. Stop invalidates old callbacks, and stop/restart does
+not let an old completion schedule another timer. An already-started operation
+may finish; it is not cancelled or misreported as failed. Durable claims and the
+existing per-bay in-process exclusion retain overlap/retry protection. The
+site-setting check occurs at tick entry, while lifecycle and prototype checks
+also occur between worker steps. This is not instantaneous remote cancellation.
+
+Server/reference typecheck and 30 focused tests pass across maintenance
+lifecycle, Scan worker, dispatch, and PGlite durable-owner integration. New timer
+tests cover slow Scan isolation, opt-in/default-off behavior, runtime flag
+changes, failure retry, startup schema failure, and old-lifecycle fencing.
+PGlite requires `NODE_OPTIONS=--experimental-vm-modules`; an initial invocation
+without it failed before database setup and was rerun successfully with it.
+Durable-owner tests exercise receipt replay, ambiguous admission recovery,
+revocation and expired queued retirement, with mocked host transport; they do
+not yet prove live timer-to-host traversal. Public Scan API/CLI/UI, scoped-agent
+admission, demand/bootstrap integration and the broader validation gates remain
+open. No live deployment configuration was changed.

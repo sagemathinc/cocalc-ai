@@ -3,6 +3,8 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import getLogger from "@cocalc/backend/logger";
+import { runCollaborationScanPass } from "./scan-worker";
+import { syncCollaborationScanSchema } from "@cocalc/database/postgres/collaborators/collaborators-scan";
 import { createSharedProjectionFetcher } from "./projection-batch";
 import { runRevisionHintRepair } from "./revision-repair";
 import { runRevisionOutboxMaintenance } from "./revision-outbox-maintenance";
@@ -66,6 +68,7 @@ import {
 const logger = getLogger("server:collaborators:maintenance");
 let timer: ReturnType<typeof setTimeout> | undefined;
 let fanoutTimer: ReturnType<typeof setTimeout> | undefined;
+let scanTimer: ReturnType<typeof setTimeout> | undefined;
 let stopped = true;
 let running = false;
 let lifecycle = 0;
@@ -245,9 +248,11 @@ export async function startCollaboratorsMaintenance() {
   if (!stopped) return;
   stopped = false;
   const cycle = ++lifecycle;
+  const scanEnabled = process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE === "1";
   try {
     await syncCollaboratorsSchema();
     await ensureCollaborationNotificationSchema();
+    if (scanEnabled) await syncCollaborationScanSchema(getPool());
     if (process.env.COCALC_PEOPLE_DEMAND_PROTOTYPE === "1")
       await syncCollaborationDemandSchema(getPool());
     if (
@@ -264,6 +269,31 @@ export async function startCollaboratorsMaintenance() {
     throw err;
   }
   if (stopped || lifecycle !== cycle) return;
+  // Separate scheduling prevents slow host reconciliation from holding up
+  // invitation delivery, projection refresh, or access renewal.
+  if (scanEnabled) {
+    const active = () => !stopped && lifecycle === cycle;
+    const scanTick = async () => {
+      if (!active()) return;
+      try {
+        if (
+          process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE === "1" &&
+          (await getServerSettings()).collaborators_enabled &&
+          active()
+        )
+          await runCollaborationScanPass(active);
+      } catch {
+        logger.warn("scan maintenance failed; durable work retained");
+      } finally {
+        if (active()) {
+          scanTimer = setTimeout(scanTick, 1000);
+          scanTimer.unref();
+        }
+      }
+    };
+    scanTimer = setTimeout(scanTick, 0);
+    scanTimer.unref();
+  }
   const fanoutTick = async () => {
     if (stopped || lifecycle !== cycle) return;
     try {
@@ -346,6 +376,8 @@ export function stopCollaboratorsMaintenance() {
   timer = undefined;
   if (fanoutTimer) clearTimeout(fanoutTimer);
   fanoutTimer = undefined;
+  if (scanTimer) clearTimeout(scanTimer);
+  scanTimer = undefined;
   for (const handle of accessTimers) clearTimeout(handle);
   accessTimers.clear();
 }

@@ -14,10 +14,12 @@ import { dispatchCollaborationScan } from "./scan-dispatch";
 const logger = getLogger("server:collaborators:scan-worker");
 const running = new Set<string>();
 
-/** Explicit prototype pass only; intentionally not installed on a timer yet.
+/** Opt-in prototype pass, independently scheduled from delivery and access work.
  * Local overlap exclusion complements durable cross-process job leases.
  */
-export async function runCollaborationScanPass() {
+export async function runCollaborationScanPass(
+  active: () => boolean = () => true,
+) {
   const result = {
     attempted: 0,
     discovered: 0,
@@ -27,7 +29,9 @@ export async function runCollaborationScanPass() {
     retired: 0,
     retirement_errors: 0,
   };
-  if (process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE !== "1") return result;
+  const enabled = () =>
+    active() && process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE === "1";
+  if (!enabled()) return result;
   const owning_bay_id = getConfiguredBayId();
   if (running.has(owning_bay_id)) return result;
   running.add(owning_bay_id);
@@ -46,11 +50,7 @@ export async function runCollaborationScanPass() {
       logger.debug("scan retirement selection deferred");
     }
     for (const job of stale.slice(0, 20)) {
-      if (
-        Date.now() >= cleanupDeadline ||
-        process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE !== "1"
-      )
-        break;
+      if (Date.now() >= cleanupDeadline || !enabled()) break;
       try {
         if (await retireExpiredQueuedCollaborationScan(job, authority))
           result.retired++;
@@ -60,19 +60,11 @@ export async function runCollaborationScanPass() {
         logger.debug("scan retirement deferred", { job_id: job.job_id });
       }
     }
-    if (
-      Date.now() >= deadline ||
-      process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE !== "1"
-    )
-      return result;
+    if (Date.now() >= deadline || !enabled()) return result;
     const candidates = await listCollaborationScanDispatchCandidates(authority);
     for (const request of candidates.slice(0, 20)) {
       // This bounds new starts, not the duration of an already in-flight RPC.
-      if (
-        Date.now() >= deadline ||
-        process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE !== "1"
-      )
-        break;
+      if (Date.now() >= deadline || !enabled()) break;
       result.attempted++;
       try {
         const step = await dispatchCollaborationScan(request, authority);

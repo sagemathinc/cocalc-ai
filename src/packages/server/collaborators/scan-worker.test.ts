@@ -45,6 +45,22 @@ test("disabled does not query", async () => {
   expect(listCollaborationScanDispatchCandidates).not.toHaveBeenCalled();
   expect(listCollaborationScanRetirementCandidates).not.toHaveBeenCalled();
 });
+test("lifecycle cancellation stops new dispatches after an in-flight operation", async () => {
+  let active = true;
+  (listCollaborationScanDispatchCandidates as jest.Mock).mockResolvedValue([
+    request,
+    request,
+  ]);
+  (dispatchCollaborationScan as jest.Mock).mockImplementation(async () => {
+    active = false;
+    return { state: "running" };
+  });
+  expect((await runCollaborationScanPass(() => active)).attempted).toBe(1);
+  jest.clearAllMocks();
+  expect((await runCollaborationScanPass(() => active)).attempted).toBe(0);
+  expect(listCollaborationScanRetirementCandidates).not.toHaveBeenCalled();
+  expect(listCollaborationScanDispatchCandidates).not.toHaveBeenCalled();
+});
 test("caps sequential attempts and preserves unknown outcomes", async () => {
   (listCollaborationScanDispatchCandidates as jest.Mock).mockResolvedValue(
     Array(30).fill(request),

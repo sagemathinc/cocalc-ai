@@ -3,6 +3,8 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 const schema = jest.fn(),
+  scanSchema = jest.fn(),
+  scan = jest.fn(),
   outboxSchema = jest.fn(),
   outbox = jest.fn(),
   repair = jest.fn(),
@@ -10,6 +12,12 @@ const schema = jest.fn(),
   settings = jest.fn();
 jest.mock("@cocalc/backend/logger", () => () => ({ warn: jest.fn() }));
 jest.mock("@cocalc/database/pool", () => () => ({}));
+jest.mock("@cocalc/database/postgres/collaborators/collaborators-scan", () => ({
+  syncCollaborationScanSchema: () => scanSchema(),
+}));
+jest.mock("./scan-worker", () => ({
+  runCollaborationScanPass: (active: () => boolean) => scan(active),
+}));
 jest.mock("@cocalc/database/settings/server-settings", () => ({
   getServerSettings: () => settings(),
 }));
@@ -115,6 +123,7 @@ const flags = [
   "COCALC_PEOPLE_EVENT_FANOUT_PROTOTYPE",
   "COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE",
   "COCALC_PEOPLE_REVISION_OUTBOX_PROTOTYPE",
+  "COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE",
 ];
 const previous = flags.map((flag) => process.env[flag]);
 function deferred() {
@@ -124,10 +133,72 @@ function deferred() {
 }
 beforeEach(() => {
   jest.useFakeTimers();
-  for (const mock of [schema, outboxSchema, outbox, repair, fanout])
+  for (const mock of [
+    schema,
+    scanSchema,
+    scan,
+    outboxSchema,
+    outbox,
+    repair,
+    fanout,
+  ])
     mock.mockReset().mockResolvedValue(undefined);
   settings.mockReset().mockResolvedValue({ collaborators_enabled: true });
   flags.forEach((flag) => (process.env[flag] = "1"));
+});
+
+test("scan scheduling is independent of slow host work and fences old lifecycles", async () => {
+  const pending = deferred();
+  scan.mockReturnValueOnce(pending.promise);
+  await startCollaboratorsMaintenance();
+  expect(scanSchema).toHaveBeenCalledTimes(1);
+  await jest.advanceTimersByTimeAsync(2000);
+  expect(scan).toHaveBeenCalledTimes(1);
+  expect(fanout).toHaveBeenCalledTimes(3);
+  const active = scan.mock.calls[0][0];
+  expect(active()).toBe(true);
+  stopCollaboratorsMaintenance();
+  expect(active()).toBe(false);
+  await startCollaboratorsMaintenance();
+  await jest.advanceTimersByTimeAsync(0);
+  expect(scan).toHaveBeenCalledTimes(2);
+  pending.resolve();
+  await jest.advanceTimersByTimeAsync(1000);
+  expect(scan).toHaveBeenCalledTimes(3);
+});
+
+test("scan timers require startup opt-in and obey runtime flags", async () => {
+  delete process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE;
+  await startCollaboratorsMaintenance();
+  await jest.advanceTimersByTimeAsync(0);
+  expect(scanSchema).not.toHaveBeenCalled();
+  expect(scan).not.toHaveBeenCalled();
+  stopCollaboratorsMaintenance();
+  process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE = "1";
+  settings.mockResolvedValue({ collaborators_enabled: false });
+  await startCollaboratorsMaintenance();
+  await jest.advanceTimersByTimeAsync(0);
+  expect(scan).not.toHaveBeenCalled();
+  settings.mockResolvedValue({ collaborators_enabled: true });
+  scan.mockRejectedValueOnce(Error("host unavailable"));
+  await jest.advanceTimersByTimeAsync(1000);
+  expect(scan).toHaveBeenCalledTimes(1);
+  await jest.advanceTimersByTimeAsync(1000);
+  expect(scan).toHaveBeenCalledTimes(2);
+  delete process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE;
+  await jest.advanceTimersByTimeAsync(1000);
+  expect(scan).toHaveBeenCalledTimes(2);
+});
+
+test("failed scan schema initialization starts no timers and is retryable", async () => {
+  scanSchema.mockRejectedValueOnce(Error("scan schema unavailable"));
+  await expect(startCollaboratorsMaintenance()).rejects.toThrow(
+    "scan schema unavailable",
+  );
+  expect(jest.getTimerCount()).toBe(0);
+  await startCollaboratorsMaintenance();
+  await jest.advanceTimersByTimeAsync(0);
+  expect(scan).toHaveBeenCalledTimes(1);
 });
 afterEach(() => {
   stopCollaboratorsMaintenance();
