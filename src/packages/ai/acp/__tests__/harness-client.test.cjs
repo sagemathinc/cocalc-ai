@@ -120,8 +120,10 @@ async function probeClaudeAuthMethods(args, remote) {
   });
   child.stderr.resume();
   const closed = new Promise((resolve) => child.once("close", resolve));
+  let response;
+  let killError;
   try {
-    const response = await new Promise((resolve, reject) => {
+    response = await new Promise((resolve, reject) => {
       let buffer = "";
       const timeout = setTimeout(
         () => reject(Error("ACP auth probe timed out")),
@@ -171,7 +173,6 @@ async function probeClaudeAuthMethods(args, remote) {
         })}\n`,
       );
     });
-    return response.authMethods;
   } finally {
     if (child.pid) {
       try {
@@ -180,12 +181,15 @@ async function probeClaudeAuthMethods(args, remote) {
           "SIGKILL",
         );
       } catch (error) {
-        if (error.code !== "ESRCH") throw error;
+        if (error.code !== "ESRCH") killError = error;
       }
     }
-    await closed;
+    // A failed kill must not prevent filesystem cleanup or mask the probe error.
+    if (!killError) await closed;
     await rm(home, { recursive: true, force: true });
   }
+  if (killError) throw killError;
+  return response.authMethods;
 }
 
 test(

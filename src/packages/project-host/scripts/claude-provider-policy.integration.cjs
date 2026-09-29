@@ -131,6 +131,7 @@ test(
           JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n",
         );
       });
+    let killError;
     try {
       await pinClaudeProvider(child, baseUrl, output);
       const initialized = await request("initialize", {
@@ -165,9 +166,10 @@ test(
       try {
         process.kill(-child.pid, "SIGKILL");
       } catch (e) {
-        if (e.code !== "ESRCH") throw e;
+        if (e.code !== "ESRCH") killError = e;
       }
-      await closed;
+      // Keep cleaning local resources without hiding an earlier test failure.
+      if (!killError) await closed;
       lines.close();
       selected.closeAllConnections();
       wrong.closeAllConnections();
@@ -177,5 +179,6 @@ test(
       ]);
       await rm(home, { recursive: true, force: true });
     }
+    if (killError) throw killError;
   },
 );
