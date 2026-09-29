@@ -774,3 +774,15 @@ and guard recovery after a database error. No timer or startup registration was
 added: remaining admission budgets and live transport/scale validation are
 required before enabling automatic scheduling. This does not complete the
 broader indexing plan.
+
+### Worker and Store Integration
+
+Added three integration cases using the real PGlite admission, queue selection,
+lease, start, settlement, receipt, and status code, with only routed host
+transport mocked. They exercise discovery through the worker, immutable retry
+receipts after settlement, a cooldown-delayed follow-up carrying the previous
+run ID, ambiguous admission response followed by exact-run inspection after
+lease expiry, and revocation before transport. The server build and these three
+cases pass. This is stronger than isolated dispatcher mocks, but still does not
+exercise real PostgreSQL locking across processes, authenticated inter-bay
+transport, filesystem census, or the plan's load and rollout gates.
