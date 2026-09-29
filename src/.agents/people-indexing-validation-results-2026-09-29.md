@@ -14,14 +14,14 @@ periodic full-volume repair are deferred. Demand-driven catch-up of known
 catalog resources, explicit best-effort Scan, strict authorization, and durable
 personal/invitation/notification state remain in scope.
 
-| Initial-release gate        | Current evidence and outstanding work                                                                                                                                                                                       |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Enabled-path simplification | Prototype paths exist but selected flags/host startup and legacy recurring traversal still need auditing against the smaller contract. Do not enable automatic bootstrap/repair.                                            |
-| Known-source vertical path  | Source/projection tests exist; validate the selected known-source-only configuration end to end, including explicit recovery of missed writes.                                                                              |
-| Security and durable state  | Retention return and disposable-demand account-rehome acceptance pass. Preserve existing authority and canonical-state portability guards; review the actual release diff.                                                  |
-| Explicit Scan and UI        | Admission, dispatch and component tests exist. Best-effort completion wording, real browser flow and disabled/unavailable cases need final validation. Agent Scan remains denied and deferred.                              |
-| Bounded cost and rollback   | One-project activation has identical measured logical work at 0/100k/1m dormant memberships. Representative mixed load, full enabled-path idle behavior and disable/reenable validation remain open. No DAU capacity claim. |
-| Release review              | Full development build, independent review of selected paths and explicit canary decision remain required. No rollout is authorized by the plan revision.                                                                   |
+| Initial-release gate        | Current evidence and outstanding work                                                                                                                                                                                                    |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Enabled-path simplification | Host startup now defaults to known-source/explicit census mode, with focused and multibay coverage. Home-worker flag selection and full idle/rollback behavior still need auditing. Do not enable automatic bootstrap/repair.            |
+| Known-source vertical path  | Source/projection tests exist; validate the selected known-source-only configuration end to end, including explicit recovery of missed writes.                                                                                           |
+| Security and durable state  | Retention return and disposable-demand account-rehome acceptance pass. Preserve existing authority and canonical-state portability guards; review the actual release diff.                                                               |
+| Explicit Scan and UI        | Admission, dispatch and component tests exist. Best-effort completion wording is tested in the accessible status region. Real browser flow and disabled/unavailable cases need final validation. Agent Scan remains denied and deferred. |
+| Bounded cost and rollback   | One-project activation has identical measured logical work at 0/100k/1m dormant memberships. Representative mixed load, full enabled-path idle behavior and disable/reenable validation remain open. No DAU capacity claim.              |
+| Release review              | Full development build passes at 408f6c2b0f. Independent review of selected paths and an explicit canary decision remain required. No rollout is authorized by the plan revision.                                                        |
 
 The following extended-scope audit and chronological results are historical
 evidence, not instructions to continue implementing deferred work. The failed
@@ -2882,3 +2882,19 @@ retention-return test passes in 47.329 seconds with the host flag unset; normal
 thread/message hooks still populate the catalog, notify and rebuild the view.
 This is not the full disabled-after-data/rollback or mixed-load release gate.
 No running projects, host processes or production settings were changed.
+
+### Full Development Build Of The Smaller-Contract Changes
+
+`pnpm -C src build:dev` completed with exit code zero at
+`408f6c2b0fb082392509473fb74ab03278b5f115`. This includes workspace installation,
+the development build pipeline (including frontend translations, static rspack
+bundle, HTTP API, Lite, project host, CLI, server/database and hub packages), and
+the Python API package/documentation build. The post-build worktree has no tracked
+changes; only the two preexisting untracked security-review documents remain.
+
+Nonfatal output included permission denial opening the local debug log at
+`/home/user/.cache/cocalc/project/log` and a Material for MkDocs informational
+warning. No unrelated permissions were changed. This is build integration
+evidence, not a production deployment, full test suite, browser validation or
+capacity result. The remaining initial-release gates in the current audit stay
+open.
