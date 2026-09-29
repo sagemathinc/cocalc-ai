@@ -2007,3 +2007,25 @@ or restored journal needs explicit bootstrap/rebuild. Do not enable broadly unti
 the activation/bootstrap, missed-signal and lifecycle gates are demonstrated.
 No trustworthy no-change filesystem token has been established, and none is
 assumed by this change. No deployment flags were changed.
+
+### Combined Census Handoff And Delivery Recovery
+
+A new integration case connects the real SQLite census store/producer, source
+journal, extraction/delivery service and coverage reporter. It injects a lost
+candidate-handoff acknowledgement and a lost ingest acknowledgement in the same
+pass, closes both stores, and reopens them. The retained candidate is acknowledged
+without a second extraction or registration, the original delivery payload is
+retried exactly, and coverage becomes complete only after pending work clears.
+An additional idle pass neither opens a directory nor extracts/sends the source.
+
+Backend/reference typecheck and 31 focused tests pass. Directory enumeration and
+remote transport are fixture seams here; this proves composition of durable local
+handoff and delivery state, not process-kill, real filesystem traversal or remote
+catalog behavior. Those have separate evidence and remaining integration gates.
+
+Cold-work inventory also identified a remaining telemetry dependency:
+`censusReporter` sends a new sequence every 30 seconds even for unchanged completed
+runs, while the owner marks reports unavailable after 30 minutes. Suppressing
+heartbeats alone would change visible freshness semantics. A demand-aware status
+contract and bounded scheduling are still required before claiming dormant
+projects have no recurring report work; this change does not remove that work.
