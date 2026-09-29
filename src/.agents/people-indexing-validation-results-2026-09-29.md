@@ -2121,3 +2121,20 @@ overhead still need realistic load measurement, cross-store process-kill tests
 remain open, and owner status still becomes stale after 30 minutes of silence.
 No deployment flags were enabled; demand-aware freshness, rebuild/rehome and the
 full workload/soak gates remain required before broad use.
+
+### Cross-Store Reporting Process-Loss Evidence
+
+A child-process test now runs built production modules against isolated SQLite
+stores and receives SIGKILL at two boundaries. First it dies after durable census
+enqueue but before journal acknowledgement: both queues survive. A fresh child
+repeats that handoff safely, prepares the immutable report, and dies inside the
+send callback before acknowledgement persistence. Reopening shows the original
+unacknowledged payload and retry deadline. Recovery makes no early send, then
+replays exactly that payload without looking up a new owner CAS; unchanged work
+is retired after the cooldown.
+
+Backend/reference typecheck and 15 focused reporting/signal tests pass. The child
+does not cleanly close either WAL. Clock advancement is simulated, and the send
+callback records bytes locally rather than contacting a live owner. This closes
+the local cross-store process-kill gap, not remote acceptance, rehome/restore,
+installation cost or scale/soak gates. No deployment changes were made.
