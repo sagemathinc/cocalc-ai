@@ -21,6 +21,8 @@ export async function syncCollaborationRevisionReceiverSchema(
   await db.query(`ALTER TABLE collaboration_revision_receivers
     ADD COLUMN IF NOT EXISTS receiver_id UUID NOT NULL DEFAULT gen_random_uuid()`);
   await db.query(`ALTER TABLE collaboration_revision_receivers
+    ADD COLUMN IF NOT EXISTS bootstrap_admitted BOOLEAN NOT NULL DEFAULT FALSE`);
+  await db.query(`ALTER TABLE collaboration_revision_receivers
     ADD COLUMN IF NOT EXISTS renew_after TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()`);
   await db.query(`ALTER TABLE collaboration_revision_receivers
     ADD COLUMN IF NOT EXISTS scheduling_seq BIGINT NOT NULL DEFAULT 0,
@@ -58,6 +60,40 @@ function validate(opts: ReceiverLease) {
   uuid(opts.lease_id, "receiver lease");
   boundedText(opts.home_bay_id, "receiver home", 128);
   boundedText(opts.owner_bay_id, "receiver owner", 128);
+}
+
+/** Durable idempotency identity for first discovery, not a freshness claim. */
+export async function readRevisionBootstrap(
+  opts: ReceiverLease,
+): Promise<string | null> {
+  validate(opts);
+  const { rows } = await getPool().query(
+    `SELECT receiver_id FROM collaboration_revision_receivers
+     WHERE project_id=$1 AND home_bay_id=$2 AND owner_bay_id=$3 AND lease_id=$4
+       AND expires_at>clock_timestamp() AND NOT bootstrap_admitted`,
+    [opts.project_id, opts.home_bay_id, opts.owner_bay_id, opts.lease_id],
+  );
+  return rows[0]?.receiver_id ?? null;
+}
+
+export async function acknowledgeRevisionBootstrap(
+  opts: ReceiverLease & { receiver_id: string },
+): Promise<boolean> {
+  validate(opts);
+  uuid(opts.receiver_id, "bootstrap receiver");
+  const { rows } = await getPool().query(
+    `UPDATE collaboration_revision_receivers SET bootstrap_admitted=TRUE
+     WHERE project_id=$1 AND home_bay_id=$2 AND owner_bay_id=$3 AND lease_id=$4
+       AND receiver_id=$5 AND expires_at>clock_timestamp() RETURNING project_id`,
+    [
+      opts.project_id,
+      opts.home_bay_id,
+      opts.owner_bay_id,
+      opts.lease_id,
+      opts.receiver_id,
+    ],
+  );
+  return rows.length > 0;
 }
 
 export interface RevisionSchedulingState extends ReceiverLease {
@@ -202,7 +238,9 @@ export async function armCollaborationRevisionReceiver(
             ],
           )
         : await db.query(
-            `UPDATE collaboration_revision_receivers SET owner_bay_id=$3,lease_id=$4,
+            `UPDATE collaboration_revision_receivers SET
+          bootstrap_admitted=CASE WHEN owner_bay_id=$3 THEN bootstrap_admitted ELSE FALSE END,
+          owner_bay_id=$3,lease_id=$4,
           expires_at=clock_timestamp()+$5::double precision*interval '1 millisecond',dirty_seq=dirty_seq+1,
           renew_after=clock_timestamp()+LEAST(30000,$5::double precision)*interval '1 millisecond'
           WHERE project_id=$1 AND home_bay_id=$2 AND lease_id=$6 RETURNING project_id`,

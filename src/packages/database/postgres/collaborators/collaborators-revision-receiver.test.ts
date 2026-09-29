@@ -10,6 +10,8 @@ import {
   collaborationRevisionReceiverNeedsRenewal,
   readRevisionSchedulingState,
   advanceRevisionScheduling,
+  readRevisionBootstrap,
+  acknowledgeRevisionBootstrap,
 } from "./collaborators-revision-receiver";
 
 const describeDb =
@@ -48,6 +50,44 @@ describeDb("shared home revision receiver", () => {
         [project_id],
       )
     ).rows[0].receiver_id as string;
+  test("bootstrap identity survives renewal and acknowledgment is lease fenced", async () => {
+    const opts = lease();
+    expect(await readRevisionBootstrap(opts)).toBeNull();
+    await arm(opts);
+    const receiver_id = (await readRevisionBootstrap(opts))!;
+    expect(receiver_id).toBeTruthy();
+    const renewed = { ...opts, lease_id: randomUUID() };
+    await arm(renewed, opts.lease_id);
+    expect(await readRevisionBootstrap(renewed)).toBe(receiver_id);
+    expect(await acknowledgeRevisionBootstrap({ ...opts, receiver_id })).toBe(
+      false,
+    );
+    expect(
+      await acknowledgeRevisionBootstrap({
+        ...renewed,
+        receiver_id: randomUUID(),
+      }),
+    ).toBe(false);
+    expect(
+      await acknowledgeRevisionBootstrap({ ...renewed, receiver_id }),
+    ).toBe(true);
+    expect(await readRevisionBootstrap(renewed)).toBeNull();
+    const moved = {
+      ...renewed,
+      owner_bay_id: "new-owner",
+      lease_id: randomUUID(),
+    };
+    await arm(moved, renewed.lease_id);
+    expect(await readRevisionBootstrap(moved)).toBe(receiver_id);
+    await getPool().query(
+      "UPDATE collaboration_revision_receivers SET expires_at=clock_timestamp()-interval '1 second' WHERE project_id=$1",
+      [opts.project_id],
+    );
+    expect(await readRevisionBootstrap(moved)).toBeNull();
+    expect(await acknowledgeRevisionBootstrap({ ...moved, receiver_id })).toBe(
+      false,
+    );
+  });
   test("scheduling progress is durable, CAS guarded, and separate from catch-up completion", async () => {
     const opts = lease();
     const read = () =>

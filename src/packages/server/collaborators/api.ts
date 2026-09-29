@@ -562,6 +562,48 @@ export const collaboratorsControl: InterBayCollaboratorsApi = {
       expected_lease_id,
       ttl_ms,
     });
+    if (
+      armed &&
+      process.env.COCALC_PEOPLE_DISCOVERY_BOOTSTRAP_PROTOTYPE === "1"
+    ) {
+      const { bootstrapDemandDiscovery } =
+        await import("./discovery-bootstrap");
+      // Bootstrap failure must not discard a valid revision receiver. The
+      // durable receiver identity is reused on a later active renewal.
+      await bootstrapDemandDiscovery(
+        {
+          project_id: opts.project_id,
+          home_bay_id,
+          owner_bay_id: registration.owner_bay_id,
+          lease_id: registration.receipt.lease_id,
+        },
+        {
+          discovery: () =>
+            owner(opts.project_id, (api, route) =>
+              api.getDiscovery({
+                account_id: opts.account_id,
+                project_id: opts.project_id,
+                route,
+              }),
+            ),
+          admit: async (request_id) => {
+            const current = await inspectCollaborationProjectDemand(
+              opts.account_id,
+              opts.project_id,
+            );
+            if (current.remaining_ms <= 0)
+              throw Error("project has no home demand");
+            return collaboratorsControl.scanAtHome({
+              account_id: opts.account_id,
+              project_id: opts.project_id,
+              request_id,
+              mode: "check",
+              route: opts.route,
+            });
+          },
+        },
+      ).catch(() => undefined);
+    }
     return { armed, lease_id: registration.receipt.lease_id };
   },
   async receiveRevisionWakeup(opts) {

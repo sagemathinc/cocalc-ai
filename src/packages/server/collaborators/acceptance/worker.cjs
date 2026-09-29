@@ -884,6 +884,9 @@ async function command(name, args = {}) {
         route: { bay_id: config.bays[1] },
       });
     }
+    case "enableDiscoveryBootstrap":
+      process.env.COCALC_PEOPLE_DISCOVERY_BOOTSTRAP_PROTOTYPE = "1";
+      return true;
     case "dispatchRevisionHint":
       return require("@cocalc/server/collaborators/revision-dispatch").dispatchCollaborationRevisionHint(
         args,

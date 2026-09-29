@@ -2505,3 +2505,41 @@ Nine focused frontend tests pass, including keyboard reset, restored focus,
 fresh-ID submission only after a separate action, and timeout identity retention.
 Frontend typecheck and lint pass. This is component-level recovery evidence;
 live browser and the broader indexing-plan validation gates remain open.
+
+### Demand-Triggered First Discovery Prototype
+
+Added opt-in bootstrap at the successful account-home revision-receiver
+registration boundary. This boundary is already fed by bounded active projection
+claims, not historical account enumeration. With
+`COCALC_PEOPLE_DISCOVERY_BOOTSTRAP_PROTOTYPE=1` and Scan dispatch enabled, a live
+receiver with no previous bootstrap acknowledgement checks the project's owner
+discovery state. Only missing first discovery (`pending` with no report) requests
+a Scan. An existing report suppresses initial scanning without asserting that
+its coverage is complete or current. Unavailable state without a report defers
+instead of replacing an unknown host run.
+
+The receiver's durable UUID is the admission request identity across retries and
+renewals. Admission uses the existing account-home actor reservation and owner
+project budgets, current account/project authorization and coalescing. Home
+demand is checked again immediately before admission. Expired/replaced receiver
+leases cannot acknowledge completion; success means admitted or a report already
+exists, not discovery/view completion. An owner change clears the acknowledgement.
+Throttling and exceptions leave bootstrap retryable on later active renewal and
+do not discard a valid revision receiver. No background timer or inactive-account
+traversal was added. Schema is additive and installed with receiver schema.
+
+The real multibay acceptance fixture starts in explicit-census mode, writes an
+unmediated chat file, rejects registration without demand, then acquires demand
+and registers through authenticated inter-bay transport. It observes one durable
+bootstrap receipt, no duplicate on renewal, real owner dispatch/host discovery,
+home projection, and zero compute-start calls. Expired demand cannot register
+again. This drives the registration boundary explicitly; it is not yet a full
+browser-to-autonomous-maintenance timing test.
+
+Focused checks pass: 52 server bootstrap/API/registration tests, six receiver
+database tests, and server/reference typecheck. The isolated multibay case passed
+again in 52.7 seconds with the final immediate pre-admission demand recheck.
+The flag remains off in production. Missed-write fallback,
+automatic repair after unavailable/partial reports, receipt expiry recovery for
+unacknowledged bootstrap, lifecycle portability, agent scopes and full scale/soak
+validation remain required; this is not a complete automatic indexing scheduler.
