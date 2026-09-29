@@ -1,7 +1,24 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
+import {
+  DOLLAR_AMOUNT,
+  INTERNAL_IMPLEMENTATION_TERMS,
+  OVERPROMISE_TERMS,
+  STALE_AGENT_PHRASES,
+  UNSUPPORTED_CAPABILITY_TERMS,
+} from "@cocalc/util/public-copy-guards";
+import {
+  getPublicFeaturePage,
+  PUBLIC_FEATURE_PAGES,
+} from "@cocalc/util/public-feature-pages";
+import type { PublicPricingTier } from "@cocalc/util/public-pricing";
+import {
+  buildPublicSitemapPaths,
+  getPublicMetadataRouteFromPath,
+  getPublicRouteMetadata,
+} from "@cocalc/util/public-site-metadata";
 import { renderPublicRoutePrerender } from "./public-prerender";
+import type { PublicRoutePrerenderData } from "./public-prerender";
 import {
   PUBLIC_HOME_EYEBROW,
   PUBLIC_HOME_HEADLINE,
@@ -504,4 +521,101 @@ describe("feature initial HTML product availability", () => {
       ),
     ).toBe("");
   });
+});
+
+// The text a crawler reads: tags removed, entities from htmlEscape() decoded.
+function crawlerText(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function guardHits(label: string, pattern: RegExp, value: string): string[] {
+  return Array.from(
+    value.matchAll(new RegExp(pattern.source, "gi")),
+    ([match]) => `${label}: "${match}"`,
+  );
+}
+
+// One store tier with a trial and AI usage, so the tier text and the AI alert
+// that Pricing adds when tier data loads are checked too.
+const PRICING_TIERS: PublicPricingTier[] = [
+  {
+    ai_limits: { units_5h: 100 },
+    id: "member",
+    label: "Member",
+    price_monthly: "25",
+    price_yearly: "225",
+    store_visible: true,
+    trial_days: 7,
+  },
+];
+
+describe("crawler fallback copy guards", () => {
+  it.each(["plus", "launchpad", "rocket"])(
+    "keeps guarded copy out of every %s route with a fallback",
+    (cocalc_product) => {
+      const config = { cocalc_product };
+      const paths = new Set([
+        ...buildPublicSitemapPaths(config),
+        ...PUBLIC_FEATURE_PAGES.map(({ slug }) => `/features/${slug}`),
+      ]);
+      const sections = new Set<string>();
+      const violations: string[] = [];
+      for (const path of paths) {
+        const route = getPublicMetadataRouteFromPath(path);
+        // Pricing is checked with and without tier data, because the shell
+        // passes the tiers only when it has loaded them.
+        const variants: PublicRoutePrerenderData[] =
+          route.section === "pricing"
+            ? [{}, { pricingTiers: PRICING_TIERS }]
+            : [{}];
+        for (const data of variants) {
+          const html = renderPublicRoutePrerender(route, "/", config, data);
+          if (html === "") continue;
+          sections.add(route.section);
+          const text = crawlerText(html);
+          const { description, title } = getPublicRouteMetadata(route, config);
+          // Internal terms: title, description and H1 only, like the React
+          // metadata checks. Body text may use rendered labels, such as the
+          // pricing heading "Dedicated project hosts".
+          const h1 = crawlerText(/<h1>([\s\S]*?)<\/h1>/.exec(html)?.[1] ?? "");
+          violations.push(
+            ...[
+              ...guardHits("overpromise", OVERPROMISE_TERMS, text),
+              ...guardHits(
+                "unsupported capability",
+                UNSUPPORTED_CAPABILITY_TERMS,
+                text,
+              ),
+              ...guardHits("stale agent phrase", STALE_AGENT_PHRASES, text),
+              ...(route.section === "pricing"
+                ? []
+                : guardHits("dollar amount", DOLLAR_AMOUNT, text)),
+              ...guardHits(
+                "internal term",
+                INTERNAL_IMPLEMENTATION_TERMS,
+                [title, description, h1].join("\n"),
+              ),
+            ].map((hit) => `${path} ${hit}`),
+          );
+        }
+      }
+      expect(violations).toEqual([]);
+      for (const section of [
+        "home",
+        "features",
+        "pricing",
+        "products",
+        "support",
+      ]) {
+        expect(sections).toContain(section);
+      }
+    },
+  );
 });

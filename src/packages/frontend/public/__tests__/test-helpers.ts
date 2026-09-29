@@ -30,11 +30,13 @@ export const SECTION_H2_MAX = 72;
 
 // --- Canary regexes -------------------------------------------------------
 
-// Internal/implementation language that must never leak into public copy.
-// Each surface combines this floor with its own surface-unique terms via
-// combineLeak(), rather than redefining the base terms locally.
-export const INTERNAL_IMPLEMENTATION_TERMS =
-  /serious\s+technical\s+work|project hosts|backend state|logs stay scoped|RootFS|multi-bay|control plane|postgres|kubernetes|systemd|conat/i;
+// Shared with the hub's crawler-fallback test. INTERNAL_IMPLEMENTATION_TERMS
+// is the leakage floor: each surface combines it with its own surface-unique
+// terms via combineLeak(), rather than redefining the base terms locally.
+export {
+  INTERNAL_IMPLEMENTATION_TERMS,
+  OVERPROMISE_TERMS,
+} from "@cocalc/util/public-copy-guards";
 
 // Banned/stale repetitive home taglines (incl. the brief's own promise sentence,
 // which is internal phrasing and must not appear verbatim in rendered copy).
@@ -46,9 +48,6 @@ export const STALE_REPETITIVE_HOME_LINES =
 // Dark panel backgrounds — public feature/CTA panels must stay light.
 export const DARK_FEATURE_CARD_STYLE =
   /#10213f|#0b1522|#0b1f47|#111827|rgb\(16,\s*33,\s*63\)|rgb\(11,\s*21,\s*34\)|rgb\(11,\s*31,\s*71\)|rgb\(17,\s*24,\s*39\)/i;
-
-export const OVERPROMISE_TERMS =
-  /with Lima|source[- ]available|multi[- ]?VM|broader deployment rights|FedRAMP|\bATO\b|SOC 2[- ]certified|HIPAA[- ]compliant|FERPA[- ]compliant|\bunlimited\b|\bguarantee(d|s)?\b/i;
 
 // Combine the shared leakage floor with surface-unique terms into one regex.
 export function combineLeak(...sources: Array<RegExp | string>): RegExp {
