@@ -2543,3 +2543,22 @@ The flag remains off in production. Missed-write fallback,
 automatic repair after unavailable/partial reports, receipt expiry recovery for
 unacknowledged bootstrap, lifecycle portability, agent scopes and full scale/soak
 validation remain required; this is not a complete automatic indexing scheduler.
+
+### Autonomous Home/Owner Bootstrap Acceptance
+
+Strengthened the isolated multibay bootstrap test to start the production home
+and owner maintenance timers rather than directly invoking successful receiver
+registration, Scan dispatch, or home projection. With 1,000 synthetic cold
+account memberships present, the initial observation window produces no receiver
+registrations or owner Scan jobs. Acquiring one real project demand lease then
+causes receiver registration, durable bootstrap admission, owner dispatch, home
+resource projection, and terminal discovery settlement. Only the active account
+has an actor receipt, the owner retains one request, and no compute starts occur.
+Expired demand is rejected at registration.
+
+The acceptance case passes in 55.568 seconds; server/reference typecheck also
+passes. Host extraction is still explicitly ticked by the fixture. This is
+evidence for automatic home/owner scheduling, not a browser lifecycle test,
+host-timer proof, sustained cold-account cost measurement, or DAU capacity result.
+The cold population shares one project; high project fanout and long-duration
+churn remain separate validation requirements. No production settings changed.
