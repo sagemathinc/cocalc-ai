@@ -206,6 +206,9 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
       "SELECT dirty_seq::text FROM collaboration_revision_receivers WHERE project_id=$1",
       [env.project],
     );
+    await env
+      .worker("owner")
+      .call("setRevisionOutboxEnabled", { enabled: false });
     await env.sql(
       "owner",
       "UPDATE collaboration_projects SET revision=revision+1 WHERE project_id=$1",
@@ -233,6 +236,24 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
       FROM collaboration_projects WHERE project_id=$2`,
       [entryKey, env.project, JSON.stringify(resource), resourceId],
     );
+    expect(await env.worker("owner").call("runRevisionOutbox")).toBe(0);
+    expect(
+      await env.sql(
+        "owner",
+        "SELECT token FROM collaboration_revision_outbox WHERE project_id=$1",
+        [env.project],
+      ),
+    ).toHaveLength(1);
+    expect(
+      await env.sql(
+        "a",
+        "SELECT dirty_seq::text FROM collaboration_revision_receivers WHERE project_id=$1",
+        [env.project],
+      ),
+    ).toEqual([before]);
+    await env
+      .worker("owner")
+      .call("setRevisionOutboxEnabled", { enabled: true });
     expect(await env.worker("owner").call("runRevisionOutbox")).toBe(1);
     expect(
       await env.sql(

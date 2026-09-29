@@ -1909,3 +1909,25 @@ The pass has no independent timer and is not yet wired into ordinary startup.
 Automatic installation, trigger disable/reenable semantics, restart/rehome
 validation, distributed fairness and sustained source-change workloads remain
 open before enabling this path.
+
+### Opt-In Maintenance Lifecycle Integration
+
+Startup now installs the outbox only when the existing demand/revision prototype
+gates and `COCALC_PEOPLE_REVISION_OUTBOX_PROTOTYPE=1` are enabled. The existing
+fanout lifecycle invokes its bounded pass; no new timer is introduced. Notification
+fanout, outbox and repair failures are isolated so one failed pass does not skip
+the others. No deployment settings were changed.
+
+Disable semantics are deliberately durable: the outbox flag stops its delivery
+worker, not the installed capture trigger or existing repair fallback. Disabling
+People stops both delivery workers. Installed capture continues coalescing actual
+catalog changes so edits during disablement are not silently lost; this is not a
+promise of zero database writes after opt-in. Full removal needs a separate
+operator procedure and is not implemented here.
+
+Server/reference typecheck, thirteen focused tests and all twenty real
+PostgreSQL/fabric demand cases pass. The integration case disables the outbox
+worker before a catalog edit, verifies pending intent and no wakeup from that
+disabled pass, then reenables and verifies delivery through home application.
+This does not yet test a real process restart or timer lifecycle, and rehome,
+restore, distributed budgets and workload/soak gates remain open.

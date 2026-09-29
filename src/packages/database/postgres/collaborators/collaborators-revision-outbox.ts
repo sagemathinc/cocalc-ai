@@ -8,8 +8,8 @@ import { transaction, uuid, boundedText } from "./collaborators-common";
 import { assertCollaborationOwnerAuthority } from "./collaborators-owner";
 import type { CollaborationOwnerAuthority } from "./collaborators-owner";
 
-/** Explicit prototype installation. Do not install in ordinary startup until
- * owner-fenced draining and disabled-after-install behavior are validated.
+/** Installed only by explicit outbox prototype opt-in. Disabling delivery keeps
+ * this trigger and coalesced intent: reenablement must not lose intervening edits.
  */
 export async function syncCollaborationRevisionOutboxSchema(
   db: Pick<PoolClient, "query">,

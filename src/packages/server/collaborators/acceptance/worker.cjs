@@ -864,6 +864,11 @@ async function command(name, args = {}) {
       );
       process.env.COCALC_PEOPLE_REVISION_OUTBOX_PROTOTYPE = "1";
       return true;
+    case "setRevisionOutboxEnabled":
+      process.env.COCALC_PEOPLE_REVISION_OUTBOX_PROTOTYPE = args.enabled
+        ? "1"
+        : "0";
+      return true;
     case "dispatchRevisionOutbox":
     case "runRevisionOutbox":
     case "claimActiveProjection":

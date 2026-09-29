@@ -5,6 +5,8 @@
 import getLogger from "@cocalc/backend/logger";
 import { createSharedProjectionFetcher } from "./projection-batch";
 import { runRevisionHintRepair } from "./revision-repair";
+import { runRevisionOutboxMaintenance } from "./revision-outbox-maintenance";
+import { syncCollaborationRevisionOutboxSchema } from "@cocalc/database/postgres/collaborators/collaborators-revision-outbox";
 import { runRevisionWakeupScheduling } from "./revision-wakeup";
 import { registerProjectionRevisionReceivers } from "./revision-registration";
 import {
@@ -254,6 +256,8 @@ export async function startCollaboratorsMaintenance() {
     ) {
       await syncCollaborationRevisionReceiverSchema(getPool());
       await syncCollaborationRevisionInterestSchema(getPool());
+      if (process.env.COCALC_PEOPLE_REVISION_OUTBOX_PROTOTYPE === "1")
+        await syncCollaborationRevisionOutboxSchema(getPool());
     }
   } catch (err) {
     if (lifecycle === cycle) stopped = true;
@@ -263,8 +267,20 @@ export async function startCollaboratorsMaintenance() {
   const fanoutTick = async () => {
     if (stopped || lifecycle !== cycle) return;
     try {
-      await runCollaboratorsFanoutMaintenance();
-      await runRevisionHintRepair();
+      for (const run of [
+        runCollaboratorsFanoutMaintenance,
+        runRevisionOutboxMaintenance,
+        runRevisionHintRepair,
+      ]) {
+        if (stopped || lifecycle !== cycle) break;
+        try {
+          await run();
+        } catch {
+          logger.warn(
+            "collaboration fanout pass failed; durable work retained",
+          );
+        }
+      }
     } catch {
       logger.warn(
         "notification fanout maintenance failed; durable work retained",

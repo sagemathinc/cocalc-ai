@@ -1502,7 +1502,7 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
     source: "database/postgres/collaborators/collaborators-revision-outbox.ts",
     migrate_to_schema: true,
     notes:
-      "Explicit prototype coalesced catalog invalidation intent. Not installed by startup; owner-fenced drain, rehome and restore behavior require validation before rollout.",
+      "Coalesced catalog invalidation intent, installed only with explicit outbox prototype opt-in. Disabling delivery retains capture and pending markers. Rehome and restore remain unsupported pending validation.",
   }),
 
   ...adHocEntries(["collaboration_revision_receivers"], {
