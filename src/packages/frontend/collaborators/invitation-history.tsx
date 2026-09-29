@@ -403,17 +403,20 @@ function InvitationHistoryItem({
         {row.kind === "access" ? `${row.role} access` : "Work together"} ·{" "}
         {new Date(row.created_at).toLocaleDateString()}
       </Typography.Paragraph>
-      <Typography.Paragraph
-        ellipsis={{ rows: 1 }}
-        className="invitation-history-message"
-      >
-        {row.message}
-      </Typography.Paragraph>
+      {row.message && (
+        <Typography.Paragraph
+          ellipsis={{ rows: 1 }}
+          className="invitation-history-message"
+        >
+          {row.message}
+        </Typography.Paragraph>
+      )}
       <div className="invitation-history-actions">
         {row.kind === "access" &&
           row.status === "pending" &&
           direction === "sent" &&
-          ["email", "course_email"].includes(row.invite_source) && (
+          (["email", "course_email"].includes(row.invite_source) ||
+            !!row.recipient_account_id) && (
             <Button
               type="primary"
               size="small"

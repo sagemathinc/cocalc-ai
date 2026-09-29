@@ -4,6 +4,11 @@
  */
 import type { PeopleAccessInvitation } from "@cocalc/util/people-invitation-history";
 import { boundPeopleHistoryApi } from "./people-history-api";
+import { parseCollaboratorsRoute } from "./routing";
+
+jest.mock("@cocalc/frontend/customize/app-base-path", () => ({
+  appBasePath: "/deployment",
+}));
 
 let mockAccount = "owner-account";
 const mockListContacts = jest.fn();
@@ -220,6 +225,39 @@ test("copy uses the routed project API and copies only its returned URL", async 
     "https://example.test/invite/token",
   );
   expect(mockNotify).not.toHaveBeenCalled();
+});
+
+test("account invite links open the exact recipient inbox without issuing an email token or changing access", async () => {
+  const invitation_id = "44444444-4444-4444-8444-444444444444";
+  const message = await boundPeopleHistoryApi("owner-account").manage(
+    { ...row, invitation_id, invite_source: "account" },
+    "copy",
+  );
+  const link = new URL(mockWriteText.mock.calls[0][0]);
+  expect(link.origin).toBe(window.location.origin);
+  expect(link.pathname).toBe("/deployment/people/invites");
+  expect(parseCollaboratorsRoute(["invites"], link.search)).toEqual({
+    view: "invites",
+    invitationId: invitation_id,
+  });
+  expect(message).toContain("sign in to the invited account");
+  expect(mockCopy).not.toHaveBeenCalled();
+  expect(mockRespond).not.toHaveBeenCalled();
+  expect(mockResend).not.toHaveBeenCalled();
+});
+
+test("account links are unavailable without a pending, identified recipient", async () => {
+  const api = boundPeopleHistoryApi("owner-account");
+  await expect(
+    api.manage(
+      { ...row, invite_source: "account", recipient_account_id: null },
+      "copy",
+    ),
+  ).rejects.toThrow("not available");
+  await expect(
+    api.manage({ ...row, invite_source: "account", status: "expired" }, "copy"),
+  ).rejects.toThrow("not available");
+  expect(mockWriteText).not.toHaveBeenCalled();
 });
 
 test("RPC and clipboard failures propagate without success notifications", async () => {

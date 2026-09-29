@@ -172,14 +172,22 @@ test("copy is an explicit action and does not resend invitations", async () => {
 test.each([
   ["email", "pending", true],
   ["course_email", "pending", true],
-  ["account", "pending", false],
+  ["account", "pending", true],
   ["email", "expired", false],
 ] as const)(
   "copy-link availability for %s invitations with status %s",
   async (invite_source, status, available) => {
     const service = api();
     service.listInvitationHistory.mockResolvedValue(
-      page([{ ...invitation, invite_source, status }]),
+      page([
+        {
+          ...invitation,
+          invite_source,
+          status,
+          recipient_account_id:
+            invite_source === "account" ? "recipient-account" : null,
+        },
+      ]),
     );
     render(<InvitationHistory api={service} />);
     await screen.findByText(/301 matching/);

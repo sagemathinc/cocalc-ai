@@ -8,6 +8,9 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { InvitationHistoryApi } from "./invitation-history";
 import { notifyCollabInvitesChanged } from "./invite-events";
 import { uuid } from "@cocalc/util/misc";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { joinUrlPath } from "@cocalc/util/url-path";
+import { collaboratorsTargetPath } from "./routing";
 
 export type PeopleHistoryApi = InvitationHistoryApi &
   Pick<CollaboratorsApi, "listPeopleContacts" | "getPeopleContact">;
@@ -94,6 +97,24 @@ export function boundPeopleHistoryApi(accountId: string): PeopleHistoryApi {
             ? "Email delivery outcome is unknown. Repeating this action will inspect the same operation, not submit another email."
             : `No email was sent${result.reason ? `: ${result.reason}` : ""}.`;
       } else if (action === "copy") {
+        if (!["email", "course_email"].includes(row.invite_source)) {
+          if (!row.recipient_account_id || row.status !== "pending")
+            throw Error("This invitation link is not available.");
+          // This is a navigation link, not a bearer token. The recipient must
+          // sign in; the existing read/respond APIs still enforce their identity.
+          const path = joinUrlPath(
+            appBasePath,
+            collaboratorsTargetPath({
+              view: "invites",
+              invitationId: row.invitation_id,
+            }),
+          );
+          await navigator.clipboard.writeText(
+            new URL(path, window.location.origin).href,
+          );
+          check();
+          return "Invitation link copied. The recipient must sign in to the invited account to accept.";
+        }
         const result = await call(() =>
           client.hub.projects.copyEmailProjectInviteLink({
             account_id: accountId,
