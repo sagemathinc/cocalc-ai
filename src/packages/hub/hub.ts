@@ -27,6 +27,7 @@ import { ensureLocalPostgres } from "@cocalc/database/postgres/dev";
 import { init_passport } from "@cocalc/server/hub/auth";
 import { initialOnPremSetup } from "@cocalc/server/initial-onprem-setup";
 import { ensureBootstrapAdminToken } from "@cocalc/server/auth/bootstrap-admin";
+import { startStandaloneBillingExecutor } from "@cocalc/server/purchases/billing-authority/startup";
 import initHandleMentions from "@cocalc/server/mentions/handle";
 import initMessageMaintenance from "@cocalc/server/messages/maintenance";
 import initProjectControl from "@cocalc/server/projects/control";
@@ -240,6 +241,16 @@ async function startServer(): Promise<void> {
   // set server settings based on environment variables
   setWorkerStartupPhase("server-settings");
   await load_server_settings_from_env(getDatabase());
+  if (program.billingWorker) {
+    // Reuse database/settings/routing initialization, not HTTP, subscriptions,
+    // general maintenance, or browser-session handling.
+    if (process.env.COCALC_BILLING_SINGLETON_LOCKED !== "1") {
+      throw Error("--billing-worker requires the singleton supervisor lock");
+    }
+    await startStandaloneBillingExecutor();
+    setWorkerStartupPhase("ready");
+    return;
+  }
   setWorkerStartupPhase("on-prem-tls");
   await maybeInitOnPremTls();
   setWorkerStartupPhase("launchpad-on-prem-services");
@@ -404,6 +415,10 @@ async function main(): Promise<void> {
     .name("cocalc-hub-server")
     .usage("options")
     .option(
+      "--billing-worker",
+      "run only the supervised singleton billing executor",
+    )
+    .option(
       "--all",
       "runs all of the servers: websocket, proxy, public web, and also mentions updator and updates db schema on startup; use this in situations where there is a single hub that serves everything (instead of a microservice situation like kucalc)",
     )
@@ -487,6 +502,14 @@ async function main(): Promise<void> {
     program[name] = opts[name];
   }
   program.mode = getCocalcProduct() === "rocket" ? "kucalc" : "launchpad";
+  if (program.billingWorker) {
+    program.all = false;
+    program.conatServer = false;
+    program.conatApi = false;
+    program.mentions = false;
+    program.proxyServer = false;
+    program.agentPort = 0;
+  }
   if (program.all) {
     program.conatServer =
       program.proxyServer =

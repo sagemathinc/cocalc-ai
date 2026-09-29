@@ -65,6 +65,7 @@ interface LeaseRow {
   enabled: boolean;
   draining: boolean;
   serving?: boolean;
+  supervised_singleton?: boolean;
   handoff_exclude_holder_id?: string | null;
   lease_valid?: boolean;
 }
@@ -1113,10 +1114,14 @@ export async function acquireBillingAuthorityLease({
   instance_id,
   lease_ms,
   db,
+  supervised_singleton = false,
 }: {
   instance_id: string;
   lease_ms: number;
   db?: Queryable;
+  // Caller holds the exclusive process-lifetime supervisor lock. Do not use
+  // this for an automatically elected or cross-machine failover executor.
+  supervised_singleton?: boolean;
 }): Promise<{ generation: number; lease_until: string } | undefined> {
   if (!isValidUUID(instance_id))
     throw authorityError("invalid instance_id", 400);
@@ -1140,7 +1145,9 @@ export async function acquireBillingAuthorityLease({
                                     AND lease_until > clock_timestamp()
                                 THEN generation
                               ELSE generation + 1 END,
-              lease_until=clock_timestamp() + ($3::TEXT || ' milliseconds')::INTERVAL,
+              lease_until=CASE WHEN $4::boolean THEN TIMESTAMP '9999-12-31 00:00:00'
+                ELSE clock_timestamp() + ($3::TEXT || ' milliseconds')::INTERVAL END,
+              supervised_singleton=$4,
               draining=CASE WHEN holder_id=$2
                                   AND lease_until > clock_timestamp()
                               THEN draining ELSE FALSE END,
@@ -1158,9 +1165,10 @@ export async function acquireBillingAuthorityLease({
           AND enabled
           AND (handoff_exclude_holder_id IS NULL
                OR handoff_exclude_holder_id <> $2)
-          AND (holder_id=$2 OR holder_id IS NULL OR lease_until <= clock_timestamp())
+          AND (holder_id=$2 OR holder_id IS NULL OR lease_until <= clock_timestamp()
+               OR (supervised_singleton AND $4::boolean))
         RETURNING holder_id, generation, lease_until, enabled, draining`,
-      [LEASE_NAME, instance_id, lease_ms],
+      [LEASE_NAME, instance_id, lease_ms, supervised_singleton],
     );
     const lease = rows[0];
     if (!lease) return undefined;
@@ -1225,7 +1233,8 @@ export async function renewBillingAuthorityLease({
 }> {
   const { rows } = await db.query<LeaseRow>(
     `UPDATE billing_authority_lease
-        SET lease_until=clock_timestamp() + ($4::TEXT || ' milliseconds')::INTERVAL,
+        SET lease_until=CASE WHEN supervised_singleton THEN lease_until
+              ELSE clock_timestamp() + ($4::TEXT || ' milliseconds')::INTERVAL END,
             updated_at=clock_timestamp()
       WHERE name=$1 AND holder_id=$2 AND generation=$3
         AND lease_until > clock_timestamp()
@@ -1414,15 +1423,19 @@ export async function releaseBillingAuthorityLease(
 export async function beginBillingAuthorityCommandExecution({
   identity,
   db,
+  supervised_singleton = false,
 }: {
   identity: BillingAuthorityLeaseIdentity;
   db: Queryable;
+  supervised_singleton?: boolean;
 }): Promise<void> {
   await db.query("BEGIN");
   try {
-    await db.query("SELECT pg_advisory_xact_lock($1)", [
-      BILLING_AUTHORITY_EXECUTION_LOCK,
-    ]);
+    if (!supervised_singleton) {
+      await db.query("SELECT pg_advisory_xact_lock($1)", [
+        BILLING_AUTHORITY_EXECUTION_LOCK,
+      ]);
+    }
     await assertBillingAuthorityLease(identity, db);
   } catch (err) {
     await db.query("ROLLBACK").catch(() => undefined);
@@ -1654,9 +1667,10 @@ export async function getBillingAuthorityHealth(): Promise<BillingAuthorityHealt
     { rows: running },
   ] = await Promise.all([
     getPool().query<LeaseRow>(
-      `SELECT holder_id, generation, lease_until, enabled, draining, serving,
+      `SELECT holder_id, generation, lease_until, enabled, draining, serving, supervised_singleton,
                 (holder_id IS NOT NULL
-                 AND lease_until > clock_timestamp()) AS lease_valid
+                 AND lease_until > clock_timestamp()
+                 AND (NOT supervised_singleton OR updated_at > clock_timestamp() - INTERVAL '60 seconds')) AS lease_valid
            FROM billing_authority_lease WHERE name=$1`,
       [LEASE_NAME],
     ),
@@ -1692,9 +1706,12 @@ export async function getBillingAuthorityHealth(): Promise<BillingAuthorityHealt
   );
   const enabled = lease?.enabled ?? true;
   const serving = !!lease?.lease_valid && lease.serving === true;
+  // A stale heartbeat is not proof that a singleton process has stopped.
+  // Drain/rollback must still see its ownership and in-flight command.
+  const owned = serving || (!!lease?.supervised_singleton && !!lease.holder_id);
   const ready = serving && enabled && !lease.draining;
   return {
-    ...(serving && lease?.holder_id ? { instance_id: lease.holder_id } : {}),
+    ...(owned && lease?.holder_id ? { instance_id: lease.holder_id } : {}),
     ...(lease ? { generation: lease.generation } : {}),
     ...(iso(lease?.lease_until)
       ? { lease_until: iso(lease?.lease_until) }
@@ -1702,7 +1719,7 @@ export async function getBillingAuthorityHealth(): Promise<BillingAuthorityHealt
     ready,
     enabled,
     draining: !enabled || (lease?.draining ?? false),
-    ...(serving && running[0]?.command_id
+    ...(owned && running[0]?.command_id
       ? { active_command_id: running[0].command_id }
       : {}),
     queue_depth,

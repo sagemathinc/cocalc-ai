@@ -166,7 +166,13 @@ Table({
     },
     lease_until: {
       type: "timestamp",
-      desc: "Database-clock expiry of the current lease.",
+      desc: "Legacy lease expiry; supervised singleton ownership uses a non-expiring sentinel.",
+    },
+    supervised_singleton: {
+      type: "boolean",
+      pg_default: "FALSE",
+      not_null: true,
+      desc: "Ownership is held by a supervised process-lifetime lock, not a timed lease.",
     },
     enabled: {
       type: "boolean",

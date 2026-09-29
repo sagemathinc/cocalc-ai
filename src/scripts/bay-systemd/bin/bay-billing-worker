@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib.sh"
+
+if [[ "${COCALC_CLUSTER_ROLE}" == attached ]]; then
+  exit 0
+fi
+case "${COCALC_BILLING_AUTHORITY_ENABLED:-0}" in
+  1|true|yes) ;;
+  *) exit 0 ;;
+esac
+require_var COCALC_BAY_HUB_MAIN
+ensure_dirs
+# The descriptor belongs to the worker for its entire lifetime. Never unlink
+# the lock file: a replacement must wait until the old process actually exits.
+exec 9>"${COCALC_BAY_STATE_DIR}/billing-executor.lock"
+flock -n 9 || exit 75
+export COCALC_BILLING_SINGLETON_LOCKED=1
+export CONAT_SERVER="http://${COCALC_BAY_ROUTER_HOST}:${COCALC_BAY_ROUTER_PORT}"
+unset COCALC_BAY_WORKER_ID COCALC_BAY_WORKER_PORT
+exec "$COCALC_BAY_NODE_BIN" "$COCALC_BAY_HUB_MAIN" --billing-worker --hostname=127.0.0.1
