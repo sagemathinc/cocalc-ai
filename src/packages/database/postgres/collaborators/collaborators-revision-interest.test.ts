@@ -38,8 +38,41 @@ describeDb("owner project/home revision interests", () => {
         }),
       ],
     );
-    return { request: { project_id, account_id, home_bay_id: "home-a" }, peer };
+    return {
+      request: {
+        project_id,
+        account_id,
+        home_bay_id: "home-a",
+        ttl_ms: 120000,
+      },
+      peer,
+    };
   }
+  test("short demand bounds new interests without shortening another consumer's lease", async () => {
+    const { request } = await fixture();
+    const before = Date.now();
+    const short = await registerCollaborationRevisionInterest(
+      { ...request, ttl_ms: 5000 },
+      authority,
+    );
+    expect(short.expires_at).toBeLessThanOrEqual(Date.now() + 5000);
+    expect(short.expires_at).toBeGreaterThan(before);
+    await getPool().query(
+      "UPDATE collaboration_revision_interests SET renew_after=clock_timestamp()-interval '1 second' WHERE project_id=$1",
+      [request.project_id],
+    );
+    const shorter = await registerCollaborationRevisionInterest(
+      { ...request, ttl_ms: 1000 },
+      authority,
+    );
+    expect(shorter.expires_at).toBe(short.expires_at);
+    await expect(
+      registerCollaborationRevisionInterest(
+        { ...request, ttl_ms: 0 },
+        authority,
+      ),
+    ).rejects.toThrow("no home demand");
+  });
   test("renewal fences delayed release and current release works after revocation", async () => {
     const { request } = await fixture();
     const first = await registerCollaborationRevisionInterest(

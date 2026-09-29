@@ -7,15 +7,15 @@ Date: 2026-09-29. This is an initial gate report, not a completed scaling rollou
 Recent Scan store/worker checks do not establish completion of the full design.
 The seven implementation gates remain distinct:
 
-| Plan gate | Evidence and remaining work |
-| --- | --- |
-| Baseline/contracts | Isolated baseline, metrics and authority work exist. Full workload cost/freshness curves remain unproven. |
-| Filesystem proof/reuse | The raw btrfs generation proof failed. No safe generation-equality shortcut is enabled; validated cold-scan avoidance remains unresolved. |
-| Vertical prototype | Owner/home and Scan components have focused integration tests, but the complete source-change, active-view, sleep, offline-event, return sequence with all failure cases is not proven. |
+| Plan gate               | Evidence and remaining work                                                                                                                                                                                                                                                                        |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Baseline/contracts      | Isolated baseline, metrics and authority work exist. Full workload cost/freshness curves remain unproven.                                                                                                                                                                                          |
+| Filesystem proof/reuse  | The raw btrfs generation proof failed. No safe generation-equality shortcut is enabled; validated cold-scan avoidance remains unresolved.                                                                                                                                                          |
+| Vertical prototype      | Owner/home and Scan components have focused integration tests, but the complete source-change, active-view, sleep, offline-event, return sequence with all failure cases is not proven.                                                                                                            |
 | Demand/event decoupling | Demand scheduling and offline-event work exist behind prototype gates. Owner revision interests and shared per-home-bay delta fetching still need implementation/validation. The consumer cap currently counts grace rows as well as live consumers, unlike the plan's stated live-consumer limit. |
-| Bounded Scan service | Internal admission, host dispatch, receipt retention and queued cleanup are tested. Public principal binding, reviewed agent scope, host/bay/global budgets, status throttling, complete watermarks and CLI/UI controls are not established. |
-| Recovery/lifecycle | Rehome guards remain necessary. Full canonical rebuild, transfer/rollback, restore and retention/deletion coverage are not proven. |
-| Scale/canary | Query fixtures are not DAU traces. The 10k/100k workloads, burst/fanout matrix, 24-hour soak, six-month churn simulation, browser matrix and explicit enablement decision remain outstanding. |
+| Bounded Scan service    | Internal admission, host dispatch, receipt retention and queued cleanup are tested. Public principal binding, reviewed agent scope, host/bay/global budgets, status throttling, complete watermarks and CLI/UI controls are not established.                                                       |
+| Recovery/lifecycle      | Rehome guards remain necessary. Full canonical rebuild, transfer/rollback, restore and retention/deletion coverage are not proven.                                                                                                                                                                 |
+| Scale/canary            | Query fixtures are not DAU traces. The 10k/100k workloads, burst/fanout matrix, 24-hour soak, six-month churn simulation, browser matrix and explicit enablement decision remain outstanding.                                                                                                      |
 
 The next implementation frontier should address selective revision delivery and
 the complete vertical path, not treat further Scan cleanup tests as a substitute
@@ -1118,3 +1118,23 @@ revocation and subsequent cold demand without changing the stored lease.
 The fixture restores membership after its revocation check. All thirteen demand
 acceptance cases and the server build pass. This covers registration only, not
 revision transport delivery, home rehome races, or demand-aligned lease expiry.
+
+### Demand-Aligned Revision Interest Expiry
+
+Registration now asks the authoritative home for the remaining grace horizon
+of this specific project, rather than accepting aggregate account scope and
+granting another unconditional 120 seconds. Unrelated project demand cannot
+extend that horizon. The response is a duration, not a cross-bay wall-clock
+timestamp; the owner deducts RPC elapsed time and the store deducts local
+transaction/fence wait before applying its 120-second cap. An existing longer
+project/home lease is preserved because another consumer may have justified it.
+Expired demand cannot create or renew a lease. This does not synchronously
+revoke previously justified leases when demand is subsequently released.
+
+Validation: server TypeScript build, 32 API tests, six PGlite interest-store
+tests and fourteen authenticated PostgreSQL/fabric demand cases pass. The new
+fabric case proves a short project-specific horizon is not enlarged by another
+project's longer demand. Store coverage verifies shorter registrations do not
+truncate an existing aggregate lease. No automatic renewal or hint-delivery
+worker is enabled; durable home hint acceptance, batched fanout, expiry cleanup,
+rehome races and the full vertical/scale gates remain outstanding.

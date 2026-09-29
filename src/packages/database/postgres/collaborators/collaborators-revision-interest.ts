@@ -35,12 +35,22 @@ export async function syncCollaborationRevisionInterestSchema(
  * the destination home bay and bind account_id to that home's active demand.
  * The owner rechecks membership; this hint never grants metadata access. A home
  * aggregates its consumers before renewing this single project/bay row.
+ * ttl_ms is the verified remaining demand duration after RPC elapsed time,
+ * not a wall-clock timestamp from another bay. Deduct local fence wait too.
  */
 export async function registerCollaborationRevisionInterest(
-  opts: { project_id: string; account_id: string; home_bay_id: string },
+  opts: {
+    project_id: string;
+    account_id: string;
+    home_bay_id: string;
+    ttl_ms: number;
+  },
   authority: CollaborationOwnerAuthority,
 ) {
   boundedText(opts.home_bay_id, "interest home bay", 128);
+  if (!Number.isFinite(opts.ttl_ms) || opts.ttl_ms <= 0)
+    throw Error("project has no home demand");
+  const started = performance.now();
   return transaction(async (db) => {
     await assertCollaborationAccountAuthority(
       db,
@@ -51,13 +61,22 @@ export async function registerCollaborationRevisionInterest(
     const now = (
       await db.query("SELECT clock_timestamp() AS now")
     ).rows[0].now.getTime();
+    const remaining = Math.min(
+      120000,
+      opts.ttl_ms - (performance.now() - started),
+    );
+    if (remaining <= 0) throw Error("project has no home demand");
     let row = (
       await db.query(
         "SELECT * FROM collaboration_revision_interests WHERE project_id=$1 AND home_bay_id=$2",
         [opts.project_id, opts.home_bay_id],
       )
     ).rows[0];
-    if (!row || row.renew_after.getTime() <= now) {
+    if (
+      !row ||
+      row.expires_at.getTime() <= now ||
+      row.renew_after.getTime() <= now
+    ) {
       // A delayed release must not erase a subsequently renewed interest.
       const lease_id = randomUUID();
       row = (
@@ -71,8 +90,8 @@ export async function registerCollaborationRevisionInterest(
             opts.project_id,
             opts.home_bay_id,
             lease_id,
-            new Date(now + 120000),
-            new Date(now + 30000),
+            new Date(Math.max(row?.expires_at.getTime() ?? 0, now + remaining)),
+            new Date(now + Math.min(30000, remaining)),
             new Date(now),
           ],
         )

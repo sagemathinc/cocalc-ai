@@ -75,6 +75,34 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
       ),
     ).toEqual([{ lease_id: first.lease_id }]);
   }, 60000);
+  test("owner interest is bounded by relevant demand, not another project's longer horizon", async () => {
+    await env.sql(
+      "owner",
+      "DELETE FROM collaboration_revision_interests WHERE project_id=$1",
+      [env.project],
+    );
+    const invoke = () => env.worker("b").call("registerRevisionInterest");
+    await demand("acquire", {
+      consumer_id: randomUUID(),
+      scope: { kind: "projects", project_ids: [randomUUID()] },
+    });
+    await expect(invoke()).rejects.toThrow("no home demand");
+    const consumer_id = randomUUID();
+    await demand("acquire", {
+      consumer_id,
+      scope: { kind: "projects", project_ids: [env.project] },
+    });
+    const [row] = await env.sql(
+      "a",
+      "UPDATE collaboration_demand SET grace_until=clock_timestamp()+interval '10 seconds' WHERE consumer_id=$1 RETURNING grace_until",
+      [consumer_id],
+    );
+    const interest = await invoke();
+    expect(interest.expires_at).toBeLessThanOrEqual(
+      new Date(row.grace_until).getTime(),
+    );
+    expect(interest.expires_at).toBeGreaterThan(Date.now());
+  }, 60000);
   test("authenticated demand calls bind the caller and cannot release another account's lease", async () => {
     expect((await env.hub("a", "check", {})).demand_supported).toBeUndefined();
     const first = await env.hub("a", "acquireDemand", {

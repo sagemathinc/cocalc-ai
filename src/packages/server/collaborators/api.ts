@@ -8,6 +8,7 @@ import {
   renewCollaborationDemand,
   releaseCollaborationDemand,
   inspectCollaborationDemand,
+  inspectCollaborationProjectDemand,
   demandSchedulingEnabled,
 } from "@cocalc/database/postgres/collaborators/collaborators-demand";
 import { invitationPublicApi, invitationControlApi } from "./invitations-api";
@@ -462,25 +463,26 @@ export const collaboratorsControl: InterBayCollaboratorsApi = {
       throw Error("revision interest prototype disabled");
     await demandEnabled();
     const authority = await checkOwner(opts.project_id, opts.route);
+    const started = performance.now();
     const observed = await home(opts.account_id, async (api, route) => ({
-      demand: await api.inspectDemand({ account_id: opts.account_id, route }),
+      demand: await api.inspectProjectDemand({
+        account_id: opts.account_id,
+        project_id: opts.project_id,
+        route,
+      }),
       home_bay_id: route.bay_id,
     }));
-    const scope = observed.demand.scope;
-    if (
-      observed.demand.state === "cold" ||
-      !scope ||
-      (scope.kind === "projects" &&
-        !scope.project_ids.includes(opts.project_id))
-    )
-      throw Error("project has no home demand");
     const { registerCollaborationRevisionInterest } =
       await import("@cocalc/database/postgres/collaborators/collaborators-revision-interest");
+    const ttl_ms = observed.demand.remaining_ms - (performance.now() - started);
+    if (!Number.isFinite(ttl_ms) || ttl_ms <= 0)
+      throw Error("project has no home demand");
     return registerCollaborationRevisionInterest(
       {
         project_id: opts.project_id,
         account_id: opts.account_id,
         home_bay_id: observed.home_bay_id,
+        ttl_ms,
       },
       authority,
     );
@@ -535,6 +537,11 @@ export const collaboratorsControl: InterBayCollaboratorsApi = {
     await demandEnabled();
     await checkHome(opts.account_id, opts.route);
     return inspectCollaborationDemand(opts.account_id!);
+  },
+  async inspectProjectDemand(opts) {
+    await demandEnabled();
+    await checkHome(opts.account_id, opts.route);
+    return inspectCollaborationProjectDemand(opts.account_id, opts.project_id);
   },
   ...invitationControlApi,
   async resolveChatAlias(opts) {

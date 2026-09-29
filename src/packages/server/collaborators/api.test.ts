@@ -110,6 +110,7 @@ jest.mock("@cocalc/database/postgres/account-rehome-fence", () => ({
 }));
 const remote = {
   inspectDemand: jest.fn(),
+  inspectProjectDemand: jest.fn(),
   scanAtOwner: jest.fn(),
   resolveChatAlias: jest.fn(),
   resolvePersonAlias: jest.fn(),
@@ -263,34 +264,35 @@ test("revision interests derive the home and require project-scoped demand", asy
   bay = "owner";
   const request = { project_id, account_id, route };
   try {
-    remote.inspectDemand.mockResolvedValue({ state: "cold", scope: null });
+    remote.inspectProjectDemand.mockResolvedValue({ remaining_ms: 0 });
     await expect(
       collaboratorsControl.registerRevisionInterest(request),
     ).rejects.toThrow("no home demand");
     expect(revisionInterest).not.toHaveBeenCalled();
-    remote.inspectDemand.mockResolvedValue({
-      state: "active",
-      scope: { kind: "projects", project_ids: [randomUUID()] },
-    });
+    remote.inspectProjectDemand.mockResolvedValue({ remaining_ms: NaN });
     await expect(
       collaboratorsControl.registerRevisionInterest(request),
     ).rejects.toThrow("no home demand");
-    remote.inspectDemand.mockResolvedValue({
-      state: "grace",
-      scope: { kind: "projects", project_ids: [project_id] },
-    });
+    remote.inspectProjectDemand.mockResolvedValue({ remaining_ms: 5000 });
     revisionInterest.mockResolvedValue({ lease_id: "lease" });
     expect(
       await collaboratorsControl.registerRevisionInterest(request),
     ).toEqual({ lease_id: "lease" });
-    expect(remote.inspectDemand).toHaveBeenCalledWith({
+    expect(remote.inspectProjectDemand).toHaveBeenCalledWith({
       account_id,
+      project_id,
       route: { bay_id: "home" },
     });
     expect(revisionInterest).toHaveBeenCalledWith(
-      { project_id, account_id, home_bay_id: "home" },
+      {
+        project_id,
+        account_id,
+        home_bay_id: "home",
+        ttl_ms: expect.any(Number),
+      },
       expect.objectContaining({ owning_bay_id: "owner" }),
     );
+    expect(revisionInterest.mock.calls[0][0].ttl_ms).toBeLessThanOrEqual(5000);
     await expect(
       collaboratorsControl.registerRevisionInterest({
         ...request,

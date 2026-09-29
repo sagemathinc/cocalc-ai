@@ -429,6 +429,27 @@ export async function inspectCollaborationDemand(
   });
 }
 
+/** Remaining project-specific scheduling horizon, not an access grant. */
+export async function inspectCollaborationProjectDemand(
+  account_id: string,
+  project_id: string,
+): Promise<{ remaining_ms: number }> {
+  uuid(project_id, "project_id");
+  return onHome(account_id, async (db, now) => {
+    const { rows } = await db.query(
+      `SELECT MAX(grace_until) AS horizon FROM collaboration_demand
+       WHERE account_id=$1 AND grace_until>$2
+       AND (scope->>'kind'='all' OR scope->'project_ids' ? $3)`,
+      [account_id, new Date(now), project_id.toLowerCase()],
+    );
+    return {
+      remaining_ms: rows[0].horizon
+        ? Math.max(0, rows[0].horizon.getTime() - now)
+        : 0,
+    };
+  });
+}
+
 /** Expiry-indexed bounded cleanup, not a scan of historical accounts. */
 export async function pruneCollaborationDemand() {
   const { rows } = await getPool().query(`WITH expired AS (
