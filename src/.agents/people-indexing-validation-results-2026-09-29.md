@@ -1836,3 +1836,20 @@ atomic intent primitive, not completed source-change delivery: owner-fenced clai
 bounded destination traversal, token-conditional settlement, retry/unknown outcomes,
 disabled-after-install behavior, real PostgreSQL concurrency and routed delivery
 must precede enabling it. Existing repair remains unchanged.
+
+### Owner-Fenced Outbox Claims And Settlement
+
+The explicit outbox prototype now supports owner-fenced 30-second claims and
+token/claim-conditional settlement. Each operation uses local lock/statement
+timeouts. A continuation advances only to a later destination cursor and releases
+the claim; completion removes only the exact live claimed marker. A newer catalog
+mutation replaces the token, resets traversal and clears the old claim atomically.
+Unknown outcomes retain the claim until retry eligibility, and expired/replaced
+claims cannot clear pending work.
+
+Database/reference typecheck and five PGlite outbox tests pass. Added coverage
+checks wrong-owner rejection, competing claims, continuation reuse/regression,
+newer-mutation fencing and expiry/reclaim. These tests do not yet establish real
+PostgreSQL concurrent lock behavior or routed delivery. Candidate enumeration,
+bounded recipient draining, lifecycle gating and real-system validation remain
+open; startup still does not install this prototype.

@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
-import { syncCollaborationRevisionOutboxSchema } from "./collaborators-revision-outbox";
+import {
+  syncCollaborationRevisionOutboxSchema,
+  claimCollaborationRevisionOutbox,
+  settleCollaborationRevisionOutbox,
+} from "./collaborators-revision-outbox";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" &&
@@ -10,6 +14,7 @@ const describeDb =
     : describe.skip;
 
 describeDb("atomic owner catalog revision intent", () => {
+  const authority = { owning_bay_id: "outbox-owner" };
   beforeAll(async () => {
     await initEphemeralDatabase();
     await syncCollaborationRevisionOutboxSchema(getPool());
@@ -20,7 +25,10 @@ describeDb("atomic owner catalog revision intent", () => {
   });
   async function fixture() {
     const id = randomUUID();
-    await getPool().query("INSERT INTO projects(project_id) VALUES($1)", [id]);
+    await getPool().query(
+      "INSERT INTO projects(project_id,owning_bay_id) VALUES($1,$2)",
+      [id, authority.owning_bay_id],
+    );
     await getPool().query(
       "INSERT INTO collaboration_projects(project_id,generation,revision) VALUES($1,$2,1)",
       [id, randomUUID()],
@@ -34,6 +42,66 @@ describeDb("atomic owner catalog revision intent", () => {
         [id],
       )
     ).rows;
+
+  test("claims are owner fenced and continuation is token conditional", async () => {
+    const id = await fixture();
+    await expect(
+      claimCollaborationRevisionOutbox(id, { owning_bay_id: "wrong" }),
+    ).rejects.toThrow();
+    const first = await claimCollaborationRevisionOutbox(id, authority);
+    expect(first).not.toBeNull();
+    expect(await claimCollaborationRevisionOutbox(id, authority)).toBeNull();
+    expect(
+      await settleCollaborationRevisionOutbox(first!, "home-a", authority),
+    ).toBe(true);
+    expect(
+      await settleCollaborationRevisionOutbox(first!, null, authority),
+    ).toBe(false);
+    const next = await claimCollaborationRevisionOutbox(id, authority);
+    expect(next?.after_home_bay).toBe("home-a");
+    expect(
+      await settleCollaborationRevisionOutbox(next!, "home-a", authority),
+    ).toBe(false);
+    await getPool().query(
+      "UPDATE collaboration_projects SET revision=revision+1 WHERE project_id=$1",
+      [id],
+    );
+    expect(
+      await settleCollaborationRevisionOutbox(next!, null, authority),
+    ).toBe(false);
+    const latest = await claimCollaborationRevisionOutbox(id, authority);
+    expect(latest).toMatchObject({ revision: "2", after_home_bay: null });
+    expect(latest?.token).not.toBe(next?.token);
+    expect(
+      await settleCollaborationRevisionOutbox(latest!, null, authority),
+    ).toBe(true);
+    expect(await read(id)).toEqual([]);
+  });
+  test("expired claims cannot settle and can be reclaimed", async () => {
+    const id = await fixture();
+    const first = await claimCollaborationRevisionOutbox(id, authority);
+    await getPool().query(
+      "UPDATE collaboration_revision_outbox SET claim_until=now()-interval '1 second',due_at=now()-interval '1 second' WHERE project_id=$1",
+      [id],
+    );
+    expect(
+      await settleCollaborationRevisionOutbox(first!, null, authority),
+    ).toBe(false);
+    const second = await claimCollaborationRevisionOutbox(id, authority);
+    expect(second?.token).toBe(first?.token);
+    expect(second?.claim_id).not.toBe(first?.claim_id);
+    expect(
+      await settleCollaborationRevisionOutbox(first!, null, authority),
+    ).toBe(false);
+    await expect(
+      settleCollaborationRevisionOutbox(second!, null, {
+        owning_bay_id: "wrong",
+      }),
+    ).rejects.toThrow();
+    expect(
+      await settleCollaborationRevisionOutbox(second!, null, authority),
+    ).toBe(true);
+  });
 
   test("coalesces actual changes and preserves no-op tokens", async () => {
     const id = await fixture();
