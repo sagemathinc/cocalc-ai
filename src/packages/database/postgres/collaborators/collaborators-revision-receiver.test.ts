@@ -131,6 +131,66 @@ describeDb("shared home revision receiver", () => {
     );
     expect(rows).toEqual([{ repair_request_id: null, bounded: true }]);
   });
+  test("weekly repair generation replaces an old identity without accepting its late acknowledgment", async () => {
+    const opts = lease();
+    await arm(opts);
+    await getPool().query(
+      `UPDATE collaboration_revision_receivers SET bootstrap_admitted=TRUE,
+       repair_after=clock_timestamp()-interval '1 second' WHERE project_id=$1`,
+      [opts.project_id],
+    );
+    const old = (await readOrCreateRevisionRepair(opts))!;
+    // Normal retries must not slide the generation's lifetime forward.
+    await getPool().query(
+      "UPDATE collaboration_revision_receivers SET repair_requested_at=clock_timestamp()-interval '6 days' WHERE project_id=$1",
+      [opts.project_id],
+    );
+    expect(await readOrCreateRevisionRepair(opts)).toBe(old);
+    expect(
+      (
+        await getPool().query(
+          `SELECT repair_requested_at<clock_timestamp()-interval '5 days' AS retained
+      FROM collaboration_revision_receivers WHERE project_id=$1`,
+          [opts.project_id],
+        )
+      ).rows,
+    ).toEqual([{ retained: true }]);
+    await getPool().query(
+      "UPDATE collaboration_revision_receivers SET repair_requested_at=clock_timestamp()-interval '8 days' WHERE project_id=$1",
+      [opts.project_id],
+    );
+    const next = (await readOrCreateRevisionRepair(opts))!;
+    expect(next).toBeTruthy();
+    expect(next).not.toBe(old);
+    expect(await readOrCreateRevisionRepair(opts)).toBe(next);
+    expect(await acknowledgeRevisionRepair({ ...opts, request_id: old })).toBe(
+      false,
+    );
+    expect(await acknowledgeRevisionRepair({ ...opts, request_id: next })).toBe(
+      true,
+    );
+  });
+  test("legacy pending repair keeps its identity when generation age is unknown", async () => {
+    const opts = lease();
+    await arm(opts);
+    const request_id = randomUUID();
+    await getPool().query(
+      `UPDATE collaboration_revision_receivers SET bootstrap_admitted=TRUE,
+       repair_after=clock_timestamp()-interval '1 second',repair_request_id=$2,
+       repair_requested_at=NULL WHERE project_id=$1`,
+      [opts.project_id, request_id],
+    );
+    expect(await readOrCreateRevisionRepair(opts)).toBe(request_id);
+    expect(
+      (
+        await getPool().query(
+          `SELECT repair_requested_at IS NOT NULL AS dated
+      FROM collaboration_revision_receivers WHERE project_id=$1`,
+          [opts.project_id],
+        )
+      ).rows,
+    ).toEqual([{ dated: true }]);
+  });
   test("expired or moved receivers cannot retry or acknowledge old repair", async () => {
     const opts = lease();
     await arm(opts);

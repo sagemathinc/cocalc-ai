@@ -2667,3 +2667,25 @@ typecheck. Both extended real multibay cases pass in 349.98 seconds. The first
 brings a second home online, advances its repair deadline, and verifies no new actor/owner receipt
 for the recent shared run. Its later missed-write phase ages the owner run as
 well as the home deadline, retaining real dispatch and host cooldowns.
+
+### Pending Repair Generation Lifetime
+
+Automatic active repair now records the database-time creation of its pending
+request identity. Retries preserve both identity and timestamp for seven days.
+If demand is still live and repair remains due after that horizon, the receiver
+starts a new durable repair generation. This is deliberate ongoing background
+repair, not an inference that an old ambiguous admission failed. Old owner jobs
+and receipts are not canceled or settled by this transition. Public Scan retry
+and status behavior is unchanged; new admission still uses existing budgets.
+
+Generation rollover is a single receiver UPDATE, and a late acknowledgment for
+the old ID cannot clear the new one. Unknown-age legacy requests keep their ID
+and receive an observation timestamp rather than being discarded on upgrade.
+Successful acknowledgment and owner change clear the generation timestamp.
+
+Ten receiver database tests, 22 server orchestration/registration tests, and
+server/reference typecheck pass. Tests simulate aging only the generation
+timestamp, verify ordinary retries do not extend its horizon, and reject old-ID
+acknowledgments after rollover. This is not a seven-day soak or a multibay
+receipt-expiry acceptance result. Initial-bootstrap identity expiry remains a
+separate recovery gap; cold repair, lifecycle and capacity gates remain open.
