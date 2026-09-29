@@ -1005,3 +1005,15 @@ cleanup stops additional attempts while dispatch can still proceed. Server build
 and all eleven worker/unit-store integration tests pass. The deadline does not
 cancel in-flight database queries; hard query timeouts, sustained contention and
 eventual cleanup latency remain unvalidated.
+
+### Maintenance Lock And Statement Limits
+
+Scan job-page selection and queued retirement now set transaction-local one-second
+lock and two-second statement timeouts. Timeout rolls back the current operation;
+the worker retains/revisits the same work rather than inferring retirement.
+The PostgreSQL fixture holds the project row lock, verifies retirement reports a
+lock timeout with its queued job unchanged, releases the lock, then successfully
+retires that same job. All six acceptance cases, 22 store tests and the server
+build pass. Settings are local to these maintenance transactions, not connection
+defaults. Pool acquisition and cumulative multi-statement transaction duration
+are not bounded by these settings; sustained contention still needs validation.

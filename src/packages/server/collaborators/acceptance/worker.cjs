@@ -20,6 +20,7 @@ const counters = { starts: 0, ownerCalls: {}, hubCalls: {}, rehomeCalls: {} };
 let closing;
 let dropSendReply;
 let interruptAccountCopy = false;
+let scanProjectLock;
 const droppedReplies = [];
 
 // Fault at the real service's response boundary, after its unmodified handler
@@ -850,6 +851,39 @@ async function command(name, args = {}) {
       return await require("@cocalc/database/postgres/collaborators/collaborators-scan-actor").reserveCollaborationScanActor(
         args.request,
       );
+    }
+    case "scanProjectLock": {
+      if (config.role !== "owner") throw Error("owner fixture required");
+      if (args.release) {
+        if (scanProjectLock) {
+          const db = scanProjectLock;
+          scanProjectLock = undefined;
+          try {
+            await db.query("ROLLBACK");
+          } finally {
+            db.release();
+          }
+        }
+        return true;
+      }
+      if (scanProjectLock) throw Error("fixture lock already held");
+      const db = await pool.connect();
+      try {
+        await db.query("BEGIN");
+        await db.query(
+          "SELECT project_id FROM projects WHERE project_id=$1 FOR UPDATE",
+          [config.project],
+        );
+        scanProjectLock = db;
+        return true;
+      } catch (err) {
+        try {
+          await db.query("ROLLBACK");
+        } finally {
+          db.release();
+        }
+        throw err;
+      }
     }
     case "scanRace": {
       if (config.role !== "owner") throw Error("owner fixture required");

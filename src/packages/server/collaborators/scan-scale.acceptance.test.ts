@@ -172,6 +172,44 @@ acceptance("scan blocked backlog query cost", () => {
         ]);
     }
   }, 120000);
+  test("retirement lock timeout leaves queued work intact and retryable", async () => {
+    const request = {
+      project_id: env.project,
+      account_id: env.accounts[0],
+      request_id: randomUUID(),
+      mode: "check",
+    };
+    const call = (operation: string, value: object) =>
+      env.worker("owner").call("scanRace", { operation, request: value });
+    const receipt = await call("admit", request);
+    const job = { project_id: env.project, job_id: receipt.job_id };
+    await env.sql(
+      "owner",
+      "UPDATE collaboration_scan_receipts SET expires_at=clock_timestamp()-interval '1 day' WHERE project_id=$1",
+      [env.project],
+    );
+    await env.worker("owner").call("scanProjectLock");
+    try {
+      await expect(call("retire", job)).rejects.toThrow("lock timeout");
+      expect(
+        await env.sql(
+          "owner",
+          "SELECT state FROM collaboration_scan_jobs WHERE job_id=$1",
+          [job.job_id],
+        ),
+      ).toEqual([{ state: "queued" }]);
+    } finally {
+      await env.worker("owner").call("scanProjectLock", { release: true });
+    }
+    expect(await call("retire", job)).toBe(true);
+    for (const table of [
+      "collaboration_scan_receipts",
+      "collaboration_scan_budget",
+    ])
+      await env.sql("owner", `DELETE FROM ${table} WHERE project_id=$1`, [
+        env.project,
+      ]);
+  }, 120000);
   test("authenticated fabric routes actor reservation at home to the project owner", async () => {
     const request = {
       project_id: env.project,

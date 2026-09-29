@@ -19,6 +19,11 @@ const COOLDOWN_MS = 300000;
 const MAX_RECEIPTS = 11000;
 const TOKEN_INTERVAL_MS = 60000;
 
+async function boundScanMaintenanceQueries(db: PoolClient) {
+  await db.query("SET LOCAL lock_timeout = '1s'");
+  await db.query("SET LOCAL statement_timeout = '2s'");
+}
+
 /** Retire only unstarted work with no live admission receipts. The project lock
  * serializes this with coalescing and start; running work needs host recovery,
  * not an inference from expired receipts. Retry history is retained unchanged.
@@ -29,6 +34,7 @@ export async function retireExpiredQueuedCollaborationScan(
 ): Promise<boolean> {
   uuid(opts.job_id, "scan job");
   return transaction(async (db) => {
+    await boundScanMaintenanceQueries(db);
     await assertCollaborationOwnerAuthority(db, opts.project_id, authority);
     const { rows } = await db.query(
       `DELETE FROM collaboration_scan_jobs j
@@ -536,6 +542,7 @@ async function scanJobPage(
   db: PoolClient,
   id: string,
 ): Promise<Array<{ job_id: string }>> {
+  await boundScanMaintenanceQueries(db);
   await db.query(
     "INSERT INTO collaboration_maintenance(id,cursor) VALUES($1,'{}') ON CONFLICT DO NOTHING",
     [id],
