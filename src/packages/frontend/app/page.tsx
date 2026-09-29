@@ -34,7 +34,7 @@ import { labels } from "@cocalc/frontend/i18n";
 import openSupportTab from "@cocalc/frontend/support/open";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
-import { IS_ANDROID, IS_IOS, IS_MOBILE, IS_SAFARI } from "../feature";
+import { IS_IPAD, IS_MOBILE, IS_SAFARI } from "../feature";
 import QuickNavigation from "./quick-navigation";
 import { ActiveContent } from "./active-content";
 import { ConnectionIndicator } from "./connection-indicator";
@@ -96,22 +96,17 @@ const PostSurfaceModals = lazyWithRetry(
   "post-surface modals",
 );
 
-// ipad and ios have a weird trick where they make the screen
-// actually smaller than 100vh and have it be scrollable, even
-// when overflow:hidden, which causes massive UI pain to cocalc.
-// so in that case we make the page_height less.  Without this
-// one little tricky, cocalc is very, very frustrating to use
-// on mobile safari. See the million discussions over the years:
-// https://liuhao.im/english/2015/05/29/ios-safari-window-height.html
-// ...
-// https://lukechannings.com/blog/2021-06-09-does-safari-15-fix-the-vh-bug/
-// Android has the same visible-vs-layout viewport mismatch when browser chrome
-// or the software keyboard is present. 100dvh is its fallback; Page overrides
-// this with the live Visual Viewport bottom edge when that API is available.
-const PAGE_HEIGHT: string = IS_ANDROID
-  ? "calc(100dvh - env(safe-area-inset-bottom))"
-  : IS_MOBILE || IS_SAFARI
-    ? `calc(100vh - env(safe-area-inset-bottom) - ${IS_IOS ? 80 : 20}px)`
+// Mobile browsers (iOS Safari, iPadOS, Android) make the layout viewport
+// (100vh) taller than the visible area when browser chrome or the software
+// keyboard is showing, and let the page scroll even with overflow:hidden.
+// See https://lukechannings.com/blog/2021-06-09-does-safari-15-fix-the-vh-bug/
+// On touch devices Page overrides this with the live Visual Viewport bottom
+// edge; 100dvh is the fallback. (iOS previously used 100vh minus a fixed
+// 80px, which left a large blank band below the page.)
+const TRACK_VISIBLE_VIEWPORT = IS_MOBILE || IS_IPAD;
+const PAGE_HEIGHT: string =
+  TRACK_VISIBLE_VIEWPORT || IS_SAFARI
+    ? "calc(100dvh - env(safe-area-inset-bottom))"
     : "100vh";
 
 const PAGE_STYLE: CSS = {
@@ -171,7 +166,9 @@ function useClientSignedIn(): boolean {
 
 export const Page: React.FC = () => {
   const page_actions = useActions("page");
-  const androidViewportBottom = useVisibleViewportBottom(IS_ANDROID);
+  const visibleViewportBottom = useVisibleViewportBottom(
+    TRACK_VISIBLE_VIEWPORT,
+  );
   const surfaceReady = useSignedInSurfaceReady();
   const startupPerformance = useStartupPerformancePolicy();
   const showPostSurfaceNavigation = usePostSurfaceWork({
@@ -535,9 +532,9 @@ export const Page: React.FC = () => {
   const body = (
     <div
       style={
-        androidViewportBottom == null
+        visibleViewportBottom == null
           ? PAGE_STYLE
-          : { ...PAGE_STYLE, height: `${androidViewportBottom}px` }
+          : { ...PAGE_STYLE, height: `${visibleViewportBottom}px` }
       }
       onDragOver={(e) => e.preventDefault()}
       onDrop={drop}

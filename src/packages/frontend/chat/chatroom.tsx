@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { createPortal } from "react-dom";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import {
   Button,
@@ -145,9 +146,7 @@ import type {
   AcpAutomationConfig,
   AcpAutomationState,
 } from "@cocalc/conat/ai/acp/types";
-import {
-  setChatOverlayOpen,
-} from "./drawer-overlay-state";
+import { setChatOverlayOpen } from "./drawer-overlay-state";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import {
   OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY,
@@ -3440,7 +3439,41 @@ function ChatPanelContent({
           {focusButton}
         </div>
       )}
-      {narrow && (
+      {narrow && embeddingOptions.mobileHeaderControlsPortal
+        ? createPortal(
+            <>
+              {effectiveReadOnly &&
+                selectedThreadKey &&
+                selectedThreadId &&
+                (threadSupportsCodexAutomation(selectedThreadMetadata) ||
+                  actions?.getCodexConfig?.(selectedThreadId) != null) && (
+                  <CodexConfigButton
+                    compact="summary"
+                    threadKey={selectedThreadKey}
+                    chatPath={path}
+                    projectId={project_id}
+                    actions={actions}
+                    threadConfig={selectedThreadMetadata?.acp_config ?? null}
+                    paymentSource={codexPaymentSource}
+                    paymentSourceLoading={codexPaymentSourceLoading}
+                    refreshPaymentSource={refreshCodexPaymentSource}
+                  />
+                )}
+              {focusButton}
+              <Button
+                type="text"
+                aria-label="Chat tools"
+                ref={mobileToolsTriggerRef}
+                aria-haspopup="dialog"
+                icon={<Icon name="tool" />}
+                onClick={() => setMobileToolsOpen(true)}
+                style={{ color: "inherit" }}
+              />
+            </>,
+            embeddingOptions.mobileHeaderControlsPortal,
+          )
+        : null}
+      {narrow && !embeddingOptions.mobileHeaderControlsPortal && (
         <div className="cocalc-chat-mobile-header">
           {!hideSidebar && !embeddingOptions.agentWorkspace && (
             <Badge dot={totalUnread > 0}>

@@ -4,7 +4,7 @@
  */
 
 import type { MenuProps } from "antd";
-import { Button, Dropdown, Modal, Tag } from "antd";
+import { Button, Dropdown, Modal } from "antd";
 
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
@@ -20,6 +20,7 @@ import api from "@cocalc/frontend/client/api";
 import { Icon } from "@cocalc/frontend/components";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
+import { UpgradePill } from "./upgrade-pill";
 
 export function AgentsAccountMenu() {
   const accountId = useTypedRedux("account", "account_id") as
@@ -155,11 +156,7 @@ export function AgentsAccountMenu() {
               {name}
             </span>
           </span>
-          {membershipClass === "free" && (
-            <Tag color="blue" style={{ marginInlineEnd: 0 }}>
-              Upgrade
-            </Tag>
-          )}
+          {membershipClass === "free" && <UpgradePill />}
           <Icon name="ellipsis-vertical" />
         </Button>
       </span>

@@ -22,3 +22,9 @@ export const ChatSourceContent = () => null;
 export const readablePeerMessage = (value: string) => value;
 export const copyTextToClipboard = async () => {};
 export const isSafeHtmlUrl = () => false;
+export const ComposerConnectors = ({
+  children,
+}: {
+  children: (extraMenuItems: unknown[]) => ReactNode;
+}) => <>{children([])}</>;
+export const ClaudeThreadInternetNotice = () => null;

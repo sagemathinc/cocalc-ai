@@ -11,6 +11,36 @@ import {
 } from "./harness-credential-selection";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 
+export function claudePaymentLabel(mode: string | undefined): string {
+  return mode === "account-subscription"
+    ? "Claude subscription"
+    : mode === "account-api-key"
+      ? "Account API key"
+      : "Project API key";
+}
+
+// The short label of the payment source selected for a thread.
+export function useClaudePaymentLabel(
+  projectId: string | undefined,
+  threadKey: string | undefined,
+): string | undefined {
+  const accountId = useTypedRedux("account", "account_id");
+  const [, setVersion] = useState(0);
+  useEffect(() => {
+    const update = () => setVersion((value) => value + 1);
+    window.addEventListener(HARNESS_CREDENTIAL_SELECTION_EVENT, update);
+    window.addEventListener("storage", update);
+    return () => {
+      window.removeEventListener(HARNESS_CREDENTIAL_SELECTION_EVENT, update);
+      window.removeEventListener("storage", update);
+    };
+  }, []);
+  if (!projectId || !threadKey) return undefined;
+  return claudePaymentLabel(
+    readHarnessCredentialSelection({ accountId, projectId, threadKey })?.mode,
+  );
+}
+
 export function ClaudePaymentStatus({
   projectId,
   threadKey,
@@ -70,11 +100,7 @@ function PaymentStatus({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const subscription = mode === "account-subscription";
-  const label = subscription
-    ? "Claude subscription"
-    : mode === "account-api-key"
-      ? "Account API key"
-      : "Project API key";
+  const label = claudePaymentLabel(mode);
   useEffect(() => {
     if (!open) return;
     let active = true;

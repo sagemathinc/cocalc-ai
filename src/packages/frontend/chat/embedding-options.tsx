@@ -31,6 +31,9 @@ export interface ChatEmbeddingOptions {
   openFilesInWorkbench?: boolean;
   sidebarHiddenByDefault?: boolean;
   sidebarPreferenceKey?: string;
+  // On narrow screens the host renders the chat's header controls here
+  // instead of the chat adding its own title row (the host shows the title).
+  mobileHeaderControlsPortal?: HTMLElement | null;
 }
 
 const Context = createContext<ChatEmbeddingOptions | undefined>(undefined);

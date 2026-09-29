@@ -180,8 +180,10 @@ type FakeActions = {
 
 function ComposerHarness({
   withSettings = false,
+  mobile = false,
 }: {
   withSettings?: boolean;
+  mobile?: boolean;
 }): React.JSX.Element {
   const [composerDraftKey, setComposerDraftKey] = useState<number>(0);
   const [composerSession, setComposerSession] = useState<number>(1);
@@ -231,8 +233,10 @@ function ComposerHarness({
         set_cursor_locs: () => undefined,
       },
       deleteDraft: () => undefined,
+      getThreadMetadata: () =>
+        withSettings ? { agent_kind: "acp" } : undefined,
     }),
-    [],
+    [withSettings],
   );
 
   const hasInput = input.trim().length > 0;
@@ -267,7 +271,7 @@ function ComposerHarness({
 
   return (
     <FrameContext.Provider value={frameContext as any}>
-      <div style={{ padding: 16, width: 760 }}>
+      <div style={{ padding: mobile ? 0 : 16, width: mobile ? "100%" : 760 }}>
         <h3>Chat Composer Harness</h3>
         <p style={{ color: "#666", marginTop: 0 }}>
           draftKey: <span data-testid="draft-key">{composerDraftKey}</span>,
@@ -304,6 +308,7 @@ function ComposerHarness({
           threads={[]}
           selectedThread={withSettings ? ({ key: "thread-1" } as any) : null}
           onComposerFocusChange={() => undefined}
+          mobile={mobile}
         />
       </div>
     </FrameContext.Provider>
@@ -328,7 +333,9 @@ function Harness(): React.JSX.Element {
     return <ComposerHarness />;
   }
   if (mode === "composer-settings") {
-    return <ComposerHarness withSettings />;
+    return (
+      <ComposerHarness withSettings mobile={params.get("mobile") === "1"} />
+    );
   }
   if (mode === "new-agent") {
     return <NewAgentHarness />;
