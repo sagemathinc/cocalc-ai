@@ -2070,3 +2070,24 @@ Progress counting now scales with relevant pending/error work rather than the
 clean catalog size. Large pending backlogs still cost proportional work, and the
 reporter's bounded project traversal/cursor persistence remains; a durable
 change-driven reporting queue and demand-aware freshness are not yet implemented.
+
+### Durable Journal Progress Signal Primitive
+
+Added an optional SQLite primitive for the reporting-queue handoff. Installation
+atomically adds triggers and adopts existing source projects once. Source
+progress, pending-delivery and redirect changes coalesce into one token-bearing
+row per project in the same transaction as the mutation. Relevant no-op updates
+do not replace the token; project deletion retains a final signal. Bounded keyset
+pages and exact-token acknowledgement let a future cross-store consumer enqueue
+report work before acknowledging, without erasing newer changes.
+
+Reopening preserves pending signals and does not reseed acknowledged projects.
+Capture remains after installation even if a consumer stops. This primitive is
+not installed by normal startup or wired to a reporter yet; reporting still uses
+its existing bounded traversal. Census-store changes also need their own durable
+admission, and lifecycle/retention behavior must be integrated before cutover.
+
+Backend/reference typecheck and the focused real SQLite signal, progress-query
+and combined handoff tests pass. Signal coverage includes transactional rollback,
+coalescing, stale acknowledgement, reopen, source/delivery/redirect removal and
+bounded paging. No production installation or capacity claim was made.
