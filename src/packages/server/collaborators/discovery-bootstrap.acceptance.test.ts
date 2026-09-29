@@ -138,4 +138,68 @@ acceptance("demand-triggered initial discovery over real fabric", () => {
     for (const role of ["owner", "a", "b"] as const)
       expect((await env.worker(role).call("inspect")).counters.starts).toBe(0);
   }, 180000);
+  const repairTest =
+    process.env.COCALC_PEOPLE_REPAIR_ACCEPTANCE === "1" ? test : test.skip;
+  repairTest(
+    "active repair discovers a later unmediated file with real host cooldown",
+    async () => {
+      const source = await env.worker("host").call("unmediatedRepairFixture");
+      const consumer_id = randomUUID();
+      const demand = await env.worker("a").call("demand", {
+        operation: "acquire",
+        opts: {
+          consumer_id,
+          scope: { kind: "projects", project_ids: [env.project] },
+        },
+      });
+      // Advance only the hourly repair deadline. Admission/dispatch/host cooldowns
+      // and all worker scheduling remain real; no manual worker ticks are used.
+      await env.sql(
+        "a",
+        `UPDATE collaboration_revision_receivers
+      SET repair_after=clock_timestamp()-interval '1 second' WHERE project_id=$1`,
+        [env.project],
+      );
+      const deadline = Date.now() + 420000;
+      let nextRenew = Date.now() + 30000;
+      let found = false;
+      while (Date.now() < deadline) {
+        if (Date.now() >= nextRenew) {
+          await env.worker("a").call("demand", {
+            operation: "renew",
+            opts: { consumer_id, lease_id: demand.lease_id },
+          });
+          nextRenew = Date.now() + 30000;
+        }
+        const page = await env.hub("a", "listResources", {
+          project_id: env.project,
+        });
+        const [{ n }] = await env.sql(
+          "owner",
+          `SELECT count(*)::integer AS n
+        FROM collaboration_scan_receipts WHERE result->>'state'='discovered'`,
+        );
+        if (
+          n === 2 &&
+          page.items.some((item: any) => item.chat_path === source.chat_path)
+        ) {
+          found = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      expect(found).toBe(true);
+      expect(
+        await env.sql(
+          "owner",
+          "SELECT count(*)::integer AS n FROM collaboration_scan_receipts",
+        ),
+      ).toEqual([{ n: 2 }]);
+      for (const role of ["owner", "a", "b"] as const)
+        expect((await env.worker(role).call("inspect")).counters.starts).toBe(
+          0,
+        );
+    },
+    450000,
+  );
 });

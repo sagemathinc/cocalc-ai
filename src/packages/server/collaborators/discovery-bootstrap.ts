@@ -5,13 +5,16 @@
 import {
   readRevisionBootstrap,
   acknowledgeRevisionBootstrap,
+  readOrCreateRevisionRepair,
+  acknowledgeRevisionRepair,
 } from "@cocalc/database/postgres/collaborators/collaborators-revision-receiver";
 import type { CollaborationDiscoveryState } from "@cocalc/util/collaboration-census";
 import type { ScanAdmissionResult } from "@cocalc/util/collaboration-scan";
 
 /** Called only after home demand and owner membership were checked and the
  * receiver was armed. Failure leaves the same identity for the next renewal.
- * Admission is finite bootstrap work, not proof of discovery or projection.
+ * Admission covers initial discovery and bounded active-demand repair, never
+ * proof of discovery or projection. Cold receivers cannot create repair work.
  */
 export async function bootstrapDemandDiscovery(
   receiver: {
@@ -31,14 +34,31 @@ export async function bootstrapDemandDiscovery(
   )
     return "disabled";
   const request_id = await readRevisionBootstrap(receiver);
-  if (!request_id) return "done";
+  if (!request_id) {
+    const repair_id = await readOrCreateRevisionRepair(receiver);
+    if (!repair_id) return "done";
+    const result = await operations.admit(repair_id);
+    if (result.admission === "throttled") return "deferred";
+    return (await acknowledgeRevisionRepair({
+      ...receiver,
+      request_id: repair_id,
+    }))
+      ? "done"
+      : "deferred";
+  }
   const discovery = await operations.discovery();
-  // Existing reports belong to reconciliation/repair, not first discovery.
+  // Returning demand must not postpone repair forever by recreating receivers.
+  // Report age is a scheduling hint, never proof that source bytes are current.
+  const staleReport =
+    discovery.report != null &&
+    discovery.updated_at != null &&
+    Number.isFinite(discovery.updated_at) &&
+    discovery.updated_at <= Date.now() - 60 * 60_000;
   // Unavailable without a report may mean a changed host: do not reinterpret it
   // as permission to replace an unknown run here.
   if (discovery.status !== "pending" && !discovery.report) return "deferred";
   if ((await readRevisionBootstrap(receiver)) !== request_id) return "deferred";
-  if (discovery.status === "pending" && !discovery.report) {
+  if ((discovery.status === "pending" && !discovery.report) || staleReport) {
     const result = await operations.admit(request_id);
     if (result.admission === "throttled") return "deferred";
   }

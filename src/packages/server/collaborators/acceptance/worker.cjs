@@ -1055,6 +1055,19 @@ async function command(name, args = {}) {
       journalService = collaborators.startCollaborators(fixtureFilesystem);
       return { chat_path: "/home/user/scan-only.chat" };
     }
+    case "unmediatedRepairFixture": {
+      if (config.role !== "host") throw Error("host fixture required");
+      const source = JSON.parse(
+        await readFile(join(config.directory, "volume/scan-only.chat"), "utf8"),
+      );
+      source.thread_id = require("node:crypto").randomUUID();
+      source.message_id = require("node:crypto").randomUUID();
+      await writeFile(
+        join(config.directory, "volume/repair-only.chat"),
+        JSON.stringify(source) + "\n",
+      );
+      return { chat_path: "/home/user/repair-only.chat" };
+    }
     case "hostCensusControl": {
       if (config.role !== "host") throw Error("host fixture required");
       const control = hostRequire(

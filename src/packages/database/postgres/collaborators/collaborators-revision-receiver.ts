@@ -23,6 +23,10 @@ export async function syncCollaborationRevisionReceiverSchema(
   await db.query(`ALTER TABLE collaboration_revision_receivers
     ADD COLUMN IF NOT EXISTS bootstrap_admitted BOOLEAN NOT NULL DEFAULT FALSE`);
   await db.query(`ALTER TABLE collaboration_revision_receivers
+    ADD COLUMN IF NOT EXISTS repair_request_id UUID,
+    ADD COLUMN IF NOT EXISTS repair_after TIMESTAMPTZ NOT NULL
+      DEFAULT (clock_timestamp()+interval '1 hour')`);
+  await db.query(`ALTER TABLE collaboration_revision_receivers
     ADD COLUMN IF NOT EXISTS renew_after TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()`);
   await db.query(`ALTER TABLE collaboration_revision_receivers
     ADD COLUMN IF NOT EXISTS scheduling_seq BIGINT NOT NULL DEFAULT 0,
@@ -91,6 +95,49 @@ export async function acknowledgeRevisionBootstrap(
       opts.owner_bay_id,
       opts.lease_id,
       opts.receiver_id,
+    ],
+  );
+  return rows.length > 0;
+}
+
+/** Active receiver only. Persist before RPC so an unknown admission is retried
+ * with the same identity. This deadline is repair policy, not a freshness claim.
+ */
+export async function readOrCreateRevisionRepair(
+  opts: ReceiverLease,
+): Promise<string | null> {
+  validate(opts);
+  const { rows } = await getPool().query(
+    `UPDATE collaboration_revision_receivers
+     SET repair_request_id=COALESCE(repair_request_id,gen_random_uuid())
+     WHERE project_id=$1 AND home_bay_id=$2 AND owner_bay_id=$3 AND lease_id=$4
+       AND expires_at>clock_timestamp() AND bootstrap_admitted
+       AND repair_after<=clock_timestamp() RETURNING repair_request_id`,
+    [opts.project_id, opts.home_bay_id, opts.owner_bay_id, opts.lease_id],
+  );
+  return rows[0]?.repair_request_id ?? null;
+}
+
+/** Acknowledges admission only. Due work is coalesced/throttled by the owner;
+ * jitter avoids synchronized hourly rescans after classroom activity bursts.
+ */
+export async function acknowledgeRevisionRepair(
+  opts: ReceiverLease & { request_id: string },
+): Promise<boolean> {
+  validate(opts);
+  uuid(opts.request_id, "repair request");
+  const { rows } = await getPool().query(
+    `UPDATE collaboration_revision_receivers SET repair_request_id=NULL,
+       repair_after=clock_timestamp()+interval '1 hour'+random()*interval '15 minutes'
+     WHERE project_id=$1 AND home_bay_id=$2 AND owner_bay_id=$3 AND lease_id=$4
+       AND repair_request_id=$5 AND expires_at>clock_timestamp()
+     RETURNING project_id`,
+    [
+      opts.project_id,
+      opts.home_bay_id,
+      opts.owner_bay_id,
+      opts.lease_id,
+      opts.request_id,
     ],
   );
   return rows.length > 0;
@@ -240,6 +287,8 @@ export async function armCollaborationRevisionReceiver(
         : await db.query(
             `UPDATE collaboration_revision_receivers SET
           bootstrap_admitted=CASE WHEN owner_bay_id=$3 THEN bootstrap_admitted ELSE FALSE END,
+          repair_request_id=CASE WHEN owner_bay_id=$3 THEN repair_request_id ELSE NULL END,
+          repair_after=CASE WHEN owner_bay_id=$3 THEN repair_after ELSE clock_timestamp()+interval '1 hour' END,
           owner_bay_id=$3,lease_id=$4,
           expires_at=clock_timestamp()+$5::double precision*interval '1 millisecond',dirty_seq=dirty_seq+1,
           renew_after=clock_timestamp()+LEAST(30000,$5::double precision)*interval '1 millisecond'

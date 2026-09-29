@@ -2604,3 +2604,35 @@ policy. Generation advancement can be a conservative dirty hint, but equality
 cannot retire dirty work or certify freshness. The next scheduler must retain
 periodic bounded reconciliation unless a stronger storage proof is validated;
 simply restoring the historical all-volume hourly traversal is not the target.
+
+### Active-Demand Conservative Repair
+
+The opt-in discovery path now checks a durable repair deadline during existing
+receiver renewal. It does not add a timer or enumerate historical memberships.
+A live, bootstrapped receiver becomes eligible after one hour; its request UUID
+is stored before admission and reused after timeout or throttling. Successful
+admission clears that UUID and sets the next deadline 60-75 minutes ahead with
+jitter. Lease/owner/request identity fences reject delayed acknowledgments;
+owner changes clear the pending identity. Expired receivers cannot request or
+acknowledge repair. Existing current-demand checks and account/project Scan
+budgets, coalescing, owner dispatch limits and host cooldown remain in force.
+
+Returning demand also requests repair when the owner discovery report is at
+least an hour old, avoiding indefinite postponement by short sessions that
+recreate ephemeral receivers. Report age is only a scheduling hint, not a
+freshness or authorization proof. Recent reports avoid this return-time request.
+
+Focused checks pass: eight receiver database tests, 56 server bootstrap/API/
+registration tests, and server/reference typecheck. The opt-in long acceptance
+case adds an unmediated file after initial discovery, advances only the hourly
+repair deadline, renews demand, and otherwise uses real production timers and
+the real five-minute host cooldown. Both real multibay cases pass in 349.278
+seconds, with exactly one initial request and one repair request, the later file
+present in the home view, both receipts settled, and zero compute starts. The
+return-time age branch was added during that run and is covered separately by
+the focused server tests, not by that already-running worker process.
+
+This is a conservative active-project fallback, not the final generation-aware
+service. Cold-volume inventory hints/backoff, shared cross-home repair suppression,
+receipt-expiry recovery after very long ambiguous outcomes, measured scan cost,
+and lifecycle/scale gates remain open. No production flags were enabled.

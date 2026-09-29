@@ -568,8 +568,8 @@ export const collaboratorsControl: InterBayCollaboratorsApi = {
     ) {
       const { bootstrapDemandDiscovery } =
         await import("./discovery-bootstrap");
-      // Bootstrap failure must not discard a valid revision receiver. The
-      // durable receiver identity is reused on a later active renewal.
+      // Discovery/repair failure must not discard a valid revision receiver.
+      // Durable request identities are reused on a later active renewal.
       await bootstrapDemandDiscovery(
         {
           project_id: opts.project_id,

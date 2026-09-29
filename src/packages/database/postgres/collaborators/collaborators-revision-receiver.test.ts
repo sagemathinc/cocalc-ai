@@ -12,6 +12,8 @@ import {
   advanceRevisionScheduling,
   readRevisionBootstrap,
   acknowledgeRevisionBootstrap,
+  readOrCreateRevisionRepair,
+  acknowledgeRevisionRepair,
 } from "./collaborators-revision-receiver";
 
 const describeDb =
@@ -87,6 +89,76 @@ describeDb("shared home revision receiver", () => {
     expect(await acknowledgeRevisionBootstrap({ ...moved, receiver_id })).toBe(
       false,
     );
+  });
+  test("repair is due-only, stable across renewal, and acknowledged with jitter", async () => {
+    const opts = lease();
+    expect(await readOrCreateRevisionRepair(opts)).toBeNull();
+    await arm(opts);
+    await getPool().query(
+      "UPDATE collaboration_revision_receivers SET repair_after=clock_timestamp()-interval '1 second' WHERE project_id=$1",
+      [opts.project_id],
+    );
+    expect(await readOrCreateRevisionRepair(opts)).toBeNull();
+    await acknowledgeRevisionBootstrap({
+      ...opts,
+      receiver_id: await identity(opts.project_id),
+    });
+    const request_id = (await readOrCreateRevisionRepair(opts))!;
+    expect(request_id).toBeTruthy();
+    expect(await readOrCreateRevisionRepair(opts)).toBe(request_id);
+    const renewed = { ...opts, lease_id: randomUUID() };
+    await arm(renewed, opts.lease_id);
+    expect(await readOrCreateRevisionRepair(opts)).toBeNull();
+    expect(await readOrCreateRevisionRepair(renewed)).toBe(request_id);
+    expect(await acknowledgeRevisionRepair({ ...opts, request_id })).toBe(
+      false,
+    );
+    expect(
+      await acknowledgeRevisionRepair({ ...renewed, request_id: randomUUID() }),
+    ).toBe(false);
+    expect(await acknowledgeRevisionRepair({ ...renewed, request_id })).toBe(
+      true,
+    );
+    expect(await acknowledgeRevisionRepair({ ...renewed, request_id })).toBe(
+      false,
+    );
+    expect(await readOrCreateRevisionRepair(renewed)).toBeNull();
+    const { rows } = await getPool().query(
+      `SELECT repair_request_id,repair_after>clock_timestamp()+interval '59 minutes' AND
+       repair_after<=clock_timestamp()+interval '75 minutes' AS bounded
+       FROM collaboration_revision_receivers WHERE project_id=$1`,
+      [opts.project_id],
+    );
+    expect(rows).toEqual([{ repair_request_id: null, bounded: true }]);
+  });
+  test("expired or moved receivers cannot retry or acknowledge old repair", async () => {
+    const opts = lease();
+    await arm(opts);
+    await getPool().query(
+      `UPDATE collaboration_revision_receivers SET bootstrap_admitted=TRUE,
+       repair_after=clock_timestamp()-interval '1 second' WHERE project_id=$1`,
+      [opts.project_id],
+    );
+    const request_id = (await readOrCreateRevisionRepair(opts))!;
+    await getPool().query(
+      "UPDATE collaboration_revision_receivers SET expires_at=clock_timestamp()-interval '1 second' WHERE project_id=$1",
+      [opts.project_id],
+    );
+    expect(await readOrCreateRevisionRepair(opts)).toBeNull();
+    expect(await acknowledgeRevisionRepair({ ...opts, request_id })).toBe(
+      false,
+    );
+    const moved = {
+      ...opts,
+      owner_bay_id: "new-owner",
+      lease_id: randomUUID(),
+    };
+    await arm(moved, opts.lease_id);
+    expect(await acknowledgeRevisionRepair({ ...moved, request_id })).toBe(
+      false,
+    );
+    expect(await readOrCreateRevisionRepair(moved)).toBeNull();
+    expect(await readRevisionBootstrap(moved)).toBeTruthy();
   });
   test("scheduling progress is durable, CAS guarded, and separate from catch-up completion", async () => {
     const opts = lease();
