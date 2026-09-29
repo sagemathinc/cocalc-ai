@@ -206,6 +206,38 @@ test("an ambiguous inspection does not offer to forget the saved identity", asyn
   expect(api.requestScan).not.toHaveBeenCalled();
 });
 
+test("running owner receipt does not claim confirmed host progress", async () => {
+  const { api, user, renderScan } = setup();
+  api.getScanStatus.mockResolvedValue({
+    allowed: true,
+    value: { state: "running" },
+    poll_after_ms: 1000,
+  });
+  renderScan();
+  await user.click(screen.getByRole("button", { name: "Scan project" }));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent("Scan queued"),
+  );
+  const request = sessionStorage.getItem(storageKey);
+  await advance();
+  const status = screen.getByRole("button", { name: "Check Scan status" });
+  await waitFor(() => expect(status).toBeEnabled());
+  status.focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "completion has not been confirmed",
+    ),
+  );
+  expect(screen.getByRole("status")).toHaveTextContent("unreachable");
+  expect(screen.getByRole("status")).not.toHaveTextContent(
+    "Discovering project metadata",
+  );
+  expect(sessionStorage.getItem(storageKey)).toBe(request);
+  expect(api.requestScan).toHaveBeenCalledTimes(1);
+  expect(api.getScanStatus).toHaveBeenCalledTimes(1);
+});
+
 test("host cooldown has an explanation and prevents immediate status polling", async () => {
   const { api, user, renderScan } = setup();
   api.getScanStatus.mockResolvedValue({

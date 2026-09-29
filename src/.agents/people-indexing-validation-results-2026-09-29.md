@@ -133,6 +133,27 @@ terminal-state focus, narrow-viewport behavior and unavailable/error UI paths
 remain unverified in this live browser. No claim of completed browser validation
 or production enablement follows from successful admission/recovery.
 
+### Live Running-State Wording Correction
+
+The existing job still reported `running` in its authoritative project owner
+(`bay-0`), but owner logs recorded repeated unknown dispatch outcomes for that
+same job. The owner changes its durable state before host confirmation, so the
+browser's former `Discovering project metadata` wording overstated the evidence.
+The UI now says submission occurred but completion is unconfirmed and the host
+may be scanning or unreachable. It directs users to inspect the same request.
+No job, lease, dispatch or retry semantics were changed.
+
+A focused keyboard status-inspection regression asserts the qualified wording,
+preserved recovery ID and no additional submission. All ten Scan component tests
+pass (35.086 seconds), along with frontend typecheck and frontend lint. This
+copy change still needs verification in the rebuilt browser bundle; the current
+live job is not proven failed or complete and must not be replaced on that basis.
+
+Before the copy change, the real Scan section was measured at a 390-pixel
+viewport: client width and scroll width both 348 pixels, with both action buttons
+inside the section. This is narrow-layout evidence for that state, not a complete
+320-pixel/zoom/accessibility matrix. The viewport was restored after inspection.
+
 ## Historical Extended-Scope Audit
 
 Before the user-approved scope reduction, the seven implementation gates were:

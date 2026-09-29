@@ -166,7 +166,7 @@ export function ProjectScan({
                 "No live status is available. The receipt may have expired; no new Scan was started.",
               queued: "Scan queued. No completion estimate is available yet.",
               running:
-                "Discovering project metadata. No completion estimate is available yet.",
+                "Scan submitted; completion has not been confirmed. The host may still be scanning or unreachable. Check this request's status rather than starting another Scan.",
               discovered:
                 "Discovery finished. Files changed during the scan may need another scan; this is not a point-in-time snapshot. People views may still be catching up.",
               failed:
