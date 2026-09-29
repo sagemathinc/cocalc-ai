@@ -11,6 +11,7 @@ case "${1:-}" in
 esac
 [[ "$wait_seconds" =~ ^[0-9]+$ ]] || exit 2
 if [[ "${COCALC_CLUSTER_ROLE}" == attached ]]; then exit 0; fi
+source "${SCRIPT_DIR}/billing-env.sh"
 case "${COCALC_BILLING_AUTHORITY_ENABLED:-0}" in
   1|true|yes) ;;
   *) exit 0 ;;

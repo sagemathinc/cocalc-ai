@@ -9,26 +9,36 @@ cleanup() {
 }
 trap cleanup EXIT
 cp "$ROOT/bin/bay-billing-worker" "$tmp/worker"
+cp "$ROOT/bin/billing-env.sh" "$tmp/billing-env.sh"
 cat >"$tmp/lib.sh" <<'EOF'
 require_var() { test -n "${!1:-}"; }
 ensure_dirs() { mkdir -p "$COCALC_BAY_STATE_DIR"; }
+EOF
+cat >"$tmp/systemctl" <<'EOF'
+#!/usr/bin/env bash
+test "$*" = 'show --property=Environment --value cocalc-bay-hub@1.service' || exit 1
+printf '%s\n' 'COCALC_BILLING_AUTHORITY_ENABLED=1'
 EOF
 cat >"$tmp/node" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 test "$COCALC_BILLING_SINGLETON_LOCKED" = 1
+test "$COCALC_BILLING_AUTHORITY_ENABLED" = 1
 test "$2" = --billing-worker
 test -z "${COCALC_BAY_WORKER_ID:-}"
 touch "$COCALC_BAY_STATE_DIR/started"
 exec sleep 30
 EOF
 chmod +x "$tmp/node"
+chmod +x "$tmp/systemctl"
+export PATH="$tmp:$PATH"
 export COCALC_BAY_STATE_DIR="$tmp/state"
 export COCALC_BAY_NODE_BIN="$tmp/node" COCALC_BAY_HUB_MAIN=unused
 export COCALC_BAY_ROUTER_HOST=127.0.0.1 COCALC_BAY_ROUTER_PORT=9000
 export COCALC_BILLING_AUTHORITY_ENABLED=1 COCALC_CLUSTER_ROLE=attached
 bash "$tmp/worker"
 test ! -e "$tmp/state/started"
+unset COCALC_BILLING_AUTHORITY_ENABLED
 export COCALC_CLUSTER_ROLE=seed COCALC_BAY_WORKER_ID=1
 bash "$tmp/worker" &
 pid=$!

@@ -4,6 +4,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 cp "$ROOT/bin/bay-billing-health" "$tmp/health"
+cp "$ROOT/bin/billing-env.sh" "$tmp/billing-env.sh"
 cat >"$tmp/lib.sh" <<'EOF'
 require_var() { test -n "${!1:-}"; }
 bay_log() { printf '%s\n' "$*" >&2; }
@@ -11,6 +12,11 @@ EOF
 cat >"$tmp/systemctl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "$1" == show ]]; then
+  test "${TEST_CONFIG_FAIL:-0}" = 0 || exit 1
+  printf '%s\n' 'UNRELATED=redacted COCALC_BILLING_AUTHORITY_ENABLED=1'
+  exit 0
+fi
 test "$*" = 'is-active --quiet cocalc-bay-billing.service'
 echo unit >> "$TEST_LOG"
 test "$TEST_UNIT_ACTIVE" = 1
@@ -53,6 +59,15 @@ bash "$tmp/health"
 export COCALC_CLUSTER_ROLE=standalone COCALC_BILLING_AUTHORITY_ENABLED=0
 bash "$tmp/health"
 test "$(wc -l < "$TEST_LOG")" = "$before"
+
+# Legacy systemd-only enablement must not silently skip the readiness gate.
+unset COCALC_BILLING_AUTHORITY_ENABLED
+export TEST_PROBE=ready
+bash "$tmp/health" >/dev/null
+export TEST_UNIT_ACTIVE=0
+if bash "$tmp/health" >/dev/null; then echo 'legacy inactive service passed' >&2; exit 1; fi
+export TEST_CONFIG_FAIL=1
+if bash "$tmp/health" >/dev/null; then echo 'unknown configuration passed' >&2; exit 1; fi
 
 # Both hub-only and full release branches must gate immediately after restart.
 awk '
