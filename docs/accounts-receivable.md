@@ -342,6 +342,16 @@ operation and Stripe key remain unchanged. Successful sync writes an immutable
 AR event with the reviewed diff and original actor/reason. Then create and send
 the replacement invoice through the normal AR workflow.
 
+An existing sync can record a verified already-applied result even if payment or
+fulfillment has since completed the order. This reconciliation never performs a
+new Stripe write on a terminal order. A first update rejected by Stripe validation
+(400 InvalidRequest with a provider request ID), followed by unchanged customer
+readback, is closed as failed with an immutable audit event. Pre-write failures on
+a never-started operation are also closed safely. Correct the AR inputs and review
+a fresh preview/version/key after failure. Timeouts, server errors, conflicting
+readbacks, unavailable verification and rejections after an earlier uncertain
+attempt remain indeterminate; those do not prove the earlier update never applied.
+
 ## Collection-Mode Corrections
 
 Use the dedicated collection-mode action when an approved order was configured

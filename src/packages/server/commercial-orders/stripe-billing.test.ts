@@ -242,3 +242,121 @@ it("verifies no-op operations without updating Stripe", async () => {
   expect(mockStripe.customers.update).not.toHaveBeenCalled();
   expect(mockComplete).toHaveBeenCalledTimes(1);
 });
+
+it("reconciles an applied update after payment completed the order without new Stripe writes", async () => {
+  const preview = await stripeBillingPreview(request);
+  customer = { ...customer, ...preview.after };
+  mockGetOperation.mockResolvedValue({
+    id: "op-1",
+    operation: "sync-customer-billing",
+    commercial_order_id: order.id,
+    status: "indeterminate",
+    request: { preview },
+  });
+  mockGetOrder.mockResolvedValue({
+    ...order,
+    workflow_state: "complete",
+    version: 8,
+  });
+  mockAllowed.mockClear();
+  mockAllowed.mockRejectedValue(
+    Error("Stripe billing sync is not allowed on a complete order"),
+  );
+  mockStripe.invoices.list.mockRejectedValue(
+    Error("must not attempt new-write admission"),
+  );
+  await syncStripeBilling({ ...request, preview_hash: preview.preview_hash });
+  expect(mockComplete).toHaveBeenCalledWith("op-1");
+  expect(mockAllowed).not.toHaveBeenCalled();
+  expect(mockStripe.customers.update).not.toHaveBeenCalled();
+});
+
+it("still blocks new writes on a completed order during recovery", async () => {
+  const preview = await stripeBillingPreview(request);
+  mockGetOperation.mockResolvedValue({
+    id: "op-1",
+    operation: "sync-customer-billing",
+    commercial_order_id: order.id,
+    status: "indeterminate",
+    request: { preview },
+  });
+  mockAllowed.mockRejectedValue(Error("complete order"));
+  await expect(
+    syncStripeBilling({ ...request, preview_hash: preview.preview_hash }),
+  ).rejects.toThrow("complete order");
+  expect(mockStripe.customers.update).not.toHaveBeenCalled();
+  expect(mockComplete).not.toHaveBeenCalled();
+  expect(mockStatus).toHaveBeenLastCalledWith(
+    expect.objectContaining({ status: "indeterminate" }),
+  );
+});
+
+it("audits definitive first-update rejection after unchanged readback instead of stranding the fence", async () => {
+  const preview = await stripeBillingPreview(request);
+  const error = Object.assign(Error("invalid postal code"), {
+    type: "StripeInvalidRequestError",
+    statusCode: 400,
+    requestId: "req_test",
+  });
+  mockStripe.customers.update.mockRejectedValue(error);
+  await expect(
+    syncStripeBilling({ ...request, preview_hash: preview.preview_hash }),
+  ).rejects.toThrow("invalid postal code");
+  expect(mockComplete).toHaveBeenCalledWith("op-1", { error });
+  expect(mockStatus).not.toHaveBeenCalledWith(
+    expect.objectContaining({ status: "indeterminate" }),
+  );
+});
+
+it("releases a never-started reservation if final pre-write admission fails", async () => {
+  const preview = await stripeBillingPreview(request);
+  mockAllowed
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(Error("new active quote"));
+  await expect(
+    syncStripeBilling({ ...request, preview_hash: preview.preview_hash }),
+  ).rejects.toThrow("new active quote");
+  expect(mockStripe.customers.update).not.toHaveBeenCalled();
+  expect(mockComplete).toHaveBeenCalledWith("op-1", {
+    error: expect.objectContaining({ message: "new active quote" }),
+  });
+});
+
+it.each([
+  "prior timeout",
+  "readback unavailable",
+  "readback changed",
+  "server error",
+  "idempotency error",
+])("retains the fence after rejection with %s", async (scenario) => {
+  const preview = await stripeBillingPreview(request);
+  const error = Object.assign(Error("provider error"), {
+    type: "StripeInvalidRequestError",
+    statusCode: 400,
+    requestId: "req_test",
+  });
+  if (scenario === "prior timeout")
+    mockGetOperation.mockResolvedValue({
+      id: "op-1",
+      operation: "sync-customer-billing",
+      commercial_order_id: order.id,
+      status: "indeterminate",
+      request: { preview },
+    });
+  if (scenario === "server error") error.statusCode = 500;
+  if (scenario === "idempotency error") error.type = "StripeIdempotencyError";
+  mockStripe.customers.update.mockImplementation(async () => {
+    if (scenario === "readback unavailable")
+      mockStripe.customers.retrieve.mockRejectedValue(Error("network"));
+    if (scenario === "readback changed")
+      customer.email = "unreviewed@example.edu";
+    throw error;
+  });
+  await expect(
+    syncStripeBilling({ ...request, preview_hash: preview.preview_hash }),
+  ).rejects.toThrow("provider error");
+  expect(mockComplete).not.toHaveBeenCalled();
+  expect(mockStatus).toHaveBeenLastCalledWith(
+    expect.objectContaining({ status: "indeterminate" }),
+  );
+});

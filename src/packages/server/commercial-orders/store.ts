@@ -3407,7 +3407,9 @@ export async function assertCommercialStripeBillingSyncAllowed(
 
 export async function completeCommercialStripeBillingSync(
   operationId: string,
+  failure?: { error: unknown },
 ): Promise<CommercialOrder> {
+  const status = failure ? "failed" : "succeeded";
   return await withTransaction(async (client) => {
     const { rows } = await client.query(
       "SELECT * FROM commercial_provider_operations WHERE id=$1 FOR UPDATE",
@@ -3418,13 +3420,23 @@ export async function completeCommercialStripeBillingSync(
       throw Error("Stripe billing sync operation not found");
     }
     const before = await loadOrder(client, operation.commercial_order_id, true);
-    if (operation.status === "succeeded") return before;
-    if (!["remote_started", "indeterminate"].includes(operation.status)) {
+    if (operation.status === status) return before;
+    if (
+      !(
+        failure
+          ? ["reserved", "remote_started", "indeterminate"]
+          : ["remote_started", "indeterminate"]
+      ).includes(operation.status)
+    ) {
       throw Error("Stripe billing sync has not started");
     }
     await client.query(
-      "UPDATE commercial_provider_operations SET status='succeeded',completed_at=NOW(),updated_at=NOW(),last_error=NULL WHERE id=$1",
-      [operation.id],
+      "UPDATE commercial_provider_operations SET status=$2,completed_at=NOW(),updated_at=NOW(),last_error=$3 WHERE id=$1",
+      [
+        operation.id,
+        status,
+        failure ? `${failure.error}`.slice(0, 5000) : null,
+      ],
     );
     await client.query(
       "UPDATE commercial_orders SET version=version+1,updated_at=NOW() WHERE id=$1",
@@ -3433,7 +3445,9 @@ export async function completeCommercialStripeBillingSync(
     const after = await loadOrder(client, before.id);
     await insertEvent(client, {
       commercial_order_id: before.id,
-      event_type: "stripe-billing-synchronized",
+      event_type: failure
+        ? "stripe-billing-sync-failed"
+        : "stripe-billing-synchronized",
       actor_account_id: operation.request.account_id as string,
       source: (operation.request.source ?? "cli") as CommercialEventSource,
       reason: operation.request.reason as string,
@@ -3443,6 +3457,7 @@ export async function completeCommercialStripeBillingSync(
       metadata: {
         operation_id: operation.id,
         preview: operation.request.preview,
+        ...(failure ? { error: `${failure.error}`.slice(0, 5000) } : {}),
       },
       identity_payload: operation.request,
     });

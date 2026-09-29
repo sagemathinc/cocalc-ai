@@ -251,6 +251,140 @@ describePglite("commercial order store", () => {
     ).rejects.toThrow("cancelled order");
   });
 
+  it("settles an existing sync after a manual payment completes the provisioned order", async () => {
+    const created = await store.createCommercialOrder(
+      request({ stripe_customer_id: `cus_${randomUUID()}` }),
+    );
+    const approved = await store.approveCommercialOrder({
+      account_id: actor,
+      id: created.id,
+      expected_version: created.version,
+      reason: "approve recovery fixture",
+    });
+    const provisioned = await store.setCommercialFulfillment({
+      account_id: actor,
+      id: approved.id,
+      expected_version: approved.version,
+      reason: "provision recovery fixture",
+      fulfillment_state: "provisioned",
+    });
+    const { operation } = await store.reserveCommercialProviderOperation({
+      order_id: provisioned.id,
+      expected_version: provisioned.version,
+      operation: "sync-customer-billing",
+      idempotency_key: `sync-${randomUUID()}`,
+      request: {
+        account_id: actor,
+        reason: "correct approved billing",
+        source: "cli",
+      },
+    });
+    await store.setCommercialProviderOperationStatus({
+      id: operation.id,
+      status: "indeterminate",
+    });
+    const paid = await store.recordManualCommercialPayment({
+      account_id: actor,
+      id: provisioned.id,
+      expected_version: provisioned.version,
+      reason: "record independently verified payment",
+      amount: "3900",
+      currency: "usd",
+      method: "wire",
+      evidence_reference: "TEST-WIRE",
+    });
+    expect(paid.workflow_state).toBe("complete");
+    const settled = await store.completeCommercialStripeBillingSync(
+      operation.id,
+    );
+    expect(settled.workflow_state).toBe("complete");
+    expect(settled.payments).toEqual(paid.payments);
+    expect(
+      (
+        await store.getCommercialProviderOperationByIdempotencyKey(
+          operation.idempotency_key,
+        )
+      )?.status,
+    ).toBe("succeeded");
+  });
+
+  it("audits a proven rejection once and permits corrected billing and a fresh operation", async () => {
+    const created = await store.createCommercialOrder(
+      request({ stripe_customer_id: `cus_${randomUUID()}` }),
+    );
+    const approved = await store.approveCommercialOrder({
+      account_id: actor,
+      id: created.id,
+      expected_version: created.version,
+      reason: "approve rejection fixture",
+    });
+    const { operation } = await store.reserveCommercialProviderOperation({
+      order_id: approved.id,
+      expected_version: approved.version,
+      operation: "sync-customer-billing",
+      idempotency_key: `sync-${randomUUID()}`,
+      request: {
+        account_id: actor,
+        reason: "correct approved billing",
+        source: "cli",
+      },
+    });
+    await store.setCommercialProviderOperationStatus({
+      id: operation.id,
+      status: "remote_started",
+    });
+    const failed = await store.completeCommercialStripeBillingSync(
+      operation.id,
+      { error: "Stripe rejected postal code; unchanged readback" },
+    );
+    expect(
+      (
+        await store.completeCommercialStripeBillingSync(operation.id, {
+          error: "replay",
+        })
+      ).version,
+    ).toBe(failed.version);
+    const stored = await store.getCommercialProviderOperationByIdempotencyKey(
+      operation.idempotency_key,
+    );
+    expect(stored).toMatchObject({
+      status: "failed",
+      last_error: "Stripe rejected postal code; unchanged readback",
+    });
+    expect(stored?.completed_at).toBeTruthy();
+    const events = await store.listCommercialOrderEvents({
+      id: approved.id,
+      reason: "inspect rejection audit",
+    });
+    expect(
+      events.events.filter(
+        ({ event_type }) => event_type === "stripe-billing-sync-failed",
+      ),
+    ).toHaveLength(1);
+    const corrected = await store.updateCommercialBillingDetails({
+      account_id: actor,
+      id: failed.id,
+      expected_version: failed.version,
+      reason: "correct rejected address",
+      billing_contacts: [
+        {
+          role: "billing",
+          name_snapshot: "Accounts Payable",
+          email_snapshot: "ap@example.edu",
+        },
+      ],
+      billing_address: { country: "US", postal_code: "98059" },
+    });
+    await expect(
+      store.reserveCommercialProviderOperation({
+        order_id: corrected.id,
+        expected_version: corrected.version,
+        operation: "sync-customer-billing",
+        idempotency_key: `sync-${randomUUID()}`,
+      }),
+    ).resolves.toBeDefined();
+  });
+
   it("creates an idempotent seed-global order and immutable event", async () => {
     const opts = request();
     const first = await store.createCommercialOrder(opts);

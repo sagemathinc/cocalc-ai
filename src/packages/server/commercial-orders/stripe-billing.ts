@@ -216,13 +216,13 @@ export async function syncStripeBilling(
         },
       });
   const operation = reservation.operation;
+  // A rejection on a retry cannot prove an earlier timed-out call did not apply.
+  const firstAttempt =
+    operation.status === "reserved" && !operation.remote_started_at;
+  let attemptedUpdate = false;
+  let definitiveRejection = false;
   try {
     const currentOrder = await getCommercialOrder(order.id);
-    await assertCommercialStripeBillingSyncAllowed(
-      currentOrder,
-      undefined,
-      operation.id,
-    );
     const { stripe, customer } = await readCustomer(currentOrder);
     const billing = currentOrder.contacts.filter(
       ({ role }) => role === "billing",
@@ -243,6 +243,20 @@ export async function syncStripeBilling(
       );
     }
     const current = details(customer.email, customer.address);
+    // Reconciliation is not a new Stripe write. Payments/fulfillment may have
+    // completed the order since the original update; still retire its fence.
+    if (existing && same(current, preview.after)) {
+      await setCommercialProviderOperationStatus({
+        id: operation.id,
+        status: "remote_started",
+      });
+      return await completeCommercialStripeBillingSync(operation.id);
+    }
+    await assertCommercialStripeBillingSyncAllowed(
+      currentOrder,
+      undefined,
+      operation.id,
+    );
     if (!same(current, preview.before) && !same(current, preview.after)) {
       throw Error(
         "Stripe billing changed outside the reviewed operation; manual reconciliation required",
@@ -255,9 +269,38 @@ export async function syncStripeBilling(
       status: "remote_started",
     });
     if (!same(current, preview.after)) {
-      await stripe.customers.update(customer.id, preview.after, {
-        idempotencyKey: key,
-      });
+      attemptedUpdate = true;
+      try {
+        await stripe.customers.update(customer.id, preview.after, {
+          idempotencyKey: key,
+        });
+      } catch (err) {
+        const rejection = err as {
+          type?: string;
+          statusCode?: number;
+          requestId?: string;
+        };
+        // Only an authenticated provider validation response plus unchanged
+        // readback proves this first update was rejected. Never infer this from
+        // arbitrary 4xx, timeouts, transport failures or idempotency conflicts.
+        if (
+          firstAttempt &&
+          rejection.type === "StripeInvalidRequestError" &&
+          rejection.statusCode === 400 &&
+          rejection.requestId
+        ) {
+          try {
+            const readback = await readCustomer(currentOrder);
+            definitiveRejection = same(
+              details(readback.customer.email, readback.customer.address),
+              preview.before,
+            );
+          } catch {
+            // Failed readback leaves the outcome unknown and fenced.
+          }
+        }
+        throw err;
+      }
     }
     // Reconcile from a fresh provider read, including after a timed-out update.
     const verified = await readCustomer(currentOrder);
@@ -273,6 +316,10 @@ export async function syncStripeBilling(
     }
     return await completeCommercialStripeBillingSync(operation.id);
   } catch (err) {
+    if ((firstAttempt && !attemptedUpdate) || definitiveRejection) {
+      await completeCommercialStripeBillingSync(operation.id, { error: err });
+      throw err;
+    }
     await setCommercialProviderOperationStatus({
       id: operation.id,
       status: "indeterminate",

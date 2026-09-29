@@ -468,6 +468,14 @@ a new provider operation. Do not re-preview and abandon an unresolved sync.
 New invoicing and AR billing edits remain blocked until it is reconciled.
 Successful sync records the reviewed diff and original actor/reason in AR.
 
+Recovery can record an already-applied result even after payment completes the
+order, without making a new Stripe write. A first-update Stripe validation
+rejection with unchanged provider readback is audited as failed and releases the
+fence; correct the AR input and review a fresh preview/version/key. Never-started
+pre-write failures also release the fence. Timeouts, server errors, unavailable
+or conflicting readback, and rejections following a prior uncertain attempt
+remain indeterminate rather than being treated as proof of non-application.
+
 ## Collection-mode corrections
 
 Use the dedicated collection-mode action when an approved order was configured
