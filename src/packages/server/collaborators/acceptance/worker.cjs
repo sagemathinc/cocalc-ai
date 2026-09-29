@@ -865,6 +865,7 @@ async function command(name, args = {}) {
       process.env.COCALC_PEOPLE_REVISION_OUTBOX_PROTOTYPE = "1";
       return true;
     case "dispatchRevisionOutbox":
+    case "runRevisionOutbox":
     case "claimActiveProjection":
     case "applyActiveProjection":
     case "scheduleRevisionWakeups":
@@ -876,6 +877,8 @@ async function command(name, args = {}) {
       const previous = flags.map((name) => process.env[name]);
       try {
         flags.forEach((name) => (process.env[name] = "1"));
+        if (name === "runRevisionOutbox")
+          return await require("@cocalc/server/collaborators/revision-outbox-maintenance").runRevisionOutboxMaintenance();
         if (name === "dispatchRevisionOutbox")
           return await require("@cocalc/server/collaborators/revision-outbox").dispatchRevisionOutboxPage(
             config.project,

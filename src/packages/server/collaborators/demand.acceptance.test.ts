@@ -233,11 +233,7 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
       FROM collaboration_projects WHERE project_id=$2`,
       [entryKey, env.project, JSON.stringify(resource), resourceId],
     );
-    expect(await env.worker("owner").call("dispatchRevisionOutbox")).toEqual({
-      state: "advanced",
-      attempted: 1,
-      acknowledged: 1,
-    });
+    expect(await env.worker("owner").call("runRevisionOutbox")).toBe(1);
     expect(
       await env.sql(
         "owner",

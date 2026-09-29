@@ -1889,3 +1889,23 @@ places twenty foreign projects before a valid project with microsecond-separated
 due times, verifies continuation through that prefix, and confirms that claiming
 the valid project removes it from immediate due discovery. Real query-plan cost,
 concurrency and automatic scheduler integration remain open.
+
+### Discovery-Driven Outbox Pass
+
+Added a gated scheduling pass connecting bounded candidate discovery to one
+eligible project page per call. It advances past foreign or failed candidates,
+wraps at exhaustion, and guards overlapping calls in one process. The process
+cursor is only a traversal optimization; durable outbox claims and recipient
+cursors retain pending work across failures. Candidate admission stops after a
+five-second start budget; an in-flight dispatch has its own bounded-attempt path
+and may outlast that budget.
+
+Server/reference typecheck, thirteen focused scheduler/dispatcher tests and all
+twenty real PostgreSQL/fabric demand tests pass. The real catalog-to-home case now
+invokes discovery-driven maintenance instead of passing a project directly to
+the dispatcher, and still verifies marker removal and exact home metadata.
+
+The pass has no independent timer and is not yet wired into ordinary startup.
+Automatic installation, trigger disable/reenable semantics, restart/rehome
+validation, distributed fairness and sustained source-change workloads remain
+open before enabling this path.
