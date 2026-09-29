@@ -2578,3 +2578,29 @@ It still uses a synthetic source, isolated transport/database processes and
 direct demand acquisition, not a browser session or production workload. Later
 unmediated-write recovery, sustained cold-account cost, lifecycle portability,
 and the broader scale/soak gates are not established by this test.
+
+### Natural Btrfs Generation Visibility Follow-Up
+
+Extended the opt-in live probe with bounded natural observation after a durable
+overwrite. `COCALC_BTRFS_OBSERVE_MS` accepts 0 through 120000 milliseconds;
+the default remains zero. Samples include elapsed time, verify the overwritten
+bytes remain readable, and stop early on generation advancement. No filesystem
+sync, snapshot, mount change, or preexisting-file mutation is performed. Repeated
+read-only samples are excluded from the changed-bytes equality counterexample.
+
+On the local btrfs mount with kernel `7.0.0-1011-gcp`, the finalized probe passed
+with a 40000 ms budget in 7.634 seconds. Its generation remained equal through
+six one-second post-overwrite samples, then advanced at 7078 ms. Truncate/fsync,
+rename and unlink afterward all retained that new generation. An earlier run
+observed advancement around one second. This is neither a latency bound nor
+proof that our write caused advancement: the containing subvolume is shared
+with other activity. It confirms that this marker can change naturally while
+still lagging visible durable changes. Server/reference typecheck passes.
+
+Code tracing also confirms that explicit census mode's prepare callback returns
+without inventory scheduling, and acknowledged demand bootstrap does not repeat
+discovery. Thus later unmediated writes still need a separate bounded repair
+policy. Generation advancement can be a conservative dirty hint, but equality
+cannot retire dirty work or certify freshness. The next scheduler must retain
+periodic bounded reconciliation unless a stronger storage proof is validated;
+simply restoring the historical all-volume hourly traversal is not the target.
