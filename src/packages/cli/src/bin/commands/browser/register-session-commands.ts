@@ -221,6 +221,8 @@ async function resolveProjectHostBrowserSessionCookies({
       },
     },
     { apiBaseUrl: ctx.apiBaseUrl, host_id, project_id },
+    // The host token was just issued by this authenticated site's hub.
+    { credentialSite: ctx.apiBaseUrl },
   );
   if (!response.ok) {
     throw new Error(

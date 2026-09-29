@@ -6,6 +6,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { buildCookieHeader } from "./auth-cookies";
 import {
   projectApiRelayTransport,
   fetchWithProjectApiRelay,
@@ -146,6 +147,7 @@ test("direct override requires no project secret and invalid modes fail", async 
   assert.equal(
     await selectProjectApiRelayTransport({
       apiBaseUrl: "https://prod.test",
+      credentialSite: "https://prod.test",
       env: { COCALC_CLI_TRANSPORT: "direct", COCALC_API_RELAY: "1" },
     }),
     undefined,
@@ -176,11 +178,16 @@ test("auto probes unknown hubs once, without credentials, and never replays a mu
       return new Response("ambiguous failure", { status: 502 });
     };
     const target = "https://outside.test/api/v2/create";
-    const response = await fetchWithProjectApiRelay(target, {
-      method: "POST",
-      headers: { Cookie: "caller-cookie" },
-      body: "mutation",
-    });
+    const response = await fetchWithProjectApiRelay(
+      target,
+      {
+        method: "POST",
+        headers: { Cookie: "caller-cookie" },
+        body: "mutation",
+      },
+      undefined,
+      { credentialSite: "https://outside.test" },
+    );
     assert.equal(response.status, 502);
     assert.equal(calls.length, 2);
     assert.equal(calls[0].init?.method, "HEAD");
@@ -198,6 +205,7 @@ test("auto probes unknown hubs once, without credentials, and never replays a mu
     assert.equal(
       await selectProjectApiRelayTransport({
         apiBaseUrl: "https://outside.test",
+        credentialSite: "https://outside.test",
       }),
       undefined,
     );
@@ -206,6 +214,7 @@ test("auto probes unknown hubs once, without credentials, and never replays a mu
     assert.equal(
       await selectProjectApiRelayTransport({
         apiBaseUrl: "https://outside.test",
+        credentialSite: "https://outside.test",
         host: { host_id: projectId, project_id: projectId },
       }),
       undefined,
@@ -269,6 +278,7 @@ test("probe transport failure selects direct, but a failed relay operation is ne
     assert.equal(
       await selectProjectApiRelayTransport({
         apiBaseUrl: "https://unreachable.test",
+        credentialSite: "https://unreachable.test",
       }),
       undefined,
     );
@@ -324,6 +334,7 @@ test("CLI transport flag overrides the environment before authentication", async
         "--cookie",
         "remember_me=fixture-cookie",
         "--no-daemon",
+        "--disable-env-auth-defaults",
         "auth",
         "status",
         "--check",
@@ -346,5 +357,46 @@ test("CLI transport flag overrides the environment before authentication", async
     assert.equal(JSON.parse(stdout).data.check.ok, true);
   } finally {
     await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("unrelated direct selection never transmits inherited project, API key or hub credentials", async () => {
+  const saved = { ...process.env };
+  const originalFetch = globalThis.fetch;
+  try {
+    Object.assign(process.env, env);
+    for (const mode of ["auto", "direct"]) {
+      process.env.COCALC_CLI_TRANSPORT = mode;
+      for (const extra of [
+        {},
+        { COCALC_API_KEY: "ambient-key" },
+        { COCALC_HUB_PASSWORD: "ambient-password" },
+      ]) {
+        let probes = 0;
+        globalThis.fetch = async (url, init) => {
+          probes++;
+          assert.match(String(url), /10\.206\.0\.1:9102/);
+          assert.equal(init?.method, "HEAD");
+          assert.equal(new Headers(init?.headers).get("cookie"), null);
+          assert.equal(new Headers(init?.headers).get("authorization"), null);
+          return new Response(null, { status: 502 });
+        };
+        const target = `https://${mode}-${Object.keys(extra)[0] ?? "project"}.invalid`;
+        const cookie = buildCookieHeader(target, {}, {}, { ...env, ...extra });
+        assert.ok(cookie);
+        await assert.rejects(
+          fetchWithProjectApiRelay(`${target}/api/v2/auth/bootstrap`, {
+            headers: { Cookie: cookie },
+          }),
+          /destination-scoped/,
+        );
+        assert.equal(probes, mode === "auto" ? 1 : 0);
+      }
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const name of Object.keys(process.env))
+      if (!(name in saved)) delete process.env[name];
+    Object.assign(process.env, saved);
   }
 });

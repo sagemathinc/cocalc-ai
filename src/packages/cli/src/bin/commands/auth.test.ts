@@ -12,14 +12,19 @@ import { sanitizeProfileName } from "../../core/auth-config";
 import { cookieNameFor, normalizeSecretValue } from "../../core/auth-cookies";
 
 let savedTransport: string | undefined;
+let savedRelay: string | undefined;
 beforeEach(() => {
   // These tests mock upstream auth endpoints, not the project relay.
   savedTransport = process.env.COCALC_CLI_TRANSPORT;
-  process.env.COCALC_CLI_TRANSPORT = "direct";
+  savedRelay = process.env.COCALC_API_RELAY;
+  process.env.COCALC_CLI_TRANSPORT = "auto";
+  delete process.env.COCALC_API_RELAY;
 });
 afterEach(() => {
   if (savedTransport === undefined) delete process.env.COCALC_CLI_TRANSPORT;
   else process.env.COCALC_CLI_TRANSPORT = savedTransport;
+  if (savedRelay === undefined) delete process.env.COCALC_API_RELAY;
+  else process.env.COCALC_API_RELAY = savedRelay;
 });
 
 function makeDeps(

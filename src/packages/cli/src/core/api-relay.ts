@@ -25,12 +25,29 @@ const routeProbes = new Map<
 >();
 
 export async function selectProjectApiRelayTransport(
-  options: Parameters<typeof projectApiRelayTransport>[0],
+  options: Parameters<typeof projectApiRelayTransport>[0] & {
+    // Set only after resolving destination-scoped auth, not merely --api.
+    credentialSite?: string;
+  },
 ): Promise<ReturnType<typeof projectApiRelayTransport>> {
   const env = options.env ?? process.env;
   const mode = apiTransportMode(env);
-  if (mode === "direct") return;
   const hub = normalizeApiRelayHubUrl(options.apiBaseUrl);
+  const assertDirectScope = () => {
+    const scope =
+      options.credentialSite ??
+      env.COCALC_API_RELAY_HUB_URL ??
+      env.COCALC_API_URL;
+    if (!scope || normalizeApiRelayHubUrl(scope) !== hub) {
+      throw Error(
+        "direct transport requires destination-scoped credentials; use a matching profile or disable environment auth defaults with explicit credentials",
+      );
+    }
+  };
+  if (mode === "direct") {
+    assertDirectScope();
+    return;
+  }
   const relay = projectApiRelayTransport({ ...options, host: undefined });
   if (!relay) {
     if (mode === "relay") throw Error("project API relay is not configured");
@@ -75,7 +92,9 @@ export async function selectProjectApiRelayTransport(
     };
     routeProbes.set(key, probe);
   }
-  return (await probe.result) ? projectApiRelayTransport(options) : undefined;
+  if (await probe.result) return projectApiRelayTransport(options);
+  assertDirectScope();
+  return;
 }
 
 export function projectApiRelayTransport({
@@ -126,15 +145,24 @@ export async function fetchWithProjectApiRelay(
   input: string | URL,
   init?: RequestInit,
   hostTarget?: { apiBaseUrl: string; host_id: string; project_id: string },
+  authScope?: { credentialSite?: string },
 ): Promise<Response> {
   const url = new URL(input);
-  if (apiTransportMode() === "direct") return await fetch(input, init);
   const apiOffset = url.pathname.indexOf("/api/v2/");
   if (!hostTarget && apiOffset < 0) return await fetch(input, init);
+  const apiBaseUrl =
+    hostTarget?.apiBaseUrl ??
+    `${url.origin}${url.pathname.slice(0, apiOffset)}`;
+  const requestHeaders = new Headers(init?.headers);
   const relay = await selectProjectApiRelayTransport({
-    apiBaseUrl:
-      hostTarget?.apiBaseUrl ??
-      `${url.origin}${url.pathname.slice(0, apiOffset)}`,
+    apiBaseUrl,
+    // Login challenges without inherited auth can target a new site. Authenticated
+    // HTTP callers must carry the scope used when constructing their headers.
+    credentialSite:
+      authScope?.credentialSite ??
+      (!requestHeaders.has("cookie") && !requestHeaders.has("authorization")
+        ? apiBaseUrl
+        : undefined),
     host: hostTarget,
   });
   if (!relay) return await fetch(input, init);

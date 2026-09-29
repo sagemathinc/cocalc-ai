@@ -86,6 +86,7 @@ export async function sendExternalAgentMessage(
   const { account_id, installation_id } = credential.source;
   const relay = await selectProjectApiRelayTransport({
     apiBaseUrl: credential.api_url,
+    credentialSite: credential.api_url,
   });
   const client = connect({
     address: relay?.address ?? credential.api_url,

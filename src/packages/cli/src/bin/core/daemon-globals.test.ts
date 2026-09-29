@@ -11,6 +11,30 @@ import {
   prepareDaemonAuthGlobals,
   shouldUseFileOpsDaemon,
 } from "./daemon-globals";
+import { selectProjectApiRelayTransport } from "../../core/api-relay";
+
+test("freezing ambient daemon auth preserves its site rather than trusting an API override", async () => {
+  const env = {
+    COCALC_API_URL: "https://local.test",
+    COCALC_API_RELAY_HUB_URL: "https://local.test",
+    COCALC_CLI_TRANSPORT: "direct",
+    COCALC_BEARER_TOKEN: "ambient-token",
+  };
+  const globals = effectiveDaemonGlobals(
+    { api: "https://other.test" },
+    { env },
+  );
+  assert.equal(globals.disableEnvAuthDefaults, true);
+  assert.equal(globals.directAuthSite, "https://local.test");
+  await assert.rejects(
+    selectProjectApiRelayTransport({
+      apiBaseUrl: globals.api!,
+      credentialSite: globals.directAuthSite,
+      env,
+    }),
+    /destination-scoped/,
+  );
+});
 import { applyAuthProfile } from "../../core/auth-config";
 
 test("manual and managed file-backed keys use the daemon", () => {

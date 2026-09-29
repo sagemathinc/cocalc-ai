@@ -22,6 +22,12 @@ Use `--transport direct` for explicit direct access, or `--transport relay` to
 require relay routing without automatic selection. These choices preserve caller
 credentials, TLS validation, destination authorization, and host-enforced egress
 restrictions. Direct mode cannot give a network-disabled project Internet access.
+Direct selection also requires matching credential scope: an explicit profile
+disables ambient credential inheritance, while project/environment credentials
+remain bound to the configured local site. An `--api` override alone does not
+authorize forwarding those credentials elsewhere. Explicit credentials can be
+used with `--disable-env-auth-defaults`; agent identity credentials stay pinned
+to their issuing site. Daemon requests retain this scope when freezing defaults.
 The CLI never retries the actual operation on another transport after failure.
 An upstream timeout can still mean a mutation executed; inspect its outcome
 instead of blindly resubmitting. Same-site relay failures remain failures in auto

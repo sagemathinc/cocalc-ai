@@ -1289,6 +1289,9 @@ async function connectRemote({
   );
   const relay = await selectProjectApiRelayTransport({
     apiBaseUrl: conatAddress,
+    credentialSite:
+      globals.directAuthSite ??
+      (globals.disableEnvAuthDefaults ? apiBaseUrl : undefined),
   });
   const extraHeaders: Record<string, string> = { ...relay?.extraHeaders };
   const cookie = buildCookieHeader(apiBaseUrl, globals);
@@ -2349,6 +2352,9 @@ async function getOrCreateRoutedProjectHostClient(
     : undefined;
   const relay = await selectProjectApiRelayTransport({
     apiBaseUrl: ctx.apiBaseUrl,
+    credentialSite:
+      ctx.globals.directAuthSite ??
+      (ctx.globals.disableEnvAuthDefaults ? ctx.apiBaseUrl : undefined),
     host: { host_id, project_id: project.project_id },
   });
   const routed = connectConat({

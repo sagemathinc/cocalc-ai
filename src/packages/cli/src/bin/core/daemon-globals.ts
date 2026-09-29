@@ -21,6 +21,7 @@ export type DaemonGlobalAuthOptions = {
   hubPassword?: string;
   noDaemon?: boolean;
   disableEnvAuthDefaults?: boolean;
+  directAuthSite?: string;
   managedConnector?: ManagedConnectorCredential;
   authProjectId?: string;
 };
@@ -74,6 +75,10 @@ export function effectiveDaemonGlobals<T extends DaemonGlobalAuthOptions>(
   if (next.disableEnvAuthDefaults) {
     return next;
   }
+
+  // Frozen ambient credentials are not newly authorized for an --api override.
+  next.directAuthSite ??=
+    env.COCALC_API_RELAY_HUB_URL ?? env.COCALC_API_URL ?? "";
 
   const managedConnector = managedConnectorCredentialFromEnv(env);
   if (managedConnector) {

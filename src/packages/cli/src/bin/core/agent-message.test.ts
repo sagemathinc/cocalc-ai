@@ -42,6 +42,63 @@ test("missing identity never falls back to account or project credentials", asyn
   }
 });
 
+test("agent direct selection cannot send an identity token to an API override outside its site", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-route-scope-"));
+  const saved = { ...process.env };
+  const fetchStub = mock.method(
+    globalThis,
+    "fetch",
+    async () => new Response(null, { status: 502 }),
+  );
+  const connectStub = mock.method(
+    require("@cocalc/conat/core/client"),
+    "connect",
+    () => {
+      throw Error("must not connect to overridden site");
+    },
+  );
+  try {
+    Object.assign(process.env, {
+      COCALC_AGENT_IDENTITY_FILE: join(dir, "identity.json"),
+      COCALC_API_RELAY: "1",
+      COCALC_API_RELAY_HUB_URL: "https://owner.invalid",
+      COCALC_PROJECT_ID: randomUUID(),
+      COCALC_PROJECT_SECRET: "local-fixture-secret",
+      CONAT_SERVER: "http://127.0.0.1:9102",
+    });
+    await writeFile(
+      process.env.COCALC_AGENT_IDENTITY_FILE!,
+      JSON.stringify({
+        agent_id: randomUUID(),
+        run_id: randomUUID(),
+        token: "cocalc_agent_identity_fixture",
+        expires_at: Date.now() + 60_000,
+        api_url: "https://owner.invalid",
+      }),
+      { mode: 0o600 },
+    );
+    for (const mode of ["auto", "direct"]) {
+      process.env.COCALC_CLI_TRANSPORT = mode;
+      await assert.rejects(
+        sendIdentityMessage(
+          { version: 3, action: "destinations" },
+          "https://unrelated.invalid",
+        ),
+        /destination-scoped/,
+      );
+    }
+    assert.equal(connectStub.mock.callCount(), 0);
+    assert.equal(fetchStub.mock.callCount(), 1);
+  } finally {
+    fetchStub.mock.restore();
+    connectStub.mock.restore();
+    for (const name of Object.keys(process.env))
+      if (!(name in saved)) delete process.env[name];
+    Object.assign(process.env, saved);
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("network send uses one scoped request and reports a lost result as unknown", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agent-network-cli-"));
   const previous = process.env.COCALC_AGENT_IDENTITY_FILE;
