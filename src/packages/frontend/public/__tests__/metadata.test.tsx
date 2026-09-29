@@ -167,8 +167,44 @@ describe("public route metadata", () => {
 
     expect(metadata.canonicalPath).toBe("/base/products/cocalc-star");
     expect(metadata.imagePath).toBe(
-      "/base/public/landing/project-notebook-20260916.jpg",
+      "/base/public/landing/cocalc-brand-social-20260925.png",
     );
+  });
+
+  it("uses the brand card for broad previews and keeps tool page images", () => {
+    const broadRoutes: PublicRoute[] = [
+      { section: "home" },
+      { route: { slug: "ai", view: "detail" }, section: "features" },
+      {
+        route: { slug: "openai-chatgpt", view: "detail" },
+        section: "features",
+      },
+      { route: { slug: "teaching", view: "detail" }, section: "features" },
+      { route: { view: "index" }, section: "features" },
+      productRoute("products"),
+      { section: "pricing" },
+      { route: { view: "docs-index" }, section: "docs" },
+      {
+        route: { slug: "projects/project-secrets", view: "docs-detail" },
+        section: "docs",
+      },
+      { route: { view: "index" }, section: "support" },
+    ];
+    for (const route of broadRoutes) {
+      expect(
+        getPublicRouteMetadata(route, { site_name: "CoCalc" }).imagePath,
+      ).toBe("/public/landing/cocalc-brand-social-20260925.png");
+    }
+
+    expect(
+      getPublicRouteMetadata(
+        {
+          route: { slug: "jupyter-notebook", view: "detail" },
+          section: "features",
+        },
+        { site_name: "CoCalc" },
+      ).imagePath,
+    ).toBe("/public/features/cocalc-jupyter2-20170508.png");
   });
 
   it("canonicalizes duplicated marketing routes to cocalc.ai on branded hosts", () => {
@@ -312,7 +348,7 @@ describe("public route metadata", () => {
     );
     expect(headMeta('meta[name="twitter:card"]')).toBe("summary_large_image");
     expect(headMeta('meta[property="og:image"]')).toBe(
-      "http://localhost/public/landing/project-notebook-20260916.jpg",
+      "http://localhost/public/landing/cocalc-brand-social-20260925.png",
     );
     expect(canonicalHref()).toBe("https://cocalc.ai/products/cocalc-star");
   });

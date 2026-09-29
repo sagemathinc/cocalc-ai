@@ -119,14 +119,16 @@ function docsPath(slug?: string): string {
   return slug ? `/docs/${slug.replace(/^\/+/, "")}` : "/docs";
 }
 
-const DEFAULT_SOCIAL_IMAGE = "public/landing/project-notebook-20260916.jpg";
+// Link previews for broad pages use one brand card (logo, tagline, address)
+// instead of a product screenshot, until a reviewed capture of the current
+// product exists. Pages about one tool keep that tool's own image.
+const DEFAULT_SOCIAL_IMAGE = "public/landing/cocalc-brand-social-20260925.png";
 const PRODUCT_SOCIAL_IMAGE = DEFAULT_SOCIAL_IMAGE;
-const WORKFLOW_SOCIAL_IMAGE = "public/landing/project-terminal-20260916.jpg";
+const WORKFLOW_SOCIAL_IMAGE = DEFAULT_SOCIAL_IMAGE;
 const FEATURE_SOCIAL_IMAGE = DEFAULT_SOCIAL_IMAGE;
 
 const PUBLIC_IMAGE_DIMENSIONS: Record<string, PublicImageDimensions> = {
   "/public/features/api-screenshot.png": { height: 1066, width: 1400 },
-  "/public/features/chatgpt-fix-code.png": { height: 552, width: 747 },
   "/public/features/cocalc-jupyter2-20170508.png": {
     height: 908,
     width: 1605,
@@ -155,13 +157,9 @@ const PUBLIC_IMAGE_DIMENSIONS: Record<string, PublicImageDimensions> = {
   "/public/features/sagemath-jupyter.png": { height: 858, width: 1508 },
   "/public/features/terminal.png": { height: 607, width: 1362 },
   "/public/features/whiteboard-sage.png": { height: 1734, width: 3024 },
-  "/public/landing/project-notebook-20260916.jpg": {
-    height: 650,
-    width: 1050,
-  },
-  "/public/landing/project-terminal-20260916.jpg": {
-    height: 400,
-    width: 800,
+  "/public/landing/cocalc-brand-social-20260925.png": {
+    height: 630,
+    width: 1200,
   },
 };
 
@@ -638,7 +636,14 @@ function featureRouteMetadata(
     return {
       canonicalPath: publicPath(`features/${page.slug}`, options),
       description: page.metadataSummary ?? page.summary,
-      imagePath: publicPath(page.image ?? FEATURE_SOCIAL_IMAGE, options),
+      // The AI page is a broad entry point, and its page image is an older
+      // code-fix screenshot, so its link preview uses the brand card.
+      imagePath: publicPath(
+        page.slug === "ai"
+          ? FEATURE_SOCIAL_IMAGE
+          : (page.image ?? FEATURE_SOCIAL_IMAGE),
+        options,
+      ),
       title: pageTitle(page.metadataTitle ?? page.title, siteName),
     };
   }

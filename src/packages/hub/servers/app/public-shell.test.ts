@@ -199,18 +199,33 @@ describe("public shell rendering", () => {
     );
   });
 
+  const BRAND_CARD = "public/landing/cocalc-brand-social-20260925.png";
+
   it.each([
-    ["/", "project-notebook-20260916.jpg", "1050", "650"],
-    ["/products/cocalc-star", "project-notebook-20260916.jpg", "1050", "650"],
-    ["/features/teaching", "project-terminal-20260916.jpg", "800", "400"],
+    ["/", BRAND_CARD, "1200", "630"],
+    ["/features/ai", BRAND_CARD, "1200", "630"],
+    ["/products", BRAND_CARD, "1200", "630"],
+    ["/products/cocalc-star", BRAND_CARD, "1200", "630"],
+    ["/pricing", BRAND_CARD, "1200", "630"],
+    ["/docs", BRAND_CARD, "1200", "630"],
+    ["/features/teaching", BRAND_CARD, "1200", "630"],
+    [
+      "/features/jupyter-notebook",
+      "public/features/cocalc-jupyter2-20170508.png",
+      "1605",
+      "908",
+    ],
   ])(
-    "emits current product evidence and dimensions for %s",
+    "emits the link preview image and dimensions for %s",
     async (path, image, width, height) => {
       const { html, status } = await renderPublicShell(request(path));
 
       expect(status).toBe(200);
       expect(html).toContain(
-        `content="https://cocalc.ai/public/landing/${image}" data-cocalc-public-route-meta="og:image"`,
+        `content="https://cocalc.ai/${image}" data-cocalc-public-route-meta="og:image"`,
+      );
+      expect(html).toContain(
+        `content="https://cocalc.ai/${image}" data-cocalc-public-route-meta="twitter:image"`,
       );
       expect(html).toContain(
         `content="${width}" data-cocalc-public-route-meta="og:image:width"`,
