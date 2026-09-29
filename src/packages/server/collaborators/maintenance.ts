@@ -5,6 +5,7 @@
 import getLogger from "@cocalc/backend/logger";
 import { runCollaborationScanPass } from "./scan-worker";
 import { syncCollaborationScanSchema } from "@cocalc/database/postgres/collaborators/collaborators-scan";
+import { syncCollaborationScanActorSchema } from "@cocalc/database/postgres/collaborators/collaborators-scan-actor";
 import { createSharedProjectionFetcher } from "./projection-batch";
 import { runRevisionHintRepair } from "./revision-repair";
 import { runRevisionOutboxMaintenance } from "./revision-outbox-maintenance";
@@ -252,7 +253,10 @@ export async function startCollaboratorsMaintenance() {
   try {
     await syncCollaboratorsSchema();
     await ensureCollaborationNotificationSchema();
-    if (scanEnabled) await syncCollaborationScanSchema(getPool());
+    if (scanEnabled) {
+      await syncCollaborationScanSchema(getPool());
+      await syncCollaborationScanActorSchema(getPool());
+    }
     if (process.env.COCALC_PEOPLE_DEMAND_PROTOTYPE === "1")
       await syncCollaborationDemandSchema(getPool());
     if (

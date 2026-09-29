@@ -10,6 +10,7 @@ import type {
   ScanStatusRequest,
   ScanReceipt,
   ScanDiscoveryStatus,
+  ScanReadResult,
 } from "@cocalc/util/collaboration-scan";
 import type { PeopleInvitationDeliveryReceipt } from "@cocalc/util/people-invitations";
 import {
@@ -180,13 +181,13 @@ export type InterBayCollaboratorsApi = RoutedApi & {
   /** Read-only inspection never reserves tokens or admits new work. */
   inspectScanAtHome(
     opts: ScanInspectionRequest & { route: CollaborationRoute },
-  ): Promise<ScanReceipt | null>;
+  ): Promise<ScanReadResult<ScanReceipt | null>>;
   inspectScanAtOwner(
     opts: ScanInspectionRequest & { route: CollaborationRoute },
   ): Promise<ScanReceipt | null>;
   scanStatusAtHome(
     opts: ScanStatusRequest & { route: CollaborationRoute },
-  ): Promise<ScanDiscoveryStatus>;
+  ): Promise<ScanReadResult<ScanDiscoveryStatus>>;
   scanStatusAtOwner(
     opts: ScanStatusRequest & { route: CollaborationRoute },
   ): Promise<ScanDiscoveryStatus>;

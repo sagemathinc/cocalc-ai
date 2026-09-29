@@ -2257,3 +2257,32 @@ failure and transport timeout without resubmission. These routing tests mock
 the transport/store boundary; the store suite separately verifies receipt and
 membership behavior. Live multibay inspection and public API/CLI/UI integration
 remain open, as do the wider plan gates. No deployment settings were changed.
+
+### Account-Home Scan Inspection Budget
+
+Startup now installs the account-home Scan reservation schema along with the
+owner Scan schema under the existing startup opt-in. Both routed home inspection
+methods use a separate shared account budget before contacting the owner. The
+typed response distinguishes `allowed: false` plus `retry_after_ms` from an
+allowed receipt/status value plus `poll_after_ms`. Receipt absence, unknown job
+state and throttling are therefore not conflated. Owner internal reads remain
+unchanged; public transport authentication is still not exposed by this change.
+
+The initial policy is a burst of ten reads, refilling one per second, aggregated
+across projects and processes at the authoritative account home. Polling uses
+separate columns on the existing budget row under the account rehome write fence.
+It neither spends nor resets admission tokens, creates admission receipts, nor
+renews dormant state on a timer. Rejected budget checks do not update the row.
+Clock rollback cannot mint tokens; replies include the future-clock delay.
+Constant additive column defaults avoid a volatile timestamp default. This is
+not a claim that all schema operations are lock-free.
+
+Server/reference typecheck, 46 API/lifecycle tests and seven PGlite actor-budget
+tests pass. Coverage includes independent budget accounting, capped refill,
+future clocks, rejected-poll immutability, wrong-home/banned/deleted actors,
+startup opt-in and skipping owner calls when throttled. A deleted-account error
+expectation was corrected to match the pre-existing fence's earlier rejection.
+These checks do not establish load capacity or bound an attacker’s total DB
+traffic: transport-level admission/concurrency limits and real multi-process
+contention validation remain required. Public API/CLI/UI and scoped-agent
+authorization remain open; no production flags were changed.

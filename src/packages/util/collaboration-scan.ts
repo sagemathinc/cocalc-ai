@@ -31,3 +31,6 @@ export interface ScanStatusRequest {
   account_id: string;
   job_id: string;
 }
+export type ScanReadResult<T> =
+  | { allowed: true; value: T; poll_after_ms: number }
+  | { allowed: false; retry_after_ms: number };

@@ -580,9 +580,16 @@ export const collaboratorsControl: InterBayCollaboratorsApi = {
   },
   async inspectScanAtHome(opts) {
     await checkHome(opts.account_id, opts.route);
-    return owner(opts.project_id, (api, route) =>
+    uuid(opts.project_id, "scan project");
+    uuid(opts.request_id, "scan request");
+    const { reserveCollaborationScanRead } =
+      await import("@cocalc/database/postgres/collaborators/collaborators-scan-actor");
+    const budget = await reserveCollaborationScanRead(opts.account_id);
+    if (!budget.allowed) return budget;
+    const value = await owner(opts.project_id, (api, route) =>
       api.inspectScanAtOwner({ ...opts, route }),
     );
+    return { ...budget, value };
   },
   async inspectScanAtOwner(opts) {
     await enabled();
@@ -593,9 +600,16 @@ export const collaboratorsControl: InterBayCollaboratorsApi = {
   },
   async scanStatusAtHome(opts) {
     await checkHome(opts.account_id, opts.route);
-    return owner(opts.project_id, (api, route) =>
+    uuid(opts.project_id, "scan project");
+    uuid(opts.job_id, "scan job");
+    const { reserveCollaborationScanRead } =
+      await import("@cocalc/database/postgres/collaborators/collaborators-scan-actor");
+    const budget = await reserveCollaborationScanRead(opts.account_id);
+    if (!budget.allowed) return budget;
+    const value = await owner(opts.project_id, (api, route) =>
       api.scanStatusAtOwner({ ...opts, route }),
     );
+    return { ...budget, value };
   },
   async scanStatusAtOwner(opts) {
     await enabled();

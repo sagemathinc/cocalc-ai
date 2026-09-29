@@ -13,12 +13,69 @@ export async function syncCollaborationScanActorSchema(
   await db.query(`CREATE TABLE IF NOT EXISTS collaboration_scan_actor_budget (
     account_id UUID PRIMARY KEY REFERENCES accounts(account_id) ON DELETE CASCADE,
     tokens DOUBLE PRECISION NOT NULL CHECK(tokens>=0 AND tokens<=2),updated_at TIMESTAMPTZ NOT NULL)`);
+  await db.query(`ALTER TABLE collaboration_scan_actor_budget
+    ADD COLUMN IF NOT EXISTS read_tokens DOUBLE PRECISION NOT NULL DEFAULT 10 CHECK(read_tokens>=0 AND read_tokens<=10),
+    ADD COLUMN IF NOT EXISTS read_updated_at TIMESTAMPTZ NOT NULL DEFAULT '1970-01-01T00:00:00Z'`);
   await db.query(`CREATE TABLE IF NOT EXISTS collaboration_scan_actor_receipts (
     account_id UUID NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
     project_id UUID NOT NULL,request_id UUID NOT NULL,mode TEXT NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,PRIMARY KEY(account_id,project_id,request_id))`);
   await db.query(`CREATE INDEX IF NOT EXISTS collaboration_scan_actor_expiry
     ON collaboration_scan_actor_receipts(account_id,expires_at)`);
+}
+
+/** Account-home polling budget, independent of admission tokens and receipts. */
+export async function reserveCollaborationScanRead(account_id: string) {
+  uuid(account_id, "scan actor");
+  return withAccountRehomeWriteFence({
+    account_id: account_id.toLowerCase(),
+    action: "inspect scan",
+    fn: async (db) => {
+      await db.query("SET LOCAL lock_timeout = '1s'");
+      await db.query("SET LOCAL statement_timeout = '2s'");
+      const account = (
+        await db.query(
+          "SELECT banned,deleted FROM accounts WHERE account_id=$1",
+          [account_id],
+        )
+      ).rows[0];
+      if (!account || account.banned || account.deleted)
+        throw Error("scan account unavailable");
+      const now = (
+        await db.query("SELECT clock_timestamp() AS now")
+      ).rows[0].now.getTime();
+      const prior = (
+        await db.query(
+          "SELECT read_tokens,read_updated_at FROM collaboration_scan_actor_budget WHERE account_id=$1",
+          [account_id],
+        )
+      ).rows[0];
+      const updated = prior?.read_updated_at.getTime() ?? now;
+      const tokens = prior
+        ? Math.min(10, prior.read_tokens + Math.max(0, now - updated) / 1000)
+        : 10;
+      if (tokens < 1)
+        return {
+          allowed: false as const,
+          retry_after_ms: Math.ceil(
+            (1 - tokens) * 1000 + Math.max(0, updated - now),
+          ),
+        };
+      await db.query(
+        `INSERT INTO collaboration_scan_actor_budget
+        (account_id,tokens,updated_at,read_tokens,read_updated_at) VALUES($1,2,$2,$3,$4)
+        ON CONFLICT(account_id) DO UPDATE SET
+          read_tokens=EXCLUDED.read_tokens,read_updated_at=EXCLUDED.read_updated_at`,
+        [
+          account_id,
+          new Date(now),
+          tokens - 1,
+          new Date(Math.max(now, updated)),
+        ],
+      );
+      return { allowed: true as const, poll_after_ms: 1000 };
+    },
+  });
 }
 
 /** Internal account-home reservation, never a project access grant. Caller

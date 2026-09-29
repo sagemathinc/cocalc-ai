@@ -4,6 +4,7 @@
  */
 const schema = jest.fn(),
   scanSchema = jest.fn(),
+  scanActorSchema = jest.fn(),
   scan = jest.fn(),
   outboxSchema = jest.fn(),
   outbox = jest.fn(),
@@ -18,6 +19,12 @@ jest.mock("@cocalc/database/postgres/collaborators/collaborators-scan", () => ({
 jest.mock("./scan-worker", () => ({
   runCollaborationScanPass: (active: () => boolean) => scan(active),
 }));
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-scan-actor",
+  () => ({
+    syncCollaborationScanActorSchema: () => scanActorSchema(),
+  }),
+);
 jest.mock("@cocalc/database/settings/server-settings", () => ({
   getServerSettings: () => settings(),
 }));
@@ -136,6 +143,7 @@ beforeEach(() => {
   for (const mock of [
     schema,
     scanSchema,
+    scanActorSchema,
     scan,
     outboxSchema,
     outbox,
@@ -152,6 +160,7 @@ test("scan scheduling is independent of slow host work and fences old lifecycles
   scan.mockReturnValueOnce(pending.promise);
   await startCollaboratorsMaintenance();
   expect(scanSchema).toHaveBeenCalledTimes(1);
+  expect(scanActorSchema).toHaveBeenCalledTimes(1);
   await jest.advanceTimersByTimeAsync(2000);
   expect(scan).toHaveBeenCalledTimes(1);
   expect(fanout).toHaveBeenCalledTimes(3);
@@ -172,6 +181,7 @@ test("scan timers require startup opt-in and obey runtime flags", async () => {
   await startCollaboratorsMaintenance();
   await jest.advanceTimersByTimeAsync(0);
   expect(scanSchema).not.toHaveBeenCalled();
+  expect(scanActorSchema).not.toHaveBeenCalled();
   expect(scan).not.toHaveBeenCalled();
   stopCollaboratorsMaintenance();
   process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE = "1";

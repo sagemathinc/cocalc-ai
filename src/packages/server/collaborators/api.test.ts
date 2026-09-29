@@ -12,6 +12,7 @@ import {
 
 const owner = jest.fn();
 const scanReserve = jest.fn();
+const scanRead = jest.fn();
 const scanAdmit = jest.fn();
 const scanInspect = jest.fn();
 const scanStatus = jest.fn();
@@ -33,7 +34,10 @@ jest.mock(
 );
 jest.mock(
   "@cocalc/database/postgres/collaborators/collaborators-scan-actor",
-  () => ({ reserveCollaborationScanActor: (...args) => scanReserve(...args) }),
+  () => ({
+    reserveCollaborationScanActor: (...args) => scanReserve(...args),
+    reserveCollaborationScanRead: (...args) => scanRead(...args),
+  }),
 );
 jest.mock("@cocalc/database/postgres/collaborators/collaborators-scan", () => ({
   admitCollaborationScan: (...args) => scanAdmit(...args),
@@ -250,6 +254,7 @@ const snapshot = {
 beforeEach(() => {
   jest.clearAllMocks();
   bay = "home";
+  scanRead.mockResolvedValue({ allowed: true, poll_after_ms: 1000 });
   owner.mockResolvedValue(route);
   home.mockResolvedValue({ home_bay_id: "home" });
   settings.mockResolvedValue({ collaborators_enabled: true });
@@ -453,15 +458,19 @@ test("scan inspection routes exact identities without admission or token reserva
     };
     remote.inspectScanAtOwner.mockResolvedValue(receipt);
     remote.scanStatusAtOwner.mockResolvedValue({ state: "queued" });
-    expect(await collaboratorsControl.inspectScanAtHome(request)).toEqual(
-      receipt,
-    );
+    expect(await collaboratorsControl.inspectScanAtHome(request)).toEqual({
+      allowed: true,
+      value: receipt,
+      poll_after_ms: 1000,
+    });
     expect(remote.inspectScanAtOwner).toHaveBeenCalledWith({
       ...request,
       route,
     });
     expect(await collaboratorsControl.scanStatusAtHome(statusRequest)).toEqual({
-      state: "queued",
+      allowed: true,
+      value: { state: "queued" },
+      poll_after_ms: 1000,
     });
     expect(remote.scanStatusAtOwner).toHaveBeenCalledWith({
       ...statusRequest,
@@ -477,6 +486,20 @@ test("scan inspection routes exact identities without admission or token reserva
         route: { bay_id: "wrong" },
       }),
     ).rejects.toThrow("stale");
+    remote.inspectScanAtOwner.mockClear();
+    remote.scanStatusAtOwner.mockClear();
+    scanRead.mockResolvedValue({ allowed: false, retry_after_ms: 1000 });
+    expect(await collaboratorsControl.inspectScanAtHome(request)).toEqual({
+      allowed: false,
+      retry_after_ms: 1000,
+    });
+    expect(await collaboratorsControl.scanStatusAtHome(statusRequest)).toEqual({
+      allowed: false,
+      retry_after_ms: 1000,
+    });
+    expect(remote.inspectScanAtOwner).not.toHaveBeenCalled();
+    expect(remote.scanStatusAtOwner).not.toHaveBeenCalled();
+    expect(scanRead).toHaveBeenLastCalledWith(account_id);
     expect(scanReserve).not.toHaveBeenCalled();
     expect(scanAdmit).not.toHaveBeenCalled();
     expect(remote.scanAtOwner).not.toHaveBeenCalled();
