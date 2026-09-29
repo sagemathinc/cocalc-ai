@@ -114,11 +114,24 @@ const Error: React.FC<ErrorProps> = (props: ErrorProps) => {
   } else {
     return (
       <div style={{ minWidth: 0 }}>
-        <h3>Error</h3>
-        Running nbconvert failed with an error {render_time()}. Review the
-        complete error log below. LaTeX-based PDF exports can fail when a
-        notebook contains invalid LaTeX or requires an unavailable LaTeX
-        package. Copy the full log when contacting support.
+        <h3 role="alert">
+          {nbconvert?.get("phase") === "initialization"
+            ? "Export did not start"
+            : "Export failed"}
+        </h3>
+        {nbconvert?.get("phase") === "initialization" ? (
+          <>
+            Jupyter could not start the export {render_time()}. Review the
+            startup error below, then retry.
+          </>
+        ) : (
+          <>
+            Running nbconvert failed with an error {render_time()}. Review the
+            complete error log below. LaTeX-based PDF exports can fail when a
+            notebook contains invalid LaTeX or requires an unavailable LaTeX
+            package. Copy the full log when contacting support.
+          </>
+        )}
         <div style={{ minWidth: 0, marginTop: "8px" }}>
           <div style={{ display: "flex", justifyContent: "flex-end" }}>
             <CopyButton
@@ -237,6 +250,7 @@ export const NBConvert: React.FC<NBConvertProps> = React.memo(
     }, [nbconvert]);
 
     function close(): void {
+      actions.cancel_nbconvert_startup();
       actions.setState({ nbconvert_dialog: undefined });
       actions.focus(true);
     }
@@ -285,7 +299,10 @@ export const NBConvert: React.FC<NBConvertProps> = React.memo(
       if (time == null) {
         return;
       }
-      if (time < misc.server_minutes_ago(5)) {
+      if (
+        time < misc.server_minutes_ago(5) &&
+        nbconvert?.get("phase") !== "initialization"
+      ) {
         // only show if recent
         return;
       }
@@ -301,6 +318,9 @@ export const NBConvert: React.FC<NBConvertProps> = React.memo(
       return (
         <div>
           {renderError()}
+          {nbconvert?.get("phase") === "initialization" && (
+            <Button onClick={run}>Retry export</Button>
+          )}
           <div>{renderDownload()}</div>
         </div>
       );
@@ -325,7 +345,18 @@ export const NBConvert: React.FC<NBConvertProps> = React.memo(
       const state = nbconvert?.get("state");
       switch (state) {
         case "start":
-          return <div>Requesting to convert...</div>;
+          return (
+            <div>
+              <div role="status">
+                {nbconvert?.get("phase") === "initialization"
+                  ? "Connecting to Jupyter for export (up to 30 seconds)..."
+                  : "Requesting to convert..."}
+              </div>
+              {nbconvert?.get("phase") === "initialization" && (
+                <Button onClick={close}>Cancel export startup</Button>
+              )}
+            </div>
+          );
         case "run":
           return (
             <div>

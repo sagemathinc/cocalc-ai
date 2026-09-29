@@ -60,6 +60,7 @@ import type { Kernels, Kernel } from "@cocalc/jupyter/util/misc";
 import { get_kernels_by_name_or_language } from "@cocalc/jupyter/util/misc";
 import { show_kernel_selector_reasons } from "@cocalc/jupyter/redux/store";
 import exportToHTML from "./nbviewer/export";
+import { initializeExport } from "./export-startup";
 import { JUPYTER_MIMETYPES } from "@cocalc/jupyter/util/misc";
 import { parse } from "path";
 import { syncdbPath } from "@cocalc/util/jupyter/names";
@@ -1741,6 +1742,8 @@ export class JupyterActions extends JupyterActions0 {
   public async close(): Promise<void> {
     try {
       if (this.isClosed()) return;
+      this.exportStartup?.abort();
+      this.exportStartup = undefined;
       this.recordJupyterOpenIncomplete("editor_closed");
       this.unsubscribeAppearance?.();
       this.unsubscribeAppearance = undefined;
@@ -2164,17 +2167,44 @@ export class JupyterActions extends JupyterActions0 {
     return state === "start" || state === "run";
   }
 
+  private exportStartup?: AbortController;
+
+  public cancel_nbconvert_startup(): void {
+    // Only cancel initialization, never imply that a submitted conversion stops.
+    if (this.exportStartup == null) return;
+    this.exportStartup.abort();
+    this.exportStartup = undefined;
+    const previous = this.store.get("nbconvert");
+    this.setState({
+      nbconvert: previous.merge({
+        state: "done",
+        phase: "initialization",
+        error: "Export startup cancelled. No conversion was requested.",
+        time: Date.now(),
+      }),
+    });
+  }
+
   public show_nbconvert_dialog(to: string): void {
     this.setState({ nbconvert_dialog: { to } });
   }
 
   public nbconvert(args: string[]): void {
-    if (this.nbconvert_has_started()) {
+    if (this.exportStartup != null || this.nbconvert_has_started()) {
       // can't run it while it is already running.
       throw Error("nbconvert is already running");
     }
     if (this.syncdb == null) {
-      console.warn("nbconvert: syncdb not available, aborting...");
+      this.setState({
+        nbconvert: fromJS({
+          args,
+          state: "done",
+          phase: "initialization",
+          time: Date.now(),
+          error:
+            "The notebook is not connected. Reopen it and retry the export. No conversion was requested.",
+        }),
+      });
       return;
     }
 
@@ -2190,20 +2220,34 @@ export class JupyterActions extends JupyterActions0 {
     };
     // Show feedback immediately, but do not publish the request until the
     // project-side notebook controller exists to consume it.
-    this.setState({ nbconvert: fromJS(request) });
-    void this.initBackend().then(
+    const controller = new AbortController();
+    this.exportStartup = controller;
+    this.setState({
+      nbconvert: fromJS({ ...request, phase: "initialization" }),
+    });
+    void initializeExport(async () => {
+      const api = await this.jupyterApi();
+      if (!controller.signal.aborted) await api.start(this.syncdbPath);
+    }, controller.signal).then(
       () => {
-        if (!this.is_closed()) {
+        if (!this.is_closed() && this.exportStartup === controller) {
+          this.exportStartup = undefined;
+          this.setState({ nbconvert: fromJS(request) });
           this.set_runtime_nbconvert(request);
         }
       },
       (err) => {
-        if (!this.is_closed()) {
-          this.set_runtime_nbconvert({
-            ...request,
-            state: "done",
-            error: `Unable to initialize Jupyter for export: ${err}`,
-            time: Date.now(),
+        if (!this.is_closed() && this.exportStartup === controller) {
+          controller.abort();
+          this.exportStartup = undefined;
+          this.setState({
+            nbconvert: fromJS({
+              ...request,
+              state: "done",
+              phase: "initialization",
+              error: String(err),
+              time: Date.now(),
+            }),
           });
         }
       },
