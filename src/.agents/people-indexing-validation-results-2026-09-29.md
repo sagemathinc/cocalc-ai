@@ -416,3 +416,41 @@ Validation: server TypeScript build and all ten real-PostgreSQL demand tests
 pass. The 1,000-cold-membership maintenance test additionally verifies that the
 first pass advances exactly 20 ordered keys and an immediate second pass leaves
 the persisted cursor unchanged. Formatting and diff whitespace checks pass.
+
+## Dormant Population: PostgreSQL Cleanup Plans
+
+Added `packages/server/collaborators/dormant-scale.acceptance.test.ts`, explicitly
+opted into with both `COCALC_COLLABORATORS_ACCEPTANCE=1` and
+`COCALC_PEOPLE_SCALE_ACCEPTANCE=1`. It runs in the isolated multi-bay PostgreSQL
+fixture, not the live development database. It grows synthetic dormant accounts
+with one membership each to 0, 100,000, and 1,000,000, leaving all access rows due.
+It analyzes the tables and explains the exact production cleanup SQL, shared
+with the test rather than copied into a separate benchmark approximation.
+
+Measured PostgreSQL 18 results from this run:
+
+| Dormant memberships | Candidate buffers | Stale-check buffers | Candidate execution ms | Stale-check execution ms |
+| ------------------: | ----------------: | ------------------: | ---------------------: | -----------------------: |
+|                   0 |                 0 |                   0 |                  0.014 |                    0.081 |
+|             100,000 |                23 |                 240 |                  0.028 |                    0.207 |
+|           1,000,000 |                 4 |                 240 |                  0.031 |                    1.092 |
+
+Buffers are root-plan shared hits plus reads, not distinct pages or physical
+disk operations. The lower candidate count at one million is not a claim that
+larger datasets are faster: visibility/cache and plan choices affect this
+measurement. The fixture checks a generous fixed ceiling of 2,000 buffers per
+query; its machine-readable output includes full analyzed plans for diagnosis.
+Both populated sizes use indexed lookups rather than a population traversal.
+
+At each size, two actual maintenance passes leave the dormant rows intact,
+create no grant claims, and make no owner project-page, access-refresh, or
+notification-page calls. All three scale tests passed in 252 seconds including
+fixture startup and population. Server TypeScript build also passed.
+
+This evidence closes the initial empty/100k/1M cleanup-query measurement gap,
+not the overall scaling gate. It measures the first keyset page, one membership
+per account, no concurrent active view load, and no bulk stale-row deletion.
+Deep cursors, heavy-tail membership distributions, active/cold competition,
+other maintenance queries, retention, storage growth, DAU traces, and the soak
+remain required. Millisecond timings here are observations, not production
+latency guarantees.

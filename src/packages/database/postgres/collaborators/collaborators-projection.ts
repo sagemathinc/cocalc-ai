@@ -355,6 +355,22 @@ export async function failCollaborationProjection(
   );
 }
 
+// Shared with the isolated PostgreSQL scale fixture so EXPLAIN measures the
+// production queries, not an independently maintained approximation.
+export const cleanupCandidatesSql = `SELECT account_id,project_id FROM collaboration_access
+  WHERE (account_id,project_id)>($1::uuid,$2::uuid)
+  ORDER BY account_id,project_id LIMIT 20`;
+
+export function cleanupStaleSql(bounded: boolean) {
+  return `SELECT x.account_id,x.project_id FROM collaboration_access x
+    ${bounded ? `JOIN jsonb_to_recordset($2::jsonb) AS c(account_id uuid,project_id uuid) USING(account_id,project_id)` : ""}
+    WHERE NOT EXISTS(SELECT 1 FROM account_project_index p JOIN accounts a USING(account_id)
+      WHERE p.account_id=x.account_id AND p.project_id=x.project_id
+      AND COALESCE(a.home_bay_id,'bay-0')=$1 AND NOT COALESCE(a.deleted,FALSE) AND NOT COALESCE(a.banned,FALSE)
+      AND p.users_summary #>> ARRAY[p.account_id::text,'group'] IN ('owner','collaborator'))
+    LIMIT 20 FOR UPDATE OF x SKIP LOCKED`;
+}
+
 /** Bounded deletion of inaccessible metadata; leases already gate reads. */
 export async function cleanCollaborationProjections(bay_id: string) {
   return transaction(async (db) => {
@@ -373,15 +389,10 @@ export async function cleanCollaborationProjections(bay_id: string) {
       if (state.next_at && new Date(state.next_at).getTime() > now.getTime())
         return 0;
       candidates = (
-        await db.query(
-          `SELECT account_id,project_id FROM collaboration_access
-        WHERE (account_id,project_id)>($1::uuid,$2::uuid)
-        ORDER BY account_id,project_id LIMIT 20`,
-          [
-            state.account_id ?? "00000000-0000-0000-0000-000000000000",
-            state.project_id ?? "00000000-0000-0000-0000-000000000000",
-          ],
-        )
+        await db.query(cleanupCandidatesSql, [
+          state.account_id ?? "00000000-0000-0000-0000-000000000000",
+          state.project_id ?? "00000000-0000-0000-0000-000000000000",
+        ])
       ).rows;
       // A skipped row lock is revisited on the next bounded repair cycle. This
       // cursor is not an access authorization or a proof of complete cleanup.
@@ -397,13 +408,7 @@ export async function cleanCollaborationProjections(bay_id: string) {
       if (!candidates!.length) return 0;
     }
     const { rows } = await db.query(
-      `SELECT x.account_id,x.project_id FROM collaboration_access x
-      ${candidates ? `JOIN jsonb_to_recordset($2::jsonb) AS c(account_id uuid,project_id uuid) USING(account_id,project_id)` : ""}
-      WHERE NOT EXISTS(SELECT 1 FROM account_project_index p JOIN accounts a USING(account_id)
-        WHERE p.account_id=x.account_id AND p.project_id=x.project_id
-        AND COALESCE(a.home_bay_id,'bay-0')=$1 AND NOT COALESCE(a.deleted,FALSE) AND NOT COALESCE(a.banned,FALSE)
-        AND p.users_summary #>> ARRAY[p.account_id::text,'group'] IN ('owner','collaborator'))
-      LIMIT 20 FOR UPDATE OF x SKIP LOCKED`,
+      cleanupStaleSql(candidates !== undefined),
       candidates ? [bay_id, JSON.stringify(candidates)] : [bay_id],
     );
     for (const row of rows) {
