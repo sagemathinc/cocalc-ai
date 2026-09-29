@@ -756,6 +756,7 @@ async function command(name, args = {}) {
           .fetchCollaborationNotificationPage,
       );
     case "notificationFanout": {
+      const fanout = require("@cocalc/database/postgres/collaborators/collaborators-notification-fanout");
       if (args.operation === "enable") {
         process.env.COCALC_PEOPLE_EVENT_FANOUT_PROTOTYPE = "1";
         return null;
@@ -764,6 +765,20 @@ async function command(name, args = {}) {
         return require("@cocalc/database/postgres/collaborators/collaborators-notifications").pruneCollaborationNotificationEvents(
           config.bays[0],
         );
+      if (args.operation === "claim")
+        return fanout.claimCollaborationNotificationRecipients({
+          project_id: config.project,
+          bay_id: args.bay_id ?? config.bays[0],
+          limit: args.limit,
+        });
+      if (args.operation === "settle")
+        return fanout.settleCollaborationNotificationRecipient({
+          project_id: config.project,
+          bay_id: args.bay_id ?? config.bays[0],
+          id: args.id,
+          claim_id: args.claim_id,
+          outcome: args.outcome,
+        });
       return require("@cocalc/database/postgres/collaborators/collaborators-notification-fanout").expandCollaborationNotificationEvent(
         {
           event_id: args.event_id,

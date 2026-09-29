@@ -191,4 +191,92 @@ acceptance("durable owner notification fanout (isolated PostgreSQL)", () => {
     );
     expect(recipients.some((row) => row.account_id === late)).toBe(false);
   });
+
+  test("bounded claims recover worker loss and reject expired or superseded acknowledgments", async () => {
+    const call = (args: object) =>
+      env.worker("owner").call("notificationFanout", args);
+    const claim = () => call({ operation: "claim", limit: 2 });
+    const settle = (row: any, outcome = "acknowledge") =>
+      call({
+        operation: "settle",
+        id: row.id,
+        claim_id: row.claim_id,
+        outcome,
+      });
+    await expect(call({ operation: "claim", limit: 26 })).rejects.toThrow(
+      /limit/,
+    );
+    await expect(
+      call({ operation: "claim", bay_id: "wrong-owner" }),
+    ).rejects.toThrow(/owner unavailable/);
+    const [first, second] = await Promise.all([claim(), claim()]);
+    expect(first).toHaveLength(2);
+    expect(second).toHaveLength(2);
+    expect(new Set([...first, ...second].map((row) => row.id)).size).toBe(4);
+    expect(await claim()).toEqual([]);
+    // Simulate a crashed worker's lease expiring, not an actual home receipt.
+    await env.sql(
+      "owner",
+      "UPDATE collaboration_notification_recipients SET claim_until=clock_timestamp()-interval '1 second',due_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+      [first[0].id],
+    );
+    expect(await settle(first[0])).toBe(false);
+    const reclaimed = await claim();
+    expect(reclaimed).toHaveLength(1);
+    expect(reclaimed[0].id).toBe(first[0].id);
+    expect(reclaimed[0].claim_id).not.toBe(first[0].claim_id);
+    expect(await settle(first[0])).toBe(false);
+    await expect(
+      call({
+        operation: "settle",
+        ...reclaimed[0],
+        bay_id: "wrong-owner",
+        outcome: "acknowledge",
+      }),
+    ).rejects.toThrow(/owner unavailable/);
+    expect(await settle(reclaimed[0], "retry")).toBe(true);
+    expect(await settle(reclaimed[0])).toBe(false);
+    expect(await claim()).toEqual([]);
+    await env.sql(
+      "owner",
+      "UPDATE collaboration_notification_recipients SET due_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+      [reclaimed[0].id],
+    );
+    const retry = await claim();
+    expect(retry).toHaveLength(1);
+    expect(retry[0].event).toEqual(reclaimed[0].event);
+    expect(retry[0].membership_epoch).toBe(reclaimed[0].membership_epoch);
+    await env.sql(
+      "owner",
+      `CREATE TABLE IF NOT EXISTS project_rehome_operations(
+      op_id UUID PRIMARY KEY,project_id UUID,source_bay_id TEXT,dest_bay_id TEXT,
+      status TEXT,stage TEXT,created_at TIMESTAMPTZ DEFAULT now())`,
+    );
+    const operation = randomUUID();
+    await env.sql(
+      "owner",
+      `INSERT INTO project_rehome_operations
+      (op_id,project_id,source_bay_id,dest_bay_id,status,stage)
+      VALUES($1,$2,$3,$4,'running','copying')`,
+      [operation, env.project, env.bays[0], env.bays[1]],
+    );
+    try {
+      await expect(claim()).rejects.toThrow(/rehome/);
+      await expect(settle(retry[0])).rejects.toThrow(/rehome/);
+    } finally {
+      await env.sql(
+        "owner",
+        "DELETE FROM project_rehome_operations WHERE op_id=$1",
+        [operation],
+      );
+    }
+    expect(await settle(retry[0])).toBe(true);
+    expect(await settle(retry[0])).toBe(false);
+    expect(
+      await env.sql(
+        "owner",
+        "SELECT id FROM collaboration_notification_recipients",
+      ),
+    ).toHaveLength(3);
+  });
 });

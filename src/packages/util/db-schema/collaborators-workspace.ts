@@ -476,7 +476,7 @@ Table({
   name: "collaboration_notification_recipients",
   rules: {
     primary_key: "id",
-    pg_indexes: ["project_id", "event_id", "due_at,id"],
+    pg_indexes: ["project_id", "event_id", "due_at,id", "project_id,due_at,id"],
   },
   fields: {
     id: uuid,

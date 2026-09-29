@@ -197,3 +197,30 @@ Next: authenticated routed recipient delivery and durable acknowledgment,
 event-triggered authorization independent of projection leases, demand/scheduler
 integration, and disabled/mixed-version recovery. Scan, filesystem reconciliation,
 scale/soak validation, and the overall rollout gates remain incomplete.
+
+## Owner Delivery Claims
+
+The prototype now supports service-internal claim and settlement transactions.
+Claims contain at most 25 obligations, use a 60-second database-clock lease
+obtained after ownership/rehome locking, and preserve stable event/recipient
+identity across retries. Claiming moves the due time to lease expiry so indexed
+selection does not repeatedly visit in-flight work. Source facts are fetched in
+one bounded batch rather than one query per recipient.
+
+Acknowledgment deletes only a matching, unexpired claim; retry releases it with
+a five-second delay. Expired, superseded, and repeated acknowledgments cannot
+delete another worker's obligation. Both operations resolve the local project
+ownership row under the existing rehome fence. No public RPC exposes these
+functions, and a claim is not a grant of recipient access.
+
+This is the owner-side work protocol, not yet an end-to-end delivery protocol.
+The authenticated home receiver, current event-specific authorization, durable
+home acceptance, and routing remain to be integrated before enabling capture or
+suspending cold-account access renewal. Fixture acknowledgments do not prove
+actual recipient delivery.
+
+Validation: server TypeScript build and seven ownership tests pass. All three
+real-PostgreSQL fanout tests pass, including concurrent bounded claims, expired
+and superseded tokens, retry delay, wrong-owner rejection, and a running-rehome
+fence on both claim and acknowledgment. No end-to-end routing or scale gate is
+claimed by these tests.

@@ -3,11 +3,128 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { uuidsha1 } from "@cocalc/util/misc";
+import { randomUUID } from "node:crypto";
+import type { PoolClient } from "@cocalc/database/pool";
+import type { CollaborationMessageEvent } from "@cocalc/util/collaboration-attention";
 import { validateCollaborationMessageEvent } from "@cocalc/util/collaboration-attention";
 import { assertProjectNotRehoming } from "../project-rehome-fence";
 import { transaction, uuid } from "./collaborators-common";
 
 export const MAX_NOTIFICATION_RECIPIENTS_PER_PROJECT = 50_000;
+
+async function lockOwner(db: PoolClient, project_id: string, bay_id: string) {
+  await assertProjectNotRehoming({
+    db,
+    project_id,
+    action: "claim or settle notification work",
+  });
+  const owner = await db.query(
+    "SELECT project_id FROM projects WHERE project_id=$1 AND owning_bay_id=$2 FOR UPDATE",
+    [project_id, bay_id],
+  );
+  if (!owner.rows.length) throw Error("notification project owner unavailable");
+}
+
+export interface NotificationRecipientClaim {
+  id: string;
+  claim_id: string;
+  account_id: string;
+  membership_epoch: string;
+  event: CollaborationMessageEvent;
+}
+
+/** Internal work receipt, NOT authorization to disclose an event. The receiver
+ * must resolve current home/owner authority and check membership before use.
+ * An unknown delivery outcome retries the same obligation, never acknowledges it.
+ */
+export async function claimCollaborationNotificationRecipients({
+  project_id,
+  bay_id,
+  limit = 25,
+}: {
+  project_id: string;
+  bay_id: string;
+  limit?: number;
+}): Promise<NotificationRecipientClaim[]> {
+  uuid(project_id, "project_id");
+  if (!Number.isInteger(limit) || limit < 1 || limit > 25)
+    throw Error("invalid recipient claim limit");
+  return transaction(async (db) => {
+    await lockOwner(db, project_id, bay_id);
+    // Read wall time after the potentially contended ownership fence. A worker
+    // must never receive an already-expired lease after waiting for a lock.
+    const claims = await db.query(
+      `WITH clock AS MATERIALIZED (SELECT clock_timestamp() AS t),
+      due AS (SELECT r.id FROM collaboration_notification_recipients r, clock
+        WHERE r.project_id=$1 AND r.due_at<=clock.t
+          AND (r.claim_until IS NULL OR r.claim_until<=clock.t)
+        ORDER BY r.due_at,r.id LIMIT $2 FOR UPDATE OF r SKIP LOCKED)
+      UPDATE collaboration_notification_recipients r SET claim_id=$3,
+        claim_until=clock.t+interval '60 seconds',due_at=clock.t+interval '60 seconds'
+      FROM due,clock WHERE r.id=due.id
+      RETURNING r.id,r.event_id,r.account_id,r.membership_epoch,r.claim_id`,
+      [project_id, limit, randomUUID()],
+    );
+    const result: NotificationRecipientClaim[] = [];
+    if (!claims.rows.length) return result;
+    const sources = await db.query(
+      "SELECT event_id,event_json FROM collaboration_notification_events WHERE event_id=ANY($1::uuid[]) AND project_id=$2",
+      [claims.rows.map((row) => row.event_id), project_id],
+    );
+    const events = new Map(
+      sources.rows.map((row) => [row.event_id, row.event_json]),
+    );
+    for (const row of claims.rows) {
+      if (!events.has(row.event_id))
+        throw Error("pending notification source missing");
+      result.push({
+        id: row.id,
+        claim_id: row.claim_id,
+        account_id: row.account_id,
+        membership_epoch: row.membership_epoch,
+        event: validateCollaborationMessageEvent(events.get(row.event_id)),
+      });
+    }
+    return result;
+  });
+}
+
+/** Call acknowledge only after durable recipient-home acceptance or definitive
+ * suppression/revocation. Retry includes timeouts/unknown outcomes. An expired
+ * or superseded claim cannot change the obligation, even after a delayed reply.
+ */
+export async function settleCollaborationNotificationRecipient({
+  project_id,
+  bay_id,
+  id,
+  claim_id,
+  outcome,
+}: {
+  project_id: string;
+  bay_id: string;
+  id: string;
+  claim_id: string;
+  outcome: "acknowledge" | "retry";
+}): Promise<boolean> {
+  uuid(project_id, "project_id");
+  uuid(id, "recipient obligation");
+  uuid(claim_id, "recipient claim");
+  if (outcome !== "acknowledge" && outcome !== "retry")
+    throw Error("invalid notification claim outcome");
+  return transaction(async (db) => {
+    await lockOwner(db, project_id, bay_id);
+    const predicate = `WHERE project_id=$1 AND id=$2 AND claim_id=$3
+      AND claim_until>clock_timestamp() RETURNING id`;
+    const settled = await db.query(
+      outcome === "acknowledge"
+        ? `DELETE FROM collaboration_notification_recipients ${predicate}`
+        : `UPDATE collaboration_notification_recipients SET claim_id=NULL,
+          claim_until=NULL,due_at=clock_timestamp()+interval '5 seconds' ${predicate}`,
+      [project_id, id, claim_id],
+    );
+    return settled.rows.length === 1;
+  });
+}
 
 /** Service-internal owner transaction; no delivery, home lookup, or RPC inside.
  * Capture is opt-in while the replacement delivery worker is being validated.
