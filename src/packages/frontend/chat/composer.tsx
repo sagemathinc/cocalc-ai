@@ -13,11 +13,7 @@ import { Alert, Button, ConfigProvider } from "antd";
 import { FormattedMessage } from "react-intl";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
-import {
-  delete_local_storage,
-  get_local_storage,
-  set_local_storage,
-} from "@cocalc/frontend/misc";
+
 import ChatInput from "./input";
 import type { ChatActions } from "./actions";
 import type { SubmitMentionsFn } from "./types";
@@ -166,15 +162,14 @@ export function ChatRoomComposer({
   const [delivery, setDelivery] = useState<ComposerDelivery>("agent");
   useEffect(() => setDelivery("agent"), [selectedThread?.key]);
   const visualViewport = useChatVisualViewport(mobile);
-  // A height the user chose by dragging. Without one the editor fits its
-  // content. (New key: heights saved before autosizing were not a choice.)
-  const HEIGHT_STORAGE_KEY = embeddingOptions.agentWorkspace
-    ? "agents-chat-composer-fixed-height-px"
-    : "chat-composer-fixed-height-px";
+
   // Automatic sizing grows to this share of the viewport, then scrolls.
   const AUTO_MAX_VH = mobile ? 0.3 : 0.4;
   const ZEN_MAX_VH = 1.0;
-  const DRAG_MAX_VH = 0.9;
+  // Dragging must never push the handle out of reach, and must leave room
+  // for the conversation above the composer.
+  const DRAG_MAX_VH = 0.6;
+  const DRAG_KEEP_VISIBLE_PX = 240;
   // About one line of text.
   const MIN_DRAG_HEIGHT = 40;
   const stripHtml = (value: string): string =>
@@ -256,14 +251,10 @@ export function ChatRoomComposer({
     if (typeof window === "undefined") return 900;
     return window.innerHeight;
   });
-  const [manualHeightPx, setManualHeightPx] = useState<number | null>(() => {
-    const stored = get_local_storage(HEIGHT_STORAGE_KEY);
-    const parsed =
-      typeof stored === "string" || typeof stored === "number"
-        ? Number(stored)
-        : NaN;
-    return Number.isFinite(parsed) ? parsed : null;
-  });
+  // The editor always fits its text. Dragging the handle only reserves room
+  // (a minimum height) for the current draft; sending resets it.
+  const [manualHeightPx, setManualHeightPx] = useState<number | null>(null);
+  useEffect(() => setManualHeightPx(null), [composerSession]);
   const [isZenMode, setIsZenMode] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -336,17 +327,18 @@ export function ChatRoomComposer({
     [viewportHeight, mobile, visualViewport.height],
   );
   const maxDragHeight = useMemo(
-    () => Math.max(MIN_DRAG_HEIGHT, Math.round(viewportHeight * DRAG_MAX_VH)),
+    () =>
+      Math.max(
+        MIN_DRAG_HEIGHT,
+        Math.round(
+          Math.min(
+            viewportHeight * DRAG_MAX_VH,
+            viewportHeight - DRAG_KEEP_VISIBLE_PX,
+          ),
+        ),
+      ),
     [viewportHeight],
   );
-
-  useEffect(() => {
-    if (manualHeightPx == null) {
-      delete_local_storage(HEIGHT_STORAGE_KEY);
-      return;
-    }
-    set_local_storage(HEIGHT_STORAGE_KEY, String(manualHeightPx));
-  }, [HEIGHT_STORAGE_KEY, manualHeightPx]);
 
   useEffect(() => {
     if (manualHeightPx == null) return;
@@ -412,12 +404,10 @@ export function ChatRoomComposer({
     [IS_MOBILE, clampHeight, autoGrowMaxHeight, isZenMode, manualHeightPx],
   );
 
-  // undefined: fit the content (between one line and autoGrowMaxHeight).
-  const chatInputHeight = isZenMode
-    ? `${zenHeight}px`
-    : manualHeightPx != null
-      ? `${clampHeight(manualHeightPx)}px`
-      : undefined;
+  // undefined: fit the content, between the reserved minimum and the cap.
+  const chatInputHeight = isZenMode ? `${zenHeight}px` : undefined;
+  const reservedHeight =
+    manualHeightPx != null ? clampHeight(manualHeightPx) : MIN_DRAG_HEIGHT;
   const currentInputHeight = () =>
     manualHeightPx ??
     Math.round(
@@ -723,7 +713,7 @@ export function ChatRoomComposer({
                 title={
                   isZenMode
                     ? "Exit fullscreen to resize"
-                    : "Drag to set the composer height; double-click to fit the text again"
+                    : "Drag to make room for this message; double-click to fit the text"
                 }
               >
                 <div
@@ -739,7 +729,7 @@ export function ChatRoomComposer({
                   aria-valuetext={
                     manualHeightPx == null
                       ? "Fits the text"
-                      : `${clampHeight(manualHeightPx)} pixels`
+                      : `At least ${clampHeight(manualHeightPx)} pixels`
                   }
                   onKeyDown={(event) => {
                     if (isZenMode) return;
@@ -856,8 +846,11 @@ export function ChatRoomComposer({
                   on_font_size_change={handleFontSizeChange}
                   height={chatInputHeight}
                   autoGrow={chatInputHeight == null}
-                  autoGrowMinHeight={MIN_DRAG_HEIGHT}
-                  autoGrowMaxHeight={autoGrowMaxHeight}
+                  autoGrowMinHeight={reservedHeight}
+                  autoGrowMaxHeight={Math.max(
+                    autoGrowMaxHeight,
+                    reservedHeight,
+                  )}
                   compactModeSwitch
                   softFocus
                   onChange={(value) => {

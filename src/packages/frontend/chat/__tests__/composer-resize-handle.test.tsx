@@ -164,14 +164,15 @@ describe("ChatRoomComposer resize handle", () => {
     );
   });
 
-  it("keeps a draft at its saved manual height", () => {
+  it("ignores composer heights saved by older versions", () => {
     mockStoredHeight = "180";
     renderComposer(
       { hasInput: true, input: "A multiline draft" },
       { agentWorkspace: true },
     );
-    expect(lastChatInputProps.height).toBe("180px");
-    expect(lastChatInputProps.autoGrow).toBe(false);
+    expect(lastChatInputProps.height).toBeUndefined();
+    expect(lastChatInputProps.autoGrow).toBe(true);
+    expect(lastChatInputProps.autoGrowMinHeight).toBe(40);
   });
 
   it("centers an automatically sized Agents composer", () => {
@@ -541,9 +542,9 @@ describe("ChatRoomComposer resize handle", () => {
     expect(screen.getByTestId("chat-input-focus-probe")).toBeInTheDocument();
   });
 
-  it("keyboard resizing fixes the height from its current size; Home fits the text", async () => {
+  it("resizing reserves room for the current draft without disabling autosizing", async () => {
     const user = userEvent.setup();
-    renderComposer();
+    const { rerender, props } = renderComposer();
     jest
       .spyOn(screen.getByTestId("chat-composer-input"), "getBoundingClientRect")
       .mockReturnValue({ height: 50 } as DOMRect);
@@ -551,17 +552,39 @@ describe("ChatRoomComposer resize handle", () => {
     expect(handle).toHaveAttribute("aria-valuetext", "Fits the text");
     handle.focus();
     await user.keyboard("{ArrowUp}");
-    expect(lastChatInputProps.height).toBe("70px");
-    expect(lastChatInputProps.autoGrow).toBe(false);
-    expect(handle).toHaveAttribute("aria-valuenow", "70");
-    // Down to about one line, not below.
-    await user.keyboard("{ArrowDown}{ArrowDown}");
-    expect(lastChatInputProps.height).toBe("40px");
-    await user.keyboard("{Home}");
+    // A minimum height: the editor still grows with its text.
     expect(lastChatInputProps.height).toBeUndefined();
     expect(lastChatInputProps.autoGrow).toBe(true);
+    expect(lastChatInputProps.autoGrowMinHeight).toBe(70);
+    expect(handle).toHaveAttribute("aria-valuetext", "At least 70 pixels");
+    // Down to about one line, not below.
+    await user.keyboard("{ArrowDown}{ArrowDown}");
+    expect(lastChatInputProps.autoGrowMinHeight).toBe(40);
+    await user.keyboard("{ArrowUp}{ArrowUp}{Home}");
+    expect(lastChatInputProps.autoGrowMinHeight).toBe(40);
     expect(handle).toHaveAttribute("aria-valuetext", "Fits the text");
     expect(handle).toHaveFocus();
+
+    // The reserved room belongs to one draft: sending resets it.
+    await user.keyboard("{ArrowUp}");
+    expect(lastChatInputProps.autoGrowMinHeight).toBe(70);
+    rerender(
+      <ChatEmbeddingOptionsProvider value={{} as any}>
+        <ChatRoomComposer {...props} composerSession={2} />
+      </ChatEmbeddingOptionsProvider>,
+    );
+    expect(lastChatInputProps.autoGrowMinHeight).toBe(40);
+  });
+
+  it("never lets the handle be dragged out of reach", async () => {
+    const user = userEvent.setup();
+    renderComposer();
+    const handle = screen.getByRole("separator", { name: "Resize composer" });
+    // 60% of jsdom's 768px viewport.
+    expect(handle).toHaveAttribute("aria-valuemax", "461");
+    handle.focus();
+    for (let i = 0; i < 40; i++) await user.keyboard("{ArrowUp}");
+    expect(lastChatInputProps.autoGrowMinHeight).toBe(461);
   });
 
   it("keeps dictation in the composer control rail", () => {

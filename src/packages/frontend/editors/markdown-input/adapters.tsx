@@ -223,6 +223,7 @@ interface SlateRichTextAdapterProps {
   style?: React.CSSProperties;
   editBarStyle?: React.CSSProperties;
   autoGrow?: boolean;
+  autoGrowMinHeight?: number;
   autoGrowMaxHeight?: number;
   unboundedAutoGrow?: boolean;
 }
@@ -275,9 +276,16 @@ export function SlateRichTextAdapter({
   style,
   editBarStyle,
   autoGrow,
+  autoGrowMinHeight,
   autoGrowMaxHeight,
   unboundedAutoGrow,
 }: SlateRichTextAdapterProps) {
+  const minHeight = `${Math.max(
+    MIN_INPUT_HEIGHT,
+    autoGrow && autoGrowMinHeight != null && Number.isFinite(autoGrowMinHeight)
+      ? Math.round(autoGrowMinHeight)
+      : 0,
+  )}px`;
   const hasFixedHeight = height != null && height !== "auto";
   const maxHeight = hasFixedHeight
     ? height
@@ -295,7 +303,7 @@ export function SlateRichTextAdapter({
     <div
       style={{
         height: hasFixedHeight ? height : undefined,
-        minHeight: `${MIN_INPUT_HEIGHT}px`,
+        minHeight,
         maxHeight: maxHeight,
         overflow: "hidden",
         width: "100%",
@@ -322,7 +330,7 @@ export function SlateRichTextAdapter({
           background: minimal ? "transparent" : UI_COLORS.surface,
           color: UI_COLORS.text,
           padding: minimal ? 0 : "5px 15px",
-          minHeight: autoGrow ? `${MIN_INPUT_HEIGHT}px` : undefined,
+          minHeight: autoGrow ? minHeight : undefined,
           // Cap the editable itself so wheel/touch and caret scrolling have
           // the same owner, rather than clipping it in the adapter wrapper.
           ...(!hasFixedHeight && maxHeight != null

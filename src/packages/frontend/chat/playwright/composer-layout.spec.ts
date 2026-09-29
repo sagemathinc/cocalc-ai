@@ -267,7 +267,7 @@ for (const editorMode of ["editor", "markdown"] as const) {
   });
 }
 
-test("a dragged composer height is kept until reset to fit the text", async ({
+test("dragging reserves room for one draft while the text still grows", async ({
   page,
 }) => {
   await page.goto("/?mode=composer&editorMode=editor");
@@ -279,11 +279,39 @@ test("a dragged composer height is kept until reset to fit the text", async ({
   await expect
     .poll(() => composerInputHeight(page))
     .toBeGreaterThan(empty + 80);
-  await resize.press("Home");
+  const reserved = await composerInputHeight(page);
+
+  // Autosizing keeps working past the reserved room.
+  await page.getByRole("textbox").click();
+  for (let line = 0; line < 30; line++) {
+    await page.keyboard.type(`Line ${line}`);
+    await page.keyboard.press("Enter");
+  }
+  await expect
+    .poll(() => composerInputHeight(page))
+    .toBeGreaterThan(reserved + 60);
+
+  // Sending returns to fitting the (now empty) text.
+  await page.keyboard.press("Shift+Enter");
   await expect(resize).toHaveAttribute("aria-valuetext", "Fits the text");
   await expect
     .poll(() => composerInputHeight(page))
     .toBeLessThanOrEqual(ONE_LINE_MAX);
+});
+
+test("the resize handle cannot be dragged out of reach", async ({ page }) => {
+  await page.goto("/?mode=composer&editorMode=editor");
+  const resize = page.getByRole("separator", { name: "Resize composer" });
+  const box = (await resize.boundingBox())!;
+  // Drag far above the top of the window.
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, -2000, { steps: 5 });
+  await page.mouse.up();
+  // At most 60% of the 720px viewport.
+  expect(await composerInputHeight(page)).toBeLessThanOrEqual(432 + 12);
+  const after = (await resize.boundingBox())!;
+  expect(after.y).toBeGreaterThanOrEqual(0);
 });
 
 test("conversation settings sit below the composer box", async ({ page }) => {
