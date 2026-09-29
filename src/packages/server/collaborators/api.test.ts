@@ -14,6 +14,7 @@ const owner = jest.fn();
 const scanReserve = jest.fn();
 const scanAdmit = jest.fn();
 const revisionInterest = jest.fn();
+const sharedProjection = jest.fn();
 const revisionWakeup = jest.fn();
 jest.mock(
   "@cocalc/database/postgres/collaborators/collaborators-revision-receiver",
@@ -177,6 +178,7 @@ jest.mock(
     collaborationWriterState: (...a) => writerState(...a),
     getOwnedCollaborationResource: (...a) => ownedResource(...a),
     registerCollaborationSource: (...a) => register(...a),
+    readCollaborationSharedProjection: (...a) => sharedProjection(...a),
   }),
 );
 jest.mock(
@@ -261,6 +263,60 @@ beforeEach(() => {
   ingest.mockResolvedValue({ revision: 1, replayed: false });
 });
 
+test("shared projection requires bounded recipients at the same demanded home", async () => {
+  const flags = [
+    "COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE",
+    "COCALC_PEOPLE_DEMAND_PROTOTYPE",
+  ];
+  const prior = flags.map((name) => process.env[name]);
+  flags.forEach((name) => (process.env[name] = "1"));
+  bay = "owner";
+  const request = {
+    project_id,
+    account_ids: [account_id, randomUUID()],
+    home_bay_id: "home",
+    route,
+    generation: null,
+    revision: 0,
+    after_key: "",
+  };
+  try {
+    remote.inspectProjectDemand.mockResolvedValue({ remaining_ms: 1000 });
+    sharedProjection.mockResolvedValue({ catalog: null, recipients: [] });
+    expect(await collaboratorsControl.sharedProjectPage(request)).toEqual({
+      catalog: null,
+      recipients: [],
+    });
+    expect(sharedProjection).toHaveBeenCalledTimes(1);
+    expect(remote.inspectProjectDemand).toHaveBeenCalledTimes(2);
+    await expect(
+      collaboratorsControl.sharedProjectPage({
+        ...request,
+        home_bay_id: "wrong",
+      }),
+    ).rejects.toThrow("home mismatch");
+    remote.inspectProjectDemand.mockResolvedValue({ remaining_ms: 0 });
+    await expect(
+      collaboratorsControl.sharedProjectPage(request),
+    ).rejects.toThrow("no demand");
+    await expect(
+      collaboratorsControl.sharedProjectPage({
+        ...request,
+        account_ids: Array(17).fill(account_id),
+      }),
+    ).rejects.toThrow("recipient count");
+    expect(sharedProjection).toHaveBeenCalledTimes(1);
+    delete process.env.COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE;
+    await expect(
+      collaboratorsControl.sharedProjectPage(request),
+    ).rejects.toThrow("disabled");
+  } finally {
+    flags.forEach((name, i) => {
+      if (prior[i] === undefined) delete process.env[name];
+      else process.env[name] = prior[i];
+    });
+  }
+});
 test("revision wakeups bind the receiving home and current project owner", async () => {
   const flags = [
     "COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE",

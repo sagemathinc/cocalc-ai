@@ -75,6 +75,7 @@ import {
   getOwnedCollaborationResource,
   ingestCollaborationSnapshot,
   readCollaborationProjection,
+  readCollaborationSharedProjection,
   registerCollaborationSource,
   relocateCollaborationSource,
   markCollaborationRoomInitialized,
@@ -953,6 +954,35 @@ export const collaboratorsControl: InterBayCollaboratorsApi = {
       opts,
       await checkOwner(opts.project_id, opts.route),
     );
+  },
+  async sharedProjectPage(opts) {
+    if (process.env.COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE !== "1")
+      throw Error("shared projection prototype disabled");
+    await demandEnabled();
+    if (
+      !Array.isArray(opts.account_ids) ||
+      !opts.account_ids.length ||
+      opts.account_ids.length > 16
+    )
+      throw Error("invalid shared projection recipient count");
+    const authority = await checkOwner(opts.project_id, opts.route);
+    for (const account_id of new Set(opts.account_ids)) {
+      const remaining = await home(account_id, async (api, route) => {
+        if (route.bay_id !== opts.home_bay_id)
+          throw Error("shared projection recipient home mismatch");
+        return api.inspectProjectDemand({
+          account_id,
+          project_id: opts.project_id,
+          route,
+        });
+      });
+      if (
+        !Number.isFinite(remaining.remaining_ms) ||
+        remaining.remaining_ms <= 0
+      )
+        throw Error("shared projection recipient has no demand");
+    }
+    return readCollaborationSharedProjection(opts, authority);
   },
   async notificationPage(opts) {
     await enabled();

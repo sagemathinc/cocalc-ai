@@ -167,6 +167,26 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
       await env.worker("owner").call("dispatchRevisionHint", request),
     ).toEqual({ state: "deferred" });
   }, 60000);
+  test("shared catalog transport rejects cold and cross-home batches", async () => {
+    await expect(env.worker("a").call("sharedProjectPage")).rejects.toThrow(
+      "no demand",
+    );
+    await demand("acquire", {
+      consumer_id: randomUUID(),
+      scope: { kind: "all" },
+    });
+    const page = await env.worker("a").call("sharedProjectPage");
+    expect(page.catalog).not.toBeNull();
+    expect(page.recipients).toHaveLength(1);
+    expect(page.recipients[0]).toMatchObject({
+      account_id: env.accounts[0],
+      allowed: true,
+    });
+    expect(page.catalog).not.toHaveProperty("attention_generation");
+    await expect(
+      env.worker("a").call("sharedProjectPage", { account_ids: env.accounts }),
+    ).rejects.toThrow("home mismatch");
+  }, 60000);
   test("authenticated demand calls bind the caller and cannot release another account's lease", async () => {
     expect((await env.hub("a", "check", {})).demand_supported).toBeUndefined();
     const first = await env.hub("a", "acquireDemand", {

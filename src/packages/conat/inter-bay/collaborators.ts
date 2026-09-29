@@ -109,7 +109,37 @@ type RoutedApi = {
     opts: Parameters<CollaboratorsApi[K]>[0] & { route: CollaborationRoute },
   ) => ReturnType<CollaboratorsApi[K]>;
 };
+export type CollaborationSharedProjectionRequest = Omit<
+  CollaborationProjectionRequest,
+  "account_id"
+> & { account_ids: string[] };
+type AllowedProjection = Extract<
+  CollaborationProjectionPage,
+  { allowed: true }
+>;
+export interface CollaborationSharedProjectionPage {
+  catalog:
+    | (Omit<AllowedProjection, "allowed" | "attention_generation" | "items"> & {
+        items: Omit<AllowedProjection["items"][number], "initial_activity">[];
+      })
+    | null;
+  recipients: (
+    | { account_id: string; allowed: false }
+    | {
+        account_id: string;
+        allowed: true;
+        attention_generation: string;
+        floors: Record<string, number>;
+      }
+  )[];
+}
 export type InterBayCollaboratorsApi = RoutedApi & {
+  sharedProjectPage(
+    opts: CollaborationSharedProjectionRequest & {
+      home_bay_id: string;
+      route: CollaborationRoute;
+    },
+  ): Promise<CollaborationSharedProjectionPage>;
   registerRevisionReceiver(opts: {
     project_id: string;
     account_id: string;

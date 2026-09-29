@@ -873,6 +873,25 @@ async function command(name, args = {}) {
         route,
       });
     }
+    case "sharedProjectPage": {
+      const route =
+        await require("@cocalc/server/inter-bay/directory").resolveProjectBay(
+          config.project,
+        );
+      const api =
+        require("@cocalc/conat/inter-bay/collaborators").createInterBayCollaboratorsClient(
+          { client: fabric, bay_id: route.bay_id },
+        );
+      return api.sharedProjectPage({
+        project_id: config.project,
+        account_ids: args.account_ids ?? [config.accounts[0]],
+        home_bay_id: config.bays[1],
+        route,
+        generation: null,
+        revision: 0,
+        after_key: "",
+      });
+    }
     case "installScan": {
       const scan = require("@cocalc/database/postgres/collaborators/collaborators-scan");
       await scan.syncCollaborationScanSchema(pool);

@@ -48,6 +48,8 @@ import {
 import type {
   CollaborationProjectionPage,
   CollaborationProjectionRequest,
+  CollaborationSharedProjectionRequest,
+  CollaborationSharedProjectionPage,
   CollaborationRelocateRequest,
   CollaborationInitializeRequest,
   CollaborationOwnedResource,
@@ -866,11 +868,9 @@ export async function readCollaborationProjection(
  * All recipients use one compatible catalog/relation cursor under one owner fence.
  */
 export async function readCollaborationSharedProjection(
-  opts: Omit<CollaborationProjectionRequest, "account_id"> & {
-    account_ids: string[];
-  },
+  opts: CollaborationSharedProjectionRequest,
   authority: CollaborationOwnerAuthority,
-) {
+): Promise<CollaborationSharedProjectionPage> {
   if (
     !Array.isArray(opts.account_ids) ||
     !opts.account_ids.length ||

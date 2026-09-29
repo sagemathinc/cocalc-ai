@@ -1319,3 +1319,20 @@ items contain no recipient floor, checks mixed/all-denied batches and enforces
 the recipient bound. Jest briefly reported open handles after test completion,
 then the same process exited successfully. Full cross-bay batch transport,
 load/byte-boundary measurements and shared home application remain unfinished.
+
+### Shared Catalog Inter-Bay Endpoint
+
+Added typed shared projection request/response contracts and an internal,
+prototype-gated owner endpoint. Before reading metadata it bounds recipients
+to sixteen, validates the project-owner route, resolves each account's actual
+home, requires that all match the requested home, and checks relevant home
+demand. The owner store still independently checks each recipient's current
+membership and keeps attention floors separate from the common catalog.
+The ordinary public API does not expose this method.
+
+Server build, 34 API tests and eighteen authenticated-fabric acceptance tests
+pass. Coverage checks cold-demand rejection, cross-home rejection, disabled
+admission, recipient bounds and a real authorized shared response with no
+attention generation inside the common catalog. This is not yet integrated
+into projection-job grouping or home application; there is still one bounded
+demand inspection per distinct recipient, and no high-fanout capacity claim.
