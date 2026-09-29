@@ -1853,3 +1853,24 @@ newer-mutation fencing and expiry/reclaim. These tests do not yet establish real
 PostgreSQL concurrent lock behavior or routed delivery. Candidate enumeration,
 bounded recipient draining, lifecycle gating and real-system validation remain
 open; startup still does not install this prototype.
+
+### Explicit Outbox Page Delivery
+
+Added an internal, explicitly gated outbox page dispatcher. It claims through
+the owner fence, reads at most twenty recipient-interest candidates, and starts
+at most eight routed deliveries within a five-second start budget. Deferred,
+failed or unknown outcomes retain the page and claim for retry. A completely
+handled page settles using the exact outbox token/claim; superseding mutations
+cannot be erased. Existing recipient acknowledgments suppress repeat delivery
+when a retained page is revisited. An in-flight RPC can exceed the start budget.
+
+Server/reference typecheck, twelve focused dispatcher tests and all twenty real
+PostgreSQL/fabric demand tests pass. The routed catalog-to-home test now installs
+the prototype only in its isolated fixture and sends through the outbox instead
+of the repair sweep. It verifies destination acknowledgment, marker removal,
+home scheduling, exact catalog metadata application and repair suppression after
+acknowledgment. Receiver-wide projection completion remains separate.
+
+There is still no automatic startup installation or drain scheduler. Indexed
+candidate discovery, fair multi-project scheduling, disabled-after-install and
+restart/rehome/unknown-outcome integration tests remain required before rollout.

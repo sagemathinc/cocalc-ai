@@ -858,6 +858,13 @@ async function command(name, args = {}) {
       return require("@cocalc/server/collaborators/revision-dispatch").dispatchCollaborationRevisionHint(
         args,
       );
+    case "installRevisionOutbox":
+      await require("@cocalc/database/postgres/collaborators/collaborators-revision-outbox").syncCollaborationRevisionOutboxSchema(
+        pool,
+      );
+      process.env.COCALC_PEOPLE_REVISION_OUTBOX_PROTOTYPE = "1";
+      return true;
+    case "dispatchRevisionOutbox":
     case "claimActiveProjection":
     case "applyActiveProjection":
     case "scheduleRevisionWakeups":
@@ -869,6 +876,10 @@ async function command(name, args = {}) {
       const previous = flags.map((name) => process.env[name]);
       try {
         flags.forEach((name) => (process.env[name] = "1"));
+        if (name === "dispatchRevisionOutbox")
+          return await require("@cocalc/server/collaborators/revision-outbox").dispatchRevisionOutboxPage(
+            config.project,
+          );
         if (name === "claimActiveProjection")
           return await require("@cocalc/database/postgres/collaborators/collaborators-projection").claimCollaborationProjectionJobs(
             config.bays[config.role === "a" ? 1 : 2],

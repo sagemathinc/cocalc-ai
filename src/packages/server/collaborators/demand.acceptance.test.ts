@@ -25,6 +25,7 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
     await demand("install");
     await env.worker("b").call("demand", { operation: "install" });
     await env.worker("owner").call("installRevisionInterest");
+    await env.worker("owner").call("installRevisionOutbox");
     await env.worker("a").call("installRevisionReceiver");
   }, 240000);
   afterAll(async () => await env?.close(), 60000);
@@ -173,7 +174,7 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
       await env.worker("owner").call("dispatchRevisionHint", request),
     ).toEqual({ state: "deferred" });
   }, 60000);
-  test("repair delivers changed watermarks through the fabric and ignores acknowledged or expired interests", async () => {
+  test("outbox delivers changed watermarks through the fabric and repair ignores acknowledged or expired interests", async () => {
     await env.sql(
       "owner",
       "DELETE FROM collaboration_revision_interests WHERE project_id=$1",
@@ -232,7 +233,18 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
       FROM collaboration_projects WHERE project_id=$2`,
       [entryKey, env.project, JSON.stringify(resource), resourceId],
     );
-    expect(await env.worker("owner").call("repairRevisionHints")).toBe(1);
+    expect(await env.worker("owner").call("dispatchRevisionOutbox")).toEqual({
+      state: "advanced",
+      attempted: 1,
+      acknowledged: 1,
+    });
+    expect(
+      await env.sql(
+        "owner",
+        "SELECT token FROM collaboration_revision_outbox WHERE project_id=$1",
+        [env.project],
+      ),
+    ).toEqual([]);
     const [ack] = await env.sql(
       "owner",
       `SELECT i.ack_generation=c.generation AND i.ack_revision=c.revision AS current
