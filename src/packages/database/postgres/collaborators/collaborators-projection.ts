@@ -8,6 +8,7 @@ import {
   claimDemandAccounts,
   demandSchedulingEnabled,
   demandScopePredicate,
+  rememberCollaborationProjectDemand,
 } from "./collaborators-demand";
 import {
   applyHomeParticipantProjection,
@@ -126,6 +127,12 @@ export async function claimCollaborationProjectionJobs(
         );
     const result: CollaborationProjectionJob[] = [];
     for (const row of rows) {
+      if (shared)
+        await rememberCollaborationProjectDemand(
+          db,
+          row.account_id,
+          row.project_id,
+        );
       const claim_id = randomUUID();
       await db.query(
         "UPDATE collaboration_access SET claim_id=$3,grant_request_id=$3,claim_until=now()+interval '30 seconds' WHERE account_id=$1 AND project_id=$2",

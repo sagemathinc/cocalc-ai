@@ -332,6 +332,16 @@ test("shared demand claiming selects compatible work across active accounts with
       [account_id, other_id].sort(),
     );
     expect(jobs.every((j) => j.project_id === project_id)).toBe(true);
+    const reverse = await getPool().query(
+      `SELECT p.account_id, p.grace_until=(SELECT MAX(d.grace_until)
+       FROM collaboration_demand d WHERE d.account_id=p.account_id) AS bounded
+       FROM collaboration_project_demand p WHERE p.project_id=$1`,
+      [project_id],
+    );
+    expect(reverse.rows.map((r) => r.account_id).sort()).toEqual(
+      [account_id, other_id].sort(),
+    );
+    expect(reverse.rows.every((r) => r.bounded)).toBe(true);
     expect(await claimCollaborationProjectionJobs("bay-test")).toEqual([]);
     await ingestCollaborationSnapshot(snapshot(), authority);
     const shared = await readCollaborationSharedProjection(

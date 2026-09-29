@@ -52,6 +52,34 @@ export async function syncCollaborationDemandSchema(
   for (const field of ["projection_due", "access_due"])
     await db.query(`CREATE INDEX IF NOT EXISTS collaboration_demand_${field}
       ON collaboration_demand_activation(${field},account_id)`);
+  await db.query(`CREATE TABLE IF NOT EXISTS collaboration_project_demand (
+    account_id UUID NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
+    project_id UUID NOT NULL, grace_until TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY(account_id,project_id))`);
+  await db.query(`CREATE INDEX IF NOT EXISTS collaboration_project_demand_active
+    ON collaboration_project_demand(project_id,grace_until,account_id)`);
+  await db.query(`CREATE INDEX IF NOT EXISTS collaboration_project_demand_expiry
+    ON collaboration_project_demand(grace_until,account_id,project_id)`);
+}
+
+/** Refresh only for a claimed active job, in its home claiming transaction.
+ * This reverse scheduling index grants no access and never creates demand.
+ * Readers must recheck current home, demand scope and membership independently.
+ */
+export async function rememberCollaborationProjectDemand(
+  db: Pick<PoolClient, "query">,
+  account_id: string,
+  project_id: string,
+) {
+  await db.query(
+    `INSERT INTO collaboration_project_demand(account_id,project_id,grace_until)
+     SELECT $1::uuid,$2::uuid,MAX(grace_until) FROM collaboration_demand
+     WHERE account_id=$1 AND grace_until>now()
+       AND (scope->>'kind'='all' OR scope->'project_ids' ? $2::uuid::text)
+     HAVING MAX(grace_until) IS NOT NULL
+     ON CONFLICT(account_id,project_id) DO UPDATE SET grace_until=excluded.grace_until`,
+    [account_id, project_id],
+  );
 }
 
 /** Called in the claiming transaction. A cold account is retired from this

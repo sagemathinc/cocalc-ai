@@ -1570,3 +1570,26 @@ passed, then the final independent setup was validated by running the new case
 alone (one passed, eighteen skipped). This demonstrates real routed repair
 delivery, not timer timing, source-write triggering, home projection catch-up,
 or capacity under a large interest population.
+
+### Reverse Active Project Scheduling Index
+
+Added rebuildable account-home `collaboration_project_demand` rows, populated
+in the claiming transaction only for active jobs selected by the shared-demand
+prototype. Each row records the maximum grace horizon of demand scopes covering
+that exact project, not another project's demand. The project/expiry/account
+index is intended to support bounded wakeup consumers without scanning every
+historical collaborator. An expiry index supports subsequent bounded cleanup.
+There is no project FK because the project may belong to another bay.
+
+These rows are scheduling hints only: they confer no authorization, do not
+create demand, and require independent current-home/scope/membership checks at
+use. They currently cover claimed projects, not every newly acquired scope;
+initial catch-up still uses the existing activation path. Bounded consumption,
+renewal behavior once polling is removed, and expiry cleanup are not implemented
+yet. This step does not close the receiver-to-projection lifecycle gate.
+
+Server typecheck, fifty projection-store tests and seven ownership-registry
+tests pass. The cohort test verifies reverse entries for both active accounts,
+their matching demand horizons, and no entry for the cold historical account.
+An initial parameter-type ambiguity was caught and corrected with explicit UUID
+casts. Jest emitted its open-handle warning but exited successfully.
