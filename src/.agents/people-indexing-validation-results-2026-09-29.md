@@ -2711,3 +2711,41 @@ after rotating the bootstrap request, proving these identities stay independent.
 The timer-driven bootstrap/cross-home acceptance rerun passes in 101.999 seconds;
 the opt-in long missed-write case is skipped in this rerun. This is not yet real
 cross-bay seven-day expiry recovery evidence or a long-duration soak.
+
+### Dormant-Population Regression At dae1dfab19
+
+Reran `dormant-scale.acceptance.test.ts` with both
+`COCALC_COLLABORATORS_ACCEPTANCE=1` and `COCALC_PEOPLE_SCALE_ACCEPTANCE=1`
+at `dae1dfab197f3225a6adf5de80305cb7ff9e7402`. All four cases pass in
+374.035 seconds, including fixture creation and cleanup. Synthetic data uses
+the fixture's deterministic `dormant-scale-N` MD5 identity seed and one membership
+per dormant account. The isolated harness has one owner, two homes and a host
+process; PostgreSQL is 18.4, Linux is `7.0.0-1011-gcp`, and temporary storage is
+btrfs. The runtime exposes 16 AMD EPYC 7B13 CPUs; effective cgroup CPU/memory
+limits were not available at the usual cgroup paths. This is a shared development
+environment, not a dedicated capacity benchmark.
+
+| Query              | 100k buffers | 1m buffers | 1m execution ms |
+| ------------------ | -----------: | ---------: | --------------: |
+| Cleanup candidates |           23 |          4 |           0.027 |
+| Activation         |            3 |          3 |           1.213 |
+| Projection claim   |            3 |          3 |           1.000 |
+| Access claim       |            3 |          3 |           1.045 |
+| Stale cleanup      |          240 |        240 |           0.473 |
+
+Buffers are PostgreSQL shared hits plus reads, not physical I/O counts. Each
+timing is one EXPLAIN ANALYZE sample, not a percentile. Candidate-plan differences
+do not imply larger populations are faster. Maintenance produces no dormant
+owner refresh RPCs or new access grants at 0, 100k or 1m dormant memberships.
+
+With 100k banned due accounts added to the million-row population, activation,
+projection and access queries touch 66, 242 and 234 buffers respectively and
+retire exactly eight ineligible hints each. This verifies bounded selection,
+not draining the entire backlog under concurrent load. Identical mixed active
+workloads, the 5% marginal-operation target, DAU traces and the 24-hour soak remain
+unproven.
+
+Requested an independent review of the recent bootstrap/repair work at this SHA.
+The message was saved, but exact-attempt inspection still reports unknown
+execution after a payment/subscription/usage-limit launch error. No automatic
+resend was made, and no independent approval is claimed.
