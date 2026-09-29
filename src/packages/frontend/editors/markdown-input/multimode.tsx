@@ -571,6 +571,7 @@ export default function MultiMarkdownInput({
             style={style}
             editBarStyle={editBarStyle}
             autoGrow={isAutoGrow}
+            autoGrowMinHeight={autoGrowMinHeight}
             autoGrowMaxHeight={autoGrowMaxHeight}
             unboundedAutoGrow={unboundedAutoGrow}
           />

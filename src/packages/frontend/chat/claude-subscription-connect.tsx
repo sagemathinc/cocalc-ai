@@ -16,6 +16,20 @@ type LoginStatus = {
   error?: string;
 };
 
+// Sign-in runs on the project's host. A project on a host that is gone (or
+// not yet assigned) cannot be routed; retrying the same project will not help.
+export function isProjectHostUnavailable(error: string): boolean {
+  return /host routing info unavailable|unable to route .* to project-host/i.test(
+    error,
+  );
+}
+
+export function claudeSignInErrorMessage(error: string): string {
+  return isProjectHostUnavailable(error)
+    ? "This project's server is not available. Select a different project, or create a new one, and try again."
+    : `Claude sign-in error: ${error}`;
+}
+
 export function ClaudeSubscriptionConnect({
   projectId,
   disabled,
@@ -234,17 +248,23 @@ export function ClaudeSubscriptionConnect({
       {login?.state === "failed" && (
         <div role="alert">{login.error || "Claude sign-in failed"}</div>
       )}
-      {error && <div role="alert">Claude sign-in error: {error}</div>}
-      {modal && !signingIn && (error || login?.state === "failed") && (
-        <Button onClick={() => void start()}>Retry sign-in</Button>
-      )}
+      {error && <div role="alert">{claudeSignInErrorMessage(error)}</div>}
+      {modal &&
+        !signingIn &&
+        (error || login?.state === "failed") &&
+        !isProjectHostUnavailable(error) && (
+          <Button onClick={() => void start()}>Retry sign-in</Button>
+        )}
     </Space>
   );
+  // Compact with the sign-in in a modal sits in a row of settings: stay
+  // inline and one line high there.
+  const inline = compact && modal;
   return (
     <Space
-      orientation="vertical"
-      size={12}
-      style={{ width: "100%", minWidth: 0 }}
+      orientation={inline ? "horizontal" : "vertical"}
+      size={inline ? 4 : 12}
+      style={inline ? { minWidth: 0 } : { width: "100%", minWidth: 0 }}
     >
       {hasConnection && !compact && (
         <Typography.Text type="secondary">
@@ -261,7 +281,12 @@ export function ClaudeSubscriptionConnect({
         </Button>
       )}
       <Button
-        style={{ maxWidth: "100%", height: "auto", whiteSpace: "normal" }}
+        size={inline ? "small" : undefined}
+        style={
+          inline
+            ? { maxWidth: "100%" }
+            : { maxWidth: "100%", height: "auto", whiteSpace: "normal" }
+        }
         aria-haspopup={modal ? "dialog" : undefined}
         disabled={disabled || signingIn}
         loading={busy}

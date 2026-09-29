@@ -43,7 +43,8 @@
   padding: 4px;
 }
 
-.cocalc-chat-narrow [data-testid="chat-composer"] .ant-btn {
+/* Touch-sized message actions; the settings line below the box stays compact. */
+.cocalc-chat-narrow [data-testid="chat-composer-box"] .ant-btn {
   min-height: 36px;
 }
 

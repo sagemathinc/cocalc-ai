@@ -41,7 +41,10 @@ import {
 } from "./harness-credential-selection";
 import { ClaudeSubscriptionConnect } from "./claude-subscription-connect";
 import { DocsLink } from "@cocalc/frontend/docs/link";
-import { ClaudePaymentStatus } from "./claude-payment-status";
+import {
+  ClaudePaymentStatus,
+  useClaudePaymentLabel,
+} from "./claude-payment-status";
 import { ClaudeConnectorPreference } from "./claude-connector-preference";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { AgentSpeedControl } from "./agent-speed-control";
@@ -70,6 +73,9 @@ export function claudeCredentialTrustWarning(
 
 interface HarnessRuntimeSummaryProps {
   compact?: boolean;
+  // With compact: one chip summarizing the settings (for phones); it opens
+  // the full settings dialog.
+  summary?: boolean;
   runtime: unknown;
   reported?: unknown;
   projectId?: string;
@@ -428,6 +434,7 @@ function HarnessRuntimeSummaryContent({
   onSettings,
   onDiscover,
   compact,
+  summary,
   configuration,
   configureLabel,
   configureButtonRef,
@@ -456,6 +463,10 @@ function HarnessRuntimeSummaryContent({
   const { profile, settings = {} } = runtime;
   const claude = profile.id === "claude-code";
   const name = claude ? "Claude Code" : `ACP: ${profile.id}`;
+  const paymentLabel = useClaudePaymentLabel(
+    claude && summary ? projectId : undefined,
+    threadKey,
+  );
   let controls: HarnessSessionControls | undefined;
   for (const candidate of [
     discovered?.reportedAtLoad === JSON.stringify(reported)
@@ -562,6 +573,23 @@ function HarnessRuntimeSummaryContent({
     setAutoDiscovered(true);
     void autoDiscover();
   }, [compact, claude, !!controls, !!onDiscover, autoDiscovered, loading]);
+  const selectedLabel = (
+    control: NonNullable<typeof controls>["configOptions"][number],
+  ): string => {
+    const value =
+      (control === controls?.mode
+        ? settings.modeId
+        : settings.configOptions?.find(({ id }) => id === control.id)?.value) ??
+      control.currentValue;
+    const selectedValue = claude
+      ? resolveClaudeConfigValue(control, value)
+      : value;
+    const option = control.options.find(
+      (option) => option.value === selectedValue,
+    );
+    if (!option) return `${selectedValue ?? control.name}`;
+    return claude && option.value === "default" ? "Default" : option.name;
+  };
   const select = (
     control: NonNullable<typeof controls>["configOptions"][number],
     inline = false,
@@ -797,6 +825,20 @@ function HarnessRuntimeSummaryContent({
     fast &&
     (settings.configOptions?.find(({ id }) => id === fast.id)?.value ??
       fast.currentValue);
+  const modelLoading =
+    !inlineControls.some(({ id }) => id === "model") &&
+    (loading || discoveryPending || (!!onDiscover && !autoDiscovered));
+  const summaryText = [
+    ...(inlineControls.length
+      ? inlineControls.map(selectedLabel)
+      : [name, modelLoading ? "Loading model" : undefined]),
+    fast && ["on", "true", "enabled"].includes(fastValue ?? "")
+      ? "Fast"
+      : undefined,
+    paymentLabel,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const settingsButton = (
     <Button
       ref={configureButtonRef}
@@ -823,9 +865,31 @@ function HarnessRuntimeSummaryContent({
           minWidth: 0,
         }}
       >
-        {leadingControl}
-        {!configureLabel && settingsButton}
-        {claude && (
+        {summary ? (
+          <Button
+            size="small"
+            type="text"
+            disabled={disabled}
+            aria-haspopup="dialog"
+            aria-label={`${name} settings: ${summaryText}`}
+            title={summaryText}
+            onClick={() => setOpen(true)}
+            style={{ minWidth: 0, maxWidth: "100%", overflow: "hidden" }}
+          >
+            <span
+              style={{
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {summaryText}
+            </span>
+          </Button>
+        ) : null}
+        {!summary && leadingControl}
+        {!summary && !configureLabel && settingsButton}
+        {!summary && claude && (
           <>
             {!configureLabel && <Tag style={{ margin: 0 }}>Preview</Tag>}
             {!inlineSetup &&
@@ -874,7 +938,7 @@ function HarnessRuntimeSummaryContent({
             )}
           </>
         )}
-        {inlinePayment && (
+        {!summary && inlinePayment && (
           <Button
             type="text"
             size="small"
@@ -891,7 +955,7 @@ function HarnessRuntimeSummaryContent({
             {inlinePayment}
           </Button>
         )}
-        {configureLabel && settingsButton}
+        {!summary && configureLabel && settingsButton}
       </div>
       {error && !inlineSetup && <div role="alert">{error}</div>}
       <Modal

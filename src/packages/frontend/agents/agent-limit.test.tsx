@@ -19,7 +19,7 @@ jest.mock("@cocalc/frontend/account/settings-routing", () => ({
 const directory: NamedAgentDirectory = {
   enabled: true,
   agents: [],
-  usage: { active: 31, limit: 1000 },
+  usage: { active: 600, limit: 1000 },
 };
 
 const browserGetComputedStyle = window.getComputedStyle.bind(window);
@@ -47,7 +47,7 @@ test("explains how to free named-agent slots and opens management", async () => 
   render(<NamedAgentUsage directory={directory} />);
 
   const usage = screen.getByRole("button", {
-    name: "31 of 1000 named-agent slots used. Learn how to free slots",
+    name: "600 of 1000 named-agent slots used. Learn how to free slots",
   });
   usage.focus();
   expect(usage).toHaveFocus();
@@ -64,4 +64,41 @@ test("explains how to free named-agent slots and opens management", async () => 
   expect(setActiveTab).toHaveBeenCalledWith("agents");
   expect(openAccountSettings).not.toHaveBeenCalled();
   getActions.mockRestore();
+});
+
+test.each([
+  [600, false, "muted"],
+  [850, true, "warning"],
+  [980, true, "danger"],
+])(
+  "the usage bar stays quiet until the limit is near (%i of 1000)",
+  (active, showsCount, color) => {
+    const { container } = render(
+      <NamedAgentUsage
+        directory={
+          { ...directory, usage: { ...directory.usage, active } } as any
+        }
+      />,
+    );
+    const usage = screen.getByRole("button", {
+      name: `${active} of 1000 named-agent slots used. Learn how to free slots`,
+    });
+    expect(usage).toHaveStyle({ textDecoration: "" });
+    expect(screen.queryByText(`${active} of 1000 agents`) != null).toBe(
+      showsCount,
+    );
+    const bar = container.querySelector<HTMLElement>(".ant-progress-track");
+    expect(bar?.getAttribute("style") ?? "").toContain(`--cocalc-ui-${color}`);
+  },
+);
+
+test("the usage bar is hidden while the count does not matter", () => {
+  const { container } = render(
+    <NamedAgentUsage
+      directory={
+        { ...directory, usage: { ...directory.usage, active: 31 } } as any
+      }
+    />,
+  );
+  expect(container).toBeEmptyDOMElement();
 });

@@ -13,11 +13,7 @@ import { Alert, Button, ConfigProvider } from "antd";
 import { FormattedMessage } from "react-intl";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
-import {
-  delete_local_storage,
-  get_local_storage,
-  set_local_storage,
-} from "@cocalc/frontend/misc";
+
 import ChatInput from "./input";
 import type { ChatActions } from "./actions";
 import type { SubmitMentionsFn } from "./types";
@@ -36,6 +32,7 @@ import { getCodexPaymentSourceOptions } from "./use-codex-payment-source";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { useChatVisualViewport } from "./use-chat-viewport";
+import "./composer.css";
 import { DictateButton } from "./audio/dictate-button";
 import { AgentMentionContext } from "@cocalc/frontend/agents/mention-context";
 import { useAgentMentions } from "@cocalc/frontend/agents/use-agent-mentions";
@@ -49,6 +46,7 @@ import {
 import { namedAgentReference } from "@cocalc/frontend/agents/api";
 import { AgentFileAttachment } from "./agent-file-attachment";
 import { ComposerConnectors } from "@cocalc/frontend/agents/composer-connectors";
+import { ClaudeThreadInternetNotice } from "@cocalc/frontend/agents/claude-internet-notice";
 import { CodexConfigButton } from "./codex";
 import { useChatEmbeddingOptions } from "./embedding-options";
 import { ComposerDeliverySelector } from "./composer-delivery";
@@ -166,14 +164,16 @@ export function ChatRoomComposer({
   const [delivery, setDelivery] = useState<ComposerDelivery>("agent");
   useEffect(() => setDelivery("agent"), [selectedThread?.key]);
   const visualViewport = useChatVisualViewport(mobile);
-  const HEIGHT_STORAGE_KEY = embeddingOptions.agentWorkspace
-    ? "agents-chat-composer-height-px"
-    : "chat-composer-height-px";
-  const DEFAULT_MAX_VH = 0.25;
+
+  // Automatic sizing grows to this share of the viewport, then scrolls.
+  const AUTO_MAX_VH = mobile ? 0.3 : 0.4;
   const ZEN_MAX_VH = 1.0;
-  const DRAG_MAX_VH = 0.9;
-  const MIN_DRAG_HEIGHT = 60;
-  const DEFAULT_INPUT_HEIGHT = 120;
+  // Dragging must never push the handle out of reach, and must leave room
+  // for the conversation above the composer.
+  const DRAG_MAX_VH = 0.6;
+  const DRAG_KEEP_VISIBLE_PX = 240;
+  // About one line of text (a little taller on touch screens).
+  const MIN_DRAG_HEIGHT = mobile || IS_MOBILE ? 38 : 32;
   const stripHtml = (value: string): string =>
     value.replace(/<[^>]*>/g, "").trim();
 
@@ -186,6 +186,8 @@ export function ChatRoomComposer({
     ? actions?.getThreadMetadata?.(selectedThread.key)
     : undefined;
   const isGenericHarness = threadMetadata?.agent_runtime?.kind === "acp";
+  const isClaudeThread =
+    threadMetadata?.agent_runtime?.profile?.id === "claude-code";
   const supportsLiveGuidance =
     !isGenericHarness ||
     (threadMetadata?.agent_runtime?.profile?.version === 2 &&
@@ -253,14 +255,10 @@ export function ChatRoomComposer({
     if (typeof window === "undefined") return 900;
     return window.innerHeight;
   });
-  const [manualHeightPx, setManualHeightPx] = useState<number | null>(() => {
-    const stored = get_local_storage(HEIGHT_STORAGE_KEY);
-    const parsed =
-      typeof stored === "string" || typeof stored === "number"
-        ? Number(stored)
-        : NaN;
-    return Number.isFinite(parsed) ? parsed : null;
-  });
+  // The editor always fits its text. Dragging the handle only reserves room
+  // (a minimum height) for the current draft; sending resets it.
+  const [manualHeightPx, setManualHeightPx] = useState<number | null>(null);
+  useEffect(() => setManualHeightPx(null), [composerSession]);
   const [isZenMode, setIsZenMode] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -310,17 +308,17 @@ export function ChatRoomComposer({
       document.removeEventListener("fullscreenchange", onFullscreenChange);
   }, []);
 
-  const defaultMaxHeight = useMemo(
+  const autoGrowMaxHeight = useMemo(
     () =>
       Math.max(
         MIN_DRAG_HEIGHT,
         Math.round(
           (mobile && visualViewport.height
             ? visualViewport.height
-            : viewportHeight) * DEFAULT_MAX_VH,
+            : viewportHeight) * AUTO_MAX_VH,
         ),
       ),
-    [viewportHeight, mobile, visualViewport.height],
+    [viewportHeight, mobile, visualViewport.height, AUTO_MAX_VH],
   );
   const zenHeight = useMemo(
     () =>
@@ -333,17 +331,18 @@ export function ChatRoomComposer({
     [viewportHeight, mobile, visualViewport.height],
   );
   const maxDragHeight = useMemo(
-    () => Math.max(MIN_DRAG_HEIGHT, Math.round(viewportHeight * DRAG_MAX_VH)),
+    () =>
+      Math.max(
+        MIN_DRAG_HEIGHT,
+        Math.round(
+          Math.min(
+            viewportHeight * DRAG_MAX_VH,
+            viewportHeight - DRAG_KEEP_VISIBLE_PX,
+          ),
+        ),
+      ),
     [viewportHeight],
   );
-
-  useEffect(() => {
-    if (manualHeightPx == null) {
-      delete_local_storage(HEIGHT_STORAGE_KEY);
-      return;
-    }
-    set_local_storage(HEIGHT_STORAGE_KEY, String(manualHeightPx));
-  }, [HEIGHT_STORAGE_KEY, manualHeightPx]);
 
   useEffect(() => {
     if (manualHeightPx == null) return;
@@ -369,7 +368,7 @@ export function ChatRoomComposer({
       event.preventDefault();
       const measured =
         inputContainerRef.current?.getBoundingClientRect().height ??
-        defaultMaxHeight;
+        autoGrowMaxHeight;
       const startHeight = manualHeightPx ?? measured;
       dragStateRef.current = {
         startY: event.clientY,
@@ -406,12 +405,19 @@ export function ChatRoomComposer({
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
     },
-    [IS_MOBILE, clampHeight, defaultMaxHeight, isZenMode, manualHeightPx],
+    [IS_MOBILE, clampHeight, autoGrowMaxHeight, isZenMode, manualHeightPx],
   );
 
-  const chatInputHeight = isZenMode
-    ? `${zenHeight}px`
-    : `${clampHeight(manualHeightPx ?? DEFAULT_INPUT_HEIGHT)}px`;
+  // undefined: fit the content, between the reserved minimum and the cap.
+  const chatInputHeight = isZenMode ? `${zenHeight}px` : undefined;
+  const reservedHeight =
+    manualHeightPx != null ? clampHeight(manualHeightPx) : MIN_DRAG_HEIGHT;
+  const currentInputHeight = () =>
+    manualHeightPx ??
+    Math.round(
+      inputContainerRef.current?.getBoundingClientRect().height ??
+        MIN_DRAG_HEIGHT,
+    );
 
   const toggleZenMode = useCallback(async () => {
     if (isZenMode) {
@@ -638,20 +644,18 @@ export function ChatRoomComposer({
     refocusComposerInput();
   };
 
+  const fullscreenZen = isZenMode && isFullscreen;
+  // The wrapper is the fullscreen element, so the settings below the box stay
+  // visible in fullscreen.
   const composerStyle: CSSProperties = {
     display: "flex",
     flexDirection: "column",
-    margin:
-      isZenMode && isFullscreen ? 0 : !mobile ? "0 auto 8px" : "0 8px 8px",
-    overflow: "hidden",
-    width: isZenMode && isFullscreen ? "100%" : "calc(100% - 16px)",
+    margin: fullscreenZen ? 0 : !mobile ? "0 auto 6px" : "0 8px 6px",
+    width: fullscreenZen ? "100%" : "calc(100% - 16px)",
     maxWidth: !mobile && !isZenMode ? 1120 : undefined,
-    height: isZenMode && isFullscreen ? "100%" : undefined,
-    padding: isZenMode && isFullscreen ? "12px" : "6px 10px",
-    background: UI_COLORS.surface,
-    border: `1px solid ${isInputFocused ? `color-mix(in srgb, ${UI_COLORS.focus} 35%, ${UI_COLORS.border})` : UI_COLORS.border}`,
-    borderRadius: isZenMode && isFullscreen ? 0 : 16,
-    boxShadow: undefined,
+    height: fullscreenZen ? "100%" : undefined,
+    padding: fullscreenZen ? "12px" : undefined,
+    background: fullscreenZen ? UI_COLORS.surface : undefined,
     boxSizing: "border-box",
     ...(mobile && isZenMode
       ? {
@@ -663,9 +667,31 @@ export function ChatRoomComposer({
           zIndex: 950,
           padding: "8px",
           justifyContent: "flex-end",
+          background: UI_COLORS.surface,
         }
       : {}),
   };
+  // The bordered box holds only the message and actions on it.
+  const composerBoxStyle: CSSProperties = {
+    display: "flex",
+    flexDirection: "column",
+    flex: fullscreenZen ? "1 1 auto" : "0 1 auto",
+    minHeight: 0,
+    overflow: "hidden",
+    position: "relative",
+    padding: "4px 8px",
+    background: UI_COLORS.surface,
+    border: `1px solid ${isInputFocused ? `color-mix(in srgb, ${UI_COLORS.focus} 35%, ${UI_COLORS.border})` : UI_COLORS.border}`,
+    borderRadius: 16,
+    boxSizing: "border-box",
+  };
+  const showIdentity =
+    !embeddingOptions.hideComposerIdentity &&
+    ((hasAgentControls && selectedThread != null) ||
+      (!selectedThread && isNewThreadCodex && onPrepareAgentThread != null) ||
+      !!threadLabel);
+  const showConversationSettings =
+    (showComposerCodexConfig && selectedThread != null) || showIdentity;
 
   const composer = (
     <AgentMentionContext.Provider value={agentMentionContext}>
@@ -674,350 +700,395 @@ export function ChatRoomComposer({
         data-testid="chat-composer"
         style={composerStyle}
       >
+        {isClaudeThread && selectedThread && project_id && (
+          <div className="chat-composer-notice">
+            <ClaudeThreadInternetNotice
+              projectId={project_id}
+              threadKey={selectedThread.key}
+            />
+          </div>
+        )}
         <div
-          style={{
-            flex: mobile ? "0 1 auto" : "1",
-            width: "100%",
-            padding: 0,
-            // Critical flexbox quirk: without minWidth: 0, long unbroken input text
-            // forces this flex item to grow instead of shrinking, so the send/toolbar
-            // buttons get pushed off-screen. Allow the item to shrink (and text to wrap)
-            // by setting minWidth: 0. See https://developer.mozilla.org/en-US/docs/Web/CSS/min-width#flex_items
-            minWidth: 0,
-          }}
+          className="chat-composer-box"
+          data-testid="chat-composer-box"
+          style={composerBoxStyle}
         >
-          {!IS_MOBILE && !mobile && (
-            <Tooltip
-              title={
-                isZenMode
-                  ? "Exit fullscreen to resize"
-                  : "Drag to resize the composer; double-click to reset"
-              }
-            >
-              <div
-                role="separator"
-                tabIndex={isZenMode ? -1 : 0}
-                aria-label="Resize composer"
-                aria-orientation="horizontal"
-                aria-valuemin={MIN_DRAG_HEIGHT}
-                aria-valuemax={maxDragHeight}
-                aria-valuenow={clampHeight(
-                  manualHeightPx ?? DEFAULT_INPUT_HEIGHT,
-                )}
-                onKeyDown={(event) => {
-                  if (isZenMode) return;
-                  const current = manualHeightPx ?? DEFAULT_INPUT_HEIGHT;
-                  if (event.key === "ArrowUp" || event.key === "ArrowDown") {
-                    event.preventDefault();
-                    setManualHeightPx(
-                      clampHeight(
-                        current + (event.key === "ArrowUp" ? 20 : -20),
-                      ),
-                    );
-                  } else if (event.key === "Home") {
-                    event.preventDefault();
-                    setManualHeightPx(null);
-                  }
-                }}
-                onMouseDown={startDrag}
-                onDoubleClick={() => setManualHeightPx(null)}
-                style={{
-                  height: "8px",
-                  cursor: isZenMode ? "default" : "row-resize",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  marginBottom: "4px",
-                  opacity: isZenMode ? 0.4 : 1,
-                }}
+          <div
+            style={{
+              flex: mobile ? "0 1 auto" : "1",
+              width: "100%",
+              padding: 0,
+              // Critical flexbox quirk: without minWidth: 0, long unbroken input text
+              // forces this flex item to grow instead of shrinking, so the send/toolbar
+              // buttons get pushed off-screen. Allow the item to shrink (and text to wrap)
+              // by setting minWidth: 0. See https://developer.mozilla.org/en-US/docs/Web/CSS/min-width#flex_items
+              minWidth: 0,
+            }}
+          >
+            {!IS_MOBILE && !mobile && (
+              <Tooltip
+                title={
+                  isZenMode
+                    ? "Exit fullscreen to resize"
+                    : "Drag to make room for this message; double-click to fit the text"
+                }
               >
                 <div
-                  style={{
-                    width: "42px",
-                    height: "3px",
-                    borderRadius: "999px",
-                    background: isDragging ? UI_COLORS.focus : UI_COLORS.border,
+                  className="chat-composer-resize-handle"
+                  data-dragging={isDragging ? "true" : undefined}
+                  role="separator"
+                  tabIndex={isZenMode ? -1 : 0}
+                  aria-label="Resize composer"
+                  aria-orientation="horizontal"
+                  aria-valuemin={MIN_DRAG_HEIGHT}
+                  aria-valuemax={maxDragHeight}
+                  aria-valuenow={clampHeight(
+                    manualHeightPx ?? autoGrowMaxHeight,
+                  )}
+                  aria-valuetext={
+                    manualHeightPx == null
+                      ? "Fits the text"
+                      : `At least ${clampHeight(manualHeightPx)} pixels`
+                  }
+                  onKeyDown={(event) => {
+                    if (isZenMode) return;
+                    const current = currentInputHeight();
+                    if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+                      event.preventDefault();
+                      setManualHeightPx(
+                        clampHeight(
+                          current + (event.key === "ArrowUp" ? 20 : -20),
+                        ),
+                      );
+                    } else if (event.key === "Home") {
+                      event.preventDefault();
+                      setManualHeightPx(null);
+                    }
                   }}
+                  onMouseDown={startDrag}
+                  onDoubleClick={() => setManualHeightPx(null)}
+                  style={
+                    {
+                      cursor: isZenMode ? "default" : undefined,
+                      "--chat-composer-grip": isDragging
+                        ? UI_COLORS.focus
+                        : UI_COLORS.border,
+                    } as CSSProperties
+                  }
+                >
+                  <div
+                    className="chat-composer-resize-grip"
+                    style={isZenMode ? { opacity: 0.4 } : undefined}
+                  />
+                </div>
+              </Tooltip>
+            )}
+            {showCodexPaymentSourceBanner && (
+              <Alert
+                action={
+                  onOpenCodexPaymentConfig != null ? (
+                    <Button
+                      onClick={onOpenCodexPaymentConfig}
+                      size="small"
+                      type="primary"
+                    >
+                      {membershipAvailable ? "Payment settings" : "Connect AI"}
+                    </Button>
+                  ) : undefined
+                }
+                showIcon
+                style={{ marginBottom: 8 }}
+                title={
+                  membershipAvailable
+                    ? "To continue using this model, connect a ChatGPT plan or OpenAI API key. CoCalc Membership is available for new conversations with its included model."
+                    : "To use AI in CoCalc, connect a ChatGPT plan or OpenAI API key."
+                }
+                type="info"
+              />
+            )}
+            {preparationError && (
+              <div role="alert">
+                <Alert
+                  type="error"
+                  title="Unable to prepare agent thread"
+                  description={preparationError}
                 />
               </div>
-            </Tooltip>
-          )}
-          {!embeddingOptions.hideComposerIdentity && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                marginBottom: 6,
-                minWidth: 0,
-                flexWrap: "wrap",
-              }}
-            >
-              {hasAgentControls && selectedThread && (
-                <NameAgent
-                  key={agentMentions.accountId}
-                  agent={agentMentions.namedAgent}
+            )}
+            {agentMentions.ui}
+            {(hasAgentControls || isNewThreadCodex) &&
+              agentMentions.agents
+                .filter((agent) => hasUnboundAgentName(input, agent.name))
+                .map((agent) => (
+                  <Button
+                    key={agent.endpoint.agent_id}
+                    size="small"
+                    onClick={() => {
+                      const reference = namedAgentReference(agent);
+                      setInput(
+                        bindAgentName(input, reference),
+                        composerSession,
+                      );
+                      agentMentionContext.onSelect(reference);
+                    }}
+                  >
+                    Resolve @{agent.name} to named agent (
+                    {agent.thread_title ?? "Agent thread"} /{" "}
+                    {agent.project_title ?? "Project"})
+                  </Button>
+                ))}
+            <div ref={inputContainerRef} data-testid="chat-composer-input">
+              {isActive && (
+                <ChatInput
                   projectId={project_id}
-                  path={path}
-                  threadId={selectedThread.key}
-                  threadTitle={threadLabel}
-                  initiallyOpen={nameAfterPreparation}
+                  key={`${path}${project_id}-draft-${composerDraftKey}`}
+                  inputControlRef={chatInputControlRef}
+                  onControlReady={(control) =>
+                    onComposerReady?.(control, inputContainerRef.current)
+                  }
+                  fontSize={mobile ? Math.max(16, fontSize) : fontSize}
+                  autoFocus={!mobile}
+                  isFocused={isInputFocused}
+                  cacheId={`${path}${project_id}-draft-${composerDraftKey}`}
+                  input={input}
+                  presenceThreadKey={presenceThreadKey}
+                  on_send={handlePrimarySend}
+                  on_queue={hasRunningCodexTurn ? handleSend : undefined}
+                  on_post={on_post ? handlePost : undefined}
+                  on_font_size_change={handleFontSizeChange}
+                  height={chatInputHeight}
+                  autoGrow={chatInputHeight == null}
+                  autoGrowMinHeight={reservedHeight}
+                  autoGrowMaxHeight={Math.max(
+                    autoGrowMaxHeight,
+                    reservedHeight,
+                  )}
+                  compactModeSwitch
+                  softFocus
+                  onChange={(value) => {
+                    setInput(value, composerSession);
+                  }}
+                  onFocus={() => {
+                    setIsInputFocused(true);
+                    onComposerFocusChange(true);
+                  }}
+                  onBlur={() => {
+                    setIsInputFocused(false);
+                    onComposerFocusChange(false);
+                  }}
+                  submitMentionsRef={submitMentionsRef}
+                  syncdb={actions.syncdb}
+                  date={composerDraftKey}
+                  sessionToken={composerSession}
+                  editBarStyle={{ overflow: "hidden" }}
+                  placeholder={
+                    postOnly
+                      ? "Post a note; @mention people to notify them..."
+                      : composerPlaceholder
+                  }
+                  externalMultilinePasteAsCodeBlock
+                  toolbarMenuContent={(close) => (
+                    <Button
+                      aria-label={isZenMode ? "Exit fullscreen" : "Fullscreen"}
+                      icon={<Icon name="expand-arrows" />}
+                      onClick={() => {
+                        close();
+                        toggleZenMode();
+                      }}
+                      size="small"
+                      type="text"
+                    >
+                      {isZenMode ? "Exit fullscreen" : "Fullscreen"}
+                    </Button>
+                  )}
                 />
               )}
-              {!selectedThread && isNewThreadCodex && onPrepareAgentThread && (
-                <Button
-                  size="small"
-                  onClick={() => {
-                    setNameAfterPreparation(true);
-                    void prepareAgentThread({});
-                  }}
-                >
-                  Name agent
-                </Button>
-              )}
-              {threadLabel && (
-                <button
-                  type="button"
-                  aria-label={`Edit Thread Appearance: ${stripHtml(threadLabel)}`}
-                  aria-haspopup="dialog"
-                  disabled={!onEditThreadAppearance}
-                  onClick={onEditThreadAppearance}
-                  style={{
-                    background: "none",
-                    border: 0,
-                    cursor: onEditThreadAppearance ? "pointer" : "default",
-                    fontFamily: "inherit",
-                    display: "flex",
-                    alignItems: "center",
-                    marginLeft: "auto",
-                    minWidth: 0,
-                    maxWidth: "100%",
-                    gap: "8px",
-                    color: UI_COLORS.secondary,
-                    fontSize: "12px",
-                    padding: "1px 4px",
-                  }}
-                >
-                  <ThreadBadge
-                    icon={threadIcon}
-                    color={threadColor}
-                    accentColor={threadAccentColor}
-                    image={threadImage}
-                    size={18}
-                  />
-                  <span
-                    style={{
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                    title={stripHtml(threadLabel)}
-                  >
-                    {stripHtml(threadLabel)}
-                  </span>
-                </button>
-              )}
             </div>
-          )}
-          {showCodexPaymentSourceBanner && (
-            <Alert
-              action={
-                onOpenCodexPaymentConfig != null ? (
-                  <Button
-                    onClick={onOpenCodexPaymentConfig}
-                    size="small"
-                    type="primary"
-                  >
-                    {membershipAvailable ? "Payment settings" : "Connect AI"}
-                  </Button>
-                ) : undefined
-              }
-              showIcon
-              style={{ marginBottom: 8 }}
-              title={
-                membershipAvailable
-                  ? "To continue using this model, connect a ChatGPT plan or OpenAI API key. CoCalc Membership is available for new conversations with its included model."
-                  : "To use AI in CoCalc, connect a ChatGPT plan or OpenAI API key."
-              }
-              type="info"
-            />
-          )}
-          {preparationError && (
-            <div role="alert">
-              <Alert
-                type="error"
-                title="Unable to prepare agent thread"
-                description={preparationError}
-              />
-            </div>
-          )}
-          {agentMentions.ui}
-          {(hasAgentControls || isNewThreadCodex) &&
-            agentMentions.agents
-              .filter((agent) => hasUnboundAgentName(input, agent.name))
-              .map((agent) => (
-                <Button
-                  key={agent.endpoint.agent_id}
-                  size="small"
-                  onClick={() => {
-                    const reference = namedAgentReference(agent);
-                    setInput(bindAgentName(input, reference), composerSession);
-                    agentMentionContext.onSelect(reference);
-                  }}
-                >
-                  Resolve @{agent.name} to named agent (
-                  {agent.thread_title ?? "Agent thread"} /{" "}
-                  {agent.project_title ?? "Project"})
-                </Button>
-              ))}
-          <div ref={inputContainerRef} data-testid="chat-composer-input">
-            {isActive && (
-              <ChatInput
-                projectId={project_id}
-                key={`${path}${project_id}-draft-${composerDraftKey}`}
-                inputControlRef={chatInputControlRef}
-                onControlReady={(control) =>
-                  onComposerReady?.(control, inputContainerRef.current)
+            {showGoal && selectedThread && (
+              <CodexGoalControl
+                key={selectedThread.key}
+                snapshot={threadMetadata?.acp_goal}
+                request={threadMetadata?.acp_goal_request}
+                ack={threadMetadata?.acp_goal_ack}
+                openRequest={goalOpenRequest}
+                hideEmptyTrigger
+                onChange={(change) =>
+                  actions.setCodexGoal(selectedThread.key, change)
                 }
-                fontSize={mobile ? Math.max(16, fontSize) : fontSize}
-                autoFocus={!mobile}
-                isFocused={isInputFocused}
-                cacheId={`${path}${project_id}-draft-${composerDraftKey}`}
-                input={input}
-                presenceThreadKey={presenceThreadKey}
-                on_send={handlePrimarySend}
-                on_queue={hasRunningCodexTurn ? handleSend : undefined}
-                on_post={on_post ? handlePost : undefined}
-                on_font_size_change={handleFontSizeChange}
-                height={chatInputHeight}
-                autoGrow={false}
-                compactModeSwitch
-                softFocus
-                onChange={(value) => {
-                  setInput(value, composerSession);
-                }}
-                onFocus={() => {
-                  setIsInputFocused(true);
-                  onComposerFocusChange(true);
-                }}
-                onBlur={() => {
-                  setIsInputFocused(false);
-                  onComposerFocusChange(false);
-                }}
-                submitMentionsRef={submitMentionsRef}
-                syncdb={actions.syncdb}
-                date={composerDraftKey}
-                sessionToken={composerSession}
-                editBarStyle={{ overflow: "hidden" }}
-                placeholder={
-                  postOnly
-                    ? "Post a note; @mention people to notify them..."
-                    : composerPlaceholder
-                }
-                externalMultilinePasteAsCodeBlock
-                toolbarMenuContent={(close) => (
-                  <Button
-                    aria-label={isZenMode ? "Exit fullscreen" : "Fullscreen"}
-                    icon={<Icon name="expand-arrows" />}
-                    onClick={() => {
-                      close();
-                      toggleZenMode();
-                    }}
-                    size="small"
-                    type="text"
-                  >
-                    {isZenMode ? "Exit fullscreen" : "Fullscreen"}
-                  </Button>
-                )}
               />
             )}
           </div>
-          {showGoal && selectedThread && (
-            <CodexGoalControl
-              key={selectedThread.key}
-              snapshot={threadMetadata?.acp_goal}
-              request={threadMetadata?.acp_goal_request}
-              ack={threadMetadata?.acp_goal_ack}
-              openRequest={goalOpenRequest}
-              hideEmptyTrigger
-              onChange={(change) =>
-                actions.setCodexGoal(selectedThread.key, change)
-              }
-            />
-          )}
-        </div>
-        <div
-          data-testid="chat-composer-actions"
-          role="group"
-          aria-label="Message actions"
-          style={{
-            alignItems: "flex-end",
-            borderTop: undefined,
-            display: "flex",
-            flexDirection: "row",
-            flexWrap: "nowrap",
-            gap: 4,
-            flexShrink: 0,
-            minWidth: 0,
-            paddingTop: 2,
-          }}
-        >
           <div
+            data-testid="chat-composer-actions"
             role="group"
-            aria-label="Message options"
+            aria-label="Message actions"
             style={{
+              alignItems: "flex-end",
+              borderTop: undefined,
               display: "flex",
-              alignItems: "center",
-              flex: "1 1 0",
-              flexWrap: "wrap",
+              flexDirection: "row",
+              flexWrap: "nowrap",
               gap: 4,
+              flexShrink: 0,
               minWidth: 0,
-              minHeight: 32,
+              paddingTop: 2,
             }}
           >
-            <ComposerConnectors
-              agent={agentMentions.namedAgent}
-              supportsCocalcAccess={threadMetadata != null && !isGenericHarness}
+            <div
+              role="group"
+              aria-label="Message options"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                flex: "1 1 0",
+                flexWrap: "wrap",
+                gap: 4,
+                minWidth: 0,
+                minHeight: 32,
+              }}
             >
-              {(extraMenuItems) => (
-                <AgentFileAttachment
-                  extraMenuItems={extraMenuItems}
-                  projectId={project_id}
-                  workingDirectory={
-                    actions.getCodexConfig?.(selectedThread?.key)
-                      ?.workingDirectory
-                  }
-                  onSetGoal={
-                    showGoal && selectedThread
-                      ? () => setGoalOpenRequest((request) => request + 1)
-                      : undefined
-                  }
-                  onInsert={(markdown) => {
-                    chatInputControlRef.current?.insertText(markdown);
+              <ComposerConnectors
+                agent={agentMentions.namedAgent}
+                supportsCocalcAccess={
+                  threadMetadata != null && !isGenericHarness
+                }
+              >
+                {(extraMenuItems) => (
+                  <AgentFileAttachment
+                    extraMenuItems={extraMenuItems}
+                    projectId={project_id}
+                    workingDirectory={
+                      actions.getCodexConfig?.(selectedThread?.key)
+                        ?.workingDirectory
+                    }
+                    onSetGoal={
+                      showGoal && selectedThread
+                        ? () => setGoalOpenRequest((request) => request + 1)
+                        : undefined
+                    }
+                    onInsert={(markdown) => {
+                      chatInputControlRef.current?.insertText(markdown);
+                      refocusComposerInput();
+                    }}
+                  />
+                )}
+              </ComposerConnectors>
+              <DictateButton
+                borderless
+                inputControlRef={chatInputControlRef}
+                path={path}
+                projectId={project_id}
+                session={composerSession}
+                threadId={selectedThread?.key}
+                onOpenVoiceOptions={onToggleVoiceOptions}
+                voiceOptionsOpen={voiceOptionsOpen}
+                onStartReady={onDictationStartReady}
+                onBusyChange={onDictationBusyChange}
+                onAvailabilityChange={onDictationAvailabilityChange}
+              />
+              <span style={{ flex: 1 }} />
+              {hasAcpPrompt ? (
+                <Tooltip title="View or edit the full prompt that will be sent to the agent">
+                  <Button
+                    size="small"
+                    aria-label="Agent Prompt"
+                    icon={mobile ? <Icon name="file" /> : undefined}
+                    onClick={() => setAcpPromptModalOpen(true)}
+                  >
+                    {mobile ? null : "Agent Prompt"}
+                  </Button>
+                </Tooltip>
+              ) : null}
+              {canChooseDelivery && hasInput && (
+                <ComposerDeliverySelector
+                  value={selectedDelivery}
+                  canQueue={hasRunningCodexTurn}
+                  canPost={canPost}
+                  onChange={(value) => {
+                    setDelivery(value);
                     refocusComposerInput();
                   }}
                 />
               )}
-            </ComposerConnectors>
-            <DictateButton
-              borderless
-              inputControlRef={chatInputControlRef}
-              path={path}
-              projectId={project_id}
-              session={composerSession}
-              threadId={selectedThread?.key}
-              onOpenVoiceOptions={onToggleVoiceOptions}
-              voiceOptionsOpen={voiceOptionsOpen}
-              onStartReady={onDictationStartReady}
-              onBusyChange={onDictationBusyChange}
-              onAvailabilityChange={onDictationAvailabilityChange}
-            />
+            </div>
+            <Tooltip
+              title={
+                postOnly ? (
+                  "Post without sending to the agent (Ctrl+Enter)"
+                ) : queueOnly ? (
+                  "Queue after the running turn (Alt+Enter)"
+                ) : canSteerRunningTurn ? (
+                  <FormattedMessage
+                    id="chatroom.chat_input.steer_button.tooltip"
+                    defaultMessage={"Steer running turn (Shift+Enter)"}
+                  />
+                ) : hasRunningCodexTurn ? (
+                  "Queue after the running turn (Shift+Enter)"
+                ) : (
+                  <FormattedMessage
+                    id="chatroom.chat_input.send_button.tooltip"
+                    defaultMessage={"Send message (Shift+Enter)"}
+                  />
+                )
+              }
+            >
+              <Button
+                onClick={
+                  postOnly
+                    ? handlePost
+                    : queueOnly
+                      ? handleSend
+                      : handlePrimarySend
+                }
+                disabled={!hasInput}
+                type="primary"
+                shape="circle"
+                aria-label={
+                  postOnly
+                    ? "Post message"
+                    : queueOnly
+                      ? "Queue message"
+                      : canSteerRunningTurn
+                        ? "Steer"
+                        : hasRunningCodexTurn
+                          ? "Queue"
+                          : "Send"
+                }
+                data-testid="chat-composer-send"
+                icon={<Icon name="arrow-up" />}
+                style={{
+                  flex: "0 0 32px",
+                  height: 32,
+                  minWidth: 32,
+                  width: 32,
+                }}
+              />
+            </Tooltip>
+          </div>
+        </div>
+        {showConversationSettings && (
+          <div
+            data-testid="chat-composer-settings"
+            role="group"
+            aria-label="Conversation settings"
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: 12,
+              minWidth: 0,
+              padding: "2px 10px 0",
+              color: UI_COLORS.secondary,
+            }}
+          >
             {showComposerCodexConfig && selectedThread ? (
               <div
                 style={{
                   display: "flex",
-                  flex: "1 1 auto",
+                  // Wrap the identity instead of shrinking settings out of view.
+                  flex: "1 0 auto",
                   minWidth: 0,
+                  maxWidth: "100%",
                   overflow: "hidden",
                 }}
               >
@@ -1037,87 +1108,91 @@ export function ChatRoomComposer({
             ) : (
               <span style={{ flex: 1 }} />
             )}
-            {mobile && showComposerCodexConfig && selectedThread && (
-              <span style={{ flex: 1 }} />
-            )}
-            {hasAcpPrompt ? (
-              <Tooltip title="View or edit the full prompt that will be sent to the agent">
-                <Button
-                  size="small"
-                  aria-label="Agent Prompt"
-                  icon={mobile ? <Icon name="file" /> : undefined}
-                  onClick={() => setAcpPromptModalOpen(true)}
-                >
-                  {mobile ? null : "Agent Prompt"}
-                </Button>
-              </Tooltip>
-            ) : null}
-            {canChooseDelivery && hasInput && (
-              <ComposerDeliverySelector
-                value={selectedDelivery}
-                canQueue={hasRunningCodexTurn}
-                canPost={canPost}
-                onChange={(value) => {
-                  setDelivery(value);
-                  refocusComposerInput();
+            {showIdentity && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  flex: "0 1 auto",
+                  flexWrap: "wrap",
+                  minWidth: 0,
+                  maxWidth: "100%",
                 }}
-              />
+              >
+                {hasAgentControls && selectedThread && (
+                  <NameAgent
+                    key={agentMentions.accountId}
+                    agent={agentMentions.namedAgent}
+                    projectId={project_id}
+                    path={path}
+                    threadId={selectedThread.key}
+                    threadTitle={threadLabel}
+                    initiallyOpen={nameAfterPreparation}
+                    triggerButtonProps={{
+                      style: { maxWidth: "100%", overflow: "hidden" },
+                    }}
+                  />
+                )}
+                {!selectedThread &&
+                  isNewThreadCodex &&
+                  onPrepareAgentThread && (
+                    <Button
+                      size="small"
+                      onClick={() => {
+                        setNameAfterPreparation(true);
+                        void prepareAgentThread({});
+                      }}
+                    >
+                      Name agent
+                    </Button>
+                  )}
+                {threadLabel && (
+                  <button
+                    type="button"
+                    aria-label={`Edit Thread Appearance: ${stripHtml(threadLabel)}`}
+                    aria-haspopup="dialog"
+                    disabled={!onEditThreadAppearance}
+                    onClick={onEditThreadAppearance}
+                    style={{
+                      background: "none",
+                      border: 0,
+                      cursor: onEditThreadAppearance ? "pointer" : "default",
+                      fontFamily: "inherit",
+                      display: "flex",
+                      alignItems: "center",
+                      marginLeft: "auto",
+                      minWidth: 0,
+                      maxWidth: "100%",
+                      gap: "8px",
+                      color: UI_COLORS.secondary,
+                      fontSize: "12px",
+                      padding: "1px 4px",
+                    }}
+                  >
+                    <ThreadBadge
+                      icon={threadIcon}
+                      color={threadColor}
+                      accentColor={threadAccentColor}
+                      image={threadImage}
+                      size={18}
+                    />
+                    <span
+                      style={{
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                      title={stripHtml(threadLabel)}
+                    >
+                      {stripHtml(threadLabel)}
+                    </span>
+                  </button>
+                )}
+              </div>
             )}
           </div>
-          <Tooltip
-            title={
-              postOnly ? (
-                "Post without sending to the agent (Ctrl+Enter)"
-              ) : queueOnly ? (
-                "Queue after the running turn (Alt+Enter)"
-              ) : canSteerRunningTurn ? (
-                <FormattedMessage
-                  id="chatroom.chat_input.steer_button.tooltip"
-                  defaultMessage={"Steer running turn (Shift+Enter)"}
-                />
-              ) : hasRunningCodexTurn ? (
-                "Queue after the running turn (Shift+Enter)"
-              ) : (
-                <FormattedMessage
-                  id="chatroom.chat_input.send_button.tooltip"
-                  defaultMessage={"Send message (Shift+Enter)"}
-                />
-              )
-            }
-          >
-            <Button
-              onClick={
-                postOnly
-                  ? handlePost
-                  : queueOnly
-                    ? handleSend
-                    : handlePrimarySend
-              }
-              disabled={!hasInput}
-              type="primary"
-              shape="circle"
-              aria-label={
-                postOnly
-                  ? "Post message"
-                  : queueOnly
-                    ? "Queue message"
-                    : canSteerRunningTurn
-                      ? "Steer"
-                      : hasRunningCodexTurn
-                        ? "Queue"
-                        : "Send"
-              }
-              data-testid="chat-composer-send"
-              icon={<Icon name="arrow-up" />}
-              style={{
-                flex: "0 0 32px",
-                height: 32,
-                minWidth: 32,
-                width: 32,
-              }}
-            />
-          </Tooltip>
-        </div>
+        )}
         <AcpPromptModal
           open={acpPromptModalOpen}
           value={acpPrompt}

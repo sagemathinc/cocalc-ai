@@ -1983,7 +1983,13 @@ export function MessageList({
         : new ResizeObserver((entries) => {
             for (const entry of entries) {
               const target = entry.target as HTMLElement | undefined;
-              if (target?.dataset?.itemIndex == null) continue;
+              // Rows change size while streaming; the scroller itself changes
+              // size when the composer below it grows or shrinks.
+              if (
+                target?.dataset?.itemIndex == null &&
+                target?.dataset?.virtuosoScroller == null
+              )
+                continue;
               scheduleLayoutRestore();
               break;
             }
@@ -1991,6 +1997,13 @@ export function MessageList({
     const observed = new Set<HTMLElement>();
     const observeVisibleItems = () => {
       if (!resizeObserver) return;
+      const scroller = host.querySelector<HTMLElement>(
+        "[data-virtuoso-scroller]",
+      );
+      if (scroller && !observed.has(scroller)) {
+        observed.add(scroller);
+        resizeObserver.observe(scroller);
+      }
       const items = host.querySelectorAll<HTMLElement>("[data-item-index]");
       for (let i = 0; i < items.length; i += 1) {
         const item = items[i];

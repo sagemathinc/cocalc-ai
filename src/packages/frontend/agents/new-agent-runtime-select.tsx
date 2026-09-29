@@ -19,6 +19,7 @@ export function NewAgentRuntimeSelect({
   return (
     <Select
       aria-label="Agent runtime"
+      variant="borderless"
       value={value}
       disabled={disabled}
       popupMatchSelectWidth={false}

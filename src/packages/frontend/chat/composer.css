@@ -1,0 +1,44 @@
+/* Chat composer: a single empty line should look like a single line. */
+.chat-composer-box .cocalc-slate-render > :first-child {
+  margin-top: 0;
+}
+.chat-composer-box .cocalc-slate-render > :last-child {
+  margin-bottom: 0;
+}
+
+/* The resize handle overlays the top edge of the box and only shows its grip
+   on hover, focus or while dragging, so it takes no room of its own. */
+.chat-composer-resize-handle {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 96px;
+  height: 8px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: row-resize;
+  outline: none;
+}
+.chat-composer-resize-grip {
+  width: 42px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--chat-composer-grip, #ccc);
+  opacity: 0;
+  transition: opacity 120ms ease-in-out;
+}
+.chat-composer-box:hover .chat-composer-resize-grip,
+.chat-composer-resize-handle:focus-visible .chat-composer-resize-grip,
+.chat-composer-resize-handle[data-dragging="true"] .chat-composer-resize-grip {
+  opacity: 1;
+}
+
+.chat-composer-notice {
+  margin-bottom: 6px;
+}
+.chat-composer-notice:empty {
+  display: none;
+}

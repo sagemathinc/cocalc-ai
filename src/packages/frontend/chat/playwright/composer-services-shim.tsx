@@ -1,4 +1,5 @@
-import { Modal, Popover } from "antd";
+import { Button, Modal, Popover } from "antd";
+import type { ButtonProps } from "antd";
 import { useState } from "react";
 
 // Keep the composer and editor real, but avoid live services in the harness.
@@ -7,7 +8,18 @@ export const CodexGoalControl = () => null;
 export const AcpPromptModal = () => null;
 export const DictateButton = () => null;
 export const AgentFileAttachment = () => null;
-export const NameAgent = () => null;
+export const NameAgent = ({
+  triggerButtonProps,
+}: {
+  triggerButtonProps?: ButtonProps;
+}) => {
+  const name = new URLSearchParams(window.location.search).get("agentName");
+  return name ? (
+    <Button {...triggerButtonProps} size="small" aria-label={`Rename @${name}`}>
+      @{name}
+    </Button>
+  ) : null;
+};
 export const getCodexPaymentSourceOptions = () => [];
 export const isCodexPaymentSourceNeedsUserConfiguration = () => false;
 export const useAgentMentions = () => ({
