@@ -387,3 +387,52 @@ export async function pruneCollaborationRevisionInterests(
     return rows.length;
   });
 }
+
+export interface RevisionInterestExpiryCursor {
+  expires_at: string;
+  project_id: string;
+  home_bay_id: string;
+}
+
+/** Bound candidates before filtering ownership, and preserve timestamp precision
+ * in the cursor. A full traversal wraps to catch rows renewed behind the cursor.
+ */
+export async function readCollaborationRevisionExpiryPage(
+  owning_bay_id: string,
+  after?: RevisionInterestExpiryCursor,
+) {
+  boundedText(owning_bay_id, "interest owner bay", 128);
+  if (after) {
+    boundedText(after.expires_at, "interest expiry cursor", 128);
+    uuid(after.project_id, "interest project cursor");
+    boundedText(after.home_bay_id, "interest home cursor", 128);
+  }
+  return transaction(async (db) => {
+    await db.query("SET LOCAL statement_timeout='2s'");
+    const { rows } = await db.query(
+      `WITH candidates AS MATERIALIZED (
+        SELECT project_id,home_bay_id,expires_at FROM collaboration_revision_interests
+        WHERE expires_at<=now()
+        ${after ? "AND (expires_at,project_id,home_bay_id)>($2::timestamptz,$3::uuid,$4::text)" : ""}
+        ORDER BY expires_at,project_id,home_bay_id LIMIT 20)
+      SELECT c.project_id,c.home_bay_id,c.expires_at::text,
+        p.owning_bay_id=$1 AS local_owner
+      FROM candidates c LEFT JOIN projects p USING(project_id)
+      ORDER BY c.expires_at,c.project_id,c.home_bay_id`,
+      after
+        ? [owning_bay_id, after.expires_at, after.project_id, after.home_bay_id]
+        : [owning_bay_id],
+    );
+    return {
+      complete: rows.length < 20,
+      candidates: rows.map((row) => ({
+        cursor: {
+          expires_at: row.expires_at,
+          project_id: row.project_id,
+          home_bay_id: row.home_bay_id,
+        } as RevisionInterestExpiryCursor,
+        local_owner: row.local_owner === true,
+      })),
+    };
+  });
+}

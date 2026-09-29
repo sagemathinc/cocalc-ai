@@ -1466,3 +1466,27 @@ tests, not a concurrent production PostgreSQL query-plan or rehome proof.
 This operation is not yet automatically scheduled: bounded owner candidate
 selection and lifecycle wiring remain necessary, along with the other open
 hint-delivery and scaling gates.
+
+### Scheduled Owner Interest Expiry
+
+Owner cleanup now reads at most twenty expired candidate rows from the expiry
+index before filtering by current project ownership. The keyset cursor preserves
+the database timestamp as text, including sub-millisecond precision. Candidate
+selection grants no authority: each deletion still takes the project owner and
+rehome fence. Maintenance coalesces candidates by project, advances past failed
+or foreign-owner candidates, and wraps after traversal completion. Restart loses
+only the optimization cursor, not authoritative cleanup state.
+
+The existing gated lifecycle calls this worker with a thirty-second process
+cooldown and a five-second budget for starting operations. A started database
+operation can run past that budget up to its existing timeout. Each project
+deletion remains bounded at one hundred rows. No memberships are enumerated and
+no demand is created. Counts distinguish candidates examined, interests deleted
+and failures. This supersedes the preceding note that expiry is unscheduled.
+
+Server typecheck, forty server maintenance/API tests and nine PGlite interest
+tests pass. Tests cover page bounds and continuation without duplicate homes,
+foreign ownership, project coalescing, cursor wrap, deadline interruption,
+failure isolation and disabled gates. Full PostgreSQL query-plan/concurrency
+validation, distributed bay quotas and churn backlog throughput remain open;
+this does not establish the complete lifecycle or scale gates.

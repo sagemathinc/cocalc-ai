@@ -10,6 +10,7 @@ import {
   claimCollaborationRevisionHint,
   settleCollaborationRevisionHint,
   pruneCollaborationRevisionInterests,
+  readCollaborationRevisionExpiryPage,
 } from "./collaborators-revision-interest";
 
 const describeDb =
@@ -74,6 +75,27 @@ describeDb("owner project/home revision interests", () => {
        FROM generate_series(1,105) AS n`,
       [request.project_id],
     );
+    const firstPage = await readCollaborationRevisionExpiryPage(
+      authority.owning_bay_id,
+    );
+    expect(firstPage.candidates).toHaveLength(20);
+    expect(firstPage.complete).toBe(false);
+    expect(firstPage.candidates.every((c) => c.local_owner)).toBe(true);
+    const secondPage = await readCollaborationRevisionExpiryPage(
+      authority.owning_bay_id,
+      firstPage.candidates[19].cursor,
+    );
+    expect(secondPage.candidates).toHaveLength(20);
+    expect(
+      new Set(
+        [...firstPage.candidates, ...secondPage.candidates].map(
+          (c) => c.cursor.home_bay_id,
+        ),
+      ).size,
+    ).toBe(40);
+    const foreign = await readCollaborationRevisionExpiryPage("wrong");
+    expect(foreign.candidates).toHaveLength(20);
+    expect(foreign.candidates.every((c) => !c.local_owner)).toBe(true);
     await expect(
       pruneCollaborationRevisionInterests(request.project_id, {
         owning_bay_id: "wrong",

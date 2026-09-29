@@ -5,7 +5,10 @@
 import getLogger from "@cocalc/backend/logger";
 import { createSharedProjectionFetcher } from "./projection-batch";
 import { registerProjectionRevisionReceivers } from "./revision-registration";
-import { runRevisionReceiverCleanup } from "./revision-maintenance";
+import {
+  runRevisionReceiverCleanup,
+  runRevisionInterestCleanup,
+} from "./revision-maintenance";
 import {
   syncCollaborationRevisionReceiverSchema,
   collaborationRevisionReceiverNeedsRenewal,
@@ -123,6 +126,7 @@ export async function runCollaboratorsMaintenance() {
     await runPeopleInviteMaintenance();
     const bay_id = getConfiguredBayId();
     await runRevisionReceiverCleanup();
+    await runRevisionInterestCleanup();
     if (process.env.COCALC_PEOPLE_DEMAND_PROTOTYPE === "1") {
       const activation = await runCollaborationDemandActivation(bay_id);
       indexingWork.inc(
