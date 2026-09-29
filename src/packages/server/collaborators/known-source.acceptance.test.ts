@@ -138,9 +138,24 @@ acceptance("known-source initial release over real fabric", () => {
     await new Promise((resolve) => setTimeout(resolve, 3000));
     const beforeIdle = (await env.worker("owner").call("inspect")).counters
       .ownerCalls;
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    // Span several legacy 20-second projection cycles, not just a quiet gap
+    // between timer passes. Keep the production maintenance timers running.
+    const idleStarted = Date.now();
+    await new Promise((resolve) => setTimeout(resolve, 60000));
     const afterIdle = (await env.worker("owner").call("inspect")).counters
       .ownerCalls;
+    process.stdout.write(
+      JSON.stringify({
+        workload: "known-source-demand-expired",
+        observed_ms: Date.now() - idleStarted,
+        calls: Object.fromEntries(
+          Object.keys(afterIdle).map((method) => [
+            method,
+            afterIdle[method] - (beforeIdle[method] ?? 0),
+          ]),
+        ),
+      }) + "\n",
+    );
     for (const method of [
       "projectPage",
       "sharedProjectPage",
@@ -156,5 +171,5 @@ acceptance("known-source initial release over real fabric", () => {
     ).toEqual(delivered);
     for (const role of ["owner", "a", "b"] as const)
       expect((await env.worker(role).call("inspect")).counters.starts).toBe(0);
-  }, 120000);
+  }, 180000);
 });

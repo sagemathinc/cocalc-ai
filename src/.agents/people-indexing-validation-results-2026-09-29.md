@@ -3265,9 +3265,32 @@ notification pages do not increase during that window. The previously delivered
 notification ID remains unchanged. Production worker timers are not manually
 ticked or rescheduled for this check.
 
-The extended test passes in 56.526 seconds including setup/cleanup, with server
+The original extended test passes in 56.526 seconds including setup/cleanup, with server
 typecheck and whitespace checks passing. This covers the transition from active
 view to expired demand under the selected flags. It is not a soak, a bound on
 all SQL/background maintenance, or proof about work scheduled beyond the short
 observation window. Representative load and long-window idle measurement remain
 open.
+
+### Idle Observation Across Legacy Polling Cycles
+
+The known-source acceptance fixture now observes 60 seconds after the same
+three-second settle period instead of only three seconds. This spans several
+legacy 20-second projection cycles while production maintenance timers continue
+running. Only the isolated demand grace deadline is advanced, as before.
+
+The rerun passed in 103.486 seconds including setup/cleanup. During the measured
+60.031-second idle window, observed owner RPC counters did not increase.
+Assertions specifically cover individual/shared projection pages, access
+refresh and legacy notification pages, and the previously delivered notification
+ID remains unchanged. Server/reference typecheck passed. This is stronger than
+a between-ticks observation, but does not establish zero background SQL work,
+indefinite idle cost or a long-duration soak.
+
+The current scoped browser probe again ended with a 408 `listOpenFiles`
+timeout for `B25GUUUSRK`. Local daemon status reports a running three-bay hub
+and stopped Lite, but neither establishes a reachable browser running this
+branch. A development browser/project target has been requested. No live flags,
+credentials or service processes were changed; rendered UI validation remains
+open. The QA preflight flags only the two existing untracked security-review
+documents, which were left untouched.
