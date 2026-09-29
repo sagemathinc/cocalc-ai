@@ -1,8 +1,11 @@
 # Demand-Driven People Indexing: Design And Validation
 
 Date: 2026-09-29.
-Status: proposed design and implementation gates; no runtime changes or capacity
-claims are made by this document.
+Status: initial execution underway; worker metrics and isolated baseline/proof
+fixtures implemented. Scheduling changes are not enabled. The raw live btrfs
+generation candidate failed the no-change proof spike; see the
+[execution results](people-indexing-validation-results-2026-09-29.md).
+No capacity claims are made by this document.
 Inspected baseline: `a60a05e8809ebb1e44a7038599b40170d079f408`.
 
 Related plans:

@@ -738,6 +738,14 @@ async function command(name, args = {}) {
         .data;
     case "sql":
       return (await pool.query(args.sql, args.params)).rows;
+    case "indexingSeed": {
+      const projection = require("@cocalc/database/postgres/collaborators/collaborators-projection");
+      return projection.seedCollaborationProjectionJobs(
+        config.bays[config.role === "a" ? 1 : 2],
+      );
+    }
+    case "indexingMetrics":
+      return require("prom-client").register.getMetricsAsJSON();
     case "tick":
       if (config.role === "host") {
         await journalService.runOnce();

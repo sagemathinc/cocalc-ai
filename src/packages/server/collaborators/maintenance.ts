@@ -3,6 +3,12 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import getLogger from "@cocalc/backend/logger";
+import {
+  indexingWork,
+  indexingPages,
+  indexingPageSeconds,
+  indexingPageBytes,
+} from "./indexing-metrics";
 import { runPeopleInvitationMaintenance } from "./invitations-runtime";
 import { runPeopleInviteMaintenance } from "@cocalc/server/people/invite-maintenance";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
@@ -41,6 +47,7 @@ const accessTimers = new Set<ReturnType<typeof setTimeout>>();
 export async function runCollaboratorsAccessMaintenance() {
   if (!(await getServerSettings()).collaborators_enabled) return 0;
   const jobs = await claimCollaborationAccess(getConfiguredBayId());
+  indexingWork.inc({ kind: "access_claimed" }, jobs.length);
   if (!jobs.length) return 0;
   try {
     const groups = await fetchCollaborationAccessBatches(jobs);
@@ -53,6 +60,7 @@ export async function runCollaboratorsAccessMaintenance() {
           const group = groups[next++];
           const requested_at = Date.now();
           try {
+            indexingWork.inc({ kind: "access_batch_attempted" });
             await applyCollaborationAccess(
               group.jobs,
               await group.fetch(),
@@ -82,28 +90,47 @@ export async function runCollaboratorsMaintenance() {
     );
     await runPeopleInviteMaintenance();
     const bay_id = getConfiguredBayId();
-    await seedCollaborationProjectionJobs(bay_id);
+    indexingWork.inc(
+      { kind: "memberships_enumerated" },
+      await seedCollaborationProjectionJobs(bay_id),
+    );
     await cleanCollaborationProjections(bay_id);
     await compactNextCollaborationProject(bay_id);
     const jobs = await claimCollaborationProjectionJobs(bay_id);
+    indexingWork.inc({ kind: "projection_claimed" }, jobs.length);
     // At most eight bounded metadata pages in flight, with durable claims and
     // no waiting queue. Each page revalidates current owner membership.
     await Promise.all(
       jobs.map(async (job) => {
         const requested_at = Date.now();
+        const end = indexingPageSeconds.startTimer();
+        let outcome = "failed";
         try {
+          const page = await fetchCollaborationProjection(job);
+          indexingPageBytes.inc(Buffer.byteLength(JSON.stringify(page)));
           const applied = await applyCollaborationProjection(
             job,
-            await fetchCollaborationProjection(job),
+            page,
             requested_at,
           );
+          outcome = !applied
+            ? "superseded"
+            : !page.allowed
+              ? "denied"
+              : page.items.length
+                ? "changed"
+                : "empty";
           if (!applied)
             await failCollaborationProjection(
               job,
               Error("superseded access grant"),
             );
         } catch (err) {
+          outcome = "failed";
           await failCollaborationProjection(job, err);
+        } finally {
+          indexingPages.inc({ outcome });
+          end();
         }
       }),
     );
