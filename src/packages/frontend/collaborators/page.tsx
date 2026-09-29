@@ -518,9 +518,12 @@ function CollaboratorsWorkspace({
           role="tabpanel"
           id={`${toolbarId}-panel-invites`}
           aria-labelledby={`${toolbarId}-tab-invites`}
+          style={{ flex: 1, minHeight: 0, overflowY: "auto" }}
+          tabIndex={0}
         >
           <InvitationHistory
             api={historyApi}
+            collectionView={preferences.value.view}
             invitationId={invitationId}
             onClearInvitation={() =>
               onNavigate({ ...route, invitationId: undefined })

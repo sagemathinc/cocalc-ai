@@ -21,6 +21,11 @@
         { "type": "press", "key": "Enter" },
         { "type": "wait", "role": "dialog", "name": "Invite a person" },
         {
+          "type": "assertFocus",
+          "role": "searchbox",
+          "name": "Email, name, or @username"
+        },
+        {
           "type": "assertFocusWithin",
           "role": "dialog",
           "name": "Invite a person"

@@ -27,6 +27,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: { account_id: "me" },
 }));
 jest.mock("./invitations-api", () => ({ boundInvitationsApi: jest.fn() }));
+jest.mock("./navigation", () => ({ openCollaborators: jest.fn() }));
 
 const person = { account_id: "person", display_name: "Bella" };
 const target: PeopleInvitationTarget = {
@@ -116,16 +117,61 @@ function makeApi(projects = [first, second]) {
 }
 
 async function continuePerson(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole("button", { name: "Continue with Bella" }));
+  await user.click(
+    screen.getByRole("button", { name: "Next: Choose projects" }),
+  );
 }
 async function reviewAndSend(user: ReturnType<typeof userEvent.setup>) {
   await user.click(
-    screen.getByRole("button", { name: "Review exact invitation" }),
+    screen.getByRole("button", { name: /Review invitation|Review again/ }),
   );
   await user.click(
-    await screen.findByRole("button", { name: "Send reviewed invitation" }),
+    await screen.findByRole("button", { name: "Send invitation" }),
   );
 }
+
+it("debounces person search, rejects stale results, and requires explicit selection before Next", async () => {
+  const user = userEvent.setup();
+  const api = makeApi();
+  let finish!: (value: any) => void;
+  api.resolveRecipient.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  render(<InviteProjects api={api} onClose={jest.fn()} />);
+  const input = screen.getByRole("searchbox", {
+    name: "Email, name, or @username",
+  });
+  const next = screen.getByRole("button", { name: "Next: Choose projects" });
+  expect(next).toBeDisabled();
+  await user.type(input, "Old");
+  await waitFor(() =>
+    expect(api.resolveRecipient).toHaveBeenCalledWith({ query: "Old" }),
+  );
+  await user.clear(input);
+  await user.type(input, "Bella");
+  const result = await screen.findByRole("radio", { name: "Bella (@bella)" });
+  await act(async () =>
+    finish({
+      recipients: [{ kind: "account", account_id: "old", label: "Old result" }],
+    }),
+  );
+  expect(screen.queryByRole("radio", { name: "Old result" })).toBeNull();
+  expect(next).toBeDisabled();
+  result.focus();
+  await user.keyboard(" ");
+  expect(next).toBeEnabled();
+  expect(screen.getByText("person", { selector: "code" })).not.toBeVisible();
+  expect(api.listProjects).not.toHaveBeenCalled();
+  await user.click(next);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("searchbox", { name: "Search projects" }),
+    ).toHaveFocus(),
+  );
+});
 
 it("is person-first, uses keyboard selection, and sends only the exact reviewed revision", async () => {
   const user = userEvent.setup();
@@ -134,17 +180,17 @@ it("is person-first, uses keyboard selection, and sends only the exact reviewed 
   expect(screen.queryByRole("table")).toBeNull();
   await waitFor(() =>
     expect(
-      screen.getByRole("heading", { name: "Choose person" }),
+      screen.getByRole("searchbox", { name: "Email, name, or @username" }),
     ).toHaveFocus(),
   );
-  await user.tab();
   expect(
-    screen.getByRole("textbox", { name: "Email, name, or @username" }),
+    screen.getByRole("searchbox", { name: "Email, name, or @username" }),
   ).toHaveFocus();
   await user.keyboard("@bella{Enter}");
   await user.click(
-    await screen.findByRole("button", { name: "Choose Bella (@bella)" }),
+    await screen.findByRole("radio", { name: "Bella (@bella)" }),
   );
+  await continuePerson(user);
   expect(api.resolveRecipient).toHaveBeenCalledWith({ query: "@bella" });
   expect(api.prepareInvitation).not.toHaveBeenCalled();
   const select = screen.getByRole("checkbox", { name: "Select First project" });
@@ -155,21 +201,21 @@ it("is person-first, uses keyboard selection, and sends only the exact reviewed 
     "Please review this work",
   );
   await user.click(
-    screen.getByRole("button", { name: "Review exact invitation" }),
+    screen.getByRole("button", { name: /Review invitation|Review again/ }),
   );
   const exact = await screen.findByRole("region", {
     name: "Exact reviewed invitation",
   });
-  expect(exact).toHaveTextContent("Please review this work");
-  expect(exact).toHaveTextContent("project read/write and runtimes");
+  expect(
+    screen.getByRole("textbox", { name: "Invitation message" }),
+  ).toHaveValue("Please review this work");
+  expect(exact).toHaveTextContent("edit files and run code");
   expect(api.sendInvitation).not.toHaveBeenCalled();
   expect(api.prepareInvitation.mock.lastCall![0].payload.recipient).toEqual({
     kind: "account",
     account_id: "person",
   });
-  await user.click(
-    screen.getByRole("button", { name: "Send reviewed invitation" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Send invitation" }));
   expect(api.sendInvitation).toHaveBeenCalledWith({
     draft_id: api.prepareInvitation.mock.lastCall![0].draft_id,
     revision: 1,
@@ -188,12 +234,13 @@ it("never resolves an email to an account and shows unknown membership", async (
   const api = makeApi([{ ...first, current_access: "unknown" }]);
   render(<InviteProjects api={api} onClose={jest.fn()} />);
   await user.type(
-    screen.getByRole("textbox", { name: "Email, name, or @username" }),
+    screen.getByRole("searchbox", { name: "Email, name, or @username" }),
     "new@example.com{Enter}",
   );
   await user.click(
-    screen.getByRole("button", { name: "Choose new@example.com" }),
+    screen.getByRole("radio", { name: "Invite new@example.com" }),
   );
+  await continuePerson(user);
   expect(api.resolveRecipient).not.toHaveBeenCalled();
   expect(
     screen.getByText("Current access unknown for this email/contact"),
@@ -202,7 +249,7 @@ it("never resolves an email to an account and shows unknown membership", async (
     screen.getByRole("checkbox", { name: "Select First project" }),
   );
   await user.click(
-    screen.getByRole("button", { name: "Review exact invitation" }),
+    screen.getByRole("button", { name: /Review invitation|Review again/ }),
   );
   expect(api.prepareInvitation.mock.lastCall![0].payload.recipient).toEqual({
     kind: "email",
@@ -240,9 +287,7 @@ it("skips unnecessary project selection for existing collaborator content and pr
     screen.getByRole("textbox", { name: "Invitation message" }),
     "What do you think?",
   );
-  expect(
-    screen.queryByRole("button", { name: "Send reviewed invitation" }),
-  ).toBeNull();
+  expect(screen.queryByRole("button", { name: "Send invitation" })).toBeNull();
   await reviewAndSend(user);
   expect(api.sendInvitation.mock.lastCall![0].review_id).toBe("review-2");
   expect(
@@ -271,7 +316,7 @@ it("does not silently upgrade a viewer who cannot open the content", async () =>
   );
   await continuePerson(user);
   expect(
-    screen.getByRole("button", { name: "Review exact invitation" }),
+    screen.getByRole("button", { name: /Review invitation|Review again/ }),
   ).toBeDisabled();
   expect(
     screen.getByText(
@@ -285,7 +330,7 @@ it("does not silently upgrade a viewer who cannot open the content", async () =>
     }),
   );
   await user.click(
-    screen.getByRole("button", { name: "Review exact invitation" }),
+    screen.getByRole("button", { name: /Review invitation|Review again/ }),
   );
   expect(api.prepareInvitation.mock.lastCall![0].payload.projects).toEqual([
     { project_id: "first", action: "offer_access", role: "collaborator" },
@@ -310,9 +355,7 @@ it("preserves recipient, message, roles, source target and selections through ex
     screen.getByRole("textbox", { name: "Invitation message" }),
     "Draft survives",
   );
-  await user.click(
-    screen.getByRole("button", { name: "Create a new project together" }),
-  );
+  await user.click(screen.getByRole("button", { name: "New project" }));
   expect(api.prepareInvitation).not.toHaveBeenCalled();
   const [selected, draft] = create.mock.lastCall as [
     string[],
@@ -413,9 +456,7 @@ it("inspects unknown sends by their stable operation ID without resending", asyn
     screen.queryByRole("button", { name: "Retry same reviewed send" }),
   ).toBeNull();
   const sent = api.sendInvitation.mock.lastCall![0];
-  await user.click(
-    screen.getByRole("button", { name: "Check delivery and operation status" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Check status" }));
   expect(api.getInvitationOperation).toHaveBeenCalledWith({
     operation_id: sent.idempotency_key,
   });
@@ -457,9 +498,9 @@ it("re-reviews only confirmed failed projects and keeps successful outcomes visi
   );
   expect(
     screen.getByRole("region", { name: "Durable invitation outcomes" }),
-  ).toHaveTextContent("First project: Invitation created");
+  ).toHaveTextContent("First projectInvitation created");
   await user.click(
-    screen.getByRole("button", { name: "Review exact invitation" }),
+    screen.getByRole("button", { name: /Review invitation|Review again/ }),
   );
   expect(api.prepareInvitation.mock.lastCall![0].payload.projects).toEqual([
     { project_id: "second", action: "offer_access", role: "collaborator" },
@@ -499,7 +540,7 @@ it("blocks dismissal while sending and restores focus when closed", async () => 
   await user.click(opener);
   await continuePerson(user);
   await reviewAndSend(user);
-  expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
   fireEvent.keyDown(
     screen.getByRole("heading", { name: "Invitation results" }),
     { key: "Escape" },
@@ -537,7 +578,7 @@ it("retains a viewer's notify-only action when current access permits the target
   expect(
     within(
       screen.getByRole("region", { name: "Exact reviewed invitation" }),
-    ).getByText(/Notification only/),
+    ).getByText(/Notification-only/),
   ).toBeVisible();
 });
 
@@ -559,12 +600,12 @@ it("requires a new review after expiry and never sends with the expired review i
   );
   await continuePerson(user);
   await user.click(
-    screen.getByRole("button", { name: "Review exact invitation" }),
+    screen.getByRole("button", { name: /Review invitation|Review again/ }),
   );
-  expect(await screen.findByRole("alert")).toHaveTextContent("Review expired");
-  expect(
-    screen.queryByRole("button", { name: "Send reviewed invitation" }),
-  ).toBeNull();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Please review again",
+  );
+  expect(screen.queryByRole("button", { name: "Send invitation" })).toBeNull();
   expect(api.sendInvitation).not.toHaveBeenCalled();
   await reviewAndSend(user);
   expect(api.sendInvitation.mock.lastCall![0].review_id).toBe("review-2");
@@ -593,7 +634,7 @@ it("can close a pending search and ignores its late response", async () => {
   const opener = screen.getByRole("button", { name: "Invite person" });
   await user.click(opener);
   await user.type(
-    screen.getByRole("textbox", { name: "Email, name, or @username" }),
+    screen.getByRole("searchbox", { name: "Email, name, or @username" }),
     "Bella{Enter}",
   );
   await waitFor(() => expect(api.resolveRecipient).toHaveBeenCalledTimes(1));
@@ -632,13 +673,13 @@ it("cannot imply source-content access by selecting only another project", async
     "another project does not grant access",
   );
   expect(
-    screen.getByRole("button", { name: "Review exact invitation" }),
+    screen.getByRole("button", { name: /Review invitation|Review again/ }),
   ).toBeDisabled();
   await user.click(
     screen.getByRole("button", { name: "Remove content context" }),
   );
   await user.click(
-    screen.getByRole("button", { name: "Review exact invitation" }),
+    screen.getByRole("button", { name: /Review invitation|Review again/ }),
   );
   expect(
     api.prepareInvitation.mock.lastCall![0].payload.target,

@@ -12,7 +12,10 @@ import {
   Space,
   Tabs,
   Tag,
+  Typography,
 } from "antd";
+import { Collection } from "@cocalc/frontend/components/collection";
+import type { CollectionView } from "@cocalc/frontend/components/collection";
 import type {
   PeopleInvitationHistoryPage,
   PeopleInvitationHistoryQuery,
@@ -43,6 +46,7 @@ export function InvitationHistory({
   onOpen,
   projectTitle,
   onClearInvitation,
+  collectionView = "list",
 }: {
   api: InvitationHistoryApi;
   personId?: string;
@@ -54,6 +58,7 @@ export function InvitationHistory({
   onOpen?: (row: PeopleInvitationHistoryRow) => void;
   projectTitle?: (projectId: string) => string | undefined;
   onClearInvitation?: () => void;
+  collectionView?: CollectionView;
 }) {
   const [view, setView] = useState<"sent" | "received" | "history">(
     invitationId ? "received" : "sent",
@@ -238,10 +243,13 @@ export function InvitationHistory({
           Refresh invitations
         </Button>
       </Space>
-      <p>
-        Access offers and invitations to work together are separate. Acceptance
-        history does not guarantee current project access.
-      </p>
+      <details style={{ marginBottom: 12 }}>
+        <summary>About invitations</summary>
+        <p>
+          Access offers and invitations to work together are separate.
+          Acceptance history does not guarantee current project access.
+        </p>
+      </details>
       {focusedId && (
         <Button
           onClick={() => {
@@ -285,14 +293,17 @@ export function InvitationHistory({
             sent, {shown.pending.received} received.
           </p>
           {!shown.items.length && <p>No invitations match these filters.</p>}
-          <div role="list" aria-label="Invitations">
-            {shown.items.map((row) => (
-              <Card
-                key={`${row.kind}:${row.invitation_id}`}
-                role="listitem"
-                size="small"
-                style={{ marginBottom: 10 }}
-              >
+          <Collection
+            items={shown.items}
+            itemId={(row) => `${row.kind}:${row.invitation_id}`}
+            itemTitle={(row) =>
+              projectTitle?.(row.project_id) || "Project invitation"
+            }
+            pins={[]}
+            view={collectionView}
+            otherTitle="Invitations"
+            renderItem={(row) => (
+              <Card size="small" style={{ marginBottom: 10 }}>
                 <InvitationHistoryItem
                   row={row}
                   direction={view}
@@ -302,8 +313,8 @@ export function InvitationHistory({
                   projectTitle={projectTitle?.(row.project_id)}
                 />
               </Card>
-            ))}
-          </div>
+            )}
+          />
           {shown.next && (
             <Button disabled={loading} onClick={() => void load(shown.next)}>
               Load more invitations
@@ -330,129 +341,167 @@ function InvitationHistoryItem({
   onOpen?: () => void;
   projectTitle?: string;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const person =
+    direction === "received"
+      ? `From ${row.sender_label || "a collaborator"}`
+      : `To ${row.recipient_label || (row.recipient_account_id ? "a collaborator" : "email contact")}`;
   return (
     <>
       <Space wrap>
-        <strong>
-          {row.kind === "access"
-            ? "Project access invitation"
-            : "Invitation to work together"}
+        <strong style={{ overflowWrap: "anywhere" }}>
+          {row.kind === "collaboration" && row.target?.label
+            ? row.target.label
+            : projectTitle || "Project invitation"}
         </strong>
         <Tag>{row.status === "canceled" ? "Revoked" : row.status}</Tag>
       </Space>
-      <p>
-        {direction === "received"
-          ? `From ${row.sender_label || `account ${row.sender_account_id}`}`
-          : `To ${row.recipient_label || (row.recipient_account_id ? `account ${row.recipient_account_id}` : "email contact")}`}
-      </p>
-      <p>Project: {projectTitle || row.project_id}</p>
-      {row.kind === "collaboration" && row.target?.label && (
-        <p>Work together on: {row.target.label}</p>
-      )}
-      {row.kind === "access" && (
-        <p>
-          Offered role: {row.role}. This is project access, not access only to a
-          linked item.
-        </p>
-      )}
+      <Typography.Paragraph type="secondary" style={{ margin: "4px 0" }}>
+        {person} ·{" "}
+        {row.kind === "access" ? `${row.role} access` : "Work together"} ·{" "}
+        {new Date(row.created_at).toLocaleDateString()}
+      </Typography.Paragraph>
       {row.message && (
-        <p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+        <Typography.Paragraph
+          ellipsis={{ rows: 1 }}
+          style={{ margin: "4px 0" }}
+        >
           {row.message}
-        </p>
+        </Typography.Paragraph>
       )}
-      <p>Created {new Date(row.created_at).toLocaleString()}</p>
-      {row.kind === "access" && row.invite_source === "email" && (
-        <p>
-          {row.last_sent_at
-            ? `Email submitted ${new Date(row.last_sent_at).toLocaleString()}.`
-            : "No email delivery has been recorded. Copy the invitation link to deliver it yourself."}
-        </p>
-      )}
-      {row.kind === "access" && row.accepted_account_id && (
-        <p>
-          Accepted by account {row.accepted_account_id}. An accepted email link
-          alone does not verify the contact's identity.
-        </p>
-      )}
-      {row.kind === "collaboration" &&
-        row.delivery.map((receipt, index) => (
-          <p key={`${receipt.channel}:${index}`}>
-            {receipt.channel}: {receipt.status}
-            {receipt.reason ? ` (${receipt.reason})` : ""}.
-          </p>
-        ))}
-      <Space wrap>
-        {row.kind === "access" &&
-          row.status === "pending" &&
-          direction === "received" && (
-            <>
-              <Popconfirm
-                title={`Accept ${row.role} access to this project?`}
-                onConfirm={() => onAction("accept")}
-                okText="Accept"
-                cancelText="Cancel"
-              >
-                <Button disabled={busy} type="primary">
-                  Accept access
-                </Button>
-              </Popconfirm>
-              <Button disabled={busy} onClick={() => onAction("decline")}>
-                Decline
-              </Button>
-            </>
+      <Button
+        type="link"
+        size="small"
+        aria-expanded={expanded}
+        onClick={() => setExpanded(!expanded)}
+      >
+        {expanded ? "Hide details" : "Details and actions"}
+      </Button>
+      {expanded && (
+        <div style={{ marginTop: 8, overflowWrap: "anywhere" }}>
+          <p>Project: {projectTitle || row.project_id}</p>
+          {row.kind === "collaboration" && row.target?.label && (
+            <p>Work together on: {row.target.label}</p>
           )}
-        {row.kind === "access" &&
-          row.status === "pending" &&
-          direction === "sent" && (
-            <>
-              <Popconfirm
-                title="Revoke this pending access offer?"
-                description="Existing project access will not be removed."
-                onConfirm={() => onAction("revoke")}
-                okText="Revoke"
-                cancelText="Cancel"
-              >
-                <Button danger disabled={busy}>
-                  Revoke
-                </Button>
-              </Popconfirm>
-              {row.invite_source === "email" && (
-                <Popconfirm
-                  title="Resend this invitation email?"
-                  description="The existing invitation and its access level will stay unchanged."
-                  okText="Resend"
-                  cancelText="Cancel"
-                  onConfirm={() => onAction("resend")}
-                >
-                  <Button disabled={busy}>Resend email</Button>
-                </Popconfirm>
+          {row.kind === "access" && (
+            <p>
+              Offered role: {row.role}. This is project access, not access only
+              to a linked item.
+            </p>
+          )}
+          {row.message && (
+            <p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+              {row.message}
+            </p>
+          )}
+          <p>Created {new Date(row.created_at).toLocaleString()}</p>
+          {row.kind === "access" && row.invite_source === "email" && (
+            <p>
+              {row.last_sent_at
+                ? `Email submitted ${new Date(row.last_sent_at).toLocaleString()}.`
+                : "No email delivery has been recorded. Copy the invitation link to deliver it yourself."}
+            </p>
+          )}
+          {row.kind === "access" && row.accepted_account_id && (
+            <p>
+              Accepted by account {row.accepted_account_id}. An accepted email
+              link alone does not verify the contact's identity.
+            </p>
+          )}
+          {row.kind === "collaboration" &&
+            row.delivery.map((receipt, index) => (
+              <p key={`${receipt.channel}:${index}`}>
+                {receipt.channel}: {receipt.status}
+                {receipt.reason ? ` (${receipt.reason})` : ""}.
+              </p>
+            ))}
+          <Space wrap>
+            {row.kind === "access" &&
+              row.status === "pending" &&
+              direction === "received" && (
+                <>
+                  <Popconfirm
+                    title={`Accept ${row.role} access to this project?`}
+                    onConfirm={() => onAction("accept")}
+                    okText="Accept"
+                    cancelText="Cancel"
+                  >
+                    <Button disabled={busy} type="primary">
+                      Accept access
+                    </Button>
+                  </Popconfirm>
+                  <Button disabled={busy} onClick={() => onAction("decline")}>
+                    Decline
+                  </Button>
+                </>
               )}
-              {row.invite_source === "email" && (
-                <Button disabled={busy} onClick={() => onAction("copy")}>
-                  Copy invitation link
+            {row.kind === "access" &&
+              row.status === "pending" &&
+              direction === "sent" && (
+                <>
+                  <Popconfirm
+                    title="Revoke this pending access offer?"
+                    description="Existing project access will not be removed."
+                    onConfirm={() => onAction("revoke")}
+                    okText="Revoke"
+                    cancelText="Cancel"
+                  >
+                    <Button danger disabled={busy}>
+                      Revoke
+                    </Button>
+                  </Popconfirm>
+                  {row.invite_source === "email" && (
+                    <Popconfirm
+                      title="Resend this invitation email?"
+                      description="The existing invitation and its access level will stay unchanged."
+                      okText="Resend"
+                      cancelText="Cancel"
+                      onConfirm={() => onAction("resend")}
+                    >
+                      <Button disabled={busy}>Resend email</Button>
+                    </Popconfirm>
+                  )}
+                  {row.invite_source === "email" && (
+                    <Button disabled={busy} onClick={() => onAction("copy")}>
+                      Copy invitation link
+                    </Button>
+                  )}
+                </>
+              )}
+            {row.kind === "collaboration" &&
+              direction === "received" &&
+              row.status === "active" &&
+              !!row.notification_id &&
+              !row.notification_archived && (
+                <Button disabled={busy} onClick={() => onAction("dismiss")}>
+                  Dismiss
                 </Button>
               )}
-            </>
-          )}
-        {row.kind === "collaboration" &&
-          direction === "received" &&
-          row.status === "active" &&
-          !!row.notification_id &&
-          !row.notification_archived && (
-            <Button disabled={busy} onClick={() => onAction("dismiss")}>
-              Dismiss
-            </Button>
-          )}
-        {row.kind === "collaboration" && row.target ? (
-          <InvitationContentLink
-            target={row.target}
-            projectId={row.target.project_id}
-          />
-        ) : onOpen &&
-          (row.status === "accepted" || row.kind === "collaboration") ? (
-          <Button onClick={onOpen}>Open project</Button>
-        ) : null}
-      </Space>
+            {row.kind === "collaboration" && row.target ? (
+              <InvitationContentLink
+                target={row.target}
+                projectId={row.target.project_id}
+              />
+            ) : onOpen &&
+              (row.status === "accepted" || row.kind === "collaboration") ? (
+              <Button onClick={onOpen}>Open project</Button>
+            ) : null}
+          </Space>
+          <details style={{ marginTop: 8 }}>
+            <summary>Technical details</summary>
+            <p>
+              Sender: <code>{row.sender_account_id}</code>
+            </p>
+            <p>
+              Recipient:{" "}
+              <code>{row.recipient_account_id ?? "email contact"}</code>
+            </p>
+            <p>
+              Invitation: <code>{row.invitation_id}</code>
+            </p>
+          </details>
+        </div>
+      )}
     </>
   );
 }

@@ -301,16 +301,18 @@ export function WorkspaceToolbar({
                 )}
               </Button>
             </Popover>
-            {!compact && view !== "invites" && (
+            {!compact && (
               <CollectionViewControl
                 view={preferences.value.view}
                 onChange={preferences.setView}
                 label={
                   view === "people"
                     ? "People"
-                    : view === "projects"
-                      ? "Projects"
-                      : "Conversations"
+                    : view === "invites"
+                      ? "Invitations"
+                      : view === "projects"
+                        ? "Projects"
+                        : "Conversations"
                 }
               />
             )}

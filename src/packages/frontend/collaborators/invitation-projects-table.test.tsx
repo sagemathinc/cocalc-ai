@@ -17,6 +17,40 @@ const project: InvitationProject = {
   can_notify: false,
 };
 
+test("groups shared projects first and only warns about the intended content's project", () => {
+  render(
+    <InvitationProjectsTable
+      rows={[
+        project,
+        { ...project, project_id: "other", title: "Other research" },
+        {
+          ...project,
+          project_id: "shared",
+          title: "Shared research",
+          current_access: "collaborator",
+          can_notify: true,
+          content_access: "allowed",
+        },
+      ]}
+      knownRows={{}}
+      choices={[]}
+      disabled={false}
+      targetProjectId="project"
+      onChange={jest.fn()}
+    />,
+  );
+  expect(screen.getAllByRole("checkbox")[0]).toHaveAccessibleName(
+    "Select Shared research",
+  );
+  expect(screen.getByText("Already shared")).toBeVisible();
+  expect(
+    screen.getAllByText("Content access has not been established."),
+  ).toHaveLength(1);
+  expect(
+    screen.getByRole("region", { name: "Project choices" }),
+  ).toHaveAttribute("tabindex", "0");
+});
+
 test("a viewer is never upgraded by the default choice", () => {
   expect(
     defaultProjectChoice({
@@ -107,7 +141,11 @@ test("enforces 25 projects without dropping previous choices and allows keyboard
     screen.getByRole("checkbox", { name: "Select Project 25" }),
   ).toBeEnabled();
   await user.click(screen.getByRole("checkbox", { name: "Select Project 25" }));
-  expect(screen.getByRole("status")).toHaveTextContent("25 of 25");
+  expect(
+    screen
+      .getAllByRole("checkbox")
+      .filter((input) => (input as HTMLInputElement).checked),
+  ).toHaveLength(25);
   expect(
     screen.getByRole("checkbox", { name: "Select Project 1" }),
   ).toBeChecked();

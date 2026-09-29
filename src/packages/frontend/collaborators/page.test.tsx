@@ -361,6 +361,9 @@ test("compact tabs support arrow navigation and contextual actions", async () =>
   ).toBeVisible();
   await user.keyboard("{End}");
   expect(screen.getByRole("tab", { name: "Invites" })).toHaveFocus();
+  const invites = screen.getByRole("tabpanel", { name: "Invites" });
+  expect(invites).toHaveStyle({ flex: "1", minHeight: "0", overflowY: "auto" });
+  expect(invites).toHaveAttribute("tabindex", "0");
   await user.keyboard("{ArrowLeft}");
   expect(screen.getByRole("tab", { name: "Shared projects" })).toHaveFocus();
   await user.keyboard("{ArrowLeft}");
@@ -423,15 +426,18 @@ test("project creation remains available inside the invitation picker", async ()
     name: "Invite a person",
   });
   await user.type(
-    within(picker).getByRole("textbox", { name: "Email, name, or @username" }),
+    within(picker).getByRole("searchbox", {
+      name: "Email, name, or @username",
+    }),
     "Bob{Enter}",
   );
+  await user.click(await within(picker).findByRole("radio", { name: "Bob" }));
   await user.click(
-    await within(picker).findByRole("button", { name: "Choose Bob" }),
+    within(picker).getByRole("button", { name: "Next: Choose projects" }),
   );
   await user.click(
     within(picker).getByRole("button", {
-      name: "Create a new project together",
+      name: "New project",
     }),
   );
   expect(
@@ -451,13 +457,16 @@ test.each(["finish", "cancel"])(
       name: "Invite a person",
     });
     await user.type(
-      within(invitation).getByRole("textbox", {
+      within(invitation).getByRole("searchbox", {
         name: "Email, name, or @username",
       }),
       "Bob{Enter}",
     );
     await user.click(
-      await within(invitation).findByRole("button", { name: "Choose Bob" }),
+      await within(invitation).findByRole("radio", { name: "Bob" }),
+    );
+    await user.click(
+      within(invitation).getByRole("button", { name: "Next: Choose projects" }),
     );
     await user.type(
       within(invitation).getByRole("textbox", { name: "Invitation message" }),
@@ -465,7 +474,7 @@ test.each(["finish", "cancel"])(
     );
     await user.click(
       within(invitation).getByRole("button", {
-        name: "Create a new project together",
+        name: "New project",
       }),
     );
     const creator = await screen.findByRole("dialog", {
@@ -484,7 +493,7 @@ test.each(["finish", "cancel"])(
     });
     expect(mockAddCollaborators).not.toHaveBeenCalled();
     await user.click(
-      within(returned).getByRole("button", { name: "Continue with Bob" }),
+      within(returned).getByRole("button", { name: "Next: Choose projects" }),
     );
     expect(
       within(returned).getByRole("textbox", { name: "Invitation message" }),
@@ -532,7 +541,7 @@ test("People navigation uses shared projects, but inviting allows the first coll
   await user.click(screen.getByRole("button", { name: "Invite", exact: true }));
   await waitFor(() =>
     expect(
-      screen.getByRole("textbox", { name: "Email, name, or @username" }),
+      screen.getByRole("searchbox", { name: "Email, name, or @username" }),
     ).toBeVisible(),
   );
   expect(screen.queryByRole("table")).toBeNull();
@@ -581,7 +590,7 @@ test("inviting from a person's overview also offers projects not yet shared with
   });
   await user.click(
     within(invitation).getByRole("button", {
-      name: "Continue with Collaborator",
+      name: "Next: Choose projects",
     }),
   );
   expect(mockAddCollaborators).not.toHaveBeenCalled();

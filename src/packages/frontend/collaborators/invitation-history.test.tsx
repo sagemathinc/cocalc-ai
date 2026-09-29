@@ -55,6 +55,33 @@ beforeAll(() => {
 });
 afterAll(() => jest.restoreAllMocks());
 
+test("compact cards use shared collection views without pinning and expand with the keyboard", async () => {
+  const user = userEvent.setup();
+  render(
+    <InvitationHistory
+      api={api()}
+      collectionView="grid"
+      projectTitle={() => "Research"}
+    />,
+  );
+  const toggle = await screen.findByRole("button", {
+    name: "Details and actions",
+  });
+  expect(screen.getByText("Research")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Copy invitation link" }),
+  ).toBeNull();
+  expect(screen.queryByRole("button", { name: /Pin / })).toBeNull();
+  toggle.focus();
+  await user.keyboard("{Enter}");
+  expect(
+    screen.getByRole("button", { name: "Copy invitation link" }),
+  ).toBeVisible();
+  await user.keyboard("{Enter}");
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(toggle).toHaveFocus();
+});
+
 test("uses server totals, pages with keyboard, and keeps email delivery explicit", async () => {
   const user = userEvent.setup();
   const service = api();
@@ -65,6 +92,11 @@ test("uses server totals, pages with keyboard, and keeps email delivery explicit
     );
   render(<InvitationHistory api={service} />);
   expect(await screen.findByText(/301 matching invitations/)).toBeVisible();
+  const details = screen.getByRole("button", { name: "Details and actions" });
+  expect(details).toHaveAttribute("aria-expanded", "false");
+  details.focus();
+  await user.keyboard("{Enter}");
+  expect(details).toHaveAttribute("aria-expanded", "true");
   expect(screen.getByText(/No email delivery has been recorded/)).toBeVisible();
   const more = screen.getByRole("button", { name: "Load more invitations" });
   more.focus();
@@ -118,6 +150,9 @@ test("copy is an explicit action and does not resend invitations", async () => {
   const user = userEvent.setup();
   const service = api();
   render(<InvitationHistory api={service} />);
+  await user.click(
+    await screen.findByRole("button", { name: "Details and actions" }),
+  );
   const copy = await screen.findByRole("button", {
     name: "Copy invitation link",
   });

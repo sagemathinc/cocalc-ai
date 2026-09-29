@@ -3,7 +3,19 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { useEffect, useId, useRef, useState } from "react";
-import { Button, Checkbox, Input } from "antd";
+import {
+  Alert,
+  Avatar,
+  Button,
+  Checkbox,
+  Input,
+  Radio,
+  Space,
+  Steps,
+  Typography,
+} from "antd";
+import type { InputRef } from "antd";
+import "./invite-projects.css";
 import type {
   PeopleInvitationOperation,
   PeopleInvitationReview,
@@ -105,6 +117,8 @@ export function InviteProjects({
     "person" | "projects" | "review" | "results"
   >("person");
   const [matches, setMatches] = useState<InvitationRecipient[]>([]);
+  const [candidate, setCandidate] = useState(draft.recipient);
+  const [searchBusy, setSearchBusy] = useState(false);
   const [rows, setRows] = useState<InvitationProject[]>([]);
   const [knownRows, setKnownRows] = useState<Record<string, InvitationProject>>(
     {},
@@ -131,6 +145,11 @@ export function InviteProjects({
   const pending = useRef(false);
   const request = useRef(0);
   const heading = useRef<HTMLHeadingElement>(null);
+  const personInput = useRef<InputRef>(null);
+  const projectInput = useRef<InputRef>(null);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
   const focusedStep = useRef(step);
   const session = useRef({ draftId: uuid(), revision: 0, sendKey: uuid() });
   const initialIds = useRef(
@@ -160,9 +179,14 @@ export function InviteProjects({
     };
   }, []);
   useEffect(() => {
-    if (focusedStep.current !== step) heading.current?.focus();
+    if (focusedStep.current !== step) focusStep();
     focusedStep.current = step;
   }, [step]);
+  useEffect(() => {
+    if (step !== "person" || !draft.recipientQuery.trim()) return;
+    searchTimer.current = setTimeout(() => void searchRecipients(), 300);
+    return () => clearTimeout(searchTimer.current);
+  }, [draft.recipientQuery, step]);
   useEffect(() => {
     setExpired(false);
     if (!review) return;
@@ -182,6 +206,12 @@ export function InviteProjects({
     });
   }
 
+  function focusStep() {
+    if (step === "person") personInput.current?.focus();
+    else if (step === "projects") projectInput.current?.focus();
+    else heading.current?.focus();
+  }
+
   function edit(patch: Partial<InviteProjectsDraft>) {
     setReview(undefined);
     setDraft((previous) => ({ ...previous, ...patch }));
@@ -189,10 +219,12 @@ export function InviteProjects({
   }
 
   async function searchRecipients() {
+    clearTimeout(searchTimer.current);
     const value = draft.recipientQuery.trim();
     if (!value || pending.current) return;
     const id = ++request.current;
     setMatches([]);
+    setSearchBusy(false);
     setError("");
     setNotice("");
     // An email stays an email specification, even if an account happens to exist.
@@ -206,8 +238,7 @@ export function InviteProjects({
       );
       return;
     }
-    pending.current = true;
-    setBusy(true);
+    setSearchBusy(true);
     try {
       const result = await discovery.resolveRecipient({ query: value });
       if (!mounted.current || id !== request.current) return;
@@ -215,14 +246,13 @@ export function InviteProjects({
       setNotice(
         result.notice ??
           (result.recipients.length
-            ? "Choose the intended person. Names can match more than one account."
+            ? ""
             : "No matching people. An email address can be invited without an account."),
       );
     } catch (err) {
       if (mounted.current && id === request.current) setError(String(err));
     } finally {
-      pending.current = false;
-      if (mounted.current) setBusy(false);
+      if (mounted.current && id === request.current) setSearchBusy(false);
     }
   }
 
@@ -239,6 +269,7 @@ export function InviteProjects({
     }
     pending.current = true;
     setBusy(true);
+    setSearchBusy(false);
     setError("");
     const id = ++request.current;
     try {
@@ -338,6 +369,11 @@ export function InviteProjects({
       });
       if (!mounted.current) return;
       setReview(reviewed);
+      setDraft((previous) => ({
+        ...previous,
+        message: reviewed.draft.payload.message,
+        channels: reviewed.draft.payload.channels,
+      }));
       setStep("review");
     } catch (err) {
       if (mounted.current) setError(String(err));
@@ -440,32 +476,108 @@ export function InviteProjects({
     setStep("projects");
   }
 
+  const reviewDisabled =
+    busy ||
+    targetMissing ||
+    !draft.projects.length ||
+    (!draft.channels.email && !draft.channels.notification);
+  const back = () => {
+    setReview(undefined);
+    setNotice("");
+    setStep(step === "projects" ? "person" : "projects");
+  };
+  const recipients =
+    candidate &&
+    !matches.some((r) => recipientKey(r) === recipientKey(candidate))
+      ? [candidate, ...matches]
+      : matches;
+
   return (
     <CollaboratorsModal
       open
       title="Invite a person"
+      rootClassName="invitation-modal"
       onCancel={close}
       closable={!submissionBusy}
       keyboard={!submissionBusy}
       mask={{ closable: false }}
-      width={760}
+      width={step === "projects" ? 880 : 640}
+      styles={{ body: { maxHeight: "min(68vh, 720px)", overflowY: "auto" } }}
       afterOpenChange={(open) => {
-        const active = document.activeElement;
-        if (
-          open &&
-          (active === document.body ||
-            active?.getAttribute("role") === "dialog")
-        )
-          heading.current?.focus();
+        if (open) focusStep();
       }}
       footer={
-        <Button disabled={submissionBusy} onClick={close}>
-          Close
-        </Button>
+        <div className="invitation-footer">
+          <Button
+            disabled={submissionBusy || (busy && step !== "person")}
+            onClick={step === "person" || step === "results" ? close : back}
+          >
+            {step === "person"
+              ? "Cancel"
+              : step === "results"
+                ? "Done"
+                : "Back"}
+          </Button>
+          <div className="invitation-footer-actions">
+            {step === "projects" && (
+              <Typography.Text type="secondary" role="status">
+                {draft.projects.length} / {PEOPLE_INVITATION_LIMITS.projects}{" "}
+                selected
+              </Typography.Text>
+            )}
+            {step === "person" && (
+              <Button
+                type="primary"
+                loading={busy}
+                disabled={!candidate || busy}
+                onClick={() =>
+                  candidate && void loadProjects(candidate, { choose: true })
+                }
+              >
+                Next: Choose projects
+              </Button>
+            )}
+            {(step === "projects" || step === "review") &&
+              (!review || expired ? (
+                <Button
+                  key="review"
+                  type="primary"
+                  loading={busy}
+                  disabled={reviewDisabled}
+                  onClick={() => void prepare()}
+                >
+                  {step === "review" ? "Review again" : "Review invitation"}
+                </Button>
+              ) : (
+                <Button
+                  key="send"
+                  type="primary"
+                  disabled={busy}
+                  onClick={() => void send()}
+                >
+                  Send invitation
+                </Button>
+              ))}
+            {step === "results" && (
+              <Button
+                type="primary"
+                disabled={submissionBusy}
+                onClick={async () => {
+                  close();
+                  const { openCollaborators } = await import("./navigation");
+                  openCollaborators({ view: "invites" });
+                }}
+              >
+                View invitations
+              </Button>
+            )}
+          </div>
+        </div>
       }
     >
       <KeyboardBoundary
         boundary="collaborators-invite-projects"
+        className="invitation-workflow"
         onKeyDown={(event) => {
           if (event.key !== "Escape" || event.defaultPrevented) return;
           event.preventDefault();
@@ -473,7 +585,22 @@ export function InviteProjects({
           close();
         }}
       >
-        <h2 ref={heading} tabIndex={-1} style={{ fontSize: 18 }}>
+        <Steps
+          className="invitation-steps"
+          size="small"
+          current={["person", "projects", "review", "results"].indexOf(step)}
+          items={[
+            { title: "Person" },
+            { title: "Projects" },
+            { title: "Review" },
+          ]}
+        />
+        <Typography.Text type="secondary" className="invitation-progress">
+          {step === "results"
+            ? "Results"
+            : `Step ${["person", "projects", "review"].indexOf(step) + 1} of 3`}
+        </Typography.Text>
+        <h2 ref={heading} tabIndex={-1} className="invitation-heading">
           {step === "person"
             ? "Choose person"
             : step === "projects"
@@ -483,164 +610,220 @@ export function InviteProjects({
                 : "Invitation results"}
         </h2>
         {draft.createdProjectIds.length > 0 && (
-          <section aria-label="Created projects">
-            <p>
-              These projects were created and will remain even if you close or
-              invitations fail. No content was copied.
-            </p>
-            <ul>
-              {draft.createdProjectIds.map((id) => (
-                <li key={id}>{knownRows[id]?.title ?? id}</li>
-              ))}
-            </ul>
-          </section>
-        )}
-        {error && <p role="alert">{error}</p>}
-        <p role="status">{busy ? "Working..." : notice}</p>
-        {previousOperations.map((previous) => (
-          <InvitationResults
-            key={previous.operation_id}
-            operation={previous}
-            projects={knownRows}
+          <Alert
+            role="note"
+            type="info"
+            title="Projects created"
+            description={
+              <section aria-label="Created projects">
+                <p>
+                  These projects remain even if you cancel. No content was
+                  copied.
+                </p>
+                <ul>
+                  {draft.createdProjectIds.map((id) => (
+                    <li key={id}>{knownRows[id]?.title ?? id}</li>
+                  ))}
+                </ul>
+              </section>
+            }
           />
-        ))}
+        )}
+        {error && <Alert role="alert" type="error" title={error} />}
+        <div role="status" className="invitation-status">
+          {busy ? "Working..." : searchBusy ? "Searching..." : notice}
+        </div>
+        {previousOperations.length > 0 && (
+          <details>
+            <summary>Previous results</summary>
+            {previousOperations.map((previous) => (
+              <InvitationResults
+                key={previous.operation_id}
+                operation={previous}
+                projects={knownRows}
+              />
+            ))}
+          </details>
+        )}
         {step === "person" && (
           <>
-            <p>
-              Choose one person by email, name, or exact public @username. A
-              public username is not a personal alias.
-            </p>
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                void searchRecipients();
+            <label htmlFor={inputId}>Email, name, or @username</label>
+            <Input.Search
+              ref={personInput}
+              aria-label="Email, name, or @username"
+              id={inputId}
+              value={draft.recipientQuery}
+              maxLength={254}
+              disabled={busy}
+              autoComplete="off"
+              placeholder="Enter an email, name, or @username"
+              enterButton="Find person"
+              loading={searchBusy}
+              onSearch={() => void searchRecipients()}
+              onChange={(event) => {
+                request.current++;
+                setSearchBusy(false);
+                setMatches([]);
+                setCandidate(undefined);
+                setNotice("");
+                edit({ recipientQuery: event.target.value });
               }}
+            />
+            <details className="invitation-help">
+              <summary>Searching by username</summary>
+              Use an exact public @username, not a personal alias. Names may
+              match more than one person.
+            </details>
+            <Radio.Group
+              aria-label="Matching people"
+              value={candidate ? recipientKey(candidate) : undefined}
+              className="invitation-people"
+              disabled={busy}
+              onChange={(event) =>
+                setCandidate(
+                  recipients.find(
+                    (r) => recipientKey(r) === event.target.value,
+                  ),
+                )
+              }
             >
-              <label htmlFor={inputId}>Email, name, or @username</label>
-              <Input
-                id={inputId}
-                value={draft.recipientQuery}
-                maxLength={254}
-                disabled={busy}
-                autoComplete="off"
-                onChange={(event) => {
-                  request.current++;
-                  setMatches([]);
-                  edit({ recipientQuery: event.target.value });
-                }}
-              />
-              <Button
-                htmlType="submit"
-                disabled={busy || !draft.recipientQuery.trim()}
-              >
-                Find person
-              </Button>
-            </form>
-            {draft.recipient && (
-              <p>
-                Selected: <strong>{draft.recipient.label}</strong>{" "}
-                <Button
-                  disabled={busy}
-                  onClick={() =>
-                    void loadProjects(draft.recipient!, { choose: true })
-                  }
+              {recipients.map((recipient) => (
+                <div
+                  key={recipientKey(recipient)}
+                  className="invitation-person"
                 >
-                  Continue with {draft.recipient.label}
-                </Button>
-              </p>
-            )}
-            <ul aria-label="Matching people">
-              {matches.map((recipient) => (
-                <li key={recipientKey(recipient)}>
-                  <Button
-                    disabled={busy}
-                    onClick={() =>
-                      void loadProjects(recipient, { choose: true })
+                  <Radio
+                    value={recipientKey(recipient)}
+                    aria-label={
+                      recipient.kind === "email"
+                        ? `Invite ${recipient.email_address}`
+                        : `${recipient.label}${recipient.username ? ` (@${recipient.username})` : ""}`
                     }
                   >
-                    Choose {recipient.label}
-                    {recipient.username ? ` (@${recipient.username})` : ""}
-                  </Button>
-                  {recipient.kind === "account" && (
-                    <span> Account: {recipient.account_id}</span>
-                  )}
-                  {recipient.kind === "email" && (
-                    <span>
-                      {" "}
-                      Email invitation; account membership is unknown.
+                    <span className="invitation-person-label">
+                      <Avatar aria-hidden>
+                        {recipient.kind === "email"
+                          ? "@"
+                          : recipient.label.slice(0, 1).toUpperCase()}
+                      </Avatar>
+                      <span>
+                        <strong>
+                          {recipient.kind === "email"
+                            ? `Invite ${recipient.email_address}`
+                            : recipient.label}
+                        </strong>
+                        <Typography.Text
+                          type="secondary"
+                          className="invitation-person-subtitle"
+                        >
+                          {recipient.kind === "email"
+                            ? "Send an email invitation"
+                            : recipient.username
+                              ? `@${recipient.username}`
+                              : "CoCalc account"}
+                        </Typography.Text>
+                      </span>
                     </span>
+                  </Radio>
+                  {recipient.kind === "account" && (
+                    <details className="invitation-help">
+                      <summary>Account details</summary>
+                      <code>{recipient.account_id}</code>
+                    </details>
                   )}
-                </li>
+                </div>
               ))}
-            </ul>
+            </Radio.Group>
           </>
         )}
         {step === "projects" && (
           <>
-            <p>
-              Recipient: <strong>{draft.recipient?.label}</strong>
-            </p>
-            <Button
-              disabled={busy}
-              onClick={() => {
-                setStep("person");
-                setNotice("");
-              }}
-            >
-              Change person
-            </Button>
+            <div className="invitation-recipient">
+              <Avatar aria-hidden>
+                {draft.recipient?.label.slice(0, 1).toUpperCase()}
+              </Avatar>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                Inviting <strong>{draft.recipient?.label}</strong>
+              </span>
+              <Button
+                type="link"
+                size="small"
+                disabled={busy}
+                onClick={() => {
+                  setStep("person");
+                  setNotice("");
+                }}
+              >
+                Change person
+              </Button>
+            </div>
             {draft.target && (
-              <section aria-label="Content invitation">
-                <h3>{draft.target.label ?? draft.target.kind}</h3>
-                <p>
-                  Source project:{" "}
-                  {knownRows[draft.target.project_id]?.title ??
-                    draft.target.project_id}
-                  . Inviting to another project does not copy this content or
-                  grant access to it.
-                </p>
-                <Button
-                  disabled={busy}
-                  onClick={() => edit({ target: undefined })}
-                >
-                  Remove content context
-                </Button>
-              </section>
+              <Alert
+                role="note"
+                type="info"
+                title={`Work together on: ${draft.target.label ?? draft.target.kind}`}
+                description={
+                  <section aria-label="Content invitation">
+                    Content stays in{" "}
+                    {knownRows[draft.target.project_id]?.title ??
+                      "its source project"}
+                    . Inviting to another project does not copy it or grant
+                    access to it.
+                    <Button
+                      type="link"
+                      size="small"
+                      disabled={busy}
+                      onClick={() => edit({ target: undefined })}
+                    >
+                      Remove content context
+                    </Button>
+                  </section>
+                }
+              />
             )}
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                if (draft.recipient)
-                  void loadProjects(draft.recipient, { search: query });
-              }}
-            >
-              <label htmlFor={searchId}>Search projects</label>
-              <Input
+            <div className="invitation-toolbar">
+              <Input.Search
+                ref={projectInput}
                 id={searchId}
+                aria-label="Search projects"
+                placeholder="Search projects"
                 value={query}
                 disabled={busy}
+                enterButton="Search"
                 onChange={(event) => setQuery(event.target.value)}
+                onSearch={() =>
+                  draft.recipient &&
+                  void loadProjects(draft.recipient, { search: query })
+                }
               />
-              <Button htmlType="submit" disabled={busy}>
-                Search projects
-              </Button>
-            </form>
+              {onCreateProject && (
+                <Button
+                  disabled={
+                    busy ||
+                    draft.projects.length >= PEOPLE_INVITATION_LIMITS.projects
+                  }
+                  onClick={() =>
+                    onCreateProject(
+                      draft.projects.map(({ project_id }) => project_id),
+                      draft,
+                    )
+                  }
+                >
+                  New project
+                </Button>
+              )}
+            </div>
             <InvitationProjectsTable
               rows={rows}
               knownRows={knownRows}
               choices={draft.projects}
+              targetProjectId={draft.target?.project_id}
               disabled={busy}
               onChange={(projects) => edit({ projects })}
             />
-            <div
-              style={{
-                display: "flex",
-                gap: 8,
-                flexWrap: "wrap",
-                marginBlock: 12,
-              }}
-            >
+            <Space wrap>
               <Button
+                type="link"
                 disabled={busy}
                 onClick={() =>
                   draft.recipient && void loadProjects(draft.recipient)
@@ -659,144 +842,122 @@ export function InviteProjects({
                   Next projects
                 </Button>
               )}
-              {onCreateProject && (
-                <Button
-                  disabled={
-                    busy ||
-                    draft.projects.length >= PEOPLE_INVITATION_LIMITS.projects
-                  }
-                  onClick={() =>
-                    onCreateProject(
-                      draft.projects.map(({ project_id }) => project_id),
-                      draft,
-                    )
-                  }
-                >
-                  Create a new project together
-                </Button>
-              )}
-            </div>
+            </Space>
             {onCreateProject && (
-              <p>
-                Creation is a separate action. The new project belongs to you;
-                this person remains pending until accepting an invitation.
-                Nothing is copied.
-              </p>
+              <Typography.Paragraph
+                type="secondary"
+                className="invitation-help"
+              >
+                A new project belongs to you. The recipient joins after
+                accepting; nothing is copied.
+              </Typography.Paragraph>
             )}
           </>
         )}
+        {(step === "projects" || step === "review") && targetMissing && (
+          <Alert
+            role="alert"
+            type="warning"
+            title="The selected content stays in its source project."
+            description="Select that project or remove the content context before reviewing; another project does not grant access to this content."
+          />
+        )}
         {(step === "projects" || step === "review") && (
           <>
-            {targetMissing && (
-              <p role="alert">
-                The selected content stays in its source project. Select that
-                project or remove the content context before reviewing; another
-                project does not grant access to this content.
-              </p>
-            )}
+            {step === "review" &&
+              (review ? (
+                <InvitationReviewDetails
+                  review={review}
+                  recipientLabel={draft.recipient?.label}
+                  projects={knownRows}
+                />
+              ) : (
+                <Typography.Paragraph role="status">
+                  Your invitation changed. Review again before sending.
+                </Typography.Paragraph>
+              ))}
             <label htmlFor={messageId}>Invitation message</label>
             <Input.TextArea
               id={messageId}
               value={draft.message}
               maxLength={PEOPLE_INVITATION_LIMITS.message}
-              autoSize={{ minRows: 3, maxRows: 8 }}
+              autoSize={{ minRows: 2, maxRows: 5 }}
               disabled={busy}
+              placeholder="Add a personal note..."
               onChange={(event) => edit({ message: event.target.value })}
             />
-            <fieldset disabled={busy} style={{ marginBlock: 12 }}>
-              <legend>Delivery channels</legend>
-              <Checkbox
-                checked={draft.channels.notification}
-                onChange={(event) =>
-                  edit({
-                    channels: {
-                      ...draft.channels,
-                      notification: event.target.checked,
-                    },
-                  })
-                }
-              >
-                In-app notification
-              </Checkbox>
-              <Checkbox
-                checked={draft.channels.email}
-                onChange={(event) =>
-                  edit({
-                    channels: {
-                      ...draft.channels,
-                      email: event.target.checked,
-                    },
-                  })
-                }
-              >
-                Email
-              </Checkbox>
+            <fieldset disabled={busy} className="invitation-channels">
+              <legend>Send via</legend>
+              <Space wrap>
+                <Checkbox
+                  checked={draft.channels.notification}
+                  onChange={(event) =>
+                    edit({
+                      channels: {
+                        ...draft.channels,
+                        notification: event.target.checked,
+                      },
+                    })
+                  }
+                >
+                  In-app notification
+                </Checkbox>
+                <Checkbox
+                  checked={draft.channels.email}
+                  onChange={(event) =>
+                    edit({
+                      channels: {
+                        ...draft.channels,
+                        email: event.target.checked,
+                      },
+                    })
+                  }
+                >
+                  Email
+                </Checkbox>
+              </Space>
             </fieldset>
-            {step === "review" && (
-              <Button
-                disabled={busy}
-                onClick={() => {
-                  setReview(undefined);
-                  setStep("projects");
-                }}
-              >
-                Change projects or content
-              </Button>
-            )}
-            {review && (
-              <InvitationReviewDetails
-                review={review}
-                recipientLabel={draft.recipient?.label}
-                projects={knownRows}
+            {expired && review && (
+              <Alert
+                role="alert"
+                type="warning"
+                title="Please review again before sending."
               />
             )}
-            {expired && review && (
-              <p role="alert">Review expired. Review again before sending.</p>
-            )}
-            {!review || expired ? (
-              <Button
-                type="primary"
-                disabled={
-                  busy ||
-                  targetMissing ||
-                  !draft.projects.length ||
-                  (!draft.channels.email && !draft.channels.notification)
-                }
-                onClick={() => void prepare()}
-              >
-                Review exact invitation
-              </Button>
-            ) : (
-              <Button
-                type="primary"
-                disabled={busy}
-                onClick={() => void send()}
-              >
-                Send reviewed invitation
-              </Button>
-            )}
-            <p>
-              No invitations or notifications are sent until you choose Send
-              reviewed invitation.
-            </p>
           </>
         )}
         {step === "results" && (
           <>
             {operation && (
-              <InvitationResults operation={operation} projects={knownRows} />
+              <InvitationResults
+                operation={operation}
+                projects={knownRows}
+                recipientLabel={draft.recipient?.label}
+              />
             )}
             {(operation || unknownSend) && (
               <Button disabled={busy} onClick={() => void inspect()}>
-                Check delivery and operation status
+                Check status
               </Button>
             )}
             {unknownSend && (
-              <p>
-                Keep this recovery key: <code>{session.current.sendKey}</code>.
-                Check status before retrying. A retry uses the same reviewed
-                operation and cannot repeat successful actions.
-              </p>
+              <Alert
+                role="note"
+                type="warning"
+                title="We could not confirm the result."
+                description={
+                  <>
+                    <p>
+                      Check status before retrying. Successful actions will not
+                      be repeated.
+                    </p>
+                    <details>
+                      <summary>Recovery details</summary>
+                      <code>{session.current.sendKey}</code>
+                    </details>
+                  </>
+                }
+              />
             )}
             {unknownSend && inspected && !expired && (
               <Button disabled={busy} onClick={() => void send()}>

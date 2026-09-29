@@ -2,7 +2,7 @@
  * This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
  * License: MS-RSL - see LICENSE.md for details
  */
-import { Button, Checkbox, Input, Select } from "antd";
+import { Button, Checkbox, Input, Select, Tag, Typography } from "antd";
 import { useState } from "react";
 import { DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY } from "@cocalc/util/project-access";
 import type { ProjectViewerReadPolicy } from "@cocalc/util/project-access";
@@ -80,15 +80,23 @@ export function InvitationProjectsTable({
   knownRows,
   choices,
   disabled,
+  targetProjectId,
   onChange,
 }: {
   rows: InvitationProject[];
   knownRows: Record<string, InvitationProject>;
   choices: InvitationProjectChoice[];
   disabled: boolean;
+  targetProjectId?: string;
   onChange: (choices: InvitationProjectChoice[]) => void;
 }) {
   const atLimit = choices.length >= INVITATION_PROJECT_LIMIT;
+  const shared = (row: InvitationProject) =>
+    ["owner", "collaborator", "viewer"].includes(row.current_access);
+  const sortedRows = [
+    ...rows.filter(shared),
+    ...rows.filter((row) => !shared(row)),
+  ];
   function replace(choice: InvitationProjectChoice) {
     const existing = choices.some(
       (item) => item.project_id === choice.project_id,
@@ -104,12 +112,15 @@ export function InvitationProjectsTable({
   }
   return (
     <>
-      <p role="status">
-        {choices.length} of {INVITATION_PROJECT_LIMIT} projects selected.
-        Selections are retained when searching or changing pages.
-      </p>
-      <div style={{ overflowX: "auto" }}>
+      <div
+        className="invitation-project-scroll"
+        role="region"
+        aria-label="Project choices"
+        tabIndex={0}
+      >
         <table
+          className="invitation-project-table"
+          aria-label="Projects and this person's current access"
           style={{
             width: "100%",
             borderCollapse: "collapse",
@@ -117,16 +128,15 @@ export function InvitationProjectsTable({
             background: UI_COLORS.surface,
           }}
         >
-          <caption>Projects and this person's current access</caption>
           <thead>
             <tr>
-              <th scope="col">Select project</th>
-              <th scope="col">Access and pending invitations</th>
-              <th scope="col">Available action</th>
+              <th scope="col">Project</th>
+              <th scope="col">Current access</th>
+              <th scope="col">Invitation</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => {
+            {sortedRows.flatMap((row, index) => {
               const choice = choices.find(
                 (item) => item.project_id === row.project_id,
               );
@@ -134,7 +144,20 @@ export function InvitationProjectsTable({
               const existing =
                 row.current_access === "owner" ||
                 row.current_access === "collaborator";
-              return (
+              return [
+                ...(index === 0 || shared(row) !== shared(sortedRows[index - 1])
+                  ? [
+                      <tr
+                        key={shared(row) ? "shared-heading" : "other-heading"}
+                      >
+                        <th colSpan={3} scope="colgroup">
+                          <Typography.Text type="secondary">
+                            {shared(row) ? "Already shared" : "Other projects"}
+                          </Typography.Text>
+                        </th>
+                      </tr>,
+                    ]
+                  : []),
                 <tr
                   key={row.project_id}
                   style={{ borderTop: `1px solid ${UI_COLORS.border}` }}
@@ -164,10 +187,16 @@ export function InvitationProjectsTable({
                       {row.title}
                     </Checkbox>
                   </th>
-                  <td style={{ verticalAlign: "top", padding: 8 }}>
-                    <p>{projectAccessLabel(row)}</p>
+                  <td
+                    data-label="Current access"
+                    style={{ verticalAlign: "top", padding: 8 }}
+                  >
+                    <Tag>{projectAccessLabel(row)}</Tag>
                     {row.current_access === "viewer" && (
-                      <InvitationPolicyDetails policy={row.read_policy} />
+                      <details>
+                        <summary>File access</summary>
+                        <InvitationPolicyDetails policy={row.read_policy} />
+                      </details>
                     )}
                     {row.pending && (
                       <div>
@@ -179,26 +208,33 @@ export function InvitationProjectsTable({
                         )}
                       </div>
                     )}
-                    <p>
-                      {row.content_access === "allowed"
-                        ? "Can open the intended content with current access."
-                        : row.content_access === "denied"
-                          ? "Current access does not allow opening the intended content."
-                          : "Content access has not been established."}
-                    </p>
+                    {targetProjectId === row.project_id &&
+                      row.content_access !== "allowed" && (
+                        <p>
+                          {row.content_access === "denied"
+                            ? "Current access does not allow opening the intended content."
+                            : "Content access has not been established."}
+                        </p>
+                      )}
                     {row.unavailable_reason && <p>{row.unavailable_reason}</p>}
                   </td>
-                  <td style={{ verticalAlign: "top", padding: 8 }}>
+                  <td
+                    data-label="Invitation"
+                    style={{ verticalAlign: "top", padding: 8 }}
+                  >
                     {existing ? (
-                      "Notification only; no membership change"
+                      "Notify only"
                     ) : row.current_access === "viewer" ? (
                       <>
-                        <p>
-                          Keep current viewer access unless you explicitly offer
-                          an upgrade.
-                        </p>
+                        <span>
+                          {choice?.action === "offer_access"
+                            ? "Offer collaborator access"
+                            : "Notify only; keep viewer access"}
+                        </span>
                         {row.can_invite && (
                           <Button
+                            size="small"
+                            type="link"
                             disabled={disabled || (!choice && atLimit)}
                             onClick={() =>
                               replace({
@@ -213,18 +249,26 @@ export function InvitationProjectsTable({
                         )}
                       </>
                     ) : row.can_invite ? (
-                      "An access invitation requires acceptance."
+                      row.pending ? (
+                        "Reuse pending invitation"
+                      ) : (
+                        "Offer access"
+                      )
                     ) : (
                       "Unavailable"
                     )}
                   </td>
-                </tr>
-              );
+                </tr>,
+              ];
             })}
           </tbody>
         </table>
       </div>
       {!rows.length && <p>No matching projects in this page.</p>}
+      <Typography.Paragraph type="secondary" className="invitation-help">
+        New access requires acceptance. Selections stay selected when searching
+        or changing pages.
+      </Typography.Paragraph>
       <section aria-label="Selected project actions">
         {choices.map((choice) => {
           const row = knownRows[choice.project_id];
@@ -233,7 +277,7 @@ export function InvitationProjectsTable({
             <fieldset
               key={choice.project_id}
               disabled={disabled}
-              style={{ marginBlock: 12, minWidth: 0 }}
+              className="invitation-selection"
             >
               <legend style={{ overflowWrap: "anywhere" }}>{title}</legend>
               <p>{invitationChoiceLabel(choice)}</p>

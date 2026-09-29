@@ -125,8 +125,11 @@ test("Invites uses its own search and Invite action, not conversation controls",
   const onAction = jest.fn();
   render(<Toolbar initial="invites" onAction={onAction} />);
   expect(screen.getByRole("textbox", { name: "Search invites" })).toBeVisible();
-  expect(screen.queryByRole("button", { name: /layout/ })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Invitations layout" }),
+  ).toBeVisible();
   expect(screen.queryByRole("button", { name: "New conversation" })).toBeNull();
+  await user.tab();
   await user.tab();
   await user.tab();
   await user.tab();

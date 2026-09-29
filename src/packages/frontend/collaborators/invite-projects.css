@@ -1,0 +1,185 @@
+.invitation-workflow {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-wrap: anywhere;
+}
+.invitation-workflow p {
+  margin: 0;
+}
+.invitation-heading {
+  font-size: 18px;
+  margin: 4px 0 0;
+}
+.invitation-progress {
+  display: none;
+}
+.invitation-heading:focus:not(:focus-visible) {
+  outline: none;
+}
+.invitation-status:empty {
+  display: none;
+}
+.invitation-footer,
+.invitation-footer-actions,
+.invitation-toolbar,
+.invitation-recipient {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.invitation-footer {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.invitation-footer-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.invitation-toolbar > .ant-input-search {
+  flex: 1;
+  min-width: 0;
+}
+.invitation-recipient {
+  flex-wrap: wrap;
+}
+.invitation-people {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+.invitation-person {
+  padding: 10px 0;
+}
+.invitation-person > .ant-radio-wrapper {
+  width: 100%;
+  align-items: center;
+}
+.invitation-person-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  vertical-align: middle;
+}
+.invitation-person-subtitle {
+  display: block;
+  font-size: 12px;
+  font-weight: normal;
+}
+.invitation-help {
+  font-size: 12px;
+}
+.invitation-help summary,
+.invitation-workflow details > summary {
+  cursor: pointer;
+}
+.invitation-channels {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.invitation-channels legend {
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+.invitation-project-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.invitation-project-table th,
+.invitation-project-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 10px 8px;
+}
+.invitation-project-table th:first-child {
+  width: 40%;
+}
+.invitation-project-table .ant-checkbox-wrapper {
+  display: flex;
+  align-items: flex-start;
+}
+.invitation-project-table .ant-checkbox {
+  margin-top: 3px;
+}
+.invitation-project-table .ant-checkbox + span {
+  min-width: 0;
+  text-align: left;
+}
+.invitation-project-table p {
+  margin: 6px 0 0;
+}
+.invitation-project-scroll {
+  max-height: 340px;
+  overflow-y: auto;
+}
+.invitation-selection {
+  border: 0;
+  min-width: 0;
+  padding: 12px 0;
+  margin: 0;
+}
+.invitation-selection legend {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+.invitation-selection .ant-select {
+  margin: 8px 0;
+}
+.invitation-summary-row {
+  padding: 12px 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+}
+.invitation-summary-row > strong {
+  flex: 1;
+  min-width: 120px;
+}
+.invitation-summary-row > div {
+  width: 100%;
+}
+@media (max-width: 575px) {
+  .invitation-steps {
+    display: none;
+  }
+  .invitation-progress {
+    display: block;
+    font-size: 12px;
+  }
+  .invitation-toolbar {
+    flex-wrap: wrap;
+  }
+  .invitation-toolbar > .ant-input-search {
+    flex-basis: 100%;
+  }
+  .invitation-project-table,
+  .invitation-project-table tbody,
+  .invitation-project-table tr,
+  .invitation-project-table th,
+  .invitation-project-table td {
+    display: block;
+    width: auto !important;
+  }
+  .invitation-project-table thead {
+    display: none;
+  }
+  .invitation-project-table td {
+    padding: 4px 8px 4px 32px;
+  }
+  .invitation-project-table td::before {
+    content: attr(data-label) ": ";
+    font-weight: 600;
+  }
+  .invitation-project-table tr {
+    padding-bottom: 10px;
+  }
+  .invitation-footer-actions {
+    flex: 1;
+  }
+}

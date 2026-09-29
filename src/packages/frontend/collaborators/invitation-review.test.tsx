@@ -62,9 +62,7 @@ it("explains known warnings without hiding unknown server warnings or changing t
   expect(details).toHaveTextContent("Additional server warning");
   expect(details).not.toHaveTextContent("compatible_pending_offer");
   expect(details).not.toHaveTextContent("content_requires_collaborator");
-  expect(details).toHaveTextContent(
-    "Invite as collaborator (project read/write and runtimes)",
-  );
+  expect(details).toHaveTextContent("Collaborator access");
   expect(within(details).queryByRole("button")).toBeNull();
 });
 
