@@ -3,6 +3,7 @@ import {
   scanDispatchPageSql,
 } from "@cocalc/database/postgres/collaborators/collaborators-scan";
 import { MultibayAcceptance } from "./acceptance/harness";
+import { randomUUID } from "node:crypto";
 const acceptance =
   process.env.COCALC_COLLABORATORS_ACCEPTANCE === "1"
     ? describe
@@ -15,6 +16,61 @@ acceptance("scan blocked backlog query cost", () => {
     await env.worker("owner").call("installScan");
   }, 240000);
   afterAll(async () => await env?.close(), 60000);
+  test("real PostgreSQL serializes admission and lease races", async () => {
+    const request = {
+      project_id: env.project,
+      account_id: env.accounts[0],
+      request_id: randomUUID(),
+      mode: "reconcile",
+    };
+    const call = (operation: string, value: object) =>
+      env.worker("owner").call("scanRace", { operation, request: value });
+    const retries = await Promise.all(
+      Array.from({ length: 12 }, () => call("admit", request)),
+    );
+    expect(
+      retries.every(
+        (result) => JSON.stringify(result) === JSON.stringify(retries[0]),
+      ),
+    ).toBe(true);
+    expect(retries[0].admission).toBe("accepted");
+    const distinct = await Promise.all(
+      Array.from({ length: 12 }, () =>
+        call("admit", { ...request, request_id: randomUUID() }),
+      ),
+    );
+    expect(
+      distinct.filter((result) => result.admission === "coalesced"),
+    ).toHaveLength(1);
+    expect(
+      distinct.filter((result) => result.admission === "throttled"),
+    ).toHaveLength(11);
+    const job = { ...request, job_id: retries[0].job_id };
+    await call("start", job);
+    const claims = await Promise.all(
+      Array.from({ length: 12 }, () => call("claim", job)),
+    );
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    const first = claims.find(Boolean);
+    await env.sql(
+      "owner",
+      "UPDATE collaboration_scan_jobs SET dispatch_until=clock_timestamp()-interval '1 second' WHERE project_id=$1",
+      [env.project],
+    );
+    const next = await call("claim", job);
+    expect(next).not.toBeNull();
+    expect(next).not.toBe(first);
+    await call("release", { ...job, token: first });
+    expect(await call("claim", job)).toBeNull();
+    for (const table of [
+      "collaboration_scan_jobs",
+      "collaboration_scan_receipts",
+      "collaboration_scan_budget",
+    ])
+      await env.sql("owner", `DELETE FROM ${table} WHERE project_id=$1`, [
+        env.project,
+      ]);
+  }, 120000);
   test("measures 10000 blocked active jobs", async () => {
     await env.sql(
       "owner",

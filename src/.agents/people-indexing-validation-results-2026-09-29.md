@@ -822,3 +822,18 @@ integration tests, the PostgreSQL case, and the server build pass. New coverage
 proves the cursor reaches an eligible job beyond a blocked first page and wraps.
 Large receipt populations and total time to revisit a heavily blocked queue
 still require measurement and lifecycle cleanup; automatic scheduling stays off.
+
+### Real PostgreSQL Admission and Lease Races
+
+The isolated PostgreSQL harness now runs 12 concurrent calls for each of three
+cases: identical admission retries, distinct requests sharing the project burst
+budget, and dispatch lease claims. Identical retries returned one exact receipt;
+only one additional distinct request was admitted/coalesced after the first
+token was spent; exactly one lease claim won. Forced lease expiry permitted a
+new token, and releasing the stale token did not clear it. Calls use separate
+pool transactions in the owner fixture process, not separate hub processes.
+
+Both PostgreSQL acceptance cases and the server build pass. The blocked queue
+eligibility regression remained below its ceiling (139 buffer hits, 0.252 ms in
+this run). This adds real database contention evidence but does not establish
+multi-hub failure recovery, transport correctness, or the broader capacity gates.

@@ -831,6 +831,20 @@ async function command(name, args = {}) {
       await scan.syncCollaborationScanSchema(pool);
       return true;
     }
+    case "scanRace": {
+      if (config.role !== "owner") throw Error("owner fixture required");
+      const scan = require("@cocalc/database/postgres/collaborators/collaborators-scan");
+      const authority = { owning_bay_id: config.bays[0] };
+      const operations = {
+        admit: scan.admitCollaborationScan,
+        start: scan.startCollaborationScan,
+        claim: scan.claimCollaborationScanDispatch,
+        release: scan.releaseCollaborationScanDispatch,
+      };
+      if (!operations[args.operation])
+        throw Error("unknown scan fixture operation");
+      return await operations[args.operation](args.request, authority);
+    }
     case "demand": {
       const demand = require("@cocalc/database/postgres/collaborators/collaborators-demand");
       if (args.operation === "install") {
