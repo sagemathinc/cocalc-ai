@@ -1982,3 +1982,28 @@ maintenance; this case validates their integrated lifecycle rather than isolatin
 which path delivered a particular hint. No production flags changed. Shared
 transport/database restart, recipient-page cursor recovery, rehome/restore,
 source-write integration and scale/soak gates remain open.
+
+### Explicit Discovery Also Stops Legacy Inventory Polling
+
+Inspection found that mediated filesystem writes already persist write-ahead
+source intent, but the host's legacy discovery callback still repeatedly fetched
+owner source pages and dirtied retained journal sources even when explicit census
+scheduling was selected. `COCALC_PEOPLE_CENSUS_EXPLICIT_PROTOTYPE=1` now selects
+both behaviors consistently for the service lifetime: no inventory-driven census
+admission and no legacy source-inventory polling. Default behavior is unchanged.
+Dirty journal entries, interrupted writes, delivery retries and explicitly
+requested census work continue through their existing processing paths.
+
+Host/reference typecheck, 20 host/census tests and 33 backend service/filesystem
+tests pass. The new host test verifies no owner RPC, retained-inventory lookup or
+filesystem open from explicit discovery. A service test reopens durable
+interrupted-write intent, processes it without inventory, verifies no further
+reads/sends across 20 clean intervals, then coalesces two new dirty signals into
+one read. Existing census tests cover explicit admission separately.
+
+This is still an opt-in prototype, not a complete cutover: arbitrary terminal
+writes need validated fallback observation or explicit reconciliation, and a new
+or restored journal needs explicit bootstrap/rebuild. Do not enable broadly until
+the activation/bootstrap, missed-signal and lifecycle gates are demonstrated.
+No trustworthy no-change filesystem token has been established, and none is
+assumed by this change. No deployment flags were changed.

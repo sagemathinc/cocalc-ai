@@ -103,7 +103,10 @@ const source = {
   project_id: "11111111-1111-4111-8111-111111111111",
   chat_path: "/home/user/a.chat",
 };
+const explicitFlag = "COCALC_PEOPLE_CENSUS_EXPLICIT_PROTOTYPE";
+const previousExplicit = process.env[explicitFlag];
 beforeEach(() => {
+  delete process.env[explicitFlag];
   jest.clearAllMocks();
   (getProject as jest.Mock).mockReturnValue({
     local_only: false,
@@ -118,6 +121,8 @@ beforeEach(() => {
 });
 afterEach(async () => {
   await stopCollaborators();
+  if (previousExplicit === undefined) delete process.env[explicitFlag];
+  else process.env[explicitFlag] = previousExplicit;
 });
 
 test("metadata reads work on stopped projects through a lifecycle-locked sandbox", async () => {
@@ -294,6 +299,19 @@ test("bounded discovery follows owner room locators without creating a default s
   expect(callHub).toHaveBeenLastCalledWith(
     expect.objectContaining({ name: "artifactCatalog.sourcePage" }),
   );
+  expect(getFilesystem).not.toHaveBeenCalled();
+});
+test("explicit discovery never polls owner or retained inventory", async () => {
+  process.env[explicitFlag] = "1";
+  const getFilesystem = jest.fn();
+  const runtime = startCollaborators(getFilesystem);
+  const retained = jest.spyOn(runtime.journal, "sources");
+  // Scheduling is fixed for this service lifetime, like the census producer.
+  delete process.env[explicitFlag];
+  for (let pass = 0; pass < 20; pass++)
+    expect(await options.discover()).toEqual([]);
+  expect(callHub).not.toHaveBeenCalled();
+  expect(retained).not.toHaveBeenCalled();
   expect(getFilesystem).not.toHaveBeenCalled();
 });
 test("activity checkpoints and relocation use host-bound owner APIs, preserving epoch and operation fencing", async () => {

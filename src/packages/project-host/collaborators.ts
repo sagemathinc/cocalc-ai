@@ -83,6 +83,8 @@ export function startCollaborators(
   filesystem = getFilesystem;
   const directory = join(data, "collaborators");
   mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const explicitDiscovery =
+    process.env.COCALC_PEOPLE_CENSUS_EXPLICIT_PROTOTYPE === "1";
   let afterProject = "",
     after: string | undefined,
     currentProject: string | undefined;
@@ -111,10 +113,7 @@ export function startCollaborators(
   };
   const census = createHostedCollaborationCensus({
     filename: join(directory, "census.sqlite"),
-    scheduling:
-      process.env.COCALC_PEOPLE_CENSUS_EXPLICIT_PROTOTYPE === "1"
-        ? "explicit"
-        : "inventory",
+    scheduling: explicitDiscovery ? "explicit" : "inventory",
     getFilesystem,
     enabled: isEnabled,
     authorize: async (project_id) => {
@@ -245,6 +244,9 @@ export function startCollaborators(
           }
         }),
       discover: async (): Promise<CollaborationSource[]> => {
+        // Explicit reconciliation and mediated writes own dirty admission in
+        // this prototype. Inventory is not evidence that a source changed.
+        if (explicitDiscovery) return [];
         if (Date.now() < nextRoundAt) return [];
         if (localRound) {
           const page = service!.journal.sources(localAfter);

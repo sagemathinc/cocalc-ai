@@ -40,6 +40,33 @@ test("service process lock rejects a concurrent worker", () => {
   setup();
   expect(() => setup()).toThrow();
 });
+test("durable writes are processed without inventory and clean sources stay idle", async () => {
+  let now = 0;
+  const first = setup({ now: () => now });
+  first.service.journal.beginWrite(source);
+  // Model process loss after durable admission but before finishWrite.
+  await first.service.close();
+  instances = [];
+  const { service, opts } = setup({ now: () => now });
+  await service.runOnce();
+  expect(opts.read).toHaveBeenCalledTimes(1);
+  expect(opts.send).toHaveBeenCalledTimes(1);
+  expect(service.journal.scans()).toEqual([]);
+  for (let pass = 0; pass < 20; pass++) {
+    now += 30_000;
+    await service.runOnce();
+  }
+  expect(opts.discover).toHaveBeenCalledTimes(21);
+  expect(opts.read).toHaveBeenCalledTimes(1);
+  expect(opts.send).toHaveBeenCalledTimes(1);
+  service.journal.touch(source);
+  service.journal.touch(source);
+  now += 2000;
+  await service.runOnce();
+  expect(opts.read).toHaveBeenCalledTimes(2);
+  expect(service.journal.scans()).toEqual([]);
+  expect(opts.onError).not.toHaveBeenCalled();
+});
 test("registration and ingest retry stable payloads after dropped acknowledgments", async () => {
   let now = 0;
   const { service, opts } = setup({ now: () => now });
