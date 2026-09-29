@@ -169,6 +169,23 @@ test("explicit requests recheck disabled, owner denial, missing volume, and repl
   expect(options.getFilesystem).not.toHaveBeenCalled();
 });
 
+test("explicit reconciliation reports changed progress rather than periodic heartbeats", async () => {
+  let now = 0;
+  const { options } = setup(() => now, "explicit");
+  await census!.requestReconciliation({ project_id, run_id: randomUUID() });
+  await census!.producer.step(journal);
+  await census!.producer.report!(journal);
+  expect(options.report).toHaveBeenCalledTimes(1);
+  now = 86400000;
+  await census!.producer.step(journal);
+  await census!.producer.report!(journal);
+  expect(options.report).toHaveBeenCalledTimes(1);
+  expect(options.getFilesystem).toHaveBeenCalledTimes(1);
+  journal.touch({ project_id, chat_path: "/home/user/new.chat" });
+  await census!.producer.report!(journal);
+  expect(options.report).toHaveBeenCalledTimes(2);
+});
+
 test("explicit status is authorized, inert, and distinguishes discovery from ingestion", async () => {
   const { options } = setup(() => 0, "explicit");
   const request = { project_id, run_id: randomUUID() };

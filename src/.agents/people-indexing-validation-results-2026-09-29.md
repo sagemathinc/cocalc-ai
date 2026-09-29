@@ -2029,3 +2029,24 @@ runs, while the owner marks reports unavailable after 30 minutes. Suppressing
 heartbeats alone would change visible freshness semantics. A demand-aware status
 contract and bounded scheduling are still required before claiming dormant
 projects have no recurring report work; this change does not remove that work.
+
+### Change-Only Telemetry Prototype
+
+Explicit host discovery now opts into change-only census reporting. Once a report
+is acknowledged, identical progress does not allocate another sequence, write a
+report checkpoint or call the owner. Changed progress retains the existing
+30-second send bound. Unacknowledged reports bypass suppression and retry their
+exact durable payload before newer progress, including after reopening the store.
+Legacy inventory mode and Lite keep their heartbeat behavior.
+
+The owner's existing 30-minute stale-status rule is deliberately unchanged. Thus
+a quiet prototype project can show unavailable/stale discovery while retaining
+its last report; silence is not evidence of an unchanged filesystem. This is not
+the final demand-aware freshness UX and remains a broad-enablement gate. The
+bounded reporter still visits local project metadata and persists its traversal
+cursor; this change removes redundant remote reports, not all cold local work.
+
+Host/reference typecheck, 10 backend reporting/integration tests and 21 host/census
+tests pass. New cases cover seven simulated quiet days and store reopen without
+report writes/RPCs, changed progress, lost-ACK ordering and explicit host wiring.
+No deployment flags changed and no load/capacity claim follows from these tests.

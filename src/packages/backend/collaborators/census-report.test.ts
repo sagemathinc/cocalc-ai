@@ -70,6 +70,74 @@ test("lost ACK survives restart with exact original report despite newer work", 
     report: { coverage: "indexing", source_pending: 1, sequence: 2 },
   });
 });
+
+test("change-only reports remain quiet across restart until durable progress changes", async () => {
+  let now = 0;
+  const send = jest.fn(async (_write) => {});
+  const current = jest.fn(async () => ({ run_id: null }));
+  const options = {
+    send,
+    current,
+    now: () => now,
+    reporting: "changes" as const,
+  };
+  await censusReporter({ ...options, store })(journal);
+  const checkpoint = store.reportCheckpoint(project_id);
+  store.close();
+  store = new CollaborationCensusStore(join(directory, "census.sqlite"));
+  const persist = jest.spyOn(store, "setReportCheckpoint");
+  const report = censusReporter({ ...options, store });
+  for (let day = 1; day <= 7; day++) {
+    now = day * 86400000;
+    await report(journal);
+  }
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(current).toHaveBeenCalledTimes(1);
+  expect(persist).not.toHaveBeenCalled();
+  expect(store.reportCheckpoint(project_id)).toBe(checkpoint);
+  journal.touch({ project_id, chat_path: "/home/user/later.chat" });
+  await report(journal);
+  expect(send).toHaveBeenCalledTimes(2);
+  expect(send.mock.calls[1][0].report).toMatchObject({
+    sequence: 2,
+    source_pending: 1,
+    coverage: "indexing",
+  });
+});
+
+test("change-only mode retries an uncertain report exactly before publishing newer state", async () => {
+  let now = 0;
+  const send = jest.fn(async (_write) => {});
+  send.mockRejectedValueOnce(Error("lost ACK"));
+  const options = {
+    send,
+    current: async () => ({ run_id: null }),
+    now: () => now,
+    reporting: "changes" as const,
+  };
+  await expect(censusReporter({ ...options, store })(journal)).rejects.toThrow(
+    "lost ACK",
+  );
+  const original = send.mock.calls[0][0];
+  store.close();
+  store = new CollaborationCensusStore(join(directory, "census.sqlite"));
+  journal.touch({ project_id, chat_path: "/home/user/new.chat" });
+  const report = censusReporter({ ...options, store });
+  await report(journal);
+  expect(send).toHaveBeenCalledTimes(1);
+  now = 30_000;
+  await report(journal);
+  expect(send.mock.calls[1][0]).toEqual(original);
+  now = 60_000;
+  await report(journal);
+  expect(send.mock.calls[2][0].report).toMatchObject({
+    sequence: 2,
+    source_pending: 1,
+  });
+  now = 90_000;
+  await report(journal);
+  expect(send).toHaveBeenCalledTimes(3);
+});
 test("registration and extraction failures cannot be called a complete census", async () => {
   journal.touch({ project_id, chat_path: "/home/user/missing.chat" });
   journal.defer(journal.registrations()[0], 0);

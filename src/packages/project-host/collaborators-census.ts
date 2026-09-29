@@ -91,6 +91,7 @@ export function createHostedCollaborationCensus(options: {
       send: options.report,
       now,
       enabled: options.enabled,
+      reporting: options.scheduling === "explicit" ? "changes" : "heartbeat",
     }),
     validate,
     prepare: async () => {

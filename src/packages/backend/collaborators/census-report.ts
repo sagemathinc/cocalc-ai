@@ -21,6 +21,8 @@ export function censusReporter(options: {
   now?: () => number;
   batchSize?: number;
   budgetMs?: number;
+  /** Explicit-discovery prototype: silence is not proof of current coverage. */
+  reporting?: "heartbeat" | "changes";
   enabled?(): Promise<boolean> | boolean;
 }) {
   const now = options.now ?? Date.now;
@@ -69,6 +71,15 @@ export function censusReporter(options: {
         errors: status.errors,
         ...progress,
       });
+      if (
+        options.reporting === "changes" &&
+        checkpoint &&
+        (Object.keys(report) as (keyof typeof report)[]).every(
+          (key) =>
+            key === "sequence" || report[key] === checkpoint!.write.report[key],
+        )
+      )
+        return;
       checkpoint = {
         write: { project_id, expected_run_id, report },
         acknowledged: false,
