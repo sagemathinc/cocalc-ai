@@ -36,7 +36,15 @@ export async function runCollaborationScanPass() {
     const authority = { owning_bay_id };
     // Give cold queued work a bounded opportunity before slow host RPCs.
     const cleanupDeadline = Date.now() + 5_000;
-    const stale = await listCollaborationScanRetirementCandidates(authority);
+    let stale: Array<{ project_id: string; job_id: string }> = [];
+    try {
+      stale = await listCollaborationScanRetirementCandidates(authority);
+    } catch {
+      // Cleanup has an independent cursor and must not suppress dispatch when
+      // that cursor is contended or its bounded selection times out.
+      result.retirement_errors++;
+      logger.debug("scan retirement selection deferred");
+    }
     for (const job of stale.slice(0, 20)) {
       if (
         Date.now() >= cleanupDeadline ||

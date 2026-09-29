@@ -2,6 +2,26 @@
 
 Date: 2026-09-29. This is an initial gate report, not a completed scaling rollout.
 
+## Current Completion Audit
+
+Recent Scan store/worker checks do not establish completion of the full design.
+The seven implementation gates remain distinct:
+
+| Plan gate | Evidence and remaining work |
+| --- | --- |
+| Baseline/contracts | Isolated baseline, metrics and authority work exist. Full workload cost/freshness curves remain unproven. |
+| Filesystem proof/reuse | The raw btrfs generation proof failed. No safe generation-equality shortcut is enabled; validated cold-scan avoidance remains unresolved. |
+| Vertical prototype | Owner/home and Scan components have focused integration tests, but the complete source-change, active-view, sleep, offline-event, return sequence with all failure cases is not proven. |
+| Demand/event decoupling | Demand scheduling and offline-event work exist behind prototype gates. Owner revision interests and shared per-home-bay delta fetching still need implementation/validation. The consumer cap currently counts grace rows as well as live consumers, unlike the plan's stated live-consumer limit. |
+| Bounded Scan service | Internal admission, host dispatch, receipt retention and queued cleanup are tested. Public principal binding, reviewed agent scope, host/bay/global budgets, status throttling, complete watermarks and CLI/UI controls are not established. |
+| Recovery/lifecycle | Rehome guards remain necessary. Full canonical rebuild, transfer/rollback, restore and retention/deletion coverage are not proven. |
+| Scale/canary | Query fixtures are not DAU traces. The 10k/100k workloads, burst/fanout matrix, 24-hour soak, six-month churn simulation, browser matrix and explicit enablement decision remain outstanding. |
+
+The next implementation frontier should address selective revision delivery and
+the complete vertical path, not treat further Scan cleanup tests as a substitute
+for those contracts. Keep default-off behavior and portability guards until the
+corresponding gates actually pass.
+
 ## Implemented
 
 - Added Prometheus counters for memberships enumerated, projection claims,
@@ -1017,3 +1037,11 @@ retires that same job. All six acceptance cases, 22 store tests and the server
 build pass. Settings are local to these maintenance transactions, not connection
 defaults. Pool acquisition and cumulative multi-statement transaction duration
 are not bounded by these settings; sustained contention still needs validation.
+
+### Cleanup Selection Failure Isolation
+
+A failed cleanup-page selection now increments the retirement error count and
+leaves dispatch eligible within the remaining pass deadline. It does not report
+successful cleanup, recreate job identities or drop retry state. Server build
+and twelve worker/unit-store tests pass, including cleanup selection timeout
+followed by successful dispatch and a subsequent normal pass.

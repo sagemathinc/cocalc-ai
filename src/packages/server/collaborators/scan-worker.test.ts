@@ -90,6 +90,18 @@ test("retirement is bounded and a fenced job does not stop its peers", async () 
   });
   expect(retireExpiredQueuedCollaborationScan).toHaveBeenCalledTimes(20);
 });
+test("cleanup selection failure does not suppress independent dispatch", async () => {
+  (
+    listCollaborationScanRetirementCandidates as jest.Mock
+  ).mockRejectedValueOnce(Error("lock timeout"));
+  expect(await runCollaborationScanPass()).toMatchObject({
+    retirement_errors: 1,
+    attempted: 1,
+    pending: 1,
+  });
+  expect(retireExpiredQueuedCollaborationScan).not.toHaveBeenCalled();
+  expect((await runCollaborationScanPass()).retirement_errors).toBe(0);
+});
 test("overlapping pass skips work and guard is released after selection failure", async () => {
   let finish!: (value: unknown) => void;
   (listCollaborationScanDispatchCandidates as jest.Mock).mockImplementationOnce(
