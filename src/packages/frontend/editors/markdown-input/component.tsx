@@ -81,6 +81,7 @@ export const FOCUSED_STYLE: CSSProperties = {
 
 const PADDING_TOP = 6;
 const MIN_INPUT_HEIGHT = IS_MOBILE ? 44 : 38;
+const MIN_EXPLICIT_INPUT_HEIGHT = 24;
 const MODE_SWITCH_OVERLAY_HEIGHT = 22;
 const INSTRUCTIONS_HEIGHT = 24;
 const AUTO_GROW_SHRINK_DELAY_MS = 120;
@@ -310,7 +311,8 @@ export function MarkdownInput(props: Props) {
       Number.isFinite(autoGrowMinHeight) &&
       autoGrowMinHeight > 0
     ) {
-      return Math.max(MIN_INPUT_HEIGHT, Math.round(autoGrowMinHeight));
+      // An explicit floor wins (e.g. the one-line chat composer).
+      return Math.max(MIN_EXPLICIT_INPUT_HEIGHT, Math.round(autoGrowMinHeight));
     }
     if (
       explicitEditorHeight != null &&

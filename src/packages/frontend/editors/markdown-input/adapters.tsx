@@ -280,12 +280,12 @@ export function SlateRichTextAdapter({
   autoGrowMaxHeight,
   unboundedAutoGrow,
 }: SlateRichTextAdapterProps) {
-  const minHeight = `${Math.max(
-    MIN_INPUT_HEIGHT,
+  // An explicit autoGrow floor wins (e.g. the one-line chat composer).
+  const minHeight = `${
     autoGrow && autoGrowMinHeight != null && Number.isFinite(autoGrowMinHeight)
-      ? Math.round(autoGrowMinHeight)
-      : 0,
-  )}px`;
+      ? Math.max(24, Math.round(autoGrowMinHeight))
+      : MIN_INPUT_HEIGHT
+  }px`;
   const hasFixedHeight = height != null && height !== "auto";
   const maxHeight = hasFixedHeight
     ? height
@@ -339,6 +339,9 @@ export function SlateRichTextAdapter({
         }}
         minimal={minimal}
         height={height}
+        autoMinHeight={
+          autoGrow && autoGrowMinHeight != null ? minHeight : undefined
+        }
         editBarStyle={{
           paddingRight: "127px",
           ...editBarStyle,

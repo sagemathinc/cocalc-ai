@@ -154,7 +154,7 @@ describe("ChatRoomComposer resize handle", () => {
     expect(composer.style.maxWidth).toBe("1120px");
     expect(lastChatInputProps.height).toBeUndefined();
     expect(lastChatInputProps.autoGrow).toBe(true);
-    expect(lastChatInputProps.autoGrowMinHeight).toBe(40);
+    expect(lastChatInputProps.autoGrowMinHeight).toBe(32);
     // 40% of jsdom's 768px viewport.
     expect(lastChatInputProps.autoGrowMaxHeight).toBe(307);
     expect(lastChatInputProps.compactModeSwitch).toBe(true);
@@ -172,7 +172,7 @@ describe("ChatRoomComposer resize handle", () => {
     );
     expect(lastChatInputProps.height).toBeUndefined();
     expect(lastChatInputProps.autoGrow).toBe(true);
-    expect(lastChatInputProps.autoGrowMinHeight).toBe(40);
+    expect(lastChatInputProps.autoGrowMinHeight).toBe(32);
   });
 
   it("centers an automatically sized Agents composer", () => {
@@ -559,9 +559,9 @@ describe("ChatRoomComposer resize handle", () => {
     expect(handle).toHaveAttribute("aria-valuetext", "At least 70 pixels");
     // Down to about one line, not below.
     await user.keyboard("{ArrowDown}{ArrowDown}");
-    expect(lastChatInputProps.autoGrowMinHeight).toBe(40);
+    expect(lastChatInputProps.autoGrowMinHeight).toBe(32);
     await user.keyboard("{ArrowUp}{ArrowUp}{Home}");
-    expect(lastChatInputProps.autoGrowMinHeight).toBe(40);
+    expect(lastChatInputProps.autoGrowMinHeight).toBe(32);
     expect(handle).toHaveAttribute("aria-valuetext", "Fits the text");
     expect(handle).toHaveFocus();
 
@@ -573,7 +573,7 @@ describe("ChatRoomComposer resize handle", () => {
         <ChatRoomComposer {...props} composerSession={2} />
       </ChatEmbeddingOptionsProvider>,
     );
-    expect(lastChatInputProps.autoGrowMinHeight).toBe(40);
+    expect(lastChatInputProps.autoGrowMinHeight).toBe(32);
   });
 
   it("never lets the handle be dragged out of reach", async () => {

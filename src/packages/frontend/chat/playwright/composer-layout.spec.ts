@@ -367,3 +367,24 @@ test.describe("on a phone", () => {
     );
   });
 });
+
+for (const editorMode of ["editor", "markdown"] as const) {
+  test(`an empty composer (${editorMode}) is one compact line`, async ({
+    page,
+  }) => {
+    await page.goto(`/?mode=composer-settings&editorMode=${editorMode}`);
+    const box = page.getByTestId("chat-composer-box");
+    // One line of text plus the action row; the resize grip is an overlay
+    // that takes no room of its own.
+    expect((await box.boundingBox())!.height).toBeLessThanOrEqual(82);
+    expect(
+      (await page.getByTestId("chat-composer-input").boundingBox())!.height,
+    ).toBeLessThanOrEqual(40);
+    const handle = page.getByRole("separator", { name: "Resize composer" });
+    const grip = handle.locator(".chat-composer-resize-grip");
+    await page.mouse.move(0, 0);
+    await expect(grip).toHaveCSS("opacity", "0");
+    await box.hover();
+    await expect(grip).toHaveCSS("opacity", "1");
+  });
+}

@@ -32,6 +32,7 @@ import { getCodexPaymentSourceOptions } from "./use-codex-payment-source";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { useChatVisualViewport } from "./use-chat-viewport";
+import "./composer.css";
 import { DictateButton } from "./audio/dictate-button";
 import { AgentMentionContext } from "@cocalc/frontend/agents/mention-context";
 import { useAgentMentions } from "@cocalc/frontend/agents/use-agent-mentions";
@@ -171,8 +172,8 @@ export function ChatRoomComposer({
   // for the conversation above the composer.
   const DRAG_MAX_VH = 0.6;
   const DRAG_KEEP_VISIBLE_PX = 240;
-  // About one line of text.
-  const MIN_DRAG_HEIGHT = 40;
+  // About one line of text (a little taller on touch screens).
+  const MIN_DRAG_HEIGHT = mobile || IS_MOBILE ? 38 : 32;
   const stripHtml = (value: string): string =>
     value.replace(/<[^>]*>/g, "").trim();
 
@@ -677,7 +678,8 @@ export function ChatRoomComposer({
     flex: fullscreenZen ? "1 1 auto" : "0 1 auto",
     minHeight: 0,
     overflow: "hidden",
-    padding: "6px 10px",
+    position: "relative",
+    padding: "4px 8px",
     background: UI_COLORS.surface,
     border: `1px solid ${isInputFocused ? `color-mix(in srgb, ${UI_COLORS.focus} 35%, ${UI_COLORS.border})` : UI_COLORS.border}`,
     borderRadius: 16,
@@ -706,7 +708,11 @@ export function ChatRoomComposer({
             />
           </div>
         )}
-        <div data-testid="chat-composer-box" style={composerBoxStyle}>
+        <div
+          className="chat-composer-box"
+          data-testid="chat-composer-box"
+          style={composerBoxStyle}
+        >
           <div
             style={{
               flex: mobile ? "0 1 auto" : "1",
@@ -728,6 +734,8 @@ export function ChatRoomComposer({
                 }
               >
                 <div
+                  className="chat-composer-resize-handle"
+                  data-dragging={isDragging ? "true" : undefined}
                   role="separator"
                   tabIndex={isZenMode ? -1 : 0}
                   aria-label="Resize composer"
@@ -759,25 +767,18 @@ export function ChatRoomComposer({
                   }}
                   onMouseDown={startDrag}
                   onDoubleClick={() => setManualHeightPx(null)}
-                  style={{
-                    height: "8px",
-                    cursor: isZenMode ? "default" : "row-resize",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    marginBottom: "4px",
-                    opacity: isZenMode ? 0.4 : 1,
-                  }}
-                >
-                  <div
-                    style={{
-                      width: "42px",
-                      height: "3px",
-                      borderRadius: "999px",
-                      background: isDragging
+                  style={
+                    {
+                      cursor: isZenMode ? "default" : undefined,
+                      "--chat-composer-grip": isDragging
                         ? UI_COLORS.focus
                         : UI_COLORS.border,
-                    }}
+                    } as CSSProperties
+                  }
+                >
+                  <div
+                    className="chat-composer-resize-grip"
+                    style={isZenMode ? { opacity: 0.4 } : undefined}
                   />
                 </div>
               </Tooltip>
