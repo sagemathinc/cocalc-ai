@@ -4,6 +4,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { entryKey as resourceEntryKey } from "@cocalc/database/postgres/collaborators/collaborators-common";
+import { claimDemandAccountsSql } from "@cocalc/database/postgres/collaborators/collaborators-demand";
 import type { CollaborationResource } from "@cocalc/util/collaborators";
 import { MultibayAcceptance } from "./acceptance/harness";
 
@@ -325,6 +326,58 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
       env.worker("a").call("sharedProjectPage", { account_ids: env.accounts }),
     ).rejects.toThrow("home mismatch");
   }, 60000);
+  test("claim batches retire ineligible due hints before reaching warm accounts", async () => {
+    const ids = Array.from({ length: 17 }, () => randomUUID());
+    try {
+      for (let i = 0; i < ids.length; i++) {
+        await env.sql(
+          "a",
+          `INSERT INTO accounts(account_id,home_bay_id,banned)
+          VALUES($1,$2,$3)`,
+          [ids[i], i < 8 ? env.bays[2] : env.bays[1], i >= 8 && i < 16],
+        );
+        await env.sql(
+          "a",
+          `INSERT INTO collaboration_demand_activation(account_id,projection_due,access_due)
+          VALUES($1,now()-interval '1 day'+$2::integer*interval '1 second',now()-interval '1 day'+$2::integer*interval '1 second')`,
+          [ids[i], i],
+        );
+        await env.sql(
+          "a",
+          `INSERT INTO collaboration_demand(account_id,consumer_id,lease_id,scope,expires_at,renew_after,grace_until)
+          VALUES($1,$2,$2,'{"kind":"all"}',now()+interval '1 day',now(),now()+interval '1 day')`,
+          [ids[i], randomUUID()],
+        );
+      }
+      for (const kind of ["projection", "access"] as const) {
+        for (let batch = 0; batch < 2; batch++) {
+          const rows = await env.sql("a", claimDemandAccountsSql(kind), [
+            env.bays[1],
+            8,
+          ]);
+          expect(rows).toHaveLength(8);
+          expect(rows.every((row) => row.warm === false)).toBe(true);
+        }
+        expect(
+          await env.sql("a", claimDemandAccountsSql(kind), [env.bays[1], 8]),
+        ).toEqual([{ account_id: ids[16], warm: true }]);
+      }
+      expect(
+        await env.sql(
+          "a",
+          `SELECT count(*)::integer AS n FROM collaboration_demand_activation
+        WHERE account_id=ANY($1::uuid[]) AND projection_due IS NULL AND access_due IS NULL`,
+          [ids.slice(0, 16)],
+        ),
+      ).toEqual([{ n: 16 }]);
+    } finally {
+      await env.sql(
+        "a",
+        "DELETE FROM accounts WHERE account_id=ANY($1::uuid[])",
+        [ids],
+      );
+    }
+  });
   test("authenticated demand calls bind the caller and cannot release another account's lease", async () => {
     expect((await env.hub("a", "check", {})).demand_supported).toBeUndefined();
     const first = await env.hub("a", "acquireDemand", {

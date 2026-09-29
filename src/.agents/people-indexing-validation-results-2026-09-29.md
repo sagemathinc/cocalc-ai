@@ -1763,3 +1763,21 @@ Server/reference typecheck and all three real PostgreSQL dormant-scale cases
 321 seconds. This verifies no-due query behavior, not a due backlog, foreign-home
 or banned-account skew, contention, active DAU throughput, or a churn soak.
 Retired queue-row storage retention remains open.
+
+### Ineligible Due-Claim Backlogs
+
+Projection/access account claims now bound the due candidate set before checking
+account home, deleted/banned state or live demand. Up to eight locked local hints
+are examined per batch. Ineligible hints have that claim due field retired to
+null, rather than remaining at the front of the queue or forcing an unbounded
+scan to locate eight eligible accounts. This changes disposable local scheduler
+state only; it does not modify remote authority or grant access. Later explicit
+activation can enqueue the account again.
+
+Server/reference typecheck and all twenty real PostgreSQL demand acceptance
+tests pass. The new case places eight foreign-home and eight banned accounts,
+all with live demand, ahead of one eligible home account. Two bounded batches
+retire the ineligible hints and the next reaches the warm account for both claim
+kinds. This is functional skew evidence, not a large-skew throughput benchmark.
+Activation dispatch still needs equivalent bounded-before-filter handling; the
+full-tip large-population suite and contention/rehome races remain open.

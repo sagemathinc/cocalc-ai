@@ -160,14 +160,19 @@ export async function claimDemandAccount(
 }
 
 export function claimDemandAccountsSql(kind: "projection" | "access") {
+  // Limit before account filtering: stale foreign/banned hints must neither
+  // force a population scan nor starve valid work behind them. Only local
+  // scheduling hints are retired; a later activation can enqueue them again.
   const field = kind === "projection" ? "projection_due" : "access_due";
   return `WITH candidate AS MATERIALIZED (
-    SELECT q.account_id FROM collaboration_demand_activation q JOIN accounts a USING(account_id)
-    WHERE q.${field}<=now() AND COALESCE(a.home_bay_id,'bay-0')=$1
-    AND a.deleted IS NOT TRUE AND a.banned IS NOT TRUE
+    SELECT q.account_id FROM collaboration_demand_activation q
+    WHERE q.${field}<=now()
     ORDER BY q.${field},q.account_id LIMIT $2 FOR UPDATE OF q SKIP LOCKED),
-    interest AS MATERIALIZED (SELECT c.account_id,EXISTS(SELECT 1 FROM collaboration_demand d
-      WHERE d.account_id=c.account_id AND d.grace_until>clock_timestamp()) AS warm FROM candidate c)
+    interest AS MATERIALIZED (SELECT c.account_id,
+      (COALESCE(a.home_bay_id,'bay-0')=$1 AND a.deleted IS NOT TRUE AND a.banned IS NOT TRUE
+       AND EXISTS(SELECT 1 FROM collaboration_demand d
+         WHERE d.account_id=c.account_id AND d.grace_until>clock_timestamp())) AS warm
+      FROM candidate c JOIN accounts a USING(account_id))
     UPDATE collaboration_demand_activation q SET ${field}=CASE WHEN i.warm
       THEN clock_timestamp()+interval '1 second' ELSE NULL END FROM interest i
     WHERE q.account_id=i.account_id RETURNING q.account_id,i.warm`;
