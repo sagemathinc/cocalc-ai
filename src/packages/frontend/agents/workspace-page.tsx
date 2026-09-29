@@ -1681,234 +1681,6 @@ function NewAgentPanel({
                   projectId={projectId}
                   session={composerSession}
                 />
-                <Popover
-                  content={advancedSettings}
-                  open={settingsOpen}
-                  placement="bottomLeft"
-                  trigger="click"
-                  onOpenChange={(open) => {
-                    setSettingsOpen(open);
-                    if (open) setMoreSettingsOpen(false);
-                  }}
-                >
-                  <ComposerProjectDirectoryButton
-                    ref={projectSettingsButton}
-                    projectTitle={projectTitle}
-                    directory={effectiveDirectory}
-                    displayedDirectory={directoryLabel}
-                    disabled={busy || !!pending}
-                  />
-                </Popover>
-                <NewAgentRuntimeSelect
-                  value={runtimeKind}
-                  disabled={busy || !!pending}
-                  onChange={setRuntimeKind}
-                />
-                {runtimeKind === "codex-native" && (
-                  <span
-                    style={{
-                      alignItems: "center",
-                      display: "inline-flex",
-                      flex: "0 1 auto",
-                      minWidth: 0,
-                      overflow: "hidden",
-                    }}
-                  >
-                    <Dropdown
-                      menu={{
-                        items: modelOptions.map(
-                          ({ value, label, disabled }) => ({
-                            key: value,
-                            label,
-                            disabled,
-                          }),
-                        ),
-                        selectedKeys: config.model ? [config.model] : [],
-                        onClick: ({ key }) => {
-                          modelCustomized.current = true;
-                          setConfig((current) =>
-                            reconcileAgentConfig(
-                              { ...current, model: key },
-                              modelOptions,
-                            ),
-                          );
-                        },
-                      }}
-                      trigger={["click"]}
-                    >
-                      <ComposerPillButton
-                        aria-label={`Change model. Current model: ${config.model}`}
-                        disabled={busy || !!pending || !!siteFundedPolicy}
-                        style={{
-                          maxWidth: 150,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        }}
-                      >
-                        {config.model}
-                      </ComposerPillButton>
-                    </Dropdown>
-                    <Text type="secondary">·</Text>
-                    <Dropdown
-                      menu={{
-                        items: reasoningOptions.map(({ id, label }) => ({
-                          key: id,
-                          label,
-                        })),
-                        selectedKeys: config.reasoning
-                          ? [config.reasoning]
-                          : [],
-                        onClick: ({ key }) => {
-                          modelCustomized.current = true;
-                          setConfig((current) => ({
-                            ...current,
-                            reasoning: key as CodexReasoningId,
-                          }));
-                        },
-                      }}
-                      trigger={["click"]}
-                    >
-                      <ComposerPillButton
-                        aria-label={`Change thinking level. Current level: ${selectedReasoningLabel}`}
-                        disabled={
-                          busy ||
-                          !!pending ||
-                          !!siteFundedPolicy ||
-                          reasoningOptions.length === 0
-                        }
-                      >
-                        {selectedReasoningLabel}
-                      </ComposerPillButton>
-                    </Dropdown>
-                    <Text type="secondary">·</Text>
-                    <Dropdown
-                      menu={{
-                        items: paymentOptions.map(
-                          ({ value, label, disabled }) => ({
-                            key: value,
-                            label,
-                            disabled,
-                          }),
-                        ),
-                        selectedKeys: [selectedPaymentValue],
-                        onClick: ({ key }) => {
-                          if (key.startsWith("subscription:")) {
-                            setConfig((current) => ({
-                              ...current,
-                              paymentSource: "subscription",
-                              credentialId: key.slice("subscription:".length),
-                            }));
-                          } else {
-                            setConfig((current) => ({
-                              ...current,
-                              paymentSource:
-                                key as CodexPaymentSourcePreference,
-                              credentialId: undefined,
-                            }));
-                          }
-                        },
-                      }}
-                      trigger={["click"]}
-                    >
-                      <ComposerPillButton
-                        aria-label={`Change payment source. Current source: ${selectedPaymentLabel}`}
-                        disabled={busy || !!pending || paymentSourceLoading}
-                        style={{
-                          maxWidth: 120,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        }}
-                      >
-                        {selectedPaymentLabel}
-                      </ComposerPillButton>
-                    </Dropdown>
-                  </span>
-                )}
-                {runtimeKind === "codex-native" && (
-                  <Popover
-                    content={advancedSettings}
-                    open={moreSettingsOpen}
-                    placement="bottomRight"
-                    trigger="click"
-                    onOpenChange={(open) => {
-                      setMoreSettingsOpen(open);
-                      if (open) setSettingsOpen(false);
-                    }}
-                  >
-                    <Button
-                      aria-label="More agent settings"
-                      aria-haspopup="dialog"
-                      icon={<Icon name="sliders" />}
-                      size="small"
-                      type="text"
-                      disabled={busy || !!pending}
-                    />
-                  </Popover>
-                )}
-                {runtimeKind === "claude-code" && (
-                  <NewAgentClaudeControls
-                    accountId={boundAccount.accountId}
-                    projectId={projectId}
-                    projectHome={projectHome}
-                    cwd={directory.trim() || projectHome || "/home/user"}
-                    settings={harnessSettings}
-                    onSettings={setHarnessSettings}
-                    credential={claudeCredential}
-                    credentials={anthropicCredentials}
-                    credentialsLoaded={claudeCredentialsLoaded}
-                    onCredential={(credential) => {
-                      claudeCredentialChosen.current = true;
-                      setClaudeCredential(credential);
-                    }}
-                    onConnected={async (credentialId) => {
-                      boundAccount.assertCurrent();
-                      claudeCredentialChosen.current = true;
-                      const rows =
-                        await webapp_client.conat_client.hub.system.listExternalCredentials(
-                          { provider: "anthropic", scope: "account" },
-                        );
-                      boundAccount.assertCurrent();
-                      setAnthropicCredentials(
-                        rows.filter(
-                          (row) =>
-                            !row.revoked &&
-                            (row.kind === "anthropic-api-key" ||
-                              row.kind === CLAUDE_SUBSCRIPTION_KIND),
-                        ),
-                      );
-                      if (
-                        !rows.some(
-                          (row) =>
-                            row.id === credentialId &&
-                            row.kind === CLAUDE_SUBSCRIPTION_KIND &&
-                            !row.revoked,
-                        )
-                      )
-                        throw Error(
-                          "Connected Claude subscription is not available",
-                        );
-                      setClaudeCredentialsLoaded(true);
-                      setClaudeCredential({
-                        version: 1,
-                        provider: "anthropic",
-                        mode: "account-subscription",
-                        credentialId,
-                      });
-                    }}
-                    disabled={busy || !!pending}
-                    assertCurrent={() => boundAccount.assertCurrent()}
-                  />
-                )}
-                {runtimeKind === "acp" && (
-                  <NewAgentAcpControls
-                    draft={harnessDraft}
-                    onChange={setHarnessDraft}
-                    cwd={directory.trim() || projectHome || "/home/user"}
-                    disabled={busy || !!pending}
-                    createDisabled={uploading || !!problem || atLimit}
-                    onCreate={() => void create(undefined, true)}
-                  />
-                )}
                 <span style={{ flex: 1 }} />
               </div>
             )}
@@ -1932,6 +1704,243 @@ function NewAgentPanel({
             />
           </div>
         </div>
+        {!isFirstRun && (
+          // The agent's settings sit below the box, apart from the request.
+          <div
+            role="group"
+            aria-label="Agent settings"
+            style={{
+              alignItems: "center",
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 4,
+              minWidth: 0,
+              padding: "0 10px",
+            }}
+          >
+            <Popover
+              content={advancedSettings}
+              open={settingsOpen}
+              placement="bottomLeft"
+              trigger="click"
+              onOpenChange={(open) => {
+                setSettingsOpen(open);
+                if (open) setMoreSettingsOpen(false);
+              }}
+            >
+              <ComposerProjectDirectoryButton
+                ref={projectSettingsButton}
+                projectTitle={projectTitle}
+                directory={effectiveDirectory}
+                displayedDirectory={directoryLabel}
+                disabled={busy || !!pending}
+              />
+            </Popover>
+            <NewAgentRuntimeSelect
+              value={runtimeKind}
+              disabled={busy || !!pending}
+              onChange={setRuntimeKind}
+            />
+            {runtimeKind === "codex-native" && (
+              <span
+                style={{
+                  alignItems: "center",
+                  display: "inline-flex",
+                  flex: "0 1 auto",
+                  minWidth: 0,
+                  overflow: "hidden",
+                }}
+              >
+                <Dropdown
+                  menu={{
+                    items: modelOptions.map(({ value, label, disabled }) => ({
+                      key: value,
+                      label,
+                      disabled,
+                    })),
+                    selectedKeys: config.model ? [config.model] : [],
+                    onClick: ({ key }) => {
+                      modelCustomized.current = true;
+                      setConfig((current) =>
+                        reconcileAgentConfig(
+                          { ...current, model: key },
+                          modelOptions,
+                        ),
+                      );
+                    },
+                  }}
+                  trigger={["click"]}
+                >
+                  <ComposerPillButton
+                    aria-label={`Change model. Current model: ${config.model}`}
+                    disabled={busy || !!pending || !!siteFundedPolicy}
+                    style={{
+                      maxWidth: 150,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {config.model}
+                  </ComposerPillButton>
+                </Dropdown>
+                <Text type="secondary">·</Text>
+                <Dropdown
+                  menu={{
+                    items: reasoningOptions.map(({ id, label }) => ({
+                      key: id,
+                      label,
+                    })),
+                    selectedKeys: config.reasoning ? [config.reasoning] : [],
+                    onClick: ({ key }) => {
+                      modelCustomized.current = true;
+                      setConfig((current) => ({
+                        ...current,
+                        reasoning: key as CodexReasoningId,
+                      }));
+                    },
+                  }}
+                  trigger={["click"]}
+                >
+                  <ComposerPillButton
+                    aria-label={`Change thinking level. Current level: ${selectedReasoningLabel}`}
+                    disabled={
+                      busy ||
+                      !!pending ||
+                      !!siteFundedPolicy ||
+                      reasoningOptions.length === 0
+                    }
+                  >
+                    {selectedReasoningLabel}
+                  </ComposerPillButton>
+                </Dropdown>
+                <Text type="secondary">·</Text>
+                <Dropdown
+                  menu={{
+                    items: paymentOptions.map(({ value, label, disabled }) => ({
+                      key: value,
+                      label,
+                      disabled,
+                    })),
+                    selectedKeys: [selectedPaymentValue],
+                    onClick: ({ key }) => {
+                      if (key.startsWith("subscription:")) {
+                        setConfig((current) => ({
+                          ...current,
+                          paymentSource: "subscription",
+                          credentialId: key.slice("subscription:".length),
+                        }));
+                      } else {
+                        setConfig((current) => ({
+                          ...current,
+                          paymentSource: key as CodexPaymentSourcePreference,
+                          credentialId: undefined,
+                        }));
+                      }
+                    },
+                  }}
+                  trigger={["click"]}
+                >
+                  <ComposerPillButton
+                    aria-label={`Change payment source. Current source: ${selectedPaymentLabel}`}
+                    disabled={busy || !!pending || paymentSourceLoading}
+                    style={{
+                      maxWidth: 120,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {selectedPaymentLabel}
+                  </ComposerPillButton>
+                </Dropdown>
+              </span>
+            )}
+            {runtimeKind === "codex-native" && (
+              <Popover
+                content={advancedSettings}
+                open={moreSettingsOpen}
+                placement="bottomRight"
+                trigger="click"
+                onOpenChange={(open) => {
+                  setMoreSettingsOpen(open);
+                  if (open) setSettingsOpen(false);
+                }}
+              >
+                <Button
+                  aria-label="More agent settings"
+                  aria-haspopup="dialog"
+                  icon={<Icon name="sliders" />}
+                  size="small"
+                  type="text"
+                  disabled={busy || !!pending}
+                />
+              </Popover>
+            )}
+            {runtimeKind === "claude-code" && (
+              <NewAgentClaudeControls
+                accountId={boundAccount.accountId}
+                projectId={projectId}
+                projectHome={projectHome}
+                cwd={directory.trim() || projectHome || "/home/user"}
+                settings={harnessSettings}
+                onSettings={setHarnessSettings}
+                credential={claudeCredential}
+                credentials={anthropicCredentials}
+                credentialsLoaded={claudeCredentialsLoaded}
+                onCredential={(credential) => {
+                  claudeCredentialChosen.current = true;
+                  setClaudeCredential(credential);
+                }}
+                onConnected={async (credentialId) => {
+                  boundAccount.assertCurrent();
+                  claudeCredentialChosen.current = true;
+                  const rows =
+                    await webapp_client.conat_client.hub.system.listExternalCredentials(
+                      { provider: "anthropic", scope: "account" },
+                    );
+                  boundAccount.assertCurrent();
+                  setAnthropicCredentials(
+                    rows.filter(
+                      (row) =>
+                        !row.revoked &&
+                        (row.kind === "anthropic-api-key" ||
+                          row.kind === CLAUDE_SUBSCRIPTION_KIND),
+                    ),
+                  );
+                  if (
+                    !rows.some(
+                      (row) =>
+                        row.id === credentialId &&
+                        row.kind === CLAUDE_SUBSCRIPTION_KIND &&
+                        !row.revoked,
+                    )
+                  )
+                    throw Error(
+                      "Connected Claude subscription is not available",
+                    );
+                  setClaudeCredentialsLoaded(true);
+                  setClaudeCredential({
+                    version: 1,
+                    provider: "anthropic",
+                    mode: "account-subscription",
+                    credentialId,
+                  });
+                }}
+                disabled={busy || !!pending}
+                assertCurrent={() => boundAccount.assertCurrent()}
+              />
+            )}
+            {runtimeKind === "acp" && (
+              <NewAgentAcpControls
+                draft={harnessDraft}
+                onChange={setHarnessDraft}
+                cwd={directory.trim() || projectHome || "/home/user"}
+                disabled={busy || !!pending}
+                createDisabled={uploading || !!problem || atLimit}
+                onCreate={() => void create(undefined, true)}
+              />
+            )}
+          </div>
+        )}
         {(isFirstRun || busy) && (
           <PreparationStatus active={busy} phase={preparationPhase} />
         )}
