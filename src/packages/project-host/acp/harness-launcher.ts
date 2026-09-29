@@ -42,6 +42,10 @@ import { harnessOwner, HARNESS_OWNER_LABEL } from "./harness-reaper";
 import { createAnthropicAccountCredentialRelay } from "./anthropic-credential-relay";
 import type { CredentialHttpRelay } from "./credential-http-relay";
 import { launchClaudeSubscriptionController } from "./claude-subscription-controller";
+import {
+  startClaudeRestrictedEgress,
+  type ClaudeRestrictedEgress,
+} from "./claude-restricted-egress";
 
 const logger = getLogger("project-host:acp:harness-launcher");
 
@@ -167,6 +171,7 @@ export async function launchHarnessInProject(
   let cliLease: Awaited<ReturnType<typeof createProjectCliTokenLease>>;
   let credentialRelay: CredentialHttpRelay | undefined;
   let credentialRelayDirectory: string | undefined;
+  let restrictedEgress: ClaudeRestrictedEgress | undefined;
   const cleanup = () =>
     (stopped ??= (async () => {
       // Keep the rootfs lease if removal fails; never unmount beneath a live child.
@@ -190,6 +195,7 @@ export async function launchHarnessInProject(
         }
       } finally {
         // Revoke scoped authority even if a failed runtime removal needs repair.
+        restrictedEgress?.close();
         await cliLease?.close();
         await credentialRelay?.close();
         if (credentialRelayDirectory)
@@ -259,6 +265,12 @@ export async function launchHarnessInProject(
         credentialRelay.token,
         { encoding: "utf8", mode: 0o600 },
       );
+    }
+    if (profile.version === 2 && profile.id === "claude-code") {
+      // The sidecar shares the project's network namespace, so a project
+      // without internet access reaches Anthropic only through this proxy.
+      restrictedEgress = await startClaudeRestrictedEgress({ projectId });
+      if (restrictedEgress) Object.assign(env, restrictedEgress.env);
     }
     const args = [
       "create",

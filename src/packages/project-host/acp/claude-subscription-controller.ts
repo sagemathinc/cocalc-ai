@@ -49,6 +49,12 @@ import {
 } from "../codex/codex-project";
 import { harnessOwner, HARNESS_OWNER_LABEL } from "./harness-reaper";
 import {
+  projectHostAddress,
+  projectNeedsRestrictedClaudeEgress,
+  startClaudeRestrictedEgress,
+  type ClaudeRestrictedEgress,
+} from "./claude-restricted-egress";
+import {
   CLAUDE_CONTROLLER_HOME_LABEL,
   claudeControllerHomePrefix,
 } from "./claude-subscription-paths";
@@ -130,6 +136,8 @@ export function claudeSubscriptionContainerArgs(options: {
   runtimeArgs?: string[];
   purpose?: "agent" | "usage";
   claudeAiConnectors?: boolean;
+  // Extra environment, e.g. the restricted egress proxy.
+  env?: Record<string, string>;
 }): string[] {
   const {
     name,
@@ -218,6 +226,10 @@ export function claudeSubscriptionContainerArgs(options: {
     ...(options.claudeAiConnectors === false
       ? ["--env", "ENABLE_CLAUDEAI_MCP_SERVERS=false"]
       : []),
+    ...Object.entries(options.env ?? {}).flatMap(([key, value]) => [
+      "--env",
+      `${key}=${value}`,
+    ]),
     "--rootfs",
     rootfs,
     "/opt/cocalc/bin/node",
@@ -282,6 +294,7 @@ ${skill}
   let launched = false;
   let toolBridge: ClaudeProjectToolBridge | undefined;
   let cliLease: Awaited<ReturnType<typeof createProjectCliTokenLease>>;
+  let restrictedEgress: ClaudeRestrictedEgress | undefined;
   let stopped: Promise<void> | undefined;
   let cleanupRetries = 0;
   let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
@@ -326,6 +339,7 @@ ${skill}
         }
       },
       closeBridge: async () => {
+        restrictedEgress?.close();
         const results = await Promise.allSettled([
           toolBridge?.close(),
           cliLease?.close(),
@@ -439,6 +453,17 @@ ${skill}
         },
       );
     }
+    if (projectNeedsRestrictedClaudeEgress(projectId)) {
+      // The controller runs in the project's network containment, which
+      // blocks the internet but not the host's own addresses. Reach Anthropic
+      // only through the host's allowlisting proxy.
+      const host = projectHostAddress();
+      if (!host)
+        throw Error(
+          "Claude cannot reach Anthropic: this project has no internet access and the project host address is unknown",
+        );
+      restrictedEgress = await startClaudeRestrictedEgress({ projectId, host });
+    }
     const owner = await harnessOwner();
     const managedHarnesses =
       process.env.COCALC_MANAGED_HARNESSES ?? MANAGED_HARNESSES;
@@ -459,6 +484,7 @@ ${skill}
         uid: process.getuid!(),
         gid: process.getgid!(),
         runtimeArgs: await podmanRuntimeArgs(),
+        env: restrictedEgress?.env,
       }),
     );
     launched = true;
