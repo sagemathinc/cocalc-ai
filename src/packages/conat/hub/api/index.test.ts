@@ -467,6 +467,48 @@ describe("hub API argument transforms", () => {
     });
   });
 
+  it("binds ownership transfer actor/session and rejects non-account principals", async () => {
+    const request = {
+      account_id: "other",
+      session_hash: "other-session",
+      project_id: "project",
+      from_account_id: "owner",
+      to_account_id: "collaborator",
+    };
+    const args = await transformArgs({
+      name: "projects.transferProjectOwnership",
+      args: [request],
+      account_id: "actor",
+      auth_session_hash: "current",
+    });
+    expect(args[0]).toMatchObject({
+      account_id: "actor",
+      session_hash: "current",
+      from_account_id: "owner",
+    });
+    const noSession = await transformArgs({
+      name: "projects.transferProjectOwnership",
+      args: [{ session_hash: "supplied" }],
+      account_id: "actor",
+    });
+    expect(noSession[0].session_hash).toBeUndefined();
+    await expect(
+      transformArgs({
+        name: "projects.transferProjectOwnership",
+        args: [{}],
+        project_id: "project",
+      }),
+    ).rejects.toThrow();
+    await expect(
+      transformArgs({
+        name: "projects.transferProjectOwnership",
+        args: [{}],
+        account_id: "actor",
+        auth_actor: "agent",
+      }),
+    ).rejects.toThrow();
+  });
+
   it("binds admin package fresh auth to the authenticated session", async () => {
     const args = await transformArgs({
       name: "purchases.adminCreateMembershipPackagePurchase",

@@ -590,7 +590,14 @@ import {
   reconcileCourseManagedProjectLocal,
 } from "@cocalc/server/projects/course/reconcile-managed-project";
 import { getProjectCollaboratorInviteUsage } from "@cocalc/server/membership/project-limits";
-import { leaveOrDeleteProjectsForAccount } from "@cocalc/server/projects/ownership";
+import {
+  leaveOrDeleteProjectsForAccount,
+  transferProjectOwnershipExplicitly,
+} from "@cocalc/server/projects/ownership";
+import {
+  assertOwnershipRecipientLocal,
+  getOwnershipUsageCountLocal,
+} from "@cocalc/server/projects/ownership-recipient";
 import {
   BAY_OPS_INTERNAL_AUTH,
   bootstrapCloudflareConfigurationOnSeed,
@@ -1433,6 +1440,11 @@ async function startAccountLocalService(): Promise<void> {
     setPasswordFromReset: async ({ account_id, email_address, password }) => {
       await setPasswordFromResetLocal({ account_id, email_address, password });
     },
+    assertOwnershipRecipient: async (opts) => {
+      await assertOwnershipRecipientLocal(opts);
+    },
+    getOwnershipUsageCount: async ({ account_id }) =>
+      await getOwnershipUsageCountLocal(account_id),
     assertProductAccessTrust: async ({ account_id, action }) => {
       await assertAccountTrustedForProductAccess(account_id, action);
     },
@@ -2774,6 +2786,8 @@ async function startProjectCollabInviteService(): Promise<void> {
         account_id,
         project_ids,
       }),
+    transferProjectOwnership: async (opts) =>
+      await transferProjectOwnershipExplicitly(opts),
     setProjectsHidden: async ({ account_id, project_ids, hide }) =>
       await setLocalProjectsHidden({
         account_id,

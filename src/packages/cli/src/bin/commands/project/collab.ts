@@ -51,6 +51,47 @@ export function registerProjectCollabCommands(
     .command("collab")
     .description("project collaborator operations");
 
+  project
+    .command("transfer-ownership")
+    .description(
+      "transfer to an existing collaborator; keep the former owner as a collaborator (requires fresh auth)",
+    )
+    .requiredOption("-w, --project <project>", "project id or name")
+    .requiredOption("--to <account-id>", "existing collaborator account id")
+    .requiredOption("--from <account-id>", "expected current owner account id")
+    .option(
+      "--yes",
+      "confirm transfer, including owner-derived billing attribution",
+    )
+    .action(
+      async (
+        opts: { project: string; to: string; from: string; yes?: boolean },
+        command: Command,
+      ) => {
+        if (!opts.yes)
+          throw new Error(
+            "Pass --yes to confirm ownership and owner-derived billing attribution transfer. The former owner stays a collaborator.",
+          );
+        if (!isValidUUID(opts.to) || !isValidUUID(opts.from))
+          throw new Error("--to and --from must be account UUIDs");
+        await withContext(
+          command,
+          "project transfer-ownership",
+          async (ctx) => {
+            const target = await resolveProjectFromArgOrContext(
+              ctx,
+              opts.project,
+            );
+            return await ctx.hub.projects.transferProjectOwnership({
+              project_id: target.project_id,
+              from_account_id: opts.from,
+              to_account_id: opts.to,
+            });
+          },
+        );
+      },
+    );
+
   collab
     .command("search <query>")
     .description("search for existing accounts by name/email/account id")

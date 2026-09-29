@@ -9,6 +9,9 @@ import { drainAccountProjectIndexProjection } from "@cocalc/database/postgres/ac
 const publishAccountFeedEventBestEffortMock = jest.fn();
 const syncProjectUsersOnHostMock = jest.fn();
 const hardDeleteProjectMock = jest.fn();
+jest.mock("./ownership-recipient", () => ({
+  assertOwnershipRecipient: jest.fn(async () => undefined),
+}));
 
 jest.mock("@cocalc/server/account/feed", () => ({
   __esModule: true,
@@ -183,7 +186,7 @@ describe("project ownership transfer integration", () => {
   afterEach(async () => {
     jest.clearAllMocks();
     await getPool().query(
-      "TRUNCATE account_project_index, project_events_outbox, projects, accounts CASCADE",
+      "TRUNCATE account_project_index, project_events_outbox, projects, accounts, central_log CASCADE",
     );
   });
 
@@ -270,6 +273,105 @@ describe("project ownership transfer integration", () => {
     ).resolves.toMatchObject({
       [TRANSFER_TARGET]: { group: "owner" },
     });
+  });
+
+  it("counts usage only on the authoritative owning bay, preserving attribution semantics", async () => {
+    await seedAccounts();
+    const users = {
+      [ACCOUNT_DELETING]: { group: "owner" },
+      [TRANSFER_TARGET]: { group: "collaborator" },
+    };
+    for (const project_id of [OWNED_PROJECT, COLLAB_PROJECT]) {
+      await seedProject({
+        project_id,
+        title: "Count fixture",
+        users,
+        last_active: {},
+      });
+    }
+    await getPool().query(
+      "UPDATE projects SET owning_bay_id='other-bay' WHERE project_id=$1",
+      [COLLAB_PROJECT],
+    );
+    const { listUsageProjectsForAccount } =
+      await import("@cocalc/server/membership/project-usage");
+    expect(
+      await listUsageProjectsForAccount(ACCOUNT_DELETING, undefined, BAY_ID),
+    ).toHaveLength(1);
+    expect(await listUsageProjectsForAccount(ACCOUNT_DELETING)).toHaveLength(2);
+    await getPool().query(
+      "UPDATE projects SET usage_account_id=$1 WHERE project_id=$2",
+      [TRANSFER_TARGET, OWNED_PROJECT],
+    );
+    expect(
+      await listUsageProjectsForAccount(ACCOUNT_DELETING, undefined, BAY_ID),
+    ).toHaveLength(0);
+    expect(
+      await listUsageProjectsForAccount(TRANSFER_TARGET, undefined, BAY_ID),
+    ).toHaveLength(1);
+  });
+
+  it("explicit transfer retains both projections and commits actor audit", async () => {
+    await seedAccounts();
+    const users = {
+      [ACCOUNT_DELETING]: { group: "owner" },
+      [TRANSFER_TARGET]: { group: "collaborator" },
+    };
+    await seedProject({
+      project_id: OWNED_PROJECT,
+      title: "Explicit transfer",
+      users,
+      last_active: {},
+    });
+    await seedProjectedProjectRows({
+      project_id: OWNED_PROJECT,
+      title: "Explicit transfer",
+      users,
+      account_ids: [ACCOUNT_DELETING, TRANSFER_TARGET],
+    });
+    const { transferProjectOwnershipExplicitly } = await import("./ownership");
+    await transferProjectOwnershipExplicitly({
+      account_id: ACCOUNT_DELETING,
+      project_id: OWNED_PROJECT,
+      from_account_id: ACCOUNT_DELETING,
+      to_account_id: TRANSFER_TARGET,
+    });
+    await drainAccountProjectIndexProjection({
+      bay_id: BAY_ID,
+      limit: 10,
+      dry_run: false,
+    });
+    for (const account_id of [ACCOUNT_DELETING, TRANSFER_TARGET]) {
+      await expect(
+        projectedUsers({ account_id, project_id: OWNED_PROJECT }),
+      ).resolves.toMatchObject({
+        [ACCOUNT_DELETING]: { group: "collaborator" },
+        [TRANSFER_TARGET]: { group: "owner" },
+      });
+      expect(feedEvents()).toContainEqual(
+        expect.objectContaining({ type: "project.upsert", account_id }),
+      );
+    }
+    expect(feedEvents().some((event) => event.type === "project.remove")).toBe(
+      false,
+    );
+    const { rows } = await getPool().query(
+      "SELECT value FROM central_log WHERE event=$1",
+      ["project-ownership-transfer"],
+    );
+    expect(rows.at(-1).value).toMatchObject({
+      actor_account_id: ACCOUNT_DELETING,
+      from_account_id: ACCOUNT_DELETING,
+      to_account_id: TRANSFER_TARGET,
+    });
+    await expect(
+      transferProjectOwnershipExplicitly({
+        account_id: ACCOUNT_DELETING,
+        project_id: OWNED_PROJECT,
+        from_account_id: ACCOUNT_DELETING,
+        to_account_id: TRANSFER_TARGET,
+      }),
+    ).rejects.toThrow("current project owner");
   });
 
   it("bulk leave/delete transfers owned projects, removes collaborator projects, and refreshes projections", async () => {
