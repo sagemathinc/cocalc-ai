@@ -94,6 +94,45 @@ UI gate. No limits, credentials or service processes were changed. Inspection
 of the existing independent-review attempt returned unknown with no
 authoritative response; it was not resubmitted.
 
+### Live Scan Admission And Reload Recovery
+
+The user confirmed that the three-bay development hub is dedicated to this
+validation. After recovering the interrupted restart (starting only missing
+bays), People and project details loaded again. This restores service but does
+not diagnose the prior admission saturation.
+
+A subsequent standard dev-cluster restart completed with command-scoped
+`COCALC_PEOPLE_SCAN_API_PROTOTYPE`, `COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE`,
+`COCALC_PEOPLE_DEMAND_PROTOTYPE`,
+`COCALC_PEOPLE_DEMAND_SCHEDULER_PROTOTYPE`,
+`COCALC_PEOPLE_EVENT_FANOUT_PROTOTYPE`,
+`COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE` and
+`COCALC_PEOPLE_REVISION_OUTBOX_PROTOTYPE` set to `1`, and
+`COCALC_PEOPLE_DISCOVERY_BOOTSTRAP_PROTOTYPE=0`. These flags are in the running
+development processes, not a committed/persistent config or production change.
+The real Scan control then appeared. The served collaborator UI source is
+unchanged from its build checkpoint `408f6c2b0fb0`; the general stale-HEAD
+warning reflects subsequent backend/test/documentation commits.
+
+In the signed-in browser supplied on CDP port 9222, keyboard Enter on `Scan
+project` admitted one request. The page showed the queued state, disabled
+cooldown controls and one accessible status region. Status inspection then
+reported discovery in progress without a completion estimate. Reload showed
+the saved-request recovery prompt; inspection recovered the same request and
+job, without another submission.
+
+Continue inspecting this exact live development job:
+
+- Project: `1ce4fe78-19c7-40a8-a598-947975744cd9`.
+- Request: `7725e62a-c1b3-4ad2-9acc-ce55e11e69d6`.
+- Job: `66da4168-707c-4d52-8104-95df4ab9d833`.
+
+The latest manual status check still reports discovering. Do not interpret
+elapsed time as failure or start a replacement Scan. Terminal completion,
+terminal-state focus, narrow-viewport behavior and unavailable/error UI paths
+remain unverified in this live browser. No claim of completed browser validation
+or production enablement follows from successful admission/recovery.
+
 ## Historical Extended-Scope Audit
 
 Before the user-approved scope reduction, the seven implementation gates were:
