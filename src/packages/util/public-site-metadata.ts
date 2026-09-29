@@ -43,6 +43,8 @@ export interface PublicRouteMetadata {
   canonicalPath: string;
   description: string;
   faq?: PublicRouteMetadataFaq[];
+  // Alt text for the link preview image, set when the image carries text.
+  imageAlt?: string;
   imagePath: string;
   // Set for pages that exist but should not be indexed by search engines
   // (e.g. docs entries restricted to admins or signed-in users); servers
@@ -124,6 +126,7 @@ function docsPath(slug?: string): string {
 // Pages about one tool keep that tool's own image. Custom brands and other
 // hosts get a product screenshot instead of the card (withLinkPreviewImage).
 const BRAND_SOCIAL_IMAGE = "public/landing/cocalc-brand-social-20260925.png";
+const BRAND_SOCIAL_IMAGE_ALT = "CoCalc: build and use software with AI";
 const UNBRANDED_SOCIAL_IMAGE = "public/landing/project-notebook-20260916.jpg";
 const DEFAULT_SOCIAL_IMAGE = BRAND_SOCIAL_IMAGE;
 const PRODUCT_SOCIAL_IMAGE = DEFAULT_SOCIAL_IMAGE;
@@ -1116,7 +1119,9 @@ function withLinkPreviewImage(
   const canonicalOnCocalcAi =
     isCanonicalPublicSiteHost(config?.dns) ||
     metadata.canonicalPath.startsWith(`${CANONICAL_PUBLIC_SITE_ORIGIN}/`);
-  if (usesDefaultPublicBrand(config) && canonicalOnCocalcAi) return metadata;
+  if (usesDefaultPublicBrand(config) && canonicalOnCocalcAi) {
+    return { ...metadata, imageAlt: BRAND_SOCIAL_IMAGE_ALT };
+  }
   return {
     ...metadata,
     imagePath: publicPath(UNBRANDED_SOCIAL_IMAGE, options),

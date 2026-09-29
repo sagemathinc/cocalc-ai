@@ -482,6 +482,35 @@ describe("robots noindex tag management", () => {
   });
 });
 
+describe("link preview alt text", () => {
+  it("adds alt text for the brand card and removes it for other images", () => {
+    const cocalcAi = { dns: "cocalc.ai", site_name: "CoCalc" };
+    const alt = "CoCalc: build and use software with AI";
+
+    applyPublicRouteMetadata(
+      getPublicRouteMetadata({ section: "home" }, cocalcAi),
+    );
+    expect(headMeta('meta[property="og:image:alt"]')).toBe(alt);
+    expect(headMeta('meta[name="twitter:image:alt"]')).toBe(alt);
+
+    applyPublicRouteMetadata(
+      getPublicRouteMetadata(
+        {
+          route: { slug: "jupyter-notebook", view: "detail" },
+          section: "features",
+        },
+        cocalcAi,
+      ),
+    );
+    expect(
+      document.head.querySelector('meta[property="og:image:alt"]'),
+    ).toBeNull();
+    expect(
+      document.head.querySelector('meta[name="twitter:image:alt"]'),
+    ).toBeNull();
+  });
+});
+
 describe("research compute product metadata", () => {
   const route = {
     section: "features" as const,

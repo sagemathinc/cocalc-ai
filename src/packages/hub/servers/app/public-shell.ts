@@ -409,6 +409,15 @@ async function buildHead(req: Request): Promise<{
           }),
         ]
       : []),
+    ...(metadata.imageAlt
+      ? [
+          metaTag({
+            content: metadata.imageAlt,
+            "data-cocalc-public-route-meta": "og:image:alt",
+            property: "og:image:alt",
+          }),
+        ]
+      : []),
     metaTag({
       content: "summary_large_image",
       "data-cocalc-public-route-meta": "twitter:card",
@@ -429,6 +438,15 @@ async function buildHead(req: Request): Promise<{
       "data-cocalc-public-route-meta": "twitter:image",
       name: "twitter:image",
     }),
+    ...(metadata.imageAlt
+      ? [
+          metaTag({
+            content: metadata.imageAlt,
+            "data-cocalc-public-route-meta": "twitter:image:alt",
+            name: "twitter:image:alt",
+          }),
+        ]
+      : []),
   ].join("\n  ");
 
   return {

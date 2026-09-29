@@ -247,6 +247,21 @@ describe("public shell rendering", () => {
     },
   );
 
+  it("gives the brand card alt text and other preview images none", async () => {
+    const { html } = await renderPublicShell(request("/"));
+    for (const tag of [
+      'data-cocalc-public-route-meta="og:image:alt" property="og:image:alt"',
+      'data-cocalc-public-route-meta="twitter:image:alt" name="twitter:image:alt"',
+    ]) {
+      expect(html).toContain(
+        `content="CoCalc: build and use software with AI" ${tag}`,
+      );
+    }
+
+    const tool = await renderPublicShell(request("/features/jupyter-notebook"));
+    expect(tool.html).not.toContain("image:alt");
+  });
+
   it("keeps the brand card and tagline title off other brands and hosts", async () => {
     const host = "compute.example.edu";
     const screenshot = `https://${host}/public/landing/project-notebook-20260916.jpg`;
@@ -266,6 +281,7 @@ describe("public shell rendering", () => {
         'content="1050" data-cocalc-public-route-meta="og:image:width"',
       );
       expect(html).not.toContain("cocalc-brand-social");
+      expect(html).not.toContain("image:alt");
       if (path === "/") {
         expect(html).toContain("<title>Example Research Cloud</title>");
       }
