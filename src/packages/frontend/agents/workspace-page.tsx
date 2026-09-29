@@ -114,7 +114,12 @@ import {
   PROJECT_DOCS_OPEN_EVENT,
   type ProjectDocsOpenDetail,
 } from "@cocalc/frontend/docs/navigation";
-import { Icon, Loading, ThemeEditorModal } from "@cocalc/frontend/components";
+import {
+  Icon,
+  Loading,
+  ThemeEditorModal,
+  Tooltip,
+} from "@cocalc/frontend/components";
 import { cocalc_setup_profile } from "@cocalc/frontend/components/constants";
 import { WorkspaceSidebarActions } from "./workspace-sidebar-actions";
 import "./workspace-sidebar-row.css";
@@ -1692,34 +1697,37 @@ function NewAgentPanel({
                 <span style={{ flex: 1 }} />
               </div>
             )}
-            <Button
-              type="primary"
-              shape="circle"
-              aria-label={
-                emptyRequest ? "Create agent without a task" : "Start agent"
-              }
+            <Tooltip
               title={
                 emptyRequest
                   ? "Create agent without a task (Shift+Enter)"
                   : "Start agent (Shift+Enter)"
               }
-              icon={<Icon name={emptyRequest ? "plus" : "arrow-up"} />}
-              style={{ height: 32, minWidth: 32, width: 32 }}
-              loading={busy}
-              disabled={
-                uploading ||
-                !!problem ||
-                (isFirstRun && emptyRequest) ||
-                atLimit ||
-                (!projectId && (!projectMap || emailVerificationRequired)) ||
-                (runtimeKind === "claude-code" && !claudeCredentialsLoaded)
-              }
-              onClick={() => {
-                const request =
-                  inputControlRef.current?.getValue?.() ?? firstRequest;
-                void create(request, canCreateWithoutTask(request));
-              }}
-            />
+            >
+              <Button
+                type="primary"
+                shape="circle"
+                aria-label={
+                  emptyRequest ? "Create agent without a task" : "Start agent"
+                }
+                icon={<Icon name={emptyRequest ? "plus" : "arrow-up"} />}
+                style={{ height: 32, minWidth: 32, width: 32 }}
+                loading={busy}
+                disabled={
+                  uploading ||
+                  !!problem ||
+                  (isFirstRun && emptyRequest) ||
+                  atLimit ||
+                  (!projectId && (!projectMap || emailVerificationRequired)) ||
+                  (runtimeKind === "claude-code" && !claudeCredentialsLoaded)
+                }
+                onClick={() => {
+                  const request =
+                    inputControlRef.current?.getValue?.() ?? firstRequest;
+                  void create(request, canCreateWithoutTask(request));
+                }}
+              />
+            </Tooltip>
           </div>
         </div>
         {!isFirstRun && (
