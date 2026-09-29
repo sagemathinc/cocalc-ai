@@ -1904,38 +1904,11 @@ export default function Message({
       },
     ];
 
-    if (
-      canMovePostedMessageToAgent(message) &&
-      showEditButton &&
-      isCodexThread &&
-      messageThreadId &&
-      actions
-    ) {
+    if (canSendPostedMessage) {
       overflowItems.unshift({
         key: "send-posted-to-agent",
         label: "Send to agent",
-        onClick: () => {
-          void movePostedMessageToAgent({
-            actions,
-            message,
-            threadId: messageThreadId,
-            content: newest_content(message),
-          })
-            .then((result) => {
-              if (result === "failed") {
-                antdMessage.error("Could not send this posted message.");
-              } else if (result === "sent") {
-                antdMessage.warning(
-                  "Sent to the agent, but the original post could not be removed.",
-                );
-              }
-            })
-            .catch(() =>
-              antdMessage.error(
-                "Could not finish moving this posted message. Check the thread before retrying.",
-              ),
-            );
-        },
+        onClick: sendPostedMessage,
       });
     }
 
@@ -2938,6 +2911,35 @@ export default function Message({
     }
   }
 
+  const canSendPostedMessage =
+    canMovePostedMessageToAgent(message) &&
+    showEditButton &&
+    isCodexThread &&
+    !!messageThreadId &&
+    actions != null;
+  const sendPostedMessage = () => {
+    if (!canSendPostedMessage || !actions || !messageThreadId) return;
+    void movePostedMessageToAgent({
+      actions,
+      message,
+      threadId: messageThreadId,
+      content: newest_content(message),
+    })
+      .then((result) => {
+        if (result === "failed") {
+          antdMessage.error("Could not send this posted message.");
+        } else if (result === "sent") {
+          antdMessage.warning(
+            "Sent to the agent, but the original post could not be removed.",
+          );
+        }
+      })
+      .catch(() =>
+        antdMessage.error(
+          "Could not finish moving this posted message. Check the thread before retrying.",
+        ),
+      );
+  };
   const handleCancelQueued = () => {
     if (!actions) return;
     void cancelQueuedAcpTurn({ actions, message });
@@ -2985,6 +2987,24 @@ export default function Message({
   );
 
   const renderAcpState = () => {
+    if (canSendPostedMessage) {
+      // Like a queued message: say what it is and offer what can be done.
+      return (
+        <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+          <Tooltip title="Posted to the chat; not sent to the agent">
+            <Tag>posted</Tag>
+          </Tooltip>
+          <Button size="small" type="text" onClick={edit_message}>
+            Edit
+          </Button>
+          <Tooltip title="Send this message to the agent">
+            <Button size="small" type="text" onClick={sendPostedMessage}>
+              Send
+            </Button>
+          </Tooltip>
+        </span>
+      );
+    }
     const receiptLabel = getAcpMessageDeliveryLabel({
       postOnly: field<boolean>(message, "post_only"),
       attentionResponse: field(message, "acp_attention_response"),
