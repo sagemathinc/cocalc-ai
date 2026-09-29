@@ -961,4 +961,73 @@ describe("ChatLog sidechat search jumps", () => {
       expect(mockScrollToIndex.mock.calls.length).toBeGreaterThan(initialCalls),
     );
   });
+
+  it("stays at the newest message when the composer below the log grows", async () => {
+    activeTopTab = "project-1";
+    activeProjectTab = "editor-thread.chat";
+    const observers: {
+      callback: ResizeObserverCallback;
+      targets: Element[];
+    }[] = [];
+    const original = (window as any).ResizeObserver;
+    (window as any).ResizeObserver = class {
+      targets: Element[] = [];
+      constructor(callback: ResizeObserverCallback) {
+        observers.push({ callback, targets: this.targets });
+      }
+      observe(target: Element) {
+        this.targets.push(target);
+      }
+      unobserve() {}
+      disconnect() {}
+    };
+    try {
+      const scrollToBottomRef = { current: undefined as any };
+      render(
+        <ChatLog
+          project_id="project-1"
+          path="thread.chat"
+          messages={
+            new Map([
+              [
+                "1000",
+                {
+                  date: 1000,
+                  sender_id: "acct-1",
+                  history: [{ content: "hello" }],
+                },
+              ],
+            ]) as any
+          }
+          mode="standalone"
+          actions={{ clearScrollRequest: jest.fn() } as any}
+          selectedThread="thread-1"
+          scrollToBottomRef={scrollToBottomRef}
+        />,
+      );
+      await waitFor(() => expect(scrollToBottomRef.current).toBeDefined());
+      const scroller = document.querySelector("[data-virtuoso-scroller]")!;
+      const observer = observers.find(({ targets }) =>
+        targets.includes(scroller),
+      );
+      expect(observer).toBeDefined();
+
+      // Following the bottom, the log's viewport shrinks as the composer grows.
+      act(() => scrollToBottomRef.current(true));
+      mockScrollToIndex.mockClear();
+      act(() =>
+        observer!.callback(
+          [{ target: scroller } as ResizeObserverEntry],
+          {} as ResizeObserver,
+        ),
+      );
+      await waitFor(() =>
+        expect(mockScrollToIndex).toHaveBeenCalledWith(
+          expect.objectContaining({ index: Number.MAX_SAFE_INTEGER }),
+        ),
+      );
+    } finally {
+      (window as any).ResizeObserver = original;
+    }
+  });
 });
