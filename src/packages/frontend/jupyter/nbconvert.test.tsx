@@ -1,5 +1,6 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { fromJS } from "immutable";
+import userEvent from "@testing-library/user-event";
 
 import { NBConvert } from "./nbconvert";
 
@@ -12,7 +13,7 @@ jest.mock("antd", () => ({
   Button: ({ children, ...props }: any) => (
     <button {...props}>{children}</button>
   ),
-  Modal: ({ children, open }: any) => (open ? <div>{children}</div> : null),
+  Modal: jest.requireActual("antd").Modal,
 }));
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
@@ -48,11 +49,104 @@ function createActions(fileExtension = ".py") {
     },
     focus: jest.fn(),
     nbconvert: jest.fn(),
+    cancel_nbconvert_startup: jest.fn(),
     setState: jest.fn(),
   } as any;
 }
 
 describe("NBConvert", () => {
+  const getComputedStyle = window.getComputedStyle;
+  beforeAll(() => {
+    // JSDOM has no pseudo-element layout for the real Modal's scrollbar probe.
+    jest
+      .spyOn(window, "getComputedStyle")
+      .mockImplementation((element) => getComputedStyle(element));
+  });
+  afterAll(() => jest.restoreAllMocks());
+  it("allows keyboard cancellation and restores editor focus", async () => {
+    const actions = createActions();
+    const user = userEvent.setup();
+    render(
+      <NBConvert
+        actions={actions}
+        path="test.ipynb"
+        project_id="project-1"
+        nbconvert_dialog={fromJS({ to: "pdf" })}
+        nbconvert={fromJS({ state: "start", phase: "initialization" })}
+      />,
+    );
+    expect(screen.getByRole("status").textContent).toContain("30 seconds");
+    screen.getByRole("button", { name: "Cancel export startup" }).focus();
+    expect(
+      screen.getByRole("button", { name: "Cancel export startup" }),
+    ).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(actions.cancel_nbconvert_startup).toHaveBeenCalledTimes(1);
+    expect(actions.setState).toHaveBeenCalledWith({
+      nbconvert_dialog: undefined,
+    });
+    expect(actions.focus).toHaveBeenCalledWith(true);
+  });
+  it("cancels pending startup with Escape from the actual dialog", async () => {
+    const actions = createActions();
+    const user = userEvent.setup();
+    render(
+      <NBConvert
+        actions={actions}
+        path="test.ipynb"
+        project_id="project-1"
+        nbconvert_dialog={fromJS({ to: "pdf" })}
+        nbconvert={fromJS({ state: "start", phase: "initialization" })}
+      />,
+    );
+    const dialog = screen.getByRole("dialog", {
+      name: /Save and Download as PDF via nbconvert and LaTeX/,
+    });
+    expect(dialog).toContainElement(
+      screen.getByRole("button", { name: "Cancel export startup" }),
+    );
+    screen.getByRole("button", { name: "Cancel export startup" }).focus();
+    await user.keyboard("{Escape}");
+    expect(actions.cancel_nbconvert_startup).toHaveBeenCalledTimes(1);
+    expect(actions.focus).toHaveBeenCalledWith(true);
+  });
+  it("announces startup failure, offers keyboard retry, and does not download", async () => {
+    const actions = createActions();
+    const dialog = fromJS({ to: "pdf" });
+    const user = userEvent.setup();
+    const props = {
+      actions,
+      path: "test.ipynb",
+      project_id: "project-1",
+      nbconvert_dialog: dialog,
+    };
+    const { rerender } = render(
+      <NBConvert
+        {...props}
+        nbconvert={fromJS({ state: "start", phase: "initialization" })}
+      />,
+    );
+    rerender(
+      <NBConvert
+        {...props}
+        nbconvert={fromJS({
+          state: "done",
+          phase: "initialization",
+          args: ["--to", "pdf"],
+          time: Date.now(),
+          error: "Permission denied",
+        })}
+      />,
+    );
+    expect(screen.getByRole("alert").textContent).toBe("Export did not start");
+    expect(downloadFile).not.toHaveBeenCalled();
+    const retry = screen.getByRole("button", { name: "Retry export" });
+    retry.focus();
+    expect(retry).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(actions.nbconvert).toHaveBeenCalledTimes(1);
+    expect(actions.nbconvert).toHaveBeenCalledWith(["--to", "pdf"]);
+  });
   beforeEach(() => {
     downloadFile.mockReset();
     getProjectStore.mockClear();
