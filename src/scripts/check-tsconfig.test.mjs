@@ -12,11 +12,10 @@ test("flags compiler options removed in TypeScript 7", () => {
     "compilerOptions": {
       "baseUrl": ".",
       "downlevelIteration": true,
-      "ignoreDeprecations": "6.0",
       "moduleResolution": "Node"
     }
   }`;
-  assert.equal(removedOptionErrors("a/tsconfig.json", text).length, 4);
+  assert.equal(removedOptionErrors("a/tsconfig.json", text).length, 3);
 });
 
 test("accepts the bundler resolver and paths", () => {

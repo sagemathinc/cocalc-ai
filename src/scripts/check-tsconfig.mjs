@@ -15,16 +15,12 @@ const REMOVED_OPTIONS = [
   [/"baseUrl"\s*:/, "baseUrl is removed in TypeScript 7; use paths"],
   [/"downlevelIteration"\s*:/, "downlevelIteration is removed in TypeScript 7"],
   [
-    /"ignoreDeprecations"\s*:/,
-    "ignoreDeprecations is obsolete in TypeScript 7",
-  ],
-  [
     /"moduleResolution"\s*:\s*"(node|node10|classic)"/i,
     'moduleResolution must not be "node"/"node10"/"classic"; inherit "bundler"',
   ],
 ];
 
-// The root package itself and the helper that only installs the TS7 compiler.
+// This helper package only installs the TypeScript 7 compiler; nothing imports it.
 const NOT_LINKED = new Set(["@cocalc/typescript-native"]);
 
 // Mirrors the exclusions in packages/pnpm-workspace.yaml.

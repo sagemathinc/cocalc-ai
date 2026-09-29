@@ -7,6 +7,9 @@
     "forceConsistentCasingInFileNames": true,
     "incremental": true,
     "isolatedModules": true,
+    // ts-jest type-checks CommonJS tests with the node10 resolver, which
+    // TypeScript 6 deprecates. TypeScript 7 builds accept this setting.
+    "ignoreDeprecations": "6.0",
     "jsx": "react-jsx",
     "lib": ["es2020", "dom"],
     "moduleResolution": "bundler",
