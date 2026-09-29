@@ -454,3 +454,33 @@ Deep cursors, heavy-tail membership distributions, active/cold competition,
 other maintenance queries, retention, storage growth, DAU traces, and the soak
 remain required. Millisecond timings here are observations, not production
 latency guarantees.
+
+## Membership Feed To Demand Scheduling
+
+Under the three demand/event scheduler prototype switches, both the local
+account-project projector and remote-home project-feed upserts now schedule the
+affected project for matching live/grace demand. This closes the case where an
+already-open view finishes activation and then joins a new project: no consumer
+restart or universal membership seed is needed. Out-of-scope, cold, banned,
+deleted, and viewer-only memberships do not qualify for this scheduling path.
+
+The targeted access job and account due markers coalesce with existing work;
+they do not reset the account activation cursor or allocate a job per event.
+Only due times are changed, never access grants or authorization generations.
+The local projector uses its existing transaction. In prototype mode the remote
+home upsert uses an account-home/rehome-fenced transaction, including both the
+membership projection and scheduling writes. Default legacy behavior remains
+unchanged. Queue-before-access lock order matches activation and claims.
+
+This consumes existing membership feed delivery; it does not make best-effort
+remote forwarding durable or solve missed-event recovery. Owner revision
+interests, atomic catalog subscription handoff, faster revocation hints, visible
+client demand, and migration/repair remain incomplete. Existing access checks
+and lease expiry still bound authorization independently of scheduling.
+
+Validation: server TypeScript build, 12 real-PostgreSQL demand tests, five
+existing server project-feed tests, and nine PGlite local projector tests pass.
+Coverage includes post-activation membership arrival, duplicate feed delivery,
+scope/role/expiry exclusion, no issued grant, preservation of the completed
+activation cursor, and rollback of membership plus queue writes when an
+injected access-job constraint failure occurs, followed by successful retry.

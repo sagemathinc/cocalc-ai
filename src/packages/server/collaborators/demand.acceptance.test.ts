@@ -366,6 +366,99 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
     ).toEqual([{ projection_due: null, access_due: null }]);
   });
 
+  test("membership feeds wake only the affected demanded project without granting access", async () => {
+    await demand("enableScheduler");
+    const joined = randomUUID();
+    const outside = randomUUID();
+    const consumer_id = randomUUID();
+    await demand("acquire", {
+      consumer_id,
+      scope: { kind: "projects", project_ids: [joined] },
+    });
+    expect(await demand("activate")).toEqual({ scheduled: 0, complete: true });
+    await demand("membershipFeed", { project_id: outside });
+    await demand("membershipFeed", { project_id: joined, group: "viewer" });
+    expect(await env.sql("a", "SELECT * FROM collaboration_access")).toEqual(
+      [],
+    );
+    await demand("membershipFeed", { project_id: joined });
+    await demand("membershipFeed", { project_id: joined });
+    expect(
+      await env.sql(
+        "a",
+        "SELECT project_id,grant_request_id,granted_generation FROM collaboration_access",
+      ),
+    ).toEqual([
+      { project_id: joined, grant_request_id: null, granted_generation: null },
+    ]);
+    // No restart of global activation, even after duplicate feed delivery.
+    expect(
+      await env.sql("a", "SELECT due_at FROM collaboration_demand_activation"),
+    ).toEqual([{ due_at: null }]);
+    expect(
+      (await demand("claimProjection")).map((row) => row.project_id),
+    ).toEqual([joined]);
+    await env.sql("a", "DELETE FROM collaboration_access");
+    await env.sql("a", "DELETE FROM collaboration_demand_activation");
+    await env.sql(
+      "a",
+      "UPDATE collaboration_demand SET grace_until=clock_timestamp()-interval '1 second'",
+    );
+    await demand("membershipFeed", { project_id: joined });
+    expect(await env.sql("a", "SELECT * FROM collaboration_access")).toEqual(
+      [],
+    );
+    expect(
+      await env.sql("a", "SELECT * FROM collaboration_demand_activation"),
+    ).toEqual([]);
+  });
+
+  test("membership and scheduling roll back together if the targeted job write fails", async () => {
+    await demand("enableScheduler");
+    const joined = randomUUID();
+    await demand("acquire", {
+      consumer_id: randomUUID(),
+      scope: { kind: "projects", project_ids: [joined] },
+    });
+    const before = await env.sql(
+      "a",
+      "SELECT * FROM collaboration_demand_activation",
+    );
+    // Inject a storage failure in the isolated fixture, after the feed upsert
+    // and account queue update but before the access job can be committed.
+    await env.sql(
+      "a",
+      `ALTER TABLE collaboration_access ADD CONSTRAINT fixture_reject_membership_job CHECK(project_id <> '${joined}'::uuid) NOT VALID`,
+    );
+    try {
+      await expect(
+        demand("membershipFeed", { project_id: joined }),
+      ).rejects.toThrow(/fixture_reject_membership_job/);
+      expect(
+        await env.sql(
+          "a",
+          "SELECT project_id FROM account_project_index WHERE project_id=$1",
+          [joined],
+        ),
+      ).toEqual([]);
+      expect(
+        await env.sql("a", "SELECT * FROM collaboration_demand_activation"),
+      ).toEqual(before);
+      expect(await env.sql("a", "SELECT * FROM collaboration_access")).toEqual(
+        [],
+      );
+    } finally {
+      await env.sql(
+        "a",
+        "ALTER TABLE collaboration_access DROP CONSTRAINT fixture_reject_membership_job",
+      );
+    }
+    await demand("membershipFeed", { project_id: joined });
+    expect(
+      await env.sql("a", "SELECT project_id FROM collaboration_access"),
+    ).toEqual([{ project_id: joined }]);
+  });
+
   test("cutover maintenance makes no owner RPC or seed work for 1000 cold memberships", async () => {
     await demand("enableScheduler");
     await env.sql(

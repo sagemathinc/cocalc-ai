@@ -81,6 +81,43 @@ export const demandScopePredicate = `EXISTS(SELECT 1 FROM collaboration_demand d
   WHERE d.account_id=x.account_id AND d.grace_until>clock_timestamp()
   AND (d.scope->>'kind'='all' OR d.scope->'project_ids' ? x.project_id::text))`;
 
+/** Run in the membership projection transaction, after its upsert. This is a
+ * scheduling hint, not an access grant. Lock the account queue before access
+ * rows, matching activation/claim lock order.
+ */
+export async function scheduleCollaborationMembershipDemand(
+  db: Pick<PoolClient, "query">,
+  account_id: string,
+  project_id: string,
+) {
+  if (!demandSchedulingEnabled()) return;
+  const { rows } = await db.query(
+    `INSERT INTO collaboration_demand_activation(account_id,projection_due,access_due)
+    SELECT p.account_id,clock_timestamp(),clock_timestamp()
+    FROM account_project_index p JOIN accounts a USING(account_id)
+    WHERE p.account_id=$1 AND p.project_id=$2
+      AND a.deleted IS NOT TRUE AND a.banned IS NOT TRUE
+      AND p.users_summary #>> ARRAY[p.account_id::text,'group'] IN ('owner','collaborator')
+      AND EXISTS(SELECT 1 FROM collaboration_demand d WHERE d.account_id=p.account_id
+        AND d.grace_until>clock_timestamp()
+        AND (d.scope->>'kind'='all' OR d.scope->'project_ids' ? p.project_id::text))
+    ON CONFLICT(account_id) DO UPDATE SET
+      projection_due=LEAST(collaboration_demand_activation.projection_due,excluded.projection_due),
+      access_due=LEAST(collaboration_demand_activation.access_due,excluded.access_due)
+    RETURNING account_id`,
+    [account_id, project_id],
+  );
+  if (!rows.length) return;
+  await db.query(
+    `INSERT INTO collaboration_access(account_id,project_id,due_at,lease_due_at)
+    VALUES($1,$2,clock_timestamp(),clock_timestamp())
+    ON CONFLICT(account_id,project_id) DO UPDATE SET
+      due_at=LEAST(collaboration_access.due_at,excluded.due_at),
+      lease_due_at=LEAST(collaboration_access.lease_due_at,excluded.lease_due_at)`,
+    [account_id, project_id],
+  );
+}
+
 function scopeOf(value: CollaborationDemandScope): CollaborationDemandScope {
   if (value?.kind === "all") return { kind: "all" };
   if (

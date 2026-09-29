@@ -835,6 +835,28 @@ async function command(name, args = {}) {
       }
       const account_id = config.accounts[config.role === "a" ? 0 : 1];
       switch (args.operation) {
+        case "membershipFeed":
+          await require("@cocalc/server/account/project-feed").applyAccountProjectFeedUpsertOnHomeBay(
+            {
+              type: "project.upsert",
+              ts: Date.now(),
+              account_id,
+              project: {
+                project_id: args.opts?.project_id ?? config.project,
+                owning_bay_id: config.bays[0],
+                title: "Membership demand fixture",
+                description: "",
+                host_id: null,
+                users: {
+                  [account_id]: { group: args.opts?.group ?? "collaborator" },
+                },
+                state: {},
+                last_active: {},
+                last_edited: null,
+              },
+            },
+          );
+          return null;
         case "maintenance":
           await require("@cocalc/server/collaborators/maintenance").runCollaboratorsMaintenance();
           await require("@cocalc/server/collaborators/maintenance").runCollaboratorsAccessMaintenance();
