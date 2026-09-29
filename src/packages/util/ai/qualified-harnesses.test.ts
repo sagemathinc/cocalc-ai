@@ -14,7 +14,7 @@ test("Claude qualification is pinned and fails closed on subscriptions", () => {
     protocolVersion: 1,
     package: {
       name: "@agentclientprotocol/claude-agent-acp",
-      version: "0.81.1",
+      version: "0.84.0",
       integrity: expect.stringMatching(/^sha512-/),
       gitHead: expect.stringMatching(/^[a-f0-9]{40}$/),
     },

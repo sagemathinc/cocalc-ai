@@ -160,7 +160,7 @@ test("subscription controller mounts only its transcript, not project secrets or
   expect(args.slice(-3)).toEqual([
     "/trusted-base-rootfs",
     "/opt/cocalc/bin/node",
-    "/opt/cocalc/harnesses/claude-code/0.81.1/app/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
+    "/opt/cocalc/harnesses/claude-code/0.84.0/app/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
   ]);
 });
 

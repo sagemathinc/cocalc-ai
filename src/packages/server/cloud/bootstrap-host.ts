@@ -511,10 +511,10 @@ export function resolveManagedHarness(
     return undefined;
   }
   const sha256 = {
-    amd64: "e19b876ca7a56b39f5f6fa24537df57319908fa44c5a99280948f62a8138f7d3",
-    arm64: "d39ceeceb2501c65502f49c24662c15076361a59c717f8ccfa6d7a99e26c1dac",
+    amd64: "90baced6cb6ec934dd962c15a45c744a850aa03b2f12481a4ebe16c49d2d8c09",
+    arm64: "512a2c7d94f9df6f6297eaddba3668d31c8ab041d316764b3157e88fd9c2d326",
   }[arch];
-  const version = "0.81.1";
+  const version = "0.84.0";
   return {
     name: "claude-code",
     version,

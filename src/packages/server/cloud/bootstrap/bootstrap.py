@@ -1642,7 +1642,7 @@ def parse_managed_harness(
         for field in fields
     })
     _require(
-        spec.name == "claude-code" and spec.version == "0.81.1",
+        spec.name == "claude-code" and spec.version == "0.84.0",
         "unsupported managed harness name/version",
     )
     _require(
@@ -11136,7 +11136,7 @@ def _validate_managed_harness_payload(root: Path, spec: ManagedHarnessSpec) -> N
     modules = root / "app/node_modules"
     for package, version in (
         ("@agentclientprotocol/claude-agent-acp", spec.version),
-        ("@anthropic-ai/claude-agent-sdk", "0.3.280"),
+        ("@anthropic-ai/claude-agent-sdk", "0.3.284"),
     ):
         metadata = _ensure_object(
             json.loads((modules / package / "package.json").read_text()),

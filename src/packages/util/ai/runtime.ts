@@ -222,7 +222,8 @@ export function parseAcpHarnessProfile(value: unknown): AcpHarnessProfile {
     if (
       !candidate ||
       candidate.status === "disabled" ||
-      revision !== candidate.package.version
+      (revision !== candidate.package.version &&
+        !candidate.package.supersededVersions?.includes(revision))
     ) {
       throw Error("Unsupported qualified ACP harness or revision");
     }
@@ -230,7 +231,8 @@ export function parseAcpHarnessProfile(value: unknown): AcpHarnessProfile {
       version: 2,
       kind: "acp",
       id,
-      revision,
+      // Profiles saved under an earlier pin run the current one.
+      revision: candidate.package.version,
       cwd,
       executionPolicy: "full-access",
       credentialMode: "project-managed",

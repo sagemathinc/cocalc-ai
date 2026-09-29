@@ -153,7 +153,7 @@ test("account credentials are exposed only through a revocable relay mount", asy
       version: 2,
       kind: "acp",
       id: "claude-code",
-      revision: "0.81.1",
+      revision: "0.84.0",
       cwd: "/home/user",
       credentialMode: "project-managed",
       executionPolicy: "full-access",
@@ -185,7 +185,7 @@ test("account credentials are exposed only through a revocable relay mount", asy
     `mount:${join(__dirname, "..", "qualified-harness", "index.js")}:/opt/cocalc/acp/qualified-harness-entry.js:true`,
   );
   expect(args).not.toContain("short-lived-token");
-  expect(args.slice(-3)).toEqual(["claude-code", "0.81.1", "account-api-key"]);
+  expect(args.slice(-3)).toEqual(["claude-code", "0.84.0", "account-api-key"]);
   await handle.stop();
   expect(mockRelayClose).toHaveBeenCalledTimes(1);
   expect(mockRm).toHaveBeenCalledWith("/host-relay", {
@@ -238,7 +238,7 @@ test("subscription controller receives the admitted conversation for agent ident
       version: 2 as const,
       kind: "acp" as const,
       id: "claude-code" as const,
-      revision: "0.81.1",
+      revision: "0.84.0",
       cwd: "/home/user",
       credentialMode: "project-managed" as const,
       executionPolicy: "full-access" as const,
@@ -264,7 +264,7 @@ test("qualified profiles resolve only through the trusted entry point", () => {
     version: 2,
     kind: "acp",
     id: "claude-code",
-    revision: "0.81.1",
+    revision: "0.84.0",
     cwd: "/home/user",
     credentialMode: "project-managed",
     executionPolicy: "full-access",
@@ -273,7 +273,7 @@ test("qualified profiles resolve only through the trusted entry point", () => {
   expect(command.args).toEqual([
     "/opt/cocalc/acp/qualified-harness-entry.js",
     "claude-code",
-    "0.81.1",
+    "0.84.0",
     "project-secret",
   ]);
   expect(command.args.join(" ")).not.toContain("ANTHROPIC_API_KEY");

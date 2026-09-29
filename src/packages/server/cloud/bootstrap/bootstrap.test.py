@@ -1672,7 +1672,7 @@ class ManagedHarnessTest(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.base = Path(temporary.name)
         self.root = self.base / "harnesses"
-        self.prefix = "claude-code/0.81.1"
+        self.prefix = "claude-code/0.84.0"
         self.destination = self.root / self.prefix
         self.cfg = replace(make_cfg(str(self.base)), ssh_user="")
         for name, value in (
@@ -1703,10 +1703,10 @@ class ManagedHarnessTest(unittest.TestCase):
         files = {
             "bin/claude-agent-acp": (b"#!/bin/sh\nexit 0\n", 0o6755),
             "app/node_modules/@agentclientprotocol/claude-agent-acp/package.json": (
-                json.dumps({"name": "@agentclientprotocol/claude-agent-acp", "version": "0.81.1"}).encode(), 0o666),
+                json.dumps({"name": "@agentclientprotocol/claude-agent-acp", "version": "0.84.0"}).encode(), 0o666),
             "app/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js": (b"// adapter", 0o644),
             "app/node_modules/@anthropic-ai/claude-agent-sdk/package.json": (
-                json.dumps({"name": "@anthropic-ai/claude-agent-sdk", "version": "0.3.280"}).encode(), 0o644),
+                json.dumps({"name": "@anthropic-ai/claude-agent-sdk", "version": "0.3.284"}).encode(), 0o644),
             "app/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs": (b"// sdk", 0o644),
             f"app/node_modules/@anthropic-ai/claude-agent-sdk-linux-{cpu}/claude": (b"fixture-binary", 0o755),
         }
@@ -1724,7 +1724,7 @@ class ManagedHarnessTest(unittest.TestCase):
             for member, data in entries:
                 target.addfile(member, io.BytesIO(data) if member.isreg() else None)
         spec = bootstrap.ManagedHarnessSpec(
-            name="claude-code", version="0.81.1", os="linux", arch=arch,
+            name="claude-code", version="0.84.0", os="linux", arch=arch,
             url=archive.as_uri(), sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
         )
         return replace(self.cfg, expected_arch=arch, managed_harness=spec)
@@ -1738,7 +1738,7 @@ class ManagedHarnessTest(unittest.TestCase):
         self.assertIsNone(bootstrap.parse_managed_harness(None, "linux", "amd64"))
         for change in (
             {"sha256": ""}, {"sha256": "g" * 64}, {"sha256": "a" * 63},
-            {"name": "other"}, {"version": "../0.81.1"}, {"version": "0.81.2"},
+            {"name": "other"}, {"version": "../0.84.0"}, {"version": "0.81.2"},
             {"os": "darwin"}, {"arch": "arm64"}, {"arch": "other"},
             {"url": "relative.tar.xz"}, {"url": "https://example.org/path\n"},
         ):
@@ -2043,7 +2043,7 @@ class ManagedHarnessTest(unittest.TestCase):
                 mock.patch.object(bootstrap, "MANAGED_HARNESSES_ROOT", self.base / arch), \
                 mock.patch.object(bootstrap.os, "uname", return_value=type("Uname", (), {"sysname": "Linux", "machine": arch})()):
                 cfg = replace(self.cfg, expected_arch=arch, managed_harness=bootstrap.ManagedHarnessSpec(
-                    name="claude-code", version="0.81.1", os="linux", arch=arch,
+                    name="claude-code", version="0.84.0", os="linux", arch=arch,
                     url=archive.as_uri(), sha256=bootstrap._managed_harness_file_sha256(archive),
                 ))
                 bootstrap.install_managed_harness(cfg)
