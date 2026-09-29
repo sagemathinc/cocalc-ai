@@ -174,6 +174,70 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
       await env.worker("owner").call("dispatchRevisionHint", request),
     ).toEqual({ state: "deferred" });
   }, 60000);
+  test("production timers deliver catalog revisions and resume pending work after stop", async () => {
+    await env.sql("owner", "DELETE FROM collaboration_revision_interests");
+    await env.sql("a", "DELETE FROM collaboration_revision_receivers");
+    await env.sql(
+      "owner",
+      `INSERT INTO collaboration_projects(project_id,generation,revision) VALUES($1,$2,1)
+       ON CONFLICT(project_id) DO UPDATE SET revision=collaboration_projects.revision+1`,
+      [env.project, randomUUID()],
+    );
+    await demand("acquire", {
+      consumer_id: randomUUID(),
+      scope: { kind: "all" },
+    });
+    await env.worker("b").call("registerRevisionReceiver");
+    const read = async () => {
+      const [row] = await env.sql(
+        "a",
+        "SELECT dirty_seq::text FROM collaboration_revision_receivers WHERE project_id=$1",
+        [env.project],
+      );
+      return BigInt(row.dirty_seq);
+    };
+    const mutate = () =>
+      env.sql(
+        "owner",
+        "UPDATE collaboration_projects SET revision=revision+1 WHERE project_id=$1",
+        [env.project],
+      );
+    const pending = () =>
+      env.sql(
+        "owner",
+        "SELECT token FROM collaboration_revision_outbox WHERE project_id=$1",
+        [env.project],
+      );
+    const wait = (ms: number) =>
+      new Promise((resolve) => setTimeout(resolve, ms));
+    const delivered = async (expected: bigint) => {
+      const deadline = Date.now() + 15000;
+      while (Date.now() < deadline) {
+        if ((await read()) === expected && !(await pending()).length) return;
+        await wait(100);
+      }
+      throw Error("automatic revision delivery did not converge in 15 seconds");
+    };
+    const processor = await env.restartOwnerProcessor();
+    const before = await read();
+    await mutate();
+    try {
+      await processor.call("startRevisionMaintenance");
+      await delivered(before + 1n);
+      await processor.call("stopRevisionMaintenance");
+      // Let already-started work settle before testing the stopped interval.
+      await wait(1500);
+      await mutate();
+      await wait(1500);
+      expect(await read()).toBe(before + 1n);
+      expect(await pending()).toHaveLength(1);
+      await processor.call("startRevisionMaintenance");
+      await delivered(before + 2n);
+    } finally {
+      await processor.call("stopRevisionMaintenance");
+    }
+  }, 120000);
+
   test("outbox survives a processor crash and resumes after claim expiry", async () => {
     await env.sql("owner", "DELETE FROM collaboration_revision_interests");
     await env.sql("a", "DELETE FROM collaboration_revision_receivers");

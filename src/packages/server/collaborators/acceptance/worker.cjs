@@ -640,6 +640,20 @@ async function historicalFixture(args) {
 
 async function command(name, args = {}) {
   switch (name) {
+    case "startRevisionMaintenance":
+      for (const flag of [
+        "COCALC_PEOPLE_DEMAND_PROTOTYPE",
+        "COCALC_PEOPLE_DEMAND_SCHEDULER_PROTOTYPE",
+        "COCALC_PEOPLE_EVENT_FANOUT_PROTOTYPE",
+        "COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE",
+        "COCALC_PEOPLE_REVISION_OUTBOX_PROTOTYPE",
+      ])
+        process.env[flag] = "1";
+      await require("@cocalc/server/collaborators/maintenance").startCollaboratorsMaintenance();
+      return true;
+    case "stopRevisionMaintenance":
+      require("@cocalc/server/collaborators/maintenance").stopCollaboratorsMaintenance();
+      return true;
     case "bootProcessor":
       config = { ...args, resume: true };
       await bootstrapDb();
@@ -1205,6 +1219,9 @@ async function command(name, args = {}) {
 async function shutdown() {
   if (closing) return closing;
   closing = (async () => {
+    // A processor may have started the real timers; stop admission before pools.
+    if (config?.resume)
+      require("@cocalc/server/collaborators/maintenance").stopCollaboratorsMaintenance();
     if (hostService) await hostService.close();
     if (journalService)
       await hostRequire(

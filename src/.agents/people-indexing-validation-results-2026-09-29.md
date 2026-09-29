@@ -1964,3 +1964,21 @@ pass. This proves timer control flow, not live timer-to-database integration or
 cancellation of already-started remote work. The separate real process-loss test
 still supplies durable-claim evidence. Shared transport/database restart,
 recipient-page cursor recovery, rehome/restore and scale/soak remain open.
+
+### Live Maintenance Timer Integration
+
+The isolated owner processor can now start and stop the production maintenance
+loop. A real PostgreSQL/fabric case commits a catalog revision, starts maintenance,
+and observes automatic account-home dirty-sequence advancement and outbox removal
+without manually invoking a dispatch pass. After stopping and allowing started
+work to settle, a second change stays pending across a timer interval; restarting
+maintenance delivers it and removes the marker. Fixture shutdown stops timer
+admission before closing database pools.
+
+Server/reference typecheck and all 22 real demand acceptance tests pass. The
+observation uses a bounded 15-second convergence deadline, not a performance SLO.
+Outbox delivery and its repair fallback are both enabled, as in production
+maintenance; this case validates their integrated lifecycle rather than isolating
+which path delivered a particular hint. No production flags changed. Shared
+transport/database restart, recipient-page cursor recovery, rehome/restore,
+source-write integration and scale/soak gates remain open.
