@@ -858,6 +858,8 @@ async function command(name, args = {}) {
       return require("@cocalc/server/collaborators/revision-dispatch").dispatchCollaborationRevisionHint(
         args,
       );
+    case "claimActiveProjection":
+    case "scheduleRevisionWakeups":
     case "repairRevisionHints": {
       const flags = [
         "COCALC_PEOPLE_DEMAND_SCHEDULER_PROTOTYPE",
@@ -866,6 +868,12 @@ async function command(name, args = {}) {
       const previous = flags.map((name) => process.env[name]);
       try {
         flags.forEach((name) => (process.env[name] = "1"));
+        if (name === "claimActiveProjection")
+          return await require("@cocalc/database/postgres/collaborators/collaborators-projection").claimCollaborationProjectionJobs(
+            config.bays[config.role === "a" ? 1 : 2],
+          );
+        if (name === "scheduleRevisionWakeups")
+          return await require("@cocalc/server/collaborators/revision-wakeup").runRevisionWakeupScheduling();
         return await require("@cocalc/server/collaborators/revision-repair").runRevisionHintRepair();
       } finally {
         flags.forEach((name, i) => {

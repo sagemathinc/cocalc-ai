@@ -188,6 +188,11 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
       consumer_id: randomUUID(),
       scope: { kind: "all" },
     });
+    await demand("membershipFeed");
+    await demand("activate");
+    const jobs = await env.worker("a").call("claimActiveProjection");
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].project_id).toBe(env.project);
     await env.worker("b").call("registerRevisionReceiver");
     const [before] = await env.sql(
       "a",
@@ -218,6 +223,37 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
       { dirty_seq: String(BigInt(before.dirty_seq) + 1n), applied_seq: "0" },
     ];
     expect(await read()).toEqual(expected);
+    expect(await env.worker("a").call("scheduleRevisionWakeups")).toBe(0);
+    const scheduling = () =>
+      env.sql(
+        "a",
+        "SELECT scheduling_complete,applied_seq::text FROM collaboration_revision_receivers WHERE project_id=$1",
+        [env.project],
+      );
+    expect(await scheduling()).toEqual([
+      { scheduling_complete: false, applied_seq: "0" },
+    ]);
+    await env.sql(
+      "a",
+      `UPDATE collaboration_access SET claim_until=clock_timestamp()-interval '1 second',
+      due_at=clock_timestamp()+interval '1 day' WHERE account_id=$1 AND project_id=$2`,
+      [env.accounts[0], env.project],
+    );
+    let scheduled = 0;
+    // The bounded project cursor may need a wrap pass before revisiting this row.
+    for (let i = 0; i < 3; i++)
+      scheduled += await env.worker("a").call("scheduleRevisionWakeups");
+    expect(scheduled).toBe(1);
+    expect(await scheduling()).toEqual([
+      { scheduling_complete: true, applied_seq: "0" },
+    ]);
+    expect(
+      await env.sql(
+        "a",
+        "SELECT due_at<=clock_timestamp() AS due FROM collaboration_access WHERE account_id=$1 AND project_id=$2",
+        [env.accounts[0], env.project],
+      ),
+    ).toEqual([{ due: true }]);
     expect(await env.worker("owner").call("repairRevisionHints")).toBe(0);
     expect(await read()).toEqual(expected);
     await env.sql(

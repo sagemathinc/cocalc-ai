@@ -1665,3 +1665,18 @@ schedule-before-advance ordering, busy/failure retention, empty filtered-page
 continuation and completed/disabled suppression. Authenticated wakeup-to-applied
 projection validation, restart/concurrency behavior, cold-index GC and the full
 source-to-sleep-to-return and capacity gates remain open.
+
+### Authenticated Wakeup To Scheduling
+
+The real PostgreSQL/fabric repair test now seeds reverse demand through the
+active projection claimant, rather than inserting reverse rows directly. After
+owner revision change and routed hint delivery, a live projection claim keeps
+the scheduling page incomplete. The fixture then expires that claim and moves
+its job due time into the future. Running the actual wakeup scheduler across a
+bounded cursor wrap schedules the account exactly once and moves the job due
+now. Scheduling completion is persisted, while `applied_seq` remains zero.
+
+Server typecheck and all nineteen demand acceptance cases pass. An initial
+fixture command typo was corrected before the final full-suite run. This extends
+real-system evidence through job scheduling, not actual catalog application,
+receiver catch-up completion, restart/concurrency or capacity validation.
