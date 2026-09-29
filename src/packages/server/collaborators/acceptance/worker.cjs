@@ -1179,6 +1179,21 @@ async function command(name, args = {}) {
     }
     case "demand": {
       const demand = require("@cocalc/database/postgres/collaborators/collaborators-demand");
+      if (args.operation === "fixtureAcquireBatch") {
+        if (
+          config.role !== "a" ||
+          !Array.isArray(args.opts?.account_ids) ||
+          args.opts.account_ids.length > 100
+        )
+          throw Error("bounded home-a fixture batch required");
+        for (const account_id of args.opts.account_ids)
+          await demand.acquireCollaborationDemand({
+            account_id,
+            consumer_id: account_id,
+            scope: { kind: "projects", project_ids: [config.project] },
+          });
+        return null;
+      }
       if (args.operation === "pruneProjectDuringRenewal") {
         const db = await pool.connect();
         try {

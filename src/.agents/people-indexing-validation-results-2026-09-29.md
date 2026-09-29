@@ -2373,6 +2373,29 @@ Live CLI-to-owner/host validation, UI, delegated-agent authorization,
 demand/bootstrap integration and the broader workload/lifecycle gates remain
 open.
 
+### Synthetic 100-Account Activation Burst
+
+`active-burst.acceptance.test.ts` adds 100 synthetic accounts on one home bay,
+all authorized on one owner-bay project, and acquires project demand through a
+bounded fixture-only store helper. These are not 100 authenticated browser
+sessions. Real maintenance timers and inter-bay RPCs then activate their empty
+catalog views with demand, event fanout, revision interest and outbox enabled.
+
+In the observed run all 100 accounts had a non-null catalog generation and a
+valid access lease after 6,150 ms from worker startup. Owner counter deltas were
+18 shared project-page calls, 16 access-refresh calls and one revision-interest
+registration. No project compute starts occurred. Samples are emitted as JSON
+by the test for reproducibility; the 250 ms sampling interval bounds temporal
+precision. The suite took 50.212 seconds including isolated setup/cleanup.
+Server/reference typecheck passes.
+
+This characterizes activation overhead for an empty single-project catalog,
+not sustained mixed traffic, browser throughput, large project catalogs,
+multi-project fanout or a 100-account rollout capacity. The test intentionally
+does not assert machine-specific convergence latency below its 30-second
+functional deadline. The requested initial canary concurrency and project-size
+envelope is still needed for interpreting representative-load measurements.
+
 ### Public Scan Routing On Real PostgreSQL And Fabric
 
 Extended the isolated Scan acceptance harness to invoke the real public hub
