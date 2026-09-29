@@ -161,7 +161,7 @@ describe("public route metadata", () => {
   it("can build canonical and image paths below a server base path", () => {
     const metadata = getPublicRouteMetadata(
       productRoute("products-cocalc-star"),
-      { site_name: "CoCalc" },
+      { dns: "cocalc.ai", site_name: "CoCalc" },
       { basePath: "/base" },
     );
 
@@ -172,6 +172,7 @@ describe("public route metadata", () => {
   });
 
   it("uses the brand card for broad previews and keeps tool page images", () => {
+    const cocalcAi = { dns: "cocalc.ai", site_name: "CoCalc" };
     const broadRoutes: PublicRoute[] = [
       { section: "home" },
       { route: { slug: "ai", view: "detail" }, section: "features" },
@@ -191,9 +192,9 @@ describe("public route metadata", () => {
       { route: { view: "index" }, section: "support" },
     ];
     for (const route of broadRoutes) {
-      expect(
-        getPublicRouteMetadata(route, { site_name: "CoCalc" }).imagePath,
-      ).toBe("/public/landing/cocalc-brand-social-20260925.png");
+      expect(getPublicRouteMetadata(route, cocalcAi).imagePath).toBe(
+        "/public/landing/cocalc-brand-social-20260925.png",
+      );
     }
 
     expect(
@@ -202,9 +203,62 @@ describe("public route metadata", () => {
           route: { slug: "jupyter-notebook", view: "detail" },
           section: "features",
         },
-        { site_name: "CoCalc" },
+        cocalcAi,
       ).imagePath,
     ).toBe("/public/features/cocalc-jupyter2-20170508.png");
+  });
+
+  it("keeps the brand card and tagline title off other brands and hosts", () => {
+    const card = "/public/landing/cocalc-brand-social-20260925.png";
+    const screenshot = "/public/landing/project-notebook-20260916.jpg";
+    const home: PublicRoute = { section: "home" };
+    const signIn: PublicRoute = {
+      route: { kind: "auth-form", view: "sign-in" },
+      section: "auth",
+    };
+    const docs: PublicRoute = {
+      route: { view: "docs-index" },
+      section: "docs",
+    };
+    const ai: PublicRoute = {
+      route: { slug: "ai", view: "detail" },
+      section: "features",
+    };
+
+    // A custom brand on its own host: no card anywhere, and the Home title
+    // is the site name.
+    const custom = {
+      dns: "compute.example.edu",
+      logo_square: "https://compute.example.edu/logo.png",
+      site_name: "Example Research Cloud",
+    };
+    expect(getPublicRouteMetadata(home, custom).title).toBe(
+      "Example Research Cloud",
+    );
+    for (const route of [home, signIn, docs, ai]) {
+      expect(getPublicRouteMetadata(route, custom).imagePath).toBe(screenshot);
+    }
+
+    // The default CoCalc brand on another host: the card only where the
+    // canonical URL is on cocalc.ai.
+    const launchpad = {
+      cocalc_product: "launchpad",
+      dns: "launchpad.example.edu",
+      is_launchpad: true,
+      site_name: "CoCalc Launchpad",
+    };
+    expect(getPublicRouteMetadata(home, launchpad).title).toBe(
+      "Build and Use Software with AI | CoCalc",
+    );
+    for (const route of [home, signIn, docs]) {
+      expect(getPublicRouteMetadata(route, launchpad).imagePath).toBe(
+        screenshot,
+      );
+    }
+    expect(getPublicRouteMetadata(ai, launchpad).canonicalPath).toBe(
+      "https://cocalc.ai/features/ai",
+    );
+    expect(getPublicRouteMetadata(ai, launchpad).imagePath).toBe(card);
   });
 
   it("canonicalizes duplicated marketing routes to cocalc.ai on branded hosts", () => {

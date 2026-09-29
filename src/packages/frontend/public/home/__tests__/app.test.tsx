@@ -604,9 +604,7 @@ describe("PublicHomeApp", () => {
       />,
     );
 
-    expect(document.title).toBe(
-      "Build and Use Software with AI | CoCalc Launchpad",
-    );
+    expect(document.title).toBe("CoCalc Launchpad");
     expect(
       screen.getAllByRole("link", { name: "Open projects" }).length,
     ).toBeGreaterThanOrEqual(2);

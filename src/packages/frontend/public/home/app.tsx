@@ -1215,11 +1215,12 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
   const siteName = getPublicMarketingSiteName(config);
   const authenticated = !!config?.is_authenticated;
   const trustHref = builtinPolicyPath(config, "trust");
+  const homeTitle = publicHomeTitle(config);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
-    document.title = publicHomeTitle(siteName);
-  }, [siteName]);
+    document.title = homeTitle;
+  }, [homeTitle]);
 
   return (
     <PublicPage active="home" config={marketingConfig}>

@@ -247,6 +247,37 @@ describe("public shell rendering", () => {
     },
   );
 
+  it("keeps the brand card and tagline title off other brands and hosts", async () => {
+    const host = "compute.example.edu";
+    const screenshot = `https://${host}/public/landing/project-notebook-20260916.jpg`;
+
+    // A custom brand on its own host.
+    for (const path of ["/", "/auth/sign-in", "/docs"]) {
+      mockedCustomize.mockResolvedValueOnce({
+        logoSquareURL: `https://${host}/logo.png`,
+        policy_pages: "sagemathinc",
+        siteName: "Example Research Cloud",
+      } as any);
+      const { html } = await renderPublicShell(request(path, {}, host));
+      expect(html).toContain(
+        `content="${screenshot}" data-cocalc-public-route-meta="og:image"`,
+      );
+      expect(html).toContain(
+        'content="1050" data-cocalc-public-route-meta="og:image:width"',
+      );
+      expect(html).not.toContain("cocalc-brand-social");
+      if (path === "/") {
+        expect(html).toContain("<title>Example Research Cloud</title>");
+      }
+    }
+
+    // The default CoCalc brand on another host: no card on its own pages.
+    const { html } = await renderPublicShell(request("/docs", {}, host));
+    expect(html).toContain(
+      `content="${screenshot}" data-cocalc-public-route-meta="og:image"`,
+    );
+  });
+
   it("renders docs inside the container replaced by the public React app", async () => {
     const { html, status } = await renderPublicShell(
       request("/docs/projects/project-secrets", { tracking: "example" }),

@@ -119,10 +119,13 @@ function docsPath(slug?: string): string {
   return slug ? `/docs/${slug.replace(/^\/+/, "")}` : "/docs";
 }
 
-// Link previews for broad pages use one brand card (logo, tagline, address)
-// instead of a product screenshot, until a reviewed capture of the current
-// product exists. Pages about one tool keep that tool's own image.
-const DEFAULT_SOCIAL_IMAGE = "public/landing/cocalc-brand-social-20260925.png";
+// Broad pages share one link preview image: a 1200x630 brand card (the size
+// link previews use) with the logo, the tagline and the address cocalc.ai.
+// Pages about one tool keep that tool's own image. Custom brands and other
+// hosts get a product screenshot instead of the card (withLinkPreviewImage).
+const BRAND_SOCIAL_IMAGE = "public/landing/cocalc-brand-social-20260925.png";
+const UNBRANDED_SOCIAL_IMAGE = "public/landing/project-notebook-20260916.jpg";
+const DEFAULT_SOCIAL_IMAGE = BRAND_SOCIAL_IMAGE;
 const PRODUCT_SOCIAL_IMAGE = DEFAULT_SOCIAL_IMAGE;
 const WORKFLOW_SOCIAL_IMAGE = DEFAULT_SOCIAL_IMAGE;
 const FEATURE_SOCIAL_IMAGE = DEFAULT_SOCIAL_IMAGE;
@@ -161,15 +164,23 @@ const PUBLIC_IMAGE_DIMENSIONS: Record<string, PublicImageDimensions> = {
     height: 630,
     width: 1200,
   },
+  "/public/landing/project-notebook-20260916.jpg": {
+    height: 650,
+    width: 1050,
+  },
 };
 
 export const PUBLIC_SITE_DESCRIPTION =
   "CoCalc helps people and teams build and use software with AI. Agents work in shared Linux projects with your files, notebooks, terminals, and collaborators.";
 
-// The server-rendered head and the Home page both use this title, so the
-// browser tab keeps it after the page loads.
-export function publicHomeTitle(siteName: string): string {
-  return pageTitle("Build and Use Software with AI", siteName);
+// Under the default CoCalc brand the Home title leads with the tagline; a
+// custom brand keeps its own site name. The server-rendered head and the
+// Home page both use this, so the browser tab keeps the title after load.
+export function publicHomeTitle(config?: PublicRouteMetadataConfig): string {
+  const siteName = getPublicMarketingSiteName(config);
+  return usesDefaultPublicBrand(config)
+    ? pageTitle("Build and Use Software with AI", siteName)
+    : siteName;
 }
 
 const PRODUCT_SITEMAP_PATHS = [
@@ -359,6 +370,15 @@ export function getPublicMarketingSiteName(
 ): string {
   if (usesDefaultLaunchpadPublicBrand(config)) return SITE_NAME;
   return config?.site_name ?? SITE_NAME;
+}
+
+// The default CoCalc brand: no custom logo, and the marketing site name is
+// CoCalc (the default Launchpad brand maps to it).
+function usesDefaultPublicBrand(config?: PublicRouteMetadataConfig): boolean {
+  return (
+    !hasCustomPublicLogo(config) &&
+    getPublicMarketingSiteName(config) === SITE_NAME
+  );
 }
 
 function routeParts(
@@ -1024,7 +1044,7 @@ function getSameOriginPublicRouteMetadata(
         canonicalPath: publicPath("", options),
         description: PUBLIC_SITE_DESCRIPTION,
         imagePath: publicPath(DEFAULT_SOCIAL_IMAGE, options),
-        title: publicHomeTitle(siteName),
+        title: publicHomeTitle(config),
       };
     case "products":
       return productRouteMetadata(route.route, siteName, options);
@@ -1068,6 +1088,42 @@ function getSameOriginPublicRouteMetadata(
 }
 
 export function getPublicRouteMetadata(
+  route: PublicMetadataRoute,
+  config?: PublicRouteMetadataConfig,
+  options?: PublicRouteMetadataOptions,
+): PublicRouteMetadata {
+  return withLinkPreviewImage(
+    getCanonicalPublicRouteMetadata(route, config, options),
+    config,
+    options,
+  );
+}
+
+// The brand card shows the CoCalc logo and the address cocalc.ai. A page uses
+// it only under the default CoCalc brand and when its canonical URL is on
+// cocalc.ai; otherwise it gets a product screenshot without branding.
+function withLinkPreviewImage(
+  metadata: PublicRouteMetadata,
+  config: PublicRouteMetadataConfig | undefined,
+  options: PublicRouteMetadataOptions | undefined,
+): PublicRouteMetadata {
+  if (
+    normalizePublicImagePath(metadata.imagePath) !==
+    normalizePublicImagePath(BRAND_SOCIAL_IMAGE)
+  ) {
+    return metadata;
+  }
+  const canonicalOnCocalcAi =
+    isCanonicalPublicSiteHost(config?.dns) ||
+    metadata.canonicalPath.startsWith(`${CANONICAL_PUBLIC_SITE_ORIGIN}/`);
+  if (usesDefaultPublicBrand(config) && canonicalOnCocalcAi) return metadata;
+  return {
+    ...metadata,
+    imagePath: publicPath(UNBRANDED_SOCIAL_IMAGE, options),
+  };
+}
+
+function getCanonicalPublicRouteMetadata(
   route: PublicMetadataRoute,
   config?: PublicRouteMetadataConfig,
   options?: PublicRouteMetadataOptions,
