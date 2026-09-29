@@ -52,6 +52,7 @@ export class SimpleInputMerge {
   // We wait to advance `last` until the remote echoes this value.
   public noteSaved(value: string): void {
     const next = value ?? "";
+    this.clearSupersededRequest(next);
     if (next === this.last) {
       this.pending = [];
       return;
@@ -67,6 +68,11 @@ export class SimpleInputMerge {
   // later persisted echo of the same save is ignored if the user has typed more.
   public noteLocalEcho(value: string): void {
     const next = value ?? "";
+    // The backing store now holds the editor's own committed value, so any
+    // requested render of an earlier merge is resolved or superseded. Keeping
+    // it would let a later remote rebase use one of its stale render
+    // candidates as the base and replay already-saved text.
+    this.requestedLocalUpdate = undefined;
     this.last = next;
     if (this.pending.length === 0) {
       this.pending = [next];
@@ -164,14 +170,30 @@ export class SimpleInputMerge {
 
     // The user edited while the requested update was being rendered. Decide
     // which value in the render chain that edit started from, then rebase only
-    // that genuine local delta.
+    // that genuine local delta. The reconciled baseline is always a candidate,
+    // so an old render candidate is never preferred over it.
     this.requestedLocalUpdate = undefined;
-    const base = requested.renderCandidates.reduce((closest, candidate) =>
-      editCost(candidate, observed) < editCost(closest, observed)
-        ? candidate
-        : closest,
+    const base = [this.last, ...requested.renderCandidates].reduce(
+      (closest, candidate) =>
+        editCost(candidate, observed) < editCost(closest, observed)
+          ? candidate
+          : closest,
     );
     return { local: observed, base };
+  }
+
+  // A newly saved local value that is neither the requested render nor an
+  // intermediate render of it means the editor has moved on from that request.
+  private clearSupersededRequest(saved: string): void {
+    const requested = this.requestedLocalUpdate;
+    if (requested == null) return;
+    if (
+      saved === requested.latest ||
+      requested.renderCandidates.includes(saved)
+    ) {
+      return;
+    }
+    this.requestedLocalUpdate = undefined;
   }
 
   public previewMerge(opts: { remote: string; local: string }): {

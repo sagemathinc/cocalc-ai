@@ -271,4 +271,42 @@ describe("SimpleInputMerge", () => {
     expect(local).not.toContain("(done) (done)");
     expect(applied).toBe(0);
   });
+
+  it("does not rebase from a stale render request after later local saves", () => {
+    // Regression for a collaborative session where a focused rich editor did
+    // not render a remote change exactly, so the requested render was never
+    // observed. The user then kept typing and saving. When the next remote
+    // change arrived, the stale render request replaced the up-to-date base,
+    // and the rebase replayed text that the remote already contained.
+    const original = "x\n- - H\n";
+    const remoteFix = "x\n- H\n";
+    const merge = new SimpleInputMerge(original);
+    let rendered = original;
+    merge.handleRemote({
+      remote: remoteFix,
+      getLocal: () => rendered,
+      applyMerged: () => {
+        // The editor kept its old structure.
+      },
+    });
+
+    // Local typing is saved and echoed back from the backing store.
+    const saved = "x\n- - H\n\n| a | b |\n| - | - |\n| 1 | 2 |\n";
+    rendered = saved;
+    merge.noteSaved(saved);
+    merge.noteLocalEcho(saved);
+
+    // The collaborator's editor removes the stray list marker again.
+    const remote = "x\n- H\n\n| a | b |\n| - | - |\n| 1 | 2 |\n";
+    let merged: string | undefined;
+    merge.handleRemote({
+      remote,
+      getLocal: () => rendered,
+      applyMerged: (value) => {
+        merged = value;
+      },
+    });
+
+    expect(merged).toBe(remote);
+  });
 });
