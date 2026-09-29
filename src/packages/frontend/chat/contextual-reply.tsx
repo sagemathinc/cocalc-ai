@@ -15,6 +15,7 @@ import { captureReplyContext } from "./contextual-reply-context";
 import type { ReplyContext, ReplySource } from "./contextual-reply-context";
 import { extendArtifactSelection } from "./artifact-selection";
 import { selectedMarkdown } from "@cocalc/frontend/editors/slate/selection-source";
+import { copyTextToClipboard } from "@cocalc/frontend/components/copy-to-clipboard-util";
 
 const Editor = lazyWithRetry(
   () => import("./contextual-reply-editor"),
@@ -35,6 +36,19 @@ export function LocalCommentButton({
       Comment
     </Button>
   );
+}
+
+export function quoteMarkdown(markdown: string): string {
+  return markdown
+    .split("\n")
+    .map((line) => `> ${line}`)
+    .join("\n");
+}
+
+export function rangeHtml(range: Range): string {
+  const container = document.createElement("div");
+  container.appendChild(range.cloneContents());
+  return container.innerHTML;
 }
 
 export default function ContextualReply({
@@ -155,14 +169,28 @@ export default function ContextualReply({
       if (!markdown) throw Error("Select some message content to quote.");
       actions.appendToComposerDraft({
         threadKey: source.thread_id,
-        text: markdown
-          .split("\n")
-          .map((line) => `> ${line}`)
-          .join("\n"),
+        text: quoteMarkdown(markdown),
       });
       setSelection(undefined);
       window.getSelection()?.removeAllRanges();
       root.current?.focus({ preventScroll: true });
+      setError("");
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+  async function copy() {
+    if (!selection) return;
+    try {
+      const markdown = selectedMarkdown(selection.range).trim();
+      if (!markdown) throw Error("Select some message content to copy.");
+      const ok = await copyTextToClipboard({
+        text: markdown,
+        markdown: true,
+        html: rangeHtml(selection.range),
+      });
+      if (!ok) throw Error("Unable to copy to the clipboard.");
+      setSelection(undefined);
       setError("");
     } catch (err) {
       setError(String(err));
@@ -208,7 +236,7 @@ export default function ContextualReply({
               zIndex: 1100,
               left: Math.max(
                 8,
-                Math.min(selection.rect.left, window.innerWidth - 160),
+                Math.min(selection.rect.left, window.innerWidth - 220),
               ),
               top: Math.max(
                 8,
@@ -231,6 +259,15 @@ export default function ContextualReply({
                 onClick={quote}
               >
                 Quote
+              </Button>
+            )}
+            {source.kind === "message" && (
+              <Button
+                size="small"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => void copy()}
+              >
+                Copy
               </Button>
             )}
           </div>

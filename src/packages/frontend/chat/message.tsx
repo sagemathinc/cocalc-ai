@@ -2650,14 +2650,17 @@ export default function Message({
               read_only ||
               !project_id ||
               !path ||
-              !msgWrittenByLLM ||
+              // Human messages in agent threads are quoted into guidance too.
+              (!msgWrittenByLLM && !isCodexThread) ||
               !messageThreadId
             }
             source={{
               kind: "message",
               id: field<string>(message, "message_id") ?? `${date}`,
               thread_id: messageThreadId ?? "",
-              title: "Assistant response",
+              title: msgWrittenByLLM
+                ? "Assistant response"
+                : `Message from ${senderName}`,
             }}
           >
             <div onClickCapture={openResultFromMessage}>

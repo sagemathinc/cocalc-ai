@@ -6,9 +6,13 @@
 export async function copyTextToClipboard({
   text,
   markdown = false,
+  html,
 }: {
   text: string;
   markdown?: boolean;
+  // Rendered HTML of the same content, for pasting as rich text elsewhere.
+  // CoCalc editors prefer the tagged markdown copy when it is present.
+  html?: string;
 }): Promise<boolean> {
   const noteMarkdownCopy = () => {
     if (!markdown) return;
@@ -40,6 +44,9 @@ export async function copyTextToClipboard({
             type: "application/x-cocalc-markdown-copy",
           });
         }
+        if (html) {
+          itemData["text/html"] = new Blob([html], { type: "text/html" });
+        }
         await navigator.clipboard.write([new ClipboardItemCtor(itemData)]);
         return true;
       }
@@ -67,6 +74,7 @@ export async function copyTextToClipboard({
         dt.setData("text/markdown", text);
         dt.setData("application/x-cocalc-markdown-copy", text);
       }
+      if (html) dt.setData("text/html", html);
     };
     try {
       document.addEventListener("copy", onCopy);

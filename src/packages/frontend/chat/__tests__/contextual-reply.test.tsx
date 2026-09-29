@@ -12,7 +12,11 @@ import {
 import ContextualReply, { LocalCommentButton } from "../contextual-reply";
 import Editor from "../contextual-reply-editor";
 import { selectedMarkdown } from "@cocalc/frontend/editors/slate/selection-source";
+import { copyTextToClipboard } from "@cocalc/frontend/components/copy-to-clipboard-util";
 
+jest.mock("@cocalc/frontend/components/copy-to-clipboard-util", () => ({
+  copyTextToClipboard: jest.fn().mockResolvedValue(true),
+}));
 jest.mock("@cocalc/frontend/editors/slate/selection-source", () => ({
   selectedMarkdown: jest.fn(
     () => "- **important**\n- [details](https://example.com)",
@@ -365,6 +369,35 @@ test("Quote stages formatted Markdown without sending or opening a reply dialog"
   expect(outbox).not.toHaveBeenCalled();
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(container.querySelector('[tabindex="0"]')).toHaveFocus();
+});
+
+test("Copy puts the selected Markdown and its rich HTML on the clipboard", async () => {
+  const { container } = render(
+    <ContextualReply {...props} source={source}>
+      <ul>
+        <li>
+          <strong>important</strong>
+        </li>
+      </ul>
+    </ContextualReply>,
+  );
+  const range = document.createRange();
+  range.selectNodeContents(container.querySelector("ul")!);
+  range.getBoundingClientRect = () => props.rect;
+  act(() => {
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+  await waitFor(() => expect(copyTextToClipboard).toHaveBeenCalledTimes(1));
+  const request = (copyTextToClipboard as jest.Mock).mock.calls[0][0];
+  expect(request.markdown).toBe(true);
+  expect(request.text).toContain("**important**");
+  expect(request.html).toContain("<strong>important</strong>");
+  expect(actions.appendToComposerDraft).not.toHaveBeenCalled();
+  expect(actions.sendChat).not.toHaveBeenCalled();
 });
 
 test("selection exposes Reply without stealing focus, and read-only disables comments", async () => {
