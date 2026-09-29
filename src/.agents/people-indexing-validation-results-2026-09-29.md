@@ -757,3 +757,20 @@ isolation, visibility before dispatch, lease/recent-poll exclusion, later
 eligibility, and revocation. Returned work is bounded, but PostgreSQL query cost
 with a large blocked active queue has not been measured. This is not yet a
 scheduled worker or proof of the plan's fairness/load targets.
+
+### Explicit Worker Pass
+
+Connected active-job selection to dispatch in a default-off explicit worker
+pass. It attempts at most 20 jobs sequentially and stops beginning steps after
+60 seconds or prototype disable. This is a start budget, not cancellation of an
+in-flight RPC. A per-bay in-process guard prevents local overlap; database job
+leases handle competing processes. Per-job exceptions count as unknown and do
+not cause fresh identities or failure settlement. Selection errors release the
+local guard and propagate.
+
+The server build and ten worker/dispatcher tests pass, covering disabled reads,
+attempt cap, unknown-outcome isolation, mid-pass disable, overlapping passes,
+and guard recovery after a database error. No timer or startup registration was
+added: remaining admission budgets and live transport/scale validation are
+required before enabling automatic scheduling. This does not complete the
+broader indexing plan.
