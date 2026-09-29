@@ -73,16 +73,25 @@ Observations:
    with the existing `module: "commonjs"` for every package. Emit stays
    CommonJS; no package changes `type`, extensions, or startup commands. Do not
    adopt `node16`/`nodenext` as part of this migration.
-2. **Self-resolution (Phase 3).** Where a package's exports cannot express how
-   it imports itself (directory indexes, hand-written declarations), add
-   package-local `paths` entries to source, merged explicitly with existing
-   `paths`. Prefer fixing exports (for example a `types` condition) when the
-   issue also affects external consumers.
+2. **Self-resolution (Phase 3).** Resolve every `@cocalc/*` import to source
+   through one shared `paths` entry in `packages/tsconfig.json`:
+   `"@cocalc/*": ["./node_modules/@cocalc/*"]`, where the workspace root
+   declares every `@cocalc` package as a `workspace:*` dev dependency so
+   `packages/node_modules/@cocalc/*` links them all. Because the mapped paths
+   go through `node_modules`, TypeScript keeps treating files of
+   non-referenced packages as external package files, exactly as the `node10`
+   resolver did; files of referenced projects are still replaced by their
+   declarations. The `@cocalc/app-*` packages, whose source lives under
+   `src/`, get explicit entries. Packages that define their own `paths` add the
+   same entry (relative to themselves), since `paths` does not merge. This
+   replaced the originally proposed per-package self mappings and `types`
+   export fixes, which were no longer needed.
 3. **Cycle first.** Resolve the `sync`/`conat` build-order dependence before
    other Phase 3 work, in a TS6-compatible way.
-4. **Guard.** Add a check that fails on new uses of TS7-removed options
-   (`moduleResolution: "node"`/`node10`, `baseUrl`, `downlevelIteration`) so
-   the gap stops growing while the migration is in flight.
+4. **Guard.** `pnpm check-tsconfig` (part of `test:checks`) fails on new uses
+   of TypeScript 7-removed options (`moduleResolution: "node"`/`node10`/
+   `classic`, `baseUrl`, `downlevelIteration`) and on `@cocalc` packages the
+   workspace root does not link.
 5. **Compiler API.** Keep TS6 as the `typescript` package for tooling. Revisit
    when TS7.1 is released; that is not a prerequisite for using TS7 as the
    build compiler.
@@ -273,7 +282,9 @@ The first TS7 run reported:
 - `downlevelIteration` is removed
 - `moduleResolution: "node"`/`node10` is removed
 - `baseUrl` is removed
-- the current deprecation suppression is no longer useful
+- the current deprecation suppression is no longer useful (corrected
+  2026-09-29: TS7 accepts `ignoreDeprecations: "6.0"`, and it is still needed
+  because ts-jest forces `node10` when type-checking CommonJS tests under TS6)
 
 `moduleResolution: "classic"` is also removed and is not an escape hatch.
 
@@ -887,3 +898,38 @@ The migration is complete only when all of the following are true:
 
 - 2026-09-29: Re-probed on current `main`, recorded the revision above, and
   opened the draft migration PR.
+- 2026-09-29: Phase 0 baseline in a fresh worktree of `main` (Node 26.10,
+  pnpm 11.9, TS 6.0.3, TS 7.0.2, Linux x64, 16 cores). TS6 solution build:
+  clean 160 s wall / 4.8 GB peak RSS **with 5 errors** (the `sync`/`conat`
+  cycle; `main` cannot build from a clean tree), second pass 48 s / 2.9 GB,
+  no-op 0.4 s.
+- 2026-09-29: Phase 1. TS 7.0.2 is installed as `@typescript/native` in the
+  private `packages/typescript-native` package. It cannot live in the root
+  package: its `tsc` binary would replace TS6's `node_modules/.bin/tsc`, which
+  many package build scripts call directly. Root scripts `tsc:6` and `tsc:7`
+  run the solution build; `tsc:build` still uses TS6.
+- 2026-09-29: Phases 2-4. `bundler` resolver with CommonJS emit, removed
+  `baseUrl`/`downlevelIteration`/local `node` resolvers, and the shared
+  `@cocalc/*` source mapping (Decision 2). This removed every resolver, stale
+  `dist`, TS5055, and `sync`/`conat` diagnostic and fixed the TS6 clean build.
+- 2026-09-29: Phase 6. Public `node-zendesk/clients/*` import path and
+  explicit return types for the Stripe and Orama TS2883 exports.
+- 2026-09-29: Results. Both compilers report 0 errors on clean, incremental,
+  and no-op builds.
+
+  | Solution build    | TS6 (6144 MB heap) |           TS7 |
+  | ----------------- | -----------------: | ------------: |
+  | clean             |     162 s / 3.9 GB | 19 s / 6.0 GB |
+  | no-op incremental |              0.4 s |         0.4 s |
+
+  TS7 peak RSS is higher on a clean build because it checks projects in
+  parallel; it is not bounded by the V8 heap setting.
+
+- 2026-09-29: Emit comparison of clean TS6 vs TS7 builds: identical file sets
+  (5,785 `.js`, 5,785 `.d.ts`). 9 `.js` files differ only by equivalent
+  rewrites (destructuring export assignment instead of a temporary; static
+  members referenced by class name instead of an alias). `.d.ts` differences
+  are union/member ordering, method vs property signatures, and better import
+  paths.
+- 2026-09-29: No bundler or runtime tool reads tsconfig `paths` (only
+  type-checking does), so the mapping does not change runtime resolution.

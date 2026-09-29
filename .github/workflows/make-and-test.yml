@@ -159,6 +159,38 @@ jobs:
             echo "No directly changed package requires depcheck."
           fi
 
+  typescript-7:
+    # TypeScript 7 migration (src/.agents/typescript-7-migration-plan-2026-07-15.md):
+    # the native compiler must keep type-checking the solution while TS6 stays
+    # the default. Non-blocking until the default switches.
+    needs: plan
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.2
+          run_install: false
+
+      - name: Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: src/packages/pnpm-lock.yaml
+
+      - name: Install workspace dependencies
+        run: pnpm -C src/packages install --frozen-lockfile
+
+      - name: TypeScript 7 solution build
+        run: |
+          pnpm -C src/packages tsc:prepare
+          pnpm -C src/packages tsc:7 --pretty false
+
   test:
     needs: [plan, build]
     if: needs.plan.outputs.has_tests == 'true'
