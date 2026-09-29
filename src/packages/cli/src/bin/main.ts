@@ -23,7 +23,10 @@ import { URL } from "node:url";
 import { Command } from "commander";
 
 import pkg from "../../package.json";
-import { projectApiRelayTransport } from "../core/api-relay";
+import {
+  apiTransportMode,
+  selectProjectApiRelayTransport,
+} from "../core/api-relay";
 
 import {
   connect as connectConat,
@@ -537,7 +540,9 @@ function defaultConatAddress(
     conatServer: process.env.CONAT_SERVER,
     devEnvMode: process.env.COCALC_DEV_ENV_MODE,
     preferApiTransport:
-      preferApiTransport || process.env.COCALC_API_RELAY === "1",
+      preferApiTransport ||
+      process.env.COCALC_API_RELAY === "1" ||
+      apiTransportMode() !== "auto",
     // Agent-mode CLI commands first need an account/hub context. Project-host
     // connections are opened later only for project-scoped services.
     preferHubForAgentMode: shouldPreferHubConatAddressForAgentMode(),
@@ -1282,7 +1287,9 @@ async function connectRemote({
     preferApiTransport ??
       (globals.disableEnvAuthDefaults === true || !!globals.api?.trim()),
   );
-  const relay = projectApiRelayTransport({ apiBaseUrl: conatAddress });
+  const relay = await selectProjectApiRelayTransport({
+    apiBaseUrl: conatAddress,
+  });
   const extraHeaders: Record<string, string> = { ...relay?.extraHeaders };
   const cookie = buildCookieHeader(apiBaseUrl, globals);
   if (cookie) {
@@ -2340,7 +2347,7 @@ async function getOrCreateRoutedProjectHostClient(
         includeHubPassword: false,
       })
     : undefined;
-  const relay = projectApiRelayTransport({
+  const relay = await selectProjectApiRelayTransport({
     apiBaseUrl: ctx.apiBaseUrl,
     host: { host_id, project_id: project.project_id },
   });
@@ -3146,6 +3153,10 @@ program
   .option("--profile <name>", "auth profile name (default: current profile)")
   .option("--account-id <uuid>", "account id to use for API calls")
   .option("--api <url>", "hub base URL")
+  .option(
+    "--transport <mode>",
+    "API transport: auto (relay-preferred), direct, or relay",
+  )
   .option("--timeout <duration>", "wait timeout (default: 600s)", "600s")
   .option("--rpc-timeout <duration>", "per-RPC timeout (default: 30s)", "30s")
   .option("--poll-ms <duration>", "poll interval (default: 1s)", "1s")
@@ -3162,6 +3173,12 @@ program
     "hub system password for local dev",
   )
   .showHelpAfterError();
+
+program.hook("preAction", (_command, action) => {
+  const mode = action.optsWithGlobals().transport;
+  if (mode != null) process.env.COCALC_CLI_TRANSPORT = mode;
+  apiTransportMode();
+});
 
 for (const spec of Object.values(PRODUCT_SPECS)) {
   program

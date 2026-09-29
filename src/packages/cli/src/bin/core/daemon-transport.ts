@@ -97,6 +97,7 @@ export function currentDaemonFingerprint(
         [
           "CONAT_SERVER",
           "COCALC_API_RELAY",
+          "COCALC_CLI_TRANSPORT",
           "COCALC_API_RELAY_HUB_URL",
           "COCALC_SITE_URL",
           "COCALC_PROJECT_ID",

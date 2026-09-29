@@ -7,6 +7,30 @@ Internet access or implement HTTP CONNECT.
 
 ## Routes and Trust
 
+### CLI transport selection
+
+The CLI defaults to `--transport auto` (also configurable with
+`COCALC_CLI_TRANSPORT=auto`). With a project relay configured, it keeps the
+configured local site on the relay. For an unfamiliar site or home bay it first
+sends a read-only HEAD probe through the relay, bounded to three seconds. This
+probe carries local relay admission credentials, but no upstream credentials or
+caller payload. Supported endpoints stay on the relay; unavailable or rejected routes
+select direct transport before sending the actual operation. Probe decisions are
+coalesced and cached for 30 seconds in a bounded, process-local cache.
+
+Use `--transport direct` for explicit direct access, or `--transport relay` to
+require relay routing without automatic selection. These choices preserve caller
+credentials, TLS validation, destination authorization, and host-enforced egress
+restrictions. Direct mode cannot give a network-disabled project Internet access.
+The CLI never retries the actual operation on another transport after failure.
+An upstream timeout can still mean a mutation executed; inspect its outcome
+instead of blindly resubmitting. Same-site relay failures remain failures in auto
+mode; direct mode is available for operator diagnosis when egress permits it.
+
+The relay allowlist is unchanged. Selecting direct transport does not make the
+relay forward to external sites. Daemon reuse includes the transport selection,
+so a daemon created for one mode cannot silently serve another mode.
+
 The relay is attached only to the existing host-local router listener. Projects
 already reach that listener through their container network gateway. No firewall
 or public ingress exception is added.

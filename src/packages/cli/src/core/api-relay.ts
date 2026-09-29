@@ -8,6 +8,76 @@ import {
 import { resolveProjectScopedAuth } from "./auth-cookies";
 import { normalizeUrl } from "./utils";
 
+export function apiTransportMode(
+  env = process.env,
+): "auto" | "direct" | "relay" {
+  const mode = env.COCALC_CLI_TRANSPORT ?? "auto";
+  if (mode === "auto" || mode === "direct" || mode === "relay") return mode;
+  throw Error("CLI transport must be auto, direct, or relay");
+}
+
+// Transport policy is not an authorization boundary: host egress controls and
+// upstream credentials apply to direct connections too. Never retry an actual
+// operation on another transport after an ambiguous response or timeout.
+const routeProbes = new Map<
+  string,
+  { expires: number; result: Promise<boolean> }
+>();
+
+export async function selectProjectApiRelayTransport(
+  options: Parameters<typeof projectApiRelayTransport>[0],
+): Promise<ReturnType<typeof projectApiRelayTransport>> {
+  const env = options.env ?? process.env;
+  const mode = apiTransportMode(env);
+  if (mode === "direct") return;
+  const hub = normalizeApiRelayHubUrl(options.apiBaseUrl);
+  const relay = projectApiRelayTransport({ ...options, host: undefined });
+  if (!relay) {
+    if (mode === "relay") throw Error("project API relay is not configured");
+    return;
+  }
+  const localSite = env.COCALC_API_RELAY_HUB_URL;
+  if (
+    mode === "relay" ||
+    (localSite && normalizeApiRelayHubUrl(localSite) === hub)
+  ) {
+    return projectApiRelayTransport(options);
+  }
+  // Unknown endpoints may be other bays in this cluster, so do not infer
+  // cluster membership from DNS suffixes. Probe only a read-only HEAD, without
+  // upstream cookies/tokens or caller payload, using the existing router API.
+  const key = JSON.stringify([relay.address, relay.extraHeaders]);
+  let probe = routeProbes.get(key);
+  if (!probe || probe.expires <= Date.now()) {
+    if (routeProbes.size >= 128) routeProbes.clear();
+    probe = {
+      expires: Date.now() + 30_000,
+      result: (async () => {
+        try {
+          const response = await fetch(`${relay.address}/api/v2/auth/status`, {
+            method: "HEAD",
+            headers: relay.extraHeaders,
+            redirect: "manual",
+            signal: AbortSignal.timeout(3_000),
+          });
+          await response.body?.cancel();
+          // An upstream 404/405 is normal for a HEAD-only reachability probe.
+          // Relay denial, overload or unavailability selects direct transport
+          // before any authenticated operation is sent.
+          return (
+            response.status < 500 &&
+            ![301, 302, 303, 307, 308, 403, 429].includes(response.status)
+          );
+        } catch {
+          return false;
+        }
+      })(),
+    };
+    routeProbes.set(key, probe);
+  }
+  return (await probe.result) ? projectApiRelayTransport(options) : undefined;
+}
+
 export function projectApiRelayTransport({
   apiBaseUrl,
   host,
@@ -17,7 +87,8 @@ export function projectApiRelayTransport({
   host?: { host_id: string; project_id: string };
   env?: NodeJS.ProcessEnv;
 }): { address: string; extraHeaders: Record<string, string> } | undefined {
-  if (env.COCALC_API_RELAY !== "1") return;
+  if (apiTransportMode(env) === "direct" || env.COCALC_API_RELAY !== "1")
+    return;
   const hub = normalizeApiRelayHubUrl(apiBaseUrl);
   const auth = resolveProjectScopedAuth(env);
   if (!auth || !env.CONAT_SERVER) {
@@ -57,10 +128,10 @@ export async function fetchWithProjectApiRelay(
   hostTarget?: { apiBaseUrl: string; host_id: string; project_id: string },
 ): Promise<Response> {
   const url = new URL(input);
-  if (process.env.COCALC_API_RELAY !== "1") return await fetch(input, init);
+  if (apiTransportMode() === "direct") return await fetch(input, init);
   const apiOffset = url.pathname.indexOf("/api/v2/");
   if (!hostTarget && apiOffset < 0) return await fetch(input, init);
-  const relay = projectApiRelayTransport({
+  const relay = await selectProjectApiRelayTransport({
     apiBaseUrl:
       hostTarget?.apiBaseUrl ??
       `${url.origin}${url.pathname.slice(0, apiOffset)}`,

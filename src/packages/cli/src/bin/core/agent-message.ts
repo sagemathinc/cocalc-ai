@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { connect } from "@cocalc/conat/core/client";
 import { withTimeout } from "./context";
-import { projectApiRelayTransport } from "../../core/api-relay";
+import { selectProjectApiRelayTransport } from "../../core/api-relay";
 import type {
   AgentNetworkDiscovery,
   AgentNetworkProposal,
@@ -109,7 +109,7 @@ export async function sendIdentityMessage(
   const credential = await readIdentityCredential();
   const address = apiUrl || credential.api_url || process.env.COCALC_API_URL;
   if (!address) throw new Error("COCALC_API_URL or --api is required");
-  const relay = projectApiRelayTransport({ apiBaseUrl: address });
+  const relay = await selectProjectApiRelayTransport({ apiBaseUrl: address });
   const client = connect({
     address: relay?.address ?? address,
     extraHeaders: relay?.extraHeaders,
