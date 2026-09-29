@@ -63,3 +63,19 @@ test("projects with internet access show nothing", () => {
   expect(container).toBeEmptyDOMElement();
   expect(onBlockedChange).toHaveBeenLastCalledWith(false);
 });
+
+test("sign-in on a project whose host is gone suggests another project", () => {
+  const {
+    claudeSignInErrorMessage,
+    isProjectHostUnavailable,
+  } = require("@cocalc/frontend/chat/claude-subscription-connect");
+  const routing =
+    "Error: unable to route 'projects.claudeSubscriptionLoginStart' to project-host for project 4cb82904-865a-4287-a4ee-1d0e0fcf7fe1; host routing info unavailable (open the project first so host info is loaded)";
+  expect(isProjectHostUnavailable(routing)).toBe(true);
+  expect(claudeSignInErrorMessage(routing)).toBe(
+    "This project's server is not available. Select a different project, or create a new one, and try again.",
+  );
+  expect(claudeSignInErrorMessage("Error: timeout")).toBe(
+    "Claude sign-in error: Error: timeout",
+  );
+});

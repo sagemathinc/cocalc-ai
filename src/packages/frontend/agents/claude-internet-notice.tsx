@@ -4,10 +4,10 @@
  */
 
 import { useEffect } from "react";
-import { Alert } from "antd";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { readHarnessCredentialSelection } from "@cocalc/frontend/chat/harness-credential-selection";
 import { useProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { UpgradePill } from "./upgrade-pill";
 
 // Same test as the "Internet access blocked" project status.
@@ -29,15 +29,23 @@ export function claudeNeedsProjectInternet(
   return credentialMode !== "account-api-key";
 }
 
+// One quiet line; remove once Claude has restricted egress like Codex
+// (https://github.com/sagemathinc/cocalc-ai/issues/740).
 export function ClaudeInternetNotice() {
   return (
-    <Alert
-      type="info"
-      showIcon
-      title="To use Claude Code, please upgrade to any paid membership."
-      description="This project does not have internet access, which Claude Code needs to reach Anthropic."
-      action={<UpgradePill interactive />}
-    />
+    <div
+      role="status"
+      style={{
+        alignItems: "center",
+        color: UI_COLORS.secondary,
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 8,
+      }}
+    >
+      <span>To use Claude Code, please upgrade to any paid membership.</span>
+      <UpgradePill interactive />
+    </div>
   );
 }
 
