@@ -8,26 +8,40 @@ The user approved the smaller initial-release contract in section 1 of the
 [design plan](people-indexing-design-validation-2026-09-29.md). It supersedes the
 original broad gates; this is a scope decision, not evidence of completion.
 
-The next step is an enabled-path audit and simplification, not additional
-automatic filesystem-discovery machinery. Automatic discovery bootstrap and
-periodic full-volume repair are deferred. Demand-driven catch-up of known
-catalog resources, explicit best-effort Scan, strict authorization, and durable
-personal/invitation/notification state remain in scope.
+The enabled-path audit and bounded fixtures below narrow the remaining work;
+they do not establish a production operating envelope. Automatic discovery
+bootstrap and periodic full-volume repair are deferred. Demand-driven catch-up
+of known catalog resources, explicit best-effort Scan, strict authorization,
+and durable personal/invitation/notification state remain in scope.
 
-| Initial-release gate        | Current evidence and outstanding work                                                                                                                                                                                                    |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Enabled-path simplification | Host startup now defaults to known-source/explicit census mode, with focused and multibay coverage. Home-worker flag selection and full idle/rollback behavior still need auditing. Do not enable automatic bootstrap/repair.            |
-| Known-source vertical path  | Source/projection tests exist; validate the selected known-source-only configuration end to end, including explicit recovery of missed writes.                                                                                           |
-| Security and durable state  | Retention return and disposable-demand account-rehome acceptance pass. Preserve existing authority and canonical-state portability guards; review the actual release diff.                                                               |
-| Explicit Scan and UI        | Admission, dispatch and component tests exist. Best-effort completion wording is tested in the accessible status region. Real browser flow and disabled/unavailable cases need final validation. Agent Scan remains denied and deferred. |
-| Bounded cost and rollback   | One-project activation has identical measured logical work at 0/100k/1m dormant memberships. Representative mixed load, full enabled-path idle behavior and disable/reenable validation remain open. No DAU capacity claim.              |
-| Release review              | Full development build passes at 408f6c2b0f. Independent review of selected paths and an explicit canary decision remain required. No rollout is authorized by the plan revision.                                                        |
+| Initial-release gate        | Current evidence and outstanding work                                                                                                                                                                                                                                                                                      |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Enabled-path simplification | Host startup defaults to known-source/explicit census mode. Home-worker switches have been audited: demand, scheduler and event-fanout must be selected together to avoid legacy polling. Short idle and rollback fixtures pass; longer resource-cost observation remains open. Do not enable automatic bootstrap/repair.  |
+| Known-source vertical path  | Timer-driven normal writes reach the active home view while unknown files remain absent; cold followers receive deduplicated notifications without warm projections. Retention return passes. Actual browser open/Scan recovery remains unverified.                                                                        |
+| Security and durable state  | Retention return and disposable-demand account-rehome acceptance pass. Preserve existing authority and canonical-state portability guards; review the actual release diff.                                                                                                                                                 |
+| Explicit Scan and UI        | Admission, dispatch and component tests exist. Best-effort completion wording is tested in the accessible status region. Real browser flow and disabled/unavailable cases need final validation. Agent Scan remains denied and deferred.                                                                                   |
+| Bounded cost and rollback   | One-project activation has identical measured logical work at 0/100k/1m dormant memberships. Timer-driven 100-account activation and paced updates pass; short idle and disable/reenable fixtures pass. Multiple-project mixed load, CPU/I/O/WAL measurements and a longer idle window remain open. No DAU capacity claim. |
+| Release review              | Standard development build passes at e500f5bd2c, including the later catalog and scheduling fixes. Independent review of selected paths and an explicit canary decision remain required. No rollout is authorized by the plan revision.                                                                                    |
 
 The following extended-scope audit and chronological results are historical
 evidence, not instructions to continue implementing deferred work. The failed
 btrfs marker proof remains a reason not to use that shortcut; obtaining a better
 marker is no longer a release prerequisite. No existing code or guard was
 removed merely by changing this document.
+
+### Latest Development Build
+
+`pnpm -C src build:dev` exited successfully at
+`e500f5bd2c771876807bce5f09ea850f134bf3db`. This ran workspace installation,
+the standard incremental development build and Python API documentation build.
+The changed database/server code and frontend, Lite and project-host packages
+completed successfully. Unchanged packages may be skipped by workspace build
+markers; this is not a clean-room rebuild or evidence of rendered browser
+behavior. The documentation tool emitted a nonfatal upstream MkDocs warning.
+
+This supersedes the older build checkpoint for the current implementation.
+Independent review, actual browser validation, broader mixed-load/resource-cost
+measurements and the explicit canary decision remain outstanding.
 
 ## Historical Extended-Scope Audit
 
