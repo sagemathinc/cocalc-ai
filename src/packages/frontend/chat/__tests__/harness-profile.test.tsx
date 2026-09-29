@@ -898,3 +898,56 @@ test("compact runtime settings open by keyboard and restore focus on Escape", as
     expect(document.activeElement).toBe(button);
   });
 });
+
+test("the phone summary is one chip that opens the full settings", async () => {
+  const getStore = jest
+    .spyOn(redux, "getStore")
+    .mockReturnValue(accountStore as any);
+  writeHarnessCredentialSelection({
+    accountId: "account-a",
+    projectId: "project-a",
+    threadKey: "thread-summary",
+    credential: {
+      version: 1,
+      provider: "anthropic",
+      mode: "account-subscription",
+      credentialId: "00000000-0000-4000-8000-000000000001",
+      claudeAiConnectors: false,
+    },
+  });
+  try {
+    const runtime = qualifiedHarnessRuntime("claude-code", "/home/user");
+    render(
+      <HarnessRuntimeControl
+        compact
+        summary
+        runtime={{
+          ...runtime,
+          settings: {
+            configOptions: [
+              { id: "effort", value: "high" },
+              { id: "fast", value: "on" },
+            ],
+          },
+        }}
+        reported={{ profile: runtime.profile, controls: claudeControls }}
+        projectId="project-a"
+        threadKey="thread-summary"
+        onSettings={jest.fn()}
+      />,
+    );
+    const chip = screen.getByRole("button", {
+      name: "Claude Code settings: Opus 5.5 · High · Fast · Claude subscription",
+    });
+    // Nothing else competes for the line.
+    expect(screen.queryByRole("combobox")).toBeNull();
+    expect(screen.queryByText("Preview")).toBeNull();
+    await userEvent.setup().click(chip);
+    expect(
+      await screen.findByRole("dialog", { name: "Claude Code settings" }),
+    ).toBeTruthy();
+    expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0);
+  } finally {
+    getStore.mockRestore();
+  }
+});

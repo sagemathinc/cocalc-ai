@@ -533,6 +533,7 @@ function HarnessConfigButton(props: CodexConfigButtonProps) {
     <HarnessRuntimeControl
       key={JSON.stringify([props.projectId, props.chatPath, props.threadKey])}
       compact={!!props.compact}
+      summary={props.compact === "mobile-composer"}
       runtime={runtime}
       projectId={props.projectId}
       threadKey={props.threadKey}

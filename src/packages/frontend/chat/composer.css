@@ -35,3 +35,10 @@
 .chat-composer-resize-handle[data-dragging="true"] .chat-composer-resize-grip {
   opacity: 1;
 }
+
+.chat-composer-notice {
+  margin-bottom: 6px;
+}
+.chat-composer-notice:empty {
+  display: none;
+}

@@ -2081,6 +2081,7 @@ function NewAgentPanel({
 
 function AgentProjectContext({
   showEditorControls,
+  mobileHeaderControlsPortal,
   agent,
   workspaceAgents,
   active,
@@ -2093,6 +2094,7 @@ function AgentProjectContext({
   onOpenDocs,
 }: {
   showEditorControls: boolean;
+  mobileHeaderControlsPortal?: HTMLElement | null;
   agent: NamedAgent;
   workspaceAgents: NamedAgent[];
   active: boolean;
@@ -2391,6 +2393,7 @@ function AgentProjectContext({
           hideTopControls: false,
           hideCompactThreadHeader: true,
           hideComposerIdentity: true,
+          mobileHeaderControlsPortal,
           openFilesInWorkbench: true,
           sidebarHiddenByDefault: true,
           sidebarPreferenceKey: `cocalc:agents:chat-sidebar-hidden:${agent.account_id}:${agent.endpoint.agent_id}`,
@@ -2467,6 +2470,10 @@ function AgentWorkspace({
   onRegisteredThreadSelected: (workspaceKey: string, agent: NamedAgent) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  // On phones the chat puts its header controls here instead of adding a
+  // second title row below this header.
+  const [chatHeaderControls, setChatHeaderControls] =
+    useState<HTMLSpanElement | null>(null);
   const [selectedThread, setSelectedThread] = useWorkspaceSelectedThread(
     agent.endpoint.agent_id,
     agent.thread_id,
@@ -2876,6 +2883,7 @@ function AgentWorkspace({
         {!unregistered && !displayedAgent.available && (
           <Tag color="warning">Unavailable</Tag>
         )}
+        <span ref={setChatHeaderControls} style={{ display: "contents" }} />
         {active && (
           <AgentsWorkspaceNavigation
             foregroundColor={headerTextColor}
@@ -3041,6 +3049,7 @@ function AgentWorkspace({
         >
           <AgentProjectContext
             showEditorControls={showEditorControls}
+            mobileHeaderControlsPortal={chatHeaderControls}
             agent={agent}
             workspaceAgents={workspaceAgents}
             active={active}

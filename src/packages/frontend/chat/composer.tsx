@@ -701,7 +701,7 @@ export function ChatRoomComposer({
         style={composerStyle}
       >
         {isClaudeThread && selectedThread && project_id && (
-          <div style={{ marginBottom: 6 }}>
+          <div className="chat-composer-notice">
             <ClaudeThreadInternetNotice
               projectId={project_id}
               threadKey={selectedThread.key}
