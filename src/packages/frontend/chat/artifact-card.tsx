@@ -6,6 +6,7 @@ import type { IconName } from "@cocalc/frontend/components/icon";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { blobImageUrl } from "@cocalc/frontend/components/theme-image-url";
 import { ArtifactNameControl } from "@cocalc/frontend/agents/artifact-name-control";
+import { InviteContentButton } from "@cocalc/frontend/collaborators/invite-content";
 import type {
   ArtifactPublication,
   ArtifactRecord,
@@ -325,6 +326,22 @@ export function ArtifactCard({
             {trailing}
           </span>
         )}
+        {projectId &&
+          chatPath &&
+          publication.thread_id &&
+          publication.artifact_id && (
+            <InviteContentButton
+              compact
+              title={title}
+              source={{
+                project_id: projectId,
+                chat_path: chatPath,
+                thread_id: publication.thread_id,
+                artifact_id: publication.artifact_id,
+                kind: "artifact",
+              }}
+            />
+          )}
         {(open || showInConversation) && (
           <Dropdown
             autoFocus

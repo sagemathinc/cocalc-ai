@@ -1,6 +1,17 @@
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ArtifactCard } from "../artifact-card";
+const mockInviteContent = jest.fn();
+jest.mock("@cocalc/frontend/collaborators/invite-content", () => ({
+  InviteContentButton: (props) => {
+    mockInviteContent(props);
+    return (
+      <button aria-label={`Invite to collaborate on ${props.title}`}>
+        Invite to collaborate
+      </button>
+    );
+  },
+}));
 jest.mock("@cocalc/frontend/agents/artifact-name-control", () => ({
   ArtifactNameControl: ({ target }) => (
     <div role="dialog" aria-label="Name artifact">
@@ -25,6 +36,20 @@ test("card menu can name a published artifact", async () => {
       chatPath="/source.chat"
       open={jest.fn()}
     />,
+  );
+  expect(
+    screen.getByRole("button", { name: "Invite to collaborate on Plan" }),
+  ).toBeInTheDocument();
+  expect(mockInviteContent).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      source: {
+        project_id: "project",
+        chat_path: "/source.chat",
+        thread_id: "thread",
+        artifact_id: "artifact",
+        kind: "artifact",
+      },
+    }),
   );
   await user.click(
     screen.getByRole("button", { name: "More options for Plan" }),

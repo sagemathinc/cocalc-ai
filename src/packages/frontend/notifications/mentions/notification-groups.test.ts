@@ -4,6 +4,21 @@ import { groupNotificationMentions } from "./notification-groups";
 import type { MentionsMap } from "./types";
 
 describe("notification grouping", () => {
+  it("keeps independent content invitations separately readable even with identical text", () => {
+    const notice = {
+      kind: "account_notice",
+      notice_type: "collaboration_invitation",
+      body_text: "Please look",
+      action_link: "/people/invites/",
+    };
+    const groups = groupNotificationMentions(
+      ImmutableMap({
+        first: fromJS({ ...notice, time: new Date(1) }),
+        second: fromJS({ ...notice, time: new Date(2) }),
+      }) as unknown as MentionsMap,
+    );
+    expect(groups.map(({ ids }) => ids)).toEqual([["second"], ["first"]]);
+  });
   it("groups duplicate account notices and keeps the latest representative", () => {
     const mentions = ImmutableMap({
       "n-1": fromJS({

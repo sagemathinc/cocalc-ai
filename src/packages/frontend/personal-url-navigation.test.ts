@@ -75,6 +75,25 @@ test("foreign alias resolution uses the qualified URL, not the viewer's library"
   expect(replaceUrl).toHaveBeenCalledWith("/u/bob/artifacts/notes");
 });
 
+test("qualified People aliases clear a previous contact selection and resolve only account people", async () => {
+  page.collaborators_contact_id = "33333333-3333-4333-8333-333333333333";
+  resolveUrl.mockResolvedValue({
+    ...artifact,
+    kind: "people",
+    alias: "invites",
+    canonical_path: "/u/bob/people/invites",
+    target: { kind: "person", person_id: "account-person" },
+  });
+  await resolvePersonalUrl("u/bob/people/invites");
+  expect(resolveUrl).toHaveBeenCalledWith({ url: "/u/bob/people/invites" });
+  expect(page).toMatchObject({
+    collaborators_view: "people",
+    collaborators_person_id: "account-person",
+    collaborators_contact_id: undefined,
+  });
+  expect(replaceUrl).toHaveBeenCalledWith("/u/bob/people/invites");
+});
+
 test.each(["unavailable", "access-denied", "inspection"] as const)(
   "%s cannot open a content locator, even if one is returned",
   async (status) => {

@@ -13,6 +13,16 @@ import { CollaboratorsPage } from "./page";
 import type { CollaboratorsRoute } from "./workspace-types";
 
 jest.mock("react-virtuoso", () => require("../test/mocks/virtuoso-list"));
+// rc-util deliberately returns the same "test-id" in Jest. With the history
+// filters beside a real modal this breaks aria-labelledby, unlike production.
+jest.mock("@rc-component/util/lib/hooks/useId", () => ({
+  ...jest.requireActual("@rc-component/util/lib/hooks/useId"),
+  __esModule: true,
+  default: function useId(id?: string) {
+    const generated = require("react").useId();
+    return id ?? generated;
+  },
+}));
 
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: () => null,
@@ -26,6 +36,36 @@ let mockAccount = "alice";
 let mockProjects = Map();
 let mockSettings = Map();
 const mockAddCollaborators = jest.fn();
+const mockInvitationApi = {
+  resolveRecipient: jest.fn(),
+  listProjects: jest.fn(),
+  prepareInvitation: jest.fn(),
+  reviewInvitation: jest.fn(),
+  sendInvitation: jest.fn(),
+  getInvitationOperation: jest.fn(),
+};
+jest.mock("./invitations-api", () => ({
+  boundInvitationsApi: () => mockInvitationApi,
+}));
+jest.mock("./people-history-api", () => ({
+  boundPeopleHistoryApi: () => ({
+    listPeopleContacts: async () => ({
+      items: [],
+      total: 0,
+      revision: "contacts",
+    }),
+    getPeopleContact: async () => null,
+    listInvitationHistory: async () => ({
+      items: [],
+      total: 0,
+      revision: "history",
+      pending: { sent: 0, received: 0 },
+      unread: null,
+      coverage: "complete",
+    }),
+    manage: jest.fn(),
+  }),
+}));
 const mockSavePreferences = jest.fn(async (key, value) => {
   mockSettings = mockSettings.set(key, value);
 });
@@ -232,6 +272,29 @@ beforeEach(() => {
   mockAccount = "alice";
   mockProjects = Map();
   mockSettings = Map();
+  mockInvitationApi.resolveRecipient.mockResolvedValue({
+    recipients: [{ kind: "account", account_id: "bob", label: "Bob" }],
+  });
+  mockInvitationApi.listProjects.mockResolvedValue({
+    projects: [
+      {
+        project_id: "geometry",
+        title: "Geometry Lab",
+        current_access: "none",
+        content_access: "unknown",
+        can_invite: true,
+        can_notify: false,
+      },
+      {
+        project_id: "new-project",
+        title: "New project",
+        current_access: "none",
+        content_access: "unknown",
+        can_invite: true,
+        can_notify: false,
+      },
+    ],
+  });
   mockApi.check.mockResolvedValue({
     revision: "initial",
     reset: true,
@@ -260,6 +323,11 @@ beforeEach(() => {
 
 beforeAll(() => {
   const getComputedStyle = window.getComputedStyle;
+  const matchMedia = window.matchMedia;
+  jest.spyOn(window, "matchMedia").mockImplementation((query) => ({
+    ...matchMedia(query),
+    matches: query === "(prefers-reduced-motion: reduce)",
+  }));
   jest
     .spyOn(window, "getComputedStyle")
     .mockImplementation((element) => getComputedStyle(element));
@@ -291,7 +359,11 @@ test("compact tabs support arrow navigation and contextual actions", async () =>
   expect(
     screen.getByRole("button", { name: "New conversation" }),
   ).toBeVisible();
-  await user.keyboard("{End}{ArrowLeft}");
+  await user.keyboard("{End}");
+  expect(screen.getByRole("tab", { name: "Invites" })).toHaveFocus();
+  await user.keyboard("{ArrowLeft}");
+  expect(screen.getByRole("tab", { name: "Shared projects" })).toHaveFocus();
+  await user.keyboard("{ArrowLeft}");
   expect(people).toHaveFocus();
 });
 
@@ -348,10 +420,19 @@ test("project creation remains available inside the invitation picker", async ()
   expect(screen.queryByRole("button", { name: "Create project" })).toBeNull();
   await user.click(screen.getByRole("button", { name: "Invite", exact: true }));
   const picker = await screen.findByRole("dialog", {
-    name: "Invite a person to projects",
+    name: "Invite a person",
   });
+  await user.type(
+    within(picker).getByRole("textbox", { name: "Email, name, or @username" }),
+    "Bob{Enter}",
+  );
   await user.click(
-    within(picker).getByRole("button", { name: "Create project" }),
+    await within(picker).findByRole("button", { name: "Choose Bob" }),
+  );
+  await user.click(
+    within(picker).getByRole("button", {
+      name: "Create a new project together",
+    }),
   );
   expect(
     await screen.findByRole("dialog", { name: "Create project" }),
@@ -367,10 +448,25 @@ test.each(["finish", "cancel"])(
       screen.getByRole("button", { name: "Invite", exact: true }),
     );
     const invitation = await screen.findByRole("dialog", {
-      name: "Invite a person to projects",
+      name: "Invite a person",
     });
+    await user.type(
+      within(invitation).getByRole("textbox", {
+        name: "Email, name, or @username",
+      }),
+      "Bob{Enter}",
+    );
     await user.click(
-      within(invitation).getByRole("button", { name: "Create project" }),
+      await within(invitation).findByRole("button", { name: "Choose Bob" }),
+    );
+    await user.type(
+      within(invitation).getByRole("textbox", { name: "Invitation message" }),
+      "Keep this invitation draft",
+    );
+    await user.click(
+      within(invitation).getByRole("button", {
+        name: "Create a new project together",
+      }),
     );
     const creator = await screen.findByRole("dialog", {
       name: "Create project",
@@ -384,14 +480,26 @@ test.each(["finish", "cancel"])(
       }),
     );
     const returned = await screen.findByRole("dialog", {
-      name: "Invite a person to projects",
+      name: "Invite a person",
     });
     expect(mockAddCollaborators).not.toHaveBeenCalled();
     await user.click(
-      within(returned).getByRole("button", { name: "Choose person" }),
+      within(returned).getByRole("button", { name: "Continue with Bob" }),
     );
-    expect(mockAddCollaborators.mock.lastCall[0].project_ids).toEqual(
-      action === "finish" ? ["geometry", "new-project"] : ["geometry"],
+    expect(
+      within(returned).getByRole("textbox", { name: "Invitation message" }),
+    ).toHaveValue("Keep this invitation draft");
+    expect(
+      within(returned).getByRole("checkbox", { name: "Select Geometry Lab" }),
+    ).toBeChecked();
+    expect(
+      within(returned).getByRole("checkbox", { name: "Select New project" }),
+    ).toHaveProperty("checked", action === "finish");
+    expect(mockInvitationApi.sendInvitation).not.toHaveBeenCalled();
+    expect(mockInvitationApi.listProjects).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        recipient: expect.objectContaining({ account_id: "bob" }),
+      }),
     );
   },
 );
@@ -422,14 +530,12 @@ test("People navigation uses shared projects, but inviting allows the first coll
   );
   await user.click(screen.getByRole("button", { name: "Cancel", exact: true }));
   await user.click(screen.getByRole("button", { name: "Invite", exact: true }));
-  expect(await screen.findByLabelText("Projects to invite to")).toHaveAttribute(
-    "data-full-collaborator",
-    "true",
+  await waitFor(() =>
+    expect(
+      screen.getByRole("textbox", { name: "Email, name, or @username" }),
+    ).toBeVisible(),
   );
-  expect(screen.getByLabelText("Projects to invite to")).toHaveAttribute(
-    "data-multiple",
-    "true",
-  );
+  expect(screen.queryByRole("table")).toBeNull();
 });
 
 test.each(["New conversation", "Invite"])(
@@ -445,7 +551,7 @@ test.each(["New conversation", "Invite"])(
       />,
     );
     await user.click(screen.getByRole("button", { name, exact: true }));
-    const dialogName = name === "Invite" ? "Invite a person to projects" : name;
+    const dialogName = name === "Invite" ? "Invite a person" : name;
     const dialog = await screen.findByRole("dialog", {
       name: dialogName,
       exact: true,
@@ -470,26 +576,27 @@ test("inviting from a person's overview also offers projects not yet shared with
       exact: true,
     }),
   );
-  expect(await screen.findByLabelText("Projects to invite to")).toHaveAttribute(
-    "data-multiple",
-    "true",
-  );
-  const invitation = screen.getByRole("dialog", {
-    name: "Invite a person to projects",
+  const invitation = await screen.findByRole("dialog", {
+    name: "Invite a person",
   });
   await user.click(
-    within(invitation).getByRole("button", { name: "Geometry Lab" }),
+    within(invitation).getByRole("button", {
+      name: "Continue with Collaborator",
+    }),
   );
   expect(mockAddCollaborators).not.toHaveBeenCalled();
   await user.click(
-    within(invitation).getByRole("button", { name: "Choose person" }),
+    within(invitation).getByRole("checkbox", { name: "Select Geometry Lab" }),
   );
-  expect(mockAddCollaborators.mock.lastCall[0]).toEqual(
+  expect(
+    within(invitation).getByRole("checkbox", { name: "Select Geometry Lab" }),
+  ).toBeChecked();
+  expect(mockInvitationApi.listProjects).toHaveBeenCalledWith(
     expect.objectContaining({
-      project_ids: ["geometry"],
-      initialPerson: expect.objectContaining({ account_id: "bob" }),
+      recipient: expect.objectContaining({ account_id: "bob" }),
     }),
   );
+  expect(mockInvitationApi.sendInvitation).not.toHaveBeenCalled();
 });
 
 test("Collaborators renders existing account avatars", async () => {

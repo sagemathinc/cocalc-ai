@@ -24,7 +24,10 @@ import {
   resolveCollaboratorsAlias,
   canonicalizeCollaboratorsAlias,
   withCollaboratorsAlias,
+  collaboratorsRouteState,
+  closedCollaboratorsState,
 } from "./navigation";
+import { parsePageTarget, getPageUrlPath } from "../page-routing";
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -149,4 +152,112 @@ test("opening Collaborators hides Library without selecting or invoking an agent
   );
   expect(setState.mock.calls[0][0]).not.toHaveProperty("active_agent_id");
   expect(setActiveTab).toHaveBeenCalledWith("agents");
+});
+
+test("Invites navigation clears stale selections and alias metadata", () => {
+  openCollaborators({ view: "invites", personId: "bob" });
+  expect(setState).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      collaborators_open: true,
+      collaborators_view: "invites",
+      collaborators_person_id: "bob",
+      collaborators_contact_id: undefined,
+      collaborators_project_id: undefined,
+      collaborators_resource_id: undefined,
+      collaborators_alias: undefined,
+      collaborators_alias_kind: undefined,
+      collaborators_alias_owner: undefined,
+      personal_url: undefined,
+      collaborators_route_error: undefined,
+    }),
+  );
+  expect(setActiveTab).toHaveBeenLastCalledWith("agents");
+  expect(resolvePersonalUrl).not.toHaveBeenCalled();
+});
+
+test("invitation selection changes and clears without becoming a person alias", () => {
+  const invitationId = "33333333-3333-4333-8333-333333333333";
+  const route = withCollaboratorsAlias(
+    { view: "invites", invitationId },
+    "friend",
+  );
+  expect(route.alias).toBeUndefined();
+  openCollaborators(route);
+  expect(setState).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      collaborators_invitation_id: invitationId,
+      collaborators_person_id: undefined,
+      collaborators_contact_id: undefined,
+    }),
+  );
+  openCollaborators({ view: "invites" });
+  expect(setState).toHaveBeenLastCalledWith(
+    expect.objectContaining({ collaborators_invitation_id: undefined }),
+  );
+  expect(
+    collaboratorsRouteState({ view: "people", invitationId })
+      .collaborators_invitation_id,
+  ).toBeUndefined();
+  expect(closedCollaboratorsState.collaborators_invitation_id).toBeUndefined();
+});
+
+test("contact navigation never turns a contact into an account alias", () => {
+  const route = {
+    view: "people" as const,
+    contactId: "33333333-3333-4333-8333-333333333333",
+  };
+  const next = withCollaboratorsAlias(route, "friend");
+  expect(next.contactId).toBe(route.contactId);
+  expect(next.alias).toBeUndefined();
+  expect(next.aliasKind).toBeUndefined();
+  openCollaborators(next);
+  expect(setState).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      collaborators_contact_id: route.contactId,
+      collaborators_person_id: undefined,
+    }),
+  );
+  expect(resolvePersonalUrl).not.toHaveBeenCalled();
+  expect(closedCollaboratorsState).toHaveProperty(
+    "collaborators_contact_id",
+    undefined,
+  );
+});
+
+test("restored route state distinguishes Collaborators and Invites without stale context", () => {
+  const targets = [
+    "people/collaborators/person/bob/",
+    "people/invites/",
+    "people/collaborators/person/bob/",
+    "people/invites/",
+  ];
+  for (const target of targets) {
+    const parsed = parsePageTarget(target);
+    if (parsed.page !== "agents" || !parsed.collaborators) throw Error(target);
+    const state = collaboratorsRouteState(parsed.collaborators);
+    const invites = target === "people/invites/";
+    expect(state.collaborators_view).toBe(invites ? "invites" : "people");
+    expect(state.collaborators_person_id).toBe(invites ? undefined : "bob");
+    expect(state.collaborators_alias).toBeUndefined();
+    expect(getPageUrlPath(parsed)).toBe(`/${target.slice(0, -1)}`);
+  }
+});
+
+test("removing a person alias restores the canonical Collaborators URL", async () => {
+  pageState = {
+    active_top_tab: "agents",
+    collaborators_open: true,
+    collaborators_view: "people",
+    collaborators_person_id: "bob",
+  };
+  expect(
+    await canonicalizeCollaboratorsAlias(
+      "alice",
+      { view: "people", personId: "bob" },
+      null,
+    ),
+  ).toBe(true);
+  expect(replaceUrl).toHaveBeenLastCalledWith(
+    "/people/collaborators/person/bob",
+  );
 });

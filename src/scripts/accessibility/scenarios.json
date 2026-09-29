@@ -2,6 +2,38 @@
   "version": 1,
   "pages": [
     {
+      "id": "people-person-first-invitation",
+      "title": "People person-first invitation keyboard and focus",
+      "path": "/people/collaborators/",
+      "authentication": "account",
+      "engine": "axe",
+      "minimumScore": 1,
+      "readySelector": "[aria-label='People views']",
+      "settleMs": 500,
+      "actions": [
+        {
+          "type": "remember",
+          "key": "trigger",
+          "role": "button",
+          "name": "Invite"
+        },
+        { "type": "focus", "role": "button", "name": "Invite" },
+        { "type": "press", "key": "Enter" },
+        { "type": "wait", "role": "dialog", "name": "Invite a person" },
+        {
+          "type": "assertFocusWithin",
+          "role": "dialog",
+          "name": "Invite a person"
+        }
+      ],
+      "cleanupActions": [
+        { "type": "press", "key": "Escape" },
+        { "type": "assertHidden", "role": "dialog", "name": "Invite a person" },
+        { "type": "waitForTimeout", "timeoutMs": 250 },
+        { "type": "assertFocus", "key": "trigger" }
+      ]
+    },
+    {
       "id": "collaborators-project-filter",
       "title": "People project selector keyboard and focus",
       "path": "/people/conversations",

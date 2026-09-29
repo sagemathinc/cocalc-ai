@@ -20,6 +20,8 @@ const emptySelection = {
   collaborators_project_id: undefined,
   collaborators_project_ids: undefined,
   collaborators_person_id: undefined,
+  collaborators_contact_id: undefined,
+  collaborators_invitation_id: undefined,
   collaborators_resource_kind: undefined,
   collaborators_resource_id: undefined,
   collaborators_alias: undefined,

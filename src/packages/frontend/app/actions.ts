@@ -283,6 +283,8 @@ export class PageActions extends Actions<PageState> {
                     projectId: page.get("collaborators_project_id"),
                     projectIds: page.get("collaborators_project_ids")?.toJS(),
                     personId: page.get("collaborators_person_id"),
+                    contactId: page.get("collaborators_contact_id"),
+                    invitationId: page.get("collaborators_invitation_id"),
                     resourceKind: page.get("collaborators_resource_kind"),
                     resourceId: page.get("collaborators_resource_id"),
                     routeError: page.get("collaborators_route_error"),

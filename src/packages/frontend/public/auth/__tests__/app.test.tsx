@@ -8,6 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import api from "@cocalc/frontend/client/api";
+import userEvent from "@testing-library/user-event";
 import {
   getControlPlaneAuthBootstrap,
   isMfaRequiredAuthResponse,
@@ -1821,6 +1822,39 @@ describe("PublicAuthApp", () => {
     });
   });
 
+  it("retains the invitation token through signup and back to sign-in", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState({}, "", "/invites/secret");
+    mockedApi.mockResolvedValue({
+      invite: {
+        project_id: "22222222-2222-4222-8222-222222222222",
+        status: "pending",
+      },
+    } as any);
+    render(
+      <PublicAuthApp
+        config={config()}
+        initialRoute={{ kind: "project-invite", token: "secret" }}
+      />,
+    );
+    const signup = await screen.findByRole("button", {
+      name: "Create an account",
+    });
+    signup.focus();
+    await user.keyboard("{Enter}");
+    expect(window.location.pathname).toBe("/auth/sign-up");
+    expect(new URLSearchParams(window.location.search).get("target")).toBe(
+      "/invites/secret",
+    );
+    const signIn = screen.getByRole("button", { name: "Sign in" });
+    signIn.focus();
+    await user.keyboard("{Enter}");
+    expect(window.location.pathname).toBe("/auth/sign-in");
+    expect(new URLSearchParams(window.location.search).get("target")).toBe(
+      "/invites/secret",
+    );
+  });
+
   it("shows expired project invite links before sign-in", async () => {
     mockedApi.mockRejectedValueOnce(
       new Error("invite is not pending (status=expired)"),
@@ -1899,7 +1933,7 @@ describe("PublicAuthApp", () => {
   });
 
   it("requires the inviter to switch accounts instead of accepting", async () => {
-    mockedApi.mockResolvedValueOnce({
+    mockedApi.mockResolvedValue({
       invite: {
         invite_id: "77777777-7777-4777-8777-777777777777",
         inviter_account_id: "acct-owner",

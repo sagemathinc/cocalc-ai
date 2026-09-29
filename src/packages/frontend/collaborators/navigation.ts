@@ -23,6 +23,9 @@ export function collaboratorsRouteState(
     collaborators_project_id: route.projectId,
     collaborators_project_ids: route.projectIds,
     collaborators_person_id: route.personId,
+    collaborators_contact_id: route.contactId,
+    collaborators_invitation_id:
+      route.view === "invites" ? route.invitationId : undefined,
     collaborators_resource_kind: route.resourceKind,
     collaborators_resource_id: route.resourceId,
     collaborators_alias: route.alias,
@@ -38,6 +41,8 @@ export const closedCollaboratorsState = {
   collaborators_project_id: undefined,
   collaborators_project_ids: undefined,
   collaborators_person_id: undefined,
+  collaborators_contact_id: undefined,
+  collaborators_invitation_id: undefined,
   collaborators_resource_kind: undefined,
   collaborators_resource_id: undefined,
   collaborators_route_error: undefined,
@@ -57,7 +62,7 @@ export function withCollaboratorsAlias(
     aliasKind: undefined,
     aliasOwner: undefined,
   } as CollaboratorsRoute;
-  if (!alias) return next;
+  if (!alias || route.contactId || route.view === "invites") return next;
   try {
     const kind =
       route.resourceId &&
@@ -95,6 +100,8 @@ export async function canonicalizeCollaboratorsAlias(
       page.get("collaborators_view") === route.view &&
       page.get("collaborators_project_id") === route.projectId &&
       page.get("collaborators_person_id") === route.personId &&
+      page.get("collaborators_contact_id") === route.contactId &&
+      page.get("collaborators_invitation_id") === route.invitationId &&
       page.get("collaborators_resource_kind") === route.resourceKind &&
       page.get("collaborators_resource_id") === route.resourceId
     );
@@ -127,7 +134,12 @@ export async function canonicalizeCollaboratorsAlias(
 export function openCollaborators(route: Partial<CollaboratorsRoute> = {}) {
   const revision = cancelAliasNavigation();
   const resolveAlias =
-    !!route.alias && !!route.aliasKind && !route.personId && !route.resourceId;
+    route.view !== "invites" &&
+    !!route.alias &&
+    !!route.aliasKind &&
+    !route.personId &&
+    !route.contactId &&
+    !route.resourceId;
   const page = redux.getActions("page");
   page.setState({
     ...closedPersonalUrlState,
@@ -141,7 +153,12 @@ export function openCollaborators(route: Partial<CollaboratorsRoute> = {}) {
       : undefined,
   });
   if (resolveAlias) void resolveCollaboratorsAlias(route, revision);
-  else if (route.alias && route.aliasOwner)
+  else if (
+    route.alias &&
+    route.aliasOwner &&
+    !route.contactId &&
+    route.view !== "invites"
+  )
     void resolvePersonalUrl(collaboratorsTargetPath(route), true);
   return page.set_active_tab("agents");
 }
@@ -151,7 +168,8 @@ export async function resolveCollaboratorsAlias(
   route: Partial<CollaboratorsRoute>,
   revision: number,
 ) {
-  if (!route.alias || !route.aliasKind || !route.aliasOwner) return;
+  if (!route.alias || !route.aliasKind || !route.aliasOwner || route.contactId)
+    return;
   if (revision !== navigationRevision) return;
   await resolvePersonalUrl(collaboratorsTargetPath(route));
 }

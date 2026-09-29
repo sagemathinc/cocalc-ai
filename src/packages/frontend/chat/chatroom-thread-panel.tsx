@@ -29,6 +29,7 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { ThreadPanelToolbar } from "./thread-panel-toolbar";
+import { InviteContentButton } from "@cocalc/frontend/collaborators/invite-content";
 import { debounce } from "lodash";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
 import { containingPath, humanSize } from "@cocalc/util/misc";
@@ -2216,6 +2217,22 @@ export function ChatRoomThreadPanel({
       }}
     >
       {topRightControlsPrefix}
+      {!readOnly &&
+        project_id &&
+        path &&
+        selectedThreadId &&
+        shouldShowCodexConfig && (
+          <InviteContentButton
+            compact={compactTopRightControls && !mobile}
+            title={compactThreadLabel || "this agent thread"}
+            source={{
+              project_id,
+              chat_path: path,
+              thread_id: selectedThreadId,
+              kind: "agent",
+            }}
+          />
+        )}
       {mobile && (
         <>
           <ThreadAnchorButton

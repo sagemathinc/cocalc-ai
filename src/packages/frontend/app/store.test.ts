@@ -25,6 +25,36 @@ function initialState(target: string) {
 }
 
 describe("initial project navigation context", () => {
+  it("hydrates copied Invites queries, including startup queries stripped from handle-target", () => {
+    const path = `people/invites?invitation_id=${PROJECT}`;
+    expect(initialState(path).collaborators_invitation_id).toBe(PROJECT);
+    window.history.replaceState({}, "", `/${path}`);
+    try {
+      expect(initialState("people/invites").collaborators_invitation_id).toBe(
+        PROJECT,
+      );
+      expect(
+        initialState("people/collaborators").collaborators_invitation_id,
+      ).toBeUndefined();
+    } finally {
+      window.history.replaceState({}, "", "/");
+    }
+  });
+  it.each(["collaborators", "invites"])(
+    "hydrates %s contact routes without an account person selection",
+    (view) => {
+      const state = initialState(`people/${view}/contact/${PROJECT}/`);
+      expect(state).toMatchObject({
+        active_top_tab: "agents",
+        collaborators_open: true,
+        collaborators_view: view === "collaborators" ? "people" : "invites",
+        collaborators_contact_id: PROJECT,
+        collaborators_person_id: undefined,
+        collaborators_route_error: undefined,
+      });
+    },
+  );
+
   it("seeds context from a direct project URL without changing startup routing", () => {
     const state = initialState(`projects/${PROJECT}/files/example.txt`);
     expect(state.active_top_tab).toBe("project");

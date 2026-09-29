@@ -14,6 +14,8 @@ jest.mock("@cocalc/frontend/lite", () => ({
 let activeTab = "agents";
 let collaboratorsOpen = false;
 let collaboratorsEnabled = false;
+let contactId: string | undefined;
+let invitationId: string | undefined;
 let customizeReady = true;
 const collaborationProps = jest.fn();
 const openCollaborators = jest.fn();
@@ -29,11 +31,16 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
     if (store === "page" && field === "active_top_tab") return activeTab;
     if (store === "page" && field === "collaborators_open")
       return collaboratorsOpen;
-    if (store === "page" && field === "collaborators_view") return "people";
+    if (store === "page" && field === "collaborators_view")
+      return invitationId ? "invites" : "people";
+    if (store === "page" && field === "collaborators_invitation_id")
+      return invitationId;
     if (store === "page" && field === "collaborators_project_id")
       return "project-id";
     if (store === "page" && field === "collaborators_person_id")
-      return "person-id";
+      return contactId ? undefined : "person-id";
+    if (store === "page" && field === "collaborators_contact_id")
+      return contactId;
     if (store === "page" && field === "collaborators_resource_kind")
       return "conversation";
     if (store === "page" && field === "collaborators_resource_id")
@@ -117,11 +124,29 @@ beforeEach(() => {
   activeTab = "agents";
   collaboratorsOpen = false;
   collaboratorsEnabled = false;
+  contactId = undefined;
+  invitationId = undefined;
   customizeReady = true;
   accountId = undefined;
   accountBindings.length = 0;
   jest.clearAllMocks();
 });
+
+it.each(["AI-disabled", "Lite"])(
+  "passes a contact selection separately from account people to the %s shell",
+  (mode) => {
+    disabled = mode === "AI-disabled";
+    mockLite = mode === "Lite";
+    accountId = "viewer";
+    collaboratorsOpen = true;
+    collaboratorsEnabled = true;
+    contactId = "33333333-3333-4333-8333-333333333333";
+    render(<ActiveContent />);
+    expect(collaborationProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({ contactId, personId: undefined }),
+    );
+  },
+);
 
 it.each(["AI-disabled", "Lite"])(
   "opens feature-enabled human discovery without mounting Agents in %s",
@@ -202,6 +227,33 @@ it.each(["AI-disabled", "Lite"])(
     expect(actions.set_active_tab).not.toHaveBeenCalled();
   },
 );
+
+it("updates invitation props without remounting the active People workspace", () => {
+  disabled = true;
+  collaboratorsOpen = true;
+  collaboratorsEnabled = true;
+  invitationId = "11111111-1111-4111-8111-111111111111";
+  const { rerender } = render(<ActiveContent />);
+  const workspace = screen.getByRole("region", {
+    name: "Human collaboration workspace",
+  });
+  expect(collaborationProps).toHaveBeenLastCalledWith(
+    expect.objectContaining({ invitationId, view: "invites" }),
+  );
+  invitationId = "22222222-2222-4222-8222-222222222222";
+  rerender(<ActiveContent />);
+  expect(collaborationProps).toHaveBeenLastCalledWith(
+    expect.objectContaining({ invitationId, view: "invites" }),
+  );
+  expect(
+    screen.getByRole("region", { name: "Human collaboration workspace" }),
+  ).toBe(workspace);
+  invitationId = undefined;
+  rerender(<ActiveContent />);
+  expect(collaborationProps).toHaveBeenLastCalledWith(
+    expect.objectContaining({ invitationId: undefined }),
+  );
+});
 
 it("switches an open Collaborators route to the human shell when AI opt-out arrives", () => {
   collaboratorsOpen = true;

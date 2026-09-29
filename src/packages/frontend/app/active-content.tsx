@@ -142,6 +142,14 @@ export const ActiveContent: React.FC = React.memo(() => {
     "page",
     "collaborators_person_id",
   );
+  const collaboratorsContactId = useTypedRedux(
+    "page",
+    "collaborators_contact_id",
+  );
+  const collaboratorsInvitationId = useTypedRedux(
+    "page",
+    "collaborators_invitation_id",
+  );
   const collaboratorsProjectIds = useTypedRedux(
     "page",
     "collaborators_project_ids",
@@ -348,6 +356,8 @@ export const ActiveContent: React.FC = React.memo(() => {
                       : undefined
                   }
                   personId={collaboratorsPersonId}
+                  contactId={collaboratorsContactId}
+                  invitationId={collaboratorsInvitationId}
                   resourceKind={collaboratorsResourceKind}
                   resourceId={collaboratorsResourceId}
                   routeError={collaboratorsRouteError}

@@ -146,16 +146,33 @@ export function set_url_with_search(
     redux.getActions("page").setState(closedPersonalUrlState);
   }
   last_url = url;
+  const queryIndex = url.indexOf("?");
+  const path = queryIndex === -1 ? url : url.slice(0, queryIndex);
+  const routeSearch = queryIndex === -1 ? "" : url.slice(queryIndex + 1);
   const current = new URL(location.href);
   current.search = params();
-  const query_params =
-    search ?? reviewSearchForNavigation(current, join(appBasePath, url));
+  const queryParams = new URLSearchParams(
+    search ?? reviewSearchForNavigation(current, join(appBasePath, path)),
+  );
+  // Invitation selection belongs to the destination, not the previous URL.
+  if (search == null) queryParams.delete("invitation_id");
+  new URLSearchParams(routeSearch).forEach((value, key) =>
+    queryParams.set(key, value),
+  );
+  const destination = parsePageTarget(path.replace(/^\//, ""));
+  if (
+    destination.page !== "agents" ||
+    destination.collaborators?.view !== "invites"
+  ) {
+    queryParams.delete("invitation_id");
+  }
+  const query_params = queryParams.size ? `?${queryParams}` : "";
   // Empty artifact segments are invalid selections, not redundant separators.
   // path.join would turn /artifacts//project/entry into a different, valid route.
   const full_url =
-    /^\/?(?:u|artifacts|collaborators|chats|people)(?:\/|$)/.test(url)
-      ? `${join(appBasePath, "/")}${url.replace(/^\//, "")}${query_params}${hash ?? location.hash}`
-      : join(appBasePath, url + query_params + (hash ?? location.hash));
+    /^\/?(?:u|artifacts|collaborators|chats|people)(?:\/|$)/.test(path)
+      ? `${join(appBasePath, "/")}${path.replace(/^\//, "")}${query_params}${hash ?? location.hash}`
+      : join(appBasePath, path + query_params + (hash ?? location.hash));
   if (full_url === location.pathname + location.search + location.hash) {
     // Back/Forward can change the current URL without going through set_url.
     // Rewriting that URL would push a duplicate and discard Forward history.
@@ -231,6 +248,8 @@ export function load_target(
         collaborators_project_id: parsed.collaborators?.projectId,
         collaborators_project_ids: parsed.collaborators?.projectIds,
         collaborators_person_id: parsed.collaborators?.personId,
+        collaborators_contact_id: parsed.collaborators?.contactId,
+        collaborators_invitation_id: parsed.collaborators?.invitationId,
         collaborators_resource_kind: parsed.collaborators?.resourceKind,
         collaborators_resource_id: parsed.collaborators?.resourceId,
         collaborators_alias: parsed.collaborators?.alias,
@@ -379,7 +398,7 @@ window.onpopstate = (_) => {
   load_target(
     document.location.pathname.slice(
       appBasePath.length + (appBasePath.endsWith("/") ? 0 : 1),
-    ),
+    ) + document.location.search,
     false,
     false,
   );

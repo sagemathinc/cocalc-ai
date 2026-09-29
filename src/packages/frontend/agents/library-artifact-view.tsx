@@ -9,6 +9,7 @@ import { Alert, Button, Input, Modal } from "antd";
 import { readArtifact } from "@cocalc/chat";
 import type { ArtifactRecord } from "@cocalc/chat";
 import { useArtifactChanges } from "@cocalc/frontend/chat/artifacts";
+import { InviteContentButton } from "@cocalc/frontend/collaborators/invite-content";
 import { copyTextToClipboard } from "@cocalc/frontend/components/copy-to-clipboard-util";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { ActionListArtifact } from "@cocalc/frontend/frame-editors/chat-editor/action-list-artifact";
@@ -187,6 +188,18 @@ function LibraryArtifactPage({
             </Button>
           )}
           <Button onClick={() => void copyLink()}>Copy link</Button>
+          {title && (
+            <InviteContentButton
+              title={title}
+              source={{
+                project_id: target.projectId,
+                chat_path: target.path,
+                thread_id: target.threadId,
+                artifact_id: target.artifactId,
+                kind: "artifact",
+              }}
+            />
+          )}
         </div>
         <span role="status">{copied ? "Link copied" : ""}</span>
         {headerActions}

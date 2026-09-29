@@ -42,6 +42,8 @@ export interface PageState {
   collaborators_project_id?: string;
   collaborators_project_ids?: string[];
   collaborators_person_id?: string;
+  collaborators_contact_id?: string;
+  collaborators_invitation_id?: string;
   collaborators_resource_kind?: CollaboratorsRoute["resourceKind"];
   collaborators_resource_id?: string;
   collaborators_route_error?: string;
@@ -93,7 +95,9 @@ export interface PageState {
 export class PageStore extends Store<PageState> {}
 
 export function init_store() {
-  const parsed = parsePageTarget(target);
+  const parsed = parsePageTarget(
+    target.includes("?") ? target : `${target}${location.search}`,
+  );
   const initialProjectId =
     parsed.page === "project" ? parsed.target.split("/")[0] : undefined;
   const collaborators =
@@ -108,6 +112,8 @@ export function init_store() {
     collaborators_project_id: collaborators?.projectId,
     collaborators_project_ids: collaborators?.projectIds,
     collaborators_person_id: collaborators?.personId,
+    collaborators_contact_id: collaborators?.contactId,
+    collaborators_invitation_id: collaborators?.invitationId,
     collaborators_resource_kind: collaborators?.resourceKind,
     collaborators_resource_id: collaborators?.resourceId,
     collaborators_route_error: collaborators?.routeError,

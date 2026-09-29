@@ -43,4 +43,29 @@ describe("invite unread count", () => {
 
     expect(getUnreadIncomingInviteCount("account-1")).toBe(2);
   });
+
+  it("keeps the last count while refreshing the same account", () => {
+    setUnreadIncomingInviteCount("account-1", 723);
+    const listener = jest.fn();
+    const unsubscribe = subscribeUnreadIncomingInviteCount(listener);
+    try {
+      beginUnreadIncomingInviteCountRefresh("account-1");
+      expect(getUnreadIncomingInviteCount("account-1")).toBe(723);
+      expect(listener).not.toHaveBeenCalled();
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("clears the previous account on switch and ignores its late reply", () => {
+    setUnreadIncomingInviteCount("account-1", 723);
+    const previous = beginUnreadIncomingInviteCountRefresh("account-1");
+    const current = beginUnreadIncomingInviteCountRefresh("account-2");
+    expect(getUnreadIncomingInviteCount("account-1")).toBe(0);
+    expect(getUnreadIncomingInviteCount("account-2")).toBe(0);
+    setUnreadIncomingInviteCount("account-2", 4, current);
+    setUnreadIncomingInviteCount("account-1", 900, previous);
+    expect(getUnreadIncomingInviteCount("account-2")).toBe(4);
+    expect(getUnreadIncomingInviteCount("account-1")).toBe(0);
+  });
 });

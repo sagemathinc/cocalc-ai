@@ -138,6 +138,46 @@ describe("NotificationRow", () => {
     expect(open_file).not.toHaveBeenCalled();
   });
 
+  it("renders authored invitation context literally and only offers passive review", () => {
+    const body =
+      '<img src="https://example.com/tracker"> [Run](javascript:run())';
+    const { container } = render(
+      <NotificationRow
+        id="invitation-notice"
+        user_map={{}}
+        mention={
+          fromJS({
+            kind: "account_notice",
+            notice_type: "collaboration_invitation",
+            target: "acct-1",
+            source: "sender",
+            time: new Date(),
+            title: "Invitation to collaborate",
+            body_text: body,
+            body_markdown: "Do not interpret this as markdown",
+            action_label: "View invitation",
+            action_link: "/people/invites/?invitation_id=invite",
+            users: { "acct-1": { read: false } },
+          }) as any
+        }
+      />,
+    );
+    expect(screen.getByText(body)).toBeTruthy();
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.queryByText("Do not interpret this as markdown")).toBeNull();
+    const link = screen.getByRole("link", { name: "View invitation" });
+    expect(link.getAttribute("href")).toBe(
+      "/people/invites/?invitation_id=invite",
+    );
+    link.focus();
+    expect(document.activeElement).toBe(link);
+    fireEvent.click(link);
+    expect(open_file).not.toHaveBeenCalled();
+    expect(mockEnsureProjectReduxRuntime).not.toHaveBeenCalled();
+    expect(respondAccessRequest).not.toHaveBeenCalled();
+    expect(mark).not.toHaveBeenCalled();
+  });
+
   it("includes the matching named agent in a Codex notice", () => {
     render(
       <NotificationRow

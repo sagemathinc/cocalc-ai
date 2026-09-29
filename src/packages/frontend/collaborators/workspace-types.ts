@@ -9,7 +9,11 @@ import type {
   CollaborationProjectQuery,
 } from "@cocalc/util/collaborators";
 
-export type CollaboratorsView = "conversations" | "people" | "projects";
+export type CollaboratorsView =
+  | "conversations"
+  | "people"
+  | "projects"
+  | "invites";
 export type ProjectView = NonNullable<CollaborationProjectQuery["view"]>;
 
 export interface CollaboratorsRoute {
@@ -17,6 +21,10 @@ export interface CollaboratorsRoute {
   projectId?: string;
   projectIds?: string[];
   personId?: string;
+  /** Account-owned contact identity, never an account/person ID. */
+  contactId?: string;
+  /** Selected invitation in the Invites view; not an account/contact identity. */
+  invitationId?: string;
   resourceKind?: CollaborationResourceKind;
   resourceId?: string;
   /** URL label only. Selections and authorization always use stable IDs. */

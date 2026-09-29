@@ -150,6 +150,44 @@ afterEach(() => {
 });
 
 describe("project context across global navigation", () => {
+  it("writes the current invitation selection and clears it outside Invites", async () => {
+    actions.setState({
+      collaborators_open: true,
+      collaborators_view: "invites",
+      collaborators_invitation_id: B,
+    });
+    await actions.set_active_tab("agents");
+    expect(set_url).toHaveBeenLastCalledWith(
+      `/people/invites?invitation_id=${B}`,
+      "",
+    );
+    actions.setState({ collaborators_invitation_id: C });
+    await actions.set_active_tab("agents");
+    expect(set_url).toHaveBeenLastCalledWith(
+      `/people/invites?invitation_id=${C}`,
+      "",
+    );
+    actions.setState({ collaborators_view: "people" });
+    await actions.set_active_tab("agents");
+    expect(set_url).toHaveBeenLastCalledWith("/people/collaborators", "");
+  });
+  it.each(["people", "invites"] as const)(
+    "generates distinct %s contact paths from page state",
+    async (view) => {
+      actions.setState({
+        collaborators_open: true,
+        collaborators_view: view,
+        collaborators_contact_id: C,
+      });
+      await actions.set_active_tab("agents");
+      expect(set_url).toHaveBeenLastCalledWith(
+        `/people/${view === "people" ? "collaborators" : view}/contact/${C}`,
+        "",
+      );
+      expect(page().get("collaborators_person_id")).toBeUndefined();
+    },
+  );
+
   it.each([
     [true, true],
     [true, false],
@@ -177,7 +215,7 @@ describe("project context across global navigation", () => {
       expect(projectActions[A].push_state).not.toHaveBeenCalled();
       if (changeHistory) {
         expect(set_url).toHaveBeenLastCalledWith(
-          `/people/people/project/${B}/person/${C}`,
+          `/people/collaborators/project/${B}/person/${C}`,
           "",
         );
       } else {

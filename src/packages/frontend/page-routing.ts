@@ -111,7 +111,10 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
     case "collaborators":
       return {
         page: "agents",
-        collaborators: parseCollaboratorsRoute(segments.slice(1)),
+        collaborators: parseCollaboratorsRoute(
+          segments.slice(1),
+          normalizedTarget.split("#")[0].split("?").slice(1).join("?"),
+        ),
       };
     case "artifacts":
       return {

@@ -43,6 +43,12 @@ import { ResourceDetail } from "./resource-detail";
 import { HumanConversationSearch } from "./conversation-search";
 import type { ConversationSearchHit } from "../chat/conversation-search/runner";
 import { NewConversation } from "./new-conversation";
+import { InvitationHistory } from "./invitation-history";
+import { boundPeopleHistoryApi } from "./people-history-api";
+import { ContactOverview, PeopleContacts } from "./people-contacts";
+import type { PeopleContact } from "@cocalc/util/people-invitation-history";
+import type { InviteProjectsDraft } from "./invitation-api";
+import type { CollaboratorInvitePerson } from "./add-collaborators";
 import type {
   CollaboratorsPageProps,
   CollaboratorsRoute,
@@ -136,6 +142,8 @@ function CollaboratorsWorkspace({
   projectId,
   projectIds,
   personId,
+  contactId,
+  invitationId,
   resourceKind,
   resourceId,
   onNavigate,
@@ -155,6 +163,9 @@ function CollaboratorsWorkspace({
   const pinFocus = useRef<string | undefined>(undefined);
   const [picker, setPicker] = useState<"project" | "person" | "conversation">();
   const [inviteProjects, setInviteProjects] = useState<string[]>();
+  const [invitePerson, setInvitePerson] = useState<CollaboratorInvitePerson>();
+  const [historyApi] = useState(() => boundPeopleHistoryApi(accountId));
+  const invitationDraft = useRef<InviteProjectsDraft | undefined>(undefined);
   const inviteSelection = useRef<string[]>([]);
   const [createProject, setCreateProject] = useState<
     "invite" | "conversation"
@@ -183,13 +194,15 @@ function CollaboratorsWorkspace({
     projectId,
     projectIds,
     personId,
+    contactId,
+    invitationId,
     resourceKind,
     resourceId,
   };
   const selection = resourceId
     ? JSON.stringify([resourceKind, projectId, resourceId])
     : view === "people"
-      ? personId
+      ? (contactId ?? personId)
       : view === "projects"
         ? projectId
         : undefined;
@@ -243,7 +256,7 @@ function CollaboratorsWorkspace({
         scope,
       });
     },
-    active,
+    active && view !== "invites",
   );
 
   useEffect(() => {
@@ -293,6 +306,7 @@ function CollaboratorsWorkspace({
         projectIds: listProjectIds,
         projectId: view === "projects" ? undefined : projectId,
         personId: view === "people" ? undefined : personId,
+        contactId: undefined,
       },
     );
     requestAnimationFrame(() => {
@@ -324,6 +338,22 @@ function CollaboratorsWorkspace({
     );
   }
   function invite() {
+    invitationDraft.current = undefined;
+    setInvitePerson(undefined);
+    setInviteProjects(projectId ? [projectId] : []);
+  }
+  function inviteContact(contact: PeopleContact) {
+    invitationDraft.current = undefined;
+    setInvitePerson(
+      contact.linked_account_id
+        ? {
+            account_id: contact.linked_account_id,
+            display_name: contact.display_label || "Invited person",
+          }
+        : contact.email
+          ? { email_address: contact.email }
+          : undefined,
+    );
     setInviteProjects(projectId ? [projectId] : []);
   }
   function newConversation() {
@@ -483,224 +513,311 @@ function CollaboratorsWorkspace({
           onClose={() => setError("")}
         />
       )}
-      <DirectorySplitView
-        hasDetail={!!selection}
-        selectionKey={selection}
-        controlsTarget={panelControls}
-        id={`${toolbarId}-panel-${view}`}
-        labelledBy={`${toolbarId}-tab-${view}`}
-      >
+      {view === "invites" ? (
         <div
-          className="collaborators-results"
-          ref={listRef}
-          tabIndex={-1}
-          aria-label="People results"
+          role="tabpanel"
+          id={`${toolbarId}-panel-invites`}
+          aria-labelledby={`${toolbarId}-tab-invites`}
         >
-          {conversationOpen && (
-            <div
-              className="collaborators-conversation-toolbar"
-              ref={setConversationToolbar}
-            />
-          )}
-          <DirectoryResults
-            hideOptions
-            result={result}
-            onRestart={
-              view === "projects"
-                ? () => {
-                    listRef.current?.focus();
-                    setPinRevision((value) => value + 1);
-                  }
-                : undefined
+          <InvitationHistory
+            api={historyApi}
+            invitationId={invitationId}
+            onClearInvitation={() =>
+              onNavigate({ ...route, invitationId: undefined })
             }
-            label={VIEWS.find(([key]) => key === view)![1]}
-            empty={
-              view === "people"
-                ? "No collaborators match this scope. Invite someone to an existing project or create a project to work together."
-                : view === "projects"
-                  ? projectView === "pinned"
-                    ? "No pinned projects match. Pin a project from Recent projects or clear your filters."
-                    : "No shared projects match. Invite a collaborator or clear your filters."
-                  : "No conversations match this filter."
-            }
+            active={active}
+            personId={contactId}
+            participantAccountId={personId}
+            search={search}
+            projectIds={listProjectIds}
+            projectTitle={(id) => {
+              const title = projects?.getIn([id, "title"]);
+              return typeof title === "string" ? title : undefined;
+            }}
+            onOpen={(row) => {
+              const target =
+                row.kind === "collaboration" ? row.target : undefined;
+              onNavigate(
+                target
+                  ? {
+                      view: "conversations",
+                      projectId: target.project_id,
+                      resourceKind: target.kind,
+                      resourceId: target.resource_id,
+                    }
+                  : { view: "projects", projectId: row.project_id },
+              );
+            }}
+          />
+        </div>
+      ) : (
+        <DirectorySplitView
+          hasDetail={!!selection}
+          selectionKey={selection}
+          controlsTarget={panelControls}
+          id={`${toolbarId}-panel-${view}`}
+          labelledBy={`${toolbarId}-tab-${view}`}
+        >
+          <div
+            className="collaborators-results"
+            ref={listRef}
+            tabIndex={-1}
+            aria-label="People results"
           >
-            {(items) =>
-              view === "conversations" ? (
-                <ResourceList
-                  items={items as CollaborationResource[]}
-                  onOpen={openResource}
-                  api={api}
-                  preferences={preferences}
-                  compact={conversationOpen}
-                  selectedId={
-                    resourceId && resourceKind && projectId
-                      ? collaborationTargetKey({
-                          project_id: projectId,
-                          kind: resourceKind,
-                          resource_id: resourceId,
-                        })
-                      : undefined
-                  }
-                />
-              ) : view === "projects" ? (
-                <ProjectList
-                  items={items as CollaborationProject[]}
-                  api={api}
-                  preferences={preferences}
-                  onOpen={(project, event) =>
-                    navigate(
-                      {
+            {conversationOpen && (
+              <div
+                className="collaborators-conversation-toolbar"
+                ref={setConversationToolbar}
+              />
+            )}
+            <DirectoryResults
+              hideOptions
+              result={result}
+              onRestart={
+                view === "projects"
+                  ? () => {
+                      listRef.current?.focus();
+                      setPinRevision((value) => value + 1);
+                    }
+                  : undefined
+              }
+              label={VIEWS.find(([key]) => key === view)![1]}
+              empty={
+                view === "people"
+                  ? "No collaborators match this scope. Invite someone to an existing project or create a project to work together."
+                  : view === "projects"
+                    ? projectView === "pinned"
+                      ? "No pinned projects match. Pin a project from Recent projects or clear your filters."
+                      : "No shared projects match. Invite a collaborator or clear your filters."
+                    : "No conversations match this filter."
+              }
+            >
+              {(items) =>
+                view === "conversations" ? (
+                  <ResourceList
+                    items={items as CollaborationResource[]}
+                    onOpen={openResource}
+                    api={api}
+                    preferences={preferences}
+                    compact={conversationOpen}
+                    selectedId={
+                      resourceId && resourceKind && projectId
+                        ? collaborationTargetKey({
+                            project_id: projectId,
+                            kind: resourceKind,
+                            resource_id: resourceId,
+                          })
+                        : undefined
+                    }
+                  />
+                ) : view === "projects" ? (
+                  <ProjectList
+                    items={items as CollaborationProject[]}
+                    api={api}
+                    preferences={preferences}
+                    onOpen={(project, event) =>
+                      navigate(
+                        {
+                          view: "projects",
+                          projectId: project.project_id,
+                          personId,
+                        },
+                        event,
+                      )
+                    }
+                    onPinChange={(id) => {
+                      pinFocus.current =
+                        document.activeElement?.getAttribute(
+                          "data-collection-pin",
+                        ) === id
+                          ? id
+                          : undefined;
+                      // Restart at page one: the favorite-set-bound cursor is now stale.
+                      setPinRevision((value) => value + 1);
+                    }}
+                  />
+                ) : (
+                  <DirectoryCollection
+                    items={items as CollaborationPerson[]}
+                    collection="people"
+                    viewOverride={selection ? "list" : undefined}
+                    label="People"
+                    preferences={preferences}
+                    itemId={(item) => item.account_id}
+                    itemTitle={(item) => item.display_name || "Collaborator"}
+                    renderItem={(item) => (
+                      <Button
+                        type="text"
+                        className="collaborators-row collaborators-person-row"
+                        onClick={(event) =>
+                          navigate(
+                            {
+                              view: "people",
+                              projectId,
+                              personId: item.account_id,
+                            },
+                            event,
+                          )
+                        }
+                      >
+                        <Avatar
+                          account_id={item.account_id}
+                          display_name={item.display_name}
+                          size={40}
+                          no_tooltip
+                        />
+                        <span>
+                          <span className="collaborators-row-title">
+                            {item.display_name || "Collaborator"}
+                          </span>
+                          <span className="collaborators-person-meta">
+                            {item.common_project_count} shared{" "}
+                            {item.common_project_count === 1
+                              ? "project"
+                              : "projects"}
+                          </span>
+                        </span>
+                      </Button>
+                    )}
+                  />
+                )
+              }
+            </DirectoryResults>
+            {view === "people" && !listPersonId && !listProjectIds.length && (
+              <PeopleContacts
+                api={historyApi}
+                active={active}
+                search={search}
+                onSelect={(contact) =>
+                  navigate({ view: "people", contactId: contact.person_id })
+                }
+              />
+            )}
+          </div>
+          {selection && (
+            <div
+              className="collaborators-detail"
+              ref={detailRef}
+              tabIndex={-1}
+              aria-label="Selected collaboration"
+              style={{
+                background: UI_COLORS.surface,
+                borderLeft: `1px solid ${UI_COLORS.border}`,
+              }}
+            >
+              {(!conversationOpen || !revision.ready) && (
+                <div>
+                  <Button onClick={back}>Back to results</Button>
+                </div>
+              )}
+              {active &&
+                revision.ready &&
+                (contactId ? (
+                  <ContactOverview
+                    key={contactId}
+                    api={historyApi}
+                    contactId={contactId}
+                    onInvite={inviteContact}
+                    onOpen={(row) =>
+                      onNavigate({
                         view: "projects",
-                        projectId: project.project_id,
-                        personId,
-                      },
-                      event,
-                    )
-                  }
-                  onPinChange={(id) => {
-                    pinFocus.current =
-                      document.activeElement?.getAttribute(
-                        "data-collection-pin",
-                      ) === id
-                        ? id
-                        : undefined;
-                    // Restart at page one: the favorite-set-bound cursor is now stale.
-                    setPinRevision((value) => value + 1);
-                  }}
-                />
-              ) : (
-                <DirectoryCollection
-                  items={items as CollaborationPerson[]}
-                  collection="people"
-                  viewOverride={selection ? "list" : undefined}
-                  label="People"
-                  preferences={preferences}
-                  itemId={(item) => item.account_id}
-                  itemTitle={(item) => item.display_name || "Collaborator"}
-                  renderItem={(item) => (
-                    <Button
-                      type="text"
-                      className="collaborators-row collaborators-person-row"
-                      onClick={(event) =>
+                        projectId: row.project_id,
+                      })
+                    }
+                    projectTitle={(id) => {
+                      const title = projects?.getIn([id, "title"]);
+                      return typeof title === "string" ? title : undefined;
+                    }}
+                  />
+                ) : resourceId && resourceKind && projectId ? (
+                  <ResourceDetail
+                    searchHit={searchHit}
+                    key={JSON.stringify([projectId, resourceKind, resourceId])}
+                    api={api}
+                    accountId={accountId}
+                    awaitingIndex={createdResourceId === resourceId}
+                    onResolved={() => {
+                      if (createdResourceId !== resourceId) return;
+                      // The initial refresh can beat directory ingestion. Once
+                      // detail lookup confirms it, do not wait for the next poll.
+                      setCreatedResourceId(undefined);
+                      result.refresh();
+                    }}
+                    target={{
+                      project_id: projectId,
+                      kind: resourceKind,
+                      resource_id: resourceId,
+                    }}
+                    onChange={result.refresh}
+                    onAlias={(alias) => {
+                      void canonicalizeCollaboratorsAlias(
+                        accountId,
+                        route,
+                        alias,
+                      );
+                    }}
+                    onBack={back}
+                    onManageProject={(id) => void manageProject(id)}
+                    projectTitle={
+                      typeof selectedProjectTitle === "string"
+                        ? selectedProjectTitle
+                        : undefined
+                    }
+                  />
+                ) : (
+                  <>
+                    <Overview
+                      accountId={accountId}
+                      key={JSON.stringify([projectId, personId])}
+                      api={api}
+                      projectId={projectId}
+                      personId={personId}
+                      onProject={(id, event) =>
                         navigate(
-                          {
-                            view: "people",
-                            projectId,
-                            personId: item.account_id,
-                          },
+                          { view: "projects", projectId: id, personId },
                           event,
                         )
                       }
-                    >
-                      <Avatar
-                        account_id={item.account_id}
-                        display_name={item.display_name}
-                        size={40}
-                        no_tooltip
-                      />
-                      <span>
-                        <span className="collaborators-row-title">
-                          {item.display_name || "Collaborator"}
-                        </span>
-                        <span className="collaborators-person-meta">
-                          {item.common_project_count} shared{" "}
-                          {item.common_project_count === 1
-                            ? "project"
-                            : "projects"}
-                        </span>
-                      </span>
-                    </Button>
-                  )}
-                />
-              )
-            }
-          </DirectoryResults>
-        </div>
-        {selection && (
-          <div
-            className="collaborators-detail"
-            ref={detailRef}
-            tabIndex={-1}
-            aria-label="Selected collaboration"
-            style={{
-              background: UI_COLORS.surface,
-              borderLeft: `1px solid ${UI_COLORS.border}`,
-            }}
-          >
-            {(!conversationOpen || !revision.ready) && (
-              <div>
-                <Button onClick={back}>Back to results</Button>
-              </div>
-            )}
-            {active &&
-              revision.ready &&
-              (resourceId && resourceKind && projectId ? (
-                <ResourceDetail
-                  searchHit={searchHit}
-                  key={JSON.stringify([projectId, resourceKind, resourceId])}
-                  api={api}
-                  accountId={accountId}
-                  awaitingIndex={createdResourceId === resourceId}
-                  onResolved={() => {
-                    if (createdResourceId !== resourceId) return;
-                    // The initial refresh can beat directory ingestion. Once
-                    // detail lookup confirms it, do not wait for the next poll.
-                    setCreatedResourceId(undefined);
-                    result.refresh();
-                  }}
-                  target={{
-                    project_id: projectId,
-                    kind: resourceKind,
-                    resource_id: resourceId,
-                  }}
-                  onChange={result.refresh}
-                  onAlias={(alias) => {
-                    void canonicalizeCollaboratorsAlias(
-                      accountId,
-                      route,
-                      alias,
-                    );
-                  }}
-                  onBack={back}
-                  onManageProject={(id) => void manageProject(id)}
-                  projectTitle={
-                    typeof selectedProjectTitle === "string"
-                      ? selectedProjectTitle
-                      : undefined
-                  }
-                />
-              ) : (
-                <Overview
-                  accountId={accountId}
-                  key={JSON.stringify([projectId, personId])}
-                  api={api}
-                  projectId={projectId}
-                  personId={personId}
-                  onProject={(id, event) =>
-                    navigate(
-                      { view: "projects", projectId: id, personId },
-                      event,
-                    )
-                  }
-                  onPerson={(id, event) =>
-                    navigate({ view: "people", projectId, personId: id }, event)
-                  }
-                  onResource={openResource}
-                  onNewConversation={newConversation}
-                  onInvite={invite}
-                  onPersonAliasChange={(alias) => {
-                    void canonicalizeCollaboratorsAlias(
-                      accountId,
-                      route,
-                      alias,
-                    );
-                  }}
-                  onManageProject={(id) => void manageProject(id)}
-                />
-              ))}
-          </div>
-        )}
-      </DirectorySplitView>
+                      onPerson={(id, event) =>
+                        navigate(
+                          { view: "people", projectId, personId: id },
+                          event,
+                        )
+                      }
+                      onResource={openResource}
+                      onNewConversation={newConversation}
+                      onInvite={invite}
+                      onPersonAliasChange={(alias) => {
+                        void canonicalizeCollaboratorsAlias(
+                          accountId,
+                          route,
+                          alias,
+                        );
+                      }}
+                      onManageProject={(id) => void manageProject(id)}
+                    />
+                    <InvitationHistory
+                      api={historyApi}
+                      participantAccountId={personId}
+                      projectIds={projectId ? [projectId] : undefined}
+                      active={active}
+                      onOpen={(row) =>
+                        onNavigate({
+                          view: "projects",
+                          projectId: row.project_id,
+                        })
+                      }
+                      projectTitle={(id) => {
+                        const title = projects?.getIn([id, "title"]);
+                        return typeof title === "string" ? title : undefined;
+                      }}
+                    />
+                  </>
+                ))}
+            </div>
+          )}
+        </DirectorySplitView>
+      )}
       {active && picker && (
         <DirectoryPicker
           api={api}
@@ -769,17 +886,20 @@ function CollaboratorsWorkspace({
         >
           <InviteProjects
             initialProjectIds={inviteProjects}
+            initialDraft={invitationDraft.current}
             person={
-              personId
+              invitePerson ??
+              (personId
                 ? {
                     account_id: personId,
                     display_name: filterNames[personId] || "Collaborator",
                   }
-                : undefined
+                : undefined)
             }
             onClose={() => setInviteProjects(undefined)}
-            onCreateProject={(selected) => {
+            onCreateProject={(selected, draft) => {
               inviteSelection.current = selected;
+              invitationDraft.current = draft;
               setInviteProjects(undefined);
               setCreateProject("invite");
             }}
@@ -804,6 +924,14 @@ function CollaboratorsWorkspace({
                 // The creator calls onClose after onCreated; both must restore
                 // the selection that includes the newly created project.
                 inviteSelection.current = [...inviteSelection.current, id];
+                if (invitationDraft.current)
+                  invitationDraft.current = {
+                    ...invitationDraft.current,
+                    createdProjectIds: [
+                      ...invitationDraft.current.createdProjectIds,
+                      id,
+                    ],
+                  };
                 setInviteProjects(inviteSelection.current);
               }
               result.refresh();

@@ -1,5 +1,89 @@
 import { collaboratorsTargetPath, parseCollaboratorsRoute } from "./routing";
 import { getPageUrlPath, parsePageTarget } from "../page-routing";
+import type { CollaboratorsView } from "./workspace-types";
+
+const CONTACT = "33333333-3333-4333-8333-333333333333";
+
+test("Invites deep links roundtrip their selected invitation and independent contact filter", () => {
+  const route = {
+    view: "invites" as const,
+    contactId: CONTACT,
+    invitationId: CONTACT,
+  };
+  const path = collaboratorsTargetPath(route);
+  expect(path).toBe(
+    `people/invites/contact/${CONTACT}?invitation_id=${CONTACT}`,
+  );
+  expect(parsePageTarget(path)).toEqual({
+    page: "agents",
+    collaborators: route,
+  });
+  expect(getPageUrlPath(parsePageTarget(path))).toBe(`/${path}`);
+  expect(
+    parsePageTarget(`people/invites/?invitation_id=${CONTACT}#details`),
+  ).toEqual({
+    page: "agents",
+    collaborators: { view: "invites", invitationId: CONTACT },
+  });
+});
+
+test.each(["", "bad", "%2F", "%00", `${CONTACT}&invitation_id=${CONTACT}`])(
+  "invalid or ambiguous invitation selection fails closed: %s",
+  (id) => {
+    expect(parsePageTarget(`people/invites?invitation_id=${id}`)).toMatchObject(
+      {
+        collaborators: { routeError: expect.any(String) },
+      },
+    );
+  },
+);
+
+test.each<CollaboratorsView>(["people", "projects", "conversations"])(
+  "%s ignores invitation-only selection",
+  (view) => {
+    const path = collaboratorsTargetPath({ view, invitationId: CONTACT });
+    expect(path).not.toContain("?");
+    expect(parsePageTarget(`${path}?invitation_id=${CONTACT}`)).toEqual({
+      page: "agents",
+      collaborators: { view },
+    });
+  },
+);
+
+test.each<CollaboratorsView>(["people", "invites"])(
+  "%s contact routes preserve contact identity separately from account people",
+  (view) => {
+    const route = { view, contactId: CONTACT };
+    const target = `people/${view === "people" ? "collaborators" : view}/contact/${CONTACT}`;
+    expect(collaboratorsTargetPath(route)).toBe(target);
+    for (const suffix of ["", "/"]) {
+      expect(parsePageTarget(`${target}${suffix}`)).toEqual({
+        page: "agents",
+        collaborators: route,
+      });
+    }
+    expect(
+      collaboratorsTargetPath({
+        ...route,
+        alias: "friend",
+        aliasKind: "people",
+        aliasOwner: "owner",
+      }),
+    ).toBe(target);
+  },
+);
+
+test("Invites contact and project filters roundtrip independently", () => {
+  const route = {
+    view: "invites" as const,
+    contactId: CONTACT,
+    projectIds: ["11111111-1111-4111-8111-111111111111"],
+  };
+  expect(parsePageTarget(collaboratorsTargetPath(route))).toEqual({
+    page: "agents",
+    collaborators: route,
+  });
+});
 
 test("unqualified chat aliases do not resolve in the viewer's namespace", () => {
   const parsed = parsePageTarget("chats/Alice-2");
@@ -29,7 +113,7 @@ test("People collection URLs are workspace views, not unqualified aliases", () =
     collaborators: { routeError: expect.any(String) },
   });
   expect(collaboratorsTargetPath({ view: "people", aliasKind: "people" })).toBe(
-    "people/people",
+    "people/collaborators",
   );
 });
 test("qualified links use the alias owner, never a person/resource ID", () => {
@@ -60,8 +144,20 @@ test("qualified links use the alias owner, never a person/resource ID", () => {
       alias: "friend",
       personId: "bob",
     }),
-  ).toBe("people/people/person/bob");
+  ).toBe("people/collaborators/person/bob");
 });
+
+test.each(["friend", "collaborators", "invites", "people", "projects"])(
+  "qualified People alias %s is never interpreted as a workspace view",
+  (alias) => {
+    for (const suffix of ["", "/"]) {
+      const target = `u/owner/people/${alias}${suffix}`;
+      const parsed = parsePageTarget(target);
+      expect(parsed).toEqual({ page: "agents", personal_url: target });
+      expect(getPageUrlPath(parsed)).toBe(`/${target}`);
+    }
+  },
+);
 test.each([
   "chats/a/b",
   "people/%2f",
@@ -101,13 +197,48 @@ test("project and person scopes roundtrip with a stable resource identity", () =
   );
 });
 
-test.each(["people", "projects", "conversations"])(
-  "direct %s view needs no project",
+test.each<[string, CollaboratorsView]>([
+  ["collaborators", "people"],
+  ["people", "people"],
+  ["projects", "projects"],
+  ["conversations", "conversations"],
+  ["invites", "invites"],
+])(
+  "direct %s view accepts trailing slash and canonicalizes without a project",
+  (segment, view) => {
+    for (const suffix of ["", "/", "/?filter=all#details"]) {
+      const parsed = parsePageTarget(`people/${segment}${suffix}`);
+      expect(parsed).toEqual({ page: "agents", collaborators: { view } });
+      const canonical = view === "people" ? "collaborators" : view;
+      expect(getPageUrlPath(parsed)).toBe(`/people/${canonical}`);
+    }
+  },
+);
+
+test.each<CollaboratorsView>([
+  "people",
+  "projects",
+  "conversations",
+  "invites",
+])(
+  "%s scoped routes roundtrip with a trailing slash without mutating parts",
   (view) => {
-    expect(parseCollaboratorsRoute([view])).toEqual({ view });
-    const parsed = parsePageTarget(`people/${view}`);
-    expect(parsed).toEqual({ page: "agents", collaborators: { view } });
-    expect(getPageUrlPath(parsed)).toBe(`/people/${view}`);
+    const route = {
+      view,
+      projectId: "project-1",
+      personId: "person-1",
+      resourceKind: "artifact" as const,
+      resourceId: "folder/item",
+    };
+    const target = collaboratorsTargetPath(route);
+    const parts = `${target}/`.split("/").slice(1);
+    const original = [...parts];
+    expect(parseCollaboratorsRoute(parts)).toEqual(route);
+    expect(parts).toEqual(original);
+    expect(parsePageTarget(`${target}/?source=copy#details`)).toEqual({
+      page: "agents",
+      collaborators: route,
+    });
   },
 );
 
@@ -115,7 +246,9 @@ test.each([
   ["collaborators", "people/conversations"],
   ["collaborators/", "people/conversations"],
   ["collaborators/conversations", "people/conversations"],
-  ["collaborators/people/person/bob", "people/people/person/bob"],
+  ["collaborators/people/person/bob", "people/collaborators/person/bob"],
+  ["people/people/person/bob/", "people/collaborators/person/bob"],
+  ["people/people/", "people/collaborators"],
   [
     "collaborators/projects/project/project-1",
     "people/projects/project/project-1",
@@ -156,6 +289,16 @@ test("root opens conversations and encoded labels do not become path segments", 
 
 test.each([
   ["unexpected"],
+  ["invites", "contact", "account-not-contact"],
+  ["collaborators", "contact", ""],
+  ["collaborators", "contact", "%2F"],
+  ["invites", "contact", CONTACT, "contact", CONTACT],
+  ["", ""],
+  ["collaborators", "", ""],
+  ["invites", "", "person", "bob"],
+  ["invites", "person", "bob", "", ""],
+  ["collaborators", "person", "", ""],
+  ["invites", "project", "one", "project", "two", ""],
   ["conversations", "resource", "conversation", "thread"],
   ["people", "person", ""],
   ["people", "person", "one", "person", "two"],

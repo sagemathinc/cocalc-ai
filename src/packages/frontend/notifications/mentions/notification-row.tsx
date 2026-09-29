@@ -97,6 +97,7 @@ export function NotificationRow(props: Props) {
     fragment_id,
     title,
     body_markdown,
+    body_text,
     origin_label,
     notice_type,
     request_id,
@@ -414,7 +415,14 @@ export function NotificationRow(props: Props) {
             </Tag>
           ) : null}
           <div style={{ color: UI_COLORS.secondary }}>
-            {origin_label ?? "System"}{" "}
+            {notice_type === "collaboration_invitation" && source ? (
+              <>
+                <User account_id={source} user_map={user_map} /> invited
+                you{" "}
+              </>
+            ) : (
+              <>{origin_label ?? "System"} </>
+            )}
             <TimeAgo date={(latestTime ?? time).getTime()} />
             {count > 1 ? (
               <Tag style={{ marginLeft: 8 }}>{count} times</Tag>
@@ -426,7 +434,18 @@ export function NotificationRow(props: Props) {
               <TimeAgo date={(latestTime ?? time).getTime()} />.
             </div>
           ) : null}
-          {body_markdown ? (
+          {notice_type === "collaboration_invitation" ? (
+            <div
+              style={{
+                color: UI_COLORS.secondary,
+                whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
+                margin: "4px 0",
+              }}
+            >
+              {body_text}
+            </div>
+          ) : body_markdown ? (
             <NotificationMarkdown
               style={{
                 ...MARKDOWN_STYLE,

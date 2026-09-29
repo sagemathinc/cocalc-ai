@@ -22,6 +22,11 @@ function dedupeKey(mention: MentionInfo): string | undefined {
   if (mention.get("kind") !== "account_notice") {
     return undefined;
   }
+  // Independent invitations must keep their own read/dismiss identities even
+  // when their sender-authored text and destination happen to be identical.
+  if (mention.get("notice_type") === "collaboration_invitation") {
+    return undefined;
+  }
   if (mention.get("notice_type") === "codex_attention") {
     return JSON.stringify([
       "codex_attention",

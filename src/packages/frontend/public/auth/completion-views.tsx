@@ -11,6 +11,10 @@ import type { ProjectCollabInviteRow } from "@cocalc/conat/hub/api/projects";
 import { signOutAuthSession } from "@cocalc/frontend/auth/api";
 import api from "@cocalc/frontend/client/api";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import {
+  InvitationContentLink,
+  invitationTargetFromContext,
+} from "@cocalc/frontend/collaborators/invitation-content-link";
 import { MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
@@ -259,7 +263,30 @@ export function PublicVerifyEmailView({
   );
 }
 
-export function PublicRedeemProjectInviteView({
+export function PublicRedeemProjectInviteView(props: {
+  currentAccountDisplayName?: string;
+  currentAccountEmailAddress?: string;
+  currentAccountId?: string;
+  inviteId?: string;
+  isAuthenticated?: boolean;
+  projectId?: string;
+  token: string;
+}) {
+  return (
+    <RedeemProjectInviteSession
+      key={JSON.stringify([
+        props.currentAccountId,
+        props.isAuthenticated,
+        props.inviteId,
+        props.projectId,
+        props.token,
+      ])}
+      {...props}
+    />
+  );
+}
+
+function RedeemProjectInviteSession({
   currentAccountDisplayName,
   currentAccountEmailAddress,
   currentAccountId,
@@ -377,6 +404,12 @@ export function PublicRedeemProjectInviteView({
     }
   }
 
+  const resolvedProjectId = invite?.project_id ?? projectId;
+  const contentTarget = invitationTargetFromContext(
+    invite?.context,
+    resolvedProjectId,
+  );
+
   if (!isAuthenticated) {
     return (
       <Flex vertical gap={16}>
@@ -404,7 +437,6 @@ export function PublicRedeemProjectInviteView({
     );
   }
 
-  const resolvedProjectId = invite?.project_id ?? projectId;
   const isInviter =
     accountId != null && invite?.inviter_account_id === accountId;
 
@@ -537,6 +569,16 @@ export function PublicRedeemProjectInviteView({
               </Paragraph>
             </div>
           ) : null}
+          {contentTarget && (
+            <div>
+              <Text type="secondary">Invitation content</Text>
+              <Paragraph>{contentTarget.label}</Paragraph>
+              <Text type="secondary">
+                This is the sender's label. Opening content checks your current
+                access; accepting does not run an agent or notebook.
+              </Text>
+            </div>
+          )}
         </Flex>
       ) : (
         <Alert
@@ -547,6 +589,12 @@ export function PublicRedeemProjectInviteView({
         />
       )}
       <Flex wrap gap={12}>
+        {state === "accepted" && contentTarget && resolvedProjectId && (
+          <InvitationContentLink
+            target={contentTarget}
+            projectId={resolvedProjectId}
+          />
+        )}
         {state === "preview" && !loading && !error && !isInviter ? (
           <>
             <Button

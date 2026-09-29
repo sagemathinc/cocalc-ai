@@ -17,6 +17,17 @@ import type { ForeignArtifactTarget } from "@cocalc/frontend/frame-editors/chat-
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
 
 const mockOpen = jest.fn();
+const mockInviteContent = jest.fn();
+jest.mock("@cocalc/frontend/collaborators/invite-content", () => ({
+  InviteContentButton: (props) => {
+    mockInviteContent(props);
+    return (
+      <button aria-label={`Invite to collaborate on ${props.title}`}>
+        Invite to collaborate
+      </button>
+    );
+  },
+}));
 const mockCopy = jest.fn();
 jest.mock("@cocalc/frontend/components/copy-to-clipboard-util", () => ({
   copyTextToClipboard: (options) => mockCopy(options),
@@ -246,7 +257,14 @@ test("loads the real source without an agent, preserves focus, and delegates exp
   await user.tab();
   expect(screen.getByRole("button", { name: "Copy link" })).toHaveFocus();
   await user.tab();
+  expect(
+    screen.getByRole("button", {
+      name: "Invite to collaborate on Actual source title",
+    }),
+  ).toHaveFocus();
+  await user.tab();
   expect(screen.getByRole("document")).toHaveFocus();
+  await user.tab({ shift: true });
   await user.tab({ shift: true });
   await user.tab({ shift: true });
   await user.tab({ shift: true });
@@ -563,6 +581,24 @@ test("missing/deleted records never manufacture an artifact and keep Back availa
   await userEvent.setup().keyboard("{Enter}");
   expect(onBack).toHaveBeenCalledTimes(1);
   expect(db.set).not.toHaveBeenCalled();
+});
+
+test("the artifact header invites to the source artifact rather than its backing file", async () => {
+  render(<LibraryArtifactView target={target} onBack={() => {}} />);
+  await screen.findByRole("button", {
+    name: "Invite to collaborate on Actual source title",
+  });
+  expect(mockInviteContent).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      source: {
+        project_id: target.projectId,
+        chat_path: target.path,
+        thread_id: target.threadId,
+        artifact_id: target.artifactId,
+        kind: "artifact",
+      },
+    }),
+  );
 });
 
 test("source access denial and failed loading expose Retry without selecting or inventing content", async () => {

@@ -17,6 +17,7 @@ import { PersonalControls } from "./personal-controls";
 import { resolveCollaborationResource } from "./resource-query";
 import { participantSummary } from "./resource-list";
 import { ShareToConversationButton } from "./share-dialog";
+import { InviteContentButton } from "./invite-content";
 import type { ConversationSearchHit } from "../chat/conversation-search/runner";
 import type { EmbeddedThreadHeader } from "../chat/embedding-options";
 import { ThreadBadge } from "../chat/thread-badge";
@@ -30,6 +31,10 @@ const LibraryEntry = lazy(async () => ({
 }));
 const EmbeddedConversation = lazy(async () => ({
   default: (await import("./embedded-conversation")).EmbeddedConversation,
+}));
+const ProjectAccessDialog = lazy(async () => ({
+  default: (await import("@cocalc/frontend/project/access"))
+    .ProjectAccessDialog,
 }));
 
 export function ResourceDetail({
@@ -59,12 +64,15 @@ export function ResourceDetail({
 }) {
   const [showSource, setShowSource] = useState(false);
   const [audienceOpen, setAudienceOpen] = useState(false);
+  const [accessOpen, setAccessOpen] = useState(false);
+  const [awaitingContentOpen, setAwaitingContentOpen] = useState(false);
   const [aliasOpen, setAliasOpen] = useState(false);
   const aliasTrigger = useRef<HTMLButtonElement>(null);
   const [threadHeader, setThreadHeader] = useState<EmbeddedThreadHeader>();
   const sourceBack = useRef<HTMLButtonElement>(null);
   const sourceOpen = useRef<HTMLButtonElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
+  const focusAfterAccess = useRef(false);
   useEffect(() => {
     if (showSource) sourceBack.current?.focus();
   }, [showSource]);
@@ -83,6 +91,12 @@ export function ResourceDetail({
     true,
   );
   const resource = result.page?.items[0];
+  useEffect(() => {
+    if (resource && focusAfterAccess.current) {
+      focusAfterAccess.current = false;
+      heading.current?.focus();
+    }
+  }, [resource]);
   const resolvedCallback = useRef(onResolved);
   resolvedCallback.current = onResolved;
   useEffect(() => {
@@ -103,9 +117,7 @@ export function ResourceDetail({
   if (result.error)
     return (
       <>
-        {target.kind === "conversation" && (
-          <Button onClick={onBack}>Back to results</Button>
-        )}
+        <Button onClick={onBack}>Back to results</Button>
         <Alert
           role="alert"
           type="error"
@@ -113,6 +125,24 @@ export function ResourceDetail({
           description={result.error}
           action={<Button onClick={result.refresh}>Retry resource</Button>}
         />
+        <Button aria-haspopup="dialog" onClick={() => setAccessOpen(true)}>
+          Check project access
+        </Button>
+        {accessOpen && (
+          <Suspense fallback={<p role="status">Loading project access...</p>}>
+            <ProjectAccessDialog
+              projectId={target.project_id}
+              open
+              onClose={() => setAccessOpen(false)}
+              onAccessGranted={() => {
+                setShowSource(false);
+                setAwaitingContentOpen(true);
+                focusAfterAccess.current = true;
+                result.refresh();
+              }}
+            />
+          </Suspense>
+        )}
       </>
     );
   const projectName = resource?.project_title || projectTitle || "Project";
@@ -240,6 +270,11 @@ export function ResourceDetail({
               />
             )}
           />
+          <InviteContentButton
+            source={resource}
+            title={resource.title || "this conversation"}
+            compact
+          />
           <CollaboratorsModal
             title="Participants and access"
             open={audienceOpen}
@@ -286,6 +321,10 @@ export function ResourceDetail({
             resource={resource}
             onChange={onChange}
           />
+          <InviteContentButton
+            source={resource}
+            title={resource.title || `this ${resource.kind}`}
+          />
           <ShareToConversationButton
             key={`${accountId}:${collaborationTargetKey(resource)}`}
             api={api}
@@ -294,7 +333,16 @@ export function ResourceDetail({
           />
         </>
       )}
-      {showSource ? (
+      {awaitingContentOpen && resource.kind !== "agent" ? (
+        <>
+          <p role="status">
+            Access updated. Open the content when you are ready.
+          </p>
+          <Button onClick={() => setAwaitingContentOpen(false)}>
+            Open {resource.kind}
+          </Button>
+        </>
+      ) : showSource ? (
         <>
           <Button ref={sourceBack} onClick={closeSource}>
             Back to resource overview

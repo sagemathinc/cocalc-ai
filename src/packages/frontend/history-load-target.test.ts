@@ -114,6 +114,66 @@ import { getPageUrlPath, parsePageTarget } from "./page-routing";
 import { closedCollaboratorsState } from "./collaborators/navigation";
 
 describe("load_target", () => {
+  it("preserves a notification invitation UUID through landing and canonical URL updates", () => {
+    const previous = location.pathname + location.search + location.hash;
+    const invitationId = "44444444-4444-4444-8444-444444444444";
+    const target = `people/invites/?invitation_id=${invitationId}`;
+    try {
+      // Notification A links and emails perform normal browser navigation: the
+      // query is already in location before account-home routing initializes.
+      window.history.replaceState({}, "", `/${target}`);
+      load_target(target, false, false);
+      expect(mockPageState).toMatchObject({
+        collaborators_view: "invites",
+        collaborators_route_error: undefined,
+      });
+      set_url(getPageUrlPath(parsePageTarget(target)));
+      expect(new URL(location.href).searchParams.get("invitation_id")).toBe(
+        invitationId,
+      );
+      expect(projectsActions.load_target).not.toHaveBeenCalled();
+    } finally {
+      window.history.replaceState({}, "", previous);
+    }
+  });
+
+  it("restores contact, invite, and account selections on Back/Forward without conflating identities", () => {
+    const contact = "33333333-3333-4333-8333-333333333333";
+    const push = jest.spyOn(window.history, "pushState");
+    try {
+      for (const [path, view, contactId, personId] of [
+        [
+          `/people/collaborators/contact/${contact}/`,
+          "people",
+          contact,
+          undefined,
+        ],
+        [`/people/invites/contact/${contact}/`, "invites", contact, undefined],
+        ["/people/collaborators/person/bob/", "people", undefined, "bob"],
+        [`/people/invites/contact/${contact}/`, "invites", contact, undefined],
+        ["/people/invites/", "invites", undefined, undefined],
+      ]) {
+        window.history.replaceState({}, "", path!);
+        window.onpopstate?.(new PopStateEvent("popstate"));
+        expect(mockPageState).toMatchObject({
+          collaborators_view: view,
+          collaborators_contact_id: contactId,
+          collaborators_person_id: personId,
+          collaborators_route_error: undefined,
+        });
+        expect(pageActions.set_active_tab).toHaveBeenLastCalledWith(
+          "agents",
+          false,
+        );
+      }
+      expect(push).not.toHaveBeenCalled();
+      load_target("agents");
+      expect(mockPageState.collaborators_contact_id).toBeUndefined();
+    } finally {
+      push.mockRestore();
+    }
+  });
+
   it("canonical alias updates replace the URL without loading a target or losing parameters", () => {
     mockRedux.getStore.mockImplementation((name: string) =>
       name === "page" ? { get: () => undefined } : accountStore,
@@ -170,6 +230,60 @@ describe("load_target", () => {
     expect(location.pathname + location.search + location.hash).toBe(path);
     push.mockRestore();
   });
+  it("merges copied invitation queries into the address bar and removes stale IDs", () => {
+    const first = "11111111-1111-4111-8111-111111111111";
+    const second = "22222222-2222-4222-8222-222222222222";
+    window.history.replaceState(
+      {},
+      "",
+      `/people/invites?invitation_id=${first}&test=keep`,
+    );
+    set_url(`/people/invites?invitation_id=${second}`, "");
+    expect(
+      new URLSearchParams(location.search).getAll("invitation_id"),
+    ).toEqual([second]);
+    expect(location.href.split("?")).toHaveLength(2);
+    expect(
+      parsePageTarget(location.pathname.slice(1) + location.search),
+    ).toMatchObject({
+      collaborators: { view: "invites", invitationId: second },
+    });
+    set_url("/people/invites", "");
+    expect(new URLSearchParams(location.search).has("invitation_id")).toBe(
+      false,
+    );
+    set_url(`/people/invites?invitation_id=${first}`, "");
+    set_url("/people/collaborators", "");
+    expect(new URLSearchParams(location.search).has("invitation_id")).toBe(
+      false,
+    );
+  });
+
+  it("restores successive invitation deep links on Back/Forward without stale selection or history pushes", () => {
+    const first = "11111111-1111-4111-8111-111111111111";
+    const second = "22222222-2222-4222-8222-222222222222";
+    const push = jest.spyOn(window.history, "pushState");
+    try {
+      for (const id of [first, second, first, second, undefined]) {
+        const path = `/people/invites${id ? `?invitation_id=${id}` : ""}`;
+        window.history.replaceState({}, "", path);
+        window.dispatchEvent(new PopStateEvent("popstate"));
+        expect(mockPageState.collaborators_invitation_id).toBe(id);
+        expect(mockPageState.collaborators_view).toBe("invites");
+        expect(pageActions.set_active_tab).toHaveBeenLastCalledWith(
+          "agents",
+          false,
+        );
+        expect(location.pathname + location.search).toBe(path);
+      }
+      load_target(`/people/collaborators?invitation_id=${first}`, false, false);
+      expect(mockPageState.collaborators_invitation_id).toBeUndefined();
+      expect(push).not.toHaveBeenCalled();
+    } finally {
+      push.mockRestore();
+    }
+  });
+
   it("preserves the active agent across People browsing and back navigation", () => {
     const state: Record<string, unknown> = {};
     pageActions.setState.mockImplementation((update) =>

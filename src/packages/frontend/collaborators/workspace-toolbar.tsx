@@ -19,6 +19,7 @@ export const PEOPLE_VIEWS: [CollaboratorsView, string][] = [
   ["conversations", "Conversations"],
   ["people", "Collaborators"],
   ["projects", "Shared projects"],
+  ["invites", "Invites"],
 ];
 const SCOPES = {
   "for-you": "For you",
@@ -91,7 +92,7 @@ export function WorkspaceToolbar({
   const action =
     view === "conversations"
       ? "New conversation"
-      : view === "people"
+      : view === "people" || view === "invites"
         ? "Invite"
         : "Invite to project";
   const filters = [
@@ -300,7 +301,7 @@ export function WorkspaceToolbar({
                 )}
               </Button>
             </Popover>
-            {!compact && (
+            {!compact && view !== "invites" && (
               <CollectionViewControl
                 view={preferences.value.view}
                 onChange={preferences.setView}

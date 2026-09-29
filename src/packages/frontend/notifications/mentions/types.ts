@@ -22,6 +22,7 @@ export type MentionInfo = TypedMap<{
   time: Date;
   title?: string;
   body_markdown?: string;
+  body_text?: string;
   origin_label?: string;
   notice_type?: string;
   request_id?: string;

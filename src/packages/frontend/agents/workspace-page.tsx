@@ -3083,6 +3083,14 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     "page",
     "collaborators_person_id",
   );
+  const collaboratorsContactId = useTypedRedux(
+    "page",
+    "collaborators_contact_id",
+  );
+  const collaboratorsInvitationId = useTypedRedux(
+    "page",
+    "collaborators_invitation_id",
+  );
   const collaboratorsProjectIds = useTypedRedux(
     "page",
     "collaborators_project_ids",
@@ -3121,6 +3129,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           ? Array.from(collaboratorsProjectIds)
           : undefined,
         personId: collaboratorsPersonId,
+        contactId: collaboratorsContactId,
+        invitationId: collaboratorsInvitationId,
         resourceKind: collaboratorsResourceKind,
         resourceId: collaboratorsResourceId,
         alias: collaboratorsAlias,

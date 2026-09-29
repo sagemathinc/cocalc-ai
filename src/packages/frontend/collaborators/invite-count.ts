@@ -38,7 +38,9 @@ export function beginUnreadIncomingInviteCountRefresh(
   account_id: string,
 ): number {
   unreadIncomingInviteRefresh += 1;
-  publishUnreadIncomingInviteCount(account_id, 0);
+  if (account_id !== unreadIncomingInviteAccountId) {
+    publishUnreadIncomingInviteCount(account_id, 0);
+  }
   return unreadIncomingInviteRefresh;
 }
 

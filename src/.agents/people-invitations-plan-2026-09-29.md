@@ -1,8 +1,75 @@
 # People And Content Invitations
 
 Date: 2026-09-29.
-Status: agreed product direction; implementation plan, not implemented.
+Status: phases 1-5 implemented; phase 6 release validation and phase 7 agent
+enablement remain separate gates.
 Source baseline: `82c00b201bdb931fab49ccc437c1bcb0ad673d4d`.
+
+## Implementation Notes
+
+The human workflow now uses the shared prepare/review/send service. Access
+offers still use `project_collab_invites`; collaboration invitations have
+separate identities and never grant project membership. Drafts and send
+operations belong to the sender's account home, access actions to the project
+owner, and notification/read state to the recipient's account home.
+
+Implementation entry points (relative to `src/`):
+
+- `packages/util/people-invitations.ts` and `people-invitation-history.ts`:
+  bounded public contracts, distinct recipient/contact identities and statuses.
+- `packages/server/collaborators/invitations*.ts`: human-session APIs,
+  recipient/project discovery, encrypted drafts, exact review and durable sends.
+- `packages/server/people/`: contacts, versioned invitation projections,
+  transactional source outboxes, backfill, routed owner actions and receipts.
+- `packages/server/projects/people-invite-resend.ts`: separately authorized,
+  idempotent email resends without rotating invitation tokens.
+- `packages/server/notifications/content-invitation*.ts`: consolidated
+  permission-free notices and delivery evidence from the existing notification
+  and email outboxes. Provider submission is not a read receipt.
+- `packages/frontend/collaborators/`: person-first modal, project/status table,
+  contact details, global Invites history and explicit management actions.
+- Artifact cards, Library, native agent threads and the public authentication
+  continuation use the same typed content targets. Opening content is explicit.
+
+Operational constraints before phase 6 sign-off:
+
+- Deploy matching util, database, server/Conat and frontend builds. New storage
+  is initialized by the invitation services and background collaboration
+  maintenance; the existing `collaborators_enabled` setting gates the workflow.
+- Backfill is bounded and uses the same versioned lifecycle outbox as new
+  invitations. One-bay coverage becomes complete only after backfill and pending
+  work drain. Multi-bay coverage remains explicitly partial until all-owner
+  completeness reconciliation is verified; a local empty page is not proof of
+  an empty global history.
+- Account/project rehome is rejected when the new invitation state would be
+  lost. Portable transfer of these families is not implemented. Deletion
+  removes private account state and project-owned receipts under the documented
+  storage rules; invitation evidence owned by another account is not identity
+  proof and is not silently rewritten.
+- Missing remote directory tombstones remain retryable and keep coverage partial.
+  Global deletion reconciliation and finite terminal-history retention are still
+  release follow-ups. Archiving does not erase encrypted contacts/history, which
+  are currently retained until owner deletion. Collaboration withdrawal and
+  verified contact-to-account linking are not exposed by this implementation.
+- Email contacts are not automatically linked to whoever accepts a forwarded
+  invitation. Ordinary and course invitation policy remains authoritative.
+- Unknown sends are inspected using their original operation IDs. A provider
+  timeout is not permission to send a duplicate; new explicit resends also
+  respect unresolved attempts and cooldown. Course/account invitations do not
+  use the ordinary-email resend endpoint.
+- Current People content resolution requires collaborator-level access. A
+  viewer's backing-file policy does not imply permission to open an artifact or
+  agent thread through that resolver; any upgrade is a separately reviewed offer.
+- Automatic content copying and agent/connector invitation scopes remain
+  deferred. New send APIs require bound human sessions; existing connector
+  privileges do not implicitly enable them.
+
+Focused tests cover contracts, route/state handling, keyboard/focus behavior,
+prepare/review binding, owner routing, SQL lifecycle/backfill, notification
+counts, delivery suppression, idempotency and resend recovery. Database tests
+use isolated PGlite (`COCALC_TEST_USE_PGLITE=1` with Node's
+`--experimental-vm-modules`); external email delivery is mocked. Live multi-bay
+and authenticated-browser end-to-end release validation is still required.
 
 ## Purpose And Decisions
 
