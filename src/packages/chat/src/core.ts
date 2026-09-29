@@ -498,4 +498,5 @@ export function buildThreadStateRecord(
 
 export * from "./acp";
 export * from "./acp-log";
+export * from "./markdown-blocks";
 export * from "./integrity";

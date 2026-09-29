@@ -8,8 +8,6 @@ import type {
   CodexPersistedLogLoadState,
 } from "./use-codex-log";
 import { trimFinalResponseFromActivity } from "@cocalc/chat";
-import { joinedTextSource } from "./text-source";
-import type { TextSource, TextSourceRange } from "./text-source";
 
 const VIEWER_ONLY_STATES = new Set(["queue", "sending", "sent", "not-sent"]);
 
@@ -73,8 +71,6 @@ export type InlineCodexActivityBlock = {
   state?: "saved" | "sending" | "sent" | "queued" | "not-sent";
 };
 
-export const DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT = 100;
-
 function guidanceFence(text: string): string {
   let length = 3;
   for (const match of text.matchAll(/`{3,}/g)) {
@@ -83,58 +79,21 @@ function guidanceFence(text: string): string {
   return "`".repeat(length);
 }
 
-export function codexActivityBlocksToSelectableMarkdown(
-  blocks: InlineCodexActivityBlock[],
+// Guidance is shown as a `guidance` fence, which the Markdown renderer draws
+// as a labeled guidance card with its delivery state.
+export function guidanceMarkdown(
+  text: string,
+  state?: InlineCodexActivityBlock["state"],
 ): string {
-  return codexActivityTextSource(blocks).toString();
+  const fence = guidanceFence(text);
+  const label = state && state !== "sent" ? ` ${state}` : "";
+  return `${fence}guidance${label}\n${text}\n${fence}`;
 }
 
-export function codexActivityTextSource(
-  blocks: InlineCodexActivityBlock[],
-): TextSource {
-  const parts: string[] = [];
-  const bodies: string[] = [];
-  const ranges: TextSourceRange[] = [];
-  let offset = 0;
-  let hasGuidance = false;
-  for (const block of blocks) {
-    const text = `${block.text ?? ""}`;
-    if (!text.trim()) continue;
-    if (parts.length > 0) {
-      parts.push("\n\n");
-      bodies.push("\n\n");
-      offset += 2;
-    }
-    bodies.push(text);
-    const range: TextSourceRange = { start: offset, end: offset + text.length };
-    ranges.push(range);
-    offset = range.end;
-    if (block.kind === "agent") {
-      parts.push(text);
-      continue;
-    }
-    hasGuidance = true;
-    const fence = guidanceFence(text);
-    const state =
-      block.state && block.state !== "sent" ? ` ${block.state}` : "";
-    parts.push(`${fence}guidance${state}\n`, text, `\n${fence}`);
-    range.format = (part) => {
-      const excerptFence = guidanceFence(part);
-      return `${excerptFence}guidance${state}\n${part}\n${excerptFence}`;
-    };
-  }
-  const source = joinedTextSource(parts);
-  if (hasGuidance) {
-    source.rendering = {
-      source: joinedTextSource(bodies),
-      ranges,
-      // A backtick-only body needs two fences of length n + 1. Reserve the
-      // longest state label, newlines, and the minimum three-backtick fences.
-      maxExpansion: 3,
-      maxOverhead: "guidance not-sent".length + 8,
-    };
-  }
-  return source;
+function activityTextLength(blocks: InlineCodexActivityBlock[]): number {
+  let length = 0;
+  for (const block of blocks) length += `${block.text ?? ""}`.length;
+  return length;
 }
 
 export function resolveLiveCodexActivityBlocks({
@@ -152,7 +111,7 @@ export function resolveLiveCodexActivityBlocks({
   let selectedLength = 0;
   for (const blocks of [reconciledCachedBlocks, previewBlocks]) {
     if (!Array.isArray(blocks) || blocks.length === 0) continue;
-    const length = codexActivityTextSource(blocks).length;
+    const length = activityTextLength(blocks);
     if (length < selectedLength) continue;
     selected = blocks;
     selectedLength = length;
@@ -183,23 +142,6 @@ export function reconcileActivityGuidance(
     else next.splice(index, 0, block);
   }
   return next;
-}
-
-export function codexActivityWindow(
-  blocks: InlineCodexActivityBlock[],
-  requestedEnd = blocks.length,
-): {
-  visibleBlocks: InlineCodexActivityBlock[];
-  hiddenCount: number;
-  end: number;
-} {
-  const end = Math.max(0, Math.min(blocks.length, Math.floor(requestedEnd)));
-  const hiddenCount = Math.max(0, end - DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT);
-  return {
-    visibleBlocks: blocks.slice(hiddenCount, end),
-    hiddenCount,
-    end,
-  };
 }
 
 export function computeAcpStateToRender({

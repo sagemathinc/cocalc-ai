@@ -68,5 +68,5 @@ export function staticSelectedMarkdown(
     const selected = trim(node, [index]);
     return selected ? [selected] : [];
   });
-  return slate_to_markdown(fragment);
+  return slate_to_markdown(fragment, { readableEscapes: true });
 }

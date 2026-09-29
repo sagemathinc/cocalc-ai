@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { readArtifact, validateArtifactPublication } from "@cocalc/chat";
 import type { ArtifactPublication } from "@cocalc/chat";
 import type { ChatActions } from "./actions";
@@ -63,6 +63,79 @@ export function useArtifactChanges(syncdb: any) {
   return version;
 }
 
+// Latest publication of each artifact produced by one message, or undefined
+// when the chat document is not available here (read-only viewers).
+export function useMessageArtifactPublications({
+  actions,
+  threadId,
+  messageId,
+}: {
+  actions?: ChatActions;
+  threadId?: string;
+  messageId?: string;
+}): ArtifactPublication[] | undefined {
+  const version = useArtifactChanges(actions?.syncdb);
+  const previous = useRef<ArtifactPublication[] | undefined>(undefined);
+  return useMemo(() => {
+    const syncdb = actions?.syncdb;
+    if (!syncdb || !threadId || !messageId) return undefined;
+    if (!artifactSyncdbReady(syncdb)) return undefined;
+    const found = syncdb.get({
+      event: "chat-artifact-publication",
+      thread_id: threadId,
+      message_id: messageId,
+    });
+    const rows = found?.toJS?.() ?? found ?? [];
+    const next = latestArtifactPublications(rows);
+    // The chat document changes constantly while agents stream; keep the same
+    // list unless this message's publications changed.
+    const last = previous.current;
+    if (
+      last != null &&
+      last.length === next.length &&
+      last.every(
+        (publication, i) => publication.operation_id === next[i].operation_id,
+      )
+    ) {
+      return last;
+    }
+    previous.current = next;
+    return next;
+  }, [actions?.syncdb, threadId, messageId, version]);
+}
+
+export function ArtifactPublicationCard({
+  actions,
+  publication,
+  compact = false,
+}: {
+  actions: ChatActions;
+  publication: ArtifactPublication;
+  compact?: boolean;
+}) {
+  useArtifactChanges(actions.syncdb);
+  let current;
+  try {
+    current = readArtifact(actions.syncdb!, publication).artifact;
+  } catch {
+    /* Historical publication only. */
+  }
+  const open = (version?: string) => {
+    openArtifact(actions, publication, version);
+  };
+  return (
+    <ArtifactCard
+      publication={publication}
+      current={current}
+      compact={compact}
+      syncdb={actions.syncdb}
+      projectId={actions.store?.get("project_id")}
+      chatPath={actions.store?.get("path")}
+      open={actions.frameTreeActions && actions.frameId ? open : undefined}
+    />
+  );
+}
+
 export function ArtifactCards({
   actions,
   threadId,
@@ -72,7 +145,11 @@ export function ArtifactCards({
   threadId?: string;
   messageId?: string;
 }) {
-  useArtifactChanges(actions?.syncdb);
+  const publications = useMessageArtifactPublications({
+    actions,
+    threadId,
+    messageId,
+  });
   const [expanded, setExpanded] = useState(false);
   const expandedId = useId();
   if (!actions?.syncdb)
@@ -80,36 +157,15 @@ export function ArtifactCards({
   if (!threadId || !messageId) return null;
   if (!artifactSyncdbReady(actions.syncdb))
     return <div role="status">Loading artifacts...</div>;
-  const found = actions.syncdb.get({
-    event: "chat-artifact-publication",
-    thread_id: threadId,
-    message_id: messageId,
-  });
-  const rows = found?.toJS?.() ?? found ?? [];
-  const publications = latestArtifactPublications(rows);
-  const renderCard = (publication: ArtifactPublication, compact: boolean) => {
-    let current;
-    try {
-      current = readArtifact(actions.syncdb!, publication).artifact;
-    } catch {
-      /* Historical publication only. */
-    }
-    const open = (version?: string) => {
-      openArtifact(actions, publication, version);
-    };
-    return (
-      <ArtifactCard
-        key={publication.operation_id}
-        publication={publication}
-        current={current}
-        compact={compact}
-        syncdb={actions.syncdb}
-        projectId={actions.store?.get("project_id")}
-        chatPath={actions.store?.get("path")}
-        open={actions.frameTreeActions && actions.frameId ? open : undefined}
-      />
-    );
-  };
+  if (publications == null) return null;
+  const renderCard = (publication: ArtifactPublication, compact: boolean) => (
+    <ArtifactPublicationCard
+      key={publication.operation_id}
+      actions={actions}
+      publication={publication}
+      compact={compact}
+    />
+  );
   if (!publications.length) return null;
   return (
     <div aria-label="Message artifacts" style={{ marginTop: 6 }}>

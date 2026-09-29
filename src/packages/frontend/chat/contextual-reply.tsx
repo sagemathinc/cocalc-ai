@@ -14,7 +14,9 @@ import type { ChatActions } from "./actions";
 import { captureReplyContext } from "./contextual-reply-context";
 import type { ReplyContext, ReplySource } from "./contextual-reply-context";
 import { extendArtifactSelection } from "./artifact-selection";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { selectedMarkdown } from "@cocalc/frontend/editors/slate/selection-source";
+import { copyTextToClipboard } from "@cocalc/frontend/components/copy-to-clipboard-util";
 
 const Editor = lazyWithRetry(
   () => import("./contextual-reply-editor"),
@@ -35,6 +37,19 @@ export function LocalCommentButton({
       Comment
     </Button>
   );
+}
+
+export function quoteMarkdown(markdown: string): string {
+  return markdown
+    .split("\n")
+    .map((line) => `> ${line}`)
+    .join("\n");
+}
+
+export function rangeHtml(range: Range): string {
+  const container = document.createElement("div");
+  container.appendChild(range.cloneContents());
+  return container.innerHTML;
 }
 
 export default function ContextualReply({
@@ -155,14 +170,28 @@ export default function ContextualReply({
       if (!markdown) throw Error("Select some message content to quote.");
       actions.appendToComposerDraft({
         threadKey: source.thread_id,
-        text: markdown
-          .split("\n")
-          .map((line) => `> ${line}`)
-          .join("\n"),
+        text: quoteMarkdown(markdown),
       });
       setSelection(undefined);
       window.getSelection()?.removeAllRanges();
       root.current?.focus({ preventScroll: true });
+      setError("");
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+  async function copy() {
+    if (!selection) return;
+    try {
+      const markdown = selectedMarkdown(selection.range).trim();
+      if (!markdown) throw Error("Select some message content to copy.");
+      const ok = await copyTextToClipboard({
+        text: markdown,
+        markdown: true,
+        html: rangeHtml(selection.range),
+      });
+      if (!ok) throw Error("Unable to copy to the clipboard.");
+      setSelection(undefined);
       setError("");
     } catch (err) {
       setError(String(err));
@@ -208,16 +237,23 @@ export default function ContextualReply({
               zIndex: 1100,
               left: Math.max(
                 8,
-                Math.min(selection.rect.left, window.innerWidth - 160),
+                Math.min(selection.rect.left, window.innerWidth - 220),
               ),
               top: Math.max(
                 8,
                 Math.min(selection.rect.bottom + 4, window.innerHeight - 40),
               ),
+              // Same look as the per-block actions in agent activity.
+              display: "flex",
+              gap: 2,
+              borderRadius: 6,
+              background: UI_COLORS.elevated,
+              boxShadow: `0 0 0 1px ${UI_COLORS.border}`,
             }}
           >
             <Button
               size="small"
+              type="text"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => void open()}
             >
@@ -226,11 +262,22 @@ export default function ContextualReply({
             {source.kind === "message" && (
               <Button
                 size="small"
+                type="text"
                 disabled={!actions?.appendToComposerDraft}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={quote}
               >
                 Quote
+              </Button>
+            )}
+            {source.kind === "message" && (
+              <Button
+                size="small"
+                type="text"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => void copy()}
+              >
+                Copy
               </Button>
             )}
           </div>

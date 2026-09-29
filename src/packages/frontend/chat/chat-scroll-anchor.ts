@@ -154,10 +154,12 @@ export function resolveChatViewportAnchorIndex(
   }
   const exact = sortedDates.indexOf(anchor.date);
   if (exact >= 0) return exact;
-  const target = Number(anchor.date);
+  // Keys of agent activity rows are "<message date>#<row id>"; fall back to
+  // the first row at or after the anchor's message.
+  const target = parseFloat(anchor.date);
   if (!Number.isFinite(target)) return undefined;
   for (let i = 0; i < sortedDates.length; i += 1) {
-    const value = Number(sortedDates[i]);
+    const value = parseFloat(sortedDates[i]);
     if (Number.isFinite(value) && value >= target) {
       return i;
     }

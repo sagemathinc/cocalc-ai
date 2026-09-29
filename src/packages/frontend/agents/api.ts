@@ -76,10 +76,24 @@ export function namedAgentReference(agent: NamedAgent): AgentMentionReference {
   };
 }
 
+// Sorting every project id is costly with many projects and this runs on
+// each render of every composer, so compute it once per project map version.
+const projectIdsKeyCache = new WeakMap<object, string>();
+
+function projectIdsKey(projectMap): string | undefined {
+  if (projectMap == null) return undefined;
+  let key = projectIdsKeyCache.get(projectMap);
+  if (key == null) {
+    key = projectMap.keySeq().sort().join(",");
+    projectIdsKeyCache.set(projectMap, key!);
+  }
+  return key;
+}
+
 export function useNamedAgents(enabled = true) {
   const accountId = useTypedRedux("account", "account_id");
   const projectMap = useTypedRedux("projects", "project_map");
-  const projectIds = projectMap?.keySeq().sort().join(",");
+  const projectIds = projectIdsKey(projectMap);
   const [revision, setRevision] = useState(0);
   const [state, setState] = useState<{
     accountId?: string;

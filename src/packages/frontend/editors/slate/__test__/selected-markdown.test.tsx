@@ -177,3 +177,34 @@ it("quotes highlighted code using the keyboard without sending", async () => {
   expect(sendChat).not.toHaveBeenCalled();
   expect(container.firstChild).toHaveFocus();
 });
+
+it.each([
+  [
+    'Your message **"> attached"** arrived.',
+    'Your message **"> attached"** arrived.',
+  ],
+  ["a > b and c < d", "a > b and c < d"],
+  // Text starting a line keeps a conservative escape, even inside marks.
+  ["**> bold start**", "**&gt; bold start**"],
+])("copies angle brackets readably: %s", (value, expected) => {
+  const { container } = render(<StaticMarkdown value={value} />);
+  const range = document.createRange();
+  range.selectNodeContents(container.querySelector(".cocalc-slate-render")!);
+  expect(selectedMarkdown(range).trim()).toBe(expected);
+});
+
+it("still escapes brackets that would change the Markdown's meaning", () => {
+  // Rendered text that looks like an HTML tag or starts with ">" (not a quote).
+  const { container } = render(
+    <StaticMarkdown value={"use &lt;b&gt; tags\n\n&gt; not a quote"} />,
+  );
+  const range = document.createRange();
+  range.selectNodeContents(container.querySelector(".cocalc-slate-render")!);
+  const markdown = selectedMarkdown(range);
+  expect(markdown).toContain("&lt;b> tags");
+  expect(markdown).toContain("&gt; not a quote");
+  const again = render(<StaticMarkdown value={markdown} />);
+  expect(again.container.textContent).toContain("use <b> tags");
+  expect(again.container.textContent).toContain("> not a quote");
+  expect(again.container.querySelector("blockquote")).toBeNull();
+});
