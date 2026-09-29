@@ -13,6 +13,45 @@ function makeProgram(deps: Record<string, any>) {
   return program;
 }
 
+test("project transfer-ownership requires confirmation and preserves expected owner", async () => {
+  const from = "11111111-1111-4111-8111-111111111111";
+  const to = "22222222-2222-4222-8222-222222222222";
+  let captured: any;
+  const deps = {
+    withContext: async (_cmd, _label, fn) =>
+      fn({
+        hub: {
+          projects: {
+            transferProjectOwnership: async (opts) => {
+              captured = opts;
+            },
+          },
+        },
+      }),
+    resolveProjectFromArgOrContext: async () => ({ project_id: "project-id" }),
+  };
+  const args = [
+    "node",
+    "cocalc",
+    "project",
+    "transfer-ownership",
+    "--project",
+    "Example",
+    "--from",
+    from,
+    "--to",
+    to,
+  ];
+  await assert.rejects(makeProgram(deps).parseAsync(args), /--yes/);
+  assert.equal(captured, undefined);
+  await makeProgram(deps).parseAsync([...args, "--yes"]);
+  assert.deepEqual(captured, {
+    project_id: "project-id",
+    from_account_id: from,
+    to_account_id: to,
+  });
+});
+
 test("project invite create creates a copyable email-token invite", async () => {
   let result: any;
   let captured: any;

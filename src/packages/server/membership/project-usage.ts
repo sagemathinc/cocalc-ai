@@ -177,6 +177,7 @@ export async function getUsageProjectCountForAccount(
 export async function listUsageProjectsForAccount(
   account_id: string,
   client?: PoolClient,
+  owning_bay_id?: string,
 ): Promise<ProjectUsageRow[]> {
   const { rows } = await getQueryClient(
     client,
@@ -198,6 +199,7 @@ export async function listUsageProjectsForAccount(
         LIMIT 1
       ) AS owner ON TRUE
       WHERE p.deleted IS NULL
+        AND ($2::text IS NULL OR COALESCE(p.owning_bay_id, $2) = $2)
         AND (
           p.usage_account_id::text = $1
           OR (
@@ -208,7 +210,7 @@ export async function listUsageProjectsForAccount(
         )
       ORDER BY p.project_id
     `,
-    [account_id],
+    [account_id, owning_bay_id ?? null],
   );
   return rows
     .filter((row) => resolveUsageAccountFromRow(row) === account_id)

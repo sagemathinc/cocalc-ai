@@ -753,6 +753,13 @@ export interface AccountDirectoryDeleteResult {
   status: "deleted";
 }
 
+export interface OwnershipRecipientRequest {
+  account_id: string;
+  project_id: string;
+  current_usage_account_id: string;
+  resulting_usage_account_id: string;
+}
+
 export interface AccountDirectoryEntry extends UserSearchResult {
   email_address?: string;
   home_bay_id?: string;
@@ -2752,6 +2759,23 @@ export interface ProjectSetUserRoleRequest {
   };
 }
 
+export interface ProjectOwnershipTransferRequest {
+  account_id: string;
+  project_id: string;
+  from_account_id: string;
+  to_account_id: string;
+  // Derived at the authenticated actor's home bay, never from public input.
+  trusted_admin: boolean;
+}
+
+export interface ProjectOwnershipTransferResult {
+  project_id: string;
+  from_account_id: string;
+  to_account_id: string;
+  usage_account_id: string | null;
+  runtime_sponsor_account_id: string | null;
+}
+
 export interface ProjectLeaveOrDeleteProjectsRequest {
   account_id: string;
   project_ids: string[];
@@ -3022,6 +3046,8 @@ export type AccountLocalMethod =
   | "search-related-accounts"
   | "set-password-from-reset"
   | "assert-product-access-trust"
+  | "assert-ownership-recipient"
+  | "get-ownership-usage-count"
   | "require-fresh-auth"
   | "is-admin"
   | "get-billing-preferences"
@@ -3206,6 +3232,7 @@ export type ProjectCollabInviteMethod =
   | "remove-collaborator"
   | "set-project-user-role"
   | "leave-or-delete-projects"
+  | "transfer-project-ownership"
   | "set-projects-hidden"
   | "set-project-metadata"
   | "set-manage-users-owner-only"
@@ -4853,6 +4880,8 @@ export interface InterBayAccountLocalApi
   setPasswordFromReset: (
     opts: AccountLocalSetPasswordFromResetRequest,
   ) => Promise<void>;
+  assertOwnershipRecipient: (opts: OwnershipRecipientRequest) => Promise<void>;
+  getOwnershipUsageCount: (opts: { account_id: string }) => Promise<number>;
   assertProductAccessTrust: (
     opts: AccountLocalAssertProductAccessTrustRequest,
   ) => Promise<void>;
@@ -5395,6 +5424,9 @@ export interface InterBayProjectCollabInviteApi {
   leaveOrDeleteProjects: (
     opts: ProjectLeaveOrDeleteProjectsRequest,
   ) => Promise<ProjectLeaveOrDeleteProjectsResult[]>;
+  transferProjectOwnership: (
+    opts: ProjectOwnershipTransferRequest,
+  ) => Promise<ProjectOwnershipTransferResult>;
   setProjectsHidden: (
     opts: ProjectSetHiddenRequest,
   ) => Promise<ProjectHiddenResult[]>;
@@ -7712,6 +7744,24 @@ export function createInterBayAccountLocalClient({
       method: "set-password-from-reset",
     }),
   });
+  const getOwnershipUsageCountClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getOwnershipUsageCount">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-ownership-usage-count",
+    }),
+  });
+  const assertOwnershipRecipientClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "assertOwnershipRecipient">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "assert-ownership-recipient",
+    }),
+  });
   const assertProductAccessTrustClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "assertProductAccessTrust">
   >({
@@ -8951,6 +9001,10 @@ export function createInterBayAccountLocalClient({
       await setPasswordFromResetClient.setPasswordFromReset(opts),
     assertProductAccessTrust: async (opts) =>
       await assertProductAccessTrustClient.assertProductAccessTrust(opts),
+    assertOwnershipRecipient: async (opts) =>
+      await assertOwnershipRecipientClient.assertOwnershipRecipient(opts),
+    getOwnershipUsageCount: async (opts) =>
+      await getOwnershipUsageCountClient.getOwnershipUsageCount(opts),
     requireFreshAuth: async (opts) =>
       await requireFreshAuthClient.requireFreshAuth(opts),
     isAdmin: async (opts) => await isAdminClient.isAdmin(opts),
@@ -9889,6 +9943,34 @@ export function createInterBayAccountLocalHandler({
         },
       },
     ),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "getOwnershipUsageCount">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-ownership-usage-count",
+      }),
+      impl: {
+        getOwnershipUsageCount: async (opts) =>
+          await impl.getOwnershipUsageCount(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "assertOwnershipRecipient">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "assert-ownership-recipient",
+      }),
+      impl: {
+        assertOwnershipRecipient: async (opts) =>
+          await impl.assertOwnershipRecipient(opts),
+      },
+    }),
     createServiceHandler<
       Pick<InterBayAccountLocalApi, "assertProductAccessTrust">
     >({
@@ -12831,6 +12913,15 @@ export function createInterBayProjectCollabInviteClient({
       method: "usage",
     }),
   });
+  const transferProjectOwnershipClient = createServiceClient<
+    Pick<InterBayProjectCollabInviteApi, "transferProjectOwnership">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectCollabInviteSubject({
+      dest_bay,
+      method: "transfer-project-ownership",
+    }),
+  });
   const leaveOrDeleteProjectsClient = createServiceClient<
     Pick<InterBayProjectCollabInviteApi, "leaveOrDeleteProjects">
   >({
@@ -12917,6 +13008,8 @@ export function createInterBayProjectCollabInviteClient({
     getUsage: async (opts) => await usageClient.getUsage(opts),
     leaveOrDeleteProjects: async (opts) =>
       await leaveOrDeleteProjectsClient.leaveOrDeleteProjects(opts),
+    transferProjectOwnership: async (opts) =>
+      await transferProjectOwnershipClient.transferProjectOwnership(opts),
     setProjectsHidden: async (opts) =>
       await setProjectsHiddenClient.setProjectsHidden(opts),
     setProjectMetadata: async (opts) =>
@@ -13347,6 +13440,20 @@ export function createInterBayProjectCollabInviteHandlers({
       impl: {
         leaveOrDeleteProjects: async (opts) =>
           await impl.leaveOrDeleteProjects(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayProjectCollabInviteApi, "transferProjectOwnership">
+    >({
+      ...options,
+      service: "inter-bay-project-collab-invite",
+      subject: projectCollabInviteSubject({
+        dest_bay: bay_id,
+        method: "transfer-project-ownership",
+      }),
+      impl: {
+        transferProjectOwnership: async (opts) =>
+          await impl.transferProjectOwnership(opts),
       },
     }),
     createServiceHandler<

@@ -44,6 +44,7 @@ import {
 import { ensureCourseManagerAccessLocal } from "@cocalc/server/projects/course/ensure-manager-access";
 import {
   leaveOrDeleteProjectsForAccount,
+  transferProjectOwnershipExplicitly,
   type ProjectLeaveOrDeleteResult,
 } from "@cocalc/server/projects/ownership";
 import { type CopyOptions } from "@cocalc/conat/files/fs";
@@ -306,6 +307,7 @@ import {
   PROJECT_DANGEROUS_INTERNAL_AUTH,
   requireDangerousProjectMutationAuth,
 } from "./project-dangerous-auth";
+import { requireDangerousSessionAuth } from "./dangerous-session-auth";
 import { resolveHostConnection } from "./hosts";
 export { PROJECT_DANGEROUS_INTERNAL_AUTH };
 import {
@@ -5996,6 +5998,52 @@ export async function setLocalProjectDeletionProtection({
     project_id: row.project_id,
     deletion_protection: row.deletion_protection === true,
   };
+}
+
+export async function transferProjectOwnership({
+  account_id,
+  browser_id,
+  session_hash,
+  project_id,
+  from_account_id,
+  to_account_id,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string;
+  project_id: string;
+  from_account_id: string;
+  to_account_id: string;
+}) {
+  if (!account_id) throw new Error("must be signed in");
+  // Transfer audits identify the signed-in account, not an impersonation actor.
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: "if_enabled",
+    allow_actor_impersonation: false,
+  });
+  for (const id of [project_id, from_account_id, to_account_id]) {
+    if (!isValidUUID(id))
+      throw new Error("project and account ids must be valid uuids");
+  }
+  // Admin status is authoritative at the authenticated actor's home bay.
+  const trusted_admin = await isAdmin(account_id);
+  const opts = {
+    account_id,
+    project_id,
+    from_account_id,
+    to_account_id,
+    trusted_admin,
+  };
+  const ownership = await resolveRequiredProjectBay(project_id);
+  if (ownership.bay_id === getConfiguredBayId()) {
+    return await transferProjectOwnershipExplicitly(opts);
+  }
+  return await getInterBayBridge()
+    .projectCollabInvite(ownership.bay_id)
+    .transferProjectOwnership(opts);
 }
 
 export async function leaveOrDeleteProjects({

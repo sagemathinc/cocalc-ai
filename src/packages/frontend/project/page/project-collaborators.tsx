@@ -33,6 +33,7 @@ import type {
 } from "@cocalc/conat/hub/api/projects";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
+import { TransferOwnership } from "./transfer-ownership";
 
 const { Text } = Typography;
 
@@ -49,6 +50,7 @@ export function ProjectCollaboratorsContent({
 }: ProjectCollaboratorsContentProps): React.JSX.Element {
   const intl = useIntl();
   const user_map = useTypedRedux("users", "user_map");
+  const account_id = useTypedRedux("account", "account_id");
   const accountCustomize = useTypedRedux("account", "customize")?.toJS() as
     | { disableCollaborators?: boolean }
     | undefined;
@@ -68,6 +70,20 @@ export function ProjectCollaboratorsContent({
     content = <Loading theme="medium" transparent={isFlyout} />;
   } else {
     const ownerOnly = project.get("manage_users_owner_only") === true;
+    const ownershipControl =
+      isOwner && !disableCollaborators && account_id ? (
+        <TransferOwnership
+          project_id={project_id}
+          owner_account_id={account_id}
+          collaborators={Object.entries(project.get("users")?.toJS() ?? {})
+            .filter(([, info]: [string, any]) => info.group === "collaborator")
+            .map(([id]) => ({
+              account_id: id,
+              name:
+                displayNameFromAccount(user_map?.get(id)?.toJS() ?? {}) || id,
+            }))}
+        />
+      ) : null;
     const canManageCollaborators =
       !disableCollaborators &&
       (canManageAsOwnerOrAdmin || (group === "collaborator" && !ownerOnly));
@@ -89,6 +105,7 @@ export function ProjectCollaboratorsContent({
     content = isFlyout ? (
       <Space orientation="vertical" size={12} style={{ width: "100%" }}>
         {disabledCollaboratorConfiguration}
+        {ownershipControl}
         <CurrentCollaboratorsPanel
           key="current-collabs"
           project={project}
@@ -119,6 +136,7 @@ export function ProjectCollaboratorsContent({
     ) : (
       <div>
         {disabledCollaboratorConfiguration}
+        {ownershipControl}
         <CurrentCollaboratorsPanel
           key="current-collabs"
           project={project}
