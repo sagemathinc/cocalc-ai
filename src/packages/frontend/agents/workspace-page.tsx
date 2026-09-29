@@ -1698,29 +1698,33 @@ function NewAgentPanel({
                   : "Start agent (Shift+Enter)"
               }
             >
-              <Button
-                type="primary"
-                shape="circle"
-                aria-label={
-                  emptyRequest ? "Create agent without a task" : "Start agent"
-                }
-                icon={<Icon name={emptyRequest ? "plus" : "arrow-up"} />}
-                style={{ height: 32, minWidth: 32, width: 32 }}
-                loading={busy}
-                disabled={
-                  uploading ||
-                  !!problem ||
-                  (isFirstRun && emptyRequest) ||
-                  atLimit ||
-                  (!projectId && (!projectMap || emailVerificationRequired)) ||
-                  (runtimeKind === "claude-code" && !claudeCredentialsLoaded)
-                }
-                onClick={() => {
-                  const request =
-                    inputControlRef.current?.getValue?.() ?? firstRequest;
-                  void create(request, canCreateWithoutTask(request));
-                }}
-              />
+              {/* The span receives hover even while the button is disabled. */}
+              <span style={{ display: "inline-flex" }}>
+                <Button
+                  type="primary"
+                  shape="circle"
+                  aria-label={
+                    emptyRequest ? "Create agent without a task" : "Start agent"
+                  }
+                  icon={<Icon name={emptyRequest ? "plus" : "arrow-up"} />}
+                  style={{ height: 32, minWidth: 32, width: 32 }}
+                  loading={busy}
+                  disabled={
+                    uploading ||
+                    !!problem ||
+                    (isFirstRun && emptyRequest) ||
+                    atLimit ||
+                    (!projectId &&
+                      (!projectMap || emailVerificationRequired)) ||
+                    (runtimeKind === "claude-code" && !claudeCredentialsLoaded)
+                  }
+                  onClick={() => {
+                    const request =
+                      inputControlRef.current?.getValue?.() ?? firstRequest;
+                    void create(request, canCreateWithoutTask(request));
+                  }}
+                />
+              </span>
             </Tooltip>
           </div>
         </div>
