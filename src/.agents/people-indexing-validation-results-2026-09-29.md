@@ -1045,3 +1045,21 @@ leaves dispatch eligible within the remaining pass deadline. It does not report
 successful cleanup, recreate job identities or drop retry state. Server build
 and twelve worker/unit-store tests pass, including cleanup selection timeout
 followed by successful dispatch and a subsequent normal pass.
+
+### Owner Revision Interest Registration Prototype
+
+Added an explicitly installed owner-side interest store keyed by project and
+destination home bay, not account membership. Registration rechecks current
+membership under the existing owner/rehome project fence. Consumers aggregated
+by one home share a 120-second lease, with no lease extension before the
+30-second renewal boundary. Expired leases rotate identity. Registration samples
+the current catalog generation/revision in that transaction without initializing
+an absent catalog or returning resource metadata. Ownership inventory and project
+rehome guards include the new table.
+
+Server build and three PGlite contract tests pass: same-home aggregation,
+non-extending retry, separate homes, expired identity rotation, catalog boundary,
+and current membership/owner checks. This is a store primitive only: no transport
+handler or scheduler uses it yet. Authenticated home/demand binding, expiry GC,
+interest quotas, coalesced revision delivery, acknowledgment fences, lost-hint
+repair and shared delta application remain required before enablement.

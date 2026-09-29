@@ -1477,6 +1477,17 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
     },
   ),
 
+  ...adHocEntries(["collaboration_revision_interests"], {
+    ownership: "project-owning",
+    authority: "project_id",
+    portability: "unsupported",
+    source:
+      "database/postgres/collaborators/collaborators-revision-interest.ts",
+    migrate_to_schema: true,
+    notes:
+      "Prototype expiring project/home-bay scheduling hints, never access grants. Rehome remains guarded pending epoch/cutover validation.",
+  }),
+
   ...adHocEntries(
     ["collaboration_scan_actor_budget", "collaboration_scan_actor_receipts"],
     {

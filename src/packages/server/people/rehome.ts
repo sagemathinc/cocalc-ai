@@ -47,6 +47,7 @@ export async function assertNoPeopleProjectStateForRehome(
     "collaboration_scan_jobs",
     "collaboration_scan_receipts",
     "collaboration_scan_budget",
+    "collaboration_revision_interests",
   ]) {
     if (
       !(await db.query("SELECT to_regclass($1) AS name", [`public.${table}`]))
