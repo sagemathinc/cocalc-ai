@@ -3566,6 +3566,14 @@ async function startHostControlService(): Promise<void> {
       await (
         await getHostClient(host_id, scan.timeout_ms ?? 30 * 60 * 1000)
       ).scanRootfsRelease(scan),
+    requestCollaborationReconciliation: async ({ host_id, scan }) =>
+      await (
+        await getHostClient(host_id, 30_000)
+      ).requestCollaborationReconciliation(scan),
+    getCollaborationReconciliationStatus: async ({ host_id, scan }) =>
+      await (
+        await getHostClient(host_id, 30_000)
+      ).getCollaborationReconciliationStatus(scan),
     scanProjectRootfs: async ({ host_id, scan }) =>
       await (
         await getHostClient(host_id, scan.timeout_ms ?? 30 * 60 * 1000)

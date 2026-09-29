@@ -26,6 +26,11 @@ import type {
 } from "@cocalc/util/project-secrets";
 import type { ProjectEnv } from "@cocalc/conat/hub/api/projects";
 import type {
+  CollaborationReconciliationRequest,
+  CollaborationReconciliationAdmission,
+  CollaborationReconciliationStatus,
+} from "@cocalc/util/collaboration-census";
+import type {
   RootfsTrivyHostScanRequest,
   RootfsTrivyHostScanResponse,
   RootfsTrivyProjectHostScanRequest,
@@ -715,6 +720,12 @@ export interface ApplyHostExamRunRequest {
 }
 
 export interface HostControlApi {
+  requestCollaborationReconciliation(
+    opts: CollaborationReconciliationRequest,
+  ): Promise<CollaborationReconciliationAdmission>;
+  getCollaborationReconciliationStatus(
+    opts: Omit<CollaborationReconciliationRequest, "expected_run_id">,
+  ): Promise<CollaborationReconciliationStatus>;
   verifyActiveAcpConnectorTurn: (opts: {
     project_id: string;
     path: string;

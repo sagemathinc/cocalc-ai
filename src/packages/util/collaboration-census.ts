@@ -2,6 +2,32 @@
  * This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
  * License: MS-RSL - see LICENSE.md for details
  */
+/** Internal owner-to-host protocol, not public user/agent Scan admission. */
+export interface CollaborationReconciliationRequest {
+  protocol_version: 1;
+  project_id: string;
+  run_id: string;
+  expected_run_id?: string;
+}
+export type CollaborationReconciliationAdmission =
+  | { admission: "accepted"; run_id: string; replayed: boolean }
+  | { admission: "deferred"; run_id: string; reason: string }
+  | { admission: "throttled"; run_id: string; retry_after_ms: number };
+export type CollaborationReconciliationStatus =
+  | { state: "unknown" }
+  | {
+      /** Discovery only: does not assert extraction or owner ingestion. */
+      state: "indexing" | "partial" | "discovered";
+      run_id: string;
+      started_at: number;
+      directories: number;
+      completed_directories: number;
+      entries: number;
+      candidates: number;
+      pending_candidates: number;
+      errors: number;
+    };
+
 export interface CollaborationDiscoveryReport {
   run_id: string;
   sequence: number;

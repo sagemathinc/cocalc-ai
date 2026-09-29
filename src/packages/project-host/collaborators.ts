@@ -45,6 +45,9 @@ let censusStore: CollaborationCensusStore | undefined;
 let censusRequest:
   | ReturnType<typeof createHostedCollaborationCensus>["requestReconciliation"]
   | undefined;
+let censusStatus:
+  | ReturnType<typeof createHostedCollaborationCensus>["reconciliationStatus"]
+  | undefined;
 let filesystem:
   | ((project_id: string) => Promise<SandboxedFilesystem>)
   | undefined;
@@ -135,6 +138,7 @@ export function startCollaborators(
   });
   censusStore = census.store;
   censusRequest = census.requestReconciliation;
+  censusStatus = census.reconciliationStatus;
   try {
     service = new CollaboratorsService({
       filename: join(directory, "journal.sqlite"),
@@ -303,6 +307,7 @@ export function startCollaborators(
   } catch (error) {
     censusStore = undefined;
     censusRequest = undefined;
+    censusStatus = undefined;
     void census.producer
       .close()
       .catch((err) =>
@@ -325,6 +330,14 @@ export async function requestHostedCollaborationReconciliation(
 ) {
   if (!censusRequest) throw Error("collaboration census is not running");
   return censusRequest(opts);
+}
+
+export async function hostedCollaborationReconciliationStatus(opts: {
+  project_id: string;
+  run_id: string;
+}) {
+  if (!censusStatus) throw Error("collaboration census is not running");
+  return censusStatus(opts);
 }
 
 export function withCollaborators(fs: SandboxedFilesystem, project_id: string) {
@@ -429,5 +442,6 @@ export async function stopCollaborators() {
     filesystem = undefined;
     censusStore = undefined;
     censusRequest = undefined;
+    censusStatus = undefined;
   }
 }

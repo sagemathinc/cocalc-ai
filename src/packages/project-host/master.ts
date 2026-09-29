@@ -1884,6 +1884,24 @@ export async function startMasterRegistration({
     async deleteRootfsImage({ image }) {
       return await deleteRootfsCacheEntry(image);
     },
+    async requestCollaborationReconciliation(opts) {
+      await awaitReadyForControl(
+        "requestCollaborationReconciliation",
+        waitUntilReady,
+      );
+      const { collaborationReconciliationControl } =
+        await import("./collaborators-control");
+      return collaborationReconciliationControl.requestCollaborationReconciliation(
+        opts,
+      );
+    },
+    async getCollaborationReconciliationStatus(opts) {
+      const { collaborationReconciliationControl } =
+        await import("./collaborators-control");
+      return collaborationReconciliationControl.getCollaborationReconciliationStatus(
+        opts,
+      );
+    },
     async scanRootfsRelease(opts) {
       await awaitReadyForControl("scanRootfsRelease", waitUntilReady);
       const image = opts.target.runtime_image;

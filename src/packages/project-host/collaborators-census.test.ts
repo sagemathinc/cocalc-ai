@@ -168,6 +168,47 @@ test("explicit requests recheck disabled, owner denial, missing volume, and repl
   expect(census!.store.status(project_id)).toBeUndefined();
   expect(options.getFilesystem).not.toHaveBeenCalled();
 });
+
+test("explicit status is authorized, inert, and distinguishes discovery from ingestion", async () => {
+  const { options } = setup(() => 0, "explicit");
+  const request = { project_id, run_id: randomUUID() };
+  expect(await census!.reconciliationStatus(request)).toEqual({
+    state: "unknown",
+  });
+  expect(census!.store.status(project_id)).toBeUndefined();
+  expect(options.getFilesystem).not.toHaveBeenCalled();
+  await census!.requestReconciliation(request);
+  expect(await census!.reconciliationStatus(request)).toMatchObject({
+    state: "indexing",
+    run_id: request.run_id,
+    entries: 0,
+  });
+  expect(options.getFilesystem).not.toHaveBeenCalled();
+  await census!.producer.step(journal);
+  expect(await census!.reconciliationStatus(request)).toMatchObject({
+    state: "discovered",
+    run_id: request.run_id,
+    candidates: 1,
+  });
+  options.authorize.mockRejectedValueOnce(Error("owner denied"));
+  await expect(census!.reconciliationStatus(request)).rejects.toThrow(
+    "owner denied",
+  );
+  options.authorize.mockImplementationOnce(async () => {
+    options.enabled.mockResolvedValue(false);
+  });
+  await expect(census!.reconciliationStatus(request)).rejects.toMatchObject({
+    code: "DISABLED",
+  });
+  options.enabled.mockResolvedValue(true);
+  (getRecordedProjectVolumeIdentity as jest.Mock).mockReturnValue(
+    "replacement",
+  );
+  await expect(census!.reconciliationStatus(request)).rejects.toMatchObject({
+    code: "ESTALE",
+  });
+  expect(options.getFilesystem).toHaveBeenCalledTimes(1);
+});
 test("stopped existing volume is streamed only by worker, and metadata reads are inert", async () => {
   const { options, fs } = setup();
   expect(census!.store.status(project_id)).toBeUndefined();

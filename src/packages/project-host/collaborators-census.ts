@@ -15,6 +15,7 @@ import type {
 import { createCensusProducer } from "@cocalc/backend/collaborators/census-producer";
 import { censusReporter } from "@cocalc/backend/collaborators/census-report";
 import type { CollaborationDiscoveryWrite } from "@cocalc/util/collaboration-census";
+import type { CollaborationReconciliationStatus } from "@cocalc/util/collaboration-census";
 import { getProject, nextCollaborationCensusProject } from "./sqlite/projects";
 import { getLocalHostId } from "./sqlite/hosts";
 import { getRecordedProjectVolumeIdentity } from "./sqlite/project-volumes";
@@ -280,5 +281,37 @@ export function createHostedCollaborationCensus(options: {
       };
     });
   }
-  return { store, producer, requestReconciliation };
+  async function reconciliationStatus(opts: {
+    project_id: string;
+    run_id: string;
+  }): Promise<CollaborationReconciliationStatus> {
+    if (!(await options.enabled())) throw unavailable("DISABLED");
+    const current = scope(opts.project_id);
+    const generation = currentProjectVolumeLifecycleGeneration(opts.project_id);
+    await options.authorize(opts.project_id);
+    if (!(await options.enabled())) throw unavailable("DISABLED");
+    assertProjectVolumeLifecycleGeneration(opts.project_id, generation);
+    const after = scope(opts.project_id);
+    if (
+      after.authority !== current.authority ||
+      after.volume_id !== current.volume_id
+    )
+      throw unavailable("ESTALE");
+    const status = store.status(opts.project_id);
+    if (!status || status.run.run_id !== opts.run_id)
+      return { state: "unknown" };
+    assertLocal(status.run);
+    return {
+      state: status.coverage === "complete" ? "discovered" : status.coverage,
+      run_id: status.run.run_id,
+      started_at: status.started_at,
+      directories: status.directories,
+      completed_directories: status.completed_directories,
+      entries: status.entries,
+      candidates: status.candidates,
+      pending_candidates: status.pending_candidates,
+      errors: status.errors,
+    };
+  }
+  return { store, producer, requestReconciliation, reconciliationStatus };
 }

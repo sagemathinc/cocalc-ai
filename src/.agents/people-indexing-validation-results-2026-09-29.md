@@ -551,3 +551,32 @@ across restart, enforce busy/cooldown/replacement behavior, and reject disabled,
 owner-denied, missing-volume, and replaced-volume requests. These use the real
 SQLite census store; filesystem/owner boundaries in the new admission tests are
 controlled mocks, not a live owner-to-host RPC or btrfs proof.
+
+## Internal Reconciliation Control Routing
+
+Added version-one request/status methods on the privileged host-control API,
+including the inter-bay host-control declarations, method registration,
+destination handlers, and routed host client. Routing resolves the host's bay;
+it does not assume the caller's local database or host is authoritative.
+The host prototype switch remains required. Unsupported versions and malformed
+identities fail before reaching the adapter, and caller-provided root/limit
+fields are not forwarded.
+
+Status rechecks enabled state, owner authorization, lifecycle generation, and
+volume identity, then returns only discovery progress for the exact current
+run. An unknown/superseded run returns unknown without creating work. Finished
+discovery is labeled `discovered`, not complete owner ingestion or visible-view
+freshness. Status never opens the project filesystem or starts compute.
+
+These methods are not installed on an account or agent API. The owner-side
+actor admission/receipt/coalescing service is still missing, so this is not a
+public Scan implementation or an authorization grant for agents. Real
+authenticated cross-bay transport and mixed-version rollout validation remain
+outstanding; routing tests here use mocked bridge clients.
+
+Validation: project-host TypeScript build (including changed referenced
+packages) and 47 focused tests pass: 23 host adapter/control tests, 19 Conat
+transport tests, and five routed host-client tests. New cases verify method
+registration at the destination bay, preservation of run identity, no compute
+start/create on forwarding, disabled/version/identity rejection, traversal-option
+stripping, inert unknown-run status, and owner/volume/disable checks on status.
