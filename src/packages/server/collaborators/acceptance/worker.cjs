@@ -496,6 +496,14 @@ async function startHost() {
   hostRequire("@cocalc/project-host/master-conat-client").setMasterConatClient(
     master,
   );
+  own(
+    require("@cocalc/conat/project-host/api").createHostControlService({
+      host_id: config.host,
+      client: master,
+      impl: hostRequire("@cocalc/project-host/collaborators-control")
+        .collaborationReconciliationControl,
+    }),
+  );
   const home = join(config.directory, "volume");
   const rootfs = join(config.directory, "rootfs");
   await mkdir(home, { recursive: true });
@@ -1000,6 +1008,10 @@ async function command(name, args = {}) {
       );
       process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE = "1";
       return true;
+    }
+    case "scanDispatch": {
+      if (config.role !== "owner") throw Error("owner fixture required");
+      return require("@cocalc/server/collaborators/scan-worker").runCollaborationScanPass();
     }
     case "explicitCensusFixture": {
       if (config.role !== "host") throw Error("host fixture required");

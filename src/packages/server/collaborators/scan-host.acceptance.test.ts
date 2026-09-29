@@ -12,6 +12,13 @@ acceptance("explicit Scan through real hosted census and catalog", () => {
     await env.start();
     await env.worker("owner").call("installScan");
     await env.worker("a").call("installScan");
+    // Exercise the supported owner-bay control subject, without a direct-host
+    // URL. The host authenticates and subscribes to its own control service.
+    await env.sql(
+      "owner",
+      "INSERT INTO project_hosts(id,bay_id) VALUES($1,$2)",
+      [env.host, "acceptance-owner"],
+    );
   }, 240000);
   afterAll(async () => env?.close(), 60000);
   test("unmediated source discovery reaches an authorized home without starting compute", async () => {
@@ -37,11 +44,10 @@ acceptance("explicit Scan through real hosted census and catalog", () => {
     };
     const control = (method: string) =>
       env.worker("host").call("hostCensusControl", { method, request: scan });
-    const before = await control("getCollaborationReconciliationStatus");
-    if (before.current_run_id) scan.expected_run_id = before.current_run_id;
-    expect(await control("requestCollaborationReconciliation")).toMatchObject({
-      admission: "accepted",
-      run_id: receipt.job_id,
+    expect(await env.worker("owner").call("scanDispatch")).toMatchObject({
+      attempted: 1,
+      pending: 1,
+      unknown: 0,
     });
     await env.converge(async () => {
       const page = await env.hub("a", "listResources", {
@@ -59,6 +65,23 @@ acceptance("explicit Scan through real hosted census and catalog", () => {
     expect(await control("getCollaborationReconciliationStatus")).toMatchObject(
       { state: "discovered", run_id: receipt.job_id, pending_candidates: 0 },
     );
+    // Observe the real dispatch cooldown rather than rewriting durable clocks.
+    await new Promise((resolve) => setTimeout(resolve, 5100));
+    expect(await env.worker("owner").call("scanDispatch")).toMatchObject({
+      attempted: 1,
+      discovered: 1,
+      unknown: 0,
+    });
+    expect(
+      await env.worker("b").call("scanPublic", {
+        method: "getScanStatus",
+        request: { project_id: env.project, job_id: receipt.job_id },
+      }),
+    ).toMatchObject({ allowed: true, value: { state: "discovered" } });
+    expect(await env.worker("owner").call("scanDispatch")).toMatchObject({
+      attempted: 0,
+      unknown: 0,
+    });
     expect(await control("requestCollaborationReconciliation")).toMatchObject({
       admission: "accepted",
       run_id: receipt.job_id,

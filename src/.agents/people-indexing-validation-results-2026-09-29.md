@@ -2397,3 +2397,27 @@ is not claimed by this test. Ticks are driven by the acceptance harness. Full
 timer/transport/settlement integration, installed CLI/browser execution, UI,
 agent scopes and the remaining plan gates remain open. Production settings are
 unchanged.
+
+### Owner Dispatch Through Real Host Control And Receipt Settlement
+
+Extended the explicit hosted discovery acceptance case to install the production
+host-control service on the host's authenticated owner-bay connection. The test
+now invokes the real bounded owner dispatch pass rather than admitting the run
+directly through fixture IPC. Ownership resolution, dispatch claims, host status
+inspection, reconciliation admission and owner settlement use production code.
+After real traversal/extraction and home projection, the test observes the real
+five-second dispatch cooldown and verifies public status is `discovered` through
+the ingress/home/owner path. A subsequent pass finds no work for the settled job.
+The host adapter remains directly callable only for diagnostic status and replay
+assertions. Compute-start counters remain zero.
+
+The combined `scan-host.acceptance.test.ts` and `scan-scale.acceptance.test.ts`
+run passed all eight tests in 108.7 seconds, including the final empty-pass
+assertion. Server and project-host reference typechecks passed.
+This exercises the supported owner-bay control-subject route, with a recorded
+host owner but no direct-host URL. It does not validate the direct-host token
+route, autonomous timer scheduling, installed CLI authentication, real btrfs
+identity/generation behavior, or production capacity. All data and credentials
+are synthetic fixture state; no production settings changed. The broader plan,
+including demand integration, recovery, agent scopes, UI and scale/soak gates,
+remains incomplete.
