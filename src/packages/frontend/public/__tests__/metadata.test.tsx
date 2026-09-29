@@ -150,12 +150,12 @@ describe("public route metadata", () => {
       },
     );
 
-    expect(metadata.title).toBe("CoCalc");
-    expect(metadata.description).toContain(
-      "people, AI agents, and project work",
-    );
-    expect(metadata.description).toContain("persistent shared Linux projects");
+    expect(metadata.title).toBe("Build and Use Software with AI | CoCalc");
+    expect(metadata.description).toContain("build and use software with AI");
+    expect(metadata.description).toContain("shared Linux projects");
     expect(metadata.description).not.toMatch(/notebooks, code, documents/i);
+    // Search results cut descriptions at about 160 characters.
+    expect(metadata.description.length).toBeLessThanOrEqual(160);
   });
 
   it("can build canonical and image paths below a server base path", () => {

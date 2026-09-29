@@ -63,7 +63,7 @@ describe("PublicHomeApp", () => {
       />,
     );
 
-    expect(document.title).toBe("CoCalc");
+    expect(document.title).toBe("Build and Use Software with AI | CoCalc");
     expect(
       within(screen.getByRole("banner")).getByRole("link", {
         name: "CoCalc home",
@@ -604,7 +604,9 @@ describe("PublicHomeApp", () => {
       />,
     );
 
-    expect(document.title).toBe("CoCalc Launchpad");
+    expect(document.title).toBe(
+      "Build and Use Software with AI | CoCalc Launchpad",
+    );
     expect(
       screen.getAllByRole("link", { name: "Open projects" }).length,
     ).toBeGreaterThanOrEqual(2);

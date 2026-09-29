@@ -21,6 +21,7 @@ import {
   PUBLIC_COLORS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
+import { publicHomeTitle } from "@cocalc/util/public-site-metadata";
 import { COLORS } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { builtinPolicyPath } from "../common";
@@ -1217,7 +1218,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
 
   useEffect(() => {
     if (typeof document === "undefined") return;
-    document.title = siteName;
+    document.title = publicHomeTitle(siteName);
   }, [siteName]);
 
   return (

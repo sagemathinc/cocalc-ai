@@ -164,7 +164,13 @@ const PUBLIC_IMAGE_DIMENSIONS: Record<string, PublicImageDimensions> = {
 };
 
 export const PUBLIC_SITE_DESCRIPTION =
-  "CoCalc keeps people, AI agents, and project work together in persistent shared Linux projects with files, notebooks, terminals, history, and recovery.";
+  "CoCalc helps people and teams build and use software with AI. Agents work in shared Linux projects with your files, notebooks, terminals, and collaborators.";
+
+// The server-rendered head and the Home page both use this title, so the
+// browser tab keeps it after the page loads.
+export function publicHomeTitle(siteName: string): string {
+  return pageTitle("Build and Use Software with AI", siteName);
+}
 
 const PRODUCT_SITEMAP_PATHS = [
   "products",
@@ -1022,7 +1028,7 @@ function getSameOriginPublicRouteMetadata(
         canonicalPath: publicPath("", options),
         description: PUBLIC_SITE_DESCRIPTION,
         imagePath: publicPath(DEFAULT_SOCIAL_IMAGE, options),
-        title: siteName,
+        title: publicHomeTitle(siteName),
       };
     case "products":
       return productRouteMetadata(route.route, siteName, options);

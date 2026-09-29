@@ -76,9 +76,7 @@ describe("PublicPage", () => {
 
     const footer = screen.getByRole("contentinfo");
     expect(
-      within(footer).getByText(
-        "Persistent shared projects where people and AI agents work together.",
-      ),
+      within(footer).getByText("Build and use software with AI."),
     ).not.toBeNull();
     expect(within(footer).getByText("Platform")).not.toBeNull();
     expect(within(footer).getByText("Resources")).not.toBeNull();

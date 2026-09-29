@@ -145,6 +145,17 @@ describe("public shell rendering", () => {
     },
   );
 
+  it("leads the Home title and description with the tagline", async () => {
+    const { html } = await renderPublicShell(request("/"));
+
+    expect(html).toContain(
+      "<title>Build and Use Software with AI | CoCalc</title>",
+    );
+    expect(html).toContain(
+      'content="CoCalc helps people and teams build and use software with AI.',
+    );
+  });
+
   it.each([
     ["/guides", "guides", "Durable collaborative projects"],
     ["/about", "about", "Building the future of collaborative computation."],
