@@ -34,9 +34,10 @@ export async function retireExpiredQueuedCollaborationScan(
       `DELETE FROM collaboration_scan_jobs j
        WHERE j.project_id=$1 AND j.job_id=$2 AND j.state='queued'
        AND NOT EXISTS (
-         SELECT 1 FROM collaboration_scan_receipts r
-         WHERE r.project_id=j.project_id AND r.receipt->>'job_id'=j.job_id::text
-           AND r.expires_at>clock_timestamp()
+         WITH receipts AS MATERIALIZED (
+           SELECT expires_at FROM collaboration_scan_receipts r
+           WHERE r.project_id=j.project_id AND r.receipt->>'job_id'=j.job_id::text
+         ) SELECT 1 FROM receipts WHERE expires_at>clock_timestamp()
        ) RETURNING job_id`,
       [opts.project_id, opts.job_id],
     );
@@ -518,13 +519,18 @@ export async function listCollaborationScanRetirementCandidates(
   });
 }
 
+// Keep expiry filtering inside a job-scoped materialization. After mass expiry,
+// the global expiry index can still contain many unvacuumed formerly-live tuples.
 export const scanRetirementCandidatesSql = `WITH page AS MATERIALIZED (
   SELECT * FROM collaboration_scan_jobs WHERE job_id=ANY($2::uuid[])
 ) SELECT j.project_id,j.job_id FROM page j JOIN projects p USING(project_id)
 WHERE p.owning_bay_id=$1 AND j.state='queued'
-AND NOT EXISTS (SELECT 1 FROM collaboration_scan_receipts r
-  WHERE r.project_id=j.project_id AND r.receipt->>'job_id'=j.job_id::text
-  AND r.expires_at>statement_timestamp())`;
+AND NOT EXISTS (
+  WITH receipts AS MATERIALIZED (
+    SELECT expires_at FROM collaboration_scan_receipts r
+    WHERE r.project_id=j.project_id AND r.receipt->>'job_id'=j.job_id::text
+  ) SELECT 1 FROM receipts WHERE expires_at>statement_timestamp()
+)`;
 
 async function scanJobPage(
   db: PoolClient,

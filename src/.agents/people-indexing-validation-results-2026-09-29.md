@@ -967,3 +967,18 @@ the server build pass.
 These timings exclude cursor selection/updates, retirement transactions, host
 work and concurrent load. Expired-receipt-heavy distributions, stale statistics,
 race validation and end-to-end cleanup latency remain separate gates.
+
+### Mass Expiry Planner Regression
+
+Expiring all 100,000 fixture receipts revealed a real unbounded-history plan:
+after ANALYZE, PostgreSQL materialized a global expiry-index lookup containing
+unvacuumed formerly-live tuples. Selecting twenty cleanup candidates cost
+100,388 shared-buffer hits and 28.17 ms, failing the 2,000-block acceptance bound.
+
+Candidate selection now materializes each selected job's receipts before expiry
+filtering; the final retirement check uses the same scoped shape. Repeating the
+fixture used 559 hits / 1.132 ms with stale statistics and 559 hits / 0.588 ms with
+fresh statistics. All four PostgreSQL acceptance cases, 22 store tests, and the
+server build pass. These remain synthetic selection measurements, not a timing
+guarantee for retirement transactions, worst-case per-job receipt counts, or DAU
+capacity. The regression cases are retained in the acceptance suite.

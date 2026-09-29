@@ -228,5 +228,12 @@ acceptance("scan blocked backlog query cost", () => {
     );
     await env.sql("owner", "ANALYZE collaboration_scan_receipts");
     await measureRetirement("retirement-10000-jobs-100000-live-receipts", 0);
+    await env.sql(
+      "owner",
+      "UPDATE collaboration_scan_receipts SET expires_at=now()-interval '1 day'",
+    );
+    await measureRetirement("retirement-100000-expired-stale-statistics", 20);
+    await env.sql("owner", "ANALYZE collaboration_scan_receipts");
+    await measureRetirement("retirement-100000-expired-fresh-statistics", 20);
   }, 120000);
 });
