@@ -6,6 +6,7 @@ import {
   readCollaborationRevisionHint,
   acknowledgeCollaborationRevisionHint,
   syncCollaborationRevisionInterestSchema,
+  readCollaborationRevisionFanoutPage,
 } from "./collaborators-revision-interest";
 
 const describeDb =
@@ -48,6 +49,85 @@ describeDb("owner project/home revision interests", () => {
       peer,
     };
   }
+  test("fanout bounds examined rows even when the first page is entirely idle", async () => {
+    const { request } = await fixture();
+    const generation = randomUUID();
+    await getPool().query(
+      "INSERT INTO collaboration_projects(project_id,generation,revision) VALUES($1,$2,9)",
+      [request.project_id, generation],
+    );
+    await getPool().query(
+      `INSERT INTO collaboration_revision_interests(project_id,home_bay_id,lease_id,expires_at,renew_after,ack_generation,ack_revision)
+       SELECT $1,'home-'||lpad(n::text,3,'0'),$2,clock_timestamp()+interval '60 seconds',clock_timestamp(),$3,
+       CASE WHEN n<20 THEN 9 ELSE 7 END FROM generate_series(0,24) AS n`,
+      [request.project_id, randomUUID(), generation],
+    );
+    const first = await readCollaborationRevisionFanoutPage(
+      { project_id: request.project_id },
+      authority,
+    );
+    expect(first).toEqual({ examined: 20, next_after: "home-019", hints: [] });
+    const second = await readCollaborationRevisionFanoutPage(
+      { project_id: request.project_id, after_home_bay_id: first.next_after! },
+      authority,
+    );
+    expect(second.examined).toBe(5);
+    expect(second.next_after).toBeNull();
+    expect(second.hints.map((x) => x.home_bay_id)).toEqual([
+      "home-020",
+      "home-021",
+      "home-022",
+      "home-023",
+      "home-024",
+    ]);
+    expect(
+      second.hints.every(
+        (x) => x.generation === generation && x.revision === 9,
+      ),
+    ).toBe(true);
+    expect(
+      await readCollaborationRevisionFanoutPage(
+        {
+          project_id: request.project_id,
+          after_home_bay_id: first.next_after!,
+        },
+        authority,
+      ),
+    ).toEqual(second);
+    const nextGeneration = randomUUID();
+    await getPool().query(
+      "UPDATE collaboration_projects SET generation=$2,revision=1 WHERE project_id=$1",
+      [request.project_id, nextGeneration],
+    );
+    const restarted = await readCollaborationRevisionFanoutPage(
+      { project_id: request.project_id },
+      authority,
+    );
+    expect(restarted.hints).toHaveLength(20);
+    expect(
+      restarted.hints.every(
+        (x) => x.generation === nextGeneration && x.revision === 1,
+      ),
+    ).toBe(true);
+    await getPool().query(
+      "UPDATE collaboration_revision_interests SET expires_at=clock_timestamp()-interval '1 second' WHERE project_id=$1",
+      [request.project_id],
+    );
+    expect(
+      (
+        await readCollaborationRevisionFanoutPage(
+          { project_id: request.project_id },
+          authority,
+        )
+      ).hints,
+    ).toEqual([]);
+    await expect(
+      readCollaborationRevisionFanoutPage(
+        { project_id: request.project_id },
+        { owning_bay_id: "wrong" },
+      ),
+    ).rejects.toThrow();
+  });
   test("short demand bounds new interests without shortening another consumer's lease", async () => {
     const { request } = await fixture();
     const before = Date.now();

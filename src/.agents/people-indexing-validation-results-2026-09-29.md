@@ -1138,3 +1138,24 @@ project's longer demand. Store coverage verifies shorter registrations do not
 truncate an existing aggregate lease. No automatic renewal or hint-delivery
 worker is enabled; durable home hint acceptance, batched fanout, expiry cleanup,
 rehome races and the full vertical/scale gates remain outstanding.
+
+### Bounded Owner Revision Fanout Pages
+
+Added a worker-only owner-store page over project/home interests. Each call
+examines at most twenty keyset-ordered candidates before filtering acknowledged
+or expired entries, so an idle population cannot cause an unbounded logical
+scan within one call. It returns exact lease IDs and the current catalog
+watermark, never resource metadata, and changes neither leases nor ACK state.
+Owner/rehome fencing and transaction-local lock/statement timeouts apply.
+
+A sweep is deliberately not a snapshot. Revisions or registrations behind the
+cursor require another bounded sweep; callers must not equate end-of-page with
+delivery completion. Sending still requires exact-lease revalidation. The
+existing project/home primary key supports cursor traversal; production-sized
+query-plan and concurrent-write behavior have not yet been measured here.
+
+Server build and seven PGlite interest-store tests pass. Coverage includes an
+entirely acknowledged first page, continuation to pending homes, replay without
+ACK mutation, generation replacement discovered by a new sweep, expired hints
+and stale owner rejection. Durable home acceptance, transport dispatch,
+shared delta fetching, sweep scheduling and expiry cleanup remain unfinished.

@@ -126,6 +126,55 @@ type InterestLookup = {
   lease_id: string;
 };
 
+/** Internal owner worker page. Limit candidate rows BEFORE filtering pending
+ * hints so an idle/expired population cannot turn one page into a full scan.
+ * A sweep is not a snapshot: later revisions/registrations require another
+ * bounded sweep. Delivery must revalidate the exact lease before sending.
+ */
+export async function readCollaborationRevisionFanoutPage(
+  opts: { project_id: string; after_home_bay_id?: string },
+  authority: CollaborationOwnerAuthority,
+) {
+  const after = opts.after_home_bay_id ?? "";
+  boundedText(after, "interest cursor", 128, true);
+  return transaction(async (db) => {
+    await db.query("SET LOCAL lock_timeout='1s'");
+    await db.query("SET LOCAL statement_timeout='2s'");
+    await assertCollaborationOwnerAuthority(db, opts.project_id, authority);
+    const { rows } = await db.query(
+      `SELECT home_bay_id,lease_id,expires_at,ack_generation,ack_revision
+       FROM collaboration_revision_interests WHERE project_id=$1 AND home_bay_id>$2
+       ORDER BY home_bay_id LIMIT 20`,
+      [opts.project_id, after],
+    );
+    const { rows: catalogs } = await db.query(
+      "SELECT generation,revision,clock_timestamp() AS now FROM collaboration_projects WHERE project_id=$1",
+      [opts.project_id],
+    );
+    const catalog = catalogs[0];
+    return {
+      next_after: rows.length === 20 ? (rows[19].home_bay_id as string) : null,
+      examined: rows.length,
+      hints: rows
+        .filter(
+          (row) =>
+            catalog &&
+            row.expires_at.getTime() > catalog.now.getTime() &&
+            (row.ack_generation !== catalog.generation ||
+              Number(row.ack_revision) < Number(catalog.revision)),
+        )
+        .map((row) => ({
+          project_id: opts.project_id,
+          home_bay_id: row.home_bay_id as string,
+          lease_id: row.lease_id as string,
+          expires_at: row.expires_at.getTime() as number,
+          generation: catalog.generation as string,
+          revision: Number(catalog.revision),
+        })),
+    };
+  });
+}
+
 /** Read-only coalesced wakeup, not a delta or an access grant. Registration's
  * authenticated-home binding applies here too. No expiry or renewal mutation.
  */
