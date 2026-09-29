@@ -1090,3 +1090,20 @@ out-of-order acknowledgment, future/wrong-generation rejection, renewal lease
 replacement, generation rotation and expiry. Transport delivery, durable home
 acceptance, batch selection and lost-hint repair remain unwired; these store
 tests do not establish the full snapshot/subscription handoff.
+
+### Revision Interest Registration Routing
+
+Added a trusted-fabric-only registration method at the current project owner,
+behind `COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE=1` plus existing People/demand
+gates. It derives the account home from the directory, asks that home's routed
+demand inspection for active/grace scope, rejects cold or unrelated project
+scope, then registers under the owner store's membership fence. The request has
+no destination-home field. No public account API, agent capability or automatic
+worker was added, and schema installation remains explicit.
+
+Server build and 32 API tests pass, including cold/out-of-scope demand, derived
+home routing, stale owner route and disabled admission. Real-fabric integration,
+home rehome/expiry races, aligning owner lease expiry with the remaining demand
+horizon, batched registration and automatic renewal remain unverified. The
+owner hint lease is not an access grant and downstream protected reads must
+continue to recheck current membership.

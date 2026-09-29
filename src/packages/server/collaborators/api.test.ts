@@ -13,6 +13,14 @@ import {
 const owner = jest.fn();
 const scanReserve = jest.fn();
 const scanAdmit = jest.fn();
+const revisionInterest = jest.fn();
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-revision-interest",
+  () => ({
+    registerCollaborationRevisionInterest: (...args) =>
+      revisionInterest(...args),
+  }),
+);
 jest.mock(
   "@cocalc/database/postgres/collaborators/collaborators-scan-actor",
   () => ({ reserveCollaborationScanActor: (...args) => scanReserve(...args) }),
@@ -101,6 +109,7 @@ jest.mock("@cocalc/database/postgres/account-rehome-fence", () => ({
   withAccountRehomeWriteFence: (...args) => pinFence(...args),
 }));
 const remote = {
+  inspectDemand: jest.fn(),
   scanAtOwner: jest.fn(),
   resolveChatAlias: jest.fn(),
   resolvePersonAlias: jest.fn(),
@@ -244,6 +253,61 @@ beforeEach(() => {
   ingest.mockResolvedValue({ revision: 1, replayed: false });
 });
 
+test("revision interests derive the home and require project-scoped demand", async () => {
+  const flags = [
+    "COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE",
+    "COCALC_PEOPLE_DEMAND_PROTOTYPE",
+  ];
+  const prior = flags.map((name) => process.env[name]);
+  for (const name of flags) process.env[name] = "1";
+  bay = "owner";
+  const request = { project_id, account_id, route };
+  try {
+    remote.inspectDemand.mockResolvedValue({ state: "cold", scope: null });
+    await expect(
+      collaboratorsControl.registerRevisionInterest(request),
+    ).rejects.toThrow("no home demand");
+    expect(revisionInterest).not.toHaveBeenCalled();
+    remote.inspectDemand.mockResolvedValue({
+      state: "active",
+      scope: { kind: "projects", project_ids: [randomUUID()] },
+    });
+    await expect(
+      collaboratorsControl.registerRevisionInterest(request),
+    ).rejects.toThrow("no home demand");
+    remote.inspectDemand.mockResolvedValue({
+      state: "grace",
+      scope: { kind: "projects", project_ids: [project_id] },
+    });
+    revisionInterest.mockResolvedValue({ lease_id: "lease" });
+    expect(
+      await collaboratorsControl.registerRevisionInterest(request),
+    ).toEqual({ lease_id: "lease" });
+    expect(remote.inspectDemand).toHaveBeenCalledWith({
+      account_id,
+      route: { bay_id: "home" },
+    });
+    expect(revisionInterest).toHaveBeenCalledWith(
+      { project_id, account_id, home_bay_id: "home" },
+      expect.objectContaining({ owning_bay_id: "owner" }),
+    );
+    await expect(
+      collaboratorsControl.registerRevisionInterest({
+        ...request,
+        route: { bay_id: "wrong" },
+      }),
+    ).rejects.toThrow("stale");
+    delete process.env.COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE;
+    await expect(
+      collaboratorsControl.registerRevisionInterest(request),
+    ).rejects.toThrow("disabled");
+  } finally {
+    flags.forEach((name, i) => {
+      if (prior[i] === undefined) delete process.env[name];
+      else process.env[name] = prior[i];
+    });
+  }
+});
 test("internal scan reserves at home before routing to the project owner", async () => {
   const previous = process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE;
   process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE = "1";

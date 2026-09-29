@@ -110,6 +110,16 @@ type RoutedApi = {
   ) => ReturnType<CollaboratorsApi[K]>;
 };
 export type InterBayCollaboratorsApi = RoutedApi & {
+  registerRevisionInterest(opts: {
+    project_id: string;
+    account_id: string;
+    route: CollaborationRoute;
+  }): Promise<{
+    lease_id: string;
+    expires_at: number;
+    renew_after: number;
+    watermark: { generation: string; revision: number } | null;
+  }>;
   scanAtHome(
     opts: ScanAdmissionRequest & { route: CollaborationRoute },
   ): Promise<ScanAdmissionResult>;

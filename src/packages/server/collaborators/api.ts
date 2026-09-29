@@ -457,6 +457,34 @@ export async function sourcePage(opts: {
 
 /** Trusted fabric only; reject stale destinations rather than forwarding loops. */
 export const collaboratorsControl: InterBayCollaboratorsApi = {
+  async registerRevisionInterest(opts) {
+    if (process.env.COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE !== "1")
+      throw Error("revision interest prototype disabled");
+    await demandEnabled();
+    const authority = await checkOwner(opts.project_id, opts.route);
+    const observed = await home(opts.account_id, async (api, route) => ({
+      demand: await api.inspectDemand({ account_id: opts.account_id, route }),
+      home_bay_id: route.bay_id,
+    }));
+    const scope = observed.demand.scope;
+    if (
+      observed.demand.state === "cold" ||
+      !scope ||
+      (scope.kind === "projects" &&
+        !scope.project_ids.includes(opts.project_id))
+    )
+      throw Error("project has no home demand");
+    const { registerCollaborationRevisionInterest } =
+      await import("@cocalc/database/postgres/collaborators/collaborators-revision-interest");
+    return registerCollaborationRevisionInterest(
+      {
+        project_id: opts.project_id,
+        account_id: opts.account_id,
+        home_bay_id: observed.home_bay_id,
+      },
+      authority,
+    );
+  },
   async scanAtHome(opts) {
     if (process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE !== "1")
       throw Error("scan prototype disabled");
