@@ -73,7 +73,7 @@ import {
 import { hubApiErrorAttrs } from "@cocalc/conat/hub/api/error-attrs";
 import { conat } from "@cocalc/backend/conat";
 import { delay } from "awaiting";
-import { recordServiceAdmissionDenialLocal } from "./service-admission-denials";
+import { hubAdmissionDenials } from "./service-admission-denials";
 import {
   getServiceAdmissionLimit,
   serviceAdmissionLimitEnvName,
@@ -269,7 +269,7 @@ async function handleMessage({ mesg }) {
     const recordedReason = activeSummary.active_methods
       ? `${admission.reason}; active=${activeSummary.active_methods}; oldest_ms=${activeSummary.oldest_ms}`
       : admission.reason;
-    void recordServiceAdmissionDenialLocal({
+    hubAdmissionDenials.record({
       surface: "hub-conat-api",
       source: admission.source,
       limit: accountLimited ? accountLimitName : limitName,
@@ -281,15 +281,6 @@ async function handleMessage({ mesg }) {
       subject: mesg.subject,
       account_id,
       key: request?.name,
-    });
-    logger.warn("rejecting hub.api request; active request cap reached", {
-      active: activeApiRequests,
-      account_active: activeAccountApiRequests,
-      account_id,
-      max: admission.maximum,
-      name: request?.name,
-      source: admission.source,
-      ...activeSummary,
     });
     mesg.respond(null, {
       noThrow: true,
