@@ -222,6 +222,14 @@ export async function finishCollaborationRevisionWakeup(
   });
 }
 
+// A stable cutoff allows an expiry index range instead of filtering live rows.
+export const revisionReceiverPruneSql = `WITH expired AS MATERIALIZED (
+      SELECT project_id FROM collaboration_revision_receivers
+      WHERE home_bay_id=$1 AND expires_at<=now()
+      ORDER BY expires_at,project_id LIMIT 100 FOR UPDATE SKIP LOCKED)
+      DELETE FROM collaboration_revision_receivers r USING expired e
+      WHERE r.project_id=e.project_id RETURNING r.project_id`;
+
 /** Expired scheduling state only; no membership or historical-account scan.
  * Row locks serialize expiry deletion with rearming and skip busy receivers.
  */
@@ -232,15 +240,7 @@ export async function pruneCollaborationRevisionReceivers(
   return transaction(async (db) => {
     await db.query("SET LOCAL lock_timeout='1s'");
     await db.query("SET LOCAL statement_timeout='2s'");
-    const { rows } = await db.query(
-      `WITH expired AS MATERIALIZED (
-      SELECT project_id FROM collaboration_revision_receivers
-      WHERE home_bay_id=$1 AND expires_at<=clock_timestamp()
-      ORDER BY expires_at,project_id LIMIT 100 FOR UPDATE SKIP LOCKED)
-      DELETE FROM collaboration_revision_receivers r USING expired e
-      WHERE r.project_id=e.project_id RETURNING r.project_id`,
-      [home_bay_id],
-    );
+    const { rows } = await db.query(revisionReceiverPruneSql, [home_bay_id]);
     return rows.length;
   });
 }

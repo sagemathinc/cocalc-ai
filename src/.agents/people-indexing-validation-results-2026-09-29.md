@@ -1513,3 +1513,19 @@ buffers per case and preservation of all 100,000 live rows.
 Server typecheck, both PostgreSQL acceptance cases and nine PGlite store tests
 pass. This validates this deletion query shape, not 100,000 DAU, concurrent
 renewal/rehome behavior, receiver cleanup query cost or full-system churn.
+
+### PostgreSQL Receiver Expiry Query Cost
+
+Receiver cleanup used the same volatile candidate cutoff as owner cleanup.
+It now uses `now()` to permit an indexed expiry range, retaining the existing
+row locks that serialize deletion with rearming. Expiry after transaction start
+is conservatively deferred. The acceptance suite uses the exact exported SQL
+against 100,000 live receivers, then adds 105 expired receivers and checks
+100/5/0 deletion batches and preservation of all live rows.
+
+Measured receiver buffer counts were 3 (all live), 758 (100 deleted), 95 (5
+deleted), and 6 (drained). All remain below the 2,000-buffer regression threshold.
+The same run revalidated owner expiry. Server typecheck, three PostgreSQL
+acceptance cases and four receiver-store tests pass. These bounded query-shape
+checks do not establish multi-worker cleanup budgets, adversarial lock contention,
+six-month churn, or the full hint-driven lifecycle and capacity gates.
