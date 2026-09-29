@@ -4,7 +4,7 @@
     {
       "id": "collaborators-project-filter",
       "title": "People project selector keyboard and focus",
-      "path": "/collaborators",
+      "path": "/people/conversations",
       "authentication": "account",
       "engine": "axe",
       "minimumScore": 1,

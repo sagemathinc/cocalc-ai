@@ -19,6 +19,9 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: () => undefined,
 }));
 jest.mock("@cocalc/frontend/collaborators/reference-picker-api", () => ({}));
+jest.mock("@cocalc/frontend/project/access", () => ({
+  ProjectAccessDialog: () => null,
+}));
 
 test.each(["agent", "artifact", "conversation"] as const)(
   "Markdown and Slate preserve unnamed %s targets and authored labels",
@@ -41,7 +44,7 @@ test.each(["agent", "artifact", "conversation"] as const)(
     const node = getMarkdownToSlate(token.type)({ token });
     expect(node).toEqual(createCollaborationReference(reference));
     expect(getSlateToMarkdown(node?.type)({ node } as any)).toBe(markup);
-    expect(md.render(markup)).toContain('href="/collaborators/');
+    expect(md.render(markup)).toContain('href="/people/');
     expect(markdown_it.parse(markup, {})[1].children![0].type).toBe(
       "collaboration-reference",
     );
@@ -57,7 +60,17 @@ test.each(["agent", "artifact", "conversation"] as const)(
     const href = collaborationReferenceHref(reference);
     expect(href).toBe(`/${collaboratorsTargetPath(route)}`);
     expect(
-      parseCollaboratorsRoute(href.slice("/collaborators/".length).split("/")),
+      parseCollaboratorsRoute(href.slice("/people/".length).split("/")),
     ).toEqual(route);
+    const legacy = markup.replace(' href="/people/', ' href="/collaborators/');
+    const legacyToken = parse_markdown(legacy).tokens[1].children![0];
+    expect(legacyToken.type).toBe("collaboration-reference");
+    const legacyNode = getMarkdownToSlate(legacyToken.type)({
+      token: legacyToken,
+    });
+    expect(legacyNode).toEqual(node);
+    expect(
+      getSlateToMarkdown(legacyNode?.type)({ node: legacyNode } as any),
+    ).toBe(markup);
   },
 );

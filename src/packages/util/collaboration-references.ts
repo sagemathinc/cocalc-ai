@@ -120,7 +120,7 @@ export function collaborationReferenceHref(
   reference: CollaborationReference,
 ): string {
   const { project_id, kind, resource_id } = reference.target;
-  return `/collaborators/conversations/project/${encodeURIComponent(project_id)}/resource/${kind}/${encodeURIComponent(resource_id)}`;
+  return `/people/conversations/project/${encodeURIComponent(project_id)}/resource/${kind}/${encodeURIComponent(resource_id)}`;
 }
 
 function escapeHtml(value: string): string {
@@ -154,10 +154,13 @@ export function parseCollaborationReference(
   );
   if (!match) return;
   const reference = decodeCollaborationReference(match[1]);
+  if (!reference) return;
+  const canonical = serializeCollaborationReference(reference);
+  // Saved messages retain the former workspace prefix. Accept only that exact
+  // old serialization; new references and rendered HTML use the canonical URL.
+  const legacy = canonical.replace(' href="/people/', ' href="/collaborators/');
   // Do not accept a label or destination that disagrees with the bound target.
-  return reference && serializeCollaborationReference(reference) === markup
-    ? reference
-    : undefined;
+  return markup === canonical || markup === legacy ? reference : undefined;
 }
 
 /** Consume the entire authored atom before Markdown parses punctuation in titles. */

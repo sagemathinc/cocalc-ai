@@ -96,6 +96,12 @@ describe("app redirect routes", () => {
     "/chats/reviewer",
     "/chats/reviewer?view=grid",
     "/people",
+    "/people/",
+    "/people/conversations",
+    "/people/people",
+    "/people/projects",
+    "/people/conversations/project/project-1/person/person-1/resource/conversation/thread-1",
+    "/people/projects/project/project-1/resource/artifact/folder%2Fitem?foo=bar&label=a%20b",
     "/people/alice",
     "/people/alice?view=grid",
     "/home",
@@ -107,7 +113,7 @@ describe("app redirect routes", () => {
     "/collaborators/conversations/project/project-1/person/person-1/resource/conversation/thread-1",
     "/collaborators/projects/project/project-1/resource/artifact/folder%2Fitem?foo=bar&label=a%20b",
   ])(
-    "redirects direct Collaborators URL %s into the app shell",
+    "redirects direct People workspace URL %s into the app shell",
     async (path) => {
       const response = await request(path);
       expect(response.status).toBe(302);

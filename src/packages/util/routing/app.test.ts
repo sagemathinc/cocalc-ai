@@ -18,6 +18,13 @@ describe("routing/app", () => {
       true,
     );
     expect(hasHostAbsoluteRoutePrefix("/collaborators-other")).toBe(false);
+    expect(hasHostAbsoluteRoutePrefix("/people")).toBe(true);
+    expect(hasHostAbsoluteRoutePrefix("/people/conversations")).toBe(true);
+    expect(hasHostAbsoluteRoutePrefix("/people/people/person/person-1")).toBe(
+      true,
+    );
+    expect(hasHostAbsoluteRoutePrefix("/people/projects")).toBe(true);
+    expect(hasHostAbsoluteRoutePrefix("/people-other")).toBe(false);
     expect(hasHostAbsoluteRoutePrefix("/app-docs")).toBe(true);
     expect(
       hasHostAbsoluteRoutePrefix("/app-docs/projects/project-secrets"),
@@ -43,6 +50,7 @@ describe("routing/app", () => {
     expect(APP_BASE_PATH_ROUTE_MARKERS).not.toContain("/library");
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/app-docs");
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/collaborators");
+    expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/people");
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/auth");
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/lang");
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/redeem");

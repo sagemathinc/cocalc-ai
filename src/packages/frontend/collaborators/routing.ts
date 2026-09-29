@@ -86,10 +86,9 @@ export function collaboratorsTargetPath(
         route.aliasKind,
         route.alias,
       ).slice(1);
-    if (!route.alias) return route.aliasKind;
   }
-  if (route.routeError) return "collaborators/invalid";
-  const parts = ["collaborators", route.view ?? "conversations"];
+  if (route.routeError) return "people/invalid";
+  const parts = ["people", route.view ?? "conversations"];
   if (route.projectId) parts.push("project", route.projectId);
   if (route.projectIds?.length)
     parts.push("projects", route.projectIds.join(","));

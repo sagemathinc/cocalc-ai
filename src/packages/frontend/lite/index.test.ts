@@ -119,7 +119,7 @@ describe("lite init", () => {
     "agents",
     "artifacts",
     "collaborators",
-    "collaborators/people/project/00000000-1000-4000-8000-000000000000/person/00000000-1000-4000-8000-000000000001",
+    "people/people/project/00000000-1000-4000-8000-000000000000/person/00000000-1000-4000-8000-000000000001",
   ])(
     "does not replace explicit %s history during background initialization",
     async (target) => {

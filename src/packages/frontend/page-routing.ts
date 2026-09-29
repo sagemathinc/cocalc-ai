@@ -102,11 +102,12 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
       // Keep even malformed qualified addresses separate from local aliases.
       return { page: "agents", personal_url: cleanTarget };
     case "chats":
-    case "people":
       return {
         page: "agents",
         collaborators: parsePrivateAliasRoute(segments[0], segments.slice(1)),
       };
+    case "people":
+    // Accept previously copied workspace links, but generate /people below.
     case "collaborators":
       return {
         page: "agents",

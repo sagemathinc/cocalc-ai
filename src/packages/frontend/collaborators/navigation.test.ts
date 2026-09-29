@@ -64,7 +64,7 @@ test("canonicalizing a saved alias preserves stable selection and qualifies its 
   expect(setActiveTab).not.toHaveBeenCalled();
   await canonicalizeCollaboratorsAlias("alice", route, null);
   expect(replaceUrl).toHaveBeenLastCalledWith(
-    "/collaborators/conversations/project/project/resource/conversation/thread",
+    "/people/conversations/project/project/resource/conversation/thread",
   );
   expect(withCollaboratorsAlias(route, "old free-form label")).toMatchObject({
     resourceId: "thread",

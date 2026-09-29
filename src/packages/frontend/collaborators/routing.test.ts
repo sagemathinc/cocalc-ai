@@ -1,23 +1,37 @@
 import { collaboratorsTargetPath, parseCollaboratorsRoute } from "./routing";
 import { getPageUrlPath, parsePageTarget } from "../page-routing";
 
-test.each(["chats", "people"])(
-  "unqualified %s aliases do not resolve in the viewer's namespace",
-  (kind) => {
-    const parsed = parsePageTarget(`${kind}/Alice-2`);
-    expect(parsed).toMatchObject({
+test("unqualified chat aliases do not resolve in the viewer's namespace", () => {
+  const parsed = parsePageTarget("chats/Alice-2");
+  expect(parsed).toMatchObject({
+    page: "agents",
+    collaborators: {
+      view: "conversations",
+      routeError: expect.stringContaining("owner"),
+    },
+  });
+  expect(parsePageTarget("chats")).toMatchObject({
+    page: "agents",
+    collaborators: { aliasKind: "chats" },
+  });
+});
+test("People collection URLs are workspace views, not unqualified aliases", () => {
+  for (const target of ["people", "people/", "people/conversations"]) {
+    const parsed = parsePageTarget(target);
+    expect(parsed).toEqual({
       page: "agents",
-      collaborators: {
-        view: kind === "people" ? "people" : "conversations",
-        routeError: expect.stringContaining("owner"),
-      },
+      collaborators: { view: "conversations" },
     });
-    expect(parsePageTarget(kind)).toMatchObject({
-      page: "agents",
-      collaborators: { aliasKind: kind },
-    });
-  },
-);
+    expect(getPageUrlPath(parsed)).toBe("/people/conversations");
+  }
+  expect(parsePageTarget("people/Alice-2")).toEqual({
+    page: "agents",
+    collaborators: { routeError: expect.any(String) },
+  });
+  expect(collaboratorsTargetPath({ view: "people", aliasKind: "people" })).toBe(
+    "people/people",
+  );
+});
 test("qualified links use the alias owner, never a person/resource ID", () => {
   expect(
     collaboratorsTargetPath({
@@ -46,7 +60,7 @@ test("qualified links use the alias owner, never a person/resource ID", () => {
       alias: "friend",
       personId: "bob",
     }),
-  ).toBe("collaborators/people/person/bob");
+  ).toBe("people/people/person/bob");
 });
 test.each([
   "chats/a/b",
@@ -76,6 +90,7 @@ test("project and person scopes roundtrip with a stable resource identity", () =
     resourceId: "thread-1",
   };
   const path = collaboratorsTargetPath(route);
+  expect(path).toMatch(/^people\/conversations\//);
   expect(parseCollaboratorsRoute(path.split("/").slice(1))).toEqual(route);
   expect(parsePageTarget(path)).toEqual({
     page: "agents",
@@ -90,8 +105,30 @@ test.each(["people", "projects", "conversations"])(
   "direct %s view needs no project",
   (view) => {
     expect(parseCollaboratorsRoute([view])).toEqual({ view });
+    const parsed = parsePageTarget(`people/${view}`);
+    expect(parsed).toEqual({ page: "agents", collaborators: { view } });
+    expect(getPageUrlPath(parsed)).toBe(`/people/${view}`);
   },
 );
+
+test.each([
+  ["collaborators", "people/conversations"],
+  ["collaborators/", "people/conversations"],
+  ["collaborators/conversations", "people/conversations"],
+  ["collaborators/people/person/bob", "people/people/person/bob"],
+  [
+    "collaborators/projects/project/project-1",
+    "people/projects/project/project-1",
+  ],
+  [
+    "collaborators/conversations/project/project-1/resource/artifact/folder%2Fitem",
+    "people/conversations/project/project-1/resource/artifact/folder%2Fitem",
+  ],
+])("old workspace URL %s canonicalizes to %s", (legacy, canonical) => {
+  const parsed = parsePageTarget(`${legacy}?view=grid#details`);
+  expect(parsed).toEqual(parsePageTarget(canonical));
+  expect(getPageUrlPath(parsed)).toBe(`/${canonical}`);
+});
 
 test("opaque resource identities roundtrip encoded slashes without changing routing", () => {
   const route = {
@@ -129,5 +166,5 @@ test.each([
 ])("malformed route stays invalid: %j", (...parts) => {
   const route = parseCollaboratorsRoute(parts);
   expect(route.routeError).toBeTruthy();
-  expect(collaboratorsTargetPath(route)).toBe("collaborators/invalid");
+  expect(collaboratorsTargetPath(route)).toBe("people/invalid");
 });

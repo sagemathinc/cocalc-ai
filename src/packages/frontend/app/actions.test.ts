@@ -177,7 +177,7 @@ describe("project context across global navigation", () => {
       expect(projectActions[A].push_state).not.toHaveBeenCalled();
       if (changeHistory) {
         expect(set_url).toHaveBeenLastCalledWith(
-          `/collaborators/people/project/${B}/person/${C}`,
+          `/people/people/project/${B}/person/${C}`,
           "",
         );
       } else {
@@ -223,7 +223,7 @@ describe("project context across global navigation", () => {
       expect(set_url).not.toHaveBeenCalled();
       await actions.set_active_tab("agents");
       expect(set_url).toHaveBeenLastCalledWith(
-        `/collaborators/conversations/project/${B}/resource/conversation/human-thread`,
+        `/people/conversations/project/${B}/resource/conversation/human-thread`,
         "",
       );
       // The route survives settings loading; rendering still gates the feature.

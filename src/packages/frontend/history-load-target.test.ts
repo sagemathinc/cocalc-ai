@@ -121,13 +121,13 @@ describe("load_target", () => {
     window.history.replaceState(
       {},
       "",
-      "/collaborators/people/person/id?view=grid#details",
+      "/people/people/person/id?view=grid#details",
     );
     const push = jest.spyOn(window.history, "pushState");
     const length = window.history.length;
-    replace_url("/people/alice");
+    replace_url("/u/bob/people/alice");
     expect(location.pathname + location.search + location.hash).toBe(
-      "/people/alice?view=grid#details",
+      "/u/bob/people/alice?view=grid#details",
     );
     expect(window.history.length).toBe(length);
     expect(push).not.toHaveBeenCalled();
@@ -170,14 +170,14 @@ describe("load_target", () => {
     expect(location.pathname + location.search + location.hash).toBe(path);
     push.mockRestore();
   });
-  it("preserves the active agent across Collaborators browsing and back navigation", () => {
+  it("preserves the active agent across People browsing and back navigation", () => {
     const state: Record<string, unknown> = {};
     pageActions.setState.mockImplementation((update) =>
       Object.assign(state, update),
     );
     load_target("agents/11111111-1111-4111-8111-111111111111");
     load_target(
-      "collaborators/conversations/project/project-1/resource/conversation/thread-1",
+      "people/conversations/project/project-1/resource/conversation/thread-1",
     );
     expect(state).toMatchObject({
       active_agent_id: "11111111-1111-4111-8111-111111111111",
@@ -189,7 +189,7 @@ describe("load_target", () => {
     load_target("artifacts");
     expect(state.collaborators_open).toBe(false);
     expect(state.collaborators_resource_id).toBeUndefined();
-    load_target("collaborators/people/person/person-1", false, false);
+    load_target("people/people/person/person-1", false, false);
     expect(state.active_agent_id).toBe("11111111-1111-4111-8111-111111111111");
     expect(state.library_open).toBe(false);
     expect(state.collaborators_person_id).toBe("person-1");

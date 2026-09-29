@@ -47,6 +47,7 @@ test.each(["agent", "artifact", "conversation"] as const)(
         decodeCollaborationReference(encodeCollaborationReference(input)),
       ).toEqual(input);
       expect(markup).toContain(collaborationReferenceHref(input));
+      expect(markup).toContain('href="/people/conversations/');
       expect(markup).not.toContain("<y>");
       expect(extractAgentMentions(markup)).toEqual([]);
       expect(extractArtifactMentions(markup)).toEqual([]);
@@ -158,30 +159,57 @@ test.each([
   expect(collaborationReference(value)).toBeUndefined();
 });
 
-test("rejects malformed, oversized, relabeled or redirected markup", () => {
-  const markup = serializeCollaborationReference(reference);
-  expect(decodeCollaborationReference("%zz")).toBeUndefined();
-  expect(decodeCollaborationReference("x".repeat(8193))).toBeUndefined();
-  expect(
-    parseCollaborationReference(
-      markup.replace(
-        'href="/collaborators',
-        'href="https://example.test/collaborators',
+test.each(["people", "collaborators"])(
+  "rejects malformed, oversized, relabeled or redirected %s markup",
+  (prefix) => {
+    const markup = serializeCollaborationReference(reference).replace(
+      ' href="/people/',
+      ` href="/${prefix}/`,
+    );
+    expect(decodeCollaborationReference("%zz")).toBeUndefined();
+    expect(decodeCollaborationReference("x".repeat(8193))).toBeUndefined();
+    expect(
+      parseCollaborationReference(
+        markup.replace(
+          `href="/${prefix}`,
+          `href="https://example.test/${prefix}`,
+        ),
       ),
-    ),
-  ).toBeUndefined();
-  expect(
-    parseCollaborationReference(
-      markup.replace(">Discussion", ">Forged discussion"),
-    ),
-  ).toBeUndefined();
-});
+    ).toBeUndefined();
+    expect(
+      parseCollaborationReference(
+        markup.replace(">Discussion", ">Forged discussion"),
+      ),
+    ).toBeUndefined();
+    expect(
+      parseCollaborationReference(
+        markup.replace("/thread%3A123", "/another-thread"),
+      ),
+    ).toBeUndefined();
+  },
+);
 
 function parser() {
   return new MarkdownIt({ html: true })
     .use(mentionPlugin)
     .use(collaborationReferencePlugin);
 }
+
+test.each(["agent", "artifact", "conversation"] as const)(
+  "saved %s references using the old workspace route still parse and render",
+  (kind) => {
+    const input = { ...reference, target: { ...reference.target, kind } };
+    const canonical = serializeCollaborationReference(input);
+    const legacy = canonical.replace(
+      ' href="/people/',
+      ' href="/collaborators/',
+    );
+    expect(legacy).not.toBe(canonical);
+    expect(parseCollaborationReference(legacy)).toEqual(input);
+    expect(parser().render(legacy)).toContain(canonical);
+    expect(parser().render(legacy)).not.toContain('href="/collaborators/');
+  },
+);
 
 test("Markdown consumes titles atomically and exports durable readable HTML", () => {
   const markup = serializeCollaborationReference(reference);
