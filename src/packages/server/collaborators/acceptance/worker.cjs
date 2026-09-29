@@ -827,6 +827,29 @@ async function command(name, args = {}) {
         },
       );
     }
+    case "installRevisionInterest": {
+      await require("@cocalc/database/postgres/collaborators/collaborators-revision-interest").syncCollaborationRevisionInterestSchema(
+        pool,
+      );
+      process.env.COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE = "1";
+      process.env.COCALC_PEOPLE_DEMAND_PROTOTYPE = "1";
+      return true;
+    }
+    case "registerRevisionInterest": {
+      const route =
+        await require("@cocalc/server/inter-bay/directory").resolveProjectBay(
+          config.project,
+        );
+      const api =
+        require("@cocalc/conat/inter-bay/collaborators").createInterBayCollaboratorsClient(
+          { client: fabric, bay_id: route.bay_id },
+        );
+      return api.registerRevisionInterest({
+        project_id: config.project,
+        account_id: config.accounts[0],
+        route,
+      });
+    }
     case "installScan": {
       const scan = require("@cocalc/database/postgres/collaborators/collaborators-scan");
       await scan.syncCollaborationScanSchema(pool);

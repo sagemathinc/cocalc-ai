@@ -18,6 +18,7 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
     await env.start();
     await demand("install");
     await env.worker("b").call("demand", { operation: "install" });
+    await env.worker("owner").call("installRevisionInterest");
   }, 240000);
   afterAll(async () => await env?.close(), 60000);
   beforeEach(async () => {
@@ -26,6 +27,54 @@ acceptance("account-home People demand store (isolated PostgreSQL)", () => {
     await env.sql("a", "DELETE FROM collaboration_access");
   });
 
+  test("revision registration crosses the fabric and derives demand from the actual home", async () => {
+    const invoke = () => env.worker("b").call("registerRevisionInterest");
+    await expect(invoke()).rejects.toThrow("no home demand");
+    await demand("acquire", {
+      consumer_id: randomUUID(),
+      scope: { kind: "projects", project_ids: [env.project] },
+    });
+    const first = await invoke();
+    expect(await invoke()).toEqual(first);
+    expect(
+      await env.sql(
+        "owner",
+        "SELECT home_bay_id,lease_id FROM collaboration_revision_interests WHERE project_id=$1",
+        [env.project],
+      ),
+    ).toEqual([{ home_bay_id: env.bays[1], lease_id: first.lease_id }]);
+    const [{ users }] = await env.sql(
+      "owner",
+      "SELECT users FROM projects WHERE project_id=$1",
+      [env.project],
+    );
+    try {
+      await env.sql(
+        "owner",
+        "UPDATE projects SET users=users-$2 WHERE project_id=$1",
+        [env.project, env.accounts[0]],
+      );
+      await expect(invoke()).rejects.toThrow("access denied");
+    } finally {
+      await env.sql(
+        "owner",
+        "UPDATE projects SET users=$2::jsonb WHERE project_id=$1",
+        [env.project, JSON.stringify(users)],
+      );
+    }
+    await env.sql(
+      "a",
+      "UPDATE collaboration_demand SET grace_until=clock_timestamp()-interval '1 second'",
+    );
+    await expect(invoke()).rejects.toThrow("no home demand");
+    expect(
+      await env.sql(
+        "owner",
+        "SELECT lease_id FROM collaboration_revision_interests WHERE project_id=$1",
+        [env.project],
+      ),
+    ).toEqual([{ lease_id: first.lease_id }]);
+  }, 60000);
   test("authenticated demand calls bind the caller and cannot release another account's lease", async () => {
     expect((await env.hub("a", "check", {})).demand_supported).toBeUndefined();
     const first = await env.hub("a", "acquireDemand", {

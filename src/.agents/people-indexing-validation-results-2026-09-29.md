@@ -1107,3 +1107,14 @@ home rehome/expiry races, aligning owner lease expiry with the remaining demand
 horizon, batched registration and automatic renewal remain unverified. The
 owner hint lease is not an access grant and downstream protected reads must
 continue to recheck current membership.
+
+### Revision Registration Over Authenticated Fabric
+
+The isolated PostgreSQL/two-home acceptance suite now invokes registration from
+the other home bay through the real inter-bay client. The owner queries the
+account's actual home, rejects initial cold demand, stores exactly that home
+and a stable retry lease after demand acquisition, and rejects membership
+revocation and subsequent cold demand without changing the stored lease.
+The fixture restores membership after its revocation check. All thirteen demand
+acceptance cases and the server build pass. This covers registration only, not
+revision transport delivery, home rehome races, or demand-aligned lease expiry.
