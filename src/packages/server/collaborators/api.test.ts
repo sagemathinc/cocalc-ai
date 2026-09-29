@@ -274,6 +274,30 @@ beforeEach(() => {
   ingest.mockResolvedValue({ revision: 1, replayed: false });
 });
 
+test("Scan capability is default off and requires API and dispatch flags", async () => {
+  const flags = [
+    "COCALC_PEOPLE_SCAN_API_PROTOTYPE",
+    "COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE",
+  ];
+  const prior = flags.map((flag) => process.env[flag]);
+  try {
+    for (const flag of flags) delete process.env[flag];
+    const check = () => collaboratorsApi.check({ account_id });
+    expect((await check()).scan_supported).toBeUndefined();
+    process.env[flags[0]] = "1";
+    expect((await check()).scan_supported).toBeUndefined();
+    process.env[flags[1]] = "1";
+    expect((await check()).scan_supported).toBe(true);
+    delete process.env[flags[0]];
+    expect((await check()).scan_supported).toBeUndefined();
+  } finally {
+    flags.forEach((flag, i) => {
+      if (prior[i] === undefined) delete process.env[flag];
+      else process.env[flag] = prior[i];
+    });
+  }
+});
+
 test("shared projection requires bounded recipients at the same demanded home", async () => {
   const flags = [
     "COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE",

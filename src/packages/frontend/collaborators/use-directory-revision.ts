@@ -46,6 +46,7 @@ export function useDirectoryRevision(
     ready: false,
     generation: 0,
     error: "",
+    scanSupported: false,
   });
   const wasActive = useRef(active);
   if (wasActive.current !== active) {
@@ -123,13 +124,17 @@ export function useDirectoryRevision(
         }
         if (cancelled) return;
         setState((current) =>
-          !check.reset && current.ready && !current.error
+          !check.reset &&
+          current.ready &&
+          !current.error &&
+          current.scanSupported === !!check.scan_supported
             ? current
             : {
                 ready: true,
                 generation:
                   current.generation + (check.reset || !current.ready ? 1 : 0),
                 error: "",
+                scanSupported: !!check.scan_supported,
               },
         );
         timer = setTimeout(

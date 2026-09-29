@@ -6,6 +6,30 @@ const settle = () =>
   act(async () => {
     await Promise.resolve();
   });
+
+test("Scan capability changes without a directory revision reset", async () => {
+  const mock = demandApi();
+  const hook = renderHook(() =>
+    useDirectoryRevision(mock as unknown as DirectoryApi, true),
+  );
+  await settle();
+  expect(hook.result.current.scanSupported).toBe(false);
+  mock.check.mockResolvedValue({
+    revision: "r",
+    reset: false,
+    poll_after_ms: 5000,
+    scan_supported: true,
+  } as any);
+  await act(() => jest.advanceTimersByTimeAsync(5000));
+  expect(hook.result.current.scanSupported).toBe(true);
+  mock.check.mockResolvedValue({
+    revision: "r",
+    reset: false,
+    poll_after_ms: 5000,
+  } as any);
+  await act(() => jest.advanceTimersByTimeAsync(5000));
+  expect(hook.result.current.scanSupported).toBe(false);
+});
 beforeEach(() => jest.useFakeTimers());
 afterEach(() => jest.useRealTimers());
 
@@ -19,14 +43,12 @@ function demandApi() {
     renew_after: Date.now() + 30000,
   });
   return {
-    check: jest
-      .fn()
-      .mockResolvedValue({
-        revision: "r",
-        reset: false,
-        poll_after_ms: 5000,
-        demand_supported: true,
-      }),
+    check: jest.fn().mockResolvedValue({
+      revision: "r",
+      reset: false,
+      poll_after_ms: 5000,
+      demand_supported: true,
+    }),
     acquireDemand: jest.fn(async ({ consumer_id }) => receipt(consumer_id)),
     renewDemand: jest.fn(async ({ consumer_id }) => ({
       ...receipt(consumer_id),

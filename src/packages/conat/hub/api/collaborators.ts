@@ -140,6 +140,7 @@ export interface CollaboratorsApi
     reset: boolean;
     poll_after_ms: number;
     demand_supported?: boolean;
+    scan_supported?: boolean;
   }>;
   listPeople(
     opts: CollaborationQuery,

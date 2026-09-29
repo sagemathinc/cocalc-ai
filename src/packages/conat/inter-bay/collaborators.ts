@@ -261,6 +261,7 @@ export type InterBayCollaboratorsApi = RoutedApi & {
     reset: boolean;
     poll_after_ms: number;
     demand_supported?: boolean;
+    scan_supported?: boolean;
   }>;
   writerState(opts: {
     project_id: string;

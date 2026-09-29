@@ -902,6 +902,10 @@ export const collaboratorsControl: InterBayCollaboratorsApi = {
     return {
       ...(await accountRevision(opts.account_id!, opts.since)),
       ...(demandSchedulingEnabled() ? { demand_supported: true } : {}),
+      ...(process.env.COCALC_PEOPLE_SCAN_API_PROTOTYPE === "1" &&
+      process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE === "1"
+        ? { scan_supported: true }
+        : {}),
     };
   },
   async listPeople(opts) {

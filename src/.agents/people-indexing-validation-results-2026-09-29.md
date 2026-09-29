@@ -2421,3 +2421,40 @@ identity/generation behavior, or production capacity. All data and credentials
 are synthetic fixture state; no production settings changed. The broader plan,
 including demand integration, recovery, agent scopes, UI and scale/soak gates,
 remains incomplete.
+
+### Capability-Gated Project Scan UI
+
+Added a Scan control to the selected project in People. The account-home check
+advertises `scan_supported` only when both Scan API and dispatch prototype flags
+are enabled. The existing revision poll updates this capability even when the
+directory revision does not change. Older servers and clients without the three
+Scan methods expose no control. Server authorization and project-owner admission
+remain authoritative; capability advertisement is not a permission grant or a
+guarantee that a particular remote host is available.
+
+The control requests bounded reconciliation, saves the exact request identity in
+account/project-scoped browser session storage before submission, and exposes
+read-only receipt recovery and status checks. It preserves the identity on
+timeout and throttling. There is no automatic retry, admission on mount, or
+background status polling. Server cooldown hints disable buttons temporarily;
+the only new timer updates the local countdown and stops at expiry. Session
+storage failure prevents submission. Recovery survives remount/reload in the
+same browser tab; this is not cross-device or closed-tab persistence. Inspectable
+request/job identifiers remain available for CLI recovery.
+
+Discovery completion is explicitly distinguished from account-view freshness.
+Terminal/unknown status allows an explicit new request rather than silently
+launching one. Native controls, a live status region, terminal focus handling,
+wrapping layout and standard theme-aware Ant Design controls are used.
+
+Validation: 13 focused frontend tests pass, covering keyboard admission/status,
+focus, cooldown, same-ID retry, lost-response remount recovery, account isolation,
+unavailable session storage and capability changes. The 40 server API tests pass,
+including default-off/both-flags capability checks. Server/reference and frontend
+typechecks pass; frontend lint reports zero warnings/errors. Fake-timer interaction
+tests were replaced by real cooldown timing after React/Ant Design scheduling
+made those assertions unreliable. This is component evidence, not a live-browser
+two-account, zoom or dark-mode audit; those remain required before enablement.
+Automatic demand-triggered discovery, missed-write fallback, richer progress
+watermarks, agent scopes, lifecycle and full scale/soak gates remain unfinished.
+No production flag was enabled.

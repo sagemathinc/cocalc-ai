@@ -26,7 +26,15 @@ export type DirectoryApi = Pick<
   | "check"
 > &
   Partial<
-    Pick<CollaboratorsApi, "acquireDemand" | "renewDemand" | "releaseDemand">
+    Pick<
+      CollaboratorsApi,
+      | "acquireDemand"
+      | "renewDemand"
+      | "releaseDemand"
+      | "requestScan"
+      | "inspectScan"
+      | "getScanStatus"
+    >
   >;
 
 export function boundCollaboratorsApi(accountId: string): DirectoryApi {
@@ -50,6 +58,18 @@ export function boundCollaboratorsApi(accountId: string): DirectoryApi {
     return value;
   }
   return {
+    requestScan: (opts) =>
+      call((service) =>
+        service.requestScan({ ...opts, account_id: accountId }),
+      ),
+    inspectScan: (opts) =>
+      call((service) =>
+        service.inspectScan({ ...opts, account_id: accountId }),
+      ),
+    getScanStatus: (opts) =>
+      call((service) =>
+        service.getScanStatus({ ...opts, account_id: accountId }),
+      ),
     acquireDemand: (opts) =>
       call((service) =>
         service.acquireDemand({ ...opts, account_id: accountId }),
