@@ -621,3 +621,24 @@ admission remains unexposed. Budget state is project-owned and included in the
 unsupported-rehome guard. Seven PGlite admission cases cover concurrent burst
 admission, shared actors, refill, free replay, and backward-clock behavior in
 addition to the earlier authorization and receipt cases.
+
+### Bounded Receipt Reclamation
+
+New project-budget-eligible admissions now reclaim at most 64 expired receipts
+using a project/expiry index in the same transaction. Replay, status reads, and
+throttled calls do not perform retention work. There is no per-project cleanup
+timer: a cold project keeps bounded expired rows until its next admission or
+project deletion, without recurring traversal. Live receipts remain unchanged.
+
+Deduplication is guaranteed only during the seven-day retention window. A
+retained expired ID is rejected, but once reclaimed it cannot be distinguished
+from a new ID. Clients must inspect unknown outcomes within retention and must
+not retry expired IDs to discover their outcome. Inspection after reclamation
+returns unknown and never launches work. A stronger forever-reject-old-ID
+contract would require a versioned timestamped request identity or retained
+tombstones; this implementation does not claim one.
+
+The focused retention case injects 80 expired rows, proves replay/inspection
+leave them untouched, verifies a new admission removes exactly 64, and checks
+that throttled requests do not continue cleanup. Host execution, receipt job
+status retention, and end-to-end client expiry UX remain unimplemented.

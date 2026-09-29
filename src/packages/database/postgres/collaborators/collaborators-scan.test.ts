@@ -212,4 +212,46 @@ describeDb("owner scan admission prototype", () => {
       inspectCollaborationScan(request, authority),
     ).rejects.toThrow();
   });
+  test("new admissions reclaim at most 64 expired receipts without touching live retries", async () => {
+    const request = await fixture();
+    const live = await admitCollaborationScan(request, authority);
+    const ids = Array.from({ length: 80 }, () => randomUUID());
+    await getPool().query(
+      `INSERT INTO collaboration_scan_receipts(project_id,account_id,request_id,mode,receipt,expires_at)
+      SELECT $1,$2,id,'reconcile','{}'::jsonb,clock_timestamp()-interval '1 day'
+      FROM unnest($3::uuid[]) id`,
+      [request.project_id, request.account_id, ids],
+    );
+    const countExpired = async () =>
+      (
+        await getPool().query(
+          "SELECT count(*)::integer AS n FROM collaboration_scan_receipts WHERE project_id=$1 AND expires_at<clock_timestamp()",
+          [request.project_id],
+        )
+      ).rows[0].n;
+    expect(
+      await inspectCollaborationScan(
+        { ...request, request_id: ids[0] },
+        authority,
+      ),
+    ).toBeNull();
+    expect(await admitCollaborationScan(request, authority)).toEqual(live);
+    expect(await countExpired()).toBe(80);
+    await admitCollaborationScan(
+      { ...request, request_id: randomUUID() },
+      authority,
+    );
+    expect(await countExpired()).toBe(16);
+    expect(await inspectCollaborationScan(request, authority)).toEqual(live);
+    // Depleted-budget calls cannot turn into an unbounded cleanup endpoint.
+    expect(
+      (
+        await admitCollaborationScan(
+          { ...request, request_id: randomUUID() },
+          authority,
+        )
+      ).admission,
+    ).toBe("throttled");
+    expect(await countExpired()).toBe(16);
+  });
 });

@@ -52,6 +52,8 @@ export async function syncCollaborationScanSchema(
     PRIMARY KEY(project_id,account_id,request_id))`);
   await db.query(`CREATE INDEX IF NOT EXISTS collaboration_scan_receipts_expiry
     ON collaboration_scan_receipts(expires_at,project_id)`);
+  await db.query(`CREATE INDEX IF NOT EXISTS collaboration_scan_receipts_project_expiry
+    ON collaboration_scan_receipts(project_id,expires_at)`);
 }
 
 /** No host RPC or filesystem work in this transaction. The owner project lock
@@ -105,13 +107,6 @@ export async function admitCollaborationScan(
       if (remaining > 0)
         return { admission: "throttled" as const, retry_after_ms: remaining };
     }
-    const count = (
-      await db.query(
-        "SELECT count(*)::integer AS n FROM collaboration_scan_receipts WHERE project_id=$1",
-        [opts.project_id],
-      )
-    ).rows[0].n;
-    if (count >= MAX_RECEIPTS) throw Error("scan receipt capacity reached");
     // The project row is already locked. All actors share this bucket, and a
     // replay returns above without spending a token. Failed transactions do
     // not consume capacity. Actor-wide budgets belong at account home.
@@ -136,6 +131,25 @@ export async function admitCollaborationScan(
             Math.max(0, (budget?.updated_at.getTime() ?? now) - now),
         ),
       };
+    // Opportunistic, bounded retention work only on a new budget-eligible
+    // request. Cold projects incur no polling; retries never erase their own
+    // receipt. After seven days request IDs no longer promise deduplication.
+    await db.query(
+      `DELETE FROM collaboration_scan_receipts r USING (
+        SELECT project_id,account_id,request_id FROM collaboration_scan_receipts
+        WHERE project_id=$1 AND expires_at<=$2
+        ORDER BY expires_at LIMIT 64
+      ) expired WHERE r.project_id=expired.project_id
+        AND r.account_id=expired.account_id AND r.request_id=expired.request_id`,
+      [opts.project_id, new Date(now)],
+    );
+    const count = (
+      await db.query(
+        "SELECT count(*)::integer AS n FROM collaboration_scan_receipts WHERE project_id=$1",
+        [opts.project_id],
+      )
+    ).rows[0].n;
+    if (count >= MAX_RECEIPTS) throw Error("scan receipt capacity reached");
     await db.query(
       `INSERT INTO collaboration_scan_budget(project_id,tokens,updated_at) VALUES($1,$2,$3)
       ON CONFLICT(project_id) DO UPDATE SET tokens=EXCLUDED.tokens,updated_at=EXCLUDED.updated_at`,
