@@ -3002,3 +3002,20 @@ notification targets. It is a mixed-behavior smoke test, not representative
 mixed-load capacity: only one account views one project, and no throughput,
 latency percentile, CPU, I/O or WAL envelope is established. Browser validation,
 larger measured load and independent release review remain open.
+
+### Known-Source Demand Becomes Idle
+
+The same timer-driven scenario now releases its active consumer through the
+authenticated API, advances only the isolated demand grace deadline, allows
+three seconds for in-flight work to settle, and observes another three seconds.
+Owner counters for individual/shared project pages, access refresh and legacy
+notification pages do not increase during that window. The previously delivered
+notification ID remains unchanged. Production worker timers are not manually
+ticked or rescheduled for this check.
+
+The extended test passes in 56.526 seconds including setup/cleanup, with server
+typecheck and whitespace checks passing. This covers the transition from active
+view to expired demand under the selected flags. It is not a soak, a bound on
+all SQL/background maintenance, or proof about work scheduled beyond the short
+observation window. Representative load and long-window idle measurement remain
+open.

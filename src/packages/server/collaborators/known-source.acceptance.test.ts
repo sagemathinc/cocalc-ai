@@ -42,8 +42,9 @@ acceptance("known-source initial release over real fabric", () => {
     // demand-triggered filesystem discovery. No manual maintenance ticks below.
     for (const role of ["owner", "a", "b"] as const)
       await env.worker(role).call("startRevisionMaintenance");
-    await env.hub("a", "acquireDemand", {
-      consumer_id: randomUUID(),
+    const consumer_id = randomUUID();
+    const demand = await env.hub("a", "acquireDemand", {
+      consumer_id,
       scope: { kind: "projects", project_ids: [env.project] },
     });
     await env.hub("a", "ensureRoom", {
@@ -121,6 +122,38 @@ acceptance("known-source initial release over real fabric", () => {
         "SELECT DISTINCT account_id FROM collaboration_access",
       ),
     ).toEqual([{ account_id: env.accounts[0] }]);
+    const delivered = await env.sql(
+      "b",
+      "SELECT notification_id FROM notification_targets ORDER BY notification_id",
+    );
+    await env.hub("a", "releaseDemand", {
+      consumer_id,
+      lease_id: demand.lease_id,
+    });
+    // Advance only the grace horizon; workers still run on their real timers.
+    await env.sql(
+      "a",
+      "UPDATE collaboration_demand SET grace_until=clock_timestamp()-interval '1 second'",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    const beforeIdle = (await env.worker("owner").call("inspect")).counters
+      .ownerCalls;
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    const afterIdle = (await env.worker("owner").call("inspect")).counters
+      .ownerCalls;
+    for (const method of [
+      "projectPage",
+      "sharedProjectPage",
+      "refreshAccess",
+      "notificationPage",
+    ])
+      expect(afterIdle[method] ?? 0).toBe(beforeIdle[method] ?? 0);
+    expect(
+      await env.sql(
+        "b",
+        "SELECT notification_id FROM notification_targets ORDER BY notification_id",
+      ),
+    ).toEqual(delivered);
     for (const role of ["owner", "a", "b"] as const)
       expect((await env.worker(role).call("inspect")).counters.starts).toBe(0);
   }, 120000);
