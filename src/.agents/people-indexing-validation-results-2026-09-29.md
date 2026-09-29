@@ -580,3 +580,26 @@ transport tests, and five routed host-client tests. New cases verify method
 registration at the destination bay, preservation of run identity, no compute
 start/create on forwarding, disabled/version/identity rejection, traversal-option
 stripping, inert unknown-run status, and owner/volume/disable checks on status.
+
+## Owner Scan Admission Store Prototype
+
+Added an explicitly installed, currently unexposed owner-side store for Scan
+admission. Project-owner locking serializes concurrent requests; request IDs are
+scoped to authenticated account and project, and retries return the original
+seven-day receipt. Changed arguments and retained expired IDs fail rather than
+silently launching new work. Receipt inspection never admits work. Both replay
+and inspection recheck current project membership and owning-bay authority.
+
+Queued requests coalesce; running work receives a five-minute admission cooldown
+before one follow-up slot can be queued. There are at most two job slots and
+4,096 retained receipts per project. This is a conservative prototype: the
+cooldown currently starts at admission, not actual host execution. Receipt
+cleanup, dispatcher/settlement, actor and project token buckets, bay/global
+budgets, and follow-up observation boundaries are still outstanding. No public
+API or startup schema installation invokes this store.
+
+These tables are project-owned durable state, not disposable view caches.
+Project rehome refuses movement while this state exists until transfer support
+is implemented. The server TypeScript build and 12 focused tests pass (five
+PGlite admission tests and seven table-ownership tests). This does not validate
+real concurrent PostgreSQL contention or end-to-end host dispatch.

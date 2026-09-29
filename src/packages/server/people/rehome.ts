@@ -42,6 +42,8 @@ export async function assertNoPeopleProjectStateForRehome(
     "people_invite_outbox",
     "people_invitation_action_receipts",
     "people_invite_resend_operations",
+    "collaboration_scan_jobs",
+    "collaboration_scan_receipts",
   ]) {
     if (
       !(await db.query("SELECT to_regclass($1) AS name", [`public.${table}`]))
@@ -56,7 +58,7 @@ export async function assertNoPeopleProjectStateForRehome(
       ).rows.length
     )
       throw Error(
-        "Project rehome is unavailable while people invitation lifecycle or receipt state exists; portability is not supported yet",
+        "Project rehome is unavailable while people invitation lifecycle, scan jobs, or receipt state exists; portability is not supported yet",
       );
     if (
       table === "people_invite_outbox" &&
