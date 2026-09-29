@@ -2936,3 +2936,44 @@ open storage or enumerate project inventory. This tests pause/resume semantics,
 not actual site-setting propagation delay or concurrent administrator/network
 timing. Three focused host suites pass (27 tests), as does host/reference
 typecheck. No production implementation change was needed for this behavior.
+
+### Initial-Release Home Worker Configuration Audit
+
+Source audit at `befb41f232` confirms that the host's known-source default alone
+does not select demand-driven home scheduling. In
+`database/postgres/collaborators/collaborators-demand.ts`,
+`demandSchedulingEnabled()` requires all three variables to equal `1`:
+
+- `COCALC_PEOPLE_DEMAND_PROTOTYPE`
+- `COCALC_PEOPLE_DEMAND_SCHEDULER_PROTOTYPE`
+- `COCALC_PEOPLE_EVENT_FANOUT_PROTOTYPE`
+
+With any missing, `server/collaborators/maintenance.ts` still calls legacy
+membership seeding and notification cursor polling, and the access claim path
+in `collaborators-access.ts` selects due grants without a demand predicate.
+This fallback does not satisfy the smaller contract's dormant-cost guarantee.
+Treat these as a coordinated rollout configuration, not independent optional
+performance tweaks. Independent event delivery is necessary before stopping
+legacy notification consumption; do not simply remove the fallback or flip a
+single switch in production.
+
+When demand scheduling is selected, the backend `check` response advertises
+`demand_supported`; `frontend/collaborators/use-directory-revision.ts` uses that
+capability to acquire/renew demand. Revision receiver registration and shared
+projection fetching additionally require
+`COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE=1`; revision outbox schema installation
+additionally requires `COCALC_PEOPLE_REVISION_OUTBOX_PROTOTYPE=1`. These are
+separate from the basic demand predicate and need explicit selection in the
+representative-load fixture rather than accidental shell inheritance.
+
+Explicit Scan dispatch has its own startup switch,
+`COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE=1`; the UI capability additionally requires
+`COCALC_PEOPLE_SCAN_API_PROTOTYPE=1`. Automatic demand-triggered filesystem
+discovery is separately gated by
+`COCALC_PEOPLE_DISCOVERY_BOOTSTRAP_PROTOTYPE=1` and must remain unset for this
+release. No live flags or services were changed during this audit.
+
+The previously running scoped `browser files` request terminated with exit code
+1 and a 408 remote `listOpenFiles` timeout. It supplied no browser validation
+evidence. No alternate credentials, session discovery, or service restart was
+attempted. Actual rendered Scan behavior remains an open gate.
