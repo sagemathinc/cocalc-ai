@@ -38,6 +38,11 @@ const isAccountBannedCachedMock = jest.fn();
 const getAccountRevokedBeforeCachedMock = jest.fn();
 const authenticateBayCredentialMock = jest.fn();
 const isBayCredentialUserActiveMock = jest.fn();
+const getAccountWithApiKeyMock = jest.fn();
+
+jest.mock("@cocalc/server/api/manage", () => ({
+  getAccountWithApiKey: (...args: any[]) => getAccountWithApiKeyMock(...args),
+}));
 
 jest.mock("@cocalc/backend/data", () => ({
   ...jest.requireActual("@cocalc/backend/data"),
@@ -114,6 +119,10 @@ jest.mock("@cocalc/server/auth/remember-me", () => ({
   getRememberMeHashFromCookieValue: jest.fn(),
 }));
 
+jest.mock("@cocalc/server/api/project-membership-revocation", () => ({
+  assertApiKeyProjectMembership: jest.fn(async () => undefined),
+}));
+
 jest.mock("@cocalc/server/conat/project-remote-access", () => ({
   __esModule: true,
   hasProjectCollaboratorAccessAllowRemote: jest.fn(),
@@ -130,6 +139,7 @@ import {
   resolveProjectAccessAllowRemote,
 } from "@cocalc/server/conat/project-remote-access";
 import { getProjectSecretToken } from "@cocalc/server/projects/control/secret-token";
+import { API_COOKIE_NAME } from "@cocalc/backend/auth/cookie-names";
 import { getAccountIdFromRememberMe } from "@cocalc/server/auth/get-account";
 import {
   getRememberMeCookieValuesFromHeader,
@@ -180,6 +190,7 @@ beforeEach(() => {
   getAccountRevokedBeforeCachedMock.mockReset().mockReturnValue(undefined);
   authenticateBayCredentialMock.mockReset();
   isBayCredentialUserActiveMock.mockReset().mockResolvedValue(true);
+  getAccountWithApiKeyMock.mockReset();
   (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockReset();
   (resolveProjectAccessAllowRemote as jest.Mock).mockReset();
 });
@@ -192,6 +203,50 @@ function projectHostBearerToken(nonce?: string) {
     nonce,
   })}.signature`;
 }
+
+it("issues a distinct reply inbox for each API-key socket", async () => {
+  getAccountWithApiKeyMock.mockResolvedValue({
+    account_id,
+    auth_method: "api_key",
+    key_id: "key-1",
+    scope_revision: 1,
+  });
+  const socket = {
+    handshake: {
+      auth: {},
+      headers: { cookie: `${API_COOKIE_NAME}=test-key` },
+    },
+  };
+  const first = await getUser(socket);
+  const second = await getUser(socket);
+  const firstPrefix = (first as { auth_api_key_reply_prefix?: string })
+    .auth_api_key_reply_prefix;
+  expect(firstPrefix).toMatch(/^_INBOX\.api-key-[0-9a-f-]{36}$/);
+  const secondPrefix = (second as { auth_api_key_reply_prefix?: string })
+    .auth_api_key_reply_prefix;
+  expect(secondPrefix).not.toBe(firstPrefix);
+  expect(getAccountWithApiKeyMock).toHaveBeenCalledWith("test-key", {
+    recordActivity: true,
+  });
+  await getUser(socket, undefined, { revalidation: true });
+  expect(getAccountWithApiKeyMock).toHaveBeenLastCalledWith("test-key", {
+    recordActivity: false,
+  });
+  expect(
+    await isAllowed({
+      user: first,
+      subject: `${firstPrefix}.reply`,
+      type: "sub",
+    }),
+  ).toBe(true);
+  expect(
+    await isAllowed({
+      user: first,
+      subject: `${secondPrefix}.reply`,
+      type: "sub",
+    }),
+  ).toBe(false);
+});
 
 describe("external session transport", () => {
   it("authenticates installation without using human or native credentials and rechecks every subject", async () => {
@@ -544,6 +599,8 @@ describe("project-host bearer account auth", () => {
       jti: "00000000-0000-4000-8000-000000000099",
       iss: "cocalc-hub",
       v: "phat-v1",
+      auth_actor: "agent",
+      project_id,
     });
   });
 
@@ -572,6 +629,48 @@ describe("project-host bearer account auth", () => {
     expect(getAccountRevokedBeforeCachedMock).toHaveBeenCalledWith(account_id);
   });
 
+  it("never exchanges a project-host API key child for Hub agent authority", async () => {
+    verifyProjectHostAuthTokenMock.mockReturnValue({
+      act: "account",
+      sub: account_id,
+      aud: `project-host:${host_id}`,
+      iat: 100,
+      exp: 1000,
+      api_key: { key_id: "key-id-123" },
+    });
+    const socket = {
+      handshake: {
+        auth: { bearer: projectHostBearerToken(), project_id },
+        headers: {},
+      },
+    };
+    await expect(getUser(socket)).rejects.toThrow(
+      "invalid master host auth token",
+    );
+  });
+
+  it("does not let a handshake retarget a signed agent token", async () => {
+    await expect(
+      getUser({
+        handshake: {
+          auth: {
+            bearer: projectHostBearerToken(),
+            project_id: project_id2,
+          },
+          headers: {},
+        },
+      }),
+    ).rejects.toThrow();
+    await expect(
+      getUser({
+        handshake: {
+          auth: { bearer: projectHostBearerToken() },
+          headers: {},
+        },
+      }),
+    ).resolves.toMatchObject({ auth_project_id: project_id });
+  });
+
   it("keeps one agent identity across signed turn-token refreshes", async () => {
     const sessionId = "00000000-0000-4000-8000-000000000098";
     verifyProjectHostAuthTokenMock
@@ -582,6 +681,8 @@ describe("project-host bearer account auth", () => {
         iat: 100,
         exp: 1_000,
         sid: sessionId,
+        auth_actor: "agent",
+        project_id,
       })
       .mockReturnValueOnce({
         act: "account",
@@ -590,6 +691,8 @@ describe("project-host bearer account auth", () => {
         iat: 500,
         exp: 1_400,
         sid: sessionId,
+        auth_actor: "agent",
+        project_id,
       });
     const makeSocket = (nonce: string) => ({
       handshake: {
@@ -989,6 +1092,36 @@ describe("test isAllowed for subjects special to accounts (similar to projects)"
 });
 
 describe("test isAllowed for collaboration -- this is the most nontrivial one", () => {
+  it("denies an API key's project subject when delegation was revoked despite current membership", async () => {
+    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
+      true,
+    );
+    const { assertApiKeyProjectMembership } = jest.requireMock(
+      "@cocalc/server/api/project-membership-revocation",
+    );
+    assertApiKeyProjectMembership.mockRejectedValueOnce(
+      Error("membership loss"),
+    );
+    const user = {
+      account_id,
+      auth_method: "api_key",
+      key_id: "key-12345",
+      scope_revision: 1,
+      capabilities: ["project:exec"],
+      allowed_project_ids: [project_id],
+    };
+    expect(
+      await isAllowed({
+        user,
+        subject: `project.${project_id}.foo`,
+        type: "pub",
+      }),
+    ).toBe(false);
+    expect(assertApiKeyProjectMembership).toHaveBeenCalledWith(
+      { account_id, key_id: "key-12345", scope_revision: 1 },
+      project_id,
+    );
+  });
   it("verifies an account can access a project it collaborates on", async () => {
     (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
       true,

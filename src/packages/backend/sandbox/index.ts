@@ -2155,6 +2155,78 @@ export class SandboxedFilesystem {
   };
 
   private readFileLock = new Set<string>();
+  readRegularFileAuthorized = async ({
+    path,
+    authorizeCanonicalIdentity,
+    maxBytes = 8 * 1024 * 1024,
+    encoding,
+    lock,
+  }: {
+    path: string;
+    authorizeCanonicalIdentity: (identity: string) => void;
+    maxBytes?: number;
+    encoding?: string;
+    lock?: number;
+  }): Promise<string | Buffer> => {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) {
+      throw new Error("invalid regular-file read limit");
+    }
+    const opened = await this.openVerifiedHandle({
+      path,
+      flags: constants.O_RDONLY | constants.O_NONBLOCK,
+    });
+    try {
+      authorizeCanonicalIdentity(
+        await this.canonicalIdentityForOpenedHandle(opened),
+      );
+      const info = await opened.handle.stat();
+      if (!info.isFile()) {
+        const err: NodeJS.ErrnoException = new Error(
+          `EACCES: regular file required, open '${path}'`,
+        );
+        err.code = "EACCES";
+        throw err;
+      }
+      if (info.size > maxBytes) {
+        const err: NodeJS.ErrnoException = new Error(
+          `EFBIG: file exceeds read limit, open '${path}'`,
+        );
+        err.code = "EFBIG";
+        throw err;
+      }
+      const p = opened.pathInSandbox;
+      if (this.readFileLock.has(p)) {
+        throw new ConatError(`path is locked - ${p}`, { code: "LOCK" });
+      }
+      if (lock) this._lockFile(p, lock);
+      const chunks: Buffer[] = [];
+      let size = 0;
+      const buffer = Buffer.allocUnsafe(Math.min(1024 * 1024, maxBytes + 1));
+      while (true) {
+        const { bytesRead } = await opened.handle.read(
+          buffer,
+          0,
+          Math.min(buffer.length, maxBytes + 1 - size),
+          null,
+        );
+        if (bytesRead === 0) break;
+        size += bytesRead;
+        if (size > maxBytes) {
+          const err: NodeJS.ErrnoException = new Error(
+            `EFBIG: file exceeds read limit, open '${path}'`,
+          );
+          err.code = "EFBIG";
+          throw err;
+        }
+        chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
+      }
+      const content = Buffer.concat(chunks, size);
+      return encoding ? content.toString(encoding as BufferEncoding) : content;
+    } finally {
+      await opened.handle.close();
+    }
+  };
+
   readFile = async (
     path: string,
     encoding?: any,

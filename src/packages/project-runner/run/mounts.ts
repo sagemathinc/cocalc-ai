@@ -11,6 +11,8 @@ export const COCALC_LIB = "/opt/cocalc/lib";
 export const COCALC_RUNTIME_LIB = "/opt/cocalc/runtime-lib";
 export const COCALC_SRC = "/opt/cocalc/src";
 export const DEFAULT_PROJECT_TOOLS = "/opt/cocalc/tools/current";
+export const DEFAULT_MANAGED_HARNESSES = "/opt/cocalc/harnesses";
+export const MANAGED_HARNESSES_MOUNT_POINT = "/opt/cocalc/harnesses";
 export const PROJECT_BUNDLE_MOUNT_POINT = "/opt/cocalc/project-bundle";
 export const PROJECT_BUNDLE_BIN_PATH = join(PROJECT_BUNDLE_MOUNT_POINT, "bin");
 export const PROJECT_BUNDLES_MOUNT_POINT = "/opt/cocalc/project-bundles";
@@ -50,6 +52,10 @@ export function getCoCalcMounts(
   nodePath = join(COCALC_BIN, "node");
 
   const mounts: Record<string, string> = getNodeRuntimeMounts();
+  const harnesses = env.COCALC_MANAGED_HARNESSES ?? DEFAULT_MANAGED_HARNESSES;
+  if (harnesses && pathExists(harnesses)) {
+    mounts[harnesses] = MANAGED_HARNESSES_MOUNT_POINT;
+  }
   const addProjectSourceMount = (source: string) => {
     if (pathExists(source)) {
       mounts[source] = COCALC_SRC;

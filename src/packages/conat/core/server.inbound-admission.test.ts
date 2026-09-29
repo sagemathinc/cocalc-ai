@@ -20,6 +20,45 @@ describe("core server inbound socket admission", () => {
     await ConatServer.closeAllForTests();
   });
 
+  it("limits API-key sockets by account despite per-connection reply prefixes", async () => {
+    setServiceAdmissionLimitOverrides({
+      conat_max_connections_per_user: 1,
+    });
+    const server = init({
+      port: 0,
+      getUser: async (socket) => socket.handshake.auth,
+    });
+    const clientA = connect({
+      address: server.address(),
+      noCache: true,
+      auth: {
+        account_id: "same-account",
+        auth_method: "api_key",
+        auth_api_key_reply_prefix: "_INBOX.api-key-first",
+      },
+    });
+    await clientA.waitUntilSignedIn({ timeout: 5000 });
+
+    const clientB = connect({
+      address: server.address(),
+      noCache: true,
+      auth: {
+        account_id: "same-account",
+        auth_method: "api_key",
+        auth_api_key_reply_prefix: "_INBOX.api-key-second",
+      },
+    });
+    await expect(clientB.waitUntilSignedIn({ timeout: 5000 })).rejects.toThrow(
+      "per user limit",
+    );
+    expect(clientA.isSignedIn()).toBe(true);
+    expect(server.getUsage()["deny:count"]).toBe(1);
+
+    clientA.close();
+    clientB.close();
+    await server.close();
+  });
+
   it("fast-fails high-rate per-socket protocol events before handler work", async () => {
     const server = init({
       port: 0,

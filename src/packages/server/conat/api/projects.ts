@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import { requireApiKeyCapability } from "@cocalc/server/api/api-key-scope";
+import type { ApiKeyPrincipal } from "@cocalc/server/api/api-key-scope";
 import createProject, {
   createProjectWithBootstrap,
 } from "@cocalc/server/projects/create";
@@ -222,7 +224,10 @@ import type {
 } from "@cocalc/conat/hub/api/projects";
 import { normalizeCoursePath } from "@cocalc/util/course-path";
 import { normalizeStudentProjectFunctionality } from "@cocalc/util/db-schema/projects";
-import { listAccountProjectWindow as listAccountProjectWindowLocal } from "@cocalc/server/projects/list-account-window";
+import {
+  listAccountProjectWindow as listAccountProjectWindowLocal,
+  listProjectSummaries as listProjectSummariesLocal,
+} from "@cocalc/server/projects/list-account-window";
 import { validateProjectEnv } from "@cocalc/util/project-secrets";
 import type { ProjectSecretsRuntimeRefreshResult } from "@cocalc/util/project-secrets";
 import { parseRootfsConfigExport } from "@cocalc/util/rootfs-images";
@@ -302,6 +307,7 @@ import {
   PROJECT_DANGEROUS_INTERNAL_AUTH,
   requireDangerousProjectMutationAuth,
 } from "./project-dangerous-auth";
+import { requireDangerousSessionAuth } from "./dangerous-session-auth";
 import { resolveHostConnection } from "./hosts";
 export { PROJECT_DANGEROUS_INTERNAL_AUTH };
 import {
@@ -3385,6 +3391,92 @@ export async function listAccountProjectWindow({
   });
 }
 
+export async function listProjectSummaries(opts: {
+  account_id: string;
+  project_id?: string;
+  limit?: number;
+  offset?: number;
+  search?: string;
+}) {
+  // Public RPC parameters must never supply admission identity.
+  const { account_id, project_id, limit, offset, search } = opts;
+  return listProjectSummariesWithAdmission({
+    account_id,
+    project_id,
+    limit,
+    offset,
+    search,
+  });
+}
+
+export async function listProjectSummariesForApiKey(
+  principal: ApiKeyPrincipal,
+  opts: {
+    project_id?: string;
+    limit?: number;
+    offset?: number;
+    search?: string;
+  },
+) {
+  requireApiKeyCapability(principal, "project:list");
+  if (!principal.account_id || !principal.key_id || !principal.scope_revision)
+    throw Error("missing authenticated search key identity");
+  const { project_id, limit, offset, search } = opts;
+  return listProjectSummariesWithAdmission({
+    account_id: principal.account_id,
+    project_id,
+    limit,
+    offset,
+    search,
+    admission_key: {
+      key_id: principal.key_id,
+      scope_revision: principal.scope_revision,
+    },
+  });
+}
+
+async function listProjectSummariesWithAdmission({
+  admission_key,
+  account_id,
+  project_id,
+  limit,
+  offset,
+  search,
+}: {
+  admission_key?: { key_id: string; scope_revision: number };
+  account_id: string;
+  project_id?: string;
+  limit?: number;
+  offset?: number;
+  search?: string;
+}) {
+  const location = await resolveAccountHomeBay({
+    account_id,
+    user_account_id: account_id,
+  });
+  if (location.home_bay_id !== getConfiguredBayId()) {
+    return await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: location.home_bay_id,
+    }).listProjectSummaries({
+      account_id,
+      project_id,
+      limit,
+      offset,
+      search,
+      ...(admission_key ? { admission_key } : {}),
+    });
+  }
+  return await listProjectSummariesLocal({
+    ...(admission_key ? { admission_key } : {}),
+    account_id,
+    project_id,
+    limit,
+    offset,
+    search,
+  });
+}
+
 export async function getCourseStudentAccess({
   account_id,
   project_id,
@@ -5924,10 +6016,13 @@ export async function transferProjectOwnership({
   to_account_id: string;
 }) {
   if (!account_id) throw new Error("must be signed in");
-  await requireDangerousProjectMutationAuth({
+  // Transfer audits identify the signed-in account, not an impersonation actor.
+  await requireDangerousSessionAuth({
     account_id,
     browser_id,
     session_hash,
+    require_second_factor: "if_enabled",
+    allow_actor_impersonation: false,
   });
   for (const id of [project_id, from_account_id, to_account_id]) {
     if (!isValidUUID(id))
@@ -7038,6 +7133,67 @@ export async function codexDeviceAuthCancel({
   throw Error(
     "codex device auth is not implemented on central hub; call a project-host endpoint via project routing",
   );
+}
+
+export async function getClaudeSubscriptionUsage({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  credential_id: string;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  throw Error("Claude subscription usage must use the project-host endpoint");
+}
+
+export async function claudeSubscriptionLoginStart({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  credential_id?: string;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  throw Error("Claude subscription login must use the project-host endpoint");
+}
+
+export async function claudeSubscriptionLoginStatus({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  id: string;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  throw Error("Claude subscription login must use the project-host endpoint");
+}
+
+export async function claudeSubscriptionLoginSubmitCode({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  id: string;
+  code: string;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  throw Error("Claude subscription login must use the project-host endpoint");
+}
+
+export async function claudeSubscriptionLoginCancel({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  id: string;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  throw Error("Claude subscription login must use the project-host endpoint");
 }
 
 export async function codexUploadAuthFile({

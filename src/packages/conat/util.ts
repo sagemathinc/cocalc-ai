@@ -3,16 +3,50 @@ import { encode as encodeBase64, decode as decodeBase64 } from "js-base64";
 export { encodeBase64, decodeBase64 };
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 
+// Only protocol-safe error metadata may cross a service boundary.
+export function serviceErrorAttributes(value: unknown): {
+  code?: string | number;
+  retry_after_ms?: number;
+} {
+  const result: { code?: string | number; retry_after_ms?: number } = {};
+  if (value == null || typeof value !== "object") return result;
+  const { code, retry_after_ms } = value as Record<string, unknown>;
+  if (
+    (typeof code === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(code)) ||
+    (typeof code === "number" && Number.isSafeInteger(code))
+  ) {
+    result.code = code;
+  }
+  if (
+    typeof retry_after_ms === "number" &&
+    Number.isSafeInteger(retry_after_ms) &&
+    retry_after_ms >= 0
+  ) {
+    result.retry_after_ms = retry_after_ms;
+  }
+  return result;
+}
+
 export class ConatError extends Error {
   code?: string | number;
   subject?: string;
+  retry_after_ms?: number;
   constructor(
     mesg: string,
-    { code, subject }: { code?: string | number; subject?: string } = {},
+    {
+      code,
+      subject,
+      retry_after_ms,
+    }: {
+      code?: string | number;
+      subject?: string;
+      retry_after_ms?: number;
+    } = {},
   ) {
     super(mesg);
     this.code = code;
     this.subject = subject;
+    if (retry_after_ms !== undefined) this.retry_after_ms = retry_after_ms;
   }
 }
 

@@ -1,5 +1,39 @@
 # SOCKETS
 
+## Confined return traffic
+
+Socket discovery advertises `inboxReturn: 1` when the service supports private
+return inboxes. New clients use that protocol; clients with a legacy peer retain
+the service-subject protocol and must independently have its permissions.
+
+In inbox-return mode, clients subscribe only beneath their authenticated reply
+namespace. Every outgoing socket message carries `CN-SocketReturn`. The broker
+validates that it is a concrete inbox subject the sender may subscribe to and
+attests it in server-owned caller metadata. Services reject unattested routes
+(including those passing through an older ingress broker) and bind each logical
+socket to its original return route. No broader subscription grant is added.
+
+Server-initiated requests use unpredictable correlation IDs. Their responses
+return through the already-authorized service subject, not an arbitrary server
+inbox. Each logical socket permits at most 128 outstanding reverse requests;
+timeouts and socket close release them. Unknown and duplicate responses do not
+resolve another request. Reverse requests accept one response.
+
+Broker lease expiry removes the private subscription. Existing socket interest
+cleanup then releases the logical socket; this does not terminate application
+processes launched through it. New brokers and services must be deployed before
+scoped clients rely on this protocol. Two-broker tests cover attestation forwarding,
+bidirectional traffic, and expiry-driven interest withdrawal.
+
+When the authenticated reply namespace changes, an inbox-return client socket
+closes with `closeReason === "reply-namespace-changed"`. It does not redirect the
+existing server socket or replay queued transport data on a different route.
+Owners must create a fresh socket and explicitly reattach application state.
+Terminal `attach` supports this without spawning a replacement process; real
+PTY tests cover reattachment and rejection of operations on the old socket.
+Automatic application recovery and deployed multibay rollout remain separate
+validation requirements.
+
 In compute networking, **TCP sockets** are a great idea that's been around since 1974! They are
 incredibly useful as an abstraction. To create
 a TCP socket you define source and target ports and ip address, and have a client
@@ -116,3 +150,12 @@ await s.waitUntilReady(5000);
 await c.waitUntilReady(5000);
 c.write("hi");
 ```
+# Request Recovery and Replay
+
+Socket `request` and `requestMany` may recover connection readiness before
+publishing, but do not automatically republish after an execution attempt.
+A response timeout, lost publish acknowledgment, or service-side `503` can occur
+after an operation has already executed. Such errors are returned to the caller;
+they are not evidence of rejection. Applications that retry must provide their
+own idempotency or reconciliation contract. Ordered socket data retransmission
+within the same logical connection is separate and remains unchanged.

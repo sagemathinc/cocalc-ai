@@ -88,6 +88,230 @@ describe("parseRusticSnapshotsOutput", () => {
   });
 });
 
+describe("fresh snapshot inventory after concurrent retention", () => {
+  const oldId = "a".repeat(64);
+  const newId = "b".repeat(64);
+  const now = new Date("2026-09-28T09:25:00.000Z");
+  const oldEnv = process.env.COCALC_DISABLE_BTRFS_ROLLING_SNAPSHOTS;
+
+  const output = (
+    stdout: string,
+    stderr = "",
+    code = 0,
+    truncated = false,
+  ) => ({
+    stdout: Buffer.from(stdout),
+    stderr: Buffer.from(stderr),
+    code,
+    truncated,
+  });
+  const inventory = (ids: string[]) =>
+    output(
+      JSON.stringify([
+        {
+          snapshots: ids.map((id) => ({
+            id,
+            time: id === oldId ? "2026-09-20T00:00:00.000Z" : now.toISOString(),
+            tags: ["cocalc-automatic"],
+            summary: {},
+          })),
+        },
+      ]),
+    );
+  const missing = (path = `snapshots/${oldId}`, code = "NoSuchKey") =>
+    output(
+      "[]",
+      `[WARN] service=s3 name=test path=${path}: read failed NotFound (persistent) at read, context: { service: s3, path: ${path} } => S3Error { code: "${code}", message: "The specified key does not exist." }\n` +
+        "error: `rustic_core` experienced an error related to `the backend`.\n" +
+        `Reading file \`${path}\` failed in the backend. Please check if the given path is correct.\n`,
+      1,
+    );
+  const volume = () =>
+    new SubvolumeRustic({
+      name: "project-1",
+      path: "/mnt/test/project-1",
+      filesystem: { opts: { mount: "/mnt/test" } },
+      fs: { rusticRepo: "/repo", rustic: jest.fn() },
+    } as any);
+
+  beforeEach(() => {
+    jest.useFakeTimers({ now });
+    rusticHostMock = jest.fn();
+    delete process.env.COCALC_DISABLE_BTRFS_ROLLING_SNAPSHOTS;
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+    if (oldEnv == null)
+      delete process.env.COCALC_DISABLE_BTRFS_ROLLING_SNAPSHOTS;
+    else process.env.COCALC_DISABLE_BTRFS_ROLLING_SNAPSHOTS = oldEnv;
+  });
+
+  it("restarts the inventory command and caches only a complete successful read", async () => {
+    rusticHostMock
+      .mockResolvedValueOnce(missing())
+      .mockResolvedValueOnce(missing())
+      .mockResolvedValueOnce(inventory([newId]));
+    const rustic = volume();
+    const result = expect(rustic.snapshots()).resolves.toEqual([
+      expect.objectContaining({ id: newId }),
+    ]);
+    await Promise.all([result, jest.runAllTimersAsync()]);
+
+    await expect(rustic.snapshots()).resolves.toHaveLength(1);
+    expect(rusticHostMock).toHaveBeenCalledTimes(3);
+    for (const [args, opts] of rusticHostMock.mock.calls) {
+      expect(args).toEqual(["snapshots", "--json"]);
+      expect(opts.host).toBe("project-1");
+    }
+    expect(Date.now() - now.valueOf()).toBe(1250);
+  });
+
+  it("fails after two retries rather than treating an unreadable inventory as empty", async () => {
+    rusticHostMock.mockResolvedValue(missing());
+    const rustic = volume();
+    const result = expect(rustic.snapshots()).rejects.toThrow("NoSuchKey");
+    await Promise.all([result, jest.runAllTimersAsync()]);
+    expect(rusticHostMock).toHaveBeenCalledTimes(3);
+    rusticHostMock.mockResolvedValue(inventory([newId]));
+    await expect(rustic.snapshots()).resolves.toHaveLength(1);
+    expect(rusticHostMock).toHaveBeenCalledTimes(4);
+  });
+
+  it.each([
+    ["missing index", missing(`index/${oldId}`)],
+    ["missing pack", missing(`data/aa/${oldId}`)],
+    ["authentication", missing(`snapshots/${oldId}`, "AccessDenied")],
+    [
+      "unspecified missing key",
+      output("[]", 'S3Error { code: "NoSuchKey" }', 1),
+    ],
+    ["short object id", missing("snapshots/abcdef")],
+    [
+      "different object in the final error",
+      {
+        ...missing(),
+        stderr: Buffer.from(
+          missing()
+            .stderr.toString()
+            .replace(
+              "Reading file `snapshots/" + oldId,
+              "Reading file `snapshots/" + newId,
+            ),
+        ),
+      },
+    ],
+    ["truncated failure", { ...missing(), truncated: true }],
+    ["malformed JSON", output("not json")],
+    ["truncated JSON", output("[]", "", 0, true)],
+  ])("does not retry %s", async (_name, failure) => {
+    rusticHostMock
+      .mockResolvedValueOnce(failure)
+      .mockResolvedValue(inventory([newId]));
+    await expect(volume().snapshots()).rejects.toThrow();
+    expect(rusticHostMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops immediately if a retry encounters a different failure", async () => {
+    rusticHostMock
+      .mockResolvedValueOnce(missing())
+      .mockResolvedValueOnce(output("[]", "AccessDenied", 1))
+      .mockResolvedValue(inventory([newId]));
+    const result = expect(volume().snapshots()).rejects.toThrow("AccessDenied");
+    await Promise.all([result, jest.runAllTimersAsync()]);
+    expect(rusticHostMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not reuse an older cached inventory when checking archive safety", async () => {
+    rusticHostMock
+      .mockResolvedValueOnce(inventory([oldId]))
+      .mockResolvedValue(missing());
+    const rustic = volume();
+    await rustic.snapshots();
+    const result = expect(rustic.snapshotExists({ id: oldId })).rejects.toThrow(
+      "NoSuchKey",
+    );
+    await Promise.all([result, jest.runAllTimersAsync()]);
+    expect(rusticHostMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("checks existence against the successful retry, including an empty inventory", async () => {
+    rusticHostMock
+      .mockResolvedValueOnce(missing())
+      .mockResolvedValue(inventory([]));
+    const result = expect(volume().snapshotExists({ id: oldId })).resolves.toBe(
+      false,
+    );
+    await Promise.all([result, jest.runAllTimersAsync()]);
+    expect(rusticHostMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps retries within the original inventory timeout", async () => {
+    rusticHostMock
+      .mockImplementationOnce(async () => {
+        jest.setSystemTime(now.valueOf() + 59000);
+        return missing();
+      })
+      .mockResolvedValue(missing());
+    const result = expect(volume().snapshots()).rejects.toThrow("NoSuchKey");
+    await Promise.all([result, jest.runAllTimersAsync()]);
+    expect(rusticHostMock).toHaveBeenCalledTimes(2);
+    expect(rusticHostMock.mock.calls[0][1].timeout).toBe(60000);
+    expect(rusticHostMock.mock.calls[1][1].timeout).toBe(750);
+  });
+
+  it.each([
+    ["completes", 2],
+    ["fails closed", Infinity],
+  ])(
+    "%s retention after forgetting an old backup without repeating mutations",
+    async (_name, failures) => {
+      const ids = [oldId];
+      let missingReads = 0;
+      const afterCreate = jest.fn();
+      rusticHostMock.mockImplementation(async ([command, id]) => {
+        if (command === "forget") {
+          expect(afterCreate).toHaveBeenCalledTimes(1);
+          expect(id).toBe(oldId);
+          ids.splice(ids.indexOf(id), 1);
+          missingReads = failures;
+          return output("");
+        }
+        expect(command).toBe("snapshots");
+        if (missingReads-- > 0) return missing();
+        return inventory(ids);
+      });
+      const rustic = volume();
+      const backup = jest
+        .spyOn(rustic, "backup")
+        .mockImplementation(async () => {
+          ids.push(newId);
+          return {
+            id: newId,
+            time: now,
+            tags: ["cocalc-automatic"],
+            summary: {},
+            snapshotGeneration: 1,
+          };
+        });
+      const update = rustic.update(
+        { frequent: 0, daily: 1, weekly: 0, monthly: 0 },
+        { limit: 1, afterCreate },
+      );
+      const result = Number.isFinite(failures)
+        ? expect(update).resolves.toBeUndefined()
+        : expect(update).rejects.toThrow("NoSuchKey");
+      await Promise.all([result, jest.runAllTimersAsync()]);
+      expect(ids).toEqual([newId]);
+      expect(backup).toHaveBeenCalledTimes(1);
+      expect(
+        rusticHostMock.mock.calls.filter(([args]) => args[0] === "forget"),
+      ).toHaveLength(1);
+    },
+  );
+});
+
 describe("scheduled backup replacement", () => {
   const oldEnv = process.env.COCALC_DISABLE_BTRFS_ROLLING_SNAPSHOTS;
 

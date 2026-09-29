@@ -9,6 +9,9 @@ function makeCallStub() {
     exists: jest.fn(async () => true),
     constants: jest.fn(async () => ({})),
     writeFile: jest.fn(async () => undefined),
+    reserveWrite: jest.fn(),
+    writeReceiptStatus: jest.fn(),
+    writeFileWithReceipt: jest.fn(),
   } as any;
 }
 
@@ -54,6 +57,7 @@ describe("fsClient waitForInterest defaults", () => {
     });
     const callStub = makeCallStub();
     callStub.writeFile.mockRejectedValue(conflict);
+    const writeFile = callStub.writeFile;
     const client = {
       call: jest.fn(() => callStub),
     } as any;
@@ -66,8 +70,8 @@ describe("fsClient waitForInterest defaults", () => {
       fs.writeFileIfUnchanged("/home/user/a.py", "new\n", "old\n"),
     ).rejects.toBe(conflict);
 
-    expect(callStub.writeFile).toHaveBeenCalledTimes(1);
-    expect(callStub.writeFile).toHaveBeenCalledWith(
+    expect(writeFile).toHaveBeenCalledTimes(1);
+    expect(writeFile).toHaveBeenCalledWith(
       "/home/user/a.py",
       expect.objectContaining({
         patch: expect.anything(),
@@ -79,6 +83,7 @@ describe("fsClient waitForInterest defaults", () => {
 
   it("does not write unchanged contents", async () => {
     const callStub = makeCallStub();
+    const writeFile = callStub.writeFile;
     const client = {
       call: jest.fn(() => callStub),
     } as any;
@@ -89,6 +94,6 @@ describe("fsClient waitForInterest defaults", () => {
 
     await fs.writeFileIfUnchanged("/home/user/a.py", "same", "same");
 
-    expect(callStub.writeFile).not.toHaveBeenCalled();
+    expect(writeFile).not.toHaveBeenCalled();
   });
 });

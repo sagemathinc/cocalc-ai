@@ -11,6 +11,8 @@ import { catalogOwnerControl } from "@cocalc/server/artifacts/catalog-api";
 import { createInterBayPersonalLibraryHandler } from "@cocalc/conat/inter-bay/personal-library";
 import { personalLibraryHomeControl } from "@cocalc/server/artifacts/personal-library-api";
 import { createAgentRpcControlHandler } from "@cocalc/conat/inter-bay/agent-rpc";
+import { createInterBayAgentConnectorHandler } from "@cocalc/conat/inter-bay/agent-connector";
+import { agentConnectorControl } from "@cocalc/server/agents/cocalc-connector-routing";
 import { agentRpcControl } from "@cocalc/server/agents/rpc";
 import { list as listOperations } from "@cocalc/server/conat/api/lro";
 import {
@@ -40,6 +42,7 @@ import {
   createInterBayHostConnectionHandler,
   createInterBayHostControlHandler,
   createInterBayProjectHostAuthTokenHandler,
+  createInterBayProjectHostApiKeyAuthTokenHandler,
   createInterBayProjectControlAddressHandler,
   createInterBayProjectControlActiveOpHandler,
   createInterBayProjectControlBackupHandler,
@@ -323,6 +326,17 @@ import {
 } from "@cocalc/server/membership/resolve";
 import * as legacyMigration from "@cocalc/server/legacy-migration";
 import { validateHostActionAuthLocal } from "@cocalc/server/auth/host-action-auth";
+import {
+  getApiKeyAuthorizationStateLocal,
+  getApiKeyIssuanceWatermarkLocal,
+} from "@cocalc/server/api/key-authorization-state";
+import {
+  requestApiKeyActionLocal,
+  decideApiKeyActionLocal,
+  listApiKeyActionsLocal,
+} from "@cocalc/server/api/key-actions";
+import { listProjectSummaries as listProjectSummariesLocal } from "@cocalc/server/projects/list-account-window";
+import { issueProjectHostApiKeyTokenLocal } from "@cocalc/server/api/project-host-api-key";
 import * as publicDirectoryShares from "@cocalc/server/public-directory-shares";
 import { getAccountUsageOverviewForAccount } from "@cocalc/server/membership/account-usage-overview";
 import { recordSiteFundedCodexAccountUsage } from "@cocalc/server/ai/save-response";
@@ -675,6 +689,14 @@ export async function initInterBayServices(): Promise<void> {
     await startProjectReferenceService();
     await startProjectDetailsService();
     services.push(
+      createInterBayAgentConnectorHandler(
+        getConfiguredBayId(),
+        agentConnectorControl,
+        {
+          client: getInterBayFabricClient({ noCache: true }),
+          parallel: true,
+        },
+      ),
       createAgentRpcControlHandler(getConfiguredBayId(), agentRpcControl, {
         client: getInterBayFabricClient({ noCache: true }),
         parallel: true,
@@ -1517,6 +1539,13 @@ async function startAccountLocalService(): Promise<void> {
       });
     },
     validateHostActionAuth: validateHostActionAuthLocal,
+    getApiKeyAuthorizationState: getApiKeyAuthorizationStateLocal,
+    getApiKeyIssuanceWatermark: getApiKeyIssuanceWatermarkLocal,
+    requestApiKeyAction: ({ principal, request }) =>
+      requestApiKeyActionLocal(principal, request),
+    decideApiKeyAction: decideApiKeyActionLocal,
+    listApiKeyActions: listApiKeyActionsLocal,
+    listProjectSummaries: listProjectSummariesLocal,
     getMembership: async ({ account_id }) =>
       await resolveMembershipForAccount(account_id),
     getArchiveLifecycleStatuses: async ({ account_ids }) =>
@@ -3569,9 +3598,16 @@ async function startProjectHostAuthTokenService(): Promise<void> {
         ttl_seconds,
         browser_session_exp_s,
       }),
+    issueApiKey: async (opts) => await issueProjectHostApiKeyTokenLocal(opts),
   };
   services.push(
     createInterBayProjectHostAuthTokenHandler({
+      client,
+      bay_id: getConfiguredBayId(),
+      parallel: true,
+      impl,
+    }),
+    createInterBayProjectHostApiKeyAuthTokenHandler({
       client,
       bay_id: getConfiguredBayId(),
       parallel: true,

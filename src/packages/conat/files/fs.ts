@@ -5,7 +5,13 @@ packages/backend/conat/files/test/local-path.test.ts
 
 */
 
-import { type Client } from "@cocalc/conat/core/client";
+import {
+  ConatError,
+  type Client,
+  type AuthenticatedCaller,
+} from "@cocalc/conat/core/client";
+import { encode, DataEncoding } from "@cocalc/conat/core/codec";
+import { MutationReceipts, type MutationState } from "./mutation-receipts";
 import {
   watchServer,
   watchClient,
@@ -23,12 +29,39 @@ import { getLogger } from "@cocalc/conat/logger";
 import { make_patch } from "@cocalc/util/dmp";
 import type { CompressedPatch } from "@cocalc/util/dmp";
 import sha256js from "sha256";
+import { delay } from "awaiting";
 
 const logger = getLogger("files:fs");
 
 export const DEFAULT_FILE_SERVICE = "fs";
 export const VIEWER_FILE_SERVICE = "fs-viewer";
 export const SHARE_FILE_SERVICE = "fs-share";
+
+export interface FileWriteReceipts {
+  reserveWrite: () => Promise<string>;
+  writeReceiptStatus: (id: string) => Promise<MutationState | "unknown">;
+  writeFileWithReceipt: (
+    id: string,
+    path: string,
+    data: string | Buffer | PatchWriteRequest,
+    saveLast?: boolean,
+  ) => Promise<void>;
+}
+
+type FileRequestContext = { subject?: string; caller?: AuthenticatedCaller };
+type FilesystemWithReceiptMethods = Filesystem &
+  FileWriteReceipts &
+  FileRequestContext;
+
+function writeReceiptScope(context: FileRequestContext): string {
+  const authority = context.caller?.file_mutation_authority;
+  if (!authority || !/^[a-f0-9]{64}$/.test(authority) || !context.subject)
+    throw new ConatError(
+      "write receipts require an authenticated scoped host key",
+      { code: 403 },
+    );
+  return `${authority}:${context.subject}`;
+}
 
 export interface ExecOutput {
   stdout: Buffer;
@@ -619,6 +652,11 @@ export async function fsServer({
   logger.debug("fsServer: ", { subject, service });
 
   const watches: { [subject: string]: any } = {};
+  const receipts = new MutationReceipts({
+    maxEntries: 256,
+    maxPerScope: 32,
+    retentionMs: 120_000,
+  });
 
   // It is extremely important to only have one copy of each
   // Filesystem for each subject, since ths Filesystem does
@@ -660,7 +698,7 @@ export async function fsServer({
   };
 
   logger.debug("fsServer: starting subscription to ", subject);
-  const sub = await resolvedClient.service<Filesystem & { subject?: string }>(
+  const sub = await resolvedClient.service<FilesystemWithReceiptMethods>(
     subject,
     {
       async appendFile(path: string, data: string | Buffer, encoding?) {
@@ -849,6 +887,27 @@ export async function fsServer({
         await (await fs(this.subject)).writeFile(path, data, saveLast);
         void reportMutation(this.subject, "writeFile", path);
       },
+      async reserveWrite() {
+        return receipts.reserve(writeReceiptScope(this));
+      },
+      async writeReceiptStatus(id: string) {
+        return receipts.status(writeReceiptScope(this), id);
+      },
+      async writeFileWithReceipt(id, path, data, saveLast) {
+        const scope = writeReceiptScope(this);
+        const fingerprint = sha256js(
+          Buffer.from(
+            encode({
+              encoding: DataEncoding.MsgPack,
+              mesg: [path, data, saveLast ?? null],
+            }),
+          ),
+        );
+        await receipts.execute(scope, id, fingerprint, async () => {
+          await (await fs(this.subject)).writeFile(path, data, saveLast);
+          void reportMutation(this.subject, "writeFile", path);
+        });
+      },
       async jupyterImportIpynb(ipynb: object) {
         return await jupyter.importIpynb({
           subject: this.subject!,
@@ -907,6 +966,7 @@ export type FilesystemClient = Omit<
   Filesystem,
   "stat" | "lstat" | "jupyterImportIpynb" | "jupyterSaveIpynb"
 > &
+  FileWriteReceipts &
   Required<Pick<Filesystem, "jupyterImportIpynb" | "jupyterSaveIpynb">> & {
     listing: (path: string) => Promise<Listing>;
     stat: (path: string) => Promise<Stats>;
@@ -1172,6 +1232,62 @@ export function fsClient({
     timeout,
     waitForInterest,
   });
+  // Reconcile a lost reply before receipt retention expires. A slow write can
+  // remain in flight across attempts; the server still executes it only once.
+  const receiptCall = resolvedClient.call<FileWriteReceipts>(subject, {
+    timeout: Math.min(timeout, 10_000),
+    waitForInterest,
+  });
+  call.reserveWrite = receiptCall.reserveWrite.bind(receiptCall);
+  call.writeReceiptStatus = receiptCall.writeReceiptStatus.bind(receiptCall);
+  call.writeFileWithReceipt =
+    receiptCall.writeFileWithReceipt.bind(receiptCall);
+
+  const writeFile0 = call.writeFile.bind(call);
+  call.writeFile = async (path, data, saveLast) => {
+    if (!resolvedClient.info?.user?.auth_api_key)
+      return await writeFile0(path, data, saveLast);
+    const binding = () => {
+      const key = resolvedClient.info?.user?.auth_api_key;
+      return (
+        key &&
+        JSON.stringify([
+          key.account_id,
+          key.key_id,
+          key.scope_revision,
+          key.project_id,
+          key.placement_revision,
+          [...key.capabilities].sort(),
+          key.viewer_policy_hash ?? null,
+          [...key.subjects].sort(),
+        ])
+      );
+    };
+    const original = binding();
+    // A failed reservation may leave an unused bounded slot, but never a write.
+    // Once reserved, all recovery uses the same ID; unknown is terminal.
+    const recover = async <T>(operation: () => Promise<T>): Promise<T> => {
+      for (let attempt = 0; ; attempt++) {
+        if (binding() !== original)
+          throw new ConatError("write authority changed during recovery", {
+            code: 403,
+          });
+        try {
+          return await operation();
+        } catch (error) {
+          if (
+            attempt >= 2 ||
+            (error?.code !== "CONNECTION_LOST" && error?.code !== 408)
+          )
+            throw error;
+          await delay(250);
+          await resolvedClient.waitUntilSignedIn({ timeout: 10_000 });
+        }
+      }
+    };
+    const id = await recover(() => call.reserveWrite());
+    await recover(() => call.writeFileWithReceipt(id, path, data, saveLast));
+  };
 
   const readdir0 = call.readdir.bind(call);
   call.readdir = async (path: string, options?) => {

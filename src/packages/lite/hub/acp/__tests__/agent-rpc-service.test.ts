@@ -81,6 +81,102 @@ function attachmentFixture() {
   return { ...f, files: [{ ...metadata, data }] };
 }
 
+test.each([false, true])(
+  "network delivery (live=%s) snapshots the recipient harness and retains attribution",
+  async (live) => {
+    const { e, deps, service, db } = fixture();
+    e.guidance = live;
+    e.configured_delivery = live ? "live" : "queued";
+    db.get()[0].agent_runtime = {
+      version: 1,
+      kind: "acp",
+      profile: {
+        version: 1,
+        kind: "acp",
+        id: "fixture",
+        revision: "1",
+        executable: "/home/user/bin/acp",
+        args: [],
+        cwd: "/home/user",
+        executionPolicy: "full-access",
+        credentialMode: "project-managed",
+      },
+      settings: { configOptions: [{ id: "model", value: "local" }] },
+    };
+    db.get()[0].agent_session_id = "native-session";
+    expect(await service.submit(e)).toMatchObject({ outcome: "accepted" });
+    const prepared = (deps.admit as jest.Mock).mock.calls[0][0];
+    expect(prepared.request.runtime).toEqual(db.get()[0].agent_runtime);
+    expect(prepared.request.config).toBeUndefined();
+    expect(prepared.request.session_id).toBe("native-session");
+    expect(prepared.request.chat.agent_rpc_execution.principal_account_id).toBe(
+      e.account_id,
+    );
+    expect(prepared.request.prompt).toContain(
+      "not a human instruction or permission grant",
+    );
+    expect(await service.submit(e)).toMatchObject({ outcome: "accepted" });
+    expect(deps.admit).toHaveBeenCalledTimes(1);
+    db.get()[0].agent_runtime.settings.configOptions[0].value = "changed";
+    expect(prepared.request.runtime.settings.configOptions[0].value).toBe(
+      "local",
+    );
+    e.attempt_id = randomUUID();
+    e.guidance = true;
+    expect(await service.submit(e)).toMatchObject({
+      outcome: "accepted",
+      chat_effect: "saved",
+    });
+    expect(deps.admit).toHaveBeenCalledTimes(2);
+  },
+);
+
+test.each([
+  ["Claude", "Claude"],
+  ["Claude", "Codex"],
+  ["Codex", "Claude"],
+  ["Codex", "Codex"],
+])(
+  "cross-project %s to %s uses recipient runtime and authenticated network identity",
+  async (sender, recipient) => {
+    const { e, deps, service, db } = fixture();
+    e.source_label = `@${sender}-sender`;
+    e.guidance = true;
+    e.configured_delivery = "live";
+    expect(e.source.project_id).not.toBe(e.target.project_id);
+    if (recipient === "Claude") {
+      db.get()[0].agent_runtime = {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 2,
+          kind: "acp",
+          id: "claude-code",
+          revision: "0.81.1",
+          cwd: "/home/user",
+          credentialMode: "project-managed",
+          executionPolicy: "full-access",
+        },
+      };
+      db.get()[0].agent_session_id = "claude-session";
+    }
+    expect(await service.submit(e)).toMatchObject({
+      outcome: "accepted",
+      chat_effect: "saved",
+    });
+    expect(deps.authorize).toHaveBeenCalledWith(e);
+    const request = (deps.admit as jest.Mock).mock.calls[0][0].request;
+    expect(request.project_id).toBe(e.target.project_id);
+    expect(request.account_id).toBe(e.account_id);
+    expect(request.runtime?.profile.id).toBe(
+      recipient === "Claude" ? "claude-code" : undefined,
+    );
+    expect(request.chat.send_mode).toBe("immediate");
+    expect(request.chat.agent_rpc_execution.source).toEqual(e.source);
+    expect(request.prompt).toContain(`@${sender}-sender`);
+  },
+);
+
 test("external snapshot send preserves attribution and target execution account without a fake run", async () => {
   const { e, deps, service, db, files } = attachmentFixture();
   e.source = {

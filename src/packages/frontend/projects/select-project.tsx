@@ -19,7 +19,7 @@ interface Props {
   disabled?: boolean;
   fullCollaboratorOnly?: boolean;
   onChange: (project_id: string) => void; // called when specific project selected
-  value?: string; // currently selected project
+  value?: string | null; // null keeps a controlled picker empty
   defaultValue?: string;
   style?: CSS;
 }
@@ -127,7 +127,7 @@ export function SelectProject({
           aria-label={ariaLabel}
           allowClear
           disabled={disabled}
-          style={{ marginRight: "15px", flex: 1 }}
+          style={{ marginRight: "15px", flex: 1, minWidth: 0 }}
           showSearch={true}
           placeholder={"Select a project..."}
           optionFilterProp={"children"}

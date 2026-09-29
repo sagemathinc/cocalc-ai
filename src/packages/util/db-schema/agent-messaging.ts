@@ -162,3 +162,100 @@ Table({
     ended_at: timestamp("Explicit runtime revocation time."),
   },
 });
+
+Table({
+  name: "agent_cocalc_connector_configs",
+  rules: {
+    primary_key: "config_id",
+    pg_custom_indexes: [
+      {
+        name: "agent_cocalc_connector_configs_owner_agent_source_key",
+        unique: true,
+        query: "(account_id,agent_id,source_project_id)",
+      },
+    ],
+  },
+  fields: {
+    config_id: required("uuid", "Stable configuration ID."),
+    account_id: required("uuid", "Human who owns this configuration."),
+    agent_id: required("uuid", "Registered native agent."),
+    source_project_id: required("uuid", "Project containing the agent."),
+    scope: {
+      type: "map",
+      pg_type: "JSONB",
+      not_null: true,
+      desc: "Canonical versioned API-key scope; no credential is stored.",
+    },
+    revision: {
+      type: "integer",
+      not_null: true,
+      pg_default: "1",
+      desc: "Monotonic configuration revision.",
+    },
+    enabled: {
+      type: "boolean",
+      not_null: true,
+      pg_default: "false",
+      desc: "Whether a future verified turn may receive this scope.",
+    },
+    created_at: created("Configuration creation time."),
+    updated_at: created("Last configuration update."),
+  },
+});
+
+Table({
+  name: "agent_cocalc_connector_turns",
+  rules: {
+    primary_key: "turn_id",
+    pg_custom_indexes: [
+      {
+        name: "agent_cocalc_connector_turns_idempotency_key",
+        unique: true,
+        query: "(account_id,agent_id,source_project_id,run_id,idempotency_key)",
+      },
+      {
+        name: "agent_cocalc_connector_turns_owner_expiry_idx",
+        query: "(account_id,expires_at)",
+      },
+    ],
+  },
+  fields: {
+    turn_id: required("uuid", "Server-allocated turn credential binding ID."),
+    account_id: required("uuid", "Human who owns the ordinary API key."),
+    agent_id: required("uuid", "Registered native agent."),
+    source_project_id: required("uuid", "Agent source project."),
+    source_host_id: required("uuid", "Authenticated source host at issuance."),
+    run_id: required(
+      "uuid",
+      "Live native-agent run attested by its owner bay.",
+    ),
+    chat_path: {
+      type: "string",
+      desc: "Source chat path for newly issued authenticated turns.",
+    },
+    message_date: {
+      type: "string",
+      desc: "Source message date for newly issued authenticated turns.",
+    },
+    message_id: {
+      type: "string",
+      desc: "Source message ID for newly issued authenticated turns.",
+    },
+    thread_id: {
+      type: "string",
+      desc: "Source thread ID for newly issued authenticated turns.",
+    },
+    idempotency_key: required("uuid", "Trusted runtime's per-turn retry key."),
+    config_id: required("uuid", "Saved human consent configuration."),
+    config_revision: required("integer", "Consent revision at issuance."),
+    key_id: required("string", "Ordinary account API-key lookup ID."),
+    secret_ciphertext: {
+      ...required("string", "Encrypted key for idempotent trusted retries."),
+      pg_type: "TEXT",
+    },
+    expires_at: { ...timestamp("Short managed key expiry."), not_null: true },
+    ended_at: timestamp("Explicit lifecycle revocation time."),
+    created_at: created("Turn credential issuance time."),
+    renewed_at: created("Last successful renewal time."),
+  },
+});

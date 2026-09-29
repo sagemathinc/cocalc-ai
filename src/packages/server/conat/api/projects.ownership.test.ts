@@ -4,8 +4,8 @@ const resolve = jest.fn();
 const local = jest.fn();
 const remote = jest.fn();
 const bridge = jest.fn(() => ({ transferProjectOwnership: remote }));
-jest.mock("./project-dangerous-auth", () => ({
-  requireDangerousProjectMutationAuth: (...args) => fresh(...args),
+jest.mock("./dangerous-session-auth", () => ({
+  requireDangerousSessionAuth: (...args) => fresh(...args),
 }));
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
   __esModule: true,
@@ -48,6 +48,33 @@ it("requires fresh auth before dispatch, even for admins", async () => {
   expect(local).not.toHaveBeenCalled();
   expect(remote).not.toHaveBeenCalled();
 });
+it.each(["home", "owner-bay"])(
+  "rejects impersonated ownership transfers before dispatch to %s",
+  async (bay_id) => {
+    resolve.mockResolvedValue({ bay_id });
+    fresh.mockImplementationOnce(async ({ allow_actor_impersonation }) => {
+      if (allow_actor_impersonation === false) {
+        throw Object.assign(new Error("impersonation blocked"), {
+          code: "impersonation_blocked",
+        });
+      }
+    });
+    await expect(transferProjectOwnership(opts)).rejects.toMatchObject({
+      code: "impersonation_blocked",
+    });
+    expect(fresh).toHaveBeenCalledWith({
+      account_id: opts.account_id,
+      browser_id: opts.browser_id,
+      session_hash: opts.session_hash,
+      require_second_factor: "if_enabled",
+      allow_actor_impersonation: false,
+    });
+    expect(admin).not.toHaveBeenCalled();
+    expect(resolve).not.toHaveBeenCalled();
+    expect(local).not.toHaveBeenCalled();
+    expect(remote).not.toHaveBeenCalled();
+  },
+);
 it("dispatches locally only after resolving owning bay and ignores public admin flags", async () => {
   await transferProjectOwnership({ ...opts, trusted_admin: true } as any);
   expect(resolve).toHaveBeenCalledWith(opts.project_id);

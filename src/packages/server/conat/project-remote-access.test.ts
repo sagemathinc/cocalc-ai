@@ -77,6 +77,24 @@ describe("project remote access", () => {
     }));
     isAdminMock = jest.fn(async () => false);
   });
+  it("fails closed for membership references when ownership is unavailable or changes", async () => {
+    const { resolveProjectReferenceForMemberAllowRemote } =
+      await import("./project-remote-access");
+    const opts = { account_id: ACCOUNT_ID, project_id: PROJECT_ID };
+    resolveProjectBayMock.mockResolvedValueOnce(null);
+    await expect(
+      resolveProjectReferenceForMemberAllowRemote(opts),
+    ).rejects.toThrow("owner is unavailable");
+    expect(projectReferenceGetMock).not.toHaveBeenCalled();
+    projectReferenceGetMock.mockResolvedValue({
+      project_id: PROJECT_ID,
+      owning_bay_id: "bay-other",
+      users: { [ACCOUNT_ID]: { group: "collaborator" } },
+    });
+    await expect(
+      resolveProjectReferenceForMemberAllowRemote(opts),
+    ).rejects.toThrow("owner changed");
+  });
 
   it("does not treat a remote viewer as a collaborator or warm runtime routing", async () => {
     projectReferenceGetMock = jest.fn(async () => ({

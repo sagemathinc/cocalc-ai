@@ -5,6 +5,7 @@
 
 import type { Client } from "@cocalc/conat/core/client";
 import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
+import { resolveHostConnectionSingleFlight } from "@cocalc/conat/hub/resolve-host-singleflight";
 
 export interface ProjectHostRoutingApi {
   resolveHostConnection(opts: { host_id: string }): Promise<HostConnectionInfo>;
@@ -146,7 +147,14 @@ export class ProjectHostClientManager {
     project_id: string;
     host_id: string;
   }): Promise<ProjectHostClientLease> {
-    const connection = await this.api.resolveHostConnection({ host_id });
+    // A manager belongs to one authenticated account/API lifetime. This also
+    // covers custom APIs that do not pass through the SDK's requestHub boundary.
+    const connection = await resolveHostConnectionSingleFlight(
+      this,
+      this.account_id,
+      [{ host_id }],
+      () => this.api.resolveHostConnection({ host_id }),
+    );
     if (connection.host_id !== host_id) {
       throw new Error("project-host routing returned a different host");
     }

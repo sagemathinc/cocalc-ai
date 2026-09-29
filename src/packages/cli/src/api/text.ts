@@ -56,6 +56,96 @@ type SyncStringLike = {
   hash_of_live_version(): number | undefined;
 };
 
+function guardTextSession(client: ConatClient, raw: SyncStringLike) {
+  let failure: Error | undefined;
+  const waiters = new Set<(error: Error) => void>();
+  const fail = (message: string) => {
+    if (failure) return;
+    failure = new Error(message);
+    for (const reject of waiters) reject(failure);
+    waiters.clear();
+  };
+  const close = () => {
+    fail("live text session interrupted: session closed");
+    client.removeListener("info", checkAuthority);
+    client.removeListener("closed", clientClosed);
+    return raw.close();
+  };
+  const interrupt = (message: string) => {
+    if (failure) return;
+    fail(message);
+    // Closing discards pending edits; it must not acknowledge a pending save.
+    void (async () => {
+      await close();
+    })().catch(() => undefined);
+  };
+  const checkAuthority = () => {
+    if (client.info?.user?.error) {
+      interrupt("live text session interrupted: authorization failed");
+    }
+  };
+  const clientClosed = () => {
+    interrupt("live text session interrupted: connection closed");
+  };
+  const check = () => {
+    if (failure) throw failure;
+  };
+  const run = async <T>(fn: () => Promise<T>): Promise<T> => {
+    check();
+    return await new Promise<T>((resolve, reject) => {
+      waiters.add(reject);
+      // Remove each completed operation instead of retaining handlers on one
+      // never-settling promise for the entire editing session.
+      const done = () => waiters.delete(reject);
+      try {
+        Promise.resolve(fn()).then(
+          (value) => {
+            done();
+            resolve(value);
+          },
+          (error) => {
+            done();
+            reject(error);
+          },
+        );
+      } catch (error) {
+        done();
+        reject(error);
+      }
+    });
+  };
+  const session: SyncStringLike = {
+    wait_until_ready: () => run(() => raw.wait_until_ready()),
+    isClosed: () => !!failure || raw.isClosed(),
+    close,
+    to_str: () => {
+      check();
+      return raw.to_str();
+    },
+    from_str: (text) => {
+      check();
+      raw.from_str(text);
+    },
+    save: () => run(() => raw.save()),
+    ...(raw.save_to_disk
+      ? { save_to_disk: () => run(() => raw.save_to_disk!()) }
+      : {}),
+    historyLastVersion: () => {
+      check();
+      return raw.historyLastVersion();
+    },
+    hash_of_live_version: () => {
+      check();
+      return raw.hash_of_live_version();
+    },
+  };
+  client.on("info", checkAuthority);
+  client.on("closed", clientClosed);
+  if (client.state === "closed") clientClosed();
+  else if (client.state === "connected") checkAuthority();
+  return { session, run };
+}
+
 type WithProjectTextSession<Ctx, Project extends TextProjectIdentity> = <T>(
   ctx: Ctx,
   options: TextDocumentBindingOptions,
@@ -273,8 +363,9 @@ export function createTextApi<Ctx, Project extends TextProjectIdentity>({
             assertTextWriteExpectation(before, writeOptions);
             if (session.to_str() !== text) {
               session.from_str(text);
-              await saveTextSession(session, writeOptions);
             }
+            // The live text may already match while disk still has older content.
+            await saveTextSession(session, writeOptions);
             return currentTextInfo(project, path, session, association);
           },
         );
@@ -350,6 +441,7 @@ export async function openLiveTextSession({
   openTimeoutMs?: number;
 }): Promise<{
   session: SyncStringLike;
+  run: <T>(fn: () => Promise<T>) => Promise<T>;
   path: string;
   association: TextDocumentAssociation;
 }> {
@@ -360,7 +452,7 @@ export async function openLiveTextSession({
       `path '${normalizedPath}' is a structured document (${association.doctype}), not a text document`,
     );
   }
-  const session = client.sync.string({
+  const raw = client.sync.string({
     project_id: projectId,
     path: normalizedPath,
     ...(persistent != null ? { persistent } : {}),
@@ -368,6 +460,7 @@ export async function openLiveTextSession({
       ? { document_activity_interval: fileUseInterval }
       : {}),
   }) as unknown as SyncStringLike;
+  const { session, run } = guardTextSession(client, raw);
 
   let timer: NodeJS.Timeout | undefined;
   try {
@@ -384,12 +477,20 @@ export async function openLiveTextSession({
         }, openTimeoutMs);
       }),
     ]);
+  } catch (error) {
+    try {
+      await session.close();
+    } catch {
+      /* Preserve the opening error. */
+    }
+    throw error;
   } finally {
     if (timer) clearTimeout(timer);
   }
 
   return {
     session,
+    run,
     path: normalizedPath,
     association,
   };
@@ -411,10 +512,13 @@ export function createLiveTextBinder<Ctx, Project extends TextProjectIdentity>({
   type Entry = {
     project: Project;
     session: SyncStringLike;
+    run: <T>(fn: () => Promise<T>) => Promise<T>;
     path: string;
     association: TextDocumentAssociation;
   };
   const sessionPromises = new Map<string, Promise<Entry>>();
+  const clientIds = new WeakMap<ConatClient, number>();
+  let nextClientId = 0;
   const leases = new RefcountLeaseManager<string>({
     delayMs: leaseMs,
     disposer: async (key) => {
@@ -441,10 +545,21 @@ export function createLiveTextBinder<Ctx, Project extends TextProjectIdentity>({
       options.cwd,
     );
     const path = normalizeTextPath(options.path);
-    const key = JSON.stringify({ project_id: project.project_id, path });
+    // Never share live drafts across credential-bearing client instances.
+    if (!clientIds.has(client)) clientIds.set(client, nextClientId++);
+    const key = JSON.stringify({
+      client: clientIds.get(client),
+      project_id: project.project_id,
+      path,
+    });
     const release = await leases.acquire(key);
     try {
       let entryPromise = sessionPromises.get(key);
+      if (entryPromise && (await entryPromise).session.isClosed()) {
+        if (sessionPromises.get(key) === entryPromise)
+          sessionPromises.delete(key);
+        entryPromise = sessionPromises.get(key);
+      }
       if (!entryPromise) {
         const created = (async () => {
           const opened = await openLiveTextSession({
@@ -469,7 +584,7 @@ export function createLiveTextBinder<Ctx, Project extends TextProjectIdentity>({
         }
       }
       const entry = await entryPromise;
-      return await fn(entry);
+      return await entry.run(() => fn(entry));
     } finally {
       await release();
     }
@@ -493,6 +608,7 @@ export async function openTextApi(
     Promise<{
       project: CurrentProjectIdentity;
       session: SyncStringLike;
+      run: <T>(fn: () => Promise<T>) => Promise<T>;
       path: string;
       association: TextDocumentAssociation;
     }>
@@ -526,6 +642,11 @@ export async function openTextApi(
     const release = await sessionLeases.acquire(key);
     try {
       let entryPromise = sessionPromises.get(key);
+      if (entryPromise && (await entryPromise).session.isClosed()) {
+        if (sessionPromises.get(key) === entryPromise)
+          sessionPromises.delete(key);
+        entryPromise = sessionPromises.get(key);
+      }
       if (!entryPromise) {
         const created = (async () => {
           const opened = await openLiveTextSession({
@@ -551,7 +672,7 @@ export async function openTextApi(
         }
       }
       const entry = await entryPromise;
-      return await fn(entry);
+      return await entry.run(() => fn(entry));
     } finally {
       await release();
     }

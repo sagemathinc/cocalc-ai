@@ -239,6 +239,7 @@ import {
   isValidSubjectWithoutWildcards,
   ConatError,
   headerToError,
+  serviceErrorAttributes,
 } from "@cocalc/conat/util";
 export { ConatError, headerToError };
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
@@ -274,6 +275,7 @@ import {
 } from "@cocalc/conat/files/fs";
 import TTL from "@isaacs/ttlcache";
 import { abortable } from "./abort";
+import { emitWithDeadline } from "./deadline-socket";
 import {
   ConatSocketServer,
   ConatSocketClient,
@@ -627,7 +629,18 @@ export class Client extends EventEmitter {
   } = { servers: {}, clients: {} };
   public readonly options: ClientOptions;
   private inboxSubject: string;
+  private initializedInboxPrefix?: string;
+  private inboxConnectionId?: string;
   private inbox?: EventEmitter;
+  private inboxRequests = new Map<
+    EventEmitter,
+    Map<
+      EventIterator<Message>,
+      { subject: string; onInvalidate?: (err: ConatError) => void }
+    >
+  >();
+  private inboxSubscription?: Subscription;
+  private inboxGeneration = 0;
   private permissionError = {
     pub: new TTL<string, string>({ ttl: 1000 * 60 }),
     sub: new TTL<string, string>({ ttl: 1000 * 60 }),
@@ -767,8 +780,14 @@ export class Client extends EventEmitter {
       }
       const firstTime = this.info == null;
       this.info = info;
-      if (firstTime) {
-        void this.initInbox().catch((err) => {
+      const prefixChanged =
+        this.initializedInboxPrefix !== this.getInboxPrefix();
+      if (
+        firstTime ||
+        prefixChanged ||
+        this.inboxConnectionId !== this.conn.id
+      ) {
+        void this.initInbox({ preserve: !prefixChanged }).catch((err) => {
           if (this.isClosed()) {
             return;
           }
@@ -936,6 +955,12 @@ export class Client extends EventEmitter {
         this.state != "connected" ||
         this.info?.user?.error
       ) {
+        // A caller may arrive after the failed handshake's info event. Do not
+        // wait for another event on that connection; a disconnected client can
+        // still wait for a new handshake instead of reusing the old failure.
+        if (this.state === "connected" && this.info?.user?.error) {
+          throw Error(`failed to sign in - ${this.info.user.error}`);
+        }
         const remaining = deadline == null ? timeout : deadline - Date.now();
         if (remaining != null && remaining <= 0) {
           throw new TimeoutError(
@@ -1004,8 +1029,12 @@ export class Client extends EventEmitter {
     subject: string,
     {
       timeout = MAX_INTEREST_TIMEOUT,
+      deadline,
+      signal,
     }: {
       timeout?: number;
+      deadline?: number;
+      signal?: AbortSignal;
     } = {},
   ) => {
     if (!isValidSubjectWithoutWildcards(subject)) {
@@ -1015,11 +1044,27 @@ export class Client extends EventEmitter {
     }
     timeout = Math.min(timeout, MAX_INTEREST_TIMEOUT);
     try {
+      if (deadline != null) {
+        return await emitWithDeadline(
+          this.conn,
+          "wait-for-interest",
+          (remaining) => ({ subject, timeout: remaining }),
+          {
+            timeout,
+            deadline,
+            signal,
+            isReady: () =>
+              this.isConnected() && this.info != null && !this.info.user?.error,
+            isClosed: this.isClosed,
+          },
+        );
+      }
       const response = await this.conn
         .timeout(timeout ? timeout : 10000)
         .emitWithAck("wait-for-interest", { subject, timeout });
       return response;
     } catch (err) {
+      signal?.throwIfAborted();
       throw toConatError(err, { subject });
     }
   };
@@ -1061,6 +1106,12 @@ export class Client extends EventEmitter {
     return `${this.inboxSubject}.${randomId()}`;
   };
 
+  // Separate branch from request/reply multiplexing for persistent protocols.
+  socketInboxSubject = async (): Promise<string> => {
+    await this.getInbox();
+    return `${this.inboxSubject}.socket.${randomId()}`;
+  };
+
   private getInbox = reuseInFlight(async (): Promise<EventEmitter> => {
     if (this.inbox == null) {
       if (this.isClosed()) {
@@ -1092,7 +1143,23 @@ export class Client extends EventEmitter {
   // identity wrt a remote server (example: a project api key knows
   // the project_id but the client might not).
   public inboxPrefixHook?: (info: ServerInfo | undefined) => string | undefined;
-  private initInbox = async () => {
+  private getInboxPrefix = () =>
+    this.inboxPrefixHook?.(this.info) ??
+    this.options?.inboxPrefix ??
+    INBOX_PREFIX;
+
+  private initInbox = async ({ preserve = false } = {}) => {
+    const preservedInbox = preserve ? this.inbox : undefined;
+    const preservedSubject = preservedInbox ? this.inboxSubject : undefined;
+    for (const inbox of this.inboxRequests.keys()) {
+      if (inbox !== preservedInbox) this.invalidateInboxRequests(inbox);
+    }
+    // A new authenticated namespace must not reuse replies or subscriptions
+    // from the previous one, including an initialization still in flight.
+    const generation = ++this.inboxGeneration;
+    this.inboxSubscription?.close();
+    this.inboxSubscription = undefined;
+    this.inbox = undefined;
     // For request/respond instead of setting up one
     // inbox *every time there is a request*, we setup a single
     // inbox once and for all for all responses.  We listen for
@@ -1106,23 +1173,27 @@ export class Client extends EventEmitter {
     // multiple servers solving the race condition would slow everything down
     // due to having to wait for so many acknowledgements.  Instead, we
     // remove all those problems by just using a single inbox subscription.
-    const inboxPrefix =
-      this.inboxPrefixHook?.(this.info) ??
-      this.options?.inboxPrefix ??
-      INBOX_PREFIX;
+    const inboxPrefix = this.getInboxPrefix();
     if (!inboxPrefix.startsWith(INBOX_PREFIX)) {
       throw Error(`custom inboxPrefix must start with '${INBOX_PREFIX}'`);
     }
-    this.inboxSubject = `${inboxPrefix}.${randomId()}`;
+    this.initializedInboxPrefix = inboxPrefix;
+    this.inboxConnectionId = this.conn.id;
+    const inboxSubject = preservedSubject ?? `${inboxPrefix}.${randomId()}`;
+    this.inboxSubject = inboxSubject;
+    const superseded = () =>
+      this.isClosed() || generation !== this.inboxGeneration;
     let sub;
     await until(
       async () => {
+        if (superseded()) return true;
         try {
           await this.waitUntilSignedIn();
-          sub = await this.subscribe(this.inboxSubject + ".*");
+          if (superseded()) return true;
+          sub = await this.subscribe(inboxSubject + ".*");
           return true;
         } catch (err) {
-          if (this.isClosed()) {
+          if (superseded()) {
             return true;
           }
           // this should only fail due to permissions issues, at which point
@@ -1135,21 +1206,71 @@ export class Client extends EventEmitter {
       },
       { start: 3000, max: 30000 },
     );
-    if (this.isClosed()) {
+    if (superseded()) {
+      sub?.close();
       return;
     }
 
-    this.inbox = new EventEmitter();
+    this.inboxSubscription = sub;
+    const inbox = preservedInbox ?? new EventEmitter();
+    this.inbox = inbox;
     (async () => {
       for await (const mesg of sub) {
-        if (this.inbox == null) {
+        if (superseded()) {
           return;
         }
-        this.inbox.emit(mesg.subject, mesg);
+        inbox.emit(mesg.subject, mesg);
       }
     })();
-    this.emit("inbox", this.inboxSubject);
+    this.emit("inbox", inboxSubject);
   };
+
+  private trackInboxRequest(
+    inbox: EventEmitter,
+    sub: EventIterator<Message>,
+    subject: string,
+    onInvalidate?: (err: ConatError) => void,
+  ) {
+    if (inbox !== this.inbox || this.isClosed()) {
+      sub.cancel();
+      throw new ConatError("request reply inbox was replaced", {
+        code: "CONNECTION_LOST",
+        subject,
+      });
+    }
+    let requests = this.inboxRequests.get(inbox);
+    if (!requests) {
+      requests = new Map();
+      this.inboxRequests.set(inbox, requests);
+    }
+    requests.set(sub, { subject, onInvalidate });
+  }
+
+  private untrackInboxRequest(
+    inbox: EventEmitter,
+    sub: EventIterator<Message>,
+  ) {
+    const requests = this.inboxRequests.get(inbox);
+    requests?.delete(sub);
+    if (!requests?.size) this.inboxRequests.delete(inbox);
+  }
+
+  private invalidateInboxRequests(inbox: EventEmitter) {
+    const requests = this.inboxRequests.get(inbox);
+    this.inboxRequests.delete(inbox);
+    for (const [sub, { subject, onInvalidate }] of requests ?? []) {
+      // Losing the response channel says nothing about execution. Recovery
+      // belongs to the operation protocol, not automatic transport replay.
+      const err = new ConatError("request reply inbox was replaced or closed", {
+        code: "CONNECTION_LOST",
+        subject,
+      });
+      // Stop pending transport admission too, not just response consumption.
+      // Normal iterator completion only untracks and must not invoke this.
+      onInvalidate?.(err);
+      sub.cancel(err);
+    }
+  }
 
   private isClosed = () => {
     return this.state == "closed";
@@ -1182,6 +1303,8 @@ export class Client extends EventEmitter {
     }
     this.routedClients = {};
     this.setState("closed");
+    for (const inbox of this.inboxRequests.keys())
+      this.invalidateInboxRequests(inbox);
     this.removeAllListeners();
     this.closeAllSockets();
     // @ts-ignore
@@ -1548,7 +1671,7 @@ export class Client extends EventEmitter {
     } catch (err) {
       respond({
         error: err instanceof Error ? err.message : `${err}`,
-        code: (err as any)?.code,
+        ...serviceErrorAttributes(err),
         serviceHandlerMs: Date.now() - handlerStart,
       });
     }
@@ -1959,7 +2082,10 @@ export class Client extends EventEmitter {
       throw toConatError(err, { subject });
     }
     if (response?.error) {
-      throw new ConatError(response.error, { code: response.code, subject });
+      throw new ConatError(response.error, {
+        ...serviceErrorAttributes(response),
+        subject,
+      });
     }
     return response;
   };
@@ -2205,7 +2331,11 @@ export class Client extends EventEmitter {
         return { bytes: 0, count: 0 };
       }
       opts.signal?.throwIfAborted();
-      await abortable(this.waitUntilSignedIn(), opts.signal);
+      await abortable(
+        this.waitUntilSignedIn({ timeout: opts.timeout }),
+        opts.signal,
+      );
+      opts.signal?.throwIfAborted();
       const start = Date.now();
       const { bytes, getCount, getServerTiming, promise } = this._publish(
         subject,
@@ -2238,6 +2368,8 @@ export class Client extends EventEmitter {
         await abortable(
           this.waitForInterest(subject, {
             timeout: timeout ? timeout - (Date.now() - start) : undefined,
+            deadline: opts.deadline,
+            signal: opts.signal,
           }),
           opts.signal,
         );
@@ -2250,6 +2382,10 @@ export class Client extends EventEmitter {
         }
         const elapsed = Date.now() - start;
         timeout -= elapsed;
+        if (opts.deadline != null) {
+          timeout = Math.min(timeout, opts.deadline - Date.now());
+          if (timeout <= 0) throw new ConatError("timeout", { code: 408 });
+        }
         // client and there is interest
         if (timeout <= 500) {
           // but... not enough time left to try again even if there is interest,
@@ -2298,8 +2434,17 @@ export class Client extends EventEmitter {
       timeout = DEFAULT_PUBLISH_TIMEOUT,
       noThrow,
       phaseReporter: _phaseReporter,
+      signal,
+      deadline,
     }: PublishOptions & { confirm?: boolean } = {},
   ) => {
+    signal?.throwIfAborted();
+    if (deadline != null) {
+      timeout = Math.min(timeout, deadline - Date.now());
+      if (timeout <= 0) {
+        throw new ConatError("timeout", { code: 408 });
+      }
+    }
     if (this.isClosed()) {
       return { bytes: 0 };
     }
@@ -2372,10 +2517,25 @@ export class Client extends EventEmitter {
         const f = async () => {
           let response;
           try {
-            response = timeout
-              ? await this.conn.timeout(timeout).emitWithAck("publish", v)
-              : await this.conn.emitWithAck("publish", v);
+            response =
+              deadline != null
+                ? await emitWithDeadline(this.conn, "publish", () => v, {
+                    timeout,
+                    deadline,
+                    signal,
+                    // Match waitUntilSignedIn: no-auth servers send info
+                    // without a user identity, which is valid readiness.
+                    isReady: () =>
+                      this.isConnected() &&
+                      this.info != null &&
+                      !this.info.user?.error,
+                    isClosed: this.isClosed,
+                  })
+                : timeout
+                  ? await this.conn.timeout(timeout).emitWithAck("publish", v)
+                  : await this.conn.emitWithAck("publish", v);
           } catch (err) {
+            signal?.throwIfAborted();
             throw toConatError(err, { subject });
           }
           // Server rejections are not Socket.IO timeouts. Preserve their code
@@ -2446,47 +2606,86 @@ export class Client extends EventEmitter {
       return await client.request(subject, mesg, {
         timeout,
         ignoreErrorHeader,
+        phaseReporter,
         ...options,
       });
     }
-    if (timeout <= 0) {
-      throw Error("timeout must be positive");
+    if (!Number.isFinite(timeout) || timeout <= 0) {
+      throw Error("timeout must be finite and positive");
     }
-    const inbox = await this.getInbox();
-    const inboxSubject = this.temporaryInboxSubject();
-    const sub = new EventIterator<Message>(inbox, inboxSubject, {
-      idle: timeout,
-      limit: 1,
-      map: (args) => args[0],
-    });
+    // Expiry stops new transport handoffs, never shared readiness. Already
+    // handed-off packets (including binary frames) have an unknown outcome;
+    // cancellation cannot undo a mutation or withdraw downstream buffers.
+    const deadline = Math.min(
+      options.deadline ?? Infinity,
+      Date.now() + timeout,
+    );
+    const controller = new AbortController();
+    const { signal } = controller;
+    const expire = () =>
+      controller.abort(new ConatError("timeout", { code: 408 }));
+    const abort = () => controller.abort(options.signal?.reason);
+    options.signal?.addEventListener("abort", abort, { once: true });
+    if (options.signal?.aborted) abort();
+    const timer = setTimeout(expire, Math.max(0, deadline - Date.now()));
+    let sub: EventIterator<Message> | undefined;
+    const cancelResponse = () => sub?.cancel(signal.reason);
+    signal.addEventListener("abort", cancelResponse, { once: true });
+    try {
+      signal.throwIfAborted();
+      const inbox = await abortable(this.getInbox(), signal);
+      signal.throwIfAborted();
+      const inboxSubject = this.temporaryInboxSubject();
+      sub = new EventIterator<Message>(inbox, inboxSubject, {
+        limit: 1,
+        map: (args) => args[0],
+        onEnd: () => this.untrackInboxRequest(inbox, sub!),
+      });
+      this.trackInboxRequest(inbox, sub, subject, (err) =>
+        controller.abort(err),
+      );
 
-    const opts = {
-      ...options,
-      timeout,
-      phaseReporter,
-      headers: { ...options?.headers, [REPLY_HEADER]: inboxSubject },
-    };
-    const { count } = await this.publish(subject, mesg, opts);
-    if (!count) {
-      sub.stop();
-      // if you hit this, consider using the option waitForInterest:true
-      throw new ConatError(`request -- no subscribers matching '${subject}'`, {
-        code: 503,
-      });
-    }
-    const responseWaitStart = Date.now();
-    for await (const resp of sub) {
-      sub.stop();
-      phaseReporter?.("response_received", {
-        elapsed_ms: Date.now() - responseWaitStart,
-      });
-      if (!ignoreErrorHeader && resp.headers?.error) {
-        throw headerToError(resp.headers);
+      const { count } = await abortable(
+        this.publish(subject, mesg, {
+          ...options,
+          timeout,
+          deadline,
+          signal,
+          phaseReporter,
+          headers: { ...options.headers, [REPLY_HEADER]: inboxSubject },
+        }),
+        signal,
+      );
+      signal.throwIfAborted();
+      if (!count) {
+        // if you hit this, consider using the option waitForInterest:true
+        throw new ConatError(
+          `request -- no subscribers matching '${subject}'`,
+          {
+            code: 503,
+          },
+        );
       }
-      return resp;
+      const responseWaitStart = Date.now();
+      for await (const resp of sub) {
+        signal.throwIfAborted();
+        phaseReporter?.("response_received", {
+          elapsed_ms: Date.now() - responseWaitStart,
+        });
+        if (!ignoreErrorHeader && resp.headers?.error) {
+          throw headerToError(resp.headers);
+        }
+        return resp;
+      }
+      throw new ConatError("timeout", { code: 408 });
+    } finally {
+      clearTimeout(timer);
+      // An early ACK failure must also stop chunks still waiting for admission.
+      controller.abort();
+      options.signal?.removeEventListener("abort", abort);
+      signal.removeEventListener("abort", cancelResponse);
+      sub?.stop();
     }
-    sub.stop();
-    throw new ConatError("timeout", { code: 408 });
   };
 
   // NOTE: Using requestMany returns a Subscription sub, and
@@ -2539,8 +2738,12 @@ export class Client extends EventEmitter {
       sizeOf: (message) => message.length,
       overflow: "throw",
       map: (args) => args[0],
-      onEnd: () => signal?.removeEventListener("abort", abort),
+      onEnd: () => {
+        signal?.removeEventListener("abort", abort);
+        this.untrackInboxRequest(inbox, sub);
+      },
     });
+    this.trackInboxRequest(inbox, sub, subject);
     signal?.addEventListener("abort", abort, { once: true });
     try {
       const { count } = await this.publish(subject, mesg, {
@@ -2773,6 +2976,9 @@ export class Client extends EventEmitter {
 
 interface PublishOptions {
   signal?: AbortSignal;
+  // Absolute admission/response deadline. After transport handoff, outcome is
+  // unknown on timeout/cancellation; this does not retract downstream buffers.
+  deadline?: number;
   headers?: Headers;
   // if encoding is given, it specifies the encoding used to encode the message
   encoding?: DataEncoding;
@@ -3143,9 +3349,13 @@ function concatArrayBuffers(buffers) {
 export type Headers = { [key: string]: JSONValue };
 
 export interface AuthenticatedCaller {
-  cluster_id: string;
-  bay_id: string;
-  bay_credential_id: string;
+  // Opaque server-derived binding for project-host API-key mutation receipts.
+  // This is attribution for deduplication, not permission to execute a request.
+  file_mutation_authority?: string;
+  cluster_id?: string;
+  bay_id?: string;
+  bay_credential_id?: string;
+  socket_return?: string;
 }
 
 export class MessageData<T = any> {
@@ -3275,7 +3485,9 @@ function toConatError(socketIoError, { subject }: { subject?: string } = {}) {
   // only errors are "disconnected" and a timeout
   const e = `${socketIoError}`;
   if (e.includes("disconnected")) {
-    return e;
+    // A lost acknowledgment does not establish whether the operation executed.
+    // Keep this distinct from admission denial or a safe-to-retry failure.
+    return new ConatError(e, { code: "CONNECTION_LOST", subject });
   } else {
     return new ConatError(
       `timeout - ${e}${subject ? " subject:" + subject : ""}`,

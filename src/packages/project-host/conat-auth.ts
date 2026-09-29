@@ -25,6 +25,7 @@ import {
 import { isProjectViewerRole } from "@cocalc/util/project-access";
 import { isAcpSubject, parseAcpSubject } from "@cocalc/conat/ai/acp/subjects";
 import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
+import { isProjectHostApiKeySubjectAllowed } from "@cocalc/conat/auth/project-host-api-key-policy";
 import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import TTL from "@isaacs/ttlcache";
 import { getProjectHostAuthPublicKey } from "./auth-public-key";
@@ -136,6 +137,24 @@ function userFromBearerToken({
   if (claims.act === "hub") {
     return { hub_id: claims.sub || "hub" };
   }
+  if (claims.api_key) {
+    const project = getProject(claims.api_key.project_id);
+    const member = project?.users?.[claims.sub];
+    const group = typeof member === "string" ? member : member?.group;
+    if (
+      Number(project?.runtime_lifecycle_revision) !==
+        claims.api_key.placement_revision ||
+      !isProjectCollaboratorGroup(group)
+    ) {
+      throw new Error("API key project-host binding is no longer valid");
+    }
+    return {
+      account_id: claims.sub,
+      auth_iat_s: claims.iat,
+      auth_lease_exp_s: claims.exp,
+      auth_api_key: claims.api_key,
+    } satisfies CoCalcUser;
+  }
   restrictedBrowserSessionTtlSeconds(claims.browser_session_exp_s);
   if (
     isAccountSessionRevoked({
@@ -149,6 +168,9 @@ function userFromBearerToken({
     account_id: claims.sub,
     auth_iat_s: claims.iat,
     auth_actor: claims.auth_actor,
+    ...(claims.auth_actor === "agent"
+      ? { auth_project_id: claims.project_id }
+      : {}),
   } satisfies CoCalcUser;
 }
 
@@ -369,6 +391,20 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
       // Local internal services authenticate using the system account.
       return true;
     }
+    if (user.auth_api_key) {
+      const binding = user.auth_api_key;
+      const project = getProject(binding.project_id);
+      const member = project?.users?.[user.account_id!];
+      const group = typeof member === "string" ? member : member?.group;
+      return (
+        userType === "account" &&
+        Date.now() < Number(user.auth_lease_exp_s) * 1000 &&
+        Number(project?.runtime_lifecycle_revision) ===
+          binding.placement_revision &&
+        isProjectCollaboratorGroup(group) &&
+        isProjectHostApiKeySubjectAllowed({ binding, subject, type })
+      );
+    }
     if (isFileServerManagementSubject(subject)) {
       return false;
     }
@@ -377,6 +413,19 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
     }
 
     const userId = getCoCalcUserId(user);
+    if (user.auth_actor === "agent") {
+      if (!user.auth_project_id) return false;
+      const projectSubject = extractProjectSubject(subject);
+      const viewerSubject = extractViewerFileSubject(subject);
+      const shareSubject = extractShareFileSubject(subject);
+      if (
+        (projectSubject && projectSubject !== user.auth_project_id) ||
+        (viewerSubject && viewerSubject.project_id !== user.auth_project_id) ||
+        (shareSubject && shareSubject.project_id !== user.auth_project_id)
+      ) {
+        return false;
+      }
+    }
     const examProjectId =
       userType === "account" ? getLocalExamAccountProjectId(userId) : undefined;
     if (
@@ -394,6 +443,8 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
         userType === "account" &&
         examProjectId == null &&
         type === "pub" &&
+        (user.auth_actor !== "agent" ||
+          presence?.project_id === user.auth_project_id) &&
         presence?.account_id === userId &&
         user.auth_scopes?.includes(BROWSER_RUNTIME_PRESENCE_AUTH_SCOPE) ===
           true &&
@@ -416,6 +467,8 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
         examProjectId != null ||
         type !== "pub" ||
         parsed == null ||
+        (user.auth_actor === "agent" &&
+          parsed.project_id !== user.auth_project_id) ||
         (parsed.operation === "automation" && user.auth_actor !== "account") ||
         (parsed.version === "account-project" && parsed.account_id !== userId)
       ) {

@@ -187,7 +187,7 @@ describe("Codex question attention", () => {
     await user.keyboard("{Enter}");
     const status = await screen.findByRole("status");
     expect(status).toHaveTextContent(
-      "Your response is saved. Receipt by Codex is not confirmed.",
+      "Your response is saved. Receipt by the agent is not confirmed.",
     );
     expect(status).toHaveFocus();
     const response = screen.getByRole("region", {
@@ -209,7 +209,7 @@ describe("Codex question attention", () => {
         }}
       />,
     );
-    expect(status).toHaveTextContent("Receipt by Codex is not confirmed");
+    expect(status).toHaveTextContent("Receipt by the agent is not confirmed");
     expect(response).toHaveTextContent("EU");
     await user.tab({ shift: true });
     expect(screen.getByRole("button", { name: "Dismiss" })).toHaveFocus();
@@ -226,30 +226,37 @@ describe("Codex question attention", () => {
     ).toHaveTextContent("EU");
   });
 
-  it("requires explicit synchronous acceptance before claiming receipt", () => {
-    const submitted = {
-      ...questionRecord,
-      state: "answered" as const,
-      response_submitted_at: 10,
-    };
-    const view = render(<CodexAttentionCard initialRecord={submitted} />);
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Receipt by Codex is not confirmed",
-    );
-    view.rerender(
-      <CodexAttentionCard
-        initialRecord={{
-          ...submitted,
-          updated_at: submitted.updated_at + 1,
-          resolution_reason: "Codex accepted the response",
-        }}
-      />,
-    );
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Codex accepted your response.",
-    );
-    expect(screen.getByText("Received by Codex")).toBeInTheDocument();
-  });
+  it.each(["Codex", "ACP"])(
+    "requires explicit %s synchronous acceptance before claiming receipt",
+    (runtime) => {
+      const submitted = {
+        ...questionRecord,
+        state: "answered" as const,
+        response_submitted_at: 10,
+      };
+      const view = render(<CodexAttentionCard initialRecord={submitted} />);
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Receipt by the agent is not confirmed",
+      );
+      view.rerender(
+        <CodexAttentionCard
+          initialRecord={{
+            ...submitted,
+            updated_at: submitted.updated_at + 1,
+            resolution_reason: `${runtime} accepted the response`,
+          }}
+        />,
+      );
+      expect(screen.getByRole("status")).toHaveTextContent(
+        `${runtime === "ACP" ? "The agent" : "Codex"} accepted your response.`,
+      );
+      expect(
+        screen.getByText(
+          `Received by ${runtime === "ACP" ? "agent" : "Codex"}`,
+        ),
+      ).toBeInTheDocument();
+    },
+  );
 
   it("restores a locally submitted answer after remount and exposes long text by keyboard", async () => {
     const user = userEvent.setup();
@@ -397,6 +404,46 @@ describe("Codex question attention", () => {
       ).toBeInTheDocument(),
     );
     otherView.unmount();
+  });
+
+  it("uses the runtime summary and does not describe a closed question as paused", () => {
+    jest
+      .mocked(webapp_client.conat_client.attentionAcp)
+      .mockResolvedValue({ ok: true });
+    const view = render(
+      <CodexAttentionCard
+        initialRecord={{
+          ...questionRecord,
+          summary: "The current ACP turn is paused.",
+        }}
+      />,
+    );
+    expect(
+      screen.getByText("The current ACP turn is paused."),
+    ).toBeInTheDocument();
+    view.unmount();
+    render(
+      <CodexAttentionCard
+        initialRecord={{
+          ...questionRecord,
+          state: "stale",
+          summary: "The current ACP turn is paused.",
+          resolution_reason: "The request was interrupted.",
+        }}
+      />,
+    );
+    expect(screen.getByText("Turn ended")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "That turn has ended. Send your answer as a new message to continue.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("The current ACP turn is paused."),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Send response" }),
+    ).not.toBeInTheDocument();
   });
 
   it("allows exactly one suggested answer", async () => {

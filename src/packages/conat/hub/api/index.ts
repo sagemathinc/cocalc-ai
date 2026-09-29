@@ -2,6 +2,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 import { type Purchases, purchases } from "./purchases";
 import { type System, system } from "./system";
 import { type Projects, projects } from "./projects";
+import { type ApiKeys, apiKeys } from "./api-keys";
 import { type DB, db } from "./db";
 import { handleErrorMessage } from "@cocalc/conat/util";
 import { type Sync, sync } from "./sync";
@@ -40,6 +41,7 @@ import type { HubApiArgTransform, HubApiPrincipalPolicy } from "./util";
 export interface HubApi {
   system: System;
   projects: Projects;
+  apiKeys: ApiKeys;
   db: DB;
   purchases: Purchases;
   sync: Sync;
@@ -78,6 +80,7 @@ type HubApiTransformStructure = {
 const HubApiStructure = {
   system,
   projects,
+  apiKeys,
   db,
   purchases,
   sync,
@@ -183,6 +186,9 @@ export function isHubApiPrincipalAllowed({
   }
   if (policy === "account-or-host-or-compute-agent") {
     return auth_actor === "agent" || !!account_id || !!host_id;
+  }
+  if (policy === "account-or-bound-agent-project") {
+    return !!account_id && (auth_actor !== "agent" || !!project_id);
   }
   return false;
 }

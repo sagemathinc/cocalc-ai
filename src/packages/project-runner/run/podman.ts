@@ -1422,7 +1422,7 @@ function tryKillPid(pid: number, signal: NodeJS.Signals): void {
   } catch {}
 }
 
-async function forceKillContainerProcesses(
+export async function forceKillContainerProcesses(
   project_id: string,
   name: string,
 ): Promise<void> {

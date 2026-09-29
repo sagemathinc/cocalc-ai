@@ -10,6 +10,26 @@ const SERVICE = "persist-test";
 const SUBJECT = `${SERVICE}.account-${ACCOUNT_ID}`;
 
 describe("persistent storage protocol paths", () => {
+  it("confines a project socket's payload to its project storage", () => {
+    const projectId = "00000000-1000-4000-8000-000000000002";
+    const subject = `persist.project-${projectId}.server.shard.client`;
+    expect(() =>
+      assertHasWritePermission({
+        subject,
+        path: `projects/${projectId}/notebook`,
+      }),
+    ).not.toThrow();
+    for (const path of [
+      `accounts/${ACCOUNT_ID}/notebook`,
+      `projects/${ACCOUNT_ID}/notebook`,
+      `projects/${projectId}-other/notebook`,
+      `projects/${projectId}/../${ACCOUNT_ID}/notebook`,
+      "hub/notebook",
+    ]) {
+      expect(() => assertHasWritePermission({ subject, path })).toThrow();
+    }
+  });
+
   it("accepts canonical POSIX paths on every host platform", () => {
     expect(() =>
       assertHasWritePermission({

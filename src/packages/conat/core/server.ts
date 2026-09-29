@@ -29,7 +29,11 @@ cd packages/server
 
 import type { ConnectionStats, ServerInfo } from "./types";
 import { stampFileReadPrincipal } from "../files/read-principal";
-import { validateMessageHeaders } from "./message-headers";
+import { fileMutationAuthority } from "../files/mutation-authority";
+import {
+  validateMessageHeaders,
+  SOCKET_RETURN_HEADER,
+} from "./message-headers";
 import {
   isValidSubject,
   isValidSubjectWithoutWildcards,
@@ -270,6 +274,7 @@ export function init(opts: Options) {
 export type UserFunction = (
   socket,
   systemAccounts?: { [cookieName: string]: { password: string; user: any } },
+  options?: { revalidation?: boolean },
 ) => Promise<any>;
 
 export type AllowFunction = (opts: {
@@ -514,7 +519,7 @@ export class ConatServer extends EventEmitter {
         : "legacy",
     });
     this.cluster = !!id && !!clusterName;
-    this.getUser = async (socket) => {
+    this.getUser = async (socket, _, options) => {
       if (getUser == null) {
         // no auth at all
         return null;
@@ -537,7 +542,7 @@ export class ConatServer extends EventEmitter {
             user: { hub_id: "cluster-link" },
           };
         }
-        return await getUser(socket, systemAccounts);
+        return await getUser(socket, systemAccounts, options);
       }
     };
     this.isAllowed = isAllowed ?? (async () => true);
@@ -1488,6 +1493,8 @@ export class ConatServer extends EventEmitter {
         bay_credential_id: user.bay_credential_id,
       };
     }
+    const file_mutation_authority = fileMutationAuthority(user);
+    if (file_mutation_authority) return { file_mutation_authority };
     return undefined;
   };
 
@@ -1499,14 +1506,42 @@ export class ConatServer extends EventEmitter {
     );
   };
 
+  private requireCurrentLease = (user: any, subject: string): void => {
+    const expiry = Number(user?.auth_lease_exp_s) * 1000;
+    // Timer teardown may run after a queued request or asynchronous policy check.
+    // An expired session is never new authority, nor a permanent scope denial.
+    if (Number.isFinite(expiry) && expiry > 0 && Date.now() >= expiry) {
+      throw new ConatError("authentication lease expired", {
+        code: "CONNECTION_LOST",
+        subject,
+      });
+    }
+  };
+
+  private authorizePublication = async (
+    options: Omit<Parameters<AllowFunction>[0], "type">,
+  ): Promise<void> => {
+    const { user, subject } = options;
+    this.requireCurrentLease(user, subject);
+    const allowed = await this.isAllowed({ ...options, type: "pub" });
+    this.requireCurrentLease(user, subject);
+    if (!allowed) {
+      const message = `permission denied publishing to '${subject}' from ${JSON.stringify(user)}`;
+      this.log(message);
+      throw new ConatError(message, { code: 403 });
+    }
+  };
+
   private publish = async ({
     subject,
     data,
     from,
+    retainAuthority,
   }: {
     subject: string;
     data: any;
     from: any;
+    retainAuthority?: () => boolean;
   }): Promise<{
     count: number;
     auth_ms: number;
@@ -1527,27 +1562,37 @@ export class ConatServer extends EventEmitter {
         code: 403,
       });
     }
-    if (
-      !(await this.isAllowed({
-        user: from,
-        subject,
-        type: "pub",
-        forwardedCaller: clusterForward ? data[7] : undefined,
-      }))
-    ) {
-      const message = `permission denied publishing to '${subject}' from ${JSON.stringify(
-        from,
-      )}`;
-      this.log(message);
-      throw new ConatError(message, {
-        // this is the http code for permission denied, and having this
-        // set is assumed elsewhere in our code, so don't mess with it!
+    await this.authorizePublication({
+      user: from,
+      subject,
+      forwardedCaller: clusterForward ? data[7] : undefined,
+    });
+    if (retainAuthority && !retainAuthority())
+      throw new ConatError("API-key publication authority is unavailable", {
         code: 403,
       });
-    }
     // Includes CN-Reply validation; malformed input must be rejected here,
     // not delivered to a service that would fail trying to answer it.
     validateMessageHeaders(data[5]);
+    const socketReturn = data[5]?.[SOCKET_RETURN_HEADER] as string | undefined;
+    if (
+      socketReturn &&
+      !clusterForward &&
+      !(await this.isAllowed({
+        user: from,
+        subject: socketReturn,
+        type: "sub",
+      }))
+    ) {
+      throw new ConatError("socket return inbox is not authorized", {
+        code: 403,
+      });
+    }
+    if (retainAuthority && !retainAuthority())
+      throw new ConatError("API-key publication authority is unavailable", {
+        code: 403,
+      });
+    this.requireCurrentLease(from, subject);
     stampFileReadPrincipal({
       subject,
       data,
@@ -1559,6 +1604,9 @@ export class ConatServer extends EventEmitter {
     // the first server while forwarding the message.
     if (!clusterForward || data[7] == null) {
       data[7] = this.authenticatedCaller(from);
+      if (socketReturn && !clusterForward) {
+        data[7] = { ...data[7], socket_return: socketReturn };
+      }
     }
     const auth_ms = Date.now() - authStart;
     const routeStart = Date.now();
@@ -1800,11 +1848,124 @@ export class ConatServer extends EventEmitter {
     }
     this.stats[socket.id].user = user;
     const id = socket.id;
+    const leaseExpiry = Number(user?.auth_lease_exp_s) * 1000;
+    const leaseTimer =
+      !user?.error && Number.isFinite(leaseExpiry) && leaseExpiry > 0
+        ? setTimeout(
+            () => {
+              socket.disconnect(true);
+              socket.conn?.close?.();
+            },
+            Math.max(0, leaseExpiry - Date.now()),
+          )
+        : undefined;
+    leaseTimer?.unref?.();
+    // API-key sockets can carry subscriptions for a long time. Reauthenticate
+    // the original credential so revocation also closes existing interests.
+    let apiKeyRefreshInFlight = false;
+    // Reply inboxes do not identify the project that authorized a request.
+    // Retain publication authority for the lifetime of an API-key connection,
+    // including requests whose replies or streams outlive their initial send.
+    const apiKeyPublicationSubjects = new Set<string>();
+    const trackApiKeyPublication = (
+      subject: string,
+      respond?: (response: { error: string; code: number }) => void,
+    ): boolean => {
+      if (user?.auth_method !== "api_key") return true;
+      if (!socket.connected) {
+        respond?.({ error: "API-key connection is closed", code: 403 });
+        return false;
+      }
+      if (
+        !isValidSubjectWithoutWildcards(subject) ||
+        subject.startsWith("_INBOX.")
+      )
+        return true;
+      if (
+        !apiKeyPublicationSubjects.has(subject) &&
+        apiKeyPublicationSubjects.size >=
+          (this.options.maxSubscriptionsPerClient ??
+            MAX_SUBSCRIPTIONS_PER_CLIENT)
+      ) {
+        respond?.({
+          error: "API-key connection authorization interest limit reached",
+          code: 429,
+        });
+        socket.disconnect(true);
+        socket.conn?.close?.();
+        return false;
+      }
+      apiKeyPublicationSubjects.add(subject);
+      return true;
+    };
+    const apiKeyRefreshTimer =
+      !user?.error && user?.auth_method === "api_key"
+        ? setInterval(async () => {
+            if (!socket.connected) return;
+            if (apiKeyRefreshInFlight) {
+              socket.disconnect(true);
+              socket.conn?.close?.();
+              return;
+            }
+            apiKeyRefreshInFlight = true;
+            let timeout: ReturnType<typeof setTimeout> | undefined;
+            try {
+              const current = await Promise.race([
+                (async () => {
+                  const current = await this.getUser(socket, undefined, {
+                    revalidation: true,
+                  });
+                  const interests = new Set([
+                    ...(this.subscriptions[id] ?? []),
+                    ...(this.rpcServiceSubjects[id] ?? []),
+                  ]);
+                  for (const subject of interests) {
+                    if (!socket.connected) throw Error("socket disconnected");
+                    // Keep the original connection's reply namespace. A fresh
+                    // login principal may carry a different random namespace.
+                    if (!(await this.isAllowed({ user, subject, type: "sub" })))
+                      throw Error("API key subscription authority changed");
+                  }
+                  for (const subject of apiKeyPublicationSubjects) {
+                    if (!socket.connected) throw Error("socket disconnected");
+                    if (!(await this.isAllowed({ user, subject, type: "pub" })))
+                      throw Error("API key request authority changed");
+                  }
+                  return current;
+                })(),
+                new Promise<never>((_, reject) => {
+                  timeout = setTimeout(
+                    () => reject(new Error("API key revalidation timed out")),
+                    10_000,
+                  );
+                }),
+              ]);
+              if (
+                current?.auth_method !== "api_key" ||
+                current.account_id !== user.account_id ||
+                current.key_id !== user.key_id ||
+                current.scope_revision !== user.scope_revision
+              ) {
+                throw new Error("API key authorization changed");
+              }
+            } catch {
+              socket.disconnect(true);
+              socket.conn?.close?.();
+            } finally {
+              if (timeout) clearTimeout(timeout);
+              apiKeyRefreshInFlight = false;
+            }
+          }, 15_000)
+        : undefined;
+    apiKeyRefreshTimer?.unref?.();
     this.log("new connection", { id, user });
     if (this.subscriptions[id] == null) {
       this.subscriptions[id] = new Set<string>();
     }
     socket.on("disconnecting", async () => {
+      if (leaseTimer) clearTimeout(leaseTimer);
+      if (apiKeyRefreshTimer) clearInterval(apiKeyRefreshTimer);
+      apiKeyPublicationSubjects.clear();
       this.log("disconnecting", { id, user });
       this.unregisterClusterInterestPeer(socket.id);
       socket.conn?.off?.("packetCreate", onServerPacketCreate);
@@ -1875,6 +2036,23 @@ export class ConatServer extends EventEmitter {
       s.recv = recv0;
     });
 
+    const authorizeSocketPublication = async (subject: string, respond) => {
+      try {
+        await this.authorizePublication({ user, subject });
+        return true;
+      } catch (err) {
+        if (err.code === 403) {
+          socket.emit("permission", {
+            message: err.message,
+            subject,
+            type: "pub",
+          });
+        }
+        respond({ error: `${err}`, code: err.code });
+        return false;
+      }
+    };
+
     socket.on("wait-for-interest", async (payload: any = {}, respond) => {
       if (respond == null) {
         return;
@@ -1893,13 +2071,8 @@ export class ConatServer extends EventEmitter {
         respond({ error: "invalid subject" });
         return;
       }
-      if (!(await this.isAllowed({ user, subject, type: "pub" }))) {
-        const message = `permission denied waiting for interest in '${subject}' from ${JSON.stringify(
-          user,
-        )}`;
-        this.log(message);
-        respond({ error: message, code: 403 });
-      }
+      if (!(await authorizeSocketPublication(subject, respond))) return;
+      if (!trackApiKeyPublication(subject, respond)) return;
       try {
         respond(await this.waitForInterest(subject, timeout, socket.id));
       } catch (err) {
@@ -1913,6 +2086,10 @@ export class ConatServer extends EventEmitter {
         return;
       }
       const [subject, ...data] = payload;
+      if (user?.auth_method === "api_key" && !socket.connected) {
+        respond?.({ error: "API-key connection is closed", code: 403 });
+        return;
+      }
       const handlerStart = Date.now();
       const stats = this.stats[socket.id];
       // The per-socket publish queue can outlive a disconnected socket. The
@@ -1933,6 +2110,7 @@ export class ConatServer extends EventEmitter {
           subject,
           data,
           from: user,
+          retainAuthority: () => trackApiKeyPublication(subject),
         });
         respond?.({
           count,
@@ -2071,20 +2249,9 @@ export class ConatServer extends EventEmitter {
         return;
       }
       const authStart = Date.now();
-      if (!(await this.isAllowed({ user, subject, type: "pub" }))) {
-        const message = `permission denied RPC to '${subject}' from ${JSON.stringify(
-          user,
-        )}`;
-        this.log(message);
-        socket.emit("permission", {
-          message,
-          subject,
-          type: "pub",
-        });
-        respond({ error: message, code: 403 });
-        return;
-      }
+      if (!(await authorizeSocketPublication(subject, respond))) return;
       const authMs = Date.now() - authStart;
+      if (!trackApiKeyPublication(subject, respond)) return;
       const routeStart = Date.now();
       const target = this.resolveRpcService(subject);
       const routeMs = Date.now() - routeStart;
@@ -2165,20 +2332,9 @@ export class ConatServer extends EventEmitter {
         return;
       }
       const authStart = Date.now();
-      if (!(await this.isAllowed({ user, subject, type: "pub" }))) {
-        const message = `permission denied fast RPC to '${subject}' from ${JSON.stringify(
-          user,
-        )}`;
-        this.log(message);
-        socket.emit("permission", {
-          message,
-          subject,
-          type: "pub",
-        });
-        respond({ error: message, code: 403 });
-        return;
-      }
+      if (!(await authorizeSocketPublication(subject, respond))) return;
       const authMs = Date.now() - authStart;
+      if (!trackApiKeyPublication(subject, respond)) return;
       const routeStart = Date.now();
       const target = this.resolveRpcService(subject);
       const routeMs = Date.now() - routeStart;
@@ -2267,20 +2423,9 @@ export class ConatServer extends EventEmitter {
         return;
       }
       const authStart = Date.now();
-      if (!(await this.isAllowed({ user, subject, type: "pub" }))) {
-        const message = `permission denied raw RPC to '${subject}' from ${JSON.stringify(
-          user,
-        )}`;
-        this.log(message);
-        socket.emit("permission", {
-          message,
-          subject,
-          type: "pub",
-        });
-        respond({ error: message, code: 403 });
-        return;
-      }
+      if (!(await authorizeSocketPublication(subject, respond))) return;
       const authMs = Date.now() - authStart;
+      if (!trackApiKeyPublication(subject, respond)) return;
       const routeStart = Date.now();
       const target = this.resolveRpcService(subject);
       const routeMs = Date.now() - routeStart;

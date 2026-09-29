@@ -63,6 +63,39 @@ describe("rolling btrfs snapshot retention", () => {
     return new Date(now - days * day).toISOString();
   }
 
+  it.each([
+    ["frequent", 15 * 60 * 1000],
+    ["daily", day],
+    ["weekly", 7 * day],
+    ["monthly", 28 * day],
+  ] as const)(
+    "creates a changed snapshot at the exact %s deadline",
+    async (type, interval) => {
+      const { updateRollingSnapshots } = await import("./snapshots");
+      const snapshots = {
+        subvolume: { name: "project-1" },
+        hasUnsavedChanges: jest.fn(async () => true),
+        readdir: jest.fn(async () => [new Date(now - interval).toISOString()]),
+        create: jest.fn(async () => undefined),
+        delete: jest.fn(async () => undefined),
+      };
+      const counts = {
+        frequent: 0,
+        daily: 0,
+        weekly: 0,
+        monthly: 0,
+        [type]: 1,
+      };
+
+      jest.spyOn(Date, "now").mockReturnValue(now - 1);
+      await updateRollingSnapshots({ snapshots: snapshots as any, counts });
+      expect(snapshots.create).not.toHaveBeenCalled();
+      jest.spyOn(Date, "now").mockReturnValue(now);
+      await updateRollingSnapshots({ snapshots: snapshots as any, counts });
+      expect(snapshots.create).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("keeps older snapshots long enough to become weekly/monthly entries", async () => {
     const { snapshotsToDelete } = await import("./snapshots");
     const snapshots = Array.from({ length: 9 }, (_, days) =>

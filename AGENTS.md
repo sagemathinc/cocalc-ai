@@ -12,14 +12,18 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
 
 - Before investigating or fixing a suspected vulnerability, read
   [`SECURITY.md`](SECURITY.md).
-- Never disclose suspected vulnerability details in a public issue,
-  discussion, pull request, commit, or branch before coordinated deployment or
-  explicit maintainer approval.
-- Use a draft GitHub repository security advisory and its temporary private
-  fork for non-public fixes. Do not push the fix to the public repository
-  until deployment is coordinated.
-- If a security issue is discovered during unrelated work, stop before making
-  the details public and alert the user or repository maintainers privately.
+- A finding explicitly introduced by an unmerged public PR, whose affected
+  functionality has not been deployed to a customer-accessible environment,
+  can be discussed and fixed in that PR; it does not require a private
+  advisory. Private development testing does not disqualify it. Merely
+  discovering a pre-existing issue during PR review does not qualify.
+- For findings affecting existing, deployed, or user-accessible code, or when
+  scope is uncertain, report privately. Use a draft GitHub repository security
+  advisory and its temporary private fork for non-public fixes; do not push
+  details or fixes to the public repository before coordinated deployment.
+- Never include real credentials, personal data, or other users' data in a
+  public report or PR. If a security issue is discovered during unrelated
+  work, stop and classify its scope before disclosing details.
 
 ## Preferred Commands
 

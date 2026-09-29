@@ -3,8 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { AcpJobRequest } from "@cocalc/conat/ai/acp/types";
+import type { AcpJobRequest, AcpRequest } from "@cocalc/conat/ai/acp/types";
 import { hubApi } from "../api";
+import { prepareHarnessRequest } from "./harness-runtime";
+import { decodeAcpJobRequest, latestHumanHarnessJob } from "../sqlite/acp-jobs";
 
 type CodexCredentialAdmissionResolver = (opts: {
   account_id: string;
@@ -33,6 +35,34 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
   request: T,
 ): Promise<T> {
   if (request.request_kind === "command") return request;
+  if (request.runtime !== undefined) {
+    if (
+      request.runtime.profile.version === 2 &&
+      request.runtime.profile.id === "claude-code" &&
+      request.chat?.agent_rpc_execution &&
+      !request.harness_credential
+    ) {
+      const previous = latestHumanHarnessJob({
+        project_id: request.project_id,
+        account_id: request.account_id,
+        path: request.chat.path,
+        thread_id: request.chat.thread_id!,
+      });
+      const admitted = previous && decodeAcpJobRequest(previous);
+      if (!admitted || admitted.request_kind === "command" || !admitted.runtime)
+        throw Error(
+          "Open the recipient agent and send a message with its selected payment method before using Agent Networks.",
+        );
+      const { cwd: _oldCwd, ...oldProfile } = admitted.runtime.profile;
+      const { cwd: _newCwd, ...newProfile } = request.runtime.profile;
+      if (JSON.stringify(oldProfile) !== JSON.stringify(newProfile))
+        throw Error(
+          "Recipient runtime changed; send a message in the recipient agent to confirm its payment method.",
+        );
+      request = { ...request, harness_credential: admitted.harness_credential };
+    }
+    return prepareHarnessRequest(request as AcpRequest) as T;
+  }
   const preference = request.config?.paymentSource ?? "auto";
   if (
     preference !== "auto" &&

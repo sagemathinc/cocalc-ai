@@ -9,6 +9,10 @@ import {
   readCodexSubscriptionSelection,
   writeCodexSubscriptionSelection,
 } from "../codex-subscription-selection";
+import {
+  readHarnessCredentialSelection,
+  writeHarnessCredentialSelection,
+} from "../harness-credential-selection";
 
 jest.mock("@cocalc/frontend/alerts", () => ({
   alert_message: jest.fn(),
@@ -842,6 +846,7 @@ describe("thread-config by thread_id", () => {
           thread_image: "https://example.com/x.png",
           pin: "true",
           archived: 1,
+          agent_session_id: "",
           acp_config: { model: "gpt-5.3-codex" },
         };
       }
@@ -856,6 +861,7 @@ describe("thread-config by thread_id", () => {
     expect(meta.thread_image).toBe("https://example.com/x.png");
     expect(meta.pin).toBe(true);
     expect(meta.archived).toBe(true);
+    expect(meta.agent_session_id).toBe("");
     expect(meta.agent_kind).toBe("acp");
     expect(meta.agent_mode).toBe("interactive");
     expect(meta.agent_model).toBe("gpt-5.3-codex");
@@ -1337,6 +1343,137 @@ describe("deleteThread identity targeting", () => {
           row?.event === "chat-thread-state" && row?.thread_id === threadA,
       ),
     ).toBeTruthy();
+  });
+
+  it("forkThread copies Claude native context, settings and private payment choice without calling Codex", async () => {
+    const accountId = "00000000-1000-4000-8000-000000000001";
+    const runtime = {
+      version: 1,
+      kind: "acp",
+      profile: {
+        version: 2,
+        kind: "acp",
+        id: "claude-code",
+        revision: "0.81.1",
+        cwd: "/home/user/work",
+        executionPolicy: "full-access",
+        credentialMode: "project-managed",
+      },
+      settings: {
+        configOptions: [
+          { id: "model", value: "opus" },
+          { id: "effort", value: "high" },
+        ],
+      },
+    };
+    const credential = {
+      version: 1,
+      provider: "anthropic",
+      mode: "account-subscription",
+      credentialId: "00000000-1000-4000-8000-000000000002",
+      claudeAiConnectors: false,
+    } as const;
+    writeHarnessCredentialSelection({
+      accountId,
+      projectId: "proj-1",
+      threadKey: "source",
+      credential,
+    });
+    const actions = makeActions();
+    actions.getThreadMetadata = jest.fn().mockReturnValue({
+      agent_kind: "acp",
+      agent_runtime: runtime,
+      agent_session_id: "claude-source",
+      agent_runtime_controls: { configOptions: [] },
+    });
+    const controlAcp = jest
+      .fn()
+      .mockResolvedValue({ ok: true, forked_session_id: "claude-copy" });
+    const forkAcpSession = jest.fn();
+    (webapp_client as any).conat_client = { controlAcp, forkAcpSession };
+    const copied = await actions.forkThread({
+      threadKey: "source",
+      title: "copy",
+      sourceTitle: "original",
+      isAI: true,
+    });
+    expect(controlAcp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "fork_harness_v1",
+        expected_session_id: "claude-source",
+        expected_runtime: runtime,
+        harness_credential: credential,
+        project_id: "proj-1",
+        path: "x.chat",
+        thread_id: "source",
+      }),
+    );
+    expect(forkAcpSession).not.toHaveBeenCalled();
+    const rows = actions.syncdb.set.mock.calls.map(([row]) => row);
+    const config = rows.find((row) => row.event === "chat-thread-config");
+    expect(config).toMatchObject({
+      thread_id: copied,
+      agent_runtime: runtime,
+      agent_session_id: "claude-copy",
+      acp_config: null,
+    });
+    expect(JSON.stringify(rows)).not.toContain(credential.credentialId);
+    expect(
+      readHarnessCredentialSelection({
+        accountId,
+        projectId: "proj-1",
+        threadKey: copied,
+      }),
+    ).toEqual(credential);
+  });
+
+  it("a rejected or ambiguous Claude fork creates no empty replacement conversation", async () => {
+    const actions = makeActions();
+    actions.getThreadMetadata = jest.fn().mockReturnValue({
+      agent_kind: "acp",
+      agent_session_id: "claude-source",
+      agent_runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 2,
+          kind: "acp",
+          id: "claude-code",
+          revision: "0.81.1",
+          cwd: "/home/user",
+          executionPolicy: "full-access",
+          credentialMode: "project-managed",
+        },
+      },
+    });
+    const controlAcp = jest
+      .fn()
+      .mockRejectedValue(Error("copy outcome unknown"));
+    const forkAcpSession = jest.fn();
+    (webapp_client as any).conat_client = { controlAcp, forkAcpSession };
+    await expect(
+      actions.forkThread({
+        threadKey: "source",
+        title: "copy",
+        sourceTitle: "original",
+        isAI: true,
+      }),
+    ).rejects.toThrow("copy outcome unknown");
+    expect(controlAcp).toHaveBeenCalledTimes(1);
+    expect(forkAcpSession).not.toHaveBeenCalled();
+    expect(actions.syncdb.set).not.toHaveBeenCalled();
+    actions.getThreadMetadata = jest.fn().mockReturnValue({
+      ...actions.getThreadMetadata("source"),
+      agent_session_id: "",
+    });
+    actions.getMessagesInThread = jest
+      .fn()
+      .mockReturnValue([{ acp_thread_id: "claude-source" }]);
+    controlAcp.mockClear();
+    await expect(
+      actions.forkThread({ threadKey: "source", title: "copy", isAI: true }),
+    ).rejects.toThrow("no saved context");
+    expect(controlAcp).not.toHaveBeenCalled();
   });
 
   it("forkThread writes a canonical thread-config row and preserves codex metadata", async () => {

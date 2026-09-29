@@ -524,7 +524,14 @@ export async function set({ path, ipynb }: { path: string; ipynb: object }) {
 }
 
 // Returns async iterator over outputs
-export async function run({ path, cells, noHalt, socket, run_id }: RunOptions) {
+export async function run({
+  path,
+  cells,
+  noHalt,
+  socket,
+  run_id,
+  stdin,
+}: RunOptions) {
   logger.debug("run:", { path, noHalt, run_id });
 
   const actions = jupyterActions[ipynbPath(path)];
@@ -564,6 +571,7 @@ export async function run({ path, cells, noHalt, socket, run_id }: RunOptions) {
           halt_on_error: !noHalt,
           code: cell.input,
           stdin: async (prompt: string, password: boolean) => {
+            if (stdin) return await stdin({ id: cell.id, prompt, password });
             try {
               const resp = await socket.request(
                 {

@@ -5,6 +5,7 @@ import {
   acpTestInternals,
   configureAcpDetachedWorkerRunning,
   disposeAcpAgents,
+  disposeAllChatWritersForTests,
 } from "../index";
 import {
   closeAcpDatabase,
@@ -15,6 +16,7 @@ import {
   claimNextQueuedAcpJobForThread,
   decodeAcpJobRequest,
   enqueueAcpJob,
+  getAcpJobByOpId,
   listQueuedAcpJobs,
   setAcpJobState,
 } from "../../sqlite/acp-jobs";
@@ -32,8 +34,15 @@ import {
   pinCodexCredentialAtAdmission,
   setCodexCredentialAdmissionResolver,
 } from "../codex-credential-admission";
+import { setHarnessLauncher } from "../harness-runtime";
+import { hubApi } from "../../api";
+import { HarnessAgent } from "@cocalc/ai/acp/harness";
 
 const mockSteer = jest.fn();
+// The worker test injects a client; protocol transport is covered in ai/acp.
+jest.mock("@agentclientprotocol/sdk-v1", () => ({}), { virtual: true });
+const mockAuthorizeRpcExecution = jest.fn();
+const originalAuthorizeRpcExecution = hubApi.agent.authorizeRpcExecution;
 jest.mock("@cocalc/ai/acp", () => ({
   ...jest.requireActual("@cocalc/ai/acp"),
   CodexAppServerAgent: {
@@ -46,6 +55,7 @@ jest.mock("@cocalc/chat/server", () => ({
   releaseChatSyncDB: jest.fn(),
 }));
 jest.mock("../../sqlite/acp-turns", () => ({
+  ...jest.requireActual("../../sqlite/acp-turns"),
   listRunningAcpTurnLeases: jest.fn(() => []),
 }));
 jest.mock("../workspace-root", () => ({
@@ -122,6 +132,32 @@ function startRunningTurn(request: AcpRequest) {
   })!;
 }
 
+function claudeTurnRequest(): AcpRequest {
+  return {
+    ...turnRequest(undefined),
+    runtime: {
+      version: 1,
+      kind: "acp",
+      profile: {
+        version: 2,
+        kind: "acp",
+        id: "claude-code",
+        revision: "0.81.1",
+        cwd: "/home/user",
+        credentialMode: "project-managed",
+        executionPolicy: "full-access",
+      },
+    },
+    harness_credential: {
+      version: 1,
+      provider: "anthropic",
+      mode: "account-subscription",
+      credentialId: "33333333-3333-4333-8333-333333333333",
+      claudeAiConnectors: false,
+    },
+  };
+}
+
 function rpcTurnRequest(config: AcpRequest["config"]): AcpRequest {
   const request = turnRequest(config);
   request.chat!.agent_rpc_execution = {
@@ -171,6 +207,8 @@ beforeAll(() => {
 afterAll(() => closeAcpDatabase());
 
 beforeEach(() => {
+  mockAuthorizeRpcExecution.mockReset().mockResolvedValue({});
+  hubApi.agent.authorizeRpcExecution = mockAuthorizeRpcExecution;
   const db = getAcpDatabase();
   for (const { name } of db
     .prepare(
@@ -219,12 +257,277 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  await disposeAllChatWritersForTests();
+  if (originalAuthorizeRpcExecution === undefined)
+    delete hubApi.agent.authorizeRpcExecution;
+  else hubApi.agent.authorizeRpcExecution = originalAuthorizeRpcExecution;
   setCodexCredentialAdmissionResolver();
   await disposeAcpAgents();
   configureAcpDetachedWorkerRunning(undefined);
   if (originalDetached === undefined)
     delete process.env.COCALC_LITE_ACP_DETACHED_WORKER;
   else process.env.COCALC_LITE_ACP_DETACHED_WORKER = originalDetached;
+});
+
+it("does not deliver a harness answer through Codex when its runtime is missing", async () => {
+  await expect(
+    acpTestInternals.deliverAsyncAttentionAnswer({
+      ...record,
+      chat: { ...record.chat, sender_id: "acp-harness" },
+    }),
+  ).rejects.toThrow(/execution configuration is unavailable/);
+  expect(mockSteer).not.toHaveBeenCalled();
+  expect(listQueuedAcpJobs()).toHaveLength(0);
+});
+
+it.each([true, false])(
+  "delivers Claude answers with private funding (running=%s)",
+  async (running) => {
+    const previous = process.env.COCALC_ACP_HARNESSES;
+    process.env.COCALC_ACP_HARNESSES = "1";
+    setHarnessLauncher(async () => {
+      throw Error("must not launch during delivery");
+    });
+    const source = claudeTurnRequest();
+    rows[0].agent_runtime = source.runtime;
+    rows[0].agent_session_id = "claude-session";
+    const job = startRunningTurn(source);
+    if (!running) setAcpJobState({ op_id: job.op_id, state: "done" });
+    const steer = jest.fn(async (id) => ({
+      state: id === "claude-session" && running ? "steered" : "missing",
+      threadId: id,
+    }));
+    const unregister = acpTestInternals.registerInterruptAgentForTests(
+      "claude",
+      projectId,
+      { steer } as any,
+      true,
+    );
+    const claudeRecord = {
+      ...record,
+      chat: {
+        ...source.chat!,
+        ...record.chat,
+        harness_session_id: "claude-session",
+      },
+    };
+    try {
+      const result =
+        await acpTestInternals.deliverAsyncAttentionAnswer(claudeRecord);
+      expect(result.state).toBe(running ? "steered" : "queued");
+      expect(mockSteer).not.toHaveBeenCalled();
+      if (running) {
+        expect(steer).toHaveBeenCalledWith(
+          "claude-session",
+          expect.objectContaining({
+            runtime: source.runtime,
+            harness_credential: source.harness_credential,
+          }),
+        );
+        expect(
+          steer.mock.calls.find(([id]) => id === "claude-session")?.[1]?.config,
+        ).toBeUndefined();
+      } else {
+        const queued = listQueuedAcpJobs();
+        expect(queued).toHaveLength(1);
+        expect(decodeAcpJobRequest(queued[0])).toMatchObject({
+          runtime: source.runtime,
+          harness_credential: source.harness_credential,
+          session_id: "claude-session",
+        });
+      }
+      const count = steer.mock.calls.length;
+      await acpTestInternals.deliverAsyncAttentionAnswer(claudeRecord);
+      expect(steer).toHaveBeenCalledTimes(count);
+      expect(JSON.stringify(rows)).not.toContain(
+        source.harness_credential!.mode,
+      );
+    } finally {
+      unregister();
+      setHarnessLauncher();
+      if (previous === undefined) delete process.env.COCALC_ACP_HARNESSES;
+      else process.env.COCALC_ACP_HARNESSES = previous;
+    }
+  },
+);
+
+it.each([false, true])(
+  "refreshes cold queued ACP context without replacing admitted choices (RPC=%s)",
+  async (rpc) => {
+    const source = claudeTurnRequest();
+    source.runtime!.settings = { configOptions: [{ id: "model", value: "a" }] };
+    if (rpc)
+      source.chat!.agent_rpc_execution =
+        rpcTurnRequest(undefined).chat!.agent_rpc_execution;
+    // Admission happened before the preceding turn created its native session.
+    const job = enqueueAcpJob(source);
+    rows[0].agent_runtime = {
+      ...source.runtime,
+      settings: { configOptions: [{ id: "model", value: "b" }] },
+    };
+    rows[0].agent_session_id = sessionId;
+    const admitted = decodeAcpJobRequest(job);
+    const prepared =
+      await acpTestInternals.prepareQueuedUserMessageForExecution({
+        client: {} as Client,
+        project_id: projectId,
+        path: record.path,
+        thread_id: record.thread_id,
+        user_message_id: job.user_message_id,
+        request: admitted,
+      });
+    expect(prepared.currentAgentSessionId).toBe(sessionId);
+    expect(prepared.currentAgentConfig).toBeUndefined();
+    expect(admitted).toMatchObject({
+      runtime: source.runtime,
+      harness_credential: source.harness_credential,
+    });
+    expect(decodeAcpJobRequest(job)).not.toHaveProperty("session_id");
+  },
+);
+
+it("preserves the explicit reset marker instead of inferring old history", async () => {
+  const source = claudeTurnRequest();
+  rows[0].agent_runtime = source.runtime;
+  rows[0].agent_session_id = "";
+  rows[1].acp_thread_id = sessionId;
+  const job = enqueueAcpJob(source);
+  const prepare = () =>
+    acpTestInternals.prepareQueuedUserMessageForExecution({
+      client: {} as Client,
+      project_id: projectId,
+      path: record.path,
+      thread_id: record.thread_id,
+      user_message_id: job.user_message_id,
+      request: decodeAcpJobRequest(job),
+    });
+  expect((await prepare()).currentAgentSessionId).toBe("");
+  // A second queued unbound message follows the first post-reset turn, rather
+  // than resetting it again or restoring the pre-reset history.
+  rows[0].agent_session_id = "replacement-session";
+  expect((await prepare()).currentAgentSessionId).toBe("replacement-session");
+});
+
+it.each(["", "replacement-session"])(
+  "rejects late first-turn Claude answers after context changed to %j",
+  async (currentSession) => {
+    const source = claudeTurnRequest();
+    rows[0].agent_runtime = source.runtime;
+    rows[0].agent_session_id = currentSession;
+    enqueueAcpJob(source);
+    await expect(
+      acpTestInternals.deliverAsyncAttentionAnswer({
+        ...record,
+        chat: { ...source.chat!, harness_session_id: "original-session" },
+      }),
+    ).rejects.toThrow("context was reset or replaced");
+    expect(listPendingAcpSteers()).toHaveLength(0);
+    expect(listQueuedAcpJobs()).toHaveLength(1); // Only the source job.
+    expect(mockSteer).not.toHaveBeenCalled();
+    expect(rows).toHaveLength(2);
+  },
+);
+
+it("does not guess a legacy first-turn question's session from current context", async () => {
+  const source = claudeTurnRequest();
+  rows[0].agent_runtime = source.runtime;
+  rows[0].agent_session_id = "replacement-session";
+  enqueueAcpJob(source);
+  await expect(
+    acpTestInternals.deliverAsyncAttentionAnswer({
+      ...record,
+      chat: source.chat!,
+    }),
+  ).rejects.toThrow("question's ACP context is unavailable");
+  expect(listPendingAcpSteers()).toHaveLength(0);
+});
+
+it.each(["", "replacement-session"])(
+  "rechecks durable Claude guidance at dispatch after context changed to %j",
+  async (currentSession) => {
+    const source = claudeTurnRequest();
+    rows[0].agent_runtime = source.runtime;
+    const request = { ...source, session_id: sessionId, chat: source.chat! };
+    enqueueAcpSteer({ request, candidate_ids: [sessionId] });
+    // The response was accepted before reset; it must neither inject into a
+    // retained old client nor fall back to a new queued turn after reset.
+    rows[0].agent_session_id = currentSession;
+    const steer = jest.fn(async () => ({ state: "steered" }));
+    const unregister = acpTestInternals.registerInterruptAgentForTests(
+      "stale-claude",
+      projectId,
+      { steer } as any,
+      true,
+    );
+    try {
+      await acpTestInternals.processPendingAcpSteersOnce();
+      expect(
+        getAcpSteer({
+          project_id: projectId,
+          path: record.path,
+          user_message_id: source.chat!.parent_message_id!,
+        }),
+      ).toMatchObject({
+        state: "error",
+        error: expect.stringContaining("context was reset or replaced"),
+      });
+      expect(steer).not.toHaveBeenCalled();
+      expect(mockSteer).not.toHaveBeenCalled();
+      expect(listQueuedAcpJobs()).toHaveLength(0);
+    } finally {
+      unregister();
+    }
+  },
+);
+
+it("does not route current Claude guidance through stale writer/lease aliases", async () => {
+  const source = claudeTurnRequest();
+  rows[0].agent_runtime = source.runtime;
+  rows[0].agent_session_id = "current-session";
+  jest.mocked(listRunningAcpTurnLeases).mockReturnValue([
+    {
+      project_id: projectId,
+      path: record.path,
+      thread_id: record.thread_id,
+      session_id: "stale-session",
+    } as any,
+  ]);
+  enqueueAcpSteer({
+    request: { ...source, session_id: "current-session", chat: source.chat! },
+    candidate_ids: ["stale-session"],
+  });
+  const steer = jest.fn(async (id) => ({
+    state: id === record.thread_id ? "missing" : "steered",
+    threadId: id,
+  }));
+  const unregister = acpTestInternals.registerInterruptAgentForTests(
+    "alias-claude",
+    projectId,
+    { steer } as any,
+    true,
+  );
+  try {
+    await acpTestInternals.processPendingAcpSteersOnce();
+    expect(steer).toHaveBeenCalledTimes(1);
+    expect(steer).toHaveBeenCalledWith("current-session", expect.anything());
+    expect(mockSteer).not.toHaveBeenCalled();
+  } finally {
+    unregister();
+  }
+});
+
+it("cancels a queued Claude answer if reset happens after steer fallback", async () => {
+  const source = claudeTurnRequest();
+  rows[0].agent_runtime = source.runtime;
+  rows[0].agent_session_id = "";
+  const job = startRunningTurn({ ...source, session_id: sessionId });
+  await acpTestInternals.runQueuedAcpJob(job);
+  expect(getAcpJobByOpId(job.op_id)).toMatchObject({
+    state: "canceled",
+    error: expect.stringContaining("context was reset or replaced"),
+  });
+  expect(rows[0].agent_session_id).toBe("");
+  expect(mockSteer).not.toHaveBeenCalled();
 });
 
 it("steers an active turn and records the human answer as delivered", async () => {
@@ -602,6 +905,132 @@ it("uses the generic agent identity if the thread has no model", async () => {
   );
 });
 
+describe("Claude network worker delivery", () => {
+  it.each([
+    ["direct", "allowed"],
+    ["direct", "network revoked"],
+    ["direct", "subscription revoked"],
+    ["durable", "allowed"],
+    ["durable", "network revoked"],
+    ["durable", "subscription revoked"],
+  ])(
+    "%s guidance checks %s before adapter injection",
+    async (path, outcome) => {
+      const previous = process.env.COCALC_ACP_HARNESSES;
+      process.env.COCALC_ACP_HARNESSES = "1";
+      setHarnessLauncher(async () => {
+        throw Error("guidance must not launch a second harness");
+      });
+      const source = claudeTurnRequest();
+      rows[0].agent_runtime = source.runtime;
+      rows[0].agent_session_id = sessionId;
+      startRunningTurn(source);
+      const request: AcpSteerRequest = {
+        ...rpcTurnRequest(undefined),
+        runtime: source.runtime,
+        session_id: sessionId,
+        chat: {
+          ...rpcTurnRequest(undefined).chat!,
+          parent_message_id: "network-guidance",
+          message_id: "network-assistant",
+        },
+      };
+      request.chat.agent_rpc_execution!.guidance = true;
+      request.chat.agent_rpc_execution!.configured_delivery = "live";
+      request.chat.agent_rpc_execution!.source.project_id =
+        "44444444-4444-4444-8444-444444444444";
+      const originalAuthorize = hubApi.agent.authorizeRpcExecution;
+      const authorize = jest.fn(async () => {
+        if (outcome === "network revoked") throw Error(outcome);
+        return {} as any;
+      });
+      hubApi.agent.authorizeRpcExecution = authorize;
+      const validateAuthority = jest.fn(async () => {
+        if (outcome === "subscription revoked") throw Error(outcome);
+      });
+      const client = {
+        sessionId,
+        running: true,
+        supportsSteering: true,
+        steer: jest.fn(async () => "injected"),
+      };
+      const runtime = {
+        binding: {
+          accountId,
+          projectId,
+          profile: source.runtime!.profile,
+          credential: source.harness_credential,
+        },
+        conversation: { path: record.path, threadId: record.thread_id },
+        busy: true,
+        client,
+        validateAuthority,
+      };
+      const steer = jest.fn((id, incoming) =>
+        HarnessAgent.prototype.steer.call(runtime as any, id, incoming),
+      );
+      const unregister = acpTestInternals.registerInterruptAgentForTests(
+        "claude-network",
+        projectId,
+        { steer } as any,
+        true,
+      );
+      try {
+        if (path === "direct") {
+          const delivery = acpTestInternals.handleAcpSteerRequest(request);
+          if (outcome === "allowed")
+            await expect(delivery).resolves.toMatchObject({ state: "steered" });
+          else await expect(delivery).rejects.toThrow(outcome);
+        } else {
+          // Admission happened before the queued delivery authorization check.
+          enqueueAcpSteer({
+            request: await pinCodexCredentialAtAdmission(request),
+            candidate_ids: [sessionId],
+          });
+          await acpTestInternals.processPendingAcpSteersOnce();
+          expect(
+            getAcpSteer({
+              project_id: projectId,
+              path: record.path,
+              user_message_id: "network-guidance",
+            }),
+          ).toMatchObject({
+            state: outcome === "allowed" ? "handled" : "error",
+          });
+        }
+        expect(authorize).toHaveBeenCalledWith({
+          account_id: accountId,
+          authorization: request.chat.agent_rpc_execution,
+        });
+        expect(mockSteer).not.toHaveBeenCalled();
+        expect(listQueuedAcpJobs()).toEqual([]);
+        if (outcome === "allowed") {
+          expect(client.steer).toHaveBeenCalledTimes(1);
+          expect(validateAuthority).toHaveBeenCalledWith(runtime.binding);
+          expect(
+            steer.mock.calls.find(([id]) => id === sessionId)?.[1],
+          ).toMatchObject({
+            harness_credential: source.harness_credential,
+            account_id: accountId,
+          });
+        } else {
+          expect(client.steer).not.toHaveBeenCalled();
+          if (outcome === "network revoked")
+            expect(steer).not.toHaveBeenCalled();
+        }
+      } finally {
+        unregister();
+        if (originalAuthorize === undefined)
+          delete hubApi.agent.authorizeRpcExecution;
+        else hubApi.agent.authorizeRpcExecution = originalAuthorize;
+        setHarnessLauncher();
+        if (previous === undefined) delete process.env.COCALC_ACP_HARNESSES;
+        else process.env.COCALC_ACP_HARNESSES = previous;
+      }
+    },
+  );
+});
+
 describe("agent RPC live guidance funding", () => {
   const liveConfig: AcpRequest["config"] = {
     paymentSource: "subscription-credential",
@@ -638,6 +1067,111 @@ describe("agent RPC live guidance funding", () => {
       user_message_id: request.chat.parent_message_id!,
     })!;
   }
+
+  it.each([
+    ["direct", "network generation changed"],
+    ["direct", "account generation changed"],
+    ["direct", "network membership revoked"],
+    ["durable", "network generation changed"],
+    ["durable", "account generation changed"],
+    ["durable", "network membership revoked"],
+  ])("rejects %s native guidance after %s", async (delivery, reason) => {
+    const request = guidanceRequest();
+    startRunningTurn(turnRequest(liveConfig));
+    if (delivery === "durable") {
+      mockLiveRuntime(liveConfig).running.clear();
+      jest.mocked(listRunningAcpTurnLeases).mockReturnValue([
+        {
+          project_id: projectId,
+          path: record.path,
+          thread_id: record.thread_id,
+          session_id: sessionId,
+          owner_instance_id: "other-worker",
+        } as any,
+      ]);
+      await acpTestInternals.handleAcpSteerRequest(request);
+      expect(storedSteer(request).state).toBe("pending");
+    }
+    // Revoke after admission/forwarding but before the owner injects guidance.
+    mockAuthorizeRpcExecution.mockRejectedValue(new Error(reason));
+    const runtime = mockLiveRuntime(liveConfig);
+    const send = runtime.running.get(sessionId)!.client.request;
+    mockSteer.mockClear();
+    if (delivery === "direct") {
+      await expect(
+        acpTestInternals.handleAcpSteerRequest(request),
+      ).rejects.toThrow(reason);
+    } else {
+      await acpTestInternals.processPendingAcpSteersOnce();
+      expect(storedSteer(request)).toMatchObject({
+        state: "error",
+        error: reason,
+      });
+      const attempts = mockAuthorizeRpcExecution.mock.calls.length;
+      await acpTestInternals.processPendingAcpSteersOnce();
+      expect(mockAuthorizeRpcExecution).toHaveBeenCalledTimes(attempts);
+    }
+    expect(mockAuthorizeRpcExecution).toHaveBeenLastCalledWith({
+      account_id: accountId,
+      authorization: request.chat.agent_rpc_execution,
+    });
+    expect(mockSteer).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(listQueuedAcpJobs()).toEqual([]);
+    expect(rows[2].acp_guidance_delivered_at_ms).toBeUndefined();
+  });
+
+  it.each(["direct", "durable"])(
+    "keeps %s human guidance independent of Agent Network authorization",
+    async (delivery) => {
+      const request = guidanceRequest(liveConfig);
+      delete request.chat.agent_rpc_execution;
+      mockAuthorizeRpcExecution.mockRejectedValue(
+        new Error("not a network turn"),
+      );
+      const runtime = mockLiveRuntime(liveConfig);
+      if (delivery === "direct") {
+        await expect(
+          acpTestInternals.handleAcpSteerRequest(request),
+        ).resolves.toMatchObject({ state: "steered" });
+      } else {
+        enqueueAcpSteer({ request });
+        await acpTestInternals.processPendingAcpSteersOnce();
+        expect(storedSteer(request).state).toBe("handled");
+      }
+      expect(mockAuthorizeRpcExecution).not.toHaveBeenCalled();
+      expect(
+        runtime.running.get(sessionId)!.client.request,
+      ).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(["direct", "durable"])(
+    "rejects %s legacy agent guidance before native injection",
+    async (delivery) => {
+      const request = guidanceRequest(liveConfig);
+      delete request.chat.agent_rpc_execution;
+      request.chat.agent_delivery_id = "retired-delivery";
+      const runtime = mockLiveRuntime(liveConfig);
+      if (delivery === "direct") {
+        await expect(
+          acpTestInternals.handleAcpSteerRequest(request),
+        ).rejects.toThrow("Legacy agent delivery is retired");
+      } else {
+        enqueueAcpSteer({ request });
+        await acpTestInternals.processPendingAcpSteersOnce();
+        expect(storedSteer(request)).toMatchObject({
+          state: "error",
+          error: expect.stringContaining("Legacy agent delivery is retired"),
+        });
+      }
+      expect(mockAuthorizeRpcExecution).not.toHaveBeenCalled();
+      expect(
+        runtime.running.get(sessionId)!.client.request,
+      ).not.toHaveBeenCalled();
+      expect(listQueuedAcpJobs()).toEqual([]);
+    },
+  );
 
   it.each(["auto", "subscription", "subscription-credential"] as const)(
     "inherits live funding instead of the next-turn %s config",

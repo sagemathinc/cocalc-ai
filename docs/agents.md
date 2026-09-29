@@ -2,6 +2,10 @@
 
 This document explains the current Codex/ACP architecture used by CoCalc.
 
+For the opt-in generic ACP v1 integration, see
+[Experimental ACP Harnesses](acp-harnesses.md). The native Codex path described
+below remains the default.
+
 ## Current Model
 
 CoCalc no longer runs a separate `codex-acp` runtime. We run upstream `codex app-server` directly and stream events through the ACP chat pipeline.

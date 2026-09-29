@@ -475,6 +475,7 @@ async function readConatStatsSnapshot({
           project_id: user.project_id,
           hub_id: user.hub_id,
           host_id: user.host_id,
+          auth_api_key_reply_prefix: user.auth_api_key_reply_prefix,
         });
       };
       clients.push(client);
