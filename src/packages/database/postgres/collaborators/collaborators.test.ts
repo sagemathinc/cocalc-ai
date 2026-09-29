@@ -3,6 +3,7 @@ import {
   syncCollaborationDemandSchema,
   readCollaborationProjectDemandPage,
   scheduleCollaborationRevisionDemand,
+  scheduleCollaborationMembershipDemand,
   acquireCollaborationDemand,
   runCollaborationDemandActivation,
 } from "./collaborators-demand";
@@ -437,17 +438,36 @@ test("shared demand claiming selects compatible work across active accounts with
       await scheduleCollaborationRevisionDemand(other_id, project_id),
     ).toBe("inactive");
     await getPool().query(
-      "UPDATE collaboration_access SET due_at=clock_timestamp()+interval '1 day',claim_until=NULL,lease_claim_until=NULL WHERE account_id=$1 AND project_id=$2",
+      "UPDATE collaboration_access SET due_at=clock_timestamp()+interval '1 day',lease_due_at=clock_timestamp()+interval '20 seconds',claim_until=NULL,lease_claim_until=NULL WHERE account_id=$1 AND project_id=$2",
       [account_id, project_id],
     );
+    const readRenewal = async () =>
+      (
+        await getPool().query(
+          `SELECT x.lease_due_at,x.lease_until,q.access_due FROM collaboration_access x
+       JOIN collaboration_demand_activation q USING(account_id)
+       WHERE x.account_id=$1 AND x.project_id=$2`,
+          [account_id, project_id],
+        )
+      ).rows[0];
+    const renewal = await readRenewal();
     expect(
       await scheduleCollaborationRevisionDemand(account_id, project_id),
     ).toBe("scheduled");
+    expect(await readRenewal()).toEqual(renewal);
     const scheduled = await getPool().query(
       "SELECT due_at<=clock_timestamp() AS due FROM collaboration_access WHERE account_id=$1 AND project_id=$2",
       [account_id, project_id],
     );
     expect(scheduled.rows[0].due).toBe(true);
+    await scheduleCollaborationMembershipDemand(
+      getPool(),
+      account_id,
+      project_id,
+    );
+    expect((await readRenewal()).lease_due_at.getTime()).toBeLessThan(
+      renewal.lease_due_at.getTime(),
+    );
   } finally {
     flags.forEach((n, i) => {
       if (prior[i] === undefined) delete process.env[n];

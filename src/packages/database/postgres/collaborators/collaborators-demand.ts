@@ -205,6 +205,7 @@ export async function scheduleCollaborationMembershipDemand(
   db: Pick<PoolClient, "query">,
   account_id: string,
   project_id: string,
+  refreshAccess = true,
 ) {
   if (!demandSchedulingEnabled()) return false;
   const { rows } = await db.query(
@@ -219,9 +220,10 @@ export async function scheduleCollaborationMembershipDemand(
         AND (d.scope->>'kind'='all' OR d.scope->'project_ids' ? p.project_id::text))
     ON CONFLICT(account_id) DO UPDATE SET
       projection_due=LEAST(collaboration_demand_activation.projection_due,excluded.projection_due),
-      access_due=LEAST(collaboration_demand_activation.access_due,excluded.access_due)
+      access_due=CASE WHEN $3 THEN LEAST(collaboration_demand_activation.access_due,excluded.access_due)
+        ELSE collaboration_demand_activation.access_due END
     RETURNING account_id`,
-    [account_id, project_id],
+    [account_id, project_id, refreshAccess],
   );
   if (!rows.length) return false;
   await db.query(
@@ -229,8 +231,9 @@ export async function scheduleCollaborationMembershipDemand(
     VALUES($1,$2,clock_timestamp(),clock_timestamp())
     ON CONFLICT(account_id,project_id) DO UPDATE SET
       due_at=LEAST(collaboration_access.due_at,excluded.due_at),
-      lease_due_at=LEAST(collaboration_access.lease_due_at,excluded.lease_due_at)`,
-    [account_id, project_id],
+      lease_due_at=CASE WHEN $3 THEN LEAST(collaboration_access.lease_due_at,excluded.lease_due_at)
+        ELSE collaboration_access.lease_due_at END`,
+    [account_id, project_id, refreshAccess],
   );
   return true;
 }
@@ -260,6 +263,9 @@ export async function scheduleCollaborationRevisionDemand(
       db,
       account_id,
       project_id,
+      // Projection pages reauthorize with the owner. A content revision does
+      // not require moving an existing independent access renewal forward.
+      rows.length === 0,
     ))
       ? "scheduled"
       : "inactive";

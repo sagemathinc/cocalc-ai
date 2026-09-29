@@ -3150,6 +3150,34 @@ mixed-load capacity: only one account views one project, and no throughput,
 latency percentile, CPU, I/O or WAL envelope is established. Browser validation,
 larger measured load and independent release review remain open.
 
+### Content Revisions Preserve Access Renewal Deadlines
+
+Revision-triggered metadata scheduling previously reused membership scheduling
+and advanced access renewal deadlines on every content update. Existing access
+rows now retain their independent renewal deadlines for content revisions;
+membership changes and new access rows still request access refresh. Projection
+pages continue to authorize against the owner. Lease durations and grants are
+unchanged. A focused regression checks both preserved revision deadlines and
+membership-triggered renewal.
+
+The repeated 100-account paced fixture delivered all 3,000 projections from 30
+conversations sent over 29.052 seconds. Total elapsed time was 39.211 seconds,
+with about 10.2 seconds to drain after the final send. Sampled peak backlog was
+652 account-resource pairs; per-conversation all-account completion latencies
+ranged from 6.048 to 23.679 seconds. Owner RPC deltas were 154 shared project
+pages, six access refreshes, and one revision-interest registration. The prior
+run used 151 pages and 259 access refreshes and drained sooner. These isolated
+runs show reduced redundant refresh work, not a demonstrated latency gain or
+a statistically established throughput limit.
+
+Both active-burst and returning-demand acceptance suites passed (165.548
+seconds combined), including retained personal state and revoked access on
+return. The 50-test core PGlite suite and server/reference typecheck passed.
+This still covers one project and synthetic demand, not browser concurrency,
+multiple hot projects, CPU/I/O/WAL costs, or a production capacity commitment.
+Choose a canary envelope from further measured indexing cost rather than an
+assumed daily-active-user count.
+
 ### Known-Source Demand Becomes Idle
 
 The same timer-driven scenario now releases its active consumer through the
