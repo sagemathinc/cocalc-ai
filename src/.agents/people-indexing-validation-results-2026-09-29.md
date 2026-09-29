@@ -2439,6 +2439,31 @@ warning and some runs emitted Jest's delayed-exit warning, but processes exited
 successfully. No production settings changed. Browser, independent review and
 representative sustained-load/resource-cost gates remain open.
 
+#### Bounded Small-Relation Page Batching
+
+The owner now batches complete small participant sets with metadata, retaining
+the 50-resource and metadata-byte bounds and adding an aggregate 200-participant
+bound. Participant payload overhead is reserved in the byte calculation. A
+resource requiring participant continuation still occupies a page alone and
+uses the existing continuation/fencing protocol. The home already supported
+multiple complete participant sets; its authorization and completeness checks
+are unchanged.
+
+The populated 100-account/24-conversation workload now reaches all accounts in
+7,474 ms, with 18 shared-page calls, 12 access refreshes and one revision-interest
+registration. The subsequent conversation reaches all homes in 7,386 ms (owner
+observed at 1,062 ms; first home at 2,329 ms). This supersedes the roughly
+80-second initial-load observation above for this same synthetic workload, not
+for arbitrary catalogs or production hardware.
+
+Server/reference typecheck, 50 core collaborator tests, 19 relation tests and
+the real multibay populated workload pass. The added boundary regression projects
+three 100-participant conversations as two resources then one, with all 300 home
+participant rows retained; existing large-set continuation tests still pass.
+The acceptance suite takes 65.427 seconds including setup/cleanup. This is one
+project with small per-thread relation sets, not a sustained mixed workload or
+10k/100k DAU capacity result. No production configuration was changed.
+
 This does not yet isolate the fault to ingestion, revision delivery or home
 scheduling. Do not use the earlier empty-catalog result as evidence that populated
 views meet a release latency target. The pending test should stay failing until

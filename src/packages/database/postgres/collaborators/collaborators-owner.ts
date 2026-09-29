@@ -964,8 +964,15 @@ export async function readCollaborationSharedProjection(
     const items: NonNullable<
       Extract<CollaborationProjectionPage, { allowed: true }>["items"]
     > = [];
+    let participants = 0;
+    let relation: Awaited<ReturnType<typeof readOwnerParticipantProjection>> =
+      {};
     for (const row of rows.slice(0, 50)) {
-      if (items.length && row.relation_set) break;
+      const participantCount =
+        row.metadata && row.relation_set ? Number(row.relation_count) : 0;
+      // Large relation sets keep the single-resource continuation protocol.
+      // Completed small sets may share a page, but never exceed its edge budget.
+      if (items.length && participants + participantCount > 200) break;
       const item = {
         entry_key: row.entry_key as string,
         revision: Number(row.revision),
@@ -984,6 +991,7 @@ export async function readCollaborationSharedProjection(
       const size =
         Buffer.byteLength(JSON.stringify(item)) +
         64 +
+        (row.relation_set ? 512 + Math.min(participantCount, 200) * 40 : 0) +
         account_ids.length *
           (item.resource
             ? Buffer.byteLength(JSON.stringify(item.resource.resource_id)) + 32
@@ -991,14 +999,15 @@ export async function readCollaborationSharedProjection(
       if (bytes + size > PAGE_BYTES) break;
       items.push(item);
       bytes += size;
-      if (row.relation_set) break;
+      participants += Math.min(participantCount, 200);
+      relation = await readOwnerParticipantProjection(
+        db,
+        item,
+        row,
+        items.length === 1 && !reset ? opts.relation_after : undefined,
+      );
+      if (relation.next) break;
     }
-    const relation = await readOwnerParticipantProjection(
-      db,
-      items[0],
-      rows[0],
-      reset ? undefined : opts.relation_after,
-    );
     const complete = !relation.next && items.length === rows.length;
     const last = items[items.length - 1];
     for (const account_id of account_ids) {

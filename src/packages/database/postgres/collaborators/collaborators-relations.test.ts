@@ -271,6 +271,46 @@ test("adding another conversation preserves unchanged revision and immutable rel
   expect((await read()).revision).not.toBe(beforeStaleDigest.revision);
 });
 
+test("small complete relation sets share a page within the 200-participant budget", async () => {
+  const resources = Array.from({ length: 3 }, (_, i) => ({
+    ...resource(),
+    resource_id: `small-${i}`,
+    thread_id: `small-${i}`,
+  }));
+  const edges: CollaborationRelation[] = resources.flatMap((r) =>
+    Array.from({ length: 100 }, (_, i) => ({
+      kind: "participant" as const,
+      source: {
+        kind: r.kind,
+        resource_id: r.resource_id,
+        thread_id: r.thread_id!,
+      },
+      account_id: person(i),
+    })),
+  );
+  await publish(await prepare(1, edges, resources));
+  const first = (await tick()).page;
+  if (!first.allowed) throw Error("fixture access denied");
+  expect(first.items).toHaveLength(2);
+  expect(first.complete).toBe(false);
+  expect(first.relation_after).toBeUndefined();
+  expect(first.items.map((i) => i.participants?.ids.length)).toEqual([
+    100, 100,
+  ]);
+  expect(first.items.every((i) => i.participants?.complete)).toBe(true);
+  const second = (await tick()).page;
+  if (!second.allowed) throw Error("fixture access denied");
+  expect(second.items).toHaveLength(1);
+  expect(second.complete).toBe(true);
+  const {
+    rows: [row],
+  } = await getPool().query(
+    "SELECT count(*)::integer AS n FROM collaboration_participant_index WHERE account_id=$1",
+    [account_id],
+  );
+  expect(row.n).toBe(300);
+});
+
 test("1000 participants page through owner and home; preview never bounds For You/person membership", async () => {
   const prepared = await prepare();
   await publish(prepared);
