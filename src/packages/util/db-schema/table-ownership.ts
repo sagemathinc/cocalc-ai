@@ -1460,15 +1460,22 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
       "Consumers reacquire bounded interest at the current home after expiry or rehome; old-home leases may expire without transfer.",
   }),
 
-  ...adHocEntries(["collaboration_scan_jobs", "collaboration_scan_receipts"], {
-    ownership: "project-owning",
-    authority: "project_id",
-    portability: "unsupported",
-    source: "database/postgres/collaborators/collaborators-scan.ts",
-    migrate_to_schema: true,
-    notes:
-      "Durable Scan admission receipts and queued work. Explicit prototype installation only; project rehome is guarded until transfer is implemented, not discarded as view cache.",
-  }),
+  ...adHocEntries(
+    [
+      "collaboration_scan_jobs",
+      "collaboration_scan_receipts",
+      "collaboration_scan_budget",
+    ],
+    {
+      ownership: "project-owning",
+      authority: "project_id",
+      portability: "unsupported",
+      source: "database/postgres/collaborators/collaborators-scan.ts",
+      migrate_to_schema: true,
+      notes:
+        "Durable Scan admission receipts and queued work. Explicit prototype installation only; project rehome is guarded until transfer is implemented, not discarded as view cache.",
+    },
+  ),
 
   ...adHocEntries(["membership_trial_claims"], {
     ownership: "seed-global",

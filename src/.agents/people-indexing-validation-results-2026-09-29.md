@@ -603,3 +603,21 @@ Project rehome refuses movement while this state exists until transfer support
 is implemented. The server TypeScript build and 12 focused tests pass (five
 PGlite admission tests and seven table-ownership tests). This does not validate
 real concurrent PostgreSQL contention or end-to-end host dispatch.
+
+### Shared Project Admission Budget
+
+The owner store now persists a project-wide token bucket: burst two, refill one
+token per minute, with database time sampled under the project lock. Different
+collaborators share it; stable retries return before charging it. Throttled
+requests do not create receipts or jobs. Backward clock movement does not refill
+the bucket. A unique project/state index also prevents duplicate queued or
+running slots. The retained-receipt cap is now 11,000 instead of 4,096, enough
+for seven days at the allowed project rate plus headroom.
+
+This is not the actor-wide limit: that must be enforced at account home across
+projects and bays, rather than a per-owner approximation. Host/bay/global limits,
+status-poll budgets, dispatch, and receipt cleanup remain outstanding; public
+admission remains unexposed. Budget state is project-owned and included in the
+unsupported-rehome guard. Seven PGlite admission cases cover concurrent burst
+admission, shared actors, refill, free replay, and backward-clock behavior in
+addition to the earlier authorization and receipt cases.

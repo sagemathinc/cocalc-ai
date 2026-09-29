@@ -63,8 +63,10 @@ describeDb("owner scan admission prototype", () => {
       ),
     );
     expect(receipts.filter((r) => r.admission === "accepted")).toHaveLength(1);
+    expect(receipts.filter((r) => r.admission === "coalesced")).toHaveLength(1);
+    expect(receipts.filter((r) => r.admission === "throttled")).toHaveLength(6);
     expect(
-      new Set(receipts.map((r) => ("job_id" in r ? r.job_id : null))).size,
+      new Set(receipts.flatMap((r) => ("job_id" in r ? [r.job_id] : []))).size,
     ).toBe(1);
     expect(
       (
@@ -90,6 +92,10 @@ describeDb("owner scan admission prototype", () => {
     expect(await inspectCollaborationScan(next, authority)).toBeNull();
     await getPool().query(
       "UPDATE collaboration_scan_jobs SET created_at=clock_timestamp()-interval '6 minutes' WHERE project_id=$1",
+      [request.project_id],
+    );
+    await getPool().query(
+      "UPDATE collaboration_scan_budget SET updated_at=clock_timestamp()-interval '6 minutes' WHERE project_id=$1",
       [request.project_id],
     );
     expect((await admitCollaborationScan(next, authority)).admission).toBe(
@@ -132,6 +138,58 @@ describeDb("owner scan admission prototype", () => {
     await expect(admitCollaborationScan(request, authority)).rejects.toThrow(
       "expired",
     );
+  });
+  test("shared project bucket refills while replay consumes no tokens", async () => {
+    const request = await fixture();
+    const receipt = await admitCollaborationScan(request, authority);
+    const other = randomUUID();
+    await getPool().query(
+      "UPDATE projects SET users=users || $2::jsonb WHERE project_id=$1",
+      [
+        request.project_id,
+        JSON.stringify({ [other]: { group: "collaborator" } }),
+      ],
+    );
+    await admitCollaborationScan(
+      { ...request, account_id: other, request_id: randomUUID() },
+      authority,
+    );
+    expect(await admitCollaborationScan(request, authority)).toEqual(receipt);
+    const next = { ...request, request_id: randomUUID() };
+    expect((await admitCollaborationScan(next, authority)).admission).toBe(
+      "throttled",
+    );
+    await getPool().query(
+      "UPDATE collaboration_scan_budget SET updated_at=clock_timestamp()-interval '61 seconds' WHERE project_id=$1",
+      [request.project_id],
+    );
+    expect((await admitCollaborationScan(next, authority)).admission).toBe(
+      "coalesced",
+    );
+    expect(
+      (
+        await admitCollaborationScan(
+          { ...next, request_id: randomUUID() },
+          authority,
+        )
+      ).admission,
+    ).toBe("throttled");
+  });
+  test("backward clock does not refill a depleted bucket", async () => {
+    const request = await fixture();
+    await admitCollaborationScan(request, authority);
+    await getPool().query(
+      "UPDATE collaboration_scan_budget SET tokens=0,updated_at=clock_timestamp()+interval '5 minutes' WHERE project_id=$1",
+      [request.project_id],
+    );
+    expect(
+      (
+        await admitCollaborationScan(
+          { ...request, request_id: randomUUID() },
+          authority,
+        )
+      ).admission,
+    ).toBe("throttled");
   });
   test("replay and inspection require current project membership and owner", async () => {
     const request = await fixture();

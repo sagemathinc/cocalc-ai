@@ -10,7 +10,9 @@ import { transaction, uuid } from "./collaborators-common";
 
 const RETENTION_MS = 7 * 86400000;
 const COOLDOWN_MS = 300000;
-const MAX_RECEIPTS = 4096;
+// Seven days at one admission/minute, plus the initial burst and headroom.
+const MAX_RECEIPTS = 11000;
+const TOKEN_INTERVAL_MS = 60000;
 export interface ScanAdmissionRequest {
   project_id: string;
   /** Authenticated actor, supplied by the future owner service, not public input. */
@@ -37,6 +39,12 @@ export async function syncCollaborationScanSchema(
     created_at TIMESTAMPTZ NOT NULL, PRIMARY KEY(project_id,slot))`);
   await db.query(`CREATE INDEX IF NOT EXISTS collaboration_scan_jobs_due
     ON collaboration_scan_jobs(state,created_at,project_id)`);
+  await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS collaboration_scan_jobs_state
+    ON collaboration_scan_jobs(project_id,state)`);
+  await db.query(`CREATE TABLE IF NOT EXISTS collaboration_scan_budget (
+    project_id UUID PRIMARY KEY REFERENCES projects(project_id) ON DELETE CASCADE,
+    tokens DOUBLE PRECISION NOT NULL CHECK(tokens>=0 AND tokens<=2),
+    updated_at TIMESTAMPTZ NOT NULL)`);
   await db.query(`CREATE TABLE IF NOT EXISTS collaboration_scan_receipts (
     project_id UUID NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
     account_id UUID NOT NULL, request_id UUID NOT NULL, mode TEXT NOT NULL,
@@ -104,6 +112,39 @@ export async function admitCollaborationScan(
       )
     ).rows[0].n;
     if (count >= MAX_RECEIPTS) throw Error("scan receipt capacity reached");
+    // The project row is already locked. All actors share this bucket, and a
+    // replay returns above without spending a token. Failed transactions do
+    // not consume capacity. Actor-wide budgets belong at account home.
+    const budget = (
+      await db.query(
+        "SELECT tokens,updated_at FROM collaboration_scan_budget WHERE project_id=$1",
+        [opts.project_id],
+      )
+    ).rows[0];
+    const tokens = budget
+      ? Math.min(
+          2,
+          budget.tokens +
+            Math.max(0, now - budget.updated_at.getTime()) / TOKEN_INTERVAL_MS,
+        )
+      : 2;
+    if (tokens < 1)
+      return {
+        admission: "throttled" as const,
+        retry_after_ms: Math.ceil(
+          (1 - tokens) * TOKEN_INTERVAL_MS +
+            Math.max(0, (budget?.updated_at.getTime() ?? now) - now),
+        ),
+      };
+    await db.query(
+      `INSERT INTO collaboration_scan_budget(project_id,tokens,updated_at) VALUES($1,$2,$3)
+      ON CONFLICT(project_id) DO UPDATE SET tokens=EXCLUDED.tokens,updated_at=EXCLUDED.updated_at`,
+      [
+        opts.project_id,
+        tokens - 1,
+        new Date(Math.max(now, budget?.updated_at.getTime() ?? now)),
+      ],
+    );
     const admission = job ? "coalesced" : "accepted";
     if (!job) {
       const slot = jobs.length ? 1 : 0;
