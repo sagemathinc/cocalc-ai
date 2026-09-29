@@ -210,6 +210,77 @@ acceptance("scan blocked backlog query cost", () => {
         env.project,
       ]);
   }, 120000);
+  test("public Scan traverses home and owner without resubmitting inspection", async () => {
+    const request = {
+      project_id: env.project,
+      account_id: randomUUID(),
+      request_id: randomUUID(),
+      mode: "check",
+      route: { bay_id: "forged" },
+    };
+    const invoke = (method: string, value: object, agent = false) =>
+      env.worker("b").call("scanPublic", { method, request: value, agent });
+    try {
+      await expect(invoke("requestScan", request, true)).rejects.toThrow(
+        "signed in",
+      );
+      const receipt = await invoke("requestScan", request);
+      expect(receipt.admission).toBe("accepted");
+      expect(await invoke("requestScan", request)).toEqual(receipt);
+      expect(await invoke("inspectScan", request)).toEqual({
+        allowed: true,
+        value: receipt,
+        poll_after_ms: 1000,
+      });
+      const status = { project_id: env.project, job_id: receipt.job_id };
+      expect(await invoke("getScanStatus", status)).toEqual({
+        allowed: true,
+        value: { state: "queued" },
+        poll_after_ms: 1000,
+      });
+      expect(
+        await invoke("inspectScan", { ...request, request_id: randomUUID() }),
+      ).toEqual({ allowed: true, value: null, poll_after_ms: 1000 });
+      await env.sql(
+        "a",
+        "UPDATE collaboration_scan_actor_budget SET read_tokens=0,read_updated_at=clock_timestamp()+interval '1 hour' WHERE account_id=$1",
+        [env.accounts[0]],
+      );
+      const denied = await invoke("getScanStatus", status);
+      expect(denied.allowed).toBe(false);
+      expect(denied.retry_after_ms).toBeGreaterThan(3500000);
+      expect(
+        await env.sql(
+          "owner",
+          "SELECT account_id,count(*)::integer AS n FROM collaboration_scan_receipts WHERE project_id=$1 GROUP BY account_id",
+          [env.project],
+        ),
+      ).toEqual([{ account_id: env.accounts[0], n: 1 }]);
+      expect(
+        await env.sql(
+          "a",
+          "SELECT count(*)::integer AS n FROM collaboration_scan_actor_receipts WHERE account_id=$1",
+          [env.accounts[0]],
+        ),
+      ).toEqual([{ n: 1 }]);
+    } finally {
+      for (const table of [
+        "collaboration_scan_jobs",
+        "collaboration_scan_receipts",
+        "collaboration_scan_budget",
+      ])
+        await env.sql("owner", `DELETE FROM ${table} WHERE project_id=$1`, [
+          env.project,
+        ]);
+      for (const table of [
+        "collaboration_scan_actor_receipts",
+        "collaboration_scan_actor_budget",
+      ])
+        await env.sql("a", `DELETE FROM ${table} WHERE account_id=$1`, [
+          env.accounts[0],
+        ]);
+    }
+  }, 120000);
   test("authenticated fabric routes actor reservation at home to the project owner", async () => {
     const request = {
       project_id: env.project,

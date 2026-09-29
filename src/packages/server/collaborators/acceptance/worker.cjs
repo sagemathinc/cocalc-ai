@@ -1009,6 +1009,22 @@ async function command(name, args = {}) {
         route: { bay_id: args.bay_id },
       });
     }
+    case "scanPublic": {
+      const methods = ["requestScan", "inspectScan", "getScanStatus"];
+      if (!methods.includes(args.method))
+        throw Error("invalid fixture Scan method");
+      process.env.COCALC_PEOPLE_SCAN_API_PROTOTYPE = "1";
+      const { transformArgs } = require("@cocalc/conat/hub/api");
+      const [request] = await transformArgs({
+        name: `collaborators.${args.method}`,
+        args: [args.request],
+        account_id: config.accounts[0],
+        auth_actor: args.agent ? "agent" : undefined,
+      });
+      return require("@cocalc/server/collaborators/api").collaboratorsApi[
+        args.method
+      ](request);
+    }
     case "scanActorRace": {
       if (config.role !== "a") throw Error("account home fixture required");
       return await require("@cocalc/database/postgres/collaborators/collaborators-scan-actor").reserveCollaborationScanActor(

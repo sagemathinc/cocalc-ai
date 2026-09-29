@@ -2344,3 +2344,28 @@ was changed. User-facing recovery semantics are documented in the CLI README.
 Live CLI-to-owner/host validation, UI, delegated-agent authorization,
 demand/bootstrap integration and the broader workload/lifecycle gates remain
 open.
+
+### Public Scan Routing On Real PostgreSQL And Fabric
+
+Extended the isolated Scan acceptance harness to invoke the real public hub
+argument transform and API wrapper in bay B, route to account home A, and then
+to a separate project owner over authenticated inter-bay transport. The fixture
+overrides a forged account identity with its synthetic authenticated account and
+rejects an agent principal. It verifies stable admission replay, exact receipt
+inspection, queued discovery status, unknown request inspection, and polling
+throttling from the durable home budget. Repeated reads leave exactly one owner
+receipt and one home reservation; supplied route fields cannot redirect them.
+
+`COCALC_COLLABORATORS_ACCEPTANCE=1 pnpm exec jest --runInBand --runTestsByPath
+collaborators/scan-scale.acceptance.test.ts` passes all seven cases in 54 seconds.
+The suite also retains real PostgreSQL reservation/lease races, retirement races,
+lock-timeout recovery, and bounded selection over 10,000 blocked jobs and 100,000
+receipts. Server/reference typecheck passes. All databases, identities and work
+are isolated fixture state; no production settings were changed.
+
+The public wrapper and transform are invoked inside the test worker, not through
+an installed CLI or a browser login. Inter-bay RPC is real, but this new case
+stops at queued work rather than host traversal/extraction or home projection.
+It is routing/receipt evidence, not full vertical Scan completion or a capacity
+claim. Live CLI/host execution, UI, scoped-agent authorization and the remaining
+plan gates remain open.
