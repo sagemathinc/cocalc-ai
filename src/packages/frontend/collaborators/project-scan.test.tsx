@@ -151,6 +151,71 @@ test("an older API does not expose the control", () => {
   expect(screen.queryByRole("button", { name: "Scan project" })).toBeNull();
 });
 
+test("status service failure preserves admitted work without resubmission", async () => {
+  const { api, user, renderScan } = setup();
+  api.getScanStatus.mockRejectedValueOnce(Error("service unavailable"));
+  renderScan();
+  await user.click(screen.getByRole("button", { name: "Scan project" }));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent("Scan queued"),
+  );
+  const request = sessionStorage.getItem(storageKey);
+  await advance();
+  await user.click(screen.getByRole("button", { name: "Check Scan status" }));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "could not be confirmed",
+    ),
+  );
+  expect(sessionStorage.getItem(storageKey)).toBe(request);
+  expect(screen.queryByRole("button", { name: "New Scan" })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Retry same Scan" }),
+  ).toBeDisabled();
+  await advance();
+  await user.click(screen.getByRole("button", { name: "Check Scan status" }));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent("Discovery finished"),
+  );
+  expect(api.requestScan).toHaveBeenCalledTimes(1);
+  expect(api.getScanStatus.mock.calls).toEqual([
+    [{ project_id: "project", job_id: "job" }],
+    [{ project_id: "project", job_id: "job" }],
+  ]);
+});
+
+test("confirmed failure moves focus to status and requires explicit new admission", async () => {
+  const { api, user, renderScan } = setup();
+  api.getScanStatus.mockResolvedValue({
+    allowed: true,
+    value: { state: "failed" },
+    poll_after_ms: 1000,
+  });
+  renderScan();
+  await user.click(screen.getByRole("button", { name: "Scan project" }));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent("Scan queued"),
+  );
+  const request = sessionStorage.getItem(storageKey);
+  await advance();
+  screen.getByRole("button", { name: "Check Scan status" }).focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(screen.getByRole("status")).toHaveFocus());
+  expect(screen.getByRole("status")).toHaveTextContent("Scan failed");
+  expect(sessionStorage.getItem(storageKey)).toBeNull();
+  expect(screen.getByRole("button", { name: "New Scan" })).toBeDisabled();
+  await advance(1100);
+  await user.tab();
+  expect(screen.getByRole("button", { name: "New Scan" })).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(api.requestScan).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("status")).toHaveFocus();
+  await user.tab();
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(api.requestScan).toHaveBeenCalledTimes(2));
+  expect(api.requestScan.mock.calls[1][0].request_id).not.toBe(request);
+});
+
 test("missing receipt allows explicit forgetting without silently submitting work", async () => {
   const { api, user, renderScan } = setup();
   const previous = "00000000-0000-4000-8000-000000000001";

@@ -35,6 +35,21 @@ claims are not needed to finish these gates.
 
 ### Original Audit And Subsequent Evidence
 
+Follow-up component coverage passes all 12 Scan tests in 52.246 seconds. New
+cases verify that a status-service failure retains the admitted request and job,
+does not permit replacement admission, and can recover by inspecting that same
+job. A confirmed failed outcome moves keyboard focus to the status, enforces
+the cooldown, and requires explicit preparation and submission of a new request.
+Frontend typecheck and lint pass. These mocked-service tests do not close the
+live storage-unavailable or terminal Scan gates.
+
+Read-only source inspection explains the CLI environment conflict: the hub dev
+environment clears inherited project secrets but does not clear inherited
+`COCALC_API_RELAY`; that transport requires the project secret. No credential
+or routing override was attempted. Inspection of review attempt
+`76cf958d-1c5f-4c57-8c3c-1eb070ae38ea` still returned outcome `unknown` with
+`No retained acceptance evidence`; no duplicate review was sent.
+
 The user approved the smaller initial-release contract in section 1 of the
 [design plan](people-indexing-design-validation-2026-09-29.md). It supersedes the
 original broad gates; this is a scope decision, not evidence of completion.
