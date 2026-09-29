@@ -249,3 +249,37 @@ Next is the recipient-home transaction that reconciles this result with current
 invalidation and personal attention state, commits the existing notification
 graph idempotently, and only then permits owner acknowledgment. Capture remains
 default-off; no cold-account or overall scale gate is complete.
+
+## Event-Triggered Home Delivery
+
+The internal receiver now resolves the recipient's home, captures a one-shot
+home fence, and fetches exact retained intent from the current owner. It checks
+the request token, captured generation state, and a database-clock 60-second
+deadline after taking the access-row lock. The shared personal-attention and
+notification-graph transaction then handles follow/mute policy and stable-event
+deduplication. The existing projection/lease delivery path remains unchanged.
+
+For a cold recipient this creates only an unscheduled fence row: no access
+generation or lease is granted, and both view and renewal due times are infinity.
+Missing home membership is retried, not mistaken for a definitive owner
+revocation. The base account-project membership projection is still required;
+the People conversation index is not. This is not yet a general elimination of
+historical-account maintenance.
+
+A bounded per-project worker claims up to 25 obligations, routes to their homes,
+and settles only returned terminal receipts. Exceptions and unknown replies
+retain obligations with retry delay; stable graph identity prevents duplicate
+notifications after a lost reply. The worker is callable internally but is not
+yet wired into the production demand/owner scheduler. Prototype capture remains
+default-off pending that integration and broader failure/scale validation.
+
+Validation: TypeScript build, 28 database notification tests, and 52 server
+API/notification tests pass. Four isolated PostgreSQL acceptance tests pass.
+The live fanout test creates exactly one notification without warming the
+recipient view, retries as a duplicate, loses a reply after commit while keeping
+the obligation, then processes definitive removal/rejoin revocation through the
+real receiver and token-checked settlement. Pending-event retention releases
+only after that settlement. The original projection-independent path also passes.
+Additional rehome and concurrent invalidation end-to-end cases remain necessary;
+unit tests reject expired, superseded-token, and changed-generation responses
+before any personal-state write.

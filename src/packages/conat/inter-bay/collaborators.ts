@@ -141,6 +141,14 @@ export type InterBayCollaboratorsApi = RoutedApi & {
       >["entries"][number]
     | null
   >;
+  deliverNotificationObligation(
+    opts: CollaborationNotificationObligation & {
+      route: CollaborationRoute;
+    },
+  ): Promise<{
+    status: "created" | "duplicate" | "suppressed" | "revoked";
+    notification_id?: string;
+  }>;
   refreshAccess(opts: {
     route: CollaborationRoute;
     requests: CollaborationAccessRequest[];

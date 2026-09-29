@@ -4,6 +4,7 @@
  */
 import type { CollaboratorsApi } from "@cocalc/conat/hub/api/collaborators";
 import { invitationPublicApi, invitationControlApi } from "./invitations-api";
+import { receiveCollaborationNotificationObligation } from "@cocalc/server/notifications/collaboration-obligation";
 import { normalizePrivateAlias } from "@cocalc/util/private-alias";
 import {
   chatAliasTarget,
@@ -779,6 +780,13 @@ export const collaboratorsControl: InterBayCollaboratorsApi = {
       await checkOwner(opts.project_id, opts.route),
     );
   },
+  async deliverNotificationObligation(opts) {
+    await checkHome(opts.account_id, opts.route);
+    return receiveCollaborationNotificationObligation(
+      opts,
+      fetchCollaborationNotificationObligation,
+    );
+  },
 };
 
 /** Resolve once per batch; each owner receives only its own bounded membership checks. */
@@ -838,5 +846,13 @@ export async function fetchCollaborationNotificationObligation(
 ) {
   return owner(input.project_id, (api, route) =>
     api.notificationObligation({ ...input, route }),
+  );
+}
+
+export async function deliverCollaborationNotificationObligation(
+  input: CollaborationNotificationObligation,
+) {
+  return home(input.account_id, (api, route) =>
+    api.deliverNotificationObligation({ ...input, route }),
   );
 }

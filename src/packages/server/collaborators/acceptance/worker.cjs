@@ -757,6 +757,30 @@ async function command(name, args = {}) {
       );
     case "notificationFanout": {
       const fanout = require("@cocalc/database/postgres/collaborators/collaborators-notification-fanout");
+      if (args.operation === "drain")
+        return require("@cocalc/server/notifications/collaboration-fanout").deliverCollaborationNotificationFanout(
+          {
+            project_id: config.project,
+            bay_id: config.bays[0],
+            deliver: async (input) => {
+              const receipt =
+                await require("@cocalc/server/collaborators/api").deliverCollaborationNotificationObligation(
+                  input,
+                );
+              if (args.lose_reply) throw Error("fixture lost delivery reply");
+              return receipt;
+            },
+          },
+        );
+      if (args.operation === "deliver")
+        return require("@cocalc/server/collaborators/api").deliverCollaborationNotificationObligation(
+          {
+            project_id: config.project,
+            id: args.id,
+            account_id: args.account_id,
+            membership_epoch: args.membership_epoch,
+          },
+        );
       if (args.operation === "authorize")
         return require("@cocalc/server/collaborators/api").fetchCollaborationNotificationObligation(
           {

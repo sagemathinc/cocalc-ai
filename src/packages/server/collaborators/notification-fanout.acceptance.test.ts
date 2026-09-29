@@ -2,7 +2,7 @@
  * This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
  * License: MS-RSL - see LICENSE.md for details
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { MultibayAcceptance } from "./acceptance/harness";
 
 const acceptance =
@@ -126,6 +126,51 @@ acceptance("durable owner notification fanout (isolated PostgreSQL)", () => {
         "SELECT id FROM collaboration_notification_recipients",
       ),
     ).toHaveLength(1);
+    // Seed the canonical personal preference directly in this fixture, without
+    // warming discovery just to express a follow choice.
+    const key = createHash("sha256")
+      .update(JSON.stringify([env.project, "conversation", thread.thread_id]))
+      .digest("hex");
+    await env.sql(
+      "b",
+      `INSERT INTO collaboration_personal(account_id,entry_key,project_id,following,following_explicit)
+      VALUES($1,$2,$3,true,true)`,
+      [env.accounts[1], key, env.project],
+    );
+    const deliver = () =>
+      env.worker("owner").call("notificationFanout", {
+        operation: "deliver",
+        id: obligation.id,
+        account_id: obligation.account_id,
+        membership_epoch: obligation.membership_epoch,
+      });
+    expect((await deliver()).status).toBe("created");
+    expect((await deliver()).status).toBe("duplicate");
+    expect(
+      await env
+        .worker("owner")
+        .call("notificationFanout", { operation: "drain", lose_reply: true }),
+    ).toEqual({ attempted: 1, acknowledged: 0, deferred: 1 });
+    expect(
+      await env.sql(
+        "owner",
+        "SELECT id FROM collaboration_notification_recipients WHERE event_id=$1",
+        [event_id],
+      ),
+    ).toHaveLength(1);
+    expect(
+      await env.sql("b", "SELECT notification_id FROM notification_targets"),
+    ).toHaveLength(1);
+    expect(await env.sql("b", "SELECT * FROM collaboration_index")).toEqual([]);
+    expect(
+      await env.sql(
+        "b",
+        `SELECT generation,lease_until,
+      due_at='infinity'::timestamp AS cold,lease_due_at='infinity'::timestamp AS no_renewal FROM collaboration_access`,
+      ),
+    ).toEqual([
+      { generation: null, lease_until: null, cold: true, no_renewal: true },
+    ]);
     // A remove/rejoin creates a new membership epoch; an old retained obligation
     // must not regain authority just because the same account is a member again.
     await env.sql(
@@ -143,13 +188,18 @@ acceptance("durable owner notification fanout (isolated PostgreSQL)", () => {
       ],
     );
     expect(await authorize()).toBeNull();
-    // Simulate successful handoff only in the owned fixture. The production
-    // receiver/claim acknowledgement protocol is not enabled yet.
+    // Advance only the fixture's retry clock. The actual receiver must decide
+    // revocation and the token-checked owner settlement must remove the work.
     await env.sql(
       "owner",
-      "DELETE FROM collaboration_notification_recipients WHERE event_id=$1",
+      "UPDATE collaboration_notification_recipients SET due_at=clock_timestamp()-interval '1 second' WHERE event_id=$1",
       [event_id],
     );
+    expect(
+      await env
+        .worker("owner")
+        .call("notificationFanout", { operation: "drain" }),
+    ).toEqual({ attempted: 1, acknowledged: 1, deferred: 0 });
     expect(
       await env
         .worker("owner")

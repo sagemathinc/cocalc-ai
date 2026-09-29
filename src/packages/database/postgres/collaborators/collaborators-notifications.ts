@@ -716,14 +716,100 @@ export async function lockCollaborationNotificationAttention({
   access_generation: string;
   state: CollaborationAttentionState;
 } | null> {
+  return lockNotificationAttention({ db, delivery });
+}
+
+export interface NotificationAuthorizationFence {
+  request_id: string;
+  generation: string | null;
+  granted_generation: string | null;
+  expires_at: string;
+}
+
+/** One-shot event authorization; do not grant or schedule discovery access. */
+export async function prepareCollaborationNotificationAuthorization(
+  account_id: string,
+  project_id: string,
+): Promise<NotificationAuthorizationFence> {
+  collaborationAccountId(account_id);
+  collaborationAccountId(project_id);
+  return withAccountRehomeWriteFence({
+    account_id,
+    action: "prepare notification authorization",
+    fn: async (db) => {
+      await db.query(
+        `INSERT INTO collaboration_access(account_id,project_id,due_at,lease_due_at)
+        VALUES($1,$2,'infinity','infinity') ON CONFLICT DO NOTHING`,
+        [account_id, project_id],
+      );
+      const row = (
+        await db.query(
+          `UPDATE collaboration_access SET grant_request_id=$3
+        WHERE account_id=$1 AND project_id=$2
+        RETURNING grant_request_id,generation,granted_generation`,
+          [account_id, project_id, randomUUID()],
+        )
+      ).rows[0];
+      const clock = (
+        await db.query(
+          "SELECT clock_timestamp()+interval '60 seconds' AS expires_at",
+        )
+      ).rows[0];
+      return {
+        request_id: row.grant_request_id,
+        generation: row.generation,
+        granted_generation: row.granted_generation,
+        expires_at: clock.expires_at.toISOString(),
+      };
+    },
+  });
+}
+
+/** Internal event path: a fresh owner answer plus unchanged home invalidation
+ * fence replaces the recurring lease, not the personal state transaction. */
+export async function lockEventCollaborationNotificationAttention(input: {
+  db: PoolClient;
+  delivery: CollaborationNotificationDelivery;
+  authorization: NotificationAuthorizationFence;
+}) {
+  if (!input.delivery.attention)
+    throw Error("notification owner attention missing");
+  return lockNotificationAttention(input);
+}
+
+async function lockNotificationAttention({
+  db,
+  delivery,
+  authorization,
+}: {
+  db: PoolClient;
+  delivery: CollaborationNotificationDelivery;
+  authorization?: NotificationAuthorizationFence;
+}): Promise<{
+  access_generation: string;
+  state: CollaborationAttentionState;
+} | null> {
   const { account_id, event } = delivery;
   const access = await lockNotificationAccess(
     db,
     account_id,
     event.project_id,
     delivery.grant_request_id,
-    delivery.access_generation,
+    authorization ? undefined : delivery.access_generation,
   );
+  if (authorization) {
+    if (
+      delivery.grant_request_id !== authorization.request_id ||
+      access.generation !== authorization.generation ||
+      access.granted_generation !== authorization.granted_generation
+    )
+      throw Error("notification authorization superseded");
+    const fresh = await db.query(
+      "SELECT 1 WHERE clock_timestamp()<$1::timestamptz",
+      [authorization.expires_at],
+    );
+    if (!fresh.rows.length) throw Error("notification authorization expired");
+  }
   const visible = (
     await db.query(
       `SELECT 1 FROM account_project_index WHERE account_id=$1 AND project_id=$2
@@ -731,7 +817,10 @@ export async function lockCollaborationNotificationAttention({
       [account_id, event.project_id],
     )
   ).rows.length;
-  if (!visible) return null;
+  if (!visible) {
+    if (authorization) throw Error("notification home membership not ready");
+    return null;
+  }
   const key = entryKey(event.project_id, event.thread_id);
   const ownerAttention =
     delivery.attention === undefined
@@ -827,7 +916,12 @@ export async function lockCollaborationNotificationAttention({
       ownerAttention?.generation ?? null,
     ],
   );
-  return { access_generation: access.generation, state };
+  return {
+    access_generation: authorization
+      ? delivery.access_generation
+      : access.generation,
+    state,
+  };
 }
 
 /** The service supplies the existing owner route/fabric call. All durable cursor

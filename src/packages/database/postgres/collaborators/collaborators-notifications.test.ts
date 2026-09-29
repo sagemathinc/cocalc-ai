@@ -13,6 +13,7 @@ import {
   initializeCollaborationProjectionAttention,
   collaborationNotificationStore,
   lockCollaborationNotificationAttention,
+  lockEventCollaborationNotificationAttention,
   readCollaborationNotificationPage,
   readCollaborationNotificationAttention,
   pruneCollaborationNotificationEvents,
@@ -395,6 +396,49 @@ it("attention locks access before any personal write and rejects a removed gener
   expect(mockQuery).toHaveBeenCalledTimes(1);
   expect(mockQuery.mock.calls[0][0]).toContain("FOR UPDATE");
 });
+
+it.each(["expired", "generation", "request"])(
+  "event authorization rejects %s before personal writes",
+  async (failure) => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          generation: failure === "generation" ? generation : null,
+          granted_generation: null,
+          grant_request_id: failure === "request" ? project_id : account_id,
+        },
+      ],
+    });
+    mockQuery.mockResolvedValue({ rows: [] });
+    await expect(
+      lockEventCollaborationNotificationAttention({
+        db: mockDb,
+        delivery: {
+          ...delivery,
+          attention: {
+            generation,
+            initial_activity: 0,
+            participating: false,
+            legacy_following: false,
+            legacy_muted: false,
+          },
+        },
+        authorization: {
+          request_id: account_id,
+          generation: null,
+          granted_generation: null,
+          expires_at: new Date().toISOString(),
+        },
+      }),
+    ).rejects.toThrow(failure === "expired" ? "expired" : "superseded");
+    expect(mockQuery.mock.calls[0][0]).toContain("FOR UPDATE");
+    expect(
+      mockQuery.mock.calls.some(([sql]) =>
+        sql.includes("INSERT INTO collaboration_personal"),
+      ),
+    ).toBe(false);
+  },
+);
 
 it.each([null, project_id])(
   "rejects granted generation %s even while indexed generation matches",
