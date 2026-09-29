@@ -154,6 +154,26 @@ viewport: client width and scroll width both 348 pixels, with both action button
 inside the section. This is narrow-layout evidence for that state, not a complete
 320-pixel/zoom/accessibility matrix. The viewport was restored after inspection.
 
+### Rebuilt Browser Verification And Host Version Mismatch
+
+`pnpm -C src build:dev` passed at `4007f1df953a3a3e80cc80f0fc33a22381772836`,
+including static Rspack compilation of the changed Scan text and Python docs.
+The known optional debug-log permission warning and upstream MkDocs warning
+were nonfatal. Reloading the actual browser and inspecting the saved request
+rendered the new unconfirmed-completion wording in the status region. The
+request/job IDs remained unchanged. At 320 CSS pixels, the Scan section's
+client/scroll widths were both 278 pixels and its two buttons wrapped inside
+the viewport. The original viewport was restored.
+
+The selected host reports version
+`20260927T191235Z-3bfbea87fb18-dirty-e3b0c442`. That base commit has no
+`getCollaborationReconciliationStatus` implementation under project-host/conat.
+It has a recent heartbeat, but a heartbeat is not evidence of Scan protocol
+support. This version mismatch must be resolved before claiming live host Scan
+completion. It is not permission to fail or replace the retained job. No host
+upgrade was performed in this check. The explicit-Scan terminal and full
+browser matrix gates remain open.
+
 ## Historical Extended-Scope Audit
 
 Before the user-approved scope reduction, the seven implementation gates were:
