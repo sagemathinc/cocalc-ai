@@ -708,3 +708,21 @@ expiry; separate coverage denies revoked access and hides jobs from a current
 collaborator without their own receipt. This internal store still needs public
 status rate limits, richer progress/freshness state, worker integration, and
 live validation before the plan's Scan contract is complete.
+
+### Internal Owner-to-host Dispatch Step
+
+Persisted the predecessor run ID with each execution and retained the last job
+ID in project budget state. Added one default-off internal dispatch step using
+the routed host client. It prepares the owner job, inspects that exact host run,
+and submits the same identity/predecessor only when the host reports unknown.
+Transport errors propagate without failure settlement or fresh run allocation.
+Discovery settles only for the matching run with zero pending candidates.
+
+The server TypeScript build, fifteen PGlite store tests, and five mocked
+dispatcher tests pass. The dispatcher is not scheduled or publicly exposed;
+`COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE=1` is required even for direct internal
+invocation. Worker leases, fair queue selection, actor/host/bay/global budgets,
+and adoption/recovery of an already-existing host census remain outstanding.
+In particular the first owner job cannot replace an unrelated host run without
+explicit predecessor reconciliation; no unsafe unconditional replacement was
+added. Real authenticated transport and end-to-end validation are still needed.

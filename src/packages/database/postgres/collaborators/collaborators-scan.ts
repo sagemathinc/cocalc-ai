@@ -101,12 +101,18 @@ export async function syncCollaborationScanSchema(
     ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ`);
   await db.query(`ALTER TABLE collaboration_scan_jobs
     ADD COLUMN IF NOT EXISTS host_id UUID`);
+  await db.query(
+    `ALTER TABLE collaboration_scan_jobs ADD COLUMN IF NOT EXISTS expected_run_id UUID`,
+  );
   await db.query(`CREATE TABLE IF NOT EXISTS collaboration_scan_budget (
     project_id UUID PRIMARY KEY REFERENCES projects(project_id) ON DELETE CASCADE,
     tokens DOUBLE PRECISION NOT NULL CHECK(tokens>=0 AND tokens<=2),
     updated_at TIMESTAMPTZ NOT NULL)`);
   await db.query(`ALTER TABLE collaboration_scan_budget
     ADD COLUMN IF NOT EXISTS last_started_at TIMESTAMPTZ`);
+  await db.query(
+    `ALTER TABLE collaboration_scan_budget ADD COLUMN IF NOT EXISTS last_job_id UUID`,
+  );
   await db.query(`CREATE TABLE IF NOT EXISTS collaboration_scan_receipts (
     project_id UUID NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
     account_id UUID NOT NULL, request_id UUID NOT NULL, mode TEXT NOT NULL,
@@ -277,7 +283,13 @@ export async function inspectCollaborationScan(
 export async function startCollaborationScan(
   opts: Omit<ScanAdmissionRequest, "mode"> & { job_id: string },
   authority: CollaborationOwnerAuthority,
-): Promise<{ job_id: string; started_at: number; replayed: boolean } | null> {
+): Promise<{
+  job_id: string;
+  started_at: number;
+  replayed: boolean;
+  host_id: string;
+  expected_run_id?: string;
+} | null> {
   uuid(opts.request_id, "scan request");
   uuid(opts.job_id, "scan job");
   return transaction(async (db) => {
@@ -288,7 +300,7 @@ export async function startCollaborationScan(
       authority,
     );
     const { rows } = await db.query(
-      `SELECT j.job_id,j.state,j.started_at,j.host_id FROM collaboration_scan_jobs j
+      `SELECT j.job_id,j.state,j.started_at,j.host_id,j.expected_run_id FROM collaboration_scan_jobs j
       JOIN collaboration_scan_receipts r ON r.project_id=j.project_id
       AND r.receipt->>'job_id'=j.job_id::text
       WHERE j.project_id=$1 AND j.job_id=$2 AND r.account_id=$3
@@ -311,6 +323,8 @@ export async function startCollaborationScan(
         job_id: job.job_id,
         started_at: job.started_at.getTime(),
         replayed: true,
+        host_id: host,
+        expected_run_id: job.expected_run_id ?? undefined,
       };
     }
     const running = await db.query(
@@ -323,7 +337,7 @@ export async function startCollaborationScan(
     // Until a no-change proof exists, check and reconcile both spend this work.
     const clock = (
       await db.query(
-        `SELECT clock_timestamp() AS now,last_started_at FROM collaboration_scan_budget
+        `SELECT clock_timestamp() AS now,last_started_at,last_job_id FROM collaboration_scan_budget
       WHERE project_id=$1`,
         [opts.project_id],
       )
@@ -335,18 +349,20 @@ export async function startCollaborationScan(
     )
       return null;
     const result = await db.query(
-      `UPDATE collaboration_scan_jobs SET state='running',started_at=$3,host_id=$4
+      `UPDATE collaboration_scan_jobs SET state='running',started_at=$3,host_id=$4,expected_run_id=$5
       WHERE project_id=$1 AND job_id=$2 AND state='queued' RETURNING started_at`,
-      [opts.project_id, opts.job_id, clock.now, host],
+      [opts.project_id, opts.job_id, clock.now, host, clock.last_job_id],
     );
     await db.query(
-      "UPDATE collaboration_scan_budget SET last_started_at=$2 WHERE project_id=$1",
-      [opts.project_id, clock.now],
+      "UPDATE collaboration_scan_budget SET last_started_at=$2,last_job_id=$3 WHERE project_id=$1",
+      [opts.project_id, clock.now, opts.job_id],
     );
     return {
       job_id: job.job_id,
       started_at: result.rows[0].started_at.getTime(),
       replayed: false,
+      host_id: host,
+      expected_run_id: clock.last_job_id ?? undefined,
     };
   });
 }
