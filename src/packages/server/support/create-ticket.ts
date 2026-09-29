@@ -1,7 +1,7 @@
 import type {
   CreateOrUpdateTicket,
   Type,
-} from "node-zendesk/dist/types/clients/core/tickets";
+} from "node-zendesk/clients/core/tickets";
 
 import { getLogger } from "@cocalc/backend/logger";
 import siteURL from "@cocalc/database/settings/site-url";

@@ -1,6 +1,9 @@
 import getConn from "@cocalc/server/stripe/connection";
 import { getStripeCustomerId } from "./util";
 import type { PaymentMethodData } from "@cocalc/util/stripe/types";
+import type Stripe from "stripe";
+
+type StripeClient = InstanceType<typeof Stripe>;
 
 export default async function getPaymentMethods({
   account_id,
@@ -102,7 +105,9 @@ export async function getPaymentMethod({
 }: {
   account_id: string;
   id: string;
-}) {
+}): Promise<
+  Awaited<ReturnType<StripeClient["customers"]["retrievePaymentMethod"]>>
+> {
   const stripe = await getConn();
   const customer = await getStripeCustomerId({ account_id, create: false });
   if (!customer) {
