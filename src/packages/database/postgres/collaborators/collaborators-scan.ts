@@ -17,18 +17,14 @@ const COOLDOWN_MS = 300000;
 // Seven days at one admission/minute, plus the initial burst and headroom.
 const MAX_RECEIPTS = 11000;
 const TOKEN_INTERVAL_MS = 60000;
-export interface ScanAdmissionRequest {
-  project_id: string;
-  /** Authenticated actor, supplied by the future owner service, not public input. */
-  account_id: string;
-  request_id: string;
-  mode: "check" | "reconcile";
-}
-export interface ScanReceipt {
-  job_id: string;
-  admission: "accepted" | "coalesced";
-  expires_at: number;
-}
+import type {
+  ScanAdmissionRequest,
+  ScanReceipt,
+} from "@cocalc/util/collaboration-scan";
+export type {
+  ScanAdmissionRequest,
+  ScanReceipt,
+} from "@cocalc/util/collaboration-scan";
 export type ScanDiscoveryStatus =
   | { state: "unknown" }
   | { state: "queued" }

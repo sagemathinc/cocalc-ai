@@ -11,6 +11,15 @@ import {
 } from "./maintenance";
 
 const owner = jest.fn();
+const scanReserve = jest.fn();
+const scanAdmit = jest.fn();
+jest.mock(
+  "@cocalc/database/postgres/collaborators/collaborators-scan-actor",
+  () => ({ reserveCollaborationScanActor: (...args) => scanReserve(...args) }),
+);
+jest.mock("@cocalc/database/postgres/collaborators/collaborators-scan", () => ({
+  admitCollaborationScan: (...args) => scanAdmit(...args),
+}));
 const owners = jest.fn();
 const register = jest.fn();
 const access = jest.fn();
@@ -92,6 +101,7 @@ jest.mock("@cocalc/database/postgres/account-rehome-fence", () => ({
   withAccountRehomeWriteFence: (...args) => pinFence(...args),
 }));
 const remote = {
+  scanAtOwner: jest.fn(),
   resolveChatAlias: jest.fn(),
   resolvePersonAlias: jest.fn(),
   getPersonAlias: jest.fn(),
@@ -232,6 +242,51 @@ beforeEach(() => {
     chat_path: "/home/user/.cocalc/collaborators.chat",
   });
   ingest.mockResolvedValue({ revision: 1, replayed: false });
+});
+
+test("internal scan reserves at home before routing to the project owner", async () => {
+  const previous = process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE;
+  process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE = "1";
+  try {
+    const request = {
+      project_id,
+      account_id,
+      request_id: randomUUID(),
+      mode: "check" as const,
+      route: { bay_id: "home" },
+    };
+    scanReserve.mockResolvedValue({ reserved: false, retry_after_ms: 500 });
+    expect(await collaboratorsControl.scanAtHome(request)).toEqual({
+      admission: "throttled",
+      retry_after_ms: 500,
+    });
+    expect(remote.scanAtOwner).not.toHaveBeenCalled();
+    scanReserve.mockResolvedValue({
+      reserved: true,
+      expires_at: Date.now() + 10000,
+    });
+    remote.scanAtOwner.mockResolvedValue({
+      admission: "accepted",
+      job_id: "job",
+      expires_at: 123,
+    });
+    expect(await collaboratorsControl.scanAtHome(request)).toMatchObject({
+      admission: "accepted",
+    });
+    expect(remote.scanAtOwner).toHaveBeenCalledWith({ ...request, route });
+    await expect(
+      collaboratorsControl.scanAtHome({
+        ...request,
+        route: { bay_id: "wrong" },
+      }),
+    ).rejects.toThrow("stale");
+    settings.mockResolvedValue({ collaborators_enabled: false });
+    await expect(collaboratorsControl.scanAtHome(request)).rejects.toThrow();
+  } finally {
+    if (previous === undefined)
+      delete process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE;
+    else process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE = previous;
+  }
 });
 
 test("room inspection and replacement use explicit project ownership, not account-home authority", async () => {

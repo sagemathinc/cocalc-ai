@@ -3,6 +3,10 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import type { Client } from "@cocalc/conat/core/client";
+import type {
+  ScanAdmissionRequest,
+  ScanAdmissionResult,
+} from "@cocalc/util/collaboration-scan";
 import type { PeopleInvitationDeliveryReceipt } from "@cocalc/util/people-invitations";
 import {
   createServiceClient,
@@ -106,6 +110,12 @@ type RoutedApi = {
   ) => ReturnType<CollaboratorsApi[K]>;
 };
 export type InterBayCollaboratorsApi = RoutedApi & {
+  scanAtHome(
+    opts: ScanAdmissionRequest & { route: CollaborationRoute },
+  ): Promise<ScanAdmissionResult>;
+  scanAtOwner(
+    opts: ScanAdmissionRequest & { route: CollaborationRoute },
+  ): Promise<ScanAdmissionResult>;
   /** Service-only sender-authorized receipt lookup at the recipient's current home. */
   readInvitationDelivery(opts: {
     recipient_account_id: string;

@@ -457,6 +457,31 @@ export async function sourcePage(opts: {
 
 /** Trusted fabric only; reject stale destinations rather than forwarding loops. */
 export const collaboratorsControl: InterBayCollaboratorsApi = {
+  async scanAtHome(opts) {
+    if (process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE !== "1")
+      throw Error("scan prototype disabled");
+    await checkHome(opts.account_id, opts.route);
+    const { reserveCollaborationScanActor } =
+      await import("@cocalc/database/postgres/collaborators/collaborators-scan-actor");
+    const reservation = await reserveCollaborationScanActor(opts);
+    if (!reservation.reserved)
+      return {
+        admission: "throttled",
+        retry_after_ms: reservation.retry_after_ms,
+      };
+    return owner(opts.project_id, (api, route) =>
+      api.scanAtOwner({ ...opts, route }),
+    );
+  },
+  async scanAtOwner(opts) {
+    if (process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE !== "1")
+      throw Error("scan prototype disabled");
+    await enabled();
+    const authority = await checkOwner(opts.project_id, opts.route);
+    const { admitCollaborationScan } =
+      await import("@cocalc/database/postgres/collaborators/collaborators-scan");
+    return admitCollaborationScan(opts, authority);
+  },
   async acquireDemand(opts) {
     await demandEnabled();
     await checkHome(opts.account_id, opts.route);

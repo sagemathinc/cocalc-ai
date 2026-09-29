@@ -854,3 +854,20 @@ deleted-account cleanup. Two focused PGlite cases validate shared-project burst,
 free replay, argument binding, wrong-home rejection, and banned-account replay
 denial. The server build passes. Cross-bay forwarding, actor concurrency/load
 coverage, status budgets, and transfer support remain outstanding.
+
+### Internal Home-to-owner Admission
+
+Added trusted inter-bay `scanAtHome` and `scanAtOwner` methods, with shared input
+and receipt types in util. Home admission checks current home routing and the
+People setting before reserving an actor token; throttling stops there. Reserved
+attempts resolve the project's owner and forward the same request identity.
+Owner admission checks the current owner route/epoch and delegates to the
+transactional project-authorized store. Both methods require the default-off
+Scan prototype switch. No public account or agent endpoint was added, and schema
+installation remains explicit.
+
+The server build and 31 existing/extended API tests pass. The new mocked-routing
+case verifies actor-throttle short circuit, owner forwarding, stale-home
+rejection and People disable. This is not authenticated transport or full
+multi-bay admission evidence; host/bay/global limits and reviewed agent scope
+remain required before exposing the flow.
