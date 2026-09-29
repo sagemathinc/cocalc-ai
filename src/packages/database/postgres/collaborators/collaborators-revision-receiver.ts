@@ -19,8 +19,26 @@ export async function syncCollaborationRevisionReceiverSchema(
     ON collaboration_revision_receivers(expires_at,project_id)`);
   await db.query(`ALTER TABLE collaboration_revision_receivers
     ADD COLUMN IF NOT EXISTS receiver_id UUID NOT NULL DEFAULT gen_random_uuid()`);
+  await db.query(`ALTER TABLE collaboration_revision_receivers
+    ADD COLUMN IF NOT EXISTS renew_after TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()`);
   await db.query(`CREATE INDEX IF NOT EXISTS collaboration_revision_receivers_home_expiry
     ON collaboration_revision_receivers(home_bay_id,expires_at,project_id)`);
+}
+
+/** Local scheduling hint only; never substitutes for demand or access checks. */
+export async function collaborationRevisionReceiverNeedsRenewal(
+  project_id: string,
+  home_bay_id: string,
+): Promise<boolean> {
+  uuid(project_id, "receiver project");
+  boundedText(home_bay_id, "receiver home", 128);
+  const { rows } = await getPool().query(
+    `SELECT 1 FROM collaboration_revision_receivers WHERE project_id=$1
+    AND home_bay_id=$2 AND expires_at>clock_timestamp()
+    AND renew_after>clock_timestamp()`,
+    [project_id, home_bay_id],
+  );
+  return rows.length === 0;
 }
 
 type ReceiverLease = {
@@ -87,8 +105,9 @@ export async function armCollaborationRevisionReceiver(
     const { rows } =
       opts.expected_lease_id === null
         ? await db.query(
-            `INSERT INTO collaboration_revision_receivers(project_id,home_bay_id,owner_bay_id,lease_id,expires_at)
-          VALUES($1,$2,$3,$4,clock_timestamp()+$5::double precision*interval '1 millisecond')
+            `INSERT INTO collaboration_revision_receivers(project_id,home_bay_id,owner_bay_id,lease_id,expires_at,renew_after)
+          VALUES($1,$2,$3,$4,clock_timestamp()+$5::double precision*interval '1 millisecond',
+          clock_timestamp()+LEAST(30000,$5::double precision)*interval '1 millisecond')
           ON CONFLICT DO NOTHING RETURNING project_id`,
             [
               opts.project_id,
@@ -100,7 +119,8 @@ export async function armCollaborationRevisionReceiver(
           )
         : await db.query(
             `UPDATE collaboration_revision_receivers SET owner_bay_id=$3,lease_id=$4,
-          expires_at=clock_timestamp()+$5::double precision*interval '1 millisecond',dirty_seq=dirty_seq+1
+          expires_at=clock_timestamp()+$5::double precision*interval '1 millisecond',dirty_seq=dirty_seq+1,
+          renew_after=clock_timestamp()+LEAST(30000,$5::double precision)*interval '1 millisecond'
           WHERE project_id=$1 AND home_bay_id=$2 AND lease_id=$6 RETURNING project_id`,
             [
               opts.project_id,

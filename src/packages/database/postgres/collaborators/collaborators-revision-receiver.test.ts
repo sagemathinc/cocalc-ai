@@ -7,6 +7,7 @@ import {
   finishCollaborationRevisionWakeup,
   readCollaborationRevisionReceiverPage,
   pruneCollaborationRevisionReceivers,
+  collaborationRevisionReceiverNeedsRenewal,
 } from "./collaborators-revision-receiver";
 
 const describeDb =
@@ -45,6 +46,30 @@ describeDb("shared home revision receiver", () => {
         [project_id],
       )
     ).rows[0].receiver_id as string;
+  test("renewal is project-local and does not extend a lease on observation or retry", async () => {
+    const opts = lease();
+    const due = (home = opts.home_bay_id) =>
+      collaborationRevisionReceiverNeedsRenewal(opts.project_id, home);
+    expect(await due()).toBe(true);
+    await arm(opts);
+    expect(await due()).toBe(false);
+    expect(await due("other-home")).toBe(true);
+    await getPool().query(
+      "UPDATE collaboration_revision_receivers SET renew_after=clock_timestamp()-interval '1 second' WHERE project_id=$1",
+      [opts.project_id],
+    );
+    expect(await due()).toBe(true);
+    await arm(opts, opts.lease_id);
+    expect(await due()).toBe(true);
+    const next = { ...opts, lease_id: randomUUID() };
+    await arm(next, opts.lease_id);
+    expect(await due()).toBe(false);
+    await getPool().query(
+      "UPDATE collaboration_revision_receivers SET expires_at=clock_timestamp()-interval '1 second' WHERE project_id=$1",
+      [opts.project_id],
+    );
+    expect(await due()).toBe(true);
+  });
   test("expiry cleanup is bounded and cannot let an old worker clear a recreated receiver", async () => {
     const opts = { ...lease(), home_bay_id: "cleanup-race" };
     await arm(opts);

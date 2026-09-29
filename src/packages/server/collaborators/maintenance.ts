@@ -4,6 +4,12 @@
  */
 import getLogger from "@cocalc/backend/logger";
 import { createSharedProjectionFetcher } from "./projection-batch";
+import { registerProjectionRevisionReceivers } from "./revision-registration";
+import {
+  syncCollaborationRevisionReceiverSchema,
+  collaborationRevisionReceiverNeedsRenewal,
+} from "@cocalc/database/postgres/collaborators/collaborators-revision-receiver";
+import { syncCollaborationRevisionInterestSchema } from "@cocalc/database/postgres/collaborators/collaborators-revision-interest";
 import getPool from "@cocalc/database/pool";
 import {
   syncCollaborationDemandSchema,
@@ -42,6 +48,7 @@ import {
   fetchCollaborationAccessBatches,
   fetchCollaborationNotificationPage,
   deliverCollaborationNotificationObligation,
+  collaboratorsControl,
 } from "./api";
 import {
   ensureCollaborationNotificationSchema,
@@ -130,6 +137,34 @@ export async function runCollaboratorsMaintenance() {
     await compactNextCollaborationProject(bay_id);
     const jobs = await claimCollaborationProjectionJobs(bay_id);
     indexingWork.inc({ kind: "projection_claimed" }, jobs.length);
+    if (
+      demandSchedulingEnabled() &&
+      process.env.COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE === "1"
+    ) {
+      const registration = await registerProjectionRevisionReceivers(
+        jobs,
+        (project_id) =>
+          collaborationRevisionReceiverNeedsRenewal(project_id, bay_id),
+        (job) =>
+          collaboratorsControl.registerRevisionReceiver({
+            account_id: job.account_id,
+            project_id: job.project_id,
+            route: { bay_id },
+          }),
+      );
+      indexingWork.inc(
+        { kind: "revision_receivers_armed" },
+        registration.armed,
+      );
+      indexingWork.inc(
+        { kind: "revision_receivers_deferred" },
+        registration.deferred,
+      );
+      indexingWork.inc(
+        { kind: "revision_receivers_failed" },
+        registration.failed,
+      );
+    }
     // Shared responses must not acquire a later access-lease start time merely
     // because another recipient begins awaiting the same in-flight request.
     const projectionRequestedAt = Date.now();
@@ -200,6 +235,13 @@ export async function startCollaboratorsMaintenance() {
     await ensureCollaborationNotificationSchema();
     if (process.env.COCALC_PEOPLE_DEMAND_PROTOTYPE === "1")
       await syncCollaborationDemandSchema(getPool());
+    if (
+      demandSchedulingEnabled() &&
+      process.env.COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE === "1"
+    ) {
+      await syncCollaborationRevisionReceiverSchema(getPool());
+      await syncCollaborationRevisionInterestSchema(getPool());
+    }
   } catch (err) {
     if (lifecycle === cycle) stopped = true;
     throw err;

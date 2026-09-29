@@ -1402,3 +1402,31 @@ preservation without received bytes, and independent UTF-8 individual payload
 measurement. This supplies an honest measurement boundary for future scaling
 experiments; no capacity, cross-cohort caching, or lifecycle gate is closed by
 these tests.
+
+### Demand-Driven Receiver Registration Integration
+
+Under the demand scheduler and revision-interest prototype flags, maintenance
+now attempts receiver registration before fetching claimed projection pages.
+Candidates come only from the at-most-eight claimed active jobs; same-project
+jobs coalesce to one registration attempt per pass. No historical account or
+membership scan is introduced. Registration uses the existing routed control
+handler, which checks account home, owner membership, and current project demand.
+
+Receiver rows now carry a local renewal deadline capped at thirty seconds or
+their remaining lifetime. A successful new lease arm moves this deadline;
+observations and idempotent same-lease retries do not extend it or the lease.
+Fresh receivers skip the routed registration call. Missing, expired, wrong-home,
+or renewal-due receivers remain eligible. Prototype startup installs the owner
+interest and home receiver schemas. Fixed-label counters distinguish armed,
+deferred CAS outcomes and failures. Failed/unknown registration outcomes do not
+retry per recipient within a pass or stop the existing bounded projection path.
+
+Server typecheck, forty-four focused server/store tests, and eighteen real
+PostgreSQL/authenticated-fabric demand acceptance tests pass. The component
+tests cover coalescing, fresh receiver suppression, failure isolation, the batch
+bound, and expiry/rotation renewal eligibility. This is demand-driven renewal
+piggybacked on projection work, not an independent renewal scheduler or a proof
+of the atomic return handoff. Owner hint dispatch, receiver catch-up completion,
+expired-state cleanup scheduling, cross-cohort reuse and scale validation remain
+open. Projection polling is intentionally retained until that integration is
+verified end to end.
