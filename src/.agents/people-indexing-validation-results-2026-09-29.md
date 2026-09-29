@@ -1063,3 +1063,14 @@ and current membership/owner checks. This is a store primitive only: no transpor
 handler or scheduler uses it yet. Authenticated home/demand binding, expiry GC,
 interest quotas, coalesced revision delivery, acknowledgment fences, lost-hint
 repair and shared delta application remain required before enablement.
+
+### Revision Interest Release Fence
+
+Accepted renewal now rotates the interest lease ID, while retries before the
+renewal boundary keep the existing ID and expiry. Internal aggregate-home release
+deletes only the exact project/home/lease tuple under the owner/rehome fence.
+A stale release cannot cancel renewed interest; a current release remains possible
+after membership revocation because relinquishing a scheduling hint grants no
+access. Four store tests and the database build pass, including renewal fencing,
+wrong-home no-op, wrong-owner rejection and repeated release. Authenticated
+aggregate-home routing is still a caller contract, not an exposed transport API.

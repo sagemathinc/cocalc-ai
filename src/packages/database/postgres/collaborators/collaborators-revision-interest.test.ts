@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import {
   registerCollaborationRevisionInterest,
+  releaseCollaborationRevisionInterest,
   syncCollaborationRevisionInterestSchema,
 } from "./collaborators-revision-interest";
 
@@ -37,6 +38,44 @@ describeDb("owner project/home revision interests", () => {
     );
     return { request: { project_id, account_id, home_bay_id: "home-a" }, peer };
   }
+  test("renewal fences delayed release and current release works after revocation", async () => {
+    const { request } = await fixture();
+    const first = await registerCollaborationRevisionInterest(
+      request,
+      authority,
+    );
+    const release = (lease_id: string, home_bay_id = request.home_bay_id) =>
+      releaseCollaborationRevisionInterest(
+        { project_id: request.project_id, home_bay_id, lease_id },
+        authority,
+      );
+    await getPool().query(
+      "UPDATE collaboration_revision_interests SET renew_after=clock_timestamp()-interval '1 second' WHERE project_id=$1",
+      [request.project_id],
+    );
+    const renewed = await registerCollaborationRevisionInterest(
+      request,
+      authority,
+    );
+    expect(renewed.lease_id).not.toBe(first.lease_id);
+    expect(await release(first.lease_id)).toBe(false);
+    expect(await release(renewed.lease_id, "another-home")).toBe(false);
+    expect(
+      await registerCollaborationRevisionInterest(request, authority),
+    ).toEqual(renewed);
+    await expect(
+      releaseCollaborationRevisionInterest(
+        { ...request, lease_id: renewed.lease_id },
+        { owning_bay_id: "wrong" },
+      ),
+    ).rejects.toThrow();
+    await getPool().query(
+      "UPDATE projects SET users='{}'::jsonb WHERE project_id=$1",
+      [request.project_id],
+    );
+    expect(await release(renewed.lease_id)).toBe(true);
+    expect(await release(renewed.lease_id)).toBe(false);
+  });
   test("same-home consumers share a lease without retry extension", async () => {
     const { request, peer } = await fixture();
     const first = await registerCollaborationRevisionInterest(

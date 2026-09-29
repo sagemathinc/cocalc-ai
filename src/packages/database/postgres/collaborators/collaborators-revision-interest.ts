@@ -4,8 +4,11 @@
  */
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "@cocalc/database/pool";
-import { transaction, boundedText } from "./collaborators-common";
-import { assertCollaborationAccountAuthority } from "./collaborators-owner";
+import { transaction, boundedText, uuid } from "./collaborators-common";
+import {
+  assertCollaborationAccountAuthority,
+  assertCollaborationOwnerAuthority,
+} from "./collaborators-owner";
 import type { CollaborationOwnerAuthority } from "./collaborators-owner";
 
 export async function syncCollaborationRevisionInterestSchema(
@@ -47,8 +50,8 @@ export async function registerCollaborationRevisionInterest(
       )
     ).rows[0];
     if (!row || row.renew_after.getTime() <= now) {
-      const lease_id =
-        row && row.expires_at.getTime() > now ? row.lease_id : randomUUID();
+      // A delayed release must not erase a subsequently renewed interest.
+      const lease_id = randomUUID();
       row = (
         await db.query(
           `INSERT INTO collaboration_revision_interests(project_id,home_bay_id,lease_id,expires_at,renew_after)
@@ -83,5 +86,25 @@ export async function registerCollaborationRevisionInterest(
           }
         : null,
     };
+  });
+}
+
+/** Called only by the authenticated aggregate home, after its last consumer
+ * leaves. Membership is not required to relinquish a hint after revocation.
+ */
+export async function releaseCollaborationRevisionInterest(
+  opts: { project_id: string; home_bay_id: string; lease_id: string },
+  authority: CollaborationOwnerAuthority,
+): Promise<boolean> {
+  boundedText(opts.home_bay_id, "interest home bay", 128);
+  uuid(opts.lease_id, "interest lease");
+  return transaction(async (db) => {
+    await assertCollaborationOwnerAuthority(db, opts.project_id, authority);
+    const { rows } = await db.query(
+      `DELETE FROM collaboration_revision_interests
+       WHERE project_id=$1 AND home_bay_id=$2 AND lease_id=$3 RETURNING lease_id`,
+      [opts.project_id, opts.home_bay_id, opts.lease_id],
+    );
+    return rows.length > 0;
   });
 }
