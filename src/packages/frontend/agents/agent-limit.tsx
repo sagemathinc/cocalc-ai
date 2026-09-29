@@ -4,7 +4,8 @@
  */
 
 import { useState } from "react";
-import { Alert, Button, Modal, Space } from "antd";
+import { Alert, Button, Modal, Progress, Space } from "antd";
+import { Tooltip } from "@cocalc/frontend/components/tip";
 import type { NamedAgentDirectory } from "@cocalc/conat/agents/personal";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import { redux } from "@cocalc/frontend/app-framework";
@@ -54,6 +55,11 @@ export function NamedAgentLimitAlert({
   );
 }
 
+// A quiet bar that is easy to ignore with few agents and draws attention
+// (and shows the count) as the limit gets close.
+const WARNING_FRACTION = 0.8;
+const DANGER_FRACTION = 0.95;
+
 export function NamedAgentUsage({
   directory,
 }: {
@@ -62,23 +68,48 @@ export function NamedAgentUsage({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const usage = directory?.usage;
   if (!usage || usage.active >= usage.limit) return null;
+  const fraction = usage.limit > 0 ? usage.active / usage.limit : 0;
   return (
     <>
-      <Button
-        type="link"
-        size="small"
-        aria-label={`${usage.active} of ${usage.limit} named-agent slots used. Learn how to free slots`}
-        style={{
-          color: UI_COLORS.muted,
-          height: "auto",
-          padding: 0,
-          textDecoration: "underline",
-          whiteSpace: "normal",
-        }}
-        onClick={() => setDetailsOpen(true)}
+      <Tooltip
+        title={`${usage.active} of ${usage.limit} named-agent slots used. Click for details.`}
       >
-        {usage.active} of {usage.limit} named-agent slots used
-      </Button>
+        <Button
+          type="text"
+          size="small"
+          aria-label={`${usage.active} of ${usage.limit} named-agent slots used. Learn how to free slots`}
+          style={{
+            alignItems: "center",
+            color: UI_COLORS.muted,
+            display: "inline-flex",
+            gap: 6,
+            height: "auto",
+            padding: "2px 4px",
+          }}
+          onClick={() => setDetailsOpen(true)}
+        >
+          <span aria-hidden style={{ display: "inline-flex" }}>
+            <Progress
+              percent={Math.round(fraction * 100)}
+              showInfo={false}
+              size={{ width: 64, height: 4 }}
+              strokeColor={
+                fraction >= DANGER_FRACTION
+                  ? UI_COLORS.danger
+                  : fraction >= WARNING_FRACTION
+                    ? UI_COLORS.warning
+                    : UI_COLORS.muted
+              }
+              railColor={UI_COLORS.border}
+            />
+          </span>
+          {fraction >= WARNING_FRACTION ? (
+            <span aria-hidden>
+              {usage.active} of {usage.limit} agents
+            </span>
+          ) : null}
+        </Button>
+      </Tooltip>
       <Modal
         open={detailsOpen}
         title="Named-agent slots"

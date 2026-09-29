@@ -65,3 +65,29 @@ test("explains how to free named-agent slots and opens management", async () => 
   expect(openAccountSettings).not.toHaveBeenCalled();
   getActions.mockRestore();
 });
+
+test.each([
+  [31, false, "muted"],
+  [850, true, "warning"],
+  [980, true, "danger"],
+])(
+  "the usage bar stays quiet until the limit is near (%i of 1000)",
+  (active, showsCount, color) => {
+    const { container } = render(
+      <NamedAgentUsage
+        directory={
+          { ...directory, usage: { ...directory.usage, active } } as any
+        }
+      />,
+    );
+    const usage = screen.getByRole("button", {
+      name: `${active} of 1000 named-agent slots used. Learn how to free slots`,
+    });
+    expect(usage).toHaveStyle({ textDecoration: "" });
+    expect(screen.queryByText(`${active} of 1000 agents`) != null).toBe(
+      showsCount,
+    );
+    const bar = container.querySelector<HTMLElement>(".ant-progress-track");
+    expect(bar?.getAttribute("style") ?? "").toContain(`--cocalc-ui-${color}`);
+  },
+);
