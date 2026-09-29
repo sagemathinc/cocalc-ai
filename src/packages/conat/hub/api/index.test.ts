@@ -65,6 +65,10 @@ describe("hub API argument transforms", () => {
   });
   it.each([
     "apiKeys.decideAction",
+    "collaborators.prepareInvitation",
+    "collaborators.reviewInvitation",
+    "collaborators.sendInvitation",
+    "collaborators.getInvitationOperation",
     "apiKeys.listActions",
     "agent.removeCocalcConnectorConfig",
   ])("binds %s to the actual human session", async (name) => {

@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import type { CollaboratorsApi } from "@cocalc/conat/hub/api/collaborators";
+import { invitationPublicApi, invitationControlApi } from "./invitations-api";
 import { normalizePrivateAlias } from "@cocalc/util/private-alias";
 import {
   chatAliasTarget,
@@ -188,6 +189,7 @@ async function writer<T>(
 
 /** Public hub calls already have their principal injected by auth-first handlers. */
 export const collaboratorsApi: CollaboratorsApi = {
+  ...invitationPublicApi,
   async resolveChatAlias(opts) {
     await enabled();
     return home(opts.account_id, (api, route) =>
@@ -412,6 +414,7 @@ export async function sourcePage(opts: {
 
 /** Trusted fabric only; reject stale destinations rather than forwarding loops. */
 export const collaboratorsControl: InterBayCollaboratorsApi = {
+  ...invitationControlApi,
   async resolveChatAlias(opts) {
     await checkHome(opts.account_id, opts.route);
     const target = await chatAliasTarget(opts.account_id!, opts.alias);

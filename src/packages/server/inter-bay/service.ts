@@ -15,6 +15,10 @@ import { usernameSeedControl } from "@cocalc/server/accounts/usernames";
 import { createInterBayPersonalUrlAliasesHandler } from "@cocalc/conat/inter-bay/personal-url-aliases";
 import { personalUrlAliasHomeControl } from "@cocalc/server/personal-url-aliases";
 import { createInterBayCollaboratorsHandler } from "@cocalc/conat/inter-bay/collaborators";
+import { createInterBayPeopleStorageHandler } from "@cocalc/conat/inter-bay/people-storage";
+import { createInterBayPeopleActionsHandler } from "@cocalc/conat/inter-bay/people-actions";
+import { peopleActionsControl } from "@cocalc/server/people/invitation-actions";
+import { peopleStorageControl } from "@cocalc/server/people/api";
 import { collaboratorsControl } from "@cocalc/server/collaborators/api";
 import { createAgentRpcControlHandler } from "@cocalc/conat/inter-bay/agent-rpc";
 import { createInterBayAgentConnectorHandler } from "@cocalc/conat/inter-bay/agent-connector";
@@ -725,6 +729,18 @@ export async function initInterBayServices(): Promise<void> {
         bayId: getConfiguredBayId(),
         parallel: true,
         impl: personalLibraryHomeControl,
+      }),
+      createInterBayPeopleStorageHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bay_id: getConfiguredBayId(),
+        parallel: true,
+        impl: peopleStorageControl,
+      }),
+      createInterBayPeopleActionsHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bay_id: getConfiguredBayId(),
+        parallel: true,
+        impl: peopleActionsControl,
       }),
       createInterBayUsernamesHandler({
         client: getInterBayFabricClient({ noCache: true }),
@@ -2709,6 +2725,10 @@ async function startProjectLroService(): Promise<void> {
 async function startProjectCollabInviteService(): Promise<void> {
   const client = getInterBayFabricClient({ noCache: true });
   const impl: InterBayProjectCollabInviteApi = {
+    resend: async (opts) =>
+      (
+        await import("@cocalc/server/projects/people-invite-resend")
+      ).resendPeopleInviteLocal(opts),
     upsertInbox: async ({ source_bay_id, invite }) => {
       await upsertProjectedCollabInviteDirect({ source_bay_id, invite });
     },

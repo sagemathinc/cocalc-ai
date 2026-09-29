@@ -90,6 +90,9 @@ function firstNonEmpty(...values: unknown[]): string {
 function notificationBodyText(row: NotificationEmailOutboxRow): string {
   const summary = row.summary_json?.summary ?? {};
   const eventPayload = row.summary_json?.event_payload ?? {};
+  if (summary.notice_type === "collaboration_invitation") {
+    return firstNonEmpty(summary.body_text, eventPayload.body_text);
+  }
   const bodyMarkdown = firstNonEmpty(
     summary.body_markdown,
     eventPayload.body_markdown,
@@ -110,6 +113,11 @@ function notificationBodyText(row: NotificationEmailOutboxRow): string {
 function notificationBodyHtml(row: NotificationEmailOutboxRow): string {
   const summary = row.summary_json?.summary ?? {};
   const eventPayload = row.summary_json?.event_payload ?? {};
+  if (summary.notice_type === "collaboration_invitation") {
+    return `<div style="white-space: pre-wrap; overflow-wrap: anywhere">${escapeNotificationEmailHtml(
+      firstNonEmpty(summary.body_text, eventPayload.body_text),
+    )}</div>`;
+  }
   const bodyMarkdown = firstNonEmpty(
     summary.body_markdown,
     eventPayload.body_markdown,
@@ -154,6 +162,18 @@ async function notificationTarget(row: NotificationEmailOutboxRow): Promise<{
   url: string;
 }> {
   const summary = row.summary_json?.summary ?? {};
+  if (
+    summary.notice_type === "collaboration_invitation" &&
+    typeof summary.invitation_id === "string" &&
+    isValidUUID(summary.invitation_id)
+  ) {
+    return {
+      label: "View invitation",
+      url: await siteUrl(
+        `people/invites/?invitation_id=${summary.invitation_id}`,
+      ),
+    };
+  }
   if (firstNonEmpty(summary.notice_type) !== "codex_attention") {
     return {
       label: "Open notifications",

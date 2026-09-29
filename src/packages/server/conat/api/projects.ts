@@ -6,6 +6,7 @@ import createProject, {
 } from "@cocalc/server/projects/create";
 export { createProject, createProjectWithBootstrap };
 export * from "./project-site-migration";
+export { resendCollabInvite } from "./people-invite-resend";
 import execProject from "@cocalc/server/projects/exec";
 import { takeStartProjectPhaseTimings } from "@cocalc/server/project-host/control";
 import {

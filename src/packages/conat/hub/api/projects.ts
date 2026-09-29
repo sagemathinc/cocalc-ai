@@ -1,5 +1,6 @@
 import {
   authFirstRequireAccount,
+  authFirstRequireAccountWithBoundSession,
   authFirstRequireAccountOrBoundAgentProject,
   authFirstRequireHostWithAccountTarget,
   authFirstRequireProject,
@@ -466,6 +467,28 @@ export type ProjectCollabInviteAction =
 
 export type ProjectCollabInviteDirection = "inbound" | "outbound" | "all";
 export type ProjectCollabInviteSource = "account" | "email" | "course_email";
+
+export interface ProjectCollabInviteResendRequest {
+  project_id: string;
+  invite_id: string;
+  operation_id: string;
+}
+
+export interface ProjectCollabInviteResendResult extends ProjectCollabInviteResendRequest {
+  /** Provider submission, not human receipt. Unknown must not be retried with a new ID. */
+  status: "sent" | "not_sent" | "unknown";
+  email_sent: boolean | null;
+  reason?:
+    | "cooldown"
+    | "tier_disallows_email"
+    | "email_not_configured"
+    | "not_pending"
+    | "expired"
+    | "unsupported_invite"
+    | "recipient_blocked"
+    | "already_has_access"
+    | "delivery_unknown";
+}
 export type ProjectInviteEmailBlockedReason =
   | "email_not_configured"
   | "tier_disallows_email"
@@ -1191,6 +1214,7 @@ export const projects = {
   setProjectUserRole: authFirstRequireAccount,
   addCollaborator: authFirstRequireAccount,
   createCollabInvite: authFirstRequireAccount,
+  resendCollabInvite: authFirstRequireAccountWithBoundSession,
   listCollabInvites: authFirstRequireAccount,
   repairAcceptedCourseStudentInviteAccounts: authFirstRequireAccount,
   ensureCourseManagerAccess: authFirstRequireAccount,
@@ -1813,6 +1837,12 @@ export interface Projects {
     created: boolean;
     invite: ProjectCollabInviteRow;
   }>;
+
+  resendCollabInvite: (
+    opts: ProjectCollabInviteResendRequest & {
+      account_id?: string;
+    },
+  ) => Promise<ProjectCollabInviteResendResult>;
 
   listCollabInvites: (opts: {
     account_id?: string;

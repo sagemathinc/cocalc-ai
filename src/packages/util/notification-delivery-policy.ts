@@ -51,6 +51,9 @@ function accountNoticeCategory(opts: {
   const noticeType = lower(
     opts.summary.notice_type ?? opts.event_payload.notice_type,
   );
+  if (noticeType === "collaboration_invitation") {
+    return "mentions";
+  }
   if (
     noticeType === "codex_turn_completion" ||
     noticeType === "codex_attention"
@@ -238,6 +241,20 @@ export function resolveNotificationDeliveryPolicy(
       if (eventPolicy.email === "unresolved_after_delay") {
         email_delay_ms = (eventPolicy.email_delay_minutes ?? 5) * 60_000;
       }
+    }
+  }
+  if (
+    kind === "account_notice" &&
+    lower(summary.notice_type ?? event_payload.notice_type) ===
+      "collaboration_invitation"
+  ) {
+    // Reviewed channel choices restrict recipient preferences, never enable a
+    // channel the sender did not select. Missing flags fail closed.
+    const channels =
+      summary.invitation_channels ?? event_payload.invitation_channels;
+    creates_in_app = creates_in_app && channels?.notification === true;
+    if (channels?.email !== true) {
+      delivery_mode = creates_in_app ? "off" : "none";
     }
   }
   const lane = laneForCategory(category);

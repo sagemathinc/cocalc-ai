@@ -4,6 +4,16 @@
  */
 import { collaboratorsApi } from "@cocalc/server/collaborators/api";
 export const {
+  resolveInvitationRecipient,
+  listInvitationProjects,
+  prepareInvitation,
+  reviewInvitation,
+  sendInvitation,
+  getInvitationOperation,
+  listPeopleContacts,
+  getPeopleContact,
+  listInvitationHistory,
+  getInvitationCounts,
   resolveChatAlias,
   resolvePersonAlias,
   getPersonAlias,

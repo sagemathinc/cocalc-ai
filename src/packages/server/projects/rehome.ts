@@ -9,6 +9,7 @@ import getPool from "@cocalc/database/pool";
 import { drainAccountProjectIndexProjection } from "@cocalc/database/postgres/account-project-index-projector";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { lockProjectRehomeFence } from "@cocalc/database/postgres/project-rehome-fence";
+import { assertNoPeopleProjectStateForRehome } from "@cocalc/server/people/rehome";
 import {
   type ProjectControlCollaborationRehomeRequest,
   type ProjectControlPortableProjectState,
@@ -311,6 +312,7 @@ async function createProjectRehomeOperation({
   try {
     await client.query("BEGIN");
     await lockProjectRehomeFence({ db: client, project_id });
+    await assertNoPeopleProjectStateForRehome(client, project_id);
     const frozen = await readFrozenProjectCollaborationExport(project_id);
     if (frozen) {
       if (
@@ -1118,6 +1120,24 @@ export async function runProjectRehomeOperation(
         operation_status: op.status,
         status: "already-home",
       };
+    }
+
+    // Recheck resumed operations before copying or switching ownership; disabling
+    // People or a prior failed attempt must not bypass the portability guard.
+    const peopleFence = await getPool().connect();
+    try {
+      await peopleFence.query("BEGIN");
+      await lockProjectRehomeFence({
+        db: peopleFence,
+        project_id: op.project_id,
+      });
+      await assertNoPeopleProjectStateForRehome(peopleFence, op.project_id);
+      await peopleFence.query("COMMIT");
+    } catch (err) {
+      await peopleFence.query("ROLLBACK");
+      throw err;
+    } finally {
+      peopleFence.release();
     }
 
     let project = op.project;

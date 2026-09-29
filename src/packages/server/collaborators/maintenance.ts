@@ -3,6 +3,8 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import getLogger from "@cocalc/backend/logger";
+import { runPeopleInvitationMaintenance } from "./invitations-runtime";
+import { runPeopleInviteMaintenance } from "@cocalc/server/people/invite-maintenance";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
@@ -73,6 +75,12 @@ export async function runCollaboratorsMaintenance() {
   running = true;
   try {
     if (!(await getServerSettings()).collaborators_enabled) return;
+    void runPeopleInvitationMaintenance().catch(() =>
+      logger.warn(
+        "people invitation maintenance failed; durable jobs retained",
+      ),
+    );
+    await runPeopleInviteMaintenance();
     const bay_id = getConfiguredBayId();
     await seedCollaborationProjectionJobs(bay_id);
     await cleanCollaborationProjections(bay_id);

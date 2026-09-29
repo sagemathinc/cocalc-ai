@@ -22,6 +22,7 @@ import { createBrowserSessionClient } from "@cocalc/conat/service/browser-sessio
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { lockAccountRehomeFence } from "@cocalc/server/accounts/rehome-fence";
 import { assertNoPersonalStateForRehome } from "@cocalc/server/agents/personal-rehome";
+import { assertNoPeopleAccountStateForRehome } from "@cocalc/server/people/rehome";
 import {
   getBayPublicOrigin,
   getClusterBayPublicOrigins,
@@ -944,6 +945,7 @@ async function createOperation({
     await client.query("BEGIN");
     await lockAccountRehomeFence({ db: client, account_id });
     await assertNoPersonalStateForRehome(client, account_id);
+    await assertNoPeopleAccountStateForRehome(client, account_id);
     const active = await client.query(
       `
         SELECT *
@@ -1837,6 +1839,7 @@ async function runAccountRehomeOperationLocked(
         await client.query("BEGIN");
         await lockAccountRehomeFence({ db: client, account_id: op.account_id });
         await assertNoPersonalStateForRehome(client, op.account_id);
+        await assertNoPeopleAccountStateForRehome(client, op.account_id);
         if (!(await getAccountCollaborationHandoff(op_id, client))) {
           if (op.stage === "requested")
             await freezeAccountCollaborationState(

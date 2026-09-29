@@ -3,12 +3,17 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import type { Client } from "@cocalc/conat/core/client";
+import type { PeopleInvitationDeliveryReceipt } from "@cocalc/util/people-invitations";
 import {
   createServiceClient,
   createServiceHandler,
 } from "@cocalc/conat/service/typed";
 import type { Options } from "@cocalc/conat/service/service";
 import type { CollaboratorsApi } from "@cocalc/conat/hub/api/collaborators";
+import type {
+  InspectInvitationProjectInput,
+  InvitationDiscoveryProject,
+} from "@cocalc/util/people-invitation-discovery";
 import type {
   CollaborationParticipantContinuation,
   CollaborationParticipantProjection,
@@ -100,6 +105,18 @@ type RoutedApi = {
   ) => ReturnType<CollaboratorsApi[K]>;
 };
 export type InterBayCollaboratorsApi = RoutedApi & {
+  /** Service-only sender-authorized receipt lookup at the recipient's current home. */
+  readInvitationDelivery(opts: {
+    recipient_account_id: string;
+    sender_account_id: string;
+    notification_ids: string[];
+    route: CollaborationRoute;
+  }): Promise<
+    { notification_id: string; delivery: PeopleInvitationDeliveryReceipt[] }[]
+  >;
+  inspectInvitationProject(
+    opts: InspectInvitationProjectInput,
+  ): Promise<InvitationDiscoveryProject | null>;
   listProjectResources(
     opts: CollaborationProjectResourceQuery & { route: CollaborationRoute },
   ): Promise<CollaborationPage<CollaborationResource>>;

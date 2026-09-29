@@ -21,6 +21,7 @@ let restoreAccountPersistStateMock: jest.Mock;
 let clearAccountPersistStateMock: jest.Mock;
 let createInterBayAccountLocalClientMock: jest.Mock;
 let personalRehomeGuardMock: jest.Mock;
+let peopleRehomeGuardMock: jest.Mock;
 let collaborationHandoffMock: jest.Mock;
 let collaborationFreezeMock: jest.Mock;
 let collaborationImportMock: jest.Mock;
@@ -30,6 +31,11 @@ let collaborationPageMock: jest.Mock;
 let collaborationReceiveMock: jest.Mock;
 let collaborationCompleteMock: jest.Mock;
 let collaborationSourceMock: jest.Mock;
+
+jest.mock("@cocalc/server/people/rehome", () => ({
+  assertNoPeopleAccountStateForRehome: (...args) =>
+    peopleRehomeGuardMock(...args),
+}));
 
 jest.mock("./collaboration-account-rehome", () => ({
   ensureCollaborationAccountRehomeSchema: jest.fn(async () => {}),
@@ -186,6 +192,7 @@ describe("account rehome", () => {
   beforeEach(() => {
     jest.resetModules();
     personalRehomeGuardMock = jest.fn(async () => {});
+    peopleRehomeGuardMock = jest.fn(async () => {});
     collaborationHandoffMock = jest.fn(async () => undefined);
     collaborationFreezeMock = jest.fn(async () => undefined);
     collaborationImportMock = jest.fn(async () => undefined);
@@ -500,6 +507,32 @@ describe("account rehome", () => {
         ),
       ).toBe(false);
       expect(operationRow.status).toBe("failed");
+    },
+  );
+
+  it.each([
+    "requested",
+    "destination_accepted",
+    "source_flipped",
+    "projections_copied",
+  ])(
+    "people state blocks resumed rehome at %s before copy or cutover",
+    async (stage) => {
+      operationRow.stage = stage;
+      peopleRehomeGuardMock.mockRejectedValue(
+        Error("people state portability is not supported"),
+      );
+      const { runAccountRehomeOperation } = await import("./rehome");
+      await expect(runAccountRehomeOperation(OP_ID)).rejects.toThrow(
+        "people state portability",
+      );
+      expect(peopleRehomeGuardMock).toHaveBeenCalledWith(
+        expect.anything(),
+        TARGET_ACCOUNT_ID,
+      );
+      expect(copyRehomeStateMock).not.toHaveBeenCalled();
+      expect(updateClusterAccountHomeBayMock).not.toHaveBeenCalled();
+      expect(clearAccountPersistStateMock).not.toHaveBeenCalled();
     },
   );
 

@@ -27,6 +27,24 @@ const principal = {
 };
 
 describe("HTTP API key policy audit", () => {
+  it.each([
+    "prepareInvitation",
+    "reviewInvitation",
+    "sendInvitation",
+    "getInvitationOperation",
+    "listPeopleContacts",
+    "getPeopleContact",
+    "listInvitationHistory",
+    "getInvitationCounts",
+  ])("denies invitation capability %s until phase 7", async (method) => {
+    await expect(
+      assertHttpHubApiKeyAllowed({
+        principal,
+        name: `collaborators.${method}`,
+        args: [{ session_hash: "forged" }],
+      }),
+    ).rejects.toThrow("API keys are not allowed");
+  });
   it("does not let management request scope invoke human approval", async () => {
     await expect(
       assertHttpHubApiKeyAllowed({

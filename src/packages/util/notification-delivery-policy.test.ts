@@ -6,6 +6,50 @@
 import { resolveNotificationDeliveryPolicy } from "./notification-delivery-policy";
 
 describe("notification delivery policy", () => {
+  it.each([
+    [true, true, "immediate", true, "immediate"],
+    [true, false, "immediate", true, "off"],
+    [false, true, "digest", false, "digest"],
+    [true, true, "none", false, "none"],
+    [true, true, "off", true, "off"],
+    [false, false, "immediate", false, "none"],
+  ])(
+    "restricts content invitation channels (%s,%s) by preferences %s",
+    (notification, email, preference, creates_in_app, delivery_mode) => {
+      expect(
+        resolveNotificationDeliveryPolicy({
+          kind: "account_notice",
+          origin_kind: "account",
+          actor_account_id: "sender",
+          target_account_id: "recipient",
+          summary: {
+            notice_type: "collaboration_invitation",
+            invitation_channels: { notification, email },
+            title: "Billing AI Codex security",
+          },
+          preferences: { email: { mentions: preference } },
+        }),
+      ).toMatchObject({
+        category: "mentions",
+        lane: "notification",
+        responsible_account_id: "sender",
+        required: false,
+        creates_in_app,
+        delivery_mode,
+      });
+    },
+  );
+
+  it("fails closed on missing invitation channel flags", () => {
+    expect(
+      resolveNotificationDeliveryPolicy({
+        kind: "account_notice",
+        target_account_id: "recipient",
+        summary: { notice_type: "collaboration_invitation" },
+      }),
+    ).toMatchObject({ creates_in_app: false, delivery_mode: "none" });
+  });
+
   it("requires immediate critical email for a trusted operator incident", () => {
     const incident = {
       kind: "account_notice",

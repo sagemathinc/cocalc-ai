@@ -226,6 +226,8 @@ import type {
   CourseStudentInviteAccountRepairRow,
   ProjectCollabInviteAction,
   ProjectCollabInviteDirection,
+  ProjectCollabInviteResendRequest,
+  ProjectCollabInviteResendResult,
   ProjectCollabInviteRow,
   ProjectCollabInviteStatus,
   ProjectCourseInfo,
@@ -3227,6 +3229,7 @@ export type BayOpsMethod =
   | "crm-outreach-apply-opt-out-internal"
   | "crm";
 export type ProjectCollabInviteMethod =
+  | "resend"
   | "upsert-inbox"
   | "delete-inbox"
   | "list"
@@ -5383,6 +5386,11 @@ export interface InterBayAuthTokenApi {
 }
 
 export interface InterBayProjectCollabInviteApi {
+  resend: (
+    opts: ProjectCollabInviteResendRequest & {
+      account_id: string;
+    },
+  ) => Promise<ProjectCollabInviteResendResult>;
   upsertInbox: (opts: ProjectCollabInviteInboxUpsertRequest) => Promise<void>;
   deleteInbox: (opts: ProjectCollabInviteInboxDeleteRequest) => Promise<void>;
   list: (
@@ -12709,6 +12717,12 @@ export function createInterBayProjectCollabInviteClient({
       method: "invite-without-account",
     }),
   });
+  const resendClient = createServiceClient<
+    Pick<InterBayProjectCollabInviteApi, "resend">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectCollabInviteSubject({ dest_bay, method: "resend" }),
+  });
   const copyEmailLinkClient = createServiceClient<
     Pick<InterBayProjectCollabInviteApi, "copyEmailLink">
   >({
@@ -12983,6 +12997,7 @@ export function createInterBayProjectCollabInviteClient({
     create: async (opts) => await createClient.create(opts),
     inviteWithoutAccount: async (opts) =>
       await inviteWithoutAccountClient.inviteWithoutAccount(opts),
+    resend: async (opts) => await resendClient.resend(opts),
     copyEmailLink: async (opts) =>
       await copyEmailLinkClient.copyEmailLink(opts),
     redeemEmail: async (opts) => await redeemEmailClient.redeemEmail(opts),
@@ -13064,6 +13079,15 @@ export function createInterBayProjectCollabInviteHandlers({
   impl: InterBayProjectCollabInviteApi;
 }): ConatService[] {
   return [
+    createServiceHandler<Pick<InterBayProjectCollabInviteApi, "resend">>({
+      ...options,
+      service: "inter-bay-project-collab-invite",
+      subject: projectCollabInviteSubject({
+        dest_bay: bay_id,
+        method: "resend",
+      }),
+      impl: { resend: async (opts) => await impl.resend(opts) },
+    }),
     createServiceHandler<Pick<InterBayProjectCollabInviteApi, "upsertInbox">>({
       ...options,
       service: "inter-bay-project-collab-invite",

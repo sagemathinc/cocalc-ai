@@ -2,7 +2,21 @@
  * This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
  * License: MS-RSL - see LICENSE.md for details
  */
-import { authFirstRequireAccount, authFirstRequireHost } from "./util";
+import {
+  authFirstRequireAccount,
+  authFirstRequireHost,
+  authFirstRequireAccountWithBoundSession,
+} from "./util";
+import type { PeopleInvitationsApi } from "@cocalc/util/people-invitations";
+import type { PeopleInvitationDiscoveryApi } from "@cocalc/util/people-invitation-discovery";
+import type {
+  PeopleContactQuery,
+  PeopleContactPage,
+  PeopleContact,
+  PeopleInvitationHistoryQuery,
+  PeopleInvitationHistoryPage,
+  PeopleInvitationCounts,
+} from "@cocalc/util/people-invitation-history";
 import type {
   CollaborationRoomReplacementHostRequest,
   CollaborationRoomReplacementResult,
@@ -32,7 +46,23 @@ import type {
   CollaborationTarget,
 } from "@cocalc/util/collaborators";
 
-export interface CollaboratorsApi {
+export interface CollaboratorsApi
+  extends PeopleInvitationsApi, PeopleInvitationDiscoveryApi {
+  listPeopleContacts(
+    opts: Omit<PeopleContactQuery, "account_id"> & { account_id?: string },
+  ): Promise<PeopleContactPage>;
+  getPeopleContact(opts: {
+    account_id?: string;
+    person_id: string;
+  }): Promise<PeopleContact | null>;
+  listInvitationHistory(
+    opts: Omit<PeopleInvitationHistoryQuery, "account_id"> & {
+      account_id?: string;
+    },
+  ): Promise<PeopleInvitationHistoryPage>;
+  getInvitationCounts(opts: {
+    account_id?: string;
+  }): Promise<PeopleInvitationCounts>;
   /** Private account-home names; returned targets still require ordinary access. */
   resolveChatAlias(opts: {
     account_id?: string;
@@ -197,6 +227,16 @@ export interface CollaboratorsApi {
 }
 
 export const collaborators = {
+  resolveInvitationRecipient: authFirstRequireAccount,
+  listInvitationProjects: authFirstRequireAccount,
+  prepareInvitation: authFirstRequireAccountWithBoundSession,
+  reviewInvitation: authFirstRequireAccountWithBoundSession,
+  sendInvitation: authFirstRequireAccountWithBoundSession,
+  getInvitationOperation: authFirstRequireAccountWithBoundSession,
+  listPeopleContacts: authFirstRequireAccount,
+  getPeopleContact: authFirstRequireAccount,
+  listInvitationHistory: authFirstRequireAccount,
+  getInvitationCounts: authFirstRequireAccount,
   resolveChatAlias: authFirstRequireAccount,
   resolvePersonAlias: authFirstRequireAccount,
   getPersonAlias: authFirstRequireAccount,
