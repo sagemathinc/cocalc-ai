@@ -453,6 +453,11 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       ],
       ["Prepare and test run", "> Prepare and test run <"],
       [
+        "Preparing and testing the exam environment",
+        '"Preparing and testing the exam environment"',
+      ],
+      ["Exam run prepared and tested", '"Exam run prepared and tested"'],
+      [
         "Complete these steps before preparing the run",
         '"Complete these steps before preparing the run"',
       ],
@@ -460,6 +465,10 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       ["Student URL", '"Student URL"'],
       ["Project cleanup", '"Project cleanup"'],
       ["Project host afterward", '"Project host afterward"'],
+      ["What these checks mean", '"What these checks mean"'],
+      ["Admission", ">Admission<"],
+      ["Cleanup", ">Cleanup<"],
+      ["End the exam", ">End the exam<"],
       ["Open admission", "> Open admission <"],
       ["Maximum students for this run", "> Maximum students for this run <"],
       ["Increase capacity", "> Increase capacity <"],
@@ -467,7 +476,13 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       ["Rotate token", "> Rotate token <"],
       ["End exam and erase now", "> End exam and erase now <"],
       ["Erase and shut down", '"Erase and shut down"'],
-      ["Refresh status", ">Refresh status<"],
+      ["Refresh status", "> Refresh status <"],
+      ["Last run", '"Last run"'],
+      ["Student projects", '"Student projects"'],
+      ["all erased", '"all erased"'],
+      ["Preparation failed", '"Preparation failed"'],
+      ["Error", '"Error"'],
+      ["none were created", '"none were created"'],
       [
         "Exam mode is not enabled for this account",
         '"Exam mode is not enabled for this account"',
@@ -528,6 +543,22 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
         "This temporary scratchpad has been prepared, but access is not open yet.",
       ],
       [
+        "student-waiting",
+        "This page checks again about every 30 seconds.",
+        "This page checks again about every 30 seconds.",
+      ],
+      [
+        "student-ended",
+        "This exam session has ended. Its temporary projects are being erased.",
+        "This exam session has ended. Its temporary projects are being erased.",
+      ],
+      [
+        "student-unavailable",
+        "This scratchpad is not available right now. Ask your instructor.",
+        "This scratchpad is not available right now. Ask your instructor.",
+      ],
+      ["student-not-found", "Not Found", 'error: "Not Found"'],
+      [
         "join-same-origin",
         "exam admission requires a same-origin request",
         '"exam admission requires a same-origin request"',
@@ -546,10 +577,6 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       ["join-invalid-token", "invalid access token"],
       ["join-closed", "scratchpad access is closed"],
       ["join-capacity", "exam project capacity has been reached"],
-      [
-        "join-rate-limit",
-        "too many unsuccessful exam join attempts; try later",
-      ],
     ] as const
   ).map(
     ([key, label]): UiVocabularyEntry => ({
@@ -559,6 +586,19 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       usedIn: [bold("hosts", label)],
     }),
   ),
+  {
+    id: "hosts.exam.join-rate-limit",
+    label: "too many unsuccessful exam join attempts; try later",
+    anchors: [
+      def(
+        "project-host/exam/token-failure-limit.ts",
+        '"too many unsuccessful exam join attempts; try later"',
+      ),
+    ],
+    usedIn: [
+      bold("hosts", "too many unsuccessful exam join attempts; try later"),
+    ],
+  },
 
   // Sign-in wording
   {

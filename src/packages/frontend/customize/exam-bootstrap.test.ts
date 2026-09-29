@@ -75,6 +75,39 @@ describe("applyExamSessionBootstrap", () => {
     expect(projectMap.getIn(["project-1", "title"])).toBe("Exam Scratchpad");
   });
 
+  it("keeps the exam project's course restrictions for the student UI", () => {
+    const projectSetState = jest.fn();
+    const redux = {
+      getStore: (name: string) =>
+        name === "account"
+          ? { get: () => undefined, emit: jest.fn() }
+          : { get: () => undefined },
+      getActions: (name: string) => ({
+        setState: name === "account" ? jest.fn() : projectSetState,
+      }),
+    };
+    applyExamSessionBootstrap({
+      redux,
+      session: {
+        account: { account_id: "account-1", display_name: "Exam User" },
+        project: {
+          project_id: "project-1",
+          title: "Exam Scratchpad",
+          course: {
+            student_project_functionality: {
+              disableTerminals: true,
+              disableUploads: true,
+            },
+          },
+        },
+      },
+    });
+    const projectMap = projectSetState.mock.calls[0][0].project_map;
+    const path = ["project-1", "course", "student_project_functionality"];
+    expect(projectMap.getIn([...path, "disableUploads"])).toBe(true);
+    expect(projectMap.getIn([...path, "disableTerminals"])).toBe(true);
+  });
+
   it("does nothing without an authenticated exam session", () => {
     const redux = { getStore: jest.fn(), getActions: jest.fn() };
     applyExamSessionBootstrap({ redux });

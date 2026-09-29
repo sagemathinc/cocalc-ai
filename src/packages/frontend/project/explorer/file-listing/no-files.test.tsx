@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 
 import { fireEvent, render, screen } from "@testing-library/react";
-import NoFiles from "./no-files";
+import NoFiles, { emptyDirectoryDescription } from "./no-files";
 import { redux } from "@cocalc/frontend/app-framework";
 
 jest.mock("antd", () => ({
@@ -72,6 +72,15 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   },
 }));
 
+let mockStudentProjectFunctionality: Record<string, boolean> = {};
+const mockUseStudentProjectFunctionality = jest.fn(
+  (_project_id?: string) => mockStudentProjectFunctionality,
+);
+jest.mock("@cocalc/frontend/course", () => ({
+  useStudentProjectFunctionality: (project_id?: string) =>
+    mockUseStudentProjectFunctionality(project_id),
+}));
+
 describe("NoFiles", () => {
   const getProjectActionsMock = redux.getProjectActions as jest.Mock;
   const getProjectStoreMock = redux.getProjectStore as jest.Mock;
@@ -79,6 +88,7 @@ describe("NoFiles", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockStudentProjectFunctionality = {};
     getProjectStoreMock.mockReturnValue({
       get: () => null,
     });
@@ -168,6 +178,153 @@ describe("NoFiles", () => {
 
     expect(setCurrentPath).toHaveBeenCalledWith("/home/user/subfolder");
     expect(askFilename).toHaveBeenCalledWith("ipynb");
+  });
+
+  it("offers Terminal and Upload when the project allows them", () => {
+    render(
+      <NoFiles
+        project_id="project-1"
+        current_path="/home/user"
+        file_search=""
+      />,
+    );
+
+    expect(screen.getByText("Terminal")).not.toBeNull();
+    expect(screen.getByText("Upload")).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Create a notebook, terminal, folder, or upload files to get started.",
+      ),
+    ).not.toBeNull();
+  });
+
+  it("offers only what a course or exam project allows", () => {
+    // Exam projects turn off uploads, and terminals unless the instructor
+    // allows them (project-host/exam/controller.ts).
+    mockStudentProjectFunctionality = {
+      disableTerminals: true,
+      disableUploads: true,
+    };
+
+    render(
+      <NoFiles
+        project_id="project-1"
+        current_path="/home/user"
+        file_search=""
+      />,
+    );
+
+    expect(screen.queryByText("Terminal")).toBeNull();
+    expect(screen.queryByText("Upload")).toBeNull();
+    expect(screen.getByText("Notebook")).not.toBeNull();
+    expect(screen.getByText("Folder")).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Create a notebook, folder, or another file to get started.",
+      ),
+    ).not.toBeNull();
+  });
+
+  it("reads the restrictions of the project it shows", () => {
+    render(
+      <NoFiles
+        project_id="project-1"
+        current_path="/home/user"
+        file_search=""
+      />,
+    );
+    expect(mockUseStudentProjectFunctionality).toHaveBeenCalledWith(
+      "project-1",
+    );
+  });
+
+  it("keeps Terminal when an exam allows terminals but not uploads", () => {
+    mockStudentProjectFunctionality = { disableUploads: true };
+    render(
+      <NoFiles
+        project_id="project-1"
+        current_path="/home/user"
+        file_search=""
+      />,
+    );
+    expect(screen.getByText("Terminal")).not.toBeNull();
+    expect(screen.queryByText("Upload")).toBeNull();
+    expect(
+      screen.getByText(
+        "Create a notebook, terminal, folder, or another file to get started.",
+      ),
+    ).not.toBeNull();
+  });
+
+  it.each([
+    [
+      true,
+      true,
+      "project",
+      "Create a notebook, terminal, folder, or upload files to get started.",
+    ],
+    [
+      true,
+      false,
+      "project",
+      "Create a notebook, terminal, folder, or another file to get started.",
+    ],
+    [
+      false,
+      true,
+      "project",
+      "Create a notebook, folder, or upload files to get started.",
+    ],
+    [
+      false,
+      false,
+      "project",
+      "Create a notebook, folder, or another file to get started.",
+    ],
+    [
+      true,
+      true,
+      "folder",
+      "Create a notebook, terminal, folder, or upload files here.",
+    ],
+    [
+      true,
+      false,
+      "folder",
+      "Create a notebook, terminal, folder, or another file here.",
+    ],
+    [false, true, "folder", "Create a notebook, folder, or upload files here."],
+    [
+      false,
+      false,
+      "folder",
+      "Create a notebook, folder, or another file here.",
+    ],
+  ] as const)(
+    "describes terminal=%s upload=%s in the %s view",
+    (terminalAllowed, uploadAllowed, context, expected) => {
+      expect(
+        emptyDirectoryDescription({ context, terminalAllowed, uploadAllowed }),
+      ).toBe(expected);
+    },
+  );
+
+  it("keeps Upload when only terminals are turned off", () => {
+    mockStudentProjectFunctionality = { disableTerminals: true };
+
+    render(
+      <NoFiles
+        project_id="project-1"
+        current_path="/home/user/subfolder"
+        file_search=""
+      />,
+    );
+
+    expect(screen.queryByText("Terminal")).toBeNull();
+    expect(screen.getByText("Upload")).not.toBeNull();
+    expect(
+      screen.getByText("Create a notebook, folder, or upload files here."),
+    ).not.toBeNull();
   });
 
   it("hides the AI chat action when project AI policy disables agents", () => {

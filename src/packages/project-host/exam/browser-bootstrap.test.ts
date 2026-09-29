@@ -56,6 +56,31 @@ describe("exam browser bootstrap", () => {
     });
   });
 
+  it("passes the exam project's course restrictions to the student UI", () => {
+    // The empty-folder panel and the terminal read these through
+    // useStudentProjectFunctionality; dropping them would re-offer Terminal
+    // and Upload in every exam.
+    const student_project_functionality = {
+      disableTerminals: true,
+      disableUploads: true,
+      disableCollaborators: true,
+    };
+    const bootstrap = buildExamBrowserBootstrap({
+      session: {
+        account_id: "account-1",
+        project_id: "project-1",
+        run_id: "run-1",
+        expires_at_ms: 1234,
+        scheduled_stop_at_ms: 1000,
+      },
+      project: {
+        title: "Scratchpad",
+        course: { student_project_functionality },
+      },
+    });
+    expect(bootstrap.project.course).toEqual({ student_project_functionality });
+  });
+
   it("does not advertise an automatic deletion time in manual mode", () => {
     const bootstrap = buildExamBrowserBootstrap({
       session: {
