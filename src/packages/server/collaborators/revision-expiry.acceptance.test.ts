@@ -1,6 +1,9 @@
 import { revisionInterestPruneSql } from "@cocalc/database/postgres/collaborators/collaborators-revision-interest";
 import { revisionReceiverPruneSql } from "@cocalc/database/postgres/collaborators/collaborators-revision-receiver";
-import { projectDemandPruneSql } from "@cocalc/database/postgres/collaborators/collaborators-demand";
+import {
+  projectDemandPruneSql,
+  demandPruneSql,
+} from "@cocalc/database/postgres/collaborators/collaborators-demand";
 import { MultibayAcceptance } from "./acceptance/harness";
 
 const acceptance =
@@ -60,6 +63,51 @@ acceptance("revision interest expiry query cost", () => {
   }
   test("100000 live interests require bounded work when nothing expired", async () => {
     await measure("100000-live-no-expired", 0);
+  });
+  test("consumer expiry uses bounded batches among 100000 live leases", async () => {
+    const insert = async (prefix: string, count: number, expired: boolean) => {
+      await env.sql(
+        "owner",
+        `INSERT INTO collaboration_demand
+        (account_id,consumer_id,lease_id,scope,expires_at,renew_after,grace_until)
+        SELECT $1,md5($2||n)::uuid,md5($2||n)::uuid,'{"kind":"all"}'::jsonb,
+          now(),now(),now()+$4::integer*interval '1 day'
+        FROM generate_series(1,$3::integer) n`,
+        [env.accounts[0], prefix, count, expired ? -1 : 1],
+      );
+      await env.sql("owner", "ANALYZE collaboration_demand");
+    };
+    const check = async (scenario: string, expected: number) => {
+      const rows = await env.sql(
+        "owner",
+        `EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) ${demandPruneSql}`,
+      );
+      const explain = rows[0]["QUERY PLAN"][0];
+      const blocks =
+        (explain.Plan["Shared Hit Blocks"] ?? 0) +
+        (explain.Plan["Shared Read Blocks"] ?? 0);
+      process.stdout.write(
+        JSON.stringify({
+          scenario,
+          blocks,
+          milliseconds: explain["Execution Time"],
+        }) + "\n",
+      );
+      expect(explain.Plan["Actual Rows"]).toBe(expected);
+      expect(blocks).toBeLessThan(expected ? 5000 : 100);
+    };
+    await insert("consumer-live-", 100000, false);
+    await check("consumers-live", 0);
+    await insert("consumer-expired-", 505, true);
+    await check("consumers-first-batch", 500);
+    await check("consumers-final-batch", 5);
+    await check("consumers-drained", 0);
+    expect(
+      await env.sql(
+        "owner",
+        "SELECT count(*)::integer AS n FROM collaboration_demand",
+      ),
+    ).toEqual([{ n: 100000 }]);
   });
   test("reverse demand expiry drains without scanning 100000 live rows", async () => {
     await env.sql(

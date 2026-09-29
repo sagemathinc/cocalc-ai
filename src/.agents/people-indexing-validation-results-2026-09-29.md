@@ -1721,3 +1721,24 @@ hints are still refreshed through claimed projection jobs. Independent renewal,
 removing polling, receiver-wide catch-up and rehome/restart validation remain
 open. The cooldown is not a distributed bay quota; backlog drain rate and
 multi-worker churn still need capacity/soak measurements before rollout.
+
+### Automatic Consumer Expiry And Delete-Plan Cost
+
+Consumer lease cleanup previously had no maintenance caller. It now runs on the
+same gated cooldown as reverse-hint cleanup, deleting at most 500 expired rows
+per pass with one-second lock and two-second statement timeouts. Its failure is
+isolated from the other cleanup results. Live/grace leases remain untouched.
+
+A real PostgreSQL fixture with 100,000 live consumer rows and 505 expired rows
+exposed a delete-plan problem: even with indexed candidate selection, the key
+join touched 1,648 buffers on a drained pass. Deletion now uses the bounded set
+of locked tuple IDs within the same statement, avoiding that broad second join.
+Measured buffers are 3 for the initial no-expiry pass, 2,450 for deleting 500,
+478 for deleting the final five and 11 after draining. All 100,000 live rows
+remain. This deliberately oversized per-account fixture measures SQL behavior,
+not admissible API usage or a DAU workload.
+
+Server/reference typecheck, eight maintenance tests and all five PostgreSQL
+expiry tests pass. Demand activation-row retention, distributed cleanup budgets,
+long-running churn, and independent lease/interest renewal remain separate open
+gates; this does not establish full cold-account lifecycle completion.

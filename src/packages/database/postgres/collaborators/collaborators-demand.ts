@@ -616,11 +616,19 @@ export async function pruneCollaborationProjectDemand(): Promise<number> {
 }
 
 /** Expiry-indexed bounded cleanup, not a scan of historical accounts. */
-export async function pruneCollaborationDemand() {
-  const { rows } = await getPool().query(`WITH expired AS (
-    SELECT account_id,consumer_id FROM collaboration_demand WHERE grace_until<=clock_timestamp()
+// Locked tuple IDs live only within this statement. A key join can choose a full
+// table scan for the delete even though the candidate CTE has a small limit.
+export const demandPruneSql = `WITH expired AS MATERIALIZED (
+    SELECT ctid AS row_tid FROM collaboration_demand WHERE grace_until<=now()
     ORDER BY grace_until,account_id,consumer_id LIMIT 500 FOR UPDATE SKIP LOCKED)
-    DELETE FROM collaboration_demand d USING expired e
-    WHERE d.account_id=e.account_id AND d.consumer_id=e.consumer_id RETURNING d.consumer_id`);
-  return rows.length;
+    DELETE FROM collaboration_demand d
+    WHERE d.ctid=ANY(ARRAY(SELECT row_tid FROM expired))
+      AND d.grace_until<=clock_timestamp() RETURNING d.consumer_id`;
+
+export async function pruneCollaborationDemand(): Promise<number> {
+  return transaction(async (db) => {
+    await db.query("SET LOCAL lock_timeout='1s'");
+    await db.query("SET LOCAL statement_timeout='2s'");
+    return (await db.query(demandPruneSql)).rows.length;
+  });
 }

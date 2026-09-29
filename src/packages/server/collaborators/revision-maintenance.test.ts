@@ -1,5 +1,6 @@
 const prune = jest.fn();
 const pruneDemand = jest.fn();
+const pruneConsumers = jest.fn();
 const enabled = jest.fn();
 const settings = jest.fn();
 const expiryPage = jest.fn();
@@ -22,6 +23,7 @@ jest.mock(
   () => ({
     demandSchedulingEnabled: () => enabled(),
     pruneCollaborationProjectDemand: () => pruneDemand(),
+    pruneCollaborationDemand: () => pruneConsumers(),
   }),
 );
 jest.mock("@cocalc/database/settings/server-settings", () => ({
@@ -43,6 +45,7 @@ beforeEach(() => {
   jest.spyOn(performance, "now").mockImplementation(() => now);
   prune.mockReset().mockResolvedValue(100);
   pruneDemand.mockReset().mockResolvedValue(100);
+  pruneConsumers.mockReset().mockResolvedValue(500);
   expiryPage.mockReset().mockResolvedValue({ complete: true, candidates: [] });
   pruneInterests.mockReset().mockResolvedValue(1);
   enabled.mockReturnValue(true);
@@ -107,6 +110,7 @@ test("cleans only the local home and limits repeated passes", async () => {
   expect(await runRevisionReceiverCleanup()).toBe(0);
   expect(prune).toHaveBeenCalledTimes(1);
   expect(pruneDemand).toHaveBeenCalledTimes(1);
+  expect(pruneConsumers).toHaveBeenCalledTimes(1);
   now += 30000;
   expect(await runRevisionReceiverCleanup()).toBe(100);
   expect(prune).toHaveBeenCalledTimes(2);
@@ -125,6 +129,7 @@ test("all gates prevent cleanup", async () => {
   await runRevisionInterestCleanup();
   expect(prune).not.toHaveBeenCalled();
   expect(pruneDemand).not.toHaveBeenCalled();
+  expect(pruneConsumers).not.toHaveBeenCalled();
   expect(expiryPage).not.toHaveBeenCalled();
 });
 test("failed cleanup is isolated and backs off", async () => {
@@ -141,6 +146,13 @@ test("reverse-demand failure preserves receiver cleanup and backs off", async ()
   expect(await runRevisionReceiverCleanup()).toBe(100);
   expect(await runRevisionReceiverCleanup()).toBe(0);
   expect(pruneDemand).toHaveBeenCalledTimes(1);
+  expect(pruneConsumers).toHaveBeenCalledTimes(1);
+});
+test("consumer cleanup failure preserves the other cleanup results", async () => {
+  pruneConsumers.mockRejectedValue(Error("database unavailable"));
+  expect(await runRevisionReceiverCleanup()).toBe(100);
+  expect(await runRevisionReceiverCleanup()).toBe(0);
+  expect(pruneConsumers).toHaveBeenCalledTimes(1);
 });
 test("overlapping calls do not start another cleanup", async () => {
   let finish!: (n: number) => void;

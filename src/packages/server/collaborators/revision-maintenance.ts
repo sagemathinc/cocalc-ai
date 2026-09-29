@@ -7,6 +7,7 @@ import { pruneCollaborationRevisionReceivers } from "@cocalc/database/postgres/c
 import {
   demandSchedulingEnabled,
   pruneCollaborationProjectDemand,
+  pruneCollaborationDemand,
 } from "@cocalc/database/postgres/collaborators/collaborators-demand";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -105,6 +106,15 @@ export async function runRevisionReceiverCleanup(): Promise<number> {
     } catch {
       indexingWork.inc({ kind: "project_demand_cleanup_failed" });
       logger.warn("project demand cleanup failed; expired hints retained");
+    }
+    try {
+      indexingWork.inc(
+        { kind: "demand_consumers_pruned" },
+        await pruneCollaborationDemand(),
+      );
+    } catch {
+      indexingWork.inc({ kind: "demand_consumer_cleanup_failed" });
+      logger.warn("consumer demand cleanup failed; expired leases retained");
     }
     return count;
   } catch {
