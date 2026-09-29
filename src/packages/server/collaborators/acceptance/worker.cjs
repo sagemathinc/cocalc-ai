@@ -1190,7 +1190,10 @@ async function command(name, args = {}) {
           await demand.acquireCollaborationDemand({
             account_id,
             consumer_id: account_id,
-            scope: { kind: "projects", project_ids: [config.project] },
+            scope: {
+              kind: "projects",
+              project_ids: args.opts.project_ids ?? [config.project],
+            },
           });
         return null;
       }
@@ -1323,6 +1326,36 @@ async function command(name, args = {}) {
         ).clearProjectHostConatAuthCaches();
       }
       return null;
+    case "fixtureCatalog": {
+      if (config.role !== "owner") throw Error("owner fixture required");
+      const owner = require("@cocalc/database/postgres/collaborators/collaborators-owner");
+      const source = {
+        project_id: args.project_id,
+        chat_path: "/home/user/load.chat",
+      };
+      const authority = { owning_bay_id: config.bays[0], host_id: config.host };
+      const epoch =
+        args.epoch ??
+        (await owner.registerCollaborationSource(
+          source,
+          authority,
+          null,
+          require("node:crypto").randomUUID(),
+        ));
+      await owner.ingestCollaborationSnapshot(
+        {
+          ...source,
+          epoch,
+          sequence: args.sequence,
+          resources: args.resources.map((resource) => ({
+            ...source,
+            ...resource,
+          })),
+        },
+        authority,
+      );
+      return { epoch };
+    }
     case "resourceSample":
       return {
         cpu: process.cpuUsage(),

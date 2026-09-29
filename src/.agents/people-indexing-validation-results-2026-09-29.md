@@ -3230,6 +3230,31 @@ remain open. Inspection of review attempt
 `No retained acceptance evidence`; it was not resubmitted or treated as a
 completed review.
 
+### Different-Size Projects Sharing Workers
+
+`multi-project-load.acceptance.test.ts` seeds four known catalogs through the
+owner store's registration/ingestion functions, with 1, 8, 32 and 80 conversation
+resources. Twenty synthetic accounts demand all four projects on the same home
+bay. Real owner/home maintenance timers and cross-bay RPCs refresh the views;
+the fixture does not advance scheduler deadlines or manually tick workers.
+
+All 2,420 account-resource projections converged both initially and after a
+second ingestion changed every resource's title/activity. Initial observed
+completion times by catalog size were 4.526, 3.521, 3.018 and 7.040 seconds.
+After the update batch finished ingesting, completion times were 2.017, 5.037,
+4.030 and 6.044 seconds. No project compute starts were recorded. The suite
+passed in 57.639 seconds including setup/cleanup; server/reference typecheck
+also passed.
+
+This adds evidence of competition between projects in one scheduler, not a
+fairness bound. Initial timing begins after worker startup; update timing begins
+after the batch of owner ingestions, so it is not end-to-end source-write
+latency. Resources have empty participant lists; filesystem extraction,
+attachments, participant fanout, browser identities and multiple owner bays
+are not represented. Production capacity, sustained mixed traffic and canary
+size remain unproven. The existing filesystem-backed single-project fixture
+remains the evidence for normal source writes; this fixture does not replace it.
+
 ### Known-Source Demand Becomes Idle
 
 The same timer-driven scenario now releases its active consumer through the
