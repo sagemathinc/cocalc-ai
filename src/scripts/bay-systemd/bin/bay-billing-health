@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib.sh"
+
+wait_seconds=0
+case "${1:-}" in
+  '') ;;
+  --wait) wait_seconds="${COCALC_BAY_BILLING_START_TIMEOUT_S:-90}" ;;
+  *) bay_log 'usage: bay-billing-health [--wait]'; exit 2 ;;
+esac
+[[ "$wait_seconds" =~ ^[0-9]+$ ]] || exit 2
+if [[ "${COCALC_CLUSTER_ROLE}" == attached ]]; then exit 0; fi
+case "${COCALC_BILLING_AUTHORITY_ENABLED:-0}" in
+  1|true|yes) ;;
+  *) exit 0 ;;
+esac
+require_var COCALC_BAY_HUB_MAIN
+
+# This is a deployment gate, not a hub watchdog. Never restart services or
+# resume an operator-drained authority to make the check pass.
+deadline=$((SECONDS + wait_seconds))
+while true; do
+  remaining=$((deadline - SECONDS))
+  probe_timeout=15
+  if (( wait_seconds > 0 && remaining < probe_timeout )); then
+    probe_timeout=$remaining
+  fi
+  if (( probe_timeout > 0 )) && timeout --kill-after=2s "${probe_timeout}s" \
+      systemctl is-active --quiet cocalc-bay-billing.service; then
+    if (( wait_seconds > 0 )); then
+      remaining=$((deadline - SECONDS))
+      if (( remaining < probe_timeout )); then probe_timeout=$remaining; fi
+    fi
+    if (( probe_timeout > 0 )) && timeout --kill-after=2s "${probe_timeout}s" \
+        "$COCALC_BAY_NODE_BIN" "$COCALC_BAY_HUB_MAIN" --billing-health-check; then
+      # Catch a service exit during the readiness query as well.
+      if timeout --kill-after=2s 2s systemctl is-active --quiet cocalc-bay-billing.service; then
+        bay_log 'billing executor active and ready'
+        exit 0
+      fi
+    fi
+  fi
+  if (( SECONDS >= deadline )); then
+    bay_log 'billing executor not ready; check unit logs, database connectivity, and operator drain state'
+    exit 1
+  fi
+  sleep 1
+done

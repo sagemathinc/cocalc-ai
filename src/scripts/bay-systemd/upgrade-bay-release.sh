@@ -680,6 +680,7 @@ for worker_id in $(seq 1 "$COCALC_BAY_WORKER_COUNT"); do
   roll_worker "$worker_id"
 done
 systemctl restart cocalc-bay-billing.service
+/opt/cocalc/bay/current/bin/bay-billing-health --wait
 /opt/cocalc/bay/current/bin/bay-status
 /opt/cocalc/bay/current/bin/bay-health
 EOF
@@ -733,6 +734,7 @@ for worker_id in $(seq 1 "$COCALC_BAY_WORKER_COUNT"); do
   roll_worker "$worker_id"
 done
 systemctl restart cocalc-bay-billing.service
+/opt/cocalc/bay/current/bin/bay-billing-health --wait
 /opt/cocalc/bay/current/bin/bay-status
 /opt/cocalc/bay/current/bin/bay-health
 EOF

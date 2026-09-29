@@ -23,6 +23,8 @@ This change is an availability/performance change, not a production deployment.
   all the capacity needed for invites, payment-source reads, and other requests.
   Existing same-scope single-flight behavior is retained. Overload telemetry is
   aggregated with bounded memory and a single database writer.
+  Fields are truncated before aggregation and logging, and a 256 KiB retained
+  payload budget covers both pending and flushing batches, including overflow.
 
 ## Billing process
 
@@ -82,7 +84,17 @@ the same `--billing-worker` command with a lifetime exclusive lock and set
 3. Drain billing via the existing operator API and wait for active work to finish.
    Roll hub workers to the new release. The hub-only/full upgrade paths restart
    the singleton after rolling workers; static-only updates do not restart it.
-4. Resume billing and verify authority health, a non-mutating billing command,
+4. The upgrade now runs `bay-billing-health --wait` after restarting billing.
+   On an enabled seed/standalone bay it requires an active systemd unit and the
+   existing database-backed authority health to report ready. It waits up to
+   `COCALC_BAY_BILLING_START_TIMEOUT_S` (default 90 seconds); failures exit the
+   deployment without restarting hubs or automatically resuming billing.
+   If deliberately drained, resume via the operator API once the new hubs and
+   executor are installed, during that wait. If the wait expires, resume and
+   rerun `bay-billing-health --wait` before declaring the release healthy.
+   This gate is separate from general bay/peer liveness so a billing failure
+   does not take unrelated services out of routing.
+   Verify a non-mutating billing command,
    queue progress, and ordinary hub calls. Check that the executor PID is separate
    from hub PIDs. Monitor event-loop lag, request rejection counts, and query plans.
 5. To roll back, drain and stop the singleton before restoring hub-embedded

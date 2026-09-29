@@ -28,6 +28,7 @@ import { init_passport } from "@cocalc/server/hub/auth";
 import { initialOnPremSetup } from "@cocalc/server/initial-onprem-setup";
 import { ensureBootstrapAdminToken } from "@cocalc/server/auth/bootstrap-admin";
 import { startStandaloneBillingExecutor } from "@cocalc/server/purchases/billing-authority/startup";
+import { getBillingAuthorityHealth } from "@cocalc/server/purchases/billing-authority/store";
 import initHandleMentions from "@cocalc/server/mentions/handle";
 import initMessageMaintenance from "@cocalc/server/messages/maintenance";
 import initProjectControl from "@cocalc/server/projects/control";
@@ -419,6 +420,10 @@ async function main(): Promise<void> {
       "run only the supervised singleton billing executor",
     )
     .option(
+      "--billing-health-check",
+      "read billing readiness and exit without starting services",
+    )
+    .option(
       "--all",
       "runs all of the servers: websocket, proxy, public web, and also mentions updator and updates db schema on startup; use this in situations where there is a single hub that serves everything (instead of a microservice situation like kucalc)",
     )
@@ -526,6 +531,15 @@ async function main(): Promise<void> {
   //console.log("got opts", opts);
 
   try {
+    if (program.billingHealthCheck) {
+      // Read-only probe against the configured authoritative database. Do not
+      // start local PostgreSQL, listeners, migrations, or an executor.
+      const health = await getBillingAuthorityHealth();
+      process.stdout.write(`${JSON.stringify(health)}\n`, () => {
+        process.exit(health.ready ? 0 : 1);
+      });
+      return;
+    }
     if (process.env.COCALC_LOCAL_POSTGRES === "1") {
       const localPg = await ensureLocalPostgres({
         enabled: true,
