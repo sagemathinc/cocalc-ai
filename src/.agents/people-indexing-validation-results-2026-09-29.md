@@ -1626,3 +1626,20 @@ idle account/project moving from a future due time to due now. Jest emitted its
 open-handle warning and exited successfully. Receiver durable traversal and
 completion integration, cross-process races, expiry GC and scale gates remain
 open; this operation is not yet called automatically for received hints.
+
+### Durable Receiver Scheduling Progress
+
+Receiver rows now separately retain a scheduling sequence, CAS version,
+project-demand continuation and scheduling-complete bit. New dirty sequences
+read as a fresh traversal. Advances require the exact receiver identity, live
+lease, owner/home tuple, dirty sequence and prior version. A completed scheduling
+traversal cannot be reopened by a stale worker; another hint or lease arm creates
+a new dirty sequence and requires traversal again. Null continuation records
+only scheduling completion and never updates `applied_seq`.
+
+Database typecheck and five receiver-store tests pass. The new test covers
+durable continuation, competing/stale advances, completion, new-hint reset,
+lease replacement and unchanged projection-completion state. The page worker
+must still be integrated, must retain pages with busy/failed accounts, and must
+not claim view freshness from this scheduling state. Real concurrency, contention
+budgets and full catch-up/scale validation remain open.

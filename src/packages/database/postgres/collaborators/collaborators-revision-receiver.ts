@@ -4,6 +4,7 @@
  */
 import type { PoolClient } from "@cocalc/database/pool";
 import getPool from "@cocalc/database/pool";
+import type { ProjectDemandCursor } from "./collaborators-demand";
 import { boundedText, transaction, uuid } from "./collaborators-common";
 
 /** Explicit prototype installation. Remote projects need not exist locally. */
@@ -21,6 +22,11 @@ export async function syncCollaborationRevisionReceiverSchema(
     ADD COLUMN IF NOT EXISTS receiver_id UUID NOT NULL DEFAULT gen_random_uuid()`);
   await db.query(`ALTER TABLE collaboration_revision_receivers
     ADD COLUMN IF NOT EXISTS renew_after TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()`);
+  await db.query(`ALTER TABLE collaboration_revision_receivers
+    ADD COLUMN IF NOT EXISTS scheduling_seq BIGINT NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS scheduling_version BIGINT NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS scheduling_after JSONB,
+    ADD COLUMN IF NOT EXISTS scheduling_complete BOOLEAN NOT NULL DEFAULT FALSE`);
   await db.query(`CREATE INDEX IF NOT EXISTS collaboration_revision_receivers_home_expiry
     ON collaboration_revision_receivers(home_bay_id,expires_at,project_id)`);
 }
@@ -52,6 +58,84 @@ function validate(opts: ReceiverLease) {
   uuid(opts.lease_id, "receiver lease");
   boundedText(opts.home_bay_id, "receiver home", 128);
   boundedText(opts.owner_bay_id, "receiver owner", 128);
+}
+
+export interface RevisionSchedulingState extends ReceiverLease {
+  receiver_id: string;
+  dirty_seq: string;
+  version: string;
+  after: ProjectDemandCursor | null;
+  complete: boolean;
+}
+
+/** New dirty sequences start a fresh traversal without discarding stored state
+ * needed to reject stale worker updates. No projection freshness is asserted.
+ */
+export async function readRevisionSchedulingState(
+  project_id: string,
+  home_bay_id: string,
+): Promise<RevisionSchedulingState | null> {
+  uuid(project_id, "scheduling project");
+  boundedText(home_bay_id, "scheduling home", 128);
+  const { rows } = await getPool().query(
+    `SELECT *,dirty_seq::text AS sequence,scheduling_version::text AS version,
+      scheduling_seq=dirty_seq AS current FROM collaboration_revision_receivers
+     WHERE project_id=$1 AND home_bay_id=$2 AND expires_at>clock_timestamp()`,
+    [project_id, home_bay_id],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    project_id: row.project_id,
+    home_bay_id: row.home_bay_id,
+    owner_bay_id: row.owner_bay_id,
+    lease_id: row.lease_id,
+    receiver_id: row.receiver_id,
+    dirty_seq: row.sequence,
+    version: row.version,
+    after: row.current ? row.scheduling_after : null,
+    complete: row.current && row.scheduling_complete,
+  };
+}
+
+/** Commit only after the page's eligible accounts were durably scheduled or
+ * verified inactive. Busy/failed accounts require retrying the page instead.
+ * Null continuation means scheduling completed, never projection completion.
+ */
+export async function advanceRevisionScheduling(
+  state: RevisionSchedulingState,
+  after: ProjectDemandCursor | null,
+): Promise<boolean> {
+  validate(state);
+  uuid(state.receiver_id, "scheduling receiver");
+  for (const value of [state.dirty_seq, state.version])
+    if (!/^[0-9]{1,19}$/.test(value) || BigInt(value) > 9223372036854775807n)
+      throw Error("invalid scheduling sequence");
+  if (after) {
+    uuid(after.account_id, "scheduling account cursor");
+    boundedText(after.grace_until, "scheduling expiry cursor", 128);
+  }
+  const { rows } = await getPool().query(
+    `UPDATE collaboration_revision_receivers SET scheduling_seq=dirty_seq,
+       scheduling_version=scheduling_version+1,scheduling_after=$7::jsonb,scheduling_complete=$8
+     WHERE project_id=$1 AND home_bay_id=$2 AND owner_bay_id=$3 AND lease_id=$4
+       AND receiver_id=$5 AND dirty_seq=$6 AND scheduling_version=$9
+       AND expires_at>clock_timestamp()
+       AND NOT (scheduling_seq=dirty_seq AND scheduling_complete)
+     RETURNING project_id`,
+    [
+      state.project_id,
+      state.home_bay_id,
+      state.owner_bay_id,
+      state.lease_id,
+      state.receiver_id,
+      state.dirty_seq,
+      after === null ? null : JSON.stringify(after),
+      after === null,
+      state.version,
+    ],
+  );
+  return rows.length > 0;
 }
 
 /** Snapshot for the registration CAS, never a metadata/access lookup. */

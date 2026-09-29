@@ -8,6 +8,8 @@ import {
   readCollaborationRevisionReceiverPage,
   pruneCollaborationRevisionReceivers,
   collaborationRevisionReceiverNeedsRenewal,
+  readRevisionSchedulingState,
+  advanceRevisionScheduling,
 } from "./collaborators-revision-receiver";
 
 const describeDb =
@@ -46,6 +48,49 @@ describeDb("shared home revision receiver", () => {
         [project_id],
       )
     ).rows[0].receiver_id as string;
+  test("scheduling progress is durable, CAS guarded, and separate from catch-up completion", async () => {
+    const opts = lease();
+    const read = () =>
+      readRevisionSchedulingState(opts.project_id, opts.home_bay_id);
+    expect(await read()).toBeNull();
+    await arm(opts);
+    const initial = (await read())!;
+    expect(initial).toMatchObject({
+      after: null,
+      complete: false,
+      dirty_seq: "1",
+    });
+    const after = {
+      account_id: randomUUID(),
+      grace_until: "2026-09-29 12:00:00.123456+00",
+    };
+    expect(await advanceRevisionScheduling(initial, after)).toBe(true);
+    expect(await advanceRevisionScheduling(initial, null)).toBe(false);
+    const next = (await read())!;
+    expect(next.after).toEqual(after);
+    expect(await advanceRevisionScheduling(next, null)).toBe(true);
+    expect((await read())!.complete).toBe(true);
+    expect(await advanceRevisionScheduling((await read())!, after)).toBe(false);
+    const completed = (await read())!;
+    await receiveCollaborationRevisionWakeup(opts);
+    expect(await advanceRevisionScheduling(completed, null)).toBe(false);
+    const dirty = (await read())!;
+    expect(dirty).toMatchObject({
+      dirty_seq: "2",
+      after: null,
+      complete: false,
+    });
+    await arm({ ...opts, lease_id: randomUUID() }, opts.lease_id);
+    expect(await advanceRevisionScheduling(dirty, null)).toBe(false);
+    expect(
+      (
+        await getPool().query(
+          "SELECT applied_seq::text FROM collaboration_revision_receivers WHERE project_id=$1",
+          [opts.project_id],
+        )
+      ).rows[0].applied_seq,
+    ).toBe("0");
+  });
   test("renewal is project-local and does not extend a lease on observation or retry", async () => {
     const opts = lease();
     const due = (home = opts.home_bay_id) =>
