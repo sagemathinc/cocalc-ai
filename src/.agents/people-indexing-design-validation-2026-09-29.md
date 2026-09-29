@@ -1,7 +1,8 @@
 # Demand-Driven People Indexing: Design And Validation
 
 Date: 2026-09-29.
-Status: user approved the smaller initial-release contract below. Implementation
+Status: user approved manual-only, scoped, cancellable Scan LROs on 2026-09-29,
+in addition to the smaller initial-release contract below. Implementation
 and validation are incomplete; this decision is not production enablement.
 The raw live btrfs generation candidate failed the no-change proof spike; see the
 [execution results](people-indexing-validation-results-2026-09-29.md).
@@ -54,7 +55,9 @@ per-project RPCs, access-lease writes, or notification polling.
 - Dormant accounts mainly cost storage. Genuine invitations/mentions, membership
   changes and bounded cleanup may still cause work. Offline delivery must not
   depend on an open People view or warm resource projection.
-- Explicit human Scan is authorized, throttled and best-effort under concurrent
+- Explicit human Scan is a scoped, cancellable long-running operation (LRO),
+  never automatic in the initial release. It is authorized, single-flight,
+  frequency-limited and best-effort under concurrent
   writes. Finished traversal does not certify a point-in-time filesystem snapshot,
   current-byte equality, or that every resource has reached every home view.
   Show unavailable, truncated, deferred and failed outcomes honestly. No scan
@@ -71,6 +74,123 @@ per-project RPCs, access-lease writes, or notification polling.
   never silently replayed or reported failed solely because of a timeout. Keep
   existing rehome guards until interruption/receipt handling is implemented and
   tested; this contract change does not authorize dropping durable receipts.
+
+### Manual Scan Product Contract
+
+Indexing and scanning are different operations. Normal supported create/open/write
+activity continues registering and updating known resources automatically.
+Filesystem Scan discovers historical or externally changed supported resources;
+it is an explicit import/recovery operation, not a prerequisite for ordinary
+collaboration. If a newly created supported conversation requires Scan to appear,
+fix the registration/update path rather than normalize that workflow.
+
+The user opens **Scan projects**, searches/selects projects (or selects all
+eligible projects), reviews the selected count, and explicitly starts one LRO.
+Resolve "all" to a fixed, authorized project set at submission; later projects
+are not silently added. Persist that set and paginate large selections/results.
+Projects excluded from this selection are not traversed by this operation.
+Not scanning a project does not hide resources registered by ordinary activity;
+global-view visibility preferences are a separate concern.
+
+Expose familiar controls: scan availability enabled/disabled, explicit project
+scope, start, inspect progress, and cancel. An administrator can disable new Scan
+admissions server-side as well as hide the UI. Existing operations must remain
+inspectable/cancellable; disabling admission does not discard receipts or
+silently claim cancellation. Disabling Scan does not disable normal indexing,
+revoke project access, or delete previously indexed resources.
+
+**No automation ships initially.** No Scan on login, page open, host startup,
+project startup, inactivity, elapsed time, or reenable. No automatic initial
+bootstrap or periodic filesystem sweep, including legacy fallback paths. Bounded
+execution/recovery of an already user-authorized LRO is not a new automatic Scan.
+Future opt-in scheduling can reuse explicit scopes, frequency limits and LROs,
+but requires a separate product/rollout decision; do not build that scheduler now.
+
+### Scan LRO Design And Reuse
+
+Use the existing LRO admission, persistence, worker, progress, cancellation and
+UI conventions. Inspect these implementations before adding another state machine:
+
+- `packages/server/lro/lro-db.ts` and `packages/server/conat/api/lro.ts`.
+- `packages/server/projects/copy-worker.ts` for bounded multi-project work.
+- `packages/server/projects/backup-lro.ts` for deduplication conventions.
+- `packages/server/projects/start-lro-progress.ts` for progress conventions.
+- `packages/server/inter-bay/start-lro-forward.ts` for routed operation identity.
+
+Reuse infrastructure, not assumptions: verify its cancellation and expiration
+semantics are sufficient for Scan. Adapt the existing per-project Scan receipts
+and dispatch to the LRO, retaining ambiguous in-flight identities; do not create
+a second independently authoritative execution path or replay old work merely
+because the UI changes.
+
+Proposed ownership: the requesting account's home bay owns the batch LRO and
+selection; each project's owning bay authorizes and coordinates its scan; its
+host traverses local storage. Route explicitly across bays. Keep traversal and
+file contents off the hub; return bounded metadata/progress. Retain topology
+guards until interruption and fencing are verified.
+
+- **Single flight:** one active Scan batch per requesting account across tabs,
+  sessions and entry points. A second start returns the existing operation,
+  without extending its selection or launching new work. Enforce this atomically
+  server-side, not with a disabled button. Serialize per-project scans across
+  accounts too; initially defer conflicting children rather than share execution
+  with ambiguous cancellation ownership.
+- **Frequency limits:** enforce account and project limits durably, plus bounded
+  host/bay concurrency. Return the next eligible time. Cancellation, failures,
+  browser reload and new request IDs must not bypass limits; an idempotent replay
+  must not consume another admission. Choose documented initial intervals and
+  concurrency from measured scan cost before enablement, not from DAU guesses.
+- **Cancellation:** stop admitting queued children, signal running children, and
+  expose "Cancelling" until they have stopped or are fenced from further work
+  and publication. Only then release single-flight admission. An unreachable
+  host is not cancellation acknowledgment. Use bounded traversal checkpoints;
+  measure cancellation latency. Cancellation is idempotent, does not undo already
+  indexed metadata, and never deletes canonical user state.
+- **Durability:** persist operation identity, fixed selection, child identities,
+  progress and cancellation intent. Closing the dialog, refresh, disconnect or
+  worker restart must not duplicate or lose the operation. Recover through the
+  standard LRO interfaces. Observation timeouts mean unknown, not failed or safe
+  to restart; reconcile/fence abandoned execution before replacement admission.
+- **Progress:** show aggregate projects processed out of the fixed total, with
+  separate successful, failed, unavailable, truncated and cancelled counts.
+  Show per-project queued/running/cancelling/terminal details and actual counters
+  where available. Do not invent percent-of-files or ETA for an unknown tree.
+  A full progress bar means processing ended, not universal success, a filesystem
+  snapshot, or completion of home-view catch-up.
+- **Retry:** after terminal completion/cancellation and the frequency limit,
+  allow explicit retry of selected unsuccessful projects as a new LRO. Never
+  silently enqueue another batch. Recheck authorization at admission and dispatch;
+  status/cancel access must not leak another account's selection or metadata.
+- **No implicit compute:** unavailable storage produces an honest per-project
+  outcome, not project startup. Bound retries and surface deferred work. The UI
+  remains keyboard accessible, supports narrow layouts, announces status without
+  disruptive focus changes, and uses the existing LRO progress presentation.
+
+### Manual Scan Validation And Delivery
+
+1. Audit all discovery entry points and keep only normal known-source updates
+   and explicitly admitted Scan work. Test idle time, login, page/project/host
+   startup, and disable/reenable cause zero unsolicited filesystem scans.
+2. Implement the LRO adapter and fixed project selection using existing
+   infrastructure. Verify single-flight admission races across tabs/workers,
+   cross-account project conflicts, authorization changes, frequency limits,
+   and selection spanning owner bays. "All" must not mean only the visible page.
+3. Verify cancel-before-dispatch, cancel-during-traversal, completion/cancel
+   races, unreachable host, worker restart, duplicate requests and stale worker
+   publication. Do not accept cancellation merely because an RPC timed out.
+4. Validate the actual browser selection/progress/cancel/reopen/retry flow,
+   including keyboard/focus, disabled controls, partial results, unavailable
+   storage and truncation. Assert no compute starts and no resubmission on reload.
+5. Measure bounded multi-project scan cost and cancellation latency; set initial
+   frequency/concurrency defaults. Keep ordinary two-person collaboration
+   validation independent: create -> invite/link -> accept -> collaborate ->
+   find again must work without Scan.
+
+This is a plan revision, not a claim that existing Scan code satisfies these
+requirements. The previous single-project control and tests are reusable evidence
+only where their behavior matches this contract. No deployment, live Scan,
+automatic goal continuation, or production enablement is authorized by updating
+this document.
 
 ### Explicitly Deferred
 
@@ -95,7 +215,9 @@ release. Revisit measured capacity before substantially expanding rollout.
    idempotency, authorization, private state and offline notification deduplication.
    Verify revoked access and expired catalog cursors on return. Keep unsupported
    canonical-state portability guarded; disposable demand must reacquire safely.
-4. **Explicit Scan and honest UI.** Validate authorization, budgets, timeout
+4. **Manual Scan LRO and honest UI.** Deliver the scoped selection, single-flight,
+   frequency limits, durable cancellation and progress contract above using
+   existing LRO infrastructure. Validate authorization, budgets, timeout
    inspection, retry identity, unavailable storage and concurrent writes. Copy
    must distinguish scan completion from snapshot consistency and view freshness.
    Check the actual browser flow and accessibility, not only component tests.
