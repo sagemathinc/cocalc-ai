@@ -578,6 +578,32 @@ export const collaboratorsControl: InterBayCollaboratorsApi = {
       await import("@cocalc/database/postgres/collaborators/collaborators-scan");
     return admitCollaborationScan(opts, authority);
   },
+  async inspectScanAtHome(opts) {
+    await checkHome(opts.account_id, opts.route);
+    return owner(opts.project_id, (api, route) =>
+      api.inspectScanAtOwner({ ...opts, route }),
+    );
+  },
+  async inspectScanAtOwner(opts) {
+    await enabled();
+    const authority = await checkOwner(opts.project_id, opts.route);
+    const { inspectCollaborationScan } =
+      await import("@cocalc/database/postgres/collaborators/collaborators-scan");
+    return inspectCollaborationScan(opts, authority);
+  },
+  async scanStatusAtHome(opts) {
+    await checkHome(opts.account_id, opts.route);
+    return owner(opts.project_id, (api, route) =>
+      api.scanStatusAtOwner({ ...opts, route }),
+    );
+  },
+  async scanStatusAtOwner(opts) {
+    await enabled();
+    const authority = await checkOwner(opts.project_id, opts.route);
+    const { readCollaborationScanStatus } =
+      await import("@cocalc/database/postgres/collaborators/collaborators-scan");
+    return readCollaborationScanStatus(opts, authority);
+  },
   async acquireDemand(opts) {
     await demandEnabled();
     await checkHome(opts.account_id, opts.route);

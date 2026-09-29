@@ -6,6 +6,10 @@ import type { Client } from "@cocalc/conat/core/client";
 import type {
   ScanAdmissionRequest,
   ScanAdmissionResult,
+  ScanInspectionRequest,
+  ScanStatusRequest,
+  ScanReceipt,
+  ScanDiscoveryStatus,
 } from "@cocalc/util/collaboration-scan";
 import type { PeopleInvitationDeliveryReceipt } from "@cocalc/util/people-invitations";
 import {
@@ -173,6 +177,19 @@ export type InterBayCollaboratorsApi = RoutedApi & {
   scanAtOwner(
     opts: ScanAdmissionRequest & { route: CollaborationRoute },
   ): Promise<ScanAdmissionResult>;
+  /** Read-only inspection never reserves tokens or admits new work. */
+  inspectScanAtHome(
+    opts: ScanInspectionRequest & { route: CollaborationRoute },
+  ): Promise<ScanReceipt | null>;
+  inspectScanAtOwner(
+    opts: ScanInspectionRequest & { route: CollaborationRoute },
+  ): Promise<ScanReceipt | null>;
+  scanStatusAtHome(
+    opts: ScanStatusRequest & { route: CollaborationRoute },
+  ): Promise<ScanDiscoveryStatus>;
+  scanStatusAtOwner(
+    opts: ScanStatusRequest & { route: CollaborationRoute },
+  ): Promise<ScanDiscoveryStatus>;
   /** Service-only sender-authorized receipt lookup at the recipient's current home. */
   readInvitationDelivery(opts: {
     recipient_account_id: string;

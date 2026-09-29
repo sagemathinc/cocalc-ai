@@ -17,3 +17,17 @@ export interface ScanReceipt {
 export type ScanAdmissionResult =
   | ScanReceipt
   | { admission: "throttled"; retry_after_ms: number };
+
+/** Discovery completion is not owner ingestion or account projection completion. */
+export type ScanDiscoveryStatus =
+  | { state: "unknown" }
+  | { state: "queued" }
+  | { state: "running"; started_at: number }
+  | { state: "discovered" | "failed"; settled_at: number };
+
+export type ScanInspectionRequest = Omit<ScanAdmissionRequest, "mode">;
+export interface ScanStatusRequest {
+  project_id: string;
+  account_id: string;
+  job_id: string;
+}

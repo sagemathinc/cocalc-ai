@@ -53,16 +53,13 @@ export async function retireExpiredQueuedCollaborationScan(
 import type {
   ScanAdmissionRequest,
   ScanReceipt,
+  ScanDiscoveryStatus,
 } from "@cocalc/util/collaboration-scan";
 export type {
   ScanAdmissionRequest,
   ScanReceipt,
+  ScanDiscoveryStatus,
 } from "@cocalc/util/collaboration-scan";
-export type ScanDiscoveryStatus =
-  | { state: "unknown" }
-  | { state: "queued" }
-  | { state: "running"; started_at: number }
-  | { state: "discovered" | "failed"; settled_at: number };
 
 /** Read-only internal status. Requires a current member's own live receipt,
  * rather than disclosing another requester's retained job by UUID alone.

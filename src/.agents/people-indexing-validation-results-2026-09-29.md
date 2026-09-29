@@ -2231,3 +2231,29 @@ revocation and expired queued retirement, with mocked host transport; they do
 not yet prove live timer-to-host traversal. Public Scan API/CLI/UI, scoped-agent
 admission, demand/bootstrap integration and the broader validation gates remain
 open. No live deployment configuration was changed.
+
+### Routed Scan Receipt And Progress Inspection
+
+Added typed service-only `inspectScanAtHome`/`inspectScanAtOwner` and
+`scanStatusAtHome`/`scanStatusAtOwner` routes. Home routing checks the account's
+current home and availability; owner routing checks the current project route
+epoch and delegates to the existing current-member, own-live-receipt database
+checks. The exact account/project/request/job identities are preserved. These
+reads do not reserve admission tokens, clean receipts, contact a host or admit
+work, and transport failures propagate rather than becoming a fabricated
+unknown/failed outcome. They remain usable with dispatch paused, while the
+People flag and ordinary authorization checks still apply.
+
+The discovery-status union now lives in util (re-exported by the database
+module) so clients need not import database implementation types. `discovered`
+explicitly does not mean ingestion or account projection completion. These are
+internal service methods, not yet public human or delegated-agent endpoints;
+public polling budgets and identity binding remain required before exposure.
+
+Server/reference typecheck, all 36 API routing tests and all 22 PGlite Scan store
+tests pass. New routing tests cover exact identity forwarding, paused dispatch,
+stale home/owner routes, disabled People, unknown/absent receipts, owner access
+failure and transport timeout without resubmission. These routing tests mock
+the transport/store boundary; the store suite separately verifies receipt and
+membership behavior. Live multibay inspection and public API/CLI/UI integration
+remain open, as do the wider plan gates. No deployment settings were changed.

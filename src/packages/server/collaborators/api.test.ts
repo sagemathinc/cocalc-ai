@@ -13,6 +13,8 @@ import {
 const owner = jest.fn();
 const scanReserve = jest.fn();
 const scanAdmit = jest.fn();
+const scanInspect = jest.fn();
+const scanStatus = jest.fn();
 const revisionInterest = jest.fn();
 const sharedProjection = jest.fn();
 const revisionWakeup = jest.fn();
@@ -35,6 +37,8 @@ jest.mock(
 );
 jest.mock("@cocalc/database/postgres/collaborators/collaborators-scan", () => ({
   admitCollaborationScan: (...args) => scanAdmit(...args),
+  inspectCollaborationScan: (...args) => scanInspect(...args),
+  readCollaborationScanStatus: (...args) => scanStatus(...args),
 }));
 const owners = jest.fn();
 const register = jest.fn();
@@ -120,6 +124,8 @@ const remote = {
   inspectDemand: jest.fn(),
   inspectProjectDemand: jest.fn(),
   scanAtOwner: jest.fn(),
+  inspectScanAtOwner: jest.fn(),
+  scanStatusAtOwner: jest.fn(),
   resolveChatAlias: jest.fn(),
   resolvePersonAlias: jest.fn(),
   getPersonAlias: jest.fn(),
@@ -424,6 +430,95 @@ test("revision interests derive the home and require project-scoped demand", asy
     });
   }
 });
+test("scan inspection routes exact identities without admission or token reservation", async () => {
+  const prior = process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE;
+  delete process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE;
+  try {
+    const request = {
+      project_id,
+      account_id,
+      request_id: randomUUID(),
+      route: { bay_id: "home" },
+    };
+    const statusRequest = {
+      project_id,
+      account_id,
+      job_id: randomUUID(),
+      route: request.route,
+    };
+    const receipt = {
+      admission: "accepted",
+      job_id: statusRequest.job_id,
+      expires_at: 123,
+    };
+    remote.inspectScanAtOwner.mockResolvedValue(receipt);
+    remote.scanStatusAtOwner.mockResolvedValue({ state: "queued" });
+    expect(await collaboratorsControl.inspectScanAtHome(request)).toEqual(
+      receipt,
+    );
+    expect(remote.inspectScanAtOwner).toHaveBeenCalledWith({
+      ...request,
+      route,
+    });
+    expect(await collaboratorsControl.scanStatusAtHome(statusRequest)).toEqual({
+      state: "queued",
+    });
+    expect(remote.scanStatusAtOwner).toHaveBeenCalledWith({
+      ...statusRequest,
+      route,
+    });
+    remote.inspectScanAtOwner.mockRejectedValueOnce(Error("transport timeout"));
+    await expect(
+      collaboratorsControl.inspectScanAtHome(request),
+    ).rejects.toThrow("transport timeout");
+    await expect(
+      collaboratorsControl.scanStatusAtHome({
+        ...statusRequest,
+        route: { bay_id: "wrong" },
+      }),
+    ).rejects.toThrow("stale");
+    expect(scanReserve).not.toHaveBeenCalled();
+    expect(scanAdmit).not.toHaveBeenCalled();
+    expect(remote.scanAtOwner).not.toHaveBeenCalled();
+  } finally {
+    if (prior === undefined)
+      delete process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE;
+    else process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE = prior;
+  }
+});
+
+test("owner scan inspection preserves access failures, unknown results and routing fences", async () => {
+  bay = "owner";
+  const request = { project_id, account_id, request_id: randomUUID(), route };
+  const statusRequest = { project_id, account_id, job_id: randomUUID(), route };
+  scanInspect.mockResolvedValue(null);
+  scanStatus.mockResolvedValue({ state: "unknown" });
+  expect(await collaboratorsControl.inspectScanAtOwner(request)).toBeNull();
+  expect(await collaboratorsControl.scanStatusAtOwner(statusRequest)).toEqual({
+    state: "unknown",
+  });
+  expect(scanInspect).toHaveBeenCalledWith(request, { owning_bay_id: "owner" });
+  expect(scanStatus).toHaveBeenCalledWith(statusRequest, {
+    owning_bay_id: "owner",
+  });
+  scanStatus.mockRejectedValueOnce(Error("access denied"));
+  await expect(
+    collaboratorsControl.scanStatusAtOwner(statusRequest),
+  ).rejects.toThrow("access denied");
+  await expect(
+    collaboratorsControl.inspectScanAtOwner({
+      ...request,
+      route: { ...route, epoch: 3 },
+    }),
+  ).rejects.toThrow("stale");
+  settings.mockResolvedValue({ collaborators_enabled: false });
+  await expect(
+    collaboratorsControl.scanStatusAtOwner(statusRequest),
+  ).rejects.toThrow("not enabled");
+  expect(scanReserve).not.toHaveBeenCalled();
+  expect(scanAdmit).not.toHaveBeenCalled();
+});
+
 test("internal scan reserves at home before routing to the project owner", async () => {
   const previous = process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE;
   process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE = "1";
