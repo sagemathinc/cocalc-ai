@@ -3624,3 +3624,45 @@ The published [manual checklist](manual-scan-checklist-2026-09-29.md) specifies
 selection, two-tab behavior, reload, cancellation, partial results/retry,
 disable/reenable, keyboard/display and ordinary collaboration checks. Results
 are pending; do not infer completion of those live-site checks from the fixtures.
+
+### Resumed Live Browser Checklist: Security Verification Pending
+
+The supplied Chromium session on CDP port 9222 is reachable again at
+`https://lite1b.cocalc.ai`. The local three-bay development hub restart and static
+frontend rebuild completed successfully. This validation did not change a
+production setting or submit a new Scan operation.
+
+The actual People shell and Scan dialog provided these results:
+
+- **Selection, partial:** project search and navigation between 25-project pages
+  work. Select-all shows the account-wide total of 72 while searching. Selection
+  persistence across pages remains untested because admission is disabled.
+- **Disabled admission:** the dialog explains that new scans are disabled and
+  disables Start. Existing project resources remain visible. Disabling during
+  an active operation and subsequent reenable behavior remain untested.
+- **Keyboard/display, partial:** Escape closes the dialog and returns focus to
+  Scan projects. At a 320-pixel viewport, the dialog and actions fit in both light
+  and dark themes. Axe WCAG 2 A/AA and 2.1 AA checks report no violations within
+  the dialog in either theme. The original system appearance preference was
+  restored. Keyboard start/cancel and actual browser 200% zoom remain untested.
+- **Execution checks pending:** no new operation ID exists for this attempt.
+  Start/reload, two-tab single-flight, cancellation, terminal results, explicit
+  retry, and the two-person ordinary collaboration workflow have not been
+  exercised on this site in this attempt.
+
+The admin setting Enable Manual People Scan is currently disabled. Saving its
+change to enabled opened the site's Confirm security action passkey dialog.
+Human verification is pending in the admin browser tab; no credential or
+authorization bypass was attempted. The scoped CLI also still reports
+`project API relay requires the current project's local connection and secret`
+after loading the development hub environment.
+
+One dialog reopen briefly displayed the generic unconfirmed-outcome alert;
+subsequent inspection loaded disabled status and the project list successfully.
+This is unresolved intermittent read-path evidence, not a confirmed scan failure.
+
+Correction to earlier accessibility evidence: the standalone audit uses CSS
+`zoom`, which does not establish behavior under actual browser zoom. An
+additional live CSS-zoom probe clipped the dialog; it must not be interpreted as
+a browser-zoom pass or a confirmed defect under native browser zoom. The live
+320-pixel reflow checks above are separate, direct measurements.
