@@ -1336,3 +1336,26 @@ admission, recipient bounds and a real authorized shared response with no
 attention generation inside the common catalog. This is not yet integrated
 into projection-job grouping or home application; there is still one bounded
 demand inspection per distinct recipient, and no high-fanout capacity claim.
+
+### Compatible Projection Job Coalescing
+
+Added a per-pass shared fetcher keyed by project, generation, revision, catalog
+cursor and relation continuation. Compatible recipients share one in-flight
+owner request, including its rejected promise on an unknown outcome. Each job
+receives an independent cloned catalog page with only its own attention floors.
+Missing/duplicate recipient overlays throw rather than manufacturing denial;
+explicit denial still flows through the normal per-account revocation path.
+
+Maintenance uses this fetcher only with both demand scheduling and the revision
+prototype enabled. Existing per-job claim checks, protected projection writes,
+error handling and metrics remain. Jobs use a conservative pass-start timestamp
+so sharing a response cannot extend another recipient's access-lease lifetime.
+Byte metrics continue to count logical per-account pages, not shared wire bytes.
+
+Server build and 37 focused tests pass; the authenticated demand suite also
+passed all eighteen cases. Compatible/different-cursor groups, independent
+attention, shared failure and malformed overlays have direct coverage.
+The current demand claimant selects one account per pass, so this integration
+does not yet demonstrate cross-account RPC savings. Project-grouped fair claim
+selection, demand registration/renewal scheduling and receiver completion after
+all relevant catch-up remain necessary before claiming the shared-fetch gate.

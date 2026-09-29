@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import getLogger from "@cocalc/backend/logger";
+import { createSharedProjectionFetcher } from "./projection-batch";
 import getPool from "@cocalc/database/pool";
 import {
   syncCollaborationDemandSchema,
@@ -36,6 +37,7 @@ import {
 } from "@cocalc/database/postgres/collaborators/collaborators-access";
 import {
   fetchCollaborationProjection,
+  fetchCollaborationSharedProjection,
   fetchCollaborationAccessBatches,
   fetchCollaborationNotificationPage,
   deliverCollaborationNotificationObligation,
@@ -127,15 +129,26 @@ export async function runCollaboratorsMaintenance() {
     await compactNextCollaborationProject(bay_id);
     const jobs = await claimCollaborationProjectionJobs(bay_id);
     indexingWork.inc({ kind: "projection_claimed" }, jobs.length);
+    // Shared responses must not acquire a later access-lease start time merely
+    // because another recipient begins awaiting the same in-flight request.
+    const projectionRequestedAt = Date.now();
+    const fetchPage =
+      demandSchedulingEnabled() &&
+      process.env.COCALC_PEOPLE_REVISION_INTEREST_PROTOTYPE === "1"
+        ? createSharedProjectionFetcher(
+            jobs,
+            fetchCollaborationSharedProjection,
+          )
+        : fetchCollaborationProjection;
     // At most eight bounded metadata pages in flight, with durable claims and
     // no waiting queue. Each page revalidates current owner membership.
     await Promise.all(
       jobs.map(async (job) => {
-        const requested_at = Date.now();
+        const requested_at = projectionRequestedAt;
         const end = indexingPageSeconds.startTimer();
         let outcome = "failed";
         try {
-          const page = await fetchCollaborationProjection(job);
+          const page = await fetchPage(job);
           indexingPageBytes.inc(Buffer.byteLength(JSON.stringify(page)));
           const applied = await applyCollaborationProjection(
             job,

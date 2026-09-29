@@ -41,6 +41,7 @@ import { createInterBayCollaboratorsClient } from "@cocalc/conat/inter-bay/colla
 import type {
   CollaborationRoute,
   CollaborationProjectionRequest,
+  CollaborationSharedProjectionRequest,
   InterBayCollaboratorsApi,
   CollaborationAccessRequest,
 } from "@cocalc/conat/inter-bay/collaborators";
@@ -1046,6 +1047,18 @@ export async function fetchCollaborationProjection(
 ) {
   return owner(opts.project_id, (api, route) =>
     api.projectPage({ ...opts, route }),
+  );
+}
+
+export async function fetchCollaborationSharedProjection(
+  opts: CollaborationSharedProjectionRequest,
+) {
+  return owner(opts.project_id, (api, route) =>
+    api.sharedProjectPage({
+      ...opts,
+      home_bay_id: getConfiguredBayId(),
+      route,
+    }),
   );
 }
 
