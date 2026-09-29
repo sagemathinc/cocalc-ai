@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { IntlProvider } from "react-intl";
 import { redux } from "@cocalc/frontend/app-framework";
@@ -159,7 +159,7 @@ test.each(["connected", "idle"] as const)(
   },
 );
 
-test("completed activity keeps guidance and agent file context on a continuation page", async () => {
+test("completed activity keeps guidance and agent file context in long rows", () => {
   log("");
   const projectActions = jest
     .spyOn(redux, "getProjectActions")
@@ -190,9 +190,6 @@ test("completed activity keeps guidance and agent file context on a continuation
         <Turn generating={false} blocks={blocks} fileContext={location} />
       </FileContext.Provider>,
     );
-    const last = screen.getByRole("button", { name: "Last part" });
-    last.focus();
-    await userEvent.setup().keyboard("{Enter}");
     const human = screen.getByRole("img", { name: "Human image" });
     expect(human.closest(".cocalc-slate-guidance")).not.toBeNull();
     expect(human).toHaveAttribute(
@@ -233,6 +230,13 @@ test("completion keeps commentary from a streamed block containing the final res
   expect(screen.getByText("hello")).toBeVisible();
   expect(screen.getByText("hello")).toBe(hello);
   expect(selection.toString()).toBe("hello");
+  // Rendered Markdown under a selection is only replaced once the reader is
+  // done selecting; then the final response is shown once.
+  act(() => {
+    selection.removeAllRanges();
+    document.dispatchEvent(new Event("selectionchange"));
+  });
+  expect(screen.getByText("hello")).toBeVisible();
   expect(screen.getAllByText("done")).toHaveLength(1);
 });
 

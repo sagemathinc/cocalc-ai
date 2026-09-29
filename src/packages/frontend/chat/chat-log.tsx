@@ -11,6 +11,7 @@ Render all the messages in the chat.
 
 import {
   createContext,
+  Fragment,
   KeyboardEvent,
   MutableRefObject,
   useCallback,
@@ -68,6 +69,24 @@ import { getUserName } from "./user-name";
 import { getSortedDates } from "./sorted-dates";
 import { useActivityVisibility } from "./activity-visibility";
 import { agentRpcMessageMarkdown } from "./agent-message-presentation";
+import { canMovePostedMessageToAgent } from "./post-to-agent";
+import {
+  ChatTurnActivityFeed,
+  needsTurnActivityFeed,
+  useTurnListRowContexts,
+} from "./chat-log-turns";
+import {
+  createTurnActivityStore,
+  TurnActivityStoreContext,
+  type TurnActivityStore,
+} from "./turn-activity";
+import {
+  TurnActivityListRow,
+  type TurnListRowContext,
+} from "./turn-activity-timeline";
+import type { TurnTimelineRow } from "./turn-timeline";
+import { useNarrowChatViewport } from "./use-chat-viewport";
+import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspaces/use-effective-editor-theme";
 import {
   CodexAttentionCard,
   type CodexAttentionDraft,
@@ -80,6 +99,32 @@ export { getSortedDates } from "./sorted-dates";
 // you can use this to quickly disabled virtuoso, but rendering large chatrooms will
 // become basically impossible.
 const USE_VIRTUOSO = true;
+
+type ChatListRow =
+  | { kind: "message"; key: string; messageIndex: number }
+  | {
+      kind: "turn";
+      key: string;
+      row: TurnTimelineRow;
+      first: boolean;
+      last: boolean;
+      context: TurnListRowContext;
+    };
+
+interface ChatRowLookup {
+  forMessageIndex: (index: number) => number;
+}
+
+const IDENTITY_ROW_LOOKUP: ChatRowLookup = {
+  forMessageIndex: (index) => index,
+};
+
+// Insets agent activity rows to line up with an agent message's content.
+const TURN_ROW_INSET: CSSProperties = { marginLeft: 39, marginRight: 24 };
+const NARROW_TURN_ROW_INSET: CSSProperties = {
+  marginLeft: 13,
+  marginRight: 13,
+};
 
 function isImmediateAcpSteerMessage(message: ChatMessageTyped): boolean {
   return field<string>(message, "acp_send_mode") === "immediate";
@@ -309,6 +354,17 @@ function ReactiveActivitySteersMessage({
   );
 }
 
+function isAwaitingExplicitSend(
+  message: ChatMessageTyped,
+  state: AttachedSteerMessage["state"],
+): boolean {
+  return (
+    state === "queued" ||
+    state === "not-sent" ||
+    (state === "saved" && canMovePostedMessageToAgent(message))
+  );
+}
+
 function collectSteers({
   messages,
   visibleKeys,
@@ -425,6 +481,9 @@ function collectSteers({
             ? "not-sent"
             : "saved";
     if (!state || (immediate && !anchoredParentId)) continue;
+    // Posted and queued messages are not part of a turn until they are sent.
+    // Leave them as ordinary rows below it, where they can still be edited.
+    if (!immediate && isAwaitingExplicitSend(message, state)) continue;
     const deliveredAtMs = Number(
       field(message, "acp_guidance_delivered_at_ms"),
     );
@@ -731,7 +790,7 @@ export function ChatLog({
     } else {
       keepBottomAnchoredRef.current = false;
       virtuosoRef.current?.scrollToIndex({
-        index: scrollToIndex,
+        index: rowLookupRef.current.forMessageIndex(scrollToIndex),
         behavior: INSTANT_SCROLL_BEHAVIOR,
       });
     }
@@ -763,7 +822,7 @@ export function ChatLog({
     }
     keepBottomAnchoredRef.current = false;
     virtuosoRef.current?.scrollToIndex({
-      index,
+      index: rowLookupRef.current.forMessageIndex(index),
       behavior: INSTANT_SCROLL_BEHAVIOR,
     });
     actions.clearScrollRequest();
@@ -777,7 +836,7 @@ export function ChatLog({
     keepBottomAnchoredRef.current = false;
     if (USE_VIRTUOSO) {
       virtuosoRef.current?.scrollToIndex({
-        index,
+        index: rowLookupRef.current.forMessageIndex(index),
         align: "center",
         behavior: INSTANT_SCROLL_BEHAVIOR,
       });
@@ -790,6 +849,9 @@ export function ChatLog({
   }, [searchJumpDate, searchJumpToken, canAutoScroll]);
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
+  // Agent activity rows sit between message rows, so list row indexes differ
+  // from message indexes. The message list keeps this lookup current.
+  const rowLookupRef = useRef<ChatRowLookup>(IDENTITY_ROW_LOOKUP);
   const manualScrollRef = useRef<boolean>(false);
   const [manualScroll, setManualScroll] = useState(false);
   const bottomScrollTokenRef = useRef(0);
@@ -869,6 +931,7 @@ export function ChatLog({
           <MessageList
             {...{
               virtuosoRef,
+              rowLookupRef,
               sortedDates,
               messages,
               account_id,
@@ -1028,6 +1091,7 @@ export function MessageList({
   messages,
   account_id,
   virtuosoRef,
+  rowLookupRef,
   sortedDates,
   user_map,
   project_id,
@@ -1072,6 +1136,7 @@ export function MessageList({
   mode;
   sortedDates;
   virtuosoRef?;
+  rowLookupRef?: MutableRefObject<ChatRowLookup>;
   project_id?: string;
   path?: string;
   fontSize?: number;
@@ -1114,7 +1179,7 @@ export function MessageList({
   const useVirtuoso = virtualized && USE_VIRTUOSO;
   const defaultVirtuosoRef = useRef<VirtuosoHandle>(null);
   const listVirtuosoRef = virtuosoRef ?? defaultVirtuosoRef;
-  const virtuosoHeightsRef = useRef<{ [index: number]: number }>({});
+  const virtuosoHeightsRef = useRef<{ [rowKey: string]: number }>({});
   const listContainerRef = useRef<HTMLDivElement | null>(null);
   const scrollerRef = useRef<HTMLElement | null>(null);
   const [atBottom, setAtBottom] = useState(true);
@@ -1126,14 +1191,6 @@ export function MessageList({
     () => loadChatViewportAnchor(cacheId),
     [cacheId],
   );
-  const initialAnchorIndex =
-    initialAnchor?.atBottom === false
-      ? resolveChatViewportAnchorIndex(initialAnchor, sortedDates)
-      : undefined;
-  const initialIndex = Math.max(
-    initialAnchorIndex ?? sortedDates.length - 1,
-    0,
-  ); // start at newest unless we have a saved viewport anchor
   const endRef = useRef<HTMLDivElement | null>(null);
   const blockScrollInput = anyOverlayOpen === true;
   const showNewestMessagesButton =
@@ -1193,11 +1250,93 @@ export function MessageList({
     codexActivityBlocksStoreRef.current = createCodexActivityBlocksStore();
   }
   const codexActivityBlocksStore = codexActivityBlocksStoreRef.current;
+  const turnActivityStoreRef = useRef<TurnActivityStore | undefined>(undefined);
+  if (turnActivityStoreRef.current == null) {
+    turnActivityStoreRef.current = createTurnActivityStore();
+  }
+  const turnActivityStore = turnActivityStoreRef.current;
+  // Re-render when any turn's activity rows change.
+  useSyncExternalStore(
+    turnActivityStore.subscribeRows,
+    turnActivityStore.rowsVersion,
+    turnActivityStore.rowsVersion,
+  );
+  const narrow = useNarrowChatViewport();
+  const editorTheme = useEffectiveEditorThemeForPath(project_id, path);
+  const turnRowContext = useTurnListRowContexts({
+    store: turnActivityStore,
+    actions,
+    project_id,
+    path,
+    account_id,
+    fontSize,
+    editorTheme,
+    searchQuery,
+    readOnly,
+    onOpenGitBrowser,
+  });
+
+  // One list row per message, preceded by the rows of its agent activity, so
+  // user input and agent output form a single linear, virtualized stream.
+  const feedTurns: { messageId: string; message: ChatMessageTyped }[] = [];
+  const listRows: ChatListRow[] = [];
+  const messageRowIndexes: number[] = [];
+  for (let index = 0; index < sortedDates.length; index += 1) {
+    const date = sortedDates[index];
+    const message = getMessageAtDate({ messages, date: parseFloat(date) });
+    const messageId = message
+      ? `${field<string>(message, "message_id") ?? ""}`.trim()
+      : "";
+    if (
+      message != null &&
+      messageId &&
+      needsTurnActivityFeed(
+        message,
+        expandedCodexActivityByMessageId[messageId] === true,
+      )
+    ) {
+      feedTurns.push({ messageId, message });
+      const activity = turnActivityStore.get(messageId);
+      const rows = activity?.rows ?? [];
+      if (activity != null && rows.length > 0) {
+        const context = turnRowContext(message, activity);
+        rows.forEach((row, i) => {
+          listRows.push({
+            kind: "turn",
+            key: `${date}#${row.id}`,
+            row,
+            first: i === 0,
+            last: i === rows.length - 1,
+            context,
+          });
+        });
+      }
+    }
+    messageRowIndexes[index] = listRows.length;
+    listRows.push({ kind: "message", key: date, messageIndex: index });
+  }
+  const feedMessageIds = new Set(feedTurns.map(({ messageId }) => messageId));
+  const rowKeys = listRows.map(({ key }) => key);
+  const lastMessageRow = messageRowIndexes[sortedDates.length - 1] ?? 0;
+  if (rowLookupRef) {
+    rowLookupRef.current = {
+      forMessageIndex: (index) => messageRowIndexes[index] ?? index,
+    };
+  }
+  const allRowKeysRef = useRef<string[]>([]);
+  allRowKeysRef.current = [...rowKeys, "end"];
+  const initialAnchorIndex =
+    initialAnchor?.atBottom === false
+      ? resolveChatViewportAnchorIndex(initialAnchor, rowKeys)
+      : undefined;
+  // Start at newest unless we have a saved viewport anchor.
+  const initialIndex = Math.max(initialAnchorIndex ?? lastMessageRow, 0);
+  const pendingActivityScrollRef = useRef<string | undefined>(undefined);
   const userScrollIntentRef = useRef(false);
   const userScrollIntentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
-  const sortedDatesRef = useRef(sortedDates);
+  const rowKeysRef = useRef(rowKeys);
   const anchorCaptureFrameRef = useRef<number | undefined>(undefined);
   const anchorRestoreTokenRef = useRef(0);
   const anchorRestoreTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -1209,7 +1348,7 @@ export function MessageList({
   const suppressAnchorRestoreUntilRef = useRef(0);
   const isVisibleRef = useRef(isVisible);
 
-  sortedDatesRef.current = sortedDates;
+  rowKeysRef.current = rowKeys;
   isVisibleRef.current = isVisible;
 
   const clearAnchorRestoreTimers = () => {
@@ -1240,7 +1379,7 @@ export function MessageList({
           // user's bottom-following intent across that intermediate layout.
           forceAtBottom: forceAtBottom || keepBottomAnchoredRef?.current,
           scroller: scrollerRef.current,
-          sortedDates: sortedDatesRef.current,
+          sortedDates: rowKeysRef.current,
         });
         saveChatViewportAnchor(cacheId, anchor);
       };
@@ -1407,7 +1546,7 @@ export function MessageList({
     setAtBottom(true);
     saveChatViewportAnchor(cacheId, {
       atBottom: true,
-      date: sortedDatesRef.current[sortedDatesRef.current.length - 1],
+      date: rowKeysRef.current[rowKeysRef.current.length - 1],
       offsetPx: 0,
       savedAt: Date.now(),
     });
@@ -1449,7 +1588,7 @@ export function MessageList({
       if (scrollToDate != null || scrollToIndex != null) return;
       if (activityJumpDate != null || activityJumpToken != null) return;
       if (searchJumpDate != null || searchJumpToken != null) return;
-      const dates = sortedDatesRef.current;
+      const dates = rowKeysRef.current;
       if (dates.length === 0) return;
 
       clearAnchorRestoreTimers();
@@ -1495,7 +1634,7 @@ export function MessageList({
           restoreChatViewportAnchorOffset({
             anchor,
             scroller: scrollerRef.current,
-            sortedDates: sortedDatesRef.current,
+            sortedDates: rowKeysRef.current,
           });
         }, delayMs);
         anchorRestoreTimersRef.current.push(timer);
@@ -1633,7 +1772,7 @@ export function MessageList({
         cachedCodexActivityBlocks == null);
 
     const is_thread = numChildren != null && isThread(message, numChildren);
-    const h = virtuosoHeightsRef.current?.[index];
+    const h = virtuosoHeightsRef.current?.[date];
     const shouldDim = false;
 
     const wrapperStyle: CSSProperties = {
@@ -1670,7 +1809,9 @@ export function MessageList({
                 : "Unknown name"
             }
             scroll_into_view={() =>
-              listVirtuosoRef.current?.scrollIntoView({ index })
+              listVirtuosoRef.current?.scrollIntoView({
+                index: messageRowIndexes[index] ?? index,
+              })
             }
             allowReply={
               !readOnly &&
@@ -1693,6 +1834,7 @@ export function MessageList({
             }
             cachedCodexActivityBlocks={cachedCodexActivityBlocks}
             codexActivityBlocksStore={codexActivityBlocksStore}
+            activityFeed={feedMessageIds.has(messageId)}
             onCachedCodexActivityBlocksChange={
               messageId
                 ? (blocks) => codexActivityBlocksStore.set(messageId, blocks)
@@ -1701,6 +1843,9 @@ export function MessageList({
             onExpandedCodexActivityChange={
               messageId
                 ? (visible: boolean) => {
+                    // Show newly expanded activity, which is inserted above
+                    // the message.
+                    if (visible) pendingActivityScrollRef.current = messageId;
                     setExplicitCodexActivityByMessageId((prev) => {
                       if ((prev[messageId] === true) === visible) {
                         return prev;
@@ -1749,7 +1894,7 @@ export function MessageList({
     onAtTopStateChange,
     scheduleAnchorCapture,
     setManualScroll,
-    sortedDatesLength: sortedDates.length,
+    lastMessageRow,
   });
   virtuosoCallbackStateRef.current = {
     keepBottomAnchoredRef,
@@ -1758,7 +1903,7 @@ export function MessageList({
     onAtTopStateChange,
     scheduleAnchorCapture,
     setManualScroll,
-    sortedDatesLength: sortedDates.length,
+    lastMessageRow,
   };
 
   const handleVirtuosoScrollerRef = useCallback(
@@ -1770,9 +1915,10 @@ export function MessageList({
   const measureVirtuosoItem = useCallback((element: HTMLElement) => {
     const height = measureChatVirtuosoItemHeight(element);
     const data = element.getAttribute("data-item-index");
-    if (data != null) {
-      const index = parseInt(data);
-      virtuosoHeightsRef.current[index] = height;
+    const key =
+      data == null ? undefined : allRowKeysRef.current[parseInt(data)];
+    if (key != null) {
+      virtuosoHeightsRef.current[key] = height;
     }
     return height;
   }, []);
@@ -1780,67 +1926,56 @@ export function MessageList({
     key: string;
     render: () => ReactNode;
   };
-  const steerRowKey = (date: string): string => {
-    const message = getMessageAtDate({
-      messages,
-      date: parseFloat(date),
-    });
-    const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
-    if (!messageId) return date;
-    const activitySteers =
-      activitySteersByAssistantMessageId?.get(messageId) ?? [];
-    const attachedSteers =
-      attachedSteersByParentMessageId?.get(messageId) ?? [];
-    const revision = [
-      ...activitySteers.map(
-        ({ messageId, state, date }) =>
-          `activity:${messageId}:${state}:${date}`,
-      ),
-      ...attachedSteers.map(
-        ({ messageId, state, date }) =>
-          `attached:${messageId}:${state}:${date}`,
-      ),
-    ].join("|");
-    return revision ? `${date}:${revision}` : date;
-  };
-  // Virtuoso memoizes mounted items. The key includes guidance revisions so an
-  // existing assistant activity row remounts when guidance is added, delivered,
-  // or changes state, without remounting the rest of the chat history.
-  const virtuosoData: ChatVirtualRow[] = Array.from(
-    { length: sortedDates.length + 1 },
-    (_, index) => {
-      const date = sortedDates[index];
-      return {
-        key: date == null ? "end" : steerRowKey(date),
-        render:
-          index === sortedDates.length
-            ? () => (
-                <div
-                  style={{
-                    ...CHAT_LOG_READING_WIDTH,
-                    padding: "8px 12px 25px",
-                  }}
-                >
-                  {displayedAttentionRecords.map((record) => (
-                    <div key={record.attention_id} style={{ marginTop: 8 }}>
-                      <CodexAttentionCard
-                        initialRecord={record}
-                        responseInActivity={projectedAttentionIds.has(
-                          record.attention_id,
-                        )}
-                        draft={attentionDrafts[record.attention_id]}
-                        onDraftChange={(update) =>
-                          updateAttentionDraft(record.attention_id, update)
-                        }
-                      />
-                    </div>
-                  ))}
+  // Keys stay stable when guidance changes: remounting a live turn would drop
+  // the reader's selection and re-measure its whole activity. Mounted rows get
+  // new render functions through `data`, and guidance through context.
+  const turnRowInset = narrow ? NARROW_TURN_ROW_INSET : TURN_ROW_INSET;
+  const virtuosoData: ChatVirtualRow[] = [
+    ...listRows.map((listRow) => ({
+      key: listRow.key,
+      render:
+        listRow.kind === "message"
+          ? () => renderMessage(listRow.messageIndex)
+          : () => (
+              <div style={CHAT_LOG_READING_WIDTH}>
+                <div style={turnRowInset}>
+                  <TurnActivityListRow
+                    row={listRow.row}
+                    first={listRow.first}
+                    last={listRow.last}
+                    context={listRow.context}
+                  />
                 </div>
-              )
-            : () => renderMessage(index),
-      };
+              </div>
+            ),
+    })),
+    {
+      key: "end",
+      render: () => (
+        <div
+          style={{
+            ...CHAT_LOG_READING_WIDTH,
+            padding: "8px 12px 25px",
+          }}
+        >
+          {displayedAttentionRecords.map((record) => (
+            <div key={record.attention_id} style={{ marginTop: 8 }}>
+              <CodexAttentionCard
+                initialRecord={record}
+                responseInActivity={projectedAttentionIds.has(
+                  record.attention_id,
+                )}
+                draft={attentionDrafts[record.attention_id]}
+                onDraftChange={(update) =>
+                  updateAttentionDraft(record.attention_id, update)
+                }
+              />
+            </div>
+          ))}
+        </div>
+      ),
     },
-  );
+  ];
   const renderVirtuosoItem = useCallback(
     (_index: number, row: ChatVirtualRow) => row.render(),
     [],
@@ -1855,11 +1990,11 @@ export function MessageList({
         manualScrollRef,
         markManualScrollAway,
         scheduleAnchorCapture,
-        sortedDatesLength,
+        lastMessageRow,
       } = virtuosoCallbackStateRef.current;
       if (!manualScrollRef) return;
       scheduleAnchorCapture();
-      if (endIndex < sortedDatesLength - 1 && userScrollIntentRef.current) {
+      if (endIndex < lastMessageRow && userScrollIntentRef.current) {
         markManualScrollAway();
       }
     },
@@ -1902,12 +2037,28 @@ export function MessageList({
   }, [scrollToBottomRef, useVirtuoso]);
 
   useEffect(() => {
+    const messageId = pendingActivityScrollRef.current;
+    if (!messageId || !useVirtuoso) return;
+    const index = listRows.findIndex(
+      (row) => row.kind === "turn" && row.context.messageId === messageId,
+    );
+    if (index < 0) return;
+    pendingActivityScrollRef.current = undefined;
+    markManualScrollAway();
+    listVirtuosoRef.current?.scrollToIndex({
+      index,
+      align: "start",
+      behavior: INSTANT_SCROLL_BEHAVIOR,
+    });
+  });
+
+  useEffect(() => {
     if (!activityJumpAttentionId || !attentionJumpExists) {
       return;
     }
     if (useVirtuoso) {
       listVirtuosoRef.current?.scrollToIndex({
-        index: sortedDates.length,
+        index: rowKeys.length,
         align: "center",
         behavior: INSTANT_SCROLL_BEHAVIOR,
       });
@@ -1943,7 +2094,7 @@ export function MessageList({
     attentionJumpExists,
     activityJumpToken,
     listVirtuosoRef,
-    sortedDates.length,
+    rowKeys.length,
     useVirtuoso,
   ]);
 
@@ -2061,6 +2212,23 @@ export function MessageList({
     return () => clearTimeout(id);
   }, [sortedDates.length, useVirtuoso]);
 
+  const feeds = feedTurns.map(({ messageId, message }) => (
+    <ChatTurnActivityFeed
+      key={messageId}
+      store={turnActivityStore}
+      blocksCache={codexActivityBlocksStore}
+      messageId={messageId}
+      message={message}
+      actions={actions}
+      project_id={project_id}
+      path={path}
+      activitySteers={activitySteersByAssistantMessageId?.get(messageId)}
+      expanded={expandedCodexActivityByMessageId[messageId] === true}
+      explicitlyExpanded={explicitCodexActivityByMessageId[messageId] === true}
+      readOnly={readOnly}
+    />
+  ));
+
   if (!useVirtuoso) {
     return (
       <div
@@ -2071,7 +2239,12 @@ export function MessageList({
         onKeyDownCapture={maybeBlockScrollKeys}
         onPointerDownCapture={markUserScrollIntent}
       >
-        {sortedDates.map((_, index) => renderMessage(index))}
+        <TurnActivityStoreContext.Provider value={turnActivityStore}>
+          {feeds}
+          {virtuosoData.slice(0, -1).map((row) => (
+            <Fragment key={row.key}>{row.render()}</Fragment>
+          ))}
+        </TurnActivityStoreContext.Provider>
         <div
           ref={endRef}
           style={{ ...CHAT_LOG_READING_WIDTH, padding: "8px 12px 25px" }}
@@ -2105,31 +2278,38 @@ export function MessageList({
       onKeyDownCapture={maybeBlockScrollKeys}
       onPointerDownCapture={markUserScrollIntent}
     >
-      <StatefulVirtuoso
-        style={CHAT_VIRTUOSO_STYLE}
-        ref={listVirtuosoRef}
-        scrollerRef={handleVirtuosoScrollerRef}
-        totalCount={sortedDates.length + 1}
-        data={virtuosoData}
-        context={virtuosoCallbackStateRef.current}
-        cacheId={cacheId}
-        persistState={false}
-        increaseViewportBy={CHAT_VIRTUOSO_INCREASE_VIEWPORT_BY}
-        initialTopMostItemIndex={initialIndex}
-        atTopThreshold={240}
-        itemSize={measureVirtuosoItem}
-        itemContent={renderVirtuosoItem}
-        computeItemKey={computeVirtuosoItemKey}
-        rangeChanged={manualScrollRef ? handleVirtuosoRangeChanged : undefined}
-        atBottomStateChange={
-          manualScrollRef ? handleVirtuosoAtBottomStateChange : undefined
-        }
-        atTopStateChange={
-          onAtTopStateChange ? handleVirtuosoAtTopStateChange : undefined
-        }
-        onScroll={handleVirtuosoScroll}
-        followOutput={isVisible && !manualScroll && atBottom && !anyOverlayOpen}
-      />
+      <TurnActivityStoreContext.Provider value={turnActivityStore}>
+        {feeds}
+        <StatefulVirtuoso
+          style={CHAT_VIRTUOSO_STYLE}
+          ref={listVirtuosoRef}
+          scrollerRef={handleVirtuosoScrollerRef}
+          totalCount={virtuosoData.length}
+          data={virtuosoData}
+          context={virtuosoCallbackStateRef.current}
+          cacheId={cacheId}
+          persistState={false}
+          increaseViewportBy={CHAT_VIRTUOSO_INCREASE_VIEWPORT_BY}
+          initialTopMostItemIndex={initialIndex}
+          atTopThreshold={240}
+          itemSize={measureVirtuosoItem}
+          itemContent={renderVirtuosoItem}
+          computeItemKey={computeVirtuosoItemKey}
+          rangeChanged={
+            manualScrollRef ? handleVirtuosoRangeChanged : undefined
+          }
+          atBottomStateChange={
+            manualScrollRef ? handleVirtuosoAtBottomStateChange : undefined
+          }
+          atTopStateChange={
+            onAtTopStateChange ? handleVirtuosoAtTopStateChange : undefined
+          }
+          onScroll={handleVirtuosoScroll}
+          followOutput={
+            isVisible && !manualScroll && atBottom && !anyOverlayOpen
+          }
+        />
+      </TurnActivityStoreContext.Provider>
       {showNewestMessagesButton ? (
         <Button
           aria-label="Scroll to newest messages"

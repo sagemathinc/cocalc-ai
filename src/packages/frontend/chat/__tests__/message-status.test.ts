@@ -2,12 +2,10 @@
 
 import { getLiveResponseBlocks } from "@cocalc/chat";
 import {
-  codexActivityBlocksToSelectableMarkdown,
-  codexActivityTextSource,
   computeAcpStateToRender,
   acpMessageStatePresentation,
   getAcpMessageDeliveryLabel,
-  codexActivityWindow,
+  guidanceMarkdown,
   shouldShowAcpResubmitToAgentButton,
 } from "../message-state";
 import "../../editors/slate/elements/types";
@@ -114,22 +112,7 @@ describe("getAcpMessageDeliveryLabel", () => {
   });
 });
 
-describe("codexActivityBlocksToSelectableMarkdown", () => {
-  it("slices across guidance boundaries without eagerly joining a large transcript", () => {
-    const text = "`".repeat(50_000);
-    const source = codexActivityTextSource([
-      { kind: "agent", text: "first" },
-      { kind: "guidance", text },
-      { kind: "agent", text: "last" },
-    ]);
-    const expected = `first\n\n${"`".repeat(50_001)}guidance\n${text}\n${"`".repeat(50_001)}\n\nlast`;
-    expect(source.length).toBe(expected.length);
-    expect(source.slice(4, 20)).toBe(expected.slice(4, 20));
-    expect(source.slice(source.length - 10, source.length)).toBe(
-      expected.slice(-10),
-    );
-    expect(source.toString()).toBe(expected);
-  });
+describe("guidanceMarkdown", () => {
   it("keeps the latest suffix from cumulative live projection events", () => {
     const blocks = getLiveResponseBlocks([
       {
@@ -147,34 +130,23 @@ describe("codexActivityBlocksToSelectableMarkdown", () => {
       },
     ]);
 
-    expect(codexActivityBlocksToSelectableMarkdown(blocks)).toBe(
+    expect(blocks.map(({ text }) => text)).toEqual([
       "Reviewing config objects changed.",
-    );
+    ]);
   });
 
-  it("keeps agent and multi-paragraph guidance in one Markdown document", () => {
-    const markdown = codexActivityBlocksToSelectableMarkdown([
-      { kind: "agent", text: "Inspecting the project." },
-      {
-        kind: "guidance",
-        text: "> quoted request\n\nFollow-up guidance.",
-        state: "sent",
-      },
-      { kind: "agent", text: "The focused tests pass." },
-    ]);
+  it("renders multi-paragraph guidance as one guidance element", () => {
+    const markdown = guidanceMarkdown(
+      "> quoted request\n\nFollow-up guidance.",
+      "sent",
+    );
 
     expect(markdown).toBe(
-      "Inspecting the project.\n\n" +
-        "```guidance\n> quoted request\n\nFollow-up guidance.\n```\n\n" +
-        "The focused tests pass.",
+      "```guidance\n> quoted request\n\nFollow-up guidance.\n```",
     );
     const slate = markdown_to_slate(markdown, true);
-    expect(slate.map((node: any) => node.type)).toEqual([
-      "paragraph",
-      "guidance",
-      "paragraph",
-    ]);
-    const guidance = slate[1] as any;
+    expect(slate.map((node: any) => node.type)).toEqual(["guidance"]);
+    const guidance = slate[0] as any;
     expect(guidance.state).toBe("sent");
     expect(guidance.children.map((node: any) => node.type)).toEqual([
       "blockquote",
@@ -184,13 +156,10 @@ describe("codexActivityBlocksToSelectableMarkdown", () => {
   });
 
   it("uses a longer outer fence when guidance contains fenced code", () => {
-    const markdown = codexActivityBlocksToSelectableMarkdown([
-      {
-        kind: "guidance",
-        state: "queued",
-        text: "Try this:\n\n```ts\nconst n = 1;\n```",
-      },
-    ]);
+    const markdown = guidanceMarkdown(
+      "Try this:\n\n```ts\nconst n = 1;\n```",
+      "queued",
+    );
 
     expect(markdown).toBe(
       "````guidance queued\nTry this:\n\n```ts\nconst n = 1;\n```\n````",
@@ -199,39 +168,6 @@ describe("codexActivityBlocksToSelectableMarkdown", () => {
     expect((slate[0] as any).type).toBe("guidance");
     expect((slate[0] as any).state).toBe("queued");
     expect(slate_to_markdown(slate).trim()).toBe(markdown);
-  });
-});
-
-describe("codexActivityWindow", () => {
-  const blocks = Array.from({ length: 250 }, (_, index) => ({
-    kind: "agent" as const,
-    text: `activity ${index}`,
-  }));
-
-  it("shows the newest capped window and reports hidden activity", () => {
-    const result = codexActivityWindow(blocks);
-    expect(result.hiddenCount).toBe(150);
-    expect(result.visibleBlocks).toHaveLength(100);
-    expect(result.visibleBlocks[0].text).toBe("activity 150");
-    expect(result.visibleBlocks[99].text).toBe("activity 249");
-  });
-
-  it("supports loading earlier activity in bounded pages", () => {
-    const result = codexActivityWindow(blocks, 150);
-    expect(result.hiddenCount).toBe(50);
-    expect(result.visibleBlocks).toHaveLength(100);
-    expect(result.visibleBlocks[0].text).toBe("activity 50");
-    expect(result.visibleBlocks[99].text).toBe("activity 149");
-    expect(
-      codexActivityWindow(blocks, result.hiddenCount).visibleBlocks,
-    ).toHaveLength(50);
-  });
-
-  it("clamps the window after a log is shortened and never exceeds 100 blocks", () => {
-    expect(
-      codexActivityWindow(blocks.slice(0, 5), 250).visibleBlocks,
-    ).toHaveLength(5);
-    expect(codexActivityWindow(blocks, 500).visibleBlocks).toHaveLength(100);
   });
 });
 

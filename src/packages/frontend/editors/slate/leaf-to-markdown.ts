@@ -26,7 +26,7 @@ export function serializeLeaf(node: Text, info: Info): string {
       !node.code &&
       info.parent?.["type"] != "code_block"
     ) {
-      text = markdownEscape(text, info.index == 0);
+      text = markdownEscape(text, info.index == 0, info.readableEscapes);
     }
 
     const marks: { left: string; right?: string }[] = [];

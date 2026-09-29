@@ -152,7 +152,9 @@ describe("appendStreamMessage", () => {
   });
 
   test("compacts long progressive runs without losing guidance chronology", () => {
-    const words = Array.from({ length: 40 }, (_, index) => `word${index}`);
+    const words = Array.from({ length: 40 }, (_, index) =>
+      index === 24 ? "word24\n\nnext" : `word${index}`,
+    );
     const events = words.map((_, index) => ({
       type: "event",
       event: {
@@ -163,6 +165,7 @@ describe("appendStreamMessage", () => {
       time: (index + 1) * 1_000,
     })) as AcpStreamMessage[];
 
+    // Guidance received mid-paragraph is shown after that paragraph.
     expect(
       getLiveResponseBlocks(events, [
         { date: 19_500, text: "check this too", state: "sent" },
@@ -170,7 +173,7 @@ describe("appendStreamMessage", () => {
     ).toEqual([
       {
         kind: "agent",
-        text: words.slice(0, 19).join(" "),
+        text: words.slice(0, 24).join(" ") + " word24",
         time: 19_000,
         state: undefined,
       },
@@ -182,9 +185,8 @@ describe("appendStreamMessage", () => {
       },
       {
         kind: "agent",
-        text: words.slice(19).join(" "),
+        text: ["next", ...words.slice(25)].join(" "),
         time: 40_000,
-        state: undefined,
       },
     ]);
   });
@@ -598,8 +600,8 @@ describe("response text helpers", () => {
     ).toEqual([
       {
         kind: "agent",
-        text: "I'm going to inspect the host.",
-        time: 1000,
+        text: "I'm going to inspect the host. The remote probe is still running.",
+        time: 3000,
         state: undefined,
       },
       {
@@ -608,12 +610,70 @@ describe("response text helpers", () => {
         time: 2000,
         state: "sent",
       },
-      {
-        kind: "agent",
-        text: "The remote probe is still running.",
-        time: 3000,
-        state: undefined,
-      },
+    ]);
+  });
+
+  test("never splits a streamed sentence or code block around guidance", () => {
+    const pieces = [
+      "Checking the build",
+      " output now.\n\n```sh\nmake",
+      "\n\nmake test\n```\n\nAll",
+      " tests pass.",
+    ];
+    const events = pieces.map((text, index) =>
+      textEvent("message", text, index + 1, { delta: true }),
+    ) as AcpStreamMessage[];
+    events.forEach((event, index) => {
+      (event as any).time = (index + 1) * 1000;
+    });
+
+    const guidance = (date: number) =>
+      getLiveResponseBlocks(events, [{ date, text: "use -j8", state: "sent" }]);
+
+    // Mid-sentence: wait for the end of the paragraph.
+    expect(guidance(1500).map(({ kind, text }) => [kind, text])).toEqual([
+      ["agent", "Checking the build output now."],
+      ["guidance", "use -j8"],
+      ["agent", "```sh\nmake\n\nmake test\n```\n\nAll tests pass."],
+    ]);
+    // Inside a fence: the blank line in the code block is not a boundary.
+    expect(guidance(2500).map(({ kind, text }) => [kind, text])).toEqual([
+      [
+        "agent",
+        "Checking the build output now.\n\n```sh\nmake\n\nmake test\n```",
+      ],
+      ["guidance", "use -j8"],
+      ["agent", "All tests pass."],
+    ]);
+    // No later boundary yet: the guidance follows the message so far.
+    expect(guidance(3500).map(({ kind, text }) => [kind, text])).toEqual([
+      [
+        "agent",
+        "Checking the build output now.\n\n```sh\nmake\n\nmake test\n```\n\nAll tests pass.",
+      ],
+      ["guidance", "use -j8"],
+    ]);
+  });
+
+  test("shows guidance between agent messages without waiting", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "First message", 1, { delta: true }),
+      { type: "status", state: "running", seq: 2 } as any,
+      textEvent("message", "Second message", 3, { delta: true }),
+    ];
+    (events[0] as any).time = 1000;
+    (events[1] as any).time = 2000;
+    (events[2] as any).time = 3000;
+    expect(
+      getLiveResponseBlocks(events, [
+        { date: 1500, text: "a", state: "sent" },
+        { date: 1600, text: "b", state: "sent" },
+      ]).map(({ kind, text }) => [kind, text]),
+    ).toEqual([
+      ["agent", "First message"],
+      ["guidance", "a"],
+      ["guidance", "b"],
+      ["agent", "Second message"],
     ]);
   });
 

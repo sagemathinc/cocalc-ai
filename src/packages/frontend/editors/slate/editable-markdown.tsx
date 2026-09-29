@@ -804,7 +804,9 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       const selected = ReactEditor.toSlateRange(editor, range);
       if (!selected)
         throw Error("Could not map the selected passage to Markdown.");
-      return slate_to_markdown(Editor.fragment(editor, selected));
+      return slate_to_markdown(Editor.fragment(editor, selected), {
+        readableEscapes: true,
+      });
     });
   }, [editor, divRef]);
 

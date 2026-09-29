@@ -17,6 +17,7 @@ import {
   resolveCodexSessionMode,
 } from "@cocalc/util/ai/codex";
 import type { AcpChatContext } from "@cocalc/conat/ai/acp/types";
+import { nextMarkdownBlockBoundary } from "./markdown-blocks";
 
 // Configuration stored on the chat thread root for Codex/ACP turns.
 // This is persisted as `acp_config` on the root message.
@@ -701,17 +702,40 @@ export function getLiveResponseBlocks(
   let pendingAgentBoundary:
     | { baseText: string | undefined; strength: "hard" | "soft" }
     | undefined;
+  // Guidance that arrived while an agent message was being written. It is
+  // shown once that message reaches a markdown block boundary (or ends), so
+  // it never splits a sentence, list, or code block.
+  let deferredGuidance:
+    | { items: typeof blocks; splitAt: number; blockIndex: number }
+    | undefined;
+  const flushDeferredGuidance = () => {
+    if (deferredGuidance == null) return;
+    blocks.push(...deferredGuidance.items);
+    deferredGuidance = undefined;
+  };
 
   for (const item of timeline) {
     if (item.kind === "guidance") {
-      blocks.push({
-        kind: "guidance",
+      const block = {
+        kind: "guidance" as const,
         text: item.text,
         time: item.time,
         state: item.state,
-      });
-      pendingGuidanceSplitBaseText = latestFullText;
-      activeSegmentBaseText = undefined;
+      };
+      const last = blocks[blocks.length - 1];
+      if (deferredGuidance != null) {
+        deferredGuidance.items.push(block);
+      } else if (last?.kind === "agent") {
+        deferredGuidance = {
+          items: [block],
+          splitAt: last.text.length,
+          blockIndex: blocks.length - 1,
+        };
+      } else {
+        blocks.push(block);
+        pendingGuidanceSplitBaseText = latestFullText;
+        activeSegmentBaseText = undefined;
+      }
       continue;
     }
 
@@ -763,20 +787,43 @@ export function getLiveResponseBlocks(
       }
       const last = blocks[blocks.length - 1];
       if (last?.kind === "agent" && pendingGuidanceSplitBaseText == null) {
-        last.text = segmentText;
-        last.time = item.time ?? last.time;
+        activeSegmentBaseText = baseText ?? "";
+        const deferred = deferredGuidance;
+        const boundary =
+          deferred?.blockIndex === blocks.length - 1
+            ? nextMarkdownBlockBoundary(segmentText, deferred.splitAt)
+            : undefined;
+        if (boundary == null) {
+          last.text = segmentText;
+          last.time = item.time ?? last.time;
+        } else {
+          last.text = segmentText.slice(0, boundary.end);
+          flushDeferredGuidance();
+          blocks.push({
+            kind: "agent",
+            text: segmentText.slice(boundary.start),
+            time: item.time,
+          });
+          // Later snapshots of this message continue the new block.
+          activeSegmentBaseText = progressive.text.slice(
+            0,
+            progressive.text.length - segmentText.length + boundary.start,
+          );
+        }
       } else {
+        flushDeferredGuidance();
         blocks.push({
           kind: "agent",
           text: segmentText,
           time: item.time,
         });
+        activeSegmentBaseText = baseText ?? "";
       }
-      activeSegmentBaseText = baseText ?? "";
       pendingGuidanceSplitBaseText = undefined;
       continue;
     }
 
+    flushDeferredGuidance();
     latestFullText = item.text;
     latestFullHasDelta = item.delta;
     latestFullSourceEvent = item.sourceEvent;
@@ -788,6 +835,7 @@ export function getLiveResponseBlocks(
     activeSegmentBaseText = "";
     pendingGuidanceSplitBaseText = undefined;
   }
+  flushDeferredGuidance();
 
   return blocks;
 }

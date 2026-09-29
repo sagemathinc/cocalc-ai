@@ -42,11 +42,31 @@ export function isPublicDirectoryShareHost(
     return true;
   }
   if (projectMap == null) return false;
-  return projectMap.some?.(
-    (project) =>
-      project?.get?.("host_id") === host_id &&
-      project?.get?.("public_directory_share_projection") === true,
-  );
+  return publicDirectoryShareHosts(projectMap).has(host_id);
+}
+
+// This is asked for every Conat request and host lookup, so scan the (large,
+// immutable) project map once per version rather than on every call.
+const publicDirectoryShareHostsCache = new WeakMap<object, Set<string>>();
+
+function publicDirectoryShareHosts(
+  projectMap: ImmutableMap<string, any>,
+): Set<string> {
+  let hosts = publicDirectoryShareHostsCache.get(projectMap);
+  if (hosts == null) {
+    hosts = new Set();
+    projectMap.forEach?.((project) => {
+      const host_id = project?.get?.("host_id");
+      if (
+        typeof host_id === "string" &&
+        project?.get?.("public_directory_share_projection") === true
+      ) {
+        hosts!.add(host_id);
+      }
+    });
+    publicDirectoryShareHostsCache.set(projectMap, hosts);
+  }
+  return hosts;
 }
 
 export function getHostInfo(

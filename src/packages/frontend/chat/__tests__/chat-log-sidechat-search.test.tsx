@@ -28,6 +28,7 @@ let visibleVirtuosoIndexes: number[] | undefined;
 let mockOverlayOpen = false;
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
+  ...jest.requireActual("@cocalc/frontend/app-framework"),
   useTypedRedux: (arg1: any, arg2?: string) => {
     if (arg1 === "page" && arg2 === "active_top_tab") {
       return activeTopTab;
