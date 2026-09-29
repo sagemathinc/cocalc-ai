@@ -1529,3 +1529,27 @@ The same run revalidated owner expiry. Server typecheck, three PostgreSQL
 acceptance cases and four receiver-store tests pass. These bounded query-shape
 checks do not establish multi-worker cleanup budgets, adversarial lock contention,
 six-month churn, or the full hint-driven lifecycle and capacity gates.
+
+### Scheduled Revision Hint Repair
+
+The existing fanout timer now invokes a gated revision repair pass. It traverses
+at most twenty interest rows by primary-key cursor before filtering for local
+ownership, live expiry, available delivery claims and unacknowledged catalog
+watermarks. It starts at most eight delivery attempts and stops starting work
+after five seconds; an in-flight RPC can outlast that budget. Claims recheck
+authority and current catalog state before sending through the existing trusted
+fabric path. Unknown outcomes retain durable claims; one failed recipient does
+not retry per collaborator or prevent later candidates from being examined.
+
+This is restartable bounded repair over interest state, not the source-write
+outbox or a high-fanout capacity solution. Restarting may revisit rows safely;
+completed traversal wraps to discover work behind the cursor. No account
+membership enumeration or demand creation is added. Source-write scheduling,
+home catch-up activation/completion, distributed quotas and fairness under large
+interest populations remain open. Projection polling is still retained.
+
+Server typecheck and forty server repair/dispatch/API tests plus nine PGlite
+interest-store tests pass. Coverage includes attempt limits, continuation and
+wrap, inactive candidates, failure isolation, disabled gates, owner filtering,
+pending catalog state and suppression while a delivery claim is live. Full
+authenticated scheduled lifecycle and large-scale repair latency remain unproven.

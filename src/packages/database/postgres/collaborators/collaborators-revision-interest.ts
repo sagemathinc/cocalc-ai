@@ -144,6 +144,54 @@ type FanoutLease = {
   lease_id: string;
 };
 
+export type RevisionDispatchCursor = Pick<
+  FanoutLease,
+  "project_id" | "home_bay_id"
+>;
+
+/** Bounded repair traversal over interest state, not historical memberships.
+ * The subsequent claim rechecks ownership, expiry and the current watermark.
+ */
+export async function readCollaborationRevisionDispatchPage(
+  owning_bay_id: string,
+  after?: RevisionDispatchCursor,
+) {
+  boundedText(owning_bay_id, "revision owner", 128);
+  if (after) {
+    uuid(after.project_id, "revision dispatch cursor");
+    boundedText(after.home_bay_id, "revision home cursor", 128);
+  }
+  return transaction(async (db) => {
+    await db.query("SET LOCAL statement_timeout='2s'");
+    const { rows } = await db.query(
+      `WITH candidates AS MATERIALIZED (
+        SELECT * FROM collaboration_revision_interests
+        ${after ? "WHERE (project_id,home_bay_id)>($2::uuid,$3::text)" : ""}
+        ORDER BY project_id,home_bay_id LIMIT 20)
+      SELECT i.project_id,i.home_bay_id,i.lease_id,
+        (p.owning_bay_id=$1 AND i.expires_at>now()
+        AND (i.delivery_until IS NULL OR i.delivery_until<=now())
+        AND (i.ack_generation IS DISTINCT FROM c.generation OR i.ack_revision<c.revision)
+        AND c.project_id IS NOT NULL) AS pending
+      FROM candidates i LEFT JOIN projects p USING(project_id)
+      LEFT JOIN collaboration_projects c USING(project_id)
+      ORDER BY i.project_id,i.home_bay_id`,
+      after
+        ? [owning_bay_id, after.project_id, after.home_bay_id]
+        : [owning_bay_id],
+    );
+    return {
+      complete: rows.length < 20,
+      candidates: rows.map((r) => ({
+        project_id: r.project_id as string,
+        home_bay_id: r.home_bay_id as string,
+        lease_id: r.lease_id as string,
+        pending: r.pending === true,
+      })),
+    };
+  });
+}
+
 /** Durable worker claim, not proof of delivery or authorization to fetch data.
  * Unknown transport outcomes leave the claim intact until expiry. The next
  * claim samples the current catalog, coalescing changes during the retry wait.

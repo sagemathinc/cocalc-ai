@@ -11,6 +11,7 @@ import {
   settleCollaborationRevisionHint,
   pruneCollaborationRevisionInterests,
   readCollaborationRevisionExpiryPage,
+  readCollaborationRevisionDispatchPage,
 } from "./collaborators-revision-interest";
 
 const describeDb =
@@ -140,8 +141,24 @@ describeDb("owner project/home revision interests", () => {
       "INSERT INTO collaboration_projects(project_id,generation,revision) VALUES($1,$2,7)",
       [request.project_id, generation],
     );
+    const pendingPage = await readCollaborationRevisionDispatchPage(
+      authority.owning_bay_id,
+    );
+    expect(
+      pendingPage.candidates.find((r) => r.project_id === request.project_id)
+        ?.pending,
+    ).toBe(true);
+    const wrongOwnerPage = await readCollaborationRevisionDispatchPage("wrong");
+    expect(wrongOwnerPage.candidates.every((r) => !r.pending)).toBe(true);
     const first = await claimCollaborationRevisionHint(lookup, authority);
     expect(first).not.toBeNull();
+    const dispatchPage = await readCollaborationRevisionDispatchPage(
+      authority.owning_bay_id,
+    );
+    expect(
+      dispatchPage.candidates.find((r) => r.project_id === request.project_id)
+        ?.pending,
+    ).toBe(false);
     expect(first!.claim_until).toBeLessThanOrEqual(lease.expires_at);
     expect(await claimCollaborationRevisionHint(lookup, authority)).toBeNull();
     await getPool().query(

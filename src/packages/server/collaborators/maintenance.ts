@@ -4,6 +4,7 @@
  */
 import getLogger from "@cocalc/backend/logger";
 import { createSharedProjectionFetcher } from "./projection-batch";
+import { runRevisionHintRepair } from "./revision-repair";
 import { registerProjectionRevisionReceivers } from "./revision-registration";
 import {
   runRevisionReceiverCleanup,
@@ -257,6 +258,7 @@ export async function startCollaboratorsMaintenance() {
     if (stopped || lifecycle !== cycle) return;
     try {
       await runCollaboratorsFanoutMaintenance();
+      await runRevisionHintRepair();
     } catch {
       logger.warn(
         "notification fanout maintenance failed; durable work retained",
