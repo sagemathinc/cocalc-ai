@@ -177,7 +177,8 @@ import {
   useAgentNetworks,
   useNamedAgents,
 } from "./api";
-import { AgentNameInput, agentNameProblem } from "./agent-name-input";
+import { agentNameProblem } from "./agent-name-input";
+import { NewAgentNamePill } from "./new-agent-name-pill";
 import { CopyAgentModal } from "./copy-agent-modal";
 import { FreshConversationModal } from "./fresh-conversation-modal";
 import { cachedAgentNameContext } from "./name-context";
@@ -1541,18 +1542,24 @@ function NewAgentPanel({
         size={16}
         style={{ maxWidth: 820, minWidth: 0, width: "100%" }}
       >
-        <div style={{ textAlign: "center" }}>
+        <div style={{ position: "relative", textAlign: "center" }}>
           <Title level={2} style={{ marginBottom: 4 }}>
             {isFirstRun
               ? "What would you like to work on?"
               : "What should your new agent do?"}
           </Title>
-          {!isFirstRun && (
-            <Text type="secondary">
-              {sourceAgent
-                ? `Using @${sourceAgent.name}'s project and settings as defaults. This starts a new conversation.`
-                : "Choose a name and describe the first task for your agent."}
-            </Text>
+          {!isFirstRun && agents.length > 0 && (
+            <Tooltip title="Cancel">
+              <Button
+                aria-label="Cancel"
+                disabled={busy}
+                icon={<Icon name="times" />}
+                onClick={onCancel}
+                shape="circle"
+                type="text"
+                style={{ position: "absolute", right: 0, top: 0 }}
+              />
+            </Tooltip>
           )}
         </div>
         {(!isFirstRun || atLimit) && (
@@ -1578,20 +1585,7 @@ function NewAgentPanel({
               )}
             </div>
           )}
-        {!isFirstRun && (
-          <div style={{ maxWidth: 320, width: "100%" }}>
-            <AgentNameInput
-              id="new-agent-name"
-              label="Name"
-              value={name}
-              onChange={setName}
-              problem={name.trim() ? problem : undefined}
-              busy={busy || !!pending}
-              autoFocus={false}
-              sideFeedback
-            />
-          </div>
-        )}
+
         <div
           style={{
             background: UI_COLORS.surface,
@@ -1633,7 +1627,7 @@ function NewAgentPanel({
               placeholder={
                 isFirstRun
                   ? "Describe what you'd like to work on…"
-                  : "Ask your agent to build, research, debug, or explain…"
+                  : "Ask your agent to build, research, debug, or explain… or press Shift+Enter to create it without a task"
               }
               style={{ fontSize: 16 }}
             />
@@ -1744,6 +1738,12 @@ function NewAgentPanel({
               padding: "0 10px",
             }}
           >
+            <NewAgentNamePill
+              name={name}
+              onChange={setName}
+              problem={problem}
+              busy={busy || !!pending}
+            />
             <Popover
               content={advancedSettings}
               open={settingsOpen}
@@ -1965,35 +1965,13 @@ function NewAgentPanel({
                 onCreate={() => void create(undefined, true)}
               />
             )}
+            <span style={{ marginLeft: "auto" }}>
+              <NamedAgentUsage directory={namedAgentDirectory} />
+            </span>
           </div>
         )}
         {(isFirstRun || busy) && (
           <PreparationStatus active={busy} phase={preparationPhase} />
-        )}
-        {!isFirstRun && (
-          <div
-            style={{
-              alignItems: "center",
-              display: "flex",
-              flexWrap: "wrap",
-              gap: 8,
-              justifyContent: "space-between",
-            }}
-          >
-            <Text type="secondary">
-              {emptyRequest
-                ? "Shift+Enter to create without a task"
-                : "Shift+Enter to start"}
-            </Text>
-            <Space>
-              <NamedAgentUsage directory={namedAgentDirectory} />
-              {agents.length > 0 && (
-                <Button type="text" disabled={busy} onClick={onCancel}>
-                  Cancel
-                </Button>
-              )}
-            </Space>
-          </div>
         )}
         {runtimeKind === "codex-native" && paymentSourceError && (
           <Alert
