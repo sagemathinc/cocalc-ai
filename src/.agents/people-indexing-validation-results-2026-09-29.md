@@ -675,3 +675,20 @@ that deleting the old job does not bypass cooldown and that alternating slots
 remain bounded to one running and one queued. Actual settlement and host
 dispatch are still absent; this test deliberately deletes the old job directly
 and is not end-to-end completion evidence.
+
+### Host-bound Discovery Settlement
+
+Execution preparation now pins the current project host; missing hosts cannot
+start, and a replacement host requires explicit recovery rather than replaying
+the old run. An internal settlement transaction checks current writer authority
+and the pinned host, records `discovered` or `failed` separately from immutable
+admission receipts, then releases the active slot. Matching repeated reports
+are idempotent while receipts remain; conflicting reports fail. Discovery is
+deliberately not labeled owner-ingested or view-current.
+
+Thirteen focused PGlite tests and the database TypeScript build pass. New tests
+cover queued-job rejection, wrong-host authorization, replacement-host fencing,
+repeated/conflicting reports, slot release, and unchanged admission replay.
+This store is still not wired to host transport or a worker. Host migration
+recovery, real dispatch/settlement, and final ingestion/view watermarks remain
+required; no end-to-end Scan completion is claimed.

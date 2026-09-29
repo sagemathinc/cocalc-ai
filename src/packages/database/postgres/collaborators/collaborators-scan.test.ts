@@ -8,6 +8,7 @@ import {
   admitCollaborationScan,
   inspectCollaborationScan,
   startCollaborationScan,
+  settleCollaborationScanDiscovery,
   syncCollaborationScanSchema,
 } from "./collaborators-scan";
 
@@ -18,6 +19,7 @@ const describeDb =
     ? describe
     : describe.skip;
 const authority = { owning_bay_id: "scan-test" };
+const host_id = randomUUID();
 describeDb("owner scan admission prototype", () => {
   beforeAll(async () => {
     await initEphemeralDatabase();
@@ -34,11 +36,12 @@ describeDb("owner scan admission prototype", () => {
       mode: "reconcile" as const,
     };
     await getPool().query(
-      "INSERT INTO projects(project_id,owning_bay_id,users) VALUES($1,$2,$3::jsonb)",
+      "INSERT INTO projects(project_id,owning_bay_id,users,host_id) VALUES($1,$2,$3::jsonb,$4)",
       [
         request.project_id,
         authority.owning_bay_id,
         JSON.stringify({ [request.account_id]: { group: "collaborator" } }),
+        host_id,
       ],
     );
     return request;
@@ -52,6 +55,79 @@ describeDb("owner scan admission prototype", () => {
     await expect(
       admitCollaborationScan({ ...request, mode: "check" }, authority),
     ).rejects.toThrow("different arguments");
+  });
+  test("host discovery settlement preserves receipts and rejects conflicting or stale reports", async () => {
+    const request = await fixture();
+    const receipt = await admitCollaborationScan(request, authority);
+    if (!("job_id" in receipt)) throw Error("expected admission");
+    const report = {
+      project_id: request.project_id,
+      job_id: receipt.job_id,
+      state: "discovered" as const,
+    };
+    const writer = { ...authority, host_id };
+    expect(await settleCollaborationScanDiscovery(report, writer)).toBe(false);
+    await startCollaborationScan(
+      { ...request, job_id: receipt.job_id },
+      authority,
+    );
+    await expect(
+      settleCollaborationScanDiscovery(report, {
+        ...writer,
+        host_id: randomUUID(),
+      }),
+    ).rejects.toThrow();
+    expect(await settleCollaborationScanDiscovery(report, writer)).toBe(true);
+    expect(await settleCollaborationScanDiscovery(report, writer)).toBe(true);
+    expect(
+      await settleCollaborationScanDiscovery(
+        { ...report, state: "failed" },
+        writer,
+      ),
+    ).toBe(false);
+    expect(await inspectCollaborationScan(request, authority)).toEqual(receipt);
+    expect(await admitCollaborationScan(request, authority)).toEqual(receipt);
+    expect(
+      (
+        await getPool().query(
+          "SELECT * FROM collaboration_scan_jobs WHERE project_id=$1",
+          [request.project_id],
+        )
+      ).rows,
+    ).toHaveLength(0);
+    expect(
+      (
+        await getPool().query(
+          "SELECT result FROM collaboration_scan_receipts WHERE project_id=$1",
+          [request.project_id],
+        )
+      ).rows[0].result.state,
+    ).toBe("discovered");
+  });
+  test("host replacement cannot settle or replay the old execution", async () => {
+    const request = await fixture();
+    const receipt = await admitCollaborationScan(request, authority);
+    if (!("job_id" in receipt)) throw Error("expected admission");
+    const start = { ...request, job_id: receipt.job_id };
+    await startCollaborationScan(start, authority);
+    const replacement = randomUUID();
+    await getPool().query(
+      "UPDATE projects SET host_id=$2 WHERE project_id=$1",
+      [request.project_id, replacement],
+    );
+    await expect(startCollaborationScan(start, authority)).rejects.toThrow(
+      "host changed",
+    );
+    expect(
+      await settleCollaborationScanDiscovery(
+        {
+          project_id: request.project_id,
+          job_id: receipt.job_id,
+          state: "discovered",
+        },
+        { ...authority, host_id: replacement },
+      ),
+    ).toBe(false);
   });
   test("concurrent requests coalesce into one queued job", async () => {
     const request = await fixture();

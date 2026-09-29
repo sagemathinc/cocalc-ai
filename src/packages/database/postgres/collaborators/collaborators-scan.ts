@@ -4,7 +4,11 @@
  */
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "@cocalc/database/pool";
-import { assertCollaborationAccountAuthority } from "./collaborators-owner";
+import {
+  assertCollaborationAccountAuthority,
+  assertCollaborationWriterAuthority,
+} from "./collaborators-owner";
+import type { CollaborationWriterAuthority } from "./collaborators-owner";
 import type { CollaborationOwnerAuthority } from "./collaborators-owner";
 import { transaction, uuid } from "./collaborators-common";
 
@@ -43,6 +47,8 @@ export async function syncCollaborationScanSchema(
     ON collaboration_scan_jobs(project_id,state)`);
   await db.query(`ALTER TABLE collaboration_scan_jobs
     ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ`);
+  await db.query(`ALTER TABLE collaboration_scan_jobs
+    ADD COLUMN IF NOT EXISTS host_id UUID`);
   await db.query(`CREATE TABLE IF NOT EXISTS collaboration_scan_budget (
     project_id UUID PRIMARY KEY REFERENCES projects(project_id) ON DELETE CASCADE,
     tokens DOUBLE PRECISION NOT NULL CHECK(tokens>=0 AND tokens<=2),
@@ -58,6 +64,10 @@ export async function syncCollaborationScanSchema(
     ON collaboration_scan_receipts(expires_at,project_id)`);
   await db.query(`CREATE INDEX IF NOT EXISTS collaboration_scan_receipts_project_expiry
     ON collaboration_scan_receipts(project_id,expires_at)`);
+  await db.query(`ALTER TABLE collaboration_scan_receipts
+    ADD COLUMN IF NOT EXISTS result JSONB`);
+  await db.query(`CREATE INDEX IF NOT EXISTS collaboration_scan_receipts_job
+    ON collaboration_scan_receipts(project_id,(receipt->>'job_id'))`);
 }
 
 /** No host RPC or filesystem work in this transaction. The owner project lock
@@ -226,7 +236,7 @@ export async function startCollaborationScan(
       authority,
     );
     const { rows } = await db.query(
-      `SELECT j.job_id,j.state,j.started_at FROM collaboration_scan_jobs j
+      `SELECT j.job_id,j.state,j.started_at,j.host_id FROM collaboration_scan_jobs j
       JOIN collaboration_scan_receipts r ON r.project_id=j.project_id
       AND r.receipt->>'job_id'=j.job_id::text
       WHERE j.project_id=$1 AND j.job_id=$2 AND r.account_id=$3
@@ -235,7 +245,15 @@ export async function startCollaborationScan(
     );
     const job = rows[0];
     if (!job) return null;
+    const host = (
+      await db.query("SELECT host_id FROM projects WHERE project_id=$1", [
+        opts.project_id,
+      ])
+    ).rows[0].host_id;
+    if (!host) return null;
     if (job.state === "running") {
+      if (job.host_id !== host)
+        throw Error("scan host changed; recovery required");
       if (!job.started_at) throw Error("scan execution boundary missing");
       return {
         job_id: job.job_id,
@@ -265,9 +283,9 @@ export async function startCollaborationScan(
     )
       return null;
     const result = await db.query(
-      `UPDATE collaboration_scan_jobs SET state='running',started_at=$3
+      `UPDATE collaboration_scan_jobs SET state='running',started_at=$3,host_id=$4
       WHERE project_id=$1 AND job_id=$2 AND state='queued' RETURNING started_at`,
-      [opts.project_id, opts.job_id, clock.now],
+      [opts.project_id, opts.job_id, clock.now, host],
     );
     await db.query(
       "UPDATE collaboration_scan_budget SET last_started_at=$2 WHERE project_id=$1",
@@ -278,5 +296,51 @@ export async function startCollaborationScan(
       started_at: result.rows[0].started_at.getTime(),
       replayed: false,
     };
+  });
+}
+
+/** Host discovery is not owner ingestion or view freshness. Only internal
+ * authenticated host reports may settle active discovery; never a public input.
+ */
+export async function settleCollaborationScanDiscovery(
+  opts: { project_id: string; job_id: string; state: "discovered" | "failed" },
+  authority: CollaborationWriterAuthority,
+): Promise<boolean> {
+  uuid(opts.job_id, "scan job");
+  if (opts.state !== "discovered" && opts.state !== "failed")
+    throw Error("invalid discovery result");
+  return transaction(async (db) => {
+    await assertCollaborationWriterAuthority(db, opts.project_id, authority);
+    const job = (
+      await db.query(
+        "SELECT state,host_id FROM collaboration_scan_jobs WHERE project_id=$1 AND job_id=$2",
+        [opts.project_id, opts.job_id],
+      )
+    ).rows[0];
+    if (!job) {
+      const prior = (
+        await db.query(
+          `SELECT result FROM collaboration_scan_receipts
+        WHERE project_id=$1 AND receipt->>'job_id'=$2 AND expires_at>clock_timestamp() LIMIT 1`,
+          [opts.project_id, opts.job_id],
+        )
+      ).rows[0]?.result;
+      return (
+        prior?.state === opts.state && prior?.host_id === authority.host_id
+      );
+    }
+    if (job.state !== "running" || job.host_id !== authority.host_id)
+      return false;
+    await db.query(
+      `UPDATE collaboration_scan_receipts SET result=jsonb_build_object(
+      'state',$3::text,'host_id',$4::text,'settled_at',clock_timestamp())
+      WHERE project_id=$1 AND receipt->>'job_id'=$2`,
+      [opts.project_id, opts.job_id, opts.state, authority.host_id],
+    );
+    await db.query(
+      "DELETE FROM collaboration_scan_jobs WHERE project_id=$1 AND job_id=$2",
+      [opts.project_id, opts.job_id],
+    );
+    return true;
   });
 }
