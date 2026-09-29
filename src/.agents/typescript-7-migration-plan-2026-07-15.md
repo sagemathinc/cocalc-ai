@@ -4,6 +4,102 @@
 
 Investigation completed and migration deferred on 2026-07-15.
 
+Re-probed and migration started on 2026-09-29 on branch `build/typescript-7`
+(tracking issue #195). The "Revision 2026-09-29" section below supersedes the
+open questions in Phases 2 and 3 and reorders the work. Progress is recorded in
+the "Progress Log" at the end of this document.
+
+## Revision 2026-09-29
+
+### What Changed Since The Original Probe
+
+- `typescript@latest` is still 7.0.2 and `@typescript/typescript6` is still
+  6.0.2. TS7.1 exists only as nightlies (`7.1.0-dev.*`). The nightlies ship a
+  new `typescript/unstable/*` API, which is not the TS6 compiler API used by
+  `ts-jest`, `ts-node`, or our AST lint script. TS6 remains required for those.
+- About 4,970 commits landed after the original plan. The self-import surface
+  grew (files importing their own package: frontend 1,688 -> 2,252, server
+  481 -> 849, conat 101 -> 140), and new packages (`ai`, `essential-frontend`,
+  `static`) were added with `moduleResolution: "node"`. Waiting makes the
+  migration larger.
+- TS6 memory pressure grew: the static build and control-plane bundle builds
+  had to raise Node heap limits again (6 GB and 8 GB).
+- All supported runtimes are Node >= 22.15 (development uses Node 26), where
+  `require()` of synchronous ESM works without flags. This reduces the risk of
+  the CommonJS/ESM boundary diagnostics that motivated caution about `node16`.
+
+### Re-Probe Results (TS 7.0.2 On A Throwaway Copy Of `main`)
+
+| Configuration                                                    | Errors |
+| ---------------------------------------------------------------- | -----: |
+| unchanged configs                                                |    121 |
+| `bundler` resolver, removed `baseUrl`/`downlevelIteration`/etc.  |    214 |
+| plus frontend self `paths` and a `types` export for util message |     44 |
+| same, clean tree (no `dist`)                                     |     99 |
+| same, incremental rebuild of the clean tree                      |     45 |
+
+Observations:
+
+- `module: "commonjs"` with `moduleResolution: "bundler"` is accepted by TS7.
+  This keeps CommonJS emit (no runtime module-format change) while replacing
+  the removed `node10` resolver.
+- 154 of the 214 errors were frontend directory-index self-imports such as
+  `@cocalc/frontend/lite`, which the `./*` -> `./dist/*.js` export cannot
+  express. A package-local `paths` self-mapping fixes all of them.
+- `@cocalc/util/message` is a hand-written `message.d.ts` beside JS source.
+  Resolution through exports found the weaker emitted `dist/message.d.ts`,
+  which caused every "missing member" diagnostic in backend, server, and
+  project.
+- TS5055 declaration collisions disappear on a clean tree; they come from
+  stale `dist` being resolved as input.
+- Clean-tree failures are dominated (about 63 of 73 unresolved imports) by
+  `@cocalc/conat` imports from `sync`. `conat` references `sync`, while `sync`
+  imports `conat` without a project reference (it cannot add one without a
+  cycle). TS6 hides this because `node10` resolution reaches conat source
+  through `node_modules` as an external library file; modern resolution goes
+  through exports to `dist`, which does not exist yet on a clean tree.
+- The same cycle already breaks **TS6** clean builds on `main`: in a fresh
+  worktree, `sync` is built before `apps/document-build`, pulls conat source
+  in as an external file, and fails on conat's import of
+  `@cocalc/app-document-build`. Current builds succeed only because `dist`
+  output from earlier builds exists. Fixing the cycle is therefore valuable
+  independent of TS7.
+- A clean TS7 solution build took about 17 s wall and 5.7 GB peak RSS; an
+  incremental build 7 s and 3.3 GB. TS6 numbers are in the Progress Log.
+
+### Decisions
+
+1. **Resolver strategy (closes Phase 2).** Use `moduleResolution: "bundler"`
+   with the existing `module: "commonjs"` for every package. Emit stays
+   CommonJS; no package changes `type`, extensions, or startup commands. Do not
+   adopt `node16`/`nodenext` as part of this migration.
+2. **Self-resolution (Phase 3).** Where a package's exports cannot express how
+   it imports itself (directory indexes, hand-written declarations), add
+   package-local `paths` entries to source, merged explicitly with existing
+   `paths`. Prefer fixing exports (for example a `types` condition) when the
+   issue also affects external consumers.
+3. **Cycle first.** Resolve the `sync`/`conat` build-order dependence before
+   other Phase 3 work, in a TS6-compatible way.
+4. **Guard.** Add a check that fails on new uses of TS7-removed options
+   (`moduleResolution: "node"`/`node10`, `baseUrl`, `downlevelIteration`) so
+   the gap stops growing while the migration is in flight.
+5. **Compiler API.** Keep TS6 as the `typescript` package for tooling. Revisit
+   when TS7.1 is released; that is not a prerequisite for using TS7 as the
+   build compiler.
+
+### Revised Order Of Work
+
+1. Plan update and draft PR (this revision).
+2. Phase 0 baseline numbers for TS6 (clean, incremental, no-op).
+3. Phase 1 side-by-side toolchain with explicit `tsc:6`/`tsc:7` scripts.
+4. `sync`/`conat` clean-build fix.
+5. Config modernization (Phases 2-4 combined, since the strategy is decided):
+   `bundler` resolver, drop removed options, self `paths`, export fixes.
+6. Remaining source diagnostics (Phase 6), the removed-options guard, and a
+   non-blocking TS7 CI job.
+7. Qualification (Phases 7-8) and the default switch (Phase 9) only after TS7
+   passes clean, incremental, and runtime checks.
+
 This document records the results of a TypeScript 7.0.2 compatibility probe and
 proposes a staged migration. The migration is substantially larger than a
 dependency update because TypeScript 7 removes the legacy module resolver used
@@ -786,3 +882,8 @@ The migration is complete only when all of the following are true:
 - A tested TS6 rollback remains available for at least one release cycle.
 - No diagnostics are hidden by broad suppressions or reduced declaration
   coverage.
+
+## Progress Log
+
+- 2026-09-29: Re-probed on current `main`, recorded the revision above, and
+  opened the draft migration PR.
