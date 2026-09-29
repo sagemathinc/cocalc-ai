@@ -2920,3 +2920,19 @@ cluster-wide propagation. Normal bay settings may remain cached for 15 seconds
 host Scan work across toggle, natural cache-delay behavior and population-scale
 reenablement are not established by this fixture. It does not remove any release
 guard or enable prototype settings in production.
+
+### Partial Explicit Scan Pause And Resume
+
+Added a host adapter regression using real SQLite census/journal state and a
+controlled directory stream. A bounded step commits one source while leaving the
+directory unfinished. After an observed disable and producer pause, directory
+and filesystem handles close; ten disabled steps/report passes perform no more
+reads, opens or report calls and leave the durable checkpoint unchanged. New
+Scan admission rejects with `DISABLED`.
+
+Reenable reopens the directory from its beginning, deduplicates the committed
+entry and completes the same run UUID. Ten further explicit-mode steps do not
+open storage or enumerate project inventory. This tests pause/resume semantics,
+not actual site-setting propagation delay or concurrent administrator/network
+timing. Three focused host suites pass (27 tests), as does host/reference
+typecheck. No production implementation change was needed for this behavior.

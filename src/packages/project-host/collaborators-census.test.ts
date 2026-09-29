@@ -140,6 +140,62 @@ test("explicit mode leaves cold inventory untouched and only a requested run ope
   expect(options.getFilesystem).toHaveBeenCalledTimes(1);
 });
 
+test("explicit partial scan survives disable and resumes the same run without inventory discovery", async () => {
+  let now = 0;
+  const { options, fs, stream } = setup(() => now, "explicit");
+  const entry = {
+    name: "unknown.chat",
+    isFile: () => true,
+    isDirectory: () => false,
+    isSymbolicLink: () => false,
+  };
+  stream.read
+    .mockReset()
+    .mockImplementationOnce(async () => {
+      now += 100; // End the bounded step after one durable observation.
+      return entry;
+    })
+    .mockResolvedValue(null);
+  const request = { project_id, run_id: randomUUID() };
+  await census!.requestReconciliation(request);
+  await census!.producer.step(journal);
+  const checkpoint = census!.store.status(project_id)!;
+  expect(checkpoint.traversal_complete).toBe(false);
+  expect(journal.sources()).toHaveLength(1);
+
+  options.enabled.mockResolvedValue(false);
+  await census!.producer.pause();
+  expect(stream.close).toHaveBeenCalledTimes(1);
+  expect(fs.close).toHaveBeenCalledTimes(1);
+  const reads = stream.read.mock.calls.length;
+  for (let pass = 0; pass < 10; pass++) {
+    await census!.producer.step(journal);
+    await census!.producer.report!(journal);
+  }
+  expect(stream.read).toHaveBeenCalledTimes(reads);
+  expect(options.getFilesystem).toHaveBeenCalledTimes(1);
+  expect(options.report).not.toHaveBeenCalled();
+  expect(census!.store.status(project_id)).toEqual(checkpoint);
+  await expect(
+    census!.requestReconciliation({ project_id, run_id: randomUUID() }),
+  ).rejects.toMatchObject({ code: "DISABLED" });
+
+  // Reopening a real directory starts from the beginning. Replay must not
+  // duplicate the already committed source or allocate a new Scan identity.
+  stream.read.mockReset().mockResolvedValueOnce(entry).mockResolvedValue(null);
+  options.enabled.mockResolvedValue(true);
+  await census!.producer.step(journal);
+  expect(census!.store.status(project_id)).toMatchObject({
+    run: { run_id: request.run_id },
+    traversal_complete: true,
+  });
+  expect(journal.sources()).toHaveLength(1);
+  expect(options.getFilesystem).toHaveBeenCalledTimes(2);
+  for (let pass = 0; pass < 10; pass++) await census!.producer.step(journal);
+  expect(options.getFilesystem).toHaveBeenCalledTimes(2);
+  expect(nextCollaborationCensusProject).not.toHaveBeenCalled();
+});
+
 test("explicit requests recheck disabled, owner denial, missing volume, and replacement fences", async () => {
   const { options } = setup(() => 0, "explicit");
   const request = { project_id, run_id: randomUUID() };
