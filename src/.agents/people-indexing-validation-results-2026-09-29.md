@@ -3666,3 +3666,64 @@ Correction to earlier accessibility evidence: the standalone audit uses CSS
 additional live CSS-zoom probe clipped the dialog; it must not be interpreted as
 a browser-zoom pass or a confirmed defect under native browser zoom. The live
 320-pixel reflow checks above are separate, direct measurements.
+
+### Live Checklist After Passkey Verification: Retired Host Blocks Completion
+
+Iteration 1; area: Manual Scan lifecycle. Result: bug found / unresolved product
+gap. Severity: high (one unreachable retired host blocks subsequent account
+scans). The human completed security verification, and the enabled setting
+propagated successfully. The current frontend implementation was exercised in
+the actual People shell on the development site, rather than the fixture.
+
+| Checklist case | Live result |
+| --- | --- |
+| Selection | Passed: selected two projects on page one and another on page two; searching retained all three. Select-all showed 72 account projects despite a single matching search result. Unchecking select-all restored the three explicit selections. |
+| Start/reopen/reload | Passed admission/recovery: the admitted operation and fixed one-project total survived closing/reopening and a full reload. Completion failed as described below. |
+| Two tabs | Passed: concurrent starts with different three-project and one-project selections returned the same operation. The one-project submission won; selections were not combined. |
+| Cancel | Partial: keyboard Enter requested cancellation, and reload retained the same ID and cancellation intent. The child eventually displayed cancelling. Host acknowledgment never arrived during observation; terminal cancellation failed. |
+| Results/retry | Blocked: no terminal result or explicit retry could be tested while this operation remained active. Truncation and successful traversal remain untested on this site. |
+| Disable/reenable | Passed for the active operation: disabled new admission preserved status and accepted Cancel. Reenabling retained the same cancelling operation and did not submit another batch. The setting is left enabled. |
+| Keyboard/display | Partial: cancellation via Enter worked. The cancelling dialog, including expanded operation ID, fit a 320-pixel viewport (client and scroll width both 304), with no dialog-scoped axe WCAG 2 A/AA or 2.1 AA violations. Prior light/dark and Escape checks remain applicable. Native browser zoom remains untested: CDP-delivered zoom shortcuts did not change the measured viewport or device scale. |
+| Ordinary collaboration | Untested: existing resources remain visible, but no new two-person conversation/invitation workflow was performed. |
+
+Reproduction: select `code-server-template`, start Scan, then cancel. In this
+run the second browser tab selected that project and won simultaneous admission.
+The first tab's selection was fresh-project, brand new project and
+headless-document-build-sage-smoke.
+
+- Operation: `8a6b4421-9632-467a-848d-61a838855079`.
+- Project: `0276ddc8-b281-4fc9-a4cc-6f31aef66e49`.
+- Child request/job: `e7a86f6c-8a0b-4f83-9b76-7455f4709d49`.
+- Host: `0ad1b494-3d74-4dd9-8634-3afb280781bb`.
+- Visible result: `Cancelling — waiting for running projects to stop. 0 of 1
+  projects processed.`
+
+Evidence: the authoritative project and host records are both in bay-0. The
+project retains that host assignment; the host record reports `deprovisioned`
+and has no last-seen timestamp. The owner job is running with
+`cancel_requested=true`. The batch child retains `dispatched=true` and
+`state=cancelling`. Hub logs repeatedly report `scan child outcome unknown;
+retaining identity` for this operation and child, including 23:47:31,
+23:48:07 and 23:48:43 UTC. No host execution or compute start was confirmed.
+
+Root cause: owner admission treats a nonempty project host ID as available
+storage. It establishes a running job before host status/admission RPCs succeed.
+The retired host cannot acknowledge status or the exact cancellation fence.
+The deliberate unknown-outcome rule then retains that identity and the account
+single-flight reservation. This preserves safety but does not provide a usable
+unavailable outcome for permanently retired storage.
+
+Fix: none applied in this iteration. A host timeout or lifecycle label alone
+must not be substituted for a cancellation acknowledgment. A complete fix needs
+an authoritative host-availability check before the execution boundary and a
+durable way to distinguish never-submitted work from ambiguous prior dispatch,
+or a host-retirement fence that rules out delayed execution. Existing ambiguous
+jobs need a separately justified recovery path. No receipts, leases, job states,
+or cooldowns were edited to manufacture completion, and no host was started or
+reprovisioned. The exact operation is left available for inspection/recovery.
+
+Validation: real signed-in Chromium, simultaneous tab submissions, settings
+propagation, reload, keyboard cancellation, narrow-layout measurement, scoped
+axe audit, and correlated durable-state/log inspection. The full checklist is
+not passing and this development instance is not ready for a clean manual
+acceptance run on the same account until the retired-host case is resolved.
