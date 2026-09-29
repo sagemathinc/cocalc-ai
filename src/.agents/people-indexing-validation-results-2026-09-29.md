@@ -642,3 +642,19 @@ The focused retention case injects 80 expired rows, proves replay/inspection
 leave them untouched, verifies a new admission removes exactly 64, and checks
 that throttled requests do not continue cleanup. Host execution, receipt job
 status retention, and end-to-end client expiry UX remain unimplemented.
+
+### Owner Execution Boundary
+
+Added an internal queued-to-running transaction that requires a live matching
+request receipt and current collaborator authority. It commits a stable start
+timestamp before host transport; repeated/concurrent starts return the same
+job and boundary instead of allocating another run. A queued follow-up cannot
+start while another job is running. Subsequent admission uses the persisted
+start timestamp for its conservative cooldown rather than queue creation time.
+
+This boundary is dispatch preparation, not proof that the host began or captured
+the filesystem. No caller is wired yet. The future dispatcher must route to the
+current authorized host, preserve this job identity across ambiguous outcomes,
+and implement leases, settlement, and durable last-execution cooldown after
+completed jobs leave the active slots. Ten focused PGlite tests and the database
+TypeScript build validate this checkpoint, not end-to-end execution.

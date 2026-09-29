@@ -41,6 +41,8 @@ export async function syncCollaborationScanSchema(
     ON collaboration_scan_jobs(state,created_at,project_id)`);
   await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS collaboration_scan_jobs_state
     ON collaboration_scan_jobs(project_id,state)`);
+  await db.query(`ALTER TABLE collaboration_scan_jobs
+    ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ`);
   await db.query(`CREATE TABLE IF NOT EXISTS collaboration_scan_budget (
     project_id UUID PRIMARY KEY REFERENCES projects(project_id) ON DELETE CASCADE,
     tokens DOUBLE PRECISION NOT NULL CHECK(tokens>=0 AND tokens<=2),
@@ -103,7 +105,10 @@ export async function admitCollaborationScan(
     if (!job && jobs.length) {
       // Raw generation equality is not a validated no-change proof: checks
       // currently require the same conservative work/cooldown as reconciliation.
-      const remaining = jobs[0].created_at.getTime() + COOLDOWN_MS - now;
+      const remaining =
+        (jobs[0].started_at ?? jobs[0].created_at).getTime() +
+        COOLDOWN_MS -
+        now;
       if (remaining > 0)
         return { admission: "throttled" as const, retry_after_ms: remaining };
     }
@@ -208,5 +213,58 @@ export async function inspectCollaborationScan(
       [opts.project_id, opts.account_id, opts.request_id],
     );
     return (rows[0]?.receipt as ScanReceipt | undefined) ?? null;
+  });
+}
+
+/** Internal owner dispatch preparation only. Commit the boundary before any
+ * host request; retry with the same job ID after an ambiguous transport result.
+ * This is not a worker lease or permission to launch work on an arbitrary host.
+ */
+export async function startCollaborationScan(
+  opts: Omit<ScanAdmissionRequest, "mode"> & { job_id: string },
+  authority: CollaborationOwnerAuthority,
+): Promise<{ job_id: string; started_at: number; replayed: boolean } | null> {
+  uuid(opts.request_id, "scan request");
+  uuid(opts.job_id, "scan job");
+  return transaction(async (db) => {
+    await assertCollaborationAccountAuthority(
+      db,
+      opts.project_id,
+      opts.account_id,
+      authority,
+    );
+    const { rows } = await db.query(
+      `SELECT j.job_id,j.state,j.started_at FROM collaboration_scan_jobs j
+      JOIN collaboration_scan_receipts r ON r.project_id=j.project_id
+      AND r.receipt->>'job_id'=j.job_id::text
+      WHERE j.project_id=$1 AND j.job_id=$2 AND r.account_id=$3
+      AND r.request_id=$4 AND r.expires_at>clock_timestamp()`,
+      [opts.project_id, opts.job_id, opts.account_id, opts.request_id],
+    );
+    const job = rows[0];
+    if (!job) return null;
+    if (job.state === "running") {
+      if (!job.started_at) throw Error("scan execution boundary missing");
+      return {
+        job_id: job.job_id,
+        started_at: job.started_at.getTime(),
+        replayed: true,
+      };
+    }
+    const running = await db.query(
+      "SELECT 1 FROM collaboration_scan_jobs WHERE project_id=$1 AND state='running'",
+      [opts.project_id],
+    );
+    if (running.rows.length) return null;
+    const result = await db.query(
+      `UPDATE collaboration_scan_jobs SET state='running',started_at=clock_timestamp()
+      WHERE project_id=$1 AND job_id=$2 AND state='queued' RETURNING started_at`,
+      [opts.project_id, opts.job_id],
+    );
+    return {
+      job_id: job.job_id,
+      started_at: result.rows[0].started_at.getTime(),
+      replayed: false,
+    };
   });
 }

@@ -7,6 +7,7 @@ import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import {
   admitCollaborationScan,
   inspectCollaborationScan,
+  startCollaborationScan,
   syncCollaborationScanSchema,
 } from "./collaborators-scan";
 
@@ -211,6 +212,69 @@ describeDb("owner scan admission prototype", () => {
     await expect(
       inspectCollaborationScan(request, authority),
     ).rejects.toThrow();
+  });
+  test("execution boundary is stable and concurrent starts cannot create a second run", async () => {
+    const request = await fixture();
+    const receipt = await admitCollaborationScan(request, authority);
+    if (!("job_id" in receipt)) throw Error("expected admission");
+    const start = { ...request, job_id: receipt.job_id };
+    const results = await Promise.all([
+      startCollaborationScan(start, authority),
+      startCollaborationScan(start, authority),
+    ]);
+    expect(results.filter((r) => r?.replayed === false)).toHaveLength(1);
+    expect(results.filter((r) => r?.replayed === true)).toHaveLength(1);
+    expect(results[0]?.started_at).toBe(results[1]?.started_at);
+    await getPool().query(
+      "UPDATE collaboration_scan_jobs SET started_at=clock_timestamp()-interval '6 minutes' WHERE project_id=$1",
+      [request.project_id],
+    );
+    const follow = { ...request, request_id: randomUUID() };
+    const followReceipt = await admitCollaborationScan(follow, authority);
+    if (!("job_id" in followReceipt)) throw Error("expected follow-up");
+    expect(followReceipt.job_id).not.toBe(receipt.job_id);
+    expect(
+      await startCollaborationScan(
+        { ...follow, job_id: followReceipt.job_id },
+        authority,
+      ),
+    ).toBeNull();
+  });
+  test("starting requires a live matching receipt and current membership", async () => {
+    const request = await fixture();
+    const receipt = await admitCollaborationScan(request, authority);
+    if (!("job_id" in receipt)) throw Error("expected admission");
+    const start = { ...request, job_id: receipt.job_id };
+    expect(
+      await startCollaborationScan(
+        { ...start, request_id: randomUUID() },
+        authority,
+      ),
+    ).toBeNull();
+    expect(
+      await startCollaborationScan(
+        { ...start, job_id: randomUUID() },
+        authority,
+      ),
+    ).toBeNull();
+    await getPool().query(
+      "UPDATE collaboration_scan_receipts SET expires_at=clock_timestamp()-interval '1 second' WHERE project_id=$1",
+      [request.project_id],
+    );
+    expect(await startCollaborationScan(start, authority)).toBeNull();
+    await getPool().query(
+      "UPDATE projects SET users='{}'::jsonb WHERE project_id=$1",
+      [request.project_id],
+    );
+    await expect(startCollaborationScan(start, authority)).rejects.toThrow();
+    expect(
+      (
+        await getPool().query(
+          "SELECT state FROM collaboration_scan_jobs WHERE project_id=$1",
+          [request.project_id],
+        )
+      ).rows[0].state,
+    ).toBe("queued");
   });
   test("new admissions reclaim at most 64 expired receipts without touching live retries", async () => {
     const request = await fixture();
