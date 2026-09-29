@@ -3192,6 +3192,44 @@ multiple hot projects, CPU/I/O/WAL costs, or a production capacity commitment.
 Choose a canary envelope from further measured indexing cost rather than an
 assumed daily-active-user count.
 
+### Paced Fixture Resource Measurements
+
+The existing paced 100-account, one-project fixture now samples each of its
+four application workers using `process.cpuUsage()` and `process.memoryUsage()`.
+It also measures the difference in `pg_current_wal_insert_lsn()` across the
+isolated PostgreSQL cluster. No live database is used. Resource sampling is a
+test-worker IPC command, not a public API.
+
+The instrumented acceptance run passed in 92.632 seconds including setup and
+cleanup. Its paced phase sent 30 conversations in 29.050 seconds and finished
+all 3,000 projections in 36.662 seconds. Peak sampled backlog was 568, and
+per-conversation all-account completion ranged from 5.041 to 22.660 seconds.
+The owner handled 149 shared pages, zero access refreshes and one interest
+registration during that window.
+
+| Worker      | User CPU (ms) | System CPU (ms) | Start RSS (bytes) | End / sampled peak RSS (bytes) |
+| ----------- | ------------: | --------------: | ----------------: | -----------------------------: |
+| Owner       |      5087.416 |        1178.717 |         474718208 |                      535912448 |
+| Active home |      4486.102 |        1229.740 |         478785536 |                      487473152 |
+| Other home  |        30.589 |          23.038 |         462020608 |                      462151680 |
+| Host        |      1716.242 |         331.866 |         142815232 |                      186200064 |
+
+Summed application-worker CPU was 14.084 seconds. Cluster WAL growth was
+25,326,016 bytes (24.153 MiB). These are measurements of the whole fixture
+window, including background work and instrumentation, not incremental indexing
+cost in isolation. CPU excludes PostgreSQL and the test runner; memory samples
+can miss transient peaks and are not heap-retention/leak evidence. WAL includes
+all bay databases and background activity; it is not disk I/O, fsync latency,
+or a per-table/per-user write-cost measurement. Sequential sampling means the
+worker windows differ slightly. Do not extrapolate these values to DAU.
+
+Server/reference typecheck and the instrumented acceptance test pass. Diverse
+project loads, database CPU/I/O, repeatability and a measured rollout envelope
+remain open. Inspection of review attempt
+`76cf958d-1c5f-4c57-8c3c-1eb070ae38ea` still returned `unknown` with
+`No retained acceptance evidence`; it was not resubmitted or treated as a
+completed review.
+
 ### Known-Source Demand Becomes Idle
 
 The same timer-driven scenario now releases its active consumer through the

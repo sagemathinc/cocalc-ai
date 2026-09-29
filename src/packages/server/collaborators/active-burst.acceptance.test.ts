@@ -179,6 +179,26 @@ acceptance("synthetic active-account scheduler burst", () => {
         }) + "\n",
       );
     expect(updated).toBe(accounts.length);
+    const roles = ["owner", "a", "b", "host"] as const;
+    type ResourceSample = {
+      cpu: { user: number; system: number };
+      rss: number;
+    };
+    const usageBefore = new Map<string, ResourceSample>();
+    const peakRss = new Map<string, number>();
+    for (const role of roles) {
+      const sample = await env
+        .worker(role)
+        .call<ResourceSample>("resourceSample");
+      usageBefore.set(role, sample);
+      peakRss.set(role, sample.rss);
+    }
+    // The harness owns the entire PostgreSQL cluster. This includes background
+    // work and all its bay databases, not just collaboration-table WAL.
+    const [walBefore] = await env.sql(
+      "owner",
+      "SELECT pg_current_wal_insert_lsn()::text AS lsn",
+    );
     const streamStarted = Date.now();
     const sent = new Map<string, number>();
     const completed = new Map<string, number>();
@@ -203,6 +223,12 @@ acceptance("synthetic active-account scheduler burst", () => {
         elapsed_ms: now - streamStarted,
         pending_projections: sent.size * accounts.length - applied,
       });
+      for (const role of roles) {
+        const sample = await env
+          .worker(role)
+          .call<ResourceSample>("resourceSample");
+        peakRss.set(role, Math.max(peakRss.get(role)!, sample.rss));
+      }
     };
     const streamBefore = (await env.worker("owner").call("inspect")).counters
       .ownerCalls;
@@ -226,12 +252,35 @@ acceptance("synthetic active-account scheduler burst", () => {
     const streamAfter = (await env.worker("owner").call("inspect")).counters
       .ownerCalls;
     const latencies = [...completed.values()].sort((a, b) => a - b);
+    const elapsedMs = Date.now() - streamStarted;
+    const [walAfter] = await env.sql(
+      "owner",
+      "SELECT pg_wal_lsn_diff(pg_current_wal_insert_lsn(),$1::pg_lsn)::text AS bytes",
+      [walBefore.lsn],
+    );
+    const workerResources: Record<string, Record<string, number>> = {};
+    for (const role of roles) {
+      const after = await env
+        .worker(role)
+        .call<ResourceSample>("resourceSample");
+      const before = usageBefore.get(role)!;
+      workerResources[role] = {
+        cpu_user_ms: (after.cpu.user - before.cpu.user) / 1000,
+        cpu_system_ms: (after.cpu.system - before.cpu.system) / 1000,
+        rss_start_bytes: before.rss,
+        rss_end_bytes: after.rss,
+        rss_sampled_peak_bytes: Math.max(peakRss.get(role)!, after.rss),
+      };
+    }
+    expect(BigInt(walAfter.bytes)).toBeGreaterThanOrEqual(0n);
     process.stdout.write(
       JSON.stringify({
         workload: "100-account-30-conversations-one-per-second",
         sending_ms: sendingMs,
-        elapsed_ms: Date.now() - streamStarted,
+        elapsed_ms: elapsedMs,
         completed: completed.size,
+        worker_resources: workerResources,
+        isolated_cluster_wal_bytes: walAfter.bytes,
         backlog,
         all_accounts_latency_ms: latencies,
         calls: Object.fromEntries(

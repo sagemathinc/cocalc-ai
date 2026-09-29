@@ -1323,6 +1323,11 @@ async function command(name, args = {}) {
         ).clearProjectHostConatAuthCaches();
       }
       return null;
+    case "resourceSample":
+      return {
+        cpu: process.cpuUsage(),
+        rss: process.memoryUsage().rss,
+      };
     case "inspect":
       if (config.role !== "host")
         return {
