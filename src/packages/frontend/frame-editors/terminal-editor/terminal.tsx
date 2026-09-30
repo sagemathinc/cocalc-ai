@@ -19,6 +19,10 @@ import {
   useRef,
   useState,
 } from "@cocalc/frontend/app-framework";
+import {
+  isLikelyStaleChunkError,
+  reloadForFrontendBuild,
+} from "@cocalc/frontend/app/frontend-build-monitor";
 import { Tooltip } from "@cocalc/frontend/components";
 import { set_buffer } from "@cocalc/frontend/copy-paste-buffer";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
@@ -55,6 +59,13 @@ const COMMAND_STYLE = {
   overflow: "hidden",
 } as CSS;
 
+const LOAD_ERROR_STYLE = {
+  padding: "8px",
+  background: "#fff1f0",
+  color: "#a8071a",
+  borderBottom: "1px solid #ffa39e",
+} as CSS;
+
 interface NativeTouchTap {
   x: number;
   y: number;
@@ -74,6 +85,9 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
   latestPropsRef.current = props;
   const nativeTouchTapRef = useRef<NativeTouchTap | null>(null);
   const [showMobileToolbar, setShowMobileToolbar] = useState(false);
+  // Opening can fail (e.g., the terminal code chunk does not load). Without
+  // this the frame stays blank with no way to recover but reloading the page.
+  const [loadError, setLoadError] = useState<unknown>(undefined);
   const resize = useResizeObserver({ ref: terminalDOMRef });
   const isMountedRef = useIsMountedRef();
   const student_project_functionality = useStudentProjectFunctionality(
@@ -89,10 +103,17 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
 
   useEffect(() => {
     setShowMobileToolbar(false);
+    setLoadError(undefined);
     if (props.is_visible && props.tab_is_visible !== false)
       void init_terminal();
     return delete_terminal;
   }, [props.is_visible, props.tab_is_visible, props.actions, props.id]);
+
+  function retryInitTerminal(): void {
+    delete_terminal();
+    setLoadError(undefined);
+    void init_terminal();
+  }
 
   useEffect(() => {
     if (props.is_current && ownsTerminal()) {
@@ -157,12 +178,34 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
       latestPropsRef.current.tab_is_visible !== false &&
       latestPropsRef.current.id === props.id &&
       latestPropsRef.current.actions === props.actions;
-    const terminal = await props.actions._get_terminal(
-      props.id,
-      node,
-      workspaceRecord?.terminal_theme,
-      isCurrent,
-    );
+    let terminal: Terminal | undefined;
+    try {
+      terminal = await props.actions._get_terminal(
+        props.id,
+        node,
+        workspaceRecord?.terminal_theme,
+        isCurrent,
+      );
+    } catch (err) {
+      if (!isCurrent()) return;
+      console.warn("terminal: failed to open", {
+        path: props.path,
+        id: props.id,
+        err,
+      });
+      setLoadError(err);
+      return;
+    }
+    if (terminal == null && isCurrent()) {
+      // Nothing superseded this view, yet no terminal was produced.
+      console.warn("terminal: open returned no terminal", {
+        path: props.path,
+        id: props.id,
+        actionsClosed: props.actions?.isClosed?.(),
+      });
+      setLoadError(new Error("The terminal did not start."));
+      return;
+    }
     if (terminal == null || !isCurrent()) {
       // A later load/view may already own this shared terminal. Stale cleanup
       // must not remove that view's element or mark its live terminal hidden.
@@ -326,6 +369,33 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
     );
   }
 
+  function renderLoadError(): Rendered {
+    const stale = isLikelyStaleChunkError(loadError);
+    return (
+      <div role="alert" style={LOAD_ERROR_STYLE}>
+        {stale
+          ? "CoCalc was updated since this page loaded. Reload the page to open terminals."
+          : `Terminal failed to open: ${
+              (loadError as any)?.message ?? `${loadError}`
+            }`}
+        <Button
+          size="small"
+          style={{ marginLeft: "8px" }}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (stale) {
+              reloadForFrontendBuild();
+            } else {
+              retryInitTerminal();
+            }
+          }}
+        >
+          {stale ? "Reload" : "Retry"}
+        </Button>
+      </div>
+    );
+  }
+
   if (student_project_functionality.disableTerminals) {
     return (
       <b style={{ margin: "auto", fontSize: "14pt", padding: "15px" }}>
@@ -364,6 +434,7 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
           focusTerminal();
         }}
       >
+        {loadError != null && renderLoadError()}
         {showMobileToolbar && (
           <MobileTerminalToolbar
             onFocus={focusTerminal}
