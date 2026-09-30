@@ -219,6 +219,31 @@ export interface CommercialCollectionModeUpdateRequest extends CommercialMutatio
   collection_mode: Exclude<CommercialCollectionMode, "complimentary">;
 }
 
+export interface CommercialStripeBillingPreviewRequest extends CommercialReadRequest {
+  id: string;
+}
+
+export interface CommercialStripeBillingDetails {
+  email: string;
+  address: Record<string, string>;
+}
+
+export interface CommercialStripeBillingPreview {
+  order_id: string;
+  order_version: number;
+  customer_id: string;
+  before: CommercialStripeBillingDetails;
+  after: CommercialStripeBillingDetails;
+  preview_hash: string;
+  changed: boolean;
+  blockers: string[];
+}
+
+export interface CommercialStripeBillingSyncRequest extends CommercialMutationRequest {
+  id: string;
+  preview_hash: string;
+}
+
 export interface CommercialOrderTransitionRequest extends CommercialMutationRequest {
   id: string;
 }
@@ -557,6 +582,12 @@ export interface CommercialOrdersApi {
   updateBillingDetails: (
     opts: CommercialBillingDetailsUpdateRequest,
   ) => Promise<CommercialOrder>;
+  stripeBillingPreview: (
+    opts: CommercialStripeBillingPreviewRequest,
+  ) => Promise<CommercialStripeBillingPreview>;
+  syncStripeBilling: (
+    opts: CommercialStripeBillingSyncRequest,
+  ) => Promise<CommercialOrder>;
   updateCollectionMode: (
     opts: CommercialCollectionModeUpdateRequest,
   ) => Promise<CommercialOrder>;
@@ -661,6 +692,8 @@ export const commercialOrders = {
   assign: authFirstRequireAccount,
   addNote: authFirstRequireAccount,
   updateBillingDetails: authFirstRequireAccount,
+  stripeBillingPreview: authFirstRequireAccount,
+  syncStripeBilling: authFirstRequireAccount,
   updateCollectionMode: authFirstRequireAccount,
   approve: authFirstRequireAccount,
   cancel: authFirstRequireAccount,
