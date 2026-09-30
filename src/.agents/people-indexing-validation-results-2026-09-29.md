@@ -3826,3 +3826,34 @@ session has been created and no recipient acceptance or reply is claimed.
 The earlier passkey confirmation that enabled Scan did not satisfy this separate
 security action. Full two-person collaboration, live terminal cancellation and
 retry, and the remaining release gates are still incomplete.
+
+### Ordinary Collaboration: Recipient Path Passed (2026-09-30)
+
+After the human completed the site's separate security confirmation, opened the
+audited recipient support session in an isolated browser context. Used the
+sender's Copy invitation link action for the existing invitation operation
+`1603dfe4-6e83-4dab-a056-814be5d09409`; no duplicate invitation was sent.
+The recipient reviewed the project, sender, message and discussion label, then
+accepted. The page confirmed Project invite accepted and offered Open
+conversation.
+
+The recipient opened discussion `00d592dd-a4f6-5728-ad02-7a89f6ed7e3e`, read the
+sender's message and posted a QA reply. The sender independently displayed that
+reply in the original browser context. The recipient then returned to People
+Conversations, filtered by the discussion title, found it in For you results,
+reopened it and verified the reply. A full recipient reload retained the
+discussion and reply. No Scan was started during any of these steps.
+
+This completes the checklist's ordinary create/invite/accept/collaborate/find
+path on the development site using two account sessions. The recipient already
+had collaborator access to the project, so this run does not establish a new
+membership grant to an account previously lacking access. It also does not
+verify receipt in an external email inbox; acceptance used the existing link
+copied through the sender UI.
+
+Ended impersonation through its visible control, verified the recipient browser
+returned to the sign-in page with no impersonation banner, and closed the
+temporary context. The original sender session remains signed in. The
+recipient-authentication blocker is resolved. The older ambiguous retired-host
+Scan, live terminal cancellation/retry checks and release gates remain open;
+the full checklist is not yet passing.
