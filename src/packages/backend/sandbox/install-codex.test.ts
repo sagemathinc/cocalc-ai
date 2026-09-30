@@ -6,7 +6,7 @@ jest.mock("fs/promises", () => ({
 jest.mock("@cocalc/backend/execute-code", () => ({
   executeCode: jest
     .fn()
-    .mockResolvedValue({ stdout: "codex-cli 0.156.0", stderr: "" }),
+    .mockResolvedValue({ stdout: "codex-cli 0.159.2", stderr: "" }),
 }));
 
 describe.each(["x64", "arm64"])("patched Codex identity (%s)", (arch) => {
@@ -20,21 +20,27 @@ describe.each(["x64", "arm64"])("patched Codex identity (%s)", (arch) => {
     else process.env.COCALC_TOOL_ARCH = original;
   });
 
-  it("accepts only a verified matched pair, including cross-builds", async () => {
+  it("accepts only a verified matched set, including cross-builds", async () => {
     const { matchesBinarySha256 } = require("./binary-integrity");
     matchesBinarySha256.mockResolvedValue(true);
     const { alreadyInstalled, SPEC } = require("./install");
     expect(await alreadyInstalled("codex")).toBe(true);
-    expect(matchesBinarySha256).toHaveBeenCalledTimes(2);
-    expect(matchesBinarySha256.mock.calls[1][0]).toMatch(
+    expect(matchesBinarySha256).toHaveBeenCalledTimes(3);
+    expect(matchesBinarySha256.mock.calls[0][0]).toMatch(
       /codex-code-mode-host$/,
     );
+    expect(matchesBinarySha256.mock.calls[1][0]).toMatch(
+      /codex-resources\/bwrap$/,
+    );
+    expect(matchesBinarySha256.mock.calls[2][0]).toMatch(/\/codex$/);
     expect(SPEC.codex.script()).toContain(`linux-${arch}.xz`);
   });
 
   it("rejects a same-version stock CLI before running it", async () => {
     const { matchesBinarySha256 } = require("./binary-integrity");
-    matchesBinarySha256.mockResolvedValue(false);
+    matchesBinarySha256.mockImplementation(
+      async (path: string) => !path.endsWith("/codex"),
+    );
     const { alreadyInstalled } = require("./install");
     expect(await alreadyInstalled("codex")).toBe(false);
     expect(
@@ -42,12 +48,15 @@ describe.each(["x64", "arm64"])("patched Codex identity (%s)", (arch) => {
     ).not.toHaveBeenCalled();
   });
 
-  it("rejects a missing or mismatched companion", async () => {
-    const { matchesBinarySha256 } = require("./binary-integrity");
-    matchesBinarySha256
-      .mockResolvedValueOnce(true)
-      .mockResolvedValueOnce(false);
-    const { alreadyInstalled } = require("./install");
-    expect(await alreadyInstalled("codex")).toBe(false);
-  });
+  it.each(["codex-code-mode-host", "bwrap", "codex"])(
+    "rejects a missing or mismatched %s",
+    async (binary) => {
+      const { matchesBinarySha256 } = require("./binary-integrity");
+      matchesBinarySha256.mockImplementation(
+        async (path: string) => !path.endsWith(`/${binary}`),
+      );
+      const { alreadyInstalled } = require("./install");
+      expect(await alreadyInstalled("codex")).toBe(false);
+    },
+  );
 });

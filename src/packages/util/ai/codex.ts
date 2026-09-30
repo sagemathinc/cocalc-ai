@@ -82,7 +82,7 @@ export function resolveCodexSessionMode(
   return "auto";
 }
 
-export const DEFAULT_CODEX_MODEL_NAME = "gpt-6-astra";
+export const DEFAULT_CODEX_MODEL_NAME = "gpt-6.1-sol";
 export const CODEX_FAST_SERVICE_TIER_REQUEST_VALUE = "fast";
 // These 0.151 features are disabled by default upstream. Keep every CoCalc
 // app-server launch path on the same rollout format and maintenance policy.
@@ -199,11 +199,21 @@ const FAST_SERVICE_TIER: CodexServiceTierInfo = {
 };
 
 // Credential-specific model/list responses override these fallback capabilities.
-// The 0.156.0 bundled catalog supplies Astra/5.6; GPT-6 Sol/Luna use the
-// published API reasoning levels that are supported by the Codex UI.
+// Match the 0.159.2 bundled catalog, including its reasoning defaults.
 export const DEFAULT_CODEX_MODELS: CodexModelInfo[] = [
   {
     name: DEFAULT_CODEX_MODEL_NAME,
+    description: "Latest workhorse model for coding and everyday work.",
+    reasoning: GPT_5_6_SOL_REASONING_LEVELS,
+    serviceTiers: [
+      {
+        ...FAST_SERVICE_TIER,
+        description: "2x speed with higher Codex credit usage.",
+      },
+    ],
+  },
+  {
+    name: "gpt-6-astra",
     description: "Frontier intelligence for the most demanding work.",
     reasoning: GPT_5_6_SOL_REASONING_LEVELS,
     serviceTiers: [
@@ -215,29 +225,19 @@ export const DEFAULT_CODEX_MODELS: CodexModelInfo[] = [
   },
   {
     name: "gpt-6-sol",
-    description: "Workhorse model for coding and everyday work.",
-    reasoning: GPT_5_6_LUNA_REASONING_LEVELS,
-    serviceTiers: [
-      {
-        ...FAST_SERVICE_TIER,
-        description: "Lower latency with higher Codex credit usage.",
-      },
-    ],
+    description: "Previous generation workhorse model.",
+    reasoning: GPT_5_6_REASONING_LEVELS,
+    serviceTiers: [FAST_SERVICE_TIER],
   },
   {
     name: "gpt-6-luna",
     description: "Fast and affordable model for easier tasks.",
     reasoning: GPT_5_6_LUNA_REASONING_LEVELS,
-    serviceTiers: [
-      {
-        ...FAST_SERVICE_TIER,
-        description: "Lower latency with higher Codex credit usage.",
-      },
-    ],
+    serviceTiers: [FAST_SERVICE_TIER],
   },
   {
     name: "gpt-5.6-sol",
-    description: "Older coding model for complex work.",
+    description: "Older generation workhorse model.",
     reasoning: GPT_5_6_SOL_REASONING_LEVELS,
     serviceTiers: [FAST_SERVICE_TIER],
   },
