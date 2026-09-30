@@ -15,7 +15,7 @@ const projects = Array.from({ length: 30 }, (_, i) => ({
 let operation,
   enabled = true;
 const starts = [];
-let server, browser;
+let server, context;
 try {
   const bundle = await scanBrowserBundle(temp);
   const axe = await readFile(
@@ -86,26 +86,51 @@ try {
     );
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  browser = await chromium.launch({
-    executablePath: process.env.CHROME_BIN ?? "/usr/bin/chromium",
-    headless: true,
-    args: ["--no-sandbox"],
-  });
   for (const dark of [false, true])
     for (const zoom of [1, 2]) {
       operation = undefined;
       enabled = true;
       starts.length = 0;
-      const page = await browser.newPage({
-        viewport: { width: 320 * zoom, height: 900 * zoom },
-      });
+      context = await chromium.launchPersistentContext(
+        join(temp, `profile-${dark}-${zoom}`),
+        {
+          executablePath: process.env.CHROME_BIN ?? "/usr/bin/chromium",
+          headless: true,
+          args: ["--no-sandbox", "--force-device-scale-factor=1"],
+          viewport: { width: 320 * zoom, height: 900 * zoom },
+        },
+      );
+      const page = await context.newPage();
       await page.goto(
         `http://127.0.0.1:${server.address().port}/${dark ? "?dark" : ""}`,
       );
-      if (zoom === 2)
-        await page.evaluate(() => {
-          document.body.style.zoom = "2";
-        });
+      // Use Chromium's actual browser zoom in this disposable profile. CSS
+      // zoom enlarges content without exercising the browser's reflow viewport.
+      const settings = await context.newPage();
+      await settings.goto("chrome://settings/appearance");
+      await settings.evaluate(
+        (factor) =>
+          new Promise((resolve) =>
+            chrome.settingsPrivate.setDefaultZoom(factor, resolve),
+          ),
+        zoom,
+      );
+      await settings.close();
+      await page.bringToFront();
+      assert.deepEqual(
+        await page.evaluate(() => ({
+          width: innerWidth,
+          height: innerHeight,
+          scale: devicePixelRatio,
+          cssZoom: getComputedStyle(document.body).zoom,
+        })),
+        {
+          width: 320,
+          height: 900,
+          scale: zoom,
+          cssZoom: "1",
+        },
+      );
       await page.keyboard.press("Tab");
       await page.keyboard.press("Enter");
       const dialog = page.getByRole("dialog", { name: "Scan projects" });
@@ -122,10 +147,7 @@ try {
       assert.equal(starts.length, 1);
       assert.equal(starts[0].project_ids, "all");
       await page.reload();
-      if (zoom === 2)
-        await page.evaluate(() => {
-          document.body.style.zoom = "2";
-        });
+      assert.equal(await page.evaluate(() => innerWidth), 320);
       await page
         .getByRole("button", { name: "Scan projects", exact: true })
         .click();
@@ -164,10 +186,7 @@ try {
         const button = dialog.getByRole("button", { name, exact: true });
         await button.scrollIntoViewIfNeeded();
         const rect = await button.boundingBox();
-        assert(
-          rect.x >= 0 && rect.x + rect.width <= 320 * zoom + 1,
-          `${name} overflows`,
-        );
+        assert(rect.x >= 0 && rect.x + rect.width <= 321, `${name} overflows`);
       }
       // Partial outcomes retain their distinctions, paginate, and require an
       // explicit retry selection/start even after the earlier batch ends.
@@ -215,13 +234,14 @@ try {
           .evaluate((el) => el === document.activeElement),
         true,
       );
-      await page.close();
+      await context.close();
+      context = undefined;
       process.stdout.write(
         `PASS ${dark ? "dark" : "light"}, ${zoom * 100}% zoom, 320 CSS px: keyboard, cancel, reload, partial results, explicit retry, focus, axe\n`,
       );
     }
 } finally {
-  await browser?.close();
+  await context?.close();
   await new Promise((resolve) => (server ? server.close(resolve) : resolve()));
   await rm(temp, { recursive: true, force: true });
 }

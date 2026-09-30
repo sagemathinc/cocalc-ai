@@ -3675,16 +3675,16 @@ scans). The human completed security verification, and the enabled setting
 propagated successfully. The current frontend implementation was exercised in
 the actual People shell on the development site, rather than the fixture.
 
-| Checklist case | Live result |
-| --- | --- |
-| Selection | Passed: selected two projects on page one and another on page two; searching retained all three. Select-all showed 72 account projects despite a single matching search result. Unchecking select-all restored the three explicit selections. |
-| Start/reopen/reload | Passed admission/recovery: the admitted operation and fixed one-project total survived closing/reopening and a full reload. Completion failed as described below. |
-| Two tabs | Passed: concurrent starts with different three-project and one-project selections returned the same operation. The one-project submission won; selections were not combined. |
-| Cancel | Partial: keyboard Enter requested cancellation, and reload retained the same ID and cancellation intent. The child eventually displayed cancelling. Host acknowledgment never arrived during observation; terminal cancellation failed. |
-| Results/retry | Blocked: no terminal result or explicit retry could be tested while this operation remained active. Truncation and successful traversal remain untested on this site. |
-| Disable/reenable | Passed for the active operation: disabled new admission preserved status and accepted Cancel. Reenabling retained the same cancelling operation and did not submit another batch. The setting is left enabled. |
-| Keyboard/display | Partial: cancellation via Enter worked. The cancelling dialog, including expanded operation ID, fit a 320-pixel viewport (client and scroll width both 304), with no dialog-scoped axe WCAG 2 A/AA or 2.1 AA violations. Prior light/dark and Escape checks remain applicable. Native browser zoom remains untested: CDP-delivered zoom shortcuts did not change the measured viewport or device scale. |
-| Ordinary collaboration | Untested: existing resources remain visible, but no new two-person conversation/invitation workflow was performed. |
+| Checklist case         | Live result                                                                                                                                                                                                                                                                                                                                                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Selection              | Passed: selected two projects on page one and another on page two; searching retained all three. Select-all showed 72 account projects despite a single matching search result. Unchecking select-all restored the three explicit selections.                                                                                                                                                           |
+| Start/reopen/reload    | Passed admission/recovery: the admitted operation and fixed one-project total survived closing/reopening and a full reload. Completion failed as described below.                                                                                                                                                                                                                                       |
+| Two tabs               | Passed: concurrent starts with different three-project and one-project selections returned the same operation. The one-project submission won; selections were not combined.                                                                                                                                                                                                                            |
+| Cancel                 | Partial: keyboard Enter requested cancellation, and reload retained the same ID and cancellation intent. The child eventually displayed cancelling. Host acknowledgment never arrived during observation; terminal cancellation failed.                                                                                                                                                                 |
+| Results/retry          | Blocked: no terminal result or explicit retry could be tested while this operation remained active. Truncation and successful traversal remain untested on this site.                                                                                                                                                                                                                                   |
+| Disable/reenable       | Passed for the active operation: disabled new admission preserved status and accepted Cancel. Reenabling retained the same cancelling operation and did not submit another batch. The setting is left enabled.                                                                                                                                                                                          |
+| Keyboard/display       | Partial: cancellation via Enter worked. The cancelling dialog, including expanded operation ID, fit a 320-pixel viewport (client and scroll width both 304), with no dialog-scoped axe WCAG 2 A/AA or 2.1 AA violations. Prior light/dark and Escape checks remain applicable. Native browser zoom remains untested: CDP-delivered zoom shortcuts did not change the measured viewport or device scale. |
+| Ordinary collaboration | Untested: existing resources remain visible, but no new two-person conversation/invitation workflow was performed.                                                                                                                                                                                                                                                                                      |
 
 Reproduction: select `code-server-template`, start Scan, then cancel. In this
 run the second browser tab selected that project and won simultaneous admission.
@@ -3696,7 +3696,7 @@ headless-document-build-sage-smoke.
 - Child request/job: `e7a86f6c-8a0b-4f83-9b76-7455f4709d49`.
 - Host: `0ad1b494-3d74-4dd9-8634-3afb280781bb`.
 - Visible result: `Cancelling — waiting for running projects to stop. 0 of 1
-  projects processed.`
+projects processed.`
 
 Evidence: the authoritative project and host records are both in bay-0. The
 project retains that host assignment; the host record reports `deprovisioned`
@@ -3773,3 +3773,56 @@ does not retroactively prove whether the older live operation
 or declared cancelled. This follow-up has not yet been loaded into the running
 development hubs. Live recovery, the remaining checklist cases, and the release
 gates remain incomplete.
+
+### Development Deployment And Native-Zoom Follow-Up (2026-09-30)
+
+All three development hubs were restarted successfully with the durable
+submission-boundary fix (`d460183e929e91371a198848dfb7908685f7332e`). The full
+development build also completed successfully. The older live operation remains
+conservatively marked possibly submitted and cancelling after that deployment;
+restarting workers did not invent a stop acknowledgment or free its reservation.
+Its operation ID remains `8a6b4421-9632-467a-848d-61a838855079`.
+
+Iteration 2; area: browser accessibility validation. Result: validation defect
+fixed. The standalone audit previously used CSS zoom, which was insufficient
+evidence for native browser zoom. It now uses isolated persistent Chromium
+profiles and the browser's default zoom setting. Each light/dark and 100%/200%
+case asserts an actual 320 CSS-pixel viewport, expected device scale, and
+unchanged CSS zoom before exercising the dialog. The profiles are disposable
+and do not change the signed-in user's preferences.
+
+All four cases passed keyboard selection/start/cancel, reload, partial results,
+explicit retry, control bounds, focus restoration and axe checks. Frontend lint
+passed with zero warnings or errors. Separately, the signed-in development
+browser passed native 200% zoom in both light and dark themes: the dialog fit
+the measured 700 CSS-pixel viewport, its expanded operation details and actions
+were reachable, and dialog-scoped axe checks reported no violations. Escape
+returned focus to Scan projects. The original browser zoom and system appearance
+preference were restored. These checks supersede the earlier CSS-zoom evidence;
+they do not establish terminal results for the retained live operation.
+
+### Ordinary Collaboration: Sender Path Passed, Recipient Verification Pending
+
+Using the normal People controls, created and opened a new supported discussion
+in the development `fresh-project`, sent one invitation to the user-designated
+test recipient, and posted a message. No Scan was started for this workflow.
+
+- Discussion: `00d592dd-a4f6-5728-ad02-7a89f6ed7e3e`.
+- Project: `1ce4fe78-19c7-40a8-a598-947975744cd9`.
+- Invitation operation: `1603dfe4-6e83-4dab-a056-814be5d09409`.
+
+The invitation UI reported Invitation created and Email sent. It also reported
+`email_only_recipient`, so it did not send an in-app notification. The newly
+created discussion subsequently appeared in the sender's filtered For you
+conversation results and reopened with the posted message. An initial empty
+result resolved during normal eventual catch-up without Scan. This confirms
+the sender's create, write, find-again and reopen path, not recipient delivery
+or acceptance.
+
+The site's audited admin impersonation flow was opened for the designated
+development recipient with a reason restricted to this QA discussion. Its
+separate Confirm security action passkey dialog remains pending. No recipient
+session has been created and no recipient acceptance or reply is claimed.
+The earlier passkey confirmation that enabled Scan did not satisfy this separate
+security action. Full two-person collaboration, live terminal cancellation and
+retry, and the remaining release gates are still incomplete.

@@ -82,6 +82,22 @@ only, so use a disposable fixture; neither check sends messages or runs agents.
 Run at desktop and 320px widths, light/dark themes and 200% browser zoom. These
 helpers supplement, not replace, the automated component and axe audits.
 
+Run the isolated Manual Scan dialog audit from the repository root:
+
+```sh
+node src/scripts/accessibility/manual-scan.mjs
+```
+
+It renders the actual component against deterministic RPC responses and uses
+disposable Chromium profiles for light/dark at 100% and 200% native browser
+zoom. The audit verifies the resulting 320 CSS-pixel viewport and device scale;
+it does not substitute CSS `zoom`. It checks keyboard selection/start/cancel,
+reload, result pagination, explicit retry, Escape focus restoration, reachable
+controls, and axe violations. It needs Chromium (default `/usr/bin/chromium`,
+override with `CHROME_BIN`) but no live CoCalc login. The separate
+`server/collaborators/scan-browser.acceptance.test.ts` covers real service RPCs;
+neither fixture substitutes for a signed-in deployment check.
+
 `checkCollectionViews(page, label, pinnedTitle?)` exercises the shared collection
 controls on Artifacts or populated Collaborators People/Projects/Conversations.
 It switches list/grid using the keyboard, checks reachable controls and the
