@@ -28,7 +28,8 @@ const authority = { owning_bay_id: "scan-worker-test" };
 describeDb("scan worker with durable owner store", () => {
   const prior = process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE;
   const status = jest.fn(),
-    admit = jest.fn();
+    admit = jest.fn(),
+    cancel = jest.fn();
   beforeAll(async () => {
     await initEphemeralDatabase();
     await syncCollaborationScanSchema(getPool());
@@ -48,10 +49,15 @@ describeDb("scan worker with durable owner store", () => {
     (getRoutedHostControlClient as jest.Mock).mockResolvedValue({
       getCollaborationReconciliationStatus: status,
       requestCollaborationReconciliation: admit,
+      cancelCollaborationReconciliation: cancel,
     });
     status.mockResolvedValue({ state: "unknown" });
     admit.mockImplementation(async (scan) => ({
       admission: "accepted",
+      run_id: scan.run_id,
+    }));
+    cancel.mockImplementation(async (scan) => ({
+      state: "cancelled",
       run_id: scan.run_id,
     }));
   });
@@ -81,6 +87,49 @@ describeDb("scan worker with durable owner store", () => {
       [project_id],
     );
   }
+  test.each(["cancelled", "partial"])(
+    "retained legacy %s outcome releases the job while preserving receipt replay",
+    async (state) => {
+      const { request, receipt } = await fixture();
+      await runCollaborationScanPass();
+      status.mockResolvedValue({
+        state,
+        run_id: receipt.job_id,
+        traversal_complete: true,
+        pending_candidates: 0,
+      });
+      if (state === "partial") {
+        cancel.mockRejectedValueOnce(Error("lost stop acknowledgment"));
+        await makeDue(request.project_id);
+        expect((await runCollaborationScanPass()).unknown).toBe(1);
+        expect(
+          (await getPool().query("SELECT job_id FROM collaboration_scan_jobs"))
+            .rows,
+        ).toEqual([{ job_id: receipt.job_id }]);
+      }
+      await makeDue(request.project_id);
+      expect((await runCollaborationScanPass()).failed).toBe(1);
+      expect(
+        await readCollaborationScanStatus(
+          { ...request, job_id: receipt.job_id },
+          authority,
+        ),
+      ).toMatchObject({ state: "failed" });
+      expect(
+        (await getPool().query("SELECT job_id FROM collaboration_scan_jobs"))
+          .rows,
+      ).toEqual([]);
+      expect(await inspectCollaborationScan(request, authority)).toEqual(
+        receipt,
+      );
+      expect(await admitCollaborationScan(request, authority)).toEqual(receipt);
+      expect((await runCollaborationScanPass()).attempted).toBe(0);
+      expect(admit).toHaveBeenCalledTimes(1);
+      expect(cancel).toHaveBeenCalledTimes(state === "cancelled" ? 0 : 2);
+      for (const [scan] of cancel.mock.calls)
+        expect(scan.run_id).toBe(receipt.job_id);
+    },
+  );
   test("admission dispatch discovery and receipt replay integrate", async () => {
     const { request, receipt } = await fixture();
     expect((await runCollaborationScanPass()).pending).toBe(1);

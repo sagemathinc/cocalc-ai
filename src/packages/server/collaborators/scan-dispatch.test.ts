@@ -29,7 +29,8 @@ const request = {
 };
 const authority = { owning_bay_id: "owner" };
 const status = jest.fn(),
-  admit = jest.fn();
+  admit = jest.fn(),
+  cancel = jest.fn();
 const prior = process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE;
 beforeEach(() => {
   jest.resetAllMocks();
@@ -44,9 +45,11 @@ beforeEach(() => {
   (getRoutedHostControlClient as jest.Mock).mockResolvedValue({
     getCollaborationReconciliationStatus: status,
     requestCollaborationReconciliation: admit,
+    cancelCollaborationReconciliation: cancel,
   });
   status.mockResolvedValue({ state: "unknown", current_run_id: "previous" });
   admit.mockResolvedValue({ admission: "accepted", run_id: "job" });
+  cancel.mockResolvedValue({ state: "cancelled", run_id: "job" });
 });
 afterAll(() => {
   if (prior === undefined)
@@ -216,4 +219,63 @@ test("settles only exact discovered run with no pending candidates", async () =>
     { project_id: "project", job_id: "job", state: "discovered" },
     { ...authority, host_id: "host" },
   );
+});
+test.each([
+  { state: "cancelled", run_id: "job" },
+  {
+    state: "partial",
+    run_id: "job",
+    traversal_complete: true,
+    pending_candidates: 0,
+  },
+  { state: "partial", run_id: "job", blocked_reason: "retry_limit" },
+])(
+  "legacy terminal host result releases only a confirmed stop: %j",
+  async (result) => {
+    status.mockResolvedValue(result);
+    (settleCollaborationScanDiscovery as jest.Mock).mockResolvedValue(true);
+    expect(await dispatchCollaborationScan(request, authority)).toEqual({
+      state: "failed",
+    });
+    expect(settleCollaborationScanDiscovery).toHaveBeenCalledWith(
+      { project_id: "project", job_id: "job", state: "failed" },
+      { ...authority, host_id: "host" },
+    );
+    expect(cancel).toHaveBeenCalledTimes(result.state === "cancelled" ? 0 : 1);
+    expect(admit).not.toHaveBeenCalled();
+  },
+);
+test.each(["timeout", "wrong-run"])(
+  "legacy partial result retains execution after %s stop acknowledgment",
+  async (kind) => {
+    status.mockResolvedValue({
+      state: "partial",
+      run_id: "job",
+      traversal_complete: true,
+      pending_candidates: 0,
+    });
+    if (kind === "timeout") cancel.mockRejectedValue(Error("timeout"));
+    else cancel.mockResolvedValue({ state: "cancelled", run_id: "other" });
+    await expect(
+      dispatchCollaborationScan(request, authority),
+    ).rejects.toThrow();
+    expect(settleCollaborationScanDiscovery).not.toHaveBeenCalled();
+    expect(admit).not.toHaveBeenCalled();
+  },
+);
+test("batch partial results remain owned by the child completion path", async () => {
+  status.mockResolvedValue({
+    state: "partial",
+    run_id: "job",
+    traversal_complete: true,
+    pending_candidates: 0,
+  });
+  expect(
+    await dispatchCollaborationScan(
+      { ...request, batch_id: "batch" },
+      authority,
+    ),
+  ).toEqual({ state: "running" });
+  expect(cancel).not.toHaveBeenCalled();
+  expect(settleCollaborationScanDiscovery).not.toHaveBeenCalled();
 });

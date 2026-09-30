@@ -23,6 +23,7 @@ export async function runCollaborationScanPass(
   const result = {
     attempted: 0,
     discovered: 0,
+    failed: 0,
     deferred: 0,
     pending: 0,
     unknown: 0,
@@ -69,6 +70,7 @@ export async function runCollaborationScanPass(
       try {
         const step = await dispatchCollaborationScan(request, authority);
         if (step.state === "discovered") result.discovered++;
+        else if (step.state === "failed") result.failed++;
         else if (step.state === "deferred") result.deferred++;
         else result.pending++;
       } catch {

@@ -74,6 +74,35 @@ export async function dispatchCollaborationScan(
           state: settled ? ("discovered" as const) : ("deferred" as const),
         };
       }
+      if (
+        !request.batch_id &&
+        (status.state === "cancelled" ||
+          status.blocked_reason ||
+          (status.traversal_complete && status.pending_candidates === 0) ||
+          (status.blocked_directories &&
+            status.completed_directories + status.blocked_directories ===
+              status.directories))
+      ) {
+        // Retained pre-batch receipts only distinguish discovered/failed. A
+        // partial traversal must not reserve the project forever, but its exact
+        // run must be fenced before releasing the old execution boundary.
+        if (status.state !== "cancelled") {
+          const stopped = await scanHostCall(() =>
+            host.cancelCollaborationReconciliation(scan),
+          );
+          if (stopped.state !== "cancelled" || stopped.run_id !== run.job_id)
+            throw Error("legacy scan cancellation not acknowledged");
+        }
+        const settled = await settleCollaborationScanDiscovery(
+          {
+            project_id: request.project_id,
+            job_id: run.job_id,
+            state: "failed",
+          },
+          { ...authority, host_id: run.host_id },
+        );
+        return { state: settled ? ("failed" as const) : ("deferred" as const) };
+      }
       return { state: "running" as const };
     }
     if (status.current_run_id !== scan.expected_run_id) {

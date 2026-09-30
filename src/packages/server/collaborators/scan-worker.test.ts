@@ -74,6 +74,7 @@ test("caps sequential attempts and preserves unknown outcomes", async () => {
     pending: 19,
     deferred: 0,
     discovered: 0,
+    failed: 0,
     retired: 0,
     retirement_errors: 0,
   });
@@ -92,6 +93,15 @@ test("disable between steps stops the pass", async () => {
   });
   expect((await runCollaborationScanPass()).attempted).toBe(1);
   expect(listCollaborationScanRetirementCandidates).toHaveBeenCalledTimes(1);
+});
+test("confirmed legacy failure is terminal rather than pending", async () => {
+  (dispatchCollaborationScan as jest.Mock).mockResolvedValue({
+    state: "failed",
+  });
+  expect(await runCollaborationScanPass()).toMatchObject({
+    failed: 1,
+    pending: 0,
+  });
 });
 test("retirement is bounded and a fenced job does not stop its peers", async () => {
   (listCollaborationScanRetirementCandidates as jest.Mock).mockResolvedValue(

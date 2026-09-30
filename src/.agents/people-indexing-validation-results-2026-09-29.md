@@ -4,6 +4,32 @@ Date: 2026-09-29. This is an initial gate report, not a completed scaling rollou
 
 ## Current Completion Audit
 
+### Retained Legacy Terminal Settlement (03:18 UTC)
+
+A completion audit found that the old single-project dispatcher settled only
+successful discovery. A confirmed-cancelled run or a terminal partial traversal
+therefore remained running indefinitely, retaining execution capacity. Five
+focused cases reproduced the missing terminal handling.
+
+The dispatcher now settles retained legacy cancelled/partial runs using the old
+receipt format's `failed` outcome. A partial traversal must first receive an
+exact-run cancellation acknowledgment; a timeout or mismatched acknowledgment
+retains the execution boundary. Batch results remain owned by the existing child
+completion path, which preserves successful/truncated/cancelled distinctions.
+
+All 66 focused batch, dispatch, worker and database-backed worker tests pass,
+along with the server reference typecheck. PGlite integration verifies job
+release, durable receipt replay and retention after a lost stop acknowledgment.
+This follow-up is committed with the report but **not yet deployed**: the active
+live retry remains on the busy-response fix while its natural traversal finishes.
+No live job was cancelled or manually removed for this audit.
+
+At 03:17:16 UTC the same live run `a9b352fe-a465-4f4a-8df9-aa2556b853b6`
+reported 593 entries, 235 directories, 136 completed directories, one candidate,
+one accumulated error and zero blocked directories. Its full traversal remains
+unverified. Independent review must include this legacy-settlement follow-up
+as well as the busy-response fix.
+
 ### Live Busy-Response Failure And Fix (03:06 UTC)
 
 Operation `9a7f3b25-aba6-488d-821c-4a399a11e89e` ended unavailable at
