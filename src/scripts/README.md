@@ -8,6 +8,33 @@ documented, or referenced from code.
 
 ## Top-Level Entry Points
 
+### Current Codex Release (0.159.2)
+
+The 0.159.2 release is built on the dedicated `build` VM from the patched
+`cocalc-v0.159.2` branch in [sagemathinc/codex](https://github.com/sagemathinc/codex).
+Use its `.github/scripts/build-cocalc-linux.sh` with
+`x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl`. The latter is a
+cross-build and requires `aarch64-linux-musl-gcc` and ARM64 binutils on PATH,
+plus `BUILD_CC=cc` for libcap's native header generator;
+both require Rust 1.95.0 (with the target installed), Zig 0.14.0, and sudo for
+upstream's musl OpenSSL/libcap setup. Run the builds sequentially to bound
+memory/disk usage. The recipe uses upstream's checksum-pinned musl V8 artifacts.
+
+Publish all three executables per architecture: `codex`, `codex-code-mode-host`,
+and `bwrap`. The recipe builds and strips `bwrap` first, then embeds its SHA-256
+in Codex. Do not replace it with an unrelated system binary. Verify static ELF
+linkage and smoke-test both architectures before publishing the `.xz` assets
+and checksums as `v0.159.2-cocalc-musl-1`. Pin both archive and executable hashes
+in `backend/sandbox/install.ts`; the installer verifies the complete set and
+places `bwrap` under `codex-resources/`, without replacing the system bubblewrap.
+The release manifest records each architecture's build commit and their common
+Rust source tree, including the build-only cross-compilation recipe changes.
+
+### Legacy Codex Release Helpers (0.156.0)
+
+The following helpers retain their version-specific 0.156.0 workflow. They do
+not package the new `bwrap` companion and must not publish 0.159.2 releases.
+
 - `build-local-codex-binaries.sh`: build upstream Codex binaries locally or
   for one native Linux architecture.
 - `publish-local-codex-binaries.sh`: publish Codex binary assets.

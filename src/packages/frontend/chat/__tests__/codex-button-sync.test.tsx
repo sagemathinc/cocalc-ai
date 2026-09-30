@@ -691,12 +691,12 @@ describe("CodexConfigButton", () => {
     expect(options).toHaveLength(3);
   });
 
-  it("offers Astra before discovery and respects account availability afterward", () => {
-    expect(codexModelOptionsForCatalog()[0].value).toBe("gpt-6-astra");
+  it("offers GPT-6.1 Sol first before discovery and respects account availability afterward", () => {
+    expect(codexModelOptionsForCatalog()[0].value).toBe("gpt-6.1-sol");
     expect(
       codexModelOptionsForCatalog().find(({ default: isDefault }) => isDefault)
         ?.value,
-    ).toBe("gpt-6-astra");
+    ).toBe("gpt-6.1-sol");
     const initial = codexModelOptionsForCatalog().find(
       ({ value }) => value === "gpt-6-astra",
     );

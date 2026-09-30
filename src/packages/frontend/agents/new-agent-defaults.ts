@@ -6,7 +6,10 @@
 import type { CodexThreadConfig } from "@cocalc/chat";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
-import type { CodexReasoningId } from "@cocalc/util/ai/codex";
+import {
+  DEFAULT_CODEX_MODEL_INFO,
+  type CodexReasoningId,
+} from "@cocalc/util/ai/codex";
 
 const AGENT_NAME_COUNTER_PREFIX = "cocalc-agent-name-counter-v1";
 
@@ -79,7 +82,13 @@ export function newAgentFundingConfig<T extends CodexThreadConfig>({
     };
   }
   if (paymentSource?.source === "subscription" && useSubscriptionDefault) {
-    return { ...config, model: "gpt-6-sol", reasoning: "medium" };
+    return {
+      ...config,
+      model: DEFAULT_CODEX_MODEL_INFO.name,
+      reasoning: DEFAULT_CODEX_MODEL_INFO.reasoning?.find(
+        (level) => level.default,
+      )?.id,
+    };
   }
   return config;
 }
