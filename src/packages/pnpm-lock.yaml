@@ -1449,6 +1449,9 @@ importers:
       '@types/node-cleanup':
         specifier: ^2.1.2
         version: 2.1.5
+      patchflow:
+        specifier: ^0.8.1
+        version: 0.8.1
 
   launchpad:
     dependencies:
@@ -1621,7 +1624,7 @@ importers:
         version: 57.0.5(expo@57.0.12)(react-native@0.86.0(patch_hash=819a86370123ff39cbe333ff82ea3e4f8d49433219fdbf243e439cd00435e40f)(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7)(bufferutil@4.0.9))(@types/react@19.2.7)(bufferutil@4.0.9)(react@19.2.3))(react@19.2.3)
       expo-router:
         specifier: 57.0.12
-        version: 57.0.12(2f5f2399c4c8a32ec95b9fb48bf8ec2f)
+        version: 57.0.12(cf61e5f273b374f369ad49d9f5bb523c)
       expo-secure-store:
         specifier: 57.0.1
         version: 57.0.1(expo@57.0.12)
@@ -1657,7 +1660,7 @@ importers:
         version: 0.86.0(patch_hash=819a86370123ff39cbe333ff82ea3e4f8d49433219fdbf243e439cd00435e40f)(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7)(bufferutil@4.0.9))(@types/react@19.2.7)(bufferutil@4.0.9)(react@19.2.3)
       react-native-draggable-flatlist:
         specifier: ^4.0.3
-        version: 4.0.3(af67f2f8400796fb490f61fe078da510)
+        version: 4.0.3(1b865b8ebcf2842a1a1c7c40a31996a8)
       react-native-gesture-handler:
         specifier: ~2.32.0
         version: 2.32.0(react-native@0.86.0(patch_hash=819a86370123ff39cbe333ff82ea3e4f8d49433219fdbf243e439cd00435e40f)(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7)(bufferutil@4.0.9))(@types/react@19.2.7)(bufferutil@4.0.9)(react@19.2.3))(react@19.2.3)
@@ -13252,7 +13255,7 @@ snapshots:
       ws: 8.21.0(bufferutil@4.0.9)(utf-8-validate@6.0.5)
       zod: 4.3.6
     optionalDependencies:
-      expo-router: 57.0.12(2f5f2399c4c8a32ec95b9fb48bf8ec2f)
+      expo-router: 57.0.12(cf61e5f273b374f369ad49d9f5bb523c)
       react-native: 0.86.0(patch_hash=819a86370123ff39cbe333ff82ea3e4f8d49433219fdbf243e439cd00435e40f)(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7)(bufferutil@4.0.9))(@types/react@19.2.7)(bufferutil@4.0.9)(react@19.2.3)
     transitivePeerDependencies:
       - '@expo/dom-webview'
@@ -13529,7 +13532,7 @@ snapshots:
       react: 19.2.3
     optionalDependencies:
       '@expo/metro-runtime': 57.0.9(@expo/log-box@57.0.2)(expo@57.0.12)(react-dom@19.2.8(react@19.2.3))(react-native@0.86.0(patch_hash=819a86370123ff39cbe333ff82ea3e4f8d49433219fdbf243e439cd00435e40f)(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7)(bufferutil@4.0.9))(@types/react@19.2.7)(bufferutil@4.0.9)(react@19.2.3))(react@19.2.3)
-      expo-router: 57.0.12(2f5f2399c4c8a32ec95b9fb48bf8ec2f)
+      expo-router: 57.0.12(cf61e5f273b374f369ad49d9f5bb523c)
       react-dom: 19.2.8(react@19.2.3)
     transitivePeerDependencies:
       - supports-color
@@ -18218,7 +18221,7 @@ snapshots:
     dependencies:
       react-native: 0.86.0(patch_hash=819a86370123ff39cbe333ff82ea3e4f8d49433219fdbf243e439cd00435e40f)(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7)(bufferutil@4.0.9))(@types/react@19.2.7)(bufferutil@4.0.9)(react@19.2.3)
 
-  expo-router@57.0.12(2f5f2399c4c8a32ec95b9fb48bf8ec2f):
+  expo-router@57.0.12(cf61e5f273b374f369ad49d9f5bb523c):
     dependencies:
       '@expo/log-box': 57.0.2(@expo/dom-webview@57.0.1)(expo@57.0.12)(react-native@0.86.0(patch_hash=819a86370123ff39cbe333ff82ea3e4f8d49433219fdbf243e439cd00435e40f)(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7)(bufferutil@4.0.9))(@types/react@19.2.7)(bufferutil@4.0.9)(react@19.2.3))(react@19.2.3)
       '@expo/metro-runtime': 57.0.9(@expo/log-box@57.0.2)(expo@57.0.12)(react-dom@19.2.8(react@19.2.3))(react-native@0.86.0(patch_hash=819a86370123ff39cbe333ff82ea3e4f8d49433219fdbf243e439cd00435e40f)(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7)(bufferutil@4.0.9))(@types/react@19.2.7)(bufferutil@4.0.9)(react@19.2.3))(react@19.2.3)
@@ -18247,7 +18250,7 @@ snapshots:
       react-fast-compare: 3.2.2
       react-is: 19.2.8
       react-native: 0.86.0(patch_hash=819a86370123ff39cbe333ff82ea3e4f8d49433219fdbf243e439cd00435e40f)(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7)(bufferutil@4.0.9))(@types/react@19.2.7)(bufferutil@4.0.9)(react@19.2.3)
-      react-native-drawer-layout: 4.2.10(d9f4b1531acc823f54f39538be9f85d3)
+      react-native-drawer-layout: 4.2.10(6e7e6952726d3c77491a9a572ce842b8)
       react-native-safe-area-context: 5.7.0(react-native@0.86.0(patch_hash=819a86370123ff39cbe333ff82ea3e4f8d49433219fdbf243e439cd00435e40f)(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7)(bufferutil@4.0.9))(@types/react@19.2.7)(bufferutil@4.0.9)(react@19.2.3))(react@19.2.3)
       react-native-screens: 4.26.2(react-native@0.86.0(patch_hash=819a86370123ff39cbe333ff82ea3e4f8d49433219fdbf243e439cd00435e40f)(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7)(bufferutil@4.0.9))(@types/react@19.2.7)(bufferutil@4.0.9)(react@19.2.3))(react@19.2.3)
       server-only: 0.0.1
@@ -21293,7 +21296,7 @@ snapshots:
 
   react-lifecycles-compat@3.0.4: {}
 
-  react-native-draggable-flatlist@4.0.3(af67f2f8400796fb490f61fe078da510):
+  react-native-draggable-flatlist@4.0.3(1b865b8ebcf2842a1a1c7c40a31996a8):
     dependencies:
       '@babel/preset-typescript': 7.29.7(@babel/core@7.29.7)
       react-native: 0.86.0(patch_hash=819a86370123ff39cbe333ff82ea3e4f8d49433219fdbf243e439cd00435e40f)(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7)(bufferutil@4.0.9))(@types/react@19.2.7)(bufferutil@4.0.9)(react@19.2.3)
@@ -21303,7 +21306,7 @@ snapshots:
       - '@babel/core'
       - supports-color
 
-  react-native-drawer-layout@4.2.10(d9f4b1531acc823f54f39538be9f85d3):
+  react-native-drawer-layout@4.2.10(6e7e6952726d3c77491a9a572ce842b8):
     dependencies:
       color: 4.2.3
       react: 19.2.3
