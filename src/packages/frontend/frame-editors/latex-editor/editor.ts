@@ -13,7 +13,7 @@ import { set } from "@cocalc/util/misc";
 import { WORD_COUNT_ICON } from "./constants";
 import { createEditor } from "../frame-tree/editor";
 import type { EditorDescription } from "../frame-tree/types";
-import { terminal } from "../terminal-editor/editor";
+import { terminal } from "../terminal-editor/spec";
 import { time_travel } from "../time-travel-editor/editor";
 import { Build } from "./build";
 import { ErrorsAndWarnings } from "./errors-and-warnings";

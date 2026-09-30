@@ -6,7 +6,7 @@ it("preserves sibling notebook metadata when changing the output limit", () => {
   const metadata = { other: "keep", cocalc: { other_setting: 7 } };
   const settings = { type: "settings", metadata };
   const actions = {
-    syncdb: { get_one: () => fromJS(settings) },
+    syncdb: { isReady: () => true, get_one: () => fromJS(settings) },
     set_global_metadata: jest.fn(),
   };
   JupyterActions.prototype.set_output_limit_bytes.call(
@@ -17,6 +17,26 @@ it("preserves sibling notebook metadata when changing the output limit", () => {
     cocalc: { other_setting: 7, output_limit_bytes: 4 * 1024 * 1024 },
   });
 });
+
+it("reads the default limit after the notebook store is destroyed", () => {
+  expect(JupyterActions.prototype.get_output_limit_bytes.call({})).toBe(
+    1024 * 1024,
+  );
+});
+
+it.each([undefined, { isReady: () => false }])(
+  "ignores a late output limit change without a ready document (%s)",
+  (syncdb) => {
+    const actions = { syncdb, set_global_metadata: jest.fn() };
+    expect(() =>
+      JupyterActions.prototype.set_output_limit_bytes.call(
+        actions,
+        4 * 1024 * 1024,
+      ),
+    ).not.toThrow();
+    expect(actions.set_global_metadata).not.toHaveBeenCalled();
+  },
+);
 
 it("reads the setting from immutable metadata, including imported ipynb metadata", () => {
   const importer = new IPynbImporter();

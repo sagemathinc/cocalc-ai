@@ -12,7 +12,7 @@ import type { IconName } from "@cocalc/frontend/components/icon";
 import { createEditor } from "@cocalc/frontend/frame-editors/frame-tree/editor";
 import { EditorDescription } from "@cocalc/frontend/frame-editors/frame-tree/types";
 import { Introspect } from "@cocalc/frontend/frame-editors/jupyter-editor/introspect/introspect";
-import { terminal } from "@cocalc/frontend/frame-editors/terminal-editor/editor";
+import { terminal } from "@cocalc/frontend/frame-editors/terminal-editor/spec";
 import { time_travel } from "@cocalc/frontend/frame-editors/time-travel-editor/editor";
 import { editor } from "@cocalc/frontend/i18n/common";
 import { set } from "@cocalc/util/misc";
