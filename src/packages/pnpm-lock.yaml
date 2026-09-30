@@ -1450,8 +1450,8 @@ importers:
         specifier: ^2.1.2
         version: 2.1.5
       patchflow:
-        specifier: ^0.9.0
-        version: 0.9.0
+        specifier: ^0.9.1
+        version: 0.9.1
 
   launchpad:
     dependencies:
