@@ -4,6 +4,68 @@ Date: 2026-09-29. This is an initial gate report, not a completed scaling rollou
 
 ## Current Completion Audit
 
+### Review Fixes And Worker-Restart Validation (03:56 UTC)
+
+The independent read-only review of `a3871f8031` returned **request changes**.
+It found that temporary owner ingestion pressure was classified as unavailable,
+and that authorization of a large rejected selection incurred routed fanout
+before a durable account rate charge. The review also required a bounded policy
+for prolonged busy responses. It did not approve the implementation or establish
+production capacity.
+
+The fixes are committed:
+
+- `de0a2cc0f9` distinguishes the specific transient ingestion-busy response.
+- `bb5b07dc01` charges the durable account cooldown before owner authorization.
+  A regression authorizes 9,999 projects and rejects the last, then proves a
+  repeated request performs no second owner fanout. Existing admitted replays
+  retain their operation without another charge. The maximum selection remains
+  10,000; this bound is not a production throughput claim.
+- `ee3512173f` persists the first busy timestamp on the exact owner job. After
+  60 seconds of sustained pressure, provably unsubmitted work can finish;
+  possibly submitted work becomes unavailable with exact-stop recovery retained.
+  Successful worker progress resets the window; inspection and worker restarts
+  do not. This prevents indefinite account single-flight retention under pressure.
+- `b985a6148e` settles retained legacy terminal runs only with the required
+  exact-run stop evidence.
+- `84f8fc0610` exposes the charged cooldown through status even when a rejected
+  preflight created no operation, so reload can display it.
+
+Validation: 72 focused server tests, 23 database Scan tests, server/reference
+typecheck, the real-service browser acceptance (129.891 seconds), and the full
+development build passed through `ee3512173f`. The final status-only follow-up
+passed all 34 batch tests and the server/reference typecheck; its new assertion
+failed before the fix. Earlier frontend/accessibility evidence remains applicable
+because these follow-ups change no frontend source.
+
+All three development hubs loaded the review fixes through `ee3512173f` at
+about 03:49 UTC. The same browser operation
+`a6983f37-0e30-4cdf-8a10-ea81cbc79e9e` and exact host run
+`a9b352fe-a465-4f4a-8df9-aa2556b853b6` survived this worker restart:
+entries advanced from 1,703 before restart to 1,824 afterward, with unchanged
+run start time and no cancellation or recovery intent. At 03:55:49 UTC it had
+2,032 entries, 697 discovered directories, 594 completed directories, one
+candidate, two accumulated errors and zero blocked directories. Full natural
+traversal is still unverified. The status-only follow-up also loaded successfully on all three development
+hubs at about 03:57 UTC; the browser retained the same running operation.
+
+Re-review of pinned `ee3512173f` was requested from `lite1-review`; delivery
+was saved but execution acknowledgment was unknown because of a recipient
+payment/subscription/usage-limit launch error. Exact attempt
+`c7047aed-c1cb-4d50-80c7-43b3be1c5924` was inspected without retry; it has no
+retained acceptance evidence. No final-source approval is inferred. The final
+status follow-up must also be included in the release review.
+
+**Canary decision: keep enablement limited to the authorized development site.**
+Do not expand enablement until full live traversal and final-source review are
+resolved. The earlier unexplained hub saturation has no established root cause;
+the current successful interval and bounded fixtures do not prove production
+capacity or resolve that separate stability concern. No production rollout or
+public push was performed.
+
+The older checkpoints below are chronological evidence; this checkpoint
+supersedes their deployment and review status.
+
 ### Retained Legacy Terminal Settlement (03:18 UTC)
 
 A completion audit found that the old single-project dispatcher settled only
