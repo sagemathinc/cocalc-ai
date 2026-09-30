@@ -5,6 +5,7 @@
     "rootDir": "./",
     "outDir": "dist",
     "paths": {
+      "@cocalc/*": ["../node_modules/@cocalc/*"],
       "@nebius/js-sdk/api/*": ["./node_modules/@nebius/js-sdk/dist/esm/api/*"],
       "@nebius/js-sdk/runtime/*": [
         "./node_modules/@nebius/js-sdk/dist/esm/runtime/*"

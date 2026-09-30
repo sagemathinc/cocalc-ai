@@ -1,12 +1,12 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": {
-    "baseUrl": ".",
     "rootDir": "./",
     "outDir": "dist",
     "declarationDir": "dist-types",
     "lib": ["ESNext"],
     "paths": {
+      "@cocalc/*": ["../node_modules/@cocalc/*"],
       "@cocalc/http-api": ["./index.ts"],
       "@cocalc/http-api/*": ["./*"],
       "@langchain/core/*": ["../ai/node_modules/@langchain/core/dist/*"]

@@ -3,9 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import type Stripe from "stripe";
 import getLogger from "@cocalc/backend/logger";
 import getConn from "@cocalc/server/stripe/connection";
 import { getStripeCustomerId } from "./util";
+
+type StripeClient = InstanceType<typeof Stripe>;
 
 const logger = getLogger("purchases:stripe:invoices");
 
@@ -34,7 +37,10 @@ export async function getInvoice({
 }: {
   account_id: string;
   invoice_id: string;
-}) {
+}): Promise<
+  | Awaited<ReturnType<StripeClient["invoices"]["retrieve"]>>
+  | Awaited<ReturnType<StripeClient["paymentIntents"]["retrieve"]>>
+> {
   logger.debug("getInvoice", { account_id, invoice_id });
   const customer = await getStripeCustomerId({ account_id, create: false });
   if (!customer) {

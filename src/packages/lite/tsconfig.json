@@ -5,10 +5,10 @@
     "outDir": "dist",
     "lib": ["ES2021", "dom"],
     "target": "ES2021",
-    "baseUrl": ".",
     "isolatedModules": true,
     "types": ["node"],
     "paths": {
+      "@cocalc/*": ["../node_modules/@cocalc/*"],
       "@cocalc/chat": ["../chat/dist/index"],
       "@cocalc/chat/*": ["../chat/dist/*"]
     }

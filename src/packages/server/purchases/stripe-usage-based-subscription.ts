@@ -63,6 +63,7 @@ import {
   setStripeCheckoutSession,
 } from "./create-stripe-checkout-session";
 import type { Checkout } from "stripe";
+import type Stripe from "stripe";
 import { assertPaymentCheckoutAllowed } from "@cocalc/server/launch/kill-switches";
 import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
 import { createCreditFromPaidStripePaymentIntent } from "./create-invoice";
@@ -70,6 +71,8 @@ import { isValidUUID } from "@cocalc/util/misc";
 import dayjs from "dayjs";
 import { moneyToStripe, toDecimal, type MoneyValue } from "@cocalc/util/money";
 import { DOMAIN_URL } from "@cocalc/util/theme";
+
+type StripeClient = InstanceType<typeof Stripe>;
 
 const logger = getLogger("purchases:stripe-usage-based-subscription");
 
@@ -202,7 +205,13 @@ export async function cancelUsageSubscription(account_id: string) {
 // Otherwise, returns "null" and clears the entry the entry in the database.
 // This always checks with stripe that the subscription exists and is
 // currently active so do not call it too much.
-export async function getUsageSubscription(account_id: string) {
+export async function getUsageSubscription(
+  account_id: string,
+): Promise<
+  | Awaited<ReturnType<StripeClient["customers"]["retrieveSource"]>>
+  | Awaited<ReturnType<StripeClient["subscriptions"]["retrieve"]>>
+  | null
+> {
   await ensureBillingAccount(account_id);
   const table = billingAccountsTable();
   const db = getPool();
