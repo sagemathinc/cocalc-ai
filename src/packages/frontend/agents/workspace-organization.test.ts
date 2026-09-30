@@ -170,6 +170,40 @@ it("groups recent agents into the workspace time buckets", () => {
   ]);
 });
 
+it("treats a new agent without activity as created when it was named", () => {
+  const now = 10 * 24 * 60 * 60 * 1000;
+  const created = {
+    ...agent("new", "new-agent"),
+    updated_at: new Date(now - 60_000).toISOString(),
+  };
+  const all = [...agents, created];
+  // Older agents have stale activity; the new agent has none recorded yet.
+  const lastOpened = { a: now - 30 * 24 * 60 * 60 * 1000, b: 1, c: 2 };
+  const sections = groupAgentsByRecency(all, lastOpened, now);
+  expect(
+    sections.map(({ title, agents }) => [
+      title,
+      agents.map(({ name }) => name),
+    ]),
+  ).toEqual([
+    ["Today", ["new-agent"]],
+    ["Older", ["a", "b", "c"]],
+  ]);
+  const { unpinned } = organizeAgents(all, {
+    ...DEFAULT_AGENT_WORKSPACE_ORGANIZATION,
+    lastOpened,
+  });
+  expect(unpinned[0].name).toBe("new-agent");
+  // Recorded activity wins over the naming time.
+  expect(
+    groupAgentsByRecency(
+      [created],
+      { new: now - 3 * 24 * 60 * 60 * 1000 },
+      now,
+    )[0].title,
+  ).toBe("Last 7 days");
+});
+
 it("groups ordered agents by project and orders projects by activity", () => {
   const projectA = {
     ...agent("a", "A"),
