@@ -64,17 +64,19 @@ beforeEach(() => {
   jest.mocked(startChatSpeech).mockClear();
 });
 
-test("agent message footer has no speaker button; read aloud is in the menu", async () => {
+test("finished agent messages show copy, read aloud and more as footer icons", async () => {
   renderTurn(false);
   const footer = screen.getByTestId("chat-message-actions");
   expect(
-    within(footer).queryByRole("button", { name: "Read this response aloud" }),
-  ).toBeNull();
+    within(footer).getByRole("button", { name: "Copy message" }),
+  ).toBeVisible();
+  expect(
+    within(footer).getByRole("button", { name: "More message actions" }),
+  ).toBeVisible();
 
   await userEvent.click(
-    within(footer).getByRole("button", { name: "More message actions" }),
+    within(footer).getByRole("button", { name: "Read aloud" }),
   );
-  await userEvent.click(await screen.findByText("Read aloud"));
   expect(startChatSpeech).toHaveBeenCalledWith(
     expect.objectContaining({
       markdown: "All done.",
@@ -82,13 +84,18 @@ test("agent message footer has no speaker button; read aloud is in the menu", as
       threadId: "thread-1",
     }),
   );
+
+  // Footer icon actions are not repeated in the overflow menu.
+  await userEvent.click(
+    within(footer).getByRole("button", { name: "More message actions" }),
+  );
+  expect(await screen.findByText("Link to message")).toBeVisible();
+  expect(screen.queryByText("Copy whole message")).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: "Read aloud" })).toBeNull();
 });
 
-test("read aloud is not offered while the agent is still generating", async () => {
+test("no footer actions while the agent is still generating", () => {
   renderTurn(true);
-  const more = screen.queryByRole("button", { name: "More message actions" });
-  if (more) {
-    await userEvent.click(more);
-  }
-  expect(screen.queryByText("Read aloud")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Read aloud" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Copy message" })).toBeNull();
 });

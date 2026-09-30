@@ -337,6 +337,19 @@ export const MESSAGE_ACTIONS_STYLE: CSS = {
   marginTop: 4,
 };
 
+// Agent reply footer: a row of always-visible icon buttons, like the
+// copy/read-aloud/more rows under replies in other chat apps.
+const CODEX_FOOTER_ACTIONS_STYLE: CSS = {
+  ...MESSAGE_ACTIONS_STYLE,
+  gap: 2,
+  marginLeft: -8,
+};
+
+const CODEX_FOOTER_BUTTON_STYLE: CSS = {
+  color: UI_COLORS.secondary,
+  fontSize: 17,
+};
+
 const VIEWER_MESSAGE_LEFT_MARGIN = "clamp(12px, 15%, 150px)";
 
 interface Props {
@@ -1894,7 +1907,10 @@ export default function Message({
     };
   }
 
-  function getCodexOverflowItems(): MenuItems {
+  // Actions shown as footer icons are left out of the overflow menu.
+  function getCodexOverflowItems({
+    footer = false,
+  }: { footer?: boolean } = {}): MenuItems {
     const overflowItems: MenuItems = [
       {
         key: "info",
@@ -1937,13 +1953,17 @@ export default function Message({
           });
         },
       },
-      {
-        key: "copy-whole",
-        label: "Copy whole message",
-        onClick: () => {
-          void copyMessageMarkdown();
-        },
-      },
+      ...(footer
+        ? []
+        : [
+            {
+              key: "copy-whole",
+              label: "Copy whole message",
+              onClick: () => {
+                void copyMessageMarkdown();
+              },
+            },
+          ]),
       {
         key: "copy-link",
         label: "Link to message",
@@ -1952,14 +1972,6 @@ export default function Message({
         },
       },
     ];
-
-    if (!lite && canReadAloud()) {
-      overflowItems.push({
-        key: "read-aloud",
-        label: "Read aloud",
-        onClick: readMessageAloud,
-      });
-    }
 
     if (canSendPostedMessage) {
       overflowItems.unshift({
@@ -2032,33 +2044,55 @@ export default function Message({
     return overflowItems;
   }
 
-  function renderCodexOverflowMenu() {
-    const overflowItems = getCodexOverflowItems();
+  function renderCodexOverflowMenu({ footer = false } = {}) {
+    const overflowItems = getCodexOverflowItems({ footer });
     if (overflowItems.length === 0) return null;
     return (
       <DropdownMenu
         items={overflowItems}
         title={<Icon name="ellipsis-vertical" />}
-        size="small"
-        style={{ color: UI_COLORS.muted }}
+        size={footer ? undefined : "small"}
+        style={footer ? CODEX_FOOTER_BUTTON_STYLE : { color: UI_COLORS.muted }}
         ariaLabel="More message actions"
       />
     );
   }
 
   function renderCodexMessageActions() {
-    const buttons: ReactNode[] = [];
-
-    // Read aloud lives in the overflow menu for agent messages; the final
-    // response header also has its own button.
-    if (codexOverflowMenuLocation === "footer") {
-      buttons.push(<span key="more">{renderCodexOverflowMenu()}</span>);
+    if (codexOverflowMenuLocation !== "footer") return null;
+    const buttons: ReactNode[] = [
+      <Tooltip key="copy" placement="bottom" title="Copy message">
+        <Button
+          aria-label="Copy message"
+          icon={<Icon name="copy" />}
+          onClick={() => void copyMessageMarkdown()}
+          style={CODEX_FOOTER_BUTTON_STYLE}
+          type="text"
+        />
+      </Tooltip>,
+    ];
+    if (!lite && canReadAloud()) {
+      buttons.push(
+        <Tooltip key="read-aloud" placement="bottom" title="Read aloud">
+          <Button
+            aria-label="Read aloud"
+            icon={<Icon name="sound-outlined" />}
+            onClick={readMessageAloud}
+            style={CODEX_FOOTER_BUTTON_STYLE}
+            type="text"
+          />
+        </Tooltip>,
+      );
     }
-
-    if (buttons.length === 0) return null;
+    buttons.push(
+      <span key="more">{renderCodexOverflowMenu({ footer: true })}</span>,
+    );
 
     return (
-      <div data-testid="chat-message-actions" style={MESSAGE_ACTIONS_STYLE}>
+      <div
+        data-testid="chat-message-actions"
+        style={CODEX_FOOTER_ACTIONS_STYLE}
+      >
         {buttons}
       </div>
     );
