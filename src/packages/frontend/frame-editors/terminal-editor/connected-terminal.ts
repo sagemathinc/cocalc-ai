@@ -16,7 +16,6 @@ import { Map } from "immutable";
 import { Terminal as XTerminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { WebglAddon } from "@xterm/addon-webgl";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { ProjectActions, redux } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
@@ -87,8 +86,6 @@ const ANSI_DIM_CYAN = "\x1b[2;36m";
 const ANSI_BOLD_CYAN = "\x1b[1;36m";
 const ANSI_BOLD_WHITE = "\x1b[1;37m";
 const ANSI_DIM = "\x1b[2m";
-
-const ENABLE_WEBGL = false;
 
 const MAX_AUTO_BUFFER = 32768;
 
@@ -479,31 +476,6 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     this.terminal.open(parent);
     if (this.terminal.element == null) {
       throw Error("terminal.element must be defined");
-    }
-
-    if (ENABLE_WEBGL) {
-      const webglAddon = new WebglAddon();
-      try {
-        this.terminal.loadAddon(webglAddon);
-        webglAddon.onContextLoss(() => {
-          // This really does work and properly switches back to canvas.  To convince yourself
-          // of this, open a single terminal, then open another tab with another terminal and
-          // split it about 20+ times. In the console, you'll see that the oldest webGL contexts
-          // go away. That triggers calling this function, and indeed the terminal then falls
-          // back seamlessly to canvas rendering.  Very impressive, xterm.js.
-          webglAddon.dispose();
-        });
-      } catch (err) {
-        // We have to disable the dispose when it doesn't get used, since it breaks
-        // on cleanup, and the xtermjs api has no way of removing an addon, and
-        // only catching the error on dispose later would mean leaving other things
-        // potentially not cleaned up properly.  I read the code of webglAddon.dispose
-        // and it doesn't do anything if the addon wasn't initialized.
-        webglAddon.dispose = () => {};
-        console.warn(
-          `WebGL Terminal not available (using fallback). -- ${err}`,
-        );
-      }
     }
 
     this.element = this.terminal.element;

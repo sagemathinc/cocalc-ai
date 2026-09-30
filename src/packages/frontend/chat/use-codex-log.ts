@@ -42,11 +42,11 @@ type RecentLogCacheEntry = {
 
 const recentActivityLogCache = new LRUCache<string, RecentLogCacheEntry>({
   max: RECENT_ACTIVITY_LOG_CACHE_SIZE,
-  maxAge: 5 * 60_000,
+  ttl: 5 * 60_000,
 });
 const recentPreviewLogCache = new LRUCache<string, RecentLogCacheEntry>({
   max: RECENT_PREVIEW_LOG_CACHE_SIZE,
-  maxAge: 5 * 60_000,
+  ttl: 5 * 60_000,
 });
 
 function getRecentLogCacheEntry(
