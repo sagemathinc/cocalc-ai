@@ -29,10 +29,10 @@ import {
 import { extractBaseImage } from "@cocalc/project-runner/run/rootfs-base";
 import {
   getClaudeSubscriptionCredential,
-  publishClaudeSubscriptionCredential,
+  syncClaudeSubscriptionCredential,
 } from "./claude-subscription-registry";
 import {
-  claudeSubscriptionBundlePaths,
+  claudeSubscriptionBundleFiles,
   restoreClaudeSubscriptionHome,
 } from "./claude-subscription-home";
 import {
@@ -57,6 +57,9 @@ const CONTROLLER_HOME = "/home/claude";
 const CONTROLLER_WORKSPACE = "/workspace";
 const MANAGED_HARNESSES = "/opt/cocalc/harnesses";
 const logger = getLogger("project-host:acp:claude-subscription-controller");
+// Save a refreshed subscription token promptly, not only when the controller
+// stops: other controllers start from the stored copy.
+const CREDENTIAL_SYNC_INTERVAL_MS = 60_000;
 
 // Project startup normalizes image references before caching them. Use the
 // same cache key or a first Claude turn unnecessarily pulls the base image.
@@ -285,6 +288,27 @@ ${skill}
   let stopped: Promise<void> | undefined;
   let cleanupRetries = 0;
   let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+  // This controller's credential files as of its last sync.
+  let credentialBaseline: ReadonlyMap<string, Buffer> =
+    claudeSubscriptionBundleFiles(registered.payload);
+  let credentialSyncing: Promise<void> = Promise.resolve();
+  let credentialSyncTimer: ReturnType<typeof setInterval> | undefined;
+  const syncCredential = () =>
+    (credentialSyncing = credentialSyncing
+      .catch(() => {})
+      .then(async () => {
+        credentialBaseline = await syncClaudeSubscriptionCredential({
+          projectId,
+          accountId,
+          credentialId,
+          home,
+          baseline: credentialBaseline,
+        });
+      }));
+  const stopCredentialSync = () => {
+    clearInterval(credentialSyncTimer);
+    credentialSyncTimer = undefined;
+  };
   const command = (args: string[]) =>
     new Promise<void>((resolve, reject) => {
       execFile(
@@ -334,17 +358,14 @@ ${skill}
         if (failure?.status === "rejected") throw failure.reason;
       },
       refreshCredential: async () => {
-        await publishClaudeSubscriptionCredential({
-          projectId,
-          accountId,
-          credentialId,
-          home,
-          identity: registered.identity,
-          plan: registered.plan,
-          allowedPaths: claudeSubscriptionBundlePaths(registered.payload),
-        });
+        stopCredentialSync();
+        await syncCredential();
       },
-      removeHome: async () => rm(home, { recursive: true, force: true }),
+      removeHome: async () => {
+        stopCredentialSync();
+        await credentialSyncing.catch(() => {});
+        await rm(home, { recursive: true, force: true });
+      },
       launched,
     })
       .then(() => {
@@ -462,6 +483,12 @@ ${skill}
       }),
     );
     launched = true;
+    credentialSyncTimer = setInterval(() => {
+      syncCredential().catch((error) =>
+        logger.warn("Claude credential sync failed", error),
+      );
+    }, CREDENTIAL_SYNC_INTERVAL_MS);
+    credentialSyncTimer.unref();
     const proc = spawn(
       launcher.command,
       [...launcher.argsPrefix, "start", "--attach", "--interactive", name],

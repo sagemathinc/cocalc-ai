@@ -14,7 +14,12 @@ import {
 } from "@cocalc/util/ai/external-credential-profiles";
 import { getMasterConatClient } from "../master-conat-client";
 import { getLocalHostId } from "../sqlite/hosts";
-import { packClaudeSubscriptionHome } from "./claude-subscription-home";
+import {
+  changedClaudeSubscriptionFiles,
+  claudeSubscriptionBundleFiles,
+  packClaudeSubscriptionBundle,
+  packClaudeSubscriptionHome,
+} from "./claude-subscription-home";
 
 function caller() {
   const client = getMasterConatClient();
@@ -105,6 +110,26 @@ export async function publishClaudeSubscriptionCredential(options: {
       throw Error("Reconnect must use the same Claude account");
   }
   const payload = await packClaudeSubscriptionHome(home, allowedPaths);
+  return await upsertClaudeSubscriptionPayload({
+    projectId,
+    accountId,
+    payload,
+    identity,
+    plan,
+    credentialId,
+  });
+}
+
+async function upsertClaudeSubscriptionPayload(options: {
+  projectId: string;
+  accountId: string;
+  payload: string;
+  identity: string;
+  plan: string;
+  credentialId?: string;
+}): Promise<string> {
+  const { projectId, accountId, payload, identity, plan, credentialId } =
+    options;
   const result = await callHub({
     ...caller(),
     name: "hosts.upsertExternalCredential",
@@ -138,4 +163,48 @@ export async function publishClaudeSubscriptionCredential(options: {
   if (!result?.id || !isValidUUID(result.id))
     throw Error("Claude subscription credential was not published");
   return result.id;
+}
+
+/**
+ * Save what a running controller changed in its Claude home, without
+ * clobbering what other controllers saved meanwhile.
+ *
+ * Claude Code rotates the subscription refresh token when it refreshes, so
+ * every controller restored from the stored bundle holds a copy that goes
+ * stale as soon as any other controller refreshes. Writing a whole home back
+ * would let a controller that never refreshed restore an already revoked
+ * token. Instead, only files that changed since `baseline` (this controller's
+ * last sync) replace the corresponding files of the currently stored bundle.
+ *
+ * Returns the new baseline: the controller's current files.
+ */
+export async function syncClaudeSubscriptionCredential(options: {
+  projectId: string;
+  accountId: string;
+  credentialId: string;
+  home: string;
+  baseline: ReadonlyMap<string, Buffer>;
+}): Promise<ReadonlyMap<string, Buffer>> {
+  const { projectId, accountId, credentialId, home, baseline } = options;
+  const current = claudeSubscriptionBundleFiles(
+    await packClaudeSubscriptionHome(home, new Set(baseline.keys())),
+  );
+  const changed = changedClaudeSubscriptionFiles(baseline, current);
+  if (changed.size === 0) return baseline;
+  const stored = await getClaudeSubscriptionCredential({
+    projectId,
+    accountId,
+    credentialId,
+  });
+  const merged = claudeSubscriptionBundleFiles(stored.payload);
+  for (const [path, bytes] of changed) merged.set(path, bytes);
+  await upsertClaudeSubscriptionPayload({
+    projectId,
+    accountId,
+    credentialId,
+    payload: packClaudeSubscriptionBundle(merged),
+    identity: stored.identity,
+    plan: stored.plan,
+  });
+  return current;
 }

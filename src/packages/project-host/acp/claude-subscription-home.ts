@@ -83,11 +83,10 @@ export function claudeSubscriptionBundlePaths(
   return new Set(bundle.files.map(({ path }) => path));
 }
 
-/** Restore only into a fresh private directory not mounted into a project. */
-export async function restoreClaudeSubscriptionHome(
-  home: string,
+/** Validate a bundle and return its files by relative path; never writes. */
+export function claudeSubscriptionBundleFiles(
   payload: string,
-): Promise<void> {
+): Map<string, Buffer> {
   if (Buffer.byteLength(payload) > MAX_BYTES * 2)
     throw Error("Claude auth bundle is too large");
   let bundle: Bundle;
@@ -102,8 +101,7 @@ export async function restoreClaudeSubscriptionHome(
     bundle.files.length > MAX_FILES
   )
     throw Error("Invalid Claude auth bundle");
-  const root = resolve(home);
-  const seen = new Set<string>();
+  const files = new Map<string, Buffer>();
   let totalBytes = 0;
   for (const entry of bundle.files) {
     if (
@@ -114,15 +112,61 @@ export async function restoreClaudeSubscriptionHome(
       !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
         entry.content,
       ) ||
-      seen.has(entry.path)
+      files.has(entry.path)
     )
       throw Error("Invalid Claude auth bundle entry");
-    seen.add(entry.path);
     const bytes = Buffer.from(entry.content, "base64");
     totalBytes += bytes.length;
     if (bytes.length > MAX_FILE_BYTES || totalBytes > MAX_BYTES)
       throw Error("Claude auth bundle is too large");
-    const target = resolve(root, entry.path);
+    files.set(entry.path, bytes);
+  }
+  return files;
+}
+
+/** Pack validated files (e.g. a merge of two bundles) into a bundle. */
+export function packClaudeSubscriptionBundle(
+  files: ReadonlyMap<string, Buffer>,
+): string {
+  if (files.size > MAX_FILES)
+    throw Error("Claude auth home has too many files");
+  let totalBytes = 0;
+  const entries: Entry[] = [];
+  for (const [path, bytes] of files) {
+    if (!safeRelativePath(path)) throw Error("Invalid Claude auth path");
+    totalBytes += bytes.length;
+    if (bytes.length > MAX_FILE_BYTES || totalBytes > MAX_BYTES)
+      throw Error("Claude auth home is too large");
+    entries.push({ path, content: bytes.toString("base64") });
+  }
+  return JSON.stringify({ version: 1, files: entries } satisfies Bundle);
+}
+
+/**
+ * Files that differ between two snapshots of the same bundle. Contents are
+ * compared as opaque bytes; provider credential files are never interpreted.
+ */
+export function changedClaudeSubscriptionFiles(
+  baseline: ReadonlyMap<string, Buffer>,
+  current: ReadonlyMap<string, Buffer>,
+): Map<string, Buffer> {
+  const changed = new Map<string, Buffer>();
+  for (const [path, bytes] of current) {
+    const before = baseline.get(path);
+    if (!before || !before.equals(bytes)) changed.set(path, bytes);
+  }
+  return changed;
+}
+
+/** Restore only into a fresh private directory not mounted into a project. */
+export async function restoreClaudeSubscriptionHome(
+  home: string,
+  payload: string,
+): Promise<void> {
+  const files = claudeSubscriptionBundleFiles(payload);
+  const root = resolve(home);
+  for (const [path, bytes] of files) {
+    const target = resolve(root, path);
     if (!target.startsWith(root + sep)) throw Error("Invalid Claude auth path");
     await mkdir(resolve(target, ".."), { recursive: true, mode: 0o700 });
     await writeFile(target, bytes, { flag: "wx", mode: 0o600 });
