@@ -1,0 +1,225 @@
+# Harden Realtime Collaborative Editing
+
+## Status
+
+Plan only, written 2026-09-30. Nothing here is implemented yet. It builds on
+PR #749 (`fix/slate-merge-duplication`), which fixed the two concrete bugs from
+the incident below.
+
+Related notes: [slate-sync.md](./slate-sync.md), [slate.md](./slate.md).
+
+## Goal
+
+Move from "no known sync bug" to justified confidence that a group of, say, ten
+people can edit one Markdown file (or notebook) at the same time with a mix of
+editors (Slate, CodeMirror, split frames) and unreliable networks, without
+content being duplicated, lost, or silently reverted.
+
+"Confident" here means: large randomized multi-client sessions, run
+continuously, satisfy precise invariants, and every production incident becomes
+a permanent regression test.
+
+## Motivating Incident (2026-09-28)
+
+Two people edited a Markdown file; one used Slate only, the other a Slate +
+CodeMirror split. A table plus the list after it was inserted a second time
+(twice), and a two-character list-marker edit ping-ponged between the clients.
+Nobody typed or pasted the duplicate.
+
+Decoding the conat-persist history and replaying it with patchflow reproduced
+the corrupting patch byte-for-byte. Patchflow was not at fault. Two integration
+bugs fed each other (details in PR #749):
+
+1. A focused Slate editor applied remote changes with a block-signature patch
+   whose list/paragraph signatures ignored structure. List-nesting changes were
+   "applied" as no-ops, the editor recorded the remote markdown as its value, and
+   its next save reverted the remote change.
+2. `SimpleInputMerge` kept a render request that the editor never exactly
+   reported, and later used one of its stale render candidates as the rebase base.
+   The rebase replayed about 16 versions of already-saved local edits onto a remote
+   value that already contained them: the duplication.
+
+The problem appeared to stop when CodeMirror was closed, but everyone also
+refreshed then, which clears both kinds of stale state. Both corrupting patches
+came from the Slate-only client.
+
+## Diagnosis Of The Bug Class
+
+The core (patchflow) is small and deterministic. Bugs live in the integration
+between the sync document and browser editors, because each integration keeps
+private, separately updated copies of "what the document was":
+
+- the Slate tree and `editor.markdownValue` (cached serialization)
+- `SimpleInputMerge` `last`, `pending`, `requestedLocalUpdate`
+- `lastSetValueRef`, `pendingRemoteRef`, block-patch deferral state
+- the CodeMirror buffer and the actions-level `MergeCoordinator` base
+- the redux store `value`
+
+Correctness requires these copies to agree. Any skipped update, deferral,
+debounce, or early return makes them disagree, and the next save turns the
+disagreement into a patch. Some code even guesses the merge base
+(`resolveLocal` picks the closest candidate by edit cost). Fixing one drifting
+path at a time cannot produce confidence; the design permits drift.
+
+## Principles
+
+1. Every local edit records the exact document version it was derived from. Merges
+   use that version's text from patchflow history; nothing guesses a base.
+2. One reconciler per document per browser, owned by the editor actions. Editor
+   frames are views: they report "edit from version V to text X" and accept
+   "show version W".
+3. Views must prove they applied a value. After applying remote content, a view's
+   serialization must equal the target, or it is rebuilt from scratch.
+4. Clients never publish suspicious patches silently. Automatic (non-typed)
+   saves are checked against simple invariants before publication.
+5. Every production incident's history is replayable and becomes a regression test
+   with synthetic content (real documents are private and never committed).
+
+## Workstreams
+
+### 1. Headless Multi-Client Fuzzer (highest priority)
+
+Simulate N clients in Node running the real integration code: Slate runs
+headless, so the real `markdown_to_slate` / `slate_to_markdown`, block patch,
+`SimpleInputMerge` (or its replacement), and real patchflow sessions can be
+used. Connect them with a simulated network that delays, reorders, duplicates,
+and partitions messages, and a virtual clock.
+
+Random operations per client:
+
+- typing bursts, deletions, pastes (including large blocks)
+- structure edits: list indent/outdent, nested lists, tables, headings, marks,
+  code blocks, math
+- focus/blur, typing inside the merge-deferral window, reloads
+- views: Slate-only, CodeMirror-only, Slate + CodeMirror split, two frames on the
+  same file
+
+Oracle: every inserted fragment contains a unique token such as `⟦c3·17⟧`
+(client, sequence). After the network is quiet, assert:
+
+1. convergence: all clients and the persisted document are identical
+2. no duplication: no token appears more than once
+3. no loss: every token that no client deleted is present
+4. no silent revert: no client publishes a patch that reverts a remote patch it
+   had already applied (reverting only by explicit undo/delete operations)
+5. views agree: every view's serialization equals its reconciler's document
+
+This oracle needs no "expected document", which is ill-defined under
+concurrency, yet catches the duplication, loss, and revert classes seen so far.
+Runs are seeded and deterministic; failures are replayable and should be
+shrunk to minimal operation sequences. Target thousands of sessions per minute
+in CI (a fixed seed set on every PR, randomized seeds nightly).
+
+Acceptance: the 2026-09-28 bug pair, reintroduced on a branch, is found within
+a small bounded number of runs.
+
+### 2. Targeted Audit Of The Integration Layer
+
+Enumerate every point where editor state and sync state meet, document the
+invariant each assumes, and add a fuzzer scenario or unit test for each.
+Starting list:
+
+- `editable-markdown.tsx` `setEditorToValue`: every early return
+  (`lastSetValueRef` skip, same-as-editor skip via cached `markdownValue`,
+  no-op operations bookkeeping, block-patch deferral) and the `finally` that
+  records the target markdown
+- `applyMergedRemoteValue`: forced `saveValue(true)` serializing the tree
+- debounced saves (`setSyncstringFromSlate`, `saveValueDebounce`) that may run
+  after the tree or baseline changed
+- the syncstring `change` handler paths (`local` echo, `source === "cm"`
+  force-set, remote merge, deferred pending merge)
+- the `value` prop path and `value_slate` path
+- `SimpleInputMerge` state transitions (`noteSaved`, `noteLocalEcho`,
+  `noteApplied`, `resolveLocal`, `previewMerge`)
+- actions-level `MergeCoordinator`, `_suppress_remote_once`,
+  `applyMergedBuffer`, and `set_syncstring_to_codemirror` pulling Slate markdown
+  when a Slate frame is active
+- multiple frames on one document; frame switching (`is_current`) saves
+- other editors using the same helpers (markdown input, chat, whiteboard code,
+  Jupyter cell inputs)
+
+Also track the known side bug: `slateDiff` operations for some table/list
+transitions drop inline math delimiters (caught today by the markdown
+verification fallback, but it should be fixed and tested).
+
+### 3. Base-Version Redesign (under the fuzzer)
+
+Replace heuristic baseline tracking with explicit versions:
+
+- editors emit `{ baseVersion, value }`; the reconciler computes
+  `makePatch(text(baseVersion), value)` and commits it on top of the current head
+  (patchflow working copies already model this)
+- remote changes are delivered to views as `{ version, value }`; a view's value
+  is only considered clean relative to the version it actually rendered
+- remove `last`/`pending`/`requestedLocalUpdate` guessing and the edit-cost base
+  selection
+- unify CodeMirror and Slate integrations behind the same reconciler
+
+Land incrementally behind the fuzzer, starting with the Markdown editor, then
+other users of `SimpleInputMerge`.
+
+### 4. Runtime Invariant Guards And Telemetry
+
+- After applying a remote value, verify the view (as PR #749 now does for focused
+  block patches) on every path, not just some.
+- Before publishing an automatic (non-keystroke) save: refuse and resync if the
+  patch reverts a just-received remote patch, or inserts a large block that
+  already exists verbatim in the document without a paste event.
+- In development and tests these guards throw; in production they refuse the
+  save, resync the view, and emit telemetry (document id, versions, sizes, no
+  content) so problems are visible before users report them.
+
+### 5. Real-Browser Chaos Suite (Playwright)
+
+The repo already has Playwright setups. Add a nightly suite:
+
+- N browser contexts as different users against a real Lite server
+- randomized layouts (Slate, CodeMirror, split, two frames on one file)
+- real keyboard input, IME-like composition, clipboard pastes
+- CDP network throttling and offline toggles, reloads mid-edit
+- the same token oracle, checked against the server-side document
+- on failure: keep the Playwright trace plus the conat-persist database
+
+This catches what headless simulation cannot: contenteditable and focus
+behavior, timing, and real event ordering.
+
+### 6. Incident Replay Kit
+
+Turn the tools used for the 2026-09-28 analysis into a supported script:
+
+- decode a conat-persist stream database (zstd + msgpack)
+- rebuild every version with patchflow
+- flag patches that duplicate existing text or revert recent remote patches
+- search for the exact `(base, local, remote)` triple that reproduces a suspect
+  patch under a given merge algorithm
+
+Every incident becomes a synthetic regression test.
+
+## Order Of Work
+
+1. Workstream 1 (fuzzer) and 6 (replay kit): days, not weeks; likely to find
+   more bugs immediately and becomes the safety net.
+2. Workstream 2 (audit), guided by fuzzer findings.
+3. Workstream 4 (guards and telemetry) for fast production protection.
+4. Workstream 3 (redesign) under the fuzzer.
+5. Workstream 5 (browser chaos suite) for browser-only behavior.
+
+## Exit Criteria
+
+- The fuzzer runs on every PR (fixed seeds) and nightly (random seeds), including
+  10-client sessions with mixed views, with zero oracle violations for an
+  extended period.
+- The nightly Playwright chaos suite is green with mixed layouts and network
+  faults.
+- No integration path merges against a guessed base.
+- Guard telemetry in production shows no refused suspicious saves over a release
+  cycle, or each one is explained and fixed.
+- Every sync incident has a replayable regression test.
+
+## Open Questions
+
+- Jupyter notebooks (syncdb, cell inputs) versus string documents: which parts of
+  the fuzzer and reconciler generalize?
+- How to represent explicit undo/redo in the "no silent revert" invariant.
+- Performance budget for view verification on very large documents (the current
+  direct-replacement threshold is 250 blocks / 50,000 characters).
