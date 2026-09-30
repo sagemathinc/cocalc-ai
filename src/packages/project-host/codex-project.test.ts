@@ -517,18 +517,24 @@ describe("initCodexProjectRunner", () => {
       try {
         if (outcome !== "ordinary") {
           let finishIssuance!: (value: any) => void;
+          let notifyIssuance!: () => void;
+          const issuanceStarted = new Promise<void>((resolve) => {
+            notifyIssuance = resolve;
+          });
           hubApi.agent.beginCocalcConnectorTurn.mockImplementationOnce(
             () =>
               new Promise((resolve) => {
                 finishIssuance = resolve;
+                notifyIssuance();
               }),
           );
           const pending = spawned.beginConnectorTurn!(chat).then(
             () => "unexpected success",
             (error) => error.message,
           );
-          for (let i = 0; i < 100 && !finishIssuance; i++)
-            await new Promise((resolve) => setImmediate(resolve));
+          // Wait for actual mock entry, not an arbitrary number of event-loop
+          // turns while filesystem work is still pending. Jest bounds the wait.
+          await issuanceStarted;
           expect(finishIssuance).toBeDefined();
           await spawned.endConnectorTurn?.();
           if (outcome === "replaced-during-issuance") {
