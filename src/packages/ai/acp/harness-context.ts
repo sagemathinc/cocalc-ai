@@ -1,6 +1,7 @@
 import type { AcpEvaluateRequest } from "./types";
 import { CLAUDE_PROJECT_JOB_GUIDANCE } from "@cocalc/util/ai/claude-project-tools";
 import { artifactPublicationGuidance } from "./publication-guidance";
+import { cocalcAccessGuidance } from "./cocalc-access-guidance";
 
 const COCALC_CLI = '"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"';
 
@@ -37,6 +38,7 @@ ${projectGuidance}
 ${request.runtime ? `Project working directory for this turn: ${JSON.stringify(request.runtime.profile.cwd)}. Use this directory for project commands unless the task requires another directory.` : ""}
 ${request.harness_credential?.mode === "account-subscription" ? CLAUDE_PROJECT_JOB_GUIDANCE : ""}
 ${request.harness_credential?.mode === "account-subscription" ? "Use request_user_input_async on the project tools server for clarification when useful independent work can continue. It saves a question card and returns immediately; the answer arrives as a new user message. Continue working without polling, and incorporate the answer when it arrives. Use blocking questions only when the answer is required before any useful work. Never use questions for secrets, authentication or permission escalation." : ""}
+${cocalcAccessGuidance(COCALC_CLI)}
 Complete foreground work before ending the turn. CoCalc cannot wake a completed turn when a background command finishes; do not promise a later notification.
 Use the scoped runtime identity and credentials already provided in the environment. Do not fall back to account credentials when a scoped operation fails.
 Current turn publication context (non-secret metadata, not an authorization grant):

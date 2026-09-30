@@ -90,6 +90,8 @@ const binding = {
 };
 const conversation = { path: "/home/user/agent.chat", threadId: "thread-a" };
 const closeLease = jest.fn();
+const beginConnectorTurn = jest.fn(async () => {});
+const endConnectorTurn = jest.fn(async () => {});
 let home: string;
 
 beforeEach(async () => {
@@ -101,10 +103,13 @@ beforeEach(async () => {
   jest.mocked(createProjectCliTokenLease).mockResolvedValue({
     containerPath: "/tmp/scoped/token",
     identityContainerPath: "/tmp/scoped/identity.json",
+    connectorContainerPath: "/tmp/scoped/connector-key",
     hostPath: "/host/token",
     setAgentSessionKey: jest.fn(),
+    beginConnectorTurn: beginConnectorTurn,
+    endConnectorTurn: endConnectorTurn,
     close: closeLease,
-  });
+  } as any);
   jest.mocked(createClaudeProjectToolBridge).mockResolvedValue({
     directory: "/tools",
     close: jest.fn(),
@@ -162,15 +167,22 @@ test("registered subscription agent gets its identity only in project tools", as
           COCALC_CODEX_CHAT_PATH: conversation.path,
           COCALC_CODEX_THREAD_ID: conversation.threadId,
           COCALC_AGENT_IDENTITY_FILE: "/tmp/scoped/identity.json",
+          COCALC_CONNECTOR_API_KEY_FILE: "/tmp/scoped/connector-key",
           COCALC_BEARER_TOKEN: "",
           COCALC_AGENT_TOKEN: "",
         }),
       }),
     );
+    // The credential-bearing controller itself never sees project authority.
     const controllerArgs = (execFile as unknown as jest.Mock).mock.calls[0][1];
     expect(controllerArgs.join(" ")).not.toMatch(
-      /scoped\/identity|scoped\/token/,
+      /scoped\/identity|scoped\/token|scoped\/connector-key/,
     );
+    const chat = { project_id: binding.projectId, path: "a.chat" } as any;
+    await handle.beginConnectorTurn!(chat);
+    expect(beginConnectorTurn).toHaveBeenCalledWith(chat);
+    await handle.endConnectorTurn!();
+    expect(endConnectorTurn).toHaveBeenCalledTimes(1);
   } finally {
     await handle.stop();
   }
