@@ -883,6 +883,11 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
   function applyMergedRemoteValue(merged: string, remote: string) {
     setEditorToValue(merged);
+    if (pendingRemoteRef.current !== merged) {
+      // Slate applied the merge synchronously (it was not deferred), so the
+      // editor now derives from the merge's committed base.
+      mergeHelperRef.current.noteRendered();
+    }
     if (merged === remote || !is_current) return;
     window.setTimeout(() => {
       if (!isMountedRef.current) return;

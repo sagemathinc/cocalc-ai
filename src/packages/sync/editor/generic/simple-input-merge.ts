@@ -89,6 +89,14 @@ export class SimpleInputMerge {
     this.pending[this.pending.length - 1] = next;
   }
 
+  // The editor has synchronously rendered the most recently requested merge
+  // (it was not deferred). Its contents now derive from that merge's committed
+  // base, which is the current baseline, so no render candidate is needed.
+  // Editors that render asynchronously should not call this.
+  public noteRendered(): void {
+    this.requestedLocalUpdate = undefined;
+  }
+
   // Mark that local and remote are known to be in sync.
   public noteApplied(value: string): void {
     this.last = value ?? "";
