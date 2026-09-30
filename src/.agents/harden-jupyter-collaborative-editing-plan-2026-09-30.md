@@ -363,3 +363,7 @@ deploying; editor fixes can follow in any later deploy.
     as before;
   - fuzzers for the code editor (CodeMirror) and chat;
   - browser tests.
+- patchflow#6 was reviewed (three P2 findings, all fixed: `isCut` through
+  snapshots, `needsMoreHistory` only for dependencies of the current heads,
+  recent merged values kept) and released as 0.9.2; this branch uses it, and
+  the snapshot integration test runs.
