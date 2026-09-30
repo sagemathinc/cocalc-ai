@@ -22,6 +22,9 @@ export const ChatSourceContent = () => null;
 export const readablePeerMessage = (value: string) => value;
 export const copyTextToClipboard = async () => {};
 export const isSafeHtmlUrl = () => false;
+// This layout harness has no configured connector; its real eligibility and
+// menu behavior are covered by composer-connectors.test.tsx.
+export const supportsCocalcConnector = () => false;
 export const ComposerConnectors = ({
   children,
 }: {
