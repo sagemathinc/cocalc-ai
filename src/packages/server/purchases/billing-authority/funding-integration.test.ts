@@ -42,12 +42,16 @@ const dbDescribe =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe.skip : describe;
 dbDescribe("funding through the running billing authority", () => {
   const old = process.env.COCALC_BILLING_AUTHORITY_ENABLED;
+  const oldLocked = process.env.COCALC_BILLING_SINGLETON_LOCKED;
   let unregister: (() => void) | undefined;
   beforeAll(async () => {
     await before({ noConat: true });
     await ensureCourseFundingApprovalSchema();
     process.env.COCALC_BILLING_AUTHORITY_ENABLED = "1";
-    startBillingAuthorityService();
+    // This isolated database has one test executor; launcher locking has its
+    // own process-level coverage in billing-worker.test.sh.
+    process.env.COCALC_BILLING_SINGLETON_LOCKED = "1";
+    startBillingAuthorityService({ executor: true });
     const deadline = Date.now() + 15000;
     while (!(await getBillingAuthorityStatus()).ready) {
       if (Date.now() > deadline) throw Error("authority not ready");
@@ -62,6 +66,8 @@ dbDescribe("funding through the running billing authority", () => {
     await stopBillingAuthorityService();
     if (old == null) delete process.env.COCALC_BILLING_AUTHORITY_ENABLED;
     else process.env.COCALC_BILLING_AUTHORITY_ENABLED = old;
+    if (oldLocked == null) delete process.env.COCALC_BILLING_SINGLETON_LOCKED;
+    else process.env.COCALC_BILLING_SINGLETON_LOCKED = oldLocked;
     resetBillingAuthorityContextForTests();
     await after();
   });

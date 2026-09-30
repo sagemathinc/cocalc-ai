@@ -8,8 +8,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 
 const CLUSTER_ACCOUNT_DIRECTORY_TABLE = "cluster_account_directory";
 const COLLAB_MEMBERSHIP_GROUPS_SQL = `('owner','collaborator')`;
-// Expose the existing users GIN index without weakening the role check.
-const REQUESTER_COLLAB_PROJECT_SQL = `(users ? $1::text AND (users -> $1::text ->> 'group') IN ${COLLAB_MEMBERSHIP_GROUPS_SQL})`;
+const REQUESTER_COLLAB_PROJECT_SQL = `users ? $1::text AND (users -> $1::text ->> 'group') IN ${COLLAB_MEMBERSHIP_GROUPS_SQL}`;
 const PEER_COLLAB_GROUP_SQL = `(info ->> 'group') IN ${COLLAB_MEMBERSHIP_GROUPS_SQL}`;
 
 export interface RebuildAccountCollaboratorIndexResult {
@@ -345,13 +344,22 @@ async function getSourceCounts(account_id: string): Promise<{
 export async function replaceAccountCollaboratorIndexRows(opts: {
   db: Queryable;
   account_id: string;
+  collaborator_account_ids?: string[];
 }): Promise<ReplaceAccountCollaboratorIndexRowsResult> {
   await ensureClusterAccountDirectorySchema(opts.db);
   const account_id = normalizeAccountId(opts.account_id);
+  const peers =
+    opts.collaborator_account_ids == null
+      ? null
+      : [
+          ...new Set(opts.collaborator_account_ids.map(normalizeAccountId)),
+        ].sort();
+  if (peers?.length === 0) return { deleted_rows: 0, inserted_rows: 0 };
   const deleted = await opts.db.query(
     `DELETE FROM account_collaborator_index
-      WHERE account_id = $1`,
-    [account_id],
+      WHERE account_id = $1
+        AND ($2::uuid[] IS NULL OR collaborator_account_id = ANY($2::uuid[]))`,
+    [account_id, peers],
   );
   const deletedUser = deletedUserProjection();
   const inserted = await opts.db.query(
@@ -365,6 +373,7 @@ export async function replaceAccountCollaboratorIndexRows(opts: {
           AND ${REQUESTER_COLLAB_PROJECT_SQL}
           AND u.account_id_text ~* '^[0-9a-f-]{36}$'
           AND ${PEER_COLLAB_GROUP_SQL}
+          AND ($5::text[] IS NULL OR u.account_id_text = ANY($5::text[]))
         GROUP BY 1
       )
       INSERT INTO account_collaborator_index
@@ -411,6 +420,7 @@ export async function replaceAccountCollaboratorIndexRows(opts: {
       deletedUser.first_name,
       deletedUser.last_name,
       deletedUser.name,
+      peers,
     ],
   );
   return {
@@ -515,6 +525,7 @@ export async function rebuildAccountCollaboratorIndex(opts: {
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    await lockAccountCollaboratorProjection(client, [account_id]);
     const { deleted_rows, inserted_rows } =
       await replaceAccountCollaboratorIndexRows({
         db: client,
@@ -536,5 +547,19 @@ export async function rebuildAccountCollaboratorIndex(opts: {
     throw err;
   } finally {
     client.release();
+  }
+}
+
+// Every projection writer takes these locks before row mutations and retains
+// them until commit. Batch consumers must lock the union for the entire batch.
+export async function lockAccountCollaboratorProjection(
+  db: Queryable,
+  account_ids: string[],
+): Promise<void> {
+  for (const account_id of [...new Set(account_ids)].sort()) {
+    await db.query(
+      "SELECT pg_advisory_xact_lock(hashtext($1::text), hashtext($2::text))",
+      ["account-collaborator-index", account_id],
+    );
   }
 }

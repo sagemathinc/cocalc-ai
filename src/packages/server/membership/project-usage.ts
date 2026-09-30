@@ -183,6 +183,17 @@ export async function listUsageProjectsForAccount(
     client,
   ).query<ProjectUsageAttributionRow>(
     `
+      WITH candidates AS MATERIALIZED (
+        SELECT project_id FROM projects
+         WHERE deleted IS NULL AND usage_account_id = $1::uuid
+        UNION
+        SELECT project_id FROM projects
+         WHERE deleted IS NULL AND course ->> 'type' = 'student'
+           AND course ->> 'account_id' = $1::text
+        UNION
+        SELECT project_id FROM projects
+         WHERE deleted IS NULL AND users ? $1::text
+      )
       SELECT
         p.project_id,
         p.host_id,
@@ -190,7 +201,7 @@ export async function listUsageProjectsForAccount(
         p.usage_account_id::text AS usage_account_id,
         p.course,
         owner.account_id AS owner_account_id
-      FROM projects AS p
+      FROM candidates c JOIN projects AS p USING (project_id)
       LEFT JOIN LATERAL (
         SELECT u.account_id_text::text AS account_id
         FROM jsonb_each(COALESCE(p.users, '{}'::jsonb)) AS u(account_id_text, user_data)
@@ -201,12 +212,12 @@ export async function listUsageProjectsForAccount(
       WHERE p.deleted IS NULL
         AND ($2::text IS NULL OR COALESCE(p.owning_bay_id, $2) = $2)
         AND (
-          p.usage_account_id::text = $1
+          p.usage_account_id::text = $1::text
           OR (
             COALESCE(p.course ->> 'type', '') = 'student'
-            AND COALESCE(p.course ->> 'account_id', '') = $1
+            AND COALESCE(p.course ->> 'account_id', '') = $1::text
           )
-          OR owner.account_id = $1
+          OR owner.account_id = $1::text
         )
       ORDER BY p.project_id
     `,

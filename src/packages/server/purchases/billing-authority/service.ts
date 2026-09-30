@@ -4,7 +4,6 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { writeSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 
 import getLogger from "@cocalc/backend/logger";
@@ -68,11 +67,10 @@ import {
 } from "./store";
 
 const logger = getLogger("purchases:billing-authority");
-const INSTANCE_ID = randomUUID();
-const LEASE_MS = 12_000;
-const LOCAL_LEASE_MARGIN_MS = 4_000;
-const HEARTBEAT_MS = 2_000;
-const LEASE_QUERY_TIMEOUT_MS = 2_500;
+let INSTANCE_ID = randomUUID();
+const LEASE_MS = 60_000;
+const HEARTBEAT_MS = 5_000;
+const LEASE_QUERY_TIMEOUT_MS = 10_000;
 const ACTIVATION_QUERY_TIMEOUT_MS = 30_000;
 const IDLE_POLL_MS = 250;
 const ELECTION_RETRY_MS = 1_000;
@@ -102,17 +100,15 @@ const runtime: RuntimeState = {
   draining: false,
   stopping: false,
 };
+let leaseRevoked = false;
 
 let started = false;
-let electionPromise: Promise<void> | undefined;
+let executorPromise: Promise<void> | undefined;
 let pruneTimer: ReturnType<typeof setInterval> | undefined;
 let shutdownHooksInstalled = false;
 
 function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    timer.unref?.();
-  });
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function serializeError(err: unknown): BillingAuthorityError {
@@ -347,6 +343,7 @@ function authorityLocallyActive(lease: ActiveLease): boolean {
     runtime.lease?.instance_id === lease.instance_id &&
     runtime.lease?.generation === lease.generation &&
     performance.now() < runtime.local_deadline_ms &&
+    !leaseRevoked &&
     !runtime.stopping
   );
 }
@@ -381,41 +378,18 @@ async function assertAuthorityFenced(lease: ActiveLease): Promise<void> {
   }
 }
 
-function failStopBillingAuthorityWorker({
-  err,
-  exit = (code) => process.exit(code),
-  report = (message) => {
-    writeSync(2, message);
-  },
-}: {
-  err: unknown;
-  exit?: (code: number) => never;
-  report?: (message: string) => void;
-}): never {
-  runtime.stopping = true;
+function pauseBillingAuthority(err: unknown): void {
+  if (leaseRevoked) return;
+  leaseRevoked = true;
   runtime.local_deadline_ms = 0;
-  // DEBUG logging may be disabled and process.exit does not drain async logs.
-  // Keep the fence intact, but always leave a bounded reason in the journal.
-  try {
-    report(
-      JSON.stringify({
-        event: "billing_authority_fail_stop",
-        time: new Date().toISOString(),
-        pid: process.pid,
-        instance_id: INSTANCE_ID,
-        generation: runtime.lease?.generation,
-        reason: `${err instanceof Error ? err.message : err}`.slice(0, 2048),
-      }) + "\n",
-    );
-  } catch {
-    // A broken log sink must not prevent the safety exit.
-  }
-  logger.error("billing authority lease safety failed; fail-stopping worker", {
-    instance_id: INSTANCE_ID,
-    generation: runtime.lease?.generation,
-    err,
-  });
-  return exit(1);
+  logger.warn(
+    "billing executor paused; waiting for in-flight work before recovery",
+    {
+      instance_id: INSTANCE_ID,
+      generation: runtime.lease?.generation,
+      err,
+    },
+  );
 }
 
 async function executeClaimedCommand({
@@ -433,6 +407,7 @@ async function executeClaimedCommand({
 }): Promise<void> {
   runtime.active_command_id = command_id;
   const executionDb = getClient();
+  executionDb.on("error", pauseBillingAuthority);
   let executionTransactionOpen = false;
   const operation = billingAuthorityOperationName(command);
   const startedAt = Date.now();
@@ -440,11 +415,9 @@ async function executeClaimedCommand({
   let error: BillingAuthorityError | undefined;
   const providerTracker = createBillingAuthorityProviderMutationTracker();
   const commandWatchdog = setTimeout(() => {
-    failStopBillingAuthorityWorker({
-      err: new Error(
-        `billing authority ${lane} command exceeded its runtime bound`,
-      ),
-    });
+    pauseBillingAuthority(
+      new Error(`billing authority ${lane} command exceeded its runtime bound`),
+    );
   }, COMMAND_RUNTIME_MS[lane]);
   commandWatchdog.unref?.();
   try {
@@ -458,6 +431,7 @@ async function executeClaimedCommand({
       promise: beginBillingAuthorityCommandExecution({
         identity: lease,
         db: executionDb,
+        supervised_singleton: true,
       }),
       timeoutMs: LEASE_QUERY_TIMEOUT_MS,
     });
@@ -509,7 +483,7 @@ async function executeClaimedCommand({
       ...(error ? { error } : {}),
     });
   } catch (err) {
-    failStopBillingAuthorityWorker({ err });
+    pauseBillingAuthority(err);
   } finally {
     if (executionTransactionOpen) {
       await executionDb.query("ROLLBACK").catch(() => undefined);
@@ -540,7 +514,8 @@ async function processingLoop(
         timeoutMs: LEASE_QUERY_TIMEOUT_MS,
       });
     } catch (err) {
-      failStopBillingAuthorityWorker({ err });
+      pauseBillingAuthority(err);
+      return;
     }
     if (!claimed) {
       await delay(IDLE_POLL_MS);
@@ -575,8 +550,6 @@ async function heartbeatLoop(lease: ActiveLease): Promise<void> {
         timeoutMs: LEASE_QUERY_TIMEOUT_MS,
       });
       runtime.draining = !renewed.enabled || renewed.draining;
-      runtime.local_deadline_ms =
-        performance.now() + LEASE_MS - LOCAL_LEASE_MARGIN_MS;
       if (runtime.draining && !runtime.active_command_id) {
         await releaseBillingAuthorityLease(lease, client);
         if (
@@ -589,7 +562,8 @@ async function heartbeatLoop(lease: ActiveLease): Promise<void> {
         return;
       }
     } catch (err) {
-      failStopBillingAuthorityWorker({ err });
+      pauseBillingAuthority(err);
+      return;
     }
   }
 }
@@ -599,37 +573,28 @@ async function runLease(
   claimClient: ReturnType<typeof getClient>,
 ): Promise<void> {
   runtime.lease = lease;
+  leaseRevoked = false;
   runtime.draining = false;
-  runtime.local_deadline_ms =
-    performance.now() + LEASE_MS - LOCAL_LEASE_MARGIN_MS;
-  logger.info("billing authority elected", lease);
-  const watchdog = setInterval(() => {
-    if (
-      runtime.lease === lease &&
-      !runtime.stopping &&
-      performance.now() >= runtime.local_deadline_ms
-    ) {
-      failStopBillingAuthorityWorker({
-        err: new Error("billing authority local lease deadline elapsed"),
-      });
-    }
-  }, 250);
-  watchdog.unref?.();
-  try {
-    await Promise.all([
-      processingLoop(lease, claimClient),
-      heartbeatLoop(lease),
-    ]);
-  } finally {
-    clearInterval(watchdog);
-  }
+  runtime.local_deadline_ms = Infinity;
+  logger.info("supervised billing executor serving", lease);
+  // Never start a replacement generation while an old command is still
+  // executing. Revoking its context prevents further provider mutations;
+  // it does not cancel an HTTP request already received by the provider.
+  await Promise.allSettled([
+    processingLoop(lease, claimClient).catch(pauseBillingAuthority),
+    heartbeatLoop(lease).catch(pauseBillingAuthority),
+  ]);
 }
 
-async function electionLoop(): Promise<void> {
+async function executorRecoveryLoop(): Promise<void> {
   assertAuthorityBay();
+  let failures = 0;
   while (!runtime.stopping) {
+    INSTANCE_ID = randomUUID();
     const leaseClient = getClient();
     const claimClient = getClient();
+    leaseClient.on("error", pauseBillingAuthority);
+    claimClient.on("error", pauseBillingAuthority);
     try {
       await boundedDedicatedQuery({
         client: leaseClient,
@@ -659,6 +624,7 @@ async function electionLoop(): Promise<void> {
           instance_id: INSTANCE_ID,
           lease_ms: LEASE_MS,
           db: leaseClient,
+          supervised_singleton: true,
         }),
         timeoutMs: LEASE_QUERY_TIMEOUT_MS,
       });
@@ -702,9 +668,16 @@ async function electionLoop(): Promise<void> {
       }
       await runLease(lease, claimClient);
     } catch (err) {
-      if (runtime.lease) failStopBillingAuthorityWorker({ err });
-      logger.warn("billing authority election attempt failed", { err });
+      pauseBillingAuthority(err);
+      logger.warn("billing executor recovery attempt failed", { err });
     } finally {
+      if (runtime.lease) {
+        await boundedDedicatedQuery({
+          client: leaseClient,
+          promise: releaseBillingAuthorityLease(runtime.lease, leaseClient),
+          timeoutMs: LEASE_QUERY_TIMEOUT_MS,
+        }).catch(() => undefined);
+      }
       await leaseClient.end().catch(() => undefined);
       await claimClient.end().catch(() => undefined);
       runtime.lease = undefined;
@@ -713,7 +686,8 @@ async function electionLoop(): Promise<void> {
       runtime.draining = false;
       runtime.active_command_id = undefined;
     }
-    await delay(ELECTION_RETRY_MS);
+    failures = leaseRevoked ? Math.min(failures + 1, 5) : 0;
+    await delay(Math.min(30_000, ELECTION_RETRY_MS * 2 ** failures));
   }
 }
 
@@ -901,7 +875,9 @@ export async function handleBillingAuthorityTransportRequest(
   }
 }
 
-export function startBillingAuthorityService(): void {
+export function startBillingAuthorityService({
+  executor = false,
+}: { executor?: boolean } = {}): void {
   if (started) return;
   started = true;
   if (!isBillingAuthorityEnabled()) {
@@ -911,12 +887,19 @@ export function startBillingAuthorityService(): void {
     return;
   }
   enableStripeMutationAuthorityEnforcement();
+  // Hubs only submit/status commands. Billing must never own their lifecycle.
+  if (!executor) return;
+  if (process.env.COCALC_BILLING_SINGLETON_LOCKED !== "1") {
+    throw Error(
+      "billing execution requires the process-lifetime singleton lock",
+    );
+  }
   if (getConfiguredClusterRole() === "attached") {
     logger.info("billing authority executor is seed-bay only");
     return;
   }
-  electionPromise = electionLoop();
-  void electionPromise;
+  executorPromise = executorRecoveryLoop();
+  void executorPromise;
   pruneTimer = setInterval(() => {
     if (runtime.lease && authorityLocallyActive(runtime.lease)) {
       void pruneBillingAuthorityCommands().catch((err) =>
@@ -973,7 +956,13 @@ export const __test__ = {
   authorityLocallyActive,
   boundedDedicatedQuery,
   classifyCommandOutcome,
-  failStopBillingAuthorityWorker,
+  pauseBillingAuthority,
+  resetLeaseRevocation: () => {
+    leaseRevoked = false;
+  },
+  processingLoop,
+  runLease,
+  executeClaimedCommand,
   isSubmitRequest,
   serializeError,
   runtime,
