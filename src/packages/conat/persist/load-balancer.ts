@@ -57,10 +57,7 @@ export function initLoadBalancer({
         sub = await client.subscribe(subject);
         for await (const mesg of sub) {
           const id = getId(ids, mesg.subject);
-          // Old clients require a string; new clients explicitly request features.
-          mesg.respondSync(
-            mesg.headers?.socketInfo === 1 ? { id, inboxReturn: 1 } : id,
-          );
+          mesg.respondSync(getPersistServerDiscoveryResponse(id));
         }
       } catch (err) {
         sub?.close();
@@ -69,6 +66,13 @@ export function initLoadBalancer({
       await delay(3000);
     }
   })();
+}
+
+// Keep persistence sockets on their project-scoped return subjects. Confined
+// inbox returns cannot be advertised until routed clients bind the inbox
+// subscription to the same project-host transport as the socket request.
+export function getPersistServerDiscoveryResponse(id: string): string {
+  return id;
 }
 
 // we use a hash so that this takes NO memory, but the assignment

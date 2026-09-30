@@ -5,6 +5,7 @@ Wants=cocalc-bay-conat-persist.service
 Wants=cocalc-bay-conat-router.service
 Wants=cocalc-bay-peer-health.service
 Wants=cocalc-bay-hub-workers.target
+Wants=cocalc-bay-billing.service
 Wants=cocalc-bay-hub-watchdog.timer
 After=network-online.target
 

@@ -1647,6 +1647,8 @@ class BootstrapStateFilesTest(unittest.TestCase):
             self.assertNotIn("bootstrap_connection", public_desired)
             self.assertNotIn("env_lines", public_desired)
             self.assertNotIn("bootstrap-secret", json.dumps(public_desired))
+            self.assertEqual(public_desired["tools_bundle"]["retention_lock_protocol"], 1)
+            self.assertEqual(public_desired["tools_bundle"]["root"], cfg.tools_bundle.root)
             self.assertEqual(
                 public_desired["project_host_bundle"],
                 {
@@ -2651,6 +2653,33 @@ class BootstrapBundleRetentionTest(unittest.TestCase):
             child.name for child in root.iterdir()
             if child.is_dir() and not child.is_symlink()
         )
+
+    def test_tools_pruning_is_delegated_to_project_host(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg, bundle, root, proc_root, _ = self.make_fixture(tmpdir)
+            cfg = replace(cfg, tools_bundle=bundle)
+            with mock.patch.object(bootstrap, "PROC_ROOT", proc_root):
+                bootstrap.prune_bundle_versions(cfg, bundle, keep=1)
+            self.assertEqual(self.remaining(root), [f"v{i}" for i in range(1, 10)])
+
+    def test_tools_extraction_holds_shared_lock_including_reused_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg, bundle, root, proc_root, _ = self.make_fixture(tmpdir)
+            cfg = replace(cfg, tools_bundle=bundle, bootstrap_user="", ssh_user="")
+            lock_path = root / ".artifact.lock"
+            original_resolve = bootstrap.resolve_bundle_spec
+
+            def checked_resolve(cfg, bundle):
+                probe = subprocess.run(["flock", "-n", str(lock_path), "true"])
+                self.assertEqual(probe.returncode, 1)
+                return original_resolve(cfg, bundle)
+
+            with mock.patch.object(bootstrap, "PROC_ROOT", proc_root), mock.patch.object(
+                bootstrap, "resolve_bundle_spec", side_effect=checked_resolve
+            ):
+                bootstrap.extract_bundle(cfg, bundle)
+            self.assertEqual((root / "current").resolve(), root / "v9")
+            self.assertEqual(subprocess.run(["flock", "-n", str(lock_path), "true"]).returncode, 0)
 
     def test_prunes_old_bundle_versions_but_keeps_current_and_desired(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -6165,6 +6194,47 @@ WantedBy=multi-user.target
 
 
 class BootstrapModesTest(unittest.TestCase):
+    def test_status_cannot_enable_cleanup_until_legacy_lifecycle_lock_released(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            export_dir = Path(tmpdir) / "public-lifecycle"
+            export_dir.mkdir()
+            desired_path = export_dir / "bootstrap-desired-state.json"
+            legacy = {"tools_bundle": {"version": "v0"}}
+            desired_path.write_text(json.dumps(legacy))
+            tools_root = Path(tmpdir) / "tools"
+            tools_root.mkdir()
+            cfg = replace(cfg, tools_bundle=replace(
+                cfg.tools_bundle, root=str(tools_root), version="v6",
+            ))
+            lock_path = bootstrap.bootstrap_lock_path(cfg)
+            lock_path.parent.mkdir(parents=True)
+            # Distinct open-file descriptions contend even in one process:
+            # this descriptor represents a still-running legacy invocation.
+            with lock_path.open("a+") as legacy_lock, \
+                mock.patch.dict(os.environ, {"COCALC_BOOTSTRAP_LOCK_TIMEOUT_SECS": "0.05"}), \
+                mock.patch.object(bootstrap, "load_config", return_value=cfg) as load_config, \
+                mock.patch.object(bootstrap, "BOOTSTRAP_LIFECYCLE_EXPORT_DIR", export_dir), \
+                mock.patch.object(bootstrap, "resolve_runtime_user_identity", return_value=(2000, 2000)), \
+                mock.patch.object(bootstrap, "log_line"), \
+                mock.patch.object(bootstrap, "report_bootstrap_status"), \
+                mock.patch("sys.stdout", new_callable=io.StringIO):
+                bootstrap.fcntl.flock(legacy_lock.fileno(), bootstrap.fcntl.LOCK_EX)
+                result = bootstrap.main(["status", "--bootstrap-dir", cfg.bootstrap_dir])
+                self.assertEqual(result, 1)
+                self.assertEqual(json.loads(desired_path.read_text()), legacy)
+                self.assertEqual(load_config.call_count, 1)
+
+                bootstrap.fcntl.flock(legacy_lock.fileno(), bootstrap.fcntl.LOCK_UN)
+                result = bootstrap.main(["status", "--bootstrap-dir", cfg.bootstrap_dir])
+                self.assertEqual(result, 0)
+                desired = json.loads(desired_path.read_text())["tools_bundle"]
+                self.assertEqual(desired["retention_lock_protocol"], 1)
+                self.assertEqual(desired["version"], "v6")
+                self.assertEqual(desired["root"], str(tools_root))
+                # Reload configuration after lock acquisition, not just before.
+                self.assertEqual(load_config.call_count, 3)
+
     def test_bootstrap_operation_lock_times_out_when_another_process_holds_it(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)

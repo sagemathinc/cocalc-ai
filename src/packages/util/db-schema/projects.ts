@@ -80,6 +80,11 @@ Table({
     ],
     pg_custom_indexes: [
       {
+        name: "projects_student_usage_account_idx",
+        query:
+          "((course ->> 'account_id')) WHERE deleted IS NULL AND course ->> 'type' = 'student'",
+      },
+      {
         name: "projects_archive_lifecycle_candidates_idx",
         query:
           "(COALESCE(last_edited, created, make_timestamp(1970, 1, 1, 0, 0, 0)), project_id) " +

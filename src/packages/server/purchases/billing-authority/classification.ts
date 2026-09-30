@@ -66,6 +66,7 @@ const COMMERCIAL_ORDER_READ_METHODS = new Set([
   "reconcilePreview",
   "siteLicenseRevenueAnalytics",
   "stripeQuotePreview",
+  "stripeBillingPreview",
 ]);
 
 const LEGACY_MIGRATION_FINANCIAL_METHODS = new Set([

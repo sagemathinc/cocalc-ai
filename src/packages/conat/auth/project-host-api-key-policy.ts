@@ -16,6 +16,18 @@ export function isProjectHostApiKeySubjectAllowed({
 }): boolean {
   if (type === "sub") {
     if (subject.startsWith(`${binding.reply_prefix}.`)) return true;
+    const persistRoot = `persist.project-${binding.project_id}.`;
+    const persistClient = `${persistRoot}client.`;
+    const socketId = subject.slice(persistClient.length);
+    if (
+      binding.capabilities?.includes("project:exec") === true &&
+      binding.subjects.includes(persistRoot) &&
+      subject.startsWith(persistClient) &&
+      socketId.length > 0 &&
+      !/[.*>]/.test(socketId)
+    ) {
+      return true;
+    }
     // Collaborative editors exchange presence on concrete per-document subjects.
     // This is not permission to subscribe to other runtime services or replies.
     const cursors = `project.${binding.project_id}.pubsub-cursors.`;

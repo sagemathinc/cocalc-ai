@@ -107,33 +107,39 @@ function effectiveArch(): string {
   return normalizeArch(overrideArch ?? arch());
 }
 
-type CodexBinary = "codex" | "codex-code-mode-host";
+// Install companions first and the CLI last, after verifying the complete set.
+const CODEX_BINARIES = ["codex-code-mode-host", "bwrap", "codex"] as const;
+type CodexBinary = (typeof CODEX_BINARIES)[number];
 type CodexArch = "x64" | "arm64";
 
 const CODEX_RELEASE_SHA256: Record<CodexArch, Record<CodexBinary, string>> = {
   x64: {
-    codex: "b77fd874b5a50202565cf2f3e5453da7e02b0a2267536ba3f89191228c828c9c",
+    bwrap: "3ed21b52f82cff34c770051be6b629f34395d60920ef34edbb808d3fe7cb1535",
+    codex: "4a7f064507ef52c3be5cd80c4b0f64db7f4d24d8761b99a15ff778a33f1ce61d",
     "codex-code-mode-host":
-      "479fe7126c887c139dd566b841cdb43cd958b624ae9b3da45c6deb5d7a0209c6",
+      "780f2fb1964a274012a33b5d5b1307d16a6373cd40f49a02557d188a80312c41",
   },
   arm64: {
-    codex: "31fdecc5cc723c606107b2e1a4c827c7ff723772bcb2020524f9eee610f9fa90",
+    bwrap: "9b02232e501f494b37a88078b217a614d8774496e12cd7c60530322564dbe061",
+    codex: "48c91d03b10f0793b567937db4a0b4fa771feb8eba0c998a88d7957f3a5a7953",
     "codex-code-mode-host":
-      "03608f5c74cfed1b81c19c0600dacdc200e66d7ee7940688834c48f5b8c3e1c1",
+      "47a9d08e58e0ac1c4d7f555437f2db544968fb149ee75c0f703198451bce04b1",
   },
 };
 
-// Stock and patched Codex report the same version; verify the matched pair.
+// Stock and patched Codex report the same version; verify the matched set.
 const CODEX_BINARY_SHA256: Record<CodexArch, Record<CodexBinary, string>> = {
   x64: {
-    codex: "dfd786bf2c7aa91be045f01180d275970f645edcbac8627ea320535d56c6462d",
+    bwrap: "925ee97249f7e98087ce438f00a5fab6dbacc79df351dd0047d635c01a50e4e0",
+    codex: "dadc2487a19335898cd1fafee95e329c37b11b8375574a8d43b1c5c0973a4349",
     "codex-code-mode-host":
-      "103f8a655d328f925ab14b8966a169c447a5e6ed476edac30b3304d668fef914",
+      "38f6b0be8cdc7918aad813429c52dd871d88eb8866e5b0d46b34361e12877538",
   },
   arm64: {
-    codex: "8969d5fe2e65325b1c1f061cc99d17ae34812733f2df1b47241a1627cca91669",
+    bwrap: "6f345780f44a37c12df38ebda789b1120e51d254b4bf856597ecc82b4cc6d0c9",
+    codex: "987e5becb09d0ab43587aa0c4d50fda71008306a39fc392220fb655d78dc27c8",
     "codex-code-mode-host":
-      "7fe28fe6f1bd341313148c9c168dee1c00a7286f65b2c830b556d4957667af90",
+      "4e417cfe98df787d1240ed79808df643dbf5ffcc0f19f8ea62bbf2da94e0cc4c",
   },
 };
 
@@ -155,12 +161,18 @@ function getCodexReleaseAssetName(
   return `${binary}-v${SPEC.codex.VERSION}-linux-${currentArch}.xz`;
 }
 
+function getCodexBinaryPath(binary: CodexBinary): string {
+  return binary === "bwrap"
+    ? join(binPath, "codex-resources", binary)
+    : join(binPath, binary);
+}
+
 function getCodexInstallScript(version: string): string {
   const releaseBase = `https://github.com/sagemathinc/codex/releases/download/v${version}-cocalc-musl-1`;
   const currentArch = getCodexArch();
-  const binaries = ["codex", "codex-code-mode-host"] as const;
+  const binaries = CODEX_BINARIES;
   const paths = Object.fromEntries(
-    binaries.map((binary) => [binary, join(binPath, binary)]),
+    binaries.map((binary) => [binary, getCodexBinaryPath(binary)]),
   );
   const archives = Object.fromEntries(
     binaries.map((binary) => [binary, `${paths[binary]}.xz.tmp`]),
@@ -175,12 +187,12 @@ function getCodexInstallScript(version: string): string {
     ];
   });
   return [
-    `rm -f "${paths.codex}.tmp" "${paths["codex-code-mode-host"]}.tmp" "${archives.codex}" "${archives["codex-code-mode-host"]}"`,
+    `mkdir -p "${join(binPath, "codex-resources")}"`,
+    `rm -f ${binaries.map((binary) => `"${paths[binary]}.tmp" "${archives[binary]}"`).join(" ")}`,
     ...downloads,
-    `rm -f "${archives.codex}" "${archives["codex-code-mode-host"]}"`,
-    `chmod a+x "${paths.codex}.tmp" "${paths["codex-code-mode-host"]}.tmp"`,
-    `mv "${paths["codex-code-mode-host"]}.tmp" "${paths["codex-code-mode-host"]}"`,
-    `mv "${paths.codex}.tmp" "${paths.codex}"`,
+    `rm -f ${binaries.map((binary) => `"${archives[binary]}"`).join(" ")}`,
+    `chmod a+x ${binaries.map((binary) => `"${paths[binary]}.tmp"`).join(" ")}`,
+    ...binaries.map((binary) => `mv "${paths[binary]}.tmp" "${paths[binary]}"`),
   ].join(" && ");
 }
 
@@ -405,7 +417,7 @@ export const SPEC = {
     desc: "codex",
     path: join(binPath, "codex"),
     getVersion: "codex --version | awk '{print $2}'",
-    VERSION: "0.156.0",
+    VERSION: "0.159.2",
     platforms: ["linux"],
     script: () => getCodexInstallScript(SPEC.codex.VERSION),
     BASE: "https://github.com/sagemathinc/codex/releases",
@@ -565,8 +577,10 @@ export async function alreadyInstalled(app: App) {
   }
   if (app === "codex") {
     const hashes = CODEX_BINARY_SHA256[getCodexArch()];
-    for (const binary of ["codex", "codex-code-mode-host"] as const) {
-      if (!(await matchesBinarySha256(join(binPath, binary), hashes[binary]))) {
+    for (const binary of CODEX_BINARIES) {
+      if (
+        !(await matchesBinarySha256(getCodexBinaryPath(binary), hashes[binary]))
+      ) {
         return false;
       }
     }

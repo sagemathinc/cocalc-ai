@@ -5,6 +5,7 @@ in order exactly once message delivery.
 */
 
 import { SOCKET_HEADER_SEQ, type Role } from "./util";
+import { SOCKET_RETURN_HEADER } from "../core/message-headers";
 import { EventEmitter } from "events";
 import {
   type Message,
@@ -107,6 +108,8 @@ export class Receiver extends EventEmitter {
     this.seq.next = seq + 1;
     this.seq.emitted = seq;
     delete mesg.headers?.[SOCKET_HEADER_SEQ];
+    // Routing metadata is not part of the application's data headers.
+    delete mesg.headers?.[SOCKET_RETURN_HEADER];
     //     console.log("emitMessage", mesg.data, {
     //       seq,
     //       next: this.seq.next,

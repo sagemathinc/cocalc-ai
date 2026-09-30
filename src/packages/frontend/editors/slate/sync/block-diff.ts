@@ -16,6 +16,7 @@ import {
 } from "slate";
 import { apply_patch, diff_main, make_patch } from "@cocalc/util/dmp";
 import { hash_string } from "@cocalc/util/misc";
+import { slate_to_markdown } from "../slate-to-markdown";
 
 const SIGNATURE_START = 0xe000; // private use area
 
@@ -48,10 +49,6 @@ export function shouldDeferBlockPatch(
   );
 }
 
-function normalizeText(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
-
 function blockPayload(node: Descendant): string {
   if (!Element.isElement(node)) {
     return Text.isText(node) ? node.text : "";
@@ -74,13 +71,21 @@ function blockPayload(node: Descendant): string {
       const value = (node as any).value ?? Node.string(node);
       return `math:${value}`;
     }
-    case "bullet_list":
-    case "ordered_list":
-      return `${type}:${Node.string(node)}`;
-    case "paragraph":
-      return `p:${normalizeText(Node.string(node))}`;
     default:
-      return `${type}:${Node.string(node)}`;
+      // The signature must change whenever the block's content changes,
+      // including structure-only changes such as list nesting or marks, which
+      // leave the concatenated text unchanged. Otherwise a focused editor
+      // treats the remote block as already applied and silently keeps stale
+      // content that its next save writes back.
+      return `${type}:${blockMarkdown(node)}`;
+  }
+}
+
+function blockMarkdown(node: Element): string {
+  try {
+    return slate_to_markdown([node]);
+  } catch {
+    return JSON.stringify(node);
   }
 }
 

@@ -27,6 +27,7 @@ describe("codex new chat defaults", () => {
       getDefaultCodexNewChatDefaults,
       getCodexNewChatModeOptions,
       codexNewChatDefaultsEqual,
+      normalizeCodexNewChatDefaults,
     } = require("../codex-defaults");
 
     const saved = saveCodexNewChatDefaults({
@@ -37,7 +38,7 @@ describe("codex new chat defaults", () => {
     });
 
     expect(saved).toEqual({
-      model: "gpt-6-astra",
+      model: "gpt-6.1-sol",
       reasoning: "extra_high",
       sessionMode: "workspace-write",
       serviceTier: "fast",
@@ -55,6 +56,13 @@ describe("codex new chat defaults", () => {
       { value: "workspace-write", label: "Workspace write" },
       { value: "full-access", label: "Full access" },
     ]);
+    // Updating the recommendation must not replace an explicit saved choice.
+    expect(
+      normalizeCodexNewChatDefaults({
+        model: "gpt-6-astra",
+        reasoning: "high",
+      }),
+    ).toMatchObject({ model: "gpt-6-astra", reasoning: "high" });
   });
 
   it("replaces retired stored model defaults for new thread setup", () => {
@@ -100,9 +108,9 @@ describe("codex new chat defaults", () => {
     const { getDefaultNewThreadSetup } = require("../chatroom-thread-panel");
 
     expect(getDefaultNewThreadSetup()).toMatchObject({
-      model: "gpt-6-astra",
+      model: "gpt-6.1-sol",
       codexConfig: {
-        model: "gpt-6-astra",
+        model: "gpt-6.1-sol",
         reasoning: "high",
         sessionMode: "full-access",
         serviceTier: "fast",
@@ -147,7 +155,7 @@ describe("codex new chat defaults", () => {
         serviceTier: "fast",
       }),
     ).toMatchObject({
-      model: "gpt-6-astra",
+      model: "gpt-6.1-sol",
       sessionMode: "full-access",
       serviceTier: "fast",
     });

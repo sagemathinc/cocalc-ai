@@ -13,6 +13,42 @@ import type {
 } from "@cocalc/conat/ai/acp/types";
 
 const MAX_TERMINAL_OUTPUT = 24_000;
+const MAX_ACTIVITY_PROJECTION_EVENTS = 256;
+const MAX_ACTIVITY_PROJECTION_TEXT = 32_768;
+const OVERSIZED_ACTIVITY_NOTICE =
+  "[Activity preview omitted for this long turn. Stored transcript and final reply are unchanged.]";
+
+function exceedsActivityProjectionBudget(
+  events: readonly AcpStreamMessage[],
+): boolean {
+  if (events.length > MAX_ACTIVITY_PROJECTION_EVENTS) return true;
+  let length = 0;
+  for (const message of events) {
+    if (message.type === "summary") {
+      length += message.finalResponse?.length ?? 0;
+    } else if (message.type === "error") {
+      length += message.error.length;
+    } else if (message.type === "event") {
+      const event = message.event;
+      if (event.type === "message" || event.type === "thinking") {
+        length += event.text.length;
+      } else if (event.type === "terminal") {
+        length +=
+          (event.chunk?.length ?? 0) +
+          (event.output?.length ?? 0) +
+          (event.command?.length ?? 0) +
+          (event.cwd?.length ?? 0) +
+          (event.exitStatus?.signal?.length ?? 0);
+        for (const arg of event.args ?? []) {
+          length += arg.length + 1;
+          if (length > MAX_ACTIVITY_PROJECTION_TEXT) return true;
+        }
+      }
+    }
+    if (length > MAX_ACTIVITY_PROJECTION_TEXT) return true;
+  }
+  return false;
+}
 
 /** Interleave compact agent preview text and delivered guidance by time. */
 export function projectAcpActivityGuidanceBlocks(
@@ -122,6 +158,9 @@ function recordTerminalEvent(
 export function projectAcpActivityMarkdown(
   events: readonly AcpStreamMessage[],
 ): string | undefined {
+  // Replay joins can repeatedly scan accumulated text. Bound input work before
+  // rendering, not just the output size, since this also runs on shared hosts.
+  if (exceedsActivityProjectionBudget(events)) return OVERSIZED_ACTIVITY_NOTICE;
   const terminals = new Map<string, TerminalActivity>();
   const errors: string[] = [];
   for (const message of events) {

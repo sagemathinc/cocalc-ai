@@ -67,6 +67,11 @@ export class SimpleInputMerge {
   // later persisted echo of the same save is ignored if the user has typed more.
   public noteLocalEcho(value: string): void {
     const next = value ?? "";
+    // The backing store now holds the editor's own committed value, so any
+    // requested render of an earlier merge is resolved or superseded. Keeping
+    // it would let a later remote rebase use one of its stale render
+    // candidates as the base and replay already-saved text.
+    this.requestedLocalUpdate = undefined;
     this.last = next;
     if (this.pending.length === 0) {
       this.pending = [next];
@@ -99,6 +104,7 @@ export class SimpleInputMerge {
     // advanced beyond pending.  In that case, we must advance baseline first
     // and stop; attempting to rebase from stale `last` can duplicate text.
     if (this.pending.includes(remote)) {
+      this.clearSupersededRequest(remote);
       this.noteApplied(remote);
       return;
     }
@@ -164,14 +170,31 @@ export class SimpleInputMerge {
 
     // The user edited while the requested update was being rendered. Decide
     // which value in the render chain that edit started from, then rebase only
-    // that genuine local delta.
+    // that genuine local delta. The reconciled baseline is always a candidate,
+    // so an old render candidate is never preferred over it.
     this.requestedLocalUpdate = undefined;
-    const base = requested.renderCandidates.reduce((closest, candidate) =>
-      editCost(candidate, observed) < editCost(closest, observed)
-        ? candidate
-        : closest,
+    const base = [this.last, ...requested.renderCandidates].reduce(
+      (closest, candidate) =>
+        editCost(candidate, observed) < editCost(closest, observed)
+          ? candidate
+          : closest,
     );
     return { local: observed, base };
+  }
+
+  // Only an echoed save supersedes a render request. Until it echoes, an edit
+  // saved from the pre-update UI still needs its original render base when a
+  // concurrent remote update arrives.
+  private clearSupersededRequest(saved: string): void {
+    const requested = this.requestedLocalUpdate;
+    if (requested == null) return;
+    if (
+      saved === requested.latest ||
+      requested.renderCandidates.includes(saved)
+    ) {
+      return;
+    }
+    this.requestedLocalUpdate = undefined;
   }
 
   public previewMerge(opts: { remote: string; local: string }): {

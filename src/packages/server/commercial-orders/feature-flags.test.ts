@@ -60,6 +60,8 @@ describe("commercial receivables action capabilities", () => {
         "retryStripeEvent",
         "sendInvoice",
         "stripeQuotePreview",
+        "stripeBillingPreview",
+        "syncStripeBilling",
         "update",
         "updateBillingDetails",
         "updateCollectionMode",

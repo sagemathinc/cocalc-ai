@@ -10,6 +10,7 @@ import {
   getProjectCollaborationAccountId,
   getProjectUserAccountIds,
   getProjectUsageAccountId,
+  listUsageProjectsForAccount,
   setProjectUsageAccountId,
 } from "./project-usage";
 
@@ -74,6 +75,70 @@ describe("project usage attribution", () => {
     await expect(getProjectUsageAccountId(project_id)).resolves.toBe(
       owner_account_id,
     );
+  });
+
+  it("selects indexed candidates without changing attribution precedence or bay scope", async () => {
+    const ids = Array.from({ length: 7 }, () => uuid());
+    const rows = [
+      { users: { [owner_account_id]: { group: "owner" } } },
+      {
+        users: { [owner_account_id]: { group: "owner" } },
+        usage: explicit_usage_account_id,
+      },
+      {
+        users: { [student_account_id]: { group: "owner" } },
+        course: { type: "student", account_id: owner_account_id },
+      },
+      {
+        users: {
+          [student_account_id]: { group: "owner" },
+          [owner_account_id]: { group: "collaborator" },
+        },
+      },
+      { users: {}, usage: owner_account_id, bay: "bay-other" },
+      { users: {}, usage: owner_account_id, deleted: true },
+      {
+        users: { [owner_account_id]: { group: "owner" } },
+        course: { type: "student", account_id: student_account_id },
+      },
+    ];
+    for (const [i, row] of rows.entries()) {
+      await getPool().query(
+        `INSERT INTO projects (project_id, users, usage_account_id, course, owning_bay_id, deleted)
+        VALUES ($1,$2::jsonb,$3,$4::jsonb,$5,$6)`,
+        [
+          ids[i],
+          JSON.stringify(row.users),
+          row.usage ?? null,
+          JSON.stringify(row.course ?? null),
+          row.bay ?? "bay-test",
+          row.deleted ?? null,
+        ],
+      );
+    }
+    try {
+      const actual = (
+        await listUsageProjectsForAccount(
+          owner_account_id,
+          undefined,
+          "bay-test",
+        )
+      )
+        .map((x) => x.project_id)
+        .filter((x) => ids.includes(x))
+        .sort();
+      expect(actual).toEqual([ids[0], ids[2]].sort());
+      const all = (await listUsageProjectsForAccount(owner_account_id)).map(
+        (x) => x.project_id,
+      );
+      expect(all).toContain(ids[4]);
+      expect(all).not.toContain(ids[5]);
+    } finally {
+      await getPool().query(
+        "DELETE FROM projects WHERE project_id=ANY($1::uuid[])",
+        [ids],
+      );
+    }
   });
 
   it("lists every project user for sole-owner abuse attribution", async () => {

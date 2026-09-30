@@ -10,6 +10,8 @@ import {
   remapSelectionInDocWithSentinels,
   shouldDeferBlockPatch,
 } from "../sync/block-diff";
+import { markdown_to_slate } from "../markdown-to-slate/parse";
+import { slate_to_markdown } from "../slate-to-markdown";
 
 function applyAndExpect(prev: Descendant[], next: Descendant[]) {
   const editor = createEditor();
@@ -536,5 +538,34 @@ describe("block diff signatures", () => {
     const remapped = remapDocWithSentinels(prev, next, selection);
     expect(remapped?.anchor.path).toEqual([1, 0]);
     expect(remapped?.anchor.offset).toBe(7);
+  });
+
+  // Regression: these remote changes leave every block's concatenated text
+  // unchanged. A signature built from that text alone made a focused editor
+  // ignore them while claiming the new markdown, so its next save reverted
+  // them (and fed a stale merge base that duplicated content).
+  test.each([
+    [
+      "list nesting",
+      "intro\n\n- - Harald has notes\n- other\n\nend\n",
+      "intro\n\n- Harald has notes\n- other\n\nend\n",
+    ],
+    [
+      "inline marks",
+      "intro\n\nsome plain words\n\nend\n",
+      "intro\n\nsome **plain** words\n\nend\n",
+    ],
+  ])("detects and applies a %s change", (_, before, after) => {
+    const prev = markdown_to_slate(before, false, {});
+    const next = markdown_to_slate(after, false, {});
+    const chunks = diffBlockSignatures(prev, next);
+    expect(chunks.some((chunk) => chunk.op !== "equal")).toBe(true);
+
+    const editor = createEditor();
+    editor.children = prev;
+    Editor.withoutNormalizing(editor, () => {
+      applyBlockDiffPatch(editor, prev, next, chunks);
+    });
+    expect(slate_to_markdown(editor.children)).toBe(slate_to_markdown(next));
   });
 });

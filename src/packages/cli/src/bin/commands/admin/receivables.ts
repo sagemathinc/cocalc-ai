@@ -1150,6 +1150,62 @@ function registerBillingCommands(
 
   mutationOptions(
     billing
+      .command("sync-stripe <order>")
+      .description(
+        "preview or synchronize approved billing email/address to the linked Stripe customer",
+      )
+      .option(
+        "--preview-hash <sha256>",
+        "exact reviewed preview hash; required with --commit",
+      ),
+    "synchronize institutional Stripe billing details",
+  ).action(
+    async (
+      orderRef: string,
+      opts: MutationOptions & { previewHash?: string },
+      command: Command,
+    ) => {
+      await deps.withContext(
+        command,
+        "admin receivables billing sync-stripe",
+        async (ctx) => {
+          const reason = requireReason(opts.reason);
+          const order = await ctx.hub.commercialOrders.get({
+            id: normalizeOrderReference(orderRef),
+            reason,
+          });
+          if (!opts.commit) {
+            return await ctx.hub.commercialOrders.stripeBillingPreview({
+              id: order.id,
+              reason,
+            });
+          }
+          if (
+            !opts.previewHash ||
+            !opts.idempotencyKey ||
+            !opts.expectedVersion
+          ) {
+            throw new Error(
+              "--commit requires --preview-hash, --expected-version and --idempotency-key from the reviewed operation",
+            );
+          }
+          // Unlike ordinary mutations, replay must retain the original reviewed
+          // version/hash even if reconciliation already advanced the order version.
+          return await ctx.hub.commercialOrders.syncStripeBilling({
+            id: order.id,
+            reason,
+            source: "cli",
+            expected_version: Number(opts.expectedVersion),
+            idempotency_key: opts.idempotencyKey,
+            preview_hash: opts.previewHash,
+          });
+        },
+      );
+    },
+  );
+
+  mutationOptions(
+    billing
       .command("update <order>")
       .description(
         "preview or correct billing details without reopening fulfilled terms",
@@ -1189,7 +1245,7 @@ function registerBillingCommands(
               request as unknown as JsonObject,
               {
                 safety:
-                  "This preserves approval and fulfillment, changes only future invoice recipient details, and is rejected after a live invoice exists.",
+                  "This preserves approval and fulfillment, changes only future invoice recipient details, and is rejected after a live invoice exists. For an existing Stripe customer, preview billing sync-stripe after this update; updating AR alone does not change Stripe.",
               },
             );
           }

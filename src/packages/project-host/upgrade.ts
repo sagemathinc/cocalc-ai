@@ -840,6 +840,7 @@ async function listLivePodmanMountedArtifactVersions(
 async function listLiveMountedArtifactVersions(
   root: string,
   procRoot = "/proc",
+  includePodman = true,
 ): Promise<string[]> {
   const roots = new Set([normalizeRootPath(root)]);
   try {
@@ -878,20 +879,147 @@ async function listLiveMountedArtifactVersions(
       }
     }
   }
-  for (const version of await listLivePodmanMountedArtifactVersions(root)) {
-    versions.add(version);
+  if (includePodman) {
+    for (const version of await listLivePodmanMountedArtifactVersions(root)) {
+      versions.add(version);
+    }
   }
   return [...versions].sort();
+}
+
+async function referencedToolsVersions(
+  root: string,
+  procRoot = "/proc",
+  run = runCommandCapture,
+): Promise<string[]> {
+  const env = podmanEnv();
+  const listContainers = async () => {
+    const { stdout } = await run("podman", ["ps", "-aq", "--no-trunc"], {
+      env,
+      timeoutMs: 15_000,
+    });
+    return stdout.trim().split(/\s+/).filter(Boolean).sort();
+  };
+  const ids = await listContainers();
+  const versions = new Set(
+    await listLiveMountedArtifactVersions(root, procRoot, false),
+  );
+  const roots = new Set([path.resolve(root), await fs.promises.realpath(root)]);
+  // Inspect stopped containers too: they may still refer to an older bundle.
+  // Structured Mounts avoids treating JSON punctuation as part of a version.
+  for (let offset = 0; offset < ids.length; offset += 32) {
+    const batch = ids.slice(offset, offset + 32);
+    const { stdout } = await run(
+      "podman",
+      [
+        "inspect",
+        "--type",
+        "container",
+        "--format",
+        '{"id":{{json .ID}},"pid":{{json .State.Pid}},"mounts":{{json .Mounts}}}',
+        ...batch,
+      ],
+      { env, timeoutMs: 30_000 },
+    );
+    const seen = new Set<string>();
+    for (const line of stdout.trim().split("\n").filter(Boolean)) {
+      const row = JSON.parse(line);
+      if (
+        !batch.includes(row.id) ||
+        seen.has(row.id) ||
+        !Number.isInteger(row.pid) ||
+        row.pid < 0 ||
+        !Array.isArray(row.mounts)
+      ) {
+        throw Error("incomplete container mount inspection");
+      }
+      seen.add(row.id);
+      const liveMountVersions = new Map<string, Set<string>>();
+      // The global proc scan is best effort (rootless hosts cannot read other
+      // users' processes). Reading each managed live container is mandatory.
+      if (row.pid > 0) {
+        const mountinfo = await fs.promises.readFile(
+          path.join(procRoot, `${row.pid}`, "mountinfo"),
+          "utf8",
+        );
+        if (!mountinfo.trim()) throw Error("empty live container mount table");
+        for (const line of mountinfo.split("\n")) {
+          const destination = decodeProcPath(line.split(" ")[4] ?? "");
+          const mounted = new Set<string>();
+          for (const candidateRoot of roots) {
+            for (const version of extractMountedArtifactVersionsFromMountinfo(
+              line,
+              candidateRoot,
+            )) {
+              versions.add(version);
+              mounted.add(version);
+            }
+          }
+          if (mounted.size) liveMountVersions.set(destination, mounted);
+        }
+      }
+      for (const mount of row.mounts) {
+        if (typeof mount.Source !== "string")
+          throw Error("invalid container mount source");
+        for (const candidateRoot of roots) {
+          const relative = path.relative(
+            candidateRoot,
+            path.resolve(mount.Source),
+          );
+          const ancestor = path.relative(
+            path.resolve(mount.Source),
+            candidateRoot,
+          );
+          if (
+            relative === "" ||
+            (ancestor !== ".." &&
+              !ancestor.startsWith(`..${path.sep}`) &&
+              !path.isAbsolute(ancestor))
+          )
+            throw Error("container mounts the entire tools directory");
+          if (relative.startsWith("../") || path.isAbsolute(relative)) continue;
+          const version = relative.split(path.sep)[0];
+          if (version === "current" || version === "previous") {
+            // A retargeted alias says nothing about what a live container
+            // mounted earlier. If its concrete mount cannot be mapped, wait.
+            if (
+              row.pid > 0 &&
+              !liveMountVersions.get(mount.Destination)?.size
+            ) {
+              throw Error("unable to resolve live tools alias mount");
+            }
+            versions.add(
+              path.basename(
+                await fs.promises.realpath(path.join(candidateRoot, version)),
+              ),
+            );
+          } else if (isArtifactVersionName(version)) versions.add(version);
+        }
+      }
+    }
+    if (seen.size !== batch.length)
+      throw Error("incomplete container mount inspection");
+  }
+  if (JSON.stringify(ids) !== JSON.stringify(await listContainers())) {
+    throw Error("container inventory changed during retention scan");
+  }
+  // Read these last so project starts during the scan contribute references.
+  for (const reference of listRuntimeArtifactReferences().tools) {
+    versions.add(reference.version);
+  }
+  return [...versions];
 }
 
 async function pruneVersionDirs(opts: {
   root: string;
   currentLink: string;
   desiredDir: string;
-  protectedVersions?: string[];
+  protectedVersions?: string[] | null;
   keep?: number;
   maxBytes?: number;
+  keepRecent?: boolean;
 }) {
+  if (opts.protectedVersions === null) return;
   const keep = opts.keep ?? 3;
   const maxBytes = opts.maxBytes;
   const entries = await fs.promises.readdir(opts.root, { withFileTypes: true });
@@ -951,6 +1079,16 @@ async function pruneVersionDirs(opts: {
   const sorted = dirs
     .filter((entry): entry is VersionDirEntry => entry != null)
     .sort((a, b) => b.mtimeMs - a.mtimeMs || b.name.localeCompare(a.name));
+  if (opts.keepRecent) {
+    for (const entry of sorted.slice(0, keep)) keepRealPaths.add(entry.real);
+    try {
+      keepRealPaths.add(
+        await fs.promises.realpath(path.join(opts.root, "previous")),
+      );
+    } catch {
+      // Hosts upgraded from older software have no previous link yet.
+    }
+  }
   let retainedCount = 0;
   let retainedBytes = 0;
   for (const entry of sorted) {
@@ -982,15 +1120,18 @@ async function pruneVersionDirs(opts: {
   }
 }
 
-async function protectedArtifactVersions({
-  artifact,
-  desiredVersion,
-  root,
-}: {
-  artifact: CanonicalArtifact;
-  desiredVersion: string;
-  root: string;
-}): Promise<string[]> {
+async function protectedArtifactVersions(
+  {
+    artifact,
+    desiredVersion,
+    root,
+  }: {
+    artifact: CanonicalArtifact;
+    desiredVersion: string;
+    root: string;
+  },
+  readToolsReferences = referencedToolsVersions,
+): Promise<string[] | null> {
   const versions = new Set<string>();
   const desired = `${desiredVersion ?? ""}`.trim();
   if (desired) {
@@ -1018,6 +1159,26 @@ async function protectedArtifactVersions({
       versions.add(version);
     }
   } else {
+    if (artifact === "tools") {
+      try {
+        for (const version of await configuredToolsVersions(root))
+          versions.add(version);
+        for (const version of await readToolsReferences(root))
+          versions.add(version);
+      } catch (err) {
+        // Cleanup is optional. An uncertain scan must neither remove live tools
+        // nor turn a successful software upgrade into an outage.
+        logger.warn(
+          "upgrade: skipping tools pruning after incomplete reference scan",
+          {
+            root,
+            err: describeError(err),
+          },
+        );
+        return null;
+      }
+      return [...versions];
+    }
     const references = listRuntimeArtifactReferences();
     const artifactReferences =
       artifact === "project" ? references.project_bundle : references.tools;
@@ -1041,25 +1202,51 @@ async function protectedArtifactVersions({
         versions.add(version);
       }
     }
-    if (artifact === "tools") {
-      const runningContainerIds = await listRunningPodmanContainerIds();
-      if (runningContainerIds.length > 0) {
-        const installedVersions = await listInstalledArtifactVersions(root);
-        logger.info(
-          "upgrade: protecting all installed tools versions while project containers are running",
-          {
-            root,
-            running_containers: runningContainerIds.length,
-            versions: installedVersions,
-          },
-        );
-        for (const version of installedVersions) {
-          versions.add(version);
-        }
-      }
-    }
   }
   return [...versions];
+}
+
+async function configuredToolsVersions(root: string): Promise<string[]> {
+  const bootstrapDir =
+    process.env.COCALC_PROJECT_HOST_BOOTSTRAP_DIR?.trim() ||
+    "/var/lib/cocalc/bootstrap-lifecycle";
+  const desired = JSON.parse(
+    await fs.promises.readFile(
+      path.join(bootstrapDir, "bootstrap-desired-state.json"),
+      "utf8",
+    ),
+  ).tools_bundle;
+  // Old bootstraps do not coordinate activation with our collector. Wait for
+  // bootstrap reconciliation to publish support before enabling deletion.
+  if (
+    desired?.retention_lock_protocol !== 1 ||
+    typeof desired.root !== "string"
+  )
+    throw Error("bootstrap does not support coordinated tools retention");
+  const realRoot = await fs.promises.realpath(root);
+  if ((await fs.promises.realpath(desired.root)) !== realRoot)
+    throw Error("bootstrap tools root does not match retention root");
+  const versions: string[] = [];
+  if (
+    typeof desired.version !== "string" ||
+    !isArtifactVersionName(desired.version)
+  )
+    throw Error("invalid bootstrap desired tools version");
+  versions.push(desired.version);
+  const configured = process.env.COCALC_PROJECT_TOOLS;
+  if (configured) {
+    const real = await fs.promises.realpath(configured);
+    const relative = path.relative(realRoot, real);
+    if (relative === "")
+      throw Error("configured tools path is entire tools root");
+    if (
+      !relative.startsWith(`..${path.sep}`) &&
+      relative !== ".." &&
+      !path.isAbsolute(relative)
+    )
+      versions.push(relative.split(path.sep)[0]);
+  }
+  return versions;
 }
 
 async function resolveArtifact(
@@ -1286,6 +1473,7 @@ async function downloadAndInstallUnlocked(
       }),
       keep: retentionPolicy.keep_count,
       maxBytes: retentionPolicy.max_bytes,
+      keepRecent: resolved.canonicalArtifact === "tools",
     });
     logger.info("upgrade: staged artifact without changing current symlink", {
       artifact: resolved.artifact,
@@ -1311,6 +1499,12 @@ async function downloadAndInstallUnlocked(
     resolved.containerRuntimeContract = contract;
   }
   try {
+    if (resolved.canonicalArtifact === "tools" && previousTarget) {
+      await replaceSymlink(
+        path.join(resolved.root, "previous"),
+        previousTarget,
+      );
+    }
     await replaceSymlink(resolved.currentLink, resolved.versionDir);
     if (resolved.canonicalArtifact === "container-runtime") {
       try {
@@ -1343,6 +1537,7 @@ async function downloadAndInstallUnlocked(
       }),
       keep: retentionPolicy.keep_count,
       maxBytes: retentionPolicy.max_bytes,
+      keepRecent: resolved.canonicalArtifact === "tools",
     });
     logger.info("upgrade: updated current symlink", {
       artifact: resolved.artifact,
@@ -1359,10 +1554,10 @@ async function downloadAndInstallUnlocked(
   }
 }
 
-async function downloadAndInstall(
-  resolved: ResolvedArtifact,
-): Promise<UpgradeSoftwareResult> {
-  const key = resolved.currentLink;
+async function withArtifactInstallLock<T>(
+  key: string,
+  work: () => Promise<T>,
+): Promise<T> {
   const previous = installTails.get(key) ?? Promise.resolve();
   let release!: () => void;
   const tail = new Promise<void>((resolve) => {
@@ -1371,13 +1566,125 @@ async function downloadAndInstall(
   installTails.set(key, tail);
   await previous;
   try {
-    return await downloadAndInstallUnlocked(resolved);
+    return await work();
   } finally {
     release();
     if (installTails.get(key) === tail) {
       installTails.delete(key);
     }
   }
+}
+
+async function downloadAndInstall(
+  resolved: ResolvedArtifact,
+): Promise<UpgradeSoftwareResult> {
+  return await withArtifactInstallLock(resolved.currentLink, () =>
+    resolved.canonicalArtifact === "tools"
+      ? withToolsFilesystemLock(resolved.root, () =>
+          downloadAndInstallUnlocked(resolved),
+        )
+      : downloadAndInstallUnlocked(resolved),
+  );
+}
+
+async function withToolsFilesystemLock<T>(
+  root: string,
+  work: () => Promise<T>,
+): Promise<T> {
+  await fs.promises.mkdir(root, { recursive: true });
+  const lockPath = path.join(root, ".artifact.lock");
+  // Linux flock works on a read-only descriptor too. Bootstrap may have
+  // created this persistent inode as root; never unlink or replace it.
+  const handle = await fs.promises
+    .open(lockPath, "a", 0o644)
+    .catch(async (err) => {
+      if (err.code !== "EACCES") throw err;
+      return await fs.promises.open(lockPath, "r");
+    });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn("flock", ["-x", "-w", "30", "3"], {
+        stdio: ["ignore", "ignore", "ignore", handle.fd],
+      });
+      child.once("error", reject);
+      child.once("exit", (code) =>
+        code === 0
+          ? resolve()
+          : reject(Error("tools artifact lock unavailable")),
+      );
+    });
+    // The inherited fd shares an open-file description with this process;
+    // the kernel lock survives flock's exit until our descriptor is closed.
+    return await work();
+  } finally {
+    await handle.close();
+  }
+}
+
+export async function pruneInstalledTools(
+  root = process.env.COCALC_PROJECT_TOOLS
+    ? path.dirname(process.env.COCALC_PROJECT_TOOLS)
+    : DEFAULT_TOOLS_ROOT,
+): Promise<void> {
+  const currentLink = path.join(root, "current");
+  await withArtifactInstallLock(currentLink, () =>
+    withToolsFilesystemLock(root, async () => {
+      let desiredDir: string;
+      try {
+        desiredDir = await fs.promises.realpath(currentLink);
+      } catch (err: any) {
+        if (err?.code === "ENOENT") return;
+        throw err;
+      }
+      const policy = retentionPolicyForArtifact("tools");
+      const protectedVersions = await protectedArtifactVersions({
+        artifact: "tools",
+        desiredVersion: path.basename(desiredDir),
+        root,
+      });
+      await pruneVersionDirs({
+        root,
+        currentLink,
+        desiredDir,
+        protectedVersions,
+        keep: policy.keep_count,
+        maxBytes: policy.max_bytes,
+        keepRecent: true,
+      });
+    }),
+  );
+}
+
+export function startRuntimeArtifactMaintenance({
+  sweep = pruneInstalledTools,
+  initialDelayMs = 5 * 60_000 + Math.random() * 60_000,
+  intervalMs = 60 * 60_000,
+}: {
+  sweep?: () => Promise<void>;
+  initialDelayMs?: number;
+  intervalMs?: number;
+} = {}): () => void {
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout>;
+  const tick = async () => {
+    try {
+      await sweep();
+    } catch (err) {
+      logger.warn("runtime artifact maintenance failed", {
+        err: describeError(err),
+      });
+    }
+    if (!stopped) {
+      timer = setTimeout(() => void tick(), intervalMs);
+      timer.unref?.();
+    }
+  };
+  timer = setTimeout(() => void tick(), initialDelayMs);
+  timer.unref?.();
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+  };
 }
 
 export async function scheduleProjectHostRestart() {
@@ -1509,6 +1816,10 @@ export const __test__ = {
   listLivePodmanMountedArtifactVersions,
   pruneVersionDirs,
   protectedArtifactVersions,
+  referencedToolsVersions,
+  withArtifactInstallLock,
+  withToolsFilesystemLock,
+  configuredToolsVersions,
   runCommandCapture,
   scheduledProjectHostReconcileCommand,
 };

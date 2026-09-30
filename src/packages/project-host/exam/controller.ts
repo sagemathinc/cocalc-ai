@@ -631,15 +631,16 @@ export async function applyExamRunLocal({
     const row = runRow(run.run_id)!;
     await runProjectSmokeTest(row);
     await verifyExamPublicRoute(config.hostname);
+    // The run may have been ended while it was being prepared.
     getDatabase()
       .prepare(
-        "UPDATE exam_runs SET status='ready', last_error=NULL, updated_at_ms=? WHERE run_id=?",
+        "UPDATE exam_runs SET status='ready', last_error=NULL, updated_at_ms=? WHERE run_id=? AND status='preparing'",
       )
       .run(Date.now(), run.run_id);
   } catch (err) {
     getDatabase()
       .prepare(
-        "UPDATE exam_runs SET status='error', last_error=?, updated_at_ms=? WHERE run_id=?",
+        "UPDATE exam_runs SET status='error', last_error=?, updated_at_ms=? WHERE run_id=? AND status='preparing'",
       )
       .run(`${err}`, Date.now(), run.run_id);
     throw err;
