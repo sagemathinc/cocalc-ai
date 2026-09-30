@@ -1087,8 +1087,10 @@ export default function Message({
     }
   }
 
-  async function handleResubmitToAgent() {
-    if (!actions || !acpResubmitParentMessage) return;
+  async function resubmitToAgent() {
+    if (!actions || !acpResubmitParentMessage) {
+      throw Error("Request is no longer retryable");
+    }
     setResubmittingAgentParentId(acpResubmitParentMessageId);
     try {
       const ok = await resendCanceledAcpTurn({
@@ -1097,14 +1099,20 @@ export default function Message({
         useCurrentPayment: true,
       });
       if (!ok) {
-        antdMessage.error("Unable to resubmit this request to Agent.");
+        throw Error("Unable to resubmit this request to Agent.");
       }
-    } catch (err) {
-      antdMessage.error(`Unable to resubmit this request to Agent: ${err}`);
     } finally {
       setResubmittingAgentParentId((current) =>
         current === acpResubmitParentMessageId ? undefined : current,
       );
+    }
+  }
+
+  async function handleResubmitToAgent() {
+    try {
+      await resubmitToAgent();
+    } catch (err) {
+      antdMessage.error(`Unable to resubmit this request to Agent: ${err}`);
     }
   }
 
@@ -2171,7 +2179,7 @@ export default function Message({
           threadKey={threadLookup.threadLookupKey}
           credentialId={claudeSubscriptionCredentialId}
           details={renderedMessageValue}
-          onRetry={canRetry ? handleResubmitToAgent : undefined}
+          onRetry={canRetry ? resubmitToAgent : undefined}
         />
       );
     }
