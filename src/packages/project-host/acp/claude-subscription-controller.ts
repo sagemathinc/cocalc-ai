@@ -404,6 +404,9 @@ ${skill}
         COCALC_AGENT_TOKEN_FILE: cliLease.containerPath,
         COCALC_AGENT_IDENTITY_FILE: cliLease.identityContainerPath ?? "",
         COCALC_AGENT_MENTION_REFERENCES_FILE: "",
+        // Holds the managed CoCalc connector key only during a turn whose
+        // agent has the connector enabled.
+        COCALC_CONNECTOR_API_KEY_FILE: cliLease.connectorContainerPath ?? "",
         COCALC_API_URL: resolveProjectRuntimeApiUrl(),
       };
       applyProjectRuntimeCliEnv(cliEnv, accountId);
@@ -483,6 +486,12 @@ ${skill}
       resumeTools: toolBridge ? () => toolBridge!.resume() : undefined,
       setAsyncQuestionHandler: toolBridge
         ? (handler) => toolBridge!.setAsyncQuestionHandler(handler)
+        : undefined,
+      beginConnectorTurn: cliLease
+        ? (chat) => cliLease!.beginConnectorTurn(chat)
+        : undefined,
+      endConnectorTurn: cliLease
+        ? () => cliLease!.endConnectorTurn()
         : undefined,
       stdin: proc.stdin,
       stdout: proc.stdout,

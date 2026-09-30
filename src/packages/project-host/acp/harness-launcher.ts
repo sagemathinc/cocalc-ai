@@ -227,6 +227,7 @@ export async function launchHarnessInProject(
       "COCALC_AGENT_TOKEN",
       "COCALC_AGENT_IDENTITY_FILE",
       "COCALC_AGENT_MENTION_REFERENCES_FILE",
+      "COCALC_CONNECTOR_API_KEY_FILE",
     ])
       delete env[key];
     Object.assign(env, identityContext, {
@@ -236,6 +237,10 @@ export async function launchHarnessInProject(
     });
     if (cliLease.identityContainerPath)
       env.COCALC_AGENT_IDENTITY_FILE = cliLease.identityContainerPath;
+    // Holds the managed CoCalc connector key only during a turn whose agent
+    // has the connector enabled (written and revoked per turn below).
+    if (cliLease.connectorContainerPath)
+      env.COCALC_CONNECTOR_API_KEY_FILE = cliLease.connectorContainerPath;
     applyProjectRuntimeCliEnv(env, accountId);
     if (credential.mode === "account-api-key") {
       if (
@@ -340,10 +345,13 @@ export async function launchHarnessInProject(
     void closed.then(cleanup).catch(() => {
       logger.warn("ACP container cleanup failed", { projectId, name });
     });
+    const lease = cliLease;
     return {
       stdin: proc.stdin,
       stdout: proc.stdout,
       stderr: proc.stderr,
+      beginConnectorTurn: (chat) => lease.beginConnectorTurn(chat),
+      endConnectorTurn: () => lease.endConnectorTurn(),
       closed,
       stop: async () => {
         await cleanup();

@@ -64,6 +64,7 @@ jest.mock("@cocalc/project-runner/run/env", () => ({
     PROVIDER_KEY: "project-only",
     COCALC_BEARER_TOKEN: "stale-image-token",
     COCALC_AGENT_IDENTITY_FILE: "/stale/identity",
+    COCALC_CONNECTOR_API_KEY_FILE: "/stale/connector-key",
   }),
 }));
 jest.mock("@cocalc/project-runner/run/mounts", () => ({
@@ -357,4 +358,36 @@ test("natural exit removes its sidecar", async () => {
   await handle.stop();
   expect(mockUnmount).toHaveBeenCalledTimes(1);
   expect(mockExec).toHaveBeenCalledTimes(2);
+});
+
+test("the sidecar reads the agent's CoCalc connector key only from its own lease", async () => {
+  const beginConnectorTurn = jest.fn(async () => {});
+  const endConnectorTurn = jest.fn(async () => {});
+  mockLease.mockResolvedValue({
+    containerPath: "/tmp/scoped/token",
+    identityContainerPath: "/tmp/scoped/identity",
+    connectorContainerPath: "/tmp/scoped/connector-key",
+    beginConnectorTurn,
+    endConnectorTurn,
+    close: mockCloseLease,
+  });
+  const handle = await launchHarnessInProject(binding);
+  const args = mockExec.mock.calls[0][1];
+  expect(args).toContain(
+    "COCALC_CONNECTOR_API_KEY_FILE=/tmp/scoped/connector-key",
+  );
+  expect(args.join(" ")).not.toContain("/stale/connector-key");
+  const chat = { project_id: binding.projectId, path: "a.chat" } as any;
+  await handle.beginConnectorTurn!(chat);
+  expect(beginConnectorTurn).toHaveBeenCalledWith(chat);
+  await handle.endConnectorTurn!();
+  expect(endConnectorTurn).toHaveBeenCalledTimes(1);
+  await handle.stop();
+});
+
+test("an unregistered sidecar gets no connector key file", async () => {
+  const handle = await launchHarnessInProject(binding);
+  const args = mockExec.mock.calls[0][1];
+  expect(args.join(" ")).not.toContain("COCALC_CONNECTOR_API_KEY_FILE");
+  await handle.stop();
 });
