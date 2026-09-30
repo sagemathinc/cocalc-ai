@@ -22,7 +22,9 @@ function Toolbar({
   initial = "people",
   onNavigate = jest.fn(),
   onAction = jest.fn(),
+  scanSupported = false,
 }: {
+  scanSupported?: boolean;
   initial?: CollaboratorsView;
   onNavigate?: (path: string) => void;
   onAction?: () => void;
@@ -32,6 +34,7 @@ function Toolbar({
     <>
       <WorkspaceToolbar
         active
+        scanSupported={scanSupported}
         id="workspace"
         view={view}
         onView={(next) => {
@@ -139,4 +142,24 @@ test("Invites uses its own search and Invite action, not conversation controls",
   ).toHaveFocus();
   await user.keyboard("{Enter}");
   expect(onAction).toHaveBeenCalledTimes(1);
+});
+
+test("Scan Files is a keyboard-reachable tab without directory controls", async () => {
+  const user = userEvent.setup();
+  const onNavigate = jest.fn();
+  render(<Toolbar scanSupported onNavigate={onNavigate} />);
+  await user.tab();
+  await user.keyboard("{End}");
+  expect(screen.getByRole("tab", { name: "Scan Files" })).toHaveFocus();
+  expect(screen.getByRole("tabpanel", { name: "Scan Files" })).toBeVisible();
+  expect(onNavigate).toHaveBeenLastCalledWith("people/scan-files");
+  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Filters/ })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Invite to project" }),
+  ).toBeNull();
+  await user.keyboard("{ArrowRight}");
+  expect(screen.getByRole("tab", { name: "Conversations" })).toHaveFocus();
+  await user.keyboard("{ArrowLeft}");
+  expect(screen.getByRole("tab", { name: "Scan Files" })).toHaveFocus();
 });

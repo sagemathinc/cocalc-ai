@@ -13,7 +13,8 @@ export type CollaboratorsView =
   | "conversations"
   | "people"
   | "projects"
-  | "invites";
+  | "invites"
+  | "scan-files";
 export type ProjectView = NonNullable<CollaborationProjectQuery["view"]>;
 
 export interface CollaboratorsRoute {

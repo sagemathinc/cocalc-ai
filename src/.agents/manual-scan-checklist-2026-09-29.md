@@ -6,21 +6,21 @@ worker must already be enabled on that development instance
 (`collaborators_enabled` and `COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE=1`). This
 checklist does not require changing production settings.
 
-Record the site/build, the operation identifier shown in the dialog, and any
+Record the site/build, the operation identifier shown in the Scan Files tab, and any
 step that behaves differently from the expected result. No credentials are
 needed in the report.
 
-1. **Selection.** Open People → **Scan projects**. Search for a project, clear
+1. **Selection.** Open People → **Scan Files**. Search for a project, clear
    the search, and select two projects. Confirm the selected count is two. If
    you have more than 25 projects, use **Next project page**, then select an
    additional project; the count must retain selections from both pages.
    **Select all eligible projects** must show the account-wide count, including
    projects outside the search results/current page.
 2. **Start and reload.** Click **Start scan** and expand **Operation identifier**.
-   Close/reopen the dialog and reload the browser. The same operation and fixed
+   Switch to another People tab, return to **Scan Files**, and reload the browser. The same operation and fixed
    total must remain; reopening must not create another scan. Progress reports
    projects processed and separate outcomes, not an estimated percentage of files.
-3. **Two tabs.** Before starting another batch, open the dialog in two tabs with
+3. **Two tabs.** Before starting another batch, open **Scan Files** in two browser tabs with
    different selections. Start from one, then promptly start from the other if
    its button is still enabled. Both must show one operation ID and the first
    admitted selection; the second selection must not be added to it. If the
@@ -50,8 +50,9 @@ needed in the report.
    current progress and Cancel remain available. Reenable the setting: no batch
    starts until you explicitly click Start. Ordinary indexing and existing
    resources remain usable throughout.
-7. **Keyboard and display.** Open/start/cancel using Tab, Enter and Space. Escape
-   closes the dialog and restores focus to **Scan projects**. Repeat in dark
+7. **Keyboard and display.** Use arrow keys, Home and End to select **Scan Files** in the
+   People tab row. Tab enters its panel and controls; Enter and Space operate
+   start/selection/cancel. Switch away and back without submitting new work. Repeat in dark
    mode and at 200% zoom/narrow width: controls and result details remain readable
    and reachable without losing actions offscreen.
 8. **Ordinary collaboration.** Create/open a supported conversation normally,

@@ -44,7 +44,7 @@ import { HumanConversationSearch } from "./conversation-search";
 import type { ConversationSearchHit } from "../chat/conversation-search/runner";
 import { NewConversation } from "./new-conversation";
 import { InvitationHistory } from "./invitation-history";
-import { ScanProjects } from "./scan-projects";
+import { ScanFiles } from "./scan-projects";
 import { boundPeopleHistoryApi } from "./people-history-api";
 import { ContactOverview, PeopleContacts } from "./people-contacts";
 import type { PeopleContact } from "@cocalc/util/people-invitation-history";
@@ -156,7 +156,7 @@ function AccountCollaboratorsPage(props: CollaboratorsPageProps) {
   const revision = useDirectoryRevision(
     api,
     props.active,
-    view === "invites"
+    view === "invites" || view === "scan-files"
       ? undefined
       : demandProjects.length
         ? { kind: "projects", project_ids: demandProjects }
@@ -292,7 +292,7 @@ function CollaboratorsWorkspace({
         scope,
       });
     },
-    active && view !== "invites",
+    active && view !== "invites" && view !== "scan-files",
   );
 
   useEffect(() => {
@@ -474,13 +474,14 @@ function CollaboratorsWorkspace({
           compact={conversationOpen}
           controlsTarget={conversationOpen ? conversationToolbar : null}
           active={active}
+          scanSupported={revision.scanSupported}
           id={toolbarId}
           view={view}
           onView={(view) =>
             onNavigate({
               view,
-              projectIds: listProjectIds,
-              personId: listPersonId,
+              projectIds: view === "scan-files" ? undefined : listProjectIds,
+              personId: view === "scan-files" ? undefined : listPersonId,
             })
           }
           input={input}
@@ -549,7 +550,23 @@ function CollaboratorsWorkspace({
           onClose={() => setError("")}
         />
       )}
-      {view === "invites" ? (
+      {view === "scan-files" ? (
+        <div
+          role="tabpanel"
+          id={`${toolbarId}-panel-scan-files`}
+          aria-labelledby={`${toolbarId}-tab-scan-files`}
+          style={{ flex: 1, minHeight: 0, overflowY: "auto" }}
+          tabIndex={0}
+        >
+          {active &&
+            revision.ready &&
+            (revision.scanSupported ? (
+              <ScanFiles key={accountId} api={api} accountId={accountId} />
+            ) : (
+              <p>File scanning is not available on this server.</p>
+            ))}
+        </div>
+      ) : view === "invites" ? (
         <div
           role="tabpanel"
           id={`${toolbarId}-panel-invites`}
@@ -608,9 +625,6 @@ function CollaboratorsWorkspace({
                 className="collaborators-conversation-toolbar"
                 ref={setConversationToolbar}
               />
-            )}
-            {active && revision.ready && revision.scanSupported && (
-              <ScanProjects key={accountId} api={api} accountId={accountId} />
             )}
             <DirectoryResults
               hideOptions

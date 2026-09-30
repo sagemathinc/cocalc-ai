@@ -311,3 +311,15 @@ test.each([
   expect(route.routeError).toBeTruthy();
   expect(collaboratorsTargetPath(route)).toBe("people/invalid");
 });
+
+test("Scan Files has a reloadable canonical People address", () => {
+  expect(collaboratorsTargetPath({ view: "scan-files" })).toBe(
+    "people/scan-files",
+  );
+  expect(parseCollaboratorsRoute(["scan-files"])).toEqual({
+    view: "scan-files",
+  });
+  expect(parsePageTarget("people/scan-files")).toMatchObject({
+    collaborators: { view: "scan-files" },
+  });
+});

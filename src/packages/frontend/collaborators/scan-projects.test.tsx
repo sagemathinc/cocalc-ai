@@ -1,6 +1,6 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ScanProjects } from "./scan-projects";
+import { ScanFiles } from "./scan-projects";
 import type { DirectoryApi } from "./workspace-api";
 const accountId = "account";
 function setup() {
@@ -34,21 +34,21 @@ function setup() {
     scanProjects,
     api,
     user: userEvent.setup(),
-    render: () => render(<ScanProjects api={api} accountId={accountId} />),
+    render: () => render(<ScanFiles api={api} accountId={accountId} />),
     disable: () => {
       enabled = false;
     },
   };
 }
 beforeEach(() => sessionStorage.clear());
-test("keyboard selection starts a fixed all-project batch and escape restores focus", async () => {
+test("keyboard selection starts a fixed all-project batch and returning only observes", async () => {
   const f = setup();
-  f.render();
+  const first = f.render();
   await f.user.tab();
-  expect(screen.getByRole("button", { name: "Scan projects" })).toHaveFocus();
-  await f.user.keyboard("{Enter}");
-  const dialog = await screen.findByRole("dialog", { name: "Scan projects" });
-  const all = await within(dialog).findByRole("checkbox", {
+  expect(
+    screen.getByRole("textbox", { name: "Search projects" }),
+  ).toHaveFocus();
+  const all = await screen.findByRole("checkbox", {
     name: "Select all eligible projects (30)",
   });
   all.focus();
@@ -63,11 +63,8 @@ test("keyboard selection starts a fixed all-project batch and escape restores fo
     f.scanProjects.mock.calls.find(([r]) => r.action === "start")![0]
       .project_ids,
   ).toBe("all");
-  await f.user.keyboard("{Escape}");
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Scan projects" })).toHaveFocus(),
-  );
-  await f.user.keyboard("{Enter}");
+  first.unmount();
+  f.render();
   await screen.findByRole("status");
   expect(
     f.scanProjects.mock.calls.filter(([r]) => r.action === "start"),
@@ -76,7 +73,6 @@ test("keyboard selection starts a fixed all-project batch and escape restores fo
 test("disabled admission keeps cancellation and status inspectable", async () => {
   const f = setup();
   f.render();
-  await f.user.click(screen.getByRole("button", { name: "Scan projects" }));
   await f.user.click(
     await screen.findByRole("checkbox", { name: "First project" }),
   );
@@ -100,7 +96,6 @@ test("disabled admission keeps cancellation and status inspectable", async () =>
 test("a lost submission is recovered without resubmitting on reopen", async () => {
   const f = setup();
   const first = f.render();
-  await f.user.click(screen.getByRole("button", { name: "Scan projects" }));
   await f.user.click(
     await screen.findByRole("checkbox", { name: "First project" }),
   );
@@ -112,7 +107,6 @@ test("a lost submission is recovered without resubmitting on reopen", async () =
   );
   first.unmount();
   f.render();
-  await f.user.click(screen.getByRole("button", { name: "Scan projects" }));
   const retry = await screen.findByRole("button", {
     name: "Retry same scan request",
   });

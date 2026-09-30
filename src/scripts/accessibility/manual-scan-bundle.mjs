@@ -9,16 +9,30 @@ export const require = createRequire(
 );
 const { build } = require("esbuild");
 export async function scanBrowserBundle(temp) {
+  const pageCss = await readFile(
+    join(root, "packages/frontend/collaborators/page.css"),
+    "utf8",
+  );
   await build({
     stdin: {
       contents: `
-      import React from 'react'; import {createRoot} from 'react-dom/client';
+      import React, {useState} from 'react'; import {createRoot} from 'react-dom/client';
       import {ConfigProvider,theme} from 'antd';
-      import {ScanProjects} from '${join(root, "packages/frontend/collaborators/scan-projects.tsx")}';
+      import {ScanFiles} from '${join(root, "packages/frontend/collaborators/scan-projects.tsx")}';
+      import {appearanceStyleSheet} from '@cocalc/util/appearance-palette';
+      import {PeopleViewTabs} from '${join(root, "packages/frontend/collaborators/workspace-tabs.tsx")}';
       const params=new URL(location.href).searchParams; const dark=params.has('dark'); const actor=params.get('actor')??'first';
-      document.body.style.background=dark?'#141414':'white';document.body.style.color=dark?'white':'black';
-      createRoot(document.getElementById('root')).render(<ConfigProvider theme={{algorithm:dark?theme.darkAlgorithm:theme.defaultAlgorithm,token:{motion:false}}}>
-      <ScanProjects accountId={actor} api={{scanProjects:async input=>{const r=await fetch(actor==='first'?'/rpc':'/rpc/second',{method:'POST',body:JSON.stringify(input)});const value=await r.json(); if(!r.ok) throw Error(value.error);return value;}}}/></ConfigProvider>);
+      document.documentElement.dataset.cocalcTheme=dark?'dark':'light';
+      const style=document.createElement('style');style.textContent=appearanceStyleSheet()+${JSON.stringify(pageCss)};document.head.append(style);
+      document.getElementById('root').className='collaborators-page';
+      const api={scanProjects:async input=>{const r=await fetch(actor==='first'?'/rpc':'/rpc/second',{method:'POST',body:JSON.stringify(input)});const value=await r.json(); if(!r.ok) throw Error(value.error);return value;}};
+      function App(){ const [view,setView]=useState('conversations'); return <>
+        <PeopleViewTabs id="people" view={view} onView={setView} scanSupported/>
+        <div role="tabpanel" id={'people-panel-'+view} aria-labelledby={'people-tab-'+view} tabIndex={0}>
+          {view==='scan-files' && <ScanFiles accountId={actor} api={api}/>}
+        </div></>; }
+      createRoot(document.getElementById('root')).render(<ConfigProvider theme={{algorithm:dark?theme.darkAlgorithm:theme.defaultAlgorithm,token:{motion:false}}}><App/></ConfigProvider>);
+
     `,
       loader: "tsx",
       resolveDir: join(root, "packages/frontend"),

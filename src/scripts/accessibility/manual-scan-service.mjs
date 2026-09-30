@@ -55,8 +55,8 @@ try {
   const url = `http://127.0.0.1:${server.address().port}`;
   await page.goto(url);
   await page.keyboard.press("Tab");
-  await page.keyboard.press("Enter");
-  const dialog = page.getByRole("dialog", { name: "Scan projects" });
+  await page.keyboard.press("End");
+  const dialog = page.getByRole("tabpanel", { name: "Scan Files" });
   await dialog.waitFor();
   const search = page.getByRole("textbox", { name: "Search projects" });
   await search.fill("Unavailable storage");
@@ -90,9 +90,7 @@ try {
     dialog.getByRole("list", { name: "Project scan results" }),
   ).toContainText(`${unavailableId}: unavailable`);
   await page.reload();
-  await page
-    .getByRole("button", { name: "Scan projects", exact: true })
-    .click();
+  await page.getByRole("tab", { name: "Scan Files", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("2 of 2");
   assert.equal(calls.filter((c) => c.input.action === "start").length, 1);
   await dialog
@@ -116,17 +114,18 @@ try {
   assert.equal(firstStarts.length, 2);
   assert.equal(firstStarts[0].input.project_ids, "all");
   assert.deepEqual(firstStarts[1].input.project_ids, [unavailableId]);
-  await page.keyboard.press("Escape");
+  await page.getByRole("tab", { name: "Scan Files" }).focus();
+  await page.keyboard.press("Home");
+  await expect(dialog).toHaveCount(0);
+  await page.keyboard.press("End");
   await expect(
-    page.getByRole("button", { name: "Scan projects", exact: true }),
+    page.getByRole("tab", { name: "Scan Files", exact: true }),
   ).toBeFocused();
 
   // The second authenticated human has an independent home-bay worker. Hold
   // that worker until Cancel has durably arrived, then use normal recovery.
   await page.goto(`${url}/?actor=second`);
-  await page
-    .getByRole("button", { name: "Scan projects", exact: true })
-    .click();
+  await page.getByRole("tab", { name: "Scan Files", exact: true }).click();
   await dialog
     .getByRole("checkbox", { name: "Available storage", exact: true })
     .check();
@@ -142,9 +141,7 @@ try {
     dialog.getByRole("list", { name: "Project scan results" }),
   ).toContainText(`${availableId}: cancelled`);
   await page.reload();
-  await page
-    .getByRole("button", { name: "Scan projects", exact: true })
-    .click();
+  await page.getByRole("tab", { name: "Scan Files", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("1 of 1");
   assert.equal(
     calls.filter((c) => c.actor === "/rpc/second" && c.input.action === "start")

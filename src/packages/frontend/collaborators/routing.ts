@@ -31,7 +31,11 @@ export function parseCollaboratorsRoute(
   }
   const [segment, ...rest] = parts;
   const view = segment === "collaborators" ? "people" : segment;
-  if (!["conversations", "people", "projects", "invites"].includes(view)) {
+  if (
+    !["conversations", "people", "projects", "invites", "scan-files"].includes(
+      view,
+    )
+  ) {
     return { routeError: "This People address is not valid." };
   }
   const result: ParsedCollaboratorsRoute = {

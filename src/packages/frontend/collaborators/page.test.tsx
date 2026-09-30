@@ -70,6 +70,7 @@ const mockSavePreferences = jest.fn(async (key, value) => {
   mockSettings = mockSettings.set(key, value);
 });
 const mockApi = {
+  scanProjects: jest.fn(),
   check: jest.fn(),
   listPeople: jest.fn(),
   listProjects: jest.fn(),
@@ -1284,4 +1285,42 @@ test("selected-resource lease resets reauthorize in place, preserve composer foc
     view.unmount();
     jest.useRealTimers();
   }
+});
+
+test("Scan Files opens inline, observes without starting, and survives leaving the tab", async () => {
+  const user = userEvent.setup();
+  mockApi.check.mockResolvedValue({
+    revision: "scan",
+    reset: true,
+    poll_after_ms: 5000,
+    scan_supported: true,
+  });
+  mockApi.scanProjects.mockResolvedValue({
+    enabled: true,
+    total: 1,
+    projects: [{ project_id: "geometry", title: "Geometry Lab" }],
+  });
+  render(<Workspace initial={{ view: "conversations" }} />);
+  const tab = await screen.findByRole("tab", { name: "Scan Files" });
+  await user.click(tab);
+  const panel = screen.getByRole("tabpanel", { name: "Scan Files" });
+  await within(panel).findByRole("checkbox", { name: "Geometry Lab" });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Scan projects" })).toBeNull();
+  expect(tab).toHaveFocus();
+  await user.tab();
+  expect(panel).toHaveFocus();
+  await user.tab();
+  expect(
+    within(panel).getByRole("textbox", { name: "Search projects" }),
+  ).toHaveFocus();
+  await user.click(screen.getByRole("tab", { name: "Invites" }));
+  await user.click(tab);
+  await within(screen.getByRole("tabpanel", { name: "Scan Files" })).findByRole(
+    "checkbox",
+    { name: "Geometry Lab" },
+  );
+  expect(
+    mockApi.scanProjects.mock.calls.map(([request]) => request.action),
+  ).toEqual(["status", "projects", "status", "projects"]);
 });

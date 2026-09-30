@@ -4,7 +4,52 @@ Date: 2026-09-29. This is an initial gate report, not a completed scaling rollou
 
 ## Current Completion Audit
 
-### Latest Checkpoint: Host Recovery And Live Cancellation (2026-09-30)
+### Latest Checkpoint: Scan Files Tab (2026-09-30)
+
+The People workspace now exposes **Scan Files** as a tab at
+`/people/scan-files`. Its contents are the former Scan projects modal controls:
+project selection, start, progress, cancel, paginated results, and explicit retry.
+The old button/modal are removed. Tab entry, return, and reload only observe
+existing operations; they do not start filesystem work. The scan view does not
+request the ordinary directory list or a directory-demand lease. Disabled
+admissions still permit status and cancellation on scan-capable servers.
+
+Validation for this change:
+
+- 105 focused frontend tests pass (scan controls, workspace page, toolbar and routes).
+- Frontend typecheck and lint pass; full `pnpm --dir src build:dev` passes.
+  The separate static development bundle also passes and is loaded on the site.
+- Browser accessibility checks pass in light/dark mode at native 100%/200% zoom
+  and 320 CSS pixels: tab keyboard navigation, selection, cancel, reload,
+  paginated partial results, explicit retry, long operation-ID reflow, and axe.
+- The real-service browser acceptance passes in 124.181 seconds: reachable
+  storage succeeds, a deprovisioned host yields unavailable, cooldown and retry
+  retain their semantics, and the second account cancels and reloads.
+  Two earlier attempts timed out while builds overlapped validation; the clean
+  post-build run passed. Temporary diagnostics were removed.
+- On `lite1b.cocalc.ai`, the tab and direct URL render the scan panel inline.
+  Keyboard Home/End selects Conversations/Scan Files, the old button/dialog are
+  absent, and return/reload retains operation
+  `745ad313-a26f-474a-9b1d-00675bc39fb8`.
+
+A separate host settings-refresh race was reproduced and fixed in
+`afe016eac489ecb361e90ad070a34e12068c64c1`: concurrent callers now await the
+same refresh instead of transiently treating the feature as disabled. Three
+regressions failed before the fix; 38 focused project-host tests and its
+reference typecheck passed afterward. Host-1 promoted bundle
+`20260930T021315Z-afe016eac489-dirty-e3b0c442` at 02:16 UTC.
+
+Full natural traversal on this development host remains unverified. The new
+live operation above reached 301 entries and 2 sources, then ended unavailable
+at 02:29:48 UTC. The bounded diagnostic records a host-control timeout involving
+hub discovery/catalog/config RPCs, unlike the earlier false-disabled error.
+The hub subsequently showed account request-cap saturation and browser
+connection errors; all three development hubs were restarted after the build.
+This is not evidence of a successful full live scan or production capacity.
+The exact stop/reservation recovery remains in force. Independent release review
+and an explicit canary decision remain open gates.
+
+### Earlier Checkpoint: Host Recovery And Live Cancellation (2026-09-30)
 
 The chronological evidence below is retained for audit. The development host is
 now upgraded, two-account collaboration without Scan has passed, and live

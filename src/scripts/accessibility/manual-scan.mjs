@@ -1,4 +1,4 @@
-// Render the real Scan dialog and keyboard boundary with a deterministic RPC
+// Render the real Scan Files tab and keyboard boundary with a deterministic RPC
 // fixture. This validates browser behavior, not a deployed hub or host.
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -43,7 +43,7 @@ try {
       if (input.action === "start") {
         starts.push(input);
         operation = {
-          op_id: "operation",
+          op_id: "a44e3f9e-6496-4269-a9fd-5fcb898b5f78",
           status: "running",
           cancelling: false,
           total: 30,
@@ -132,8 +132,8 @@ try {
         },
       );
       await page.keyboard.press("Tab");
-      await page.keyboard.press("Enter");
-      const dialog = page.getByRole("dialog", { name: "Scan projects" });
+      await page.keyboard.press("End");
+      const dialog = page.getByRole("tabpanel", { name: "Scan Files" });
       await dialog.waitFor();
       const select = dialog.getByRole("checkbox", {
         name: "Select all eligible projects (30)",
@@ -148,9 +148,7 @@ try {
       assert.equal(starts[0].project_ids, "all");
       await page.reload();
       assert.equal(await page.evaluate(() => innerWidth), 320);
-      await page
-        .getByRole("button", { name: "Scan projects", exact: true })
-        .click();
+      await page.getByRole("tab", { name: "Scan Files", exact: true }).click();
       await page.getByRole("status").waitFor();
       assert.equal(starts.length, 1);
       enabled = false;
@@ -167,7 +165,7 @@ try {
       await page.addScriptTag({ content: axe });
       const audit = await page.evaluate(
         async () =>
-          await window.axe.run(document.querySelector('[role="dialog"]'), {
+          await window.axe.run(document.querySelector("main"), {
             runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa"] },
           }),
       );
@@ -177,6 +175,13 @@ try {
           nodes: v.nodes.map((n) => n.target),
         })),
         [],
+      );
+      await dialog.getByText("Operation identifier", { exact: true }).click();
+      assert.equal(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+        true,
       );
       for (const name of [
         "Refresh scan status",
@@ -226,11 +231,14 @@ try {
         starts[1].project_ids,
         projects.slice(25).map((p) => p.project_id),
       );
-      await page.keyboard.press("Escape");
+      await page.getByRole("tab", { name: "Scan Files" }).focus();
+      await page.keyboard.press("Home");
       await dialog.waitFor({ state: "hidden" });
+      await page.keyboard.press("End");
+      await dialog.waitFor();
       assert.equal(
         await page
-          .getByRole("button", { name: "Scan projects", exact: true })
+          .getByRole("tab", { name: "Scan Files", exact: true })
           .evaluate((el) => el === document.activeElement),
         true,
       );

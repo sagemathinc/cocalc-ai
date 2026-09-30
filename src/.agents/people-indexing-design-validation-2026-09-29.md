@@ -86,10 +86,13 @@ it is an explicit import/recovery operation, not a prerequisite for ordinary
 collaboration. If a newly created supported conversation requires Scan to appear,
 fix the registration/update path rather than normalize that workflow.
 
-The user opens **Scan projects**, searches/selects projects (or selects all
+The user opens the **Scan Files** tab in People (`/people/scan-files`),
+searches/selects projects (or selects all
 eligible projects), reviews the selected count, and explicitly starts one LRO.
 Resolve "all" to a fixed, authorized project set at submission; later projects
 are not silently added. Persist that set and paginate large selections/results.
+The tab contains the scan controls inline; opening, returning or reloading
+only observes existing work. It never submits or retries a scan automatically.
 Projects excluded from this selection are not traversed by this operation.
 Not scanning a project does not hide resources registered by ordinary activity;
 global-view visibility preferences are a separate concern.
