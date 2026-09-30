@@ -14,7 +14,7 @@ import {
   Text,
   Transforms,
 } from "slate";
-import { apply_patch, diff_main, make_patch } from "@cocalc/util/dmp";
+import { diff_main } from "@cocalc/util/dmp";
 import { hash_string } from "@cocalc/util/misc";
 import { slate_to_markdown } from "../slate-to-markdown";
 
@@ -324,18 +324,92 @@ function pointFromDocOffset(doc: Descendant[], offset: number): Point {
   return Editor.start({ children: doc } as any, [0]);
 }
 
-function insertAt(text: string, index: number, marker: string): string {
-  return text.slice(0, index) + marker + text.slice(index);
+// The offset in `next` of the position `offset` in `prev`. Unchanged words
+// (and runs of whitespace) are aligned by a diff of whole words, so a caret
+// never lands inside a different word (a character diff can align similar
+// words wrongly); within text that changed it is mapped by characters. A
+// caret at the place where text was inserted stays in front of it (as
+// CodeMirror maps a cursor), so it does not jump into what a collaborator is
+// typing there and interleave with it.
+function mapTextOffset(prev: string, next: string, offset: number): number {
+  const tokens = (text: string) => text.match(/\s+|\S+/g) ?? [];
+  const a = tokens(prev);
+  const b = tokens(next);
+  const ids = new Map<string, string>();
+  const encode = (list: string[]) =>
+    list
+      .map((token) => {
+        let id = ids.get(token);
+        if (id == null) {
+          id = String.fromCharCode(ids.size + 1);
+          ids.set(token, id);
+        }
+        return id;
+      })
+      .join("");
+  const x = encode(a);
+  const y = encode(b);
+  if (ids.size >= 0xffff) return mapChangedText(prev, next, offset);
+  let p = 0;
+  let n = 0;
+  let i = 0;
+  let j = 0;
+  let deleted = "";
+  let inserted = "";
+  // A changed region (deleted and inserted tokens between unchanged ones).
+  const region = (): number | undefined => {
+    const result =
+      deleted === ""
+        ? offset === p
+          ? n
+          : undefined
+        : offset >= p && offset <= p + deleted.length
+          ? n + mapChangedText(deleted, inserted, offset - p)
+          : undefined;
+    p += deleted.length;
+    n += inserted.length;
+    deleted = "";
+    inserted = "";
+    return result;
+  };
+  for (const [op, run] of diff_main(x, y)) {
+    for (let k = 0; k < run.length; k++) {
+      if (op === 0) {
+        const mapped = region();
+        if (mapped != null) return mapped;
+        const length = a[i++].length;
+        j++;
+        if (offset <= p + length) return n + (offset - p);
+        p += length;
+        n += length;
+      } else if (op === -1) {
+        deleted += a[i++];
+      } else {
+        inserted += b[j++];
+      }
+    }
+  }
+  return region() ?? n;
 }
 
-function pickSentinel(text: string, start: number): string {
-  let code = start;
-  let marker = String.fromCharCode(code);
-  while (text.includes(marker)) {
-    code += 1;
-    marker = String.fromCharCode(code);
+// mapTextOffset by characters, for text that changed.
+function mapChangedText(prev: string, next: string, offset: number): number {
+  let p = 0;
+  let n = 0;
+  for (const [op, text] of diff_main(prev, next)) {
+    if (op === 0) {
+      if (offset <= p + text.length) return n + (offset - p);
+      p += text.length;
+      n += text.length;
+    } else if (op === -1) {
+      if (offset < p + text.length) return n;
+      p += text.length;
+    } else {
+      if (offset === p) return n;
+      n += text.length;
+    }
   }
-  return marker;
+  return n;
 }
 
 export function remapSelectionAfterBlockPatch(
@@ -409,54 +483,19 @@ export function remapSelectionAfterBlockPatchWithSentinels(
     prevSelection.focus.offset,
   );
 
-  let anchorMarker = pickSentinel(prevText, 0xe000);
-  let focusMarker = pickSentinel(prevText + anchorMarker, 0xe001);
-  let textWithMarkers = prevText;
-  if (anchorOffset === focusOffset) {
-    focusMarker = anchorMarker;
-  }
-
-  if (anchorOffset <= focusOffset) {
-    textWithMarkers = insertAt(textWithMarkers, anchorOffset, anchorMarker);
-    if (anchorOffset !== focusOffset) {
-      textWithMarkers = insertAt(
-        textWithMarkers,
-        focusOffset + anchorMarker.length,
-        focusMarker,
-      );
-    }
-  } else {
-    textWithMarkers = insertAt(textWithMarkers, focusOffset, focusMarker);
-    textWithMarkers = insertAt(
-      textWithMarkers,
-      anchorOffset + focusMarker.length,
-      anchorMarker,
-    );
-  }
-
-  const patch = make_patch(prevText, nextText);
-  const [patchedText] = apply_patch(patch, textWithMarkers);
-
-  const anchorIdx = patchedText.indexOf(anchorMarker);
-  const focusIdx = patchedText.indexOf(focusMarker);
-  if (anchorIdx < 0 || focusIdx < 0) {
-    return base;
-  }
-
-  const markerIndices =
-    anchorMarker === focusMarker ? [anchorIdx] : [anchorIdx, focusIdx];
-  const adjustIndex = (idx: number) =>
-    idx - markerIndices.filter((marker) => marker < idx).length;
-
   const anchorPoint = pointFromBlockOffset(
     nextBlock,
     mappedIndex,
-    adjustIndex(anchorIdx),
+    mapTextOffset(prevText, nextText, anchorOffset),
   );
   const focusPoint =
-    anchorMarker === focusMarker
+    anchorOffset === focusOffset
       ? anchorPoint
-      : pointFromBlockOffset(nextBlock, mappedIndex, adjustIndex(focusIdx));
+      : pointFromBlockOffset(
+          nextBlock,
+          mappedIndex,
+          mapTextOffset(prevText, nextText, focusOffset),
+        );
 
   return { anchor: anchorPoint, focus: focusPoint };
 }
@@ -481,48 +520,17 @@ export function remapSelectionInDocWithSentinels(
     prevSelection.focus.offset,
   );
 
-  let anchorMarker = pickSentinel(prevText, 0xe000);
-  let focusMarker = pickSentinel(prevText + anchorMarker, 0xe001);
-  let textWithMarkers = prevText;
-  if (anchorOffset === focusOffset) {
-    focusMarker = anchorMarker;
-  }
-
-  if (anchorOffset <= focusOffset) {
-    textWithMarkers = insertAt(textWithMarkers, anchorOffset, anchorMarker);
-    if (anchorOffset !== focusOffset) {
-      textWithMarkers = insertAt(
-        textWithMarkers,
-        focusOffset + anchorMarker.length,
-        focusMarker,
-      );
-    }
-  } else {
-    textWithMarkers = insertAt(textWithMarkers, focusOffset, focusMarker);
-    textWithMarkers = insertAt(
-      textWithMarkers,
-      anchorOffset + focusMarker.length,
-      anchorMarker,
-    );
-  }
-
-  const patch = make_patch(prevText, nextText);
-  const [patchedText] = apply_patch(patch, textWithMarkers);
-
-  const anchorIdx = patchedText.indexOf(anchorMarker);
-  const focusIdx = patchedText.indexOf(focusMarker);
-  if (anchorIdx < 0 || focusIdx < 0) return null;
-
-  const markerIndices =
-    anchorMarker === focusMarker ? [anchorIdx] : [anchorIdx, focusIdx];
-  const adjustIndex = (idx: number) =>
-    idx - markerIndices.filter((marker) => marker < idx).length;
-
-  const anchorPoint = pointFromDocOffset(nextDoc, adjustIndex(anchorIdx));
+  const anchorPoint = pointFromDocOffset(
+    nextDoc,
+    mapTextOffset(prevText, nextText, anchorOffset),
+  );
   const focusPoint =
-    anchorMarker === focusMarker
+    anchorOffset === focusOffset
       ? anchorPoint
-      : pointFromDocOffset(nextDoc, adjustIndex(focusIdx));
+      : pointFromDocOffset(
+          nextDoc,
+          mapTextOffset(prevText, nextText, focusOffset),
+        );
 
   return { anchor: anchorPoint, focus: focusPoint };
 }

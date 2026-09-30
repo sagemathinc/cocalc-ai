@@ -474,6 +474,48 @@ describe("block diff signatures", () => {
     expect(selection.anchor.offset).toBe(5);
   });
 
+  test("sentinel remap keeps the caret in front of text inserted at it", () => {
+    // Two people typing at the end of one line: the caret must not jump into
+    // the other person's text, or their words interleave.
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "notes a1" }] },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "notes a1 b1" }] },
+    ];
+    const editor = applyPatchAndRemapSelectionWithSentinels(prev, next, {
+      anchor: { path: [0, 0], offset: "notes a1".length },
+      focus: { path: [0, 0], offset: "notes a1".length },
+    });
+    expect(editor.selection!.anchor.offset).toBe("notes a1".length);
+  });
+
+  test("sentinel remap never moves the caret into a similar word", () => {
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "tk2n4q tk2n10q tk6n14q" }] },
+    ];
+    const next: Descendant[] = [
+      {
+        type: "paragraph",
+        children: [{ text: "tk2n4q tk3n2q tk2n10q tk2n1q tk6n14q tk2n24q" }],
+      },
+    ];
+    for (let offset = 0; offset <= 22; offset++) {
+      const editor = applyPatchAndRemapSelectionWithSentinels(prev, next, {
+        anchor: { path: [0, 0], offset },
+        focus: { path: [0, 0], offset },
+      });
+      const text = "tk2n4q tk3n2q tk2n10q tk2n1q tk6n14q tk2n24q";
+      const mapped = editor.selection!.anchor.offset;
+      // Same characters around the caret as before (within its word).
+      const before = "tk2n4q tk2n10q tk6n14q"
+        .slice(0, offset)
+        .split(" ")
+        .pop()!;
+      expect(text.slice(0, mapped).endsWith(before)).toBe(true);
+    }
+  });
+
   test("sentinel remap keeps non-collapsed range anchored after prefix insert", () => {
     const prev: Descendant[] = [
       { type: "paragraph", children: [{ text: "abcdef" }] },
