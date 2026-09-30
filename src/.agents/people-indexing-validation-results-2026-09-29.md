@@ -4,6 +4,63 @@ Date: 2026-09-29. This is an initial gate report, not a completed scaling rollou
 
 ## Current Completion Audit
 
+### Live Busy-Response Failure And Fix (03:06 UTC)
+
+Operation `9a7f3b25-aba6-488d-821c-4a399a11e89e` ended unavailable at
+02:59:57 UTC after 1,096 entries and one source. The diagnostic was specifically
+`collaboration ingestion busy; retry later` from the owner's
+`collaborators.discoveryForHost` gate, propagated through host status.
+This is distinct from the earlier unexplained hub timeout. Host inspection then
+confirmed exact run `ea16f50f-5b39-48fe-80ba-383f6ee6c308` cancelled;
+the authoritative bay-0 owner job was subsequently absent. Normal stop recovery
+released its reservation; no manual deletion or replay occurred.
+
+Commit `de0a2cc0f9` distinguishes that specific temporary admission-pressure
+response from host reachability failures. Busy status/submission/cancel calls
+retain the exact operation and run for normal bounded worker retries. Generic
+timeouts and genuinely unavailable hosts keep the existing foreground completion
+and exact-stop recovery behavior. Four database-backed regressions failed before
+the fix and pass afterward, covering pre-submission, submission, running status
+and cancellation. The full 43 batch/dispatch tests and server reference typecheck
+pass. All three development hubs restarted with the fix at about 03:05 UTC.
+The real browser then explicitly selected the unsuccessful project for retry and
+clicked Start, admitting operation `a6983f37-0e30-4cdf-8a10-ea81cbc79e9e`
+at 03:06 UTC. Its exact host run is
+`a9b352fe-a465-4f4a-8df9-aa2556b853b6`; the owner confirms running/submitted
+with no cancellation or recovery intent. The UI reports initial progress.
+A full live traversal with this fix is not yet proved.
+
+The requested review described the preceding committed tree; any completed
+release review must also include this follow-up fix. Review execution remains
+unconfirmed as detailed below. No production enablement is authorized.
+
+### Requested Independent Review: Execution Unconfirmed (02:59 UTC)
+
+At the user's explicit request, a review of local committed implementation
+`a3871f8031d839ac0b1716b441a3c8dee6e6dbd2` was sent to `lite1-review` through
+the existing `cocalc` Agent Network. The request covers the initial-release
+contract, the actual enabled paths, unavailable-host recovery and the Scan Files
+tab. It asks for findings and a conclusion without edits, deployments or live
+service restarts.
+
+The request is saved, but execution is **unknown**, not accepted or complete.
+Exact-attempt inspection reports `execution_ack_unknown` because agent launch
+encountered a payment, subscription or usage-limit error. The recipient's AI
+settings need attention; no automatic resend was made and no approval is inferred.
+
+Retain these identifiers for read-only inspection:
+
+- Attempt: `e0f82506-e1e4-4e9e-a2fd-638c61a0c9d1`.
+- Agent Network: `af17fa97-9e63-47b2-802f-291170e8f34c`.
+- Target project: `6adb0c79-a1d8-4ba3-b5cd-f0320bfedda8`.
+- Target agent: `a76cb828-09c8-45a5-b068-6d650e245406`.
+
+The same live scan `9a7f3b25-aba6-488d-821c-4a399a11e89e` remains active.
+At 02:59:13 UTC its exact host run reported 1,080 entries, 341 discovered
+directories, 245 completed directories, one candidate, no pending candidates,
+one accumulated error and zero blocked directories. This is progress, not
+completed traversal. No code or runtime settings changed during this follow-up.
+
 ### Live Follow-Up: Recovery Confirmed; Traversal Still Running (02:47 UTC)
 
 Read-only host inspection confirmed the exact cancelled run
