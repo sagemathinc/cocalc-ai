@@ -709,10 +709,20 @@ def test(args) -> None:
         raise RuntimeError(f"Test Suite Failed {fails}")
 
 
+def remove_stale_tsc_shims() -> None:
+    # Package builds run `pnpm exec tsc`. In checkouts installed before the
+    # TypeScript 7 switch, pnpm leaves stale shims that still run TypeScript 6.
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'scripts',
+                          'check-local-tsc.mjs')
+    subprocess.run(['node', script, '--fix'], check=True)
+
+
 # Build all the packages that need to be built.
 def build(args) -> None:
     v = [package for package in packages(args) if needs_build(package)]
     CUR = os.path.abspath('.')
+
+    remove_stale_tsc_shims()
 
     if not args.parallel:
         # Clean all selected outputs before any compiler runs. Project references

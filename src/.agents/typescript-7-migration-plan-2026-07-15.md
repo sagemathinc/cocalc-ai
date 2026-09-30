@@ -979,3 +979,10 @@ The migration is complete only when all of the following are true:
 - Remaining after merge: watch the first staging/production deploy; revisit
   the TS6 API alias when TypeScript ships a stable programmatic API and
   ts-jest supports it (kulshekhar/ts-jest#5366), or move Jest to `@swc/jest`.
+- 2026-09-30: Dogfooding found that existing checkouts still built several
+  packages (ai, chat, chat-client, essential-frontend, export,
+  executable-templates, lite) with TS6: pnpm does not remove stale
+  `node_modules/.bin/tsc` shims in packages that do not declare TypeScript, and
+  their builds run `pnpm exec tsc`. `workspaces.py build` now runs
+  `scripts/check-local-tsc.mjs --fix` first, which removes shims that run
+  TypeScript < 7. Fresh installs and CI were not affected.
