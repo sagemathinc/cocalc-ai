@@ -14,7 +14,9 @@ jest.mock("./exam/controller", () => ({
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  addCatchAll,
   EXAM_ADMISSION_SCRIPT,
+  EXAM_HOST_IDLE_PAGE,
   getExamJoinPage,
   getProjectHostCustomizePayload,
   initHttp,
@@ -690,6 +692,55 @@ describe("project-host exam admission script", () => {
     expect(page.timers).toHaveLength(1);
   });
 
+  it("keeps checking from the page for an exam address without a run", async () => {
+    // That page answers each check with itself and Not Found until a run
+    // uses the address; it must never be taken for an opened page.
+    // The student arrived from the admission link (host-exam-panel.tsx).
+    const token = "exam-token-visible-later";
+    const page = runAdmissionScript({
+      hash: `#token=${encodeURIComponent(token)}`,
+      waiting: EXAM_HOST_IDLE_PAGE.includes("data-exam-waiting"),
+      fetchResults: [
+        { status: 404, body: EXAM_HOST_IDLE_PAGE },
+        { status: 404, body: EXAM_HOST_IDLE_PAGE },
+        {
+          status: 200,
+          body: getExamJoinPage({ admission_open: false, run_status: "ready" }),
+        },
+        {
+          status: 200,
+          body: getExamJoinPage({ admission_open: true, run_status: "open" }),
+        },
+      ],
+    });
+    // Kept for this tab, as on a waiting admission page, because loading
+    // "/" once access opens drops the fragment.
+    expect(page.store.get(STORAGE_KEY)).toBe(token);
+    expect(page.location.hash).toBe("");
+    for (let check = 0; check < 3; check++) {
+      expect(page.timers).toHaveLength(1);
+      await page.runNextCheck();
+      expect(page.location.replace).not.toHaveBeenCalled();
+    }
+    await page.runNextCheck();
+    expect(page.fetch).toHaveBeenCalledTimes(4);
+    expect(page.location.replace).toHaveBeenCalledWith("/");
+    expect(page.location.reload).not.toHaveBeenCalled();
+    expect(page.timers).toHaveLength(0);
+    // The admission form that replaced the page has the token filled in.
+    const opened = getExamJoinPage({
+      admission_open: true,
+      run_status: "open",
+    });
+    const form = runAdmissionScript({
+      withInput: opened.includes('name="token"'),
+      waiting: opened.includes("data-exam-waiting"),
+      store: page.store,
+    });
+    expect(form.input?.value).toBe(token);
+    expect(form.timers).toHaveLength(0);
+  });
+
   it("keeps waiting while no run uses the address, then opens the next run", async () => {
     // Between two runs the host answers Not Found. Leaving for that page would
     // strand the student there when the instructor opens the next run.
@@ -802,5 +853,153 @@ describe("project-host exam join route", () => {
     );
     expect(res.body).not.toContain("data-exam-waiting");
     expect(res.body).not.toContain("data-exam-token-rejected");
+  });
+});
+
+// Before the first run, between runs and after the last one, no run uses the
+// exam address, so requests reach the catch-all route.
+describe("project-host exam address without a run", () => {
+  const publicUrl = process.env.PROJECT_HOST_PUBLIC_URL;
+
+  function createRouteResponse() {
+    return {
+      headers: {} as Record<string, unknown>,
+      statusCode: 200,
+      contentType: undefined as string | undefined,
+      body: undefined as unknown,
+      setHeader(name: string, value: unknown) {
+        this.headers[name.toLowerCase()] = value;
+      },
+      getHeader(name: string) {
+        return this.headers[name.toLowerCase()];
+      },
+      status(code: number) {
+        this.statusCode = code;
+        return this;
+      },
+      type(value: string) {
+        this.contentType = value;
+        return this;
+      },
+      send(body: unknown) {
+        this.body = body;
+        return this;
+      },
+      json(body: unknown) {
+        this.contentType = "json";
+        this.body = body;
+        return this;
+      },
+      redirect: jest.fn(),
+    };
+  }
+
+  function getCatchAll(host: string) {
+    let handler: Function | undefined;
+    addCatchAll({
+      get: (_path: unknown, route: Function) => {
+        handler = route;
+      },
+    } as any);
+    const res = createRouteResponse();
+    handler!({ headers: { host }, url: "/", originalUrl: "/" }, res);
+    return res;
+  }
+
+  async function getAdmissionScript(host: string) {
+    const routes: Record<string, Function> = {};
+    const app = {
+      use: jest.fn(),
+      post: jest.fn(),
+      get: (path: string, handler: Function) => {
+        routes[path] = handler;
+      },
+    };
+    await initHttp({ app: app as any, conatClient: {} as any });
+    const res = createRouteResponse();
+    const next = jest.fn();
+    routes["/exam/admission.js"]({ headers: { host } }, res, next);
+    return { res, next };
+  }
+
+  beforeEach(() => {
+    process.env.PROJECT_HOST_PUBLIC_URL = "https://host-123.example.test";
+    mockGetExamBrowserSession.mockReset();
+    mockGetExamRunStatusLocal.mockReset();
+    mockGetExamRunStatusLocal.mockReturnValue({
+      admission_open: false,
+      active_projects: 0,
+      updated_at: "2026-09-29T00:00:00.000Z",
+    });
+  });
+
+  afterEach(() => {
+    if (publicUrl === undefined) {
+      delete process.env.PROJECT_HOST_PUBLIC_URL;
+    } else {
+      process.env.PROJECT_HOST_PUBLIC_URL = publicUrl;
+    }
+  });
+
+  it("tells a student on the exam address that no exam is open", () => {
+    const res = getCatchAll("exam-123.example.test:443");
+    // Still Not Found, which a waiting page treats as "check again".
+    expect(res.statusCode).toBe(404);
+    expect(res.contentType).toBe("html");
+    expect(res.body).toBe(EXAM_HOST_IDLE_PAGE);
+    expect(res.body).toContain("<title>No exam is open - CoCalc</title>");
+    expect(res.body).toContain("<h1>No exam is open</h1>");
+    expect(res.body).toContain(
+      "No exam is open at this address right now. This page checks again about every 30 seconds and shows the Open scratchpad button when your instructor opens access. If you expected an exam now, ask your instructor.",
+    );
+    expect(res.body).not.toContain("Not Found");
+    expect(res.headers["cache-control"]).toBe("no-store");
+    expect(res.headers["content-security-policy"]).toContain(
+      "frame-ancestors 'none'",
+    );
+    expect(res.headers["x-frame-options"]).toBe("DENY");
+    // The public route check looks for this marker; this page must not pass.
+    expect(res.body).not.toContain('name="cocalc-scratchpad"');
+    expect(res.redirect).not.toHaveBeenCalled();
+  });
+
+  it("checks again like a waiting admission page, and looks like one", () => {
+    // Apart from its title and the public route marker, the head is the
+    // admission page's: language, viewport, styles and the admission script.
+    const head = (html: string) =>
+      html
+        .slice(0, html.indexOf("<body>"))
+        .replace(/<title>.*<\/title>/, "")
+        .replace(/\n *<meta name="cocalc-scratchpad"[^>]*>/, "");
+    const waiting = getExamJoinPage({ admission_open: false });
+    expect(head(EXAM_HOST_IDLE_PAGE)).toBe(head(waiting));
+    expect(EXAM_HOST_IDLE_PAGE).toContain(
+      '<script src="/exam/admission.js" defer></script>',
+    );
+    expect(EXAM_HOST_IDLE_PAGE).toContain(
+      '<div class="closed" data-exam-waiting>No exam is open',
+    );
+  });
+
+  it("serves the admission script to the page on the exam address", async () => {
+    const exam = await getAdmissionScript("exam-123.example.test");
+    expect(exam.next).not.toHaveBeenCalled();
+    expect(exam.res.contentType).toBe("application/javascript");
+    expect(exam.res.body).toBe(EXAM_ADMISSION_SCRIPT);
+    expect(exam.res.headers["cache-control"]).toBe("no-store");
+
+    const other = await getAdmissionScript("host-123.example.test");
+    expect(other.next).toHaveBeenCalledTimes(1);
+    expect(other.res.body).toBeUndefined();
+  });
+
+  it("keeps the JSON Not Found for other hostnames", () => {
+    const res = getCatchAll("host-123.example.test");
+    expect(res.statusCode).toBe(404);
+    expect(res.body).toEqual({
+      error: "Not Found",
+      detail: "Static assets are not served from project-host.",
+    });
+    expect(res.headers["cache-control"]).toBeUndefined();
   });
 });
