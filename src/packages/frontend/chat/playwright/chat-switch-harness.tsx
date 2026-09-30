@@ -4,25 +4,30 @@ import React, { useEffect, useMemo, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { ChatLog } from "../chat-log";
 
+function switchMessage(prefix: string, i: number) {
+  const date = 1_700_000_000_000 + i * 60_000;
+  const paragraphs = 1 + ((i * 7) % 6);
+  const content = Array.from(
+    { length: paragraphs },
+    (_, p) =>
+      `${prefix} message ${i}, paragraph ${p}. ` +
+      "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(4),
+  ).join("\n\n");
+  return {
+    date,
+    message_id: `${prefix}-${i}`,
+    thread_id: `${prefix}-thread`,
+    sender_id:
+      i % 2 === 0 ? "00000000-1000-4000-8000-000000000000" : "other-user",
+    history: [{ content, author_id: "x", date }],
+  };
+}
+
 function switchMessages(prefix: string, count: number) {
   const messages = new Map<string, any>();
   for (let i = 0; i < count; i++) {
-    const date = 1_700_000_000_000 + i * 60_000;
-    const paragraphs = 1 + ((i * 7) % 6);
-    const content = Array.from(
-      { length: paragraphs },
-      (_, p) =>
-        `${prefix} message ${i}, paragraph ${p}. ` +
-        "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(4),
-    ).join("\n\n");
-    messages.set(`${date}`, {
-      date,
-      message_id: `${prefix}-${i}`,
-      thread_id: `${prefix}-thread`,
-      sender_id:
-        i % 2 === 0 ? "00000000-1000-4000-8000-000000000000" : "other-user",
-      history: [{ content, author_id: "x", date }],
-    });
+    const message = switchMessage(prefix, i);
+    messages.set(`${message.date}`, message);
   }
   return messages;
 }
@@ -36,10 +41,10 @@ function ChatSwitchHarness({
 }): React.JSX.Element {
   const [order, setOrder] = useState<string[]>(["a", "b"]);
   const [active, setActive] = useState<string>("a");
-  const logs = useMemo(
-    () => ({ a: switchMessages("A", 200), b: switchMessages("B", 200) }),
-    [],
-  );
+  const [logs, setLogs] = useState(() => ({
+    a: switchMessages("A", 200),
+    b: switchMessages("B", 200),
+  }));
   // Rendering real messages touches many chat actions; none matter here.
   const actions = useMemo(
     () =>
@@ -49,6 +54,15 @@ function ChatSwitchHarness({
     [],
   );
   useEffect(() => {
+    // New rows arriving, as while an agent is working.
+    (window as any).__chatAppend = (id: "a" | "b") => {
+      setLogs((old) => {
+        const log = new Map(old[id]);
+        const message = switchMessage(id.toUpperCase(), log.size);
+        log.set(`${message.date}`, message);
+        return { ...old, [id]: log };
+      });
+    };
     (window as any).__chatSwitch = (id: string) => {
       setActive(id);
       if (reorder) {
