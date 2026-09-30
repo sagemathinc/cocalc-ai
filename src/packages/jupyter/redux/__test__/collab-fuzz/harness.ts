@@ -69,10 +69,18 @@ const merge3 = dbMerge3<any>(fromStr, (d: any) => d.to_str(), {
   stringCols: STRING_COLS,
 });
 
-// FUZZ_MERGE_PROBE: report merges that drop a token either side added.
+// FUZZ_MERGE_PROBE: report merges that drop a token either side added, or
+// have more copies of a token than either side.
 function probeMerge(base: any, a: any, b: any, out: any): void {
   const [s0, sa, sb, so] = [base, a, b, out].map((d) => d.to_str());
+  const n = (text: string, tok: string) => text.split(tok).length - 1;
   for (const tok of new Set(`${sa}\n${sb}`.match(/tk[a-z]\d+q/g) ?? [])) {
+    if (n(so, tok) > Math.max(n(sa, tok), n(sb, tok))) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `PROBE merge duplicated ${tok}\n${JSON.stringify({ base: s0, a: sa, b: sb, out: so }, null, 1)}`,
+      );
+    }
     if (!s0.includes(tok) && !so.includes(tok)) {
       // eslint-disable-next-line no-console
       console.log(

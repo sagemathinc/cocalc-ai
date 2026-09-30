@@ -97,6 +97,18 @@ function classify(
     for (const commit of c.syncdb.commits as Commit[]) {
       const [before, after] = [count(commit.before), count(commit.after)];
       if (lost ? before > 0 && after === 0 : after > 1 && before <= 1) {
+        if (process.env.FUZZ_VERBOSE) {
+          const cellOf = (doc: string) =>
+            parse(doc).cells.find((cell) => (cell.input ?? "").includes(tok))
+              ?.id;
+          const id = cellOf(commit.before) ?? cellOf(commit.after);
+          const input = (doc: string) =>
+            parse(doc).cells.find((cell) => cell.id === id)?.input;
+          // eslint-disable-next-line no-console
+          console.log(
+            `c${c.id} ${commit.source} commit on ${id}:\n  before: ${JSON.stringify(input(commit.before))}\n  after:  ${JSON.stringify(input(commit.after))}`,
+          );
+        }
         return `${lost ? "removed" : "duplicated"} by a c${c.id} ${commit.source ?? "?"} commit`;
       }
     }

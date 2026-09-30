@@ -22,7 +22,8 @@
  *   keep `remote` as the baseline until the local edits are saved, and only
  *   overwrite the buffer when the merge differs.
  */
-import { diff_main, merge_prefer_local } from "@cocalc/util/dmp";
+import { diff_main } from "@cocalc/util/dmp";
+import { mergeText } from "./string-merge3";
 
 type Getter = () => string;
 
@@ -157,7 +158,7 @@ export class SimpleInputMerge {
     // base -> local to remote. When base is older than remote's own base, the
     // local delta repeats changes remote already has; a three-way merge applies
     // those once, and never relocates a deletion onto similar text elsewhere.
-    const merged = merge_prefer_local({ base, local, remote });
+    const merged = mergeText({ base, local, remote });
     this.noteApplied(remote);
     if (merged !== local) {
       this.applyMerged(
@@ -246,7 +247,7 @@ export class SimpleInputMerge {
     const current = opts.current ?? "";
     const { local, base } = this.inspectLocal(observed);
     if (current === base) return local;
-    return merge_prefer_local({ base, local, remote: current });
+    return mergeText({ base, local, remote: current });
   }
 
   // A newly saved local value that is neither the requested render nor an
@@ -283,7 +284,7 @@ export class SimpleInputMerge {
       return { merged, changed: merged !== local };
     }
 
-    const merged = merge_prefer_local({ base: this.last, local, remote });
+    const merged = mergeText({ base: this.last, local, remote });
     return { merged, changed: merged !== local };
   }
 }

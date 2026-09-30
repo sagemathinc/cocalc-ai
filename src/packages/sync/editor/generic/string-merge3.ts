@@ -22,3 +22,16 @@ export function stringMerge3<D>(
       }),
     );
 }
+
+// Merge an edit of a text (base -> local) into a newer version of it (base ->
+// remote). Nothing either side added is lost.
+export function mergeText(opts: {
+  base: string;
+  local: string;
+  remote: string;
+}): string {
+  const { base, local, remote } = opts;
+  if (local === remote || base === remote) return local;
+  if (base === local) return remote;
+  return mergeStrings3({ base, a: remote, b: local });
+}

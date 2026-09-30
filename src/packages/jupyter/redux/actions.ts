@@ -31,7 +31,7 @@ declare const localStorage: any;
 import * as immutable from "immutable";
 import { Actions } from "@cocalc/util/redux/Actions";
 import { three_way_merge } from "@cocalc/sync/editor/generic/util";
-import { merge_prefer_local } from "@cocalc/util/dmp";
+import { mergeText } from "@cocalc/sync/editor/generic/string-merge3";
 import { callback2, once } from "@cocalc/util/async-utils";
 import * as misc from "@cocalc/util/misc";
 import { delay } from "awaiting";
@@ -915,7 +915,9 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     base?: string,
   ): void {
     if (!this.store) return;
-    if (this.store.getIn(["cells", id]) == null) {
+    // Whether the cell exists is decided by the synced document: the store
+    // can lag it by a few ms in either direction.
+    if (this.syncdb?.get_one({ type: "cell", id }) == null) {
       this.restoreRemotelyDeletedCell(id, input, save);
       return;
     }
@@ -926,7 +928,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
         current !== base &&
         current !== input
       ) {
-        input = merge_prefer_local({ base, local: input, remote: current });
+        input = mergeText({ base, local: input, remote: current });
       }
     }
     if (this.store.getIn(["cells", id, "input"]) == input) {
@@ -964,7 +966,10 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     input: string,
     save: boolean,
   ): void {
-    const cell = this.remotelyDeletedCells.get(id);
+    // A cell deleted remotely that the store has not caught up with yet is
+    // still in the store (a local delete updates the store synchronously).
+    const cell =
+      this.remotelyDeletedCells.get(id) ?? this.store.getIn(["cells", id]);
     this.remotelyDeletedCells.delete(id);
     if (cell == null || cell.get("input") === input) return;
     const record = cell.toJS();
