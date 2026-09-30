@@ -11,6 +11,7 @@ import { agentStore, hashIdentityToken } from "./store";
 import { PersonalAgentStore } from "./personal-store";
 import { assertActor } from "./access";
 import { agentRpcControl, authorizeRpcExecution } from "./rpc";
+import { startFreshConversationLocal } from "./api";
 
 const account = randomUUID();
 const source = { project_id: randomUUID(), agent_id: randomUUID() };
@@ -47,6 +48,15 @@ jest.mock("@cocalc/server/conat/api/project-host-token-auth", () => ({
 jest.mock("./personal", () => ({
   withPersonalHome: (...args) => checkNetwork(...args),
   personalControl: jest.fn(),
+}));
+jest.mock("@cocalc/server/conat/route-client", () => ({
+  conatWithProjectRoutingForAccount: () => ({}),
+}));
+jest.mock("@cocalc/conat/ai/acp/client", () => ({
+  controlAcp: async () => ({
+    ok: true,
+    successor_thread_id: randomUUID(),
+  }),
 }));
 
 const describeDb =
@@ -134,9 +144,15 @@ describeDb("accepted queued work outlives the sending run", () => {
       });
     }
     await db.query(
-      `INSERT INTO agent_identity_runs(agent_id,run_id,account_id,token_hash,expires_at)
-      VALUES($1,$2,$3,$4,now()+interval '10 minutes')`,
-      [source.agent_id, runId, account, hashIdentityToken(token)],
+      `INSERT INTO agent_identity_runs(agent_id,run_id,account_id,token_hash,expires_at,thread_id)
+      VALUES($1,$2,$3,$4,now()+interval '10 minutes',$5)`,
+      [
+        source.agent_id,
+        runId,
+        account,
+        hashIdentityToken(token),
+        source.agent_id,
+      ],
     );
     const network = await store.createNetwork(
       account,
@@ -221,6 +237,118 @@ describeDb("accepted queued work outlives the sending run", () => {
       );
     },
   );
+
+  test.each([
+    ["active", false],
+    ["ended", false],
+    ["expired", false],
+    ["active", true],
+    ["ended", true],
+    ["expired", true],
+  ])(
+    "fresh conversation invalidates %s sender's queued work (legacy=%s)",
+    async (state, legacy) => {
+      if (legacy)
+        await db.query(
+          "UPDATE agent_identity_runs SET thread_id=NULL WHERE run_id=$1",
+          [runId],
+        );
+      if (state === "ended")
+        await db.query(
+          "UPDATE agent_identity_runs SET ended_at=now() WHERE run_id=$1",
+          [runId],
+        );
+      if (state === "expired")
+        await db.query(
+          "UPDATE agent_identity_runs SET expires_at=now()-interval '1 second' WHERE run_id=$1",
+          [runId],
+        );
+      await execute();
+      const previous = await db.get(source.agent_id);
+      const next = await startFreshConversationLocal({
+        account_id: account,
+        ...source,
+        expected_thread_id: previous.thread_id,
+      });
+      await expect(execute()).rejects.toThrow(
+        "accepted agent run is unavailable",
+      );
+      await expect(db.issue(previous, randomUUID(), account)).rejects.toThrow(
+        "agent conversation changed",
+      );
+      const nextRunId = randomUUID();
+      await db.issue(next, nextRunId, account);
+      authorization.source_run_id = nextRunId;
+      await expect(execute()).resolves.toBeUndefined();
+      await db.query(
+        "UPDATE agent_identity_runs SET ended_at=now() WHERE run_id=$1",
+        [nextRunId],
+      );
+      await expect(execute()).resolves.toBeUndefined();
+    },
+  );
+
+  test("renewal binds a legacy run in the current conversation after a previous reset", async () => {
+    const agent = await db.get(source.agent_id);
+    await db.query(
+      "UPDATE agent_identity_runs SET thread_id=NULL WHERE run_id=$1",
+      [runId],
+    );
+    await db.query(
+      "UPDATE agent_identities SET conversation_history=$1 WHERE agent_id=$2",
+      [
+        [{ thread_id: randomUUID(), ended_at: new Date().toISOString() }],
+        source.agent_id,
+      ],
+    );
+    await expect(execute()).rejects.toThrow(
+      "accepted agent run is unavailable",
+    );
+    await db.issue(agent, runId, account);
+    await expect(
+      db.executionRun(source.agent_id, runId),
+    ).resolves.toMatchObject({
+      thread_id: agent.thread_id,
+    });
+    await expect(execute()).resolves.toBeUndefined();
+  });
+
+  test("expired-run recovery and an exact retry retain the conversation binding", async () => {
+    const agent = await db.get(source.agent_id);
+    await db.query(
+      "UPDATE agent_identity_runs SET expires_at=now()-interval '1 second' WHERE run_id=$1",
+      [runId],
+    );
+    const replacement = randomUUID();
+    await db.issue(agent, replacement, account, runId);
+    await expect(
+      db.executionRun(source.agent_id, replacement),
+    ).resolves.toMatchObject({
+      thread_id: agent.thread_id,
+    });
+    // An older hub may have created the replacement without the new field.
+    await db.query(
+      "UPDATE agent_identity_runs SET thread_id=NULL WHERE run_id=$1",
+      [replacement],
+    );
+    await db.issue(agent, replacement, account, runId);
+    await expect(
+      db.executionRun(source.agent_id, replacement),
+    ).resolves.toMatchObject({
+      thread_id: agent.thread_id,
+    });
+    await startFreshConversationLocal({
+      account_id: account,
+      ...source,
+      expected_thread_id: agent.thread_id,
+    });
+    await expect(db.executionRun(source.agent_id, replacement)).rejects.toThrow(
+      "accepted agent run is unavailable",
+    );
+    await expect(db.executionRun(source.agent_id, runId)).rejects.toThrow(
+      "accepted agent run is unavailable",
+    );
+  });
 
   test.each([source, target])(
     "disabled agent still prevents execution: $agent_id",
