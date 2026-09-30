@@ -42,6 +42,28 @@ it("renders the stored goal without calling the runtime or saving anything", () 
   expect(onChange).not.toHaveBeenCalled();
 });
 
+it("separates the composer goal row and hides it when the goal is cleared", () => {
+  const onChange = jest.fn();
+  const { rerender } = render(
+    <CodexGoalControl
+      snapshot={snapshot}
+      onChange={onChange}
+      hideEmptyTrigger
+    />,
+  );
+  const row = screen.getByRole("button", {
+    name: "Goal: Finish the implementation (active)",
+  }).parentElement!;
+  expect(row.style.borderTop).toBe(`1px solid ${UI_COLORS.border}`);
+  expect(row.style.margin).toBe("0px 15px");
+  expect(row.style.display).toBe("flex");
+
+  rerender(<CodexGoalControl onChange={onChange} hideEmptyTrigger />);
+  expect(screen.queryByRole("button", { name: "Set goal" })).toBeNull();
+  expect(row.style.display).toBe("none");
+  expect(onChange).not.toHaveBeenCalled();
+});
+
 it("opens with the keyboard, labels inputs, and restores focus after Escape", async () => {
   const user = userEvent.setup();
   render(<CodexGoalControl onChange={jest.fn()} />);
