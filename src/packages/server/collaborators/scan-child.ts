@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import getPool from "@cocalc/database/pool";
+import getLogger from "@cocalc/backend/logger";
 import {
   prepareScanChild,
   finishScanChild,
@@ -20,6 +21,8 @@ import { dispatchCollaborationScan } from "./scan-dispatch";
 import { retainUnavailableScanChild } from "@cocalc/database/postgres/collaborators/collaborators-scan-recovery";
 import { ScanHostUnavailable, scanHostCall } from "./scan-host";
 
+const logger = getLogger("server:collaborators:scan-child");
+
 export async function stepScanChild(
   opts: ScanChildRequest,
   authority: CollaborationOwnerAuthority,
@@ -30,6 +33,12 @@ export async function stepScanChild(
     if (!(error instanceof ScanHostUnavailable)) throw error;
     const result = await retainUnavailableScanChild(opts, authority);
     if (!result) throw error;
+    logger.warn("scan host unavailable; exact stop retained for recovery", {
+      project_id: opts.project_id,
+      job_id: opts.request_id,
+      batch_id: opts.batch_id,
+      error: String(error).slice(0, 1000),
+    });
     return result;
   }
 }
@@ -52,7 +61,15 @@ async function step(
         deferredUntil = Date.now() + (dispatch.retry_after_ms ?? 30000);
     } catch (error) {
       const unsubmitted = await finishUnsubmittedScanChild(opts, authority);
-      if (unsubmitted) return unsubmitted;
+      if (unsubmitted) {
+        logger.warn("scan ended before host submission", {
+          project_id: opts.project_id,
+          job_id: opts.request_id,
+          batch_id: opts.batch_id,
+          error: String(error).slice(0, 1000),
+        });
+        return unsubmitted;
+      }
       if (error instanceof ScanHostUnavailable) throw error;
       // Only a definitive host storage rejection can become unavailable. Fence
       // the exact run first so an earlier delayed submission cannot execute.
