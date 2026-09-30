@@ -127,6 +127,7 @@ export const DOCS_ENTRY_IDS = [
   "ai.codex-automation",
   "ai.codex-notifications",
   "ai.editor-agent",
+  "docs.cocalc-at-a-glance",
   "docs.quick-navigation",
   "docs.browser",
   "docs.executable-actions",

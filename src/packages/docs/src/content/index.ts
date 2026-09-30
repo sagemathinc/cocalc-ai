@@ -7,6 +7,7 @@ export * from "./admin";
 export * from "./account";
 export * from "./ai";
 export * from "./automation";
+export * from "./cocalc-at-a-glance";
 export * from "./collaboration";
 export * from "./course-compute";
 export * from "./compute";
