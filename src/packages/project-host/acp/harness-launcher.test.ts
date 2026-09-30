@@ -35,6 +35,11 @@ jest.mock("node:fs/promises", () => ({
 jest.mock("./anthropic-credential-relay", () => ({
   createAnthropicAccountCredentialRelay: (...args) => mockCreateRelay(...args),
 }));
+const mockStartEgress = jest.fn();
+const mockCloseEgress = jest.fn();
+jest.mock("./claude-restricted-egress", () => ({
+  startClaudeRestrictedEgress: (...args) => mockStartEgress(...args),
+}));
 jest.mock("./claude-subscription-controller", () => ({
   launchClaudeSubscriptionController: jest.fn(),
 }));
@@ -136,6 +141,7 @@ beforeEach(() => {
     token: "short-lived-token",
     close: mockRelayClose,
   });
+  mockStartEgress.mockResolvedValue(undefined);
   mockWriteFile.mockResolvedValue(undefined);
   mockRm.mockResolvedValue(undefined);
   mockLease.mockResolvedValue({
@@ -357,4 +363,42 @@ test("natural exit removes its sidecar", async () => {
   await handle.stop();
   expect(mockUnmount).toHaveBeenCalledTimes(1);
   expect(mockExec).toHaveBeenCalledTimes(2);
+});
+
+test("Claude in a project without internet access gets only the Anthropic proxy", async () => {
+  mockStartEgress.mockResolvedValue({
+    env: {
+      HTTPS_PROXY: "http://cocalc-claude:token@host.containers.internal:4567",
+      NO_PROXY: "host.containers.internal",
+    },
+    close: mockCloseEgress,
+  });
+  const handle = await launchHarnessInProject({
+    ...binding,
+    profile: {
+      version: 2,
+      kind: "acp",
+      id: "claude-code",
+      revision: "0.81.1",
+      cwd: "/home/user",
+      credentialMode: "project-managed",
+      executionPolicy: "full-access",
+    },
+  });
+  expect(mockStartEgress).toHaveBeenCalledWith({
+    projectId: binding.projectId,
+  });
+  const args = mockExec.mock.calls[0][1];
+  expect(args).toContain(
+    "HTTPS_PROXY=http://cocalc-claude:token@host.containers.internal:4567",
+  );
+  expect(args).toContain("NO_PROXY=host.containers.internal");
+  await handle.stop();
+  expect(mockCloseEgress).toHaveBeenCalledTimes(1);
+});
+
+test("custom ACP harnesses never get the Anthropic proxy", async () => {
+  const handle = await launchHarnessInProject(binding);
+  expect(mockStartEgress).not.toHaveBeenCalled();
+  await handle.stop();
 });
