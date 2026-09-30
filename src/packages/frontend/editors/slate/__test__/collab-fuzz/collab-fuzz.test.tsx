@@ -12,8 +12,7 @@ FUZZ_RUNS (default 6) and FUZZ_SEED (default 1) select the seeds; a failure
 prints its seed so it can be replayed with FUZZ_SEED=<seed> FUZZ_RUNS=1.
 Other knobs: FUZZ_STEPS (operations per session), FUZZ_VERBOSE (print the
 operation log and final document), FUZZ_TRACE_TOKEN (track one token after
-every step), FUZZ_SLATE_DEBUG (enable the editor's sync debug log), and
-FUZZ_STRICT_MERGE (fail on known core merge losses too).
+every step), and FUZZ_SLATE_DEBUG (enable the editor's sync debug log).
 */
 
 import { encodePatchId, StringDocument } from "patchflow";
@@ -366,30 +365,19 @@ async function runSession(seed: number, steps = STEPS): Promise<RunResult> {
     problems.push("clients did not converge");
   }
   const final = docs[0];
-  const mergeLosses: string[] = [];
   const counts = new Map<string, number>();
   for (const tok of tokensIn(final))
     counts.set(tok, (counts.get(tok) ?? 0) + 1);
   for (const [tok, n] of counts) {
     if (n > 1) {
       const cause = classifyDuplicate(tok, clients);
-      if (cause === "duplicated in merge" && !process.env.FUZZ_STRICT_MERGE) {
-        mergeLosses.push(`${tok}(dup)`);
-      } else {
-        problems.push(`duplicated token ${tok} (x${n}, ${cause})`);
-      }
+      problems.push(`duplicated token ${tok} (x${n}, ${cause})`);
     }
   }
   for (const tok of inserted) {
     if (!deleted.has(tok) && !counts.has(tok)) {
       const cause = classifyLoss(tok, clients, initialHas(tok));
-      if (cause === "lost in merge" && !process.env.FUZZ_STRICT_MERGE) {
-        // Known core merge limitation (see core-merge-limitations.test.ts);
-        // reported but not failing unless FUZZ_STRICT_MERGE is set.
-        mergeLosses.push(tok);
-      } else {
-        problems.push(`lost token ${tok} (${cause})`);
-      }
+      problems.push(`lost token ${tok} (${cause})`);
     }
   }
   for (const c of clients) {
@@ -413,13 +401,6 @@ async function runSession(seed: number, steps = STEPS): Promise<RunResult> {
         `c${c.opts.id} editor does not show its document (line ${i}: editor=${JSON.stringify(a.slice(i, i + 3))} doc=${JSON.stringify(b.slice(i, i + 3))})`,
       );
     }
-  }
-  if (mergeLosses.length > 0) {
-    log.unshift(`known core merge anomalies: ${mergeLosses.join(" ")}`);
-    // eslint-disable-next-line no-console
-    console.warn(
-      `seed ${seed}: known core merge anomaly: ${mergeLosses.join(" ")}`,
-    );
   }
   const stats = `patches=${net.log.length} inserted=${inserted.size} deleted=${deleted.size} final=${final.length} chars, ${counts.size} tokens`;
   if (process.env.FUZZ_VERBOSE) {

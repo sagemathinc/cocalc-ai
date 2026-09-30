@@ -261,17 +261,11 @@ Every incident becomes a synthetic regression test.
   `versions`, `explain`) with tests on a synthetic database; on the real
   incident it flags both duplicating patches and reproduces the corrupt
   version from its merge inputs.
-- Core finding (not fixed; decision needed): patchflow computes a document by
-  applying all patches in time order with fuzzy diff-match-patch patch
-  application, including concurrent patches. A deletion whose context changed
-  concurrently can be applied to similar text elsewhere while reporting
-  success. Recorded as `sync/editor/generic/test/core-merge-limitations.test.ts`
-  (`test.failing`). At 80 fuzz steps this accounts for most remaining losses
-  (about a quarter of runs); the fuzzer reports them separately unless
-  `FUZZ_STRICT_MERGE` is set. Options: merge concurrent heads with a diff3-style
-  merge from their common ancestor (deterministically, e.g. earlier patch wins
-  on true overlap), keeping fuzzy application only for linear history; this
-  changes how existing histories replay, so it needs a versioned rollout.
+- Core finding (fixed later the same day, see below): patchflow computed a
+  document by applying all patches in time order with fuzzy diff-match-patch
+  patch application, including concurrent patches. A deletion whose context
+  changed concurrently could be applied to similar text elsewhere while
+  reporting success.
 - Other findings for the audit (not yet fixed):
   - A programmatic source-frame change within Slate's save debounce discards
     unsaved Slate edits (`forceSetEditorToValue` cancels the pending save).
@@ -303,7 +297,49 @@ Every incident becomes a synthetic regression test.
   Serializer canonicalization being indistinguishable from user edits is the
   motivation for Workstream 3. Core merge anomalies (not counted as failures)
   appear in about 22% of these extreme runs.
-- Next steps: decide the core merge change (merge concurrent heads with diff3
-  from their common ancestor); then Workstream 3 (edits carry their base
-  version; canonicalization is not a user edit); Workstream 4 guards;
-  Workstream 5 (Playwright, lite2b.cocalc.ai is available for it).
+- Core merge fixed in patchflow (decision: fix it; cocalc-ai histories are
+  recent and mostly linear), sagemathinc/patchflow#2, branch
+  `diff3-dag-merge`:
+  - A codec may provide `merge3`. Then every patch applies to the exact value
+    of its own parents, and concurrent heads merge three-way from their
+    maximal common ancestors (found like git's merge-base; recursively for
+    criss-cross histories). Codecs without `merge3` are unchanged.
+  - `mergeStrings3`, a line-oriented diff3:
+    - identical changes apply once;
+    - nothing is relocated by fuzzy matching;
+    - lines both sides edited merge by whole words;
+    - nothing either side typed is dropped (a modification beats a
+      deletion, and true conflicts keep both versions);
+    - characters of different words or lines are never spliced;
+    - it is symmetric.
+  - A patch whose parent has not arrived (out-of-order delivery) is held back
+    until it does (`getValueHeads`), and `Session` commits on those heads.
+    Before this, the whole value fell back to fuzzy application, and clients
+    committed on top of garbled text.
+  - Randomized property tests on concurrent line and word edits: zero lost
+    tokens (the old algorithm loses tokens in 30-55% of those runs).
+    Duplicates remain only in extreme criss-cross runs of 5 clients with word
+    edits.
+  - Loading 20k patches with 2k merges takes 1.7s (old: 0.75s); adding a patch
+    costs 28ms (old: 93ms).
+- CoCalc side:
+  - `sync/editor/generic/string-merge3.ts` gives string documents' patchflow
+    codec a `merge3` (db documents unchanged), and the fuzzer harness uses the
+    same helper.
+  - `core-merge-limitations.test.ts` became `core-merge.test.ts` (the
+    incident case now merges correctly through the patch graph).
+  - The fuzzer now fails on core merge losses and duplicates by default
+    (`FUZZ_STRICT_MERGE` is gone).
+- Strict sweeps (400 seeds, 80 operations; all failures counted):
+  - before: 18 failures (4.5%);
+  - with the exact merge: 7 (1.75%), none of them in the core merge;
+  - remaining: six "removed by a Slate commit" losses (Workstream 3
+    territory) and the ordered-list start number.
+- Requires a patchflow release with #2; publishing is pending. Until then the
+  branch typechecks only against a local patchflow build.
+- Next steps:
+  - Publish patchflow and bump the dependency.
+  - Workstream 3 (edits carry their base version; canonicalization is not a
+    user edit), aimed at the remaining Slate-commit losses.
+  - Workstream 4 guards.
+  - Workstream 5 (Playwright; lite2b.cocalc.ai is available for it).

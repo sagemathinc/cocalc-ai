@@ -22,6 +22,7 @@ import {
   type PatchStore,
 } from "patchflow";
 import { Editor, Transforms, Text, type Descendant } from "slate";
+import { stringMerge3 } from "@cocalc/sync/editor/generic/string-merge3";
 import { EditableMarkdown } from "../../editable-markdown";
 import { markdown_to_slate } from "../../markdown-to-slate/parse";
 import { slate_to_markdown } from "../../slate-to-markdown";
@@ -51,6 +52,11 @@ const codec = {
   applyPatch: (d: any, p: unknown) => d.applyPatch(p),
   applyPatchBatch: (d: any, ps: unknown[]) => d.applyPatchBatch(ps),
   makePatch: (a: any, b: any) => a.makePatch(b),
+  // The same exact merge SyncDoc uses for string documents.
+  merge3: stringMerge3<any>(
+    (s: string) => new StringDocument(s),
+    (d: any) => d.toString(),
+  ),
 };
 
 interface InFlight {

@@ -62,6 +62,7 @@ import {
   MemoryPresenceAdapter as PatchflowMemoryPresenceAdapter,
 } from "patchflow";
 import type { RecoveryState } from "@cocalc/conat/sync/core-stream";
+import { stringMerge3 } from "./string-merge3";
 import type {
   Client,
   CompressedPatch,
@@ -2482,6 +2483,17 @@ export class SyncDoc extends EventEmitter {
       },
       makePatch: (a: Document, b: Document) =>
         ((a as any).make_patch ?? a.makePatch).call(a, b),
+      // Exact values for text: every patch applies to the value of its own
+      // parents and concurrent heads merge three-way from their common
+      // ancestor, instead of fuzzy-applying concurrent patches to each other's
+      // text (which could delete or duplicate the wrong text).
+      ...(this.doctype.type === "string"
+        ? {
+            merge3: stringMerge3<Document>(this._from_str, (doc) =>
+              doc.to_str(),
+            ),
+          }
+        : {}),
     };
   };
 
