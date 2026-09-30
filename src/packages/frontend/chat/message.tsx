@@ -2052,7 +2052,11 @@ export default function Message({
         items={overflowItems}
         title={<Icon name="ellipsis-vertical" />}
         size={footer ? undefined : "small"}
-        style={footer ? CODEX_FOOTER_BUTTON_STYLE : { color: UI_COLORS.muted }}
+        style={
+          footer
+            ? { ...CODEX_FOOTER_BUTTON_STYLE, width: 32, paddingInline: 0 }
+            : { color: UI_COLORS.muted }
+        }
         ariaLabel="More message actions"
       />
     );
