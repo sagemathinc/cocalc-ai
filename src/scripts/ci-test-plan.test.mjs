@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -9,6 +13,56 @@ import {
 } from "./ci-test-plan.mjs";
 
 const workspaces = discoverWorkspaces();
+
+test("PR merge parents preserve changed-file planning and deeper bases can be fetched", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ci-plan-shallow-"));
+  try {
+    const origin = join(dir, "origin");
+    const shallow = join(dir, "shallow");
+    const git = (cwd, ...args) =>
+      execFileSync("git", args, {
+        cwd,
+        encoding: "utf8",
+        stdio: "pipe",
+      }).trim();
+    git(dir, "init", "--quiet", "--initial-branch=main", origin);
+    git(origin, "config", "user.name", "CI Planner Test");
+    git(origin, "config", "user.email", "ci-planner@example.invalid");
+    const commitFile = (name) => {
+      writeFileSync(join(origin, name), name);
+      git(origin, "add", name);
+      git(origin, "commit", "--quiet", "-m", name);
+    };
+    commitFile("initial");
+    const initial = git(origin, "rev-parse", "HEAD");
+    git(origin, "checkout", "--quiet", "-b", "feature");
+    commitFile("feature-change");
+    git(origin, "checkout", "--quiet", "main");
+    commitFile("base-change");
+    const base = git(origin, "rev-parse", "HEAD");
+    git(origin, "merge", "--quiet", "--no-ff", "feature", "-m", "PR merge");
+    git(dir, "clone", "--quiet", "--no-local", "--depth=2", origin, shallow);
+
+    git(shallow, "merge-base", "--is-ancestor", base, "HEAD");
+    const changedFiles = (cwd, since) =>
+      git(cwd, "diff", "--name-only", "--diff-filter=ACMR", `${since}...HEAD`);
+    assert.equal(changedFiles(shallow, base), changedFiles(origin, base));
+    assert.equal(changedFiles(shallow, base), "feature-change");
+
+    assert.notEqual(
+      spawnSync("git", ["merge-base", "--is-ancestor", initial, "HEAD"], {
+        cwd: shallow,
+        stdio: "pipe",
+      }).status,
+      0,
+    );
+    git(shallow, "fetch", "--no-tags", "--unshallow", "origin");
+    git(shallow, "merge-base", "--is-ancestor", initial, "HEAD");
+    assert.equal(changedFiles(shallow, initial), changedFiles(origin, initial));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("discovers nested test workspaces", () => {
   assert.ok(workspaces.some(({ name }) => name === "notebook"));
