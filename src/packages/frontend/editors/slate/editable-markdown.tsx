@@ -2503,6 +2503,22 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
               applied: blockPatchApplied,
               chunks: blockPatchResult.chunks,
             });
+            if (
+              blockPatchApplied &&
+              slate_to_markdown(editor.children, {
+                cache: editor.syncCache,
+                preserveBlankLines,
+              }) !== normalizedValue
+            ) {
+              // The block patch did not produce the remote value, e.g., because
+              // a block changed in a way its signature did not capture. Never
+              // keep that result: the markdown bookkeeping below would claim the
+              // remote value while the tree still shows stale content, and the
+              // next local save would silently revert the remote change.
+              debugSyncLog("block-patch:mismatch-fallback");
+              blockPatchApplied = false;
+              operations = null;
+            }
             if (blockPatchApplied && previousSelection) {
               const remapped = remapSelectionAfterBlockPatchWithSentinels(
                 editor,
@@ -2567,7 +2583,9 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
             editor.syncCausedUpdate = true;
             // console.log("setEditorToValue: applying operations...", { operations });
             if (operations == null) {
-              operations = slateDiff(previousEditorValue, nextEditorValue);
+              // Diff from the current tree, which differs from
+              // previousEditorValue if a block patch was attempted above.
+              operations = slateDiff(editor.children, nextEditorValue);
             }
             preserveScrollPosition(editor, operations);
             const operationsApplied = applyOperations(editor, operations);
