@@ -45,7 +45,10 @@ import {
 } from "@cocalc/frontend/agents/unbound-mentions";
 import { namedAgentReference } from "@cocalc/frontend/agents/api";
 import { AgentFileAttachment } from "./agent-file-attachment";
-import { ComposerConnectors } from "@cocalc/frontend/agents/composer-connectors";
+import {
+  ComposerConnectors,
+  supportsCocalcConnector,
+} from "@cocalc/frontend/agents/composer-connectors";
 import { ClaudeThreadInternetNotice } from "@cocalc/frontend/agents/claude-internet-notice";
 import { CodexConfigButton } from "./codex";
 import { useChatEmbeddingOptions } from "./embedding-options";
@@ -949,9 +952,7 @@ export function ChatRoomComposer({
             >
               <ComposerConnectors
                 agent={agentMentions.namedAgent}
-                supportsCocalcAccess={
-                  threadMetadata != null && !isGenericHarness
-                }
+                supportsCocalcAccess={supportsCocalcConnector(threadMetadata)}
               >
                 {(extraMenuItems) => (
                   <AgentFileAttachment
