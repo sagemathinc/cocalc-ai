@@ -24,6 +24,7 @@ import {
 } from "@cocalc/project-proxy/api-relay";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getProject } from "./sqlite/projects";
+import { resolveProjectHostBootstrapMasterConatServer } from "./master-conat-server";
 import { createApiRelayMeter } from "@cocalc/project-proxy/api-relay-meter";
 
 const logger = getLogger("project-host:api-relay");
@@ -84,14 +85,24 @@ export async function resolveApiRelayHubUrl(
     siteUrl,
     hostId,
     masterClient,
+    masterUrl,
   }: {
     siteUrl?: string;
     hostId: string;
     masterClient?: Client;
+    masterUrl?: string;
   },
 ): Promise<string> {
   const site = siteUrl ? normalizeApiRelayHubUrl(siteUrl) : undefined;
   let requested = requestedUrl ? normalizeApiRelayHubUrl(requestedUrl) : site;
+  // Older project environments use the host's HTTP master transport URL as
+  // their API base. Resolve that exact configured alias to the canonical site;
+  // it is not a public API destination. HTTPS home-bay requests retain their
+  // explicit routing identity.
+  const master = masterUrl ? normalizeApiRelayHubUrl(masterUrl) : undefined;
+  if (master?.startsWith("http://") && requested === master) {
+    requested = undefined;
+  }
   if (!requested || requested !== site) {
     if (!masterClient) throw Error("master Conat connection is unavailable");
     const target = await callHub({
@@ -167,6 +178,7 @@ export function attachProjectApiRelay({
       // The host's master may be a different bay from the caller's home bay.
       const url = await resolveApiRelayHubUrl(requestedUrl, {
         siteUrl: process.env.COCALC_SITE_URL,
+        masterUrl: resolveProjectHostBootstrapMasterConatServer(),
         hostId,
         masterClient,
       });
