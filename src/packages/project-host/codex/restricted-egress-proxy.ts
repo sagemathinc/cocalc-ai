@@ -7,11 +7,20 @@ import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage } from "node:http";
 import { connect, type Socket } from "node:net";
 import getLogger from "@cocalc/backend/logger";
+import { readClientHelloServerName } from "./tls-client-hello";
 
 const logger = getLogger("project-host:codex:restricted-egress-proxy");
 const PROXY_USERNAME = "cocalc-codex";
 const MAX_TUNNELS_PER_SESSION = 32;
 const TUNNEL_IDLE_TIMEOUT_MS = 35 * 60_000;
+// Raw connections across all sessions, counted before authentication.
+const MAX_CONNECTIONS = 256;
+// Absolute deadline from accept until a verified tunnel: the CONNECT request,
+// the upstream connection and the client's TLS ClientHello. Trickling bytes
+// does not extend it.
+const SETUP_TIMEOUT_MS = 10_000;
+const MAX_HEADER_BYTES = 8 * 1024;
+const MAX_CLIENT_HELLO_BYTES = 64 * 1024;
 
 // Keep this deliberately narrow. This proxy exists only so Codex authentication
 // and provider traffic continue to work when general project egress is disabled.
@@ -91,8 +100,24 @@ export function isAllowedCodexEgressTarget(rawTarget: string): boolean {
   return !!target && ALLOWED_OPENAI_HOSTS.has(target.hostname);
 }
 
-class RestrictedCodexEgressProxy {
+export interface RestrictedCodexEgressProxyOptions {
+  maxConnections?: number;
+  setupTimeoutMs?: number;
+  // Tests substitute a local upstream.
+  connectUpstream?: (port: number, hostname: string) => Socket;
+}
+
+export class RestrictedCodexEgressProxy {
+  constructor(
+    private readonly options: RestrictedCodexEgressProxyOptions = {},
+  ) {}
+
   private readonly sessions = new Map<string, Session>();
+  // Raw connections, each with its setup deadline until its tunnel is verified.
+  private readonly connections = new Map<
+    Socket,
+    ReturnType<typeof setTimeout> | undefined
+  >();
   private server?: ReturnType<typeof createServer>;
   private port?: number;
   private listening?: Promise<number>;
@@ -110,10 +135,16 @@ class RestrictedCodexEgressProxy {
 
   private async startListening(): Promise<number> {
     if (!this.server) {
-      this.server = createServer((_request, response) => {
-        response.writeHead(405, { connection: "close" });
-        response.end();
-      });
+      this.server = createServer(
+        { maxHeaderSize: MAX_HEADER_BYTES },
+        (_request, response) => {
+          response.writeHead(405, { connection: "close" });
+          response.end();
+        },
+      );
+      this.server.on("connection", (socket: Socket) =>
+        this.admitConnection(socket),
+      );
       this.server.on("connect", (request, socket, head) => {
         this.handleConnect(request, socket as Socket, head);
       });
@@ -168,7 +199,50 @@ class RestrictedCodexEgressProxy {
     };
   }
 
+  /** Bound raw connections before any request parsing or authentication. */
+  private admitConnection(socket: Socket): void {
+    if (
+      this.connections.size >= (this.options.maxConnections ?? MAX_CONNECTIONS)
+    ) {
+      socket.destroy();
+      return;
+    }
+    this.connections.set(
+      socket,
+      setTimeout(
+        () => closeSocket(socket),
+        this.options.setupTimeoutMs ?? SETUP_TIMEOUT_MS,
+      ),
+    );
+    socket.once("close", () => {
+      clearTimeout(this.connections.get(socket));
+      this.connections.delete(socket);
+    });
+  }
+
+  /** A verified tunnel trades its setup deadline for an idle timeout. */
+  private tunnelEstablished(socket: Socket): void {
+    clearTimeout(this.connections.get(socket));
+    if (this.connections.has(socket)) this.connections.set(socket, undefined);
+    socket.setTimeout(TUNNEL_IDLE_TIMEOUT_MS, () => closeSocket(socket));
+  }
+
+  /** For tests: raw connections and pending setup deadlines. */
+  stateForTesting(): { connections: number; pendingDeadlines: number } {
+    return {
+      connections: this.connections.size,
+      pendingDeadlines: [...this.connections.values()].filter(
+        (timer) => timer != null,
+      ).length,
+    };
+  }
+
   async shutdown(): Promise<void> {
+    for (const [socket, timer] of this.connections) {
+      clearTimeout(timer);
+      closeSocket(socket);
+    }
+    this.connections.clear();
     for (const session of this.sessions.values()) {
       session.closed = true;
       for (const socket of session.sockets) closeSocket(socket);
@@ -206,7 +280,10 @@ class RestrictedCodexEgressProxy {
 
     session.activeTunnels += 1;
     session.sockets.add(client);
-    const upstream = connect(target.port, target.hostname);
+    const upstream = (this.options.connectUpstream ?? connect)(
+      target.port,
+      target.hostname,
+    );
     session.sockets.add(upstream);
     let released = false;
     const release = () => {
@@ -216,7 +293,6 @@ class RestrictedCodexEgressProxy {
       session.sockets.delete(client);
       session.sockets.delete(upstream);
     };
-    client.setTimeout(TUNNEL_IDLE_TIMEOUT_MS, () => closeSocket(client));
     upstream.setTimeout(TUNNEL_IDLE_TIMEOUT_MS, () => closeSocket(upstream));
     client.once("close", () => {
       release();
@@ -236,10 +312,73 @@ class RestrictedCodexEgressProxy {
         return;
       }
       client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-      if (head.length > 0) upstream.write(head);
-      client.pipe(upstream);
-      upstream.pipe(client);
+      // The CONNECT authority only names the address; shared CDN addresses
+      // serve many sites. Forward nothing until the client's own TLS
+      // ClientHello asks for exactly the allowed host.
+      this.awaitClientHello(client, head, target.hostname, (hello) => {
+        if (session.closed || client.destroyed || upstream.destroyed) {
+          closeSocket(client);
+          return;
+        }
+        this.tunnelEstablished(client);
+        upstream.write(hello);
+        client.pipe(upstream);
+        upstream.pipe(client);
+      });
     });
+  }
+
+  /**
+   * Read the client's ClientHello; call onVerified with the buffered bytes
+   * only if it names exactly `hostname`. The connection's setup deadline
+   * bounds the wait; a closed client cancels it.
+   */
+  private awaitClientHello(
+    client: Socket,
+    head: Buffer,
+    hostname: string,
+    onVerified: (hello: Buffer) => void,
+  ): void {
+    let received = head;
+    let finished = false;
+    const finish = (verified: boolean, reason?: string) => {
+      if (finished) return;
+      finished = true;
+      client.off("data", onData);
+      client.off("end", onClose);
+      client.off("close", onClose);
+      if (verified) {
+        client.pause();
+        onVerified(received);
+        return;
+      }
+      received = Buffer.alloc(0);
+      if (reason) {
+        logger.debug("restricted egress tunnel rejected", { hostname, reason });
+      }
+      closeSocket(client);
+    };
+    const check = () => {
+      if (received.length > MAX_CLIENT_HELLO_BYTES)
+        return finish(false, "ClientHello too large");
+      const hello = readClientHelloServerName(received);
+      if (hello.state === "incomplete") return;
+      if (hello.state === "invalid") return finish(false, hello.reason);
+      finish(
+        hello.serverName === hostname,
+        hello.serverName === hostname ? undefined : "server name mismatch",
+      );
+    };
+    const onData = (chunk: Buffer) => {
+      received = Buffer.concat([received, chunk]);
+      check();
+    };
+    // HTTP server sockets are half-open: a client FIN ends the wait too.
+    const onClose = () => finish(false);
+    client.on("data", onData);
+    client.once("end", onClose);
+    client.once("close", onClose);
+    check();
   }
 }
 
