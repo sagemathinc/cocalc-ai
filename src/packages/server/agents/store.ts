@@ -247,6 +247,20 @@ export class AgentStore {
     return rows[0];
   }
 
+  // Provenance for work already admitted to the trusted host queue, NOT token
+  // authentication. Normal sender shutdown/expiry must not retract accepted
+  // work. Callers must still check current account/project/network authority.
+  async executionRun(agentId: string, runId: string): Promise<AgentRun> {
+    const { rows } = await this.query<AgentRun>(
+      `SELECT r.*,a.project_id FROM agent_identity_runs r
+       JOIN agent_identities a USING(agent_id)
+       WHERE r.agent_id=$1 AND r.run_id=$2 AND a.disabled_at IS NULL`,
+      [agentId, runId],
+    );
+    if (!rows[0]) throw new Error("accepted agent run is unavailable");
+    return rows[0];
+  }
+
   async authenticate(token: string): Promise<AgentRun> {
     if (!token.startsWith(AGENT_IDENTITY_TOKEN_PREFIX) || token.length > 256)
       throw new Error("invalid agent credential");
