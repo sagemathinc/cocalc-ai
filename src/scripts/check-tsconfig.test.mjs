@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import {
@@ -62,6 +66,48 @@ test("keeps typescript as the TypeScript 6 API and tsc as TypeScript 7", () => {
     },
   };
   assert.equal(typescriptDependencyErrors("p/package.json", bad).length, 2);
+});
+
+test("the repository scan checks compiler dependencies in root and workspace manifests", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "check-tsconfig-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const rootPath = "src/packages/package.json";
+  const packagePath = "src/packages/apps/example/package.json";
+  const write = (path, pkg) => {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), JSON.stringify(pkg));
+  };
+  const rootPackage = {
+    devDependencies: {
+      "@cocalc/example": "workspace:*",
+      "@typescript/native": "npm:typescript@^7.0.2",
+      typescript: "npm:@typescript/typescript6@^6.0.2",
+    },
+  };
+  const workspacePackage = { name: "@cocalc/example" };
+  execFileSync("git", ["init", "--quiet"], { cwd: root, stdio: "pipe" });
+  write(rootPath, rootPackage);
+  write(packagePath, workspacePackage);
+  execFileSync("git", ["add", "."], { cwd: root, stdio: "pipe" });
+  assert.deepEqual(checkTsconfig(root), []);
+
+  for (const path of [rootPath, packagePath]) {
+    for (const section of ["dependencies", "devDependencies"]) {
+      write(rootPath, rootPackage);
+      write(packagePath, workspacePackage);
+      write(path, {
+        ...(path === rootPath ? rootPackage : workspacePackage),
+        [section]: {
+          ...(path === rootPath ? rootPackage.devDependencies : {}),
+          "@typescript/native": "npm:typescript@^6.0.3",
+          typescript: "^7.0.2",
+        },
+      });
+      const errors = checkTsconfig(root);
+      assert.equal(errors.length, 2, `${path}: ${section}`);
+      assert.ok(errors.every((error) => error.startsWith(`${path}:`)));
+    }
+  }
 });
 
 test("the repository passes", () => {

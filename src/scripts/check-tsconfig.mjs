@@ -94,12 +94,12 @@ export function checkTsconfig(root = ROOT) {
       errors.push(
         ...removedOptionErrors(path, readFileSync(join(root, path), "utf8")),
       );
-    } else if (
-      name === "package.json" &&
-      path !== "src/packages/package.json"
-    ) {
+    } else if (name === "package.json") {
       const pkg = JSON.parse(readFileSync(join(root, path), "utf8"));
-      if (pkg.name) workspaceNames.push(pkg.name);
+      errors.push(...typescriptDependencyErrors(path, pkg));
+      if (path !== "src/packages/package.json" && pkg.name) {
+        workspaceNames.push(pkg.name);
+      }
     }
   }
   const rootPackage = JSON.parse(
