@@ -171,3 +171,27 @@ moderate pressure need not fall below 1% for 60 seconds to protect overdue data.
 Queue position and cooldown reset on process restart; ordinary startup delay
 still applies. No starvation escape is granted to scavengers. Interactive
 storage, transport, and eviction are unchanged.
+
+## Runtime Tools Retention
+
+Tools cleanup runs during installation and hourly, with the first background
+sweep five to six minutes after startup. Sweeps do not overlap and share the
+installer's artifact lock. No containers are stopped for cleanup.
+
+The configured tools retention count (default three) retains recent versions
+in addition to versions needed by live mounts, stopped-container configurations,
+and running/starting project records. `current` and the prior activation's
+`previous` symlink are preserved. References can therefore exceed the configured
+count or byte budget.
+
+Container metadata may record `tools/current` even though the container still
+mounts an older release. Cleanup reads the live container's mount table before
+pruning; metadata alone is insufficient. Failed or incomplete inspection,
+changing container inventory, and unmappable live aliases skip tools pruning
+for that sweep rather than failing an upgrade or stopping projects.
+
+Only unreferenced tools releases are collected by the background sweep. Host
+bundles, Node installations, backup caches and deployment staging directories
+have separate lifecycles. Plan root-disk capacity for all concurrently referenced
+runtime generations and room to extract a new release, not just the retention
+count.
