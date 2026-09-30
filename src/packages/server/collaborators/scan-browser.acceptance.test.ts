@@ -19,6 +19,7 @@ acceptance("Scan browser against real home, owner and host services", () => {
   let env: MultibayAcceptance;
   let bridge: Server | undefined;
   const unavailable = randomUUID();
+  const retiredHost = randomUUID();
   beforeAll(async () => {
     env = new MultibayAcceptance({ explicitCensus: true });
     await env.start();
@@ -40,16 +41,23 @@ acceptance("Scan browser against real home, owner and host services", () => {
       "INSERT INTO project_hosts(id,bay_id) VALUES($1,$2)",
       [env.host, env.bays[0]],
     );
-    for (const role of ["owner", "b"] as const)
+    for (const role of ["owner", "b"] as const) {
       await env.sql(
         role,
-        "INSERT INTO projects(project_id,owning_bay_id,users,title) VALUES($1,$2,$3::jsonb,'Unavailable storage')",
+        "INSERT INTO project_hosts(id,bay_id,status) VALUES($1,$2,'deprovisioned')",
+        [retiredHost, env.bays[2]],
+      );
+      await env.sql(
+        role,
+        "INSERT INTO projects(project_id,owning_bay_id,users,title,host_id) VALUES($1,$2,$3::jsonb,'Unavailable storage',$4)",
         [
           unavailable,
           env.bays[2],
           JSON.stringify({ [env.accounts[0]]: { group: "collaborator" } }),
+          retiredHost,
         ],
       );
+    }
     await env.sql(
       "a",
       "INSERT INTO account_project_index(account_id,project_id,owning_bay_id,users_summary,title,sort_key) VALUES($1,$2,$3,$4::jsonb,'Unavailable storage',now())",

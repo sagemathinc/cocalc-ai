@@ -137,6 +137,10 @@ export async function syncCollaborationScanSchema(
     ADD COLUMN IF NOT EXISTS cancel_requested BOOLEAN NOT NULL DEFAULT false,
     ADD COLUMN IF NOT EXISTS progress JSONB,
     ADD COLUMN IF NOT EXISTS finish_result JSONB`);
+  // Existing jobs may already have sent work. Only new batch jobs explicitly
+  // opt into the provably-unsubmitted state; migration must remain conservative.
+  await db.query(`ALTER TABLE collaboration_scan_jobs
+    ADD COLUMN IF NOT EXISTS host_request_started BOOLEAN NOT NULL DEFAULT true`);
   await db.query(`CREATE INDEX IF NOT EXISTS collaboration_scan_jobs_due
     ON collaboration_scan_jobs(state,created_at,project_id)`);
   await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS collaboration_scan_jobs_state
@@ -150,7 +154,25 @@ export async function syncCollaborationScanSchema(
   );
   await db.query(`ALTER TABLE collaboration_scan_jobs
     ADD COLUMN IF NOT EXISTS dispatch_token UUID,
+    ADD COLUMN IF NOT EXISTS dispatch_probe_token UUID,
     ADD COLUMN IF NOT EXISTS dispatch_until TIMESTAMPTZ`);
+  // An older worker can claim a new job during a rolling upgrade/rollback. It
+  // does not implement the submission boundary, so its lease must immediately
+  // make execution ambiguous. New workers attest their probe-aware lease by
+  // setting both tokens together; no writer can reset a true boundary to false.
+  await db.query(`CREATE OR REPLACE FUNCTION collaboration_scan_submission_guard()
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF OLD.host_request_started OR
+         (NEW.dispatch_token IS NOT NULL AND
+          NEW.dispatch_token IS DISTINCT FROM NEW.dispatch_probe_token) THEN
+        NEW.host_request_started := true;
+      END IF;
+      RETURN NEW;
+    END $$`);
+  await db.query(`CREATE OR REPLACE TRIGGER collaboration_scan_submission_guard
+    BEFORE UPDATE ON collaboration_scan_jobs FOR EACH ROW
+    EXECUTE FUNCTION collaboration_scan_submission_guard()`);
   await db.query(`ALTER TABLE collaboration_scan_jobs
     ADD COLUMN IF NOT EXISTS deferred_reason TEXT,
     ADD COLUMN IF NOT EXISTS deferred_until TIMESTAMPTZ`);
@@ -498,7 +520,7 @@ export async function claimCollaborationScanDispatch(
     const token = randomUUID();
     const result = await db.query(
       `UPDATE collaboration_scan_jobs j
-      SET dispatch_token=$4,dispatch_until=clock_timestamp()+interval '90 seconds',last_dispatch_at=clock_timestamp(),deferred_reason=NULL,deferred_until=NULL
+      SET dispatch_token=$4,dispatch_probe_token=$4,dispatch_until=clock_timestamp()+interval '90 seconds',last_dispatch_at=clock_timestamp(),deferred_reason=NULL,deferred_until=NULL
       WHERE project_id=$1 AND job_id=$2 AND state='running' AND NOT cancel_requested
       AND (dispatch_until IS NULL OR dispatch_until<=clock_timestamp())
       AND (deferred_until IS NULL OR deferred_until<=clock_timestamp())
@@ -508,6 +530,39 @@ export async function claimCollaborationScanDispatch(
       [opts.project_id, opts.job_id, opts.account_id, token],
     );
     return result.rows.length ? token : null;
+  });
+}
+
+/** Commit the possible remote-execution boundary before sending a start RPC.
+ * The project fence serializes this with cancellation and unsubmitted cleanup.
+ * A worker delayed in its read-only probe cannot submit after either wins.
+ */
+export async function markCollaborationScanHostRequest(
+  opts: {
+    project_id: string;
+    account_id: string;
+    job_id: string;
+    token: string;
+  },
+  authority: CollaborationOwnerAuthority,
+): Promise<boolean> {
+  uuid(opts.job_id, "scan job");
+  uuid(opts.token, "dispatch token");
+  return transaction(async (db) => {
+    await assertCollaborationAccountAuthority(
+      db,
+      opts.project_id,
+      opts.account_id,
+      authority,
+    );
+    const result = await db.query(
+      `UPDATE collaboration_scan_jobs SET host_request_started=true
+       WHERE project_id=$1 AND job_id=$2 AND dispatch_token=$3
+       AND dispatch_until>clock_timestamp() AND state='running'
+       AND NOT cancel_requested AND finish_result IS NULL RETURNING job_id`,
+      [opts.project_id, opts.job_id, opts.token],
+    );
+    return result.rows.length > 0;
   });
 }
 

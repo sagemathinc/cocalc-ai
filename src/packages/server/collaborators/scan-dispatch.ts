@@ -9,6 +9,7 @@ import {
   releaseCollaborationScanDispatch,
   adoptCollaborationScanPredecessor,
   deferCollaborationScanDispatch,
+  markCollaborationScanHostRequest,
 } from "@cocalc/database/postgres/collaborators/collaborators-scan";
 import type { CollaborationOwnerAuthority } from "@cocalc/database/postgres/collaborators/collaborators-owner";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
@@ -83,6 +84,13 @@ export async function dispatchCollaborationScan(
       if (!adopted) return { state: "deferred" as const };
       scan.expected_run_id = status.current_run_id;
     }
+    if (
+      !(await markCollaborationScanHostRequest(
+        { ...request, token: token! },
+        authority,
+      ))
+    )
+      return { state: "deferred" as const };
     const admission = await host.requestCollaborationReconciliation(scan);
     if (admission.admission === "accepted" && admission.run_id !== run.job_id)
       throw Error("scan host accepted a different run");

@@ -105,6 +105,11 @@ try {
   await expect(page.getByRole("status")).toContainText("1 of 1", {
     timeout: 60000,
   });
+  // Unreachable storage still spends project admission. Retrying after the
+  // account interval must respect the longer project cooldown.
+  await expect(
+    dialog.getByRole("list", { name: "Project scan results" }),
+  ).toContainText(`${unavailableId}: deferred`);
   const firstStarts = calls.filter(
     (c) => c.actor === "/rpc" && c.input.action === "start",
   );

@@ -6,6 +6,7 @@ import {
   releaseCollaborationScanDispatch,
   adoptCollaborationScanPredecessor,
   deferCollaborationScanDispatch,
+  markCollaborationScanHostRequest,
 } from "@cocalc/database/postgres/collaborators/collaborators-scan";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 jest.mock("@cocalc/database/postgres/collaborators/collaborators-scan", () => ({
@@ -15,6 +16,7 @@ jest.mock("@cocalc/database/postgres/collaborators/collaborators-scan", () => ({
   releaseCollaborationScanDispatch: jest.fn(),
   adoptCollaborationScanPredecessor: jest.fn(),
   deferCollaborationScanDispatch: jest.fn(),
+  markCollaborationScanHostRequest: jest.fn(),
 }));
 jest.mock("@cocalc/server/project-host/client", () => ({
   getRoutedHostControlClient: jest.fn(),
@@ -33,6 +35,7 @@ beforeEach(() => {
   jest.resetAllMocks();
   process.env.COCALC_PEOPLE_SCAN_DISPATCH_PROTOTYPE = "1";
   (claimCollaborationScanDispatch as jest.Mock).mockResolvedValue("lease");
+  (markCollaborationScanHostRequest as jest.Mock).mockResolvedValue(true);
   (startCollaborationScan as jest.Mock).mockResolvedValue({
     job_id: "job",
     host_id: "host",
@@ -109,6 +112,22 @@ test("timeout does not settle or retry with a fresh identity", async () => {
   );
   expect(admit).toHaveBeenCalledTimes(1);
   expect(settleCollaborationScanDiscovery).not.toHaveBeenCalled();
+});
+test("cancellation or an expired lease during the read probe prevents submission", async () => {
+  (markCollaborationScanHostRequest as jest.Mock).mockResolvedValue(false);
+  expect(await dispatchCollaborationScan(request, authority)).toEqual({
+    state: "deferred",
+  });
+  expect(status).toHaveBeenCalledTimes(1);
+  expect(admit).not.toHaveBeenCalled();
+});
+test("read probe failure never crosses the durable submission boundary", async () => {
+  status.mockRejectedValue(Error("host unavailable"));
+  await expect(dispatchCollaborationScan(request, authority)).rejects.toThrow(
+    "host unavailable",
+  );
+  expect(markCollaborationScanHostRequest).not.toHaveBeenCalled();
+  expect(admit).not.toHaveBeenCalled();
 });
 test.each([
   [

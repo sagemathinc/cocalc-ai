@@ -35,7 +35,7 @@ export async function prepareScanChild(
     ).rows[0];
     const prior = (
       await db.query(
-        `SELECT r.receipt,r.result,j.state,j.host_id,j.cancel_requested,j.progress,j.finish_result
+        `SELECT r.receipt,r.result,j.state,j.host_id,j.cancel_requested,j.progress,j.finish_result,j.host_request_started
       FROM collaboration_scan_receipts r LEFT JOIN collaboration_scan_jobs j ON j.job_id::text=r.receipt->>'job_id'
       WHERE r.project_id=$1 AND r.account_id=$2 AND r.request_id=$3`,
         [opts.project_id, opts.account_id, opts.request_id],
@@ -55,7 +55,10 @@ export async function prepareScanChild(
       !member ||
       prior?.cancel_requested ||
       (prior?.host_id && prior.host_id !== project.host_id);
-    if (prior?.state === "running") {
+    if (
+      prior?.state === "running" &&
+      !(cancelling && prior.host_request_started === false)
+    ) {
       if (cancelling)
         await db.query(
           "UPDATE collaboration_scan_jobs SET cancel_requested=true WHERE job_id=$1",
@@ -78,7 +81,7 @@ export async function prepareScanChild(
       await receipt(db, opts, result);
       if (prior)
         await db.query(
-          "DELETE FROM collaboration_scan_jobs WHERE job_id=$1 AND state='queued'",
+          "DELETE FROM collaboration_scan_jobs WHERE job_id=$1 AND (state='queued' OR NOT host_request_started)",
           [prior.receipt.job_id],
         );
       return result;
@@ -128,11 +131,51 @@ export async function prepareScanChild(
       [opts.project_id],
     );
     await db.query(
-      `INSERT INTO collaboration_scan_jobs(project_id,slot,job_id,state,created_at,batch_id) VALUES($1,0,$2,'queued',clock_timestamp(),$3)`,
+      `INSERT INTO collaboration_scan_jobs(project_id,slot,job_id,state,created_at,batch_id,host_request_started) VALUES($1,0,$2,'queued',clock_timestamp(),$3,false)`,
       [opts.project_id, opts.request_id, opts.batch_id],
     );
     await receipt(db, opts);
     return { ...base, state: "queued", job_id: opts.request_id };
+  });
+}
+
+/** A failed read-only probe can end unavailable only while the durable job
+ * proves that no start RPC was sent. Never infer this from a transport error.
+ */
+export async function finishUnsubmittedScanChild(
+  opts: ScanChildRequest,
+  authority: CollaborationOwnerAuthority,
+): Promise<ScanChild | undefined> {
+  return transaction(async (db) => {
+    await assertCollaborationOwnerAuthority(db, opts.project_id, authority);
+    const prior = (
+      await db.query(
+        `SELECT receipt,result FROM collaboration_scan_receipts
+         WHERE project_id=$1 AND account_id=$2 AND request_id=$3`,
+        [opts.project_id, opts.account_id, opts.request_id],
+      )
+    ).rows[0];
+    if (!prior || prior.receipt.batch_id !== opts.batch_id)
+      throw Error("scan child receipt missing");
+    if (prior.result) return prior.result;
+    const job = (
+      await db.query(
+        `DELETE FROM collaboration_scan_jobs WHERE project_id=$1 AND job_id=$2
+         AND NOT host_request_started AND finish_result IS NULL
+         RETURNING cancel_requested`,
+        [opts.project_id, opts.request_id],
+      )
+    ).rows[0];
+    if (!job) return;
+    const result: ScanChild = {
+      project_id: opts.project_id,
+      request_id: opts.request_id,
+      state: job.cancel_requested ? "cancelled" : "unavailable",
+      message:
+        "Storage could not be reached before scan submission; compute was not started.",
+    };
+    await receipt(db, opts, result);
+    return result;
   });
 }
 async function receipt(

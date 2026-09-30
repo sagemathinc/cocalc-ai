@@ -198,6 +198,130 @@ describeDb("manual scan LRO durability", () => {
     );
     expect(admit).toHaveBeenCalledTimes(1);
   });
+  test("unreachable storage before submission ends unavailable and fences replay", async () => {
+    const result = await start();
+    const request: ScanChildRequest = {
+      account_id,
+      project_id,
+      batch_id: result.operation!.op_id,
+      request_id: result.operation!.children[0].request_id,
+      action: "start",
+    };
+    status.mockRejectedValue(Error("retired host is unreachable"));
+    await runScanBatchPass(step);
+    const final = (await api({ action: "status" })).operation!;
+    expect(final.processed).toBe(1);
+    expect(final.counts.unavailable).toBe(1);
+    expect(final.status).toBe("failed");
+    expect(final.children[0].message).toContain("before scan submission");
+    expect(admit).not.toHaveBeenCalled();
+    expect(cancel).not.toHaveBeenCalled();
+    expect((await step(request)).state).toBe("unavailable");
+    expect(
+      (await getPool().query("SELECT * FROM collaboration_scan_jobs")).rows,
+    ).toEqual([]);
+    expect((await start()).next_eligible_at).toBeGreaterThan(Date.now());
+  });
+  test("cancel during a delayed read probe fences the stale worker without a host RPC", async () => {
+    const result = await start();
+    const request: ScanChildRequest = {
+      account_id,
+      project_id,
+      batch_id: result.operation!.op_id,
+      request_id: result.operation!.children[0].request_id,
+      action: "start",
+    };
+    let resume!: () => void;
+    let probing!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      probing = resolve;
+    });
+    status.mockImplementationOnce(async () => {
+      probing();
+      await new Promise<void>((resolve) => {
+        resume = resolve;
+      });
+      return { state: "unknown" };
+    });
+    const running = step(request);
+    await entered;
+    try {
+      expect((await step({ ...request, action: "cancel" })).state).toBe(
+        "cancelled",
+      );
+    } finally {
+      resume();
+    }
+    expect((await running).state).toBe("cancelled");
+    expect(admit).not.toHaveBeenCalled();
+    expect(cancel).not.toHaveBeenCalled();
+    expect((await step(request)).state).toBe("cancelled");
+  });
+  test("legacy ambiguous execution cannot be cleared by a failed read probe", async () => {
+    const result = await start();
+    const request: ScanChildRequest = {
+      account_id,
+      project_id,
+      batch_id: result.operation!.op_id,
+      request_id: result.operation!.children[0].request_id,
+      action: "start",
+    };
+    await prepareScanChild(request, authority);
+    // The schema default is conservative for pre-boundary writers and migrated jobs.
+    await getPool().query(
+      "UPDATE collaboration_scan_jobs SET host_request_started=DEFAULT",
+    );
+    status.mockRejectedValue(Error("unknown remote state"));
+    await runScanBatchPass(step);
+    expect((await api({ action: "status" })).operation?.status).toBe("running");
+    expect(
+      (
+        await getPool().query(
+          "SELECT host_request_started FROM collaboration_scan_jobs",
+        )
+      ).rows[0].host_request_started,
+    ).toBe(true);
+    await api({ action: "cancel", op_id: result.operation!.op_id });
+    cancel.mockRejectedValue(Error("no acknowledgment"));
+    await due();
+    await runScanBatchPass(step);
+    expect((await api({ action: "status" })).operation?.cancelling).toBe(true);
+    expect(admit).not.toHaveBeenCalled();
+  });
+  test("an older dispatch writer makes a new job ambiguous before it can send", async () => {
+    const result = await start();
+    const request: ScanChildRequest = {
+      account_id,
+      project_id,
+      batch_id: result.operation!.op_id,
+      request_id: result.operation!.children[0].request_id,
+      action: "start",
+    };
+    await prepareScanChild(request, authority);
+    // Pre-boundary workers only write dispatch_token. The database protects a
+    // mixed-version deployment even though that code cannot set the new flag.
+    await getPool().query(
+      "UPDATE collaboration_scan_jobs SET dispatch_token=$1,dispatch_until=now()+interval '90 seconds'",
+      [randomUUID()],
+    );
+    expect(
+      (
+        await getPool().query(
+          "SELECT host_request_started FROM collaboration_scan_jobs",
+        )
+      ).rows[0].host_request_started,
+    ).toBe(true);
+    await getPool().query(
+      "UPDATE collaboration_scan_jobs SET host_request_started=false",
+    );
+    expect(
+      (
+        await getPool().query(
+          "SELECT host_request_started FROM collaboration_scan_jobs",
+        )
+      ).rows[0].host_request_started,
+    ).toBe(true);
+  });
   test("disabled admission preserves status/cancel and no generic expiry loses receipts", async () => {
     const result = await start();
     mockEnabled = false;

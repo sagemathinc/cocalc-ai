@@ -7,6 +7,7 @@ import {
   prepareScanChild,
   finishScanChild,
   stageScanChildFinish,
+  finishUnsubmittedScanChild,
 } from "@cocalc/database/postgres/collaborators/collaborators-scan-child";
 import type { CollaborationOwnerAuthority } from "@cocalc/database/postgres/collaborators/collaborators-owner";
 import type {
@@ -34,6 +35,8 @@ export async function stepScanChild(
       if ("host_deferred" in dispatch && dispatch.host_deferred)
         deferredUntil = Date.now() + (dispatch.retry_after_ms ?? 30000);
     } catch (error) {
+      const unsubmitted = await finishUnsubmittedScanChild(opts, authority);
+      if (unsubmitted) return unsubmitted;
       // Only a definitive host storage rejection can become unavailable. Fence
       // the exact run first so an earlier delayed submission cannot execute.
       unavailable = [

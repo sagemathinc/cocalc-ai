@@ -3727,3 +3727,49 @@ propagation, reload, keyboard cancellation, narrow-layout measurement, scoped
 axe audit, and correlated durable-state/log inspection. The full checklist is
 not passing and this development instance is not ready for a clean manual
 acceptance run on the same account until the retired-host case is resolved.
+
+### Retired-Host Follow-Up: Durable Submission Boundary
+
+The owner now records whether a host start request may have been sent, separately
+from creating a running coordination job. New batch jobs begin provably
+unsubmitted. The dispatcher first performs its read-only host status probe,
+then commits the possible-execution boundary under the project authority lock
+and its current dispatch lease before sending a start RPC. Cancellation and
+failed-probe cleanup use that same lock. A worker delayed in its probe cannot
+start after cleanup wins. Once submission is possible, transport errors retain
+the exact identity and require the existing host reconciliation/fence protocol.
+
+A failed probe can therefore produce unavailable for unreachable storage,
+including a retired host, without claiming that a timed-out execution stopped.
+Cancellation before submission can finish without contacting the unavailable
+host. Both paths keep terminal receipts and cooldown history. No compute start
+or host provisioning is introduced.
+
+Existing jobs conservatively default to possibly submitted. A database guard
+also detects dispatch leases claimed by older workers during a mixed-version
+upgrade or rollback and makes their jobs ambiguous before they can send. The
+guard prevents reverting a possible-execution boundary to unsubmitted.
+
+Validation:
+
+- Server/reference TypeScript build passed.
+- Focused batch, dispatch, and legacy worker integration suites passed all 37
+  tests. New cases cover unreachable storage before submission, cancellation
+  during a delayed read probe, stale-worker prevention, legacy ambiguous jobs,
+  and an older dispatch writer. Existing lost-start-acknowledgment and
+  unreachable-cancellation tests still require a confirmed stop.
+- All 23 database scan tests passed.
+- The real-service browser acceptance fixture now assigns its unavailable
+  project to a retired host with no running control service, instead of omitting
+  its host assignment. The actual dialog reaches successful/unavailable results,
+  reloads, explicitly retries after the real account cooldown, and reports
+  deferred for the still-applicable project cooldown. Separate-process home,
+  owner and host services use isolated PostgreSQL and the real routing fabric.
+  The suite passed in 122.946 seconds; compute-start counters remain zero.
+
+This fixes new work and safely handles work created with the new boundary. It
+does not retroactively prove whether the older live operation
+`8a6b4421-9632-467a-848d-61a838855079` sent work. That operation was not edited
+or declared cancelled. This follow-up has not yet been loaded into the running
+development hubs. Live recovery, the remaining checklist cases, and the release
+gates remain incomplete.
