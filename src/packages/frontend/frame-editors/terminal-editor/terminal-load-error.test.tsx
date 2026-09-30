@@ -2,6 +2,7 @@
 
 import { Map } from "immutable";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { TerminalFrame } from "./terminal";
 import { TerminalManager } from "./terminal-manager";
 
@@ -99,14 +100,26 @@ test("an open that silently yields no terminal is reported, not left blank", asy
   expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
 });
 
-test("a stale chunk after a deploy offers a reload", async () => {
+test("chunk failures keep keyboard Retry before offering a page reload", async () => {
+  const user = userEvent.setup();
   const err = Object.assign(new Error("Loading chunk 95636 failed."), {
     name: "ChunkLoadError",
   });
   const actions = { _get_terminal: jest.fn().mockRejectedValue(err) };
   render(<TerminalFrame {...baseProps} actions={actions} />);
-  await screen.findByText(/CoCalc was updated/);
-  fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+  await screen.findByText(/Terminal code failed to load/);
+  expect(screen.queryByRole("button", { name: "Reload page" })).toBeNull();
+  const retry = screen.getByRole("button", { name: "Retry" });
+  retry.focus();
+  expect(retry).toHaveFocus();
+  await user.keyboard("{Enter}");
+  await screen.findByRole("button", { name: "Reload page" });
+  expect(actions._get_terminal).toHaveBeenCalledTimes(2);
+  expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+  screen.getByRole("button", { name: "Retry" }).focus();
+  await user.tab();
+  expect(screen.getByRole("button", { name: "Reload page" })).toHaveFocus();
+  await user.keyboard("{Enter}");
   expect(mockReload).toHaveBeenCalled();
 });
 

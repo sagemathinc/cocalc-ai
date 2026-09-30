@@ -24,6 +24,8 @@ import {
   reloadForFrontendBuild,
 } from "@cocalc/frontend/app/frontend-build-monitor";
 import { Tooltip } from "@cocalc/frontend/components";
+import { getLogger } from "@cocalc/frontend/logger";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { set_buffer } from "@cocalc/frontend/copy-paste-buffer";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { useProjectContext } from "@cocalc/frontend/project/context";
@@ -61,10 +63,12 @@ const COMMAND_STYLE = {
 
 const LOAD_ERROR_STYLE = {
   padding: "8px",
-  background: "#fff1f0",
-  color: "#a8071a",
-  borderBottom: "1px solid #ffa39e",
+  background: UI_COLORS.dangerBg,
+  color: UI_COLORS.danger,
+  borderBottom: `1px solid ${UI_COLORS.border}`,
 } as CSS;
+
+const logger = getLogger("terminal-editor");
 
 interface NativeTouchTap {
   x: number;
@@ -88,6 +92,7 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
   // Opening can fail (e.g., the terminal code chunk does not load). Without
   // this the frame stays blank with no way to recover but reloading the page.
   const [loadError, setLoadError] = useState<unknown>(undefined);
+  const [manuallyRetried, setManuallyRetried] = useState(false);
   const resize = useResizeObserver({ ref: terminalDOMRef });
   const isMountedRef = useIsMountedRef();
   const student_project_functionality = useStudentProjectFunctionality(
@@ -104,6 +109,7 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
   useEffect(() => {
     setShowMobileToolbar(false);
     setLoadError(undefined);
+    setManuallyRetried(false);
     if (props.is_visible && props.tab_is_visible !== false)
       void init_terminal();
     return delete_terminal;
@@ -111,6 +117,7 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
 
   function retryInitTerminal(): void {
     delete_terminal();
+    setManuallyRetried(true);
     setLoadError(undefined);
     void init_terminal();
   }
@@ -188,7 +195,7 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
       );
     } catch (err) {
       if (!isCurrent()) return;
-      console.warn("terminal: failed to open", {
+      logger.warn("terminal: failed to open", {
         path: props.path,
         id: props.id,
         err,
@@ -198,7 +205,7 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
     }
     if (terminal == null && isCurrent()) {
       // Nothing superseded this view, yet no terminal was produced.
-      console.warn("terminal: open returned no terminal", {
+      logger.warn("terminal: open returned no terminal", {
         path: props.path,
         id: props.id,
         actionsClosed: props.actions?.isClosed?.(),
@@ -374,7 +381,7 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
     return (
       <div role="alert" style={LOAD_ERROR_STYLE}>
         {stale
-          ? "CoCalc was updated since this page loaded. Reload the page to open terminals."
+          ? "Terminal code failed to load. Retry the terminal without reloading this page."
           : `Terminal failed to open: ${
               (loadError as any)?.message ?? `${loadError}`
             }`}
@@ -383,15 +390,23 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
           style={{ marginLeft: "8px" }}
           onClick={(event) => {
             event.stopPropagation();
-            if (stale) {
-              reloadForFrontendBuild();
-            } else {
-              retryInitTerminal();
-            }
+            retryInitTerminal();
           }}
         >
-          {stale ? "Reload" : "Retry"}
+          Retry
         </Button>
+        {stale && manuallyRetried && (
+          <Button
+            size="small"
+            style={{ marginLeft: "8px" }}
+            onClick={(event) => {
+              event.stopPropagation();
+              reloadForFrontendBuild();
+            }}
+          >
+            Reload page
+          </Button>
+        )}
       </div>
     );
   }
