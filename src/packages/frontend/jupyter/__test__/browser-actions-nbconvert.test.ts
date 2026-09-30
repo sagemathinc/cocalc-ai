@@ -1,7 +1,9 @@
 /** @jest-environment jsdom */
 jest.mock("@cocalc/frontend/webapp-client", () => ({ webapp_client: {} }));
 jest.mock("../widgets/manager", () => ({ WidgetManager: class {} }));
+jest.mock("../download-html", () => ({ downloadHTML: jest.fn() }));
 import { JupyterActions } from "../browser-actions";
+import { downloadHTML } from "../download-html";
 import { EXPORT_STARTUP_TIMEOUT_MS } from "../export-startup";
 
 function setup(start = jest.fn().mockResolvedValue(undefined)) {
@@ -170,6 +172,76 @@ describe("JupyterActions nbconvert startup", () => {
       "cocalc-pdf",
     ]);
     expect(test.target.nbconvertToHtml).toHaveBeenCalledTimes(1);
+    expect(test.target.nbconvertToHtml).toHaveBeenCalledWith("cocalc-pdf");
     expect(test.target.jupyterApi).not.toHaveBeenCalled();
+  });
+});
+
+describe("local HTML and PDF delivery", () => {
+  function actions(overrides: object) {
+    return Object.assign(
+      new JupyterActions("export-test", {
+        getStore: jest.fn(() => undefined),
+        removeActions: jest.fn(),
+      } as any),
+      overrides,
+    );
+  }
+  afterEach(() => jest.restoreAllMocks());
+  it("routes HTML to a download, not printing or backend conversion", async () => {
+    const target = actions({
+      path: "/home/user/My notebook.ipynb",
+      toHTML: jest.fn(async () => "<html>notebook</html>"),
+      setState: jest.fn(),
+    });
+    const open = jest.spyOn(window, "open");
+    await target.nbconvertToHtml("cocalc-html");
+    expect(downloadHTML).toHaveBeenCalledWith(
+      "<html>notebook</html>",
+      "My notebook.html",
+    );
+    expect(open).not.toHaveBeenCalled();
+    expect(target.setState).toHaveBeenLastCalledWith({
+      nbconvert: expect.objectContaining({
+        state: "done",
+        error: "",
+        args: ["--to", "cocalc-html"],
+      }),
+    });
+  });
+  it("retains the PDF print-window flow", async () => {
+    const popup: any = {
+      document: { open: jest.fn(), write: jest.fn(), close: jest.fn() },
+      print: jest.fn(),
+      close: jest.fn(),
+    };
+    jest.spyOn(window, "open").mockReturnValue(popup);
+    const target = actions({
+      toHTML: jest.fn(async () => "<html>print</html>"),
+      setState: jest.fn(),
+    });
+    await target.nbconvertToHtml("cocalc-pdf");
+    expect(popup.document.write).toHaveBeenCalledWith("<html>print</html>");
+    popup.onload();
+    expect(popup.print).toHaveBeenCalledTimes(1);
+    popup.onafterprint();
+    expect(popup.close).toHaveBeenCalledTimes(1);
+  });
+  it("surfaces HTML delivery failure in the conversion state", async () => {
+    (downloadHTML as jest.Mock).mockImplementationOnce(() => {
+      throw Error("delivery failed");
+    });
+    const target = actions({
+      path: "test.ipynb",
+      toHTML: jest.fn(async () => "html"),
+      setState: jest.fn(),
+    });
+    await target.nbconvertToHtml("cocalc-html");
+    expect(target.setState).toHaveBeenLastCalledWith({
+      nbconvert: expect.objectContaining({
+        state: "done",
+        error: "Error: delivery failed",
+      }),
+    });
   });
 });

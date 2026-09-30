@@ -55,6 +55,43 @@ function createActions(fileExtension = ".py") {
 }
 
 describe("NBConvert", () => {
+  it.each(["cocalc-html", "cocalc-pdf"])(
+    "does not request a phantom project file for %s",
+    async (to) => {
+      const actions = createActions();
+      const props = {
+        actions,
+        path: "test.ipynb",
+        project_id: "project-1",
+        nbconvert_dialog: fromJS({ to }),
+      };
+      const { rerender } = render(
+        <NBConvert {...props} nbconvert={fromJS({ state: "run" })} />,
+      );
+      rerender(
+        <NBConvert
+          {...props}
+          nbconvert={fromJS({
+            state: "done",
+            args: ["--to", to],
+            time: Date.now(),
+            error: "",
+          })}
+        />,
+      );
+      expect(downloadFile).not.toHaveBeenCalled();
+      expect(screen.queryByRole("link")).not.toBeInTheDocument();
+      expect(screen.getByRole("status").textContent).toContain(
+        to === "cocalc-html"
+          ? "HTML download requested"
+          : "Print dialog requested",
+      );
+      const user = userEvent.setup();
+      screen.getByRole("button", { name: "Close" }).focus();
+      await user.keyboard("{Enter}");
+      expect(actions.focus).toHaveBeenCalledWith(true);
+    },
+  );
   const getComputedStyle = window.getComputedStyle;
   beforeAll(() => {
     // JSDOM has no pseudo-element layout for the real Modal's scrollbar probe.
