@@ -61,6 +61,7 @@ import { get_kernels_by_name_or_language } from "@cocalc/jupyter/util/misc";
 import { show_kernel_selector_reasons } from "@cocalc/jupyter/redux/store";
 import exportToHTML from "./nbviewer/export";
 import { initializeExport } from "./export-startup";
+import { downloadHTML } from "./download-html";
 import { JUPYTER_MIMETYPES } from "@cocalc/jupyter/util/misc";
 import { parse } from "path";
 import { syncdbPath } from "@cocalc/util/jupyter/names";
@@ -2209,7 +2210,7 @@ export class JupyterActions extends JupyterActions0 {
     }
 
     if (args[1] == "cocalc-html" || args[1] == "cocalc-pdf") {
-      this.nbconvertToHtml();
+      this.nbconvertToHtml(args[1]);
       return;
     }
 
@@ -2967,26 +2968,42 @@ export class JupyterActions extends JupyterActions0 {
     return exportToHTML({ cocalcJupyter, title });
   };
 
-  nbconvertToHtml = async () => {
+  nbconvertToHtml = async (
+    format: "cocalc-html" | "cocalc-pdf" = "cocalc-pdf",
+  ) => {
+    const result = { args: ["--to", format], time: Date.now() };
     try {
-      this.setState({ nbconvert: { state: "run", error: "" } });
+      this.setState({ nbconvert: { ...result, state: "run", error: "" } });
       const html = await this.toHTML();
+      if (format === "cocalc-html") {
+        downloadHTML(html, `${parse(this.path).name}.html`);
+        this.setState({ nbconvert: { ...result, state: "done", error: "" } });
+        return;
+      }
       const printWindow = window.open("", "_blank");
       if (printWindow == null) {
         throw Error("failed to open popup window");
       }
       printWindow.document.open();
       printWindow.document.write(html);
-      printWindow.document.close();
-      printWindow.onload = function () {
-        printWindow.print();
+      let printRequested = false;
+      const print = () => {
+        if (printRequested) return;
+        printRequested = true;
         printWindow.onafterprint = function () {
           printWindow.close();
         };
+        printWindow.print();
       };
-      this.setState({ nbconvert: { state: "done", error: "" } });
+      printWindow.onload = print;
+      printWindow.document.close();
+      // A fully local document can already be loaded before the handler runs.
+      if (printWindow.document.readyState === "complete") print();
+      this.setState({ nbconvert: { ...result, state: "done", error: "" } });
     } catch (err) {
-      this.setState({ nbconvert: { state: "done", error: `${err}` } });
+      this.setState({
+        nbconvert: { ...result, state: "done", error: `${err}` },
+      });
     }
     return;
   };

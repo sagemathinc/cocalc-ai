@@ -193,6 +193,8 @@ export const NBConvert: React.FC<NBConvertProps> = React.memo(
         return {};
       }
       const to = nbconvert_dialog.get("to");
+      // These formats are delivered locally, not saved to the project.
+      if (to === "cocalc-html" || to === "cocalc-pdf") return {};
       const info = NAMES[to];
       if (info == null) {
         return {};
@@ -273,6 +275,19 @@ export const NBConvert: React.FC<NBConvertProps> = React.memo(
     }
 
     function renderDownload() {
+      const to = nbconvert_dialog?.get("to");
+      if (
+        !nbconvert?.get("error") &&
+        (to === "cocalc-html" || to === "cocalc-pdf")
+      ) {
+        return (
+          <div role="status">
+            {to === "cocalc-html"
+              ? "HTML download requested. Check your browser's downloads."
+              : "Print dialog requested. Choose Save as PDF in your browser."}
+          </div>
+        );
+      }
       const { targetPath, url, info } = target();
       if (!targetPath || !url || !info) return;
       return (
