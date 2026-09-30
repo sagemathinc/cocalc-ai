@@ -34,12 +34,9 @@ test.each([
   "requestCollaborationReconciliation",
   "getCollaborationReconciliationStatus",
 ] as const)(
-  "%s rejects disabled and unsupported/invalid protocol requests",
+  "%s rejects unsupported/invalid protocol requests",
   async (method) => {
     delete process.env.COCALC_PEOPLE_CENSUS_EXPLICIT_PROTOTYPE;
-    if (method === "requestCollaborationReconciliation")
-      await expect(api[method](opts)).rejects.toThrow("disabled");
-    process.env.COCALC_PEOPLE_CENSUS_EXPLICIT_PROTOTYPE = "1";
     await expect(
       api[method]({ ...opts, protocol_version: 2 as any }),
     ).rejects.toThrow("unsupported");
@@ -48,6 +45,16 @@ test.each([
     );
     expect(requestHostedCollaborationReconciliation).not.toHaveBeenCalled();
     expect(hostedCollaborationReconciliationStatus).not.toHaveBeenCalled();
+  },
+);
+test.each([undefined, "0", "1"])(
+  "owner-admitted requests do not depend on the retired host prototype flag (%s)",
+  async (value) => {
+    if (value === undefined)
+      delete process.env.COCALC_PEOPLE_CENSUS_EXPLICIT_PROTOTYPE;
+    else process.env.COCALC_PEOPLE_CENSUS_EXPLICIT_PROTOTYPE = value;
+    await api.requestCollaborationReconciliation(opts);
+    expect(requestHostedCollaborationReconciliation).toHaveBeenCalledTimes(1);
   },
 );
 test("admission forwards only fixed protocol fields, not caller traversal options", async () => {

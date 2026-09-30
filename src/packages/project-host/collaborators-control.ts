@@ -11,9 +11,7 @@ import {
   cancelHostedCollaborationReconciliation,
 } from "./collaborators";
 
-function validate(opts: CollaborationReconciliationRequest, admission = false) {
-  if (admission && process.env.COCALC_PEOPLE_CENSUS_EXPLICIT_PROTOTYPE !== "1")
-    throw Error("explicit collaboration census prototype disabled");
+function validate(opts: CollaborationReconciliationRequest) {
   if (opts?.protocol_version !== 1)
     throw Error("unsupported reconciliation protocol");
   if (
@@ -38,7 +36,10 @@ export const collaborationReconciliationControl: Pick<
     return cancelHostedCollaborationReconciliation(opts);
   },
   async requestCollaborationReconciliation(opts) {
-    validate(opts, true);
+    // Admission is authorized and gated at the project owner. Hosted census is
+    // always explicit; a retired host-local prototype flag must not silently
+    // disable already-admitted human requests on an otherwise healthy host.
+    validate(opts);
     return requestHostedCollaborationReconciliation({
       project_id: opts.project_id,
       run_id: opts.run_id,
