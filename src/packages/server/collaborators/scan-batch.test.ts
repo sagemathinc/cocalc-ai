@@ -133,6 +133,81 @@ describeDb("manual scan LRO durability", () => {
       (await getPool().query("SELECT * FROM long_running_operations")).rows,
     ).toHaveLength(1);
   });
+  test("a late authorization rejection still charges the durable account cooldown", async () => {
+    const ids = Array.from({ length: 10000 }, () => randomUUID()).sort();
+    const authorize = jest.fn(async (id: string) =>
+      id === ids[ids.length - 1] ? null : { project_id: id, title: "Fixture" },
+    );
+    const submit = () =>
+      scanProjectsAtHome(
+        {
+          action: "start",
+          account_id,
+          request_id: randomUUID(),
+          project_ids: ids,
+        },
+        authorize,
+      );
+    await expect(submit()).rejects.toThrow("no longer accessible");
+    expect(authorize).toHaveBeenCalledTimes(10000);
+    const repeated = await submit();
+    expect(repeated.next_eligible_at).toBeGreaterThan(Date.now());
+    expect(repeated.operation).toBeUndefined();
+    expect(authorize).toHaveBeenCalledTimes(10000);
+    expect(
+      (await getPool().query("SELECT op_id FROM long_running_operations")).rows,
+    ).toEqual([]);
+  });
+  test("a pending authorization charges once and a later replay observes its winner", async () => {
+    let release!: () => void, entered!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const ready = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const authorize = jest.fn(async (id: string) => {
+      entered();
+      await held;
+      return { project_id: id, title: "Fixture" };
+    });
+    const firstRequest = randomUUID(),
+      secondRequest = randomUUID();
+    const submit = (request_id: string) =>
+      scanProjectsAtHome(
+        { action: "start", account_id, request_id, project_ids: [project_id] },
+        authorize,
+      );
+    const first = submit(firstRequest);
+    await ready;
+    try {
+      const pending = await submit(secondRequest);
+      expect(pending.operation).toBeUndefined();
+      expect(pending.next_eligible_at).toBeGreaterThan(Date.now());
+      expect(authorize).toHaveBeenCalledTimes(1);
+    } finally {
+      release();
+    }
+    const admitted = await first;
+    const replay = await submit(secondRequest);
+    expect(replay.operation?.op_id).toBe(admitted.operation?.op_id);
+    expect(authorize).toHaveBeenCalledTimes(1);
+    const before = (
+      await getPool().query(
+        "SELECT next_eligible_at FROM collaboration_scan_batch_accounts WHERE account_id=$1",
+        [account_id],
+      )
+    ).rows;
+    await submit(firstRequest);
+    expect(
+      (
+        await getPool().query(
+          "SELECT next_eligible_at FROM collaboration_scan_batch_accounts WHERE account_id=$1",
+          [account_id],
+        )
+      ).rows,
+    ).toEqual(before);
+  });
   test("all captures every page and later projects are not included", async () => {
     const ids = Array.from({ length: 30 }, () => randomUUID());
     for (const id of ids)

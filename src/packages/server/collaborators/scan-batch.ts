@@ -179,6 +179,45 @@ export async function scanProjectsAtHome(
     if (!op_id) {
       if (!enabled)
         throw Error("New Scan operations are disabled by the administrator");
+      // Charge before any routed authorization work. Rejected selections and
+      // lost callers must not turn the whole owner fanout into a free retry.
+      // The account fence serializes this charge across hub processes.
+      const preflight = await accountTx(account_id, async (db) => {
+        const prior = await existing(db, account_id, opts.request_id, selected);
+        if (prior) return { op_id: prior };
+        const now = (
+          await db.query("SELECT clock_timestamp() AS now")
+        ).rows[0].now.getTime();
+        const next =
+          (
+            await db.query(
+              "SELECT next_eligible_at FROM collaboration_scan_batch_accounts WHERE account_id=$1",
+              [account_id],
+            )
+          ).rows[0]?.next_eligible_at?.getTime() ?? 0;
+        if (next > now) return { next_eligible_at: next };
+        await db.query(
+          `INSERT INTO collaboration_scan_batch_accounts VALUES($1,$2) ON CONFLICT(account_id) DO UPDATE SET next_eligible_at=EXCLUDED.next_eligible_at`,
+          [account_id, new Date(now + SCAN_ACCOUNT_INTERVAL_MS)],
+        );
+        return {};
+      });
+      if (preflight.op_id)
+        return {
+          enabled,
+          operation: await readScanBatch(account_id, preflight.op_id),
+        };
+      if (preflight.next_eligible_at) {
+        // A racing tab may have paid for selection validation but not created
+        // its LRO yet. Briefly observe that winner; never duplicate its fanout.
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const winner = await accountTx(account_id, (db) =>
+          existing(db, account_id, opts.request_id, selected),
+        );
+        return winner
+          ? { enabled, operation: await readScanBatch(account_id, winner) }
+          : { enabled, next_eligible_at: preflight.next_eligible_at };
+      }
       const candidates =
         selected === "all"
           ? await accountTx(account_id, async (db) =>
@@ -211,14 +250,6 @@ export async function scanProjectsAtHome(
         const now = (
           await db.query("SELECT clock_timestamp() AS now")
         ).rows[0].now.getTime();
-        const next =
-          (
-            await db.query(
-              "SELECT next_eligible_at FROM collaboration_scan_batch_accounts WHERE account_id=$1",
-              [account_id],
-            )
-          ).rows[0]?.next_eligible_at?.getTime() ?? 0;
-        if (next > now) return { next_eligible_at: next };
         const id = randomUUID();
         await db.query(
           `INSERT INTO long_running_operations(op_id,kind,scope_type,scope_id,status,created_by,input,expires_at,dedupe_key,routing)
@@ -251,8 +282,6 @@ export async function scanProjectsAtHome(
         );
         return { op_id: id };
       });
-      if (!admitted.op_id)
-        return { enabled, next_eligible_at: admitted.next_eligible_at };
       op_id = admitted.op_id;
     }
   } else {
