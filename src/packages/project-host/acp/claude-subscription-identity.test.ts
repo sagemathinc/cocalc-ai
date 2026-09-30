@@ -33,6 +33,7 @@ jest.mock("./claude-subscription-registry", () => ({
 jest.mock("./claude-subscription-home", () => ({
   restoreClaudeSubscriptionHome: jest.fn(),
   claudeSubscriptionBundleFiles: () => new Map(),
+  readClaudeSubscriptionHomeFiles: async () => new Map(),
 }));
 jest.mock("./claude-subscription-paths", () => ({
   claudeControllerHomePrefix: () => join(tmpdir(), "claude-identity-test-"),

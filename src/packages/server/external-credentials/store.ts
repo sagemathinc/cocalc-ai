@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { EXTERNAL_CREDENTIAL_CONFLICT } from "@cocalc/util/external-credential-conflict";
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import {
   decryptSecretStorageValue,
@@ -548,14 +549,23 @@ export async function updateExternalCredentialById({
   payload,
   metadata,
   revive = false,
+  expectedPayloadSha256,
 }: {
   id: string;
   selector: ExternalCredentialSelector;
   payload: string;
   metadata: Record<string, any>;
   revive?: boolean;
+  // Compare-and-swap: update only if the stored payload still has this
+  // SHA-256 (hex); otherwise throw EXTERNAL_CREDENTIAL_CONFLICT.
+  expectedPayloadSha256?: string;
 }): Promise<boolean> {
   const normalized = normalizeSelector(selector);
+  if (
+    expectedPayloadSha256 != null &&
+    !/^[0-9a-f]{64}$/.test(expectedPayloadSha256)
+  )
+    throw new Error("invalid expected payload hash");
   validatePayload(payload);
   const encryptedPayload = await encryptPayload(normalized, payload);
   const client = await pool().connect();
@@ -572,6 +582,33 @@ export async function updateExternalCredentialById({
         selector: normalized,
         metadataKey: defaultMetadataKey,
       });
+    }
+    if (expectedPayloadSha256 != null) {
+      // Under the selector lock: compare what is stored now.
+      const { rows } = await client.query(
+        `
+SELECT encrypted_payload FROM external_credentials
+WHERE id=$1 AND ${ownershipClause(2)}
+  AND ($8::boolean OR revoked IS NULL)
+FOR UPDATE
+        `,
+        [id, ...selectorValues(normalized), revive],
+      );
+      if (rows.length === 0) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+      const stored = await decryptPayload(
+        normalized,
+        rows[0].encrypted_payload,
+      );
+      if (
+        createHash("sha256").update(stored, "utf8").digest("hex") !==
+        expectedPayloadSha256
+      ) {
+        await client.query("ROLLBACK");
+        throw new Error(EXTERNAL_CREDENTIAL_CONFLICT);
+      }
     }
     const { rowCount } = await client.query(
       `

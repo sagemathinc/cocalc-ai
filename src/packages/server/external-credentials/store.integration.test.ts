@@ -17,8 +17,11 @@ import {
   listExternalCredentials,
   revokeExternalCredential,
   touchExternalCredential,
+  updateExternalCredentialById,
   updateExternalCredentialPayloadLocked,
 } from "./store";
+import { createHash } from "node:crypto";
+import { EXTERNAL_CREDENTIAL_CONFLICT } from "@cocalc/util/external-credential-conflict";
 
 jest.mock("@cocalc/database/settings/secret-settings", () => ({
   encryptSecretStorageValue: async (_name: string, value: string) => value,
@@ -148,5 +151,67 @@ describeDb("account Codex subscription default identity", () => {
         })
       )?.id,
     ).toBe(a.id);
+  });
+});
+
+describeDb("conditional external credential update", () => {
+  const selector = {
+    provider: "anthropic",
+    kind: "claude-subscription",
+    scope: "account" as const,
+    owner_account_id: randomUUID(),
+  };
+  const sha256 = (value: string) =>
+    createHash("sha256").update(value, "utf8").digest("hex");
+
+  beforeAll(async () => {
+    await syncSchema({ external_credentials: SCHEMA.external_credentials });
+  });
+
+  test("updates only while the stored payload is the expected one", async () => {
+    const { id } = await createExternalCredential({
+      selector,
+      payload: "bundle-1",
+    });
+    await expect(
+      updateExternalCredentialById({
+        id,
+        selector,
+        payload: "bundle-2",
+        metadata: {},
+        expectedPayloadSha256: sha256("bundle-1"),
+      }),
+    ).resolves.toBe(true);
+    // A writer that read bundle-1 must not overwrite bundle-2.
+    await expect(
+      updateExternalCredentialById({
+        id,
+        selector,
+        payload: "stale",
+        metadata: {},
+        expectedPayloadSha256: sha256("bundle-1"),
+      }),
+    ).rejects.toThrow(EXTERNAL_CREDENTIAL_CONFLICT);
+    expect((await getExternalCredential({ selector }))?.payload).toBe(
+      "bundle-2",
+    );
+    await expect(
+      updateExternalCredentialById({
+        id,
+        selector,
+        payload: "x",
+        metadata: {},
+        expectedPayloadSha256: "not-a-hash",
+      }),
+    ).rejects.toThrow("invalid expected payload hash");
+    // Without an expectation the update is unconditional, as before.
+    await expect(
+      updateExternalCredentialById({
+        id,
+        selector,
+        payload: "bundle-3",
+        metadata: {},
+      }),
+    ).resolves.toBe(true);
   });
 });
