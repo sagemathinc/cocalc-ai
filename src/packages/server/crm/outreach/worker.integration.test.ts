@@ -483,6 +483,44 @@ describePglite("CRM outreach initial-send claim revalidation", () => {
     expect(delivery.rows[0]).toEqual({ state: "failed", attempt_count: 0 });
   });
 
+  it("serves the claim-time contact history scans from email indexes", async () => {
+    const fixture = await createFixture();
+    const delivery = await pool.query(
+      "SELECT to_jsonb(d) AS delivery FROM crm_outreach_deliveries d WHERE id=$1",
+      [fixture.deliveryId],
+    );
+    const store = await import("./store");
+    const client = await pool.connect();
+    const plans: string[] = [];
+    try {
+      await client.query("BEGIN");
+      await client.query("SET LOCAL enable_seqscan=off");
+      const explaining = {
+        query: async (sql: string, params?: any[]) => {
+          const plan = await client.query(`EXPLAIN ${sql}`, params);
+          plans.push(plan.rows.map((row) => row["QUERY PLAN"]).join("\n"));
+          return await client.query(sql, params);
+        },
+      };
+      await store.loadOutreachRecipientEligibility(
+        explaining as any,
+        store.deliveryRow(delivery.rows[0].delivery),
+        config.contact_cooldown_days,
+      );
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+    }
+    const deliveryScans = plans.filter((plan) =>
+      plan.includes("crm_outreach_deliveries"),
+    );
+    expect(deliveryScans).toHaveLength(2);
+    expect(deliveryScans[0]).toContain("crm_outreach_delivery_contact_idx");
+    expect(deliveryScans[1]).toContain(
+      "crm_outreach_delivery_nonterminal_email_idx",
+    );
+  });
+
   async function processClaimWithLookupDrift(
     drift: (fixture: Fixture) => Promise<unknown>,
   ): Promise<{ fixture: Fixture; operationId: string }> {
