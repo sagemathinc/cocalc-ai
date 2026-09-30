@@ -119,6 +119,27 @@ describe("merge_prefer_local", () => {
     );
   });
 
+  test("applies the same line move made on both sides once", () => {
+    // Found by the collaborative editing fuzzer: both sides moved a line, but
+    // their line diffs decomposed the move differently.
+    const base = "a\n\nb\n\nmoved line\n\nc\n";
+    const moved = "a\n\nmoved line\n\nb\n\nc\n";
+    const remote = "a\n\nmoved line\n\nb\n\nc\nremote\n";
+    const merged = merge(base, moved, remote);
+    expect(merged.split("moved line").length - 1).toBe(1);
+    expect(merged).toContain("remote");
+  });
+
+  test("does not anchor on blank lines matched differently by the two diffs", () => {
+    // Found by the collaborative editing fuzzer: both sides renumbered a list,
+    // and the remote side also edited the line above; the diffs matched
+    // different blank lines and the renumbered item was duplicated.
+    const base = "- sub x\n\n1. first\n2. second\n";
+    const local = "- sub x\n\n2. first\n\n3. second\n";
+    const remote = "- sub \n\n2. first\n\n3. second\n";
+    expect(merge(base, local, remote)).toBe(remote);
+  });
+
   test("prefers local where edits overlap", () => {
     expect(merge("the cat sat", "the dog sat", "the cow sat")).toBe(
       "the dog sat",

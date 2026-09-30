@@ -193,156 +193,141 @@ export function checked_three_way_merge(opts: {
   return { clean: true, merged };
 }
 
-function diffsToEdits(diffs: [number, string][]): StringEdit[] {
-  const edits: StringEdit[] = [];
-  let cursor = 0;
-  let current: StringEdit | undefined;
-  for (const [operation, value] of diffs) {
-    if (operation === 0) {
-      if (current != null) edits.push(current);
-      current = undefined;
-      cursor += value.length;
-      continue;
-    }
-    current ??= { from: cursor, to: cursor, insert: "" };
-    if (operation === -1) {
-      current.to += value.length;
-      cursor += value.length;
-    } else {
-      current.insert += value;
-    }
-  }
-  if (current != null) edits.push(current);
-  return edits;
-}
+type Diff = [number, string][];
 
-// Line-granular edits: every edit starts and ends on a line boundary.
-function lineEdits(base: string, target: string): StringEdit[] {
-  if (base === target) return [];
+// Line-granular diff: every change starts and ends on a line boundary.
+function lineDiff(base: string, target: string): Diff {
   const { chars1, chars2, lineArray } = dmp.diff_linesToChars(base, target);
   const diffs = dmp.diff_main(chars1, chars2, false);
   dmp.diff_charsToLines(diffs, lineArray);
-  return diffsToEdits(diffs as [number, string][]);
+  return diffs as Diff;
 }
 
-// Character edits from a semantically cleaned diff, so a replaced word is one
-// edit rather than a mix of kept and changed characters.
-function semanticEdits(base: string, target: string): StringEdit[] {
-  if (base === target) return [];
+// Character diff with semantic cleanup, so a replaced word is one change rather
+// than a mix of kept and changed characters.
+function charDiff(base: string, target: string): Diff {
   const diffs = dmp.diff_main(base, target);
   dmp.diff_cleanupSemantic(diffs);
-  return diffsToEdits(diffs as [number, string][]);
+  return diffs as Diff;
 }
 
-function applyEdits(text: string, edits: StringEdit[]): string {
-  let cursor = 0;
-  let out = "";
-  for (const edit of [...edits].sort((a, b) => a.from - b.from)) {
-    out += text.slice(cursor, edit.from) + edit.insert;
-    cursor = edit.to;
+// Unchanged spans of base in a diff, with their offset in the target.
+function equalRuns(
+  diffs: Diff,
+): { from: number; to: number; target: number }[] {
+  const runs: { from: number; to: number; target: number }[] = [];
+  let b = 0;
+  let t = 0;
+  for (const [op, text] of diffs) {
+    if (op === 0) {
+      runs.push({ from: b, to: b + text.length, target: t });
+      b += text.length;
+      t += text.length;
+    } else if (op === -1) {
+      b += text.length;
+    } else {
+      t += text.length;
+    }
   }
-  return out + text.slice(cursor);
+  return runs;
 }
 
-// Merge local and remote edits of base. Identical changes apply once;
-// non-overlapping changes apply at exact positions; overlapping changes are
-// resolved by `resolve` (called with the base region and each side's version of
-// it), and local wins if no resolver is given.
-function mergeEdits(
+// Map a base offset inside (or at an end of) an unchanged run to the target.
+// Changes located exactly at a run boundary belong to the chunk before the
+// following stable span, so a chunk start maps through the run that ends at the
+// offset (before any insertion there) and a chunk end maps through the run that
+// starts at it (after any insertion there).
+function mapOffset(
+  runs: { from: number; to: number; target: number }[],
+  offset: number,
+  side: "chunk-start" | "chunk-end",
+): number {
+  const preferred = runs.find((run) =>
+    side === "chunk-start" ? run.to === offset : run.from === offset,
+  );
+  const run =
+    preferred ?? runs.find((run) => run.from <= offset && offset <= run.to);
+  if (run == null) throw new Error("offset is not in an unchanged run");
+  return run.target + (offset - run.from);
+}
+
+/*
+diff3: split base into stable spans (unchanged on both sides) and unstable
+chunks between them. For each chunk compare contents: identical changes apply
+once, a change on one side applies, and a real conflict goes to `conflict`.
+Comparing chunk contents (not edit decompositions) recognizes the same net
+change even when the two diffs expressed it differently.
+*/
+function diff3(
   base: string,
-  localEdits: StringEdit[],
-  remoteEdits: StringEdit[],
-  resolve?: (region: { base: string; local: string; remote: string }) => string,
+  local: string,
+  remote: string,
+  diff: (a: string, b: string) => Diff,
+  conflict: (chunk: { base: string; local: string; remote: string }) => string,
+  // Whether an unchanged span is a trustworthy anchor between chunks. Blank
+  // lines are not: the two diffs may match different blank lines, splitting one
+  // change into chunks that differ between the sides and duplicating content.
+  isAnchor: (text: string) => boolean = () => true,
 ): string {
-  const applyOne = (edit: StringEdit) =>
-    base.slice(0, edit.from) + edit.insert + base.slice(edit.to);
-  const localResults = localEdits.map(applyOne);
-  // Edits are the same change if applying either one alone gives the same
-  // text, even if the diffs placed it at different offsets.
-  const remote = remoteEdits.filter(
-    (r) =>
-      !localEdits.some((l) => sameEdit(l, r)) &&
-      !localResults.includes(applyOne(r)),
-  );
-  // Two pure insertions at the same position do not conflict: keep both,
-  // local first. Other overlapping edits conflict.
-  const conflicts = (a: StringEdit, b: StringEdit) =>
-    !(a.from === a.to && b.from === b.to) && editsOverlap(a, b);
-  const isInsertion = (edit: StringEdit) => edit.from === edit.to;
-  // Group conflicting edits into clusters over base ranges.
-  const all = [
-    ...localEdits.map((edit) => ({ edit, local: true })),
-    ...remote.map((edit) => ({ edit, local: false })),
-  ].sort(
-    (a, b) =>
-      a.edit.from - b.edit.from ||
-      Number(isInsertion(b.edit)) - Number(isInsertion(a.edit)) ||
-      Number(b.local) - Number(a.local) ||
-      a.edit.to - b.edit.to,
-  );
-  const clusters: { from: number; to: number; items: typeof all }[] = [];
-  for (const item of all) {
-    const last = clusters[clusters.length - 1];
-    const overlapsLast =
-      last != null &&
-      last.items.some((other) => conflicts(other.edit, item.edit));
-    if (overlapsLast) {
-      last.items.push(item);
-      last.to = Math.max(last.to, item.edit.to);
-    } else {
-      clusters.push({ from: item.edit.from, to: item.edit.to, items: [item] });
-    }
+  const localRuns = equalRuns(diff(base, local));
+  const remoteRuns = equalRuns(diff(base, remote));
+  // Stable spans: intersections of unchanged runs on both sides.
+  const stable: { from: number; to: number }[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < localRuns.length && j < remoteRuns.length) {
+    const from = Math.max(localRuns[i].from, remoteRuns[j].from);
+    const to = Math.min(localRuns[i].to, remoteRuns[j].to);
+    if (from < to && isAnchor(base.slice(from, to))) stable.push({ from, to });
+    if (localRuns[i].to < remoteRuns[j].to) i++;
+    else j++;
   }
-  let cursor = 0;
-  let merged = "";
-  for (const cluster of clusters) {
-    merged += base.slice(cursor, cluster.from);
-    const regionBase = base.slice(cluster.from, cluster.to);
-    const shift = (edit: StringEdit) => ({
-      from: edit.from - cluster.from,
-      to: edit.to - cluster.from,
-      insert: edit.insert,
-    });
-    const localIn = cluster.items
-      .filter((i) => i.local)
-      .map((i) => shift(i.edit));
-    const remoteIn = cluster.items
-      .filter((i) => !i.local)
-      .map((i) => shift(i.edit));
-    if (remoteIn.length === 0) {
-      merged += applyEdits(regionBase, localIn);
-    } else if (localIn.length === 0) {
-      merged += applyEdits(regionBase, remoteIn);
-    } else {
-      const region = {
-        base: regionBase,
-        local: applyEdits(regionBase, localIn),
-        remote: applyEdits(regionBase, remoteIn),
-      };
-      merged += resolve != null ? resolve(region) : region.local;
-    }
-    cursor = cluster.to;
+  let out = "";
+  // Chunk boundaries: the start of the document or the end of a stable span,
+  // up to the start of the next stable span or the end of the document.
+  let startBase = 0;
+  let startLocal = 0;
+  let startRemote = 0;
+  const emitChunk = (endBase: number, endLocal: number, endRemote: number) => {
+    const chunk = {
+      base: base.slice(startBase, endBase),
+      local: local.slice(startLocal, endLocal),
+      remote: remote.slice(startRemote, endRemote),
+    };
+    if (chunk.local === chunk.remote) out += chunk.local;
+    else if (chunk.local === chunk.base) out += chunk.remote;
+    else if (chunk.remote === chunk.base) out += chunk.local;
+    else out += conflict(chunk);
+  };
+  for (const span of stable) {
+    emitChunk(
+      span.from,
+      mapOffset(localRuns, span.from, "chunk-end"),
+      mapOffset(remoteRuns, span.from, "chunk-end"),
+    );
+    out += base.slice(span.from, span.to);
+    startBase = span.to;
+    startLocal = mapOffset(localRuns, span.to, "chunk-start");
+    startRemote = mapOffset(remoteRuns, span.to, "chunk-start");
   }
-  return merged + base.slice(cursor);
+  emitChunk(base.length, local.length, remote.length);
+  return out;
 }
 
 /**
- * Three-way merge for a live editor buffer: merge the local and remote edits
- * of a common base, applying each change once at its exact position (in the
- * style of diff3).
+ * Three-way merge for a live editor buffer, in the style of diff3.
  *
- * - Changes are matched line by line first, so block-level edits align; where
- *   both sides changed the same lines, those lines are merged character by
- *   character (semantically cleaned), so edits to different words of one line
- *   both survive.
- * - Identical changes made on both sides (for example, both deleted the same
- *   text, or a stale base where both already contain the same inserted block)
- *   apply once.
+ * - Matches changes line by line; where both sides changed the same lines
+ *   differently, merges those lines character by character, so edits to
+ *   different words of one line both survive.
+ * - Identical net changes made on both sides (both deleted the same text, both
+ *   moved the same line, or a stale base where both already contain the same
+ *   block) apply once, even if the two diffs expressed them differently.
  * - Nothing is relocated by fuzzy matching, so a deletion can never land on
  *   similar text elsewhere.
- * - Where local and remote change the same characters, the local version wins,
- *   since the user is editing there right now (the remote change remains in
- *   history).
+ * - Where both sides changed the same characters: concurrent pure insertions
+ *   are both kept (local first); otherwise the local version wins, since the
+ *   user is editing there right now (the remote change remains in history).
  */
 export function merge_prefer_local(opts: {
   base: string;
@@ -353,17 +338,15 @@ export function merge_prefer_local(opts: {
   if (local === remote) return local;
   if (base === remote) return local;
   if (base === local) return remote;
-  return mergeEdits(
+  return diff3(
     base,
-    lineEdits(base, local),
-    lineEdits(base, remote),
-    (region) =>
-      region.local === region.remote
-        ? region.local
-        : mergeEdits(
-            region.base,
-            semanticEdits(region.base, region.local),
-            semanticEdits(region.base, region.remote),
-          ),
+    local,
+    remote,
+    lineDiff,
+    (lines) =>
+      diff3(lines.base, lines.local, lines.remote, charDiff, (chars) =>
+        chars.base === "" ? chars.local + chars.remote : chars.local,
+      ),
+    (text) => text.trim() !== "",
   );
 }

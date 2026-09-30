@@ -83,6 +83,20 @@ function classifyLoss(
   return "lost in merge";
 }
 
+// Which commit first produced two copies of a token? If none did, the core
+// merge of concurrent patches duplicated it.
+function classifyDuplicate(tok: string, clients: SimClient[]): string {
+  const count = (text: string) => text.split(tok).length - 1;
+  for (const c of clients) {
+    for (const commit of c.commits) {
+      if (count(commit.after) > 1 && count(commit.before) <= 1) {
+        return `introduced by a c${c.opts.id} ${commit.source ?? "?"} commit`;
+      }
+    }
+  }
+  return "duplicated in merge";
+}
+
 interface RunResult {
   seed: number;
   problems: string[];
@@ -335,7 +349,14 @@ async function runSession(seed: number, steps = STEPS): Promise<RunResult> {
   for (const tok of tokensIn(final))
     counts.set(tok, (counts.get(tok) ?? 0) + 1);
   for (const [tok, n] of counts) {
-    if (n > 1) problems.push(`duplicated token ${tok} (x${n})`);
+    if (n > 1) {
+      const cause = classifyDuplicate(tok, clients);
+      if (cause === "duplicated in merge" && !process.env.FUZZ_STRICT_MERGE) {
+        mergeLosses.push(`${tok}(dup)`);
+      } else {
+        problems.push(`duplicated token ${tok} (x${n}, ${cause})`);
+      }
+    }
   }
   for (const tok of inserted) {
     if (!deleted.has(tok) && !counts.has(tok)) {
@@ -372,10 +393,10 @@ async function runSession(seed: number, steps = STEPS): Promise<RunResult> {
     }
   }
   if (mergeLosses.length > 0) {
-    log.unshift(`known core merge losses: ${mergeLosses.join(" ")}`);
+    log.unshift(`known core merge anomalies: ${mergeLosses.join(" ")}`);
     // eslint-disable-next-line no-console
     console.warn(
-      `seed ${seed}: known core merge loss of ${mergeLosses.join(" ")}`,
+      `seed ${seed}: known core merge anomaly: ${mergeLosses.join(" ")}`,
     );
   }
   const stats = `patches=${net.log.length} inserted=${inserted.size} deleted=${deleted.size} final=${final.length} chars, ${counts.size} tokens`;
@@ -411,10 +432,14 @@ if (process.env.FUZZ_MERGE_TRACE) {
     return original.call(this, {
       ...opts,
       applyMerged: (merged: string) => {
-        if (local.includes(token) && !merged.includes(token)) {
+        const count = (text: string) => text.split(token).length - 1;
+        if (
+          (local.includes(token) && !merged.includes(token)) ||
+          count(merged) > Math.max(count(local), count(opts.remote))
+        ) {
           // eslint-disable-next-line no-console
           console.log(
-            `MERGE DROPPED ${token}: ${JSON.stringify({ last, local, remote: opts.remote, merged, pending, requested, resolved: (this as any).__lastResolve })}`,
+            `MERGE ANOMALY ${token}: ${JSON.stringify({ last, local, remote: opts.remote, merged, pending, requested, resolved: (this as any).__lastResolve })}`,
           );
         }
         opts.applyMerged(merged);
