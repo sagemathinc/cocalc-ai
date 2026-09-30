@@ -71,6 +71,7 @@ function publicRecord(
     chat: _chat,
     response: _response,
     response_id: _id,
+    response_credential_id: _credentialId,
     response_declined: _declined,
     dispatch_as_async: _dispatchAsAsync,
     ...publicRow
