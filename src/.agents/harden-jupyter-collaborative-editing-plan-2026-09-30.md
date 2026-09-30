@@ -1,0 +1,142 @@
+# Harden Jupyter Collaborative Editing
+
+## Status
+
+Written 2026-09-30. Follows
+[Harden Realtime Collaborative Editing](./harden-realtime-collaborative-editing-plan-2026-09-30.md)
+(PR #751), which did this for the Markdown (Slate) editor and fixed the core
+merge for text documents (sagemathinc/patchflow#2). Most CoCalc use is now
+Jupyter notebooks, so they come next.
+
+## Goal
+
+Two or more people (and agents, and the project's kernel backend) editing
+the same notebook at the same time must never lose, duplicate or garble cell
+input, never produce ghost or duplicate cells, and always converge, with a
+cell order everyone agrees on. The evidence should be a headless
+multi-client fuzzer running the real notebook code, plus a browser suite, not
+manual testing.
+
+## How Notebooks Sync Today
+
+- A notebook is a patchflow db document (`SyncDB`), with records keyed by
+  `type` and `id` (`jupyter/redux/sync.ts`). Cells are `type: "cell"` records
+  with `input` (a string column), `pos`, `cell_type`, `output`, `exec_count`,
+  `state`, metadata, and so on. Other record types hold settings and kernel
+  state.
+- Patches are record-level: a changed string column is a diff-match-patch
+  patch of that field; a changed map field is a shallow merge patch; other
+  fields are replaced; a deleted record is a delete by primary key
+  (patchflow `db-document-immutable.ts`).
+- Values are computed like text documents were before patchflow#2: every
+  reachable patch applied in time order, including concurrent ones. So:
+  - concurrent edits of one cell's `input` are fuzzy-applied to each other's
+    text, the same algorithm that relocated a deletion onto the wrong text in
+    the Markdown incident;
+  - concurrent writes to other fields of a record are last-writer-wins by
+    patch time, which is deterministic but can drop a change silently.
+- In the browser, each cell's input (`frontend/jupyter/cell-input.tsx`) keeps
+  a live buffer and merges remote changes into it with `SimpleInputMerge`,
+  the helper hardened in #749 and #751. The CodeMirror wrapper
+  (`codemirror-editor.tsx`) saves after a debounce (`cm_save` ->
+  `set_cell_input`) and, when the merged value changes, replaces the editor
+  contents with it (`setValueNoJump`) and clears its undo history. Markdown
+  cells use `MarkdownInput` instead.
+- The project backend is also a writer: it runs cells and writes outputs,
+  execution counts and state into the same cell records.
+
+## Confirmed And Suspected Problems
+
+1. Confirmed (patchflow db codec, `SYNCDB_OPTIONS`): if one user deletes a
+   cell while another edits it, the result depends on which patch has the
+   earlier timestamp. If the delete is earlier, the edit's patch re-creates
+   the record with only the changed non-string fields: a **ghost cell** such
+   as `{type: "cell", id}` with no input and no position. If the edit is
+   earlier, the delete wins and the edit is lost silently. Pinned in
+   `sync/editor/db/test/jupyter-core-merge.test.ts`.
+2. Same class as the Markdown incident: concurrent edits of one cell's input
+   are fuzzy-applied to each other (see above).
+3. Suspected, to verify with the fuzzer:
+   - the editor replacing its contents on every merged remote change (undo
+     history cleared, cursor effects, races with the save debounce and the
+     paste workaround `ignoreNextValue`);
+   - split/merge cells, move cells (`pos` conflicts), change cell type, and
+     cut/paste of cells, all concurrent with typing in those cells;
+   - backend writes (outputs, state) concurrent with user edits of the same
+     cells, including a cell deleted while it runs;
+   - reconnect/refresh with unsaved typing in a cell.
+
+## Workstreams
+
+### J1. Exact merges for db documents (patchflow)
+
+Give db documents a `merge3`, like strings got in patchflow#2, and turn it
+on for notebooks first:
+
+- Three-way per record by primary key. A record added on one side is
+  added; deleted on one side and unchanged on the other is deleted;
+  **deleted on one side and edited on the other keeps the edited record
+  whole** (never lose typed input, never produce a partial record).
+- Per field: changed on one side takes that change; changed on both merges
+  string columns with `mergeStrings3`, map fields key by key, and other
+  fields by a deterministic rule (the later patch wins, as today).
+- Enable for `SYNCDB_OPTIONS` (notebooks) through the CoCalc codec; tasks,
+  chats and whiteboards later, each after its own tests.
+
+### J2. Headless multi-client notebook fuzzer (highest priority)
+
+Same approach as the Markdown fuzzer (`frontend/editors/slate/__test__/collab-fuzz`):
+
+- N simulated clients, each with a real patchflow Session on the notebook
+  codec, connected by the seeded `SimNetwork` (delay, reordering), under
+  jest fake timers; plus a simulated backend writer for outputs and state.
+- Each client renders real `CellInput`/CodeMirror components where jsdom
+  allows; otherwise a model with the same merge and save logic
+  (`SimpleInputMerge`, debounced saves). Decide after a spike.
+- Operations: type/delete/paste in a cell, insert/delete/move/split/merge
+  cells, change cell type, run a cell (backend writes output), focus
+  changes, disconnect/reconnect.
+- Oracle: every inserted fragment carries a unique token. At quiescence all
+  clients converge; no token is lost unless deleted, and none is duplicated;
+  every cell id appears once with a string input and a position; cell order
+  is identical everywhere; each editor shows its cell's document.
+- Seeds that found bugs become regression tests.
+
+### J3. Audit and fix the integration layer, guided by the fuzzer
+
+`cell-input.tsx`, `codemirror-editor.tsx`, markdown cells, the cell actions
+in `jupyter/redux/actions.ts` (`set_cell_input`, split, merge, move, delete,
+paste), undo/redo, cursors, and the backend's writes.
+
+### J4. Browser suite (Playwright on lite2b.cocalc.ai)
+
+Two or more real browsers on one notebook: concurrent typing in the same
+cell and in neighbouring cells, structural edits, running cells, refresh
+mid-typing. Same token oracle, read from the saved notebook.
+
+### J5. Incident replay for notebooks
+
+Extend `scripts/dev/sync-replay.mjs` to notebook histories, so a reported
+problem can be traced to the patch or merge that caused it.
+
+## Order Of Work
+
+1. J1 pinned tests (done for the ghost cell), then the J2 fuzzer against
+   today's code to measure the baseline.
+2. J1 in patchflow, enabled for notebooks; re-measure.
+3. J3 fixes, each with a fuzzer seed or unit test.
+4. J4, then J5.
+
+## Exit Criteria
+
+- Long fuzzer sweeps (hundreds of seeds, several clients, structural edits
+  and backend writes) with no failures, run in CI at a smaller size.
+- The Playwright suite passes repeatedly on lite2b.
+- No ghost cells, lost input or duplicated input in either.
+
+## Progress Log
+
+### 2026-09-30
+
+- Plan written. Ghost cell on concurrent delete and edit confirmed and pinned
+  as a `test.failing`.
