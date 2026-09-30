@@ -120,3 +120,107 @@ test("scrolling a long idle thread up and down is never pulled back", async ({
     expect(Math.abs((await row()) - previous)).toBeLessThanOrEqual(1);
   }
 });
+
+async function gapFromBottom(page: Page, id: string) {
+  return await page.evaluate((id) => {
+    const s = document.querySelector<HTMLElement>(
+      `[data-testid=log-${id}] [data-virtuoso-scroller]`,
+    )!;
+    return Math.round(s.scrollHeight - s.scrollTop - s.clientHeight);
+  }, id);
+}
+
+for (const resume of ["button", "wheel"] as const) {
+  test(`after returning to the bottom via ${resume}, a streaming reply stays followed`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1000, height: 800 });
+    await page.goto(`/?mode=chat-switch&reorder=0&chatMode=sidechat`);
+    const a = page.getByTestId("log-a");
+    await expect(a.locator("[data-item-index]").first()).toBeVisible();
+    await page.waitForTimeout(1000);
+    await a.hover();
+    // A reply is streaming into the newest message.
+    await page.evaluate(() => {
+      (window as any).__chatStream = setInterval(
+        () => (window as any).__chatGrow("a"),
+        200,
+      );
+    });
+    await page.waitForTimeout(1500);
+    expect(await gapFromBottom(page, "a")).toBeLessThan(200);
+    for (let i = 0; i < 4; i++) {
+      await page.mouse.wheel(0, -600);
+      await page.waitForTimeout(100);
+    }
+    await page.waitForTimeout(500);
+    expect(await gapFromBottom(page, "a")).toBeGreaterThan(1000);
+    if (resume === "button") {
+      await page
+        .getByRole("button", { name: "Scroll to newest messages" })
+        .click();
+    } else {
+      for (let i = 0; i < 20; i++) {
+        await page.mouse.wheel(0, 3000);
+        await page.waitForTimeout(50);
+      }
+    }
+    const gaps: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      await page.waitForTimeout(300);
+      gaps.push(await gapFromBottom(page, "a"));
+    }
+    await page.evaluate(() => clearInterval((window as any).__chatStream));
+    console.log(`RESULT resume=${resume} gaps=${gaps.join(",")}`);
+    // Following the stream: never more than one growth step behind.
+    expect(Math.max(...gaps.slice(2))).toBeLessThan(200);
+    await expect(
+      page.getByRole("button", { name: "Scroll to newest messages" }),
+    ).toHaveCount(0);
+  });
+}
+
+async function atBottom(page: Page) {
+  return (await gapFromBottom(page, "a")) < 60;
+}
+
+test("switching threads within a chat keeps each thread's reading position", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1000, height: 800 });
+  await page.goto(`/?mode=chat-switch&reorder=0&chatMode=sidechat`);
+  const a = page.getByTestId("log-a");
+  await expect(a.locator("[data-item-index]").first()).toBeVisible();
+  await page.waitForTimeout(1000);
+  await a.hover();
+  // Thread A: read from the middle.
+  for (let i = 0; i < 8; i++) {
+    await page.mouse.wheel(0, -2500);
+    await page.waitForTimeout(60);
+  }
+  await page.waitForTimeout(1500);
+  const middleOfA = await readingPosition(page, "a");
+  expect(await atBottom(page)).toBe(false);
+
+  // Thread C: opened fresh, left at the bottom.
+  await page.evaluate(() => (window as any).__chatThread("C"));
+  await page.waitForTimeout(1500);
+  expect(await atBottom(page)).toBe(true);
+
+  // Back to A: its middle position, not C's bottom-following.
+  await page.evaluate(() => (window as any).__chatThread("A"));
+  await page.waitForTimeout(1500);
+  const backToA = await readingPosition(page, "a");
+  expect(Math.abs(backToA!.index - middleOfA!.index)).toBeLessThanOrEqual(1);
+
+  // Back to C: still at the bottom.
+  await page.evaluate(() => (window as any).__chatThread("C"));
+  await page.waitForTimeout(1500);
+  expect(await atBottom(page)).toBe(true);
+
+  // And A once more after C was at the bottom.
+  await page.evaluate(() => (window as any).__chatThread("A"));
+  await page.waitForTimeout(1500);
+  const againA = await readingPosition(page, "a");
+  expect(Math.abs(againA!.index - middleOfA!.index)).toBeLessThanOrEqual(1);
+});

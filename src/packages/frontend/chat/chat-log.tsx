@@ -1372,8 +1372,18 @@ export function MessageList({
       if (!forceAtBottom && Date.now() < suppressAnchorCaptureUntilRef.current)
         return;
       if (anchorCaptureFrameRef.current != null) return;
+      // A capture runs a frame later. If the thread changed meanwhile (e.g.,
+      // momentum scrolling while clicking another thread), the rows and
+      // scroller now belong to that thread; saving them under this thread's
+      // key would later restore this thread to a foreign message.
+      const scheduledScroller = scrollerRef.current;
       const capture = () => {
         anchorCaptureFrameRef.current = undefined;
+        if (
+          cacheIdRef.current !== cacheId ||
+          scrollerRef.current !== scheduledScroller
+        )
+          return;
         if (
           !forceAtBottom &&
           Date.now() < suppressAnchorCaptureUntilRef.current
@@ -1602,7 +1612,12 @@ export function MessageList({
       clearAnchorRestoreTimers();
       suppressAnchorCaptureUntilRef.current = Date.now() + 1200;
 
-      if (anchor.atBottom) {
+      // An anchor whose message is not among the rows (e.g., archived, or
+      // from another thread) opens at the newest messages, like a fresh open.
+      const index = anchor.atBottom
+        ? undefined
+        : resolveChatViewportAnchorIndex(anchor, dates);
+      if (anchor.atBottom || index == null) {
         if (keepBottomAnchoredRef) {
           keepBottomAnchoredRef.current = true;
         }
@@ -1619,8 +1634,6 @@ export function MessageList({
         return;
       }
 
-      const index = resolveChatViewportAnchorIndex(anchor, dates);
-      if (index == null) return;
       if (keepBottomAnchoredRef) {
         keepBottomAnchoredRef.current = false;
       }
@@ -2009,6 +2022,16 @@ export function MessageList({
       setManualScroll,
     } = virtuosoCallbackStateRef.current;
     if (!manualScrollRef) return;
+    if (
+      atBottom &&
+      !userScrollIntentRef.current &&
+      Date.now() < suppressAnchorCaptureUntilRef.current
+    ) {
+      // A saved position is being restored. A freshly mounted list can report
+      // its transient bottom first; saving that would overwrite the reader's
+      // position before the restore lands.
+      return;
+    }
     if (atBottom) {
       scheduleAnchorCapture(true);
       if (keepBottomAnchoredRef) {
