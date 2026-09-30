@@ -313,7 +313,19 @@ async function runSession(seed: number, steps = STEPS) {
   }
 
   const docs = clients.map((c) => c.doc());
-  if (new Set(docs).size !== 1) problems.push("clients did not converge");
+  if (new Set(docs).size !== 1) {
+    problems.push("clients did not converge");
+    if (process.env.FUZZ_VERBOSE) {
+      const lines0 = new Set(docs[0].split("\n"));
+      for (let i = 1; i < docs.length; i++) {
+        const lines = new Set(docs[i].split("\n"));
+        // eslint-disable-next-line no-console
+        console.log(
+          `c${i} vs c0:\n  only c${i}: ${JSON.stringify([...lines].filter((l) => !lines0.has(l)))}\n  only c0: ${JSON.stringify([...lines0].filter((l) => !lines.has(l)))}\n  heads c${i}: ${clients[i].session.getHeads().length} c0: ${clients[0].session.getHeads().length}`,
+        );
+      }
+    }
+  }
   const final = parse(docs[0]);
   for (const cell of final.cells) {
     if (typeof cell.input !== "string" || typeof cell.pos !== "number") {

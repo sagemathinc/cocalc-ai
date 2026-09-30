@@ -304,20 +304,27 @@ export class CellEditor {
   cmSave(): void {
     if (this.value === this.lastRemote) return;
     const base = this.lastRemote;
-    this.lastRemote = this.value;
-    this.client.run("editor save", () =>
-      this.client.actions.set_cell_input(this.id, this.value, true, base),
-    );
-    this.merge.noteSaved(this.value); // onSetCellInput
+    const saved =
+      this.client.run("editor save", () =>
+        this.client.actions.set_cell_input(this.id, this.value, true, base),
+      ) ?? this.value;
+    this.lastRemote = saved;
+    // cell-input.tsx onSetCellInput: note it, and show it if it differs.
+    this.merge.noteSaved(saved);
+    if (saved !== this.value) {
+      this.localValue = saved;
+      this.renderValue();
+    }
   }
 
   // cell-input.tsx setCellInput, then CodeMirror's value effect.
   private setCellInput(value: string, base?: string): void {
-    this.localValue = value;
-    this.client.run("editor merge", () =>
-      this.client.actions.set_cell_input(this.id, value, true, base),
-    );
-    this.merge.noteSaved(value);
+    const saved =
+      this.client.run("editor merge", () =>
+        this.client.actions.set_cell_input(this.id, value, true, base),
+      ) ?? value;
+    this.localValue = saved;
+    this.merge.noteSaved(saved);
     this.renderValue();
   }
 

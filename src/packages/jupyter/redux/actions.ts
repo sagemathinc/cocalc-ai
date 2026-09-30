@@ -908,33 +908,32 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   // loaded or saved). If the synced input has changed since then, e.g. a
   // collaborator's edit merged but not yet shown in the editor, the edit is
   // merged into it instead of overwriting (and so reverting) that change.
+  // Returns the input the cell has afterwards (which an editor should show),
+  // or undefined if nothing was written.
   public set_cell_input(
     id: string,
     input: string,
     save = true,
     base?: string,
-  ): void {
+  ): string | undefined {
     if (!this.store) return;
-    // Whether the cell exists is decided by the synced document: the store
-    // can lag it by a few ms in either direction.
-    if (this.syncdb?.get_one({ type: "cell", id }) == null) {
-      this.restoreRemotelyDeletedCell(id, input, save);
-      return;
+    // Whether the cell exists, and its input, come from the synced document:
+    // the store can lag it by a few ms in either direction.
+    const record = this.syncdb?.get_one({ type: "cell", id });
+    if (record == null) {
+      return this.restoreRemotelyDeletedCell(id, input, save);
     }
-    if (base != null) {
-      const current = this.syncdb?.get_one({ type: "cell", id })?.get("input");
-      if (
-        typeof current === "string" &&
-        current !== base &&
-        current !== input
-      ) {
-        input = mergeText({ base, local: input, remote: current });
-      }
+    const current = record.get("input");
+    if (
+      base != null &&
+      typeof current === "string" &&
+      current !== base &&
+      current !== input
+    ) {
+      input = mergeText({ base, local: input, remote: current });
     }
-    if (this.store.getIn(["cells", id, "input"]) == input) {
-      // nothing changed.   Note, I tested doing the above check using
-      // both this.syncdb and this.store, and this.store is orders of magnitude faster.
-      return;
+    if (current === input) {
+      return input; // nothing changed
     }
     if (this.check_edit_protection(id, "changing input")) {
       // note -- we assume above that there was an actual change before checking
@@ -954,6 +953,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       start: null,
       end: null,
     });
+    return input;
   }
 
   // Input typed into a cell that another user deleted concurrently, e.g.
@@ -965,7 +965,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     id: string,
     input: string,
     save: boolean,
-  ): void {
+  ): string | undefined {
     // A cell deleted remotely that the store has not caught up with yet is
     // still in the store (a local delete updates the store synchronously).
     const cell =
@@ -977,6 +977,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       delete record[key];
     }
     this._set({ ...record, type: "cell", id, input }, save);
+    return input;
   }
 
   set_cell_output = (id: string, output: any, save = true) => {

@@ -121,8 +121,10 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
         if (!props.actions || props.input_is_readonly) {
           return;
         }
-        props.actions.set_cell_input(props.id, input, true, base);
-        mergeHelperRef.current.noteSaved(input);
+        const saved =
+          props.actions.set_cell_input(props.id, input, true, base) ?? input;
+        if (saved !== input) setLocalValue(saved);
+        mergeHelperRef.current.noteSaved(saved);
       },
       [props.input_is_readonly, props.id, props.actions],
     );
@@ -205,7 +207,12 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
             to "instantly revert". */
           }
           onSetCellInput={(input) => {
+            // `input` is what was saved, which can include a collaborator's
+            // change merged into this editor's edit: show it.
             mergeHelperRef.current.noteSaved(input);
+            if (input !== (getValueRef.current?.() ?? localValueRef.current)) {
+              setLocalValue(input);
+            }
           }}
           complete={props.complete}
           getValueRef={getValueRef}

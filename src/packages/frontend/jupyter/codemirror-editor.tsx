@@ -66,7 +66,7 @@ export interface Actions extends CompleteActions {
     input: string,
     save?: boolean,
     base?: string,
-  ) => void;
+  ) => string | undefined;
   undo: () => void;
   redo: () => void;
   in_undo_mode: () => boolean;
@@ -489,8 +489,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       // since some code, e.g., for introspection when doing evaluation,
       // which runs immediately after this, assumes the Store state
       // is set for the editor.
-      actions.set_cell_input(id, value, true, base);
-      onSetCellInput?.(value);
+      // The saved input can include a collaborator's change merged in; the
+      // cell input shows it and takes it as what was saved.
+      const saved = actions.set_cell_input(id, value, true, base) ?? value;
+      cm_last_remote.current = saved;
+      onSetCellInput?.(saved);
     }
     return value;
   }
