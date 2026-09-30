@@ -37,6 +37,13 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
     conat_client: { attentionAcp: jest.fn() },
   },
 }));
+const mockNamedAgents = jest.fn(() => ({ directory: { agents: [] as any[] } }));
+beforeEach(() => {
+  mockNamedAgents.mockReturnValue({ directory: { agents: [] } });
+});
+jest.mock("@cocalc/frontend/agents/api", () => ({
+  useNamedAgents: () => mockNamedAgents(),
+}));
 jest.mock("@cocalc/frontend/misc/open-browser-tab", () => ({
   open_new_tab: jest.fn(),
 }));
@@ -100,7 +107,7 @@ describe("Codex fresh-auth attention", () => {
   it("renders an accessible action instead of question controls", async () => {
     const view = render(<CodexAttentionCard initialRecord={record} />);
     expect(
-      screen.getByRole("region", { name: "Codex needs attention" }),
+      screen.getByRole("region", { name: "The agent needs attention" }),
     ).toBeInTheDocument();
     const approve = screen.getByRole("button", {
       name: "Approve in CoCalc",
@@ -153,6 +160,49 @@ describe("Codex question attention", () => {
           ? { records: [questionRecord] }
           : { state: "pending", record: questionRecord }),
       }));
+  });
+
+  it("names the agent, not Codex, while an async question waits", () => {
+    const question = {
+      ...questionRecord,
+      source_kind: "codex_async_question" as const,
+      is_blocking: false,
+    };
+    const unnamed = render(<CodexAttentionCard initialRecord={question} />);
+    expect(
+      screen.getByText(
+        "The agent can keep working while you answer. Your response will be saved with this question and submitted to the agent.",
+      ),
+    ).toBeInTheDocument();
+    unnamed.unmount();
+
+    mockNamedAgents.mockReturnValue({
+      directory: {
+        agents: [
+          {
+            name: "cocalc-acp",
+            path: question.path,
+            thread_id: question.thread_id,
+            endpoint: { project_id: question.project_id },
+          },
+          {
+            name: "other-thread",
+            path: question.path,
+            thread_id: "thread-2",
+            endpoint: { project_id: question.project_id },
+          },
+        ],
+      },
+    });
+    render(<CodexAttentionCard initialRecord={question} />);
+    expect(
+      screen.getByRole("region", { name: "@cocalc-acp needs attention" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "@cocalc-acp can keep working while you answer. Your response will be saved with this question and submitted to @cocalc-acp.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("keeps the submitted answer beside its question with keyboard focus and no false receipt", async () => {
@@ -226,7 +276,7 @@ describe("Codex question attention", () => {
     ).toHaveTextContent("EU");
   });
 
-  it.each(["Codex", "ACP"])(
+  it.each(["Codex", "ACP", "Claude", "Agent"])(
     "requires explicit %s synchronous acceptance before claiming receipt",
     (runtime) => {
       const submitted = {
@@ -247,13 +297,13 @@ describe("Codex question attention", () => {
           }}
         />,
       );
+      const name =
+        runtime === "Codex" || runtime === "Claude" ? runtime : undefined;
       expect(screen.getByRole("status")).toHaveTextContent(
-        `${runtime === "ACP" ? "The agent" : "Codex"} accepted your response.`,
+        `${name ?? "The agent"} accepted your response.`,
       );
       expect(
-        screen.getByText(
-          `Received by ${runtime === "ACP" ? "agent" : "Codex"}`,
-        ),
+        screen.getByText(`Received by ${name ?? "agent"}`),
       ).toBeInTheDocument();
     },
   );
