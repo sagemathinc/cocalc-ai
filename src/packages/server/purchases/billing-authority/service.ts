@@ -4,6 +4,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { writeSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 
 import getLogger from "@cocalc/backend/logger";
@@ -383,12 +384,32 @@ async function assertAuthorityFenced(lease: ActiveLease): Promise<void> {
 function failStopBillingAuthorityWorker({
   err,
   exit = (code) => process.exit(code),
+  report = (message) => {
+    writeSync(2, message);
+  },
 }: {
   err: unknown;
   exit?: (code: number) => never;
+  report?: (message: string) => void;
 }): never {
   runtime.stopping = true;
   runtime.local_deadline_ms = 0;
+  // DEBUG logging may be disabled and process.exit does not drain async logs.
+  // Keep the fence intact, but always leave a bounded reason in the journal.
+  try {
+    report(
+      JSON.stringify({
+        event: "billing_authority_fail_stop",
+        time: new Date().toISOString(),
+        pid: process.pid,
+        instance_id: INSTANCE_ID,
+        generation: runtime.lease?.generation,
+        reason: `${err instanceof Error ? err.message : err}`.slice(0, 2048),
+      }) + "\n",
+    );
+  } catch {
+    // A broken log sink must not prevent the safety exit.
+  }
   logger.error("billing authority lease safety failed; fail-stopping worker", {
     instance_id: INSTANCE_ID,
     generation: runtime.lease?.generation,

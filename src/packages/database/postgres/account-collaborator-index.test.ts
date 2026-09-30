@@ -37,6 +37,44 @@ describe("account_collaborator_index rebuild", () => {
     await testCleanup();
   });
 
+  it.each(["owner", "collaborator", "viewer", "admin", null])(
+    "retains requester role semantics for %s when using the users key predicate",
+    async (group) => {
+      await getPool().query(
+        `INSERT INTO accounts (account_id, home_bay_id) VALUES ($1, $2)`,
+        [ACCOUNT_ID, LOCAL_BAY_ID],
+      );
+      const users = {
+        ...(group == null ? {} : { [ACCOUNT_ID]: { group } }),
+        [COLLAB_A]: { group: "collaborator" },
+        [COLLAB_B]: { group: "viewer" },
+      };
+      await getPool().query(
+        `INSERT INTO projects (project_id, users, deleted)
+         VALUES ($1, $3::JSONB, FALSE), ($2, $3::JSONB, TRUE)`,
+        [PROJECT_A, PROJECT_DELETED, JSON.stringify(users)],
+      );
+      const allowed = group === "owner" || group === "collaborator";
+      await expect(
+        rebuildAccountCollaboratorIndex({
+          account_id: ACCOUNT_ID,
+          bay_id: LOCAL_BAY_ID,
+          dry_run: false,
+        }),
+      ).resolves.toMatchObject({
+        source_project_rows: allowed ? 1 : 0,
+        source_collaborator_rows: allowed ? 2 : 0,
+        inserted_rows: allowed ? 2 : 0,
+      });
+      const rows = await listProjectedMyCollaboratorsForAccount({
+        account_id: ACCOUNT_ID,
+      });
+      expect(rows.map((row) => row.account_id)).toEqual(
+        allowed ? [COLLAB_A] : [],
+      );
+    },
+  );
+
   it("rebuilds projected collaborator summaries for a home-bay account", async () => {
     await getPool().query(
       `INSERT INTO accounts

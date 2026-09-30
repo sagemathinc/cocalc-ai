@@ -4,12 +4,20 @@
  */
 
 import centralLog from "@cocalc/database/postgres/central-log";
+import getLogger from "@cocalc/backend/logger";
+import { createHubAdmissionDenialRecorder } from "./hub-admission-denials";
 import {
   normalizeServiceAdmissionDenialEvent,
   setServiceAdmissionDenialRecorder,
   setServiceAdmissionNearLimitRecorder,
   type ServiceAdmissionDenialEvent,
 } from "@cocalc/conat/admission/denials";
+
+const logger = getLogger("server:conat:api:admission-denials");
+export const hubAdmissionDenials = createHubAdmissionDenialRecorder({
+  record: recordServiceAdmissionDenialLocal,
+  warn: (message, details) => logger.warn(message, details),
+});
 
 function optionalString(value: unknown, maxLength: number): string | undefined {
   const trimmed = `${value ?? ""}`.trim();

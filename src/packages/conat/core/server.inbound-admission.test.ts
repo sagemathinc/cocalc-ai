@@ -173,6 +173,9 @@ describe("core server inbound socket admission", () => {
   });
 
   it("uses the identity guard instead of the per-socket guard for hub service clients", async () => {
+    setServiceAdmissionLimitOverrides({
+      conat_inbound_events_per_hub_identity_window: 3,
+    });
     const server = init({
       port: 0,
       getUser: async (socket) => socket.handshake.auth,
@@ -204,6 +207,91 @@ describe("core server inbound socket admission", () => {
     expect(server.getUsage()["inbound-deny:count"]).toBe(0);
     expect(server.getUsage()["inbound-identity-deny:count"]).toBeGreaterThan(0);
 
+    client.close();
+    await server.close();
+  });
+
+  it("gives shared hub service traffic a separate bounded budget", async () => {
+    setServiceAdmissionLimitOverrides({
+      conat_inbound_events_per_hub_identity_window: 12,
+    });
+    const server = init({
+      port: 0,
+      getUser: async (socket) => socket.handshake.auth,
+      maxInboundEventsPerSocketWindow: 2,
+      maxInboundEventsPerIdentityWindow: 3,
+      inboundEventWindowMs: 60_000,
+      inboundEventBlockMs: 60_000,
+    });
+    const clients = [0, 1].map(() =>
+      connect({
+        address: server.address(),
+        noCache: true,
+        auth: { hub_id: "hub" },
+      }),
+    );
+    await Promise.all(
+      clients.map((client) => client.waitUntilSignedIn({ timeout: 5000 })),
+    );
+    for (let i = 0; i < 6; i++) {
+      const response = await clients[i % 2].conn
+        .timeout(2000)
+        .emitWithAck("subscriptions", {});
+      expect(response?.code).not.toBe(429);
+    }
+    let denied: any;
+    for (let i = 0; i < 15; i++) {
+      const response = await clients[i % 2].conn
+        .timeout(2000)
+        .emitWithAck("subscriptions", {});
+      if (response?.code === 429) {
+        denied = response;
+        break;
+      }
+    }
+    expect(denied).toMatchObject({ code: 429 });
+    expect(server.getUsage()["inbound-identity-deny:count"]).toBeGreaterThan(0);
+    clients.forEach((client) => client.close());
+    await server.close();
+  });
+
+  it.each([
+    { account_id: "account" },
+    { project_id: "project" },
+    { account_id: "account", hub_id: "hub" },
+    { project_id: "project", hub_id: "hub" },
+    {},
+  ])("retains the ordinary identity limit for %j", async (principal) => {
+    setServiceAdmissionLimitOverrides({
+      conat_inbound_events_per_hub_identity_window: 1000,
+    });
+    const server = init({
+      port: 0,
+      getUser: async () => principal,
+      maxInboundEventsPerSocketWindow: 100,
+      maxInboundEventsPerIdentityWindow: 3,
+      inboundEventWindowMs: 60_000,
+      inboundEventBlockMs: 60_000,
+    });
+    const client = connect({
+      address: server.address(),
+      noCache: true,
+      // A claimed hub role in handshake data must not replace getUser's result.
+      auth: { hub_id: "hub" },
+    });
+    await client.waitUntilSignedIn({ timeout: 5000 });
+    let denied: any;
+    for (let i = 0; i < 8; i++) {
+      const response = await client.conn
+        .timeout(2000)
+        .emitWithAck("subscriptions", {});
+      if (response?.code === 429) {
+        denied = response;
+        break;
+      }
+    }
+    expect(denied).toMatchObject({ code: 429 });
+    expect(server.getUsage()["inbound-identity-deny:count"]).toBeGreaterThan(0);
     client.close();
     await server.close();
   });

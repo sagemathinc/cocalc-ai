@@ -8,7 +8,8 @@ import { isValidUUID } from "@cocalc/util/misc";
 
 const CLUSTER_ACCOUNT_DIRECTORY_TABLE = "cluster_account_directory";
 const COLLAB_MEMBERSHIP_GROUPS_SQL = `('owner','collaborator')`;
-const REQUESTER_COLLAB_PROJECT_SQL = `(users -> $1::text ->> 'group') IN ${COLLAB_MEMBERSHIP_GROUPS_SQL}`;
+// Expose the existing users GIN index without weakening the role check.
+const REQUESTER_COLLAB_PROJECT_SQL = `(users ? $1::text AND (users -> $1::text ->> 'group') IN ${COLLAB_MEMBERSHIP_GROUPS_SQL})`;
 const PEER_COLLAB_GROUP_SQL = `(info ->> 'group') IN ${COLLAB_MEMBERSHIP_GROUPS_SQL}`;
 
 export interface RebuildAccountCollaboratorIndexResult {
