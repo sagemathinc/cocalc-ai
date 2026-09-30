@@ -172,3 +172,57 @@ cell-notebook/actions.ts`) does not save the input editor first, unlike
   another user deleted the cell saves its unsaved typing with
   `set_cell_input`, which re-creates the cell as a ghost with only `id` and
   `input`.
+
+### 2026-09-30 (later): fixes, measured with the fuzzer
+
+Notebook fuzzer, 200 seeds x 40 operations, 2-3 users plus kernel backend:
+
+|                       | all operations | without split/merge cells |
+| --------------------- | -------------- | ------------------------- |
+| baseline              | 36 pass        | -                         |
+| after the fixes below | 106 pass       | 198 pass                  |
+
+Without split/merge, nothing is lost and clients always converge; the two
+remaining failures are keep-both duplicates in the core merge (both users
+rewrote the same line). Every remaining failure with split/merge is text
+moved by a split or merge while someone edited it (see open question).
+
+Fixes (each found by the fuzzer; unit tests in `sync/editor/db/test`):
+
+- Core merge for all db documents (notebooks, tasks, chats, boards, slides):
+  `sync/editor/db/merge3.ts`, an exact three-way merge per record and
+  field. A cell deleted while another user typed in it is kept whole; one
+  deleted while the kernel wrote its output stays deleted. Replaces
+  time-ordered fuzzy application (ghost cells, silently lost edits).
+- Never create a partial cell record (without position and input): an
+  editor saving as it unmounts after a delete, a move or output for a
+  deleted cell used to create ghost cells. Input typed into a cell another
+  user deleted concurrently brings the cell back whole.
+- Editor saves carry their base: `set_cell_input(id, input, save, base)`
+  merges into newer synced input instead of reverting a collaborator's
+  change, and returns the saved input, which the editor shows and records
+  (otherwise its echo was merged again from an old base, duplicating text).
+- Editor merges (`SimpleInputMerge`, also used by the Markdown editor) use
+  patchflow's `mergeStrings3` instead of `merge_prefer_local`, whose "local
+  wins" rule dropped a collaborator's text typed next to a local edit. The
+  Markdown fuzzer went from 7 to 2 failures in 400 x 80 (both the known
+  ordered-list numbering).
+- Split, merge, delete, cut and copy save open editors first (split right
+  after typing duplicated text, with one user). `split_cell` checks the cell
+  still exists before inserting, and `set_cell_input` commits when asked to
+  even if the input did not change (half-done splits stayed uncommitted on
+  one client: the non-converging runs).
+- Fuzzer: harness initial-change baseline fixed; `FUZZ_NO_SPLIT_MERGE`,
+  `FUZZ_MERGE_PROBE`; verbose output shows the commit that lost or
+  duplicated a token and how non-converged clients differ.
+
+Open question: splitting or merging cells moves text between cells. If
+someone edits that text at the same moment, a text merge cannot tell the
+move from a deletion, so the edit keeps the text and the other cell has it
+too (a visible duplicate, nothing lost). Options: accept it (rare: needs a
+concurrent split/merge of the same cell within about a second), or make
+split/merge carry the edits made meanwhile to where the text moved.
+
+Next: decide the split/merge question; then run the fuzzer approach on
+tasks, boards and slides (they already get the core merge), J4 (browser
+suite on lite2b) and J5.

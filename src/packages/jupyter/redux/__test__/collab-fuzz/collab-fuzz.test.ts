@@ -338,10 +338,14 @@ async function runSession(seed: number, steps = STEPS) {
   for (const tok of tokensIn(final.inputs))
     counts.set(tok, (counts.get(tok) ?? 0) + 1);
   for (const [tok, n] of counts) {
-    if (n > 1)
-      problems.push(
-        `duplicated token ${tok} (x${n}, ${classify(tok, clients, false)})`,
-      );
+    if (n <= 1) continue;
+    const cellsWith = final.cells.filter((cell) =>
+      (cell.input ?? "").includes(tok),
+    ).length;
+    const where = cellsWith > 1 ? "across cells" : "in one cell";
+    problems.push(
+      `duplicated token ${tok} (x${n}, ${where}, ${classify(tok, clients, false)})`,
+    );
   }
   for (const tok of inserted) {
     if (!deleted.has(tok) && !counts.has(tok)) {
