@@ -1104,6 +1104,14 @@ export const UI_VOCABULARY_FACTS: readonly UiVocabularyFact[] = [
     text: '"users"',
     reason: USERS_RETIRED,
   },
+  {
+    id: "shares.sign-in-required",
+    file: "server/public-directory-shares/index.ts",
+    kind: "present",
+    text: "anonymous public directory shares are not supported",
+    reason:
+      'The "Publish project files" guide (docs/src/content/projects.ts, sections "Share URLs and slugs" and "Viewer access model") says only someone signed in to the site can open an unlisted share. If the message only moved, point this fact at its new location. If anonymous shares become possible, update those sections, then this fact.',
+  },
 ];
 
 export const UI_VOCABULARY_ALIAS_EXCEPTIONS: readonly UiVocabularyAliasException[] =
