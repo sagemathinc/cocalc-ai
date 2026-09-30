@@ -150,17 +150,27 @@ guards until interruption and fencing are verified.
   browser reload and new request IDs must not bypass limits; an idempotent replay
   must not consume another admission. Choose documented initial intervals and
   concurrency from measured scan cost before enablement, not from DAU guesses.
+  Charge the 60-second account cooldown before routed selection authorization,
+  including rejected selections. Replays of an admitted operation are not charged
+  again. While an earlier submission is still authorizing and has no LRO yet,
+  competing requests observe its winner or return the next eligible time without
+  duplicating authorization work.
 - **Cancellation:** stop admitting queued children and signal running children.
   Confirmed stops become cancelled. If the host cannot be reached, end foreground
   processing with unavailable and explicit "stop unconfirmed" text; retain the
   owner job, cancellation intent, exact host/run identity and project reservation.
   Only an exact stop acknowledgment releases that project's reservation. The
   account can submit another batch for other projects after its normal cooldown.
+  Temporary owner-ingestion pressure has a durable 60-second foreground window,
+  reset only by a successful host observation, never by inspection. On exhaustion,
+  end unavailable with explicit busy/stop-unconfirmed wording and retain exact
+  recovery identity for possibly submitted work. A provably unsubmitted job can
+  end without a stop fence. Worker restarts do not reset the pressure window.
   A timeout never means the remote execution stopped. Use bounded traversal checkpoints;
   measure cancellation latency. Cancellation is idempotent, does not undo already
   indexed metadata, and never deletes canonical user state.
 - **Durability:** persist operation identity, fixed selection, child identities,
-  progress and cancellation intent. Closing the dialog, refresh, disconnect or
+  progress and cancellation intent. Leaving the tab, refresh, disconnect or
   worker restart must not duplicate or lose the operation. Recover through the
   standard LRO interfaces. Observation timeouts mean unknown, not failed or safe
   to restart the affected project; reconcile/fence abandoned execution before

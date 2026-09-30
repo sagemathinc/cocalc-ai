@@ -33,12 +33,19 @@ needed in the report.
    ends with unavailable and a stop-unconfirmed explanation, allowing other
    projects to be scanned. The affected project's exact identity and reservation
    remain for background stop recovery. Already indexed resources remain available.
+   Temporary service-busy responses may retain progress for up to 60 seconds
+   without a successful host observation. After that, expect unavailable with
+   busy/stop-unconfirmed wording and the same recovery protections.
 5. **Results and retry.** Check that the per-project list and outcome counts
    agree. A project whose storage is unavailable should say **unavailable** and
    must not start compute. Excluded/inaccessible/limited paths may yield
    **truncated**, rather than success. After processing ends, click **Select
    unsuccessful projects for retry**. This selects them without starting work.
-   Account cooldown is 60 seconds; an admitted project's cooldown is 5 minutes.
+   Account cooldown is 60 seconds, charged before selection authorization even
+   when that selection is rejected; an admitted project's cooldown is 5 minutes.
+   A competing request during unfinished selection authorization may return the
+   next eligible time; it must not launch a second authorization pass. Once an
+   operation is admitted, replay returns that operation without another charge.
    A project with unresolved stop recovery instead remains deferred until its
    exact host/run stop is confirmed; a new batch must not replace that identity.
    Once eligible, explicitly click **Start scan**: it should create a new

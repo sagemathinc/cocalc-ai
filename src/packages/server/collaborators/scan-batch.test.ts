@@ -377,6 +377,95 @@ describeDb("manual scan LRO durability", () => {
         expect(request.run_id).toBe(run_id);
     },
   );
+  test.each(["before-submit", "running", "cancel"])(
+    "sustained busy responses release the account without inventing a stop (%s)",
+    async (phase) => {
+      const operation = (await start()).operation!;
+      const request_id = operation.children[0].request_id;
+      const busy = Error("collaboration ingestion busy; retry later");
+      if (phase !== "before-submit") await runScanBatchPass(step);
+      if (phase === "cancel") {
+        await api({ action: "cancel", op_id: operation.op_id });
+        cancel.mockRejectedValue(busy);
+      } else status.mockRejectedValue(busy);
+      await due();
+      await runScanBatchPass(step);
+      expect((await api({ action: "status" })).operation?.status).toBe(
+        "running",
+      );
+      expect(
+        (
+          await getPool().query(
+            "SELECT busy_since FROM collaboration_scan_jobs",
+          )
+        ).rows[0].busy_since,
+      ).toBeInstanceOf(Date);
+      await getPool().query(
+        "UPDATE collaboration_scan_jobs SET busy_since=now()-interval '2 minutes'",
+      );
+      // Mere inspection does not reset the persisted pressure window.
+      await step({
+        account_id,
+        project_id,
+        request_id,
+        batch_id: operation.op_id,
+        action: "inspect",
+      });
+      await due();
+      await runScanBatchPass(step);
+      const final = (await api({ action: "status" })).operation!;
+      expect(final.status).toBe("failed");
+      expect(final.children[0]).toMatchObject({
+        request_id,
+        state: "unavailable",
+        message: expect.stringContaining("busy"),
+      });
+      const jobs = (
+        await getPool().query(
+          "SELECT job_id,cancel_requested,recovery_pending FROM collaboration_scan_jobs",
+        )
+      ).rows;
+      expect(jobs).toEqual(
+        phase === "before-submit"
+          ? []
+          : [
+              {
+                job_id: request_id,
+                cancel_requested: true,
+                recovery_pending: true,
+              },
+            ],
+      );
+      if (phase !== "cancel") expect(cancel).not.toHaveBeenCalled();
+    },
+  );
+  test("a successful host observation resets the durable busy window", async () => {
+    const operation = (await start()).operation!;
+    const run_id = operation.children[0].request_id;
+    await runScanBatchPass(step);
+    status.mockRejectedValue(
+      Error("collaboration ingestion busy; retry later"),
+    );
+    await due();
+    await runScanBatchPass(step);
+    await getPool().query(
+      "UPDATE collaboration_scan_jobs SET busy_since=now()-interval '2 minutes'",
+    );
+    status.mockResolvedValue({ state: "indexing", run_id, entries: 7 });
+    await due();
+    await runScanBatchPass(step);
+    expect(
+      (await getPool().query("SELECT busy_since FROM collaboration_scan_jobs"))
+        .rows,
+    ).toEqual([{ busy_since: null }]);
+    status.mockRejectedValue(
+      Error("collaboration ingestion busy; retry later"),
+    );
+    await due();
+    await runScanBatchPass(step);
+    expect((await api({ action: "status" })).operation?.status).toBe("running");
+    expect(cancel).not.toHaveBeenCalled();
+  });
   test.each(["prior-frontier", "empty-frontier"])(
     "new admission reconciles its predecessor after a rejected earlier request (%s)",
     async (kind) => {

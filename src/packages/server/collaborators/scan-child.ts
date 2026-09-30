@@ -9,6 +9,7 @@ import {
   finishScanChild,
   stageScanChildFinish,
   finishUnsubmittedScanChild,
+  recordScanChildBusy,
 } from "@cocalc/database/postgres/collaborators/collaborators-scan-child";
 import type { CollaborationOwnerAuthority } from "@cocalc/database/postgres/collaborators/collaborators-owner";
 import type {
@@ -28,12 +29,28 @@ export async function stepScanChild(
   authority: CollaborationOwnerAuthority,
 ): Promise<ScanChild> {
   try {
-    return await step(opts, authority);
+    const result = await step(opts, authority);
+    if (opts.action !== "inspect" && !scanChildTerminal(result.state))
+      await recordScanChildBusy(opts, authority, false);
+    return result;
   } catch (error) {
-    if (error instanceof ScanHostBusy)
-      return prepareScanChild({ ...opts, action: "inspect" }, authority);
-    if (!(error instanceof ScanHostUnavailable)) throw error;
-    const result = await retainUnavailableScanChild(opts, authority);
+    const busy = error instanceof ScanHostBusy;
+    if (busy) {
+      if (!(await recordScanChildBusy(opts, authority, true)))
+        return prepareScanChild({ ...opts, action: "inspect" }, authority);
+      const unsubmitted = await finishUnsubmittedScanChild(
+        opts,
+        authority,
+        "busy",
+      );
+      if (unsubmitted) return unsubmitted;
+    }
+    if (!busy && !(error instanceof ScanHostUnavailable)) throw error;
+    const result = await retainUnavailableScanChild(
+      opts,
+      authority,
+      busy ? "busy" : "unreachable",
+    );
     if (!result) throw error;
     logger.warn("scan host unavailable; exact stop retained for recovery", {
       project_id: opts.project_id,

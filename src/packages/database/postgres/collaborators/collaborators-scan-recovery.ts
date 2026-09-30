@@ -19,6 +19,7 @@ import type {
 export async function retainUnavailableScanChild(
   opts: ScanChildRequest,
   authority: CollaborationOwnerAuthority,
+  reason: "unreachable" | "busy" = "unreachable",
 ): Promise<ScanChild | undefined> {
   return transaction(async (db) => {
     await assertCollaborationOwnerAuthority(db, opts.project_id, authority);
@@ -51,7 +52,10 @@ export async function retainUnavailableScanChild(
         ? job.finish_result.state
         : "unavailable",
       message:
-        "Host unavailable; stop was not confirmed. This project's scan identity is retained for recovery. Other projects can be scanned; this project stays reserved until its host confirms the stop.",
+        (reason === "busy"
+          ? "Scan services remained busy; stop was not confirmed. "
+          : "Host unavailable; stop was not confirmed. ") +
+        "This project's scan identity is retained for recovery. Other projects can be scanned; this project stays reserved until its host confirms the stop.",
     };
     await db.query(
       `UPDATE collaboration_scan_receipts SET result=$4::jsonb

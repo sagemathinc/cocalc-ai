@@ -136,7 +136,8 @@ export async function syncCollaborationScanSchema(
     ADD COLUMN IF NOT EXISTS batch_id UUID,
     ADD COLUMN IF NOT EXISTS cancel_requested BOOLEAN NOT NULL DEFAULT false,
     ADD COLUMN IF NOT EXISTS progress JSONB,
-    ADD COLUMN IF NOT EXISTS finish_result JSONB`);
+    ADD COLUMN IF NOT EXISTS finish_result JSONB,
+    ADD COLUMN IF NOT EXISTS busy_since TIMESTAMPTZ`);
   await db.query(`ALTER TABLE collaboration_scan_jobs
     ADD COLUMN IF NOT EXISTS recovery_pending BOOLEAN NOT NULL DEFAULT false,
     ADD COLUMN IF NOT EXISTS recovery_after TIMESTAMPTZ,

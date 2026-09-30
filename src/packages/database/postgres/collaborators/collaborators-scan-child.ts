@@ -141,12 +141,35 @@ export async function prepareScanChild(
   });
 }
 
+/** Persist pressure across workers/restarts. Only a successful host observation
+ * clears it; user inspection must not extend the 60-second foreground budget.
+ */
+export async function recordScanChildBusy(
+  opts: ScanChildRequest,
+  authority: CollaborationOwnerAuthority,
+  busy: boolean,
+): Promise<boolean> {
+  return transaction(async (db) => {
+    await assertCollaborationOwnerAuthority(db, opts.project_id, authority);
+    const { rows } = await db.query(
+      `UPDATE collaboration_scan_jobs SET busy_since=CASE WHEN $4::boolean
+         THEN COALESCE(busy_since,clock_timestamp()) ELSE NULL END
+       WHERE project_id=$1 AND job_id=$2 AND batch_id=$3
+         AND ($4::boolean OR busy_since IS NOT NULL)
+       RETURNING COALESCE(clock_timestamp()>=busy_since+interval '60 seconds',false) AS exhausted`,
+      [opts.project_id, opts.request_id, opts.batch_id, busy],
+    );
+    return rows[0]?.exhausted ?? false;
+  });
+}
+
 /** A failed read-only probe can end unavailable only while the durable job
  * proves that no start RPC was sent. Never infer this from a transport error.
  */
 export async function finishUnsubmittedScanChild(
   opts: ScanChildRequest,
   authority: CollaborationOwnerAuthority,
+  reason: "unreachable" | "busy" = "unreachable",
 ): Promise<ScanChild | undefined> {
   return transaction(async (db) => {
     await assertCollaborationOwnerAuthority(db, opts.project_id, authority);
@@ -174,7 +197,9 @@ export async function finishUnsubmittedScanChild(
       request_id: opts.request_id,
       state: job.cancel_requested ? "cancelled" : "unavailable",
       message:
-        "Storage could not be reached before scan submission; compute was not started.",
+        reason === "busy"
+          ? "Scan services remained busy before submission; no scan was submitted and compute was not started. Retry explicitly after cooldown."
+          : "Storage could not be reached before scan submission; compute was not started.",
     };
     await receipt(db, opts, result);
     return result;
