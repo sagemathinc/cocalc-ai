@@ -935,6 +935,27 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     ],
   },
 
+  // Recovery status lines at the top of the Find Snapshots and Backups tabs
+  ...(
+    [
+      ["snapshots", "Local snapshots", "snapshot"],
+      ["backups", "Off-host backups", "backup"],
+    ] as const
+  ).map(
+    ([key, label, kind]): UiVocabularyEntry => ({
+      id: `recovery.status.${key}`,
+      label,
+      anchors: [
+        def("frontend/project/recovery-status.tsx", `"${label}"`),
+        ren(
+          `frontend/project/find/find-tab-${key}.tsx`,
+          `<ProjectRecoveryStatus project_id={project_id} kind="${kind}" />`,
+        ),
+      ],
+      usedIn: [bold("files", label)],
+    }),
+  ),
+
   // Virtual machines
   ...(
     [
@@ -1111,6 +1132,14 @@ export const UI_VOCABULARY_FACTS: readonly UiVocabularyFact[] = [
     text: "anonymous public directory shares are not supported",
     reason:
       'The "Publish project files" guide (docs/src/content/projects.ts, sections "Share URLs and slugs" and "Viewer access model") says only someone signed in to the site can open an unlisted share. If the message only moved, point this fact at its new location. If anonymous shares become possible, update those sections, then this fact.',
+  },
+  {
+    id: "recovery.status.snapshot-date-scheduled-only",
+    file: "project-host/file-server.ts",
+    kind: "present",
+    text: ".filter(isISODate) .sort();",
+    reason:
+      'The Local snapshots status date comes from the newest date-named (scheduled) snapshot only, while Find searches every retained snapshot. The Files guide (docs/src/content/files.ts, "Find a retained file when its path is unknown") says so. If the filter only moved, point this fact at its new location. If the date starts counting other snapshots, update that paragraph, then this fact.',
   },
 ];
 
