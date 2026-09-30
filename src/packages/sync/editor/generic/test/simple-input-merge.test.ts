@@ -309,4 +309,34 @@ describe("SimpleInputMerge", () => {
 
     expect(merged).toBe(remote);
   });
+
+  it("keeps an unsaved local edit when two remote updates arrive before it is saved", () => {
+    // Found by the collaborative editing fuzzer: after rebasing a local edit
+    // onto one remote update, the merge became the baseline even though the
+    // edit was not committed yet. A second remote update then looked like "no
+    // local edits" and was adopted directly, dropping the edit.
+    const base = "a\n\nb\n\nc\n";
+    const merge = new SimpleInputMerge(base);
+    let rendered = `${base}local\n`;
+    const remote1 = `x\n\n${base}`;
+    merge.handleRemote({
+      remote: remote1,
+      getLocal: () => rendered,
+      applyMerged: (value) => {
+        rendered = value;
+      },
+    });
+    expect(rendered).toBe(`${remote1}local\n`);
+
+    const remote2 = `x\n\n${base}y\n`;
+    merge.handleRemote({
+      remote: remote2,
+      getLocal: () => rendered,
+      applyMerged: (value) => {
+        rendered = value;
+      },
+    });
+    expect(rendered).toContain("local");
+    expect(rendered).toContain("y");
+  });
 });

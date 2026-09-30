@@ -127,10 +127,14 @@ export class SimpleInputMerge {
       return;
     }
 
-    // Local diverged: rebase local delta onto remote.
+    // Local diverged: rebase local delta onto remote. The baseline becomes the
+    // remote value, not the merge: the rebased local edits are not committed
+    // yet, and must stay a local delta until their save echoes back. Otherwise
+    // a second remote update arriving before that save looks like "no local
+    // edits" and is adopted directly, dropping them.
     const delta = makePatch(base, local);
     const [merged] = applyPatch(delta, remote);
-    this.noteApplied(merged);
+    this.noteApplied(remote);
     if (merged !== local) {
       this.applyMerged(opts.applyMerged, observedLocal, merged);
     }
