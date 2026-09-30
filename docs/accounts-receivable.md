@@ -307,6 +307,51 @@ The JSON file must contain exactly one `billing` contact in
 `billing_contacts`. It may also contain `procurement_contacts`,
 `billing_address`, and `invoice_memo`.
 
+Updating AR does not silently edit an existing institutional Stripe customer.
+After correcting the AR details, preview and explicitly synchronize that customer
+before creating the replacement invoice:
+
+```sh
+cocalc admin receivables billing sync-stripe AR-2026-000123 \
+  --reason "sync approved procurement billing correction" --json
+
+# Review before/after, blockers, order_version, and preview_hash above.
+cocalc admin receivables billing sync-stripe AR-2026-000123 \
+  --expected-version 7 --preview-hash <reviewed-sha256> \
+  --idempotency-key procurement-correction-123 \
+  --reason "sync approved procurement billing correction" --commit --json
+```
+
+The mutation requires fresh admin authentication and the Stripe-draft capability,
+and runs in the serialized seed billing authority. It changes only the linked
+institutional customer's billing email/address, including clearing obsolete
+address fields. It never changes customer identity, metadata, subscriptions,
+invoice history, or the customer's ordinary CoCalc account billing profile.
+Shared AR customers, active invoices/quotes, subscriptions, truncated subscription
+history and unresolved provider operations require manual review instead.
+
+The reviewed hash pins the order version and Stripe before/after values. A changed
+preview must be reviewed again, not silently accepted. A durable provider operation
+fences new invoicing and AR billing edits while a sync is unresolved. After a
+timeout, retain the original hash and expected version: recovery reads Stripe,
+accepts an already-applied result, or resumes the exact idempotent update only if
+the original values remain. An unrelated Stripe change requires manual
+reconciliation. If billing authority has cached a failed command, use a new
+**command** idempotency key with the same reviewed hash/version; the provider
+operation and Stripe key remain unchanged. Successful sync writes an immutable
+AR event with the reviewed diff and original actor/reason. Then create and send
+the replacement invoice through the normal AR workflow.
+
+An existing sync can record a verified already-applied result even if payment or
+fulfillment has since completed the order. This reconciliation never performs a
+new Stripe write on a terminal order. A first update rejected by Stripe validation
+(400 InvalidRequest with a provider request ID), followed by unchanged customer
+readback, is closed as failed with an immutable audit event. Pre-write failures on
+a never-started operation are also closed safely. Correct the AR inputs and review
+a fresh preview/version/key after failure. Timeouts, server errors, conflicting
+readbacks, unavailable verification and rejections after an earlier uncertain
+attempt remain indeterminate; those do not prove the earlier update never applied.
+
 ## Collection-Mode Corrections
 
 Use the dedicated collection-mode action when an approved order was configured

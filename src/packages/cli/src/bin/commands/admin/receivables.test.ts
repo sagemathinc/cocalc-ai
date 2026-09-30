@@ -12,6 +12,53 @@ import { registerReceivablesCommand } from "./receivables";
 const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 const ASSIGNEE_ID = "22222222-2222-4222-8222-222222222222";
 
+test("Stripe billing sync is preview-first and preserves reviewed replay inputs", async () => {
+  const calls: any[] = [];
+  const api = {
+    get: async () => order({ version: 9 }),
+    stripeBillingPreview: async () => ({
+      preview_hash: "a".repeat(64),
+      order_version: 7,
+    }),
+    syncStripeBilling: async (request: any) => {
+      calls.push(request);
+      return order();
+    },
+  };
+  const args = [
+    "node",
+    "test",
+    "admin",
+    "receivables",
+    "billing",
+    "sync-stripe",
+    "AR-2026-000123",
+    "--reason",
+    "correct billing",
+  ];
+  const dryRun = setup(api);
+  await dryRun.program.parseAsync(args);
+  assert.equal(dryRun.output().order_version, 7);
+  assert.equal(calls.length, 0);
+  await assert.rejects(
+    setup(api).program.parseAsync([...args, "--commit"]),
+    /--preview-hash/,
+  );
+  await setup(api).program.parseAsync([
+    ...args,
+    "--commit",
+    "--preview-hash",
+    "a".repeat(64),
+    "--expected-version",
+    "7",
+    "--idempotency-key",
+    "sync-test",
+  ]);
+  assert.equal(calls[0].expected_version, 7);
+  assert.equal(calls[0].preview_hash, "a".repeat(64));
+  assert.equal(calls[0].idempotency_key, "sync-test");
+});
+
 function order(overrides: Record<string, unknown> = {}) {
   return {
     id: "33333333-3333-4333-8333-333333333333",

@@ -61,6 +61,15 @@ describe("billing authority operation classification", () => {
   });
 
   it("defaults new and side-effecting methods to serialized commands", () => {
+    expect(
+      isBillingAuthorityHubApiCall("commercialOrders.syncStripeBilling"),
+    ).toBe(true);
+    expect(
+      isBillingAuthorityHubApiRead("commercialOrders.syncStripeBilling"),
+    ).toBe(false);
+    expect(
+      isBillingAuthorityHubApiRead("commercialOrders.stripeBillingPreview"),
+    ).toBe(true);
     expect(isBillingAuthorityHubApiRead("purchases.getBalance")).toBe(true);
     expect(isBillingAuthorityHubApiRead("commercialOrders.quotePreview")).toBe(
       true,

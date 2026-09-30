@@ -63,6 +63,8 @@ import {
   create,
   createPreview,
   createInvoiceDraft,
+  stripeBillingPreview,
+  syncStripeBilling,
   diagnostics,
   issueManualInvoice,
   issueQuoteLink,
@@ -92,6 +94,41 @@ describe("commercial orders public Conat API", () => {
     mockAssertCommercialReceivablesCapability.mockResolvedValue(undefined);
     mockCentralLog.mockResolvedValue(undefined);
     mockRequireDangerousSessionAuth.mockResolvedValue(undefined);
+  });
+
+  it("requires fresh auth for Stripe billing sync but not its read-only preview", async () => {
+    await stripeBillingPreview({ ...BASE, id: "order-1" });
+    expect(mockRequireDangerousSessionAuth).not.toHaveBeenCalled();
+    await syncStripeBilling({
+      ...BASE,
+      id: "order-1",
+      expected_version: 1,
+      preview_hash: "a".repeat(64),
+      idempotency_key: "sync-test",
+    });
+    expect(mockRequireDangerousSessionAuth).toHaveBeenCalledWith(
+      expect.objectContaining({ allow_actor_impersonation: false }),
+    );
+    expect(mockAssertCommercialReceivablesCapability).toHaveBeenLastCalledWith(
+      "stripeDraft",
+    );
+    expect(mockDispatchCommercialSeedRequest).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        action: "syncStripeBilling",
+        actor_account_id: BASE.account_id,
+      }),
+    );
+    mockRequireDangerousSessionAuth.mockRejectedValueOnce(
+      Error("fresh auth required"),
+    );
+    await expect(
+      syncStripeBilling({
+        ...BASE,
+        id: "order-1",
+        expected_version: 1,
+        preview_hash: "a".repeat(64),
+      }),
+    ).rejects.toThrow("fresh auth required");
   });
 
   it("rejects unauthenticated and non-admin reads before seed dispatch", async () => {
@@ -367,11 +404,9 @@ describe("commercial orders public Conat API", () => {
   });
 
   it("routes audited read-only legacy discovery to the seed without dropping pagination", async () => {
-    const commercialOrders = jest
-      .fn()
-      .mockResolvedValue({
-        legacy_invoice_scan: { has_more: false, invoices: [] },
-      });
+    const commercialOrders = jest.fn().mockResolvedValue({
+      legacy_invoice_scan: { has_more: false, invoices: [] },
+    });
     const bayOps = jest.fn(() => ({ commercialOrders }));
     mockGetConfiguredBayId.mockReturnValue("worker-bay");
     mockGetInterBayBridge.mockReturnValue({ bayOps });
