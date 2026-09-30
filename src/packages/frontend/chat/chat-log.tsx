@@ -1683,12 +1683,14 @@ export function MessageList({
     searchJumpToken,
   ]);
 
-  // Restore the saved reading position only when a retained, hidden chat is
+  // Restore on initial opens, chat identity changes, or when a retained chat is
   // shown again. Never on layout changes, new rows or window focus while the
   // chat stays visible: each restore suppresses anchor capture briefly, so
   // restoring during streaming would discard the user's scrolling and snap
   // the view back to the stale anchor.
   const wasHiddenRef = useRef(!isVisible);
+  const restoredCacheIdRef = useRef<string | undefined>(undefined);
+  const hasRows = sortedDates.length > 0;
   const restoreSavedAnchorRef = useRef(restoreSavedAnchor);
   restoreSavedAnchorRef.current = restoreSavedAnchor;
   useEffect(() => {
@@ -1697,21 +1699,24 @@ export function MessageList({
       wasHiddenRef.current = true;
       return;
     }
-    if (!wasHiddenRef.current) return;
+    if (!hasRows) return;
+    if (!wasHiddenRef.current && restoredCacheIdRef.current === cacheId) return;
     wasHiddenRef.current = false;
+    restoredCacheIdRef.current = cacheId;
     for (const timer of visibilityRestoreTimersRef.current) {
       clearTimeout(timer);
     }
     visibilityRestoreTimersRef.current = [];
     const token = ++visibilityRestoreTokenRef.current;
-    for (const delayMs of [0, 16, 75, 250]) {
+    restoreSavedAnchorRef.current();
+    for (const delayMs of [16, 75, 250]) {
       const timer = setTimeout(() => {
         if (visibilityRestoreTokenRef.current !== token) return;
         restoreSavedAnchorRef.current();
       }, delayMs);
       visibilityRestoreTimersRef.current.push(timer);
     }
-  }, [isVisible, useVirtuoso]);
+  }, [cacheId, hasRows, isVisible, useVirtuoso]);
 
   const scrollToNewestMessages = useCallback(() => {
     forceScrollToBottom();
