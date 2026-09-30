@@ -150,6 +150,10 @@ describeDb("manual scan LRO durability", () => {
       );
     await expect(submit()).rejects.toThrow("no longer accessible");
     expect(authorize).toHaveBeenCalledTimes(10000);
+    expect(
+      (await scanProjectsAtHome({ action: "status", account_id }, authorize))
+        .next_eligible_at,
+    ).toBeGreaterThan(Date.now());
     const repeated = await submit();
     expect(repeated.next_eligible_at).toBeGreaterThan(Date.now());
     expect(repeated.operation).toBeUndefined();

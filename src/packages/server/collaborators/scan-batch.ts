@@ -300,6 +300,19 @@ export async function scanProjectsAtHome(
   const after = opts.action === "status" ? opts.after : undefined;
   if (after) uuid(after, "scan result cursor");
   const operation = await readScanBatch(account_id, op_id, after);
+  if (!operation) {
+    // A rejected preflight can consume cooldown without creating an LRO. Let
+    // status/reload display that limit without another Start request.
+    const next = await accountTx(account_id, async (db) =>
+      (
+        await db.query(
+          "SELECT next_eligible_at FROM collaboration_scan_batch_accounts WHERE account_id=$1",
+          [account_id],
+        )
+      ).rows[0]?.next_eligible_at?.getTime(),
+    );
+    return { enabled, next_eligible_at: next };
+  }
   return { enabled, operation };
 }
 export async function readScanBatch(
