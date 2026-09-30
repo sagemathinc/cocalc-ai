@@ -1683,16 +1683,22 @@ export function MessageList({
     searchJumpToken,
   ]);
 
+  // Restore the saved reading position only when a retained, hidden chat is
+  // shown again. Never on layout changes, new rows or window focus while the
+  // chat stays visible: each restore suppresses anchor capture briefly, so
+  // restoring during streaming would discard the user's scrolling and snap
+  // the view back to the stale anchor.
+  const wasHiddenRef = useRef(!isVisible);
+  const restoreSavedAnchorRef = useRef(restoreSavedAnchor);
+  restoreSavedAnchorRef.current = restoreSavedAnchor;
   useEffect(() => {
     if (!useVirtuoso) return;
-    if (!isVisible) return;
-    if (!sortedDates.length) return;
-    restoreSavedAnchor();
-  }, [cacheId, isVisible, restoreSavedAnchor, sortedDates.length, useVirtuoso]);
-
-  useEffect(() => {
-    if (!useVirtuoso) return;
-    if (!isVisible) return;
+    if (!isVisible) {
+      wasHiddenRef.current = true;
+      return;
+    }
+    if (!wasHiddenRef.current) return;
+    wasHiddenRef.current = false;
     for (const timer of visibilityRestoreTimersRef.current) {
       clearTimeout(timer);
     }
@@ -1701,26 +1707,11 @@ export function MessageList({
     for (const delayMs of [0, 16, 75, 250]) {
       const timer = setTimeout(() => {
         if (visibilityRestoreTokenRef.current !== token) return;
-        restoreSavedAnchor();
+        restoreSavedAnchorRef.current();
       }, delayMs);
       visibilityRestoreTimersRef.current.push(timer);
     }
-  }, [isVisible, restoreSavedAnchor, useVirtuoso]);
-
-  useEffect(() => {
-    if (!useVirtuoso) return;
-    const restoreIfVisible = () => {
-      if (document.visibilityState === "hidden") return;
-      if (!isVisibleRef.current) return;
-      restoreSavedAnchor();
-    };
-    document.addEventListener("visibilitychange", restoreIfVisible);
-    window.addEventListener("focus", restoreIfVisible);
-    return () => {
-      document.removeEventListener("visibilitychange", restoreIfVisible);
-      window.removeEventListener("focus", restoreIfVisible);
-    };
-  }, [restoreSavedAnchor, useVirtuoso]);
+  }, [isVisible, useVirtuoso]);
 
   const scrollToNewestMessages = useCallback(() => {
     forceScrollToBottom();
@@ -2133,10 +2124,8 @@ export function MessageList({
     const scheduleLayoutRestore = () => {
       const anchor = loadChatViewportAnchor(cacheId);
       if (!isVisibleRef.current) return;
-      if (anchor && !anchor.atBottom) {
-        restoreSavedAnchor(anchor);
-        return;
-      }
+      // A reader away from the bottom keeps their own position as rows grow.
+      if (anchor && !anchor.atBottom) return;
       if (manualScrollRef?.current) return;
       if (!keepBottomAnchoredRef.current) return;
       if (anyOverlayOpen) return;
@@ -2209,7 +2198,6 @@ export function MessageList({
     cacheId,
     keepBottomAnchoredRef,
     manualScrollRef,
-    restoreSavedAnchor,
     scrollToBottomRef,
     useVirtuoso,
   ]);
