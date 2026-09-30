@@ -224,3 +224,37 @@ test("switching threads within a chat keeps each thread's reading position", asy
   const againA = await readingPosition(page, "a");
   expect(Math.abs(againA!.index - middleOfA!.index)).toBeLessThanOrEqual(1);
 });
+
+test("a retained chat that was evicted remounts at its reading position", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1000, height: 800 });
+  await page.goto(`/?mode=chat-switch&reorder=0&chatMode=sidechat`);
+  const a = page.getByTestId("log-a");
+  await expect(a.locator("[data-item-index]").first()).toBeVisible();
+  await page.waitForTimeout(1000);
+  await a.hover();
+  for (let i = 0; i < 8; i++) {
+    await page.mouse.wheel(0, -2500);
+    await page.waitForTimeout(60);
+  }
+  await page.waitForTimeout(1500);
+  const before = await readingPosition(page, "a");
+  await page.evaluate(() => (window as any).__chatSwitch("b"));
+  await page.waitForTimeout(800);
+  await page.evaluate(() => (window as any).__chatEvict("a"));
+  await page.waitForTimeout(500);
+  await page.evaluate(() => {
+    (window as any).__chatEvict("a", false);
+    (window as any).__chatSwitch("a");
+  });
+  const samples: number[] = [];
+  for (let i = 0; i < 8; i++) {
+    await page.waitForTimeout(300);
+    samples.push((await readingPosition(page, "a"))!.index);
+  }
+  console.log(`EVICT before=${before!.index} samples=${samples.join(",")}`);
+  for (const index of samples.slice(1)) {
+    expect(Math.abs(index - before!.index)).toBeLessThanOrEqual(1);
+  }
+});

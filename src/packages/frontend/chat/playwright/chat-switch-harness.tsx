@@ -60,6 +60,8 @@ function ChatSwitchHarness({
   // Log "a" can switch between two threads of the same chat, as the thread
   // sidebar does: one ChatLog, new selectedThread and rows.
   const [threadA, setThreadA] = useState<"A" | "C">("A");
+  // Retained views get evicted (Agents keeps a few) and later remount fresh.
+  const [evicted, setEvicted] = useState<Record<string, boolean>>({});
   // Rendering real messages touches many chat actions; none matter here.
   const actions = useMemo(
     () =>
@@ -92,6 +94,8 @@ function ChatSwitchHarness({
       });
     };
     (window as any).__chatThread = (thread: "A" | "C") => setThreadA(thread);
+    (window as any).__chatEvict = (id: string, value = true) =>
+      setEvicted((old) => ({ ...old, [id]: value }));
     (window as any).__chatSwitch = (id: string) => {
       setActive(id);
       if (reorder) {
@@ -115,24 +119,28 @@ function ChatSwitchHarness({
               visibility: shown ? "visible" : "hidden",
             }}
           >
-            <ChatLog
-              project_id="project-1"
-              path={`${id}.chat`}
-              mode={mode}
-              actions={actions}
-              selectedThread={
-                id === "a" ? `${threadA}-thread` : `${id.toUpperCase()}-thread`
-              }
-              messages={id === "a" && threadA === "C" ? logs.c : logs[id]}
-              scrollCacheId={`switch-${id}`}
-              isVisible={shown}
-              scrollToBottomRef={
-                id === "a" ? scrollToBottomRefA : scrollToBottomRefB
-              }
-              // ChatRoom passes counters that start at 0.
-              activityJumpToken={0}
-              searchJumpToken={0}
-            />
+            {evicted[id] ? null : (
+              <ChatLog
+                project_id="project-1"
+                path={`${id}.chat`}
+                mode={mode}
+                actions={actions}
+                selectedThread={
+                  id === "a"
+                    ? `${threadA}-thread`
+                    : `${id.toUpperCase()}-thread`
+                }
+                messages={id === "a" && threadA === "C" ? logs.c : logs[id]}
+                scrollCacheId={`switch-${id}`}
+                isVisible={shown}
+                scrollToBottomRef={
+                  id === "a" ? scrollToBottomRefA : scrollToBottomRefB
+                }
+                // ChatRoom passes counters that start at 0.
+                activityJumpToken={0}
+                searchJumpToken={0}
+              />
+            )}
           </div>
         );
       })}
