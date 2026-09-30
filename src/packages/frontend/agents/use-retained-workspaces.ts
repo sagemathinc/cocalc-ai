@@ -5,16 +5,24 @@ export const AGENT_WORKSPACE_IDLE_MS = 5 * 60_000;
 
 // Only the React views are evicted. Shared editor actions, persisted drafts,
 // and server-side agent execution have independent lifetimes.
+//
+// Map order is render order and must stay stable: moving a retained view in the
+// DOM silently resets every scroll position inside it (e.g., long chats jump to
+// the top). Recency lives only in the values.
 export function useRetainedWorkspaces(activeWorkspace?: string) {
   const [workspaces, setWorkspaces] = useState(() => new Map<string, number>());
   const activeRef = useRef(activeWorkspace);
   const mountWorkspace = useCallback((workspace: string) => {
     setWorkspaces((old) => {
       const next = new Map(old);
-      next.delete(workspace);
       next.set(workspace, Date.now());
       while (next.size > MAX_RETAINED_AGENT_WORKSPACES) {
-        next.delete(next.keys().next().value!);
+        let oldest: string | undefined;
+        for (const [key, lastActive] of next) {
+          if (key === workspace) continue;
+          if (oldest == null || lastActive < next.get(oldest)!) oldest = key;
+        }
+        next.delete(oldest!);
       }
       return next;
     });
