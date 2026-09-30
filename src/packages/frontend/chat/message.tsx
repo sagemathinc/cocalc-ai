@@ -124,6 +124,11 @@ import {
   codexModelRecoveryConfig,
 } from "@cocalc/util/ai/codex-model-recovery";
 import { CodexModelRecovery } from "./codex-model-recovery";
+import {
+  ClaudeSignInRecovery,
+  isClaudeSignInExpired,
+  useClaudeSubscriptionCredentialId,
+} from "./claude-sign-in-recovery";
 import { AcpPromptModal } from "./acp-prompt-modal";
 import {
   linkifyCommitHashes,
@@ -1104,7 +1109,7 @@ export default function Message({
   }
 
   function renderResubmitToAgentButton() {
-    if (unavailableModel) return null;
+    if (unavailableModel || claudeSignInExpired) return null;
     if (!acpResubmitParentMessage) return null;
     return (
       <div style={{ marginTop: "8px" }}>
@@ -1145,6 +1150,18 @@ export default function Message({
     });
   }, [actions, threadLookup]);
   const threadCodexConfig = threadMetadata?.acp_config;
+  // A Claude subscription turn that failed on expired sign-in offers
+  // "Reconnect Claude" instead of the raw error.
+  const claudeSubscriptionCredentialId = useClaudeSubscriptionCredentialId(
+    threadMetadata?.agent_runtime?.profile?.id === "claude-code"
+      ? project_id
+      : undefined,
+    threadLookup.threadLookupKey,
+  );
+  const claudeSignInExpired =
+    showCodexErrorHelp &&
+    !!claudeSubscriptionCredentialId &&
+    isClaudeSignInExpired(renderedMessageValue);
   const acpDisplayName =
     threadMetadata?.agent_runtime?.profile?.id === "claude-code"
       ? "Claude Code"
@@ -2138,6 +2155,26 @@ export default function Message({
   }
 
   function renderMessageBody({ message_class }) {
+    if (
+      claudeSignInExpired &&
+      project_id &&
+      threadLookup.threadLookupKey &&
+      claudeSubscriptionCredentialId
+    ) {
+      const canRetry =
+        !!acpResubmitParentMessage &&
+        sender_is_viewer(account_id, acpResubmitParentMessage);
+      return (
+        <ClaudeSignInRecovery
+          key={`${account_id}:${project_id}:${acpResubmitParentMessageId}`}
+          projectId={project_id}
+          threadKey={threadLookup.threadLookupKey}
+          credentialId={claudeSubscriptionCredentialId}
+          details={renderedMessageValue}
+          onRetry={canRetry ? handleResubmitToAgent : undefined}
+        />
+      );
+    }
     if (
       unavailableModel &&
       project_id &&
