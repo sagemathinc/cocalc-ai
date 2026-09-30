@@ -1,5 +1,13 @@
 import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
 import { renderPublicRoutePrerender } from "./public-prerender";
+import {
+  PUBLIC_HOME_EYEBROW,
+  PUBLIC_HOME_HEADLINE,
+  PUBLIC_HOME_HIGHLIGHTS,
+  PUBLIC_HOME_INTRO,
+  PUBLIC_HOME_SECONDARY_CTA,
+  PUBLIC_HOME_TRUST_LINE,
+} from "@cocalc/util/public-home-content";
 
 describe("public feature initial HTML", () => {
   it.each(["/prefix", "/docs"])(
@@ -24,6 +32,107 @@ describe("public feature initial HTML", () => {
   );
 });
 
+describe("home first screen initial HTML", () => {
+  // cocalc.ai's /customize reports the Launchpad product, so the cocalc.ai
+  // cases do too: a rule that left out Launchpad would fail them.
+  const cocalcAi = {
+    cocalc_product: "launchpad",
+    dns: "cocalc.ai",
+    is_launchpad: true,
+    site_name: "CoCalc",
+  };
+
+  // The React page renders the same constants (frontend/public/home tests),
+  // so crawlers read the first screen word for word.
+  it.each(["/", "/prefix"])(
+    "renders the first screen from the shared Home content on %s",
+    (basePath) => {
+      const prefix = basePath === "/" ? "" : basePath;
+      const html = renderPublicRoutePrerender(
+        { section: "home" },
+        basePath,
+        cocalcAi,
+      );
+      const header = html.slice(
+        html.indexOf("<header>"),
+        html.indexOf("</header>"),
+      );
+      const texts = [...header.matchAll(/<(p|h1|li)>([^<]+)<\/\1>/g)].map(
+        ([, tag, text]) => `${tag}: ${text}`,
+      );
+
+      expect(texts).toEqual([
+        `p: ${PUBLIC_HOME_EYEBROW}`,
+        `h1: ${PUBLIC_HOME_HEADLINE}`,
+        `p: ${PUBLIC_HOME_INTRO}`,
+        ...PUBLIC_HOME_HIGHLIGHTS.map((highlight) => `li: ${highlight}`),
+        `p: ${PUBLIC_HOME_TRUST_LINE}`,
+      ]);
+      expect(header).toContain(
+        `<a href="${prefix}/auth/sign-up">Start on CoCalc.ai</a> <a href="${prefix}/${PUBLIC_HOME_SECONDARY_CTA.href}">${PUBLIC_HOME_SECONDARY_CTA.label}</a>`,
+      );
+    },
+  );
+
+  // The first three sites and their chips match the React test in
+  // frontend/public/home/__tests__/app.test.tsx, so the two renderings agree.
+  const withClaude = [
+    "Codex and Claude Code in one project",
+    "Collaborators see edits live",
+    "Restore earlier versions",
+  ];
+  const withoutClaude = [
+    "Collaborators see edits live",
+    "Restore earlier versions",
+  ];
+  it.each([
+    ["the default CoCalc brand on cocalc.ai", cocalcAi, withClaude],
+    [
+      "CoCalc Plus",
+      { cocalc_product: "plus", dns: "localhost", site_name: "CoCalc" },
+      withoutClaude,
+    ],
+    [
+      "a self-hosted Launchpad host",
+      {
+        cocalc_product: "launchpad",
+        dns: "launchpad.example.edu",
+        is_launchpad: true,
+        site_name: "CoCalc Launchpad",
+      },
+      withoutClaude,
+    ],
+    [
+      "a custom logo on cocalc.ai",
+      { ...cocalcAi, logo_square: "https://example.edu/logo.png" },
+      withoutClaude,
+    ],
+    [
+      "a custom site name on cocalc.ai",
+      { ...cocalcAi, site_name: "University CoCalc" },
+      withoutClaude,
+    ],
+    [
+      "a cocalc.ai subdomain",
+      { ...cocalcAi, dns: "dev.cocalc.ai" },
+      withoutClaude,
+    ],
+    ["no site configuration", undefined, withoutClaude],
+  ])(
+    "names Claude Code in the highlights only on cocalc.ai: %s",
+    (_site, config, expected) => {
+      const html = renderPublicRoutePrerender({ section: "home" }, "/", config);
+      const header = html.slice(
+        html.indexOf("<header>"),
+        html.indexOf("</header>"),
+      );
+      expect(
+        [...header.matchAll(/<li>([^<]+)<\/li>/g)].map(([, text]) => text),
+      ).toEqual(expected);
+    },
+  );
+});
+
 describe("core landing page initial HTML", () => {
   it.each(["/", "/prefix"])(
     "renders useful home, product, and pricing content on %s",
@@ -31,9 +140,7 @@ describe("core landing page initial HTML", () => {
       const prefix = basePath === "/" ? "" : basePath;
       const home = renderPublicRoutePrerender({ section: "home" }, basePath);
       expect(home).toContain('data-cocalc-public-prerender="home"');
-      expect(home).toContain(
-        "Keep people, AI agents, and project work together.",
-      );
+      expect(home).toContain("Build and use software with AI.");
       expect(home).toContain(
         `href="${basePath === "/" ? "" : basePath}/features/compare"`,
       );

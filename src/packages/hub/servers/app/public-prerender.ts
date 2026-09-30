@@ -25,6 +25,14 @@ import {
   PUBLIC_FEATURED_GUIDES,
   PUBLIC_GUIDE_GROUPS,
 } from "@cocalc/util/public-guides";
+import {
+  getPublicHomeHighlights,
+  PUBLIC_HOME_EYEBROW,
+  PUBLIC_HOME_HEADLINE,
+  PUBLIC_HOME_INTRO,
+  PUBLIC_HOME_SECONDARY_CTA,
+  PUBLIC_HOME_TRUST_LINE,
+} from "@cocalc/util/public-home-content";
 import { getDocsEntry } from "@cocalc/docs";
 import {
   PUBLIC_COMMUNITY_INTRO,
@@ -90,13 +98,20 @@ function publicOrExternalLink(
   )}</a>`;
 }
 
-function renderHome(basePath: string): string {
+function renderHome(
+  basePath: string,
+  config: PublicRouteMetadataConfig,
+): string {
   return `<main data-cocalc-public-prerender="home" style="${ARTICLE_STYLE}">
 <header>
-  <p>Persistent shared projects</p>
-  <h1>Keep people, AI agents, and project work together.</h1>
-  <p>Files, notebooks, terminals, services, and history stay in a shared Linux project so work can continue, be reviewed, and be handed off.</p>
-  <p>${publicLink(basePath, "auth/sign-up", "Start on CoCalc.ai")} ${publicLink(basePath, "products", "Ways to run CoCalc")}</p>
+  <p>${htmlEscape(PUBLIC_HOME_EYEBROW)}</p>
+  <h1>${htmlEscape(PUBLIC_HOME_HEADLINE)}</h1>
+  <p>${htmlEscape(PUBLIC_HOME_INTRO)}</p>
+  <p>${publicLink(basePath, "auth/sign-up", "Start on CoCalc.ai")} ${publicLink(basePath, PUBLIC_HOME_SECONDARY_CTA.href, PUBLIC_HOME_SECONDARY_CTA.label)}</p>
+  <ul>${getPublicHomeHighlights(config)
+    .map((highlight) => `<li>${htmlEscape(highlight)}</li>`)
+    .join("")}</ul>
+  <p>${htmlEscape(PUBLIC_HOME_TRUST_LINE)}</p>
 </header>
 <section>
   <h2>Agents work where your project lives.</h2>
@@ -509,7 +524,7 @@ export function renderPublicRoutePrerender(
 ): string {
   const resolvedConfig = config ?? {};
   if (route.section === "home") {
-    return renderHome(basePath);
+    return renderHome(basePath, resolvedConfig);
   }
   if (route.section === "products") {
     return renderProducts(route, basePath, resolvedConfig);
