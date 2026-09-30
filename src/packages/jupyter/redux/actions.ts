@@ -1799,16 +1799,26 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       if (this.check_edit_protection(id, "merging cell")) return;
     }
     if (this.check_delete_protection(next_id)) return;
+    // Either cell may have just been deleted (e.g. by a collaborator): check
+    // before deleting the cell below, so no half-done merge is left behind.
+    for (const id of [cell_id, next_id]) {
+      if (this.syncdb.get_one({ type: "cell", id }) == null) return;
+    }
 
     const cells = this.store.get("cells");
     if (cells == null) {
       return;
     }
 
-    const input: string =
-      cells.getIn([cell_id, "input"], "") +
-      "\n" +
-      cells.getIn([next_id, "input"], "");
+    // The inputs come from the synced document: the store can lag it, and
+    // anything newer in the cell below would be deleted with it.
+    const inputOf = (id: string): string => {
+      const input = this.syncdb.get_one({ type: "cell", id })?.get("input");
+      return typeof input === "string"
+        ? input
+        : (cells.getIn([id, "input"], "") as string);
+    };
+    const input: string = inputOf(cell_id) + "\n" + inputOf(next_id);
 
     const output0 = cells.getIn([cell_id, "output"]) as any;
     const output1 = cells.getIn([next_id, "output"]) as any;

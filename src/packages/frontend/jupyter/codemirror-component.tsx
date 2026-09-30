@@ -41,8 +41,10 @@ interface CodeMirrorProps {
   unregisterEditor?;
   getValueRef?;
   setShowAICellGen?: (show: Position) => void;
-  // onSetCellInput -- called after saving input via actions
-  onSetCellInput?: (input: string) => void;
+  // onSetCellInput -- called after saving input via actions, with the input
+  // saved and whether the store already holds it (it does, synchronously,
+  // unless nothing was written).
+  onSetCellInput?: (input: string, stored: boolean) => void;
 }
 
 function should_memoize(prev, next) {

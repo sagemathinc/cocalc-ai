@@ -11,7 +11,8 @@ Records are matched by primary key and merged field by field:
   with patchflow's mergeStrings3, maps are merged key by key, and any other
   value takes the later side (b), as the last write would.
 - A value changed on one side and deleted on the other is kept.
-- A record added on both sides is merged as if added to an empty record.
+- A record added on both sides is merged as if added to an empty record; its
+  text columns merge from the text the two sides have in common.
 - A record deleted on one side and edited on the other stays deleted, unless
   the edit changed user text (a string column): then the edited record is
   kept whole, so concurrent typing is never lost, and never leaves a partial
@@ -21,6 +22,11 @@ Records are matched by primary key and merged field by field:
 
 import { isEqual, isPlainObject } from "lodash";
 import { mergeStrings3 } from "patchflow";
+import { DiffMatchPatch } from "@cocalc/util/dmp";
+
+// Merges must be identical on every replica, so no wall-clock diff deadline.
+const dmp = new DiffMatchPatch();
+dmp.diffTimeout = 0;
 
 export interface DbMergeOptions {
   primaryKeys: string[];
@@ -57,7 +63,10 @@ function mergeValue(
   if (b === undefined) return a;
   if (isString && typeof a === "string" && typeof b === "string") {
     return mergeStrings3({
-      base: typeof base === "string" ? base : "",
+      // A text added on both sides (e.g. a deleted cell both users brought
+      // back by typing in it) merges from what the two have in common, so
+      // shared lines appear once.
+      base: typeof base === "string" ? base : commonText(a, b),
       a,
       b,
       ancestors: ancestors.some((x) => typeof x === "string")
@@ -69,6 +78,76 @@ function mergeValue(
     return mergeFields(isPlainObject(base) ? base : {}, a, b, new Set(), []);
   }
   return b;
+}
+
+// What two versions of a text have in common, in order: the tokens (words,
+// runs of whitespace, punctuation) that a diff of the two keeps, so the result
+// never fuses parts of different words or lines.
+function commonText(a: string, b: string): string {
+  // Canonical order: the diff is not symmetric, and the merge must be.
+  if (b < a) [a, b] = [b, a];
+  const tokenize = (text: string) =>
+    text.match(/\n|[^\S\n]+|[\p{L}\p{N}_]+|[^\s\p{L}\p{N}_]/gu) ?? [];
+  const ids = new Map<string, string>();
+  const tokens: string[] = [];
+  const encode = (text: string) =>
+    tokenize(text)
+      .map((token) => {
+        let id = ids.get(token);
+        if (id === undefined) {
+          id = String.fromCharCode(tokens.length);
+          ids.set(token, id);
+          tokens.push(token);
+        }
+        return id;
+      })
+      .join("");
+  const x = encode(a);
+  const y = encode(b);
+  if (tokens.length > 0xffff || x.length * y.length > 4_000_000) {
+    return commonLines(a, b);
+  }
+  return dmp
+    .diff_main(x, y, false)
+    .filter(([op]) => op === 0)
+    .map(([, ids]) =>
+      Array.from(ids, (id) => tokens[id.charCodeAt(0)]).join(""),
+    )
+    .join("");
+}
+
+// The longest common subsequence of the lines of a and b (empty if too
+// large to compute cheaply).
+function commonLines(a: string, b: string): string {
+  const x = a.split(/(?<=\n)/);
+  const y = b.split(/(?<=\n)/);
+  if (x.length * y.length > 250_000) return "";
+  const best: number[][] = Array.from({ length: x.length + 1 }, () =>
+    Array.from({ length: y.length + 1 }, () => 0),
+  );
+  for (let i = x.length - 1; i >= 0; i--) {
+    for (let j = y.length - 1; j >= 0; j--) {
+      best[i][j] =
+        x[i] === y[j]
+          ? best[i + 1][j + 1] + 1
+          : Math.max(best[i + 1][j], best[i][j + 1]);
+    }
+  }
+  let out = "";
+  let i = 0;
+  let j = 0;
+  while (i < x.length && j < y.length) {
+    if (x[i] === y[j]) {
+      out += x[i];
+      i++;
+      j++;
+    } else if (best[i + 1][j] >= best[i][j + 1]) {
+      i++;
+    } else {
+      j++;
+    }
+  }
+  return out;
 }
 
 function mergeFields(

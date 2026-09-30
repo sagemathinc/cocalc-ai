@@ -113,4 +113,20 @@ describe("notebook core merge", () => {
       },
     ]);
   });
+
+  it("merges a cell both sides brought back without duplicating shared lines", () => {
+    const merge = dbMerge3<any>(base.fromString, base.toString, options);
+    const a = doc([
+      { type: "cell", id: "a", pos: 0, input: "x = 1 A\ny = 2\nz = 3\n" },
+    ]);
+    const b = doc([
+      { type: "cell", id: "a", pos: 0, input: "x = 1\ny = 2\nz = 3 B\n" },
+    ]);
+    expect(records(merge(doc([]), a, b))[0].input).toBe(
+      "x = 1 A\ny = 2\nz = 3 B\n",
+    );
+    expect(records(merge(doc([]), b, a))[0].input).toBe(
+      "x = 1 A\ny = 2\nz = 3 B\n",
+    );
+  });
 });

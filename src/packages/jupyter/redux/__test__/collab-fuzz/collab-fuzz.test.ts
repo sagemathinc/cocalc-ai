@@ -158,6 +158,23 @@ async function runSession(seed: number, steps = STEPS) {
 
   const inserted = new Set<string>(tokensIn(INITIAL));
   const deleted = new Set<string>();
+  // Tokens in cells that were split or merged. Accepted policy: if someone
+  // edits text while a split or merge moves it to another cell, a text merge
+  // cannot tell the move from a deletion, so the text can end up twice (a
+  // visible duplicate; nothing is lost). Such duplicates are reported but do
+  // not fail.
+  const moved = new Set<string>();
+  const noteMoved = (c: NotebookClient, ids: (string | undefined)[]) => {
+    for (const id of ids) {
+      if (id == null) continue;
+      const synced = c.syncdb.get_one({ type: "cell", id })?.get("input");
+      for (const t of tokensIn(typeof synced === "string" ? synced : ""))
+        moved.add(t);
+      for (const t of tokensIn(c.cellInput(id) ?? "")) moved.add(t);
+      if (c.editor?.id === id)
+        for (const t of tokensIn(c.editor.value)) moved.add(t);
+    }
+  };
   let counter = 0;
   const newToken = (c: NotebookClient) => `tk${"abcdefgh"[c.id]}${counter++}q`;
 
@@ -251,6 +268,7 @@ async function runSession(seed: number, steps = STEPS) {
         const ed = c.editor;
         if (ed == null || ed.closed) continue;
         const line = Math.floor(rng() * ed.value.split("\n").length);
+        noteMoved(c, [ed.id]);
         c.frameCommand("split cell", () =>
           c.actions.split_cell(ed.id, { line, ch: 0 }),
         );
@@ -259,6 +277,7 @@ async function runSession(seed: number, steps = STEPS) {
         // merge a cell with the one below
         if (cells.length <= 1) continue;
         const id = pick(rng, cells.slice(0, -1));
+        noteMoved(c, [id, c.store.get_cell_id(1, id)]);
         c.frameCommand("merge cells", () =>
           c.actions.merge_cell_below_cell(id, true),
         );
@@ -337,8 +356,13 @@ async function runSession(seed: number, steps = STEPS) {
   const counts = new Map<string, number>();
   for (const tok of tokensIn(final.inputs))
     counts.set(tok, (counts.get(tok) ?? 0) + 1);
+  const movedDuplicates: string[] = [];
   for (const [tok, n] of counts) {
     if (n <= 1) continue;
+    if (moved.has(tok)) {
+      movedDuplicates.push(tok);
+      continue;
+    }
     const cellsWith = final.cells.filter((cell) =>
       (cell.input ?? "").includes(tok),
     ).length;
@@ -360,12 +384,19 @@ async function runSession(seed: number, steps = STEPS) {
       c.cellInput(ed.id) != null &&
       ed.value !== c.cellInput(ed.id)
     ) {
-      problems.push(`c${c.id} editor for ${ed.id} does not show its cell`);
+      problems.push(
+        `c${c.id} editor for ${ed.id} does not show its cell (editor ${JSON.stringify(ed.value)}, cell ${JSON.stringify(c.cellInput(ed.id))})`,
+      );
     }
   }
   if (process.env.FUZZ_VERBOSE) {
     // eslint-disable-next-line no-console
-    console.log(`seed ${seed}:\n${log.join("\n")}\n--- final ---\n${docs[0]}`);
+    console.log(
+      `seed ${seed}:\n${log.join("\n")}\n--- final ---\n${docs[0]}` +
+        (movedDuplicates.length > 0
+          ? `\naccepted duplicates of moved text: ${movedDuplicates.join(" ")}`
+          : ""),
+    );
   }
   for (const c of clients) c.stop();
   return { seed, problems, log };

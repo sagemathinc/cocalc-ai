@@ -112,6 +112,16 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
     );
     const getValueRef = useRef<any>(null);
 
+    // Saving a cell's input updates the synced document and the store
+    // synchronously, so a value that was stored is the new baseline at once
+    // (any later change is based on it). Treating it as a save still waiting
+    // for its echo would merge later changes from an older baseline, e.g.
+    // bring back lines a split just moved to another cell.
+    const noteSaved = (value: string, stored: boolean) => {
+      if (stored) mergeHelperRef.current.noteLocalEcho(value);
+      else mergeHelperRef.current.noteSaved(value);
+    };
+
     // `base`: the input the value was made from, if known (see
     // JupyterActions.set_cell_input).
     const setCellInput = useCallback(
@@ -121,10 +131,15 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
         if (!props.actions || props.input_is_readonly) {
           return;
         }
-        const saved =
-          props.actions.set_cell_input(props.id, input, true, base) ?? input;
+        const written = props.actions.set_cell_input(
+          props.id,
+          input,
+          true,
+          base,
+        );
+        const saved = written ?? input;
         if (saved !== input) setLocalValue(saved);
-        mergeHelperRef.current.noteSaved(saved);
+        noteSaved(saved, written != null);
       },
       [props.input_is_readonly, props.id, props.actions],
     );
@@ -206,10 +221,10 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
             then changing it, changes the original cell... causing timetravel
             to "instantly revert". */
           }
-          onSetCellInput={(input) => {
+          onSetCellInput={(input, stored) => {
             // `input` is what was saved, which can include a collaborator's
             // change merged into this editor's edit: show it.
-            mergeHelperRef.current.noteSaved(input);
+            noteSaved(input, stored);
             if (input !== (getValueRef.current?.() ?? localValueRef.current)) {
               setLocalValue(input);
             }

@@ -113,8 +113,10 @@ interface CodeMirrorEditorProps {
   getValueRef?: MutableRefObject<() => string>;
   canvasScale?: number;
   setShowAICellGen?: (show: Position) => void;
-  // onSetCellInput -- called after saving input via actions
-  onSetCellInput?: (input: string) => void;
+  // onSetCellInput -- called after saving input via actions, with the input
+  // saved and whether the store already holds it (it does, synchronously,
+  // unless nothing was written).
+  onSetCellInput?: (input: string, stored: boolean) => void;
 }
 
 export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
@@ -491,9 +493,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       // is set for the editor.
       // The saved input can include a collaborator's change merged in; the
       // cell input shows it and takes it as what was saved.
-      const saved = actions.set_cell_input(id, value, true, base) ?? value;
+      const written = actions.set_cell_input(id, value, true, base);
+      const saved = written ?? value;
       cm_last_remote.current = saved;
-      onSetCellInput?.(saved);
+      onSetCellInput?.(saved, written != null);
     }
     return value;
   }
