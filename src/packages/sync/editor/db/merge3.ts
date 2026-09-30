@@ -203,37 +203,72 @@ export function mergeDbStrings(
   const ancestors = (opts.ancestors ?? []).map((x) => parse(x, primaryKeys));
   const out: Record[] = [];
   for (const key of new Set([...base.keys(), ...a.keys(), ...b.keys()])) {
-    const r0 = base.get(key);
-    const ra = a.get(key);
-    const rb = b.get(key);
     const anc = ancestors
       .map((records) => records.get(key))
       .filter((r): r is Record => r != null);
-    if (r0 == null) {
-      // Added on one or both sides.
-      if (ra != null && rb != null)
-        out.push(mergeFields({}, ra, rb, stringCols, anc));
-      else out.push((ra ?? rb)!);
-    } else if (ra == null && rb == null) {
-      continue; // deleted on both sides
-    } else if (ra == null || rb == null) {
-      // Deleted on one side: kept only if the other side changed its text.
-      const kept = (ra ?? rb)!;
-      if (changedText(r0, kept, stringCols)) out.push(kept);
-    } else {
-      out.push(mergeFields(r0, ra, rb, stringCols, anc));
-    }
+    const merged = mergeRecord(
+      base.get(key),
+      a.get(key),
+      b.get(key),
+      stringCols,
+      anc,
+    );
+    if (merged != null) out.push(merged);
   }
   return out.map((record) => JSON.stringify(record)).join("\n");
 }
 
-// A DocCodec.merge3 for db documents.
+// The merge of one record (undefined: the record is deleted).
+function mergeRecord(
+  r0: Record | undefined,
+  ra: Record | undefined,
+  rb: Record | undefined,
+  stringCols: Set<string>,
+  anc: Record[],
+): Record | undefined {
+  if (r0 == null) {
+    // Added on one or both sides.
+    if (ra != null && rb != null)
+      return mergeFields({}, ra, rb, stringCols, anc);
+    return ra ?? rb;
+  }
+  if (ra == null && rb == null) return undefined; // deleted on both sides
+  if (ra == null || rb == null) {
+    // Deleted on one side: kept only if the other side changed its text.
+    const kept = (ra ?? rb)!;
+    return changedText(r0, kept, stringCols) ? kept : undefined;
+  }
+  return mergeFields(r0, ra, rb, stringCols, anc);
+}
+
+// The immutable db document (patchflow's DbDocument) API the fast merge uses.
+interface DbDoc {
+  changes(prev: DbDoc): { forEach(fn: (key: any) => void): void };
+  getOne(where: object): { toJS(): Record } | undefined;
+  set(record: Record): DbDoc;
+  delete(where: object): DbDoc;
+}
+
+const isDbDoc = (doc: any): doc is DbDoc =>
+  doc != null &&
+  typeof doc.changes === "function" &&
+  typeof doc.getOne === "function" &&
+  typeof doc.set === "function" &&
+  typeof doc.delete === "function";
+
+// A DocCodec.merge3 for db documents. The same merge as mergeDbStrings, but
+// only records changed on both sides are merged: a record changed on one side
+// takes that side's version, so the cost depends on what changed, not on the
+// size of the document. (Unchanged records are shared between versions, so
+// finding what changed is cheap.)
 export function dbMerge3<D>(
   fromStr: (text: string) => D,
   toStr: (doc: D) => string,
   opts: DbMergeOptions,
 ): (base: D, a: D, b: D, ancestors?: D[]) => D {
-  return (base, a, b, ancestors) =>
+  const { primaryKeys } = opts;
+  const stringCols = new Set(opts.stringCols);
+  const viaStrings = (base: D, a: D, b: D, ancestors?: D[]) =>
     fromStr(
       mergeDbStrings({
         ...opts,
@@ -243,4 +278,61 @@ export function dbMerge3<D>(
         ancestors: ancestors?.map(toStr),
       }),
     );
+  const keyOf = (record: Record) =>
+    JSON.stringify(primaryKeys.map((key) => record[key] ?? null));
+  // Primary keys of the records that differ between two versions.
+  const changed = (doc: DbDoc, prev: DbDoc) => {
+    const keys = new Map<string, Record>();
+    doc.changes(prev).forEach((key) => {
+      const where = key.toJS();
+      keys.set(keyOf(where), where);
+    });
+    return keys;
+  };
+  return (base, a, b, ancestors) => {
+    const docs = [base, a, b, ...(ancestors ?? [])];
+    if (!docs.every(isDbDoc)) return viaStrings(base, a, b, ancestors);
+    const [d0, da, db] = [base, a, b] as unknown as DbDoc[];
+    const changedA = changed(da, d0);
+    const changedB = changed(db, d0);
+    if (changedB.size === 0) return a;
+    if (changedA.size === 0) return b;
+    // The record with exactly this primary key; a where clause could also
+    // match a record that has more key fields set.
+    const get = (doc: DbDoc, key: string, where: Record) => {
+      const record = doc.getOne(where)?.toJS();
+      if (record == null) return undefined;
+      if (keyOf(record) !== key) throw new MismatchedKey();
+      return record;
+    };
+    try {
+      let out = da;
+      for (const [key, where] of changedB) {
+        const ra = get(da, key, where);
+        const rb = get(db, key, where);
+        const merged = changedA.has(key)
+          ? mergeRecord(
+              get(d0, key, where),
+              ra,
+              rb,
+              stringCols,
+              ((ancestors ?? []) as unknown as DbDoc[])
+                .map((doc) => get(doc, key, where))
+                .filter((r): r is Record => r != null),
+            )
+          : rb;
+        if (isEqual(merged, ra)) continue;
+        if (ra != null) out = out.delete(where);
+        if (merged != null) out = out.set(merged);
+      }
+      return out as unknown as D;
+    } catch (err) {
+      if (err instanceof MismatchedKey) {
+        return viaStrings(base, a, b, ancestors);
+      }
+      throw err;
+    }
+  };
 }
+
+class MismatchedKey extends Error {}

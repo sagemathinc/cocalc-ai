@@ -536,6 +536,9 @@ export class SyncDoc extends EventEmitter {
       { start: 3000, max: 15000, decay: 1.3 },
     );
     if (this.isClosed()) return;
+    // Before showing the document, so it never shows an incomplete value.
+    await this.loadHistoryForExactValue();
+    if (this.isClosed()) return;
     this.set_state("ready");
     this.emitOpenPhase("sync_ready");
 
@@ -2731,12 +2734,53 @@ export class SyncDoc extends EventEmitter {
       return;
     }
     if (envs.length > 1 && this.applyPatchflowRemoteBatch(envs)) {
+      this.loadHistoryIfNeeded();
       return;
     }
     for (const env of envs) {
       onEnvelope(env);
     }
+    this.loadHistoryIfNeeded();
   };
+
+  // A document is loaded from its latest snapshot and the patches after the
+  // snapshotted patch. Patches made concurrently with the snapshotted patch but
+  // appended before it are in neither, and later patches can build on them
+  // (e.g. a merge, or a client that was offline); then the exact value needs
+  // older history, and without it this client would show something different
+  // from everyone else. Load more history until it does not.
+  private loadHistoryIfNeeded = (): void => {
+    if (
+      this.isClosed() ||
+      this.patchflowSession == null ||
+      !this.patchflowReady() ||
+      this.get_state() !== "ready" ||
+      this.hasFullHistory()
+    ) {
+      return;
+    }
+    if (!(this.patchflowSession as any).needsMoreHistory?.()) return;
+    void this.loadHistoryForExactValue();
+  };
+
+  private loadHistoryForExactValue = reuseInFlight(async (): Promise<void> => {
+    const needsMore = () =>
+      !this.isClosed() &&
+      this.patchflowSession != null &&
+      !this.hasFullHistory() &&
+      !!(this.patchflowSession as any).needsMoreHistory?.();
+    try {
+      // Normally one step back (to the previous snapshot) is enough.
+      for (let i = 0; i < 3 && needsMore(); i++) {
+        if (!(await this.loadMoreHistory())) break;
+      }
+      if (needsMore()) {
+        await this.loadMoreHistory({ all: true });
+      }
+    } catch (err) {
+      this.dbg("loadHistoryForExactValue")(`failed: ${err}`);
+    }
+  });
 
   private applyPatchflowRemoteBatch = (envs: PatchEnvelope[]): boolean => {
     if (this.patchflowSession == null) {
@@ -3321,10 +3365,34 @@ export class SyncDoc extends EventEmitter {
         : true,
     );
     if (window.length === 0) return;
+    // Prefer a patch that every other loaded patch is an ancestor or a
+    // descendant of (a clean cut), near the chosen one: a client that loads
+    // from a snapshot there needs no older history. Patches concurrent with
+    // the snapshotted patch but appended before it are in neither the snapshot
+    // nor the patches after it (see loadHistoryIfNeeded). If there is no clean
+    // cut (constant concurrent editing), snapshot anyway once the window is
+    // large, rather than never.
+    const nearestCut = (idx: number): PatchId | undefined => {
+      const session = this.patchflowSession as any;
+      if (typeof session?.isCut !== "function") return window[idx].time;
+      // Each check walks the loaded history, so only look nearby.
+      for (let d = 0; d < Math.min(window.length, 200); d++) {
+        for (const i of [idx - d, idx + d]) {
+          if (
+            i >= 1 &&
+            i < window.length - 1 &&
+            session.isCut(window[i].time)
+          ) {
+            return window[i].time;
+          }
+        }
+      }
+      return window.length >= 4 * interval ? window[idx].time : undefined;
+    };
     // Rule 1: interval count
     if (window.length >= 2 * interval) {
       const idx = Math.min(interval, window.length - 1);
-      return window[idx].time;
+      return nearestCut(idx);
     }
     // Rule 2: size threshold
     let totalSize = 0;
@@ -3335,10 +3403,10 @@ export class SyncDoc extends EventEmitter {
     }
     if (totalSize > max_size) {
       let running = 0;
-      for (const p of window) {
-        running += p.size ?? 0;
+      for (let i = 0; i < window.length; i++) {
+        running += window[i].size ?? 0;
         if (running > max_size) {
-          return p.time;
+          return nearestCut(i) ?? window[i].time;
         }
       }
     }

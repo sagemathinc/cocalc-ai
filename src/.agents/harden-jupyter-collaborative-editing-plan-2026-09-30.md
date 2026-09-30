@@ -304,3 +304,62 @@ core merge), J4 (browser suite on lite2b) and J5.
   everyone else, and the same editor after reload, sees one list. The fuzzer
   no longer generates this case.
 - Slate fuzzer after these: 400/400 x 80, plus regression seeds.
+
+### 2026-09-30 (late night): making the core merge final before deploying
+
+The core merge (exact values in patchflow, `stringMerge3`, `dbMerge3`) is what
+every client must agree on, so it was benchmarked and fuzzed further before
+deploying; editor fixes can follow in any later deploy.
+
+- Benchmark (`sync/editor/generic/test/bench-exact.test.ts`, opt-in `BENCH=1`):
+  3000 patches with concurrent bursts.
+  - Found: `dbMerge3` serialized and reparsed whole documents (5 ms per merge on a
+    62 kB notebook). It now merges only records changed on both sides, with
+    identical results (`db/test/merge3-fast.test.ts` compares 3000 random merges
+    with the string merge).
+  - Found (patchflow#6): exact-value caches held up to 2000 full copies of a
+    text (203 MB for one 100 kB document with its full history), and every read
+    rescanned the history.
+  - Now: 0.1–0.3 ms per edit (apply-all: 0.6–9 ms), loading from a snapshot
+    135 ms (text) and 244 ms (notebook), 3–22 MB.
+- Loading from a snapshot (patchflow#6 `snapshot-join.test.ts`, and
+  `backend/conat/test/sync-doc/snapshot-concurrent.test.ts` on the real stack).
+  - Found: a client opening a document after a snapshot taken at a patch with
+    concurrent siblings appended before it showed a stale document: with exact
+    values, later patches were held back.
+    - This was pre-existing in a milder form: with apply-all, the siblings'
+      text was missing for that client.
+  - Fixed:
+    - SyncDoc loads more history (`loadMoreHistory`) before it is ready, and
+      whenever patches arrive, while `needsMoreHistory()`.
+    - Snapshots are taken at a clean cut (`isCut`) near the usual point when
+      there is one.
+  - Result: 0/150 late clients differ (before: 39/40).
+- Undo (patchflow#6 `undo-fuzz.test.ts`).
+  - Found: a commit made while a missing parent was in transit was based on
+    the apply-all fallback value, and its patch could delete another user's
+    line. Fixed: with the history complete from the start, such a patch waits
+    for its parent.
+  - Accepted: an undone or deleted line can come back, or a line can appear
+    twice, when concurrent inserts were ordered differently on different merge
+    paths: about 1% of sessions at 300 ms delays with very fast typing. Nothing
+    is lost.
+- Task lists: the fuzzer's task ids are now seeded, so failures replay.
+  - Seed 162 (400 × 60) is a keep-both: two users edited the same word at
+    once, one typing onto its end. Accepted, like other true conflicts.
+- Mixed versions (patchflow#6 `mixed-version.test.ts`, opt-in).
+  - Old (apply-all) and new clients that edit concurrently show different
+    text in about 60% of busy sessions, and stay different until the old
+    clients reload. New clients always agree.
+  - **So a deploy of this should make browsers reload** (raise
+    `version_min_browser`), not only recommend it.
+- Backend sync-doc tests updated to the exact-merge results:
+  - two independent first versions are both kept, on separate lines;
+  - a title edited by one user and deleted by another keeps the edit (it was
+    lost before).
+- Not yet done:
+  - a disk-writer fuzzer (file changes while users type); the watcher attaches
+    the file's patch to the current heads rather than to the version on disk,
+    as before;
+  - fuzzers for the code editor (CodeMirror) and chat;
+  - browser tests.

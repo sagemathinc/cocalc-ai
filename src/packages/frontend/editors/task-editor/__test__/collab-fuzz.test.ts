@@ -15,6 +15,16 @@ FUZZ_RUNS (default 6), FUZZ_SEED, FUZZ_STEPS (default 40), FUZZ_VERBOSE.
 */
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({ webapp_client: {} }));
+// New task ids come from the session's seed, so a failing seed replays exactly.
+let uuidRng: () => number = Math.random;
+jest.mock("@cocalc/util/misc", () => ({
+  ...jest.requireActual("@cocalc/util/misc"),
+  uuid: () =>
+    "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+      const r = Math.floor(uuidRng() * 16);
+      return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+    }),
+}));
 
 import { debounce } from "lodash";
 import { TaskActions } from "../actions";
@@ -204,6 +214,7 @@ function classify(tok: string, clients: TaskClient[], lost: boolean): string {
 
 async function runSession(seed: number, steps = STEPS) {
   const rng = makeRng(seed);
+  uuidRng = makeRng(seed + 1_000_003);
   const log: string[] = [];
   const problems: string[] = [];
   const net = new SimNetwork(rng, () => Date.now(), 400);
