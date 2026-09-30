@@ -34,6 +34,7 @@ import type { StorageAdmissionTicket } from "./storage-admission";
 import type { StorageOperationKind } from "./storage-operation-registry";
 import { orderProjectMaintenance } from "./maintenance-priority";
 import { MaintenanceDispatchQueue } from "./maintenance-dispatch-queue";
+import { MaintenanceScheduleRefresh } from "./maintenance-schedule-refresh";
 import { createMaintenanceStarvationQueue } from "./maintenance-starvation";
 import type { StarvedMaintenance } from "./maintenance-starvation";
 import { recoveryFailureReason } from "./recovery-failure-reason";
@@ -81,6 +82,7 @@ const dispatchQueues = new Map<
   {
     snapshot: MaintenanceDispatchQueue;
     backup: MaintenanceDispatchQueue;
+    refresh: MaintenanceScheduleRefresh;
   }
 >();
 function queuesForHost(hostId: string) {
@@ -89,6 +91,7 @@ function queuesForHost(hostId: string) {
     queues = {
       snapshot: new MaintenanceDispatchQueue(),
       backup: new MaintenanceDispatchQueue(),
+      refresh: new MaintenanceScheduleRefresh(),
     };
     dispatchQueues.set(hostId, queues);
   }
@@ -664,6 +667,70 @@ function snapshotDueAt(
     : candidate;
 }
 
+function reconciliationDue(
+  row: HostProjectMaintenanceSchedule,
+  kind: "snapshot" | "backup",
+  now: number,
+): boolean {
+  const lastObserved = parseTimestampMs(
+    kind === "snapshot"
+      ? row.last_snapshot_observed_at
+      : row.last_backup_observed_at,
+  );
+  return lastObserved == null || now - lastObserved >= 24 * 60 * 60_000;
+}
+
+function needsConfirmedBackupReconciliation(
+  row: HostProjectMaintenanceSchedule,
+  dueAt: number | undefined,
+  now: number,
+): boolean {
+  const previousDue = parseTimestampMs(row.backup_status_due_at);
+  const lastBackup = parseTimestampMs(row.last_backup);
+  return !!(
+    ((row.backup_status_outcome === "failed" &&
+      row.backup_status_reason?.includes("hosts.recordProjectBackup")) ||
+      (row.backup_status_outcome === "deferred" &&
+        row.backup_status_reason === "change_generation_changed")) &&
+    previousDue != null &&
+    lastBackup != null &&
+    lastBackup >= previousDue &&
+    (dueAt == null || dueAt > now)
+  );
+}
+
+function actionableMaintenance(
+  row: HostProjectMaintenanceSchedule,
+  kind: "snapshot" | "backup",
+  now: number,
+): boolean {
+  const schedule = mergeSchedule(
+    kind === "snapshot" ? DEFAULT_SNAPSHOT_COUNTS : DEFAULT_BACKUP_COUNTS,
+    kind === "snapshot" ? row.snapshots : row.backups,
+  );
+  if (schedule.disabled) return false;
+  const due =
+    kind === "snapshot"
+      ? snapshotDueAt(row, schedule)
+      : backupDueAt(row, schedule);
+  const retry = parseTimestampMs(
+    kind === "snapshot" ? row.snapshot_retry_at : row.backup_retry_at,
+  );
+  if (kind === "snapshot") {
+    return (
+      (retry ?? 0) <= now &&
+      ((due != null && due <= now) || reconciliationDue(row, kind, now))
+    );
+  }
+  return (
+    (due != null && due <= now && (retry ?? 0) <= now) ||
+    needsConfirmedBackupReconciliation(row, due, now) ||
+    ((due == null || due > now) &&
+      reconciliationDue(row, kind, now) &&
+      row.backup_status_outcome !== "failed")
+  );
+}
+
 function retryAt(
   outcome: "succeeded" | "deferred" | "failed" | "skipped",
   failures: number,
@@ -850,6 +917,15 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       hostId,
       rows,
       requestedProjectIds: projectIds,
+    });
+  }
+  const queues = queuesForHost(hostId);
+  if (!usedOwnershipLease) {
+    queues.refresh.observe({
+      rows,
+      version: listingVersion,
+      at: listingStartedAt,
+      projectIds,
     });
   }
   if (!rows.length) {
@@ -1096,33 +1172,31 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       );
     },
   );
-  const refreshQueuedRow = async (row: HostProjectMaintenanceSchedule) => {
-    if (usedOwnershipLease || Date.now() - listingStartedAt < 60_000)
-      return row;
-    try {
-      const fresh = await statusClient.listProjectMaintenanceSchedules({
-        host_id: hostId,
-        project_ids: [row.project_id],
-        limit: 1,
-      });
-      return fresh.find((candidate) => candidate.project_id === row.project_id);
-    } catch (err) {
-      // The normal assignment check still fences dispatch; a refresh failure
-      // is not permission to weaken ownership or generation validation.
-      logger.warn("queued maintenance refresh failed", {
-        hostId,
-        project_id: row.project_id,
-        err: `${err}`,
-      });
-      return row;
-    }
-  };
-  const queues = queuesForHost(hostId);
+  const refreshQueuedRow = (row: HostProjectMaintenanceSchedule) =>
+    usedOwnershipLease
+      ? Promise.resolve(row)
+      : queues.refresh.get({
+          row,
+          pendingProjectIds: () => [
+            ...queues.snapshot.pendingProjectIds(100),
+            ...queues.backup.pendingProjectIds(100),
+          ],
+          list: (project_ids) =>
+            statusClient.listProjectMaintenanceSchedules({
+              host_id: hostId,
+              project_ids,
+              limit: project_ids.length,
+            }),
+          onError: (err) =>
+            logger.warn("queued maintenance batch refresh failed", {
+              hostId,
+              err: `${err}`,
+            }),
+        });
   const snapshotLane = async () => {
     await queues.snapshot.submit({
-      rows: snapshotRows.filter(
-        (row) =>
-          !mergeSchedule(DEFAULT_SNAPSHOT_COUNTS, row.snapshots).disabled,
+      rows: snapshotRows.filter((row) =>
+        actionableMaintenance(row, "snapshot", queuedAt),
       ),
       observedAt: listingVersion,
       parallelism,
@@ -1139,14 +1213,12 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         const project_id = row.project_id;
         const schedule = mergeSchedule(DEFAULT_SNAPSHOT_COUNTS, row.snapshots);
         const dueAt = snapshotDueAt(row, schedule);
-        const lastObserved = parseTimestampMs(row.last_snapshot_observed_at);
-        const reconciliationDue =
-          lastObserved == null || Date.now() - lastObserved >= 24 * 60 * 60_000;
         if (
           !project_id ||
           schedule.disabled ||
           (parseTimestampMs(row.snapshot_retry_at) ?? 0) > Date.now() ||
-          ((dueAt == null || dueAt > Date.now()) && !reconciliationDue) ||
+          ((dueAt == null || dueAt > Date.now()) &&
+            !reconciliationDue(row, "snapshot", Date.now())) ||
           inFlightSnapshots.has(project_id)
         ) {
           return;
@@ -1315,8 +1387,8 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
   };
   const backupLane = async () => {
     await queues.backup.submit({
-      rows: backupRows.filter(
-        (row) => !mergeSchedule(DEFAULT_BACKUP_COUNTS, row.backups).disabled,
+      rows: backupRows.filter((row) =>
+        actionableMaintenance(row, "backup", queuedAt),
       ),
       observedAt: listingVersion,
       parallelism,
@@ -1327,20 +1399,12 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         const project_id = row.project_id;
         const schedule = mergeSchedule(DEFAULT_BACKUP_COUNTS, row.backups);
         const dueAt = backupDueAt(row, schedule);
-        const lastObserved = parseTimestampMs(row.last_backup_observed_at);
-        const reconciliationDue =
-          lastObserved == null || Date.now() - lastObserved >= 24 * 60 * 60_000;
         const previousDue = parseTimestampMs(row.backup_status_due_at);
         const lastBackup = parseTimestampMs(row.last_backup);
-        const needsConfirmedBackupReconciliation =
-          (row.backup_status_outcome === "failed" &&
-            row.backup_status_reason?.includes("hosts.recordProjectBackup")) ||
-          (row.backup_status_outcome === "deferred" &&
-            row.backup_status_reason === "change_generation_changed");
         if (
           project_id &&
           !schedule.disabled &&
-          needsConfirmedBackupReconciliation &&
+          needsConfirmedBackupReconciliation(row, dueAt, Date.now()) &&
           previousDue != null &&
           lastBackup != null &&
           lastBackup >= previousDue &&
@@ -1385,7 +1449,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
           project_id &&
           !schedule.disabled &&
           (dueAt == null || dueAt > Date.now()) &&
-          reconciliationDue &&
+          reconciliationDue(row, "backup", Date.now()) &&
           row.backup_status_outcome !== "failed"
         ) {
           await report({

@@ -2127,6 +2127,152 @@ describe("snapshot-backup-maintenance", () => {
     expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(2);
   });
 
+  it("bounds refresh RPCs across a large stale backlog and leaves non-due inventory out of both queues", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-09-30T16:00:00Z"));
+    const observedAt = new Date().toISOString();
+    const due = Array.from({ length: 600 }, (_, i) => ({
+      project_id: `due-${String(i).padStart(4, "0")}`,
+      storage_service_class: "free",
+      last_changed: "2026-09-29T14:00:00Z",
+      backup_due_since: "2026-09-29T14:00:00Z",
+      snapshots: { daily: 1 },
+      backups: { daily: 1 },
+      last_snapshot_observed_at: observedAt,
+      last_backup_observed_at: observedAt,
+    }));
+    const future = Array.from({ length: 600 }, (_, i) => ({
+      ...due[0],
+      project_id: `future-${String(i).padStart(4, "0")}`,
+      last_snapshot: observedAt,
+      last_backup: observedAt,
+      backup_due_since: observedAt,
+    }));
+    const rows = [...due, ...future];
+    listProjectMaintenanceSchedulesMock.mockImplementation(
+      async ({ project_ids, cursor_project_id, limit }) =>
+        rows
+          .filter((row) =>
+            project_ids
+              ? project_ids.includes(row.project_id)
+              : !cursor_project_id || row.project_id > cursor_project_id,
+          )
+          .slice(0, limit),
+    );
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    runScheduledSnapshotMaintenanceMock.mockImplementation(
+      async ({ project_id }) => {
+        if (project_id === due[0].project_id) await held;
+        return {
+          changed: true,
+          created_snapshot_at: new Date().toISOString(),
+          latest_snapshot_at: new Date().toISOString(),
+        };
+      },
+    );
+    runScheduledBackupMaintenanceMock.mockImplementation(
+      async ({ project_id }) => {
+        if (project_id === due[0].project_id) await held;
+        return { created: true };
+      },
+    );
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+    const onFutureDue = jest.fn();
+    const sweep = runProjectSnapshotBackupMaintenanceSweepOnce({
+      hostId: "large-backlog-host",
+      onFutureDue,
+    });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(1);
+    expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(1);
+    jest.setSystemTime(Date.now() + 85 * 60_000);
+    release();
+    await sweep;
+    const refreshCalls = listProjectMaintenanceSchedulesMock.mock.calls
+      .map(([request]) => request)
+      .filter((request) => request.project_ids);
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledTimes(6);
+    expect(refreshCalls).toHaveLength(1);
+    expect(refreshCalls[0].project_ids).toHaveLength(100);
+    expect(
+      refreshCalls[0].project_ids.every((id: string) => id.startsWith("due-")),
+    ).toBe(true);
+    expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(
+      due.length,
+    );
+    expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(due.length);
+    expect(onFutureDue).toHaveBeenCalledTimes(future.length);
+    expect(onFutureDue).toHaveBeenCalledWith(
+      future[0].project_id,
+      Date.parse(observedAt) + 24 * 60 * 60_000,
+    );
+  });
+
+  it("keeps assignment fencing for stale candidates outside the refresh budget", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-09-30T16:00:00Z"));
+    const rows = Array.from({ length: 201 }, (_, i) => ({
+      project_id: `fenced-${String(i).padStart(4, "0")}`,
+      last_changed: "2026-09-29T14:00:00Z",
+      snapshots: { daily: 1 },
+      backups: { disabled: true },
+    }));
+    const changedAt = "2026-09-30T15:59:00Z";
+    listProjectMaintenanceSchedulesMock.mockImplementation(
+      async ({ project_ids }) =>
+        project_ids
+          ? rows
+              .filter((row) => project_ids.includes(row.project_id))
+              .map((row) => ({ ...row, last_changed: changedAt }))
+          : rows,
+    );
+    confirmProjectMaintenanceAssignmentMock.mockImplementation(
+      async ({ project_id, observed_change_at }) =>
+        project_id === rows[0].project_id || observed_change_at === changedAt
+          ? { valid: true }
+          : { valid: false, reason: "change_generation_changed" },
+    );
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    runScheduledSnapshotMaintenanceMock.mockImplementation(
+      async ({ project_id }) => {
+        if (project_id === rows[0].project_id) await held;
+        return {
+          changed: true,
+          created_snapshot_at: new Date().toISOString(),
+          latest_snapshot_at: new Date().toISOString(),
+        };
+      },
+    );
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+    const sweep = runProjectSnapshotBackupMaintenanceSweepOnce({
+      hostId: "refresh-budget-fence-host",
+    });
+    await jest.advanceTimersByTimeAsync(0);
+    jest.setSystemTime(Date.now() + 60_001);
+    release();
+    await sweep;
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledTimes(2);
+    expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(101);
+    expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ project_id: rows[200].project_id }),
+    );
+    expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: rows[200].project_id,
+        outcome: "deferred",
+        reason: "change_generation_changed",
+      }),
+    );
+  });
+
   it("continues discovering changed projects while an earlier event batch waits", async () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date("2026-09-30T16:00:00Z"));

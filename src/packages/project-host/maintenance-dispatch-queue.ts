@@ -24,6 +24,15 @@ export class MaintenanceDispatchQueue {
   private paidSinceFree = 0;
   private concurrency = 1;
 
+  pendingProjectIds(limit: number): string[] {
+    const ids: string[] = [];
+    for (const id of this.pending.keys()) {
+      if (ids.length >= limit) break;
+      ids.push(id);
+    }
+    return ids;
+  }
+
   submit({
     rows,
     observedAt,
