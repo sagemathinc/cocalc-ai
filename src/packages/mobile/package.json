@@ -59,7 +59,7 @@
     "expo-web-browser": "57.0.2",
     "fast-text-encoding": "1.0.6",
     "htmlparser2": "^8.0.2",
-    "markdown-it": "^14.2.0",
+    "markdown-it": "^14.3.1",
     "path-browserify": "^1.0.1",
     "prismjs": "^1.30.0",
     "ratex-react-native": "0.1.14",
