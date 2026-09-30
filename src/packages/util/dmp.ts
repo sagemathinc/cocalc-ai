@@ -192,3 +192,178 @@ export function checked_three_way_merge(opts: {
   merged += opts.base.slice(cursor);
   return { clean: true, merged };
 }
+
+function diffsToEdits(diffs: [number, string][]): StringEdit[] {
+  const edits: StringEdit[] = [];
+  let cursor = 0;
+  let current: StringEdit | undefined;
+  for (const [operation, value] of diffs) {
+    if (operation === 0) {
+      if (current != null) edits.push(current);
+      current = undefined;
+      cursor += value.length;
+      continue;
+    }
+    current ??= { from: cursor, to: cursor, insert: "" };
+    if (operation === -1) {
+      current.to += value.length;
+      cursor += value.length;
+    } else {
+      current.insert += value;
+    }
+  }
+  if (current != null) edits.push(current);
+  return edits;
+}
+
+// Line-granular edits: every edit starts and ends on a line boundary.
+function lineEdits(base: string, target: string): StringEdit[] {
+  if (base === target) return [];
+  const { chars1, chars2, lineArray } = dmp.diff_linesToChars(base, target);
+  const diffs = dmp.diff_main(chars1, chars2, false);
+  dmp.diff_charsToLines(diffs, lineArray);
+  return diffsToEdits(diffs as [number, string][]);
+}
+
+// Character edits from a semantically cleaned diff, so a replaced word is one
+// edit rather than a mix of kept and changed characters.
+function semanticEdits(base: string, target: string): StringEdit[] {
+  if (base === target) return [];
+  const diffs = dmp.diff_main(base, target);
+  dmp.diff_cleanupSemantic(diffs);
+  return diffsToEdits(diffs as [number, string][]);
+}
+
+function applyEdits(text: string, edits: StringEdit[]): string {
+  let cursor = 0;
+  let out = "";
+  for (const edit of [...edits].sort((a, b) => a.from - b.from)) {
+    out += text.slice(cursor, edit.from) + edit.insert;
+    cursor = edit.to;
+  }
+  return out + text.slice(cursor);
+}
+
+// Merge local and remote edits of base. Identical changes apply once;
+// non-overlapping changes apply at exact positions; overlapping changes are
+// resolved by `resolve` (called with the base region and each side's version of
+// it), and local wins if no resolver is given.
+function mergeEdits(
+  base: string,
+  localEdits: StringEdit[],
+  remoteEdits: StringEdit[],
+  resolve?: (region: { base: string; local: string; remote: string }) => string,
+): string {
+  const applyOne = (edit: StringEdit) =>
+    base.slice(0, edit.from) + edit.insert + base.slice(edit.to);
+  const localResults = localEdits.map(applyOne);
+  // Edits are the same change if applying either one alone gives the same
+  // text, even if the diffs placed it at different offsets.
+  const remote = remoteEdits.filter(
+    (r) =>
+      !localEdits.some((l) => sameEdit(l, r)) &&
+      !localResults.includes(applyOne(r)),
+  );
+  // Two pure insertions at the same position do not conflict: keep both,
+  // local first. Other overlapping edits conflict.
+  const conflicts = (a: StringEdit, b: StringEdit) =>
+    !(a.from === a.to && b.from === b.to) && editsOverlap(a, b);
+  const isInsertion = (edit: StringEdit) => edit.from === edit.to;
+  // Group conflicting edits into clusters over base ranges.
+  const all = [
+    ...localEdits.map((edit) => ({ edit, local: true })),
+    ...remote.map((edit) => ({ edit, local: false })),
+  ].sort(
+    (a, b) =>
+      a.edit.from - b.edit.from ||
+      Number(isInsertion(b.edit)) - Number(isInsertion(a.edit)) ||
+      Number(b.local) - Number(a.local) ||
+      a.edit.to - b.edit.to,
+  );
+  const clusters: { from: number; to: number; items: typeof all }[] = [];
+  for (const item of all) {
+    const last = clusters[clusters.length - 1];
+    const overlapsLast =
+      last != null &&
+      last.items.some((other) => conflicts(other.edit, item.edit));
+    if (overlapsLast) {
+      last.items.push(item);
+      last.to = Math.max(last.to, item.edit.to);
+    } else {
+      clusters.push({ from: item.edit.from, to: item.edit.to, items: [item] });
+    }
+  }
+  let cursor = 0;
+  let merged = "";
+  for (const cluster of clusters) {
+    merged += base.slice(cursor, cluster.from);
+    const regionBase = base.slice(cluster.from, cluster.to);
+    const shift = (edit: StringEdit) => ({
+      from: edit.from - cluster.from,
+      to: edit.to - cluster.from,
+      insert: edit.insert,
+    });
+    const localIn = cluster.items
+      .filter((i) => i.local)
+      .map((i) => shift(i.edit));
+    const remoteIn = cluster.items
+      .filter((i) => !i.local)
+      .map((i) => shift(i.edit));
+    if (remoteIn.length === 0) {
+      merged += applyEdits(regionBase, localIn);
+    } else if (localIn.length === 0) {
+      merged += applyEdits(regionBase, remoteIn);
+    } else {
+      const region = {
+        base: regionBase,
+        local: applyEdits(regionBase, localIn),
+        remote: applyEdits(regionBase, remoteIn),
+      };
+      merged += resolve != null ? resolve(region) : region.local;
+    }
+    cursor = cluster.to;
+  }
+  return merged + base.slice(cursor);
+}
+
+/**
+ * Three-way merge for a live editor buffer: merge the local and remote edits
+ * of a common base, applying each change once at its exact position (in the
+ * style of diff3).
+ *
+ * - Changes are matched line by line first, so block-level edits align; where
+ *   both sides changed the same lines, those lines are merged character by
+ *   character (semantically cleaned), so edits to different words of one line
+ *   both survive.
+ * - Identical changes made on both sides (for example, both deleted the same
+ *   text, or a stale base where both already contain the same inserted block)
+ *   apply once.
+ * - Nothing is relocated by fuzzy matching, so a deletion can never land on
+ *   similar text elsewhere.
+ * - Where local and remote change the same characters, the local version wins,
+ *   since the user is editing there right now (the remote change remains in
+ *   history).
+ */
+export function merge_prefer_local(opts: {
+  base: string;
+  local: string;
+  remote: string;
+}): string {
+  const { base, local, remote } = opts;
+  if (local === remote) return local;
+  if (base === remote) return local;
+  if (base === local) return remote;
+  return mergeEdits(
+    base,
+    lineEdits(base, local),
+    lineEdits(base, remote),
+    (region) =>
+      region.local === region.remote
+        ? region.local
+        : mergeEdits(
+            region.base,
+            semanticEdits(region.base, region.local),
+            semanticEdits(region.base, region.remote),
+          ),
+  );
+}

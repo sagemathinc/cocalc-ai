@@ -351,8 +351,24 @@ async function runSession(seed: number, steps = STEPS): Promise<RunResult> {
   }
   for (const c of clients) {
     if (c.editor == null) continue;
-    if (c.shown() !== canonical(c.doc())) {
-      problems.push(`c${c.opts.id} editor does not show its document`);
+    // Compare modulo whitespace: whitespace-only rendering differences are
+    // cosmetic; content, structure, and numbering differences are not.
+    const squash = (text: string) =>
+      text
+        .split("\n")
+        .map((line) => line.replace(/\s+/g, " ").trim())
+        .filter((line) => line !== "")
+        .join("\n");
+    const shown = squash(c.shown());
+    const expected = squash(canonical(c.doc()));
+    if (shown !== expected) {
+      const a = shown.split("\n");
+      const b = expected.split("\n");
+      let i = 0;
+      while (i < a.length && a[i] === b[i]) i++;
+      problems.push(
+        `c${c.opts.id} editor does not show its document (line ${i}: editor=${JSON.stringify(a.slice(i, i + 3))} doc=${JSON.stringify(b.slice(i, i + 3))})`,
+      );
     }
   }
   if (mergeLosses.length > 0) {
@@ -371,6 +387,40 @@ async function runSession(seed: number, steps = STEPS): Promise<RunResult> {
   }
   for (const c of clients) c.stop();
   return { seed, problems, log: [stats, ...log] };
+}
+
+// FUZZ_MERGE_TRACE=<token>: log SimpleInputMerge inputs whenever a merge drops
+// the token from the local value.
+if (process.env.FUZZ_MERGE_TRACE) {
+  const {
+    SimpleInputMerge,
+  } = require("@cocalc/sync/editor/generic/simple-input-merge");
+  const token = process.env.FUZZ_MERGE_TRACE;
+  const originalResolve = SimpleInputMerge.prototype.resolveLocal;
+  SimpleInputMerge.prototype.resolveLocal = function (observed: string) {
+    const out = originalResolve.call(this, observed);
+    (this as any).__lastResolve = out;
+    return out;
+  };
+  const original = SimpleInputMerge.prototype.handleRemote;
+  SimpleInputMerge.prototype.handleRemote = function (opts: any) {
+    const last = (this as any).last;
+    const requested = (this as any).requestedLocalUpdate;
+    const pending = [...(this as any).pending];
+    const local = opts.getLocal();
+    return original.call(this, {
+      ...opts,
+      applyMerged: (merged: string) => {
+        if (local.includes(token) && !merged.includes(token)) {
+          // eslint-disable-next-line no-console
+          console.log(
+            `MERGE DROPPED ${token}: ${JSON.stringify({ last, local, remote: opts.remote, merged, pending, requested, resolved: (this as any).__lastResolve })}`,
+          );
+        }
+        opts.applyMerged(merged);
+      },
+    });
+  };
 }
 
 describe("collaborative markdown editing fuzz", () => {

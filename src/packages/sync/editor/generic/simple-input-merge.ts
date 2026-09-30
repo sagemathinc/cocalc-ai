@@ -18,12 +18,11 @@
  * - Track `pending` as the locally-saved values that have not yet been observed
  *   coming back from the remote source.
  * - If the live buffer equals `last` (and there's no pending), adopt remote.
- * - If there are local edits, compute a patch from `last → local`, apply it to
- *   `remote`, set `last` to the merged value, and only overwrite the buffer when
- *   it differs.
+ * - If there are local edits, three-way merge `base`, `local`, and `remote`,
+ *   keep `remote` as the baseline until the local edits are saved, and only
+ *   overwrite the buffer when the merge differs.
  */
-import { applyPatch, makePatch } from "patchflow";
-import { diff_main } from "@cocalc/util/patch";
+import { diff_main, merge_prefer_local } from "@cocalc/util/dmp";
 
 type Getter = () => string;
 
@@ -145,8 +144,12 @@ export class SimpleInputMerge {
     // yet, and must stay a local delta until their save echoes back. Otherwise
     // a second remote update arriving before that save looks like "no local
     // edits" and is adopted directly, dropping them.
-    const delta = makePatch(base, local);
-    const [merged] = applyPatch(delta, remote);
+    //
+    // Merge with a three-way merge rather than by applying a fuzzy patch of
+    // base -> local to remote. When base is older than remote's own base, the
+    // local delta repeats changes remote already has; a three-way merge applies
+    // those once, and never relocates a deletion onto similar text elsewhere.
+    const merged = merge_prefer_local({ base, local, remote });
     this.noteApplied(remote);
     if (merged !== local) {
       this.applyMerged(
@@ -241,8 +244,7 @@ export class SimpleInputMerge {
       return { merged, changed: merged !== local };
     }
 
-    const delta = makePatch(this.last, local);
-    const [merged] = applyPatch(delta, remote);
+    const merged = merge_prefer_local({ base: this.last, local, remote });
     return { merged, changed: merged !== local };
   }
 }
