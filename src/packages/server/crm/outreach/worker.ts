@@ -1277,11 +1277,22 @@ async function processClaim(claim: ClaimedOperation): Promise<void> {
         );
         return;
       }
+      const existing = await findOutreachTicketByExternalId(
+        claim.delivery.provider_external_id,
+        config,
+      );
+      // Eligibility can change while the lookup is in flight, so check again
+      // immediately before the only request that can notify the recipient.
+      if (!existing && !(await revalidateStartedCreateTicketClaim(claim))) {
+        recordOutreachProviderOperation(
+          claim.operation,
+          "preflight_not_sent",
+          Date.now() - startedAt,
+        );
+        return;
+      }
       ticket =
-        (await findOutreachTicketByExternalId(
-          claim.delivery.provider_external_id,
-          config,
-        )) ??
+        existing ??
         (await createOutreachTicket({
           delivery: claim.delivery,
           batch: claim.batch,

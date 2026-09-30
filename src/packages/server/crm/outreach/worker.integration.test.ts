@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 
 import type * as OutreachStore from "./store";
 import type * as OutreachWorker from "./worker";
+import type * as OutreachZendesk from "./zendesk";
 
 const describePglite =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -61,6 +62,7 @@ describePglite("CRM outreach initial-send claim revalidation", () => {
     ReturnType<(typeof import("@cocalc/database/pool"))["default"]>
   >;
   let worker: typeof OutreachWorker;
+  let zendesk: typeof OutreachZendesk;
   let config = { ...baseConfig };
 
   beforeAll(async () => {
@@ -83,6 +85,7 @@ describePglite("CRM outreach initial-send claim revalidation", () => {
       .spyOn(store, "loadOutreachConfiguration")
       .mockImplementation(async () => config);
     worker = await import("./worker");
+    zendesk = await import("./zendesk");
   });
 
   afterAll(async () => {
@@ -402,6 +405,90 @@ describePglite("CRM outreach initial-send claim revalidation", () => {
     expect(delivery.rows[0]).toMatchObject({
       state: "cancelled",
       cancelled_at: expect.any(Date),
+    });
+  });
+
+  async function processClaimWithLookupDrift(
+    drift: (fixture: Fixture) => Promise<unknown>,
+  ): Promise<{ fixture: Fixture; operationId: string }> {
+    const fixture = await createFixture();
+    const claim = await worker.__test__.claimOneEffectful();
+    expect(claim).toMatchObject({ delivery: { id: fixture.deliveryId } });
+    // The drift commits while the Zendesk lookup is still in flight.
+    const lookup = jest
+      .spyOn(zendesk, "findOutreachTicketByExternalId")
+      .mockImplementation(async () => {
+        await drift(fixture);
+        return undefined;
+      });
+    const create = jest
+      .spyOn(zendesk, "createOutreachTicket")
+      .mockRejectedValue(Error("ticket creation must not start"));
+    try {
+      await expect(
+        worker.__test__.processClaim(claim!),
+      ).resolves.toBeUndefined();
+      expect(lookup).toHaveBeenCalledTimes(1);
+      expect(create).not.toHaveBeenCalled();
+    } finally {
+      lookup.mockRestore();
+      create.mockRestore();
+    }
+    return { fixture, operationId: claim!.operation_id };
+  }
+
+  it("fails a send that became ineligible during the Zendesk lookup", async () => {
+    const { fixture, operationId } = await processClaimWithLookupDrift(
+      async ({ emailId }) =>
+        await pool.query(
+          `INSERT INTO crm_contact_suppressions
+            (id,scope,normalized_scope_value,person_email_id,reason,source)
+           VALUES($1,'email','person@example.com',$2,'manual','admin_ui')`,
+          [randomUUID(), emailId],
+        ),
+    );
+    const operation = await pool.query(
+      "SELECT state,provider_status,error_category FROM crm_outreach_provider_operations WHERE id=$1",
+      [operationId],
+    );
+    expect(operation.rows[0]).toMatchObject({
+      state: "cancelled",
+      provider_status: "cancelled_preflight",
+      error_category: "ineligible_initial_send",
+    });
+    const delivery = await pool.query(
+      "SELECT state,last_error FROM crm_outreach_deliveries WHERE id=$1",
+      [fixture.deliveryId],
+    );
+    expect(delivery.rows[0]).toMatchObject({
+      state: "failed",
+      last_error: "INELIGIBLE_BEFORE_PROVIDER:suppressed",
+    });
+  });
+
+  it("requeues a send whose batch was paused during the Zendesk lookup", async () => {
+    const { fixture, operationId } = await processClaimWithLookupDrift(
+      async ({ batchId }) =>
+        await pool.query(
+          "UPDATE crm_outreach_batches SET state='paused' WHERE id=$1",
+          [batchId],
+        ),
+    );
+    const operation = await pool.query(
+      "SELECT state,provider_status FROM crm_outreach_provider_operations WHERE id=$1",
+      [operationId],
+    );
+    expect(operation.rows[0]).toMatchObject({
+      state: "cancelled",
+      provider_status: "batch_paused",
+    });
+    const delivery = await pool.query(
+      "SELECT state,provider_submitted_at FROM crm_outreach_deliveries WHERE id=$1",
+      [fixture.deliveryId],
+    );
+    expect(delivery.rows[0]).toMatchObject({
+      state: "queued",
+      provider_submitted_at: null,
     });
   });
 });
