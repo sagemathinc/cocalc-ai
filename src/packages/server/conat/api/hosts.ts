@@ -2779,6 +2779,7 @@ export async function upsertExternalCredential({
   create,
   max_active,
   deduplicate_metadata,
+  expected_payload_sha256,
 }: {
   host_id?: string;
   project_id: string;
@@ -2796,6 +2797,7 @@ export async function upsertExternalCredential({
   create?: boolean;
   max_active?: number;
   deduplicate_metadata?: { key: string; value: string };
+  expected_payload_sha256?: string;
 }): Promise<{ id: string; created: boolean }> {
   assertExternalCredentialId(credential_id);
   if (!host_id) {
@@ -2872,6 +2874,7 @@ export async function upsertExternalCredential({
       selector: routedSelector,
       payload,
       metadata: safeMetadata,
+      expected_payload_sha256,
     });
     if (!updated) throw new Error("credential is unavailable");
     return { id: credential_id, created: false };

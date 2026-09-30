@@ -57,14 +57,18 @@ function fresh(at?: number) {
     throw new Error("fresh human approval attestation expired");
 }
 
-async function principal(source: AgentEndpoint, run_id: string) {
+async function principal(
+  source: AgentEndpoint,
+  run_id: string,
+  forExecution = false,
+) {
   const route = await resolveProjectBay(source.project_id);
   if (!route) throw new Error("source owner unavailable");
   const api =
     route.bay_id === getConfiguredBayId()
       ? agentRpcControl
       : createAgentRpcControlClient(getInterBayFabricClient(), route.bay_id);
-  const proof = await api.principal({
+  const proof = await api[forExecution ? "executionPrincipal" : "principal"]({
     source,
     run_id,
     project_id: source.project_id,
@@ -82,6 +86,7 @@ export function personalStore(db = agentStore()) {
     principal,
     assertPersonalAccountAuthority,
     agentProjectWasDeleted,
+    (source, run_id) => principal(source, run_id, true),
   );
 }
 
@@ -111,7 +116,10 @@ export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
     throw new Error("stale personal account home route");
   await ensureAccountSecurityStateReady();
   if (isAccountBannedCached(opts.account_id))
-    if (opts.request.action === "checkNetwork")
+    if (
+      opts.request.action === "checkNetwork" ||
+      opts.request.action === "checkExecutionNetwork"
+    )
       return { denied: "account_disabled" };
     else throw new PersonalAgentAuthorizationError("account_disabled");
 
@@ -216,6 +224,7 @@ export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
       if (request.options.action === "resume") fresh(opts.fresh_auth_at);
       return store.setControls(account, request.options);
     case "checkNetwork":
+    case "checkExecutionNetwork":
       try {
         return await store.checkNetwork(
           account,
@@ -223,6 +232,7 @@ export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
           request.options.source,
           request.options.run_id,
           request.options.target,
+          request.action === "checkExecutionNetwork",
         );
       } catch (error) {
         if (error instanceof PersonalAgentAuthorizationError)

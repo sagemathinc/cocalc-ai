@@ -56,26 +56,37 @@ export async function createClaudeProjectToolBridge(
     | undefined;
   let generation = new AbortController();
   const jobs = new ClaudeProjectJobs(execute);
-  let checking = false;
-  const checkAuthority = async () => {
-    try {
-      await authorize();
-    } catch (error) {
-      paused = true;
-      generation.abort();
-      await jobs.cancelAll();
-      throw error;
-    }
-  };
+  let authorityCheck: Promise<AbortSignal> | undefined;
+  // Share checks (including failed-check cleanup) so an older result cannot
+  // invalidate a newly authorized generation. Explicit cancel/close stay final
+  // until the caller resumes; an authority failure alone is recoverable.
+  const checkAuthority = (): Promise<AbortSignal> =>
+    (authorityCheck ??= (async () => {
+      const current = generation;
+      if (fenced || paused) throw Error("Project tool is closed");
+      try {
+        await authorize();
+      } catch (error) {
+        if (generation === current && !fenced && !paused) {
+          current.abort();
+          await jobs.cancelAll();
+        }
+        throw error;
+      }
+      if (fenced || paused || generation !== current)
+        throw Error("Project tool is closed");
+      if (current.signal.aborted) {
+        generation = new AbortController();
+        jobs.resume();
+      }
+      return generation.signal;
+    })().finally(() => {
+      authorityCheck = undefined;
+    }));
   // Long jobs must not retain execution authority indefinitely between tool calls.
   const authorityTimer = setInterval(() => {
-    if (!jobs.running || checking || fenced || paused) return;
-    checking = true;
-    void checkAuthority()
-      .catch(() => {})
-      .finally(() => {
-        checking = false;
-      });
+    if (!jobs.running || authorityCheck || fenced || paused) return;
+    void checkAuthority().catch(() => {});
   }, 30_000);
   authorityTimer.unref();
   const running = new Set<Promise<void>>();
@@ -101,7 +112,6 @@ export async function createClaudeProjectToolBridge(
         return;
       }
       active++;
-      const signal = generation.signal;
       const task = (async () => {
         try {
           const request = JSON.parse(input.slice(0, newline));
@@ -114,7 +124,7 @@ export async function createClaudeProjectToolBridge(
             Array.isArray(args)
           )
             throw Error("Invalid project tool request");
-          await checkAuthority();
+          const signal = await checkAuthority();
           signal.throwIfAborted();
           if (fenced || paused) throw Error("Project tool is closed");
           let result;

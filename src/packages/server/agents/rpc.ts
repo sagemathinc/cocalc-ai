@@ -262,6 +262,7 @@ async function networkProof(
   run_id: string | undefined,
   target: AgentRpcTarget,
   agent_network_id: string,
+  forExecution = false,
 ): Promise<AgentNetworkAuthorization | PersonalAgentDenial> {
   validateAgentRpcSource(source, run_id);
   validateAgentRpcTarget(target);
@@ -270,7 +271,7 @@ async function networkProof(
   if (isExternalAgentSource(source) && source.account_id !== account_id)
     throw new PersonalAgentAuthorizationError("principal_mismatch");
   return (await withPersonalHome(account_id, {
-    action: "checkNetwork",
+    action: forExecution ? "checkExecutionNetwork" : "checkNetwork",
     options: {
       agent_network_id,
       source,
@@ -539,6 +540,17 @@ export const agentRpcControl: AgentRpcControlApi = {
       personal_messaging: true,
     };
   },
+  executionPrincipal: async (opts) => {
+    await local(opts, opts.source);
+    requireUuid(opts.run_id, "run_id");
+    await sourceIdentity(opts.source);
+    const run = await agentStore().executionRun(
+      opts.source.agent_id,
+      opts.run_id,
+    );
+    await assertRun(run);
+    return { account_id: run.account_id, personal_messaging: true };
+  },
   submit: async (opts) =>
     (await submitAgentRpcOperation(
       opts,
@@ -657,12 +669,16 @@ export const authorizeRpcExecution: AgentApi["authorizeRpcExecution"] = async (
     target.thread_id !== authorization.target_thread_id
   )
     throw new Error("target identity changed");
+  // The authenticated destination host supplies its already-admitted queue
+  // record, not editable chat content. Recheck current authority, but do not
+  // require the original sender process/credential to remain alive.
   const proof = await networkProof(
     account_id,
     authorization.source,
     authorization.source_run_id,
     authorization.target,
     authorization.agent_network_id,
+    true,
   );
   if ("denied" in proof)
     throw new PersonalAgentAuthorizationError(proof.denied);

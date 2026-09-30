@@ -2304,6 +2304,9 @@ export interface Hosts {
     create?: boolean;
     max_active?: number;
     deduplicate_metadata?: { key: string; value: string };
+    // With credential_id: update only if the stored payload still has this
+    // SHA-256 (hex); otherwise fail with EXTERNAL_CREDENTIAL_CONFLICT.
+    expected_payload_sha256?: string;
   }) => Promise<{ id: string; created: boolean }>;
   releaseCodexDeviceAuthLease: (opts: {
     host_id?: string;

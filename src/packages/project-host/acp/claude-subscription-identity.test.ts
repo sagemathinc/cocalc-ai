@@ -28,11 +28,12 @@ jest.mock("../codex/codex-project", () => ({
 }));
 jest.mock("./claude-subscription-registry", () => ({
   getClaudeSubscriptionCredential: async () => ({ payload: {}, identity: {} }),
-  publishClaudeSubscriptionCredential: jest.fn(),
+  syncClaudeSubscriptionCredential: jest.fn(async ({ baseline }) => baseline),
 }));
 jest.mock("./claude-subscription-home", () => ({
   restoreClaudeSubscriptionHome: jest.fn(),
-  claudeSubscriptionBundlePaths: () => [],
+  claudeSubscriptionBundleFiles: () => new Map(),
+  readClaudeSubscriptionHomeFiles: async () => new Map(),
 }));
 jest.mock("./claude-subscription-paths", () => ({
   claudeControllerHomePrefix: () => join(tmpdir(), "claude-identity-test-"),

@@ -27,14 +27,9 @@ import {
   projectPoolPodmanLauncher,
 } from "@cocalc/project-runner/run/podman";
 import { extractBaseImage } from "@cocalc/project-runner/run/rootfs-base";
-import {
-  getClaudeSubscriptionCredential,
-  publishClaudeSubscriptionCredential,
-} from "./claude-subscription-registry";
-import {
-  claudeSubscriptionBundlePaths,
-  restoreClaudeSubscriptionHome,
-} from "./claude-subscription-home";
+import { getClaudeSubscriptionCredential } from "./claude-subscription-registry";
+import { restoreClaudeSubscriptionHome } from "./claude-subscription-home";
+import { createClaudeCredentialSync } from "./claude-credential-sync";
 import {
   CLAUDE_PROJECT_TOOL_MOUNT,
   createClaudeProjectToolBridge,
@@ -298,6 +293,13 @@ ${skill}
   let stopped: Promise<void> | undefined;
   let cleanupRetries = 0;
   let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+  const credentialSync = createClaudeCredentialSync({
+    projectId,
+    accountId,
+    credentialId,
+    home,
+    restoredPayload: registered.payload,
+  });
   const command = (args: string[]) =>
     new Promise<void>((resolve, reject) => {
       execFile(
@@ -347,18 +349,11 @@ ${skill}
         const failure = results.find((result) => result.status === "rejected");
         if (failure?.status === "rejected") throw failure.reason;
       },
-      refreshCredential: async () => {
-        await publishClaudeSubscriptionCredential({
-          projectId,
-          accountId,
-          credentialId,
-          home,
-          identity: registered.identity,
-          plan: registered.plan,
-          allowedPaths: claudeSubscriptionBundlePaths(registered.payload),
-        });
+      refreshCredential: () => credentialSync.finish(),
+      removeHome: async () => {
+        await credentialSync.idle();
+        await rm(home, { recursive: true, force: true });
       },
-      removeHome: async () => rm(home, { recursive: true, force: true }),
       launched,
     })
       .then(() => {
@@ -493,6 +488,7 @@ ${skill}
       }),
     );
     launched = true;
+    credentialSync.start();
     const proc = spawn(
       launcher.command,
       [...launcher.argsPrefix, "start", "--attach", "--interactive", name],
