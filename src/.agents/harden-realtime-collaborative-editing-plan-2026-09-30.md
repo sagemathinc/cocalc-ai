@@ -2,7 +2,7 @@
 
 ## Status
 
-Plan only, written 2026-09-30. Nothing here is implemented yet. It builds on
+Written 2026-09-30; implementation started the same day (see Progress Log). It builds on
 PR #749 (`fix/slate-merge-duplication`), which fixed the two concrete bugs from
 the incident below.
 
@@ -223,3 +223,87 @@ Every incident becomes a synthetic regression test.
 - How to represent explicit undo/redo in the "no silent revert" invariant.
 - Performance budget for view verification on very large documents (the current
   direct-replacement threshold is 250 blocks / 50,000 characters).
+
+## Progress Log
+
+### 2026-09-30
+
+- Workstream 1 (fuzzer): `frontend/editors/slate/__test__/collab-fuzz/`.
+  Each simulated client mounts a real `EditableMarkdown` as the Markdown frame
+  editor does, backed by a real patchflow `Session` and a fake `SyncString`,
+  over a seeded network that delays and reorders patches. Operations: token
+  inserts and deletes through the Slate editor, structured block inserts,
+  source-frame (CodeMirror-style) edits including list nesting and bold, and
+  focus changes. Oracle: convergence, no duplicated token, no lost token (lost
+  tokens are classified as "never committed", "removed by a cX commit", or
+  "lost in merge"), and every editor shows its document (modulo whitespace).
+  Knobs: `FUZZ_RUNS`, `FUZZ_SEED`, `FUZZ_STEPS`, `FUZZ_VERBOSE`,
+  `FUZZ_TRACE_TOKEN`, `FUZZ_SLATE_DEBUG`, `FUZZ_MERGE_TRACE`,
+  `FUZZ_STRICT_MERGE`. Seeds that found bugs run on every test run.
+- Validation: with the PR #749 fixes reverted, all 40 of 40 seeds fail with
+  duplication; with them applied, duplication disappears.
+- Integration bugs found by the fuzzer and fixed, each with a regression test:
+  1. `SimpleInputMerge` made a rebased merge (containing unsaved local edits)
+     its baseline; a second remote update before the save dropped the edits.
+  2. A stale `editor.syncCausedUpdate` (set by an external update that changed
+     nothing) made the next local edit look remote; it was never saved.
+  3. When the editor canonicalized a merged value, the next rebase used the
+     merged value as its base and dropped uncommitted edits inside it. Render
+     candidates now record their committed base.
+  4. Rebasing from an older base with a fuzzy patch repeated committed
+     changes; a stale deletion was applied to similar text elsewhere.
+     `SimpleInputMerge` now uses `merge_prefer_local` (`@cocalc/util/dmp`), a
+     diff3-style merge (line-level, refined per character inside overlapping
+     lines, identical changes applied once, no fuzzy relocation, concurrent
+     insertions kept, local wins only on true character overlap). Replaying the
+     2026-09-28 incident through it yields one table even with the stale base.
+- Workstream 6 (replay kit): `src/scripts/dev/sync-replay.mjs` (`summary`,
+  `versions`, `explain`) with tests on a synthetic database; on the real
+  incident it flags both duplicating patches and reproduces the corrupt
+  version from its merge inputs.
+- Core finding (not fixed; decision needed): patchflow computes a document by
+  applying all patches in time order with fuzzy diff-match-patch patch
+  application, including concurrent patches. A deletion whose context changed
+  concurrently can be applied to similar text elsewhere while reporting
+  success. Recorded as `sync/editor/generic/test/core-merge-limitations.test.ts`
+  (`test.failing`). At 80 fuzz steps this accounts for most remaining losses
+  (about a quarter of runs); the fuzzer reports them separately unless
+  `FUZZ_STRICT_MERGE` is set. Options: merge concurrent heads with a diff3-style
+  merge from their common ancestor (deterministically, e.g. earlier patch wins
+  on true overlap), keeping fuzzy application only for linear history; this
+  changes how existing histories replay, so it needs a versioned rollout.
+- Other findings for the audit (not yet fixed):
+  - A programmatic source-frame change within Slate's save debounce discards
+    unsaved Slate edits (`forceSetEditorToValue` cancels the pending save).
+  - An ordered list's start number can differ between the editor and its
+    document (for example `2.` shown as `1.`); the next save renumbers it.
+  - `slateDiff` operations for some list/table transitions drop inline math
+    delimiters; the markdown verification fallback catches it.
+- Later the same day, sweeps of 400 seeds at 80 operations each drove further
+  integration fixes (each found by the fuzzer, with unit or pinned-seed
+  regression tests): 5. Saves wrote the editor's serialized contents as-is. While a remote change
+  was deferred (the user was typing) or not yet rendered, that reverted the
+  remote change for everyone. Saves now use
+  `SimpleInputMerge.mergeForSave`, merging the editor's uncommitted edits
+  into the current syncstring value; deferred merges flush against the
+  current value. 6. `merge_prefer_local` became a diff3 merge (stable spans, chunk contents
+  compared, so the same net change expressed by differently decomposed
+  diffs applies once; blank lines are not anchors; conflicts refined by
+  semantic then raw character diffs; concurrent insertions kept; a
+  whitespace-only side never overrides real content; otherwise local wins). 7. Slate applies merged values synchronously, but the render request stayed
+  open and later merges/saves guessed an old candidate's base, duplicating
+  text. `noteRendered()` settles it after Slate applied a merge.
+- Sweep results (400 seeds, 80 operations, 2-4 clients) over the day:
+  integration failures 30 -> 19 -> 16 -> 8 (2%). Remaining: a few "removed by
+  a Slate commit" losses and the ordered-list numbering mismatch. The losses
+  investigated so far are knock-on effects of the core merge: out-of-order
+  delivery briefly garbles Markdown structure, a local edit makes Slate
+  re-serialize the garbled block (for example escaping table pipes), and that
+  canonicalization then wins a conflict against the corrected remote.
+  Serializer canonicalization being indistinguishable from user edits is the
+  motivation for Workstream 3. Core merge anomalies (not counted as failures)
+  appear in about 22% of these extreme runs.
+- Next steps: decide the core merge change (merge concurrent heads with diff3
+  from their common ancestor); then Workstream 3 (edits carry their base
+  version; canonicalization is not a user edit); Workstream 4 guards;
+  Workstream 5 (Playwright, lite2b.cocalc.ai is available for it).
