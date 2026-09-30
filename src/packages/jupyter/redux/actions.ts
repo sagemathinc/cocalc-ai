@@ -31,6 +31,7 @@ declare const localStorage: any;
 import * as immutable from "immutable";
 import { Actions } from "@cocalc/util/redux/Actions";
 import { three_way_merge } from "@cocalc/sync/editor/generic/util";
+import { merge_prefer_local } from "@cocalc/util/dmp";
 import { callback2, once } from "@cocalc/util/async-utils";
 import * as misc from "@cocalc/util/misc";
 import { delay } from "awaiting";
@@ -151,6 +152,11 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   private runtimeStateInitStarted = false;
   private pendingRuntimeRecords: Map<string, object> = new Map();
   private pendingDeletedRuntimeRecords: Set<string> = new Set();
+  // Cells deleted by another client (most recent last), and cells this
+  // client is deleting; see restoreRemotelyDeletedCell.
+  private remotelyDeletedCells: Map<string, immutable.Map<string, any>> =
+    new Map();
+  private locallyDeletingCells: Set<string> = new Set();
   private labels?: {
     math: { [label: string]: { tag: string; id: string } };
     fig: { [label: string]: { tag: string; id: string } };
@@ -898,8 +904,31 @@ export class JupyterActions extends Actions<JupyterStoreState> {
 
   // Set the input of the given cell in the syncdb, which will also change the store.
   // Might throw a CellWriteProtectedException
-  public set_cell_input(id: string, input: string, save = true): void {
+  // `base` is the input this edit was made from (e.g. what an editor last
+  // loaded or saved). If the synced input has changed since then, e.g. a
+  // collaborator's edit merged but not yet shown in the editor, the edit is
+  // merged into it instead of overwriting (and so reverting) that change.
+  public set_cell_input(
+    id: string,
+    input: string,
+    save = true,
+    base?: string,
+  ): void {
     if (!this.store) return;
+    if (this.store.getIn(["cells", id]) == null) {
+      this.restoreRemotelyDeletedCell(id, input, save);
+      return;
+    }
+    if (base != null) {
+      const current = this.syncdb?.get_one({ type: "cell", id })?.get("input");
+      if (
+        typeof current === "string" &&
+        current !== base &&
+        current !== input
+      ) {
+        input = merge_prefer_local({ base, local: input, remote: current });
+      }
+    }
     if (this.store.getIn(["cells", id, "input"]) == input) {
       // nothing changed.   Note, I tested doing the above check using
       // both this.syncdb and this.store, and this.store is orders of magnitude faster.
@@ -923,6 +952,26 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       start: null,
       end: null,
     });
+  }
+
+  // Input typed into a cell that another user deleted concurrently, e.g.
+  // saved by its editor as it unmounts because of the delete. As when the
+  // edit and the delete merge (typed text beats a concurrent delete), bring
+  // the cell back whole with the new input instead of dropping what was
+  // typed. Cells this client deleted, or never had, are not recreated.
+  private restoreRemotelyDeletedCell(
+    id: string,
+    input: string,
+    save: boolean,
+  ): void {
+    const cell = this.remotelyDeletedCells.get(id);
+    this.remotelyDeletedCells.delete(id);
+    if (cell == null || cell.get("input") === input) return;
+    const record = cell.toJS();
+    for (const key of ["cursors", "state", "start", "end", "done", "last"]) {
+      delete record[key];
+    }
+    this._set({ ...record, type: "cell", id, input }, save);
   }
 
   set_cell_output = (id: string, output: any, save = true) => {
@@ -1154,6 +1203,14 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       this.deleteRuntimeRecord(jupyterRuntimeCellKey(id));
       this.reset_more_output(id); // free up memory locally
       this.handleCellDeleted(id);
+      if (old_cell != null && !this.locallyDeletingCells.has(id)) {
+        this.remotelyDeletedCells.delete(id);
+        this.remotelyDeletedCells.set(id, old_cell);
+        if (this.remotelyDeletedCells.size > 100) {
+          const oldest = this.remotelyDeletedCells.keys().next().value;
+          if (oldest != null) this.remotelyDeletedCells.delete(oldest);
+        }
+      }
       if (old_cell != null) {
         const cell_list = this.store.get_cell_list().filter((x) => x !== id);
         this.setState({ cells: cells.delete(id), cell_list });
@@ -1385,6 +1442,12 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       // no possible way to do anything.
       return;
     }
+    if (this.wouldCreatePartialCell(obj)) {
+      // E.g., an input editor saving as it unmounts because its cell was just
+      // deleted, or output arriving for a deleted cell. Creating the record
+      // would bring the cell back as a "ghost" without a position or input.
+      return;
+    }
     // check write protection regarding specific keys to be set
     if (
       obj.type === "cell" &&
@@ -1429,6 +1492,18 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     );
   };
 
+  // A cell record can only be created whole, with a position and an input:
+  // setting other fields of a cell that does not exist (any more), e.g. its
+  // position from a move based on a store that has not caught up with a
+  // delete yet, must not create one.
+  private wouldCreatePartialCell = (obj: any): boolean => {
+    const get = (key: string) =>
+      typeof obj?.get === "function" ? obj.get(key) : obj?.[key];
+    if (get("type") !== "cell" || get("id") == null) return false;
+    if (get("pos") != null && typeof get("input") === "string") return false;
+    return this.syncdb.get_one({ type: "cell", id: get("id") }) == null;
+  };
+
   // might throw a CellDeleteProtectedException
   _delete = (obj: any, save = true) => {
     if (
@@ -1447,11 +1522,18 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     this.syncdb.delete(obj);
     if (obj.type === "cell" && obj.id != null) {
       this.deleteRuntimeRecord(jupyterRuntimeCellKey(obj.id));
+      this.remotelyDeletedCells.delete(obj.id);
     }
     if (save) {
       this.syncdb.commit();
     }
-    this._syncdb_change(immutable.fromJS([{ type: obj.type, id: obj.id }]));
+    const local = obj.type === "cell" && obj.id != null ? obj.id : undefined;
+    if (local != null) this.locallyDeletingCells.add(local);
+    try {
+      this._syncdb_change(immutable.fromJS([{ type: obj.type, id: obj.id }]));
+    } finally {
+      if (local != null) this.locallyDeletingCells.delete(local);
+    }
   };
 
   public _sync = () => {

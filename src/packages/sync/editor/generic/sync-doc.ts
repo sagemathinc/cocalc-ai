@@ -63,6 +63,7 @@ import {
 } from "patchflow";
 import type { RecoveryState } from "@cocalc/conat/sync/core-stream";
 import { stringMerge3 } from "./string-merge3";
+import { dbMerge3 } from "../db/merge3";
 import type {
   Client,
   CompressedPatch,
@@ -2493,7 +2494,19 @@ export class SyncDoc extends EventEmitter {
               doc.to_str(),
             ),
           }
-        : {}),
+        : this.doctype.type === "db" &&
+            this.doctype.opts?.primary_keys?.length > 0
+          ? {
+              merge3: dbMerge3<Document>(
+                this._from_str,
+                (doc) => doc.to_str(),
+                {
+                  primaryKeys: this.doctype.opts?.primary_keys,
+                  stringCols: this.doctype.opts?.string_cols ?? [],
+                },
+              ),
+            }
+          : {}),
     };
   };
 

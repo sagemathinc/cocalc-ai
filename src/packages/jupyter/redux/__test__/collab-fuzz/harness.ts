@@ -17,6 +17,7 @@ import { EventEmitter } from "events";
 import { debounce, throttle } from "lodash";
 import { Session, type PatchEnvelope, type PatchStore } from "patchflow";
 import { from_str } from "@cocalc/sync/editor/db/doc";
+import { dbMerge3 } from "@cocalc/sync/editor/db/merge3";
 import { rebaseLocalDocument } from "@cocalc/sync/editor/generic/rebase-local-document";
 import { SimpleInputMerge } from "@cocalc/sync/editor/generic/simple-input-merge";
 import { AppRedux } from "../../app";
@@ -55,7 +56,31 @@ export const codec = {
   applyPatch: (d: any, p: unknown) => d.apply_patch(p),
   applyPatchBatch: (d: any, ps: unknown[]) => d.apply_patch_batch(ps),
   makePatch: (a: any, b: any) => a.make_patch(b),
+  // The same exact merge SyncDoc uses for db documents.
+  merge3: (base: any, a: any, b: any, ancestors?: any[]) => {
+    const out = merge3(base, a, b, ancestors);
+    if (process.env.FUZZ_MERGE_PROBE) probeMerge(base, a, b, out);
+    return out;
+  },
 };
+
+const merge3 = dbMerge3<any>(fromStr, (d: any) => d.to_str(), {
+  primaryKeys: PRIMARY_KEYS,
+  stringCols: STRING_COLS,
+});
+
+// FUZZ_MERGE_PROBE: report merges that drop a token either side added.
+function probeMerge(base: any, a: any, b: any, out: any): void {
+  const [s0, sa, sb, so] = [base, a, b, out].map((d) => d.to_str());
+  for (const tok of new Set(`${sa}\n${sb}`.match(/tk[a-z]\d+q/g) ?? [])) {
+    if (!s0.includes(tok) && !so.includes(tok)) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `PROBE merge dropped ${tok}\n${JSON.stringify({ base: s0, a: sa, b: sb, out: so }, null, 1)}`,
+      );
+    }
+  }
+}
 
 interface InFlight {
   to: number;
@@ -168,6 +193,10 @@ export class SimSyncDB extends EventEmitter {
     session.on("change", this.handlePatchflowChange);
   }
 
+  // SyncDoc emits a change "from nothing to something" when ready, which
+  // also sets the baseline later changes are computed against.
+  emitInitialChange = (): void => this.emitChangeNow();
+
   private emitChangeNow = (): void => {
     this.emit("change", this.doc?.changes?.(this.before_change));
     this.before_change = this.doc;
@@ -266,18 +295,19 @@ export class CellEditor {
   // codemirror-editor.tsx cm_save
   cmSave(): void {
     if (this.value === this.lastRemote) return;
+    const base = this.lastRemote;
     this.lastRemote = this.value;
     this.client.run("editor save", () =>
-      this.client.actions.set_cell_input(this.id, this.value, true),
+      this.client.actions.set_cell_input(this.id, this.value, true, base),
     );
     this.merge.noteSaved(this.value); // onSetCellInput
   }
 
   // cell-input.tsx setCellInput, then CodeMirror's value effect.
-  private setCellInput(value: string): void {
+  private setCellInput(value: string, base?: string): void {
     this.localValue = value;
     this.client.run("editor merge", () =>
-      this.client.actions.set_cell_input(this.id, value, true),
+      this.client.actions.set_cell_input(this.id, value, true, base),
     );
     this.merge.noteSaved(value);
     this.renderValue();
@@ -299,7 +329,7 @@ export class CellEditor {
     this.merge.handleRemote({
       remote: input,
       getLocal: () => this.value,
-      applyMerged: (value) => this.setCellInput(value),
+      applyMerged: (value) => this.setCellInput(value, input),
     });
   }
 
@@ -355,8 +385,7 @@ export class NotebookClient {
       this.store,
       client,
     );
-    // SyncDoc emits a change from nothing to the loaded document when ready.
-    this.syncdb.emit("change", "all");
+    this.syncdb.emitInitialChange();
     this.actions._state = "ready";
     // React re-renders after a store change: a cell that disappeared
     // unmounts its editor, and a mounted editor sees its new input.
@@ -391,6 +420,14 @@ export class NotebookClient {
     if (this.editor?.id === id && !this.editor?.closed) return;
     this.editor?.close();
     this.editor = id == null ? undefined : new CellEditor(this, id);
+  }
+
+  // The notebook frame's commands that split, merge, copy or delete cells
+  // first save every open input editor (cell-notebook/actions.ts
+  // save_all_input_editors).
+  frameCommand<T>(source: string, f: () => T): T {
+    if (this.editor != null && !this.editor.closed) this.editor.cmSave();
+    return this.run(source, f);
   }
 
   // The cell editor unmounts when its cell disappears from the notebook.

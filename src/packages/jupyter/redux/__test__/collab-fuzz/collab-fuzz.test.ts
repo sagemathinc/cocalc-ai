@@ -11,7 +11,8 @@ open cell editor must show its cell's input.
 Run with JUPYTER_FUZZ=1. FUZZ_RUNS (default 6) and FUZZ_SEED (default 1) select the seeds; a failure
 prints its seed, so it can be replayed with FUZZ_SEED=<seed> FUZZ_RUNS=1.
 FUZZ_STEPS sets operations per session and FUZZ_VERBOSE prints the operation
-log and final notebook.
+log and final notebook. FUZZ_NO_SPLIT_MERGE leaves out splitting and merging
+cells, and FUZZ_MERGE_PROBE reports core merges that drop a token.
 */
 
 jest.mock("@cocalc/conat/sync/akv", () => ({ akv: () => ({}) }));
@@ -222,7 +223,7 @@ async function runSession(seed: number, steps = STEPS) {
         if (c.editor?.id === id) {
           for (const t of tokensIn(c.editor.value)) deleted.add(t);
         }
-        c.run("delete cell", () => c.actions.delete_cells([id]));
+        c.frameCommand("delete cell", () => c.actions.delete_cells([id]));
         log.push(`${label}: delete cell ${id}`);
       } else if (r < 0.7) {
         // move a cell
@@ -231,18 +232,24 @@ async function runSession(seed: number, steps = STEPS) {
         const to = Math.floor(rng() * cells.length);
         c.run("move cell", () => c.actions.moveCell(from, to));
         log.push(`${label}: move cell ${from} -> ${to}`);
+      } else if (r < 0.8 && process.env.FUZZ_NO_SPLIT_MERGE) {
+        continue;
       } else if (r < 0.75) {
         // split the focused cell at a line (the frontend passes the editor cursor)
         const ed = c.editor;
         if (ed == null || ed.closed) continue;
         const line = Math.floor(rng() * ed.value.split("\n").length);
-        c.run("split cell", () => c.actions.split_cell(ed.id, { line, ch: 0 }));
+        c.frameCommand("split cell", () =>
+          c.actions.split_cell(ed.id, { line, ch: 0 }),
+        );
         log.push(`${label}: split cell ${ed.id} at line ${line}`);
       } else if (r < 0.8) {
         // merge a cell with the one below
         if (cells.length <= 1) continue;
         const id = pick(rng, cells.slice(0, -1));
-        c.run("merge cells", () => c.actions.merge_cell_below_cell(id, true));
+        c.frameCommand("merge cells", () =>
+          c.actions.merge_cell_below_cell(id, true),
+        );
         log.push(`${label}: merge cell ${id} with the one below`);
       } else if (r < 0.85) {
         // change a cell's type

@@ -112,14 +112,16 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
     );
     const getValueRef = useRef<any>(null);
 
+    // `base`: the input the value was made from, if known (see
+    // JupyterActions.set_cell_input).
     const setCellInput = useCallback(
-      (value) => {
+      (value, base?: string) => {
         const input = value ?? "";
         setLocalValue(input);
         if (!props.actions || props.input_is_readonly) {
           return;
         }
-        props.actions.set_cell_input(props.id, input, true);
+        props.actions.set_cell_input(props.id, input, true, base);
         mergeHelperRef.current.noteSaved(input);
       },
       [props.input_is_readonly, props.id, props.actions],
@@ -282,7 +284,7 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
       mergeHelperRef.current.handleRemote({
         remote,
         getLocal: () => getValueRef.current?.() ?? localValueRef.current,
-        applyMerged: setCellInput,
+        applyMerged: (value) => setCellInput(value, remote),
       });
     }, [props.cell.get("input")]);
 

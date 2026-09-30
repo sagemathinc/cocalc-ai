@@ -61,7 +61,12 @@ const STYLE: React.CSSProperties = {
 // there own object with this interface and it should work.
 export interface Actions extends CompleteActions {
   set_cursor_locs: (locs: any[], side_effect?: boolean) => void;
-  set_cell_input: (id: string, input: string, save?: boolean) => void;
+  set_cell_input: (
+    id: string,
+    input: string,
+    save?: boolean,
+    base?: string,
+  ) => void;
   undo: () => void;
   redo: () => void;
   in_undo_mode: () => boolean;
@@ -474,13 +479,17 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     const value = cm.current.getValue();
     if (value !== cm_last_remote.current) {
       // only save if we actually changed something
+      // The edit was made from what the editor last loaded or saved; passing
+      // it lets a collaborator's change that is synced but not yet shown here
+      // be merged instead of reverted by this save.
+      const base = cm_last_remote.current ?? undefined;
       cm_last_remote.current = value;
       // The true makes sure the Store has its state set immediately,
       // with no debouncing/throttling, etc., which is important
       // since some code, e.g., for introspection when doing evaluation,
       // which runs immediately after this, assumes the Store state
       // is set for the editor.
-      actions.set_cell_input(id, value, true);
+      actions.set_cell_input(id, value, true, base);
       onSetCellInput?.(value);
     }
     return value;
