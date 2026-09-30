@@ -1,11 +1,11 @@
 import { connect, createServer, type Socket } from "node:net";
 import { connect as tlsConnect } from "node:tls";
 import {
-  RestrictedCodexEgressProxy,
   isAllowedCodexEgressTarget,
   shutdownRestrictedCodexEgressProxyForTesting,
   startRestrictedCodexEgressProxySession,
 } from "./restricted-egress-proxy";
+import { RestrictedEgressProxy } from "../restricted-egress-proxy";
 
 async function connectResponse({
   proxyUrl,
@@ -135,7 +135,10 @@ async function localProxy(options = {}) {
     upstreamServer.listen(0, "127.0.0.1", resolve),
   );
   const upstreamPort = (upstreamServer.address() as { port: number }).port;
-  const proxy = new RestrictedCodexEgressProxy({
+  const proxy = new RestrictedEgressProxy({
+    name: "test",
+    username: "cocalc-codex",
+    allowedHosts: new Set(["chatgpt.com", "api.anthropic.com"]),
     connectUpstream: () => connect(upstreamPort, "127.0.0.1"),
     ...options,
   });
@@ -218,16 +221,51 @@ describe("restricted egress tunnels verify the TLS destination", () => {
     }
   });
 
-  it("forwards the exact ClientHello for the allowed host", async () => {
-    const proxy = await localProxy();
-    try {
-      const hello = await captureClientHello("chatgpt.com");
-      await tunnel(proxy, "chatgpt.com:443", hello);
-      expect(Buffer.concat(proxy.received).equals(hello)).toBe(true);
-    } finally {
-      await proxy.close();
+  it.each(["chatgpt.com", "api.anthropic.com"])(
+    "forwards the exact ClientHello for %s",
+    async (hostname) => {
+      const proxy = await localProxy();
+      try {
+        const hello = await captureClientHello(hostname);
+        await tunnel(proxy, `${hostname}:443`, hello);
+        expect(Buffer.concat(proxy.received).equals(hello)).toBe(true);
+      } finally {
+        await proxy.close();
+      }
+    },
+  );
+});
+
+test("session allowlists are isolated snapshots and cannot expand proxy authority", async () => {
+  const local = await localProxy();
+  const hosts = new Set(["api.anthropic.com", "example.com"]);
+  const narrowed = await local.proxy.startSession({ allowedHosts: hosts });
+  hosts.add("chatgpt.com");
+  try {
+    for (const hostname of ["chatgpt.com", "example.com"]) {
+      await expect(
+        connectResponse({
+          proxyUrl: narrowed.proxyUrl,
+          target: `${hostname}:443`,
+          authenticated: true,
+        }),
+      ).resolves.toContain("403 Forbidden");
     }
-  });
+    await expect(
+      connectResponse({
+        proxyUrl: narrowed.proxyUrl,
+        target: "api.anthropic.com:443",
+        authenticated: true,
+      }),
+    ).resolves.toContain("200 Connection Established");
+    // A second session on the same listener keeps the original authority.
+    const hello = await captureClientHello("chatgpt.com");
+    await tunnel(local, "chatgpt.com:443", hello);
+    expect(Buffer.concat(local.received).equals(hello)).toBe(true);
+  } finally {
+    narrowed.close();
+    await local.close();
+  }
 });
 
 describe("restricted egress connections are bounded before authentication", () => {

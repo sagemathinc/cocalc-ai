@@ -202,27 +202,23 @@ export function resolveRenderedMessageValue({
   interrupted,
 }: {
   rowValue: string;
-  logValue?: string;
+  logValue?: string | (() => string | undefined);
   generating: boolean;
   interrupted?: boolean;
 }): string {
   const trimmedRow = rowValue.trim();
   if (
-    interrupted &&
+    (interrupted || !generating) &&
     trimmedRow.length > 0 &&
     trimmedRow !== ACP_THINKING_PLACEHOLDER
   ) {
     return rowValue;
   }
-  if (
-    typeof logValue === "string" &&
-    logValue.trim().length > 0 &&
-    (interrupted ||
-      generating ||
-      trimmedRow.length === 0 ||
-      trimmedRow === ACP_THINKING_PLACEHOLDER)
-  ) {
-    return logValue;
+  // Replaying an old event log can be expensive; only project it when its
+  // result can replace the durable row, especially after an interruption.
+  const projectedValue = typeof logValue === "function" ? logValue() : logValue;
+  if (typeof projectedValue === "string" && projectedValue.trim().length > 0) {
+    return projectedValue;
   }
   return rowValue;
 }

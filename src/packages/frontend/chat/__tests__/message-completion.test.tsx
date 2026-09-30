@@ -107,9 +107,13 @@ function log(text: string) {
 }
 
 test.each([true, false])(
-  "commit-heavy messages stay bounded after formatting (generating: %s)",
+  "multi-block commit-heavy messages stay bounded after formatting (generating: %s)",
   (generating) => {
-    const text = "abcdef0 ".repeat(4_096);
+    // Timeline rows pack whole Markdown blocks. Exercise the per-row budget
+    // with splittable content, not one deliberately indivisible paragraph.
+    const text = Array.from({ length: 16 }, () => "abcdef0 ".repeat(256)).join(
+      "\n\n",
+    );
     log(generating ? text : "");
     const parse = jest.spyOn(parser, "markdown_to_slate");
     try {
@@ -128,6 +132,30 @@ test.each([true, false])(
     }
   },
 );
+
+test("oversized activity paragraphs keep links intact without decoration growth", () => {
+  const text =
+    "abcdef0 ".repeat(2_048) +
+    "[Whole reference](https://example.com/reference) tail";
+  log(text);
+  const parse = jest.spyOn(parser, "markdown_to_slate");
+  try {
+    render(<Turn generating />);
+    expect(
+      screen.getByRole("link", { name: "Whole reference" }),
+    ).toHaveAttribute("href", "https://example.com/reference");
+    // The soft row limit must not cut links/tables/math. An oversized source
+    // block may exceed the parser budget, but optional commit links must not
+    // expand it further.
+    const oversized = parse.mock.calls
+      .map(([value]) => value)
+      .filter((value) => value.length > MAX_RENDERED_TEXT_CHARS);
+    expect(oversized.length).toBeGreaterThan(0);
+    expect(oversized.every((value) => value === text)).toBe(true);
+  } finally {
+    parse.mockRestore();
+  }
+});
 
 test.each(["connected", "idle"] as const)(
   "keeps the rendered commentary and selection when the final response arrives (%s)",
@@ -173,11 +201,16 @@ test("completed activity keeps guidance and agent file context in long rows", ()
     directory: "/home/user/work",
   };
   const blocks: InlineCodexActivityBlock[] = [
-    { kind: "agent", text: "intro ".repeat(3_000) },
+    {
+      kind: "agent",
+      text: Array.from({ length: 30 }, () => "intro ".repeat(100)).join("\n\n"),
+    },
     {
       kind: "guidance",
       time: 1500,
-      text: "context ".repeat(3_000) + "\n\n![Human image](reference.png)",
+      text:
+        Array.from({ length: 30 }, () => "context ".repeat(100)).join("\n\n") +
+        "\n\n![Human image](reference.png)",
     },
     { kind: "agent", text: "![Agent image](output.png)" },
   ];

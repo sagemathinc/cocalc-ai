@@ -1152,7 +1152,7 @@ describe("projects.createProject clone routing", () => {
       if (
         sql.includes("SELECT") &&
         sql.includes("p.project_id") &&
-        sql.includes("FROM projects AS p")
+        sql.includes("FROM candidates c JOIN projects AS p USING (project_id)")
       ) {
         return {
           rows: [

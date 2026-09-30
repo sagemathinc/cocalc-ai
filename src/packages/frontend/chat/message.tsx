@@ -913,45 +913,45 @@ export default function Message({
     codexPreviewLog.loadError,
     codexPreviewLog.loadState,
   ]);
-  const codexBodyValue = useMemo(() => {
-    if (
-      !Array.isArray(codexPreviewLog.events) ||
-      codexPreviewLog.events.length === 0
-    ) {
-      return undefined;
-    }
-    if (effectiveGenerating) {
-      return getLiveResponseMarkdown(codexPreviewLog.events as any);
-    }
-    if (acpInterrupted) {
-      return getInterruptedResponseMarkdown(
-        codexPreviewLog.events as any,
-        acpInterruptedText,
-      );
-    }
-    return getBestResponseText(codexPreviewLog.events as any);
-  }, [
-    acpInterrupted,
-    acpInterruptedText,
-    codexPreviewLog.events,
-    effectiveGenerating,
-  ]);
+  const renderedMessageValue = useMemo(
+    () =>
+      resolveRenderedMessageValue({
+        rowValue: rowMessageValue,
+        logValue: () => {
+          if (
+            !Array.isArray(codexPreviewLog.events) ||
+            codexPreviewLog.events.length === 0
+          ) {
+            return undefined;
+          }
+          if (effectiveGenerating) {
+            return getLiveResponseMarkdown(codexPreviewLog.events as any);
+          }
+          if (acpInterrupted) {
+            return getInterruptedResponseMarkdown(
+              codexPreviewLog.events as any,
+              acpInterruptedText,
+            );
+          }
+          return getBestResponseText(codexPreviewLog.events as any);
+        },
+        generating: effectiveGenerating,
+        interrupted: acpInterrupted,
+      }),
+    [
+      acpInterrupted,
+      acpInterruptedText,
+      codexPreviewLog.events,
+      effectiveGenerating,
+      rowMessageValue,
+    ],
+  );
   const completedCodexActivityBlocks = turnActivity.completedBlocks;
   const timelineRows = turnActivity.rows;
   const showsActivityTimeline = timelineRows.length > 0;
   const lastCodexActivityAtMs = useMemo(
     () => getLatestCodexActivityAtMs(codexPreviewLog.events),
     [codexPreviewLog.events],
-  );
-  const renderedMessageValue = useMemo(
-    () =>
-      resolveRenderedMessageValue({
-        rowValue: rowMessageValue,
-        logValue: codexBodyValue,
-        generating: effectiveGenerating,
-        interrupted: acpInterrupted,
-      }),
-    [acpInterrupted, codexBodyValue, effectiveGenerating, rowMessageValue],
   );
   const responseParentMessageId = parentMessageId(message);
   useEffect(() => {

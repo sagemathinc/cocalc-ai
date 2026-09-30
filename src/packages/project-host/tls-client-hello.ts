@@ -3,7 +3,7 @@
  *  License: MS-RSL – see https://github.com/sagemathinc/cocalc-ai/blob/master/LICENSE.md
  */
 
-// Minimal TLS ClientHello reader for the restricted egress proxy: extract the
+// Minimal TLS ClientHello reader for the shared restricted egress proxy: extract the
 // server name (SNI) a client asks for inside a CONNECT tunnel, before any of
 // its bytes are forwarded upstream. Anything unexpected is an error; callers
 // must fail closed.

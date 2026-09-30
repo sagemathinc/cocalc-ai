@@ -240,3 +240,27 @@ test("command authority is revoked before stopping the controller and cleanup su
   ).rejects.toThrow("bridge cleanup failed");
   expect(order).toEqual(["bridge", "stop", "refresh", "home"]);
 });
+
+test("restricted egress environment reaches only the controller process", () => {
+  const args = claudeSubscriptionContainerArgs({
+    name: "restricted",
+    projectId: "project",
+    owner: "owner",
+    home: "/auth",
+    rootfs: "/rootfs",
+    managedHarnesses: "/harnesses",
+    nodeMounts: {},
+    uid: 1000,
+    gid: 1000,
+    env: { HTTPS_PROXY: "http://cocalc-claude:token@10.1.2.3:4567" },
+  });
+  const rootfs = args.indexOf("--rootfs");
+  const proxy = args.indexOf(
+    "HTTPS_PROXY=http://cocalc-claude:token@10.1.2.3:4567",
+  );
+  expect(proxy).toBeGreaterThan(0);
+  expect(args[proxy - 1]).toBe("--env");
+  expect(proxy).toBeLessThan(rootfs);
+  // Still its own network, not the project's.
+  expect(args).toContain("--network=slirp4netns");
+});
