@@ -793,7 +793,8 @@ export async function adoptCollaborationScanPredecessor(
       `UPDATE collaboration_scan_jobs SET expected_run_id=$4
       WHERE project_id=$1 AND job_id=$2 AND dispatch_token=$3 AND dispatch_until>clock_timestamp()
       AND state='running' AND host_id=$5 AND NOT cancel_requested AND finish_result IS NULL
-      AND (expected_run_id IS NULL OR expected_run_id IS NOT DISTINCT FROM $4::uuid OR NOT host_request_started)
+      AND (expected_run_id IS NOT DISTINCT FROM $4::uuid OR NOT host_request_started
+        OR (batch_id IS NULL AND expected_run_id IS NULL))
       RETURNING job_id`,
       [
         opts.project_id,

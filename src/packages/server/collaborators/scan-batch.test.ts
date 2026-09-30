@@ -291,6 +291,28 @@ describeDb("manual scan LRO durability", () => {
     ).toHaveLength(1);
     expect(admit).toHaveBeenCalledTimes(1);
   });
+  test("a submitted empty predecessor cannot be rewritten after host state loss", async () => {
+    await start();
+    await runScanBatchPass(step);
+    expect(admit).toHaveBeenCalledTimes(1);
+    status.mockResolvedValue({
+      state: "unknown",
+      current_run_id: randomUUID(),
+    });
+    await getPool().query(
+      "UPDATE collaboration_scan_jobs SET last_dispatch_at=now()-interval '1 minute'",
+    );
+    await due();
+    await runScanBatchPass(step);
+    expect(admit).toHaveBeenCalledTimes(1);
+    expect(
+      (
+        await getPool().query(
+          "SELECT expected_run_id FROM collaboration_scan_jobs",
+        )
+      ).rows,
+    ).toEqual([{ expected_run_id: null }]);
+  });
   test("recovery leases fence stale workers and survive loss of project membership", async () => {
     await start();
     admit.mockRejectedValue(Error("lost start acknowledgment"));
