@@ -19,9 +19,11 @@ import Leaf from "./leaf";
 import { markdown_to_slate as markdownToSlate } from "./markdown-to-slate";
 import { ChangeContext } from "./use-change";
 import { registerMarkdownSelection } from "./selection-source";
+import { stripBlankParagraphs } from "./padding";
 
 interface Props {
   value: string;
+  preserveBlankLines?: boolean;
   style?: CSSProperties;
   className?: string;
   editorTheme?: string | null;
@@ -39,6 +41,7 @@ type PartialSlateEditor = any; // TODO
 
 interface StaticMarkdownRenderInput {
   value: string;
+  preserveBlankLines: boolean;
   inlineCodeLinks?: InlineCodeLink[];
   inlineCodeProjectRoot?: string;
   highlightQuery?: string;
@@ -53,6 +56,7 @@ export default function StaticMarkdown({
   inlineCodeProjectRoot,
   highlightQuery,
   serializeSelection,
+  preserveBlankLines = true,
 }: Props) {
   const didMountRef = useRef(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -60,6 +64,7 @@ export default function StaticMarkdown({
   const [editor, setEditor] = useState<PartialSlateEditor>(() => ({
     children: renderStaticMarkdownChildren({
       value,
+      preserveBlankLines,
       inlineCodeLinks,
       inlineCodeProjectRoot,
       highlightQuery,
@@ -115,6 +120,7 @@ export default function StaticMarkdown({
     }
     const nextRender = {
       value,
+      preserveBlankLines,
       inlineCodeLinks,
       inlineCodeProjectRoot,
       highlightQuery,
@@ -131,7 +137,13 @@ export default function StaticMarkdown({
     setHasPendingRender(false);
     setEditor({ children: renderStaticMarkdownChildren(nextRender) });
     setChange((change) => change + 1);
-  }, [value, inlineCodeLinks, inlineCodeProjectRoot, highlightQuery]);
+  }, [
+    value,
+    preserveBlankLines,
+    inlineCodeLinks,
+    inlineCodeProjectRoot,
+    highlightQuery,
+  ]);
 
   if (editor == null) {
     return null;
@@ -182,20 +194,20 @@ function selectionIntersectsNode(node: HTMLElement | null): boolean {
 
 function renderStaticMarkdownChildren({
   value,
+  preserveBlankLines,
   inlineCodeLinks,
   inlineCodeProjectRoot,
   highlightQuery,
-}: {
-  value: string;
-  inlineCodeLinks?: InlineCodeLink[];
-  inlineCodeProjectRoot?: string;
-  highlightQuery?: string;
-}): any[] {
+}: StaticMarkdownRenderInput): any[] {
+  const children = markdownToSlate(value);
   return applySearchHighlights(
-    applyInlineCodeLinks(markdownToSlate(value), {
-      inlineCodeLinks,
-      inlineCodeProjectRoot,
-    }),
+    applyInlineCodeLinks(
+      preserveBlankLines ? children : stripBlankParagraphs(children),
+      {
+        inlineCodeLinks,
+        inlineCodeProjectRoot,
+      },
+    ),
     highlightQuery,
   );
 }
