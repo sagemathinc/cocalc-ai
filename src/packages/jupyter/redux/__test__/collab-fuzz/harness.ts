@@ -13,260 +13,40 @@ buffer, a debounced save, SimpleInputMerge for remote changes, and a save
 when the editor unmounts.
 */
 
-import { EventEmitter } from "events";
-import { debounce, throttle } from "lodash";
-import { Session, type PatchEnvelope, type PatchStore } from "patchflow";
-import { from_str } from "@cocalc/sync/editor/db/doc";
-import { dbMerge3 } from "@cocalc/sync/editor/db/merge3";
-import { rebaseLocalDocument } from "@cocalc/sync/editor/generic/rebase-local-document";
+import { debounce } from "lodash";
+import { type PatchEnvelope, type Session } from "patchflow";
+import {
+  dbCodec,
+  SimSyncDB,
+  simSession,
+  type SimNetwork,
+} from "@cocalc/sync/editor/sim";
 import { SimpleInputMerge } from "@cocalc/sync/editor/generic/simple-input-merge";
 import { AppRedux } from "../../app";
 import { JupyterActions } from "../../actions";
 import { JupyterStore } from "../../store";
 import { SYNCDB_OPTIONS } from "../../sync";
 
+export {
+  makeRng,
+  pick,
+  SimNetwork,
+  tokensIn,
+  TOKEN_RE,
+  type Commit,
+  type Rng,
+} from "@cocalc/sync/editor/sim";
+
 // frontend/frame-editors/code-editor/const.ts
 export const SAVE_DEBOUNCE_MS = 750;
 
-export type Rng = () => number;
-
-// Small deterministic PRNG so every failure is replayable from its seed.
-export function makeRng(seed: number): Rng {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-export const pick = <T>(rng: Rng, items: readonly T[]): T =>
-  items[Math.floor(rng() * items.length)];
-
 // The notebook codec, as SyncDoc.buildPatchflowCodec builds it for a SyncDB
-// with SYNCDB_OPTIONS.
-const PRIMARY_KEYS = SYNCDB_OPTIONS.primary_keys;
-const STRING_COLS = SYNCDB_OPTIONS.string_cols;
-export const fromStr = (s: string) => from_str(s, PRIMARY_KEYS, STRING_COLS);
-export const codec = {
-  fromString: fromStr,
-  toString: (d: any) => d.to_str(),
-  applyPatch: (d: any, p: unknown) => d.apply_patch(p),
-  applyPatchBatch: (d: any, ps: unknown[]) => d.apply_patch_batch(ps),
-  makePatch: (a: any, b: any) => a.make_patch(b),
-  // The same exact merge SyncDoc uses for db documents.
-  merge3: (base: any, a: any, b: any, ancestors?: any[]) => {
-    const out = merge3(base, a, b, ancestors);
-    if (process.env.FUZZ_MERGE_PROBE) probeMerge(base, a, b, out);
-    return out;
-  },
-};
-
-const merge3 = dbMerge3<any>(fromStr, (d: any) => d.to_str(), {
-  primaryKeys: PRIMARY_KEYS,
-  stringCols: STRING_COLS,
+// with SYNCDB_OPTIONS (with its exact merge).
+export const codec = dbCodec({
+  primaryKeys: SYNCDB_OPTIONS.primary_keys,
+  stringCols: SYNCDB_OPTIONS.string_cols,
 });
-
-// FUZZ_MERGE_PROBE: report merges that drop a token either side added, or
-// have more copies of a token than either side.
-function probeMerge(base: any, a: any, b: any, out: any): void {
-  const [s0, sa, sb, so] = [base, a, b, out].map((d) => d.to_str());
-  const n = (text: string, tok: string) => text.split(tok).length - 1;
-  for (const tok of new Set(`${sa}\n${sb}`.match(/tk[a-z]\d+q/g) ?? [])) {
-    if (n(so, tok) > Math.max(n(sa, tok), n(sb, tok))) {
-      // eslint-disable-next-line no-console
-      console.log(
-        `PROBE merge duplicated ${tok}\n${JSON.stringify({ base: s0, a: sa, b: sb, out: so }, null, 1)}`,
-      );
-    }
-    if (!s0.includes(tok) && !so.includes(tok)) {
-      // eslint-disable-next-line no-console
-      console.log(
-        `PROBE merge dropped ${tok}\n${JSON.stringify({ base: s0, a: sa, b: sb, out: so }, null, 1)}`,
-      );
-    }
-  }
-}
-
-interface InFlight {
-  to: number;
-  env: PatchEnvelope;
-  deliverAt: number;
-}
-
-export class SimNetwork {
-  private queue: InFlight[] = [];
-  private receivers = new Map<number, (env: PatchEnvelope) => void>();
-  public log: { from: number; env: PatchEnvelope }[] = [];
-
-  constructor(
-    private rng: Rng,
-    private now: () => number,
-    private maxDelayMs: number,
-  ) {}
-
-  register(id: number, onEnvelope: (env: PatchEnvelope) => void): void {
-    this.receivers.set(id, onEnvelope);
-  }
-
-  send(from: number, env: PatchEnvelope): void {
-    this.log.push({ from, env });
-    for (const to of this.receivers.keys()) {
-      if (to === from) continue;
-      this.queue.push({
-        to,
-        env,
-        deliverAt: this.now() + Math.floor(this.rng() * this.maxDelayMs),
-      });
-    }
-  }
-
-  pending(): number {
-    return this.queue.length;
-  }
-
-  // Deliver messages that are due, in random order (patchflow must tolerate
-  // reordering).
-  deliverDue(all = false): number {
-    const now = this.now();
-    const due = this.queue.filter((m) => all || m.deliverAt <= now);
-    this.queue = this.queue.filter((m) => !due.includes(m));
-    for (let i = due.length - 1; i > 0; i--) {
-      const j = Math.floor(this.rng() * (i + 1));
-      [due[i], due[j]] = [due[j], due[i]];
-    }
-    for (const m of due) this.receivers.get(m.to)?.(m.env);
-    return due.length;
-  }
-}
-
-class SimPatchStore implements PatchStore {
-  private listeners: ((env: PatchEnvelope) => void)[] = [];
-  constructor(
-    private id: number,
-    private net: SimNetwork,
-    private initial: PatchEnvelope[],
-  ) {
-    net.register(id, (env) => {
-      for (const fn of this.listeners) fn(env);
-    });
-  }
-  async loadInitial() {
-    return { patches: this.initial.slice() };
-  }
-  append(env: PatchEnvelope): void {
-    this.net.send(this.id, env);
-  }
-  subscribe(fn: (env: PatchEnvelope) => void) {
-    this.listeners.push(fn);
-    return () => {
-      this.listeners = this.listeners.filter((x) => x !== fn);
-    };
-  }
-}
-
-export interface Commit {
-  before: string;
-  after: string;
-  source?: string;
-}
-
-// The subset of SyncDB that JupyterActions and JupyterStore use, with the
-// semantics of SyncDoc (sync/editor/generic/sync-doc.ts): set/delete edit a
-// local draft and emit a debounced change; commit rebases the draft onto the
-// committed document and commits it as a patch; merged remote patches rebase
-// the draft and emit a change throttled by change_throttle.
-export class SimSyncDB extends EventEmitter {
-  public project_id = "00000000-0000-4000-8000-000000000000";
-  private doc: any;
-  private last: any;
-  private before_change: any;
-  public commits: Commit[] = [];
-  public source?: string;
-  private emit_change: () => void;
-  private emit_change_debounced: () => void;
-
-  constructor(public session: Session) {
-    super();
-    this.setMaxListeners(100);
-    this.doc = session.getDocument();
-    this.last = this.doc;
-    this.emit_change_debounced = debounce(this.emitChangeNow, 0);
-    this.emit_change = throttle(
-      this.emitChangeNow,
-      SYNCDB_OPTIONS.change_throttle,
-    );
-    session.on("change", this.handlePatchflowChange);
-  }
-
-  // SyncDoc emits a change "from nothing to something" when ready, which
-  // also sets the baseline later changes are computed against.
-  emitInitialChange = (): void => this.emitChangeNow();
-
-  private emitChangeNow = (): void => {
-    this.emit("change", this.doc?.changes?.(this.before_change));
-    this.before_change = this.doc;
-  };
-
-  private handlePatchflowChange = (committed: any): void => {
-    const previous = this.doc;
-    const next =
-      previous == null
-        ? committed
-        : rebaseLocalDocument({ base: this.last, draft: previous, committed });
-    this.last = committed;
-    this.doc = next;
-    if (previous != null && previous.is_equal(next)) return;
-    this.emit("after-change");
-    this.emit_change();
-  };
-
-  private set_doc(doc: any): void {
-    if (doc.is_equal(this.doc)) return;
-    this.doc = doc;
-    this.emit_change_debounced();
-  }
-
-  set = (x: any): void => this.set_doc(this.doc.set(x));
-  delete = (x?: any): void => this.set_doc(this.doc.delete(x));
-  get = (x?: any): any => this.doc.get(x);
-  get_one = (x?: any): any => this.doc.get_one?.(x);
-  get_doc = (): any => this.doc;
-  to_str = (): string => this.doc.to_str();
-
-  commit = (): boolean => {
-    const draft = this.doc;
-    const current = this.session.getDocument() as any;
-    const forceMerge = this.session.getHeads().length > 1;
-    const next = rebaseLocalDocument({
-      base: this.last,
-      draft,
-      committed: current,
-    });
-    this.doc = next;
-    if (!forceMerge && current.is_equal(next)) return false;
-    this.last = next;
-    const before = current.to_str();
-    this.session.commit(next);
-    this.commits.push({ before, after: next.to_str(), source: this.source });
-    return true;
-  };
-
-  save = async (): Promise<void> => {};
-  get_state = (): string => "ready";
-  isReady = (): boolean => true;
-  is_read_only = (): boolean => false;
-  init_ipywidgets = (): void => {};
-  in_undo_mode = (): boolean => false;
-  undo = (): void => {};
-  redo = (): void => {};
-  has_uncommitted_changes = (): boolean => false;
-  close = (): void => {
-    this.session.close();
-  };
-}
+export const fromStr = codec.fromString;
 
 // A cell's input editor, modelled on frontend/jupyter/cell-input.tsx (live
 // value, SimpleInputMerge for remote changes) and codemirror-editor.tsx
@@ -378,16 +158,16 @@ export class NotebookClient {
   ) {}
 
   async start(): Promise<void> {
-    const patchStore = new SimPatchStore(this.id, this.net, this.initial);
-    this.session = new Session({
-      codec,
-      patchStore,
+    this.session = await simSession({
+      id: this.id,
+      net: this.net,
       clock: this.clock,
-      userId: this.id + 1,
-      clientId: `client${this.id}`,
+      initial: this.initial,
+      codec,
     });
-    await this.session.init();
-    this.syncdb = new SimSyncDB(this.session);
+    this.syncdb = new SimSyncDB(this.session, {
+      changeThrottle: SYNCDB_OPTIONS.change_throttle,
+    });
     const redux = new AppRedux();
     const name = `jupyter-fuzz-${this.id}`;
     this.store = redux.createStore(name, JupyterStore);
@@ -420,13 +200,7 @@ export class NotebookClient {
 
   // Run an operation, labelling the commits it makes.
   run<T>(source: string, f: () => T): T {
-    const prev = this.syncdb.source;
-    this.syncdb.source = source;
-    try {
-      return f();
-    } finally {
-      this.syncdb.source = prev;
-    }
+    return this.syncdb.run(source, f);
   }
 
   cellList(): string[] {
@@ -471,6 +245,3 @@ export class NotebookClient {
     this.session.close();
   }
 }
-
-export const TOKEN_RE = /tk[a-z]\d+q/g;
-export const tokensIn = (text: string): string[] => text.match(TOKEN_RE) ?? [];
