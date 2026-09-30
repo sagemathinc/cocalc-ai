@@ -227,6 +227,46 @@ describe("local HTML and PDF delivery", () => {
     popup.onafterprint();
     expect(popup.close).toHaveBeenCalledTimes(1);
   });
+  it("handles a popup that loads and finishes printing synchronously", async () => {
+    const popup: any = {
+      document: {
+        open: jest.fn(),
+        write: jest.fn(),
+        close: jest.fn(() => popup.onload?.()),
+      },
+      print: jest.fn(() => popup.onafterprint?.()),
+      close: jest.fn(),
+    };
+    jest.spyOn(window, "open").mockReturnValue(popup);
+    const target = actions({
+      toHTML: jest.fn(async () => "<html>print</html>"),
+      setState: jest.fn(),
+    });
+    await target.nbconvertToHtml("cocalc-pdf");
+    expect(popup.print).toHaveBeenCalledTimes(1);
+    expect(popup.close).toHaveBeenCalledTimes(1);
+  });
+  it("prints an already loaded popup once even if load is delivered later", async () => {
+    const popup: any = {
+      document: {
+        open: jest.fn(),
+        write: jest.fn(),
+        close: jest.fn(),
+        readyState: "complete",
+      },
+      print: jest.fn(),
+      close: jest.fn(),
+    };
+    jest.spyOn(window, "open").mockReturnValue(popup);
+    const target = actions({
+      toHTML: jest.fn(async () => "<html>print</html>"),
+      setState: jest.fn(),
+    });
+    await target.nbconvertToHtml("cocalc-pdf");
+    expect(popup.print).toHaveBeenCalledTimes(1);
+    popup.onload();
+    expect(popup.print).toHaveBeenCalledTimes(1);
+  });
   it("surfaces HTML delivery failure in the conversion state", async () => {
     (downloadHTML as jest.Mock).mockImplementationOnce(() => {
       throw Error("delivery failed");

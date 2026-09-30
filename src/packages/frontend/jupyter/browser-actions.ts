@@ -2986,13 +2986,19 @@ export class JupyterActions extends JupyterActions0 {
       }
       printWindow.document.open();
       printWindow.document.write(html);
-      printWindow.document.close();
-      printWindow.onload = function () {
-        printWindow.print();
+      let printRequested = false;
+      const print = () => {
+        if (printRequested) return;
+        printRequested = true;
         printWindow.onafterprint = function () {
           printWindow.close();
         };
+        printWindow.print();
       };
+      printWindow.onload = print;
+      printWindow.document.close();
+      // A fully local document can already be loaded before the handler runs.
+      if (printWindow.document.readyState === "complete") print();
       this.setState({ nbconvert: { ...result, state: "done", error: "" } });
     } catch (err) {
       this.setState({
