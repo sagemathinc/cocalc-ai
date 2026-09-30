@@ -176,7 +176,9 @@ async function typeTokenRich(
       .getSelection()
       ?.collapse(last, zeroWidth ? 0 : (last.textContent ?? "").length);
   }, index);
-  await page.waitForTimeout(20);
+  // slate-react reads DOM selection changes throttled (about 100ms); typing
+  // earlier would go where the click put the caret, possibly mid-word.
+  await page.waitForTimeout(150);
   if (rng() < 0.3) await page.keyboard.press("Enter");
   await page.keyboard.type(` ${token}`, { delay: 15 + Math.floor(rng() * 40) });
 }
@@ -344,7 +346,19 @@ test("a meeting's notes stay consistent with many people typing", async ({
   const counts = new Map<string, number>();
   for (const t of text.match(TOKEN_RE) ?? [])
     counts.set(t, (counts.get(t) ?? 0) + 1);
-  const lost = typed.filter((t) => !counts.has(t));
+  // A word someone else's typing went into the middle of (e.g. "tk2n3 tk7n3q
+  // 4q" for tk2n34q) is split, not lost: its characters are all there.
+  const isSplit = (t: string) => {
+    for (let k = 2; k < t.length; k++) {
+      const re = new RegExp(
+        `${t.slice(0, k)}(?: tk\\d+n\\d+q)+ ?${t.slice(k)}`,
+      );
+      if (re.test(text)) return true;
+    }
+    return false;
+  };
+  const split = typed.filter((t) => !counts.has(t) && isSplit(t));
+  const lost = typed.filter((t) => !counts.has(t) && !isSplit(t));
   const duplicated = [...counts].filter(([, n]) => n > 1).map(([t]) => t);
   console.log(
     JSON.stringify({
@@ -355,6 +369,7 @@ test("a meeting's notes stay consistent with many people typing", async ({
       reloads,
       distinctValues: distinct,
       lost: lost.length,
+      split: split.length,
       duplicated: duplicated.length,
       lostSample: lost.slice(0, 10),
       duplicatedSample: duplicated.slice(0, 10),
@@ -393,7 +408,7 @@ test("a meeting's notes stay consistent with many people typing", async ({
     );
     await writeFile(`${path}.debug.json`, JSON.stringify(debugEvents));
   }
-  if (distinct > 1 || lost.length || duplicated.length) {
+  if (distinct > 1 || lost.length || split.length || duplicated.length) {
     await writeFile(
       `${path}.final.json`,
       JSON.stringify({ values, typed, missed, lost, events }, null, 1),
@@ -401,5 +416,6 @@ test("a meeting's notes stay consistent with many people typing", async ({
   }
   expect(distinct).toBe(1);
   expect(lost).toEqual([]);
+  expect(split).toEqual([]);
   expect(duplicated).toEqual([]);
 });
