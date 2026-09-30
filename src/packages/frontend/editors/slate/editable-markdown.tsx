@@ -2263,6 +2263,18 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     }
   }, [is_current]);
 
+  // External values set editor.syncCausedUpdate so the resulting onChange is
+  // not saved back. Slate delivers that onChange in a microtask queued by the
+  // first applied operation; clear the flag in a later microtask so that it
+  // cannot outlive an external update that changed nothing (no onChange at
+  // all). A stale flag makes the next local edit look sync-caused, so it is
+  // never marked dirty or saved and a later remote merge overwrites it.
+  function clearSyncCausedUpdateAfterFlush() {
+    queueMicrotask(() => {
+      editor.syncCausedUpdate = false;
+    });
+  }
+
   function setEditorToSlateValue(nextValueRaw: Descendant[]) {
     if (nextValueRaw == null) return;
     const nextEditorValue = withBlockSpacerParagraphs(
@@ -2280,6 +2292,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     onChange(nextEditorValue);
     editor.resetHasUnsavedChanges();
     editor.markdownValue = normalizedValue;
+    clearSyncCausedUpdateAfterFlush();
   }
 
   function forceSetEditorToValue(value: string) {
@@ -2324,6 +2337,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       onlySelectionOps: false,
       syncCausedUpdate: true,
     });
+    clearSyncCausedUpdateAfterFlush();
   }
 
   const setEditorToValue = (value) => {
@@ -2644,6 +2658,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     } else {
       applyExternalValue();
     }
+    clearSyncCausedUpdateAfterFlush();
     if (
       shouldPublishReadOnlyExternalSlateValue({
         readOnly: read_only,
