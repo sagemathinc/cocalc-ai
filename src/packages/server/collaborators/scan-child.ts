@@ -19,7 +19,7 @@ import { scanChildTerminal } from "@cocalc/util/collaboration-scan-batch";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import { dispatchCollaborationScan } from "./scan-dispatch";
 import { retainUnavailableScanChild } from "@cocalc/database/postgres/collaborators/collaborators-scan-recovery";
-import { ScanHostUnavailable, scanHostCall } from "./scan-host";
+import { ScanHostBusy, ScanHostUnavailable, scanHostCall } from "./scan-host";
 
 const logger = getLogger("server:collaborators:scan-child");
 
@@ -30,6 +30,8 @@ export async function stepScanChild(
   try {
     return await step(opts, authority);
   } catch (error) {
+    if (error instanceof ScanHostBusy)
+      return prepareScanChild({ ...opts, action: "inspect" }, authority);
     if (!(error instanceof ScanHostUnavailable)) throw error;
     const result = await retainUnavailableScanChild(opts, authority);
     if (!result) throw error;
@@ -60,6 +62,7 @@ async function step(
       if ("host_deferred" in dispatch && dispatch.host_deferred)
         deferredUntil = Date.now() + (dispatch.retry_after_ms ?? 30000);
     } catch (error) {
+      if (error instanceof ScanHostBusy) throw error;
       const unsubmitted = await finishUnsubmittedScanChild(opts, authority);
       if (unsubmitted) {
         logger.warn("scan ended before host submission", {

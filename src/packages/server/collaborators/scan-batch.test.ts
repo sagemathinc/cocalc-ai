@@ -231,6 +231,77 @@ describeDb("manual scan LRO durability", () => {
     ).toBe("unavailable");
     expect(admit).toHaveBeenCalledTimes(1);
   });
+  test.each(["before-submit", "submit", "running", "cancel"])(
+    "temporary owner ingestion pressure preserves the exact scan (%s)",
+    async (phase) => {
+      const operation = (await start()).operation!;
+      const run_id = operation.children[0].request_id;
+      const busy = Error(
+        "calling remote function 'getCollaborationReconciliationStatus': collaboration ingestion busy; retry later - callHub: name='collaborators.discoveryForHost', code='unknown'",
+      );
+      if (phase === "running" || phase === "cancel") {
+        await runScanBatchPass(step);
+        status.mockResolvedValue({ state: "indexing", run_id, entries: 12 });
+      }
+      if (phase === "cancel") {
+        await api({ action: "cancel", op_id: operation.op_id });
+        cancel.mockRejectedValue(busy);
+      } else if (phase === "submit") {
+        admit.mockRejectedValue(busy);
+      } else {
+        status.mockRejectedValue(busy);
+      }
+      await due();
+      await runScanBatchPass(step);
+      const pending = (await api({ action: "status" })).operation!;
+      expect(pending.status).toBe("running");
+      expect(pending.processed).toBe(0);
+      expect(pending.children[0].request_id).toBe(run_id);
+      expect(
+        (
+          await getPool().query(
+            "SELECT job_id,cancel_requested,recovery_pending FROM collaboration_scan_jobs",
+          )
+        ).rows,
+      ).toEqual([
+        {
+          job_id: run_id,
+          cancel_requested: phase === "cancel",
+          recovery_pending: false,
+        },
+      ]);
+      if (phase !== "cancel") expect(cancel).not.toHaveBeenCalled();
+
+      // Clearing pressure continues the retained request, never a replacement.
+      const completed = { state: "discovered", run_id, pending_candidates: 0 };
+      if (phase === "before-submit" || phase === "submit") {
+        status.mockResolvedValue({ state: "unknown" });
+        admit.mockImplementation(async (scan) => {
+          status.mockResolvedValue(completed);
+          return { admission: "accepted", run_id: scan.run_id };
+        });
+        // Advance only the isolated fixture's dispatch backoff.
+        await getPool().query(
+          "UPDATE collaboration_scan_jobs SET dispatch_until=now()-interval '1 second',last_dispatch_at=now()-interval '2 minutes'",
+        );
+      } else {
+        status.mockResolvedValue(completed);
+      }
+      cancel.mockImplementation(async (scan) => ({
+        state: "cancelled",
+        run_id: scan.run_id,
+      }));
+      await due();
+      await runScanBatchPass(step);
+      const final = (await api({ action: "status" })).operation!;
+      expect(final.op_id).toBe(operation.op_id);
+      expect(final.children[0].request_id).toBe(run_id);
+      expect(final.status).toBe(phase === "cancel" ? "canceled" : "succeeded");
+      expect(admit).toHaveBeenCalledTimes(phase === "submit" ? 2 : 1);
+      for (const [request] of admit.mock.calls)
+        expect(request.run_id).toBe(run_id);
+    },
+  );
   test.each(["prior-frontier", "empty-frontier"])(
     "new admission reconciles its predecessor after a rejected earlier request (%s)",
     async (kind) => {
