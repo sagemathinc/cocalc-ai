@@ -338,6 +338,11 @@ export function load_target(
       redux.getActions("page").set_active_tab("hosts", change_history);
       break;
 
+    case "people":
+      redux.getActions("page").setState({ people_route: parsed.route });
+      redux.getActions("page").set_active_tab("people", change_history);
+      break;
+
     case "share":
       redux.getActions("page").setState({ share_slug: parsed.slug });
       redux.getActions("page").set_active_tab("share", change_history);

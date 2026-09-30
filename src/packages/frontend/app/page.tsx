@@ -499,6 +499,26 @@ export const Page: React.FC = () => {
     );
   }
 
+  function render_people_nav_button(): React.JSX.Element | null {
+    if (lite) return null;
+    return (
+      <NavTab
+        style={{
+          height: `${pageStyle.height}px`,
+          margin: "0",
+          overflow: "hidden",
+        }}
+        name="people"
+        active_top_tab={active_top_tab}
+        tooltip="Conversations with the people you collaborate with"
+        icon="users"
+        label="People"
+        hide_label={isNarrow}
+        ariaLabel="People"
+      />
+    );
+  }
+
   function render_agents_nav_button(): React.JSX.Element | null {
     if (aiDisabled) return null;
     return (
@@ -554,6 +574,7 @@ export const Page: React.FC = () => {
           <nav className="smc-top-bar" style={topBarStyle}>
             {!workspaceShell && <AppLogo size={pageStyle.height} />}
             {!workspaceShell && is_logged_in && render_agents_nav_button()}
+            {!workspaceShell && is_logged_in && render_people_nav_button()}
             {is_logged_in && render_project_nav_button()}
             {render_hosts_tab()}
             {!isNarrow ? (

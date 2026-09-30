@@ -307,6 +307,13 @@ export class PageActions extends Actions<PageState> {
         }
         set_window_title("CoCalc Docs");
         return;
+      case "people":
+        if (change_history) {
+          const route = this.redux.getStore("page").get("people_route");
+          set_url(getPageUrlPath({ page: "people", route }));
+        }
+        set_window_title("People");
+        return;
       case "hosts":
         if (change_history) {
           set_url(getPageUrlPath({ page: "hosts" }));

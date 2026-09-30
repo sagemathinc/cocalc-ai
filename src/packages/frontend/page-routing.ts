@@ -28,6 +28,7 @@ export type PageTopTab =
   | "file-use"
   | "hosts"
   | "notifications"
+  | "people"
   | "project"
   | "projects"
   | "share"
@@ -52,6 +53,9 @@ export type ParsedPageTarget =
       tab?: "mentions";
     }
   | { page: "docs"; print?: boolean; slug?: string }
+  // route: "conversations/<project_id>/<conversation_id>" or
+  // "collaborators/<account_id>"
+  | { page: "people"; route?: string }
   | { page: "file-use" }
   | { page: "admin"; route: AdminRoute }
   | { page: "hosts" }
@@ -132,6 +136,11 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
       };
     case "file-use":
       return { page: "file-use" };
+    case "people":
+      return {
+        page: "people",
+        route: segments.slice(1).filter(Boolean).join("/") || undefined,
+      };
     case "admin":
       return {
         page: "admin",
@@ -218,6 +227,8 @@ export function getPageTargetPath(parsed: ParsedPageTarget): string {
       return parsed.slug ? `app-docs/${parsed.slug}` : "app-docs";
     case "file-use":
       return "file-use";
+    case "people":
+      return parsed.route ? `people/${parsed.route}` : "people";
     case "admin":
       return getAdminTargetPath(parsed.route);
     case "hosts":
