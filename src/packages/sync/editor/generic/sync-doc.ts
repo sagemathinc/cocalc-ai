@@ -315,6 +315,12 @@ export class SyncDoc extends EventEmitter {
   private last: Document;
   private doc: Document;
   private before_change?: Document;
+  // The value a local draft set with from_str(value, { base }) was derived
+  // from, e.g. what an editor showed when its user typed. The draft's changes
+  // are relative to it rather than to this.last, which can be newer: a remote
+  // change can reach this document before the editor shows it, and diffing
+  // the editor's value against this.last would delete that change.
+  private draftBase?: Document;
   private cursorSnapshots: any[] = [];
 
   private last_user_change: Date = minutes_ago(60);
@@ -775,11 +781,34 @@ export class SyncDoc extends EventEmitter {
     return this.doc;
   };
 
-  // Set this doc from its string representation.
-  from_str = (value: string): void => {
+  // Set the document to the given string. If it is an editor's value, pass
+  // the value it was derived from as base (see draftBase), so that only the
+  // editor's own changes are applied: text that reached this document but not
+  // the editor is then kept rather than deleted.
+  from_str = (value: string, opts?: { base?: string }): void => {
     // console.log(`sync-doc.from_str("${value}")`);
     this.markLocalUnsavedChange();
     this.doc = this._from_str(value);
+    this.draftBase = opts?.base != null ? this._from_str(opts.base) : undefined;
+  };
+
+  // The local draft rebased onto the committed document.
+  private rebaseDraftOnto = (
+    draft: Document,
+    committed: Document,
+  ): Document => {
+    const draftBase = this.draftBase;
+    if (draftBase == null) {
+      return rebaseLocalDocument({ base: this.last, draft, committed });
+    }
+    if (draftBase.is_equal(draft)) return committed;
+    const merge3 = this.patchflowCodec?.merge3;
+    if (merge3 != null) {
+      // Exact three-way merge from the draft's base: the draft's changes are
+      // applied once, never relocated onto similar text.
+      return merge3(draftBase as any, draft as any, committed as any) as any;
+    }
+    return rebaseLocalDocument({ base: draftBase, draft, committed });
   };
 
   // Return string representation of this doc,
@@ -3325,15 +3354,11 @@ export class SyncDoc extends EventEmitter {
     const committed = doc as Document;
     const previous = this.doc;
     const next =
-      previous == null
-        ? committed
-        : rebaseLocalDocument({
-            base: this.last,
-            draft: previous,
-            committed,
-          });
+      previous == null ? committed : this.rebaseDraftOnto(previous, committed);
     this.last = committed;
     this.doc = next;
+    // The draft is now relative to the committed document.
+    this.draftBase = undefined;
     if (previous != null && previous.is_equal(next) && this.state === "ready") {
       return;
     }
@@ -3550,11 +3575,8 @@ export class SyncDoc extends EventEmitter {
     }
     // A remote patch can advance the committed graph while this.doc still
     // contains a local draft. Replay only the local delta onto that graph.
-    const next = rebaseLocalDocument({
-      base: this.last,
-      draft,
-      committed: current,
-    });
+    const next = this.rebaseDraftOnto(draft, current);
+    this.draftBase = undefined;
     this.doc = next;
     const compareAgainst = current;
     if (

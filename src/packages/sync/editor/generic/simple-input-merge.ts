@@ -27,6 +27,13 @@ import { mergeText } from "./string-merge3";
 
 type Getter = () => string;
 
+// Debugging aid for diagnosing merges in a live editor: set
+// globalThis.__simpleInputMergeDebug to a function to receive each decision.
+function debug(event: string, data: Record<string, unknown>): void {
+  const hook = (globalThis as any).__simpleInputMergeDebug;
+  if (typeof hook === "function") hook(event, data);
+}
+
 interface RenderCandidate {
   value: string;
   // The committed value this candidate was derived from.
@@ -43,6 +50,8 @@ export class SimpleInputMerge {
   private requestedLocalUpdate?: {
     latest: RenderCandidate;
     renderCandidates: RenderCandidate[];
+    // What the editor showed when the latest merge was requested.
+    shown: RenderCandidate;
   };
 
   constructor(initialValue: string) {
@@ -97,6 +106,19 @@ export class SimpleInputMerge {
     this.requestedLocalUpdate = undefined;
   }
 
+  // The editor did not render the most recently requested merge (it deferred
+  // it, e.g. while its user types in the changed block): it still shows what
+  // it showed, derived from that value's base, which is therefore the
+  // baseline. Guessing which requested value it shows from later edits could
+  // pick the merge, and then the next merge would treat the remote changes in
+  // it, which the editor never showed, as deleted locally.
+  public noteNotRendered(): void {
+    const requested = this.requestedLocalUpdate;
+    if (requested == null) return;
+    this.last = requested.shown.base;
+    this.requestedLocalUpdate = undefined;
+  }
+
   // Mark that local and remote are known to be in sync.
   public noteApplied(value: string): void {
     this.last = value ?? "";
@@ -121,6 +143,7 @@ export class SimpleInputMerge {
     // advanced beyond pending.  In that case, we must advance baseline first
     // and stop; attempting to rebase from stale `last` can duplicate text.
     if (this.pending.includes(remote)) {
+      debug("remote:echo", { remote, observedLocal, last: this.last });
       this.clearSupersededRequest(remote);
       this.noteApplied(remote);
       return;
@@ -131,12 +154,14 @@ export class SimpleInputMerge {
     // echo.  Rebasing stale `last → local` onto the identical remote would
     // replay the local edit and duplicate inserted text.
     if (remote === local) {
+      debug("remote:same", { remote });
       this.noteApplied(remote);
       return;
     }
 
     // No local edits since last baseline and no pending: adopt remote directly.
     if (local === this.last && this.pending.length === 0) {
+      debug("remote:adopt", { remote, observedLocal, local, last: this.last });
       this.noteApplied(remote);
       if (remote !== local) {
         this.applyMerged(
@@ -159,6 +184,15 @@ export class SimpleInputMerge {
     // local delta repeats changes remote already has; a three-way merge applies
     // those once, and never relocates a deletion onto similar text elsewhere.
     const merged = mergeText({ base, local, remote });
+    debug("remote:merge", {
+      remote,
+      observedLocal,
+      local,
+      base,
+      last: this.last,
+      pending: this.pending,
+      merged,
+    });
     this.noteApplied(remote);
     if (merged !== local) {
       this.applyMerged(
@@ -182,7 +216,11 @@ export class SimpleInputMerge {
         renderCandidates.push(candidate);
       }
     }
-    this.requestedLocalUpdate = { latest: requested, renderCandidates };
+    this.requestedLocalUpdate = {
+      latest: requested,
+      renderCandidates,
+      shown: observedLocal,
+    };
     apply(requested.value);
   }
 
@@ -246,8 +284,10 @@ export class SimpleInputMerge {
     const observed = opts.observed ?? "";
     const current = opts.current ?? "";
     const { local, base } = this.inspectLocal(observed);
-    if (current === base) return local;
-    return mergeText({ base, local, remote: current });
+    const result =
+      current === base ? local : mergeText({ base, local, remote: current });
+    debug("save:merge", { observed, current, local, base, result });
+    return result;
   }
 
   // Only an echoed save supersedes a render request. Until it echoes, an edit
@@ -286,6 +326,7 @@ export class SimpleInputMerge {
     }
 
     const merged = mergeText({ base: this.last, local, remote });
+    debug("preview:merge", { remote, local, last: this.last, merged });
     return { merged, changed: merged !== local };
   }
 }

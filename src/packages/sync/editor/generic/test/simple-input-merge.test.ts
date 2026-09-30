@@ -388,3 +388,37 @@ describe("SimpleInputMerge", () => {
     expect(rendered).toContain("y");
   });
 });
+
+describe("SimpleInputMerge with a deferred render", () => {
+  it("keeps a remote change the editor deferred showing while its user typed", () => {
+    // Found by the multi-user browser test: the editor deferred rendering a
+    // remote change (its user was typing in that block) and the user kept
+    // typing something similar. Guessing from the edits which requested value
+    // the editor showed picked the remote one, which the editor never showed,
+    // so the next merge deleted the remote change.
+    const base = "a\n\nb\n";
+    const merge = new SimpleInputMerge(base);
+    let shown = base;
+    const remote = "a\n\nb tk2n29q\n";
+    merge.handleRemote({
+      remote,
+      getLocal: () => shown,
+      applyMerged: () => {
+        // deferred: the editor keeps showing `shown`
+      },
+    });
+    merge.noteNotRendered();
+    // The user types at the end of the same line before the flush.
+    shown = "a\n\nb tk0n28q\n";
+    let merged: string | undefined;
+    merge.handleRemote({
+      remote,
+      getLocal: () => shown,
+      applyMerged: (value) => {
+        merged = value;
+      },
+    });
+    expect(merged).toContain("tk2n29q");
+    expect(merged).toContain("tk0n28q");
+  });
+});

@@ -205,8 +205,15 @@ export class SimClient {
       registerSlateEditor: (_id: string, ed: any) => {
         this.editor = ed;
       },
-      // Mirrors markdown-editor actions.set_value + actions-base.set_syncstring.
-      set_value: (value: string, _undo?: boolean, source?: string) => {
+      // Mirrors markdown-editor actions.set_value + actions-base.set_syncstring
+      // + SyncDoc.from_str/commit: with a base, only the changes from the base
+      // are applied to the current value (SyncDoc.rebaseDraftOnto).
+      set_value: (
+        value: string,
+        _undo?: boolean,
+        source?: string,
+        base?: string,
+      ) => {
         if (source === "slate") {
           value = preserveSourceForTrailingBlankWhitespaceOnly({
             source: syncstring.to_str(),
@@ -215,12 +222,27 @@ export class SimClient {
         }
         const before = syncstring.to_str();
         if (before === value) return;
+        if (base != null && base !== before) {
+          value =
+            base === value
+              ? before
+              : codec.merge3!(
+                  new StringDocument(base),
+                  new StringDocument(value),
+                  new StringDocument(before),
+                ).toString();
+          if (before === value) return;
+        }
         session.commit(new StringDocument(value));
         this.commits.push({ before, after: value, source });
         this.onCommit?.({ before, after: value, source });
         syncstring.emit("change", { local: true, source });
       },
-      syncstring_commit: () => {},
+      // Mirrors markdown-editor actions.set_syncstring_to_codemirror for a
+      // Slate frame: save through the editor's own (merging) save.
+      syncstring_commit: () => {
+        (this.editor as any)?.saveValue?.(true);
+      },
       ensure_syncstring_is_saved: () => {},
     };
     const { unmount } = render(

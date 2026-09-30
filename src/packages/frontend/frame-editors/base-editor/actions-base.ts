@@ -655,16 +655,20 @@ export class BaseEditorActions<
     const localSnapshot = cm?.getValue?.();
 
     if (isSelfChange) {
-      // Our own commit echoed back. Refresh base/version, but never clobber
-      // local edits that may have happened after the commit.
-      manager.recordLocalCommit(remoteValue, latest);
+      // Our own commit echoed back. set_syncstring recorded the value it
+      // wrote as the base. The committed value can also contain remote
+      // changes that the commit was rebased onto and the buffer does not show
+      // yet: merge those in, keeping anything typed since the commit.
       if (!cm || localSnapshot === remoteValue) {
+        manager.recordLocalCommit(remoteValue, latest);
         // Keep store in sync without rewriting the buffer, but avoid
         // dispatching a redundant store update when nothing changed.
         if (this.store?.get("value") !== remoteValue) {
           this.setState({ value: remoteValue });
         }
+        return;
       }
+      manager.mergeRemote(remoteValue, latest, localSnapshot);
       return;
     }
 
@@ -2776,31 +2780,28 @@ export class BaseEditorActions<
     // a preview, then the real thing only after the change event from commit.
     this._syncstring.commit({ emitChangeImmediately: true });
     this._syncstring.save();
-    try {
-      const value = this._syncstring.to_str();
-      this.getMergeCoordinator().recordLocalCommit(
-        value,
-        this.getLatestVersion(),
-      );
-    } catch (err) {
-      // ignore
-      console.warn("syncstring_commit error", err);
-    }
+    // set_syncstring recorded the value written from the editor as the merge
+    // base. Do not record to_str() here: it can include remote changes the
+    // commit was rebased onto that the editor does not show yet, and using it
+    // as the base would make the editor's next save delete them.
   }
 
   // Sets value of syncstring to the given value.  If there are any
   // codemirror editors, their value also gets sets directly.
+  // base: the syncstring value that `value` was derived from (e.g. what an
+  // editor showed when its user typed); see SyncDoc.from_str.
   public set_value(
     value: string,
     do_not_exit_undo_mode?: boolean,
     localSource?: string,
+    base?: string,
   ): void {
     if (this._state === "closed") return;
     const cm = this._get_cm();
     if (cm != null) {
       cm.setValueNoJump(value);
     }
-    this.set_syncstring(value, do_not_exit_undo_mode, localSource);
+    this.set_syncstring(value, do_not_exit_undo_mode, localSource, base);
   }
 
   set_syncstring_to_codemirror(
@@ -2812,7 +2813,13 @@ export class BaseEditorActions<
       return;
     }
     const localText = cm.getValue();
-    this.set_syncstring(localText, do_not_exit_undo_mode, "cm");
+    // The buffer is the merge coordinator's base plus the user's edits.
+    this.set_syncstring(
+      localText,
+      do_not_exit_undo_mode,
+      "cm",
+      this.mergeCoordinator?.getBaseValue(),
+    );
   }
 
   // Do NOT call this outside of this class to set the value - instead call
@@ -2821,6 +2828,7 @@ export class BaseEditorActions<
     value: string,
     do_not_exit_undo_mode?: boolean,
     localSource?: string,
+    base?: string,
   ): void {
     // note -- we don't try to set the syncstring if actions are closed
     // or the syncstring isn't initialized yet.  The latter case happens when
@@ -2849,10 +2857,21 @@ export class BaseEditorActions<
     }
     // There is definitely a nontrivial local change:
     this._suppress_remote_once = true;
-    // Now actually set the value.
-    this._syncstring.from_str(value);
+    // Now actually set the value. With a base, only the changes from the base
+    // are applied, so remote changes the editor has not shown are kept.
+    if (base != null) {
+      this._syncstring.from_str(value, { base });
+    } else {
+      this._syncstring.from_str(value);
+    }
     this._syncstring.commit();
     this._syncstring.save();
+    // The editor now shows exactly this value (the editor's own value, or set
+    // into it by set_value); it is the base for merging later changes.
+    this.getMergeCoordinator().recordLocalCommit(
+      value,
+      this.getLatestVersion(),
+    );
     // NOTE: above is the only place where syncstring is changed, and when *we* change syncstring,
     // no change event is fired.  However, derived classes may want to update some preview when
     // syncstring changes, so we explicitly emit a change here:

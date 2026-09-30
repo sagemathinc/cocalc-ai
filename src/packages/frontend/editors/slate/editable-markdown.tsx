@@ -400,6 +400,10 @@ function applyBlockDiffPatchWithDebug(
   return { applied, chunks };
 }
 
+function sameIgnoringWhitespace(a: string, b: string): boolean {
+  return a.replace(/\s+/g, "") === b.replace(/\s+/g, "");
+}
+
 function debugSyncLog(type: string, data?: Record<string, unknown>): void {
   if (typeof window === "undefined") return;
   if (!(window as any).__slateDebugLog) return;
@@ -883,10 +887,20 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
   function applyMergedRemoteValue(merged: string, remote: string) {
     setEditorToValue(merged);
-    if (pendingRemoteRef.current !== merged) {
-      // Slate applied the merge synchronously (it was not deferred), so the
-      // editor now derives from the merge's committed base.
+    // Compared ignoring whitespace: the editor's markdown can differ from the
+    // merge in whitespace only (normalization), and that is still showing it.
+    if (sameIgnoringWhitespace(editor.getMarkdownValue(), merged)) {
+      // The editor shows the merge, so it now derives from the merge's
+      // committed base.
       mergeHelperRef.current.noteRendered();
+    } else {
+      // Not shown (yet): deferred because the user is typing in the changed
+      // block, skipped, or rendering asynchronously. The editor still derives
+      // from what it showed; the merge is redone from the current value later.
+      // (Assuming it was shown when it was not would make the next merge treat
+      // its remote changes as deleted locally; the reverse is harmless, since
+      // changes on both sides of a three-way merge apply once.)
+      mergeHelperRef.current.noteNotRendered();
     }
     if (merged === remote || !is_current) return;
     window.setTimeout(() => {
@@ -918,9 +932,25 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     const change = (event?: { local?: boolean; source?: string }) => {
       const remote = actions._syncstring?.to_str() ?? "";
       if (event?.local && event.source !== "cm") {
-        mergeHelperRef.current.noteLocalEcho(remote);
+        // Our own save. The baseline is what the editor shows: normally the
+        // saved value, but the editor may have deferred showing it (e.g. a
+        // merged remote change in the block its user is typing in), and the
+        // committed value can also contain remote changes the save was rebased
+        // onto. Anything the editor does not show is merged in as a remote
+        // change; taking it as the baseline instead would make the next merge
+        // treat it as deleted locally.
+        const shown =
+          savingValueRef.current != null ? editor.getMarkdownValue() : remote;
+        mergeHelperRef.current.noteLocalEcho(shown);
         pendingRemoteRef.current = null;
         setPendingRemoteIndicator(false);
+        if (shown !== remote) {
+          mergeHelperRef.current.handleRemote({
+            remote,
+            getLocal: () => editor.getMarkdownValue(),
+            applyMerged: (merged) => applyMergedRemoteValue(merged, remote),
+          });
+        }
         return;
       }
       if (event?.local && event.source === "cm") {
@@ -1433,7 +1463,22 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
   const lastSetValueRef = useRef<string | null>(null);
 
+  // A save commits through actions.syncstring_commit, which (for the markdown
+  // editor) saves the active Slate editor again; do not re-enter.
+  const savingNowRef = useRef<boolean>(false);
+  // The value being saved, while the save commits (its echo is synchronous).
+  const savingValueRef = useRef<string | null>(null);
   const setSyncstringFromSlateNOW = () => {
+    if (savingNowRef.current) return;
+    savingNowRef.current = true;
+    try {
+      saveSyncstringFromSlate();
+    } finally {
+      savingNowRef.current = false;
+    }
+  };
+
+  const saveSyncstringFromSlate = () => {
     if (actions.set_value == null && actions.set_slate_value == null) {
       // no way to save the value out (e.g., just beginning to test
       // using the component).
@@ -1459,15 +1504,21 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
             local: editor.getMarkdownValue(),
           }).merged
         : editor.getMarkdownValue();
+    // The syncstring value the saved markdown was merged into: the save
+    // passes it as the base, so that only the changes from it are committed,
+    // even if more remote changes arrive before the commit.
+    let base: string | undefined;
     if (actions._syncstring != null) {
       // The editor can lag behind the syncstring, e.g., while a remote change
       // is deferred because the user is typing, or has not rendered yet.
       // Saving the editor contents as-is would revert those remote changes, so
       // save the editor's uncommitted edits merged into the current value.
       const editorMarkdown = markdown;
+      const current = actions._syncstring.to_str();
+      base = current;
       markdown = mergeHelperRef.current.mergeForSave({
         observed: editorMarkdown,
-        current: actions._syncstring.to_str(),
+        current,
       });
       // This save incorporates any deferred remote change.
       pendingRemoteRef.current = null;
@@ -1487,9 +1538,25 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       editor.markdownValue = currentMarkdown;
       return;
     }
+    if ((window as any).__slateDebugLog) {
+      debugSyncLog("save", {
+        editor: editor.getMarkdownValue(),
+        saved: markdown,
+        current: actions._syncstring?.to_str(),
+      });
+    }
     lastSetValueRef.current = markdown;
     mergeHelperRef.current.noteSaved(markdown);
-    actions.set_value?.(markdown, undefined, "slate");
+    savingValueRef.current = markdown;
+    try {
+      if (base != null) {
+        actions.set_value?.(markdown, undefined, "slate", base);
+      } else {
+        actions.set_value?.(markdown, undefined, "slate");
+      }
+    } finally {
+      savingValueRef.current = null;
+    }
     actions.syncstring_commit?.();
 
     // Record that the syncstring's value is now equal to ours:
@@ -2368,10 +2435,15 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
   const setEditorToValue = (value) => {
     // console.log("setEditorToValue", { value, ed: editor.getMarkdownValue() });
-    if (lastSetValueRef.current == value) {
+    if (
+      lastSetValueRef.current == value &&
+      editor.getMarkdownValue() == value
+    ) {
       // this always happens once right after calling setSyncstringFromSlateNOW
       // and it can randomly undo the last thing done, so don't do that!
-      // Also, this is an excellent optimization to do as well.
+      // Also, this is an excellent optimization to do as well. (Only when the
+      // editor shows the value: a save can include remote changes the editor
+      // deferred showing, which must still be shown.)
       lastSetValueRef.current = null;
       // console.log("setEditorToValue: skip");
       return;
@@ -2411,7 +2483,10 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           normalized: normalizedValue,
         });
 
-    if (lastSetValueRef.current == cleanMarkdownValue) {
+    if (
+      lastSetValueRef.current == cleanMarkdownValue &&
+      editor.getMarkdownValue() == cleanMarkdownValue
+    ) {
       debugSyncLog("value-skip:last-set");
       lastSetValueRef.current = null;
       return;

@@ -4,7 +4,8 @@ Keeps track of the last upstream base/version and performs 3-way merges
 between that base, the current local buffer, and incoming remote value.
 */
 
-import { threeWayMerge, type PatchId } from "@cocalc/sync";
+import type { PatchId } from "@cocalc/sync";
+import { mergeText } from "@cocalc/sync/editor/generic/string-merge3";
 
 export interface MergeCoordinatorOpts {
   getLocal: () => string | undefined;
@@ -36,7 +37,9 @@ export class MergeCoordinator {
   ): string {
     const base = this.baseValue ?? remoteValue;
     const local = localOverride ?? this.opts.getLocal() ?? base;
-    const merged = threeWayMerge({ base, local, remote: remoteValue });
+    // Exact three-way merge: concurrent edits are applied once and never
+    // relocated onto similar text; conflicting edits keep both versions.
+    const merged = mergeText({ base, local, remote: remoteValue });
     // Keep the base anchored to upstream/remote for future merges, even if
     // merged contains uncommitted local edits.
     this.baseValue = remoteValue;
