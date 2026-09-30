@@ -176,11 +176,16 @@ storage, transport, and eviction are unchanged.
 
 Tools cleanup runs during installation and hourly, with the first background
 sweep five to six minutes after startup. Sweeps do not overlap and share the
-installer's artifact lock. No containers are stopped for cleanup.
+installer's artifact lock. Tools installers and bootstrap also acquire the same
+kernel `flock` on `tools/.artifact.lock`, covering inspection through deletion
+and extraction through activation. Never remove that lock file. No containers
+are stopped for cleanup.
 
 The configured tools retention count (default three) retains recent versions
 in addition to versions needed by live mounts, stopped-container configurations,
-and running/starting project records. `current` and the prior activation's
+and running/starting project records. Explicit `COCALC_PROJECT_TOOLS` and the
+bootstrap desired tools version are protected even before being mounted.
+`current` and the prior activation's
 `previous` symlink are preserved. References can therefore exceed the configured
 count or byte budget.
 
@@ -189,6 +194,12 @@ mounts an older release. Cleanup reads the live container's mount table before
 pruning; metadata alone is insufficient. Failed or incomplete inspection,
 changing container inventory, and unmappable live aliases skip tools pruning
 for that sweep rather than failing an upgrade or stopping projects.
+
+Deploy/reconcile the updated bootstrap before expecting space reclamation. Its
+public desired-state export advertises `tools_bundle.retention_lock_protocol=1`
+and the tools root. Missing/older/unreadable configuration disables tools pruning,
+not project service. Bootstrap delegates tools deletion to the reference-aware
+project-host collector rather than applying a weaker independent policy.
 
 Only unreferenced tools releases are collected by the background sweep. Host
 bundles, Node installations, backup caches and deployment staging directories

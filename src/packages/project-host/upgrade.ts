@@ -1014,11 +1014,12 @@ async function pruneVersionDirs(opts: {
   root: string;
   currentLink: string;
   desiredDir: string;
-  protectedVersions?: string[];
+  protectedVersions?: string[] | null;
   keep?: number;
   maxBytes?: number;
   keepRecent?: boolean;
 }) {
+  if (opts.protectedVersions === null) return;
   const keep = opts.keep ?? 3;
   const maxBytes = opts.maxBytes;
   const entries = await fs.promises.readdir(opts.root, { withFileTypes: true });
@@ -1130,7 +1131,7 @@ async function protectedArtifactVersions(
     root: string;
   },
   readToolsReferences = referencedToolsVersions,
-): Promise<string[]> {
+): Promise<string[] | null> {
   const versions = new Set<string>();
   const desired = `${desiredVersion ?? ""}`.trim();
   if (desired) {
@@ -1160,6 +1161,8 @@ async function protectedArtifactVersions(
   } else {
     if (artifact === "tools") {
       try {
+        for (const version of await configuredToolsVersions(root))
+          versions.add(version);
         for (const version of await readToolsReferences(root))
           versions.add(version);
       } catch (err) {
@@ -1172,8 +1175,7 @@ async function protectedArtifactVersions(
             err: describeError(err),
           },
         );
-        for (const version of await listInstalledArtifactVersions(root))
-          versions.add(version);
+        return null;
       }
       return [...versions];
     }
@@ -1202,6 +1204,49 @@ async function protectedArtifactVersions(
     }
   }
   return [...versions];
+}
+
+async function configuredToolsVersions(root: string): Promise<string[]> {
+  const bootstrapDir =
+    process.env.COCALC_PROJECT_HOST_BOOTSTRAP_DIR?.trim() ||
+    "/var/lib/cocalc/bootstrap-lifecycle";
+  const desired = JSON.parse(
+    await fs.promises.readFile(
+      path.join(bootstrapDir, "bootstrap-desired-state.json"),
+      "utf8",
+    ),
+  ).tools_bundle;
+  // Old bootstraps do not coordinate activation with our collector. Wait for
+  // bootstrap reconciliation to publish support before enabling deletion.
+  if (
+    desired?.retention_lock_protocol !== 1 ||
+    typeof desired.root !== "string"
+  )
+    throw Error("bootstrap does not support coordinated tools retention");
+  const realRoot = await fs.promises.realpath(root);
+  if ((await fs.promises.realpath(desired.root)) !== realRoot)
+    throw Error("bootstrap tools root does not match retention root");
+  const versions: string[] = [];
+  if (
+    typeof desired.version !== "string" ||
+    !isArtifactVersionName(desired.version)
+  )
+    throw Error("invalid bootstrap desired tools version");
+  versions.push(desired.version);
+  const configured = process.env.COCALC_PROJECT_TOOLS;
+  if (configured) {
+    const real = await fs.promises.realpath(configured);
+    const relative = path.relative(realRoot, real);
+    if (relative === "")
+      throw Error("configured tools path is entire tools root");
+    if (
+      !relative.startsWith(`..${path.sep}`) &&
+      relative !== ".." &&
+      !path.isAbsolute(relative)
+    )
+      versions.push(relative.split(path.sep)[0]);
+  }
+  return versions;
 }
 
 async function resolveArtifact(
@@ -1534,8 +1579,46 @@ async function downloadAndInstall(
   resolved: ResolvedArtifact,
 ): Promise<UpgradeSoftwareResult> {
   return await withArtifactInstallLock(resolved.currentLink, () =>
-    downloadAndInstallUnlocked(resolved),
+    resolved.canonicalArtifact === "tools"
+      ? withToolsFilesystemLock(resolved.root, () =>
+          downloadAndInstallUnlocked(resolved),
+        )
+      : downloadAndInstallUnlocked(resolved),
   );
+}
+
+async function withToolsFilesystemLock<T>(
+  root: string,
+  work: () => Promise<T>,
+): Promise<T> {
+  await fs.promises.mkdir(root, { recursive: true });
+  const lockPath = path.join(root, ".artifact.lock");
+  // Linux flock works on a read-only descriptor too. Bootstrap may have
+  // created this persistent inode as root; never unlink or replace it.
+  const handle = await fs.promises
+    .open(lockPath, "a", 0o644)
+    .catch(async (err) => {
+      if (err.code !== "EACCES") throw err;
+      return await fs.promises.open(lockPath, "r");
+    });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn("flock", ["-x", "-w", "30", "3"], {
+        stdio: ["ignore", "ignore", "ignore", handle.fd],
+      });
+      child.once("error", reject);
+      child.once("exit", (code) =>
+        code === 0
+          ? resolve()
+          : reject(Error("tools artifact lock unavailable")),
+      );
+    });
+    // The inherited fd shares an open-file description with this process;
+    // the kernel lock survives flock's exit until our descriptor is closed.
+    return await work();
+  } finally {
+    await handle.close();
+  }
 }
 
 export async function pruneInstalledTools(
@@ -1544,30 +1627,32 @@ export async function pruneInstalledTools(
     : DEFAULT_TOOLS_ROOT,
 ): Promise<void> {
   const currentLink = path.join(root, "current");
-  await withArtifactInstallLock(currentLink, async () => {
-    let desiredDir: string;
-    try {
-      desiredDir = await fs.promises.realpath(currentLink);
-    } catch (err: any) {
-      if (err?.code === "ENOENT") return;
-      throw err;
-    }
-    const policy = retentionPolicyForArtifact("tools");
-    const protectedVersions = await protectedArtifactVersions({
-      artifact: "tools",
-      desiredVersion: path.basename(desiredDir),
-      root,
-    });
-    await pruneVersionDirs({
-      root,
-      currentLink,
-      desiredDir,
-      protectedVersions,
-      keep: policy.keep_count,
-      maxBytes: policy.max_bytes,
-      keepRecent: true,
-    });
-  });
+  await withArtifactInstallLock(currentLink, () =>
+    withToolsFilesystemLock(root, async () => {
+      let desiredDir: string;
+      try {
+        desiredDir = await fs.promises.realpath(currentLink);
+      } catch (err: any) {
+        if (err?.code === "ENOENT") return;
+        throw err;
+      }
+      const policy = retentionPolicyForArtifact("tools");
+      const protectedVersions = await protectedArtifactVersions({
+        artifact: "tools",
+        desiredVersion: path.basename(desiredDir),
+        root,
+      });
+      await pruneVersionDirs({
+        root,
+        currentLink,
+        desiredDir,
+        protectedVersions,
+        keep: policy.keep_count,
+        maxBytes: policy.max_bytes,
+        keepRecent: true,
+      });
+    }),
+  );
 }
 
 export function startRuntimeArtifactMaintenance({
@@ -1733,6 +1818,8 @@ export const __test__ = {
   protectedArtifactVersions,
   referencedToolsVersions,
   withArtifactInstallLock,
+  withToolsFilesystemLock,
+  configuredToolsVersions,
   runCommandCapture,
   scheduledProjectHostReconcileCommand,
 };

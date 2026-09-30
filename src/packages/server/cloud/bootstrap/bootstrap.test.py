@@ -1647,6 +1647,8 @@ class BootstrapStateFilesTest(unittest.TestCase):
             self.assertNotIn("bootstrap_connection", public_desired)
             self.assertNotIn("env_lines", public_desired)
             self.assertNotIn("bootstrap-secret", json.dumps(public_desired))
+            self.assertEqual(public_desired["tools_bundle"]["retention_lock_protocol"], 1)
+            self.assertEqual(public_desired["tools_bundle"]["root"], cfg.tools_bundle.root)
             self.assertEqual(
                 public_desired["project_host_bundle"],
                 {
@@ -2651,6 +2653,33 @@ class BootstrapBundleRetentionTest(unittest.TestCase):
             child.name for child in root.iterdir()
             if child.is_dir() and not child.is_symlink()
         )
+
+    def test_tools_pruning_is_delegated_to_project_host(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg, bundle, root, proc_root, _ = self.make_fixture(tmpdir)
+            cfg = replace(cfg, tools_bundle=bundle)
+            with mock.patch.object(bootstrap, "PROC_ROOT", proc_root):
+                bootstrap.prune_bundle_versions(cfg, bundle, keep=1)
+            self.assertEqual(self.remaining(root), [f"v{i}" for i in range(1, 10)])
+
+    def test_tools_extraction_holds_shared_lock_including_reused_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg, bundle, root, proc_root, _ = self.make_fixture(tmpdir)
+            cfg = replace(cfg, tools_bundle=bundle, bootstrap_user="", ssh_user="")
+            lock_path = root / ".artifact.lock"
+            original_resolve = bootstrap.resolve_bundle_spec
+
+            def checked_resolve(cfg, bundle):
+                probe = subprocess.run(["flock", "-n", str(lock_path), "true"])
+                self.assertEqual(probe.returncode, 1)
+                return original_resolve(cfg, bundle)
+
+            with mock.patch.object(bootstrap, "PROC_ROOT", proc_root), mock.patch.object(
+                bootstrap, "resolve_bundle_spec", side_effect=checked_resolve
+            ):
+                bootstrap.extract_bundle(cfg, bundle)
+            self.assertEqual((root / "current").resolve(), root / "v9")
+            self.assertEqual(subprocess.run(["flock", "-n", str(lock_path), "true"]).returncode, 0)
 
     def test_prunes_old_bundle_versions_but_keeps_current_and_desired(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

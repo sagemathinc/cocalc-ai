@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { closeDatabase } from "@cocalc/lite/hub/sqlite/database";
 import { upsertProject } from "./sqlite/projects";
 import { __test__, startRuntimeArtifactMaintenance } from "./upgrade";
@@ -11,6 +12,8 @@ let proc: string;
 const oldData = process.env.COCALC_DATA;
 const oldDatabase = process.env.COCALC_LITE_SQLITE_FILENAME;
 const oldRuntime = process.env.COCALC_PODMAN_RUNTIME_DIR;
+const oldBootstrap = process.env.COCALC_PROJECT_HOST_BOOTSTRAP_DIR;
+const oldTools = process.env.COCALC_PROJECT_TOOLS;
 
 beforeEach(() => {
   base = fs.mkdtempSync(path.join(os.tmpdir(), "tools-retention-"));
@@ -21,6 +24,14 @@ beforeEach(() => {
   process.env.COCALC_DATA = path.join(base, "data");
   process.env.COCALC_LITE_SQLITE_FILENAME = ":memory:";
   process.env.COCALC_PODMAN_RUNTIME_DIR = base;
+  process.env.COCALC_PROJECT_HOST_BOOTSTRAP_DIR = base;
+  delete process.env.COCALC_PROJECT_TOOLS;
+  fs.writeFileSync(
+    path.join(base, "bootstrap-desired-state.json"),
+    JSON.stringify({
+      tools_bundle: { root, version: "v6", retention_lock_protocol: 1 },
+    }),
+  );
   closeDatabase();
 });
 
@@ -34,6 +45,11 @@ afterEach(() => {
   else process.env.COCALC_LITE_SQLITE_FILENAME = oldDatabase;
   if (oldRuntime === undefined) delete process.env.COCALC_PODMAN_RUNTIME_DIR;
   else process.env.COCALC_PODMAN_RUNTIME_DIR = oldRuntime;
+  if (oldBootstrap === undefined)
+    delete process.env.COCALC_PROJECT_HOST_BOOTSTRAP_DIR;
+  else process.env.COCALC_PROJECT_HOST_BOOTSTRAP_DIR = oldBootstrap;
+  if (oldTools === undefined) delete process.env.COCALC_PROJECT_TOOLS;
+  else process.env.COCALC_PROJECT_TOOLS = oldTools;
   fs.rmSync(base, { recursive: true, force: true });
 });
 
@@ -141,6 +157,7 @@ it("retains every installed version when reference discovery fails", async () =>
       throw Error("podman unavailable");
     },
   );
+  expect(refs).toBeNull();
   await __test__.pruneVersionDirs({
     root,
     currentLink: path.join(root, "current"),
@@ -149,6 +166,157 @@ it("retains every installed version when reference discovery fails", async () =>
     keep: 1,
     keepRecent: true,
   });
+  expect(fs.existsSync(path.join(root, "v0", "payload"))).toBe(true);
+});
+
+it("does not inventory directories after failed discovery, even if inventory is unreadable", async () => {
+  versions();
+  const refs = await __test__.protectedArtifactVersions(
+    { artifact: "tools", desiredVersion: "v6", root },
+    async () => {
+      throw Error("scan failed");
+    },
+  );
+  const readdir = jest
+    .spyOn(fs.promises, "readdir")
+    .mockRejectedValue(Error("unreadable"));
+  await __test__.pruneVersionDirs({
+    root,
+    currentLink: path.join(root, "current"),
+    desiredDir: path.join(root, "v6"),
+    protectedVersions: refs,
+    keep: 1,
+  });
+  expect(readdir).not.toHaveBeenCalled();
+});
+
+it("does not prune versions appearing after a failed reference scan", async () => {
+  versions();
+  const refs = await __test__.protectedArtifactVersions(
+    { artifact: "tools", desiredVersion: "v6", root },
+    async () => {
+      throw Error("scan failed");
+    },
+  );
+  fs.mkdirSync(path.join(root, "v-new"));
+  await __test__.pruneVersionDirs({
+    root,
+    currentLink: path.join(root, "current"),
+    desiredDir: path.join(root, "v6"),
+    protectedVersions: refs,
+    keep: 1,
+  });
+  expect(fs.existsSync(path.join(root, "v-new"))).toBe(true);
+});
+
+it.each(["explicit", "bootstrap"])(
+  "protects the not-yet-mounted %s tools version",
+  async (source) => {
+    versions();
+    if (source === "explicit")
+      process.env.COCALC_PROJECT_TOOLS = path.join(root, "v0");
+    else
+      fs.writeFileSync(
+        path.join(base, "bootstrap-desired-state.json"),
+        JSON.stringify({
+          tools_bundle: { root, version: "v0", retention_lock_protocol: 1 },
+        }),
+      );
+    const refs = await __test__.protectedArtifactVersions(
+      { artifact: "tools", desiredVersion: "v6", root },
+      async () => [],
+    );
+    expect(refs).toContain("v0");
+    await __test__.pruneVersionDirs({
+      root,
+      currentLink: path.join(root, "current"),
+      desiredDir: path.join(root, "v6"),
+      protectedVersions: refs,
+      keep: 1,
+    });
+    expect(fs.existsSync(path.join(root, "v0", "payload"))).toBe(true);
+    expect(fs.existsSync(path.join(root, "v2"))).toBe(false);
+  },
+);
+
+it.each(["missing", "old", "malformed"])(
+  "skips pruning with %s bootstrap coordination state",
+  async (state) => {
+    const filename = path.join(base, "bootstrap-desired-state.json");
+    if (state === "missing") fs.unlinkSync(filename);
+    else
+      fs.writeFileSync(
+        filename,
+        state === "old" ? '{"tools_bundle":{"version":"v0"}}' : "{",
+      );
+    expect(
+      await __test__.protectedArtifactVersions(
+        { artifact: "tools", desiredVersion: "v6", root },
+        async () => [],
+      ),
+    ).toBeNull();
+  },
+);
+
+it("keeps an OS lock across awaits and releases it after failure", async () => {
+  const probe = () =>
+    new Promise<number | null>((resolve, reject) => {
+      const child = spawn("flock", [
+        "-n",
+        path.join(root, ".artifact.lock"),
+        "true",
+      ]);
+      child.once("error", reject);
+      child.once("exit", resolve);
+    });
+  await expect(
+    __test__.withToolsFilesystemLock(root, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(await probe()).toBe(1);
+      throw Error("work failed");
+    }),
+  ).rejects.toThrow("work failed");
+  expect(await probe()).toBe(0);
+});
+
+it("serializes with Python bootstrap activation in a separate process", async () => {
+  versions();
+  const lock = path.join(root, ".artifact.lock");
+  const script = `import os, sys\nfrom types import SimpleNamespace\nsys.path.insert(0, sys.argv[4])\nimport bootstrap\nroot = os.path.dirname(sys.argv[1])\nbundle = SimpleNamespace(root=root)\ncfg = SimpleNamespace(tools_bundle=bundle)\ndef activate(cfg, bundle):\n print('locked', flush=True)\n sys.stdin.readline()\n os.unlink(sys.argv[2])\n os.symlink(sys.argv[3], sys.argv[2])\n return bundle\nbootstrap.extract_bundle_unlocked = activate\nbootstrap.extract_bundle(cfg, bundle)\n`;
+  const child = spawn("python3", [
+    "-c",
+    script,
+    lock,
+    path.join(root, "current"),
+    path.join(root, "v0"),
+    path.resolve(__dirname, "../server/cloud/bootstrap"),
+  ]);
+  const exited = new Promise<number | null>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", resolve);
+  });
+  await new Promise<void>((resolve) =>
+    child.stdout.once("data", () => resolve()),
+  );
+  let entered = false;
+  const cleanup = __test__.withToolsFilesystemLock(root, async () => {
+    entered = true;
+    await __test__.pruneVersionDirs({
+      root,
+      currentLink: path.join(root, "current"),
+      desiredDir: path.join(root, "v6"),
+      keep: 1,
+    });
+  });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  const enteredBeforeRelease = entered;
+  child.stdin.end("activate\n");
+  await exited;
+  await cleanup;
+  expect(enteredBeforeRelease).toBe(false);
+  expect(fs.realpathSync(path.join(root, "current"))).toBe(
+    path.join(root, "v0"),
+  );
   expect(fs.existsSync(path.join(root, "v0", "payload"))).toBe(true);
 });
 
