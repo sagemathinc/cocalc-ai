@@ -1376,14 +1376,9 @@ export function MessageList({
       // momentum scrolling while clicking another thread), the rows and
       // scroller now belong to that thread; saving them under this thread's
       // key would later restore this thread to a foreign message.
-      const scheduledScroller = scrollerRef.current;
       const capture = () => {
         anchorCaptureFrameRef.current = undefined;
-        if (
-          cacheIdRef.current !== cacheId ||
-          scrollerRef.current !== scheduledScroller
-        )
-          return;
+        if (cacheIdRef.current !== cacheId) return;
         if (
           !forceAtBottom &&
           Date.now() < suppressAnchorCaptureUntilRef.current
@@ -1634,6 +1629,9 @@ export function MessageList({
         return;
       }
 
+      // A freshly mounted list can report a transient bottom before this lands,
+      // which saves an at-bottom anchor. Keep the reader's position saved.
+      saveChatViewportAnchor(cacheId, anchor);
       if (keepBottomAnchoredRef) {
         keepBottomAnchoredRef.current = false;
       }
@@ -1721,11 +1719,14 @@ export function MessageList({
     }
     visibilityRestoreTimersRef.current = [];
     const token = ++visibilityRestoreTokenRef.current;
-    restoreSavedAnchorRef.current();
+    // Every retry restores the position saved when the chat was left, not
+    // whatever the settling list captured in between.
+    const anchor = loadChatViewportAnchor(cacheId);
+    restoreSavedAnchorRef.current(anchor);
     for (const delayMs of [16, 75, 250]) {
       const timer = setTimeout(() => {
         if (visibilityRestoreTokenRef.current !== token) return;
-        restoreSavedAnchorRef.current();
+        restoreSavedAnchorRef.current(anchor);
       }, delayMs);
       visibilityRestoreTimersRef.current.push(timer);
     }
@@ -2022,16 +2023,6 @@ export function MessageList({
       setManualScroll,
     } = virtuosoCallbackStateRef.current;
     if (!manualScrollRef) return;
-    if (
-      atBottom &&
-      !userScrollIntentRef.current &&
-      Date.now() < suppressAnchorCaptureUntilRef.current
-    ) {
-      // A saved position is being restored. A freshly mounted list can report
-      // its transient bottom first; saving that would overwrite the reader's
-      // position before the restore lands.
-      return;
-    }
     if (atBottom) {
       scheduleAnchorCapture(true);
       if (keepBottomAnchoredRef) {

@@ -148,6 +148,12 @@ for (const resume of ["button", "wheel"] as const) {
       );
     });
     await page.waitForTimeout(1500);
+    // Start from following at the bottom (reaching it by scrolling down).
+    for (let i = 0; i < 10; i++) {
+      await page.mouse.wheel(0, 3000);
+      await page.waitForTimeout(50);
+    }
+    await page.waitForTimeout(800);
     expect(await gapFromBottom(page, "a")).toBeLessThan(200);
     for (let i = 0; i < 4; i++) {
       await page.mouse.wheel(0, -600);
