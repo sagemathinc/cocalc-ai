@@ -8,6 +8,8 @@ import { createInterBayAgentIdentityHandler } from "@cocalc/conat/inter-bay/agen
 import { agentIdentityControl } from "@cocalc/server/agents/identity-control";
 import { createInterBayArtifactCatalogHandler } from "@cocalc/conat/inter-bay/artifact-catalog";
 import { catalogOwnerControl } from "@cocalc/server/artifacts/catalog-api";
+import { createInterBayConversationsHandler } from "@cocalc/conat/inter-bay/conversations";
+import { conversationsControl } from "@cocalc/server/conversations/api";
 import { createInterBayPersonalLibraryHandler } from "@cocalc/conat/inter-bay/personal-library";
 import { personalLibraryHomeControl } from "@cocalc/server/artifacts/personal-library-api";
 import { createAgentRpcControlHandler } from "@cocalc/conat/inter-bay/agent-rpc";
@@ -712,6 +714,12 @@ export async function initInterBayServices(): Promise<void> {
         bay_id: getConfiguredBayId(),
         parallel: true,
         impl: catalogOwnerControl,
+      }),
+      createInterBayConversationsHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bay_id: getConfiguredBayId(),
+        parallel: true,
+        impl: conversationsControl,
       }),
       createInterBayPersonalLibraryHandler({
         client: getInterBayFabricClient({ noCache: true }),

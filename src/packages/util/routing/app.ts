@@ -17,6 +17,7 @@ export const APP_ROUTES = new Set([
   "share",
   "notifications",
   "hosts",
+  "people",
 ]);
 
 const HOST_ROOT_ONLY_ROUTES = [

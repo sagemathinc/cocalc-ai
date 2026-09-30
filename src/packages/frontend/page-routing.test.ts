@@ -201,4 +201,15 @@ describe("page-routing", () => {
       "/projects/abc/files",
     );
   });
+
+  it("round-trips People routes", () => {
+    expect(parsePageTarget("people")).toEqual({ page: "people" });
+    const route = "conversations/p1/c1";
+    expect(parsePageTarget(`people/${route}`)).toEqual({
+      page: "people",
+      route,
+    });
+    expect(getPageUrlPath({ page: "people", route })).toBe(`/people/${route}`);
+    expect(getPageUrlPath({ page: "people" })).toBe("/people");
+  });
 });

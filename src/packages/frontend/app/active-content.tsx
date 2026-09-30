@@ -32,6 +32,7 @@ import {
   DocsPage,
   FileUsePage,
   HostsPage,
+  PeoplePage,
   MyAgentsWorkspacePage,
   NotificationPage,
   ProjectPage,
@@ -342,6 +343,9 @@ export const ActiveContent: React.FC = React.memo(() => {
         break;
       case "hosts":
         overlay = renderSurfaceLayer("hosts", <HostsPage />);
+        break;
+      case "people":
+        overlay = renderSurfaceLayer("people", <PeoplePage />);
         break;
       case "share":
         overlay = renderSurfaceLayer(
