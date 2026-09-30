@@ -2844,7 +2844,7 @@ test("canceling while a permission event is pending never grants permission", as
   assert.match(events.at(-1).text, /cancelled/);
 });
 
-test("each harness turn holds the CoCalc connector credential only while it runs", async (t) => {
+test("each Claude Code turn holds the CoCalc connector credential only while it runs", async (t) => {
   const calls = [];
   const connector = {
     begin: async (chat) => calls.push(["begin", chat.thread_id]),
@@ -2852,11 +2852,11 @@ test("each harness turn holds the CoCalc connector credential only while it runs
   };
   const { agent, request, events } = adapter(
     t,
-    [],
+    ["--claude-adapter", "--delayed-status"],
     undefined,
     false,
     undefined,
-    false,
+    true,
     connector,
   );
   await agent.evaluate(request);
@@ -2866,7 +2866,7 @@ test("each harness turn holds the CoCalc connector credential only while it runs
   assert.deepEqual(calls.slice(2), [["begin", "conversation-a"], ["end"]]);
 });
 
-test("a connector credential that cannot be issued fails the turn and is still revoked", async (t) => {
+test("a Claude connector credential that cannot be issued fails the turn and is still revoked", async (t) => {
   let ended = 0;
   const connector = {
     begin: async () => {
@@ -2878,6 +2878,25 @@ test("a connector credential that cannot be issued fails the turn and is still r
   };
   const { agent, request } = adapter(
     t,
+    ["--claude-adapter"],
+    undefined,
+    false,
+    undefined,
+    true,
+    connector,
+  );
+  await assert.rejects(() => agent.evaluate(request), /connector unavailable/);
+  assert.equal(ended, 1);
+});
+
+test("an arbitrary ACP harness never begins a CoCalc connector turn", async (t) => {
+  const calls = [];
+  const connector = {
+    begin: async () => calls.push("begin"),
+    end: async () => calls.push("end"),
+  };
+  const { agent, request } = adapter(
+    t,
     [],
     undefined,
     false,
@@ -2885,6 +2904,6 @@ test("a connector credential that cannot be issued fails the turn and is still r
     false,
     connector,
   );
-  await assert.rejects(() => agent.evaluate(request), /connector unavailable/);
-  assert.equal(ended, 1);
+  await agent.evaluate(request);
+  assert.deepEqual(calls, []);
 });

@@ -16,6 +16,7 @@ import {
 } from "@cocalc/util/ai/runtime";
 import { randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
+import { isQualifiedClaudeCodeProfile } from "@cocalc/util/ai/qualified-harnesses";
 import { harnessPrompt } from "./harness-context";
 import { assertSameTurnPrincipal } from "./turn-principal";
 import { normalizeCodexAsyncQuestions } from "./codex-attention";
@@ -235,9 +236,10 @@ export class HarnessAgent implements AcpAgent {
           "rejected",
           "ACP prompt interrupted before submission",
         );
-      if (request.chat) {
+      if (request.chat && isQualifiedClaudeCodeProfile(this.binding.profile)) {
         // The agent's scoped CoCalc connector credential lives only as long
-        // as this turn (as for Codex); it is revoked in finally.
+        // as this turn (as for Codex); it is revoked in finally. Only the
+        // qualified Claude Code harness is trusted with it.
         connectorClient = client;
         await client.beginConnectorTurn(request.chat);
       }

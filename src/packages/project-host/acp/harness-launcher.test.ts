@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { launchClaudeSubscriptionController } from "./claude-subscription-controller";
+import { CLAUDE_CODE_QUALIFICATION } from "@cocalc/util/ai/qualified-harnesses";
 import {
   launchHarnessInProject as launch,
   resolveHarnessCommand,
@@ -360,7 +361,17 @@ test("natural exit removes its sidecar", async () => {
   expect(mockExec).toHaveBeenCalledTimes(2);
 });
 
-test("the sidecar reads the agent's CoCalc connector key only from its own lease", async () => {
+const qualifiedClaude = {
+  version: 2 as const,
+  kind: "acp" as const,
+  id: "claude-code",
+  revision: CLAUDE_CODE_QUALIFICATION.package.version,
+  cwd: "/home/user",
+  credentialMode: "project-managed" as const,
+  executionPolicy: "full-access" as const,
+};
+
+function connectorLease() {
   const beginConnectorTurn = jest.fn(async () => {});
   const endConnectorTurn = jest.fn(async () => {});
   mockLease.mockResolvedValue({
@@ -371,7 +382,15 @@ test("the sidecar reads the agent's CoCalc connector key only from its own lease
     endConnectorTurn,
     close: mockCloseLease,
   });
-  const handle = await launchHarnessInProject(binding);
+  return { beginConnectorTurn, endConnectorTurn };
+}
+
+test("qualified Claude Code reads the agent's CoCalc connector key only from its own lease", async () => {
+  const { beginConnectorTurn, endConnectorTurn } = connectorLease();
+  const handle = await launchHarnessInProject({
+    ...binding,
+    profile: qualifiedClaude,
+  });
   const args = mockExec.mock.calls[0][1];
   expect(args).toContain(
     "COCALC_CONNECTOR_API_KEY_FILE=/tmp/scoped/connector-key",
@@ -385,8 +404,25 @@ test("the sidecar reads the agent's CoCalc connector key only from its own lease
   await handle.stop();
 });
 
-test("an unregistered sidecar gets no connector key file", async () => {
+test("an arbitrary ACP executable never receives the CoCalc connector", async () => {
+  const { beginConnectorTurn } = connectorLease();
+  // A registered agent with an enabled connector runs a project-configured
+  // (version 1) harness.
   const handle = await launchHarnessInProject(binding);
+  const args = mockExec.mock.calls[0][1];
+  expect(args.join(" ")).not.toContain("COCALC_CONNECTOR_API_KEY_FILE");
+  expect(args.join(" ")).not.toContain("connector-key");
+  expect(handle.beginConnectorTurn).toBeUndefined();
+  expect(handle.endConnectorTurn).toBeUndefined();
+  expect(beginConnectorTurn).not.toHaveBeenCalled();
+  await handle.stop();
+});
+
+test("an unregistered Claude sidecar gets no connector key file", async () => {
+  const handle = await launchHarnessInProject({
+    ...binding,
+    profile: qualifiedClaude,
+  });
   const args = mockExec.mock.calls[0][1];
   expect(args.join(" ")).not.toContain("COCALC_CONNECTOR_API_KEY_FILE");
   await handle.stop();

@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HarnessBinding, HarnessProcess } from "@cocalc/ai/acp/harness";
 import { parseAcpHarnessProfile } from "@cocalc/util/ai/runtime";
-import { getQualifiedHarnessCandidate } from "@cocalc/util/ai/qualified-harnesses";
+import {
+  getQualifiedHarnessCandidate,
+  isQualifiedClaudeCodeProfile,
+} from "@cocalc/util/ai/qualified-harnesses";
 import { isValidUUID } from "@cocalc/util/misc";
 import { podmanEnv } from "@cocalc/backend/podman/env";
 import { mountArg } from "@cocalc/backend/podman";
@@ -239,7 +242,10 @@ export async function launchHarnessInProject(
       env.COCALC_AGENT_IDENTITY_FILE = cliLease.identityContainerPath;
     // Holds the managed CoCalc connector key only during a turn whose agent
     // has the connector enabled (written and revoked per turn below).
-    if (cliLease.connectorContainerPath)
+    // The managed CoCalc connector is for trusted runtimes only: never hand it
+    // to an arbitrary project-configured ACP executable.
+    const connector = isQualifiedClaudeCodeProfile(profile);
+    if (connector && cliLease.connectorContainerPath)
       env.COCALC_CONNECTOR_API_KEY_FILE = cliLease.connectorContainerPath;
     applyProjectRuntimeCliEnv(env, accountId);
     if (credential.mode === "account-api-key") {
@@ -350,8 +356,12 @@ export async function launchHarnessInProject(
       stdin: proc.stdin,
       stdout: proc.stdout,
       stderr: proc.stderr,
-      beginConnectorTurn: (chat) => lease.beginConnectorTurn(chat),
-      endConnectorTurn: () => lease.endConnectorTurn(),
+      ...(connector
+        ? {
+            beginConnectorTurn: (chat) => lease.beginConnectorTurn(chat),
+            endConnectorTurn: () => lease.endConnectorTurn(),
+          }
+        : {}),
       closed,
       stop: async () => {
         await cleanup();
