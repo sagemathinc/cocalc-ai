@@ -167,7 +167,7 @@ describe("new agent defaults", () => {
         paymentSource,
         useSubscriptionDefault: true,
       }),
-    ).toMatchObject({ model: "gpt-6-sol", reasoning: "medium" });
+    ).toMatchObject({ model: "gpt-6.1-sol", reasoning: "low" });
     expect(
       newAgentFundingConfig({
         config,
