@@ -428,6 +428,61 @@ describePglite("CRM outreach initial-send claim revalidation", () => {
     });
   });
 
+  it("gives back the attempt when preflight requeues before any provider request", async () => {
+    const fixture = await createFixture();
+    const claim = await worker.__test__.claimOneEffectful();
+    expect(claim).toMatchObject({ attempt_number: 1 });
+    await pool.query(
+      "UPDATE crm_outreach_batches SET state='paused' WHERE id=$1",
+      [fixture.batchId],
+    );
+    await expect(
+      worker.__test__.revalidateStartedCreateTicketClaim(claim!),
+    ).resolves.toBe(false);
+    const requeued = await pool.query(
+      "SELECT state,attempt_count FROM crm_outreach_deliveries WHERE id=$1",
+      [fixture.deliveryId],
+    );
+    expect(requeued.rows[0]).toEqual({ state: "queued", attempt_count: 0 });
+
+    await pool.query(
+      "UPDATE crm_outreach_batches SET state='sending' WHERE id=$1",
+      [fixture.batchId],
+    );
+    const reclaimed = await worker.__test__.claimOneEffectful();
+    expect(reclaimed).toMatchObject({
+      attempt_number: 1,
+      delivery: { id: fixture.deliveryId, attempt_count: 1 },
+    });
+    const operations = await pool.query(
+      `SELECT state,attempt_number FROM crm_outreach_provider_operations
+        WHERE delivery_id=$1 ORDER BY created_at,state`,
+      [fixture.deliveryId],
+    );
+    expect(operations.rows).toEqual([
+      { state: "cancelled", attempt_number: 1 },
+      { state: "started", attempt_number: 1 },
+    ]);
+  });
+
+  it("gives back the attempt when preflight fails a send before any provider request", async () => {
+    const fixture = await createFixture();
+    const claim = await worker.__test__.claimOneEffectful();
+    expect(claim).toMatchObject({ attempt_number: 1 });
+    await pool.query(
+      "UPDATE crm_organizations SET status='archived' WHERE id=$1",
+      [fixture.organizationId],
+    );
+    await expect(
+      worker.__test__.revalidateStartedCreateTicketClaim(claim!),
+    ).resolves.toBe(false);
+    const delivery = await pool.query(
+      "SELECT state,attempt_count FROM crm_outreach_deliveries WHERE id=$1",
+      [fixture.deliveryId],
+    );
+    expect(delivery.rows[0]).toEqual({ state: "failed", attempt_count: 0 });
+  });
+
   async function processClaimWithLookupDrift(
     drift: (fixture: Fixture) => Promise<unknown>,
   ): Promise<{ fixture: Fixture; operationId: string }> {

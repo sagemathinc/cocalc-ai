@@ -243,11 +243,13 @@ export async function failIneligibleInitialSend(
   reasons: OutreachInitialSendIneligibility[],
 ): Promise<void> {
   const lastError = `${stage === "claim" ? "INELIGIBLE_AT_CLAIM" : "INELIGIBLE_BEFORE_PROVIDER"}:${reasons.join(",")}`;
+  // A started claim took an attempt, but no ticket-creation request was made.
   await client.query(
     `UPDATE crm_outreach_deliveries SET state='failed',last_error=$1,
-      provider_submitted_at=NULL,updated_at=NOW(),version=version+1
+      provider_submitted_at=NULL,attempt_count=GREATEST(attempt_count-$3::int,0),
+      updated_at=NOW(),version=version+1
      WHERE id=$2`,
-    [lastError, delivery.id],
+    [lastError, delivery.id, stage === "before_provider" ? 1 : 0],
   );
   await addActivity(client, {
     organization_id: delivery.organization_id,
@@ -395,6 +397,12 @@ async function claimOneEffectful(): Promise<ClaimedOperation | undefined> {
       const delivery = deliveryRow(selected.delivery);
       const operationId = randomUUID();
       const attemptNumber = delivery.attempt_count + 1;
+      // Preflight gives back the attempt of a claim it stops, and that claim
+      // keeps its cancelled operation, so key each claim by ledger position.
+      const priorClaims = await client.query(
+        "SELECT count(*)::int AS count FROM crm_outreach_provider_operations WHERE delivery_id=$1 AND operation='create_ticket'",
+        [delivery.id],
+      );
       const snapshot = {
         send_per_minute: config.send_per_minute,
         send_per_hour: config.send_per_hour,
@@ -410,7 +418,7 @@ async function claimOneEffectful(): Promise<ClaimedOperation | undefined> {
         [
           operationId,
           delivery.id,
-          `create-ticket:${delivery.id}:${attemptNumber}`,
+          `create-ticket:${delivery.id}:${priorClaims.rows[0].count + 1}`,
           createHash("sha256")
             .update(
               JSON.stringify({
@@ -664,8 +672,10 @@ async function revalidateStartedCreateTicketClaim(
           claim.operation_id,
         ],
       );
+      // No ticket-creation request was made, so give back the claim's attempt.
       await client.query(
         `UPDATE crm_outreach_deliveries SET state=$1,provider_submitted_at=NULL,
+          attempt_count=GREATEST(attempt_count-1,0),
           next_attempt_at=CASE WHEN $1='queued' THEN NOW() ELSE next_attempt_at END,
           cancelled_at=CASE WHEN $1='cancelled' THEN NOW() ELSE cancelled_at END,
           updated_at=NOW(),version=version+1

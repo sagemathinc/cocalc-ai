@@ -124,9 +124,13 @@ describe("CRM outreach worker recovery invariants", () => {
     expect(query.mock.calls[0][0]).toContain("state='failed'");
     expect(query.mock.calls[0][0]).not.toContain("next_attempt_at");
     expect(query.mock.calls[0][0]).toContain("provider_submitted_at=NULL");
+    expect(query.mock.calls[0][0]).toContain(
+      "attempt_count=GREATEST(attempt_count-$3::int,0)",
+    );
     expect(query.mock.calls[0][1]).toEqual([
       "INELIGIBLE_BEFORE_PROVIDER:organization_inactive,email_not_primary",
       "delivery-1",
+      1,
     ]);
   });
 
