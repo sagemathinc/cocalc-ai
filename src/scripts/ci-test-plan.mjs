@@ -106,16 +106,24 @@ export function createPlan({
     .sort();
   const lanes = [];
   if (selectedSet.delete("server")) {
-    for (let index = 1; index <= 2; index++) {
+    for (let index = 1; index <= 3; index++) {
       lanes.push({
         lane: `server-${index}`,
         packages: "server",
-        shard: `${index}/2`,
+        shard: `${index}/3`,
+        ...(index === 3 ? { cache_fallback_lane: "server-2" } : {}),
       });
     }
   }
   if (selectedSet.delete("frontend")) {
-    lanes.push({ lane: "frontend", packages: "frontend" });
+    for (let index = 1; index <= 2; index++) {
+      lanes.push({
+        lane: `frontend-${index}`,
+        packages: "frontend",
+        shard: `${index}/2`,
+        cache_fallback_lane: "frontend",
+      });
+    }
   }
   // These packages accounted for 183s of the 399s remaining-package lane in
   // the September 9 measurement. Run their complete suites on another runner.
@@ -126,6 +134,15 @@ export function createPlan({
     lanes.push({
       lane: "backend-database",
       packages: backendDatabase.join(","),
+    });
+  }
+  // Conat alone took 137s of the 402s rest lane on September 30. Keep its
+  // real transport tests, but do not serialize all other packages behind it.
+  if (selectedSet.delete("conat")) {
+    lanes.push({
+      lane: "conat",
+      packages: "conat",
+      cache_fallback_lane: "rest",
     });
   }
   const rest = [...selectedSet].sort();

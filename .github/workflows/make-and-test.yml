@@ -211,9 +211,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: src/.cache/jest
-          key: jest-v2-${{ runner.os }}-node24-${{ needs.plan.outputs.jest_cache_key }}-${{ matrix.lane }}-${{ github.sha }}
+          # Jest hashes each source file itself. Reuse one immutable baseline
+          # per compiler/configuration and lane instead of copying it per commit.
+          key: jest-v2-${{ runner.os }}-node24-${{ needs.plan.outputs.jest_cache_key }}-${{ matrix.lane }}
+          # These also restore the older commit-suffixed and unsplit caches.
           restore-keys: |
             jest-v2-${{ runner.os }}-node24-${{ needs.plan.outputs.jest_cache_key }}-${{ matrix.lane }}-
+            jest-v2-${{ runner.os }}-node24-${{ needs.plan.outputs.jest_cache_key }}-${{ matrix.cache_fallback_lane || matrix.lane }}-
 
       - name: Cache pip
         if: matrix.lane == 'rest'
