@@ -335,7 +335,7 @@ Every incident becomes a synthetic regression test.
   - with the exact merge: 7 (1.75%), none of them in the core merge;
   - remaining: six "removed by a Slate commit" losses (Workstream 3
     territory) and the ordered-list start number.
-- Uses patchflow 0.9.0 (released with #2, and with fixes from its review:
+- Uses patchflow 0.9.1 (0.9.0 released with #2 and fixes from its review:
   deterministic merges, exact undo, bounded work and caches).
 - Next steps:
   - Workstream 3 (edits carry their base version; canonicalization is not a
