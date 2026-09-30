@@ -1640,11 +1640,26 @@ export function MessageList({
       }
       setManualScroll?.(true);
       setAtBottom(false);
-      listVirtuosoRef.current?.scrollToIndex({
-        index,
-        align: "start",
-        behavior: INSTANT_SCROLL_BEHAVIOR,
-      });
+      // A retained chat shown again usually still renders its saved row, often
+      // exactly in place. Snapping that row to the top first and then applying
+      // the saved offset (on every retry) made the view flicker up and down;
+      // only jump when the row is not rendered, otherwise just correct offset.
+      const rendered =
+        scrollerRef.current?.querySelector(`[data-item-index="${index}"]`) !=
+        null;
+      if (rendered) {
+        restoreChatViewportAnchorOffset({
+          anchor,
+          scroller: scrollerRef.current,
+          sortedDates: dates,
+        });
+      } else {
+        listVirtuosoRef.current?.scrollToIndex({
+          index,
+          align: "start",
+          behavior: INSTANT_SCROLL_BEHAVIOR,
+        });
+      }
 
       const token = ++anchorRestoreTokenRef.current;
       for (const delayMs of [0, 16, 75, 200, 500, 1000]) {

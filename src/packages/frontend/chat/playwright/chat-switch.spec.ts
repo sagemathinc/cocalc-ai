@@ -264,3 +264,39 @@ test("a retained chat that was evicted remounts at its reading position", async 
     expect(Math.abs(index - before!.index)).toBeLessThanOrEqual(1);
   }
 });
+
+test("showing a retained chat again does not move a position that is already in place", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1000, height: 800 });
+  await page.goto(`/?mode=chat-switch&reorder=0`);
+  const a = page.getByTestId("log-a");
+  await expect(a.locator("[data-item-index]").first()).toBeVisible();
+  await page.waitForTimeout(1000);
+  await a.hover();
+  // Stop mid-row so the saved offset is not zero.
+  for (let i = 0; i < 7; i++) {
+    await page.mouse.wheel(0, -1700);
+    await page.waitForTimeout(60);
+  }
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => (window as any).__chatSwitch("b"));
+  await page.waitForTimeout(1000);
+  const scrollTops = await page.evaluate(async () => {
+    (window as any).__chatSwitch("a");
+    const scroller = document.querySelector<HTMLElement>(
+      "[data-testid=log-a] [data-virtuoso-scroller]",
+    )!;
+    const seen: number[] = [];
+    const t0 = performance.now();
+    while (performance.now() - t0 < 1500) {
+      seen.push(Math.round(scroller.scrollTop));
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+    return seen;
+  });
+  // Every frame shows the same position: no snap-to-row-then-correct flicker.
+  expect(Math.max(...scrollTops) - Math.min(...scrollTops)).toBeLessThanOrEqual(
+    3,
+  );
+});
