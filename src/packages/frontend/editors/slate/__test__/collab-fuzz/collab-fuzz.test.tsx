@@ -76,6 +76,13 @@ function classifyLoss(
   for (const c of clients) {
     for (const commit of c.commits) {
       if (commit.before.includes(tok) && !commit.after.includes(tok)) {
+        if (process.env.FUZZ_VERBOSE) {
+          const { diffLines } = require("./line-diff");
+          // eslint-disable-next-line no-console
+          console.log(
+            `commit by c${c.opts.id} (${commit.source}) removing ${tok}:\n${diffLines(commit.before, commit.after)}`,
+          );
+        }
         return `removed by a c${c.opts.id} ${commit.source ?? "?"} commit`;
       }
     }
@@ -140,6 +147,19 @@ async function runSession(seed: number, steps = STEPS): Promise<RunResult> {
     await step(() => client.start(INITIAL));
     clients.push(client);
   }
+  for (const c of clients) {
+    c.onCommit = ({ before, after, source }) => {
+      const gone = tokensIn(before).filter(
+        (tok) => !after.includes(tok) && deletedBy.get(tok) !== c.opts.id,
+      );
+      if (gone.length > 0 && process.env.FUZZ_SLATE_DEBUG) {
+        // eslint-disable-next-line no-console
+        console.log(
+          `### STALE SAVE by c${c.opts.id} (${source}) drops ${gone.join(" ")}`,
+        );
+      }
+    };
+  }
   log.push(
     `clients: ${clients.map((c) => `c${c.opts.id}${c.opts.hasSourceFrame ? "+cm" : ""}`).join(" ")}`,
   );
@@ -156,6 +176,7 @@ async function runSession(seed: number, steps = STEPS): Promise<RunResult> {
     log.push(`  trace ${traced} ${label}: ${where}`);
   };
   const inserted = new Set<string>(tokensIn(INITIAL));
+  const deletedBy = new Map<string, number>(); // token -> client that deleted it
   const deleted = new Set<string>();
   let seq = 0;
   const newToken = (c: SimClient) =>
@@ -216,6 +237,7 @@ async function runSession(seed: number, steps = STEPS): Promise<RunResult> {
       if (hits.length === 0) return;
       const hit = pick(rng, hits);
       deleted.add(hit.token);
+      deletedBy.set(hit.token, c.opts.id);
       Transforms.delete(c.editor, {
         at: {
           anchor: { path: hit.path, offset: hit.offset },
@@ -410,6 +432,48 @@ async function runSession(seed: number, steps = STEPS): Promise<RunResult> {
   return { seed, problems, log: [stats, ...log] };
 }
 
+// FUZZ_SAVE_TRACE=<token>: log every mergeForSave call and whether its inputs
+// and result contain the token.
+if (process.env.FUZZ_SAVE_TRACE) {
+  const {
+    SimpleInputMerge,
+  } = require("@cocalc/sync/editor/generic/simple-input-merge");
+  const token = process.env.FUZZ_SAVE_TRACE;
+  let nextId = 0;
+  const idOf = (m: any) => (m.__fuzzId ??= nextId++);
+  for (const method of ["noteApplied", "noteLocalEcho", "noteSaved"]) {
+    const orig = SimpleInputMerge.prototype[method];
+    SimpleInputMerge.prototype[method] = function (value: string) {
+      const had = (this as any).last.includes(token);
+      const out = orig.call(this, value);
+      const has = (this as any).last.includes(token);
+      if (had !== has) {
+        // eslint-disable-next-line no-console
+        console.log(
+          `### merge#${idOf(this)} ${method} changed last: token ${has ? "added" : "removed"}\n${(
+            new Error().stack ?? ""
+          )
+            .split("\n")
+            .slice(2, 9)
+            .map((l) => `###   ${l.trim()}`)
+            .join("\n")}`,
+        );
+      }
+      return out;
+    };
+  }
+  const original = SimpleInputMerge.prototype.mergeForSave;
+  SimpleInputMerge.prototype.mergeForSave = function (opts: any) {
+    const result = original.call(this, opts);
+    const inspected = (this as any).inspectLocal(opts.observed);
+    // eslint-disable-next-line no-console
+    console.log(
+      `### merge#${idOf(this)} mergeForSave observed:${opts.observed.includes(token)} current:${opts.current.includes(token)} base:${inspected.base.includes(token)} last:${(this as any).last.includes(token)} request:${(this as any).requestedLocalUpdate != null} result:${result.includes(token)}`,
+    );
+    return result;
+  };
+}
+
 // FUZZ_MERGE_TRACE=<token>: log SimpleInputMerge inputs whenever a merge drops
 // the token from the local value.
 if (process.env.FUZZ_MERGE_TRACE) {
@@ -429,22 +493,36 @@ if (process.env.FUZZ_MERGE_TRACE) {
     const requested = (this as any).requestedLocalUpdate;
     const pending = [...(this as any).pending];
     const local = opts.getLocal();
-    return original.call(this, {
+    let merged: string | undefined;
+    const out = original.call(this, {
       ...opts,
-      applyMerged: (merged: string) => {
-        const count = (text: string) => text.split(token).length - 1;
-        if (
-          (local.includes(token) && !merged.includes(token)) ||
-          count(merged) > Math.max(count(local), count(opts.remote))
-        ) {
-          // eslint-disable-next-line no-console
-          console.log(
-            `MERGE ANOMALY ${token}: ${JSON.stringify({ last, local, remote: opts.remote, merged, pending, requested, resolved: (this as any).__lastResolve })}`,
-          );
-        }
-        opts.applyMerged(merged);
+      applyMerged: (value: string) => {
+        merged = value;
+        opts.applyMerged(value);
       },
     });
+    const result = merged ?? local;
+    const count = (text: string) => text.split(token).length - 1;
+    const base = (this as any).__lastResolve?.base ?? last;
+    const kind =
+      local.includes(token) &&
+      !result.includes(token) &&
+      opts.remote.includes(token)
+        ? "local-dropped"
+        : count(result) > Math.max(count(local), count(opts.remote))
+          ? "duplicated"
+          : opts.remote.includes(token) &&
+              !base.includes(token) &&
+              !result.includes(token)
+            ? "remote-insert-dropped"
+            : null;
+    if (kind != null) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `MERGE ANOMALY ${token}: ${JSON.stringify({ kind, applied: merged != null, last, local, remote: opts.remote, merged: result, pending, requested, resolved: (this as any).__lastResolve })}`,
+      );
+    }
+    return out;
   };
 }
 

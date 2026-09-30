@@ -140,6 +140,16 @@ describe("merge_prefer_local", () => {
     expect(merge(base, local, remote)).toBe(remote);
   });
 
+  test("does not let a local whitespace normalization drop remote content", () => {
+    // Found by the collaborative editing fuzzer: the local editor removed a
+    // trailing blank line while the remote appended a table at the same spot.
+    const base = "1. first\n2. second\n\n\n";
+    const local = "2. first\n\n3. second\n\n";
+    const remote =
+      "2. first\n\n3. second\n\n| x | y |\n| - | - |\n| 5 | 6 |\n\n";
+    expect(merge(base, local, remote)).toContain("| 5 | 6 |");
+  });
+
   test("prefers local where edits overlap", () => {
     expect(merge("the cat sat", "the dog sat", "the cow sat")).toBe(
       "the dog sat",

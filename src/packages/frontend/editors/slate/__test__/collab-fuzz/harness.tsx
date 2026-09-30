@@ -167,6 +167,11 @@ export class SimClient {
   public actions: any;
   // Every local commit, for classifying oracle violations.
   public commits: { before: string; after: string; source?: string }[] = [];
+  public onCommit?: (commit: {
+    before: string;
+    after: string;
+    source?: string;
+  }) => void;
   private unmount?: () => void;
 
   constructor(
@@ -206,6 +211,7 @@ export class SimClient {
         if (before === value) return;
         session.commit(new StringDocument(value));
         this.commits.push({ before, after: value, source });
+        this.onCommit?.({ before, after: value, source });
         syncstring.emit("change", { local: true, source });
       },
       syncstring_commit: () => {},

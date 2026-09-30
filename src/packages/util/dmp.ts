@@ -203,6 +203,14 @@ function lineDiff(base: string, target: string): Diff {
   return diffs as Diff;
 }
 
+function sameIgnoringWhitespace(a: string, b: string): boolean {
+  return a.replace(/\s+/g, "") === b.replace(/\s+/g, "");
+}
+
+function rawCharDiff(base: string, target: string): Diff {
+  return dmp.diff_main(base, target) as Diff;
+}
+
 // Character diff with semantic cleanup, so a replaced word is one change rather
 // than a mix of kept and changed characters.
 function charDiff(base: string, target: string): Diff {
@@ -326,8 +334,10 @@ function diff3(
  * - Nothing is relocated by fuzzy matching, so a deletion can never land on
  *   similar text elsewhere.
  * - Where both sides changed the same characters: concurrent pure insertions
- *   are both kept (local first); otherwise the local version wins, since the
- *   user is editing there right now (the remote change remains in history).
+ *   are both kept (local first); a whitespace-only change (typically editor
+ *   normalization) never overrides real content from the other side; otherwise
+ *   the local version wins, since the user is editing there right now (the
+ *   remote change remains in history).
  */
 export function merge_prefer_local(opts: {
   base: string;
@@ -344,8 +354,21 @@ export function merge_prefer_local(opts: {
     remote,
     lineDiff,
     (lines) =>
-      diff3(lines.base, lines.local, lines.remote, charDiff, (chars) =>
-        chars.base === "" ? chars.local + chars.remote : chars.local,
+      diff3(lines.base, lines.local, lines.remote, charDiff, (words) =>
+        // Semantic chunks can fold a remote insertion next to a local change
+        // into one conflicting chunk; separate them with a raw character diff
+        // before giving up on either side.
+        diff3(words.base, words.local, words.remote, rawCharDiff, (chars) => {
+          if (chars.base === "") return chars.local + chars.remote;
+          // A whitespace-only change (typically an editor normalizing blank
+          // lines or trailing spaces) never overrides real content from the
+          // other side.
+          if (sameIgnoringWhitespace(chars.base, chars.local))
+            return chars.remote;
+          if (sameIgnoringWhitespace(chars.base, chars.remote))
+            return chars.local;
+          return chars.local;
+        }),
       ),
     (text) => text.trim() !== "",
   );
