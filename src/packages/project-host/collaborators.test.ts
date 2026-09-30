@@ -247,6 +247,64 @@ test("feature settings are bounded, default off, and fail closed on refresh fail
     now.mockRestore();
   }
 });
+test.each(["initial", "expired"])(
+  "concurrent census and producer checks await the same %s settings refresh",
+  async (phase) => {
+    const now = jest.spyOn(Date, "now").mockReturnValue(100_000);
+    try {
+      startCollaborators(jest.fn());
+      const censusEnabled = (createHostedCollaborationCensus as jest.Mock).mock
+        .calls[0][0].enabled;
+      if (phase === "expired") {
+        (callHub as jest.Mock).mockResolvedValue({
+          collaborators_enabled: true,
+        });
+        expect(await options.enabled()).toBe(true);
+        now.mockReturnValue(130_000);
+      }
+      (callHub as jest.Mock).mockClear();
+      let release!: (value: unknown) => void;
+      (callHub as jest.Mock).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            release = resolve;
+          }),
+      );
+      const checks = [options.enabled(), censusEnabled(), censusEnabled()];
+      release({ collaborators_enabled: true });
+      expect(await Promise.all(checks)).toEqual([true, true, true]);
+      expect(callHub).toHaveBeenCalledTimes(1);
+    } finally {
+      now.mockRestore();
+    }
+  },
+);
+test("concurrent refresh failure never reuses the previously enabled setting", async () => {
+  const now = jest.spyOn(Date, "now").mockReturnValue(100_000);
+  try {
+    startCollaborators(jest.fn());
+    (callHub as jest.Mock).mockResolvedValue({ collaborators_enabled: true });
+    expect(await options.enabled()).toBe(true);
+    now.mockReturnValue(130_000);
+    let reject!: (error: Error) => void;
+    (callHub as jest.Mock).mockImplementationOnce(
+      () =>
+        new Promise((_resolve, fail) => {
+          reject = fail;
+        }),
+    );
+    const checks = Promise.allSettled([options.enabled(), options.enabled()]);
+    reject(Error("settings unavailable"));
+    expect((await checks).map((result) => result.status)).toEqual([
+      "rejected",
+      "rejected",
+    ]);
+    expect(await options.enabled()).toBe(false);
+    expect(callHub).toHaveBeenCalledTimes(2);
+  } finally {
+    now.mockRestore();
+  }
+});
 test("deleted or migrated projects do not recreate storage or publish removal", async () => {
   const getFilesystem = jest.fn();
   startCollaborators(getFilesystem);

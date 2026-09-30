@@ -88,22 +88,33 @@ export function startCollaborators(
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   let enabled = false,
     refreshEnabledAt = 0;
+  let refreshingEnabled: Promise<boolean> | undefined;
   const isEnabled = async () => {
+    // Census status and producer reads share this cache. A refresh is unknown,
+    // not a disabled value: all concurrent checks must await its result.
+    if (refreshingEnabled) return refreshingEnabled;
     if (Date.now() < refreshEnabledAt) return enabled;
     enabled = false;
     refreshEnabledAt = Date.now() + 30_000;
-    const client = getMasterConatClient(),
-      host_id = getLocalHostId();
-    if (!client || !host_id) return false;
-    const result = await callHub({
-      client,
-      host_id,
-      name: "system.getCustomize",
-      args: [["collaborators_enabled"]],
-    });
-    if (result?.error) throw Error(`${result.error}`);
-    enabled = result?.collaborators_enabled === true;
-    return enabled;
+    refreshingEnabled = (async () => {
+      const client = getMasterConatClient(),
+        host_id = getLocalHostId();
+      if (!client || !host_id) return false;
+      const result = await callHub({
+        client,
+        host_id,
+        name: "system.getCustomize",
+        args: [["collaborators_enabled"]],
+      });
+      if (result?.error) throw Error(`${result.error}`);
+      enabled = result?.collaborators_enabled === true;
+      return enabled;
+    })();
+    try {
+      return await refreshingEnabled;
+    } finally {
+      refreshingEnabled = undefined;
+    }
   };
   const census = createHostedCollaborationCensus({
     filename: join(directory, "census.sqlite"),
