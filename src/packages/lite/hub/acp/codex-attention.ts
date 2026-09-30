@@ -3,6 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import {
+  codexAttentionAcceptedReason,
+  codexAttentionRuntimeName,
+  type CodexAttentionRuntimeLabel,
+} from "@cocalc/util/ai/codex-attention";
 import callHub from "@cocalc/conat/hub/call-hub";
 import type {
   AcpAttentionQuestion,
@@ -281,10 +286,14 @@ export async function reconcileCodexAction(opts: {
   return resolved;
 }
 
-function titleForQuestions(questions: AcpAttentionQuestion[]): string {
+function titleForQuestions(
+  questions: AcpAttentionQuestion[],
+  runtimeLabel: CodexAttentionRuntimeLabel,
+): string {
+  const name = codexAttentionRuntimeName(runtimeLabel);
   return questions.length === 1
-    ? questions[0].header || "Codex needs your attention"
-    : `Codex has ${questions.length} questions`;
+    ? questions[0].header || `${name} needs your attention`
+    : `${name} has ${questions.length} questions`;
 }
 
 export function createCodexAttentionHandler(
@@ -293,12 +302,14 @@ export function createCodexAttentionHandler(
     runtimeLabel = "Codex",
     onSyncResponseResolved,
   }: {
-    runtimeLabel?: "Codex" | "ACP" | "Claude" | "Agent";
+    runtimeLabel?: CodexAttentionRuntimeLabel;
     onSyncResponseResolved?: (
       record: AcpAttentionStoredRecord,
     ) => Promise<void>;
   } = {},
 ): CodexAttentionHandler {
+  const runtimeName = codexAttentionRuntimeName(runtimeLabel);
+  const runtimeTurnName = runtimeName === "The agent" ? "agent" : runtimeName;
   return {
     async requestSyncQuestion({
       requestId,
@@ -329,10 +340,10 @@ export function createCodexAttentionHandler(
         source_id: syncSourceId(context, requestId),
         attention_kind: "question",
         is_blocking: isBlocking,
-        title: titleForQuestions(questions),
+        title: titleForQuestions(questions, runtimeLabel),
         summary: isBlocking
-          ? `The current ${runtimeLabel} turn is paused.`
-          : `${runtimeLabel} may continue while it waits.`,
+          ? `The current ${runtimeTurnName} turn is paused.`
+          : `${runtimeName} may continue while it waits.`,
         questions,
         chat: context.chat,
         expires_at: Number.isFinite(expiresAt) ? expiresAt : undefined,
@@ -429,8 +440,8 @@ export function createCodexAttentionHandler(
         source_id: asyncSourceId(context, itemId),
         attention_kind: "question",
         is_blocking: false,
-        title: titleForQuestions(questions),
-        summary: `${runtimeLabel} may continue while it waits for your reply.`,
+        title: titleForQuestions(questions, runtimeLabel),
+        summary: `${runtimeName} may continue while it waits for your reply.`,
         questions,
         chat: context.chat,
       });
@@ -467,7 +478,7 @@ export function createCodexAttentionHandler(
         reason: current?.response_id
           ? current.response_declined
             ? "The user declined to answer"
-            : `${runtimeLabel} accepted the response`
+            : codexAttentionAcceptedReason(runtimeLabel)
           : `${runtimeLabel} cleared the request before receiving an answer`,
       });
       if (resolved) {

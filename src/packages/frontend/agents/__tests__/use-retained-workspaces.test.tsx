@@ -12,8 +12,26 @@ test("keeps at most three recently visited workspaces and revisits update recenc
     ({ active }) => useRetainedWorkspaces(active),
     { initialProps: { active: "A" } },
   );
-  for (const active of ["B", "C", "A", "D"]) rerender({ active });
-  expect([...result.current.mountedWorkspaces.keys()]).toEqual(["C", "A", "D"]);
+  for (const active of ["B", "C", "A", "D"]) {
+    act(() => jest.advanceTimersByTime(1000));
+    rerender({ active });
+  }
+  expect([...result.current.mountedWorkspaces.keys()]).toEqual(["A", "C", "D"]);
+});
+
+test("revisiting a retained workspace keeps render order stable", () => {
+  // Reordering keyed views moves their DOM, which resets scroll positions.
+  const { result, rerender } = renderHook(
+    ({ active }) => useRetainedWorkspaces(active),
+    { initialProps: { active: "A" } },
+  );
+  for (const active of ["B", "C", "A", "B", "A"]) {
+    act(() => jest.advanceTimersByTime(1000));
+    rerender({ active });
+    const keys = [...result.current.mountedWorkspaces.keys()];
+    expect(keys).toEqual(["A", "B", "C"].slice(0, keys.length));
+  }
+  expect(result.current.mountedWorkspaces.size).toBe(3);
 });
 
 test("evicts inactive views but preserves the active view even after a long visit", () => {

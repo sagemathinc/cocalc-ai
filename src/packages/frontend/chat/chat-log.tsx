@@ -17,6 +17,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -1187,6 +1188,11 @@ export function MessageList({
     Record<string, CodexAttentionDraft>
   >({});
   const cacheId = scrollCacheId ?? `${project_id}${path}`;
+  const cacheIdRef = useRef(cacheId);
+  cacheIdRef.current = cacheId;
+  const visibleScrollTopRef = useRef<
+    { cacheId: string; scrollTop: number } | undefined
+  >(undefined);
   const initialAnchor = useMemo(
     () => loadChatViewportAnchor(cacheId),
     [cacheId],
@@ -1586,8 +1592,10 @@ export function MessageList({
       if (!isVisibleRef.current) return;
       if (Date.now() < suppressAnchorRestoreUntilRef.current) return;
       if (scrollToDate != null || scrollToIndex != null) return;
-      if (activityJumpDate != null || activityJumpToken != null) return;
-      if (searchJumpDate != null || searchJumpToken != null) return;
+      // Activity/search jumps are events, not pending state: ChatRoom passes
+      // token 0 before any jump and never clears the dates. Treating them as
+      // pending disabled every restore; the suppression window set when a jump
+      // happens (below) is what keeps restores from fighting it.
       const dates = rowKeysRef.current;
       if (dates.length === 0) return;
 
@@ -1641,8 +1649,6 @@ export function MessageList({
       }
     },
     [
-      activityJumpDate,
-      activityJumpToken,
       cacheId,
       keepBottomAnchoredRef,
       listVirtuosoRef,
@@ -1650,8 +1656,6 @@ export function MessageList({
       scrollToBottomRef,
       scrollToDate,
       scrollToIndex,
-      searchJumpDate,
-      searchJumpToken,
       setManualScroll,
       useVirtuoso,
     ],
@@ -1662,9 +1666,9 @@ export function MessageList({
       scrollToDate == null &&
       scrollToIndex == null &&
       activityJumpDate == null &&
-      activityJumpToken == null &&
+      !activityJumpToken &&
       searchJumpDate == null &&
-      searchJumpToken == null
+      !searchJumpToken
     ) {
       return;
     }
@@ -2026,8 +2030,31 @@ export function MessageList({
     virtuosoCallbackStateRef.current.onAtTopStateChange?.(atTop);
   }, []);
   const handleVirtuosoScroll = useCallback(() => {
+    const scroller = scrollerRef.current;
+    if (scroller != null && isVisibleRef.current) {
+      visibleScrollTopRef.current = {
+        cacheId: cacheIdRef.current,
+        scrollTop: scroller.scrollTop,
+      };
+    }
     virtuosoCallbackStateRef.current.scheduleAnchorCapture();
   }, []);
+
+  // Moving a retained chat in the DOM (e.g., a parent reordering keyed
+  // siblings) resets its scrollTop to 0 without telling Virtuoso. Returning
+  // would then show the oldest rows, and the next capture would save the top as
+  // the reading position. Put the last visible offset back before paint; the
+  // resulting scroll event resyncs Virtuoso, and the anchor restore corrects any
+  // growth that happened while hidden.
+  useLayoutEffect(() => {
+    if (!useVirtuoso || !isVisible) return;
+    const scroller = scrollerRef.current;
+    const last = visibleScrollTopRef.current;
+    if (scroller == null || last == null || last.cacheId !== cacheId) return;
+    if (scroller.scrollTop === 0 && last.scrollTop > 0) {
+      scroller.scrollTop = last.scrollTop;
+    }
+  }, [cacheId, isVisible, useVirtuoso]);
 
   useEffect(() => {
     if (!scrollToBottomRef || useVirtuoso) return;

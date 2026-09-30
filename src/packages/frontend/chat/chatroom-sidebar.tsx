@@ -424,7 +424,7 @@ export function ChatRoomSidebarContent({
               />
             )}
             {attentionCountForThread > 0 ? (
-              <Tooltip title="Codex needs attention in this chat">
+              <Tooltip title="An agent needs attention in this chat">
                 <Badge
                   count={attentionCountForThread}
                   color={COLORS.ORANGE_WARN}
@@ -596,7 +596,7 @@ export function ChatRoomSidebarContent({
             Chats
           </span>
           {attentionCount > 0 ? (
-            <Tooltip title="Codex needs attention in this project chat">
+            <Tooltip title="An agent needs attention in this project chat">
               <Badge count={attentionCount} color={COLORS.ORANGE_WARN} />
             </Tooltip>
           ) : null}
