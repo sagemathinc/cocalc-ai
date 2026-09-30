@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { cocalcAccessGuidance } from "./cocalc-access-guidance";
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -358,7 +359,7 @@ function getCoCalcProjectRuntimeGuidance(cliCommand: string): string[] {
     "- COCALC_PROJECT_ID",
     "- COCALC_API_URL",
     "- COCALC_BEARER_TOKEN",
-    `When CoCalc access is enabled for this turn, use ordinary \`${cliCommand}\` commands. The CLI keeps the own-project credential for this project and automatically selects the temporary scoped credential for permitted account or other-project operations. Inspect \`${cliCommand} project list --help\` or the relevant command's help when needed. Do not read, print, or copy the connector credential file, and do not fall back to a broader login if a grant is absent.`,
+    cocalcAccessGuidance(cliCommand),
     "Project secret changes apply immediately to running projects; do not restart a project merely to apply a secret update. Programs that cache credentials may need their own reload.",
     "Use Codex's synchronous or asynchronous question tools when human input is required. Use asynchronous questions only when useful authorized work can continue while waiting.",
     "Do not use question tools for permission or authentication escalation. Use typed first-party CoCalc actions for supported fresh-auth, login, and approval flows.",

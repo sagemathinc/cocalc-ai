@@ -12,7 +12,10 @@ import type {
   CreateElicitationRequest,
   CreateElicitationResponse,
 } from "@agentclientprotocol/sdk-v1";
-import type { AcpAttentionQuestion } from "@cocalc/conat/ai/acp/types";
+import type {
+  AcpAttentionQuestion,
+  AcpChatContext,
+} from "@cocalc/conat/ai/acp/types";
 import type { AcpImageAttachment } from "./types";
 import { harnessQuestionForm } from "./harness-questions";
 import type { Readable, Writable } from "node:stream";
@@ -66,6 +69,12 @@ export interface HarnessProcess {
   resumeTools?(): void;
   /** Trusted tool bridge callback, scoped to this process's admitted conversation. */
   setAsyncQuestionHandler?(handler: HarnessAsyncQuestionHandler): void;
+  /**
+   * Managed CoCalc connector: issue the agent's scoped credential for one
+   * turn (if its connector is enabled) and revoke it when the turn ends.
+   */
+  beginConnectorTurn?(chat: AcpChatContext): Promise<void>;
+  endConnectorTurn?(): Promise<void>;
   /** Launcher must terminate the execution boundary, including descendants. */
   stop(): Promise<void>;
 }
@@ -339,6 +348,16 @@ export class AcpHarnessClient {
         ?.steering?.supported === true
     );
   }
+  /** Issue this turn's CoCalc connector credential, if the launcher supports it. */
+  async beginConnectorTurn(chat: AcpChatContext): Promise<void> {
+    await this.process.beginConnectorTurn?.(chat);
+  }
+
+  /** Revoke the current turn's CoCalc connector credential. */
+  async endConnectorTurn(): Promise<void> {
+    await this.process.endConnectorTurn?.();
+  }
+
   get controls(): HarnessSessionControls {
     return harnessSessionControls(this.session ?? {});
   }

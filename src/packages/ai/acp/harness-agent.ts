@@ -15,6 +15,7 @@ import {
   parseAcpHarnessProfile,
 } from "@cocalc/util/ai/runtime";
 import { randomUUID } from "node:crypto";
+import getLogger from "@cocalc/backend/logger";
 import { harnessPrompt } from "./harness-context";
 import { assertSameTurnPrincipal } from "./turn-principal";
 import { normalizeCodexAsyncQuestions } from "./codex-attention";
@@ -22,6 +23,8 @@ import type {
   CodexAttentionContext,
   CodexAttentionHandler,
 } from "./codex-project";
+
+const logger = getLogger("ai:acp:harness-agent");
 
 /** One admitted conversation binding. The service must authorize each evaluation. */
 export class HarnessAgent implements AcpAgent {
@@ -91,6 +94,8 @@ export class HarnessAgent implements AcpAgent {
 
     this.busy = true;
     this.interrupted = false;
+    // The client whose CoCalc connector credential this turn issued.
+    let connectorClient: AcpHarnessClient | undefined;
     try {
       await this.validateAuthority?.(this.binding);
       // The service preserves the authoritative empty reset marker. Missing
@@ -230,6 +235,12 @@ export class HarnessAgent implements AcpAgent {
           "rejected",
           "ACP prompt interrupted before submission",
         );
+      if (request.chat) {
+        // The agent's scoped CoCalc connector credential lives only as long
+        // as this turn (as for Codex); it is revoked in finally.
+        connectorClient = client;
+        await client.beginConnectorTurn(request.chat);
+      }
       const result = await client.prompt(
         harnessPrompt(request),
         async (event) => {
@@ -339,6 +350,11 @@ export class HarnessAgent implements AcpAgent {
       // Never silently start a fresh native session after an ambiguous failure.
       return await disposeFailedHarness(error, () => this.dispose());
     } finally {
+      await connectorClient?.endConnectorTurn().catch((error) => {
+        logger.warn("managed CoCalc connector revocation unconfirmed", {
+          error: `${error}`,
+        });
+      });
       this.attentionContext = undefined;
       this.busy = false;
     }
