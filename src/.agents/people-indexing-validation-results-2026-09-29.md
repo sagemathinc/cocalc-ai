@@ -4,6 +4,35 @@ Date: 2026-09-29. This is an initial gate report, not a completed scaling rollou
 
 ## Current Completion Audit
 
+### Latest Checkpoint: Host Recovery And Live Cancellation (2026-09-30)
+
+The chronological evidence below is retained for audit. The development host is
+now upgraded, two-account collaboration without Scan has passed, and live
+cancellation has reached a confirmed terminal result after reload. The general
+unavailable-host behavior and the rejected-start retry fix are deployed on all
+three development hubs. The final live retry ended unavailable after 518 entries;
+background recovery subsequently confirmed its exact stop and released that
+project's reservation. The permanently retired host retains its unresolved
+reservation without holding the whole account open. No reservation was manually
+deleted to make validation pass.
+
+| Checklist step         | Current result                                                                                                                                                                                                                    |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Selection              | Passed on the development site, including 72 eligible projects and selection across pages.                                                                                                                                        |
+| Start/reload           | Passed; fixed operation identity and progress survive reopen and full reload.                                                                                                                                                     |
+| Two tabs               | Passed; one admitted operation and fixed selection.                                                                                                                                                                               |
+| Cancel                 | Passed for both a reachable host's confirmed stop and an unreachable host's honest unavailable result.                                                                                                                            |
+| Results/retry          | Passed for unavailable/deferred outcomes, explicit retry and later stop recovery. Successful/truncated completion passes the real-service fixture; full natural traversal completion on this development host remains unverified. |
+| Disable/reenable       | Passed; current status/cancel remain available and reenable does not submit work.                                                                                                                                                 |
+| Keyboard/display       | Passed, including focus restoration, native 200% zoom, light/dark mode and narrow layout.                                                                                                                                         |
+| Ordinary collaboration | Passed with two account sessions, including invitation acceptance, reply, find-again and reload, without Scan. The recipient already had project access; external inbox receipt was not checked.                                  |
+
+The live retry took about 14 minutes before its unavailable outcome. This is a
+performance and environment-reliability limitation, not evidence of a healthy
+completed live traversal. Functional acceptance fixtures do not establish the
+development host's full traversal time or production capacity. Independent
+release review and an explicit canary decision remain separate open gates.
+
 ### Recovery Checkpoint: Host Upgrade Blocked
 
 The latest standard development build passed at `4007f1df95`; the browser loaded
@@ -3912,3 +3941,61 @@ After restarting all three development hubs with this change:
 The whole-account cancellation block is resolved without a fabricated stop.
 Live healthy traversal still needs the development host software upgrade; the
 full live checklist and release gates are not yet established.
+
+### Compatible Host, Confirmed Cancellation And Rejected-Start Recovery
+
+Upgraded only the selected development host's project-host daemon through the
+admin Runtime controls. The final promoted bundle is
+`20260930T012457Z-fd28d0480646-dirty-e3b0c442`; router, persistence and ACP versions
+were not changed. Host control now supports the Scan API. Removed an obsolete
+host-local prototype switch that rejected owner-admitted explicit scans even
+when the normal server admission settings allowed them. Protocol and identity
+validation remain enforced. The host build/typecheck and 35 focused host tests
+passed. Upgrade operation `0a6a763c-745c-4ba5-a15b-0fa92c8cda26` completed and the
+Runtime panel confirmed promotion.
+
+Live operation `9b6fd215-6c92-4e14-8716-4f61f5a51d0d` traversed storage in project
+`756629fd-ce98-4596-8595-1071d6c019a6`. Keyboard cancellation visibly changed its
+status to Cancelling. Reload and reopen retained the same operation, which then
+reported one confirmed cancelled project, 161 entries examined and two sources
+found. This is a confirmed host stop, unlike the unavailable retired-host result.
+
+The next live retry exposed a separate predecessor mismatch. An earlier rejected
+start had updated the owner's last-attempt identity without becoming the host's
+current run. The host correctly rejected replacement using that stale expected
+identity. Two regression cases reproduced unavailable results for both a retained
+older host run and an empty host frontier. New admissions now reconcile that
+inherited predecessor before the durable possible-submission boundary. Lease,
+cancel and terminal-state checks remain; established possibly-submitted
+predecessors and the host's compare-and-swap are preserved. A raced reconciliation
+cannot submit new work.
+
+Validation after the fix: server/reference TypeScript build; 38 batch/dispatch
+tests, five legacy worker integration tests and 23 database tests; plus the real
+home/owner/host browser acceptance test (119.344 seconds). The legacy fixture was
+corrected to retain the completed host run when observing its unknown successor.
+Commits: `06a421e6a73ed673cf79f020babb38ce2be94876` and
+`98f1122415865200334328355c80730ebf19803a`.
+
+After all three development hubs restarted, the same failed project was selected
+using Select unsuccessful projects for retry. Selection alone left the old
+operation unchanged; explicit Start created
+`b45e80f0-9d92-4b4e-a1c4-274eb76e6e98`. The live host accepted child run
+`6e96276a-4396-41e3-a7f2-4f3ce05fbe19`. Full reload retained the operation and its
+increasing entry count. The operation ran from 01:41:14.668Z to 01:55:11.522Z,
+then ended unavailable with 518 entries examined, zero sources found and the
+stop-unconfirmed explanation. Reload retained the exact outcome and operation.
+A subsequent read-only host status returned cancelled for the exact child run.
+The owner's job had been removed by background recovery, while the permanently
+retired project's original job remained cancellation-requested and recovery-pending.
+The historical unavailable result was not rewritten as successful or cancelled.
+The transport interruption's underlying cause was not established; this run
+does not prove natural successful or truncated traversal on the development host.
+
+A follow-up regression also reproduced an unwanted second admission when a
+submitted batch's predecessor was empty and the host subsequently reported a
+different frontier. Commit `0176a82e2431a08f1b83acf219545147c3e6b8cc` preserves that
+empty boundary after possible submission, while retaining initial predecessor
+adoption for legacy jobs. The final server/reference TypeScript build, 44 focused
+server tests and 23 database tests pass. The live development hubs were restarted
+with this additional guard; no further live Scan was submitted automatically.
