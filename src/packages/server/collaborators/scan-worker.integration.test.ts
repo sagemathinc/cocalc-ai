@@ -118,7 +118,11 @@ describeDb("scan worker with durable owner store", () => {
       "UPDATE collaboration_scan_budget SET last_started_at=clock_timestamp()-interval '6 minutes' WHERE project_id=$1",
       [request.project_id],
     );
-    status.mockResolvedValue({ state: "unknown" });
+    // A new run is unknown, but the host retains the completed predecessor.
+    status.mockResolvedValue({
+      state: "unknown",
+      current_run_id: receipt.job_id,
+    });
     expect((await runCollaborationScanPass()).pending).toBe(1);
     expect(admit).toHaveBeenLastCalledWith(
       expect.objectContaining({
