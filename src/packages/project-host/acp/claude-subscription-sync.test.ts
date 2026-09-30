@@ -264,3 +264,20 @@ test("bundle helpers round-trip and compare opaque bytes", () => {
     ),
   ).toThrow("Invalid Claude auth bundle entry");
 });
+
+test("a maximal bundle with long paths still fits the reader's output cap", async () => {
+  const home = await mkdtemp(join(tmpdir(), "claude-home-long-"));
+  homes.push(home);
+  // 128 files with ~990-character paths and 1.4 MB of data in total.
+  const segment = "d".repeat(200);
+  const dir = [segment, segment, segment, segment].join("/");
+  await mkdir(join(home, dir), { recursive: true });
+  const paths: string[] = [];
+  for (let i = 0; i < 128; i++) {
+    const path = `${dir}/${String(i).padStart(3, "0")}${"f".repeat(180)}`;
+    await writeFile(join(home, path), Buffer.alloc(10_937, i));
+    paths.push(path);
+  }
+  const files = await readClaudeSubscriptionHomeFiles(home, paths);
+  expect(files.size).toBe(128);
+});

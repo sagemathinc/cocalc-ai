@@ -227,7 +227,11 @@ export async function readClaudeSubscriptionHomeFiles(
     if (!safeRelativePath(path)) throw Error("Invalid Claude auth path");
   if (wanted.length > MAX_FILES)
     throw Error("Claude auth home has too many files");
-  const maxOutput = Math.ceil((MAX_BYTES * 4) / 3) + 64 * (wanted.length + 1);
+  // JSON [[path, base64], ...]: base64 of at most MAX_BYTES (4 chars per 3
+  // bytes, padded per file) plus each quoted path and its punctuation.
+  const maxOutput =
+    Math.ceil((MAX_BYTES * 4) / 3) +
+    wanted.reduce((sum, path) => sum + JSON.stringify(path).length + 16, 2);
   const child = spawn(
     process.execPath,
     [
