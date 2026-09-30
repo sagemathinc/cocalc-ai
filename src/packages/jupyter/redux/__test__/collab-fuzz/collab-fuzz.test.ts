@@ -8,7 +8,7 @@ record (string input, numeric position); no token may be duplicated; no
 token may be lost unless the client that deleted it could see it; and every
 open cell editor must show its cell's input.
 
-Run with JUPYTER_FUZZ=1. FUZZ_RUNS (default 6) and FUZZ_SEED (default 1) select the seeds; a failure
+FUZZ_RUNS (default 6) and FUZZ_SEED (default 1) select the seeds; a failure
 prints its seed, so it can be replayed with FUZZ_SEED=<seed> FUZZ_RUNS=1.
 FUZZ_STEPS sets operations per session and FUZZ_VERBOSE prints the operation
 log and final notebook. FUZZ_NO_SPLIT_MERGE leaves out splitting and merging
@@ -402,12 +402,23 @@ async function runSession(seed: number, steps = STEPS) {
   return { seed, problems, log };
 }
 
-// Today's code fails most seeds (see the plan's baseline), so the fuzzer only
-// runs when asked for (JUPYTER_FUZZ=1) until the fixes land; it then becomes a
-// default test, as the Markdown fuzzer is.
-const describeFuzz = process.env.JUPYTER_FUZZ ? describe : describe.skip;
+// Seeds that found bugs; always run them as regression tests.
+//    5 (10 steps): split right after typing duplicated text
+//    6 (15 steps): an editor saving as its cell was deleted made a ghost cell
+//   33 (40 steps): a half-done split left a cell on one client only
+//  150 (40 steps): a cell both users brought back had its lines twice
+//  182 (40 steps): an editor merged from a stale baseline after a split
+//  235 (40 steps): a half-done merge of cells deleted a cell with its text
+const REGRESSION_SEEDS: { seed: number; steps: number }[] = [
+  { seed: 5, steps: 10 },
+  { seed: 6, steps: 15 },
+  { seed: 33, steps: 40 },
+  { seed: 150, steps: 40 },
+  { seed: 182, steps: 40 },
+  { seed: 235, steps: 40 },
+];
 
-describeFuzz("collaborative notebook editing fuzz", () => {
+describe("collaborative notebook editing fuzz", () => {
   beforeEach(() => {
     jest.useFakeTimers({ now: 1_800_000_000_000 });
   });
@@ -415,9 +426,19 @@ describeFuzz("collaborative notebook editing fuzz", () => {
     jest.useRealTimers();
   });
 
+  const cases = process.env.FUZZ_SEED
+    ? []
+    : REGRESSION_SEEDS.map(({ seed, steps }) => ({
+        name: `regression seed ${seed} (${steps} steps)`,
+        seed,
+        steps,
+      }));
   for (let seed = FIRST_SEED; seed < FIRST_SEED + RUNS; seed++) {
-    it(`seed ${seed}`, async () => {
-      const { problems } = await runSession(seed);
+    cases.push({ name: `seed ${seed}`, seed, steps: STEPS });
+  }
+  for (const { name, seed, steps } of cases) {
+    it(name, async () => {
+      const { problems } = await runSession(seed, steps);
       if (problems.length > 0) {
         // eslint-disable-next-line no-console
         console.log(`seed ${seed}: ${problems.join("; ")}`);

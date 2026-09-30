@@ -216,13 +216,35 @@ Fixes (each found by the fuzzer; unit tests in `sync/editor/db/test`):
   `FUZZ_MERGE_PROBE`; verbose output shows the commit that lost or
   duplicated a token and how non-converged clients differ.
 
-Open question: splitting or merging cells moves text between cells. If
-someone edits that text at the same moment, a text merge cannot tell the
-move from a deletion, so the edit keeps the text and the other cell has it
-too (a visible duplicate, nothing lost). Options: accept it (rare: needs a
-concurrent split/merge of the same cell within about a second), or make
-split/merge carry the edits made meanwhile to where the text moved.
+Decision (2026-09-30): accept that text a split or merge moves while someone
+edits it may end up twice (a visible duplicate; nothing is lost). The fuzzer
+records the text in split or merged cells and reports duplicates of it
+without failing.
 
-Next: decide the split/merge question; then run the fuzzer approach on
-tasks, boards and slides (they already get the core merge), J4 (browser
-suite on lite2b) and J5.
+Next: the fuzzer approach for tasks, boards and slides (they already get the
+core merge), J4 (browser suite on lite2b) and J5.
+
+### 2026-09-30 (evening): all fuzzer failures fixed
+
+- More fixes found by the fuzzer:
+  - `merge_cell_below_cell` checks that both cells still exist before
+    deleting the one below, and reads the inputs from the synced document.
+    Before, it could leave the delete uncommitted, to go out with the next
+    commit and lose the cell's text.
+  - A text column added on both sides (a deleted cell both users brought
+    back) merges from the tokens the two versions have in common, not from
+    an empty base.
+  - Cell editors take a value they stored as their baseline at once
+    (`SimpleInputMerge.noteLocalEcho`), because the store is updated
+    synchronously.
+  - patchflow (sagemathinc/patchflow#4, to be released as 0.9.1):
+    unterminated last lines, and pairing a changed line with its closest
+    edit.
+- Notebook fuzzer, 400 seeds x 40 operations, with and without split/merge:
+  - with the patchflow#4 fixes: 400/400 in both modes;
+  - with patchflow 0.9.0: 400/400 with all operations, and 398/400 without
+    split/merge.
+- Markdown fuzzer, 400 x 80: 2 failures, both the known ordered-list
+  numbering.
+- The notebook fuzzer runs by default now: 6 random seeds plus regression
+  seeds, about 2 seconds.
