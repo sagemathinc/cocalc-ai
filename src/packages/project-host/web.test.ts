@@ -859,7 +859,10 @@ describe("project-host exam join route", () => {
 // Before the first run, between runs and after the last one, no run uses the
 // exam address, so requests reach the catch-all route.
 describe("project-host exam address without a run", () => {
-  const publicUrl = process.env.PROJECT_HOST_PUBLIC_URL;
+  const savedEnv = {
+    PROJECT_HOST_PUBLIC_URL: process.env.PROJECT_HOST_PUBLIC_URL,
+    PROJECT_HOST_ID: process.env.PROJECT_HOST_ID,
+  };
 
   function createRouteResponse() {
     return {
@@ -934,10 +937,12 @@ describe("project-host exam address without a run", () => {
   });
 
   afterEach(() => {
-    if (publicUrl === undefined) {
-      delete process.env.PROJECT_HOST_PUBLIC_URL;
-    } else {
-      process.env.PROJECT_HOST_PUBLIC_URL = publicUrl;
+    for (const [name, value] of Object.entries(savedEnv)) {
+      if (value === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = value;
+      }
     }
   });
 
@@ -991,6 +996,28 @@ describe("project-host exam address without a run", () => {
     const other = await getAdmissionScript("host-123.example.test");
     expect(other.next).toHaveBeenCalledTimes(1);
     expect(other.res.body).toBeUndefined();
+  });
+
+  it("uses the hub's exam address when the public URL has no host- label", async () => {
+    // The hub then names the exam address after the host id.
+    const host_id = "00000000-1000-4000-8000-000000000123";
+    process.env.PROJECT_HOST_PUBLIC_URL = "https://compute.example.test";
+    process.env.PROJECT_HOST_ID = host_id;
+    const examHost = `exam-${host_id}.example.test`;
+
+    const res = getCatchAll(examHost);
+    expect(res.statusCode).toBe(404);
+    expect(res.contentType).toBe("html");
+    expect(res.body).toBe(EXAM_HOST_IDLE_PAGE);
+
+    const exam = await getAdmissionScript(examHost);
+    expect(exam.next).not.toHaveBeenCalled();
+    expect(exam.res.body).toBe(EXAM_ADMISSION_SCRIPT);
+
+    expect(getCatchAll("compute.example.test").body).toEqual({
+      error: "Not Found",
+      detail: "Static assets are not served from project-host.",
+    });
   });
 
   it("keeps the JSON Not Found for other hostnames", () => {

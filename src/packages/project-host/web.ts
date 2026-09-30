@@ -260,6 +260,7 @@ function examRuntimeForRequest(req: express.Request) {
 function isExamHostnameRequest(req: express.Request): boolean {
   const hostname = examHostnameFromProjectHostPublicUrl(
     process.env.PROJECT_HOST_PUBLIC_URL,
+    process.env.PROJECT_HOST_ID,
   );
   return !!hostname && requestHostname(req) === hostname;
 }
