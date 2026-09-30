@@ -908,6 +908,32 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     ],
     usedIn: [bold("jupyter", "Target language")],
   },
+  {
+    id: "jupyter.run.output-limit",
+    label: "Output limit",
+    anchors: [
+      msg(COMMON, "menu.generic.run.label", 'defaultMessage: "Run"'),
+      ren(JUPYTER_EDITOR, "label: menu.run,"),
+      def(JUPYTER_EDITOR, 'label: "Output limit",'),
+    ],
+    usedIn: [{ file: doc("jupyter"), text: "**Run → Output limit**" }],
+  },
+  {
+    id: "jupyter.run.output-limit.choices",
+    label: "{mib} MiB",
+    anchors: [
+      def("jupyter/execute/output-budget.ts", "[1, 4, 16, 64]"),
+      ren("frontend/jupyter/output-limit-menu.ts", "${mib} MiB"),
+      ren("frontend/jupyter/output-limit-menu.ts", '" (default)"'),
+      ren("frontend/jupyter/output-limit-menu.ts", '" (selected)"'),
+    ],
+    usedIn: [
+      {
+        file: doc("jupyter"),
+        text: "**1 MiB (default)**, **4 MiB**, **16 MiB**, or **64 MiB**",
+      },
+    ],
+  },
 
   // Virtual machines
   ...(
