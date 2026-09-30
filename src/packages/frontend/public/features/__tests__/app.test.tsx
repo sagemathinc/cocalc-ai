@@ -2,6 +2,7 @@
 
 import { fireEvent, render, screen } from "@testing-library/react";
 
+import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
 import PublicFeaturesApp from "../app";
 import { getFeatureIndexPages } from "../catalog";
 import { featurePath, getFeaturesRouteFromPath } from "../routes";
@@ -432,8 +433,9 @@ describe("PublicFeaturesApp", () => {
     expect(screen.queryByText("Start a course in CoCalc")).toBeNull();
   });
 
-  it("renders the richer terminal feature page", () => {
-    render(
+  it("renders the terminal page from its feature record, like the crawler fallback", () => {
+    const page = getPublicFeaturePage("terminal")!;
+    const { container } = render(
       <PublicFeaturesApp
         config={{ help_email: "help@example.com", site_name: "Launchpad" }}
         initialRoute={{ slug: "terminal", view: "detail" }}
@@ -441,23 +443,45 @@ describe("PublicFeaturesApp", () => {
     );
 
     expect(
-      screen.getByText("An online Linux terminal that lives in your project."),
+      screen.getByRole("heading", { level: 2, name: page.tagline }),
     ).not.toBeNull();
-    expect(
-      screen.getByRole("heading", {
-        name: "Edit and run scripts side by side",
-      }),
-    ).not.toBeNull();
-    expect(
-      screen.getByRole("heading", {
-        name: "Real-time collaboration in the shell",
-      }),
-    ).not.toBeNull();
-    expect(
-      screen.getByRole("heading", {
-        name: "Pick the software, install more on top",
-      }),
-    ).not.toBeNull();
+    expect(screen.getByText(page.summary)).not.toBeNull();
+    expect(page.highlights).toHaveLength(4);
+    for (const highlight of page.highlights!) {
+      expect(screen.getByText(highlight)).not.toBeNull();
+    }
+    expect(page.sections).toHaveLength(4);
+    for (const { bullets, links, paragraphs, title } of page.sections!) {
+      // The page renders paragraphs and links; bullets would reach only the
+      // crawler fallback.
+      expect(bullets).toBeUndefined();
+      expect(
+        screen.getByRole("heading", { level: 3, name: title }),
+      ).not.toBeNull();
+      for (const paragraph of paragraphs!) {
+        expect(screen.getByText(paragraph)).not.toBeNull();
+      }
+      for (const { href, label } of links ?? []) {
+        expect(
+          screen.getByRole("link", { name: label }).getAttribute("href"),
+        ).toBe(href);
+      }
+    }
+    expect(page.signUpLabel).toBe("Start on CoCalc.ai");
+    const ctas = screen.getAllByRole("link", { name: page.signUpLabel });
+    expect(ctas).toHaveLength(2);
+    for (const cta of ctas) {
+      expect(cta.getAttribute("href")).toBe("/auth/sign-up?intent=code");
+    }
+    // The record's image is the link preview and the page's only screenshot
+    // (the shell's logos have empty alt text).
+    expect(page.image).toBe("/public/landing/project-terminal-20260916.jpg");
+    const screenshots = Array.from(container.querySelectorAll("img")).filter(
+      (img) => img.getAttribute("alt") !== "",
+    );
+    expect(screenshots).toHaveLength(1);
+    expect(screenshots[0].getAttribute("src")).toBe(page.image);
+    expect(screenshots[0].getAttribute("alt")).toMatch(/Agent button/);
   });
 
   it("uses projects as the terminal CTA for authenticated users", () => {
@@ -473,11 +497,15 @@ describe("PublicFeaturesApp", () => {
     );
 
     const projectLinks = screen.getAllByRole("link", { name: "Open projects" });
-    expect(projectLinks.length).toBeGreaterThan(0);
+    expect(projectLinks).toHaveLength(2);
     for (const link of projectLinks) {
       expect(link.getAttribute("href")).toBe("/projects");
     }
-    expect(screen.queryByText("Create account")).toBeNull();
+    expect(
+      screen.queryByRole("link", {
+        name: getPublicFeaturePage("terminal")!.signUpLabel,
+      }),
+    ).toBeNull();
   });
 
   it("renders the software-environment feature page", () => {

@@ -22,6 +22,48 @@ describe("public feature initial HTML", () => {
       expect(html).toContain(`href="${basePath}/auth/sign-up"`);
     },
   );
+
+  it.each(["/", "/prefix"])(
+    "renders the terminal record that the React page renders, on %s",
+    (basePath) => {
+      const page = getPublicFeaturePage("terminal")!;
+      const html = renderPublicRoutePrerender(
+        { section: "features", route: { view: "detail", slug: page.slug } },
+        basePath,
+        {},
+      );
+
+      expect(page.highlights).toHaveLength(4);
+      expect(page.sections).toHaveLength(4);
+      for (const text of [
+        page.tagline,
+        page.summary,
+        ...page.highlights!.map((highlight) => `<li>${highlight}</li>`),
+        ...page.sections!.flatMap(({ paragraphs, title }) => [
+          `<h2>${title}</h2>`,
+          ...paragraphs!,
+        ]),
+      ]) {
+        expect(html).toContain(text);
+      }
+      const prefix = basePath === "/" ? "" : basePath;
+      const links = page.sections!.flatMap(({ links }) => links ?? []);
+      expect(links.map(({ href }) => href)).toEqual([
+        "/docs/terminal/use-terminal",
+        "/features/software-environment",
+      ]);
+      for (const { href, label } of links) {
+        expect(html).toContain(`href="${prefix}${href}">${label}</a>`);
+      }
+      // The React page's sign-up label, not the generic one.
+      expect(page.signUpLabel).toBe("Start on CoCalc.ai");
+      expect(html).toContain(
+        `href="${prefix}/auth/sign-up">${page.signUpLabel}</a>`,
+      );
+      expect(html).not.toContain("Start using CoCalc");
+      expect(html).not.toContain("terminal.png");
+    },
+  );
 });
 
 describe("core landing page initial HTML", () => {
