@@ -16,7 +16,13 @@ import {
   Tag,
   message as antdMessage,
 } from "antd";
-import { CSSProperties, ReactNode, useEffect, useLayoutEffect } from "react";
+import {
+  CSSProperties,
+  ReactNode,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+} from "react";
 import { useIntl } from "react-intl";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { showParticipantAvatar } from "./message-avatar";
@@ -157,7 +163,9 @@ import {
 import {
   ChatReadAloudButton,
   CodexFinalResponseCopy,
+  requestChatReadAloud,
 } from "./codex-final-response-copy";
+import { SpeechPaneContext } from "./audio/speech-pane-context";
 import {
   agentMessageFence,
   stripAgentRpcPrompt,
@@ -730,6 +738,7 @@ export default function Message({
     generating: effectiveGenerating,
     isAgentMessage: isCodexAgentMessage,
   });
+  const speechPaneId = useContext(SpeechPaneContext);
 
   useEffect(() => {
     if (isEditing) return;
@@ -1624,12 +1633,27 @@ export default function Message({
     );
   }
 
+  function canReadAloud() {
+    return (
+      msgWrittenByLLM &&
+      !effectiveGenerating &&
+      !!renderedMessageMarkdown.trim()
+    );
+  }
+
+  function readMessageAloud() {
+    requestChatReadAloud({
+      paneId: speechPaneId,
+      value: renderedMessageMarkdown,
+      projectId: project_id,
+      path,
+      threadId: messageThreadId,
+      messageId: field<string>(message, "message_id") ?? `${date}`,
+    });
+  }
+
   function renderReadAloudButton() {
-    if (
-      !msgWrittenByLLM ||
-      effectiveGenerating ||
-      !renderedMessageMarkdown.trim()
-    ) {
+    if (!canReadAloud()) {
       return null;
     }
     return (
@@ -1929,6 +1953,14 @@ export default function Message({
       },
     ];
 
+    if (!lite && canReadAloud()) {
+      overflowItems.push({
+        key: "read-aloud",
+        label: "Read aloud",
+        onClick: readMessageAloud,
+      });
+    }
+
     if (canSendPostedMessage) {
       overflowItems.unshift({
         key: "send-posted-to-agent",
@@ -2016,9 +2048,9 @@ export default function Message({
 
   function renderCodexMessageActions() {
     const buttons: ReactNode[] = [];
-    const readAloud = renderReadAloudButton();
-    if (readAloud) buttons.push(readAloud);
 
+    // Read aloud lives in the overflow menu for agent messages; the final
+    // response header also has its own button.
     if (codexOverflowMenuLocation === "footer") {
       buttons.push(<span key="more">{renderCodexOverflowMenu()}</span>);
     }
