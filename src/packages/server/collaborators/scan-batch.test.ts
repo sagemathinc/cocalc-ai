@@ -231,6 +231,31 @@ describeDb("manual scan LRO durability", () => {
     ).toBe("unavailable");
     expect(admit).toHaveBeenCalledTimes(1);
   });
+  test.each(["prior-frontier", "empty-frontier"])(
+    "new admission reconciles its predecessor after a rejected earlier request (%s)",
+    async (kind) => {
+      const previous = randomUUID();
+      const current = kind === "prior-frontier" ? randomUUID() : undefined;
+      await getPool().query(
+        "INSERT INTO collaboration_scan_budget(project_id,tokens,updated_at,last_job_id,last_started_at) VALUES($1,0,now(),$2,now()-interval '10 minutes')",
+        [project_id, previous],
+      );
+      status.mockResolvedValue({ state: "unknown", current_run_id: current });
+      admit.mockImplementation(async (request) => {
+        if (request.expected_run_id !== current)
+          throw Error("census replacement requires the current run id");
+        return { admission: "accepted", run_id: request.run_id };
+      });
+      await start();
+      await runScanBatchPass(step);
+      expect(
+        (await api({ action: "status" })).operation?.children[0].state,
+      ).toBe("running");
+      expect(admit).toHaveBeenCalledWith(
+        expect.objectContaining({ expected_run_id: current }),
+      );
+    },
+  );
   test("cancel with an unreachable host ends unavailable and never reports stopped", async () => {
     const operation = (await start()).operation!;
     await runScanBatchPass(step);

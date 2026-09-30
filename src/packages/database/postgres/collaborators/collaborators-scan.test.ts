@@ -238,6 +238,12 @@ describeDb("owner scan admission prototype", () => {
         writer,
       ),
     ).toBe(false);
+    expect(
+      await adoptCollaborationScanPredecessor(
+        { ...opts, predecessor: null },
+        writer,
+      ),
+    ).toBe(false);
     expect(await startCollaborationScan(job, authority)).toMatchObject({
       expected_run_id: opts.predecessor,
     });

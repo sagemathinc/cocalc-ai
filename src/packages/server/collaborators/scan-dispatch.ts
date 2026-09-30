@@ -76,13 +76,13 @@ export async function dispatchCollaborationScan(
       }
       return { state: "running" as const };
     }
-    if (status.current_run_id && !scan.expected_run_id) {
+    if (status.current_run_id !== scan.expected_run_id) {
       const adopted = await adoptCollaborationScanPredecessor(
         {
           project_id: request.project_id,
           job_id: run.job_id,
           token: token!,
-          predecessor: status.current_run_id,
+          predecessor: status.current_run_id ?? null,
         },
         { ...authority, host_id: run.host_id },
       );

@@ -769,21 +769,22 @@ export async function releaseCollaborationScanDispatch(
   });
 }
 
-/** Adopt an initial host census only under the current dispatch lease. Never
- * overwrite an already recorded predecessor after a race or restart.
+/** Reconcile the host frontier under the current dispatch lease. An owner-side
+ * attempt may never have reached the host. Only before possible submission may
+ * its inherited predecessor be replaced (including by an empty frontier).
  */
 export async function adoptCollaborationScanPredecessor(
   opts: {
     project_id: string;
     job_id: string;
     token: string;
-    predecessor: string;
+    predecessor: string | null;
   },
   authority: CollaborationWriterAuthority,
 ) {
   uuid(opts.job_id, "scan job");
   uuid(opts.token, "dispatch token");
-  uuid(opts.predecessor, "scan predecessor");
+  if (opts.predecessor !== null) uuid(opts.predecessor, "scan predecessor");
   if (opts.job_id === opts.predecessor)
     throw Error("scan cannot replace itself");
   return transaction(async (db) => {
@@ -791,7 +792,8 @@ export async function adoptCollaborationScanPredecessor(
     const { rows } = await db.query(
       `UPDATE collaboration_scan_jobs SET expected_run_id=$4
       WHERE project_id=$1 AND job_id=$2 AND dispatch_token=$3 AND dispatch_until>clock_timestamp()
-      AND state='running' AND host_id=$5 AND (expected_run_id IS NULL OR expected_run_id=$4)
+      AND state='running' AND host_id=$5 AND NOT cancel_requested AND finish_result IS NULL
+      AND (expected_run_id IS NULL OR expected_run_id IS NOT DISTINCT FROM $4::uuid OR NOT host_request_started)
       RETURNING job_id`,
       [
         opts.project_id,

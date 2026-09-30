@@ -45,7 +45,7 @@ beforeEach(() => {
     getCollaborationReconciliationStatus: status,
     requestCollaborationReconciliation: admit,
   });
-  status.mockResolvedValue({ state: "unknown" });
+  status.mockResolvedValue({ state: "unknown", current_run_id: "previous" });
   admit.mockResolvedValue({ admission: "accepted", run_id: "job" });
 });
 afterAll(() => {
@@ -104,6 +104,15 @@ test("unknown run admits exact persistent identity and predecessor", async () =>
     host_id: "host",
     timeout: 30000,
   });
+});
+test("a raced predecessor reconciliation cannot submit work", async () => {
+  status.mockResolvedValue({ state: "unknown", current_run_id: "other" });
+  (adoptCollaborationScanPredecessor as jest.Mock).mockResolvedValue(false);
+  expect(await dispatchCollaborationScan(request, authority)).toEqual({
+    state: "deferred",
+  });
+  expect(markCollaborationScanHostRequest).not.toHaveBeenCalled();
+  expect(admit).not.toHaveBeenCalled();
 });
 test("timeout does not settle or retry with a fresh identity", async () => {
   admit.mockRejectedValue(Error("timeout"));
