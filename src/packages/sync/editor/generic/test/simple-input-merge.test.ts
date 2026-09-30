@@ -64,31 +64,35 @@ describe("SimpleInputMerge", () => {
     expect(requested).toEqual([firstRemote, secondRemote, thirdRemote]);
   });
 
-  it("preserves a user edit made from the pre-update rendered value", () => {
-    const original = "base";
-    const firstRemote = "remote 1\nbase";
-    const secondRemote = "remote 2\nbase";
-    const merge = new SimpleInputMerge(original);
-    let rendered = original;
-    let requested = "";
-    const applyMerged = (value: string) => {
-      requested = value;
-    };
+  it.each([false, true])(
+    "preserves a user edit made from the pre-update rendered value (saved: %s)",
+    (saved) => {
+      const original = "base";
+      const firstRemote = "remote 1\nbase";
+      const secondRemote = "remote 2\nbase";
+      const merge = new SimpleInputMerge(original);
+      let rendered = original;
+      let requested = "";
+      const applyMerged = (value: string) => {
+        requested = value;
+      };
 
-    merge.handleRemote({
-      remote: firstRemote,
-      getLocal: () => rendered,
-      applyMerged,
-    });
-    rendered = `${original}\nlocal`;
-    merge.handleRemote({
-      remote: secondRemote,
-      getLocal: () => rendered,
-      applyMerged,
-    });
+      merge.handleRemote({
+        remote: firstRemote,
+        getLocal: () => rendered,
+        applyMerged,
+      });
+      rendered = `${original}\nlocal`;
+      if (saved) merge.noteSaved(rendered);
+      merge.handleRemote({
+        remote: secondRemote,
+        getLocal: () => rendered,
+        applyMerged,
+      });
 
-    expect(requested).toBe(`${secondRemote}\nlocal`);
-  });
+      expect(requested).toBe(`${secondRemote}\nlocal`);
+    },
+  );
 
   it("preserves a user edit made from the post-update rendered value", () => {
     const original = "base";
@@ -272,43 +276,56 @@ describe("SimpleInputMerge", () => {
     expect(applied).toBe(0);
   });
 
-  it("does not rebase from a stale render request after later local saves", () => {
-    // Regression for a collaborative session where a focused rich editor did
-    // not render a remote change exactly, so the requested render was never
-    // observed. The user then kept typing and saving. When the next remote
-    // change arrived, the stale render request replaced the up-to-date base,
-    // and the rebase replayed text that the remote already contained.
-    const original = "x\n- - H\n";
-    const remoteFix = "x\n- H\n";
-    const merge = new SimpleInputMerge(original);
-    let rendered = original;
-    merge.handleRemote({
-      remote: remoteFix,
-      getLocal: () => rendered,
-      applyMerged: () => {
-        // The editor kept its old structure.
-      },
-    });
+  it.each(["local", "remote"])(
+    "does not rebase from a stale render request after later local saves (%s echo)",
+    (echo) => {
+      // Regression for a collaborative session where a focused rich editor did
+      // not render a remote change exactly, so the requested render was never
+      // observed. The user then kept typing and saving. When the next remote
+      // change arrived, the stale render request replaced the up-to-date base,
+      // and the rebase replayed text that the remote already contained.
+      const original = "x\n- - H\n";
+      const remoteFix = "x\n- H\n";
+      const merge = new SimpleInputMerge(original);
+      let rendered = original;
+      merge.handleRemote({
+        remote: remoteFix,
+        getLocal: () => rendered,
+        applyMerged: () => {
+          // The editor kept its old structure.
+        },
+      });
 
-    // Local typing is saved and echoed back from the backing store.
-    const saved = "x\n- - H\n\n| a | b |\n| - | - |\n| 1 | 2 |\n";
-    rendered = saved;
-    merge.noteSaved(saved);
-    merge.noteLocalEcho(saved);
+      // Local typing is saved and echoed back from the backing store.
+      const saved = "x\n- - H\n\n| a | b |\n| - | - |\n| 1 | 2 |\n";
+      rendered = saved;
+      merge.noteSaved(saved);
+      if (echo === "local") {
+        merge.noteLocalEcho(saved);
+      } else {
+        merge.handleRemote({
+          remote: saved,
+          getLocal: () => rendered,
+          applyMerged: (value) => {
+            rendered = value;
+          },
+        });
+      }
 
-    // The collaborator's editor removes the stray list marker again.
-    const remote = "x\n- H\n\n| a | b |\n| - | - |\n| 1 | 2 |\n";
-    let merged: string | undefined;
-    merge.handleRemote({
-      remote,
-      getLocal: () => rendered,
-      applyMerged: (value) => {
-        merged = value;
-      },
-    });
+      // The collaborator's editor removes the stray list marker again.
+      const remote = "x\n- H\n\n| a | b |\n| - | - |\n| 1 | 2 |\n";
+      let merged: string | undefined;
+      merge.handleRemote({
+        remote,
+        getLocal: () => rendered,
+        applyMerged: (value) => {
+          merged = value;
+        },
+      });
 
-    expect(merged).toBe(remote);
-  });
+      expect(merged).toBe(remote);
+    },
+  );
 
   it("keeps an unsaved local edit when two remote updates arrive before it is saved", () => {
     // Found by the collaborative editing fuzzer: after rebasing a local edit

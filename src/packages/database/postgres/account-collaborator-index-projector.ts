@@ -10,7 +10,10 @@ import type {
   AccountFeedEvent,
 } from "@cocalc/conat/hub/api/account-feed";
 import { isValidUUID } from "@cocalc/util/misc";
-import { replaceAccountCollaboratorIndexRows } from "./account-collaborator-index";
+import {
+  lockAccountCollaboratorProjection,
+  replaceAccountCollaboratorIndexRows,
+} from "./account-collaborator-index";
 import type {
   ProjectOutboxEventRow,
   ProjectOutboxEventType,
@@ -155,6 +158,7 @@ export async function retryAccountCollaboratorIndexDeadlock<T>(
 async function collaboratorRowsForAccount(
   db: PoolClient,
   account_id: string,
+  collaborator_account_ids: string[],
 ): Promise<AccountFeedCollaboratorRow[]> {
   const { rows } = await db.query<{
     collaborator_account_id: string;
@@ -180,11 +184,12 @@ async function collaboratorRowsForAccount(
      FROM account_collaborator_index
      WHERE account_id = $1
        AND collaborator_account_id <> $1
+       AND collaborator_account_id = ANY($2::uuid[])
      ORDER BY
        common_project_count DESC,
        COALESCE(last_active, updated_at) DESC NULLS LAST,
        collaborator_account_id ASC`,
-    [account_id],
+    [account_id, collaborator_account_ids],
   );
   return rows.map((row) => ({
     account_id: row.collaborator_account_id,
@@ -230,25 +235,6 @@ function collaboratorFeedEventsForAccount(opts: {
   return events;
 }
 
-async function withAccountCollaboratorProjectionLock<T>(opts: {
-  db: PoolClient;
-  account_id: string;
-  fn: () => Promise<T>;
-}): Promise<T> {
-  await opts.db.query(
-    "SELECT pg_advisory_lock(hashtext($1::text), hashtext($2::text))",
-    ["account-collaborator-index", opts.account_id],
-  );
-  try {
-    return await opts.fn();
-  } finally {
-    await opts.db.query(
-      "SELECT pg_advisory_unlock(hashtext($1::text), hashtext($2::text))",
-      ["account-collaborator-index", opts.account_id],
-    );
-  }
-}
-
 export async function loadLatestCollaboratorProjectionEvent(opts: {
   db: PoolClient;
   project_id: string;
@@ -266,10 +252,10 @@ export async function loadLatestCollaboratorProjectionEvent(opts: {
        collaborator_index_published_at
      FROM project_events_outbox
      WHERE project_id = $1
-       AND event_type = ANY($2::TEXT[])
+       AND event_type IN ('project.created', 'project.membership_changed', 'project.deleted')
      ORDER BY created_at DESC, event_id DESC
      LIMIT 1`,
-    [opts.project_id, RELEVANT_EVENT_TYPES],
+    [opts.project_id],
   );
   return rows[0] ?? null;
 }
@@ -292,7 +278,7 @@ export async function applyProjectEventToAccountCollaboratorIndex(opts: {
     };
   }
   const previous = await previousParticipantAccountIds(opts.db, opts.event);
-  const impacted = [...new Set([...current, ...previous])];
+  const impacted = [...new Set([...current, ...previous])].sort();
   const localAccounts = await localHomeAccountIds(opts.db, {
     bay_id: opts.bay_id,
     account_ids: impacted,
@@ -301,39 +287,34 @@ export async function applyProjectEventToAccountCollaboratorIndex(opts: {
   let inserted_rows = 0;
   let deleted_rows = 0;
   const feed_events: AccountFeedEvent[] = [];
+  await lockAccountCollaboratorProjection(opts.db, [...localAccounts]);
   for (const account_id of impacted) {
     if (!localAccounts.has(account_id)) continue;
-    const result = await withAccountCollaboratorProjectionLock({
+    const previous_rows = await collaboratorRowsForAccount(
+      opts.db,
+      account_id,
+      impacted,
+    );
+    const result = await replaceAccountCollaboratorIndexRows({
       db: opts.db,
       account_id,
-      fn: async () => {
-        const previous_rows = await collaboratorRowsForAccount(
-          opts.db,
-          account_id,
-        );
-        const replaceResult = await replaceAccountCollaboratorIndexRows({
-          db: opts.db,
-          account_id,
-        });
-        const current_rows = await collaboratorRowsForAccount(
-          opts.db,
-          account_id,
-        );
-        return {
-          inserted_rows: replaceResult.inserted_rows,
-          deleted_rows: replaceResult.deleted_rows,
-          feed_events: collaboratorFeedEventsForAccount({
-            account_id,
-            previous_rows,
-            current_rows,
-            event_ts: opts.event.created_at,
-          }),
-        };
-      },
+      collaborator_account_ids: impacted,
     });
+    const current_rows = await collaboratorRowsForAccount(
+      opts.db,
+      account_id,
+      impacted,
+    );
     inserted_rows += result.inserted_rows;
     deleted_rows += result.deleted_rows;
-    feed_events.push(...result.feed_events);
+    feed_events.push(
+      ...collaboratorFeedEventsForAccount({
+        account_id,
+        previous_rows,
+        current_rows,
+        event_ts: opts.event.created_at,
+      }),
+    );
   }
   return {
     inserted_rows,
@@ -459,6 +440,21 @@ async function drainAccountCollaboratorIndexProjectionOnce(opts?: {
       feed_events: [],
       event_types: {},
     };
+
+    const impacted = new Set<string>();
+    for (const event of rows) {
+      for (const id of [
+        ...participantAccountIds(event.payload_json),
+        ...(await previousParticipantAccountIds(client, event)),
+      ])
+        impacted.add(id);
+    }
+    await lockAccountCollaboratorProjection(client, [
+      ...(await localHomeAccountIds(client, {
+        bay_id,
+        account_ids: [...impacted],
+      })),
+    ]);
 
     for (const event of rows) {
       result.event_types[event.event_type] =

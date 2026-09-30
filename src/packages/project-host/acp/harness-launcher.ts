@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HarnessBinding, HarnessProcess } from "@cocalc/ai/acp/harness";
 import { parseAcpHarnessProfile } from "@cocalc/util/ai/runtime";
-import { getQualifiedHarnessCandidate } from "@cocalc/util/ai/qualified-harnesses";
+import {
+  getQualifiedHarnessCandidate,
+  isQualifiedClaudeCodeProfile,
+} from "@cocalc/util/ai/qualified-harnesses";
 import { isValidUUID } from "@cocalc/util/misc";
 import { podmanEnv } from "@cocalc/backend/podman/env";
 import { mountArg } from "@cocalc/backend/podman";
@@ -42,6 +45,10 @@ import { harnessOwner, HARNESS_OWNER_LABEL } from "./harness-reaper";
 import { createAnthropicAccountCredentialRelay } from "./anthropic-credential-relay";
 import type { CredentialHttpRelay } from "./credential-http-relay";
 import { launchClaudeSubscriptionController } from "./claude-subscription-controller";
+import {
+  startClaudeRestrictedEgress,
+  type ClaudeRestrictedEgress,
+} from "./claude-restricted-egress";
 
 const logger = getLogger("project-host:acp:harness-launcher");
 
@@ -167,6 +174,7 @@ export async function launchHarnessInProject(
   let cliLease: Awaited<ReturnType<typeof createProjectCliTokenLease>>;
   let credentialRelay: CredentialHttpRelay | undefined;
   let credentialRelayDirectory: string | undefined;
+  let restrictedEgress: ClaudeRestrictedEgress | undefined;
   const cleanup = () =>
     (stopped ??= (async () => {
       // Keep the rootfs lease if removal fails; never unmount beneath a live child.
@@ -190,6 +198,7 @@ export async function launchHarnessInProject(
         }
       } finally {
         // Revoke scoped authority even if a failed runtime removal needs repair.
+        restrictedEgress?.close();
         await cliLease?.close();
         await credentialRelay?.close();
         if (credentialRelayDirectory)
@@ -227,6 +236,7 @@ export async function launchHarnessInProject(
       "COCALC_AGENT_TOKEN",
       "COCALC_AGENT_IDENTITY_FILE",
       "COCALC_AGENT_MENTION_REFERENCES_FILE",
+      "COCALC_CONNECTOR_API_KEY_FILE",
     ])
       delete env[key];
     Object.assign(env, identityContext, {
@@ -236,6 +246,13 @@ export async function launchHarnessInProject(
     });
     if (cliLease.identityContainerPath)
       env.COCALC_AGENT_IDENTITY_FILE = cliLease.identityContainerPath;
+    // Holds the managed CoCalc connector key only during a turn whose agent
+    // has the connector enabled (written and revoked per turn below).
+    // The managed CoCalc connector is for trusted runtimes only: never hand it
+    // to an arbitrary project-configured ACP executable.
+    const connector = isQualifiedClaudeCodeProfile(profile);
+    if (connector && cliLease.connectorContainerPath)
+      env.COCALC_CONNECTOR_API_KEY_FILE = cliLease.connectorContainerPath;
     applyProjectRuntimeCliEnv(env, accountId);
     if (credential.mode === "account-api-key") {
       if (
@@ -259,6 +276,12 @@ export async function launchHarnessInProject(
         credentialRelay.token,
         { encoding: "utf8", mode: 0o600 },
       );
+    }
+    if (profile.version === 2 && profile.id === "claude-code") {
+      // The sidecar shares the project's network namespace, so a project
+      // without internet access reaches Anthropic only through this proxy.
+      restrictedEgress = await startClaudeRestrictedEgress({ projectId });
+      if (restrictedEgress) Object.assign(env, restrictedEgress.env);
     }
     const args = [
       "create",
@@ -340,10 +363,17 @@ export async function launchHarnessInProject(
     void closed.then(cleanup).catch(() => {
       logger.warn("ACP container cleanup failed", { projectId, name });
     });
+    const lease = cliLease;
     return {
       stdin: proc.stdin,
       stdout: proc.stdout,
       stderr: proc.stderr,
+      ...(connector
+        ? {
+            beginConnectorTurn: (chat) => lease.beginConnectorTurn(chat),
+            endConnectorTurn: () => lease.endConnectorTurn(),
+          }
+        : {}),
       closed,
       stop: async () => {
         await cleanup();

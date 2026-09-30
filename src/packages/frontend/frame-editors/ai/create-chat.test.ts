@@ -25,13 +25,14 @@ describe("createChat", () => {
   });
 
   it("defaults legacy assistant models to the current Codex default", () => {
-    expect(resolveAssistantCodexModel("gpt-4o")).toBe("gpt-6-astra");
+    expect(resolveAssistantCodexModel("gpt-4o")).toBe("gpt-6.1-sol");
+    expect(resolveAssistantCodexModel("gpt-6-astra")).toBe("gpt-6-astra");
     expect(resolveAssistantCodexModel("gpt-6-sol")).toBe("gpt-6-sol");
   });
 
   it.each(["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.2"])(
     "does not launch retired assistant model %s",
-    (model) => expect(resolveAssistantCodexModel(model)).toBe("gpt-6-astra"),
+    (model) => expect(resolveAssistantCodexModel(model)).toBe("gpt-6.1-sol"),
   );
 
   it("canonicalizes the current assistant model alias", () => {

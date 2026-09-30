@@ -161,12 +161,15 @@ export async function updateExternalCredentialByIdRouted({
   payload,
   metadata,
   revive,
+  expected_payload_sha256,
 }: {
   id: string;
   selector: ExternalCredentialSelector;
   payload: string;
   metadata?: Record<string, any>;
   revive?: boolean;
+  // Compare-and-swap against the stored payload (see the store).
+  expected_payload_sha256?: string;
 }): Promise<boolean> {
   return await withExternalCredentialAuthority({
     selector,
@@ -177,6 +180,7 @@ export async function updateExternalCredentialByIdRouted({
         payload,
         metadata: metadata ?? {},
         revive,
+        expectedPayloadSha256: expected_payload_sha256,
       }),
     remote: async (dest_bay) =>
       await remoteCredentialsClient(dest_bay).updateById({
@@ -185,6 +189,7 @@ export async function updateExternalCredentialByIdRouted({
         payload,
         metadata,
         revive,
+        expected_payload_sha256,
       }),
   });
 }

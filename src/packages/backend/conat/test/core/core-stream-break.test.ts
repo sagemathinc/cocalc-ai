@@ -60,18 +60,17 @@ describe("stop persist server, create a client, create an ephemeral core-stream,
     expect(stream.get(0)).toBe("x");
   });
 
-  it("stops persist server again, and sees that publishing throws timeout error (otherwise it queues things up waiting for persist server to return)", async () => {
+  it("rejects publishing after graceful persist shutdown without queuing data", async () => {
     await persistServer.end();
 
-    await expect(async () => {
-      await stream.publish("y", { timeout: 100 });
-    }).rejects.toThrow();
-
-    try {
-      await stream.publish("y", { timeout: 100 });
-    } catch (err) {
-      expect(`${err}`).toContain("timed out");
-    }
+    // Shutdown can close the socket before publication or while it waits for
+    // readiness. Both outcomes reject; neither may silently queue the write.
+    await expect(
+      stream.publish("not-persisted", { timeout: 100 }),
+    ).rejects.toThrow(/closed|timed out|timeout/);
+    await expect(
+      stream.publish("not-persisted", { timeout: 100 }),
+    ).rejects.toThrow(/closed|timed out|timeout/);
   });
 
   it("starts persist server and can eventually publish again", async () => {
@@ -86,6 +85,10 @@ describe("stop persist server, create a client, create an ephemeral core-stream,
         }
       },
     });
+    await wait({ until: () => stream.length >= 2 });
+    expect(stream.get(0)).toBe("x");
+    expect(stream.get(1)).toBe("y");
+    expect(stream.length).toBe(2);
   });
 
   it("creates a dstream, publishes, sees it hasn't saved, starts persist server and sees save works again", async () => {

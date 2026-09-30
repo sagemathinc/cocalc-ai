@@ -6,6 +6,7 @@
 import { Receiver, Sender } from "./tcp";
 import { messageData } from "@cocalc/conat/core/client";
 import { SOCKET_HEADER_SEQ } from "./util";
+import { SOCKET_RETURN_HEADER } from "../core/message-headers";
 
 function socketAck(emitted: number) {
   return {
@@ -101,6 +102,36 @@ describe("Conat socket TCP sender", () => {
 });
 
 describe("Conat socket TCP receiver", () => {
+  it.each(["client", "server"] as const)(
+    "strips transport headers before delivering %s application data",
+    (role) => {
+      const receiver = new Receiver(
+        jest.fn().mockResolvedValue(undefined),
+        jest.fn(),
+        role,
+      );
+      const delivered = jest.fn();
+      receiver.on("message", delivered);
+      try {
+        receiver.process(
+          messageData("data", {
+            headers: {
+              [SOCKET_HEADER_SEQ]: 1,
+              [SOCKET_RETURN_HEADER]: "_INBOX.test.socket.return",
+              application: "preserved",
+            },
+          }),
+        );
+        expect(delivered).toHaveBeenCalledTimes(1);
+        expect(delivered.mock.calls[0][0].headers).toEqual({
+          application: "preserved",
+        });
+      } finally {
+        receiver.close();
+      }
+    },
+  );
+
   it("retries the ack when a duplicate packet arrives after ack failure", async () => {
     const request = jest
       .fn()

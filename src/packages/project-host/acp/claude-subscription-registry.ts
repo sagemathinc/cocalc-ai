@@ -3,7 +3,10 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
+import { createHash } from "node:crypto";
 import callHub from "@cocalc/conat/hub/call-hub";
+import getLogger from "@cocalc/backend/logger";
+import { isExternalCredentialConflict } from "@cocalc/util/external-credential-conflict";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
   ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY,
@@ -14,7 +17,16 @@ import {
 } from "@cocalc/util/ai/external-credential-profiles";
 import { getMasterConatClient } from "../master-conat-client";
 import { getLocalHostId } from "../sqlite/hosts";
-import { packClaudeSubscriptionHome } from "./claude-subscription-home";
+import {
+  changedClaudeSubscriptionFiles,
+  claudeSubscriptionBundleFiles,
+  packClaudeSubscriptionBundle,
+  packClaudeSubscriptionHome,
+} from "./claude-subscription-home";
+
+const logger = getLogger("project-host:acp:claude-subscription-registry");
+// Compare-and-swap conflicts are retried against the newly stored bundle.
+const SYNC_ATTEMPTS = 3;
 
 function caller() {
   const client = getMasterConatClient();
@@ -105,6 +117,34 @@ export async function publishClaudeSubscriptionCredential(options: {
       throw Error("Reconnect must use the same Claude account");
   }
   const payload = await packClaudeSubscriptionHome(home, allowedPaths);
+  return await upsertClaudeSubscriptionPayload({
+    projectId,
+    accountId,
+    payload,
+    identity,
+    plan,
+    credentialId,
+  });
+}
+
+async function upsertClaudeSubscriptionPayload(options: {
+  projectId: string;
+  accountId: string;
+  payload: string;
+  identity: string;
+  plan: string;
+  credentialId?: string;
+  expectedPayloadSha256?: string;
+}): Promise<string> {
+  const {
+    projectId,
+    accountId,
+    payload,
+    identity,
+    plan,
+    credentialId,
+    expectedPayloadSha256,
+  } = options;
   const result = await callHub({
     ...caller(),
     name: "hosts.upsertExternalCredential",
@@ -123,6 +163,7 @@ export async function publishClaudeSubscriptionCredential(options: {
           verified_at: new Date().toISOString(),
         },
         credential_id: credentialId,
+        expected_payload_sha256: expectedPayloadSha256,
         create: !credentialId,
         max_active: credentialId ? undefined : 3,
         deduplicate_metadata: credentialId
@@ -138,4 +179,84 @@ export async function publishClaudeSubscriptionCredential(options: {
   if (!result?.id || !isValidUUID(result.id))
     throw Error("Claude subscription credential was not published");
   return result.id;
+}
+
+/**
+ * Save what a controller changed in its Claude home without clobbering what
+ * other controllers saved meanwhile.
+ *
+ * Claude Code rotates the subscription refresh token when it refreshes, so a
+ * controller's copy goes stale as soon as any other controller refreshes. For
+ * each file changed since `baseline` (this controller's last sync), compare
+ * with the currently stored file (a three-way merge on opaque bytes):
+ *
+ * - stored equals the local change: already saved (e.g. an earlier write
+ *   whose acknowledgement was lost), nothing to do;
+ * - stored still equals the baseline: apply the local change;
+ * - stored differs from both: another controller saved newer bytes; keep them.
+ *
+ * The merged bundle is written only if the stored bundle is unchanged since it
+ * was read (compare-and-swap); on conflict the merge is redone.
+ *
+ * Returns the new baseline: the controller's current files.
+ */
+export async function syncClaudeSubscriptionCredential(options: {
+  projectId: string;
+  accountId: string;
+  credentialId: string;
+  baseline: ReadonlyMap<string, Buffer>;
+  current: ReadonlyMap<string, Buffer>;
+}): Promise<ReadonlyMap<string, Buffer>> {
+  const { projectId, accountId, credentialId, baseline, current } = options;
+  const changed = changedClaudeSubscriptionFiles(baseline, current);
+  if (changed.size === 0) return current;
+  for (let attempt = 1; ; attempt++) {
+    const stored = await getClaudeSubscriptionCredential({
+      projectId,
+      accountId,
+      credentialId,
+    });
+    const storedFiles = claudeSubscriptionBundleFiles(stored.payload);
+    const merged = new Map(storedFiles);
+    let writes = 0;
+    const kept: string[] = [];
+    for (const [path, local] of changed) {
+      const storedFile = storedFiles.get(path);
+      const before = baseline.get(path);
+      if (storedFile?.equals(local)) continue;
+      if (
+        storedFile == null
+          ? before == null
+          : before != null && storedFile.equals(before)
+      ) {
+        merged.set(path, local);
+        writes++;
+      } else {
+        kept.push(path);
+      }
+    }
+    if (kept.length > 0)
+      logger.debug("kept newer stored Claude credential files", {
+        credentialId,
+        files: kept.length,
+      });
+    if (writes === 0) return current;
+    try {
+      await upsertClaudeSubscriptionPayload({
+        projectId,
+        accountId,
+        credentialId,
+        payload: packClaudeSubscriptionBundle(merged),
+        identity: stored.identity,
+        plan: stored.plan,
+        expectedPayloadSha256: createHash("sha256")
+          .update(stored.payload, "utf8")
+          .digest("hex"),
+      });
+      return current;
+    } catch (error) {
+      if (!isExternalCredentialConflict(error) || attempt >= SYNC_ATTEMPTS)
+        throw error;
+    }
+  }
 }

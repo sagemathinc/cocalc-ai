@@ -4,6 +4,122 @@
 
 Investigation completed and migration deferred on 2026-07-15.
 
+Re-probed and migration started on 2026-09-29 on branch `build/typescript-7`
+(tracking issue #195). The "Revision 2026-09-29" section below supersedes the
+open questions in Phases 2 and 3 and reorders the work. Progress is recorded in
+the "Progress Log" at the end of this document.
+
+## Revision 2026-09-29
+
+### What Changed Since The Original Probe
+
+- `typescript@latest` is still 7.0.2 and `@typescript/typescript6` is still
+  6.0.2. TS7.1 exists only as nightlies (`7.1.0-dev.*`). The nightlies ship a
+  new `typescript/unstable/*` API, which is not the TS6 compiler API used by
+  `ts-jest`, `ts-node`, or our AST lint script. TS6 remains required for those.
+- About 4,970 commits landed after the original plan. The self-import surface
+  grew (files importing their own package: frontend 1,688 -> 2,252, server
+  481 -> 849, conat 101 -> 140), and new packages (`ai`, `essential-frontend`,
+  `static`) were added with `moduleResolution: "node"`. Waiting makes the
+  migration larger.
+- TS6 memory pressure grew: the static build and control-plane bundle builds
+  had to raise Node heap limits again (6 GB and 8 GB).
+- All supported runtimes are Node >= 22.15 (development uses Node 26), where
+  `require()` of synchronous ESM works without flags. This reduces the risk of
+  the CommonJS/ESM boundary diagnostics that motivated caution about `node16`.
+
+### Re-Probe Results (TS 7.0.2 On A Throwaway Copy Of `main`)
+
+| Configuration                                                    | Errors |
+| ---------------------------------------------------------------- | -----: |
+| unchanged configs                                                |    121 |
+| `bundler` resolver, removed `baseUrl`/`downlevelIteration`/etc.  |    214 |
+| plus frontend self `paths` and a `types` export for util message |     44 |
+| same, clean tree (no `dist`)                                     |     99 |
+| same, incremental rebuild of the clean tree                      |     45 |
+
+Observations:
+
+- `module: "commonjs"` with `moduleResolution: "bundler"` is accepted by TS7.
+  This keeps CommonJS emit (no runtime module-format change) while replacing
+  the removed `node10` resolver.
+- 154 of the 214 errors were frontend directory-index self-imports such as
+  `@cocalc/frontend/lite`, which the `./*` -> `./dist/*.js` export cannot
+  express. A package-local `paths` self-mapping fixes all of them.
+- `@cocalc/util/message` is a hand-written `message.d.ts` beside JS source.
+  Resolution through exports found the weaker emitted `dist/message.d.ts`,
+  which caused every "missing member" diagnostic in backend, server, and
+  project.
+- TS5055 declaration collisions disappear on a clean tree; they come from
+  stale `dist` being resolved as input.
+- Clean-tree failures are dominated (about 63 of 73 unresolved imports) by
+  `@cocalc/conat` imports from `sync`. `conat` references `sync`, while `sync`
+  imports `conat` without a project reference (it cannot add one without a
+  cycle). TS6 hides this because `node10` resolution reaches conat source
+  through `node_modules` as an external library file; modern resolution goes
+  through exports to `dist`, which does not exist yet on a clean tree.
+- The same cycle already breaks **TS6** clean builds on `main`: in a fresh
+  worktree, `sync` is built before `apps/document-build`, pulls conat source
+  in as an external file, and fails on conat's import of
+  `@cocalc/app-document-build`. Current builds succeed only because `dist`
+  output from earlier builds exists. Fixing the cycle is therefore valuable
+  independent of TS7.
+- A clean TS7 solution build took about 17 s wall and 5.7 GB peak RSS; an
+  incremental build 7 s and 3.3 GB. TS6 numbers are in the Progress Log.
+
+### Decisions
+
+1. **Resolver strategy (closes Phase 2).** Use `moduleResolution: "bundler"`
+   with the existing `module: "commonjs"` for every package. Emit stays
+   CommonJS; no package changes `type`, extensions, or startup commands. Do not
+   adopt `node16`/`nodenext` as part of this migration.
+2. **Self-resolution (Phase 3).** Resolve every `@cocalc/*` import to source
+   through one shared `paths` entry in `packages/tsconfig.json`:
+   `"@cocalc/*": ["./node_modules/@cocalc/*"]`, where the workspace root
+   declares every `@cocalc` package as a `workspace:*` dev dependency so
+   `packages/node_modules/@cocalc/*` links them all. Because the mapped paths
+   go through `node_modules`, TypeScript keeps treating files of
+   non-referenced packages as external package files, exactly as the `node10`
+   resolver did; files of referenced projects are still replaced by their
+   declarations. The `@cocalc/app-*` packages, whose source lives under
+   `src/`, get explicit entries. Packages that define their own `paths` add the
+   same entry (relative to themselves), since `paths` does not merge. This
+   replaced the originally proposed per-package self mappings and `types`
+   export fixes, which were no longer needed.
+3. **Cycle first.** Resolve the `sync`/`conat` build-order dependence before
+   other Phase 3 work, in a TS6-compatible way.
+4. **Guard.** `pnpm check-tsconfig` (part of `test:checks`) fails on new uses
+   of TypeScript 7-removed options (`moduleResolution: "node"`/`node10`/
+   `classic`, `baseUrl`, `downlevelIteration`) and on `@cocalc` packages the
+   workspace root does not link.
+5. **TypeScript 7 is the only compiler (decided 2026-09-29, superseding the
+   side-by-side transition period in Phases 1 and 9).** `tsc` everywhere is
+   TS 7, installed as `"@typescript/native": "npm:typescript@^7.0.2"`. There
+   is no TS6 build, script, or CI path and no rollback script. TS 7.0 has no
+   JavaScript compiler API, so `"typescript"` is
+   `"npm:@typescript/typescript6@^6.0.2"`: a library, never run as a compiler,
+   that provides the API for ts-jest, formatjs, Expo, and the AST scripts. This
+   is the layout documented by Microsoft and by ts-jest (29.4.12+, which also
+   filters its own `node10` deprecation diagnostic, so `ignoreDeprecations` is
+   gone). Diagnostics produced by ts-jest during test transforms come from TS6;
+   TS7 builds are authoritative. Revisit when TypeScript ships a stable
+   programmatic API and ts-jest supports it (kulshekhar/ts-jest#5366; the
+   maintainer expects TS 7.1, with no committed date), or move Jest to a
+   transpiler without a TypeScript dependency such as `@swc/jest`.
+
+### Revised Order Of Work
+
+1. Plan update and draft PR (this revision).
+2. Phase 0 baseline numbers for TS6 (clean, incremental, no-op).
+3. Phase 1 side-by-side toolchain with explicit `tsc:6`/`tsc:7` scripts.
+4. `sync`/`conat` clean-build fix.
+5. Config modernization (Phases 2-4 combined, since the strategy is decided):
+   `bundler` resolver, drop removed options, self `paths`, export fixes.
+6. Remaining source diagnostics (Phase 6), the removed-options guard, and a
+   non-blocking TS7 CI job.
+7. Qualification (Phases 7-8) and the default switch (Phase 9) only after TS7
+   passes clean, incremental, and runtime checks.
+
 This document records the results of a TypeScript 7.0.2 compatibility probe and
 proposes a staged migration. The migration is substantially larger than a
 dependency update because TypeScript 7 removes the legacy module resolver used
@@ -177,7 +293,9 @@ The first TS7 run reported:
 - `downlevelIteration` is removed
 - `moduleResolution: "node"`/`node10` is removed
 - `baseUrl` is removed
-- the current deprecation suppression is no longer useful
+- the current deprecation suppression is no longer useful (corrected
+  2026-09-29: TS7 accepts `ignoreDeprecations: "6.0"`, and it is still needed
+  because ts-jest forces `node10` when type-checking CommonJS tests under TS6)
 
 `moduleResolution: "classic"` is also removed and is not an escape hatch.
 
@@ -786,3 +904,85 @@ The migration is complete only when all of the following are true:
 - A tested TS6 rollback remains available for at least one release cycle.
 - No diagnostics are hidden by broad suppressions or reduced declaration
   coverage.
+
+## Progress Log
+
+- 2026-09-29: Re-probed on current `main`, recorded the revision above, and
+  opened the draft migration PR.
+- 2026-09-29: Phase 0 baseline in a fresh worktree of `main` (Node 26.10,
+  pnpm 11.9, TS 6.0.3, TS 7.0.2, Linux x64, 16 cores). TS6 solution build:
+  clean 160 s wall / 4.8 GB peak RSS **with 5 errors** (the `sync`/`conat`
+  cycle; `main` cannot build from a clean tree), second pass 48 s / 2.9 GB,
+  no-op 0.4 s.
+- 2026-09-29: Phase 1. TS 7.0.2 is installed as `@typescript/native` in the
+  private `packages/typescript-native` package. It cannot live in the root
+  package: its `tsc` binary would replace TS6's `node_modules/.bin/tsc`, which
+  many package build scripts call directly. Root scripts `tsc:6` and `tsc:7`
+  run the solution build; `tsc:build` still uses TS6.
+- 2026-09-29: Phases 2-4. `bundler` resolver with CommonJS emit, removed
+  `baseUrl`/`downlevelIteration`/local `node` resolvers, and the shared
+  `@cocalc/*` source mapping (Decision 2). This removed every resolver, stale
+  `dist`, TS5055, and `sync`/`conat` diagnostic and fixed the TS6 clean build.
+- 2026-09-29: Phase 6. Public `node-zendesk/clients/*` import path and
+  explicit return types for the Stripe and Orama TS2883 exports.
+- 2026-09-29: Results. Both compilers report 0 errors on clean, incremental,
+  and no-op builds.
+
+  | Solution build    | TS6 (6144 MB heap) |           TS7 |
+  | ----------------- | -----------------: | ------------: |
+  | clean             |     162 s / 3.9 GB | 19 s / 6.0 GB |
+  | no-op incremental |              0.4 s |         0.4 s |
+
+  TS7 peak RSS is higher on a clean build because it checks projects in
+  parallel; it is not bounded by the V8 heap setting.
+
+- 2026-09-29: Emit comparison of clean TS6 vs TS7 builds: identical file sets
+  (5,785 `.js`, 5,785 `.d.ts`). 9 `.js` files differ only by equivalent
+  rewrites (destructuring export assignment instead of a temporary; static
+  members referenced by class name instead of an alias). `.d.ts` differences
+  are union/member ordering, method vs property signatures, and better import
+  paths.
+- 2026-09-29: No bundler or runtime tool reads tsconfig `paths` (only
+  type-checking does), so the mapping does not change runtime resolution.
+- 2026-09-29: TS6 emit on this branch vs TS6 emit on `main` (built twice to
+  get past the cycle errors): all 5,785 `.js` files are byte-identical. The
+  13 `.d.ts` differences are the intended source changes, union ordering, and
+  equivalent import paths. The configuration change therefore does not
+  change the runtime output of today's TS6 build.
+- 2026-09-29: Validation. `pnpm -C src test:checks` passes (includes lint,
+  version check, and `check-tsconfig`). Jest results on the branch: util
+  1,884, sync 150, conat 939, jupyter 193, chat 141, chat-client 66,
+  document-build 32, notebook 6, export 14, ai 146, lite 632, project-host
+  1,376, and frontend 7,140 tests passing; apps/tasks `node:test` passing.
+  Remaining failures are identical on `main` in the same environment:
+  backend conat socket/stream suites (6), project
+  `system.managed-vm-ssh-config` and `formatters/format` (2), frontend
+  `chat/__tests__/message-completion` (1), and server suites that need a
+  PostgreSQL test database (5). Backend sandbox suites need
+  `pnpm install-sandbox-tools` in a fresh worktree and then pass.
+- Superseded 2026-09-29: the default switch landed as Decision 5.
+- 2026-09-29: Switched fully to TypeScript 7 (Decision 5). Removed
+  `packages/typescript-native`, the `tsc:6`/`tsc:7` scripts, the separate CI
+  job, `ignoreDeprecations`, and TS-specific Node heap flags (the native
+  compiler does not use the V8 heap). ts-jest 29.4.9 -> 29.4.14. `pnpm tsc`
+  from a clean tree: 25 s including prepare steps, 0 errors. The guard now
+  also requires `typescript` to be the TS6 compatibility alias and
+  `@typescript/native` to be TS 7.
+- 2026-09-29: Live qualification on lite2b.cocalc.ai (launchpad dev stack,
+  three bays, three project hosts) from this branch: `pnpm build` (TS7,
+  including the static production bundle) 320 s; `scripts/dev/upgrade-all.sh`
+  succeeded (hub restart; all hosts reported "upgrade complete"). Browser smoke
+  tests: projects list, project open, and Markdown, terminal, Jupyter, tasks,
+  and chat editors load without application console errors; a terminal
+  command ran end to end. Jupyter notebooks and terminals were also checked
+  manually and work.
+- Remaining after merge: watch the first staging/production deploy; revisit
+  the TS6 API alias when TypeScript ships a stable programmatic API and
+  ts-jest supports it (kulshekhar/ts-jest#5366), or move Jest to `@swc/jest`.
+- 2026-09-30: Dogfooding found that existing checkouts still built several
+  packages (ai, chat, chat-client, essential-frontend, export,
+  executable-templates, lite) with TS6: pnpm does not remove stale
+  `node_modules/.bin/tsc` shims in packages that do not declare TypeScript, and
+  their builds run `pnpm exec tsc`. `workspaces.py build` now runs
+  `scripts/check-local-tsc.mjs --fix` first, which removes shims that run
+  TypeScript < 7. Fresh installs and CI were not affected.

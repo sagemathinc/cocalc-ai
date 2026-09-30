@@ -4,8 +4,7 @@
     "types": ["node"],
     "lib": ["ESNext"],
     "rootDir": "./",
-    "outDir": "dist",
-    "baseUrl": "."
+    "outDir": "dist"
   },
   "exclude": [
     "node_modules",

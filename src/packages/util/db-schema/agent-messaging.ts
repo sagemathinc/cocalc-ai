@@ -153,6 +153,10 @@ Table({
     agent_id: required("uuid", "Registered agent."),
     run_id: required("uuid", "App-server runtime incarnation, not a turn id."),
     account_id: required("uuid", "Account executing the runtime."),
+    thread_id: {
+      type: "string",
+      desc: "Conversation at run issuance; absent on legacy runs.",
+    },
     token_hash: required(
       "string",
       "SHA-256 of the opaque credential; never plaintext.",

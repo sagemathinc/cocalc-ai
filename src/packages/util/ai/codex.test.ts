@@ -48,8 +48,9 @@ describe("DEFAULT_CODEX_MODELS", () => {
     },
   );
 
-  it("offers exactly the current six Codex models", () => {
+  it("offers exactly the current seven Codex models", () => {
     expect(DEFAULT_CODEX_MODELS.map((model) => model.name)).toEqual([
+      "gpt-6.1-sol",
       "gpt-6-astra",
       "gpt-6-sol",
       "gpt-6-luna",
@@ -88,15 +89,27 @@ describe("DEFAULT_CODEX_MODELS", () => {
     expect(isCodexModelName("gpt-5.5")).toBe(true);
   });
 
-  it("defaults new chats to Astra with upstream low reasoning", () => {
+  it("defaults new chats to GPT-6.1 Sol with upstream low reasoning", () => {
     expect(DEFAULT_CODEX_MODEL_INFO).toMatchObject({
-      name: "gpt-6-astra",
+      name: "gpt-6.1-sol",
       reasoning: expect.arrayContaining([
         expect.objectContaining({ id: "low", default: true }),
         expect.objectContaining({ id: "max" }),
         expect.objectContaining({ id: "ultra" }),
       ]),
     });
+    expect(isCodexModelName("gpt-6.1-sol")).toBe(true);
+    expect(
+      resolveCodexServiceTier({ model: "gpt-6.1-sol", serviceTier: "fast" }),
+    ).toBe("fast");
+  });
+
+  it("exposes the newly advertised ultra effort on GPT-6 Sol", () => {
+    expect(
+      DEFAULT_CODEX_MODELS.find(
+        ({ name }) => name === "gpt-6-sol",
+      )?.reasoning?.map(({ id }) => id),
+    ).toContain("ultra");
   });
 
   it("exposes upstream max reasoning on gpt-5.6 family models", () => {

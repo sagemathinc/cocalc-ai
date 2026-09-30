@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib.sh"
+
+wait_seconds=0
+generation_only=0
+after_generation=""
+while (( $# > 0 )); do
+  case "$1" in
+    --wait) wait_seconds="${COCALC_BAY_BILLING_START_TIMEOUT_S:-90}"; shift ;;
+    --generation) generation_only=1; shift ;;
+    --after-generation)
+      [[ "${2:-}" =~ ^(0|[1-9][0-9]*)$ ]] || exit 2
+      after_generation="$2"; shift 2 ;;
+    *) bay_log 'usage: bay-billing-health [--generation | --wait --after-generation N]'; exit 2 ;;
+  esac
+done
+[[ "$wait_seconds" =~ ^[0-9]+$ ]] || exit 2
+if (( generation_only )) && { [[ -n "$after_generation" ]] || (( wait_seconds > 0 )); }; then exit 2; fi
+skip_billing() {
+  if (( generation_only )); then printf '0\n'; fi
+  exit 0
+}
+if [[ "${COCALC_CLUSTER_ROLE}" == attached ]]; then skip_billing; fi
+source "${SCRIPT_DIR}/billing-env.sh"
+case "${COCALC_BILLING_AUTHORITY_ENABLED:-0}" in
+  1|true|yes) ;;
+  *) skip_billing ;;
+esac
+require_var COCALC_BAY_HUB_MAIN
+
+if (( generation_only )); then
+  # Exit 1 is also the hub probe's valid not-ready result. Require valid JSON
+  # either way; database errors/timeouts must abort, not invent a baseline.
+  status=0
+  health="$(timeout --kill-after=2s 15s "$COCALC_BAY_NODE_BIN" \
+    "$COCALC_BAY_HUB_MAIN" --billing-health-check)" || status=$?
+  if (( status != 0 && status != 1 )); then exit "$status"; fi
+  printf '%s' "$health" | "$COCALC_BAY_NODE_BIN" "${SCRIPT_DIR}/billing-probe.js" generation
+  exit "$?"
+fi
+
+# This is a deployment gate, not a hub watchdog. Never restart services or
+# resume an operator-drained authority to make the check pass.
+deadline=$((SECONDS + wait_seconds))
+while true; do
+  remaining=$((deadline - SECONDS))
+  probe_timeout=15
+  if (( wait_seconds > 0 && remaining < probe_timeout )); then
+    probe_timeout=$remaining
+  fi
+  if (( probe_timeout > 0 )) && timeout --kill-after=2s "${probe_timeout}s" \
+      systemctl is-active --quiet cocalc-bay-billing.service; then
+    if (( wait_seconds > 0 )); then
+      remaining=$((deadline - SECONDS))
+      if (( remaining < probe_timeout )); then probe_timeout=$remaining; fi
+    fi
+    if (( probe_timeout > 0 )) && health="$(timeout --kill-after=2s "${probe_timeout}s" \
+        "$COCALC_BAY_NODE_BIN" "$COCALC_BAY_HUB_MAIN" --billing-health-check)"; then
+      printf '%s\n' "$health"
+      generation_ready=1
+      if [[ -n "$after_generation" ]] && ! printf '%s' "$health" | \
+          "$COCALC_BAY_NODE_BIN" "${SCRIPT_DIR}/billing-probe.js" ready-after "$after_generation"; then
+        generation_ready=0
+      fi
+      # Catch a service exit during the readiness query as well.
+      if (( generation_ready )) && timeout --kill-after=2s 2s systemctl is-active --quiet cocalc-bay-billing.service; then
+        bay_log 'billing executor active and ready'
+        exit 0
+      fi
+    fi
+  fi
+  if (( SECONDS >= deadline )); then
+    bay_log 'billing executor not ready; check unit logs, database connectivity, and operator drain state'
+    exit 1
+  fi
+  sleep 1
+done

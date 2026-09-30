@@ -113,7 +113,7 @@ describe("socket inbox-return protocol", () => {
   }
 
   it.each([false, true])(
-    "negotiates confined persistence sockets through load balancing (clustered=%s)",
+    "keeps persistence sockets on legacy returns through load balancing (clustered=%s)",
     async (clustered) => {
       const persist = "persist.project-00000000-0000-4000-8000-000000000001";
       const { client, service, listener } = await fixture(
@@ -122,6 +122,8 @@ describe("socket inbox-return protocol", () => {
         persist,
         {
           ...binding,
+          project_id: "00000000-0000-4000-8000-000000000001",
+          capabilities: ["project:exec"],
           subjects: [persist + "."],
         },
       );
@@ -133,7 +135,6 @@ describe("socket inbox-return protocol", () => {
       );
       expect(await getPersistServerInfo({ client, subject: persist })).toEqual({
         id: listener.id,
-        inboxReturn: 1,
       });
       expect(await getPersistServerId({ client, subject: persist })).toBe(
         listener.id,
@@ -148,16 +149,17 @@ describe("socket inbox-return protocol", () => {
       });
       await socket.waitUntilReady(5000);
       const serverSocket = await accepted;
-      expect(serverSocket.clientSubject.startsWith(prefix + ".")).toBe(true);
+      expect(serverSocket.clientSubject).toBe(`${persist}.client.${socket.id}`);
       serverSocket.on("request", (message) =>
         message.respondSync("persist-response"),
       );
       expect((await socket.request(null, { timeout: 2000 })).data).toBe(
         "persist-response",
       );
-      await expect(
-        client.subscribe(persist + ".client.foreign"),
-      ).rejects.toThrow();
+      const sameProjectReturn = await client.subscribe(
+        persist + ".client.another-socket",
+      );
+      sameProjectReturn.close();
       await expect(
         client.subscribe("_INBOX.account-foreign.>"),
       ).rejects.toThrow();

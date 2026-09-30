@@ -28,6 +28,7 @@ const originalAuthorityEnabled = process.env.COCALC_BILLING_AUTHORITY_ENABLED;
 describe("billing authority service boundary", () => {
   beforeEach(() => {
     process.env.COCALC_BILLING_AUTHORITY_ENABLED = "1";
+    __test__.resetLeaseRevocation();
   });
 
   afterEach(() => {
@@ -140,20 +141,24 @@ describe("billing authority service boundary", () => {
     expect(__test__.authorityLocallyActive(lease)).toBe(false);
   });
 
-  it("fail-stops rather than continuing after lease-safety failure", () => {
-    const calls: number[] = [];
-    expect(() =>
-      __test__.failStopBillingAuthorityWorker({
-        err: new Error("lease lost"),
-        exit: (code): never => {
-          calls.push(code);
-          throw new Error("worker exited");
-        },
-      }),
-    ).toThrow("worker exited");
-    expect(calls).toEqual([1]);
-    expect(__test__.runtime.stopping).toBe(true);
+  it("pauses billing without exiting or allowing a late renewal to reactivate it", () => {
+    const lease = { instance_id: INSTANCE_ID, generation: 4 };
+    Object.assign(__test__.runtime, {
+      lease,
+      local_deadline_ms: performance.now() + 1000,
+    });
+    const exit = jest.spyOn(process, "exit").mockImplementation(() => {
+      throw Error("must not exit");
+    });
+    __test__.pauseBillingAuthority(
+      new Error("database temporarily unavailable"),
+    );
+    expect(exit).not.toHaveBeenCalled();
+    expect(__test__.runtime.stopping).toBe(false);
     expect(__test__.runtime.local_deadline_ms).toBe(0);
+    __test__.runtime.local_deadline_ms = performance.now() + 10000;
+    expect(__test__.authorityLocallyActive(lease)).toBe(false);
+    exit.mockRestore();
   });
 
   it("marks provider ambiguity and post-provider failures uncertain", () => {

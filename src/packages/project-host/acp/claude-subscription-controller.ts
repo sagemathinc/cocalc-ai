@@ -27,14 +27,9 @@ import {
   projectPoolPodmanLauncher,
 } from "@cocalc/project-runner/run/podman";
 import { extractBaseImage } from "@cocalc/project-runner/run/rootfs-base";
-import {
-  getClaudeSubscriptionCredential,
-  publishClaudeSubscriptionCredential,
-} from "./claude-subscription-registry";
-import {
-  claudeSubscriptionBundlePaths,
-  restoreClaudeSubscriptionHome,
-} from "./claude-subscription-home";
+import { getClaudeSubscriptionCredential } from "./claude-subscription-registry";
+import { restoreClaudeSubscriptionHome } from "./claude-subscription-home";
+import { createClaudeCredentialSync } from "./claude-credential-sync";
 import {
   CLAUDE_PROJECT_TOOL_MOUNT,
   createClaudeProjectToolBridge,
@@ -48,6 +43,12 @@ import {
   resolveProjectRuntimeApiUrl,
 } from "../codex/codex-project";
 import { harnessOwner, HARNESS_OWNER_LABEL } from "./harness-reaper";
+import {
+  projectHostAddress,
+  projectNeedsRestrictedClaudeEgress,
+  startClaudeRestrictedEgress,
+  type ClaudeRestrictedEgress,
+} from "./claude-restricted-egress";
 import {
   CLAUDE_CONTROLLER_HOME_LABEL,
   claudeControllerHomePrefix,
@@ -130,6 +131,8 @@ export function claudeSubscriptionContainerArgs(options: {
   runtimeArgs?: string[];
   purpose?: "agent" | "usage";
   claudeAiConnectors?: boolean;
+  // Extra environment, e.g. the restricted egress proxy.
+  env?: Record<string, string>;
 }): string[] {
   const {
     name,
@@ -218,6 +221,10 @@ export function claudeSubscriptionContainerArgs(options: {
     ...(options.claudeAiConnectors === false
       ? ["--env", "ENABLE_CLAUDEAI_MCP_SERVERS=false"]
       : []),
+    ...Object.entries(options.env ?? {}).flatMap(([key, value]) => [
+      "--env",
+      `${key}=${value}`,
+    ]),
     "--rootfs",
     rootfs,
     "/opt/cocalc/bin/node",
@@ -282,9 +289,17 @@ ${skill}
   let launched = false;
   let toolBridge: ClaudeProjectToolBridge | undefined;
   let cliLease: Awaited<ReturnType<typeof createProjectCliTokenLease>>;
+  let restrictedEgress: ClaudeRestrictedEgress | undefined;
   let stopped: Promise<void> | undefined;
   let cleanupRetries = 0;
   let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+  const credentialSync = createClaudeCredentialSync({
+    projectId,
+    accountId,
+    credentialId,
+    home,
+    restoredPayload: registered.payload,
+  });
   const command = (args: string[]) =>
     new Promise<void>((resolve, reject) => {
       execFile(
@@ -326,6 +341,7 @@ ${skill}
         }
       },
       closeBridge: async () => {
+        restrictedEgress?.close();
         const results = await Promise.allSettled([
           toolBridge?.close(),
           cliLease?.close(),
@@ -333,18 +349,11 @@ ${skill}
         const failure = results.find((result) => result.status === "rejected");
         if (failure?.status === "rejected") throw failure.reason;
       },
-      refreshCredential: async () => {
-        await publishClaudeSubscriptionCredential({
-          projectId,
-          accountId,
-          credentialId,
-          home,
-          identity: registered.identity,
-          plan: registered.plan,
-          allowedPaths: claudeSubscriptionBundlePaths(registered.payload),
-        });
+      refreshCredential: () => credentialSync.finish(),
+      removeHome: async () => {
+        await credentialSync.idle();
+        await rm(home, { recursive: true, force: true });
       },
-      removeHome: async () => rm(home, { recursive: true, force: true }),
       launched,
     })
       .then(() => {
@@ -404,6 +413,9 @@ ${skill}
         COCALC_AGENT_TOKEN_FILE: cliLease.containerPath,
         COCALC_AGENT_IDENTITY_FILE: cliLease.identityContainerPath ?? "",
         COCALC_AGENT_MENTION_REFERENCES_FILE: "",
+        // Holds the managed CoCalc connector key only during a turn whose
+        // agent has the connector enabled.
+        COCALC_CONNECTOR_API_KEY_FILE: cliLease.connectorContainerPath ?? "",
         COCALC_API_URL: resolveProjectRuntimeApiUrl(),
       };
       applyProjectRuntimeCliEnv(cliEnv, accountId);
@@ -439,6 +451,22 @@ ${skill}
         },
       );
     }
+    if (projectNeedsRestrictedClaudeEgress(projectId)) {
+      // The controller runs in the project's network containment, which
+      // blocks the internet but not the host's own addresses. Reach Anthropic
+      // only through the host's allowlisting proxy.
+      const host = projectHostAddress();
+      if (!host)
+        throw Error(
+          "Claude cannot reach Anthropic: this project has no internet access and the project host address is unknown",
+        );
+      restrictedEgress = await startClaudeRestrictedEgress({
+        projectId,
+        host,
+        claudeAiConnectors:
+          purpose === "agent" && credential.claudeAiConnectors !== false,
+      });
+    }
     const owner = await harnessOwner();
     const managedHarnesses =
       process.env.COCALC_MANAGED_HARNESSES ?? MANAGED_HARNESSES;
@@ -459,9 +487,11 @@ ${skill}
         uid: process.getuid!(),
         gid: process.getgid!(),
         runtimeArgs: await podmanRuntimeArgs(),
+        env: restrictedEgress?.env,
       }),
     );
     launched = true;
+    credentialSync.start();
     const proc = spawn(
       launcher.command,
       [...launcher.argsPrefix, "start", "--attach", "--interactive", name],
@@ -483,6 +513,12 @@ ${skill}
       resumeTools: toolBridge ? () => toolBridge!.resume() : undefined,
       setAsyncQuestionHandler: toolBridge
         ? (handler) => toolBridge!.setAsyncQuestionHandler(handler)
+        : undefined,
+      beginConnectorTurn: cliLease
+        ? (chat) => cliLease!.beginConnectorTurn(chat)
+        : undefined,
+      endConnectorTurn: cliLease
+        ? () => cliLease!.endConnectorTurn()
         : undefined,
       stdin: proc.stdin,
       stdout: proc.stdout,

@@ -38,8 +38,11 @@ export function ClaudeSubscriptionConnect({
   compact = false,
   modal = false,
   reconnectCredentialId,
+  reconnectOnly = false,
 }: {
   projectId: string;
+  // Offer only "Reconnect Claude" (e.g. when a turn failed on expired sign-in).
+  reconnectOnly?: boolean;
   disabled?: boolean;
   hasConnection?: boolean;
   compact?: boolean;
@@ -274,33 +277,37 @@ export function ClaudeSubscriptionConnect({
       )}
       {reconnectCredentialId && (
         <Button
+          type={reconnectOnly ? "primary" : undefined}
           disabled={disabled || signingIn}
+          loading={reconnectOnly && busy}
           onClick={() => void start(reconnectCredentialId)}
         >
           Reconnect Claude
         </Button>
       )}
-      <Button
-        size={inline ? "small" : undefined}
-        style={
-          inline
-            ? { maxWidth: "100%" }
-            : { maxWidth: "100%", height: "auto", whiteSpace: "normal" }
-        }
-        aria-haspopup={modal ? "dialog" : undefined}
-        disabled={disabled || signingIn}
-        loading={busy}
-        onClick={() => {
-          if (modal) setOpen(true);
-          void start();
-        }}
-      >
-        {hasConnection
-          ? compact
-            ? "Connect another subscription"
-            : "Connect another Claude subscription"
-          : "Connect Claude Pro/Max"}
-      </Button>
+      {!reconnectOnly && (
+        <Button
+          size={inline ? "small" : undefined}
+          style={
+            inline
+              ? { maxWidth: "100%" }
+              : { maxWidth: "100%", height: "auto", whiteSpace: "normal" }
+          }
+          aria-haspopup={modal ? "dialog" : undefined}
+          disabled={disabled || signingIn}
+          loading={busy}
+          onClick={() => {
+            if (modal) setOpen(true);
+            void start();
+          }}
+        >
+          {hasConnection
+            ? compact
+              ? "Connect another subscription"
+              : "Connect another Claude subscription"
+            : "Connect Claude Pro/Max"}
+        </Button>
+      )}
       {modal ? (
         <Modal
           title="Connect Claude Pro/Max"

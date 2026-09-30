@@ -124,6 +124,11 @@ import {
   codexModelRecoveryConfig,
 } from "@cocalc/util/ai/codex-model-recovery";
 import { CodexModelRecovery } from "./codex-model-recovery";
+import {
+  ClaudeSignInRecovery,
+  isClaudeSignInExpired,
+  useClaudeSubscriptionCredentialId,
+} from "./claude-sign-in-recovery";
 import { AcpPromptModal } from "./acp-prompt-modal";
 import {
   linkifyCommitHashes,
@@ -913,45 +918,45 @@ export default function Message({
     codexPreviewLog.loadError,
     codexPreviewLog.loadState,
   ]);
-  const codexBodyValue = useMemo(() => {
-    if (
-      !Array.isArray(codexPreviewLog.events) ||
-      codexPreviewLog.events.length === 0
-    ) {
-      return undefined;
-    }
-    if (effectiveGenerating) {
-      return getLiveResponseMarkdown(codexPreviewLog.events as any);
-    }
-    if (acpInterrupted) {
-      return getInterruptedResponseMarkdown(
-        codexPreviewLog.events as any,
-        acpInterruptedText,
-      );
-    }
-    return getBestResponseText(codexPreviewLog.events as any);
-  }, [
-    acpInterrupted,
-    acpInterruptedText,
-    codexPreviewLog.events,
-    effectiveGenerating,
-  ]);
+  const renderedMessageValue = useMemo(
+    () =>
+      resolveRenderedMessageValue({
+        rowValue: rowMessageValue,
+        logValue: () => {
+          if (
+            !Array.isArray(codexPreviewLog.events) ||
+            codexPreviewLog.events.length === 0
+          ) {
+            return undefined;
+          }
+          if (effectiveGenerating) {
+            return getLiveResponseMarkdown(codexPreviewLog.events as any);
+          }
+          if (acpInterrupted) {
+            return getInterruptedResponseMarkdown(
+              codexPreviewLog.events as any,
+              acpInterruptedText,
+            );
+          }
+          return getBestResponseText(codexPreviewLog.events as any);
+        },
+        generating: effectiveGenerating,
+        interrupted: acpInterrupted,
+      }),
+    [
+      acpInterrupted,
+      acpInterruptedText,
+      codexPreviewLog.events,
+      effectiveGenerating,
+      rowMessageValue,
+    ],
+  );
   const completedCodexActivityBlocks = turnActivity.completedBlocks;
   const timelineRows = turnActivity.rows;
   const showsActivityTimeline = timelineRows.length > 0;
   const lastCodexActivityAtMs = useMemo(
     () => getLatestCodexActivityAtMs(codexPreviewLog.events),
     [codexPreviewLog.events],
-  );
-  const renderedMessageValue = useMemo(
-    () =>
-      resolveRenderedMessageValue({
-        rowValue: rowMessageValue,
-        logValue: codexBodyValue,
-        generating: effectiveGenerating,
-        interrupted: acpInterrupted,
-      }),
-    [acpInterrupted, codexBodyValue, effectiveGenerating, rowMessageValue],
   );
   const responseParentMessageId = parentMessageId(message);
   useEffect(() => {
@@ -1082,8 +1087,10 @@ export default function Message({
     }
   }
 
-  async function handleResubmitToAgent() {
-    if (!actions || !acpResubmitParentMessage) return;
+  async function resubmitToAgent() {
+    if (!actions || !acpResubmitParentMessage) {
+      throw Error("Request is no longer retryable");
+    }
     setResubmittingAgentParentId(acpResubmitParentMessageId);
     try {
       const ok = await resendCanceledAcpTurn({
@@ -1092,10 +1099,8 @@ export default function Message({
         useCurrentPayment: true,
       });
       if (!ok) {
-        antdMessage.error("Unable to resubmit this request to Agent.");
+        throw Error("Unable to resubmit this request to Agent.");
       }
-    } catch (err) {
-      antdMessage.error(`Unable to resubmit this request to Agent: ${err}`);
     } finally {
       setResubmittingAgentParentId((current) =>
         current === acpResubmitParentMessageId ? undefined : current,
@@ -1103,8 +1108,16 @@ export default function Message({
     }
   }
 
+  async function handleResubmitToAgent() {
+    try {
+      await resubmitToAgent();
+    } catch (err) {
+      antdMessage.error(`Unable to resubmit this request to Agent: ${err}`);
+    }
+  }
+
   function renderResubmitToAgentButton() {
-    if (unavailableModel) return null;
+    if (unavailableModel || claudeSignInExpired) return null;
     if (!acpResubmitParentMessage) return null;
     return (
       <div style={{ marginTop: "8px" }}>
@@ -1145,6 +1158,18 @@ export default function Message({
     });
   }, [actions, threadLookup]);
   const threadCodexConfig = threadMetadata?.acp_config;
+  // A Claude subscription turn that failed on expired sign-in offers
+  // "Reconnect Claude" instead of the raw error.
+  const claudeSubscriptionCredentialId = useClaudeSubscriptionCredentialId(
+    threadMetadata?.agent_runtime?.profile?.id === "claude-code"
+      ? project_id
+      : undefined,
+    threadLookup.threadLookupKey,
+  );
+  const claudeSignInExpired =
+    showCodexErrorHelp &&
+    !!claudeSubscriptionCredentialId &&
+    isClaudeSignInExpired(renderedMessageValue);
   const acpDisplayName =
     threadMetadata?.agent_runtime?.profile?.id === "claude-code"
       ? "Claude Code"
@@ -2138,6 +2163,26 @@ export default function Message({
   }
 
   function renderMessageBody({ message_class }) {
+    if (
+      claudeSignInExpired &&
+      project_id &&
+      threadLookup.threadLookupKey &&
+      claudeSubscriptionCredentialId
+    ) {
+      const canRetry =
+        !!acpResubmitParentMessage &&
+        sender_is_viewer(account_id, acpResubmitParentMessage);
+      return (
+        <ClaudeSignInRecovery
+          key={`${account_id}:${project_id}:${acpResubmitParentMessageId}`}
+          projectId={project_id}
+          threadKey={threadLookup.threadLookupKey}
+          credentialId={claudeSubscriptionCredentialId}
+          details={renderedMessageValue}
+          onRetry={canRetry ? resubmitToAgent : undefined}
+        />
+      );
+    }
     if (
       unavailableModel &&
       project_id &&

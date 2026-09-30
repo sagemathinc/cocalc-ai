@@ -86,6 +86,8 @@ export function CodexGoalControl({
           alignItems: "center",
           minWidth: 0,
           gap: 4,
+          borderTop: `1px solid ${UI_COLORS.border}`,
+          margin: "0 15px",
         }}
       >
         <button

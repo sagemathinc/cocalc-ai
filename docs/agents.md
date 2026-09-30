@@ -58,6 +58,41 @@ It is not a `codex-acp` tool-call runtime in the current architecture.
 
 ## Security/Isolation Notes
 
+### Accepted Agent Network Messages
+
+New sends authenticate the registered sender's live identity run. Once admitted,
+the destination project-host stores execution metadata in its trusted ACP queue.
+The sender's ordinary shutdown or credential expiry must not invalidate that
+already-accepted work.
+
+Queued execution uses a separate internal `checkExecutionNetwork` check. It
+routes to the account home for current network/account generations and to the
+source project's owner for the recorded run's principal. This historical run
+lookup does not authenticate tokens or enable new sends. Current agent status,
+collaborator access, account/session revocation, network membership, and the
+destination host/conversation are still checked. Runs record their source
+conversation at issuance; starting a fresh conversation invalidates the previous
+conversation's queued work. Legacy runs without a recorded thread can execute
+only before the identity's first reset, or after a live renewal binds them to
+the current conversation. An unknown or pruned run is rejected; existing
+run-history retention bounds how long this provenance is available.
+
+Only the trusted host-owned queue supplies execution metadata. Chat rows and
+message bodies are not admission proofs. External installation authentication
+is unchanged. This does not change queue dispatch, deduplication, or automatically
+replay failed messages.
+
+This is a hub-side change with an additive, nullable `agent_identity_runs.thread_id`
+column. Apply the usual schema synchronization before updated hubs start; old
+hubs can still use the extended schema. No queue-format migration is needed. For
+multi-bay rollout, coordinate updates of participating source-owner, account-home,
+and destination-owner hubs: during a mixed-version rollout, an older bay without
+the new internal method rejects execution rather than silently relaxing checks.
+A rollback restores the original ended-run failure and does not require reviving
+credentials or rewriting queued records.
+
+### Runtime Isolation
+
 - Users do not get direct shell access to the Codex runtime container.
 - Project-host resolves auth per turn and mounts only the selected Codex home/auth context.
 - OpenAI keys/subscription files are managed outside normal workspace file access paths.

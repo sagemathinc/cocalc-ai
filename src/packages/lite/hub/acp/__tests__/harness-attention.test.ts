@@ -84,7 +84,7 @@ test.each(["answer", "cancel"])(
           return;
         const record = payload.event.request;
         id = record.attention_id;
-        expect(record.summary).toBe("The current ACP turn is paused.");
+        expect(record.summary).toBe("The current agent turn is paused.");
         expect(record.turn_id).toBe(context.turnId);
         if (action === "cancel") {
           abort.abort();

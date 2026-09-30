@@ -9,6 +9,8 @@ export type HubApiAdmissionDecision = {
     | "hub-api"
     | "hub-api-low-priority"
     | "hub-api-account"
+    | "hub-api-resolver"
+    | "hub-api-account-resolver"
     | "hub-api-account-low-priority";
   reason?: string;
   maximum: number;
@@ -63,17 +65,49 @@ export function getHubApiAdmissionDecision({
   maximum,
   accountActive,
   accountMaximum,
+  resolverActive = 0,
+  accountResolverActive = 0,
   key,
 }: {
   active: number;
   maximum: number;
   accountActive?: number;
   accountMaximum?: number;
+  resolverActive?: number;
+  accountResolverActive?: number;
   key: unknown;
 }): HubApiAdmissionDecision {
   const max = Math.max(1, Math.floor(Number(maximum)));
   const current = Math.max(0, Math.floor(Number(active)));
   const lowPriority = isLowPriorityHubApiMethod(key);
+  // Reconnecting tabs must leave room for payments, invites, and ordinary API
+  // traffic. This is a sub-budget, not an increase in the overall allowance.
+  if (key === "hosts.resolveHostConnection") {
+    const resolverMaximum = Math.max(1, Math.floor(max / 4));
+    const accountResolverMaximum = Math.max(
+      1,
+      Math.min(32, Math.floor((accountMaximum ?? max) / 4)),
+    );
+    if (
+      accountMaximum != null &&
+      accountResolverActive >= accountResolverMaximum
+    ) {
+      return {
+        allowed: false,
+        source: "hub-api-account-resolver",
+        maximum: accountResolverMaximum,
+        reason: "hub api per-account host-resolution budget is exhausted",
+      };
+    }
+    if (resolverActive >= resolverMaximum) {
+      return {
+        allowed: false,
+        source: "hub-api-resolver",
+        maximum: resolverMaximum,
+        reason: "hub api host-resolution budget is exhausted",
+      };
+    }
+  }
   if (accountActive != null && accountMaximum != null) {
     const accountCurrent = Math.max(0, Math.floor(Number(accountActive) || 0));
     const accountMax = Math.max(1, Math.floor(Number(accountMaximum) || 1));

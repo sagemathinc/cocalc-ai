@@ -95,6 +95,72 @@ it("fails closed when neither trusted site configuration nor lookup is available
   ).rejects.toThrow("master Conat connection is unavailable");
 });
 
+it.each([undefined, "http://alpha.c.projecthosts.internal:9102"])(
+  "resolves the configured legacy HTTP master alias with site configuration %s",
+  async (siteUrl) => {
+    const masterUrl = "http://alpha.c.projecthosts.internal:9102";
+    (callHub as jest.Mock).mockResolvedValue({
+      url: "https://alpha.cocalc.ai",
+    });
+    await expect(
+      resolveApiRelayHubUrl(`${masterUrl}/`, {
+        siteUrl,
+        masterUrl,
+        hostId: projectId,
+        masterClient: {} as any,
+      }),
+    ).resolves.toBe("https://alpha.cocalc.ai");
+    expect(callHub).toHaveBeenCalledWith(
+      expect.objectContaining({ args: [{ url: undefined }] }),
+    );
+  },
+);
+
+it.each([
+  "http://other.c.projecthosts.internal:9102",
+  "http://alpha.c.projecthosts.internal:9103",
+  "http://alpha.c.projecthosts.internal:9102/other",
+  "https://home-bay.test",
+])("preserves explicit routing identity for non-alias %s", async (url) => {
+  (callHub as jest.Mock).mockResolvedValue({ url: "https://site.test" });
+  await expect(
+    resolveApiRelayHubUrl(url, {
+      masterUrl: "http://alpha.c.projecthosts.internal:9102",
+      hostId: projectId,
+      masterClient: {} as any,
+    }),
+  ).rejects.toThrow("identity mismatch");
+  expect(callHub).toHaveBeenCalledWith(
+    expect.objectContaining({ args: [{ url }] }),
+  );
+});
+
+it("does not reinterpret a configured HTTPS master as the canonical site", async () => {
+  const url = "https://home-bay.test";
+  (callHub as jest.Mock).mockResolvedValue({ url });
+  await expect(
+    resolveApiRelayHubUrl(url, {
+      masterUrl: url,
+      hostId: projectId,
+      masterClient: {} as any,
+    }),
+  ).resolves.toBe(url);
+  expect(callHub).toHaveBeenCalledWith(
+    expect.objectContaining({ args: [{ url }] }),
+  );
+});
+
+it("requires trusted resolution even when the legacy alias matches site configuration", async () => {
+  const masterUrl = "http://alpha.c.projecthosts.internal:9102";
+  await expect(
+    resolveApiRelayHubUrl(masterUrl, {
+      masterUrl,
+      siteUrl: masterUrl,
+      hostId: projectId,
+    }),
+  ).rejects.toThrow("master Conat connection is unavailable");
+});
+
 it("admits a local running project's own secret, not an upstream account credential", () => {
   const admission = authenticateApiRelay(
     request({ authorization: "Bearer account-token" }),

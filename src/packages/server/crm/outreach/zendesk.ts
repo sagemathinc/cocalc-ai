@@ -5,7 +5,7 @@
 
 import { createHash } from "node:crypto";
 
-import type { CreateOrUpdateTicket } from "node-zendesk/dist/types/clients/core/tickets";
+import type { CreateOrUpdateTicket } from "node-zendesk/clients/core/tickets";
 
 import getZendeskClient from "@cocalc/server/support/zendesk-client";
 import type {

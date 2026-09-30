@@ -11,7 +11,7 @@
   },
   "scripts": {
     "preinstall": "npx only-allow pnpm",
-    "tsc": "node --max-old-space-size=8192 ../node_modules/typescript/bin/tsc",
+    "tsc": "tsc",
     "build": "rm -rf dist tsconfig.tsbuildinfo && pnpm tsc --build && node scripts/copy-canonical-skills.js",
     "test": "node scripts/test.js",
     "clean": "rm -rf node_modules dist tsconfig.tsbuildinfo build",

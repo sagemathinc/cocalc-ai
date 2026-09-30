@@ -894,13 +894,23 @@ export class ConatServer extends EventEmitter {
     return this.maxInboundEventsPerSocketWindow();
   };
 
+  private isInboundHubIdentity = (socket): boolean => {
+    const user = this.stats[socket.id]?.user;
+    // Use the authenticated server principal, never a client-supplied label.
+    // Mixed principals retain the account/project budget, matching key precedence.
+    return isHubUser(user) && !user?.account_id && !user?.project_id;
+  };
+
   private inboundAdmissionLimitEnvName = (
     dimension: InboundAdmissionDimension,
+    socket: any,
   ): string => {
     switch (dimension) {
       case "identity":
         return serviceAdmissionLimitEnvName(
-          "conat_inbound_events_per_identity_window",
+          this.isInboundHubIdentity(socket)
+            ? "conat_inbound_events_per_hub_identity_window"
+            : "conat_inbound_events_per_identity_window",
         );
       case "socket-event":
         return serviceAdmissionLimitEnvName(
@@ -970,7 +980,7 @@ export class ConatServer extends EventEmitter {
     recordServiceAdmissionDenial({
       surface: "conat-socket",
       source: dimension,
-      limit: this.inboundAdmissionLimitEnvName(dimension),
+      limit: this.inboundAdmissionLimitEnvName(dimension, socket),
       current: record.count,
       maximum: limit,
       reason: "high-rate Conat socket event stream",
@@ -1066,7 +1076,7 @@ export class ConatServer extends EventEmitter {
       recordServiceAdmissionNearLimit({
         surface: "conat-socket",
         source: dimension,
-        limit: this.inboundAdmissionLimitEnvName(dimension),
+        limit: this.inboundAdmissionLimitEnvName(dimension, socket),
         current: record.count,
         maximum: limit,
         reason: "Conat socket event stream is near capacity",
@@ -1146,7 +1156,13 @@ export class ConatServer extends EventEmitter {
       records: this.inboundAdmissionByIdentity,
       key: this.inboundIdentityKey(socket),
       dimension: "identity",
-      limit: this.maxInboundEventsPerIdentityWindow(),
+      // Internal hub sockets carry work and replies for many accounts under one
+      // shared hub identity. Keep a service budget, not an end-user budget.
+      limit: this.isInboundHubIdentity(socket)
+        ? getServiceAdmissionLimit(
+            "conat_inbound_events_per_hub_identity_window",
+          )
+        : this.maxInboundEventsPerIdentityWindow(),
       now,
       respond,
     });
