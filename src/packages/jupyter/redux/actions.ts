@@ -933,7 +933,10 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       input = mergeText({ base, local: input, remote: current });
     }
     if (current === input) {
-      return input; // nothing changed
+      // Nothing changed, but a caller that asks to save may have made other
+      // changes it relies on this to commit (e.g. split_cell's new cell).
+      if (save) this._sync();
+      return input;
     }
     if (this.check_edit_protection(id, "changing input")) {
       // note -- we assume above that there was an actual change before checking
@@ -1743,14 +1746,14 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     if (this.check_edit_protection(id, "splitting cell")) {
       return;
     }
+    // The cell may have just been deleted (e.g. by a collaborator); check
+    // before inserting anything, so no half-done split is left behind.
+    const cell = this.store.get("cells").get(id);
+    if (cell == null || this.syncdb.get_one({ type: "cell", id }) == null) {
+      return;
+    }
     // insert a new cell before the currently selected one
     const new_id: string = this.insert_cell_adjacent(id, -1, false);
-
-    // split the cell content at the cursor loc
-    const cell = this.store.get("cells").get(id);
-    if (cell == null) {
-      throw Error(`no cell with id=${id}`);
-    }
     const cell_type = cell.get("cell_type");
     if (cell_type !== "code") {
       this.set_cell_type(new_id, cell_type, false);
