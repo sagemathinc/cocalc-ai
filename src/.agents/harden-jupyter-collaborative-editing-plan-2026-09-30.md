@@ -140,3 +140,35 @@ problem can be traced to the patch or merge that caused it.
 
 - Plan written. Ghost cell on concurrent delete and edit confirmed and pinned
   as a `test.failing`.
+- J2 fuzzer, first version: `jupyter/redux/__test__/collab-fuzz/`
+  (`JUPYTER_FUZZ=1`).
+  - Each client runs real `JupyterActions` and `JupyterStore` on its own
+    headless redux.
+  - Underneath is `SimSyncDB`: SyncDoc's set/commit/rebase and throttled
+    change events on a real patchflow Session with CoCalc's notebook codec.
+  - Clients exchange patches over the seeded simulated network.
+  - The focused cell's editor is a model of `cell-input.tsx` plus
+    `codemirror-editor.tsx`: a debounced save, `SimpleInputMerge`, and a
+    save on unmount.
+  - A simulated kernel backend writes outputs.
+- Baseline on today's code: 200 seeds x 40 operations, 2-3 users plus
+  backend, 164 failing (82%). Runs with each problem:
+  - ghost cells: made by editor saves (101), cell inserts (49), merges (31),
+    splits (13), moves (11) and others;
+  - tokens duplicated by editor saves (92);
+  - tokens lost in the core merge (43), or removed by editor saves or merges
+    (23);
+  - no convergence (10).
+  - The harness is new: categories are verified one by one before being
+    called bugs.
+- Confirmed by code reading, with a single user: split right after typing
+  duplicates text. `split_current_cell` (`frame-editors/jupyter-editor/
+cell-notebook/actions.ts`) does not save the input editor first, unlike
+  the run commands, and neither the escape-mode switch nor a CodeMirror blur
+  saves. So `split_cell` splits the stored input, which lacks the last 750ms
+  of typing. The editor then merges its buffer back, keeping text from the
+  top part in the bottom cell.
+- Suspected, to confirm with the fuzzer: a cell editor unmounting because
+  another user deleted the cell saves its unsaved typing with
+  `set_cell_input`, which re-creates the cell as a ghost with only `id` and
+  `input`.
