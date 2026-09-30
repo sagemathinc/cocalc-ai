@@ -306,7 +306,7 @@ test("queued execution rechecks the exact network authority and host principal",
     project_id: targetProject,
   });
   expect(checkNetwork).toHaveBeenCalledWith(account, {
-    action: "checkNetwork",
+    action: "checkExecutionNetwork",
     options: {
       agent_network_id: network,
       source,

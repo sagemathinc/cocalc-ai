@@ -122,6 +122,7 @@ import { recordSignedInSurfaceReady } from "@cocalc/frontend/app/bootstrap-ux-la
 import { markStartupPhaseOnce } from "@cocalc/frontend/app/startup-phase";
 import { HostRecoveryBanner } from "./host-recovery-banner";
 import { useProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
+import { useStableRenderOrder } from "@cocalc/frontend/components/stable-render-order";
 import {
   browserIdleTimeoutFromRunQuota,
   BrowserRuntimeLimitBanner,
@@ -588,6 +589,11 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     projectCtx.workspaces,
     workspaceStartupGuard,
   ]);
+  // Tab order is not render order: moving a retained editor in the DOM resets
+  // its scroll positions.
+  const editorRenderPaths = useStableRenderOrder(
+    initialWorkspaceRender.renderPaths,
+  );
 
   const displayProjectTab = useMemo(() => {
     return initialWorkspaceRender.displayActiveTab;
@@ -806,7 +812,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
         ? tab_to_path(initialWorkspaceRender.displayActiveTab)
         : undefined;
 
-    initialWorkspaceRender.renderPaths.map((path) => {
+    editorRenderPaths.map((path) => {
       if (!path) {
         return;
       }

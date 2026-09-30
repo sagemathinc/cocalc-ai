@@ -894,12 +894,6 @@ export async function setExamConfigLocal({
 }): Promise<HostExamConfig> {
   await ensureSchema();
   const config = normalizeConfig(input);
-  const activeRun = await loadCurrentRun(host.id);
-  if (activeRun && activeRun.status !== "stopped") {
-    throw new Error(
-      "exam configuration cannot change while an exam run is active",
-    );
-  }
   const hostname = examHostnameForHost(host);
   const token =
     config.admission_token ??
@@ -910,54 +904,77 @@ export async function setExamConfigLocal({
     tokenSecretName(host.id),
     token,
   );
-  const { rows } = await getPool().query(
-    `
-      INSERT INTO ${CONFIG_TABLE} (
-        host_id, enabled, title, hostname, generation, max_projects,
-        project_cpu, project_memory_mb, project_disk_mb,
-        project_ttl_minutes, cleanup_grace_minutes, terminal_enabled,
-        network_mode, token_hash, token_ciphertext, created_by, updated_by
-      )
-      VALUES (
-        $1, $2, $3, $4, 1, $5, $6, $7, $8, $9, $10, $11, 'disabled',
-        $12, $13, $14, $14
-      )
-      ON CONFLICT (host_id) DO UPDATE SET
-        enabled=EXCLUDED.enabled,
-        title=EXCLUDED.title,
-        max_projects=EXCLUDED.max_projects,
-        project_cpu=EXCLUDED.project_cpu,
-        project_memory_mb=EXCLUDED.project_memory_mb,
-        project_disk_mb=EXCLUDED.project_disk_mb,
-        project_ttl_minutes=EXCLUDED.project_ttl_minutes,
-        cleanup_grace_minutes=EXCLUDED.cleanup_grace_minutes,
-        terminal_enabled=EXCLUDED.terminal_enabled,
-        network_mode='disabled',
-        token_hash=EXCLUDED.token_hash,
-        token_ciphertext=EXCLUDED.token_ciphertext,
-        generation=${CONFIG_TABLE}.generation + 1,
-        updated_by=EXCLUDED.updated_by,
-        updated_at=NOW()
-      RETURNING *
-    `,
-    [
+  // Serialize with run creation so a run cannot be reserved between the
+  // active-run check and the configuration change.
+  const db = await getPool().connect();
+  let saved: HostExamConfig;
+  try {
+    await db.query("BEGIN");
+    await db.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [
+      "project-host-exam-run-create",
       host.id,
-      config.enabled,
-      config.title,
-      hostname,
-      config.max_projects,
-      config.project_cpu,
-      config.project_memory_mb,
-      config.project_disk_mb,
-      config.project_ttl_minutes,
-      config.cleanup_grace_minutes,
-      config.terminal_enabled,
-      token_hash,
-      token_ciphertext,
-      actor_account_id,
-    ],
-  );
-  const saved = mapConfig(rows[0]);
+    ]);
+    const activeRun = await loadCurrentRun(host.id, db);
+    if (activeRun && activeRun.status !== "stopped") {
+      throw new Error(
+        "exam configuration cannot change while an exam run is active",
+      );
+    }
+    const { rows } = await db.query(
+      `
+        INSERT INTO ${CONFIG_TABLE} (
+          host_id, enabled, title, hostname, generation, max_projects,
+          project_cpu, project_memory_mb, project_disk_mb,
+          project_ttl_minutes, cleanup_grace_minutes, terminal_enabled,
+          network_mode, token_hash, token_ciphertext, created_by, updated_by
+        )
+        VALUES (
+          $1, $2, $3, $4, 1, $5, $6, $7, $8, $9, $10, $11, 'disabled',
+          $12, $13, $14, $14
+        )
+        ON CONFLICT (host_id) DO UPDATE SET
+          enabled=EXCLUDED.enabled,
+          title=EXCLUDED.title,
+          max_projects=EXCLUDED.max_projects,
+          project_cpu=EXCLUDED.project_cpu,
+          project_memory_mb=EXCLUDED.project_memory_mb,
+          project_disk_mb=EXCLUDED.project_disk_mb,
+          project_ttl_minutes=EXCLUDED.project_ttl_minutes,
+          cleanup_grace_minutes=EXCLUDED.cleanup_grace_minutes,
+          terminal_enabled=EXCLUDED.terminal_enabled,
+          network_mode='disabled',
+          token_hash=EXCLUDED.token_hash,
+          token_ciphertext=EXCLUDED.token_ciphertext,
+          generation=${CONFIG_TABLE}.generation + 1,
+          updated_by=EXCLUDED.updated_by,
+          updated_at=NOW()
+        RETURNING *
+      `,
+      [
+        host.id,
+        config.enabled,
+        config.title,
+        hostname,
+        config.max_projects,
+        config.project_cpu,
+        config.project_memory_mb,
+        config.project_disk_mb,
+        config.project_ttl_minutes,
+        config.cleanup_grace_minutes,
+        config.terminal_enabled,
+        token_hash,
+        token_ciphertext,
+        actor_account_id,
+      ],
+    );
+    await db.query("COMMIT");
+    saved = mapConfig(rows[0]);
+  } catch (err) {
+    await db.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    db.release();
+  }
   if (!saved.enabled) return saved;
   return await ensureExamDns({
     host,
@@ -969,9 +986,11 @@ export async function setExamConfigLocal({
 async function updateRunFromRuntime({
   run_id,
   runtime,
+  keep_stopped = false,
 }: {
   run_id: string;
   runtime: HostExamRuntimeStatus;
+  keep_stopped?: boolean;
 }): Promise<HostExamRun> {
   const status = runtime.status ?? "error";
   const { rows } = await getPool().query(
@@ -995,13 +1014,26 @@ async function updateRunFromRuntime({
           stopped_at=CASE WHEN $2='stopped' THEN COALESCE(stopped_at, NOW()) ELSE stopped_at END,
           last_error=$3,
           updated_at=NOW()
-      WHERE run_id=$1
+      WHERE run_id=$1 AND NOT ($5::BOOLEAN AND status='stopped')
       RETURNING *
     `,
-    [run_id, status, runtime.last_error ?? null, runtime.max_projects ?? null],
+    [
+      run_id,
+      status,
+      runtime.last_error ?? null,
+      runtime.max_projects ?? null,
+      keep_stopped,
+    ],
   );
-  if (!rows[0]) throw new Error("exam run not found");
-  return mapRun(rows[0]);
+  if (rows[0]) return mapRun(rows[0]);
+  if (keep_stopped) {
+    const stopped = await getPool().query(
+      `SELECT * FROM ${RUN_TABLE} WHERE run_id=$1`,
+      [run_id],
+    );
+    if (stopped.rows[0]) return mapRun(stopped.rows[0]);
+  }
+  throw new Error("exam run not found");
 }
 
 export async function createExamRunLocal({
@@ -1116,6 +1148,22 @@ export async function createExamRunLocal({
     if (active.rows[0]) {
       throw new Error("another exam run is still active on this host");
     }
+    // The configuration may have been saved while the RootFS was cached.
+    const configured = (
+      await db.query(
+        `SELECT generation, token_ciphertext FROM ${CONFIG_TABLE} WHERE host_id=$1`,
+        [host.id],
+      )
+    ).rows[0];
+    if (
+      Number(configured?.generation) !== config.generation ||
+      !configured?.token_ciphertext ||
+      (await decryptExamToken(host.id, configured.token_ciphertext)) !== token
+    ) {
+      throw new Error(
+        "exam configuration changed while the run was being prepared; prepare the exam again",
+      );
+    }
     const { rows } = await db.query(
       `
         INSERT INTO ${RUN_TABLE} (
@@ -1168,7 +1216,8 @@ export async function createExamRunLocal({
       run,
       token_hash,
     });
-    run = await updateRunFromRuntime({ run_id, runtime });
+    // The run may have been ended while the host was preparing it.
+    run = await updateRunFromRuntime({ run_id, runtime, keep_stopped: true });
   } catch (err) {
     let runtime: HostExamRuntimeStatus | undefined;
     let inspectedRuntime = false;
@@ -1194,7 +1243,7 @@ export async function createExamRunLocal({
             stopped_at=CASE WHEN $2='stopped' THEN COALESCE(stopped_at, NOW()) ELSE stopped_at END,
             last_error=$3,
             updated_at=NOW()
-        WHERE run_id=$1
+        WHERE run_id=$1 AND status <> 'stopped'
       `,
       [run_id, rejectedBeforeActivation ? "stopped" : "error", `${err}`],
     );

@@ -5,7 +5,6 @@
     "outDir": "./dist",
     "sourceMap": true,
     "allowSyntheticDefaultImports": true,
-    "moduleResolution": "node",
     "lib": ["es2020", "dom"]
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],

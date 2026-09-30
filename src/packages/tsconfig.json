@@ -3,15 +3,26 @@
     "allowJs": true,
     "composite": true,
     "declaration": true,
-    "downlevelIteration": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "incremental": true,
     "isolatedModules": true,
-    "ignoreDeprecations": "6.0",
     "jsx": "react-jsx",
     "lib": ["es2020", "dom"],
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
+    "paths": {
+      "@cocalc/app-document-build": [
+        "./node_modules/@cocalc/app-document-build/src"
+      ],
+      "@cocalc/app-document-build/*": [
+        "./node_modules/@cocalc/app-document-build/src/*"
+      ],
+      "@cocalc/app-notebook": ["./node_modules/@cocalc/app-notebook/src"],
+      "@cocalc/app-notebook/*": ["./node_modules/@cocalc/app-notebook/src/*"],
+      "@cocalc/app-tasks": ["./node_modules/@cocalc/app-tasks/src"],
+      "@cocalc/app-tasks/*": ["./node_modules/@cocalc/app-tasks/src/*"],
+      "@cocalc/*": ["./node_modules/@cocalc/*"]
+    },
     "noImplicitThis": true,
     "noUncheckedSideEffectImports": false,
     "noUnusedLocals": true,

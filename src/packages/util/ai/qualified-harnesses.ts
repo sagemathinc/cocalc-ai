@@ -80,3 +80,19 @@ export function getQualifiedHarnessCandidate(
 ): QualifiedHarnessCandidate | undefined {
   return QUALIFIED_HARNESS_CANDIDATES.find((candidate) => candidate.id === id);
 }
+
+/**
+ * The exact qualified Claude Code harness (version 2 profile at the current
+ * pinned revision). Authority reserved for trusted runtimes, such as the
+ * managed CoCalc connector, must require this, never an arbitrary ACP profile.
+ */
+export function isQualifiedClaudeCodeProfile(
+  profile: { version?: unknown; id?: unknown; revision?: unknown } | undefined,
+): boolean {
+  return (
+    profile?.version === 2 &&
+    profile.id === CLAUDE_CODE_QUALIFICATION.id &&
+    profile.revision === CLAUDE_CODE_QUALIFICATION.package.version &&
+    CLAUDE_CODE_QUALIFICATION.status !== "disabled"
+  );
+}

@@ -60,7 +60,6 @@ export class SimpleInputMerge {
   // We wait to advance `last` until the remote echoes this value.
   public noteSaved(value: string): void {
     const next = value ?? "";
-    this.clearSupersededRequest(next);
     if (next === this.last) {
       this.pending = [];
       return;
@@ -121,6 +120,7 @@ export class SimpleInputMerge {
     // advanced beyond pending.  In that case, we must advance baseline first
     // and stop; attempting to rebase from stale `last` can duplicate text.
     if (this.pending.includes(remote)) {
+      this.clearSupersededRequest(remote);
       this.noteApplied(remote);
       return;
     }
@@ -249,8 +249,9 @@ export class SimpleInputMerge {
     return merge_prefer_local({ base, local, remote: current });
   }
 
-  // A newly saved local value that is neither the requested render nor an
-  // intermediate render of it means the editor has moved on from that request.
+  // Only an echoed save supersedes a render request. Until it echoes, an edit
+  // saved from the pre-update UI still needs its original render base when a
+  // concurrent remote update arrives.
   private clearSupersededRequest(saved: string): void {
     const requested = this.requestedLocalUpdate;
     if (requested == null) return;

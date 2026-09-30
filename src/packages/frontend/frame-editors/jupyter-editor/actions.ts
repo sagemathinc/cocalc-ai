@@ -474,7 +474,7 @@ export class JupyterEditorActions
   }
 
   print(_id): void {
-    this.jupyter_actions.show_nbconvert_dialog("cocalc-html");
+    this.jupyter_actions.show_nbconvert_dialog("cocalc-pdf");
   }
 
   async format(id: string): Promise<void> {

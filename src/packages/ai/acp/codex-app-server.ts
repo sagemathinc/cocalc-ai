@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { artifactPublicationGuidance } from "./publication-guidance";
+import { cocalcAccessGuidance } from "./cocalc-access-guidance";
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -358,7 +360,7 @@ function getCoCalcProjectRuntimeGuidance(cliCommand: string): string[] {
     "- COCALC_PROJECT_ID",
     "- COCALC_API_URL",
     "- COCALC_BEARER_TOKEN",
-    `When CoCalc access is enabled for this turn, use ordinary \`${cliCommand}\` commands. The CLI keeps the own-project credential for this project and automatically selects the temporary scoped credential for permitted account or other-project operations. Inspect \`${cliCommand} project list --help\` or the relevant command's help when needed. Do not read, print, or copy the connector credential file, and do not fall back to a broader login if a grant is absent.`,
+    cocalcAccessGuidance(cliCommand),
     "Project secret changes apply immediately to running projects; do not restart a project merely to apply a secret update. Programs that cache credentials may need their own reload.",
     "Use Codex's synchronous or asynchronous question tools when human input is required. Use asynchronous questions only when useful authorized work can continue while waiting.",
     "Do not use question tools for permission or authentication escalation. Use typed first-party CoCalc actions for supported fresh-auth, login, and approval flows.",
@@ -1771,10 +1773,10 @@ function addRuntimeGuidance(
   const attribution = context.COCALC_CODEX_MESSAGE_DATE
     ? `\n\nCurrent turn publication context (use these exact values as explicit CLI arguments or command-scoped environment overrides, even if a reused shell has older values; never infer the producing message from history):\n${JSON.stringify(context)}`
     : "";
-  const workbench =
-    runtimeEnv?.COCALC_WORKBENCH === "1"
-      ? `\n\nWorkbench is enabled for this turn. Publishing durable reviewable results is part of task completion: publish requested programs/scripts and other deliverable files as file-preview cards, written plans/documents as file references, generated images as file references, completed commits and PRs as their respective cards, and support drafts requiring approval as proposed actions. If the user explicitly asks to create, make, or publish an artifact, artifact publication is required: a normal response, file creation, image generation, or file link alone does not satisfy the request. Use ${getCoCalcCliCommand(runtimeEnv)} project chat artifact publish --help. A program or script created to satisfy the user's request is a deliverable even on the first onboarding turn: publish its saved file without waiting for the user to ask for a card. Do not publish incidental implementation files, temporary files, or every file touched during a task. Keep ordinary explanations and scratch work in chat. Read and update an existing artifact when revising the same object; do not duplicate it. Respect a user's request not to publish. Verify the returned publication before claiming success. Publishing proposals does not approve or execute them. If the installed command is unavailable or publication fails, report that exact failure and provide an ordinary link as a fallback; never claim an artifact was created and never write .chat files directly.`
-      : `\n\nThis turn has no workbench-enabled surface. Do not publish artifacts by default; use ordinary text and file links for ordinary requests. However, if the user explicitly asks to create, make, or publish an artifact, artifact publication is required. Use ${getCoCalcCliCommand(runtimeEnv)} project chat artifact publish --help and publish with its explicit outside-workbench opt-in (currently --experimental). A normal response, file creation, image generation, or file link alone does not satisfy an explicit artifact request. Verify the returned publication before claiming success. If the installed command is unavailable or publication fails, report that exact failure and provide an ordinary link as a fallback; never claim an artifact was created and never write .chat files directly.`;
+  const workbench = `\n\n${artifactPublicationGuidance(
+    getCoCalcCliCommand(runtimeEnv),
+    runtimeEnv?.COCALC_WORKBENCH === "1",
+  )}`;
   return `${getCoCalcRuntimeGuidanceHeader(getCoCalcCliCommand(runtimeEnv), {
     hasBrowser: !!hasBrowser,
   })}${attribution}${workbench}\n\n${prompt}`;

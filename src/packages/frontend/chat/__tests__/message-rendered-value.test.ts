@@ -224,6 +224,67 @@ describe("resolveLiveCodexActivityBlocks", () => {
 });
 
 describe("resolveRenderedMessageValue", () => {
+  it.each([
+    { generating: false, interrupted: false },
+    { generating: false, interrupted: true },
+    { generating: true, interrupted: true },
+  ])("does not replay the log when saved text wins (%j)", (state) => {
+    const projectLog = jest.fn(() => "older log content");
+    expect(
+      resolveRenderedMessageValue({
+        rowValue: "  Saved response.\n",
+        logValue: projectLog,
+        ...state,
+      }),
+    ).toBe("  Saved response.\n");
+    expect(projectLog).not.toHaveBeenCalled();
+  });
+
+  it.each(["", "   ", ACP_THINKING_PLACEHOLDER])(
+    "replays missing saved text exactly once (%j)",
+    (rowValue) => {
+      for (const interrupted of [false, true]) {
+        const projectLog = jest.fn(() => "Recovered response.");
+        expect(
+          resolveRenderedMessageValue({
+            rowValue,
+            logValue: projectLog,
+            generating: false,
+            interrupted,
+          }),
+        ).toBe("Recovered response.");
+        expect(projectLog).toHaveBeenCalledTimes(1);
+      }
+    },
+  );
+
+  it("projects live output even when saved text exists", () => {
+    const projectLog = jest.fn(() => "New live response.");
+    expect(
+      resolveRenderedMessageValue({
+        rowValue: "Older saved text.",
+        logValue: projectLog,
+        generating: true,
+      }),
+    ).toBe("New live response.");
+    expect(projectLog).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([undefined, "", "   "])(
+    "keeps the saved row when the lazy projection is empty (%j)",
+    (logValue) => {
+      const projectLog = jest.fn(() => logValue);
+      expect(
+        resolveRenderedMessageValue({
+          rowValue: "Saved response.",
+          logValue: projectLog,
+          generating: true,
+        }),
+      ).toBe("Saved response.");
+      expect(projectLog).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("prefers row content when not generating and row has text", () => {
     expect(
       resolveRenderedMessageValue({

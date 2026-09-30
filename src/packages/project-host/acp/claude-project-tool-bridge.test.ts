@@ -12,6 +12,285 @@ import { createClaudeProjectToolBridge } from "./claude-project-tool-bridge";
 
 const PROJECT_ID = "00000000-0000-4000-8000-000000000001";
 
+async function callTool(
+  directory: string,
+  tool = "project_exec",
+  args: Record<string, unknown> = { script: "echo ok" },
+): Promise<any> {
+  const token = await readFile(join(directory, "token"), "utf8");
+  return new Promise((resolve, reject) => {
+    const socket = connect(join(directory, "tool.sock"));
+    let response = "";
+    socket.setEncoding("utf8");
+    socket.on("error", reject);
+    socket.on("connect", () =>
+      socket.write(JSON.stringify({ token, tool, args }) + "\n"),
+    );
+    socket.on("data", (chunk) => (response += chunk));
+    socket.on("end", () => {
+      try {
+        resolve(JSON.parse(response));
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+}
+
+test("successful reauthorization restores tools in the same turn", async () => {
+  const execute = jest.fn(async () => ({
+    code: 0,
+    stdout: "ok",
+    stderr: "",
+    cleanupConfirmed: true,
+  }));
+  const authorize = jest
+    .fn(async () => {})
+    .mockRejectedValueOnce(Error("connection lost"));
+  const bridge = await createClaudeProjectToolBridge(
+    PROJECT_ID,
+    execute,
+    authorize,
+  );
+  try {
+    expect((await callTool(bridge.directory)).stderr).toBe("connection lost");
+    expect(execute).not.toHaveBeenCalled();
+    expect((await callTool(bridge.directory)).stdout).toBe("ok");
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(authorize).toHaveBeenCalledTimes(2);
+  } finally {
+    await bridge.close();
+  }
+});
+
+test("continuing authorization denial never restores tools", async () => {
+  const execute = jest.fn();
+  const authorize = jest.fn(async () => {
+    throw Error("No longer authorized");
+  });
+  const bridge = await createClaudeProjectToolBridge(
+    PROJECT_ID,
+    execute,
+    authorize,
+  );
+  try {
+    for (let i = 0; i < 3; i++) {
+      expect((await callTool(bridge.directory)).stderr).toBe(
+        "No longer authorized",
+      );
+    }
+    expect(authorize).toHaveBeenCalledTimes(3);
+    expect(execute).not.toHaveBeenCalled();
+  } finally {
+    await bridge.close();
+  }
+});
+
+test("cancel during reauthorization requires an explicit resume", async () => {
+  let release!: () => void;
+  let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const execute = jest.fn(async () => ({
+    code: 0,
+    stdout: "ok",
+    stderr: "",
+    cleanupConfirmed: true,
+  }));
+  const authorize = jest
+    .fn(async () => {})
+    .mockRejectedValueOnce(Error("connection lost"))
+    .mockImplementationOnce(async () => {
+      entered();
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    });
+  const bridge = await createClaudeProjectToolBridge(
+    PROJECT_ID,
+    execute,
+    authorize,
+  );
+  try {
+    await callTool(bridge.directory);
+    const pending = callTool(bridge.directory);
+    await waiting;
+    const canceled = bridge.cancel();
+    release();
+    await canceled;
+    expect((await pending).code).toBeNull();
+    expect((await callTool(bridge.directory)).stderr).toBe(
+      "Project tool is closed",
+    );
+    expect(execute).not.toHaveBeenCalled();
+    bridge.resume();
+    expect((await callTool(bridge.directory)).stdout).toBe("ok");
+  } finally {
+    release?.();
+    await bridge.close();
+  }
+});
+
+test("reauthorization preserves canceled jobs and retry IDs without replay", async () => {
+  let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const execute = jest.fn(
+    async (_script: string, _cwd: string | undefined, signal: AbortSignal) => {
+      entered();
+      await new Promise<void>((resolve) =>
+        signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+      return {
+        code: 130,
+        stdout: "",
+        stderr: "canceled",
+        cleanupConfirmed: true,
+      };
+    },
+  );
+  let fail = false;
+  const bridge = await createClaudeProjectToolBridge(
+    PROJECT_ID,
+    execute,
+    async () => {
+      if (fail) throw Error("connection lost");
+    },
+  );
+  const args = { script: "long job", request_id: "original", yield_time_ms: 0 };
+  try {
+    const original = await callTool(bridge.directory, "project_exec", args);
+    await waiting;
+    fail = true;
+    expect(
+      (await callTool(bridge.directory, "project_exec_list", {})).stderr,
+    ).toBe("connection lost");
+    fail = false;
+    const listed = await callTool(bridge.directory, "project_exec_list", {});
+    expect(listed.jobs).toEqual([
+      expect.objectContaining({ job_id: original.job_id, status: "canceled" }),
+    ]);
+    const retried = await callTool(bridge.directory, "project_exec", args);
+    expect(retried.job_id).toBe(original.job_id);
+    expect(retried.status).toBe("canceled");
+    expect(execute).toHaveBeenCalledTimes(1);
+  } finally {
+    await bridge.close();
+  }
+});
+
+test("timer authority failure recovers without replaying its canceled job", async () => {
+  jest.useFakeTimers({
+    doNotFake: ["nextTick", "setImmediate", "setTimeout", "clearTimeout"],
+  });
+  let canceled!: () => void;
+  const cancellation = new Promise<void>((resolve) => {
+    canceled = resolve;
+  });
+  const execute = jest.fn(
+    async (_script: string, _cwd: string | undefined, signal: AbortSignal) => {
+      await new Promise<void>((resolve) =>
+        signal.addEventListener(
+          "abort",
+          () => {
+            canceled();
+            resolve();
+          },
+          { once: true },
+        ),
+      );
+      return {
+        code: 130,
+        stdout: "",
+        stderr: "canceled",
+        cleanupConfirmed: true,
+      };
+    },
+  );
+  const authorize = jest
+    .fn(async () => {})
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(Error("connection lost"));
+  const bridge = await createClaudeProjectToolBridge(
+    PROJECT_ID,
+    execute,
+    authorize,
+  );
+  try {
+    const job = await callTool(bridge.directory, "project_exec", {
+      script: "long job",
+      yield_time_ms: 0,
+    });
+    jest.advanceTimersByTime(30_000);
+    await cancellation;
+    const listed = await callTool(bridge.directory, "project_exec_list", {});
+    expect(listed.jobs).toEqual([
+      expect.objectContaining({ job_id: job.job_id, status: "canceled" }),
+    ]);
+    expect(authorize).toHaveBeenCalledTimes(3);
+    expect(execute).toHaveBeenCalledTimes(1);
+  } finally {
+    await bridge.close();
+    jest.useRealTimers();
+  }
+});
+
+test("timer and tool calls share an in-flight authorization check", async () => {
+  jest.useFakeTimers({
+    doNotFake: ["nextTick", "setImmediate", "setTimeout", "clearTimeout"],
+  });
+  let entered!: () => void;
+  let release!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const execute = jest.fn(
+    async (_script: string, _cwd: string | undefined, signal: AbortSignal) => {
+      await new Promise<void>((resolve) =>
+        signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+      return {
+        code: 130,
+        stdout: "",
+        stderr: "canceled",
+        cleanupConfirmed: true,
+      };
+    },
+  );
+  const authorize = jest
+    .fn(async () => {})
+    .mockResolvedValueOnce(undefined)
+    .mockImplementationOnce(async () => {
+      entered();
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    });
+  const bridge = await createClaudeProjectToolBridge(
+    PROJECT_ID,
+    execute,
+    authorize,
+  );
+  try {
+    await callTool(bridge.directory, "project_exec", {
+      script: "long job",
+      yield_time_ms: 0,
+    });
+    const pending = callTool(bridge.directory, "project_exec_list", {});
+    await waiting;
+    jest.advanceTimersByTime(30_000);
+    expect(authorize).toHaveBeenCalledTimes(2);
+    release();
+    expect((await pending).jobs).toHaveLength(1);
+  } finally {
+    release?.();
+    await bridge.close();
+    jest.useRealTimers();
+  }
+});
+
 async function sendTool(directory: string) {
   const token = await readFile(join(directory, "token"), "utf8");
   const socket = connect(join(directory, "tool.sock"));

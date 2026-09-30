@@ -226,8 +226,9 @@ export const ActiveContent: React.FC = React.memo(() => {
   );
 
   const project_layers: React.JSX.Element[] = [];
-  open_projects?.forEach((project_id: string) => {
-    if (!mountedProjectIds.current.has(project_id)) return;
+  // Mount order, not project tab order: moving a retained project page in the
+  // DOM resets the scroll positions of everything inside it.
+  mountedProjectIds.current.forEach((project_id: string) => {
     const is_active = project_id === active_top_tab;
     const x = (
       <RouteChunk route="project">

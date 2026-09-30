@@ -62,7 +62,52 @@ test("keeps guidance visible if its assistant is outside the loaded window", () 
   ]);
 });
 
-test("places guidance between compact agent preview messages", () => {
+test("places guidance at a paragraph boundary in compact agent previews", () => {
+  const assistant = message("assistant", "agent", {
+    generating: true,
+    activity: {
+      state: "ready",
+      events: [
+        {
+          seq: 1,
+          time: 1000,
+          type: "event",
+          event: { type: "message", text: "I found the bug. ", delta: true },
+        },
+        {
+          seq: 2,
+          time: 3000,
+          type: "event",
+          event: { type: "message", text: "\n\nI am fixing it.", delta: true },
+        },
+      ],
+    },
+  });
+  const guidance = message("guidance", "human", {
+    guidance: true,
+    guidance_delivered_at_ms: 2000,
+    content: "Please check the tests too.",
+  });
+  const sections = activityGuidanceSections(assistant, [guidance]);
+  assert.deepEqual(
+    sections.map((section) => section.kind),
+    ["activity", "guidance", "activity"],
+  );
+  assert.match(
+    sections[0].kind === "activity" ? sections[0].markdown : "",
+    /found the bug/,
+  );
+  assert.match(
+    sections[2].kind === "activity" ? sections[2].markdown : "",
+    /fixing it/,
+  );
+  assert.doesNotMatch(
+    sections[2].kind === "activity" ? sections[2].markdown : "",
+    /found the bug/,
+  );
+});
+
+test("defers guidance rather than splitting a streaming paragraph", () => {
   const assistant = message("assistant", "agent", {
     generating: true,
     activity: {
@@ -91,20 +136,17 @@ test("places guidance between compact agent preview messages", () => {
   const sections = activityGuidanceSections(assistant, [guidance]);
   assert.deepEqual(
     sections.map((section) => section.kind),
-    ["activity", "guidance", "activity"],
+    ["activity", "guidance"],
   );
-  assert.match(
+  assert.equal(
     sections[0].kind === "activity" ? sections[0].markdown : "",
-    /found the bug/,
+    "I found the bug. I am fixing it.",
   );
-  assert.match(
-    sections[2].kind === "activity" ? sections[2].markdown : "",
-    /fixing it/,
-  );
-  assert.doesNotMatch(
-    sections[2].kind === "activity" ? sections[2].markdown : "",
-    /found the bug/,
-  );
+  assert.deepEqual(sections[1], {
+    kind: "guidance",
+    key: guidance.message_id,
+    item: guidance,
+  });
 });
 
 test("keeps delivered guidance in place after a completed turn is reopened", () => {
