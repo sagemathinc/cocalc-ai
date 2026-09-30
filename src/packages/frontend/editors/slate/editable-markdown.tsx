@@ -871,10 +871,13 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     });
     pendingRemoteRef.current = null;
     setPendingRemoteIndicator(false);
+    // Merge the current value, not the one captured when the merge was
+    // deferred: later saves or remote changes may have superseded it.
+    const remote = actions._syncstring?.to_str() ?? pending;
     mergeHelperRef.current.handleRemote({
-      remote: pending,
+      remote,
       getLocal: () => editor.getMarkdownValue(),
-      applyMerged: (merged) => applyMergedRemoteValue(merged, pending),
+      applyMerged: (merged) => applyMergedRemoteValue(merged, remote),
     });
   }
 
@@ -1444,13 +1447,31 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     }
 
     const remote = getRemoteValueRef.current?.() ?? valueRef.current;
-    const markdown =
+    let markdown =
       mergeRemoteValues && remote !== reconciledValueRef.current
         ? mergeHelperRef.current.previewMerge({
             remote: remote ?? "",
             local: editor.getMarkdownValue(),
           }).merged
         : editor.getMarkdownValue();
+    if (actions._syncstring != null) {
+      // The editor can lag behind the syncstring, e.g., while a remote change
+      // is deferred because the user is typing, or has not rendered yet.
+      // Saving the editor contents as-is would revert those remote changes, so
+      // save the editor's uncommitted edits merged into the current value.
+      const editorMarkdown = markdown;
+      markdown = mergeHelperRef.current.mergeForSave({
+        observed: editorMarkdown,
+        current: actions._syncstring.to_str(),
+      });
+      // This save incorporates any deferred remote change.
+      pendingRemoteRef.current = null;
+      setPendingRemoteIndicator(false);
+      if (markdown !== editorMarkdown) {
+        // Show what is about to be saved before saving it.
+        setEditorToValue(markdown);
+      }
+    }
     const currentMarkdown = valueRef.current;
     if (
       currentMarkdown != null &&

@@ -178,18 +178,34 @@ export class SimpleInputMerge {
   }
 
   private resolveLocal(observed: string): { local: string; base: string } {
+    const { local, base, settled } = this.inspectLocal(observed);
+    if (settled) this.requestedLocalUpdate = undefined;
+    return { local, base };
+  }
+
+  // Resolve what the observed editor value means relative to committed state,
+  // without changing any state. `settled` means a pending render request is
+  // resolved (the editor rendered it, or was edited after it).
+  private inspectLocal(observed: string): {
+    local: string;
+    base: string;
+    settled: boolean;
+  } {
     const requested = this.requestedLocalUpdate;
     if (requested == null) {
-      return { local: observed, base: this.last };
+      return { local: observed, base: this.last, settled: false };
     }
     if (observed === requested.latest.value) {
-      this.requestedLocalUpdate = undefined;
-      return { local: observed, base: requested.latest.base };
+      return { local: observed, base: requested.latest.base, settled: true };
     }
     if (requested.renderCandidates.some((c) => c.value === observed)) {
       // The setter has not reached the latest value yet. Treat any known value
       // from the asynchronous render chain as stale UI, not a new local edit.
-      return { local: requested.latest.value, base: requested.latest.base };
+      return {
+        local: requested.latest.value,
+        base: requested.latest.base,
+        settled: false,
+      };
     }
 
     // The user edited (or the editor canonicalized) while the requested update
@@ -198,7 +214,6 @@ export class SimpleInputMerge {
     // that candidate's committed base. Using the candidate itself as the base
     // would treat its uncommitted local edits as committed and drop them. The
     // reconciled baseline is always a candidate.
-    this.requestedLocalUpdate = undefined;
     const start = [
       { value: this.last, base: this.last },
       ...requested.renderCandidates,
@@ -207,7 +222,23 @@ export class SimpleInputMerge {
         ? candidate
         : closest,
     );
-    return { local: observed, base: start.base };
+    return { local: observed, base: start.base, settled: true };
+  }
+
+  /**
+   * The value to save for the observed editor contents, given the current
+   * value of the backing store. Editors can lag behind the store (a remote
+   * change deferred while the user types, or not yet rendered); saving the
+   * editor contents as-is would revert those changes. This merges the editor's
+   * uncommitted edits into the current store value instead. It does not change
+   * state; call noteSaved with the returned value when saving it.
+   */
+  public mergeForSave(opts: { observed: string; current: string }): string {
+    const observed = opts.observed ?? "";
+    const current = opts.current ?? "";
+    const { local, base } = this.inspectLocal(observed);
+    if (current === base) return local;
+    return merge_prefer_local({ base, local, remote: current });
   }
 
   // A newly saved local value that is neither the requested render nor an
