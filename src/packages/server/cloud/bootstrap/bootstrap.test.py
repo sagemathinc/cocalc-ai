@@ -6194,6 +6194,47 @@ WantedBy=multi-user.target
 
 
 class BootstrapModesTest(unittest.TestCase):
+    def test_status_cannot_enable_cleanup_until_legacy_lifecycle_lock_released(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            export_dir = Path(tmpdir) / "public-lifecycle"
+            export_dir.mkdir()
+            desired_path = export_dir / "bootstrap-desired-state.json"
+            legacy = {"tools_bundle": {"version": "v0"}}
+            desired_path.write_text(json.dumps(legacy))
+            tools_root = Path(tmpdir) / "tools"
+            tools_root.mkdir()
+            cfg = replace(cfg, tools_bundle=replace(
+                cfg.tools_bundle, root=str(tools_root), version="v6",
+            ))
+            lock_path = bootstrap.bootstrap_lock_path(cfg)
+            lock_path.parent.mkdir(parents=True)
+            # Distinct open-file descriptions contend even in one process:
+            # this descriptor represents a still-running legacy invocation.
+            with lock_path.open("a+") as legacy_lock, \
+                mock.patch.dict(os.environ, {"COCALC_BOOTSTRAP_LOCK_TIMEOUT_SECS": "0.05"}), \
+                mock.patch.object(bootstrap, "load_config", return_value=cfg) as load_config, \
+                mock.patch.object(bootstrap, "BOOTSTRAP_LIFECYCLE_EXPORT_DIR", export_dir), \
+                mock.patch.object(bootstrap, "resolve_runtime_user_identity", return_value=(2000, 2000)), \
+                mock.patch.object(bootstrap, "log_line"), \
+                mock.patch.object(bootstrap, "report_bootstrap_status"), \
+                mock.patch("sys.stdout", new_callable=io.StringIO):
+                bootstrap.fcntl.flock(legacy_lock.fileno(), bootstrap.fcntl.LOCK_EX)
+                result = bootstrap.main(["status", "--bootstrap-dir", cfg.bootstrap_dir])
+                self.assertEqual(result, 1)
+                self.assertEqual(json.loads(desired_path.read_text()), legacy)
+                self.assertEqual(load_config.call_count, 1)
+
+                bootstrap.fcntl.flock(legacy_lock.fileno(), bootstrap.fcntl.LOCK_UN)
+                result = bootstrap.main(["status", "--bootstrap-dir", cfg.bootstrap_dir])
+                self.assertEqual(result, 0)
+                desired = json.loads(desired_path.read_text())["tools_bundle"]
+                self.assertEqual(desired["retention_lock_protocol"], 1)
+                self.assertEqual(desired["version"], "v6")
+                self.assertEqual(desired["root"], str(tools_root))
+                # Reload configuration after lock acquisition, not just before.
+                self.assertEqual(load_config.call_count, 3)
+
     def test_bootstrap_operation_lock_times_out_when_another_process_holds_it(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)

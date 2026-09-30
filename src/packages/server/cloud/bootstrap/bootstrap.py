@@ -14044,11 +14044,15 @@ def main(argv: list[str]) -> int:
                 write_bootstrap_state_files(cfg)
                 return 0
         if args.mode == "status":
-            write_bootstrap_state_files(cfg)
-            sys.stdout.write(
-                json.dumps(json_load(bootstrap_state_path(cfg)), indent=2, sort_keys=True)
-                + "\n"
-            )
+            # Status republishes cleanup capability, so it must wait for any
+            # older bootstrap invocation to finish before enabling deletion.
+            with bootstrap_operation_lock(cfg):
+                cfg = load_config(bootstrap_dir)
+                write_bootstrap_state_files(cfg)
+                sys.stdout.write(
+                    json.dumps(json_load(bootstrap_state_path(cfg)), indent=2, sort_keys=True)
+                    + "\n"
+                )
             return 0
         if args.mode == "provision":
             with bootstrap_operation_lock(cfg):
