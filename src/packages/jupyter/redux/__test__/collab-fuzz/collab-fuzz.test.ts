@@ -147,7 +147,9 @@ async function runSession(seed: number, steps = STEPS) {
     patch: codec.makePatch(fromStr(""), fromStr(INITIAL)),
     userId: 0,
   } as any;
-  const nUsers = 2 + Math.floor(rng() * 2);
+  const nUsers = process.env.FUZZ_USERS
+    ? Number(process.env.FUZZ_USERS)
+    : 2 + Math.floor(rng() * 2);
   const clients: NotebookClient[] = [];
   for (let id = 0; id < nUsers + 1; id++) {
     clients.push(new NotebookClient(id, net, now, [initialPatch]));
@@ -176,7 +178,7 @@ async function runSession(seed: number, steps = STEPS) {
     }
   };
   let counter = 0;
-  const newToken = (c: NotebookClient) => `tk${"abcdefgh"[c.id]}${counter++}q`;
+  const newToken = (c: NotebookClient) => `tk${"abcdefghijklmnop"[c.id]}${counter++}q`;
 
   const settle = async (ms: number) => {
     jest.advanceTimersByTime(ms);

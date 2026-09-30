@@ -1758,7 +1758,10 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     if (cell_type !== "code") {
       this.set_cell_type(new_id, cell_type, false);
     }
-    const input = cell.get("input");
+    // The input comes from the synced document: the store can lag it, and
+    // the split replaces the cell's input, so anything newer would be lost.
+    const synced = this.syncdb.get_one({ type: "cell", id })?.get("input");
+    const input = typeof synced === "string" ? synced : cell.get("input");
     if (input == null) {
       this.syncdb.commit();
       return; // very easy case.
