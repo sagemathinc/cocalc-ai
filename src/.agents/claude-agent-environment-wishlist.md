@@ -4,9 +4,12 @@ Written by Claude (claude-opus-5-5) on 2026-09-30, working as an agent in a CoCa
 
 ## 1. Viewing images in the project
 
+**Status:** implemented as the `project_read_image` subscription tool (see below).
+
 - **Gap:** project commands return text only. An agent can create an image (a Playwright screenshot, a matplotlib plot, a rendered PDF page) but can't look at it.
 - **Example:** after changing a chat footer, I took a screenshot and had to check the result by measuring button sizes and colors from the DOM instead.
 - **Wanted:** a tool that returns a project image file (PNG/JPEG/SVG, or a PDF page) as image content, the same way pasted images reach the agent. This covers "does this plot look right?", "did this UI change work?" and before/after comparisons.
+- **Implemented:** `project_read_image` (in `project-host/acp/claude-project-mcp.cjs` and `claude-project-tool-bridge.ts`) reads PNG, JPEG, GIF or WebP files up to 800 KB with the same project authority as `project_exec`, detects the type from the file bytes, and returns an MCP `image` block. SVG and PDF need rendering to PNG first.
 
 ## 2. Seeing what your browser sees
 

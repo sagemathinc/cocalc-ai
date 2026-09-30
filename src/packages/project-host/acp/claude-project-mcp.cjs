@@ -89,6 +89,23 @@ const tools = [
     },
   },
   {
+    name: "project_read_image",
+    description:
+      "View an image file saved in the CoCalc project (PNG, JPEG, GIF or WebP, up to 800 KB), such as a screenshot, plot or rendered page, returned as an image you can see. Use it to check visual results instead of describing or measuring them indirectly. For SVG or PDF, render a PNG first; for large images, save a smaller or cropped copy.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description:
+            "Image path in the project; relative paths start in the project home directory",
+        },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "request_user_input_async",
     description:
       "Ask the user one to three short questions while continuing useful work. Returns immediately after saving a question card; the reply arrives as a user message during this turn, or a continuation if the turn has finished. Do not poll or stop unrelated work waiting for a reply. Use only for missing information, preferences, or clarification, never authentication, secrets, or permission escalation. Use a unique request_id and reuse it only when retrying the identical request.",
@@ -192,10 +209,27 @@ async function handle(message) {
           ? !canceledSuccessfully &&
             ["failed", "canceled", "timed_out"].includes(output.status)
           : "code" in output && output.code !== 0);
-      result = {
-        content: [{ type: "text", text: JSON.stringify(output) }],
-        isError,
-      };
+      const image = output.image;
+      result =
+        image && typeof image.data === "string"
+          ? {
+              content: [
+                { type: "image", data: image.data, mimeType: image.mimeType },
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    path: output.path,
+                    bytes: output.bytes,
+                    mimeType: image.mimeType,
+                  }),
+                },
+              ],
+              isError: false,
+            }
+          : {
+              content: [{ type: "text", text: JSON.stringify(output) }],
+              isError,
+            };
     } else {
       throw new Error("Unsupported project tool method");
     }

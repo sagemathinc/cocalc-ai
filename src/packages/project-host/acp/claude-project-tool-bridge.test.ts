@@ -418,6 +418,7 @@ test("trusted MCP helper executes only through the scoped project socket", async
       "project_exec_wait",
       "project_exec_cancel",
       "project_exec_list",
+      "project_read_image",
       "request_user_input_async",
     ]);
     const called = await request(3, "tools/call", {
@@ -436,6 +437,28 @@ test("trusted MCP helper executes only through the scoped project socket", async
         onOutput: expect.any(Function),
       }),
     );
+    const png = Buffer.from("89504e470d0a1a0a0000000d49484452", "hex");
+    execute.mockImplementationOnce(async () => ({
+      code: 0,
+      cleanupConfirmed: true,
+      stdout: png.toString("base64"),
+      stderr: "",
+    }));
+    const viewed = await request(5, "tools/call", {
+      name: "project_read_image",
+      arguments: { path: "/home/user/plot.png" },
+    });
+    expect(viewed.result.isError).toBe(false);
+    expect(viewed.result.content[0]).toEqual({
+      type: "image",
+      data: png.toString("base64"),
+      mimeType: "image/png",
+    });
+    expect(JSON.parse(viewed.result.content[1].text)).toEqual({
+      path: "/home/user/plot.png",
+      bytes: png.length,
+      mimeType: "image/png",
+    });
     const question = {
       request_id: "target",
       questions: [{ title: "Which target?" }],
@@ -484,7 +507,7 @@ test("trusted MCP helper executes only through the scoped project socket", async
       socket.on("end", () => resolve(response));
     });
     expect(unauthorized).toContain("Invalid project tool request");
-    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledTimes(2);
   } finally {
     child.kill("SIGKILL");
     await bridge.close();

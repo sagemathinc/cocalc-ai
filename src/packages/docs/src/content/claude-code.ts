@@ -183,6 +183,13 @@ continue, rather than waiting or polling for an answer. Questions are for
 clarification, not passwords, login codes, authentication, or permission
 escalation. See [goals and questions](/docs/ai/codex-goals) for the shared cards.
 
+The subscription tool \`project_read_image\` lets Claude look at an image
+saved in the project, such as a screenshot, plot, or rendered page, instead of
+only reading text output. It accepts PNG, JPEG, GIF, and WebP files up to
+800 KB and uses the same project access as \`project_exec\`. For SVG or PDF,
+Claude renders a PNG first; for larger images, it saves a smaller or cropped
+copy.
+
 ## Troubleshooting and agent-readable help
 
 ### Long commands and background services
