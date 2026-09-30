@@ -46,7 +46,7 @@ export type PersonalControlRequest =
       };
     }[PersonalHumanMethod]
   | {
-      action: "checkNetwork";
+      action: "checkNetwork" | "checkExecutionNetwork";
       options: {
         agent_network_id: string;
         source: AgentRpcSource;
@@ -129,6 +129,10 @@ export interface AgentRpcControlApi {
     request: PersonalControlRequest;
   }): Promise<PersonalControlResult>;
   principal(
+    opts: RpcRoute & RpcSource,
+  ): Promise<{ account_id: string; personal_messaging: boolean }>;
+  /** Trusted fabric only: provenance of an already admitted host-queued job. */
+  executionPrincipal(
     opts: RpcRoute & RpcSource,
   ): Promise<{ account_id: string; personal_messaging: boolean }>;
   submit(

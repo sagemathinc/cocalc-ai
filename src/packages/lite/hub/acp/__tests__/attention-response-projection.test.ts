@@ -294,7 +294,7 @@ it("promotes a saved sync answer to a dispatchable queued continuation without r
   }
 });
 
-it.each(["Codex", "ACP"])(
+it.each(["Codex", "ACP", "Claude", "Agent"])(
   "projects an explicitly accepted %s sync response as received",
   async (runtime) => {
     await respond();

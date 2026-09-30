@@ -3648,6 +3648,9 @@ export interface InterBayExternalCredentialsApi {
     payload: string;
     metadata?: Record<string, any>;
     revive?: boolean;
+    // Compare-and-swap: fail with a conflict unless the stored payload has
+    // this SHA-256 (hex).
+    expected_payload_sha256?: string;
   }) => Promise<boolean>;
   updateLabelById: (opts: {
     id: string;

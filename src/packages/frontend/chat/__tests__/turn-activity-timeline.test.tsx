@@ -51,6 +51,20 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
+test("activity collapses blank paragraphs while preserving copied Markdown", async () => {
+  const text = "First paragraph\n\n\nSecond paragraph";
+  const { container } = render(<Timeline blocks={[{ kind: "agent", text }]} />);
+  expect(screen.getByText("First paragraph")).toBeTruthy();
+  expect(screen.getByText("Second paragraph")).toBeTruthy();
+  expect(container.querySelector(".cocalc-blank-line")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Copy block" }));
+  await waitFor(() =>
+    expect(copyTextToClipboard).toHaveBeenCalledWith(
+      expect.objectContaining({ text, markdown: true }),
+    ),
+  );
+});
+
 test("guidance keeps chat-relative links beside agent links", () => {
   render(
     <Timeline

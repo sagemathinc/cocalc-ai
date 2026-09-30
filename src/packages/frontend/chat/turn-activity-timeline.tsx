@@ -202,6 +202,7 @@ function TimelineMarkdownRow({
         <div ref={bodyRef} data-chat-selectable-message="true">
           <StaticMarkdown
             value={displayed}
+            preserveBlankLines={false}
             className={context.className}
             style={context.markdownStyle}
             editorTheme={context.editorTheme}

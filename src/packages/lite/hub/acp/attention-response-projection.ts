@@ -1,3 +1,4 @@
+import { codexAttentionAcceptingRuntime } from "@cocalc/util/ai/codex-attention";
 import { uuidsha1 } from "@cocalc/backend/misc_node";
 import { buildChatMessage } from "@cocalc/chat/core";
 import type { AcpAttentionStoredRecord } from "../sqlite/acp-attention";
@@ -40,8 +41,7 @@ export function acceptedSyncAttentionResponse(
     record.source_kind === "codex_sync_question" &&
     !record.dispatch_as_async &&
     ((record.state === "answered" &&
-      (record.resolution_reason === "Codex accepted the response" ||
-        record.resolution_reason === "ACP accepted the response")) ||
+      codexAttentionAcceptingRuntime(record.resolution_reason) != null) ||
       (record.state === "declined" &&
         record.resolution_reason === "The user declined to answer"))
   );
