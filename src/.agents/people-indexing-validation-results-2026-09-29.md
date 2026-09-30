@@ -4,6 +4,42 @@ Date: 2026-09-29. This is an initial gate report, not a completed scaling rollou
 
 ## Current Completion Audit
 
+### Live Follow-Up: Recovery Confirmed; Traversal Still Running (02:47 UTC)
+
+Read-only host inspection confirmed the exact cancelled run
+`51369392-b087-4479-9be7-1e3619573ebe` for operation
+`745ad313-a26f-474a-9b1d-00675bc39fb8`. The owner job is now absent, following
+normal recovery; no reservation was manually deleted. Its historical
+unavailable result remains unchanged.
+
+An explicit browser Start selected only `api-relay-qa-source` (project
+`43736a2b-8625-430c-9189-2293dedde585`) and admitted operation
+`9a7f3b25-aba6-488d-821c-4a399a11e89e`, exact host run
+`ea16f50f-5b39-48fe-80ba-383f6ee6c308`, at about 02:38 UTC. This operation is
+still running, not failed or complete. At 02:47:37 UTC it reported 490 entries,
+208 discovered directories, 105 completed directories, one candidate and no
+pending candidates. It has one accumulated traversal error and zero currently
+blocked directories; that does not prove error-free or complete coverage.
+The browser reports the same operation and ongoing progress.
+
+Twenty read-only host status samples from 02:42:46 through 02:47:37 all returned
+successfully. Median duration was 204 ms; maximum was 3,196 ms for the initial
+route/client setup sample. No new hub request-cap or scan-host-unavailable
+message appeared in the current seed-hub log through this checkpoint. This is
+a short observation after restart, not proof that the earlier connectivity
+problem is fixed. The earlier `fresh-project` run also remains active and was
+observed making progress; neither execution was cancelled merely for being slow.
+
+Release audit: PR 727 remains open at remote head
+`82c00b201bdb931fab49ccc437c1bcb0ad673d4d`, with no reviews or review decision.
+That older head cannot establish review of local implementation
+`bcf6d5c7d080f663569563005e00b4416ce764a4`. Re-inspection of the original review
+attempt now requires its original Agent Network and target identifiers, which
+are not recorded in this report; the command was rejected before execution.
+No review was resent and no approval is inferred. Full live traversal,
+independent review of the final enabled paths, and the explicit canary decision
+remain open. Keep enablement confined to the authorized development site.
+
 ### Latest Checkpoint: Scan Files Tab (2026-09-30)
 
 The People workspace now exposes **Scan Files** as a tab at
