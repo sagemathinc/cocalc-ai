@@ -31,6 +31,7 @@ describe("CRM outreach worker recovery invariants", () => {
       suppression_reasons: ["manual"],
       cooldown_last_contact: new Date("2026-09-16T12:00:00.000Z"),
       same_kind_nonterminal_count: 1,
+      initial_send_in_flight_count: 1,
     };
 
     expect(outreachInitialSendIneligibility(eligibility, null)).toEqual([
@@ -41,11 +42,16 @@ describe("CRM outreach worker recovery invariants", () => {
       "email_not_primary",
       "suppressed",
       "same_kind_nonterminal_duplicate",
+      "initial_send_in_flight",
       "contact_cooldown_active_no_override",
     ]);
-    expect(
-      outreachInitialSendIneligibility(eligibility, "reviewed exception"),
-    ).not.toContain("contact_cooldown_active_no_override");
+    const overridden = outreachInitialSendIneligibility(
+      eligibility,
+      "reviewed exception",
+    );
+    expect(overridden).not.toContain("contact_cooldown_active_no_override");
+    // An override covers a known recent contact, not an unresolved send.
+    expect(overridden).toContain("initial_send_in_flight");
   });
 
   it("loads recipient eligibility through the supplied transaction", async () => {
@@ -65,7 +71,7 @@ describe("CRM outreach worker recovery invariants", () => {
       })
       .mockResolvedValueOnce({ rows: [{ reason: "manual" }] })
       .mockResolvedValueOnce({ rows: [{ last_contact: lastContact }] })
-      .mockResolvedValueOnce({ rows: [{ count: 2 }] });
+      .mockResolvedValueOnce({ rows: [{ same_kind: 2, in_flight: 1 }] });
 
     await expect(
       loadOutreachRecipientEligibility(
@@ -89,8 +95,11 @@ describe("CRM outreach worker recovery invariants", () => {
       suppression_reasons: ["manual"],
       cooldown_last_contact: lastContact,
       same_kind_nonterminal_count: 2,
+      initial_send_in_flight_count: 1,
     });
     expect(query).toHaveBeenCalledTimes(4);
+    expect(query.mock.calls[3][0]).toContain("state='creating_ticket'");
+    expect(query.mock.calls[3][0]).not.toMatch(/AND kind=/);
   });
 
   it("fails an ineligible initial send without leaving it retryable", async () => {

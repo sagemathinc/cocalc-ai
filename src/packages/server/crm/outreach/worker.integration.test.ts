@@ -276,18 +276,38 @@ describePglite("CRM outreach initial-send claim revalidation", () => {
     ).toContain("same_kind_nonterminal_duplicate");
   });
 
-  it("allows different kinds for one email but rejects a later same-kind duplicate", async () => {
+  it("blocks another kind while an initial send to the email is in flight", async () => {
     const adoption = await createFixture({ kind: "adoption_pilot" });
     const renewal = await createFixture({ kind: "renewal" });
 
     const first = await worker.__test__.claimOneEffectful();
-    const second = await worker.__test__.claimOneEffectful();
-    expect(new Set([first?.delivery.id, second?.delivery.id])).toEqual(
-      new Set([adoption.deliveryId, renewal.deliveryId]),
-    );
+    expect(first).toMatchObject({ operation: "create_ticket" });
+    const blocked =
+      first!.delivery.id === adoption.deliveryId ? renewal : adoption;
+    await expectFailed(blocked.deliveryId, "initial_send_in_flight");
 
-    const duplicate = await createFixture({ kind: "adoption_pilot" });
+    const duplicate = await createFixture({ kind: first!.delivery.kind });
     await expectFailed(duplicate.deliveryId, "same_kind_nonterminal_duplicate");
+  });
+
+  it("blocks another kind, even with an override, while a send is indeterminate", async () => {
+    const adoption = await createFixture({ kind: "adoption_pilot" });
+    const claim = await worker.__test__.claimOneEffectful();
+    expect(claim).toMatchObject({ delivery: { id: adoption.deliveryId } });
+    // A lost lease leaves an effect Zendesk may have accepted.
+    await pool.query(
+      "UPDATE crm_outreach_provider_operations SET lease_expires_at=NOW()-INTERVAL '1 minute' WHERE id=$1",
+      [claim!.operation_id],
+    );
+    await expect(
+      worker.recoverExpiredProviderOperations(pool as any),
+    ).resolves.toMatchObject({ effectful_indeterminate: 1 });
+
+    const renewal = await createFixture({
+      kind: "renewal",
+      overrideReason: "Reviewer accepted the recent-contact warning",
+    });
+    await expectFailed(renewal.deliveryId, "initial_send_in_flight");
   });
 
   it("revalidates a started claim before any provider request", async () => {

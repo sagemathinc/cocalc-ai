@@ -1426,6 +1426,7 @@ export interface OutreachRecipientEligibility {
   suppression_reasons: string[];
   cooldown_last_contact: Date | null;
   same_kind_nonterminal_count: number;
+  initial_send_in_flight_count: number;
 }
 
 export type OutreachInitialSendIneligibility =
@@ -1436,6 +1437,7 @@ export type OutreachInitialSendIneligibility =
   | "email_not_primary"
   | "suppressed"
   | "same_kind_nonterminal_duplicate"
+  | "initial_send_in_flight"
   | "contact_cooldown_active_no_override";
 
 // Review and delivery must evaluate the same recipient facts. Accepting the
@@ -1466,9 +1468,14 @@ export async function loadOutreachRecipientEligibility(
       WHERE normalized_email=$1 AND id<>$2 AND notification_requested_at >= NOW()-($3::int * INTERVAL '1 day')`,
     [delivery.normalized_email, delivery.id, contactCooldownDays],
   );
-  const duplicate = await db.query(
-    `SELECT count(*)::int AS count FROM crm_outreach_deliveries
-      WHERE id<>$1 AND normalized_email=$2 AND kind=$3 AND state IN ('approved','queued','creating_ticket','notification_requested')`,
+  // A creating_ticket delivery of any kind may already have reached Zendesk,
+  // including one left indeterminate, so it blocks every initial send to the
+  // same email until the worker resolves it.
+  const nonterminal = await db.query(
+    `SELECT count(*) FILTER (WHERE kind=$3)::int AS same_kind,
+        count(*) FILTER (WHERE state='creating_ticket')::int AS in_flight
+       FROM crm_outreach_deliveries
+      WHERE id<>$1 AND normalized_email=$2 AND state IN ('approved','queued','creating_ticket','notification_requested')`,
     [delivery.id, delivery.normalized_email, delivery.kind],
   );
   return {
@@ -1481,7 +1488,8 @@ export async function loadOutreachRecipientEligibility(
     cooldown_last_contact: recent.rows[0]?.last_contact
       ? new Date(recent.rows[0].last_contact)
       : null,
-    same_kind_nonterminal_count: Number(duplicate.rows[0]?.count ?? 0),
+    same_kind_nonterminal_count: Number(nonterminal.rows[0]?.same_kind ?? 0),
+    initial_send_in_flight_count: Number(nonterminal.rows[0]?.in_flight ?? 0),
   };
 }
 
@@ -1498,6 +1506,8 @@ export function outreachInitialSendIneligibility(
   if (eligibility.suppression_reasons.length) reasons.push("suppressed");
   if (eligibility.same_kind_nonterminal_count > 0)
     reasons.push("same_kind_nonterminal_duplicate");
+  if (eligibility.initial_send_in_flight_count > 0)
+    reasons.push("initial_send_in_flight");
   if (eligibility.cooldown_last_contact && !overrideReason?.trim())
     reasons.push("contact_cooldown_active_no_override");
   return reasons;
@@ -1546,6 +1556,10 @@ async function deliveryPreflight(
   if (eligibility.same_kind_nonterminal_count)
     errors.push(
       "same-kind nonterminal outreach already exists for this contact",
+    );
+  if (eligibility.initial_send_in_flight_count)
+    errors.push(
+      "another initial send to this contact is in flight or indeterminate",
     );
   return { blocking_errors: errors, warnings };
 }
