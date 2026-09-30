@@ -1607,7 +1607,9 @@ export async function reconcileDueExamRunsOnce(): Promise<void> {
         -- A run waiting for its stopped host has nothing to do until the host
         -- runs again, and must not crowd newly due runs out of this batch.
         AND (h.status = 'running' OR r.last_error IS DISTINCT FROM $2)
-      ORDER BY r.scheduled_stop_at
+      -- A run waiting for a host that still looks running is asked about
+      -- again, but only after the runs that are not waiting.
+      ORDER BY r.last_error IS NOT DISTINCT FROM $2, r.scheduled_stop_at
       LIMIT 16
     `,
     [ACTIVE_RUN_STATUSES, WAITING_FOR_HOST_STOPPED_AT_DEADLINE],

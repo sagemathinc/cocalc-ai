@@ -243,6 +243,42 @@ describe("scheduled exam cleanup when the host stops at the deadline", () => {
     expect(mockAdminAlert).toHaveBeenCalledTimes(1);
   });
 
+  it("does not let runs waiting for unreachable running hosts crowd out newly due runs", async () => {
+    // The deadline loop handles at most 16 due runs per pass.
+    const waiting = new Set<string>();
+    for (let i = 0; i < 16; i++) {
+      const { run_id } = await openRunPastDeadline();
+      // Older than the new run below, but within the cleanup grace.
+      await setDeadlineMinutesAgo(run_id, 5);
+      waiting.add(run_id);
+    }
+    mockControl.getExamRunStatus.mockImplementation(async (opts) => {
+      if (waiting.has(opts?.run_id)) {
+        throw new Error("project host is not connected");
+      }
+      return runtime(opts?.run_id, "open");
+    });
+    await reconcileDueExamRunsOnce();
+    const { run_id } = await openRunPastDeadline();
+    mockControl.getExamRunStatus.mockClear();
+
+    await reconcileDueExamRunsOnce();
+
+    expect(mockControl.closeAndCleanupExamRun).toHaveBeenCalledWith(
+      expect.objectContaining({ run_id, poweroff: true }),
+    );
+    expect((await runRow(run_id)).status).toBe("stopped");
+    // The waiting runs are still asked about in the same pass.
+    const [oldest] = waiting;
+    expect(mockControl.getExamRunStatus).toHaveBeenCalledWith({
+      run_id: oldest,
+    });
+    expect((await runRow(oldest)).last_error).toMatch(
+      /waiting for the project host/,
+    );
+    expect(mockAdminAlert).not.toHaveBeenCalled();
+  });
+
   it("completes the run and stops the host again when it runs after the deadline", async () => {
     const { host, run_id } = await openRunPastDeadline({ host_status: "off" });
     await reconcileDueExamRunsOnce();
