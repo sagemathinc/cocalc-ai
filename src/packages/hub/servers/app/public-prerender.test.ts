@@ -59,7 +59,7 @@ describe("core landing page initial HTML", () => {
       );
       expect(pricing).toContain('data-cocalc-public-prerender="pricing"');
       expect(pricing).toContain("Hosted memberships");
-      expect(pricing).toContain("For teams and organizations");
+      expect(pricing).toContain("For Teams and Organizations");
       expect(pricing).toContain(
         "membership options on this page apply to the hosted service",
       );
@@ -68,7 +68,7 @@ describe("core landing page initial HTML", () => {
       );
       expect(pricing).toContain("Compare customer-operated options");
       expect(pricing).toContain(
-        "Account actions require sign-in, and host creation also depends on membership or grant eligibility.",
+        "The purchaser must sign in before buying or managing seats.",
       );
       expect(pricing).not.toContain("then choose a plan");
     },
@@ -86,7 +86,9 @@ describe("core landing page initial HTML", () => {
       expect(launchpad).toContain(
         `href="${prefix}/features/research-compute">Evaluate research compute`,
       );
-      expect(launchpad).toContain("catalog availability, and authorization");
+      expect(launchpad).toContain(
+        "available models, capacity, and authorization vary by site and account",
+      );
 
       const plus = renderPublicRoutePrerender(
         { section: "pricing" },
