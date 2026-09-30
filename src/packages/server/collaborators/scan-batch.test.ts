@@ -16,6 +16,11 @@ import {
   readScanBatch,
 } from "./scan-batch";
 import { stepScanChild } from "./scan-child";
+import { runScanRecoveryPass } from "./scan-recovery";
+import {
+  claimScanRecoveries,
+  finishScanRecovery,
+} from "@cocalc/database/postgres/collaborators/collaborators-scan-recovery";
 import { expireDueLros } from "@cocalc/server/lro/lro-db";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import type { ScanChildRequest } from "@cocalc/util/collaboration-scan-batch";
@@ -177,26 +182,143 @@ describeDb("manual scan LRO durability", () => {
     );
     expect((await start()).next_eligible_at).toBeGreaterThan(Date.now());
   });
-  test("lost host acknowledgement and cancel timeout retain admission until stopped", async () => {
+  test("lost host acknowledgement releases the batch but retains project admission until stopped", async () => {
     const result = await start();
     admit.mockRejectedValue(Error("timeout"));
     await runScanBatchPass(step);
-    expect((await api({ action: "status" })).operation?.status).toBe("running");
-    await api({ action: "cancel", op_id: result.operation?.op_id });
+    const final = (await api({ action: "status" })).operation!;
+    expect(final.status).toBe("failed");
+    expect(final.children[0]).toMatchObject({
+      state: "unavailable",
+      message: expect.stringContaining("stop was not confirmed"),
+    });
+    expect(
+      (
+        await getPool().query(
+          "SELECT cancel_requested,recovery_pending FROM collaboration_scan_jobs",
+        )
+      ).rows,
+    ).toEqual([{ cancel_requested: true, recovery_pending: true }]);
     cancel.mockRejectedValueOnce(Error("unreachable"));
-    await due();
+    expect(await runScanRecoveryPass()).toMatchObject({
+      attempted: 1,
+      unknown: 1,
+    });
+    expect(await runScanRecoveryPass()).toMatchObject({ attempted: 0 });
+    await getPool().query(
+      "UPDATE collaboration_scan_batch_accounts SET next_eligible_at=now()-interval '1 minute'",
+    );
+    const retry = await start();
+    expect(retry.operation?.op_id).not.toBe(result.operation?.op_id);
     await runScanBatchPass(step);
-    expect((await api({ action: "status" })).operation?.cancelling).toBe(true);
     expect((await api({ action: "status" })).operation?.children[0].state).toBe(
-      "cancelling",
+      "deferred",
     );
-    expect((await start()).operation?.op_id).toBe(result.operation?.op_id);
+    await getPool().query(
+      "UPDATE collaboration_scan_jobs SET recovery_after=now()-interval '1 second',recovery_until=NULL",
+    );
+    mockEnabled = false;
+    expect(await runScanRecoveryPass()).toMatchObject({
+      attempted: 1,
+      stopped: 1,
+    });
+    expect(
+      (await getPool().query("SELECT 1 FROM collaboration_scan_jobs")).rows,
+    ).toHaveLength(0);
+    expect(
+      (await api({ action: "status", op_id: result.operation!.op_id }))
+        .operation?.children[0].state,
+    ).toBe("unavailable");
+    expect(admit).toHaveBeenCalledTimes(1);
+  });
+  test("cancel with an unreachable host ends unavailable and never reports stopped", async () => {
+    const operation = (await start()).operation!;
+    await runScanBatchPass(step);
+    await api({ action: "cancel", op_id: operation.op_id });
+    cancel.mockRejectedValue(Error("host deprovisioned"));
     await due();
     await runScanBatchPass(step);
-    expect((await api({ action: "status" })).operation?.status).toBe(
-      "canceled",
-    );
+    const final = (await api({ action: "status" })).operation!;
+    expect(final.status).toBe("failed");
+    expect(final.cancelling).toBe(false);
+    expect(final.counts).toEqual({ unavailable: 1 });
+    expect(
+      (
+        await getPool().query(
+          "SELECT job_id,cancel_requested,recovery_pending FROM collaboration_scan_jobs",
+        )
+      ).rows,
+    ).toEqual([
+      {
+        job_id: operation.children[0].request_id,
+        cancel_requested: true,
+        recovery_pending: true,
+      },
+    ]);
+    // A malformed acknowledgment is not a stop, even if it says cancelled.
+    cancel.mockResolvedValue({ state: "cancelled", run_id: randomUUID() });
+    expect(await runScanRecoveryPass()).toMatchObject({
+      unknown: 1,
+      stopped: 0,
+    });
+    expect(
+      (await getPool().query("SELECT 1 FROM collaboration_scan_jobs")).rows,
+    ).toHaveLength(1);
     expect(admit).toHaveBeenCalledTimes(1);
+  });
+  test("recovery leases fence stale workers and survive loss of project membership", async () => {
+    await start();
+    admit.mockRejectedValue(Error("lost start acknowledgment"));
+    await runScanBatchPass(step);
+    const first = (await claimScanRecoveries(authority))[0];
+    expect(first).toBeDefined();
+    expect(await claimScanRecoveries(authority)).toHaveLength(0);
+    await getPool().query(
+      "UPDATE collaboration_scan_jobs SET recovery_until=now()-interval '1 second',recovery_after=now()-interval '1 second'",
+    );
+    await getPool().query(
+      "UPDATE projects SET users='{}'::jsonb WHERE project_id=$1",
+      [project_id],
+    );
+    const second = (await claimScanRecoveries(authority))[0];
+    expect(second.token).not.toBe(first.token);
+    expect(await finishScanRecovery(first, authority)).toBe(false);
+    expect(await finishScanRecovery(second, authority)).toBe(true);
+    expect(
+      (
+        await getPool().query(
+          "SELECT result FROM collaboration_scan_receipts WHERE request_id=$1",
+          [first.job_id],
+        )
+      ).rows[0].result.state,
+    ).toBe("unavailable");
+  });
+  test("retained unavailable hosts do not exhaust active bay capacity for healthy hosts", async () => {
+    for (let i = 0; i < 8; i++) {
+      const id = randomUUID(),
+        host = randomUUID();
+      await getPool().query(
+        "INSERT INTO projects(project_id,owning_bay_id,host_id) VALUES($1,$2,$3)",
+        [id, authority.owning_bay_id, host],
+      );
+      await getPool().query(
+        "INSERT INTO collaboration_scan_jobs(project_id,slot,job_id,state,created_at,started_at,host_id,cancel_requested,recovery_pending) VALUES($1,0,$2,'running',now(),now(),$3,true,true)",
+        [id, randomUUID(), host],
+      );
+    }
+    await start();
+    await runScanBatchPass(step);
+    expect(admit).toHaveBeenCalledTimes(1);
+    expect((await api({ action: "status" })).operation?.children[0].state).toBe(
+      "running",
+    );
+    expect(
+      (
+        await getPool().query(
+          "SELECT 1 FROM collaboration_scan_jobs WHERE recovery_pending",
+        )
+      ).rows,
+    ).toHaveLength(8);
   });
   test("unreachable storage before submission ends unavailable and fences replay", async () => {
     const result = await start();
@@ -273,7 +395,7 @@ describeDb("manual scan LRO durability", () => {
     );
     status.mockRejectedValue(Error("unknown remote state"));
     await runScanBatchPass(step);
-    expect((await api({ action: "status" })).operation?.status).toBe("running");
+    expect((await api({ action: "status" })).operation?.status).toBe("failed");
     expect(
       (
         await getPool().query(
@@ -285,7 +407,16 @@ describeDb("manual scan LRO durability", () => {
     cancel.mockRejectedValue(Error("no acknowledgment"));
     await due();
     await runScanBatchPass(step);
-    expect((await api({ action: "status" })).operation?.cancelling).toBe(true);
+    expect((await api({ action: "status" })).operation?.children[0].state).toBe(
+      "unavailable",
+    );
+    expect(
+      (
+        await getPool().query(
+          "SELECT recovery_pending FROM collaboration_scan_jobs",
+        )
+      ).rows[0].recovery_pending,
+    ).toBe(true);
     expect(admit).not.toHaveBeenCalled();
   });
   test("an older dispatch writer makes a new job ambiguous before it can send", async () => {
@@ -532,24 +663,25 @@ describeDb("manual scan LRO durability", () => {
       await due();
       await runScanBatchPass(step);
       expect((await api({ action: "status" })).operation?.status).toBe(
-        "running",
+        "failed",
       );
-      expect((await start()).operation?.op_id).toBe(result.operation!.op_id);
-      await expect(
-        finishScanChild(
-          {
-            account_id,
-            project_id,
-            request_id: run_id,
-            batch_id: result.operation!.op_id,
-            action: "start",
-          },
-          authority,
-          { project_id, request_id: run_id, state: "successful" },
-        ),
-      ).rejects.toThrow("fence not acknowledged");
-      await due();
-      await runScanBatchPass(step);
+      // Observing a terminal foreground receipt is not permission to release
+      // the retained execution. A separate exact host acknowledgment is needed.
+      await finishScanChild(
+        {
+          account_id,
+          project_id,
+          request_id: run_id,
+          batch_id: result.operation!.op_id,
+          action: "start",
+        },
+        authority,
+        { project_id, request_id: run_id, state: "successful" },
+      );
+      expect(
+        (await getPool().query("SELECT 1 FROM collaboration_scan_jobs")).rows,
+      ).toHaveLength(1);
+      expect(await runScanRecoveryPass()).toMatchObject({ stopped: 1 });
       const final = (await api({ action: "status" })).operation!;
       expect(final.status).toBe("failed");
       expect(final.children[0]).toMatchObject({

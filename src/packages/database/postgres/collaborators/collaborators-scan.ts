@@ -137,6 +137,11 @@ export async function syncCollaborationScanSchema(
     ADD COLUMN IF NOT EXISTS cancel_requested BOOLEAN NOT NULL DEFAULT false,
     ADD COLUMN IF NOT EXISTS progress JSONB,
     ADD COLUMN IF NOT EXISTS finish_result JSONB`);
+  await db.query(`ALTER TABLE collaboration_scan_jobs
+    ADD COLUMN IF NOT EXISTS recovery_pending BOOLEAN NOT NULL DEFAULT false,
+    ADD COLUMN IF NOT EXISTS recovery_after TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS recovery_token UUID,
+    ADD COLUMN IF NOT EXISTS recovery_until TIMESTAMPTZ`);
   // Existing jobs may already have sent work. Only new batch jobs explicitly
   // opt into the provably-unsubmitted state; migration must remain conservative.
   await db.query(`ALTER TABLE collaboration_scan_jobs
@@ -410,7 +415,7 @@ export async function startCollaborationScan(
     ]);
     const capacity = (
       await db.query(
-        `SELECT count(*)::int AS bay,
+        `SELECT count(*) FILTER (WHERE NOT recovery_pending)::int AS bay,
       count(*) FILTER (WHERE host_id=$1)::int AS host FROM collaboration_scan_jobs WHERE state='running'`,
         [host],
       )
@@ -470,7 +475,7 @@ export async function settleCollaborationScanDiscovery(
     await assertCollaborationWriterAuthority(db, opts.project_id, authority);
     const job = (
       await db.query(
-        "SELECT state,host_id FROM collaboration_scan_jobs WHERE project_id=$1 AND job_id=$2",
+        "SELECT state,host_id,batch_id,cancel_requested,recovery_pending FROM collaboration_scan_jobs WHERE project_id=$1 AND job_id=$2",
         [opts.project_id, opts.job_id],
       )
     ).rows[0];
@@ -486,7 +491,13 @@ export async function settleCollaborationScanDiscovery(
         prior?.state === opts.state && prior?.host_id === authority.host_id
       );
     }
-    if (job.state !== "running" || job.host_id !== authority.host_id)
+    if (
+      job.state !== "running" ||
+      job.host_id !== authority.host_id ||
+      job.batch_id ||
+      job.cancel_requested ||
+      job.recovery_pending
+    )
       return false;
     await db.query(
       `UPDATE collaboration_scan_receipts SET result=jsonb_build_object(
@@ -624,7 +635,7 @@ AND NOT EXISTS (
   ) SELECT 1 FROM receipts WHERE expires_at>statement_timestamp()
 )`;
 
-async function scanJobPage(
+export async function scanJobPage(
   db: PoolClient,
   id: string,
 ): Promise<Array<{ job_id: string }>> {

@@ -4,6 +4,7 @@
  */
 import getLogger from "@cocalc/backend/logger";
 import { runCollaborationScanPass } from "./scan-worker";
+import { runScanRecoveryPass } from "./scan-recovery";
 import { syncCollaborationScanSchema } from "@cocalc/database/postgres/collaborators/collaborators-scan";
 import { syncCollaborationScanActorSchema } from "@cocalc/database/postgres/collaborators/collaborators-scan-actor";
 import { createSharedProjectionFetcher } from "./projection-batch";
@@ -286,8 +287,11 @@ export async function startCollaboratorsMaintenance() {
           (await getServerSettings()).collaborators_enabled &&
           active()
         ) {
-          await (await import("./api")).runRoutedScanBatchPass(active);
-          await runCollaborationScanPass(active);
+          await Promise.all([
+            (await import("./api")).runRoutedScanBatchPass(active),
+            runCollaborationScanPass(active),
+            runScanRecoveryPass(active),
+          ]);
         }
       } catch {
         logger.warn("scan maintenance failed; durable work retained");

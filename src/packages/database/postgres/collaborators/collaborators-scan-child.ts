@@ -102,10 +102,10 @@ export async function prepareScanChild(
       (budget?.last_started_at?.getTime() ?? 0) + SCAN_PROJECT_INTERVAL_MS;
     const conflict = (
       await db.query(
-        "SELECT 1 FROM collaboration_scan_jobs WHERE project_id=$1 LIMIT 1",
+        "SELECT recovery_pending FROM collaboration_scan_jobs WHERE project_id=$1 LIMIT 1",
         [opts.project_id],
       )
-    ).rows.length;
+    ).rows[0];
     if (!project.host_id || conflict || eligible > now) {
       const result: ScanChild = {
         ...base,
@@ -113,7 +113,9 @@ export async function prepareScanChild(
         message: !project.host_id
           ? "Project storage is unavailable; compute was not started."
           : conflict
-            ? "Another scan owns this project."
+            ? conflict.recovery_pending
+              ? "An earlier scan's stop remains unconfirmed. This project stays reserved until host recovery confirms the stop."
+              : "Another scan owns this project."
             : "Project scan cooldown.",
         next_eligible_at: conflict
           ? Math.max(eligible, now + SCAN_PROJECT_INTERVAL_MS)

@@ -3857,3 +3857,58 @@ temporary context. The original sender session remains signed in. The
 recipient-authentication blocker is resolved. The older ambiguous retired-host
 Scan, live terminal cancellation/retry checks and release gates remain open;
 the full checklist is not yet passing.
+
+### General Host Unavailability: Foreground Completion With Retained Recovery
+
+The user confirmed the original host is permanently gone and clarified that
+any host may be unavailable or deprovisioned. The implementation now separates
+foreground batch completion from unresolved remote execution. A failed host
+observation ends that child's foreground processing as unavailable with explicit
+stop-unconfirmed text. It does not manufacture cancellation acknowledgment or
+remove the project reservation. Known truncated/failed results and counters are
+retained when their terminal-fence acknowledgment is lost.
+
+The owner atomically retains the exact host/run identity, cancellation intent,
+receipt and project reservation, independently of the account's foreground LRO.
+Other projects can be submitted after the normal account cooldown. Retrying the
+reserved project returns deferred and explains pending stop recovery. A separate
+worker claims at most two stops per pass from a bounded twenty-job keyset page,
+with durable 90-second leases and five-minute retry backoff. Only a matching
+cancelled acknowledgment can remove the reservation. Worker restart, disabled
+new admissions, lost membership, wrong run IDs and stale recovery workers do
+not discard the obligation. Recovery never starts host or project compute.
+
+Unconfirmed recovery jobs retain their per-project and per-host reservations;
+they no longer consume the bay's eight foreground execution slots and therefore
+cannot exhaust that bay's active admission capacity merely by accumulating on
+unavailable hosts. This is a bound on foreground work, not a claim that detached
+remote work has stopped. Existing topology guards and durable receipts remain.
+Permanently unreachable projects can retain their reservation indefinitely;
+recovery does not assert that moving/restoring them is safe without a separate
+authoritative retirement fence.
+
+Validation passed: server/reference TypeScript build; 40 focused batch,
+dispatch and legacy integration tests; 23 database Scan tests; and the real
+home/owner/host browser acceptance fixture (121.963 seconds). The latter checks
+actual dialog selection, reload, successful/unavailable results, the real
+account cooldown, explicit retry, cancellation and zero compute starts.
+
+After restarting all three development hubs with this change:
+
+- The old operation `8a6b4421-9632-467a-848d-61a838855079` ended with one
+  unavailable result and stop-unconfirmed text. Its project execution identity
+  was not replaced or declared stopped.
+- Selecting unsuccessful projects for retry retained the old operation until
+  explicit keyboard Start. New operation `dd615ea0-cdb6-4c29-88e8-e325bf8fcc6d`
+  completed with two deferred results: the old project's retained stop and
+  fresh-project's separate pre-existing legacy scan reservation. Neither
+  generated another host execution.
+- After the real account cooldown, new operation
+  `237f02d2-7f22-4e09-833f-039c2856162b` targeted brand new project and ended
+  unavailable before submission. A read-only status probe identified the live
+  host's response: `unknown service method 'getCollaborationReconciliationStatus'`.
+  That host is still running software without the Manual Scan control API.
+
+The whole-account cancellation block is resolved without a fabricated stop.
+Live healthy traversal still needs the development host software upgrade; the
+full live checklist and release gates are not yet established.

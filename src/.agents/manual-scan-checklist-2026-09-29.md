@@ -29,13 +29,18 @@ needed in the report.
    **Cancel scan**. It may finish quickly, or show **Cancelling** while waiting
    for running projects to stop. Reload during cancellation: the same operation
    must remain. A slow/unreachable host must not be reported stopped merely
-   because a request timed out. Already indexed resources remain available.
+   because a request timed out. If it cannot be reached, foreground processing
+   ends with unavailable and a stop-unconfirmed explanation, allowing other
+   projects to be scanned. The affected project's exact identity and reservation
+   remain for background stop recovery. Already indexed resources remain available.
 5. **Results and retry.** Check that the per-project list and outcome counts
    agree. A project whose storage is unavailable should say **unavailable** and
    must not start compute. Excluded/inaccessible/limited paths may yield
    **truncated**, rather than success. After processing ends, click **Select
    unsuccessful projects for retry**. This selects them without starting work.
    Account cooldown is 60 seconds; an admitted project's cooldown is 5 minutes.
+   A project with unresolved stop recovery instead remains deferred until its
+   exact host/run stop is confirmed; a new batch must not replace that identity.
    Once eligible, explicitly click **Start scan**: it should create a new
    operation for your selected retry set. Selecting or reopening alone must
    never retry it. Record unavailable/truncated coverage as untested if your

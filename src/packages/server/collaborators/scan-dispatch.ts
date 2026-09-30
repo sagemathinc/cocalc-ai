@@ -13,6 +13,7 @@ import {
 } from "@cocalc/database/postgres/collaborators/collaborators-scan";
 import type { CollaborationOwnerAuthority } from "@cocalc/database/postgres/collaborators/collaborators-owner";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
+import { scanHostCall } from "./scan-host";
 
 /** One internal dispatch step, not a public admission endpoint or scheduler.
  * Transport failures propagate as unknown outcomes; never settle them as failed.
@@ -41,17 +42,21 @@ export async function dispatchCollaborationScan(
 
   async function step() {
     if (!run) throw Error("missing scan run");
-    const host = await getRoutedHostControlClient({
-      host_id: run.host_id,
-      timeout: 30000,
-    });
+    const host = await scanHostCall(() =>
+      getRoutedHostControlClient({
+        host_id: run.host_id,
+        timeout: 30000,
+      }),
+    );
     const scan = {
       protocol_version: 1 as const,
       project_id: request.project_id,
       run_id: run.job_id,
       expected_run_id: run.expected_run_id,
     };
-    const status = await host.getCollaborationReconciliationStatus(scan);
+    const status = await scanHostCall(() =>
+      host.getCollaborationReconciliationStatus(scan),
+    );
     if (status.state !== "unknown") {
       if (status.run_id !== run.job_id)
         throw Error("scan host returned a different run");
@@ -91,7 +96,9 @@ export async function dispatchCollaborationScan(
       ))
     )
       return { state: "deferred" as const };
-    const admission = await host.requestCollaborationReconciliation(scan);
+    const admission = await scanHostCall(() =>
+      host.requestCollaborationReconciliation(scan),
+    );
     if (admission.admission === "accepted" && admission.run_id !== run.job_id)
       throw Error("scan host accepted a different run");
     if (admission.admission !== "accepted") {

@@ -131,38 +131,51 @@ host traverses local storage. Route explicitly across bays. Keep traversal and
 file contents off the hub; return bounded metadata/progress. Retain topology
 guards until interruption and fencing are verified.
 
-- **Single flight:** one active Scan batch per requesting account across tabs,
+- **Single flight:** one active foreground Scan batch per requesting account across tabs,
   sessions and entry points. A second start returns the existing operation,
   without extending its selection or launching new work. Enforce this atomically
   server-side, not with a disabled button. Serialize per-project scans across
   accounts too; initially defer conflicting children rather than share execution
   with ambiguous cancellation ownership.
+  As clarified on 2026-09-30, any host may disappear or be deprovisioned. An
+  unavailable host must not indefinitely reserve the whole account. Its batch
+  may end with an unavailable result while the project owner retains the exact
+  unresolved execution and project reservation for background stop recovery.
+  This is not successful cancellation or permission to replace that execution.
 - **Frequency limits:** enforce account and project limits durably, plus bounded
   host/bay concurrency. Return the next eligible time. Cancellation, failures,
   browser reload and new request IDs must not bypass limits; an idempotent replay
   must not consume another admission. Choose documented initial intervals and
   concurrency from measured scan cost before enablement, not from DAU guesses.
-- **Cancellation:** stop admitting queued children, signal running children, and
-  expose "Cancelling" until they have stopped or are fenced from further work
-  and publication. Only then release single-flight admission. An unreachable
-  host is not cancellation acknowledgment. Use bounded traversal checkpoints;
+- **Cancellation:** stop admitting queued children and signal running children.
+  Confirmed stops become cancelled. If the host cannot be reached, end foreground
+  processing with unavailable and explicit "stop unconfirmed" text; retain the
+  owner job, cancellation intent, exact host/run identity and project reservation.
+  Only an exact stop acknowledgment releases that project's reservation. The
+  account can submit another batch for other projects after its normal cooldown.
+  A timeout never means the remote execution stopped. Use bounded traversal checkpoints;
   measure cancellation latency. Cancellation is idempotent, does not undo already
   indexed metadata, and never deletes canonical user state.
 - **Durability:** persist operation identity, fixed selection, child identities,
   progress and cancellation intent. Closing the dialog, refresh, disconnect or
   worker restart must not duplicate or lose the operation. Recover through the
   standard LRO interfaces. Observation timeouts mean unknown, not failed or safe
-  to restart; reconcile/fence abandoned execution before replacement admission.
+  to restart the affected project; reconcile/fence abandoned execution before
+  replacement admission. A bounded, independently leased recovery worker keeps
+  retrying the same stop identity, including after admission is disabled or the
+  original account loses project access. It does not provision or start a host.
 - **Progress:** show aggregate projects processed out of the fixed total, with
   separate successful, failed, unavailable, truncated and cancelled counts.
   Show per-project queued/running/cancelling/terminal details and actual counters
   where available. Do not invent percent-of-files or ETA for an unknown tree.
   A full progress bar means processing ended, not universal success, a filesystem
-  snapshot, or completion of home-view catch-up.
+  snapshot, confirmed stopping of unavailable hosts, or completion of home-view catch-up.
 - **Retry:** after terminal completion/cancellation and the frequency limit,
   allow explicit retry of selected unsuccessful projects as a new LRO. Never
   silently enqueue another batch. Recheck authorization at admission and dispatch;
   status/cancel access must not leak another account's selection or metadata.
+  A retry that includes a project with unresolved stop recovery returns deferred
+  for that project, without replacing the retained identity.
 - **No implicit compute:** unavailable storage produces an honest per-project
   outcome, not project startup. Bound retries and surface deferred work. The UI
   remains keyboard accessible, supports narrow layouts, announces status without

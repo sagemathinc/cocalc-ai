@@ -427,7 +427,7 @@ export async function runScanBatchPass(
       if (current.attempt !== op.attempt) return;
       const done = summary.processed === summary.total;
       const status = done
-        ? current.input.cancel_requested
+        ? current.input.cancel_requested && !(summary.counts.unavailable ?? 0)
           ? "canceled"
           : (summary.counts.successful ?? 0) === summary.total
             ? "succeeded"

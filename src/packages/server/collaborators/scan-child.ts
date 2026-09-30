@@ -17,8 +17,24 @@ import type {
 import { scanChildTerminal } from "@cocalc/util/collaboration-scan-batch";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import { dispatchCollaborationScan } from "./scan-dispatch";
+import { retainUnavailableScanChild } from "@cocalc/database/postgres/collaborators/collaborators-scan-recovery";
+import { ScanHostUnavailable, scanHostCall } from "./scan-host";
 
 export async function stepScanChild(
+  opts: ScanChildRequest,
+  authority: CollaborationOwnerAuthority,
+): Promise<ScanChild> {
+  try {
+    return await step(opts, authority);
+  } catch (error) {
+    if (!(error instanceof ScanHostUnavailable)) throw error;
+    const result = await retainUnavailableScanChild(opts, authority);
+    if (!result) throw error;
+    return result;
+  }
+}
+
+async function step(
   opts: ScanChildRequest,
   authority: CollaborationOwnerAuthority,
 ): Promise<ScanChild> {
@@ -37,6 +53,7 @@ export async function stepScanChild(
     } catch (error) {
       const unsubmitted = await finishUnsubmittedScanChild(opts, authority);
       if (unsubmitted) return unsubmitted;
+      if (error instanceof ScanHostUnavailable) throw error;
       // Only a definitive host storage rejection can become unavailable. Fence
       // the exact run first so an earlier delayed submission cannot execute.
       unavailable = [
@@ -50,10 +67,13 @@ export async function stepScanChild(
     child = await prepareScanChild({ ...opts, action: "inspect" }, authority);
   }
   if (!child.host_id || !child.job_id) return child;
-  const host = await getRoutedHostControlClient({
-    host_id: child.host_id,
-    timeout: 30000,
-  });
+  const host_id = child.host_id;
+  const host = await scanHostCall(() =>
+    getRoutedHostControlClient({
+      host_id,
+      timeout: 30000,
+    }),
+  );
   const request = {
     protocol_version: 1 as const,
     project_id: opts.project_id,
@@ -61,7 +81,9 @@ export async function stepScanChild(
   };
   async function finishAfterFence(result: ScanChild) {
     const pending = await stageScanChildFinish(opts, authority, result);
-    const stopped = await host.cancelCollaborationReconciliation(request);
+    const stopped = await scanHostCall(() =>
+      host.cancelCollaborationReconciliation(request),
+    );
     if (stopped.state !== "cancelled" || stopped.run_id !== request.run_id)
       throw Error("scan cancellation not acknowledged");
     return finishScanChild(opts, authority, pending, true);
@@ -88,7 +110,9 @@ export async function stepScanChild(
         : {}),
     });
   }
-  const status = await host.getCollaborationReconciliationStatus(request);
+  const status = await scanHostCall(() =>
+    host.getCollaborationReconciliationStatus(request),
+  );
   if (status.state === "unknown") return child;
   if (status.run_id !== child.job_id)
     throw Error("scan host returned different run");
