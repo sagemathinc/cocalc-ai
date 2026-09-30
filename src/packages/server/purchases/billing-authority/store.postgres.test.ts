@@ -30,6 +30,8 @@ import {
   recordBillingAuthorityProviderMutationStart,
   reconcileExpiredBillingAuthorityLease,
   releaseBillingAuthorityLease,
+  renewBillingAuthorityLease,
+  assertBillingAuthorityLease,
   requestBillingAuthorityDrain,
   resumeBillingAuthorityGlobally,
   setBillingAuthorityAccountFrozen,
@@ -148,6 +150,78 @@ describePostgres("billing authority PostgreSQL journal", () => {
   afterAll(async () => {
     await resetTables();
     await getPool().end();
+  });
+
+  it("keeps singleton ownership through stale heartbeats without advertising readiness", async () => {
+    const acquired = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 1,
+      supervised_singleton: true,
+    });
+    const identity = {
+      instance_id: INSTANCE_A,
+      generation: acquired!.generation,
+    };
+    await markBillingAuthorityLeaseServing(identity);
+    await getPool().query(
+      "UPDATE billing_authority_lease SET updated_at=clock_timestamp()-INTERVAL '2 minutes'",
+    );
+    await expect(getBillingAuthorityHealth()).resolves.toMatchObject({
+      ready: false,
+      instance_id: INSTANCE_A,
+    });
+    await expect(
+      assertBillingAuthorityLease(identity),
+    ).resolves.toBeUndefined();
+    await renewBillingAuthorityLease({ ...identity, lease_ms: 1 });
+    await expect(getBillingAuthorityHealth()).resolves.toMatchObject({
+      ready: true,
+    });
+    const next = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_B,
+      lease_ms: 1,
+      supervised_singleton: true,
+    });
+    expect(next!.generation).toBe(identity.generation + 1);
+    await expect(assertBillingAuthorityLease(identity)).rejects.toThrow(
+      "lease was lost",
+    );
+  });
+
+  it("does not let a legacy lease contender replace the supervised singleton", async () => {
+    await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 1,
+      supervised_singleton: true,
+    });
+    await expect(
+      acquireBillingAuthorityLease({ instance_id: INSTANCE_B, lease_ms: 1000 }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("does not hold the legacy execution advisory lock for a singleton command", async () => {
+    const acquired = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 1,
+      supervised_singleton: true,
+    });
+    const client = getClient();
+    await client.connect();
+    try {
+      await beginBillingAuthorityCommandExecution({
+        identity: { instance_id: INSTANCE_A, generation: acquired!.generation },
+        db: client,
+        supervised_singleton: true,
+      });
+      const result = await getPool().query(
+        "SELECT pg_try_advisory_xact_lock($1) AS acquired",
+        [BILLING_AUTHORITY_EXECUTION_LOCK],
+      );
+      expect(result.rows[0].acquired).toBe(true);
+    } finally {
+      await client.query("ROLLBACK");
+      await client.end();
+    }
   });
 
   it("deduplicates by command identity and rejects conflicting reuse", async () => {

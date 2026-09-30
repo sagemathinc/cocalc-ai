@@ -10,7 +10,10 @@ import {
   getAccountCollaboratorIndexProjectionBacklogStatus,
 } from "./account-collaborator-index-projector";
 import { drainAccountProjectIndexProjection } from "./account-project-index-projector";
-import { listProjectedCollaboratorsForAccount } from "./account-collaborator-index";
+import {
+  listProjectedCollaboratorsForAccount,
+  lockAccountCollaboratorProjection,
+} from "./account-collaborator-index";
 import { appendProjectOutboxEventForProject } from "./project-events-outbox";
 
 const LOCAL_BAY_ID = "bay-local";
@@ -64,6 +67,30 @@ describe("account_collaborator_index projector", () => {
     );
   }
 
+  (process.env.COCALC_TEST_USE_PGLITE === "1" ? it.skip : it)(
+    "holds account projection locks until commit, not until one account is updated",
+    async () => {
+      const first = await getPool().connect();
+      const second = await getPool().connect();
+      try {
+        await first.query("BEGIN");
+        await second.query("BEGIN");
+        await lockAccountCollaboratorProjection(first, [ACCOUNT_B, ACCOUNT_A]);
+        const sql =
+          "SELECT pg_try_advisory_xact_lock(hashtext($1::text), hashtext($2::text)) AS acquired";
+        const args = ["account-collaborator-index", ACCOUNT_A];
+        expect((await second.query(sql, args)).rows[0].acquired).toBe(false);
+        await first.query("COMMIT");
+        expect((await second.query(sql, args)).rows[0].acquired).toBe(true);
+      } finally {
+        await first.query("ROLLBACK");
+        await second.query("ROLLBACK");
+        first.release();
+        second.release();
+      }
+    },
+  );
+
   it("supports dry-run drains without mutating projection or outbox state", async () => {
     await seedBaseRows();
     await appendProjectOutboxEventForProject({
@@ -109,6 +136,74 @@ describe("account_collaborator_index projector", () => {
         collaborator_index_published_at: null,
       },
     ]);
+  });
+
+  it("leaves unrelated collaborator pairs untouched and tolerates replay", async () => {
+    await seedBaseRows();
+    const otherProject = "66666666-6666-4666-8666-666666666666";
+    await getPool().query(
+      `INSERT INTO projects (project_id, users, owning_bay_id)
+      VALUES ($1,$2::jsonb,$3)`,
+      [
+        otherProject,
+        JSON.stringify({
+          [ACCOUNT_A]: { group: "owner" },
+          [ACCOUNT_D]: { group: "collaborator" },
+        }),
+        LOCAL_BAY_ID,
+      ],
+    );
+    for (const project_id of [PROJECT_ID, otherProject]) {
+      await appendProjectOutboxEventForProject({
+        event_type: "project.created",
+        project_id,
+        default_bay_id: LOCAL_BAY_ID,
+      });
+    }
+    await drainAccountCollaboratorIndexProjection({
+      bay_id: LOCAL_BAY_ID,
+      dry_run: false,
+    });
+    await getPool().query(
+      `UPDATE account_collaborator_index SET updated_at='2020-01-01'
+      WHERE account_id=$1 AND collaborator_account_id=$2`,
+      [ACCOUNT_A, ACCOUNT_D],
+    );
+    await getPool().query(
+      "UPDATE projects SET users=users-$2::text WHERE project_id=$1",
+      [PROJECT_ID, ACCOUNT_B],
+    );
+    await appendProjectOutboxEventForProject({
+      event_type: "project.membership_changed",
+      project_id: PROJECT_ID,
+      default_bay_id: LOCAL_BAY_ID,
+    });
+    await drainAccountCollaboratorIndexProjection({
+      bay_id: LOCAL_BAY_ID,
+      dry_run: false,
+    });
+    await getPool().query(
+      "UPDATE project_events_outbox SET collaborator_index_pending=TRUE WHERE project_id=$1",
+      [PROJECT_ID],
+    );
+    await drainAccountCollaboratorIndexProjection({
+      bay_id: LOCAL_BAY_ID,
+      dry_run: false,
+    });
+    const untouched = await getPool().query(
+      `SELECT common_project_count, updated_at FROM account_collaborator_index
+      WHERE account_id=$1 AND collaborator_account_id=$2`,
+      [ACCOUNT_A, ACCOUNT_D],
+    );
+    expect(untouched.rows).toEqual([
+      { common_project_count: 1, updated_at: new Date("2020-01-01T00:00:00Z") },
+    ]);
+    const removed = await getPool().query(
+      `SELECT * FROM account_collaborator_index
+      WHERE account_id=$1 AND collaborator_account_id=$2`,
+      [ACCOUNT_A, ACCOUNT_B],
+    );
+    expect(removed.rows).toEqual([]);
   });
 
   it.each(["project", "collaborator"] as const)(

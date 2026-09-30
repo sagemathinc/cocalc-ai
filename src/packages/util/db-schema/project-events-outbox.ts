@@ -17,6 +17,17 @@ Table({
       "published_at",
       "collaborator_index_pending",
     ],
+    pg_custom_indexes: [
+      {
+        name: "project_events_outbox_project_history_idx",
+        query: "(project_id, created_at DESC, event_id DESC)",
+      },
+      {
+        name: "project_events_outbox_collaborator_history_idx",
+        query:
+          "(project_id, created_at DESC, event_id DESC) WHERE event_type IN ('project.created', 'project.membership_changed', 'project.deleted')",
+      },
+    ],
   },
   fields: {
     event_id: {

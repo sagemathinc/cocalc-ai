@@ -402,21 +402,40 @@ export async function publishProjectAccountFeedEventsBestEffort(opts: {
             db: client,
             event: latestEvent,
           });
-    const collaboratorEvent = await loadLatestCollaboratorProjectionEvent({
-      db: client,
-      project_id: opts.project_id,
-    });
+    // Summary/state updates cannot change collaborator relationships. Do not
+    // search membership history just to discard the result below.
+    const collaboratorEvent =
+      latestEvent != null &&
+      [
+        "project.created",
+        "project.membership_changed",
+        "project.deleted",
+      ].includes(latestEvent.event_type)
+        ? await loadLatestCollaboratorProjectionEvent({
+            db: client,
+            project_id: opts.project_id,
+          })
+        : null;
     if (
       collaboratorEvent != null &&
       collaboratorEvent.event_id === latestEvent?.event_id
     ) {
       const collaborator = await retryAccountCollaboratorIndexDeadlock(
-        async () =>
-          await applyProjectEventToAccountCollaboratorIndex({
-            db: client,
-            bay_id,
-            event: collaboratorEvent,
-          }),
+        async () => {
+          await client.query("BEGIN");
+          try {
+            const result = await applyProjectEventToAccountCollaboratorIndex({
+              db: client,
+              bay_id,
+              event: collaboratorEvent,
+            });
+            await client.query("COMMIT");
+            return result;
+          } catch (err) {
+            await client.query("ROLLBACK");
+            throw err;
+          }
+        },
       );
       collaboratorFeedEvents = collaborator.feed_events;
     }

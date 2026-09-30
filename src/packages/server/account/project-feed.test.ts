@@ -87,6 +87,37 @@ describe("publishProjectAccountFeedEventsBestEffort", () => {
     dbMock = {};
   });
 
+  it.each([
+    "project.summary_changed",
+    "project.state_changed",
+    "project.host_changed",
+  ])("does not search collaborator history for %s", async (event_type) => {
+    const client = {
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+      release: jest.fn(),
+    };
+    client.query.mockResolvedValueOnce({
+      rows: [
+        {
+          event_id: "e1",
+          event_type,
+          project_id: "p1",
+          payload_json: { project_id: "p1", users_summary: {} },
+          created_at: new Date(),
+        },
+      ],
+    });
+    connectMock.mockResolvedValue(client);
+    computeAccountProjectFeedEventsMock.mockResolvedValue([]);
+    const { publishProjectAccountFeedEventsBestEffort } =
+      await import("./project-feed");
+    await publishProjectAccountFeedEventsBestEffort({ project_id: "p1" });
+    expect(loadLatestCollaboratorProjectionEventMock).not.toHaveBeenCalled();
+    expect(
+      applyProjectEventToAccountCollaboratorIndexMock,
+    ).not.toHaveBeenCalled();
+  });
+
   it("loads the latest project payload, computes feed events, and publishes them", async () => {
     const client = {
       query: jest
