@@ -248,3 +248,40 @@ core merge), J4 (browser suite on lite2b) and J5.
   numbering.
 - The notebook fuzzer runs by default now: 6 random seeds plus regression
   seeds, about 2 seconds.
+
+### 2026-09-30 (night): task lists, whiteboards and slides
+
+- The simulated network and SyncDB are shared (`sync/editor/sim.ts`) by the
+  notebook, task list and whiteboard fuzzers, all of which run by default.
+- Task lists (`frontend/editors/task-editor/__test__/collab-fuzz.test.ts`):
+  real tasks session and `TaskActions.set_desc`, with a model of the
+  description editor.
+  - Found and fixed:
+    - description saves overwrote newer synced text: they now carry their
+      base and merge, like notebook cells;
+    - the description editor never settled a merged value it rendered, so a
+      later merge could guess an older baseline and duplicate text
+      (`noteRendered`);
+    - checkbox toggles in the rendered description now merge too.
+  - Also found and fixed: word diffs matched spaces instead of words
+    (patchflow#4).
+  - Results, 400 x 60: 398/400 on patchflow 0.9.0, 400/400 with #4.
+  - Accepted: text typed into a trashed task while someone empties the
+    trash is deleted with it (a deliberate, permanent delete); deleting a
+    line break while someone rewrites both lines keeps both versions.
+- Whiteboards and slides
+  (`frontend/frame-editors/whiteboard-editor/__test__/collab-fuzz.test.ts`):
+  the real `setElement`, `setElementData` and `deleteElements` on simulated
+  clients, covering create, text edits (saved whole), move, resize, data
+  keys, edges and delete.
+  - 400/400 x 40 and 200/200 x 100: no lost or duplicated text, no partial
+    elements.
+  - `setElementData` now sets only the changed data keys (the document
+    merges maps by key). Spreading the store's possibly stale data could
+    write back keys a collaborator just changed.
+  - Accepted: an edge to an element deleted at the same moment stays as a
+    record; it is not drawn while an end is missing, and is again if the
+    element comes back.
+  - Not yet covered: the whiteboard text editor itself (Slate with
+    `mergeRemoteValues` inside `MultiMarkdownInput`); the fuzzer saves text
+    whole, as `text.tsx` does.
