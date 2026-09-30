@@ -97,23 +97,22 @@ export function splitTextNodes(
       newProperties,
     });
   }
-  let properties = getProperties(split[0]);
-  // Rest of the operations to split up node as required.
+  // Rest of the operations to split up node as required.  Slate creates the
+  // second half of a split text node from the operation's properties alone,
+  // not inheriting the node's marks, so pass all of nextPart's marks.
   let splitPath = path;
   for (let i = 0; i < split.length - 1; i++) {
     const part = split[i];
     const nextPart = split[i + 1];
-    const newProperties = getProperties(nextPart, properties);
 
     operations.push({
       type: "split_node",
       path: splitPath,
       position: part.text.length,
-      properties: newProperties,
+      properties: getProperties(nextPart),
     });
 
     splitPath = nextPath(splitPath);
-    properties = getProperties(nextPart);
   }
   return operations;
 }

@@ -16,7 +16,7 @@ every step), and FUZZ_SLATE_DEBUG (enable the editor's sync debug log).
 */
 
 import { encodePatchId, StringDocument } from "patchflow";
-import { Editor } from "slate";
+import { Editor, Node } from "slate";
 import {
   blur,
   canonical,
@@ -113,10 +113,12 @@ interface RunResult {
 //   38 (40 steps): unsaved edit dropped by back-to-back remote updates
 //   42 (80 steps): stale syncCausedUpdate made a local edit look remote
 //  107 (80 steps): unsaved edit dropped after the editor canonicalized a merge
+//  165 (80 steps): slateDiff split a bold text node and dropped the bold
 const REGRESSION_SEEDS: { seed: number; steps: number }[] = [
   { seed: 38, steps: 40 },
   { seed: 42, steps: 80 },
   { seed: 107, steps: 80 },
+  { seed: 165, steps: 80 },
 ];
 
 async function runSession(seed: number, steps = STEPS): Promise<RunResult> {
@@ -260,6 +262,26 @@ async function runSession(seed: number, steps = STEPS): Promise<RunResult> {
       ])();
       const nodes = markdown_to_slate(fragment, false, {});
       const at = Math.floor(rng() * (c.editor.children.length + 1));
+      // A list placed right after a list of the same type (blank lines
+      // between) is one list in markdown, so the inserting editor shows two
+      // lists while everyone else sees one. That's a known limit of the
+      // markdown round trip, not a sync problem (see the plan), so skip it.
+      const children = c.editor.children as any[];
+      const isBlank = (n: any) =>
+        n?.type === "paragraph" && Node.string(n) === "";
+      let before = at - 1;
+      while (before >= 0 && isBlank(children[before])) before--;
+      let after = at;
+      while (after < children.length && isBlank(children[after])) after++;
+      const listType = (nodes[0] as any)?.type;
+      if (
+        /_list$/.test(listType ?? "") &&
+        (children[before]?.type === listType ||
+          children[after]?.type === listType)
+      ) {
+        for (const token of tokensIn(fragment)) inserted.delete(token);
+        return;
+      }
       Transforms.insertNodes(c.editor, nodes as any, { at: [at] });
       log.push(
         `c${c.opts.id} insertBlock at ${at}: ${JSON.stringify(fragment)}`,
@@ -383,11 +405,20 @@ async function runSession(seed: number, steps = STEPS): Promise<RunResult> {
   for (const c of clients) {
     if (c.editor == null) continue;
     // Compare modulo whitespace: whitespace-only rendering differences are
-    // cosmetic; content, structure, and numbering differences are not.
+    // cosmetic; content, structure, and numbering differences are not. So are
+    // "**a** **b**" versus "**a b**" (an editor merges adjacent bold leaves)
+    // and the width of a table's separator row, which follows the text.
     const squash = (text: string) =>
       text
         .split("\n")
-        .map((line) => line.replace(/\s+/g, " ").trim())
+        .map((line) =>
+          line
+            .replace(/\s+/g, " ")
+            .trim()
+            .split("** **")
+            .join(" ")
+            .replace(/^(\| :?-+:? )+\|$/, (row) => row.replace(/-+/g, "-")),
+        )
         .filter((line) => line !== "")
         .join("\n");
     const shown = squash(c.shown());

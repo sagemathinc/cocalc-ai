@@ -285,3 +285,22 @@ core merge), J4 (browser suite on lite2b) and J5.
   - Not yet covered: the whiteboard text editor itself (Slate with
     `mergeRemoteValues` inside `MultiMarkdownInput`); the fuzzer saves text
     whole, as `text.tsx` does.
+
+### 2026-09-30 (late night): patchflow 0.9.1 and the Slate fuzzer
+
+- Uses patchflow 0.9.1 (patchflow#4: word diffs align words; line pairs are
+  scored in linear time).
+- Results on 0.9.1: notebooks 400/400 (and 400/400 without split/merge), task
+  lists 400/400 x 60, whiteboards 400/400 x 40 and 200/200 x 100.
+- Slate fuzzer, 400 x 80: found and fixed a `slateDiff` bug. Splitting a text
+  node sent only the marks that changed from the previous part, but Slate
+  builds the new half from the split's properties alone. So splitting
+  `**a b c**` into `**a b **` and `**c**` (e.g. when a collaborator bolds a
+  word inside bold text) dropped the bold from `c` in every other editor.
+  Regression seed 165 and `slate/__test__/slate-diff-split.test.ts`.
+- Accepted (a markdown limit, not a sync problem): a list inserted in Slate
+  right after a list of the same type, with only blank lines between, is one
+  list in markdown. The inserting editor shows two lists numbered from 1;
+  everyone else, and the same editor after reload, sees one list. The fuzzer
+  no longer generates this case.
+- Slate fuzzer after these: 400/400 x 80, plus regression seeds.
