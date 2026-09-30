@@ -26,14 +26,23 @@ import { applyPatch, makePatch } from "patchflow";
 import { diff_main } from "@cocalc/util/patch";
 
 type Getter = () => string;
+
+interface RenderCandidate {
+  value: string;
+  // The committed value this candidate was derived from.
+  base: string;
+}
 type Setter = (value: string) => void;
 
 export class SimpleInputMerge {
   private last: string;
   private pending: string[] = [];
+  // A merged value handed to the editor that it may not have rendered yet.
+  // Each candidate records the committed value it was derived from, so a user
+  // edit made on top of any candidate rebases only uncommitted changes.
   private requestedLocalUpdate?: {
-    latest: string;
-    renderCandidates: string[];
+    latest: RenderCandidate;
+    renderCandidates: RenderCandidate[];
   };
 
   constructor(initialValue: string) {
@@ -122,7 +131,11 @@ export class SimpleInputMerge {
     if (local === this.last && this.pending.length === 0) {
       this.noteApplied(remote);
       if (remote !== local) {
-        this.applyMerged(opts.applyMerged, observedLocal, remote);
+        this.applyMerged(
+          opts.applyMerged,
+          { value: observedLocal, base },
+          { value: remote, base: remote },
+        );
       }
       return;
     }
@@ -136,25 +149,29 @@ export class SimpleInputMerge {
     const [merged] = applyPatch(delta, remote);
     this.noteApplied(remote);
     if (merged !== local) {
-      this.applyMerged(opts.applyMerged, observedLocal, merged);
+      this.applyMerged(
+        opts.applyMerged,
+        { value: observedLocal, base },
+        { value: merged, base: remote },
+      );
     }
   }
 
   private applyMerged(
     apply: Setter,
-    observedLocal: string,
-    requested: string,
+    observedLocal: RenderCandidate,
+    requested: RenderCandidate,
   ): void {
     const renderCandidates = [
       ...(this.requestedLocalUpdate?.renderCandidates ?? []),
     ];
     for (const candidate of [observedLocal, requested]) {
-      if (!renderCandidates.includes(candidate)) {
+      if (!renderCandidates.some((c) => c.value === candidate.value)) {
         renderCandidates.push(candidate);
       }
     }
     this.requestedLocalUpdate = { latest: requested, renderCandidates };
-    apply(requested);
+    apply(requested.value);
   }
 
   private resolveLocal(observed: string): { local: string; base: string } {
@@ -162,28 +179,32 @@ export class SimpleInputMerge {
     if (requested == null) {
       return { local: observed, base: this.last };
     }
-    if (observed === requested.latest) {
+    if (observed === requested.latest.value) {
       this.requestedLocalUpdate = undefined;
-      return { local: observed, base: this.last };
+      return { local: observed, base: requested.latest.base };
     }
-    if (requested.renderCandidates.includes(observed)) {
+    if (requested.renderCandidates.some((c) => c.value === observed)) {
       // The setter has not reached the latest value yet. Treat any known value
       // from the asynchronous render chain as stale UI, not a new local edit.
-      return { local: requested.latest, base: this.last };
+      return { local: requested.latest.value, base: requested.latest.base };
     }
 
-    // The user edited while the requested update was being rendered. Decide
-    // which value in the render chain that edit started from, then rebase only
-    // that genuine local delta. The reconciled baseline is always a candidate,
-    // so an old render candidate is never preferred over it.
+    // The user edited (or the editor canonicalized) while the requested update
+    // was being rendered. Decide which value in the render chain the observed
+    // value started from, then rebase everything not yet committed relative to
+    // that candidate's committed base. Using the candidate itself as the base
+    // would treat its uncommitted local edits as committed and drop them. The
+    // reconciled baseline is always a candidate.
     this.requestedLocalUpdate = undefined;
-    const base = [this.last, ...requested.renderCandidates].reduce(
-      (closest, candidate) =>
-        editCost(candidate, observed) < editCost(closest, observed)
-          ? candidate
-          : closest,
+    const start = [
+      { value: this.last, base: this.last },
+      ...requested.renderCandidates,
+    ].reduce((closest, candidate) =>
+      editCost(candidate.value, observed) < editCost(closest.value, observed)
+        ? candidate
+        : closest,
     );
-    return { local: observed, base };
+    return { local: observed, base: start.base };
   }
 
   // A newly saved local value that is neither the requested render nor an
@@ -192,8 +213,8 @@ export class SimpleInputMerge {
     const requested = this.requestedLocalUpdate;
     if (requested == null) return;
     if (
-      saved === requested.latest ||
-      requested.renderCandidates.includes(saved)
+      saved === requested.latest.value ||
+      requested.renderCandidates.some((c) => c.value === saved)
     ) {
       return;
     }

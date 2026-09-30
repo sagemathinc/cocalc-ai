@@ -89,7 +89,17 @@ interface RunResult {
   log: string[];
 }
 
-async function runSession(seed: number): Promise<RunResult> {
+// Seeds that found integration bugs; always run them as regression tests.
+//   38 (40 steps): unsaved edit dropped by back-to-back remote updates
+//   42 (80 steps): stale syncCausedUpdate made a local edit look remote
+//  107 (80 steps): unsaved edit dropped after the editor canonicalized a merge
+const REGRESSION_SEEDS: { seed: number; steps: number }[] = [
+  { seed: 38, steps: 40 },
+  { seed: 42, steps: 80 },
+  { seed: 107, steps: 80 },
+];
+
+async function runSession(seed: number, steps = STEPS): Promise<RunResult> {
   const rng: Rng = makeRng(seed);
   const log: string[] = [];
   const problems: string[] = [];
@@ -156,15 +166,31 @@ async function runSession(seed: number): Promise<RunResult> {
         )
         .join(">");
       log.push(
-        `c${c.opts.id} insertToken ${token} at ${path}:${offset} (${types})`,
+        `c${c.opts.id} insertToken ${token} at ${path}:${offset} (${types})${c.editor.syncCausedUpdate ? " [syncCausedUpdate still set]" : ""}`,
       );
       if (process.env.FUZZ_SLATE_DEBUG) {
         // eslint-disable-next-line no-console
         console.log(`### c${c.opts.id} insertToken ${token}`);
       }
+      const tracing = process.env.FUZZ_TRACE_TOKEN === token;
+      if (tracing) {
+        log.push(
+          `  node before: ${JSON.stringify(Editor.node(c.editor, path.slice(0, 1))[0])}`,
+        );
+      }
       Transforms.insertText(c.editor, ` ${token} `, {
         at: { path, offset },
       });
+      if (tracing) {
+        log.push(
+          `  serialized right after insert: ${c.shown().includes(token)}`,
+        );
+        queueMicrotask(() =>
+          log.push(
+            `  serialized after microtasks: ${c.shown().includes(token)} (block now: ${JSON.stringify(c.editor.children[path[0]])})`,
+          ),
+        );
+      }
     },
     deleteToken(c) {
       const hits: { path: number[]; offset: number; token: string }[] = [];
@@ -265,7 +291,7 @@ async function runSession(seed: number): Promise<RunResult> {
     "blur",
   ];
 
-  for (let i = 0; i < STEPS; i++) {
+  for (let i = 0; i < steps; i++) {
     const c = pick(rng, clients);
     const op = pick(rng, weighted);
     await step(() => {
@@ -356,15 +382,31 @@ describe("collaborative markdown editing fuzz", () => {
     jest.useRealTimers();
   });
 
+  const runs: { seed: number; steps: number; label: string }[] = [];
+  if (process.env.FUZZ_SEED == null) {
+    for (const r of REGRESSION_SEEDS) {
+      runs.push({
+        ...r,
+        label: `regression seed ${r.seed} (${r.steps} steps)`,
+      });
+    }
+  }
   for (let seed = FIRST_SEED; seed < FIRST_SEED + RUNS; seed++) {
-    test(`seed ${seed}`, async () => {
-      const result = await runSession(seed);
-      if (result.problems.length > 0) {
-        throw new Error(
-          `seed ${seed}: ${result.problems.join("; ")}\n` +
-            result.log.slice(-40).join("\n"),
-        );
-      }
-    }, 120_000);
+    runs.push({ seed, steps: STEPS, label: `seed ${seed}` });
+  }
+  for (const { seed, steps, label } of runs) {
+    test(
+      label,
+      async () => {
+        const result = await runSession(seed, steps);
+        if (result.problems.length > 0) {
+          throw new Error(
+            `seed ${seed}: ${result.problems.join("; ")}\n` +
+              result.log.slice(-40).join("\n"),
+          );
+        }
+      },
+      120_000,
+    );
   }
 });

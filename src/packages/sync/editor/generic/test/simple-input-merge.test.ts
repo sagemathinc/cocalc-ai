@@ -339,4 +339,35 @@ describe("SimpleInputMerge", () => {
     expect(rendered).toContain("local");
     expect(rendered).toContain("y");
   });
+
+  it("keeps an unsaved local edit when the editor canonicalizes a merged value", () => {
+    // Found by the collaborative editing fuzzer: the editor rendered a merged
+    // value slightly differently (e.g., normalized whitespace). The next remote
+    // update then used the merged value itself as the base, treating the
+    // uncommitted local edit inside it as committed, and dropped it.
+    const base = "a\n\nb\n\nc\n";
+    const merge = new SimpleInputMerge(base);
+    let rendered = `${base}local \n`;
+    const remote1 = `x\n\n${base}`;
+    merge.handleRemote({
+      remote: remote1,
+      getLocal: () => rendered,
+      applyMerged: (value) => {
+        // The editor strips the trailing space it was given.
+        rendered = value.replace("local \n", "local\n");
+      },
+    });
+    expect(rendered).toBe(`${remote1}local\n`);
+
+    const remote2 = `x\n\n${base}y\n`;
+    merge.handleRemote({
+      remote: remote2,
+      getLocal: () => rendered,
+      applyMerged: (value) => {
+        rendered = value;
+      },
+    });
+    expect(rendered).toContain("local");
+    expect(rendered).toContain("y");
+  });
 });
