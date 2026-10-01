@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { createInterface } from "node:readline";
+import { createJsonLineReader } from "@cocalc/util/json-lines";
 import { DatabaseSync } from "node:sqlite";
 import { CodexGoalSync } from "./codex-goal";
 import { assertSameTurnPrincipal } from "./turn-principal";
@@ -721,10 +721,8 @@ export class AppServerClient {
     private readonly requestHandler?: CodexAppServerRequestHandler,
     private readonly attentionHandler?: CodexAttentionHandler,
   ) {
-    const rl = createInterface({
-      input: proc.stdout as Readable,
-      crlfDelay: Infinity,
-    });
+    // Not readline: it splits JSON lines on U+2028/U+2029 inside strings.
+    const rl = createJsonLineReader(proc.stdout as Readable);
     rl.on("line", (line) => {
       if (!line.trim()) return;
       try {

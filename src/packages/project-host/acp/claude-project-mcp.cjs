@@ -6,7 +6,6 @@
 /* Trusted controller-side MCP transport. Project effects go only through the scoped socket. */
 const fs = require("node:fs");
 const net = require("node:net");
-const readline = require("node:readline");
 const root = process.env.COCALC_PROJECT_TOOL_DIR || "/run/cocalc/agent-tools";
 const token = fs.readFileSync(root + "/token", "utf8");
 const tools = [
@@ -157,6 +156,14 @@ function execute(tool, args) {
     });
   });
 }
+/** Writes one JSON-RPC message, escaping U+2028/U+2029 for line readers. */
+function send(message) {
+  process.stdout.write(
+    JSON.stringify(message).replace(/[\u2028\u2029]/g, (c) =>
+      c === "\u2028" ? "\\u2028" : "\\u2029",
+    ) + "\n",
+  );
+}
 /** @param {any} message */
 async function handle(message) {
   if (!message || typeof message !== "object" || message.id === undefined)
@@ -199,27 +206,69 @@ async function handle(message) {
     } else {
       throw new Error("Unsupported project tool method");
     }
-    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n");
+    send({ jsonrpc: "2.0", id, result });
   } catch (error) {
-    process.stdout.write(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        id,
-        error: {
-          code: -32000,
-          message: error.message || "Project tool failed",
-        },
-      }) + "\n",
-    );
+    send({
+      jsonrpc: "2.0",
+      id,
+      error: {
+        code: -32000,
+        message: error.message || "Project tool failed",
+      },
+    });
   }
 }
-const input = readline.createInterface({ input: process.stdin });
-input.on("line", (line) => {
-  if (line.length > 65536) return;
+// Requests are newline-delimited JSON. Split only on "\n": readline would also
+// split on U+2028/U+2029, which JSON.stringify leaves raw inside strings, and
+// the resulting fragments used to be dropped silently, hanging the tool call.
+const MAX_REQUEST_LENGTH = 65536;
+function requestId(line) {
+  const match = line.match(/"id"\s*:\s*("(?:[^"\\]|\\.)*"|-?\d+)/);
+  if (!match) return undefined;
   try {
-    void handle(JSON.parse(line));
+    return JSON.parse(match[1]);
   } catch {
-    /* Ignore malformed notifications. */
+    return undefined;
   }
+}
+function reject(line, code, message) {
+  const id = requestId(line);
+  if (id === undefined) {
+    process.stderr.write(`cocalc-project-tools: ${message}\n`);
+    return;
+  }
+  send({ jsonrpc: "2.0", id, error: { code, message } });
+}
+function onLine(raw) {
+  const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+  if (!line.trim()) return;
+  if (line.length > MAX_REQUEST_LENGTH)
+    return reject(line, -32600, "Project tool request is too large");
+  let message;
+  try {
+    message = JSON.parse(line);
+  } catch {
+    return reject(line, -32700, "Project tool request was not valid JSON");
+  }
+  void handle(message);
+}
+let pending = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  pending += chunk;
+  let index;
+  while ((index = pending.indexOf("\n")) >= 0) {
+    const line = pending.slice(0, index);
+    pending = pending.slice(index + 1);
+    onLine(line);
+  }
+  if (pending.length > MAX_REQUEST_LENGTH * 2) {
+    reject(pending, -32600, "Project tool request is too large");
+    pending = "";
+  }
+});
+process.stdin.on("end", () => {
+  if (pending) onLine(pending);
+  pending = "";
 });
 module.exports = {};
