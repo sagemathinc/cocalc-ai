@@ -106,8 +106,8 @@ isolated login controller. Both agents remain subject to CLI authorization.
 
 ### Agent Networks
 
-Humans create and manage Agent Networks in **Agents**. Each network is a
-two-way group: its members can communicate with each other. Naming an agent,
+Humans create and manage Agent Networks in the agents workspace. Each network
+is a two-way group: its members can communicate with each other. Naming an agent,
 mentioning it, sharing a project, or choosing the same model does not create
 network membership. See [the Agents workspace](/docs/ai/my-agents) and
 [CLI authentication and targets](/docs/cli/authentication-and-targets).

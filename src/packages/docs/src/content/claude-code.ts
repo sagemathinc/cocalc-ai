@@ -16,12 +16,14 @@ feature-by-feature comparison, including known messaging limitations.
 
 ## Start a conversation
 
-1. Open **Agents**, choose **New Agent**, and select a project.
+1. In the agents workspace, choose **New Agent** in the sidebar and select a
+   project. If CoCalc opened the agents workspace for you, its first form has
+   no runtime choice and starts a Codex agent; choose **New Agent** after it.
 2. Select **Claude** and open its settings icon to configure Claude Code.
 3. Choose a credential in settings: a project API-key secret, an account API key, or a
    connected Claude Pro/Max subscription, where offered by the site.
 4. For a project key, use the Claude API-key dialog. For a subscription, use
-   **Connect Claude Pro/Max (experimental)** and complete the sign-in flow.
+   **Connect Claude Pro/Max** and complete the sign-in flow.
    Never paste credentials or login codes into a chat message.
 5. Choose the model and effort in the composer before your first turn. Available
    options load automatically; loading is not a request to reconnect your account.
