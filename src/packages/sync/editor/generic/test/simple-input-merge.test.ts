@@ -421,4 +421,42 @@ describe("SimpleInputMerge with a deferred render", () => {
     expect(merged).toContain("tk2n29q");
     expect(merged).toContain("tk0n28q");
   });
+
+  describe("an editor that shows text in its own canonical form", () => {
+    // Like a rich text editor's markdown: it drops leading spaces of lines.
+    const normalize = (value: string) => value.replace(/^ +/gm, "");
+    const raw = "notes\n tk1 tk2\n tk3\nend";
+
+    it("saves nothing when the only difference is its reformatting", () => {
+      const merge = new SimpleInputMerge(raw, { normalize });
+      expect(
+        merge.mergeForSave({ observed: normalize(raw), current: raw }),
+      ).toBe(raw);
+    });
+
+    it("saves an edit without its reformatting of the rest", () => {
+      const merge = new SimpleInputMerge(raw, { normalize });
+      const observed = normalize(raw).replace("tk3", "tk3 mine");
+      expect(merge.mergeForSave({ observed, current: raw })).toBe(
+        "notes\n tk1 tk2\n tk3 mine\nend",
+      );
+      // ... also when the stored text changed meanwhile.
+      const current = raw.replace("tk1", "tk1 theirs");
+      expect(merge.mergeForSave({ observed, current })).toBe(
+        "notes\n tk1 theirs tk2\n tk3 mine\nend",
+      );
+    });
+
+    it("adopts a remote change when the editor only reformatted", () => {
+      const merge = new SimpleInputMerge(raw, { normalize });
+      const remote = raw + "\n more";
+      let applied: string | undefined;
+      merge.handleRemote({
+        remote,
+        getLocal: () => normalize(raw),
+        applyMerged: (value) => (applied = value),
+      });
+      expect(applied).toBe(remote);
+    });
+  });
 });

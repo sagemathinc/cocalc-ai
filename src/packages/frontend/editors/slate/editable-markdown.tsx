@@ -400,6 +400,21 @@ function applyBlockDiffPatchWithDebug(
   return { applied, chunks };
 }
 
+// The markdown the editor would save for a value it shows with no edits.
+function canonicalMarkdown(
+  markdown: string,
+  preserveBlankLines: boolean,
+): string {
+  const cache = {};
+  const doc = markdown_to_slate(markdown, false, cache);
+  return slate_to_markdown(
+    withBlockSpacerParagraphs(
+      preserveBlankLines ? doc : stripBlankParagraphs(doc),
+    ),
+    { cache, preserveBlankLines },
+  );
+}
+
 function sameIgnoringWhitespace(a: string, b: string): boolean {
   return a.replace(/\s+/g, "") === b.replace(/\s+/g, "");
 }
@@ -557,9 +572,21 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const preserveBlankLines = preserveBlankLinesProp ?? false;
   const selectionRootRef = useRef<HTMLDivElement>(null);
   const [change, setChange] = useState<number>(0);
-  const mergeHelperRef = useRef<SimpleInputMerge>(
-    new SimpleInputMerge(value ?? ""),
-  );
+  const preserveBlankLinesRef = useRef<boolean>(preserveBlankLines);
+  preserveBlankLinesRef.current = preserveBlankLines;
+  // The editor shows markdown in its own canonical form: what it would save
+  // for a value with no edits. Merges and saves use it, so this reformatting
+  // (blank lines, spacing) is never taken for the user's edits -- otherwise a
+  // freshly loaded editor's first save would rewrite whitespace all over a
+  // document others are editing, and their concurrent edits of those lines
+  // would be kept twice.
+  const mergeHelperRef = useRef<SimpleInputMerge>(null as any);
+  if (mergeHelperRef.current == null) {
+    mergeHelperRef.current = new SimpleInputMerge(value ?? "", {
+      normalize: (markdown) =>
+        canonicalMarkdown(markdown, preserveBlankLinesRef.current),
+    });
+  }
   const valueRef = useRef<string | undefined>(value);
   const reconciledValueRef = useRef<string | undefined>(value);
   const getRemoteValueRef = useRef(getRemoteValue);

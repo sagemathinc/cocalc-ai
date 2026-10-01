@@ -54,8 +54,35 @@ export class SimpleInputMerge {
     shown: RenderCandidate;
   };
 
-  constructor(initialValue: string) {
+  // How the editor shows a value. A rich text editor re-serializes the text it
+  // is given in its own canonical form (blank lines, spacing, escapes), so its
+  // contents differ from the value it was given even with no edits. Local
+  // edits are what differs between the editor's contents and how it shows the
+  // value they derive from; merges and saves use that, so the editor's
+  // reformatting is never taken for an edit (and written over everyone
+  // else's text).
+  private normalize: (value: string) => string;
+
+  constructor(
+    initialValue: string,
+    opts: { normalize?: (value: string) => string } = {},
+  ) {
     this.last = initialValue ?? "";
+    this.normalize = opts.normalize ? memoize(opts.normalize) : (v) => v;
+  }
+
+  // Whether two values show the same in the editor.
+  private same(a: string, b: string): boolean {
+    return a === b || this.normalize(a) === this.normalize(b);
+  }
+
+  // Merge local edits (relative to how the editor shows base) into remote.
+  private merge(base: string, local: string, remote: string): string {
+    return mergeText({
+      base: this.normalize(base),
+      local: this.normalize(local),
+      remote,
+    });
   }
 
   // Reset the baseline (e.g., when switching documents).
@@ -153,17 +180,17 @@ export class SimpleInputMerge {
     // local save was observed through another path before `pending` saw the
     // echo.  Rebasing stale `last → local` onto the identical remote would
     // replay the local edit and duplicate inserted text.
-    if (remote === local) {
+    if (this.same(remote, local)) {
       debug("remote:same", { remote });
       this.noteApplied(remote);
       return;
     }
 
     // No local edits since last baseline and no pending: adopt remote directly.
-    if (local === this.last && this.pending.length === 0) {
+    if (this.same(local, this.last) && this.pending.length === 0) {
       debug("remote:adopt", { remote, observedLocal, local, last: this.last });
       this.noteApplied(remote);
-      if (remote !== local) {
+      if (!this.same(remote, local)) {
         this.applyMerged(
           opts.applyMerged,
           { value: observedLocal, base },
@@ -183,7 +210,7 @@ export class SimpleInputMerge {
     // base -> local to remote. When base is older than remote's own base, the
     // local delta repeats changes remote already has; a three-way merge applies
     // those once, and never relocates a deletion onto similar text elsewhere.
-    const merged = mergeText({ base, local, remote });
+    const merged = this.merge(base, local, remote);
     debug("remote:merge", {
       remote,
       observedLocal,
@@ -194,7 +221,7 @@ export class SimpleInputMerge {
       merged,
     });
     this.noteApplied(remote);
-    if (merged !== local) {
+    if (!this.same(merged, local)) {
       this.applyMerged(
         opts.applyMerged,
         { value: observedLocal, base },
@@ -242,10 +269,10 @@ export class SimpleInputMerge {
     if (requested == null) {
       return { local: observed, base: this.last, settled: false };
     }
-    if (observed === requested.latest.value) {
+    if (this.same(observed, requested.latest.value)) {
       return { local: observed, base: requested.latest.base, settled: true };
     }
-    if (requested.renderCandidates.some((c) => c.value === observed)) {
+    if (requested.renderCandidates.some((c) => this.same(c.value, observed))) {
       // The setter has not reached the latest value yet. Treat any known value
       // from the asynchronous render chain as stale UI, not a new local edit.
       return {
@@ -264,11 +291,13 @@ export class SimpleInputMerge {
     const start = [
       { value: this.last, base: this.last },
       ...requested.renderCandidates,
-    ].reduce((closest, candidate) =>
-      editCost(candidate.value, observed) < editCost(closest.value, observed)
+    ].reduce((closest, candidate) => {
+      const shown = this.normalize(observed);
+      return editCost(this.normalize(candidate.value), shown) <
+        editCost(this.normalize(closest.value), shown)
         ? candidate
-        : closest,
-    );
+        : closest;
+    });
     return { local: observed, base: start.base, settled: true };
   }
 
@@ -284,8 +313,11 @@ export class SimpleInputMerge {
     const observed = opts.observed ?? "";
     const current = opts.current ?? "";
     const { local, base } = this.inspectLocal(observed);
-    const result =
-      current === base ? local : mergeText({ base, local, remote: current });
+    // With no edits (the editor shows base as it shows everything), there is
+    // nothing to save: never write the editor's reformatting of base.
+    const result = this.same(local, base)
+      ? current
+      : this.merge(base, local, current);
     debug("save:merge", { observed, current, local, base, result });
     return result;
   }
@@ -316,16 +348,16 @@ export class SimpleInputMerge {
       return { merged: local, changed: false };
     }
 
-    if (remote === local) {
+    if (this.same(remote, local)) {
       return { merged: local, changed: false };
     }
 
-    if (local === this.last && this.pending.length === 0) {
+    if (this.same(local, this.last) && this.pending.length === 0) {
       const merged = remote;
       return { merged, changed: merged !== local };
     }
 
-    const merged = mergeText({ base: this.last, local, remote });
+    const merged = this.merge(this.last, local, remote);
     debug("preview:merge", { remote, local, last: this.last, merged });
     return { merged, changed: merged !== local };
   }
@@ -337,4 +369,19 @@ function editCost(from: string, to: string): number {
       operation === 0 ? total : total + value.length,
     0,
   );
+}
+
+// A function's results for the last few (large) arguments: the editor's
+// normalization of the same few values is needed again and again.
+function memoize(f: (value: string) => string): (value: string) => string {
+  const cache = new Map<string, string>();
+  return (value) => {
+    let result = cache.get(value);
+    if (result === undefined) {
+      result = f(value);
+      cache.set(value, result);
+      if (cache.size > 8) cache.delete(cache.keys().next().value!);
+    }
+    return result;
+  };
 }
