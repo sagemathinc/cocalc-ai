@@ -445,3 +445,15 @@ Details:
   - backend `sync-doc/value-hash.test.ts`;
   - the notebook collab fuzzer (60 seeds clean);
   - both Playwright meeting tests.
+- **Real browsers with hashes** (bench-1, 10 users, mixed views):
+  - 15 min with reloads (seed 74): 5,528 words, 20 reloads, 3,738 hashed
+    patches; every browser agrees, 0 duplicated, **0 inconsistencies**. 13
+    words lost; every sampled one is in no patch (typed just before a
+    reload).
+  - Notebook, 60 s (seed 81): clean, 0 inconsistencies.
+  - Markdown, 60 s (seed 81): 0 inconsistencies. One word was split by a
+    collaborator's new paragraph typed at the end of it ("tk4n11\n\ntk6n12qq"),
+    which the test now counts as split rather than lost: two concurrent
+    inserts at one spot, ordered with the other user's text first.
+- **Merging #760 needs** a patchflow release with #10 and #11 (until then
+  there are no hashes, and `backend sync-doc/value-hash.test.ts` fails).
