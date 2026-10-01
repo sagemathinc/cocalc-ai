@@ -252,7 +252,9 @@ test("a meeting's notes stay consistent with many people typing", async ({
   browser,
 }) => {
   const rng = makeRng(SEED);
-  const path = join(HOME, `collab/meeting-${VIEW}-${SEED}.md`);
+  // A new file each run: the server may still have an earlier run's file
+  // of the same name open, with all its history.
+  const path = join(HOME, `collab/meeting-${VIEW}-${SEED}-${Date.now()}.md`);
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, AGENDA);
   console.log(
