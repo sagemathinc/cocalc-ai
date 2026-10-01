@@ -110,6 +110,9 @@ const bold = (name: string, label: string): UiVocabularyUse => ({
   text: `**${label}**`,
 });
 
+// The agents workspace and the form that starts a new agent.
+const AGENTS_WORKSPACE = "frontend/agents/workspace-page.tsx";
+
 export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
   // Project rail, flyouts and full pages
   {
@@ -201,6 +204,170 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       ),
     ],
     usedIn: [conventions("the Agents rail tab")],
+  },
+  // The agents workspace guide. It describes the top navigation entry in words
+  // and binds only the labels of the workspace itself.
+  {
+    id: "agents.sidebar.heading",
+    label: "Agents",
+    anchors: [
+      def(
+        "frontend/agents/organization-controls.tsx",
+        '<Typography.Text type="secondary">Agents</Typography.Text>',
+      ),
+      ren(AGENTS_WORKSPACE, "<AgentOrganizationControls"),
+    ],
+    usedIn: [{ file: doc("ai"), text: "the sidebar's **Agents** list" }],
+  },
+  {
+    id: "agents.sidebar.more-actions",
+    label: "More actions",
+    anchors: [def(AGENTS_WORKSPACE, "title={`More actions for @")],
+    usedIn: [bold("ai", "More actions")],
+  },
+  ...(
+    [
+      ["hide", "Hide from Agents", ': "Hide from Agents"'],
+      ["remove", "Remove from Agents…", ': "Remove from Agents…"'],
+      ["remove-confirm", "Remove from Agents", 'okText: "Remove from Agents"'],
+    ] as const
+  ).map(
+    ([key, label, text]): UiVocabularyEntry => ({
+      id: `agents.sidebar.${key}`,
+      label,
+      anchors: [def(AGENTS_WORKSPACE, text)],
+      usedIn: [bold("ai", label)],
+    }),
+  ),
+  {
+    id: "agents.new.first-run",
+    label: "What would you like to work on?",
+    anchors: [def(AGENTS_WORKSPACE, '? "What would you like to work on?"')],
+    usedIn: [bold("ai", "What would you like to work on?")],
+  },
+  {
+    id: "agents.new.start",
+    label: "Start agent",
+    anchors: [
+      def(AGENTS_WORKSPACE, ': "Start agent (Shift+Enter)"'),
+      ren(
+        AGENTS_WORKSPACE,
+        'emptyRequest ? "Create agent without a task" : "Start agent"',
+      ),
+    ],
+    usedIn: [bold("ai", "Start agent")],
+  },
+  {
+    id: "agents.new.create-without-task",
+    label: "Create agent without a task",
+    anchors: [
+      def(AGENTS_WORKSPACE, '? "Create agent without a task (Shift+Enter)"'),
+    ],
+    usedIn: [bold("ai", "Create agent without a task")],
+  },
+  {
+    id: "agents.new.name",
+    label: "Name",
+    anchors: [
+      def("frontend/agents/new-agent-name-pill.tsx", 'label="Name"'),
+      ren(AGENTS_WORKSPACE, "<NewAgentNamePill"),
+    ],
+    usedIn: [{ file: doc("ai"), text: "the agent's **Name**" }],
+  },
+  {
+    id: "agents.new.project",
+    label: "Project",
+    anchors: [
+      def("frontend/agents/agent-project-selector.tsx", "<span>Project</span>"),
+      ren(AGENTS_WORKSPACE, "<AgentProjectSelector"),
+    ],
+    usedIn: [bold("ai", "Project")],
+  },
+  ...(
+    [
+      ["directory", "Working directory"],
+      ["description", "Description (optional)"],
+    ] as const
+  ).map(
+    ([key, label]): UiVocabularyEntry => ({
+      id: `agents.new.${key}`,
+      label,
+      anchors: [
+        def(AGENTS_WORKSPACE, `<label htmlFor="new-agent-${key}">${label}`),
+      ],
+      usedIn: [bold("ai", label)],
+    }),
+  ),
+  {
+    id: "agents.new.no-project",
+    label: "Your first project will be created automatically",
+    anchors: [
+      def(
+        AGENTS_WORKSPACE,
+        'title="Your first project will be created automatically"',
+      ),
+    ],
+    usedIn: [bold("ai", "Your first project will be created automatically")],
+  },
+  {
+    id: "agents.new.default-project-title",
+    label: "My first project",
+    anchors: [
+      def(
+        "frontend/agents/new-agent-defaults.ts",
+        'if (!title) return "My first project";',
+      ),
+    ],
+    usedIn: [bold("ai", "My first project")],
+  },
+  {
+    id: "agents.new.runtime.claude",
+    label: "Claude",
+    anchors: [
+      def(
+        "frontend/agents/new-agent-runtime-select.tsx",
+        '{ value: "claude-code", label: "Claude" }',
+      ),
+      ren(AGENTS_WORKSPACE, "<NewAgentRuntimeSelect"),
+    ],
+    usedIn: [bold("ai", "Claude"), bold("claude-code", "Claude")],
+  },
+  {
+    id: "agents.new.payment.membership",
+    label: "CoCalc Membership",
+    anchors: [
+      def(
+        "frontend/chat/use-codex-payment-source.ts",
+        'label: "CoCalc Membership"',
+      ),
+      ren(AGENTS_WORKSPACE, "getCodexPaymentSourceOptions(paymentSource)"),
+    ],
+    usedIn: [bold("ai", "CoCalc Membership")],
+  },
+  {
+    id: "account.ai",
+    label: "AI",
+    anchors: [
+      msg(COMMON, "labels.ai", 'defaultMessage: "AI"'),
+      ren("frontend/account/account-preferences-ai.tsx", "label: labels.ai,"),
+    ],
+    usedIn: [{ file: doc("ai"), text: "account **AI** settings" }],
+  },
+  {
+    id: "account.ai.disable-all",
+    label: "Disable all AI integrations",
+    anchors: [
+      msg(
+        "frontend/account/other-settings.tsx",
+        "account.other-settings.llm.disable_all",
+        "<strong>Disable all AI integrations</strong>",
+      ),
+      ren(
+        "frontend/account/other-settings.tsx",
+        "{anyAIEnabled && render_disable_all_ai()}",
+      ),
+    ],
+    usedIn: [bold("ai", "Disable all AI integrations")],
   },
   {
     id: "assistant.codex",
