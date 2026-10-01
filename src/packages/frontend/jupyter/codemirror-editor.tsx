@@ -161,6 +161,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 }: CodeMirrorEditorProps) => {
   const cm = useRef<any>(null);
   const cm_last_remote = useRef<any>(null);
+  const boundGetValue = useRef<(() => string) | null>(null);
+  const boundSetValue = useRef<((value: string) => void) | null>(null);
   const cm_change = useRef<any>(null);
   const cm_is_focused = useRef<boolean>(false);
   const vim_mode = useRef<boolean>(false);
@@ -394,6 +396,22 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
   function cm_destroy(): void {
     if (cm.current != null) {
+      // The cell may now show a static rendering (or nothing): reading this
+      // destroyed editor's text as what the user sees would make the next
+      // merge treat everything added to the cell since as deleted locally.
+      // (A newer editor for the cell may have set these already.)
+      if (
+        getValueRef != null &&
+        getValueRef.current === boundGetValue.current
+      ) {
+        getValueRef.current = null as any;
+      }
+      if (
+        setValueRef != null &&
+        setValueRef.current === boundSetValue.current
+      ) {
+        setValueRef.current = null;
+      }
       unregisterEditor?.();
       cm_last_remote.current = null;
       cm.current.save = null;
@@ -748,10 +766,12 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     cm.current.addKeyMap(options0.extraKeys);
 
     if (getValueRef != null) {
-      getValueRef.current = cm.current.getValue.bind(cm.current);
+      getValueRef.current = boundGetValue.current = cm.current.getValue.bind(
+        cm.current,
+      );
     }
     if (setValueRef != null) {
-      setValueRef.current = (value: string) => {
+      setValueRef.current = boundSetValue.current = (value: string) => {
         if (cm.current == null) return;
         debug("cell:set-now", { id, local: cm.current.getValue(), value });
         if (cm.current.getValue() !== value) cm.current.setValueNoJump(value);
