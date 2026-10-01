@@ -60,10 +60,20 @@ export function inferAppBasePath(pathname?: string): string {
     return staticIndex === 0 ? "/" : normalizedPathname.slice(0, staticIndex);
   }
 
+  // A project-host URL can contain app route names inside its file path, e.g.
+  // /<project-id>/files/home/user/a.pdf. Search only before the project id.
+  const projectHostBasePath = inferProjectHostBasePath(normalizedPathname);
+  const routePathname = projectHostBasePath ?? normalizedPathname;
   for (const marker of APP_BASE_PATH_ROUTE_MARKERS) {
-    const index = normalizedPathname.indexOf(marker);
-    if (index !== -1) {
-      return index === 0 ? "/" : normalizedPathname.slice(0, index);
+    let index = routePathname.indexOf(marker);
+    while (index !== -1) {
+      const after = routePathname.slice(index + marker.length);
+      // Short personal-address routes such as /u must not match a longer
+      // directory name.
+      if (!after || after.startsWith("/")) {
+        return index === 0 ? "/" : normalizedPathname.slice(0, index);
+      }
+      index = routePathname.indexOf(marker, index + marker.length);
     }
   }
 
@@ -77,7 +87,6 @@ export function inferAppBasePath(pathname?: string): string {
     return localeBasePath;
   }
 
-  const projectHostBasePath = inferProjectHostBasePath(normalizedPathname);
   if (projectHostBasePath != null) {
     return projectHostBasePath;
   }

@@ -44,6 +44,13 @@ describe("inferAppBasePath", () => {
     expect(inferAppBasePath("/")).toBe("/");
   });
 
+  it("matches personal-address route segments without matching longer names", () => {
+    expect(inferAppBasePath("/u/jane")).toBe("/");
+    expect(inferAppBasePath("/base/u/jane")).toBe("/base");
+    expect(inferAppBasePath("/uploads")).toBe("/uploads");
+    expect(inferAppBasePath("/uploads/base/u/jane")).toBe("/uploads/base");
+  });
+
   it("infers the base path before project-host uuid routes", () => {
     expect(
       inferAppBasePath(

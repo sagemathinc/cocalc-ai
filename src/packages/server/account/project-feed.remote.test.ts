@@ -4,6 +4,7 @@
  */
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
+import { syncCollaborationDemandSchema } from "@cocalc/database/postgres/collaborators/collaborators-demand";
 import {
   applyAccountProjectFeedRemoveOnHomeBay,
   applyAccountProjectFeedUpsertOnHomeBay,
@@ -18,15 +19,22 @@ const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
 const HOST_ID = "33333333-3333-4333-8333-333333333333";
 
 describe("server/account/project-feed remote home-bay apply", () => {
+  const previousBayId = process.env.COCALC_BAY_ID;
   beforeAll(async () => {
+    process.env.COCALC_BAY_ID = "bay-1";
     await initEphemeralDatabase({});
+    await syncCollaborationDemandSchema(getPool());
   }, 15000);
 
   afterEach(async () => {
-    await getPool().query("TRUNCATE account_project_index, accounts CASCADE");
+    await getPool().query(
+      "TRUNCATE collaboration_demand, collaboration_demand_activation, account_project_index, accounts CASCADE",
+    );
   });
 
   afterAll(async () => {
+    if (previousBayId === undefined) delete process.env.COCALC_BAY_ID;
+    else process.env.COCALC_BAY_ID = previousBayId;
     await getPool().end();
   });
 
