@@ -32,7 +32,7 @@ import * as immutable from "immutable";
 import { Actions } from "@cocalc/util/redux/Actions";
 import { three_way_merge } from "@cocalc/sync/editor/generic/util";
 import { mergeText } from "@cocalc/sync/editor/generic/string-merge3";
-import { callback2, once } from "@cocalc/util/async-utils";
+import { callback2, once, until } from "@cocalc/util/async-utils";
 import * as misc from "@cocalc/util/misc";
 import { delay } from "awaiting";
 import * as cell_utils from "@cocalc/jupyter/util/cell-utils";
@@ -59,6 +59,9 @@ import {
   jupyterRuntimeCellIdFromKey,
   jupyterRuntimeCellKey,
   JUPYTER_RUNTIME_CELL_KEY_PREFIX,
+  JUPYTER_RUNTIME_IPYNB_SAVE_KEY_PREFIX,
+  JUPYTER_RUNTIME_IPYNB_SAVES_KEPT,
+  type JupyterRuntimeIpynbSave,
   JUPYTER_RUNTIME_LIMITS_KEY,
   JUPYTER_RUNTIME_NBCONVERT_KEY,
   JUPYTER_RUNTIME_SETTINGS_FIELDS,
@@ -150,6 +153,8 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   public syncdb: SyncDB;
   private runtimeState?: JupyterRuntimeState;
   private runtimeStateInitStarted = false;
+  // Whether opening the runtime state has finished, successfully or not.
+  private runtimeStateSettled = false;
   private pendingRuntimeRecords: Map<string, object> = new Map();
   private pendingDeletedRuntimeRecords: Set<string> = new Set();
   // Cells deleted by another client (most recent last), and cells this
@@ -286,8 +291,83 @@ export class JupyterActions extends Actions<JupyterStoreState> {
         this.applyRuntimeStateSnapshot();
       } catch (err) {
         this.dbg("initRuntimeState")("failed to initialize runtime state", err);
+      } finally {
+        this.runtimeStateSettled = true;
       }
     })();
+  };
+
+  // Record a save of the .ipynb file (see JupyterRuntimeIpynbSave).
+  protected recordIpynbSave = ({
+    sha1,
+    mtimeMs,
+  }: {
+    sha1?: string;
+    mtimeMs?: number;
+  }): void => {
+    if (!sha1 || this.is_closed()) return;
+    const record: JupyterRuntimeIpynbSave = { sha1, savedAt: Date.now() };
+    if (typeof mtimeMs === "number" && Number.isFinite(mtimeMs)) {
+      record.mtimeMs = mtimeMs;
+    }
+    this.setRuntimeRecord(
+      `${JUPYTER_RUNTIME_IPYNB_SAVE_KEY_PREFIX}${sha1}`,
+      record,
+    );
+    const saves = this.getIpynbSaves();
+    for (const old of saves.slice(JUPYTER_RUNTIME_IPYNB_SAVES_KEPT)) {
+      this.deleteRuntimeRecord(
+        `${JUPYTER_RUNTIME_IPYNB_SAVE_KEY_PREFIX}${old.sha1}`,
+      );
+    }
+  };
+
+  // Recorded saves of the .ipynb file, newest first.
+  private getIpynbSaves = (): JupyterRuntimeIpynbSave[] => {
+    const keys = new Set<string>(this.pendingRuntimeRecords.keys());
+    for (const key of Object.keys(this.runtimeState?.getAll() ?? {})) {
+      keys.add(key);
+    }
+    const saves: JupyterRuntimeIpynbSave[] = [];
+    for (const key of keys) {
+      if (!key.startsWith(JUPYTER_RUNTIME_IPYNB_SAVE_KEY_PREFIX)) continue;
+      const save = this.getRuntimeRecord<JupyterRuntimeIpynbSave>(key);
+      if (save?.sha1) saves.push(save);
+    }
+    return saves.sort((a, b) => (b.savedAt ?? 0) - (a.savedAt ?? 0));
+  };
+
+  // Whether the file on disk (its text and modification time) is a save by a
+  // client of this notebook rather than an external edit: it is one of the
+  // recorded saves, or not modified after the newest one. Waits briefly for
+  // the runtime state to open; without it nothing is known to be a save.
+  protected isIpynbSave = async ({
+    text,
+    mtimeMs,
+  }: {
+    text: string;
+    mtimeMs?: number;
+  }): Promise<boolean> => {
+    if (!this.runtimeStateSettled) {
+      this.initRuntimeState();
+      await until(() => this.runtimeStateSettled || this.is_closed(), {
+        start: 50,
+        max: 250,
+        timeout: 5000,
+      });
+    }
+    const saves = this.getIpynbSaves();
+    if (saves.length == 0) return false;
+    const hash = sha1(text);
+    if (saves.some((save) => save.sha1 === hash)) return true;
+    const newest = Math.max(
+      ...saves.map((save) => save.mtimeMs ?? Number.NEGATIVE_INFINITY),
+    );
+    return (
+      typeof mtimeMs === "number" &&
+      Number.isFinite(newest) &&
+      mtimeMs <= newest
+    );
   };
 
   private runtimeStateChange = (change?: { key?: string }): void => {
