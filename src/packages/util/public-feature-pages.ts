@@ -315,7 +315,7 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
       {
         title: "Codex in project threads",
         paragraphs: [
-          "CoCalc-AI uses AI through Codex chat threads. Human @mentions notify collaborators; they do not invoke models.",
+          "Codex works in project chat threads. Human @mentions notify collaborators; they do not invoke models.",
         ],
         bullets: [
           "Use OpenAI API keys or OpenAI subscription plans for native Codex support",
@@ -328,9 +328,13 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
       {
         title: "Integrated chat or a terminal agent",
         paragraphs: [
-          "Codex runs through project chat and can work with project files, terminals, and live notebook state. Claude Code, OpenCode, and other shell-based agents run in project terminals as normal Linux tools; their interfaces, credentials, and capabilities are separate from Codex chat.",
+          "Codex runs through project chat and can work with project files, terminals, and live notebook state. Claude Code is integrated as an experimental preview on sites that enable it and works with your personal Claude Pro or Max subscription. Other command-line agents can run in project terminals as ordinary Linux tools, with their own interfaces and credentials.",
         ],
         links: [
+          {
+            href: "/docs/ai/claude-code",
+            label: "Claude Code in CoCalc (Experimental Preview)",
+          },
           { href: "/features/terminal", label: "Use project terminals" },
           {
             href: "/features/compare",

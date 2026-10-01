@@ -307,13 +307,13 @@ const AGENT_DEFINITION_CARDS = [
   },
   {
     accent: COLORS.RUN,
-    body: "Patches, notes, and run output stay visible in the project, so your team can inspect the work before keeping it.",
+    body: "Patches, notes, and run output stay visible in the project, so your team can inspect the work.",
     icon: "search",
     title: "Review agent changes",
   },
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
-    body: "Use the integrated Codex experience, Claude Code in a terminal, or other shell-capable agents without moving the project somewhere else.",
+    body: "Use the integrated Codex agent or Claude Code (experimental preview, where enabled), or run other command-line agents in a terminal, without moving the project somewhere else.",
     icon: "terminal",
     title: "Integrated chat or terminal",
   },
@@ -637,7 +637,7 @@ function AgentDefinitionSection() {
       style={{ padding: "22px 0 24px" }}
     >
       <SectionIntro
-        body="Use integrated Codex, or run Claude Code and other shell-based agents in project terminals, with the files, tools, and running services your collaborators already use."
+        body="Use the integrated Codex agent or Claude Code, or run other command-line agents in project terminals, all with the files, tools, and running services your collaborators already use. Claude Code is an experimental preview on sites that enable it and works with your personal Claude Pro or Max subscription."
         eyebrow="Agent-ready by design"
         title="Give AI agents the files and tools they need."
       />

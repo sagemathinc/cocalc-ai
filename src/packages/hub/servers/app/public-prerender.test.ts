@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
 import { renderPublicRoutePrerender } from "./public-prerender";
 
@@ -33,6 +35,9 @@ describe("core landing page initial HTML", () => {
       expect(home).toContain('data-cocalc-public-prerender="home"');
       expect(home).toContain(
         "Keep people, AI agents, and project work together.",
+      );
+      expect(home).toContain(
+        "Use the integrated Codex agent or Claude Code, or run other command-line agents in project terminals",
       );
       expect(home).toContain(
         `href="${basePath === "/" ? "" : basePath}/features/compare"`,
@@ -239,6 +244,41 @@ describe("core landing page initial HTML", () => {
       expect(html).not.toContain('href="/prefix/docs/');
     },
   );
+
+  it("links the Claude Code guide from the AI page initial HTML", () => {
+    const html = renderPublicRoutePrerender(
+      { section: "features", route: { view: "detail", slug: "ai" } },
+      "/prefix",
+      { cocalc_product: "launchpad" },
+    );
+
+    expect(html).toContain(
+      '<a href="/prefix/docs/ai/claude-code">Claude Code in CoCalc (Experimental Preview)</a>',
+    );
+  });
+
+  it("keeps the Home agent section text identical in React and the crawler fallback", () => {
+    const expected = [
+      "Use the integrated Codex agent or Claude Code, or run other command-line agents in project terminals, all with the files, tools, and running services your collaborators already use.",
+      "Claude Code is an experimental preview on sites that enable it and works with your personal Claude Pro or Max subscription.",
+    ].join(" ");
+    const source = readFileSync(
+      join(__dirname, "../../../frontend/public/home/app.tsx"),
+      "utf8",
+    );
+    const reactBody =
+      /function AgentDefinitionSection\(\)[\s\S]*?<SectionIntro\s+body="([^"]*)"/.exec(
+        source,
+      )?.[1];
+    const html = renderPublicRoutePrerender({ section: "home" }, "/");
+    const fallback =
+      /<h2>Agents work where your project lives\.<\/h2>\s*<p>([^<]*)<\/p>/.exec(
+        html,
+      )?.[1];
+
+    expect(reactBody).toBe(expected);
+    expect(fallback).toBe(expected);
+  });
 });
 
 describe("feature initial HTML product availability", () => {

@@ -246,6 +246,13 @@ const AI_PAGE_CSS = `
   color: ${PUBLIC_COLORS.surface};
 }
 
+/* Guide titles are long; let them wrap inside a narrow card. */
+.feature-ai-interface-card .ant-btn {
+  height: auto;
+  min-height: 32px;
+  white-space: normal;
+}
+
 .feature-ai-compute-panel {
   background: linear-gradient(120deg, ${PUBLIC_COLORS.brandTint}, ${PUBLIC_COLORS.surface});
   border: 1px solid ${PUBLIC_COLORS.border};
@@ -340,7 +347,7 @@ const WORKFLOW_STEPS = [
     title: "Watch and inspect",
   },
   {
-    body: "Review the result, keep it with the project, and continue with an agent or collaborator.",
+    body: "Open the files the agent saved to review them, then continue with an agent or collaborator.",
     title: "Review and continue",
   },
 ] as const;
@@ -583,16 +590,24 @@ function InterfaceSection({ showCodexDocs }: { showCodexDocs: boolean }) {
                 <Flex vertical gap={14}>
                   <IconBadge accent={AI_ACCENT} icon="comments" />
                   <Title level={3} style={{ margin: 0 }}>
-                    Integrated Codex chat
+                    Integrated Codex and Claude Code
                   </Title>
                   <Paragraph style={{ margin: 0 }}>
-                    Work with project files, terminals, commands, and live
-                    notebook state through CoCalc's project chat.
+                    Codex works with project files, terminals, commands, and
+                    live notebook state through CoCalc's project chat. Claude
+                    Code is integrated as an experimental preview on sites that
+                    enable it and works with your personal Claude Pro or Max
+                    subscription.
                   </Paragraph>
                   {showCodexDocs ? (
-                    <Button href={appPath("docs/ai/codex-chat")}>
-                      Read the Codex guide
-                    </Button>
+                    <>
+                      <Button href={appPath("docs/ai/codex-chat")}>
+                        Read the Codex guide
+                      </Button>
+                      <Button href={appPath("docs/ai/claude-code")}>
+                        Claude Code in CoCalc (Experimental Preview)
+                      </Button>
+                    </>
                   ) : null}
                 </Flex>
               </article>
@@ -605,9 +620,8 @@ function InterfaceSection({ showCodexDocs }: { showCodexDocs: boolean }) {
                     Terminal-based agents
                   </Title>
                   <Paragraph style={{ margin: 0 }}>
-                    Install and run Claude Code, OpenCode, and other compatible
-                    command-line agents as ordinary Linux tools in a project
-                    terminal.
+                    Install and run other command-line agents as ordinary Linux
+                    tools in a project terminal.
                   </Paragraph>
                   <Button href={appPath("features/terminal")}>
                     Explore terminal workflows
@@ -813,8 +827,8 @@ export default function AIFeaturePage({
                     Use integrated Codex or terminal-based agents beside the
                     same project files, live notebooks, Linux terminals,
                     applications, and collaborators. Inspect the work as it
-                    happens, keep the result, and continue from the same
-                    context.
+                    happens, open what the agent saves, and continue from the
+                    same context.
                   </Paragraph>
                   <Flex wrap gap={12}>
                     <Button size="large" type="primary" href={primaryHref}>

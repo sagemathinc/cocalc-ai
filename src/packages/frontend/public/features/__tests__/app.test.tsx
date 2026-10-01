@@ -162,6 +162,11 @@ describe("PublicFeaturesApp", () => {
       screen.getByRole("link", { name: "Read the Codex guide" }),
     ).toHaveAttribute("href", "/docs/ai/codex-chat");
     expect(
+      screen.getByRole("link", {
+        name: "Claude Code in CoCalc (Experimental Preview)",
+      }),
+    ).toHaveAttribute("href", "/docs/ai/claude-code");
+    expect(
       screen.getAllByRole("link", {
         name: "Compare with agent sandboxes",
       })[0],
@@ -206,6 +211,11 @@ describe("PublicFeaturesApp", () => {
 
     expect(
       screen.queryByRole("link", { name: "Read the Codex guide" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("link", {
+        name: "Claude Code in CoCalc (Experimental Preview)",
+      }),
     ).toBeNull();
     expect(screen.queryByRole("link", { name: "Codex setup" })).toBeNull();
     expect(
