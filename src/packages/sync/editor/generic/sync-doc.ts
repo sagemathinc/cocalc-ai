@@ -2306,7 +2306,7 @@ export class SyncDoc extends EventEmitter {
     // Never pass on a value that differs from what the patch's author
     // recorded: every client opening the document later would start from it.
     // ("unknown": a patch from before hashes, or no exact value.)
-    if (this.patchflowSession.verifyValue(time) === "mismatch") {
+    if ((this.patchflowSession as any).verifyValue?.(time) === "mismatch") {
       throw Error(
         `not making a snapshot at ${time}: value differs from its hash`,
       );

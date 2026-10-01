@@ -411,3 +411,37 @@ contain every typed word exactly once. 10 users, 60 s per run unless noted.
     browsers agree, 0 duplicated, every snapshot equals the exact replay;
     11 words lost, none of them in any patch (typed just before a reload).
   - Next: release patchflow with #10; a 30 min notebook run.
+
+### 2026-10-01: value hashes (patchflow#11)
+
+Every patch records the hash of the document value right after it, as its
+author computed it, and every client checks the values it computes against
+those hashes. A difference means a client's document is not what everyone
+else's is; it is never silent:
+- patchflow reports it (`onInconsistency`, Session `"inconsistency"`);
+- SyncDoc logs it, sends it to the hub's client error log, emits
+  `"inconsistency"` and counts it (`getInconsistencyCount`).
+
+Details:
+- **Snapshots** carry their patch's hash and are written only if the value
+  matches it. A snapshot that does not match is not used: the value is
+  computed from the patch itself, loading more history if needed, so a client
+  that opens a document from a bad snapshot recovers by itself.
+- **Formats:**
+  - text: `s1:` (64-bit cyrb53, 0.14 ms for 50 KB);
+  - database documents: `d1:`, the sum of per-record hashes of canonical
+    JSON, independent of record and key order. Records are hashed once each:
+    a one-cell edit of a 300-cell notebook adds no measurable time.
+- **TimeTravel:** a version is checked when it is computed, so a wrong value
+  is caught there too, even with a single user.
+- **Found right away:** `Session.commit` after `undo()` recorded something
+  other than what the editor had, because the patch was made against the
+  undone value while its parents still included the undone patch. Fixed: a
+  patch is made against the exact value of its parents. SyncDoc avoided this
+  case already via `resetUndo()`.
+- **Tests fail on any inconsistency:**
+  - the patchflow snapshot fuzz test, which detects the #10 bug in 7 of its
+    8 failing seeds when that fix is disabled;
+  - backend `sync-doc/value-hash.test.ts`;
+  - the notebook collab fuzzer (60 seeds clean);
+  - both Playwright meeting tests.
