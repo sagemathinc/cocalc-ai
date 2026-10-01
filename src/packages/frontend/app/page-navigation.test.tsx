@@ -174,10 +174,11 @@ test.each([false, true])(
     expect(
       screen.getByRole("region", { name: "Workspace content" }),
     ).toContainElement(nav);
-    // The sidebar owns the logo, Agents and Projects entries in the shell.
+    // The sidebar owns the logo and Agents entry in the shell.
     expect(within(nav).queryByRole("link", { name: "CoCalc home" })).toBeNull();
     expect(within(nav).queryByRole("button", { name: "Agents" })).toBeNull();
-    expect(within(nav).queryByRole("button", { name: "Projects" })).toBeNull();
+    // An icon-only Projects tab returns to the Projects list from any page.
+    expect(within(nav).getByRole("button", { name: "Projects" })).toBeVisible();
     const hosts = within(nav).getByRole("button", { name: "Compute" });
     expect(
       screen.getByRole("region", { name: "post-surface project navigation" }),
@@ -236,4 +237,21 @@ test("retained tabs preserve login and AI visibility", () => {
   expect(screen.queryByRole("button", { name: "Agents" })).toBeNull();
   expect(screen.getByRole("button", { name: "Projects" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Compute" })).toBeVisible();
+});
+
+test("the compact folder tab returns from an opened project to the Projects list", async () => {
+  activeTab = "1ce4fe78-19c7-40a8-a598-947975744cd9";
+  render(view());
+  const nav = screen.getByRole("navigation");
+  const projects = within(nav).getByRole("button", { name: "Projects" });
+  const compute = within(nav).getByRole("button", { name: "Compute" });
+  expect(projects.textContent).toBe("");
+  expect(
+    projects.compareDocumentPosition(compute) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  projects.focus();
+  await userEvent.keyboard("{Enter}");
+  expect(actions.set_active_tab).toHaveBeenCalledWith("projects");
+  expect(projects).toHaveFocus();
 });

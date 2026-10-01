@@ -484,13 +484,16 @@ export const Page: React.FC = () => {
           id: "page.project_nav.tooltip",
           defaultMessage: "Show all the projects on which you collaborate.",
         })}
-        icon="edit"
+        icon="folder-open"
         label={intl.formatMessage(labels.projects)}
-        hide_label={shouldHideProjectsLabel(
-          open_projects.size,
-          isNarrow,
-          projectsNavMode === "tabs",
-        )}
+        hide_label={
+          workspaceShell ||
+          shouldHideProjectsLabel(
+            open_projects.size,
+            isNarrow,
+            projectsNavMode === "tabs",
+          )
+        }
         ariaLabel={intl.formatMessage(labels.projects)}
       />
     );
@@ -551,7 +554,7 @@ export const Page: React.FC = () => {
           <nav className="smc-top-bar" style={topBarStyle}>
             {!workspaceShell && <AppLogo size={pageStyle.height} />}
             {!workspaceShell && is_logged_in && render_agents_nav_button()}
-            {!workspaceShell && is_logged_in && render_project_nav_button()}
+            {is_logged_in && render_project_nav_button()}
             {render_hosts_tab()}
             {!isNarrow ? (
               showPostSurfaceNavigation ? (

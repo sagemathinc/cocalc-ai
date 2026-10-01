@@ -38,7 +38,7 @@ export default function ProjectsPageTour({
     {
       title: (
         <>
-          <Icon name="edit" /> The {projectsLabel} Page{" "}
+          <Icon name="folder-open" /> The {projectsLabel} Page{" "}
           <DocsLink slug="projects/project-list">(docs)</DocsLink>
         </>
       ),
@@ -69,7 +69,7 @@ export default function ProjectsPageTour({
     {
       title: (
         <>
-          <Icon name="edit" /> {projectLabel} List
+          <Icon name="folder-open" /> {projectLabel} List
         </>
       ),
       description: (
