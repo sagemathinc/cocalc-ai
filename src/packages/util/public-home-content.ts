@@ -29,9 +29,12 @@ export const PUBLIC_HOME_SECONDARY_CTA = {
 export const PUBLIC_HOME_AGENTS_HIGHLIGHT =
   "Codex and Claude Code in one project";
 
+export const PUBLIC_HOME_COLLABORATION_HIGHLIGHT =
+  "Collaborators see edits live";
+
 export const PUBLIC_HOME_HIGHLIGHTS = [
   PUBLIC_HOME_AGENTS_HIGHLIGHT,
-  "Collaborators see edits live",
+  PUBLIC_HOME_COLLABORATION_HIGHLIGHT,
   "Restore earlier versions",
 ] as const;
 
@@ -44,15 +47,26 @@ function usesDefaultPublicBrand(config?: PublicRouteMetadataConfig): boolean {
   );
 }
 
+// CoCalc Plus is the local, one-user runtime, as the Products and Pricing
+// pages say for the same product. It has no collaborators, so it also drops
+// the collaboration highlight and keeps only the version history one.
+//
 // Claude Code runs only on sites that enable it, so the highlight that names
 // it shows only under the default CoCalc brand on cocalc.ai. Every other site
-// (CoCalc Plus, a self-hosted Launchpad, a custom brand) gets the other two
-// highlights. `config.dns` is the request host on both sides: the crawler
-// fallback reads it from the request, and /customize sets it from the Host
-// header for the browser.
+// (a self-hosted Launchpad, a custom brand) gets the other two highlights.
+// `config.dns` is the request host on both sides: the crawler fallback reads
+// it from the request, and /customize sets it from the Host header for the
+// browser.
 export function getPublicHomeHighlights(
   config?: PublicRouteMetadataConfig,
 ): readonly string[] {
+  if (config?.cocalc_product === "plus") {
+    return PUBLIC_HOME_HIGHLIGHTS.filter(
+      (highlight) =>
+        highlight !== PUBLIC_HOME_AGENTS_HIGHLIGHT &&
+        highlight !== PUBLIC_HOME_COLLABORATION_HIGHLIGHT,
+    );
+  }
   if (
     usesDefaultPublicBrand(config) &&
     isCanonicalPublicSiteHost(config?.dns)

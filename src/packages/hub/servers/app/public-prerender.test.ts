@@ -88,9 +88,9 @@ describe("home first screen initial HTML", () => {
   it.each([
     ["the default CoCalc brand on cocalc.ai", cocalcAi, withClaude],
     [
-      "CoCalc Plus",
+      "CoCalc Plus, the local one-user runtime",
       { cocalc_product: "plus", dns: "localhost", site_name: "CoCalc" },
-      withoutClaude,
+      ["Restore earlier versions"],
     ],
     [
       "a self-hosted Launchpad host",
@@ -119,7 +119,7 @@ describe("home first screen initial HTML", () => {
     ],
     ["no site configuration", undefined, withoutClaude],
   ])(
-    "names Claude Code in the highlights only on cocalc.ai: %s",
+    "shows only the highlights that hold on each site: %s",
     (_site, config, expected) => {
       const html = renderPublicRoutePrerender({ section: "home" }, "/", config);
       const header = html.slice(
