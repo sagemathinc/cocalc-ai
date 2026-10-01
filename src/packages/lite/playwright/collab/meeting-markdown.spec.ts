@@ -172,36 +172,43 @@ async function typeTokenRich(
     }
     return Math.floor(Math.random() * blocks.length);
   }, rng());
-  const block = page.locator("[data-slate-editor] > *").nth(index);
-  await block.click({ timeout: 10_000 }).catch(() => undefined);
-  // Put the caret at the end of the block's text. (The End key goes to the
-  // end of the visual line, so on a wrapped line it could land in the middle
-  // of another person's word, and the test would count that word as lost.)
-  await page.evaluate((index) => {
+  // Click just past the end of the block's text, as a person who wants to
+  // add to it does. (Clicking its middle and then moving the caret is not
+  // reliable: until slate-react imports the DOM selection change, a
+  // re-render restores the caret where the click put it, possibly in the
+  // middle of someone's word; the End key goes to the end of the visual
+  // line, which on a wrapped line is not the end of the block.)
+  const point = await page.evaluate((index) => {
     const block = document.querySelector("[data-slate-editor]")?.children[
       index
-    ];
-    if (block == null) return;
+    ] as HTMLElement | undefined;
+    if (block == null) return null;
+    block.scrollIntoView({ block: "center" });
     const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, {
       acceptNode: (node) =>
-        node.parentElement?.closest(
-          "[data-slate-string], [data-slate-zero-width]",
-        )
+        node.parentElement?.closest("[data-slate-string]") &&
+        (node.textContent ?? "").length > 0
           ? NodeFilter.FILTER_ACCEPT
           : NodeFilter.FILTER_SKIP,
     });
     let last: Node | null = null;
     while (walker.nextNode()) last = walker.currentNode;
-    if (last == null) return;
-    const zeroWidth =
-      last.parentElement?.closest("[data-slate-zero-width]") != null;
-    window
-      .getSelection()
-      ?.collapse(last, zeroWidth ? 0 : (last.textContent ?? "").length);
+    let rect: DOMRect;
+    if (last == null) {
+      rect = block.getBoundingClientRect();
+      return { x: rect.left + 4, y: rect.top + rect.height / 2 };
+    }
+    const range = document.createRange();
+    const length = (last.textContent ?? "").length;
+    range.setStart(last, length - 1);
+    range.setEnd(last, length);
+    const rects = range.getClientRects();
+    rect = rects[rects.length - 1] ?? range.getBoundingClientRect();
+    return { x: rect.right + 3, y: rect.top + rect.height / 2 };
   }, index);
-  // slate-react reads DOM selection changes throttled (about 100ms); typing
-  // earlier would go where the click put the caret, possibly mid-word.
-  await page.waitForTimeout(150);
+  if (point == null) return;
+  await page.mouse.click(point.x, point.y);
+  await page.waitForTimeout(50);
   if (rng() < 0.3) await page.keyboard.press("Enter");
   await page.keyboard.type(` ${token}`, { delay: 15 + Math.floor(rng() * 40) });
 }
