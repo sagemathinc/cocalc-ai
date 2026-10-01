@@ -90,6 +90,40 @@ const ROW = {
 } as const;
 
 describe("notification email outbox maintenance", () => {
+  it("renders authored invitation text without HTML/Markdown and uses a passive landing", async () => {
+    const body =
+      '<img src="https://example.com/tracker"> [Run](javascript:run())';
+    claimQueuedNotificationEmails.mockResolvedValue([
+      {
+        ...ROW,
+        summary_json: {
+          summary: {
+            notice_type: "collaboration_invitation",
+            invitation_id: ROW.event_id,
+            body_text: body,
+            body_markdown: "ignored markdown",
+            action_link: "https://example.com/untrusted",
+          },
+        },
+      },
+    ]);
+    const sender = jest.fn(async (_message: any) => undefined);
+    await sendQueuedNotificationEmailBatch({
+      sender,
+      emailConfigured: jest.fn(async () => true),
+      sendLimitChecker: jest.fn(async () => ({ allowed: true })),
+    });
+    const message = sender.mock.calls[0][0];
+    expect(message.text).toContain(body);
+    expect(message.html).toContain("&lt;img");
+    expect(message.html).not.toContain("<img");
+    expect(message.html).not.toContain('href="javascript:');
+    expect(message.html).not.toContain("ignored markdown");
+    expect(message.html).not.toContain("https://example.com/untrusted");
+    expect(message.html).toContain(
+      `https://cocalc.test/people/invites/?invitation_id=${ROW.event_id}`,
+    );
+  });
   beforeEach(() => {
     jest.clearAllMocks();
     getServerSettingsMock.mockResolvedValue({
