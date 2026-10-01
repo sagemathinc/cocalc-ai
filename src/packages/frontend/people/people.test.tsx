@@ -23,11 +23,9 @@ const base = {
   created_by: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   created: 1000,
   participant_ids: [],
-  pin_order: null,
   alias: null,
   following: false,
   muted: false,
-  collected: false,
 };
 
 const conversations: ListedConversation[] = [

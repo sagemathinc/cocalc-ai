@@ -148,7 +148,7 @@ test("read markers and pins are per account and monotone", async () => {
     kind: "conversation",
     target_id: c.conversation_id,
     project_id,
-    patch: { pinned: true, pin_order: 3 },
+    patch: { pinned: true },
   });
   const bobs = await getPersonalStates({
     account_id: bob,
@@ -157,7 +157,6 @@ test("read markers and pins are per account and monotone", async () => {
   });
   expect(bobs.get(c.conversation_id)).toMatchObject({
     pinned: true,
-    pin_order: 3,
     last_read: 2000,
     following: false,
   });

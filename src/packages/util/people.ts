@@ -39,23 +39,19 @@ export const MAX_ALIAS_LENGTH = 64;
 
 // One account's private choices about one conversation or person.
 export interface PersonalState {
+  // Pinned items form this account's collection; their manual order lives in
+  // the account's collection preferences, shared with Library and Projects.
   pinned: boolean;
-  // Manual order among pinned items; lower sorts first.
-  pin_order?: number | null;
   // Private, stable handle (without "@"). Unique per account and kind.
   alias?: string | null;
   following: boolean;
   muted: boolean;
-  collected: boolean;
   // Conversations only: activity time this account has read through.
   last_read?: number | null;
 }
 
 export type PersonalStatePatch = Partial<
-  Pick<
-    PersonalState,
-    "pinned" | "pin_order" | "alias" | "following" | "muted" | "collected"
-  >
+  Pick<PersonalState, "pinned" | "alias" | "following" | "muted">
 >;
 
 export interface PersonalStateRow extends PersonalState {
@@ -66,11 +62,9 @@ export interface PersonalStateRow extends PersonalState {
 
 export const DEFAULT_PERSONAL_STATE: PersonalState = {
   pinned: false,
-  pin_order: null,
   alias: null,
   following: false,
   muted: false,
-  collected: false,
   last_read: null,
 };
 

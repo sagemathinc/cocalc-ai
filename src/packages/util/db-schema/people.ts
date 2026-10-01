@@ -71,10 +71,6 @@ Table({
       desc: "Project of a conversation (reference only, not authority).",
     },
     pinned: { type: "boolean", desc: "Pinned by this account." },
-    pin_order: {
-      type: "number",
-      desc: "Manual order among pinned items; lower sorts first.",
-    },
     alias: {
       type: "string",
       pg_type: "VARCHAR(64)",
@@ -82,7 +78,6 @@ Table({
     },
     following: { type: "boolean", desc: "Explicitly followed." },
     muted: { type: "boolean", desc: "Explicitly muted." },
-    collected: { type: "boolean", desc: "In this account's collection." },
     last_read: {
       type: "timestamp",
       desc: "Conversation activity time this account has read through.",

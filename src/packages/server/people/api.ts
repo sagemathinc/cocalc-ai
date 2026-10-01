@@ -115,11 +115,9 @@ export function mergeListed(
       ...record,
       ...DEFAULT_PERSONAL_STATE,
       pinned: state?.pinned ?? false,
-      pin_order: state?.pin_order ?? null,
       alias: state?.alias ?? null,
       following: state?.following ?? false,
       muted: state?.muted ?? false,
-      collected: state?.collected ?? false,
       last_read: state?.last_read ?? null,
     });
   }

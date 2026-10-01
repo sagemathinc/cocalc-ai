@@ -216,8 +216,8 @@ export async function removeConversation({
 
 // ---- account home bay: personal state ----
 
-const STATE_COLUMNS = `kind, target_id, project_id, pinned, pin_order, alias,
-  following, muted, collected, last_read`;
+const STATE_COLUMNS = `kind, target_id, project_id, pinned, alias,
+  following, muted, last_read`;
 
 function toState(row: any): PersonalStateRow {
   return {
@@ -225,11 +225,9 @@ function toState(row: any): PersonalStateRow {
     target_id: row.target_id,
     project_id: row.project_id ?? null,
     pinned: !!row.pinned,
-    pin_order: row.pin_order ?? null,
     alias: row.alias ?? null,
     following: !!row.following,
     muted: !!row.muted,
-    collected: !!row.collected,
     last_read: row.last_read == null ? null : row.last_read.valueOf(),
   };
 }
@@ -264,7 +262,7 @@ export async function listPersonalStates({
   const { rows } = await getPool().query(
     `SELECT ${STATE_COLUMNS} FROM account_people_state
      WHERE account_id = $1 AND kind = $2
-     ORDER BY pin_order NULLS LAST, updated DESC
+     ORDER BY updated DESC
      LIMIT 10000`,
     [account_id, assertPeopleStateKind(kind)],
   );
@@ -288,16 +286,9 @@ export async function setPersonalState({
   assertPeopleStateKind(kind);
   const values: Record<string, unknown> = {};
   if (patch.pinned !== undefined) values.pinned = !!patch.pinned;
-  if (patch.pin_order !== undefined) {
-    if (patch.pin_order != null && !Number.isFinite(patch.pin_order)) {
-      throw Error("invalid pin_order");
-    }
-    values.pin_order = patch.pin_order;
-  }
   if (patch.alias !== undefined) values.alias = normalizeAlias(patch.alias);
   if (patch.following !== undefined) values.following = !!patch.following;
   if (patch.muted !== undefined) values.muted = !!patch.muted;
-  if (patch.collected !== undefined) values.collected = !!patch.collected;
   const columns = Object.keys(values);
   const params: unknown[] = [account_id, kind, target_id, project_id ?? null];
   const insertColumns = columns.map((column) => {
