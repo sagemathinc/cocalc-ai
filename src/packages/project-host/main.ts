@@ -44,6 +44,11 @@ import {
 } from "./file-server";
 import { handleProjectHostUpload } from "./upload";
 import { startArtifactCatalog } from "./artifact-catalog";
+import { startCollaborators } from "./collaborators";
+import { initCollaboratorsService } from "./collaborators-service";
+import callHub from "@cocalc/conat/hub/call-hub";
+import { getMasterConatClient } from "./master-conat-client";
+import { getLocalHostId } from "./sqlite/hosts";
 import { initHttp, addCatchAll } from "./web";
 import { initSqlite } from "./sqlite/init";
 import {
@@ -1396,7 +1401,80 @@ export async function main(
     "Serve per-project files via the fs.* conat service, mounting from the local file-server.",
   );
   const artifactCatalog = startArtifactCatalog(artifactCatalogFilesystem);
+  const collaborators = startCollaborators(artifactCatalogFilesystem);
   const fsServer = await initFsServer({ client: conatClient });
+  const collaboratorsService = await initCollaboratorsService(conatClient, {
+    replaceRoom: async ({ project_id, account_id }, request, absence) => {
+      const client = getMasterConatClient();
+      const host_id = getLocalHostId();
+      if (!client || !host_id)
+        throw Error("collaboration owner connection unavailable");
+      const result = await callHub({
+        client,
+        host_id,
+        name: "collaborators.replaceRoomForHost",
+        args: [
+          {
+            project_id,
+            requesting_account_id: account_id,
+            request,
+            ...(absence ? { absence } : {}),
+          },
+        ],
+      });
+      if (result?.error) throw Error(`${result.error}`);
+      return result;
+    },
+    sourceEpoch: async (source) => {
+      const client = getMasterConatClient();
+      const host_id = getLocalHostId();
+      if (!client || !host_id)
+        throw Error("collaboration owner connection unavailable");
+      const result = await callHub({
+        client,
+        host_id,
+        name: "collaborators.writerState",
+        args: [source],
+      });
+      if (result?.error) throw Error(`${result.error}`);
+      return result?.epoch ?? null;
+    },
+    markInitialized: async (room, { account_id }) => {
+      const client = getMasterConatClient();
+      const host_id = getLocalHostId();
+      if (!client || !host_id)
+        throw Error("collaboration owner connection unavailable");
+      const result = await callHub({
+        client,
+        host_id,
+        name: "collaborators.markRoomInitialized",
+        args: [
+          {
+            project_id: room.project_id,
+            room_id: room.room_id,
+            chat_path: room.chat_path,
+            requesting_account_id: account_id,
+          },
+        ],
+      });
+      if (result?.error) throw Error(`${result.error}`);
+      return result;
+    },
+    resolveRoom: async ({ project_id, account_id }) => {
+      const client = getMasterConatClient();
+      const host_id = getLocalHostId();
+      if (!client || !host_id)
+        throw Error("collaboration owner connection unavailable");
+      const room = await callHub({
+        client,
+        host_id,
+        name: "collaborators.roomForHost",
+        args: [{ project_id, requesting_account_id: account_id }],
+      });
+      if (room?.error) throw Error(`${room.error}`);
+      return room;
+    },
+  });
   const editJournalService = await initProjectEditJournalService(conatClient);
 
   logger.info("HTTP static + customize + API wiring");
@@ -1579,6 +1657,8 @@ export async function main(
     // Keep the catalog's exclusive lease until process exit: filesystem calls
     // already in flight may still complete after the service stops accepting.
     artifactCatalog.stop();
+    collaborators.stop();
+    void collaboratorsService.close();
     editJournalService?.close?.();
     stopProvisionedInventoryReporter();
     projectTouchService?.close?.();
