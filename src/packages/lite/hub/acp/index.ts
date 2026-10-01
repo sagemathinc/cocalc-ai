@@ -1,3 +1,4 @@
+import { isQualifiedClaudeCodeProfile } from "@cocalc/util/ai/qualified-harnesses";
 import { agentMemoryTurnContext } from "@cocalc/conat/agents/memory";
 import path from "node:path";
 import { hubApi } from "../api";
@@ -8083,7 +8084,7 @@ async function executeAcpRequest({
         // Host-computed for this turn's account and only for native Codex and
         // the qualified Claude harness; any wire value is dropped.
         agent_memory_context:
-          !harness || request.runtime?.profile.id === "claude-code"
+          !harness || isQualifiedClaudeCodeProfile(request.runtime?.profile)
             ? await loadAgentMemoryContext(projectId, request.account_id)
             : undefined,
         mentionReferences,
