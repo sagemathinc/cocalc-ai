@@ -538,6 +538,13 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       // cell input shows it and takes it as what was saved.
       const written = actions.set_cell_input(id, value, true, base);
       const saved = written ?? value;
+      if (saved !== value && cm.current != null) {
+        // Show what was saved (with a collaborator's change merged in) now:
+        // the cell takes it as the baseline at once, so if the editor still
+        // showed the old text when the next change arrives, that change
+        // would be merged as if the user had deleted the collaborator's.
+        cm.current.setValueNoJump(saved);
+      }
       debug("cell:save", { id, base, value, written });
       cm_last_remote.current = saved;
       onSetCellInput?.(saved, written != null);

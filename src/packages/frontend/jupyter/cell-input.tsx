@@ -227,9 +227,7 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
             // `input` is what was saved, which can include a collaborator's
             // change merged into this editor's edit: show it.
             noteSaved(input, stored);
-            if (input !== (getValueRef.current?.() ?? localValueRef.current)) {
-              setLocalValue(input);
-            }
+            setLocalValue(input);
           }}
           complete={props.complete}
           getValueRef={getValueRef}
