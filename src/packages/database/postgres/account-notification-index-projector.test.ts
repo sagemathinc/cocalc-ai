@@ -614,6 +614,55 @@ describe("account_notification_index projector", () => {
     ).resolves.toMatchObject({ rows: [{ published: true }] });
   });
 
+  it("retains explicit suppression evidence for collaboration invitation delivery", async () => {
+    await seedAccounts();
+    const summary = {
+      notice_type: "collaboration_invitation",
+      title: "Invitation to collaborate",
+      invitation_channels: { notification: false, email: false },
+    };
+    await createNotificationEventGraph({
+      kind: "account_notice",
+      source_bay_id: OTHER_BAY_ID,
+      origin_kind: "account",
+      actor_account_id: SOURCE_ACCOUNT_ID,
+      payload_json: summary,
+      targets: [
+        {
+          target_account_id: LOCAL_ACCOUNT_ID,
+          target_home_bay_id: LOCAL_BAY_ID,
+          summary_json: summary,
+        },
+      ],
+    });
+    await drainAccountNotificationIndexProjection({
+      bay_id: LOCAL_BAY_ID,
+      dry_run: false,
+    });
+    expect(
+      (
+        await getPool().query(
+          "SELECT notification_id FROM account_notification_index WHERE account_id=$1",
+          [LOCAL_ACCOUNT_ID],
+        )
+      ).rows,
+    ).toEqual([]);
+    expect(
+      (
+        await getPool().query(
+          "SELECT status,summary_json FROM notification_email_outbox",
+        )
+      ).rows,
+    ).toEqual([
+      expect.objectContaining({
+        status: "skipped_preference",
+        summary_json: expect.objectContaining({
+          delivery_policy: { creates_in_app: false },
+        }),
+      }),
+    ]);
+  });
+
   it("uses display_path for queued mention email subjects", async () => {
     await seedAccounts();
     await appendMentionOutboxRow({

@@ -66,4 +66,50 @@ describe("project rehome fence", () => {
 
     expect(query).toHaveBeenCalledTimes(3);
   });
+
+  it("keeps failed exports and incomplete imports frozen independently of operation status", async () => {
+    const query = jest.fn(async (sql: string) => {
+      if (sql.includes("to_regclass"))
+        return {
+          rows: [
+            {
+              table_name: "project_rehome_operations",
+              collaboration_table_name:
+                "project_collaboration_rehome_transfers",
+            },
+          ],
+        };
+      if (sql.includes("FROM project_collaboration_rehome_transfers")) {
+        expect(sql).toContain(
+          "direction='export' AND state IN ('exporting','exported')",
+        );
+        expect(sql).toContain(
+          "direction='import' AND state IN ('staging','ready')",
+        );
+        return { rows: [{ op_id: "frozen-op" }] };
+      }
+      return { rows: [] };
+    });
+    await expect(
+      assertProjectNotRehoming({ db: { query }, project_id: PROJECT_ID }),
+    ).rejects.toThrow("handoff frozen-op is frozen");
+  });
+
+  it("permits current-owner writes after export retirement and destination activation", async () => {
+    const query = jest.fn(async (sql: string) => ({
+      rows: sql.includes("to_regclass")
+        ? [
+            {
+              table_name: "project_rehome_operations",
+              collaboration_table_name:
+                "project_collaboration_rehome_transfers",
+            },
+          ]
+        : [],
+    }));
+    await expect(
+      assertProjectNotRehoming({ db: { query }, project_id: PROJECT_ID }),
+    ).resolves.toBeUndefined();
+    expect(query.mock.calls).toHaveLength(4);
+  });
 });

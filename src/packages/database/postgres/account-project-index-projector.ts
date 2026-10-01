@@ -5,6 +5,7 @@
 
 import getPool from "@cocalc/database/pool";
 import type { PoolClient } from "@cocalc/database/pool";
+import { scheduleCollaborationMembershipDemand } from "./collaborators/collaborators-demand";
 import type {
   AccountFeedEvent,
   AccountFeedProjectRow,
@@ -319,6 +320,7 @@ async function applyProjectEventToAccountProjectIndex(opts: {
         sortKeyForAccount(payload, account_id, event.created_at),
       ],
     );
+    await scheduleCollaborationMembershipDemand(db, account_id, project_id);
     inserted_rows += 1;
   }
   return {

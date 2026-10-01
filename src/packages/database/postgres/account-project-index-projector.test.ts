@@ -10,6 +10,7 @@ import {
   getAccountProjectIndexProjectionBacklogStatus,
 } from "./account-project-index-projector";
 import { appendProjectOutboxEventForProject } from "./project-events-outbox";
+import { syncCollaborationDemandSchema } from "./collaborators/collaborators-demand";
 
 const LOCAL_BAY_ID = "bay-local";
 const OTHER_BAY_ID = "bay-other";
@@ -21,11 +22,15 @@ const HOST_ID = "44444444-4444-4444-8444-444444444444";
 describe("account_project_index projector", () => {
   beforeAll(async () => {
     await initEphemeralDatabase({});
+    await syncCollaborationDemandSchema(getPool());
+    await getPool().query(
+      "TRUNCATE collaboration_access, collaboration_demand, collaboration_demand_activation",
+    );
   }, 15000);
 
   afterEach(async () => {
     await getPool().query(
-      "TRUNCATE account_project_index, project_events_outbox, projects, accounts CASCADE",
+      "TRUNCATE collaboration_access, collaboration_demand, collaboration_demand_activation, account_project_index, project_events_outbox, projects, accounts CASCADE",
     );
   });
 
@@ -172,7 +177,7 @@ describe("account_project_index projector", () => {
 
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(drainSettled).toBe(false);
-      const beforeRelease = await getPool().query(
+      const beforeRelease = await blocker.query(
         `SELECT event_type, published_at
            FROM project_events_outbox
           WHERE project_id = $1
@@ -266,6 +271,56 @@ describe("account_project_index projector", () => {
       oldest_unpublished_event_age_ms: 60 * 60 * 1000,
       newest_unpublished_event_age_ms: 15 * 60 * 1000,
     });
+  });
+
+  it("atomically schedules demanded local memberships without warming cold homes", async () => {
+    {
+      await syncCollaborationDemandSchema(getPool());
+      await seedBaseRows();
+      await getPool().query(
+        `INSERT INTO collaboration_demand(account_id,consumer_id,lease_id,scope,expires_at,renew_after,grace_until)
+        VALUES($1,$1,$1,'{"kind":"all"}',now()+interval '2 minutes',now(),now()+interval '7 minutes')`,
+        [ACCOUNT_LOCAL],
+      );
+      await appendProjectOutboxEventForProject({
+        event_type: "project.created",
+        project_id: PROJECT_ID,
+        default_bay_id: LOCAL_BAY_ID,
+      });
+      await drainAccountProjectIndexProjection({
+        bay_id: LOCAL_BAY_ID,
+        limit: 10,
+        dry_run: false,
+      });
+      expect(
+        (
+          await getPool().query(
+            "SELECT account_id,project_id,grant_request_id,granted_generation FROM collaboration_access",
+          )
+        ).rows,
+      ).toEqual([
+        {
+          account_id: ACCOUNT_LOCAL,
+          project_id: PROJECT_ID,
+          grant_request_id: null,
+          granted_generation: null,
+        },
+      ]);
+      expect(
+        (
+          await getPool().query(
+            "SELECT account_id,due_at,projection_due IS NOT NULL AS projection,access_due IS NOT NULL AS access FROM collaboration_demand_activation",
+          )
+        ).rows,
+      ).toEqual([
+        {
+          account_id: ACCOUNT_LOCAL,
+          due_at: null,
+          projection: true,
+          access: true,
+        },
+      ]);
+    }
   });
 
   it("projects local-home collaborators, preserves last_opened_at, and deletes on project.deleted", async () => {

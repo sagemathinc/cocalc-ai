@@ -298,7 +298,11 @@ async function applyNotificationEventToAccountNotificationIndex(opts: {
       ],
     );
   }
-  if (insertProjection || notificationModeSendsEmail(delivery_mode)) {
+  if (
+    insertProjection ||
+    notificationModeSendsEmail(delivery_mode) ||
+    payload.summary?.notice_type === "collaboration_invitation"
+  ) {
     await enqueueProjectedNotificationEmail({
       db,
       event,
@@ -439,6 +443,9 @@ async function enqueueProjectedNotificationEmail(opts: {
       source_path: payload.source_path ?? null,
       projection_notification_id: opts.projection_notification_id,
       required: policy.required,
+      ...(payload.summary?.notice_type === "collaboration_invitation"
+        ? { delivery_policy: { creates_in_app: policy.creates_in_app } }
+        : {}),
       ...(financial
         ? { financial_receipt_home_bay_id: event.target_home_bay_id }
         : {}),

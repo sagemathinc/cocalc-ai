@@ -66,6 +66,7 @@ export default async function getCustomize(
       splashImage: settings.splash_image,
 
       legacy_migration_enabled: !!settings.legacy_migration_enabled,
+      collaborators_enabled: settings.collaborators_enabled === true,
       legacy_migration_page_message: settings.legacy_migration_page_message,
 
       googleAnalytics: settings.google_analytics,

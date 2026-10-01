@@ -37,10 +37,18 @@ const snapshot = (sequence = 1): ArtifactCatalogSnapshot => ({
 
 beforeAll(async () => {
   await initEphemeralDatabase({});
+  await getPool().query(`CREATE TABLE IF NOT EXISTS project_rehome_operations (
+    op_id UUID PRIMARY KEY, project_id UUID, source_bay_id TEXT,
+    dest_bay_id TEXT, status TEXT, stage TEXT, created_at TIMESTAMPTZ DEFAULT now())`);
+  await getPool()
+    .query(`CREATE TABLE IF NOT EXISTS project_collaboration_rehome_transfers (
+    op_id UUID, project_id UUID, direction TEXT, state TEXT,
+    source_bay_id TEXT, dest_bay_id TEXT, schema_hash TEXT, header JSONB,
+    table_rows JSONB, chain_hash TEXT)`);
 }, 30000);
 beforeEach(async () => {
   await getPool().query(
-    "TRUNCATE artifact_catalog,artifact_catalog_sources,artifact_catalog_project_budget,projects CASCADE",
+    "TRUNCATE artifact_catalog,artifact_catalog_sources,artifact_catalog_project_budget,project_rehome_operations,project_collaboration_rehome_transfers,projects CASCADE",
   );
   await getPool().query(
     `INSERT INTO projects(project_id,host_id,owning_bay_id,users)
@@ -57,6 +65,77 @@ beforeEach(async () => {
 afterAll(async () => {
   await testCleanup();
 });
+
+test.each([
+  ["export", "exporting"],
+  ["export", "exported"],
+  ["import", "staging"],
+  ["import", "ready"],
+  ["operation", "running"],
+])(
+  "writer operations respect the %s/%s rehome fence",
+  async (direction, state) => {
+    const before = await getArtifactCatalogWriterState(source, authority);
+    const budget = (
+      await getPool().query("SELECT * FROM artifact_catalog_project_budget")
+    ).rows;
+    if (direction === "operation") {
+      await getPool().query(
+        `INSERT INTO project_rehome_operations
+       (op_id,project_id,source_bay_id,dest_bay_id,status,stage)
+       VALUES($1,$2,$3,'destination',$4,'requested')`,
+        [randomUUID(), project_id, authority.owning_bay_id, state],
+      );
+    } else {
+      await getPool().query(
+        `INSERT INTO project_collaboration_rehome_transfers
+       (op_id,project_id,direction,state,source_bay_id,dest_bay_id,schema_hash,header,table_rows,chain_hash)
+       VALUES($1,$2,$3,$4,'bay-test','destination','test','{}','{}','test')`,
+        [randomUUID(), project_id, direction, state],
+      );
+    }
+    for (const operation of [
+      () =>
+        registerArtifactCatalogSource(source, authority, epoch, randomUUID()),
+      () => applyArtifactCatalogSnapshot(snapshot(), authority),
+      () => getArtifactCatalogWriterState(source, authority),
+      () => artifactCatalogSourcePage(project_id, authority),
+    ]) {
+      await expect(operation()).rejects.toThrow(/rehome|handoff/);
+    }
+    expect(
+      (await getPool().query("SELECT * FROM artifact_catalog")).rows,
+    ).toEqual([]);
+    expect(
+      (await getPool().query("SELECT * FROM artifact_catalog_project_budget"))
+        .rows,
+    ).toEqual(budget);
+
+    await getPool().query(
+      "UPDATE project_rehome_operations SET status='completed'",
+    );
+    await getPool().query(
+      "UPDATE project_collaboration_rehome_transfers SET state=CASE WHEN direction='export' THEN 'retired' ELSE 'active' END",
+    );
+    expect(await getArtifactCatalogWriterState(source, authority)).toEqual(
+      before,
+    );
+    await expect(
+      applyArtifactCatalogSnapshot(snapshot(), authority),
+    ).resolves.toMatchObject({ revision: 1 });
+
+    await getPool().query(
+      "UPDATE projects SET owning_bay_id='destination' WHERE project_id=$1",
+      [project_id],
+    );
+    await expect(
+      registerArtifactCatalogSource(source, authority, epoch, randomUUID()),
+    ).rejects.toThrow("owner/host");
+    await expect(
+      applyArtifactCatalogSnapshot(snapshot(2), authority),
+    ).rejects.toThrow("owner/host");
+  },
+);
 
 test("writer recovery lookup is owner/host checked and reports committed sequence", async () => {
   expect(await getArtifactCatalogWriterState(source, authority)).toMatchObject({

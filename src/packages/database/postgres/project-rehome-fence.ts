@@ -19,6 +19,9 @@ type ProjectRehomeFenceOptions = {
 };
 
 const PROJECT_REHOME_OPERATIONS_TABLE = "project_rehome_operations";
+const COLLABORATION_TRANSFERS_TABLE = "project_collaboration_rehome_transfers";
+
+export class ProjectRehomeInProgressError extends Error {}
 
 export async function lockProjectRehomeFence({
   db,
@@ -33,13 +36,17 @@ export async function lockProjectRehomeFence({
   );
 }
 
-async function projectRehomeOperationsTableExists(
+async function projectRehomeTables(
   db: Queryable,
-): Promise<boolean> {
+): Promise<{ operations: boolean; collaboration: boolean }> {
   const { rows } = await db.query(
-    `SELECT to_regclass('public.${PROJECT_REHOME_OPERATIONS_TABLE}') AS table_name`,
+    `SELECT to_regclass('public.${PROJECT_REHOME_OPERATIONS_TABLE}') AS table_name,
+      to_regclass('public.${COLLABORATION_TRANSFERS_TABLE}') AS collaboration_table_name`,
   );
-  return rows[0]?.table_name != null;
+  return {
+    operations: rows[0]?.table_name != null,
+    collaboration: rows[0]?.collaboration_table_name != null,
+  };
 }
 
 export async function assertProjectNotRehoming({
@@ -48,11 +55,10 @@ export async function assertProjectNotRehoming({
   action = "modify project metadata",
 }: ProjectRehomeFenceOptions): Promise<void> {
   await lockProjectRehomeFence({ db, project_id });
-  if (!(await projectRehomeOperationsTableExists(db))) {
-    return;
-  }
-  const { rows } = await db.query(
-    `
+  const tables = await projectRehomeTables(db);
+  const { rows } = tables.operations
+    ? await db.query(
+        `
       SELECT op_id, source_bay_id, dest_bay_id, stage
         FROM ${PROJECT_REHOME_OPERATIONS_TABLE}
        WHERE project_id = $1
@@ -60,13 +66,28 @@ export async function assertProjectNotRehoming({
        ORDER BY created_at DESC
        LIMIT 1
     `,
-    [project_id],
-  );
+        [project_id],
+      )
+    : { rows: [] };
   const active = rows[0];
-  if (!active) return;
-  throw new Error(
-    `cannot ${action} for project ${project_id}; project rehome ${active.op_id} is running from ${active.source_bay_id} to ${active.dest_bay_id} at stage ${active.stage}`,
-  );
+  if (active)
+    throw new ProjectRehomeInProgressError(
+      `cannot ${action} for project ${project_id}; project rehome ${active.op_id} is running from ${active.source_bay_id} to ${active.dest_bay_id} at stage ${active.stage}`,
+    );
+  if (tables.collaboration) {
+    // A failed source operation still owns its immutable snapshot. Likewise,
+    // destination staging is not authority to serve incomplete catalog state.
+    const { rows: transfers } = await db.query(
+      `SELECT op_id FROM ${COLLABORATION_TRANSFERS_TABLE} WHERE project_id=$1
+       AND ((direction='export' AND state IN ('exporting','exported'))
+         OR (direction='import' AND state IN ('staging','ready'))) LIMIT 1`,
+      [project_id],
+    );
+    if (transfers.length)
+      throw new ProjectRehomeInProgressError(
+        `cannot ${action} for project ${project_id}; collaboration handoff ${transfers[0].op_id} is frozen`,
+      );
+  }
 }
 
 export async function withProjectRehomeWriteFence<T>({
