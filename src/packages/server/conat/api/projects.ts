@@ -730,6 +730,15 @@ export async function collectAssignment({
     dedupe_key: normalizedRunAt
       ? `course-collect:${course_project_id}:${assignment_id}:${normalizedRunAt}`
       : undefined,
+    // Waiting for the scheduled time must not consume the execution window.
+    ...(normalizedRunAt
+      ? {
+          expires_at: new Date(
+            Math.max(Date.now(), Date.parse(normalizedRunAt)) +
+              7 * 24 * 60 * 60 * 1000,
+          ),
+        }
+      : {}),
     status: "queued",
   });
   try {
