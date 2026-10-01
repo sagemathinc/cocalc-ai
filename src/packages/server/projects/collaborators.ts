@@ -104,6 +104,7 @@ import {
 } from "@cocalc/util/secret-settings-crypto";
 import { upsertProjectCollabInviteDirectory } from "@cocalc/server/projects/collab-invite-directory";
 import { appendProjectLogRowBestEffort } from "@cocalc/server/projects/project-log";
+import { ensurePeopleInviteSourceSchema } from "@cocalc/server/people/schema";
 
 const logger = getLogger("project:collaborators");
 const COLLAB_GROUPS = ["owner", "collaborator"] as const;
@@ -243,7 +244,9 @@ function normalizeInviteReadPolicy({
   return read_policy ?? DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY;
 }
 
-function emailUnavailableFromSendMessage(message: string | undefined): boolean {
+export function emailUnavailableFromSendMessage(
+  message: string | undefined,
+): boolean {
   const value = `${message ?? ""}`.toLowerCase();
   return (
     value.includes("no actual message sent") ||
@@ -324,12 +327,15 @@ function ensureUuid(value: string, label: string): void {
   }
 }
 
-async function ensureProjectCollabInviteEmailTokenSchema(): Promise<void> {
+export async function ensureProjectCollabInviteEmailTokenSchema(): Promise<void> {
   if (projectCollabInviteEmailTokenSchemaReady) {
     return await projectCollabInviteEmailTokenSchemaReady;
   }
   projectCollabInviteEmailTokenSchemaReady =
-    ensureProjectCollabInviteEmailTokenSchemaUncached();
+    ensureProjectCollabInviteEmailTokenSchemaUncached().catch((err) => {
+      projectCollabInviteEmailTokenSchemaReady = undefined;
+      throw err;
+    });
   return await projectCollabInviteEmailTokenSchemaReady;
 }
 
@@ -368,6 +374,7 @@ async function ensureProjectCollabInviteEmailTokenSchemaUncached(): Promise<void
          AND scope = 'course_student'
          AND invite_source IN ('email', 'course_email')`,
   );
+  await ensurePeopleInviteSourceSchema();
 }
 
 async function ensureProjectAccessRequestSchema(): Promise<void> {
@@ -495,7 +502,7 @@ async function ensureBayIndependentInviteTokenHash({
   return token_hash;
 }
 
-async function hashInviteEmail(email: string): Promise<string> {
+export async function hashInviteEmail(email: string): Promise<string> {
   return await hmacInviteValue(EMAIL_INVITE_EMAIL_AAD, email);
 }
 
@@ -503,7 +510,10 @@ async function encryptInviteValue(aad: string, value: string): Promise<string> {
   return encryptSecretSettingValue(aad, value, await inviteSecretKey());
 }
 
-async function decryptInviteValue(aad: string, value: string): Promise<string> {
+export async function decryptInviteValue(
+  aad: string,
+  value: string,
+): Promise<string> {
   return decryptSecretSettingValue(aad, value, await inviteSecretKey());
 }
 
@@ -531,7 +541,7 @@ function normalizeInviteBaseUrl(value?: string | null): string | undefined {
   }
 }
 
-async function inviteUrl({
+export async function inviteUrl({
   token,
   base_url,
 }: {
@@ -1163,9 +1173,14 @@ export async function createCollabInvite(
   },
   {
     trustedProductAccessChecked = false,
+    beforeReuse,
+    invite_id: stableInviteId,
   }: {
     /** Only set by the authenticated inter-bay service after a home-bay check. */
     trustedProductAccessChecked?: boolean;
+    /** Trusted owner service only; never deserialize these options from public input. */
+    beforeReuse?: (invite_id: string) => Promise<void>;
+    invite_id?: string;
   } = {},
 ): Promise<{
   created: boolean;
@@ -1182,6 +1197,11 @@ export async function createCollabInvite(
   }
   ensureUuid(project_id, "project_id");
   ensureUuid(invitee_account_id, "invitee_account_id");
+  if (stableInviteId) {
+    ensureUuid(stableInviteId, "invite_id");
+    if (invite_scope === COURSE_EMAIL_INVITE_SCOPE)
+      throw Error("stable invite IDs are for ordinary invitations only");
+  }
   const actorIsAdmin = (direct && trusted_admin) || (await isAdmin(account_id));
   if (invitee_account_id === account_id && !(direct && actorIsAdmin)) {
     throw new Error("cannot invite yourself");
@@ -1339,6 +1359,7 @@ export async function createCollabInvite(
   );
   const existingPending = pendingRows[0]?.invite_id;
   if (existingPending) {
+    await beforeReuse?.(existingPending);
     if (scope || serializedContext) {
       await pool.query(
         `UPDATE project_collab_invites
@@ -1369,7 +1390,7 @@ export async function createCollabInvite(
     await assertProjectCollaboratorInviteLimit({ project_id });
   }
 
-  const invite_id = uuid();
+  const invite_id = stableInviteId ?? uuid();
   await pool.query(
     `INSERT INTO project_collab_invites
       (invite_id, project_id, inviter_account_id, invitee_account_id,
@@ -3178,7 +3199,7 @@ export async function listMyCollaborators({
   return await hydrateMyCollaboratorRows(rows, includeEmail);
 }
 
-async function allowUrlsInEmails({
+export async function allowUrlsInEmails({
   account_id,
 }: {
   project_id: string;
@@ -3192,7 +3213,7 @@ async function allowUrlsInEmails({
   return true;
 }
 
-async function canSendInviteEmail(account_id: string): Promise<boolean> {
+export async function canSendInviteEmail(account_id: string): Promise<boolean> {
   const resolution = await resolveMembershipForAccount(account_id);
   const limits = getEffectiveMembershipUsageLimits(resolution);
   return limits.invite_email_send_enabled !== false;
@@ -3204,7 +3225,9 @@ async function canCopyInviteLink(account_id: string): Promise<boolean> {
   return limits.invite_email_link_copy_enabled !== false;
 }
 
-async function getInviteEmailResendCutoff(account_id: string): Promise<Date> {
+export async function getInviteEmailResendCutoff(
+  account_id: string,
+): Promise<Date> {
   const resolution = await resolveMembershipForAccount(account_id);
   const limits = getEffectiveMembershipUsageLimits(resolution);
   const minutes =
@@ -3213,7 +3236,7 @@ async function getInviteEmailResendCutoff(account_id: string): Promise<Date> {
   return new Date(Date.now() - Math.max(0, minutes) * 60_000);
 }
 
-async function normalizeInviteMessageForAccount({
+export async function normalizeInviteMessageForAccount({
   account_id,
   message,
 }: {
@@ -3235,7 +3258,7 @@ async function normalizeInviteMessageForAccount({
   return trimmed;
 }
 
-async function getInvitePolicyAccountId({
+export async function getInvitePolicyAccountId({
   account_id,
   context,
   project_id,
@@ -3312,7 +3335,7 @@ async function normalizeAccessRequestMessageForAccount({
   return trimmed;
 }
 
-async function assertEmailInviteCreationLimits({
+export async function assertEmailInviteCreationLimits({
   account_id,
   policy_account_id,
   project_id,
@@ -3422,7 +3445,7 @@ async function assertEmailInviteCreationLimits({
   }
 }
 
-async function assertEmailInviteBatchLimit({
+export async function assertEmailInviteBatchLimit({
   account_id,
   recipientCount,
 }: {
@@ -3452,7 +3475,7 @@ function normalizeInviteEmail(email: string): string {
   return normalized;
 }
 
-async function assertCanManageProjectCollaborators({
+export async function assertCanManageProjectCollaborators({
   account_id,
   action,
   project_id,
@@ -3502,6 +3525,8 @@ async function createEmailProjectInvite({
   invite_base_url,
   read_policy,
   require_email_match,
+  beforeReuse,
+  stableInviteId,
 }: {
   account_id: string;
   context?: Record<string, unknown>;
@@ -3514,6 +3539,8 @@ async function createEmailProjectInvite({
   invite_base_url?: string;
   read_policy?: ProjectViewerReadPolicy | null;
   require_email_match?: boolean;
+  beforeReuse?: (invite_id: string) => Promise<void>;
+  stableInviteId?: string;
 }): Promise<{
   created: boolean;
   invite: ProjectCollabInviteRow;
@@ -3521,6 +3548,11 @@ async function createEmailProjectInvite({
 }> {
   await ensureProjectCollabInviteEmailTokenSchema();
   const normalizedEmail = normalizeInviteEmail(email_address);
+  if (stableInviteId) {
+    ensureUuid(stableInviteId, "invite_id");
+    if (scope === COURSE_EMAIL_INVITE_SCOPE)
+      throw Error("stable invite IDs are for ordinary invitations only");
+  }
   const policyAccountId =
     policy_account_id ??
     (await getInvitePolicyAccountId({
@@ -3591,6 +3623,7 @@ async function createEmailProjectInvite({
   }>(existingInviteQuery, existingInviteParams);
   const existing = existingRows[0];
   if (existing) {
+    await beforeReuse?.(existing.invite_id);
     if (context != null || require_email_match != null) {
       await pool.query(
         `UPDATE project_collab_invites
@@ -3644,7 +3677,7 @@ async function createEmailProjectInvite({
     await assertProjectCollaboratorInviteLimit({ project_id });
   }
   const token = generateInviteToken();
-  const invite_id = uuid();
+  const invite_id = stableInviteId ?? uuid();
   const token_hash = await hashProjectCollabInviteToken(token);
   const token_ciphertext = await encryptInviteValue(
     EMAIL_INVITE_TOKEN_AAD,
@@ -4174,30 +4207,42 @@ export async function inviteCollaborator({
   return delivery;
 }
 
-export async function inviteCollaboratorWithoutAccount({
-  account_id,
-  opts,
-}: {
-  account_id: string;
-  opts: {
-    project_id: string;
-    title: string;
-    link2proj: string;
-    replyto?: string;
-    replyto_name?: string;
-    to: string;
-    email: string; // body in HTML format
-    subject?: string;
-    message?: string;
-    send_email?: boolean;
-    invite_context?: Record<string, unknown>;
-    invite_scope?: string;
-    require_email_match?: boolean;
-    invite_role?: Exclude<ProjectUserRole, "owner">;
-    invite_base_url?: string;
-    read_policy?: ProjectViewerReadPolicy | null;
-  };
-}): Promise<{ invites: ProjectCollabInviteRow[] } & InviteEmailDeliveryStatus> {
+export async function inviteCollaboratorWithoutAccount(
+  {
+    account_id,
+    opts,
+  }: {
+    account_id: string;
+    opts: {
+      project_id: string;
+      title: string;
+      link2proj: string;
+      replyto?: string;
+      replyto_name?: string;
+      to: string;
+      email: string; // body in HTML format
+      subject?: string;
+      message?: string;
+      send_email?: boolean;
+      invite_context?: Record<string, unknown>;
+      invite_scope?: string;
+      require_email_match?: boolean;
+      invite_role?: Exclude<ProjectUserRole, "owner">;
+      invite_base_url?: string;
+      read_policy?: ProjectViewerReadPolicy | null;
+    };
+  },
+  {
+    trustedProductAccessChecked = false,
+    beforeReuse,
+    invite_id: stableInviteId,
+  }: {
+    /** Trusted owner service only, after checking the sender's current home. */
+    trustedProductAccessChecked?: boolean;
+    beforeReuse?: (invite_id: string) => Promise<void>;
+    invite_id?: string;
+  } = {},
+): Promise<{ invites: ProjectCollabInviteRow[] } & InviteEmailDeliveryStatus> {
   await assertLocalProjectCollaborator({
     account_id,
     project_id: opts.project_id,
@@ -4207,10 +4252,12 @@ export async function inviteCollaboratorWithoutAccount({
     action: "invite collaborators",
     project_id: opts.project_id,
   });
-  await assertAccountTrustedForProductAccess(
-    account_id,
-    "invite collaborators",
-  );
+  if (!trustedProductAccessChecked) {
+    await assertAccountTrustedForProductAccess(
+      account_id,
+      "invite collaborators",
+    );
+  }
   const dbg = (...args) =>
     logger.debug("inviteCollaboratorWithoutAccount", ...args);
   const database = db();
@@ -4227,6 +4274,8 @@ export async function inviteCollaboratorWithoutAccount({
     .replace(/;/g, ",")
     .split(",")
     .filter((x) => x);
+  if (stableInviteId && to.length !== 1)
+    throw Error("stable invite ID requires exactly one recipient");
   const policyAccountId = await getInvitePolicyAccountId({
     account_id,
     context: opts.invite_context,
@@ -4272,6 +4321,8 @@ export async function inviteCollaboratorWithoutAccount({
       invite_role: opts.invite_role,
       invite_base_url: opts.invite_base_url ?? opts.link2proj,
       read_policy: opts.read_policy,
+      beforeReuse,
+      stableInviteId,
     });
 
     // 3. Has email been sent recently?

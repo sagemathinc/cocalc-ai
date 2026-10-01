@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { PERSONAL_LIBRARY_MAX_PIN_BYTES } from "@cocalc/util/personal-library";
-import { personalLibraryStore } from "./personal-library-store";
+import {
+  clearPersonalLibraryAlias,
+  personalLibraryStore,
+} from "./personal-library-store";
 
 jest.mock("@cocalc/server/agents/personal-rehome", () => ({
   assertPersonalAccountAuthority: jest.fn().mockResolvedValue(undefined),
@@ -62,6 +65,29 @@ test("pins append, unpin, and reorder only visible slots", async () => {
     )
   ).rows.map((row) => Number(row.rank));
   expect(ranks).toEqual([0, 2, 3]);
+});
+
+test("clearing a label keeps pins and historical target bindings", async () => {
+  const target = { account_id, project_id, entry_id: "a".repeat(64) };
+  await personalLibraryStore.name({ ...target, name: "sphere" });
+  await personalLibraryStore.setPinned({
+    account_id,
+    pin_key: pin("sphere"),
+    pinned: true,
+  });
+  const first = await clearPersonalLibraryAlias(target);
+  expect(first.aliases).toEqual([
+    { name: "sphere", project_id, entry_id: target.entry_id, active: false },
+  ]);
+  expect(first.pins).toEqual([pin("sphere")]);
+  expect(await clearPersonalLibraryAlias(target)).toEqual(first);
+  await expect(
+    personalLibraryStore.name({
+      ...target,
+      entry_id: "b".repeat(64),
+      name: "sphere",
+    }),
+  ).rejects.toThrow("already used");
 });
 
 test("pin mutations enforce both row and serialized-byte budgets", async () => {

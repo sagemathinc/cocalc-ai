@@ -1,5 +1,7 @@
 import getLogger from "@cocalc/backend/logger";
 import { initAPI } from "./api";
+import getPool from "@cocalc/database/pool";
+import { syncCollaborationDemandSchema } from "@cocalc/database/postgres/collaborators/collaborators-demand";
 import { loadConatConfiguration } from "./configuration";
 import { createTimeService } from "@cocalc/conat/service/time";
 import { listenForUpdates as listenForProjectHostUpdates } from "./route-project";
@@ -225,6 +227,9 @@ export async function initConatApi({
   startConatAdmissionSettingsRefresh();
   logProjectionReadModes();
   startBillingAuthorityService();
+  // Membership projection schedules People demand in the same transaction.
+  // Install its queue before feeds or background membership workers can run.
+  await syncCollaborationDemandSchema(getPool());
   enableDbAccountRowFeedPublishing();
   enableDbCollaboratorAccountFeedPublishing();
   enableDbProjectAccountFeedPublishing();

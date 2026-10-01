@@ -5,6 +5,9 @@
 
 import { db } from "@cocalc/database";
 import getPool from "@cocalc/database/pool";
+import type { PoolClient } from "@cocalc/database/pool";
+import { withAccountRehomeWriteFence } from "@cocalc/database/postgres/account-rehome-fence";
+import { scheduleCollaborationMembershipDemand } from "@cocalc/database/postgres/collaborators/collaborators-demand";
 import {
   applyProjectEventToAccountCollaboratorIndex,
   loadLatestCollaboratorProjectionEvent,
@@ -150,8 +153,9 @@ export async function applyAccountProjectFeedUpsertOnHomeBay(
   const updated_at = new Date(event.ts);
   const last_activity_at =
     parseDate(event.project.last_active?.[event.account_id]) ?? null;
-  await getPool().query(
-    `INSERT INTO account_project_index
+  const write = async (db: Pick<PoolClient, "query">) => {
+    await db.query(
+      `INSERT INTO account_project_index
       (account_id, project_id, owning_bay_id, host_id, rootfs_image_id, title, description,
         theme, labels, users_summary, state_summary, last_edited, last_backup, last_activity_at,
         last_opened_at, is_hidden, deletion_protection, sort_key, updated_at)
@@ -175,31 +179,42 @@ export async function applyAccountProjectFeedUpsertOnHomeBay(
        deletion_protection = EXCLUDED.deletion_protection,
        sort_key = EXCLUDED.sort_key,
        updated_at = EXCLUDED.updated_at`,
-    [
+      [
+        event.account_id,
+        event.project.project_id,
+        `${event.project.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
+        event.project.host_id,
+        event.project.rootfs_image_id ?? null,
+        event.project.title ?? "",
+        event.project.description ?? "",
+        JSON.stringify(event.project.theme ?? {}),
+        JSON.stringify(event.project.labels ?? {}),
+        JSON.stringify(event.project.users ?? {}),
+        JSON.stringify(event.project.state ?? {}),
+        parseDate(event.project.last_edited) ?? null,
+        parseDate(event.project.last_backup) ?? null,
+        last_activity_at,
+        !!event.project.users?.[event.account_id]?.hide,
+        event.project.deletion_protection === true,
+        sortKeyForFeedProject({
+          project: event.project,
+          account_id: event.account_id,
+          fallback: updated_at,
+        }),
+        updated_at,
+      ],
+    );
+    await scheduleCollaborationMembershipDemand(
+      db,
       event.account_id,
       event.project.project_id,
-      `${event.project.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
-      event.project.host_id,
-      event.project.rootfs_image_id ?? null,
-      event.project.title ?? "",
-      event.project.description ?? "",
-      JSON.stringify(event.project.theme ?? {}),
-      JSON.stringify(event.project.labels ?? {}),
-      JSON.stringify(event.project.users ?? {}),
-      JSON.stringify(event.project.state ?? {}),
-      parseDate(event.project.last_edited) ?? null,
-      parseDate(event.project.last_backup) ?? null,
-      last_activity_at,
-      !!event.project.users?.[event.account_id]?.hide,
-      event.project.deletion_protection === true,
-      sortKeyForFeedProject({
-        project: event.project,
-        account_id: event.account_id,
-        fallback: updated_at,
-      }),
-      updated_at,
-    ],
-  );
+    );
+  };
+  await withAccountRehomeWriteFence({
+    account_id: event.account_id,
+    action: "apply People membership demand",
+    fn: write,
+  });
   await publishAccountFeedEventBestEffort({
     account_id: event.account_id,
     event,

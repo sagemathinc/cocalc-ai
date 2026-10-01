@@ -117,6 +117,7 @@
     "url": "https://github.com/sagemathinc/cocalc"
   },
   "devDependencies": {
+    "@cocalc/sync": "workspace:*",
     "@types/async": "^2.0.43",
     "@types/dot-object": "^2.1.6",
     "@types/express": "^5.0.6",

@@ -10,6 +10,16 @@ import { createInterBayArtifactCatalogHandler } from "@cocalc/conat/inter-bay/ar
 import { catalogOwnerControl } from "@cocalc/server/artifacts/catalog-api";
 import { createInterBayPersonalLibraryHandler } from "@cocalc/conat/inter-bay/personal-library";
 import { personalLibraryHomeControl } from "@cocalc/server/artifacts/personal-library-api";
+import { createInterBayUsernamesHandler } from "@cocalc/conat/inter-bay/usernames";
+import { usernameSeedControl } from "@cocalc/server/accounts/usernames";
+import { createInterBayPersonalUrlAliasesHandler } from "@cocalc/conat/inter-bay/personal-url-aliases";
+import { personalUrlAliasHomeControl } from "@cocalc/server/personal-url-aliases";
+import { createInterBayCollaboratorsHandler } from "@cocalc/conat/inter-bay/collaborators";
+import { createInterBayPeopleStorageHandler } from "@cocalc/conat/inter-bay/people-storage";
+import { createInterBayPeopleActionsHandler } from "@cocalc/conat/inter-bay/people-actions";
+import { peopleActionsControl } from "@cocalc/server/people/invitation-actions";
+import { peopleStorageControl } from "@cocalc/server/people/api";
+import { collaboratorsControl } from "@cocalc/server/collaborators/api";
 import { createAgentRpcControlHandler } from "@cocalc/conat/inter-bay/agent-rpc";
 import { createInterBayAgentConnectorHandler } from "@cocalc/conat/inter-bay/agent-connector";
 import { agentConnectorControl } from "@cocalc/server/agents/cocalc-connector-routing";
@@ -56,6 +66,7 @@ import {
   createInterBayProjectControlHandler,
   createInterBayProjectControlCreateHandler,
   createInterBayProjectControlAcceptRehomeHandler,
+  createInterBayProjectControlCollaborationRehomeHandler,
   createInterBayProjectControlSetUsageAccountHandler,
   createInterBayProjectControlAssignHostHandler,
   createInterBayProjectControlMoveHandler,
@@ -406,6 +417,7 @@ import {
   handleProjectControlCheckStartAdmission,
   handleProjectControlClearEntitlementOverride,
   handleProjectControlAcceptRehome,
+  handleProjectControlCollaborationRehome,
   handleProjectControlGetEntitlementOverride,
   handleProjectControlGetRootfsStates,
   handleProjectControlHardDeleteStatus,
@@ -689,6 +701,12 @@ export async function initInterBayServices(): Promise<void> {
     await startProjectReferenceService();
     await startProjectDetailsService();
     services.push(
+      createInterBayCollaboratorsHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bay_id: getConfiguredBayId(),
+        parallel: true,
+        impl: collaboratorsControl,
+      }),
       createInterBayAgentConnectorHandler(
         getConfiguredBayId(),
         agentConnectorControl,
@@ -718,6 +736,30 @@ export async function initInterBayServices(): Promise<void> {
         bayId: getConfiguredBayId(),
         parallel: true,
         impl: personalLibraryHomeControl,
+      }),
+      createInterBayPeopleStorageHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bay_id: getConfiguredBayId(),
+        parallel: true,
+        impl: peopleStorageControl,
+      }),
+      createInterBayPeopleActionsHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bay_id: getConfiguredBayId(),
+        parallel: true,
+        impl: peopleActionsControl,
+      }),
+      createInterBayUsernamesHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bayId: getConfiguredBayId(),
+        parallel: true,
+        impl: usernameSeedControl,
+      }),
+      createInterBayPersonalUrlAliasesHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bayId: getConfiguredBayId(),
+        parallel: true,
+        impl: personalUrlAliasHomeControl,
       }),
     );
     await startProjectSecretsService();
@@ -2357,6 +2399,8 @@ async function startProjectControlStartService(): Promise<void> {
     move: async (opts) => await handleProjectControlMove(opts),
     rehome: async (opts) => await handleProjectControlRehome(opts),
     acceptRehome: async (opts) => await handleProjectControlAcceptRehome(opts),
+    collaborationRehome: async (opts) =>
+      await handleProjectControlCollaborationRehome(opts),
     activeOp: async (opts) => await handleProjectControlActiveOperation(opts),
     getProjectEntitlementOverride: async (opts) =>
       await handleProjectControlGetEntitlementOverride(opts),
@@ -2456,6 +2500,12 @@ async function startProjectControlStartService(): Promise<void> {
       impl,
     }),
     createInterBayProjectControlAcceptRehomeHandler({
+      client,
+      bay_id,
+      parallel: true,
+      impl,
+    }),
+    createInterBayProjectControlCollaborationRehomeHandler({
       client,
       bay_id,
       parallel: true,
@@ -2695,6 +2745,10 @@ async function startProjectLroService(): Promise<void> {
 async function startProjectCollabInviteService(): Promise<void> {
   const client = getInterBayFabricClient({ noCache: true });
   const impl: InterBayProjectCollabInviteApi = {
+    resend: async (opts) =>
+      (
+        await import("@cocalc/server/projects/people-invite-resend")
+      ).resendPeopleInviteLocal(opts),
     upsertInbox: async ({ source_bay_id, invite }) => {
       await upsertProjectedCollabInviteDirect({ source_bay_id, invite });
     },
@@ -3534,6 +3588,18 @@ async function startHostControlService(): Promise<void> {
       await (
         await getHostClient(host_id, scan.timeout_ms ?? 30 * 60 * 1000)
       ).scanRootfsRelease(scan),
+    requestCollaborationReconciliation: async ({ host_id, scan }) =>
+      await (
+        await getHostClient(host_id, 30_000)
+      ).requestCollaborationReconciliation(scan),
+    cancelCollaborationReconciliation: async ({ host_id, scan }) =>
+      (await getHostClient(host_id, 30_000)).cancelCollaborationReconciliation(
+        scan,
+      ),
+    getCollaborationReconciliationStatus: async ({ host_id, scan }) =>
+      await (
+        await getHostClient(host_id, 30_000)
+      ).getCollaborationReconciliationStatus(scan),
     scanProjectRootfs: async ({ host_id, scan }) =>
       await (
         await getHostClient(host_id, scan.timeout_ms ?? 30 * 60 * 1000)

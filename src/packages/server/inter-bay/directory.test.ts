@@ -121,6 +121,10 @@ describe("inter-bay directory", () => {
   });
 
   it("resolves a batch of local projects with one database query", async () => {
+    const { getInterBayFabricClient } = await import("./fabric");
+    jest.mocked(getInterBayFabricClient).mockImplementation(() => {
+      throw Error("inter-bay credentials are not configured");
+    });
     queryMock.mockResolvedValue({
       rows: [
         { project_id: "proj-1", bay_id: "bay-1" },
@@ -138,6 +142,7 @@ describe("inter-bay directory", () => {
     );
     expect(queryMock).toHaveBeenCalledTimes(1);
     expect(requestMock).not.toHaveBeenCalled();
+    expect(getInterBayFabricClient).not.toHaveBeenCalled();
   });
 
   it("uses directory fallback only for projects missing locally", async () => {
