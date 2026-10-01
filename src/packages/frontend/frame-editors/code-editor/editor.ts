@@ -11,7 +11,7 @@ import { CodemirrorEditor } from "./codemirror-editor";
 import { filename_extension, set } from "@cocalc/util/misc";
 import { createEditor } from "../frame-tree/editor";
 import { EditorDescription } from "../frame-tree/types";
-import { terminal } from "../terminal-editor/spec";
+import { terminal } from "../terminal-editor/terminal-spec";
 import { time_travel } from "../time-travel-editor/editor";
 import { fileExtensionsSet } from "@cocalc/util/code-formatter";
 

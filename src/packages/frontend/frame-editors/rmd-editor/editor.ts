@@ -17,7 +17,7 @@ import { pdfjsCommands } from "../latex-editor/editor";
 import { PDFJS } from "../latex-editor/pdfjs";
 import { RenderedMarkdown } from "../markdown-editor/rendered-markdown";
 import { SETTINGS_SPEC } from "../settings/editor";
-import { terminal } from "../terminal-editor/spec";
+import { terminal } from "../terminal-editor/terminal-spec";
 import { time_travel } from "../time-travel-editor/editor";
 
 import { BuildLog } from "./build-log";

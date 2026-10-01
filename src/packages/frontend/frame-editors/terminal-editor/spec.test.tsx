@@ -5,7 +5,7 @@
 
 import { createElement } from "react";
 import { render, screen } from "@testing-library/react";
-import { terminal } from "./spec";
+import { terminal } from "./terminal-spec";
 
 const mockLoadTerminal = jest.fn();
 const mockTerminalProps = jest.fn();

@@ -4,9 +4,9 @@
  */
 
 import { createEditor } from "../frame-tree/editor";
-import { terminal } from "./spec";
+import { terminal } from "./terminal-spec";
 
-export { terminal } from "./spec";
+export { terminal } from "./terminal-spec";
 
 export const Editor = createEditor({
   format_bar: false,
