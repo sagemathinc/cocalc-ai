@@ -311,9 +311,10 @@ const surfaces = [
   {
     label: "Essential Docs",
     chunks: [...initial, ...docs],
-    // Connector, Claude, and exam guides expand the non-admin documentation;
-    // the released baseline is 320.6 KiB Brotli before the exam UI updates.
-    max: 325 * KiB,
+    // Connector, Claude, exam, and agents workspace guides expand the non-admin
+    // documentation: 324.4 KiB Brotli with the agents workspace guide, and
+    // 325.1 KiB with the documentation changes open beside it.
+    max: 328 * KiB,
   },
   {
     label: "minimal project settings",
