@@ -32,7 +32,12 @@ export interface Conversation {
 // Things an account keeps private choices about. Artifacts, agents and
 // projects keep using their existing stores (Library, named agents,
 // project bookmarks).
-export const PEOPLE_STATE_KINDS = ["conversation", "person"] as const;
+// "project" rows only record when this account last scanned that project.
+export const PEOPLE_STATE_KINDS = [
+  "conversation",
+  "person",
+  "project",
+] as const;
 export type PeopleStateKind = (typeof PEOPLE_STATE_KINDS)[number];
 
 export const MAX_ALIAS_LENGTH = 64;
@@ -48,10 +53,12 @@ export interface PersonalState {
   muted: boolean;
   // Conversations only: activity time this account has read through.
   last_read?: number | null;
+  // Projects only: when this account last scanned it for .chat files.
+  scanned_at?: number | null;
 }
 
 export type PersonalStatePatch = Partial<
-  Pick<PersonalState, "pinned" | "alias" | "following" | "muted">
+  Pick<PersonalState, "pinned" | "alias" | "following" | "muted" | "scanned_at">
 >;
 
 export interface PersonalStateRow extends PersonalState {

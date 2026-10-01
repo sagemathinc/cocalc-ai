@@ -23,6 +23,7 @@ import {
   mentionKey,
   listPersonalStates,
   markConversationRead,
+  refreshConversationActivity,
   removeConversation,
   renameConversation,
   resolveAlias,
@@ -162,6 +163,11 @@ export const peopleControl: InterBayPeopleApi = {
     return await touchConversation(opts);
   },
 
+  async refresh(opts) {
+    await assertOwner(opts.project_id);
+    return await refreshConversationActivity(opts);
+  },
+
   async rename(opts) {
     await assertOwner(opts.project_id);
     return await renameConversation(opts);
@@ -285,6 +291,13 @@ export const peopleApi: PeopleApi = {
     if (c == null) return {};
     await markReadBestEffort(account_id!, c);
     return { conversation_id: c.conversation_id };
+  },
+
+  async refreshConversation({ account_id, project_id, path, activity }) {
+    const c = await (
+      await owner(project_id)
+    ).refresh({ account_id: account_id!, project_id, path, activity });
+    return c == null ? {} : { conversation_id: c.conversation_id };
   },
 
   async renameConversation({ account_id, project_id, conversation_id, title }) {

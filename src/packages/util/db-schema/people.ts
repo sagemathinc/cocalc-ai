@@ -60,11 +60,11 @@ Table({
     kind: {
       type: "string",
       pg_type: "VARCHAR(32)",
-      desc: "What the target is: conversation or person.",
+      desc: "What the target is: conversation, person or project.",
     },
     target_id: {
       type: "uuid",
-      desc: "conversation_id or the person's account_id.",
+      desc: "conversation_id, the person's account_id or a project_id.",
     },
     project_id: {
       type: "uuid",
@@ -78,6 +78,10 @@ Table({
     },
     following: { type: "boolean", desc: "Explicitly followed." },
     muted: { type: "boolean", desc: "Explicitly muted." },
+    scanned_at: {
+      type: "timestamp",
+      desc: "Projects: when this account last scanned it for .chat files.",
+    },
     last_read: {
       type: "timestamp",
       desc: "Conversation activity time this account has read through.",

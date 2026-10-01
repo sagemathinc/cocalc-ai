@@ -10,6 +10,7 @@ export const {
   getConversation,
   addConversation,
   touchConversation,
+  refreshConversation,
   renameConversation,
   removeConversation,
   markRead,

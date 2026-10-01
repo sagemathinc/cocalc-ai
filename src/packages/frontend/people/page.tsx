@@ -21,6 +21,8 @@ import { CollectionViewControl } from "@cocalc/frontend/components/collection";
 import { useCollectionPreferences } from "@cocalc/frontend/components/use-collection-preferences";
 import { ConversationView } from "./conversation-view";
 import { NewConversationModal } from "./new-conversation";
+import { ScanDialog } from "./scan-dialog";
+import { SearchDialog } from "./search-dialog";
 import { useConversations } from "./use-conversations";
 import { useWorkspaceContentNavigation } from "@cocalc/frontend/agents/workspace-content-navigation";
 
@@ -58,6 +60,7 @@ export function PeoplePage() {
   const state = useConversations(active);
   const [filter, setFilter] = useState("");
   const [newFor, setNewFor] = useState<{ personId?: string } | null>(null);
+  const [dialog, setDialog] = useState<"scan" | "search">();
   const people = usePeople();
   const navigation = useWorkspaceContentNavigation();
   const account_id = useTypedRedux("account", "account_id");
@@ -236,6 +239,22 @@ export function PeoplePage() {
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
+          {route.tab === "conversations" && (
+            <>
+              <Button
+                icon={<Icon name="comment" />}
+                onClick={() => setDialog("search")}
+              >
+                Search messages
+              </Button>
+              <Button
+                icon={<Icon name="sync" />}
+                onClick={() => setDialog("scan")}
+              >
+                Scan
+              </Button>
+            </>
+          )}
           <Button
             type="primary"
             icon={<Icon name="plus" />}
@@ -299,6 +318,17 @@ export function PeoplePage() {
           ]}
         />
       </div>
+      <ScanDialog
+        open={dialog === "scan"}
+        conversations={state.conversations}
+        onClose={() => setDialog(undefined)}
+      />
+      <SearchDialog
+        open={dialog === "search"}
+        conversations={filtered}
+        onOpen={(c) => navigate(conversationRoute(c))}
+        onClose={() => setDialog(undefined)}
+      />
       <NewConversationModal
         open={newFor != null}
         personId={newFor?.personId}

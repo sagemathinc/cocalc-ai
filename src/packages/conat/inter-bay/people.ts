@@ -37,6 +37,12 @@ export interface InterBayPeopleApi {
     project_id: string;
     path: string;
   }): Promise<Conversation | null>;
+  refresh(opts: {
+    account_id: string;
+    project_id: string;
+    path: string;
+    activity: number;
+  }): Promise<Conversation | null>;
   rename(opts: {
     account_id: string;
     project_id: string;

@@ -43,6 +43,13 @@ export interface PeopleApi {
     project_id: string;
     path: string;
   }): Promise<{ conversation_id?: string }>;
+  // Raise activity to a .chat file's modification time found by Scan.
+  refreshConversation(opts: {
+    account_id?: string;
+    project_id: string;
+    path: string;
+    activity: number;
+  }): Promise<{ conversation_id?: string }>;
   renameConversation(
     opts: ConversationRef & { title: string },
   ): Promise<Conversation>;
@@ -74,6 +81,7 @@ export const people = {
   getConversation: authFirstRequireAccount,
   addConversation: authFirstRequireAccount,
   touchConversation: authFirstRequireAccount,
+  refreshConversation: authFirstRequireAccount,
   renameConversation: authFirstRequireAccount,
   removeConversation: authFirstRequireAccount,
   markRead: authFirstRequireAccount,

@@ -14,6 +14,7 @@ import {
   mentionKey,
   listPersonalStates,
   markConversationRead,
+  refreshConversationActivity,
   removeConversation,
   renameConversation,
   resolveAlias,
@@ -298,4 +299,51 @@ test("latest explicit mentions per conversation, ignoring thread-follow", async 
     new Date("2026-01-02T00:00:00Z").valueOf(),
   );
   expect(mentions.has(mentionKey(project_id, "/home/user/y.chat"))).toBe(false);
+});
+
+test("a scan raises activity to the file time, never backwards or ahead", async () => {
+  const c = await createConversationRecord({
+    account_id: alice,
+    project_id,
+    path: "x.chat",
+    title: "x",
+  });
+  const older = await refreshConversationActivity({
+    account_id: bob,
+    project_id,
+    path: "x.chat",
+    activity: c.last_activity - 60_000,
+  });
+  expect(older!.last_activity).toBe(c.last_activity);
+  const future = await refreshConversationActivity({
+    account_id: bob,
+    project_id,
+    path: "x.chat",
+    activity: Date.now() + 3_600_000,
+  });
+  expect(future!.last_activity).toBeLessThanOrEqual(Date.now() + 1000);
+  expect(future!.last_activity).toBeGreaterThanOrEqual(c.last_activity);
+  expect(future!.last_sender_id ?? null).toBeNull();
+  expect(
+    await refreshConversationActivity({
+      account_id: viewer,
+      project_id,
+      path: "x.chat",
+      activity: Date.now(),
+    }),
+  ).toBeNull();
+});
+
+test("scanned_at is recorded per account and project", async () => {
+  const state = await setPersonalState({
+    account_id: alice,
+    kind: "project",
+    target_id: project_id,
+    patch: { scanned_at: 5000 },
+  });
+  expect(state.scanned_at).toBe(5000);
+  expect(
+    (await listPersonalStates({ account_id: alice, kind: "project" }))[0]
+      .scanned_at,
+  ).toBe(5000);
 });

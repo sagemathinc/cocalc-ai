@@ -174,6 +174,32 @@ export async function touchConversation({
   return rows[0] == null ? null : toConversation(rows[0]);
 }
 
+// Raise activity to a file modification time seen by an explicit scan (for
+// chats edited outside CoCalc's chat UI). Never moves activity backwards or
+// into the future, and does not change the last sender.
+export async function refreshConversationActivity({
+  account_id,
+  project_id,
+  path,
+  activity,
+}: {
+  account_id: string;
+  project_id: string;
+  path: string;
+  activity: number;
+}): Promise<Conversation | null> {
+  path = normalizeConversationPath(path);
+  if (!Number.isFinite(activity)) throw Error("invalid activity");
+  const { rows } = await getPool().query(
+    `UPDATE project_conversations c SET
+       last_activity = GREATEST(c.last_activity, LEAST($3::timestamp, NOW()))
+     WHERE c.project_id = $1 AND c.path = $2 AND ${collaborator(4)}
+     RETURNING ${COLUMNS}`,
+    [project_id, path, new Date(activity), account_id],
+  );
+  return rows[0] == null ? null : toConversation(rows[0]);
+}
+
 export async function renameConversation({
   account_id,
   project_id,
@@ -217,7 +243,7 @@ export async function removeConversation({
 // ---- account home bay: personal state ----
 
 const STATE_COLUMNS = `kind, target_id, project_id, pinned, alias,
-  following, muted, last_read`;
+  following, muted, last_read, scanned_at`;
 
 function toState(row: any): PersonalStateRow {
   return {
@@ -229,6 +255,7 @@ function toState(row: any): PersonalStateRow {
     following: !!row.following,
     muted: !!row.muted,
     last_read: row.last_read == null ? null : row.last_read.valueOf(),
+    scanned_at: row.scanned_at == null ? null : row.scanned_at.valueOf(),
   };
 }
 
@@ -289,6 +316,13 @@ export async function setPersonalState({
   if (patch.alias !== undefined) values.alias = normalizeAlias(patch.alias);
   if (patch.following !== undefined) values.following = !!patch.following;
   if (patch.muted !== undefined) values.muted = !!patch.muted;
+  if (patch.scanned_at !== undefined) {
+    if (patch.scanned_at != null && !Number.isFinite(patch.scanned_at)) {
+      throw Error("invalid scanned_at");
+    }
+    values.scanned_at =
+      patch.scanned_at == null ? null : new Date(patch.scanned_at);
+  }
   const columns = Object.keys(values);
   const params: unknown[] = [account_id, kind, target_id, project_id ?? null];
   const insertColumns = columns.map((column) => {
