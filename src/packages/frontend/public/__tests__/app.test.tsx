@@ -336,7 +336,9 @@ describe("PublicApp", () => {
     );
 
     expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
-    expect(screen.getByRole("link", { name: "Agents" })).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Home", exact: true }),
+    ).not.toBeNull();
   });
 
   it("hides Agents on the landing page after loading the signed-in AI preference", async () => {
@@ -352,7 +354,9 @@ describe("PublicApp", () => {
       );
       await waitFor(() => {
         expect(bootstrap).toHaveBeenCalled();
-        expect(screen.queryByRole("link", { name: "Agents" })).toBeNull();
+        expect(
+          screen.queryByRole("link", { name: "Home", exact: true }),
+        ).toBeNull();
       });
       expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
     } finally {

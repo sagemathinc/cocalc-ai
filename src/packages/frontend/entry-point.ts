@@ -18,7 +18,7 @@ import { redux } from "./app-framework";
 import "./launch/actions";
 
 // Initialize app stores, actions, etc.
-import { init as initAccount } from "./account";
+import { init as initAccount } from "./account/init";
 import { init as initApp } from "./app/init";
 import { init as initProjects } from "./projects";
 import { init as initFileUse } from "./file-use/init";

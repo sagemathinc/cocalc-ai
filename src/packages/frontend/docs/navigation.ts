@@ -9,6 +9,13 @@ import type { FixedTab } from "@cocalc/frontend/project/page/fixed-tab-ids";
 export const APP_DOCS_SELECTED_STORAGE_KEY = "cocalc-app-docs-selected-slug";
 export const PROJECT_DOCS_SELECTED_STORAGE_PREFIX =
   "cocalc-project-docs-selected-slug:";
+export const APP_DOCS_DRAWER_OPEN_EVENT = "cocalc:app-docs-drawer-open";
+
+export type AppDocsDrawerOpenDetail = {
+  slug?: string;
+  returnFocus?: HTMLElement;
+};
+
 export const PROJECT_DOCS_OPEN_EVENT = "cocalc:project-docs-open";
 
 export type ProjectDocsOpenDetail = {
@@ -60,6 +67,19 @@ export function openAppDocs(slug?: string): void {
   const pageActions = redux.getActions("page");
   pageActions?.setState?.({ docs_print: false, docs_slug: normalized });
   pageActions?.set_active_tab?.("docs", true);
+}
+
+/** Open contextual help without changing the current route or workspace. */
+export function openAppDocsDrawer(
+  slug?: string,
+  returnFocus?: HTMLElement,
+): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent<AppDocsDrawerOpenDetail>(APP_DOCS_DRAWER_OPEN_EVENT, {
+      detail: { slug: normalizeDocsSlug(slug), returnFocus },
+    }),
+  );
 }
 
 export function openProjectDocs({

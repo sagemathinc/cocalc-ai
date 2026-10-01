@@ -233,28 +233,7 @@ export function editor_id(project_id: string, path: string): string {
   return `cocalc-editor-${sha1(project_id + path)}`;
 }
 
-// Normalize path as in node, except '' is the home dir, not '.'.
-// Also, if ~/ is somewhere in the path, start over at home.
-export function normalize(path: string): string {
-  while (true) {
-    const pattern = "/~/";
-    const i = path.indexOf(pattern);
-    if (i == -1) {
-      break;
-    }
-    path = path.slice(i + pattern.length);
-  }
-  if (path.startsWith("~/")) {
-    path = path.slice(2);
-  }
-
-  path = os_path.normalize(path);
-  if (path === ".") {
-    return "";
-  } else {
-    return path;
-  }
-}
+export { normalize } from "./normalize-path";
 
 // test, if the given file exists and has nonzero size
 export async function file_nonzero_size(

@@ -9,6 +9,7 @@ import { Alert, Button, Input, Modal } from "antd";
 import { readArtifact } from "@cocalc/chat";
 import type { ArtifactRecord } from "@cocalc/chat";
 import { useArtifactChanges } from "@cocalc/frontend/chat/artifacts";
+import { InviteContentButton } from "@cocalc/frontend/collaborators/invite-content";
 import { copyTextToClipboard } from "@cocalc/frontend/components/copy-to-clipboard-util";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { ActionListArtifact } from "@cocalc/frontend/frame-editors/chat-editor/action-list-artifact";
@@ -32,6 +33,7 @@ export interface LibraryArtifactViewProps {
   onBack: () => void;
   onShowConversation?: (target: ForeignArtifactTarget) => Promise<void> | void;
   navigation?: ReactNode;
+  headerActions?: ReactNode;
 }
 
 /** Navigation and stable URLs belong to the parent, not a chat frame or agent. */
@@ -54,6 +56,7 @@ function LibraryArtifactPage({
   onBack,
   onShowConversation,
   navigation,
+  headerActions,
 }: LibraryArtifactViewProps) {
   const [title, setTitle] = useState<string>();
   const [error, setError] = useState("");
@@ -106,7 +109,7 @@ function LibraryArtifactPage({
   };
   return (
     <section
-      aria-label="Library artifact"
+      aria-label="Artifact"
       className="smc-vfill"
       style={{
         minHeight: 0,
@@ -120,7 +123,7 @@ function LibraryArtifactPage({
       <header
         ref={header}
         role="group"
-        aria-label="Library artifact navigation"
+        aria-label="Artifact navigation"
         tabIndex={-1}
         style={{
           display: "flex",
@@ -144,8 +147,8 @@ function LibraryArtifactPage({
             minWidth: 0,
           }}
         >
-          <Button type="text" onClick={onBack} aria-label="Back to Library">
-            Library
+          <Button type="text" onClick={onBack} aria-label="Back to Artifacts">
+            Artifacts
           </Button>
           <span aria-hidden="true">/</span>
           <h1
@@ -185,8 +188,21 @@ function LibraryArtifactPage({
             </Button>
           )}
           <Button onClick={() => void copyLink()}>Copy link</Button>
+          {title && (
+            <InviteContentButton
+              title={title}
+              source={{
+                project_id: target.projectId,
+                chat_path: target.path,
+                thread_id: target.threadId,
+                artifact_id: target.artifactId,
+                kind: "artifact",
+              }}
+            />
+          )}
         </div>
         <span role="status">{copied ? "Link copied" : ""}</span>
+        {headerActions}
       </header>
       {error && <Alert type="error" title={error} />}
       <Modal

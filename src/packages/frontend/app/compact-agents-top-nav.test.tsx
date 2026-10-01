@@ -6,6 +6,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+const mockOpenDocsDrawer = jest.fn();
+jest.mock("@cocalc/frontend/docs/navigation", () => ({
+  openAppDocsDrawer: (...args: any[]) => mockOpenDocsDrawer(...args),
+}));
+
 const setActiveTab = jest.fn();
 const showConnection = jest.fn();
 const toggleFullscreen = jest.fn();
@@ -179,6 +184,19 @@ describe("compact Agents navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "More navigation" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Documentation" }));
     expect(onOpenDocs).toHaveBeenCalledTimes(1);
+    expect(setActiveTab).not.toHaveBeenCalled();
+  });
+
+  it("opens non-agent documentation in the drawer and returns focus to its menu trigger", async () => {
+    const user = userEvent.setup();
+    render(<CompactAgentsTopNav isLoggedIn pageStyle={pageStyle} />);
+    const trigger = screen.getByRole("button", { name: "More navigation" });
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    const item = screen.getByRole("menuitem", { name: "Documentation" });
+    item.focus();
+    await user.keyboard("{Enter}");
+    expect(mockOpenDocsDrawer).toHaveBeenCalledWith(undefined, trigger);
     expect(setActiveTab).not.toHaveBeenCalled();
   });
 

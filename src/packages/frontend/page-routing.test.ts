@@ -7,6 +7,57 @@ import {
 } from "./page-routing";
 
 describe("page-routing", () => {
+  it.each([
+    "u/alice/agents/reviewer",
+    "u/alice/artifacts/notes",
+    "u/11111111-1111-4111-8111-111111111111/chats/team",
+    "u/alice/people/bella",
+    "u/alice/artifacts/notes/extra",
+    "u//agents/reviewer",
+    "u/alice/chats/%2F",
+    "u/alice/chats/%",
+  ])("keeps %s separate from all viewer-local aliases", (target) => {
+    const parsed = parsePageTarget(`${target}?view=grid#details`);
+    expect(parsed).toEqual({ page: "agents", personal_url: target });
+    expect(getPageUrlPath(parsed)).toBe(`/${target}`);
+    expect(getPageTopTab(parsed)).toBe("agents");
+  });
+
+  it("qualifies personal links but not collections or the new-agent action", () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    expect(
+      getPageUrlPath({ page: "agents", owner: "alice", agent_id: id }),
+    ).toBe(`/agents/${id}`);
+    expect(
+      getPageUrlPath({ page: "agents", owner: "alice", agent_id: "reviewer" }),
+    ).toBe("/u/alice/agents/reviewer");
+    expect(
+      getPageUrlPath({
+        page: "agents",
+        owner: "alice",
+        library: true,
+        artifact_project_id: "notes",
+      }),
+    ).toBe("/u/alice/artifacts/notes");
+    expect(getPageUrlPath({ page: "agents", owner: "alice" })).toBe("/agents");
+    expect(
+      getPageUrlPath({ page: "agents", owner: "alice", agent_id: "new" }),
+    ).toBe("/agents/new");
+    expect(
+      getPageUrlPath({ page: "agents", owner: "alice", library: true }),
+    ).toBe("/artifacts");
+  });
+
+  it("unqualified agent names never become a viewer-local selection", () => {
+    expect(parsePageTarget("agents/reviewer")).toEqual({
+      page: "agents",
+      personal_url: "agents/reviewer",
+    });
+  });
+  it("opens Home as the agent workspace", () => {
+    expect(parsePageTarget("home")).toEqual(parsePageTarget("agents"));
+    expect(parsePageTarget("home/")).toEqual(parsePageTarget("agents"));
+  });
   it("maps settings routes to the account top tab", () => {
     const parsed = parsePageTarget("settings/payment-methods");
     expect(parsed).toEqual({
@@ -32,18 +83,29 @@ describe("page-routing", () => {
       page: "agents",
       agent_id: undefined,
     });
-    const parsed = parsePageTarget("agents/agent-123");
-    expect(parsed).toEqual({ page: "agents", agent_id: "agent-123" });
+    const parsed = parsePageTarget(
+      "agents/11111111-1111-4111-8111-111111111111",
+    );
+    expect(parsed).toEqual({
+      page: "agents",
+      agent_id: "11111111-1111-4111-8111-111111111111",
+    });
     expect(getPageTopTab(parsed)).toBe("agents");
-    expect(getPageTargetPath(parsed)).toBe("agents/agent-123");
+    expect(getPageTargetPath(parsed)).toBe(
+      "agents/11111111-1111-4111-8111-111111111111",
+    );
 
     const create = parsePageTarget("agents/new");
     expect(create).toEqual({ page: "agents", agent_id: "new" });
     expect(getPageUrlPath(create)).toBe("/agents/new");
 
-    expect(parsePageTarget("agents/agent-123?network=legacy-filter")).toEqual({
+    expect(
+      parsePageTarget(
+        "agents/11111111-1111-4111-8111-111111111111?network=legacy-filter",
+      ),
+    ).toEqual({
       page: "agents",
-      agent_id: "agent-123",
+      agent_id: "11111111-1111-4111-8111-111111111111",
     });
   });
 
@@ -55,7 +117,7 @@ describe("page-routing", () => {
     expect(parsePageTarget("ssh")).toEqual({ page: "ssh" });
   });
 
-  it.each(["library", "library/nb1", "library/project-123/entry-456"])(
+  it.each(["artifacts", "artifacts/nb1", "artifacts/project-123/entry-456"])(
     "roundtrips %s through the agents top tab",
     (target) => {
       const parsed = parsePageTarget(target);
@@ -72,24 +134,34 @@ describe("page-routing", () => {
     },
   );
 
-  it("normalizes the Library root trailing slash without selecting an agent", () => {
-    expect(parsePageTarget("library/")).toEqual(parsePageTarget("library"));
+  it.each(["library", "library/sphere", "library/project/entry"])(
+    "does not route removed library URL %s to artifacts",
+    (target) => {
+      expect(parsePageTarget(target)).toEqual({
+        page: "account",
+        tab: "index",
+      });
+    },
+  );
+
+  it("normalizes the Artifacts root trailing slash without selecting an agent", () => {
+    expect(parsePageTarget("artifacts/")).toEqual(parsePageTarget("artifacts"));
     expect(
       getPageUrlPath({ page: "agents", library: true, agent_id: "prior" }),
-    ).toBe("/library");
+    ).toBe("/artifacts");
   });
 
   it.each([
-    "library//entry",
-    "library/project/",
-    "library/project/entry/extra",
-    "library/project/entry/",
-    "library///",
+    "artifacts//entry",
+    "artifacts/project/",
+    "artifacts/project/entry/extra",
+    "artifacts/project/entry/",
+    "artifacts///",
   ])("retains malformed suffixes for not-found handling: %s", (target) => {
     const parsed = parsePageTarget(target);
     expect(parsed.page).toBe("agents");
     expect(getPageTargetPath(parsed)).toBe(target);
-    expect(parsed).not.toEqual(parsePageTarget("library/project/entry"));
+    expect(parsed).not.toEqual(parsePageTarget("artifacts/project/entry"));
   });
 
   it("parses site-license claim routes explicitly", () => {

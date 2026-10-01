@@ -337,11 +337,11 @@ export default function PublicTopNav({
       {!config?.openai_disabled && (
         <Button
           href={appPath("agents")}
-          icon={<Icon name="robot" />}
+          icon={<Icon name="home" />}
           size={isCompact ? "small" : "middle"}
           type="primary"
         >
-          Agents
+          Home
         </Button>
       )}
       <Button

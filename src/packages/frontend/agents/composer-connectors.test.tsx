@@ -83,9 +83,13 @@ const config = {
 function Controls({
   value = agent,
   supportsCocalcAccess = true,
+  extraActions,
 }: {
   value?: NamedAgent | null;
   supportsCocalcAccess?: boolean;
+  extraActions?: React.ComponentProps<
+    typeof AgentFileAttachment
+  >["extraActions"];
 }) {
   return (
     <ComposerConnectors
@@ -98,6 +102,7 @@ function Controls({
           onInsert={jest.fn()}
           onSetGoal={jest.fn()}
           extraMenuItems={extraMenuItems}
+          extraActions={extraActions}
         />
       )}
     </ComposerConnectors>
@@ -120,6 +125,40 @@ beforeEach(() => {
   }));
   mockApi.listAgentNetworkActivity.mockResolvedValue([]);
   mockApi.removeCocalcConnectorConfig.mockResolvedValue(undefined);
+});
+
+test("reference actions and connector entries coexist in the keyboard + menu", async () => {
+  const onReference = jest.fn();
+  const user = userEvent.setup();
+  render(
+    <Controls
+      extraActions={[
+        {
+          key: "reference",
+          label: "Link to CoCalc content",
+          onClick: onReference,
+        },
+      ]}
+    />,
+  );
+  const plus = screen.getByRole("button", { name: "Add files and more" });
+  plus.focus();
+  await user.keyboard("{Enter}");
+  const reference = await screen.findByRole("menuitem", {
+    name: "Link to CoCalc content",
+  });
+  await waitFor(() => expect(reference).toBeVisible());
+  expect(
+    screen.getByRole("menuitem", { name: "CoCalc", exact: true }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("menuitem", { name: "Agent Networks" }),
+  ).toBeVisible();
+  reference.focus();
+  fireEvent.keyDown(reference, { key: "Enter", keyCode: 13, which: 13 });
+  expect(onReference).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(plus).toHaveFocus());
+  expect(mockApi.saveCocalcConnectorConfig).not.toHaveBeenCalled();
 });
 
 test.each(["CoCalc", "Agent Networks"])(

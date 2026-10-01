@@ -84,6 +84,15 @@ export const MyAgentsWorkspacePage = lazyWithRetry(
   "Agents workspace route",
 );
 
+export const CollaboratorsPage = lazyWithRetry(
+  async () =>
+    loadRoute("collaborators", async () => ({
+      default: (await import("@cocalc/frontend/collaborators/page"))
+        .CollaboratorsPage,
+    })),
+  "Collaborators workspace route",
+);
+
 export const NotificationPage = lazyWithRetry(
   async () =>
     loadRoute("notifications", async () => {

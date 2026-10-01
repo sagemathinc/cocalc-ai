@@ -335,10 +335,15 @@ export function catalogResults(
       },
     });
   }
+  const pinOrder = new Map(pins.map((id, index) => [id, index]));
   return results.sort((a, b) => {
-    const ai = pins.indexOf(artifactIdentity(a)),
-      bi = pins.indexOf(artifactIdentity(b));
-    if (ai >= 0 || bi >= 0) return ai < 0 ? 1 : bi < 0 ? -1 : ai - bi;
+    const ai = pinOrder.get(artifactIdentity(a)),
+      bi = pinOrder.get(artifactIdentity(b));
+    if (ai != null || bi != null) {
+      if (ai == null) return 1;
+      if (bi == null) return -1;
+      return ai - bi;
+    }
     const order =
       sort === "title"
         ? compare(a.hit.artifact_title ?? "", b.hit.artifact_title ?? "")

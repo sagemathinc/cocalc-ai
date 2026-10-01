@@ -5,6 +5,7 @@
 
 import { redux, Store, TypedMap } from "@cocalc/frontend/app-framework";
 import type { AdminRoute } from "@cocalc/frontend/admin/routing";
+import type { CollaboratorsRoute } from "@cocalc/frontend/collaborators/workspace-types";
 import target from "@cocalc/frontend/client/handle-target";
 import type { AuthView } from "@cocalc/frontend/auth/types";
 import type { ConatConnectionStatus } from "@cocalc/frontend/conat/client";
@@ -27,9 +28,28 @@ export interface PageState {
   active_top_tab: TopTab; // key of the active tab
   active_agent_id?: string;
   active_agent_name?: string;
+  personal_url?: string;
+  personal_url_status?: "loading" | "resolved" | "error";
+  personal_url_error?: string;
+  personal_url_viewer?: string;
+  personal_url_owner_account_id?: string;
+  personal_url_project_id?: string;
   library_open?: boolean;
   library_project_id?: string;
   library_entry_id?: string;
+  collaborators_open?: boolean;
+  collaborators_view?: CollaboratorsRoute["view"];
+  collaborators_project_id?: string;
+  collaborators_project_ids?: string[];
+  collaborators_person_id?: string;
+  collaborators_contact_id?: string;
+  collaborators_invitation_id?: string;
+  collaborators_resource_kind?: CollaboratorsRoute["resourceKind"];
+  collaborators_resource_id?: string;
+  collaborators_route_error?: string;
+  collaborators_alias?: string;
+  collaborators_alias_kind?: CollaboratorsRoute["aliasKind"];
+  collaborators_alias_owner?: string;
   last_project_tab?: string; // project context retained while viewing global pages
   admin_route?: AdminRoute;
   auth_view?: AuthView;
@@ -75,11 +95,30 @@ export interface PageState {
 export class PageStore extends Store<PageState> {}
 
 export function init_store() {
-  const parsed = parsePageTarget(target);
+  const parsed = parsePageTarget(
+    target.includes("?") ? target : `${target}${location.search}`,
+  );
   const initialProjectId =
     parsed.page === "project" ? parsed.target.split("/")[0] : undefined;
+  const collaborators =
+    parsed.page === "agents" ? parsed.collaborators : undefined;
   const DEFAULT_STATE: PageState = {
     active_top_tab: getPageTopTab(parsed) as TopTab,
+    personal_url: parsed.page === "agents" ? parsed.personal_url : undefined,
+    personal_url_status:
+      parsed.page === "agents" && parsed.personal_url ? "loading" : undefined,
+    collaborators_open: collaborators != null,
+    collaborators_view: collaborators?.view,
+    collaborators_project_id: collaborators?.projectId,
+    collaborators_project_ids: collaborators?.projectIds,
+    collaborators_person_id: collaborators?.personId,
+    collaborators_contact_id: collaborators?.contactId,
+    collaborators_invitation_id: collaborators?.invitationId,
+    collaborators_resource_kind: collaborators?.resourceKind,
+    collaborators_resource_id: collaborators?.resourceId,
+    collaborators_route_error: collaborators?.routeError,
+    collaborators_alias: collaborators?.alias,
+    collaborators_alias_kind: collaborators?.aliasKind,
     library_open: parsed.page === "agents" && parsed.library === true,
     library_project_id:
       parsed.page === "agents" ? parsed.artifact_project_id : undefined,

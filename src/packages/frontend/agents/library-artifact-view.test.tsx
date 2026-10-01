@@ -17,6 +17,17 @@ import type { ForeignArtifactTarget } from "@cocalc/frontend/frame-editors/chat-
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
 
 const mockOpen = jest.fn();
+const mockInviteContent = jest.fn();
+jest.mock("@cocalc/frontend/collaborators/invite-content", () => ({
+  InviteContentButton: (props) => {
+    mockInviteContent(props);
+    return (
+      <button aria-label={`Invite to collaborate on ${props.title}`}>
+        Invite to collaborate
+      </button>
+    );
+  },
+}));
 const mockCopy = jest.fn();
 jest.mock("@cocalc/frontend/components/copy-to-clipboard-util", () => ({
   copyTextToClipboard: (options) => mockCopy(options),
@@ -197,9 +208,9 @@ test("loads the real source without an agent, preserves focus, and delegates exp
   const user = userEvent.setup();
   render(<LibraryArtifactView {...{ target, onBack, onShowConversation }} />);
   expect(
-    screen.getByRole("group", { name: "Library artifact navigation" }),
+    screen.getByRole("group", { name: "Artifact navigation" }),
   ).toHaveFocus();
-  const back = screen.getByRole("button", { name: "Back to Library" });
+  const back = screen.getByRole("button", { name: "Back to Artifacts" });
   back.focus();
   await screen.findByRole("heading", { name: "Actual source title", level: 1 });
   expect(back).toHaveFocus();
@@ -246,7 +257,14 @@ test("loads the real source without an agent, preserves focus, and delegates exp
   await user.tab();
   expect(screen.getByRole("button", { name: "Copy link" })).toHaveFocus();
   await user.tab();
+  expect(
+    screen.getByRole("button", {
+      name: "Invite to collaborate on Actual source title",
+    }),
+  ).toHaveFocus();
+  await user.tab();
   expect(screen.getByRole("document")).toHaveFocus();
+  await user.tab({ shift: true });
   await user.tab({ shift: true });
   await user.tab({ shift: true });
   await user.tab({ shift: true });
@@ -271,7 +289,7 @@ test("parent navigation remains keyboard accessible while loading, updating, and
   );
   expect(screen.getByText("Loading artifact source...")).toBeVisible();
   expect(
-    screen.getByRole("group", { name: "Library artifact navigation" }),
+    screen.getByRole("group", { name: "Artifact navigation" }),
   ).toHaveFocus();
   const navigation = screen.getByRole("button", { name: "Show sidebar" });
   expect(
@@ -295,7 +313,9 @@ test("parent navigation remains keyboard accessible while loading, updating, and
   expect(screen.getByRole("heading", { name: "Latest title" })).toBeVisible();
   expect(navigation).toHaveFocus();
   await user.tab();
-  expect(screen.getByRole("button", { name: "Back to Library" })).toHaveFocus();
+  expect(
+    screen.getByRole("button", { name: "Back to Artifacts" }),
+  ).toHaveFocus();
   await user.tab({ shift: true });
   act(() => {
     record = undefined;
@@ -346,36 +366,40 @@ test("uses sanitized source context and follows live title/content updates, not 
   ).not.toBeInTheDocument();
 });
 
-test("Copy link reads the parent's current URL at activation and reports clipboard failures", async () => {
-  const user = userEvent.setup();
-  render(<LibraryArtifactView target={target} onBack={() => {}} />);
-  await screen.findByRole("heading", { name: "Actual source title" });
-  const originalUrl = window.location.href;
-  try {
-    window.history.replaceState(
-      null,
-      "",
-      "/library/source-project/stable-entry",
-    );
-    const copy = screen.getByRole("button", { name: "Copy link" });
-    copy.focus();
-    await user.keyboard("{Enter}");
-    expect(mockCopy).toHaveBeenLastCalledWith({ text: window.location.href });
-    expect(screen.getByText("Link copied")).toHaveAttribute("role", "status");
-    expect(copy).toHaveFocus();
-    mockCopy.mockResolvedValueOnce(false);
-    await user.keyboard(" ");
-    expect(screen.getByRole("alert")).toHaveTextContent("Unable to copy link");
-    expect(screen.queryByText("Link copied")).not.toBeInTheDocument();
-    expect(copy).toHaveFocus();
-    await user.keyboard("{Enter}");
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByText("Link copied")).toHaveAttribute("role", "status");
-    expect(mockOpen).toHaveBeenCalledTimes(1);
-  } finally {
-    window.history.replaceState(null, "", originalUrl);
-  }
-});
+test.each([
+  "/artifacts/source-project/stable-entry",
+  "/u/another-owner/artifacts/notes",
+])(
+  "Copy link preserves %s at activation and reports clipboard failures",
+  async (url) => {
+    const user = userEvent.setup();
+    render(<LibraryArtifactView target={target} onBack={() => {}} />);
+    await screen.findByRole("heading", { name: "Actual source title" });
+    const originalUrl = window.location.href;
+    try {
+      window.history.replaceState(null, "", url);
+      const copy = screen.getByRole("button", { name: "Copy link" });
+      copy.focus();
+      await user.keyboard("{Enter}");
+      expect(mockCopy).toHaveBeenLastCalledWith({ text: window.location.href });
+      expect(screen.getByText("Link copied")).toHaveAttribute("role", "status");
+      expect(copy).toHaveFocus();
+      mockCopy.mockResolvedValueOnce(false);
+      await user.keyboard(" ");
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Unable to copy link",
+      );
+      expect(screen.queryByText("Link copied")).not.toBeInTheDocument();
+      expect(copy).toHaveFocus();
+      await user.keyboard("{Enter}");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getByText("Link copied")).toHaveAttribute("role", "status");
+      expect(mockOpen).toHaveBeenCalledTimes(1);
+    } finally {
+      window.history.replaceState(null, "", originalUrl);
+    }
+  },
+);
 
 test("name control saves an account alias through a keyboard-accessible dialog", async () => {
   const user = userEvent.setup();
@@ -414,7 +438,7 @@ test.each(["throw", "reject"])(
     );
     await screen.findByRole("heading", { name: "Actual source title" });
     const open = within(
-      screen.getByRole("group", { name: "Library artifact navigation" }),
+      screen.getByRole("group", { name: "Artifact navigation" }),
     ).getByRole("button", { name: "Conversation" });
     open.focus();
     await user.keyboard("{Enter}");
@@ -552,11 +576,29 @@ test("missing/deleted records never manufacture an artifact and keep Back availa
   expect(screen.getByRole("alert")).toHaveTextContent("Artifact unavailable");
   expect(screen.queryByRole("document")).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Artifact" })).toBeVisible();
-  const back = screen.getByRole("button", { name: "Back to Library" });
+  const back = screen.getByRole("button", { name: "Back to Artifacts" });
   back.focus();
   await userEvent.setup().keyboard("{Enter}");
   expect(onBack).toHaveBeenCalledTimes(1);
   expect(db.set).not.toHaveBeenCalled();
+});
+
+test("the artifact header invites to the source artifact rather than its backing file", async () => {
+  render(<LibraryArtifactView target={target} onBack={() => {}} />);
+  await screen.findByRole("button", {
+    name: "Invite to collaborate on Actual source title",
+  });
+  expect(mockInviteContent).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      source: {
+        project_id: target.projectId,
+        chat_path: target.path,
+        thread_id: target.threadId,
+        artifact_id: target.artifactId,
+        kind: "artifact",
+      },
+    }),
+  );
 });
 
 test("source access denial and failed loading expose Retry without selecting or inventing content", async () => {
@@ -584,7 +626,7 @@ test("late agent discovery does not reload the resource or steal focus", async (
     <LibraryArtifactView target={target} onBack={() => {}} />,
   );
   await screen.findByRole("heading", { name: "Actual source title" });
-  const back = screen.getByRole("button", { name: "Back to Library" });
+  const back = screen.getByRole("button", { name: "Back to Artifacts" });
   back.focus();
   view.rerender(
     <LibraryArtifactView
@@ -620,7 +662,7 @@ test("target change clears prior content while the new source loads", async () =
   });
   view.rerender(<LibraryArtifactView target={next} onBack={() => {}} />);
   expect(
-    screen.getByRole("group", { name: "Library artifact navigation" }),
+    screen.getByRole("group", { name: "Artifact navigation" }),
   ).toHaveFocus();
   expect(screen.queryByText("Actual source title")).not.toBeInTheDocument();
   expect(screen.queryByRole("document")).not.toBeInTheDocument();

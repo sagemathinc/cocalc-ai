@@ -18,6 +18,7 @@ interface Props {
   onBack: () => void;
   onShowConversation: (target: ForeignArtifactTarget) => Promise<void>;
   navigation?: ReactNode;
+  headerActions?: ReactNode;
 }
 
 export function LibraryEntry(props: Props) {
@@ -38,13 +39,14 @@ function ResolvedLibraryEntry({
   onBack,
   onShowConversation,
   navigation,
+  headerActions,
 }: Props) {
   const navigationIntent = useNavigationIntent(true, accountId);
   const back = () => {
     navigationIntent.current++;
     onBack();
   };
-  const { names, setName, resolve } = useArtifactNames();
+  const { names, setName } = useArtifactNames();
   const [entry, setEntry] = useState<CatalogEntry>();
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
@@ -53,11 +55,8 @@ function ResolvedLibraryEntry({
     setEntry(undefined);
     setError("");
     void (async () => {
-      const alias = entryId ? undefined : await resolve(projectId);
-      if (!entryId && !alias)
-        throw Error("This artifact name was not found in your account.");
-      const resolvedProjectId = alias?.project_id ?? projectId;
-      const resolvedEntryId = alias?.entry_id ?? entryId;
+      const resolvedProjectId = projectId;
+      const resolvedEntryId = entryId;
       if (!resolvedEntryId) throw Error("Missing artifact identity.");
       const value =
         await webapp_client.conat_client.hub.artifactCatalog.getEntry({
@@ -87,9 +86,9 @@ function ResolvedLibraryEntry({
 
   if (!entry) {
     return (
-      <section aria-label="Library artifact" style={{ padding: 16 }}>
+      <section aria-label="Artifact" style={{ padding: 16 }}>
         <Button type="text" onClick={back}>
-          Back to Library
+          Back to Artifacts
         </Button>
         {error ? (
           <Alert
@@ -123,6 +122,7 @@ function ResolvedLibraryEntry({
   return (
     <LibraryArtifactView
       navigation={navigation}
+      headerActions={headerActions}
       target={target}
       artifactName={
         names.find(

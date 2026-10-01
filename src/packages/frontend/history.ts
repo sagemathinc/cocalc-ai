@@ -48,6 +48,12 @@ The URI schema handled by the single page app is as follows:
 */
 
 import { join } from "path";
+import { cancelAliasNavigation } from "./collaborators/navigation";
+import { resolvePersonalUrl } from "./personal-url-navigation";
+import {
+  cancelPersonalUrlNavigation,
+  closedPersonalUrlState,
+} from "./personal-url-state";
 
 import { redux } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
@@ -73,6 +79,59 @@ import {
   createGitReviewNavigationSearch,
   consumeGitReviewOnlyNavigation,
 } from "./git/review-route";
+
+import { RetainedWorkspaceNavigation } from "./app/retained-workspace-navigation";
+
+const retainedWorkspaceNavigation = new RetainedWorkspaceNavigation();
+function retainedWorkspaceRuntime(tab: string): object | undefined {
+  if (tab === "projects") return redux.getStore("projects");
+  if (is_valid_uuid_string(tab) && redux.hasProjectStore(tab))
+    return redux.getProjectStore(tab);
+}
+
+/** Capture before the top tab changes, including departures through Artifacts. */
+export function rememberProjectsView() {
+  const activeTab = redux.getStore("page")?.get?.("active_top_tab");
+  const runtime = retainedWorkspaceRuntime(activeTab);
+  const account = redux.getStore("account")?.get("account_id");
+  const currentRoute = parsePageTarget(
+    location.pathname.slice(appBasePath.length).replace(/^\//, ""),
+  );
+  const currentViewMatches =
+    activeTab === "projects"
+      ? currentRoute.page === "projects"
+      : currentRoute.page === "project" &&
+        currentRoute.target.split("/")[0] === activeTab;
+  if (runtime && account && currentViewMatches) {
+    retainedWorkspaceNavigation.remember(
+      activeTab,
+      location.href,
+      account,
+      runtime,
+    );
+  }
+}
+
+/** Sidebar Projects means resume the Projects workspace, not reset to its list. */
+export function openProjectsWorkspace() {
+  const page = redux.getActions("page");
+  const activeTab = redux.getStore("page")?.get("active_top_tab");
+  if (activeTab === "projects" || is_valid_uuid_string(activeTab)) return;
+  const view = retainedWorkspaceNavigation.latest(
+    redux.getStore("account")?.get("account_id"),
+    retainedWorkspaceRuntime,
+  );
+  if (!view) return page.set_active_tab("projects");
+  cancelAliasNavigation();
+  cancelPersonalUrlNavigation();
+  const url = new URL(view.url);
+  set_url_with_search(
+    url.pathname.slice(appBasePath.length),
+    url.search,
+    url.hash,
+  );
+  return page.set_active_tab(view.tab, false);
+}
 
 const reviewSearchForNavigation = createGitReviewNavigationSearch(
   new URL(location.href),
@@ -119,31 +178,64 @@ export function set_url(url: string, hash?: string) {
   set_url_with_search(url, undefined, hash);
 }
 
+/** Metadata-only URL canonicalization; preserve Back/Forward history. */
+export function replace_url(url: string, hash?: string) {
+  set_url_with_search(url, undefined, hash, true);
+}
+
 export function set_url_with_search(
   url: string,
   search?: string,
   hash?: string,
+  replace = false,
 ) {
   if (IS_EMBEDDED) {
     // no need to mess with url in embedded mode.
     return;
   }
+  if (!replace && parsePageTarget(url.replace(/^\//, "")).page === "agents") {
+    rememberProjectsView();
+  }
+  const personalUrl = redux.getStore("page")?.get?.("personal_url");
+  if (personalUrl && url.replace(/^\//, "").split(/[?#]/)[0] !== personalUrl) {
+    cancelPersonalUrlNavigation();
+    redux.getActions("page").setState(closedPersonalUrlState);
+  }
   last_url = url;
+  const queryIndex = url.indexOf("?");
+  const path = queryIndex === -1 ? url : url.slice(0, queryIndex);
+  const routeSearch = queryIndex === -1 ? "" : url.slice(queryIndex + 1);
   const current = new URL(location.href);
   current.search = params();
-  const query_params =
-    search ?? reviewSearchForNavigation(current, join(appBasePath, url));
-  // Empty Library segments are invalid selections, not redundant separators.
-  // path.join would turn /library//project/entry into a different, valid route.
-  const full_url = /^\/?library(?:\/|$)/.test(url)
-    ? `${join(appBasePath, "/")}${url.replace(/^\//, "")}${query_params}${hash ?? location.hash}`
-    : join(appBasePath, url + query_params + (hash ?? location.hash));
+  const queryParams = new URLSearchParams(
+    search ?? reviewSearchForNavigation(current, join(appBasePath, path)),
+  );
+  // Invitation selection belongs to the destination, not the previous URL.
+  if (search == null) queryParams.delete("invitation_id");
+  new URLSearchParams(routeSearch).forEach((value, key) =>
+    queryParams.set(key, value),
+  );
+  const destination = parsePageTarget(path.replace(/^\//, ""));
+  if (
+    destination.page !== "agents" ||
+    destination.collaborators?.view !== "invites"
+  ) {
+    queryParams.delete("invitation_id");
+  }
+  const query_params = queryParams.size ? `?${queryParams}` : "";
+  // Empty artifact segments are invalid selections, not redundant separators.
+  // path.join would turn /artifacts//project/entry into a different, valid route.
+  const full_url =
+    /^\/?(?:u|artifacts|collaborators|chats|people)(?:\/|$)/.test(path)
+      ? `${join(appBasePath, "/")}${path.replace(/^\//, "")}${query_params}${hash ?? location.hash}`
+      : join(appBasePath, path + query_params + (hash ?? location.hash));
   if (full_url === location.pathname + location.search + location.hash) {
     // Back/Forward can change the current URL without going through set_url.
     // Rewriting that URL would push a duplicate and discard Forward history.
     return;
   }
-  history.pushState({}, "", full_url);
+  if (replace) history.replaceState({}, "", full_url);
+  else history.pushState({}, "", full_url);
   consumeGitReviewOnlyNavigation(new URL(location.href));
   window.dispatchEvent(new Event(APP_NAVIGATION_EVENT));
 }
@@ -154,6 +246,7 @@ export function load_target(
   ignore_kiosk: boolean = false,
   change_history: boolean = true,
 ) {
+  cancelAliasNavigation();
   if (target?.[0] == "/") {
     target = target.slice(1);
   }
@@ -173,6 +266,21 @@ export function load_target(
     return;
   }
   const parsed = parsePageTarget(target);
+  if (parsed.page === "agents" && parsed.personal_url) {
+    // Start watching before login/account hydration. The namespace owner stays
+    // in the URL; no viewer-local alias resolver ever sees this route.
+    void resolvePersonalUrl(parsed.personal_url);
+    if (
+      !redux.getStore("account").get("is_logged_in") &&
+      !webapp_client.is_signed_in()
+    ) {
+      redux.getActions("page").set_active_tab("account", false);
+    } else {
+      redux.getActions("page").set_active_tab("agents", false);
+      if (change_history) set_url(getPageUrlPath(parsed));
+    }
+    return;
+  }
   if (
     !redux.getStore("account").get("is_logged_in") &&
     !webapp_client.is_signed_in() &&
@@ -187,11 +295,29 @@ export function load_target(
   switch (parsed.page) {
     case "agents":
       redux.getActions("page").setState({
+        ...closedPersonalUrlState,
         library_open: parsed.library === true,
         library_project_id: parsed.artifact_project_id,
         library_entry_id: parsed.artifact_entry_id,
+        collaborators_open: parsed.collaborators != null,
+        collaborators_view: parsed.collaborators?.view,
+        collaborators_project_id: parsed.collaborators?.projectId,
+        collaborators_project_ids: parsed.collaborators?.projectIds,
+        collaborators_person_id: parsed.collaborators?.personId,
+        collaborators_contact_id: parsed.collaborators?.contactId,
+        collaborators_invitation_id: parsed.collaborators?.invitationId,
+        collaborators_resource_kind: parsed.collaborators?.resourceKind,
+        collaborators_resource_id: parsed.collaborators?.resourceId,
+        collaborators_alias: parsed.collaborators?.alias,
+        collaborators_alias_kind: parsed.collaborators?.aliasKind,
+        collaborators_alias_owner: parsed.collaborators?.aliasOwner,
+        collaborators_route_error:
+          parsed.collaborators?.routeError ??
+          (parsed.collaborators?.alias
+            ? "Resolving personal alias..."
+            : undefined),
         // Library overlays the workspace; keep its selected conversation.
-        ...(!parsed.library
+        ...(!parsed.library && !parsed.collaborators
           ? {
               active_agent_id: parsed.agent_id,
               active_agent_name:
@@ -325,12 +451,25 @@ window.onpopstate = (_) => {
   // The owning chat listens to popstate. Reopening the same file for a drawer
   // selection can create an extra history entry and discard the Forward stack.
   if (consumeGitReviewOnlyNavigation(new URL(location.href))) return;
+  // A suspended workspace is already at this exact address. Do not reopen its
+  // file, directory, search, settings, or other view just to make it visible.
+  const retained = retainedWorkspaceNavigation.find(
+    location.href,
+    redux.getStore("account")?.get("account_id"),
+    retainedWorkspaceRuntime,
+  );
+  if (retained && redux.getStore("page")?.get("active_top_tab") === "agents") {
+    cancelAliasNavigation();
+    cancelPersonalUrlNavigation();
+    redux.getActions("page").setState(closedPersonalUrlState);
+    void redux.getActions("page").set_active_tab(retained, false);
+    return;
+  }
+  cancelPersonalUrlNavigation();
   load_target(
-    decodeURIComponent(
-      document.location.pathname.slice(
-        appBasePath.length + (appBasePath.endsWith("/") ? 0 : 1),
-      ),
-    ),
+    document.location.pathname.slice(
+      appBasePath.length + (appBasePath.endsWith("/") ? 0 : 1),
+    ) + document.location.search,
     false,
     false,
   );

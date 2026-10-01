@@ -11,6 +11,8 @@ let examMode = false;
 let isLite = false;
 let loggedIn = true;
 let aiDisabled = false;
+let collaboratorsEnabled = false;
+const openCollaborators = jest.fn();
 const actions = { set_active_tab: jest.fn(), clear_all_handlers: jest.fn() };
 const openProjects = { size: 0 };
 const topBarStyle = { display: "flex", height: 36 };
@@ -26,7 +28,11 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
     if (field === "is_logged_in") return loggedIn;
     if (field === "fullscreen") return fullscreen;
     if (field === "exam_mode") return examMode;
+    if (field === "collaborators_enabled") return collaboratorsEnabled;
   },
+}));
+jest.mock("@cocalc/frontend/collaborators/navigation", () => ({
+  openCollaborators: (...args) => openCollaborators(...args),
 }));
 jest.mock("@cocalc/frontend/lite", () => ({
   get lite() {
@@ -86,8 +92,13 @@ jest.mock("./quick-navigation", () => ({
   __esModule: true,
   default: () => null,
 }));
+jest.mock("./home-workspace-navigation", () => ({
+  HomeWorkspaceNavigation: () => <button>More navigation</button>,
+}));
 jest.mock("./active-content", () => ({
-  ActiveContent: () => <div>Active content</div>,
+  ActiveContent: ({ navigation }) => (
+    <section aria-label="Workspace content">{navigation}Active content</section>
+  ),
 }));
 jest.mock("./connection-indicator", () => ({
   ConnectionIndicator: () => null,
@@ -157,29 +168,36 @@ beforeEach(() => {
   isLite = false;
   loggedIn = true;
   aiDisabled = false;
+  collaboratorsEnabled = false;
   jest.clearAllMocks();
 });
 
 test.each([false, true])(
-  "Agents hides the full navigation and Projects restores it (narrow=%s)",
+  "Projects keeps project navigation inside the shared workspace (narrow=%s)",
   async (isNarrow) => {
     narrow = isNarrow;
     const mounted = render(view());
     const nav = screen.getByRole("navigation");
-    const logo = within(nav).getByRole("link", { name: "CoCalc home" });
-    const agents = within(nav).getByRole("button", { name: "Agents" });
-    const projects = within(nav).getByRole("button", { name: "Projects" });
+    expect(
+      screen.getByRole("region", { name: "Workspace content" }),
+    ).toContainElement(nav);
+    expect(within(nav).queryByRole("link", { name: "CoCalc home" })).toBeNull();
+    expect(within(nav).queryByRole("button", { name: "Home" })).toBeNull();
+    expect(within(nav).getByRole("button", { name: "Projects" })).toBeVisible();
     const hosts = within(nav).getByRole("button", { name: "Compute" });
-    const segment = [logo, agents, projects, hosts];
-    expect(Array.from(nav.children).slice(0, 4)).toEqual(segment);
     expect(
       screen.getByRole("region", { name: "post-surface project navigation" }),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Docs" })).toBeVisible();
+    expect(
+      screen.getByRole("button", {
+        name: isNarrow ? "More navigation" : "Docs",
+      }),
+    ).toBeVisible();
     const user = userEvent.setup();
-    agents.focus();
+    hosts.focus();
+    expect(hosts).toHaveFocus();
     await user.keyboard("{Enter}");
-    expect(actions.set_active_tab).toHaveBeenCalledWith("agents");
+    expect(actions.set_active_tab).toHaveBeenCalledWith("hosts");
     activeTab = "agents";
     mounted.rerender(view());
     expect(screen.queryByRole("navigation")).toBeNull();
@@ -215,13 +233,55 @@ test("retained tabs preserve login and AI visibility", () => {
   loggedIn = false;
   const mounted = render(view());
   expect(screen.getByRole("link", { name: "CoCalc home" })).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Agents" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Home" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Projects" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Compute" })).toBeNull();
   loggedIn = true;
   aiDisabled = true;
   mounted.rerender(view());
-  expect(screen.queryByRole("button", { name: "Agents" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Home" })).toBeNull();
   expect(screen.getByRole("button", { name: "Projects" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Compute" })).toBeVisible();
+});
+
+test.each([false, true])(
+  "AI opt-out exposes only the feature-gated human entry (narrow=%s)",
+  async (isNarrow) => {
+    narrow = isNarrow;
+    aiDisabled = true;
+    collaboratorsEnabled = true;
+    const mounted = render(view());
+    expect(screen.queryByRole("button", { name: "Home" })).toBeNull();
+    const entry = screen.getByRole("button", { name: "People" });
+    entry.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(openCollaborators).toHaveBeenCalledTimes(1);
+    expect(openCollaborators).toHaveBeenCalledWith();
+    expect(actions.set_active_tab).not.toHaveBeenCalled();
+    collaboratorsEnabled = false;
+    mounted.rerender(view());
+    expect(screen.queryByRole("button", { name: "People" })).toBeNull();
+    collaboratorsEnabled = true;
+    loggedIn = false;
+    mounted.rerender(view());
+    expect(screen.queryByRole("button", { name: "People" })).toBeNull();
+  },
+);
+
+test("the compact folder tab returns from an opened project to the Projects list", async () => {
+  activeTab = "1ce4fe78-19c7-40a8-a598-947975744cd9";
+  render(view());
+  const nav = screen.getByRole("navigation");
+  const projects = within(nav).getByRole("button", { name: "Projects" });
+  const compute = within(nav).getByRole("button", { name: "Compute" });
+  expect(projects.querySelector('[data-icon="folder-open"]')).toBeTruthy();
+  expect(projects.textContent).toBe("");
+  expect(
+    projects.compareDocumentPosition(compute) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  projects.focus();
+  await userEvent.keyboard("{Enter}");
+  expect(actions.set_active_tab).toHaveBeenCalledWith("projects");
+  expect(projects).toHaveFocus();
 });

@@ -14,7 +14,7 @@ import {
   buildProjectFilesTarget,
   buildProjectScopedTarget,
 } from "@cocalc/frontend/project-routing";
-import { normalize } from "@cocalc/frontend/project/utils";
+import { normalize } from "@cocalc/frontend/project/normalize-path";
 
 export type AuxTabName = "new" | "search";
 

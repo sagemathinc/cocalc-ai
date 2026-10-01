@@ -346,15 +346,19 @@ function AuthDivider({ children = "or" }: { children?: ReactNode }) {
 
 function NavLink(props: { children: ReactNode; onClick: () => void }) {
   return (
-    <a
-      style={LINK_STYLE}
-      onClick={(e) => {
-        e.preventDefault();
-        props.onClick();
+    <button
+      type="button"
+      style={{
+        ...LINK_STYLE,
+        border: 0,
+        padding: 0,
+        background: "transparent",
+        font: "inherit",
       }}
+      onClick={props.onClick}
     >
       {props.children}
-    </a>
+    </button>
   );
 }
 

@@ -691,7 +691,8 @@ export const ProjectsPage: React.FC = () => {
                         whiteSpace: "nowrap",
                       }}
                     >
-                      <Icon name="edit" /> {intl.formatMessage(labels.projects)}
+                      <Icon name="folder" />{" "}
+                      {intl.formatMessage(labels.projects)}
                     </Title>
                     <Button
                       ref={createNewRef}

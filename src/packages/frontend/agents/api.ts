@@ -10,13 +10,33 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { AgentMentionReference } from "@cocalc/util/agent-mentions";
 
 export const personalAgentApi = () => webapp_client.conat_client.hub.agent;
-const listeners = new Set<() => void>();
+const listeners = new Set<(accountId?: string) => void>();
 const directoryRequests = new Map<string, Promise<NamedAgentDirectory>>();
 const networkRequests = new Map<string, Promise<AgentNetworkDirectory>>();
+const generations = new Map<string, number>();
+function generation(accountId: string) {
+  if (!generations.has(accountId)) generations.set(accountId, 0);
+  return generations.get(accountId)!;
+}
+function refreshDirectories(accountId?: string) {
+  for (const id of accountId ? [accountId] : generations.keys())
+    generations.set(id, generation(id) + 1);
+  if (accountId) {
+    directoryRequests.delete(accountId);
+    networkRequests.delete(accountId);
+  } else {
+    directoryRequests.clear();
+    networkRequests.clear();
+  }
+  for (const listener of listeners) listener(accountId);
+}
+
 export function refreshNamedAgents() {
-  directoryRequests.clear();
-  networkRequests.clear();
-  for (const listener of listeners) listener();
+  refreshDirectories();
+}
+
+export function refreshNamedAgentsForAccount(accountId: string) {
+  refreshDirectories(accountId);
 }
 
 export const refreshAgentNetworks = refreshNamedAgents;
@@ -29,7 +49,8 @@ export function loadNamedAgents(
     request = personalAgentApi()
       .listNamedAgents({})
       .catch((err) => {
-        directoryRequests.delete(accountId);
+        if (directoryRequests.get(accountId) === request)
+          directoryRequests.delete(accountId);
         throw err;
       });
     directoryRequests.set(accountId, request);
@@ -49,7 +70,8 @@ function loadAgentNetworks(accountId: string): Promise<AgentNetworkDirectory> {
     request = personalAgentApi()
       .listAgentNetworks({ limit: 100 })
       .catch((err) => {
-        networkRequests.delete(accountId);
+        if (networkRequests.get(accountId) === request)
+          networkRequests.delete(accountId);
         throw err;
       });
     networkRequests.set(accountId, request);
@@ -102,12 +124,14 @@ export function useNamedAgents(enabled = true) {
     loading: boolean;
   }>({ loading: true });
   useEffect(() => {
-    const refresh = () => setRevision((n) => n + 1);
+    const refresh = (id?: string) => {
+      if (!id || id === accountId) setRevision((n) => n + 1);
+    };
     listeners.add(refresh);
     return () => {
       listeners.delete(refresh);
     };
-  }, []);
+  }, [accountId]);
   useEffect(() => {
     let disposed = false;
     if (!accountId || !enabled) {
@@ -116,12 +140,14 @@ export function useNamedAgents(enabled = true) {
       return;
     }
     setState((old) => ({ ...old, loading: true }));
+    const epoch = generation(accountId);
     void loadNamedAgents(accountId)
       .then((directory) => {
-        if (!disposed) setState({ accountId, directory, loading: false });
+        if (!disposed && epoch === generation(accountId))
+          setState({ accountId, directory, loading: false });
       })
       .catch((err) => {
-        if (!disposed)
+        if (!disposed && epoch === generation(accountId))
           setState((old) => ({
             accountId,
             directory: old.accountId === accountId ? old.directory : undefined,
@@ -150,12 +176,14 @@ export function useAgentNetworks(enabled = true) {
     loading: boolean;
   }>({ loading: true });
   useEffect(() => {
-    const refresh = () => setRevision((n) => n + 1);
+    const refresh = (id?: string) => {
+      if (!id || id === accountId) setRevision((n) => n + 1);
+    };
     listeners.add(refresh);
     return () => {
       listeners.delete(refresh);
     };
-  }, []);
+  }, [accountId]);
   useEffect(() => {
     let disposed = false;
     if (!accountId || !enabled) {
@@ -163,12 +191,15 @@ export function useAgentNetworks(enabled = true) {
       return;
     }
     setState((old) => ({ ...old, loading: true }));
+    const epoch = generation(accountId);
     void loadAgentNetworks(accountId)
       .then((directory) => {
-        if (!disposed) setState({ accountId, directory, loading: false });
+        if (!disposed && epoch === generation(accountId))
+          setState({ accountId, directory, loading: false });
       })
       .catch((err) => {
-        if (!disposed) setState({ accountId, loading: false, error: `${err}` });
+        if (!disposed && epoch === generation(accountId))
+          setState({ accountId, loading: false, error: `${err}` });
       });
     return () => {
       disposed = true;

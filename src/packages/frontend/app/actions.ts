@@ -10,7 +10,11 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { set_window_title } from "@cocalc/frontend/browser";
-import { set_url, update_params } from "@cocalc/frontend/history";
+import {
+  set_url,
+  update_params,
+  rememberProjectsView,
+} from "@cocalc/frontend/history";
 import { labels } from "@cocalc/frontend/i18n";
 import { getIntl } from "@cocalc/frontend/i18n/get-intl";
 import {
@@ -19,6 +23,7 @@ import {
   requestFullscreen,
 } from "@cocalc/frontend/misc/fullscreen";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
+import { cancelPersonalUrlNavigation } from "@cocalc/frontend/personal-url-state";
 import { disconnect_from_project } from "@cocalc/frontend/project/websocket/connect";
 import { session_manager } from "@cocalc/frontend/session";
 import { once } from "@cocalc/util/async-utils";
@@ -179,8 +184,16 @@ export class PageActions extends Actions<PageState> {
   }
 
   set_active_tab = async (key, change_history = true): Promise<void> => {
+    if (key !== "agents" && change_history) cancelPersonalUrlNavigation();
+    const humanPersonalUrl = /^u\/[^/]+\/(?:chats|people)(?:\/|$)/.test(
+      this.redux.getStore("page").get("personal_url") ?? "",
+    );
+    // Human routes share this tab key, but not the AI opt-out. The renderer
+    // independently gates Collaborators on its site feature flag.
     if (
       key === "agents" &&
+      !this.redux.getStore("page").get("collaborators_open") &&
+      !humanPersonalUrl &&
       redux.getStore("account")?.getIn(["other_settings", "openai_disabled"])
     ) {
       key = "projects";
@@ -195,7 +208,12 @@ export class PageActions extends Actions<PageState> {
       }
     }
     if (lite) {
-      if (!LITE_TABS.has(key)) {
+      // Collaborators uses the agents workspace shell, not Lite's project tab.
+      const collaboratorsWorkspace =
+        key === "agents" &&
+        (this.redux.getStore("page").get("collaborators_open") ||
+          humanPersonalUrl);
+      if (!LITE_TABS.has(key) && !collaboratorsWorkspace) {
         key = project_id;
       }
       if (key === "ssh") {
@@ -214,6 +232,7 @@ export class PageActions extends Actions<PageState> {
       return;
     }
     const prev_key = this.redux.getStore("page").get("active_top_tab");
+    if (prev_key !== key) rememberProjectsView();
     const previousProjectNeedsRuntime =
       prev_key?.length === 36 && !hasReducedProjectState(prev_key);
     const nextProjectNeedsRuntime =
@@ -252,19 +271,46 @@ export class PageActions extends Actions<PageState> {
         const page = this.redux.getStore("page");
         const agent_id = page.get("active_agent_id");
         const agent_name = page.get("active_agent_name");
+        const accountId = redux.getStore("account")?.get("account_id");
         if (change_history) {
           set_url(
             getPageUrlPath({
               page: "agents",
-              agent_id: agent_name ?? agent_id,
+              personal_url: page.get("personal_url"),
+              owner: accountId,
+              agent_id: accountId ? (agent_name ?? agent_id) : agent_id,
               library: page.get("library_open"),
               artifact_project_id: page.get("library_project_id"),
               artifact_entry_id: page.get("library_entry_id"),
+              collaborators: page.get("collaborators_open")
+                ? {
+                    view: page.get("collaborators_view"),
+                    projectId: page.get("collaborators_project_id"),
+                    projectIds: page.get("collaborators_project_ids")?.toJS(),
+                    personId: page.get("collaborators_person_id"),
+                    contactId: page.get("collaborators_contact_id"),
+                    invitationId: page.get("collaborators_invitation_id"),
+                    resourceKind: page.get("collaborators_resource_kind"),
+                    resourceId: page.get("collaborators_resource_id"),
+                    routeError: page.get("collaborators_route_error"),
+                    alias: page.get("collaborators_alias"),
+                    aliasKind: page.get("collaborators_alias_kind"),
+                    aliasOwner: page.get("collaborators_alias_owner"),
+                  }
+                : undefined,
             }),
-            page.get("library_open") ? "" : undefined,
+            page.get("library_open") || page.get("collaborators_open")
+              ? ""
+              : undefined,
           );
         }
-        set_window_title(page.get("library_open") ? "Library" : "Agents");
+        set_window_title(
+          page.get("collaborators_open")
+            ? "People"
+            : page.get("library_open")
+              ? "Artifacts"
+              : "Home",
+        );
         return;
       }
       case "projects":

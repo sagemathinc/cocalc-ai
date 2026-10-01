@@ -1,12 +1,21 @@
 /** @jest-environment jsdom */
 
 import { redux, project_redux_name } from "@cocalc/frontend/app-framework";
-import { set_url } from "@cocalc/frontend/history";
+import { set_url, rememberProjectsView } from "@cocalc/frontend/history";
+import { set_window_title } from "@cocalc/frontend/browser";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { PageActions } from "./actions";
 import { init_store } from "./store";
 import { setNotificationsOpen } from "../notifications/drawer-state";
 import { openLibrary } from "../agents/library-navigation";
+
+let mockLite = false;
+jest.mock("@cocalc/frontend/lite", () => ({
+  get lite() {
+    return mockLite;
+  },
+  project_id: "00000000-0000-4000-8000-000000000001",
+}));
 
 jest.mock("../notifications/drawer-state", () => ({
   setNotificationsOpen: jest.fn(),
@@ -40,6 +49,7 @@ jest.mock("@cocalc/frontend/browser", () => ({ set_window_title: jest.fn() }));
 jest.mock("@cocalc/frontend/history", () => ({
   set_url: jest.fn(),
   update_params: jest.fn(),
+  rememberProjectsView: jest.fn(),
 }));
 jest.mock("@cocalc/frontend/i18n", () => ({
   labels: {
@@ -90,6 +100,7 @@ const page = () => redux.getStore("page") as any;
 const projects = () => redux.getStore("projects");
 
 beforeEach(() => {
+  mockLite = false;
   jest.clearAllMocks();
   jest.mocked(ensureProjectReduxRuntime).mockResolvedValue(undefined);
   init_store();
@@ -140,6 +151,145 @@ afterEach(() => {
 });
 
 describe("project context across global navigation", () => {
+  it("writes the current invitation selection and clears it outside Invites", async () => {
+    actions.setState({
+      collaborators_open: true,
+      collaborators_view: "invites",
+      collaborators_invitation_id: B,
+    });
+    await actions.set_active_tab("agents");
+    expect(set_url).toHaveBeenLastCalledWith(
+      `/people/invites?invitation_id=${B}`,
+      "",
+    );
+    actions.setState({ collaborators_invitation_id: C });
+    await actions.set_active_tab("agents");
+    expect(set_url).toHaveBeenLastCalledWith(
+      `/people/invites?invitation_id=${C}`,
+      "",
+    );
+    actions.setState({ collaborators_view: "people" });
+    await actions.set_active_tab("agents");
+    expect(set_url).toHaveBeenLastCalledWith("/people/collaborators", "");
+  });
+  it.each(["people", "invites"] as const)(
+    "generates distinct %s contact paths from page state",
+    async (view) => {
+      actions.setState({
+        collaborators_open: true,
+        collaborators_view: view,
+        collaborators_contact_id: C,
+      });
+      await actions.set_active_tab("agents");
+      expect(set_url).toHaveBeenLastCalledWith(
+        `/people/${view === "people" ? "collaborators" : view}/contact/${C}`,
+        "",
+      );
+      expect(page().get("collaborators_person_id")).toBeUndefined();
+    },
+  );
+
+  it.each([
+    [true, true],
+    [true, false],
+    [false, true],
+    [false, false],
+  ])(
+    "preserves Lite Collaborators routing (history=%s, enabled=%s)",
+    async (changeHistory, enabled) => {
+      mockLite = true;
+      redux.createActions("customize").setState({
+        collaborators_enabled: enabled,
+      });
+      actions.setState({
+        collaborators_open: true,
+        collaborators_view: "people",
+        collaborators_project_id: B,
+        collaborators_person_id: C,
+      });
+      await actions.set_active_tab("agents", changeHistory);
+      // The workspace itself renders the disabled notice when the flag is off.
+      expect(page().get("active_top_tab")).toBe("agents");
+      expect(page().get("collaborators_project_id")).toBe(B);
+      expect(page().get("collaborators_person_id")).toBe(C);
+      expect(projectActions[A].show).not.toHaveBeenCalled();
+      expect(projectActions[A].push_state).not.toHaveBeenCalled();
+      if (changeHistory) {
+        expect(set_url).toHaveBeenLastCalledWith(
+          `/people/collaborators/project/${B}/person/${C}`,
+          "",
+        );
+      } else {
+        expect(set_url).not.toHaveBeenCalled();
+      }
+    },
+  );
+  it("labels the workspace Home without changing the agents route", async () => {
+    await actions.set_active_tab("agents");
+    expect(page().get("active_top_tab")).toBe("agents");
+    expect(set_url).toHaveBeenLastCalledWith("/agents", undefined);
+    expect(set_window_title).toHaveBeenLastCalledWith("Home");
+  });
+  it("still redirects unsupported Lite tabs without a Collaborators overlay", async () => {
+    mockLite = true;
+    await actions.set_active_tab("agents");
+    expect(page().get("active_top_tab")).toBe(A);
+    expect(projectActions[A].show).toHaveBeenCalled();
+  });
+  it("does not let a retained Collaborators overlay bypass Lite tab restrictions", async () => {
+    mockLite = true;
+    actions.setState({ collaborators_open: true });
+    await actions.set_active_tab("projects");
+    expect(page().get("active_top_tab")).toBe(A);
+  });
+  it.each([false, true])(
+    "preserves human routes with AI disabled (Lite=%s)",
+    async (isLite) => {
+      mockLite = isLite;
+      actions.setState({
+        collaborators_open: true,
+        collaborators_view: "conversations",
+        collaborators_project_id: B,
+        collaborators_resource_kind: "conversation",
+        collaborators_resource_id: "human-thread",
+      });
+      redux.getActions("account").setState({
+        other_settings: { openai_disabled: true },
+      });
+      await actions.set_active_tab("agents", false);
+      expect(page().get("active_top_tab")).toBe("agents");
+      expect(page().get("collaborators_resource_id")).toBe("human-thread");
+      expect(set_url).not.toHaveBeenCalled();
+      await actions.set_active_tab("agents");
+      expect(set_url).toHaveBeenLastCalledWith(
+        `/people/conversations/project/${B}/resource/conversation/human-thread`,
+        "",
+      );
+      // The route survives settings loading; rendering still gates the feature.
+      expect(projectActions[A].show).not.toHaveBeenCalled();
+    },
+  );
+  it("still blocks the ordinary Lite Agents route with AI disabled", async () => {
+    mockLite = true;
+    redux
+      .getActions("account")
+      .setState({ other_settings: { openai_disabled: true } });
+    await actions.set_active_tab("agents", false);
+    expect(page().get("active_top_tab")).toBe(A);
+  });
+  it("keeps the exam guard for the Lite Collaborators workspace", async () => {
+    mockLite = true;
+    actions.setState({ collaborators_open: true });
+    redux.createActions("customize").setState({
+      exam_mode: true,
+      project_id: A,
+    });
+    redux
+      .getActions("account")
+      .setState({ other_settings: { openai_disabled: true } });
+    await actions.set_active_tab("agents");
+    expect(page().get("active_top_tab")).toBe(A);
+  });
   it.each([false, true])(
     "keeps Agents navigation in the assigned exam project (AI disabled=%s)",
     async (disabled) => {
@@ -194,15 +344,44 @@ describe("project context across global navigation", () => {
   });
 
   it("opens the selected agent's stable workspace URL", async () => {
+    redux.getActions("account").setState({ account_id: A });
     actions.setState({
-      active_agent_id: "agent-123",
+      active_agent_id: C,
       active_agent_name: "reviewer",
     });
     await actions.set_active_tab("agents");
-    expect(set_url).toHaveBeenLastCalledWith("/agents/reviewer", undefined);
+    expect(set_url).toHaveBeenLastCalledWith(
+      `/u/${A}/agents/reviewer`,
+      undefined,
+    );
   });
 
-  it("agent identity canonicalization does not implicitly close Library", () => {
+  it("uses a stable ID while the agent name or account is unavailable", async () => {
+    actions.setState({ active_agent_id: C });
+    await actions.set_active_tab("agents");
+    expect(set_url).toHaveBeenLastCalledWith(`/agents/${C}`, undefined);
+    redux.getActions("account").setState({ account_id: A });
+    await actions.set_active_tab("agents");
+    expect(set_url).toHaveBeenLastCalledWith(`/agents/${C}`, undefined);
+  });
+
+  it.each(["chats", "people"])(
+    "qualified %s can resolve with AI disabled in Lite",
+    async (kind) => {
+      mockLite = true;
+      redux
+        .getActions("account")
+        .setState({ other_settings: { openai_disabled: true } });
+      actions.setState({
+        personal_url: `u/alice/${kind}/shared`,
+        personal_url_status: "loading",
+      });
+      await actions.set_active_tab("agents", false);
+      expect(page().get("active_top_tab")).toBe("agents");
+    },
+  );
+
+  it("agent identity canonicalization does not implicitly close Artifacts", () => {
     actions.setState({
       active_agent_id: "reviewer",
       library_open: true,
@@ -218,7 +397,7 @@ describe("project context across global navigation", () => {
     expect(page().get("library_entry_id")).toBe("entry");
   });
 
-  it("opens Library from a project without changing the selected agent", async () => {
+  it("opens Artifacts from a project without changing the selected agent", async () => {
     actions.setState({
       active_agent_id: "agent-123",
       active_agent_name: "reviewer",
@@ -230,11 +409,11 @@ describe("project context across global navigation", () => {
     expect(page().get("active_agent_id")).toBe("agent-123");
     expect(page().get("active_agent_name")).toBe("reviewer");
     expect(projectActions[B].hide).toHaveBeenCalledTimes(1);
-    expect(set_url).toHaveBeenLastCalledWith(`/library/${A}/entry`, "");
+    expect(set_url).toHaveBeenLastCalledWith(`/artifacts/${A}/entry`, "");
   });
 
   it.each([false, true])(
-    "retains the Library URL when selecting Agents (detail=%s)",
+    "retains the Artifacts URL when selecting Agents (detail=%s)",
     async (detail) => {
       actions.setState({
         active_agent_id: "agent-123",
@@ -246,7 +425,7 @@ describe("project context across global navigation", () => {
       await actions.set_active_tab("account");
       await actions.set_active_tab("agents");
       expect(set_url).toHaveBeenLastCalledWith(
-        detail ? `/library/${A}/${B}` : "/library",
+        detail ? `/artifacts/${A}/${B}` : "/artifacts",
         "",
       );
       expect(page().get("active_agent_id")).toBe("agent-123");
@@ -257,14 +436,14 @@ describe("project context across global navigation", () => {
     },
   );
 
-  it.each(["library", `library/${A}/${B}`, "agents/reviewer"])(
+  it.each(["artifacts", `artifacts/${A}/${B}`, `agents/${C}`])(
     "initializes scalar route state on reload of %s",
     (target) => {
       jest.requireMock("@cocalc/frontend/client/handle-target").default =
         target;
       redux.removeStore("page");
       init_store();
-      const library = target.startsWith("library");
+      const library = target.startsWith("artifacts");
       expect(page().get("active_top_tab")).toBe("agents");
       expect(page().get("library_open")).toBe(library);
       expect(page().get("library_project_id")).toBe(
@@ -273,15 +452,22 @@ describe("project context across global navigation", () => {
       expect(page().get("library_entry_id")).toBe(
         target.includes(B) ? B : undefined,
       );
-      expect(page().get("active_agent_id")).toBe(
-        library ? undefined : "reviewer",
-      );
-      expect(page().get("active_agent_name")).toBe(
-        library ? undefined : "reviewer",
-      );
+      expect(page().get("active_agent_id")).toBe(library ? undefined : C);
+      expect(page().get("active_agent_name")).toBeUndefined();
       expect(page().get("last_project_tab")).toBeUndefined();
     },
   );
+
+  it("initial qualified URLs contain no viewer-local selection", () => {
+    jest.requireMock("@cocalc/frontend/client/handle-target").default =
+      "u/bob/agents/reviewer";
+    redux.removeStore("page");
+    init_store();
+    expect(page().get("personal_url")).toBe("u/bob/agents/reviewer");
+    expect(page().get("personal_url_status")).toBe("loading");
+    expect(page().get("active_agent_id")).toBeUndefined();
+    expect(page().get("active_agent_name")).toBeUndefined();
+  });
 
   it("retains context across repeated Account/Admin visits and updates on explicit project navigation", async () => {
     await actions.set_active_tab(B);
@@ -402,4 +588,15 @@ describe("project context across global navigation", () => {
     expect(page().get("active_top_tab")).toBe(A);
     expect(page().get("last_project_tab")).toBe(A);
   });
+});
+
+test("captures the Projects workspace before switching to Artifacts", async () => {
+  actions.setState({ active_top_tab: A, library_open: true });
+  let capturedTab: unknown;
+  jest.mocked(rememberProjectsView).mockImplementationOnce(() => {
+    capturedTab = redux.getStore("page").get("active_top_tab");
+  });
+  await actions.set_active_tab("agents");
+  expect(capturedTab).toBe(A);
+  expect(redux.getStore("page").get("active_top_tab")).toBe("agents");
 });

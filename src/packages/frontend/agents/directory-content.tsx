@@ -19,7 +19,11 @@ export function AgentDirectoryContent({
           showIcon
           title="Unable to load agents"
           description={error}
-          action={<Button onClick={refreshNamedAgents}>Retry directory</Button>}
+          action={
+            <Button onClick={() => refreshNamedAgents()}>
+              Retry directory
+            </Button>
+          }
         />
       )}
       {hasDirectory && children}

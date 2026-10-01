@@ -12,6 +12,7 @@ import { getDocsEntry, listDocsEntries } from "@cocalc/docs";
 import {
   DocsBrowser,
   DocsFontSizeFrame,
+  docsSiteProfileFromLocation,
   DOCS_BROWSER_FLYOUT_STYLE,
   DOCS_BROWSER_MUTED_TITLE_STYLE,
   DOCS_BROWSER_PAGE_STYLE,
@@ -32,6 +33,8 @@ import { useDocsPrivateState } from "@cocalc/frontend/docs/private-state/use-doc
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Tooltip } from "@cocalc/frontend/components";
 import {
+  APP_DOCS_SELECTED_STORAGE_KEY,
+  saveStoredAppDocsSlug,
   PROJECT_DOCS_OPEN_EVENT,
   type ProjectDocsOpenDetail,
   projectDocsStorageKey,
@@ -43,7 +46,7 @@ import {
 } from "@cocalc/frontend/project/docs-actions";
 import { lite } from "@cocalc/frontend/lite";
 import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -56,7 +59,11 @@ function loadStoredProjectDocsEntry({
 }): DocsEntry | undefined {
   if (typeof window === "undefined") return undefined;
   const storedSlug = window.localStorage
-    .getItem(projectDocsStorageKey(projectId))
+    .getItem(
+      projectId
+        ? projectDocsStorageKey(projectId)
+        : APP_DOCS_SELECTED_STORAGE_KEY,
+    )
     ?.trim();
   return storedSlug ? getDocsEntry(storedSlug, docsAccess) : undefined;
 }
@@ -68,15 +75,18 @@ function saveStoredProjectDocsEntry({
   entry?: DocsEntry;
   projectId: string;
 }): void {
-  saveStoredProjectDocsSlug({ projectId, slug: entry?.slug });
+  if (projectId) saveStoredProjectDocsSlug({ projectId, slug: entry?.slug });
+  else saveStoredAppDocsSlug(entry?.slug);
 }
 
 export function ProjectDocsPanel({
   layout,
-  project_id,
+  project_id = "",
+  request,
 }: {
+  request?: { slug?: string };
   layout: "flyout" | "page";
-  project_id: string;
+  project_id?: string;
 }) {
   const [messageApi, contextHolder] = message.useMessage();
   const [privateFilter, setPrivateFilter] = useState<DocsPrivateFilter>("all");
@@ -95,11 +105,14 @@ export function ProjectDocsPanel({
             features: computeVmEnabled ? ["compute-vms"] : [],
             includeAdmin: isAdmin,
             includeSignedIn: !!accountId,
+            siteProfile: docsSiteProfileFromLocation(),
           },
     [accountId, computeVmEnabled, isAdmin],
   );
   const docsPrivateState = useDocsPrivateState(accountId);
-  const [requestedEntry, setRequestedEntry] = useState<DocsEntry | undefined>();
+  const [requestedEntry, setRequestedEntry] = useState<DocsEntry | undefined>(
+    () => (request?.slug ? getDocsEntry(request.slug, docsAccess) : undefined),
+  );
   const actionAvailability = useMemo(
     () =>
       listDocsAppActions({
@@ -116,14 +129,22 @@ export function ProjectDocsPanel({
   const initialEntry = useMemo(
     () =>
       requestedEntry ??
-      loadStoredProjectDocsEntry({
-        docsAccess,
-        projectId: project_id,
-      }),
+      loadStoredProjectDocsEntry({ docsAccess, projectId: project_id }),
     [docsAccess, project_id, requestedEntry],
   );
 
   useEffect(() => {
+    if (!request?.slug) return;
+    const entry = getDocsEntry(request.slug, docsAccess);
+    if (!entry) return;
+    // Reselect explicit help even if this guide was opened earlier. Opening
+    // the menu without a slug preserves the mounted browser's current state.
+    setRequestedEntry({ ...entry });
+    saveStoredProjectDocsEntry({ entry, projectId: project_id });
+  }, [docsAccess, project_id, request]);
+
+  useEffect(() => {
+    if (!project_id) return;
     function handleProjectDocsOpen(event: Event): void {
       const detail = (event as CustomEvent<ProjectDocsOpenDetail>).detail;
       if (detail?.projectId !== project_id) return;
@@ -259,19 +280,21 @@ export function ProjectDocsPanel({
                 marginTop: isFlyout ? 4 : 8,
               }}
             >
-              Help for this project
+              {project_id
+                ? "Help for this project"
+                : "Help for this CoCalc site"}
             </Title>
           </div>
           <Paragraph
             style={{
-              color: COLORS.GRAY_M,
+              color: UI_COLORS.secondary,
               fontSize: isFlyout ? "0.93em" : undefined,
               lineHeight: isFlyout ? 1.4 : undefined,
               marginBottom: isFlyout ? 6 : 20,
             }}
           >
-            Search current CoCalc-ai docs without leaving the project. Pages
-            with implemented actions can open the relevant app panel directly.
+            Search current CoCalc-ai docs without leaving your work. Pages with
+            implemented actions can open the relevant app panel directly.
           </Paragraph>
         </Flex>
         <DocsBrowser

@@ -4,17 +4,7 @@
  */
 
 import { DndContext, useDraggable } from "@dnd-kit/core";
-import {
-  Alert,
-  Button,
-  Card,
-  Input,
-  Modal,
-  Radio,
-  Space,
-  Tag,
-  Typography,
-} from "antd";
+import { Alert, Button, Card, Modal, Space, Tag, Typography } from "antd";
 import {
   React,
   redux,
@@ -108,11 +98,10 @@ import {
 } from "./access-landing-auth";
 import { HardDeleteProjectModal } from "@cocalc/frontend/projects/hard-delete-project-modal";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
+import { ProjectAccessLandingPage } from "../access";
 import type { ProjectAccessLandingInfo } from "@cocalc/conat/hub/api/projects";
 import { lite } from "@cocalc/frontend/lite";
 import { shouldBypassWorkspaceStartupGuardForTab } from "./workspace-startup";
-import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { isProjectRuntimePreparing } from "@cocalc/frontend/project/runtime-start-readiness";
 import {
   isFreeTierPressureRecovery,
@@ -144,7 +133,7 @@ const FULL_PAGE_FALLBACK_TAB: FixedTab = "files";
 const HIDDEN_RAIL_TOP_LEFT_WIDTH_PX = 84;
 const HIDDEN_RAIL_HOME_BUTTON_WIDTH_PX = 44;
 const FLYOUT_RESIZE_GUTTER_WIDTH_PX = 5;
-const { Paragraph, Text, Title } = Typography;
+const { Paragraph, Title } = Typography;
 
 const FileActionModal = lazyWithRetry(
   async () => ({ default: (await import("../file-action-modal")).default }),
@@ -874,14 +863,6 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     if (hardDeleteBlocked) {
       return;
     }
-    if (!is_active) {
-      // see https://github.com/sagemathinc/cocalc/issues/3799
-      // Some fixed project tabs are expensive and hooked into broad redux
-      // state. We retain hidden fixed tabs only while this project is active,
-      // so switching within the project is smooth without making background
-      // projects do hidden panel work.
-      return;
-    }
     if (initialWorkspaceRender.pending) {
       return;
     }
@@ -893,7 +874,10 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
         ? retainedFixedTabs
         : [...retainedFixedTabs, activeFixedTab];
       return fixedTabsToRender.map((tab) =>
-        renderFixedFullPageContent(tab, displayProjectTab === tab),
+        renderFixedFullPageContent(
+          tab,
+          projectPageIsForeground && displayProjectTab === tab,
+        ),
       );
     }
     const retainedFixedContent = retainedFixedTabs.map((tab) =>
@@ -906,7 +890,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
       ...retainedFixedContent,
       <Content
         key={displayProjectTab}
-        is_visible={true}
+        is_visible={projectPageIsForeground}
         tab_name={displayProjectTab}
       />,
     ];
@@ -1485,245 +1469,6 @@ function ProjectAccessLandingGate({ project_id, is_active }: Props) {
     );
   }
   return <Loading />;
-}
-
-function ProjectAccessLandingPage({
-  info,
-  loading,
-  error,
-  onChange,
-}: {
-  info: ProjectAccessLandingInfo;
-  loading: boolean;
-  error: string | null;
-  onChange: (info: ProjectAccessLandingInfo) => void;
-}) {
-  const [requestedRole, setRequestedRole] = useState<"viewer" | "collaborator">(
-    info.relationship === "viewer" ? "collaborator" : "viewer",
-  );
-  const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const projectTitle = info.title?.trim() || "Untitled project";
-  const owner = info.owner;
-  const canChooseViewer = info.relationship !== "viewer";
-
-  async function refreshProjectAccess() {
-    await (
-      redux.getActions("projects") as any
-    )?.ensureRealtimeFeedForCurrentAccount?.();
-    await redux.getActions("projects").open_project({
-      project_id: info.project_id,
-      target: "files",
-      switch_to: true,
-      restore_session: false,
-    });
-  }
-
-  async function acceptInvite() {
-    if (!info.pending_invite) return;
-    setBusy(true);
-    setActionError(null);
-    try {
-      await webapp_client.project_collaborators.respond_invite({
-        invite_id: info.pending_invite.invite_id,
-        project_id: info.project_id,
-        action: "accept",
-      });
-      await refreshProjectAccess();
-    } catch (err) {
-      setActionError(`${err}`);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function declineInvite() {
-    if (!info.pending_invite) return;
-    setBusy(true);
-    setActionError(null);
-    try {
-      await webapp_client.project_collaborators.respond_invite({
-        invite_id: info.pending_invite.invite_id,
-        project_id: info.project_id,
-        action: "decline",
-      });
-      const next =
-        await webapp_client.project_collaborators.get_access_landing_info({
-          project_id: info.project_id,
-        });
-      onChange(next);
-    } catch (err) {
-      setActionError(`${err}`);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function requestAccess() {
-    setBusy(true);
-    setActionError(null);
-    try {
-      const request = await webapp_client.project_collaborators.request_access({
-        project_id: info.project_id,
-        requested_role: requestedRole,
-        message,
-        source:
-          info.relationship === "viewer" ? "viewer-read-only" : "project-url",
-      });
-      onChange({
-        ...info,
-        pending_request: {
-          request_id: request.request_id,
-          requested_role: request.requested_role,
-          status: "pending",
-        },
-      });
-      setMessage("");
-    } catch (err) {
-      setActionError(`${err}`);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div
-      style={{
-        minHeight: "100%",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24,
-        background: UI_COLORS.inset,
-      }}
-    >
-      <Card style={{ width: "100%", maxWidth: 680 }}>
-        <Space vertical size="middle" style={{ width: "100%" }}>
-          <div>
-            <Title level={3} style={{ marginTop: 0, marginBottom: 4 }}>
-              Project access
-            </Title>
-            <Text type="secondary">
-              You are signed in, but this project is not currently available as
-              a normal collaborator project.
-            </Text>
-          </div>
-          <div
-            style={{
-              border: `1px solid ${UI_COLORS.border}`,
-              borderRadius: 10,
-              padding: 14,
-              background: UI_COLORS.surface,
-            }}
-          >
-            <Title level={4} style={{ marginTop: 0 }}>
-              {projectTitle}
-            </Title>
-            {owner != null && (
-              <Space>
-                <Avatar
-                  account_id={owner.account_id}
-                  display_name={owner.name ?? undefined}
-                  first_name={owner.first_name ?? undefined}
-                  last_name={owner.last_name ?? undefined}
-                  size={32}
-                />
-                <span>
-                  Owner:{" "}
-                  <Text strong>
-                    {displayNameFromAccount({
-                      display_name: owner.name,
-                      first_name: owner.first_name,
-                      last_name: owner.last_name,
-                    }) || "Unknown"}
-                  </Text>
-                </span>
-              </Space>
-            )}
-          </div>
-          {info.pending_invite != null ? (
-            <Alert
-              showIcon
-              type="success"
-              title={`You were invited as a ${info.pending_invite.invite_role}.`}
-              description={
-                <Space wrap style={{ marginTop: 8 }}>
-                  <Button type="primary" loading={busy} onClick={acceptInvite}>
-                    Accept invite
-                  </Button>
-                  <Button disabled={busy} onClick={declineInvite}>
-                    Decline
-                  </Button>
-                </Space>
-              }
-            />
-          ) : info.pending_request != null ? (
-            <Alert
-              showIcon
-              type="info"
-              title="Access request pending"
-              description={`You requested ${info.pending_request.requested_role} access. A project owner or authorized collaborator can approve it.`}
-            />
-          ) : info.blocked ? (
-            <Alert
-              showIcon
-              type="warning"
-              title="Access requests are not available"
-              description="This project is not accepting access requests from your account."
-            />
-          ) : (
-            <Space vertical size="middle" style={{ width: "100%" }}>
-              <Paragraph style={{ marginBottom: 0 }}>
-                Request access from the project owner or an authorized
-                collaborator.
-              </Paragraph>
-              <Radio.Group
-                value={requestedRole}
-                onChange={(e) => setRequestedRole(e.target.value)}
-              >
-                {canChooseViewer && <Radio value="viewer">Viewer</Radio>}
-                <Radio value="collaborator">Collaborator</Radio>
-              </Radio.Group>
-              <Input.TextArea
-                rows={3}
-                maxLength={512}
-                showCount
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                placeholder="Optional short message"
-              />
-              <Button
-                type="primary"
-                loading={busy || loading}
-                onClick={requestAccess}
-              >
-                Request access
-              </Button>
-            </Space>
-          )}
-          {(error || actionError) && (
-            <Alert
-              showIcon
-              type="error"
-              title="Unable to update project access"
-              description={actionError ?? error}
-            />
-          )}
-          <Space>
-            <Button
-              onClick={() => {
-                redux.getActions("page").close_project_tab(info.project_id);
-                redux.getActions("page").set_active_tab("projects");
-              }}
-            >
-              Back to projects
-            </Button>
-          </Space>
-        </Space>
-      </Card>
-    </div>
-  );
 }
 
 function ProjectAccessLandingError({

@@ -16,6 +16,7 @@ import { Alert, Spin } from "antd";
 import { useIntl } from "react-intl";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
+import { openCollaborators } from "@cocalc/frontend/collaborators/navigation";
 import { AppearanceControl } from "@cocalc/frontend/appearance/control";
 import { alert_message } from "@cocalc/frontend/alerts";
 import {
@@ -37,6 +38,8 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { IS_IPAD, IS_MOBILE, IS_SAFARI } from "../feature";
 import QuickNavigation from "./quick-navigation";
 import { ActiveContent } from "./active-content";
+import { usesWorkspaceShell } from "./workspace-shell";
+import { HomeWorkspaceNavigation } from "./home-workspace-navigation";
 import { ConnectionIndicator } from "./connection-indicator";
 import { ConnectionInfo } from "./connection-info";
 import { NotificationsDrawer } from "../notifications/drawer";
@@ -220,6 +223,10 @@ export const Page: React.FC = () => {
   const active_top_tab = useTypedRedux("page", "active_top_tab");
   const otherSettings = useTypedRedux("account", "other_settings");
   const aiDisabled = !!otherSettings?.get("openai_disabled");
+  const collaboratorsEnabled = !!useTypedRedux(
+    "customize",
+    "collaborators_enabled",
+  );
   const compactAgentsNavigation = active_top_tab === "agents";
   const isAuthView = active_top_tab === "auth";
   const show_mentions = active_top_tab === "notifications";
@@ -251,6 +258,14 @@ export const Page: React.FC = () => {
   ) as string | undefined;
   const clientSignedIn = useClientSignedIn();
   const effectivelySignedIn = is_logged_in || clientSignedIn;
+  const workspaceShell = usesWorkspaceShell({
+    lite,
+    aiDisabled,
+    signedIn: !!is_logged_in,
+    examMode,
+    fullscreen,
+    activeTab: active_top_tab,
+  });
   const groups = useTypedRedux("account", "groups");
   const zendesk = !!useTypedRedux("customize", "zendesk");
 
@@ -474,20 +489,23 @@ export const Page: React.FC = () => {
           id: "page.project_nav.tooltip",
           defaultMessage: "Show all the projects on which you collaborate.",
         })}
-        icon="edit"
+        icon="folder-open"
         label={intl.formatMessage(labels.projects)}
-        hide_label={shouldHideProjectsLabel(
-          open_projects.size,
-          isNarrow,
-          projectsNavMode === "tabs",
-        )}
+        hide_label={
+          workspaceShell ||
+          shouldHideProjectsLabel(
+            open_projects.size,
+            isNarrow,
+            projectsNavMode === "tabs",
+          )
+        }
         ariaLabel={intl.formatMessage(labels.projects)}
       />
     );
   }
 
   function render_agents_nav_button(): React.JSX.Element | null {
-    if (aiDisabled) return null;
+    if (aiDisabled && !collaboratorsEnabled) return null;
     return (
       <NavTab
         style={{
@@ -495,13 +513,18 @@ export const Page: React.FC = () => {
           margin: "0",
           overflow: "hidden",
         }}
-        name="agents"
+        name={aiDisabled ? undefined : "agents"}
+        on_click={aiDisabled ? () => void openCollaborators() : undefined}
         active_top_tab={active_top_tab}
-        tooltip="Work with registered agents, chats, artifacts, and terminals"
-        icon="robot"
-        label="Agents"
+        tooltip={
+          aiDisabled
+            ? "People, conversations, and shared work"
+            : "Your home for agents, conversations, artifacts, and shared work"
+        }
+        icon={aiDisabled ? "users" : "home"}
+        label={aiDisabled ? "People" : "Home"}
         hide_label={isNarrow}
-        ariaLabel="Agents"
+        ariaLabel={aiDisabled ? "People" : "Home"}
       />
     );
   }
@@ -529,6 +552,62 @@ export const Page: React.FC = () => {
 
   // Children must define their own padding from navbar and screen borders
   // Note that the parent is a flex container
+  const legacyNavigation = (
+    <>
+      {!lite &&
+        !examMode &&
+        !fullscreen &&
+        !isAuthView &&
+        !compactAgentsNavigation && (
+          <nav className="smc-top-bar" style={topBarStyle}>
+            {!workspaceShell && <AppLogo size={pageStyle.height} />}
+            {!workspaceShell && is_logged_in && render_agents_nav_button()}
+            {is_logged_in && render_project_nav_button()}
+            {render_hosts_tab()}
+            {!isNarrow ? (
+              showPostSurfaceNavigation ? (
+                <PostSurfaceSlot scope="app.post-surface-project-navigation">
+                  <PostSurfaceProjectsNav
+                    height={pageStyle.height}
+                    onModeChange={setProjectsNavMode}
+                    style={projectsNavStyle}
+                  />
+                </PostSurfaceSlot>
+              ) : (
+                <div style={{ ...projectsNavStyle, flex: "1 1 auto" }} />
+              )
+            ) : (
+              // we need an expandable placeholder, otherwise the right-nav-buttons won't align to the right
+              <div style={{ flex: "1 1 auto" }} />
+            )}
+            {workspaceShell && isNarrow ? (
+              <HomeWorkspaceNavigation />
+            ) : (
+              render_right_nav()
+            )}
+          </nav>
+        )}
+      {!lite &&
+        !examMode &&
+        isNarrow &&
+        !isAuthView &&
+        !compactAgentsNavigation && (
+          <>
+            {showPostSurfaceNavigation ? (
+              <PostSurfaceSlot scope="app.post-surface-project-navigation-narrow">
+                <PostSurfaceProjectsNav
+                  height={pageStyle.height}
+                  onModeChange={setProjectsNavMode}
+                  style={projectsNavStyle}
+                />
+              </PostSurfaceSlot>
+            ) : (
+              <div style={{ ...projectsNavStyle, height: pageStyle.height }} />
+            )}
+          </>
+        )}
+    </>
+  );
   const body = (
     <div
       style={
@@ -556,55 +635,8 @@ export const Page: React.FC = () => {
         <Alert banner showIcon type="error" title={configurationLoadError} />
       )}
       <ImpersonationBanner />
-      {!lite &&
-        !examMode &&
-        !fullscreen &&
-        !isAuthView &&
-        !compactAgentsNavigation && (
-          <nav className="smc-top-bar" style={topBarStyle}>
-            <AppLogo size={pageStyle.height} />
-            {is_logged_in && render_agents_nav_button()}
-            {is_logged_in && render_project_nav_button()}
-            {render_hosts_tab()}
-            {!isNarrow ? (
-              showPostSurfaceNavigation ? (
-                <PostSurfaceSlot scope="app.post-surface-project-navigation">
-                  <PostSurfaceProjectsNav
-                    height={pageStyle.height}
-                    onModeChange={setProjectsNavMode}
-                    style={projectsNavStyle}
-                  />
-                </PostSurfaceSlot>
-              ) : (
-                <div style={{ ...projectsNavStyle, flex: "1 1 auto" }} />
-              )
-            ) : (
-              // we need an expandable placeholder, otherwise the right-nav-buttons won't align to the right
-              <div style={{ flex: "1 1 auto" }} />
-            )}
-            {render_right_nav()}
-          </nav>
-        )}
+      {!workspaceShell && legacyNavigation}
       {fullscreen && !isAuthView && render_fullscreen()}
-      {!lite &&
-        !examMode &&
-        isNarrow &&
-        !isAuthView &&
-        !compactAgentsNavigation && (
-          <>
-            {showPostSurfaceNavigation ? (
-              <PostSurfaceSlot scope="app.post-surface-project-navigation-narrow">
-                <PostSurfaceProjectsNav
-                  height={pageStyle.height}
-                  onModeChange={setProjectsNavMode}
-                  style={projectsNavStyle}
-                />
-              </PostSurfaceSlot>
-            ) : (
-              <div style={{ ...projectsNavStyle, height: pageStyle.height }} />
-            )}
-          </>
-        )}
       {examMode && !isAuthView && (
         <ScratchpadSessionControls deleteAt={scratchpadDeleteAt} />
       )}
@@ -613,7 +645,9 @@ export const Page: React.FC = () => {
         scope="app.active-content"
         resetKeys={[active_top_tab]}
       >
-        <ActiveContent />
+        <ActiveContent
+          navigation={workspaceShell ? legacyNavigation : undefined}
+        />
       </CocalcErrorBoundary>
       {/* Embedded surfaces (kiosk and project embed) and the auth view hide
           the top navigation and confine what may be shown; keep the global

@@ -41,6 +41,7 @@ import {
 import PublicAuthPageShell from "./page-shell";
 import {
   getPublicAuthRouteFromPath,
+  getPublicAuthRedirectTargetFromSearch,
   pathForAuthView,
   type PublicAuthRoute,
 } from "./routes";
@@ -303,6 +304,11 @@ export default function PublicAuthApp({
     undefined,
   );
   const siteName = getSiteName(resolvedConfig);
+  const authRedirect =
+    redirectToPath ??
+    (typeof window === "undefined"
+      ? undefined
+      : getPublicAuthRedirectTargetFromSearch(window.location.search));
   const ssoStrategies =
     initialSSOStrategies ??
     (resolvedConfig?.strategies as PublicSSOStrategy[] | undefined);
@@ -382,7 +388,18 @@ export default function PublicAuthApp({
     pendingAuthNavigateOptions.current = options;
     setAuthNavigateOptions(options);
     setRoute(nextRoute);
-    navigatePublic(pathForAuthView(next));
+    // Keep the token route, not a client-supplied content URL, across signup.
+    // The email landing resolves the typed continuation from the invite again.
+    const invitationReturn =
+      route.kind === "project-invite"
+        ? window.location.pathname + window.location.search
+        : getPublicAuthRedirectTargetFromSearch(window.location.search);
+    const destination = pathForAuthView(next);
+    navigatePublic(
+      invitationReturn
+        ? `${destination}?${new URLSearchParams({ target: invitationReturn })}`
+        : destination,
+    );
   }
 
   return (
@@ -409,7 +426,7 @@ export default function PublicAuthApp({
             emailAuthenticationMode={resolvedConfig?.email_authentication_mode}
             initialSSOStrategies={ssoStrategies}
             onNavigate={onNavigate}
-            redirectToPath={redirectToPath}
+            redirectToPath={authRedirect}
           />
         )}
         {route.kind === "auth-second-factor" && (
@@ -419,7 +436,7 @@ export default function PublicAuthApp({
             initialInfo="Single sign-on succeeded. Enter your CoCalc second factor to finish signing in."
             initialSSOStrategies={ssoStrategies}
             onNavigate={onNavigate}
-            redirectToPath={redirectToPath}
+            redirectToPath={authRedirect}
           />
         )}
         {route.kind === "auth-form" && route.view === "sign-up" && (
@@ -439,7 +456,7 @@ export default function PublicAuthApp({
                     initialEmail={authNavigateOptions.initialEmail}
                     initialSSOStrategies={ssoStrategies}
                     onNavigate={onNavigate}
-                    redirectToPath={redirectToPath}
+                    redirectToPath={authRedirect}
                     view="sign-up"
                   />
                 ) : (
@@ -454,7 +471,7 @@ export default function PublicAuthApp({
                     }
                     onNavigate={onNavigate}
                     onVerificationPendingChange={setSignupVerificationPending}
-                    redirectToPath={redirectToPath}
+                    redirectToPath={authRedirect}
                     signupEmailDomainPolicy={
                       resolvedConfig?.signup_email_domain_public_policy
                     }
@@ -478,7 +495,7 @@ export default function PublicAuthApp({
             cookieBannerEnabled={!!resolvedConfig?.cookie_banner_enabled}
             initialSSOStrategies={ssoStrategies}
             onNavigate={onNavigate}
-            redirectToPath={redirectToPath}
+            redirectToPath={authRedirect}
           />
         )}
         {route.kind === "auth-cli-login" && (

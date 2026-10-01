@@ -29,7 +29,7 @@ jest.mock("./library-artifact-view", () => ({
     return (
       <div>
         <span>{props.target.artifactId}</span>
-        <button onClick={props.onBack}>Back to Library</button>
+        <button onClick={props.onBack}>Back to Artifacts</button>
         <button onClick={props.onShowConversation}>
           Open source conversation
         </button>
@@ -65,19 +65,16 @@ beforeEach(() => {
   getEntry.mockResolvedValue(entry);
 });
 
-test("personal short URL resolves through the same authorized catalog lookup", async () => {
+test("an unresolved alias never falls back to the viewer's personal library", async () => {
   artifactNames = [
     { name: "nb1", project_id: "project", entry_id: "entry", active: true },
   ];
   resolveName.mockResolvedValue(artifactNames[0]);
   render(<LibraryEntry {...props} projectId="nb1" entryId="" />);
-  await screen.findByText("artifact");
-  expect(getEntry).toHaveBeenCalledWith({
-    project_id: "project",
-    entry_id: "entry",
-  });
-  expect(resolveName).toHaveBeenCalledWith("nb1");
-  expect(view.mock.calls.at(-1)[0].artifactName).toBe("nb1");
+  await screen.findByRole("alert");
+  expect(getEntry).not.toHaveBeenCalled();
+  expect(resolveName).not.toHaveBeenCalled();
+  expect(view).not.toHaveBeenCalled();
 });
 
 test("direct links resolve without an agent; source navigation is explicit", async () => {
@@ -105,7 +102,7 @@ test("direct links resolve without an agent; source navigation is explicit", asy
     ...target,
     publicationId: "old-publication",
   });
-  await user.click(screen.getByRole("button", { name: "Back to Library" }));
+  await user.click(screen.getByRole("button", { name: "Back to Artifacts" }));
   expect(props.onBack).toHaveBeenCalled();
 });
 
@@ -154,7 +151,7 @@ test.each(["history", "unmount", "route", "account", "back", "conversation"])(
         break;
       case "back":
         await user.click(
-          screen.getByRole("button", { name: "Back to Library" }),
+          screen.getByRole("button", { name: "Back to Artifacts" }),
         );
         break;
       case "conversation":

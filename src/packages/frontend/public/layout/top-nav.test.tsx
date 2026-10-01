@@ -53,7 +53,7 @@ describe("PublicTopNav", () => {
   });
 
   it.each([1280, 375])(
-    "hides Agents for signed-in AI opt-out at width %s",
+    "hides Home for signed-in AI opt-out at width %s",
     async (width) => {
       setViewportWidth(width);
       const user = userEvent.setup();
@@ -64,13 +64,17 @@ describe("PublicTopNav", () => {
           <PublicTopNav />
         </PublicConfigProvider>,
       );
-      expect(screen.queryByRole("link", { name: "Agents" })).toBeNull();
+      expect(
+        screen.queryByRole("link", { name: "Home", exact: true }),
+      ).toBeNull();
       const projects = screen.getByRole("link", { name: "Projects" });
       expect(projects).toHaveAttribute("href", "/projects");
       projects.focus();
       expect(projects).toHaveFocus();
       await user.tab();
-      expect(screen.queryByRole("link", { name: "Agents" })).toBeNull();
+      expect(
+        screen.queryByRole("link", { name: "Home", exact: true }),
+      ).toBeNull();
     },
   );
 
@@ -95,7 +99,27 @@ describe("PublicTopNav", () => {
     return result;
   }
 
-  it("uses Agents and Projects as authenticated app actions", async () => {
+  it.each([1280, 320])(
+    "keeps Home keyboard-accessible at width %s",
+    async (width) => {
+      setViewportWidth(width);
+      const user = userEvent.setup();
+      render(
+        <PublicConfigProvider config={{ is_authenticated: true }}>
+          <PublicTopNav />
+        </PublicConfigProvider>,
+      );
+      const home = screen.getByRole("link", { name: "Home", exact: true });
+      expect(home).toHaveAttribute("href", "/agents");
+      expect(screen.queryByRole("link", { name: "Agents" })).toBeNull();
+      home.focus();
+      expect(home).toHaveFocus();
+      await user.tab();
+      expect(screen.getByRole("link", { name: "Projects" })).toHaveFocus();
+    },
+  );
+
+  it("uses Home and Projects as authenticated app actions", async () => {
     await render(
       <PublicConfigProvider
         config={{
@@ -111,10 +135,10 @@ describe("PublicTopNav", () => {
 
     expect(screen.getByText("Alice Example")).not.toBeNull();
     expect(screen.queryByText("alice@example.com")).toBeNull();
-    const agents = screen.getByRole("link", { name: "Agents" });
+    const home = screen.getByRole("link", { name: "Home", exact: true });
     const projects = screen.getByRole("link", { name: "Projects" });
-    expect(agents).toHaveAttribute("href", "/agents");
-    expect(agents.querySelector('svg[data-icon="robot"]')).not.toBeNull();
+    expect(home).toHaveAttribute("href", "/agents");
+    expect(home.querySelector('svg[data-icon="home"]')).not.toBeNull();
     expect(projects).toHaveAttribute("href", "/projects");
     expect(projects.querySelector('svg[data-icon="edit"]')).not.toBeNull();
     expect(screen.queryByRole("link", { name: "Settings" })).toBeNull();

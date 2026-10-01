@@ -69,6 +69,7 @@
     "@pierre/trees": "1.0.0-beta.6",
     "@playwright/test": "^1.57.0",
     "@rc-component/tabs": "1.7.0",
+    "@rc-component/util": "1.10.0",
     "@simplewebauthn/browser": "^13.3.0",
     "@stripe/react-stripe-js": "^6.4.0",
     "@stripe/stripe-js": "^9.6.0",

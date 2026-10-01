@@ -108,12 +108,12 @@ test("active alone shows all agents and reuses the warm cache and search", async
   );
   await waitFor(() => expect(listProject).toHaveBeenCalledTimes(2));
   expect(
-    screen.queryByRole("region", { name: "Library" }),
+    screen.queryByRole("region", { name: "Artifacts" }),
   ).not.toBeInTheDocument();
   view.rerender(
     <AgentArtifactBrowser {...props} active activeAgent={agents[0]} />,
   );
-  expect(screen.getByRole("heading", { name: "Library" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Artifacts" })).toBeVisible();
   expect(screen.getByRole("searchbox")).toHaveFocus();
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(
@@ -130,7 +130,7 @@ test("active alone shows all agents and reuses the warm cache and search", async
   ).toBeVisible();
   const user = userEvent.setup();
   await user.type(
-    screen.getByRole("searchbox", { name: "Search library" }),
+    screen.getByRole("searchbox", { name: "Search artifacts" }),
     "description two{Enter}",
   );
   expect(
@@ -171,7 +171,7 @@ test("active alone shows all agents and reuses the warm cache and search", async
       }),
     }),
   );
-  expect(screen.getByRole("heading", { name: "Library" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Artifacts" })).toBeVisible();
   expect(listProject).toHaveBeenCalledTimes(2);
 });
 
@@ -215,7 +215,7 @@ test("navigation shares the heading and participates in keyboard order", async (
   await screen.findByRole("button", { name: "Open Result two from two" });
   const navigation = screen.getByRole("button", { name: "Toggle sidebar" });
   expect(
-    screen.getByRole("heading", { name: "Library" }).parentElement,
+    screen.getByRole("heading", { name: "Artifacts" }).parentElement,
   ).toContainElement(navigation);
   const user = userEvent.setup();
   await user.tab({ shift: true });
@@ -230,7 +230,7 @@ test("navigation shares the heading and participates in keyboard order", async (
   await user.tab();
   await user.tab();
   expect(
-    screen.getByRole("searchbox", { name: "Search library" }),
+    screen.getByRole("searchbox", { name: "Search artifacts" }),
   ).toHaveFocus();
   expect(
     screen.queryByRole("button", { name: /Return to agent|Back to agent/ }),
@@ -268,7 +268,69 @@ test("grid and list views retain the same artifact actions", async () => {
   );
 });
 
-test("Library view choice survives a remount for the same account", async () => {
+test.each(["List", "Grid"])(
+  "%s view keeps older pinned artifacts in a separate first group",
+  async (mode) => {
+    const user = userEvent.setup();
+    pinned = [JSON.stringify(["p-one", "/one.chat", "t-one", "same-id"])];
+    render(
+      <AgentArtifactBrowser
+        accountId={`pinned-${mode}`}
+        agents={agents}
+        active
+        onSelect={async () => {}}
+      />,
+    );
+    await screen.findByRole("button", { name: "Open Result two from two" });
+    await user.click(screen.getByRole("button", { name: `${mode} view` }));
+    const pinnedSection = screen.getByRole("region", { name: "Pinned" });
+    const otherSection = screen.getByRole("region", {
+      name: "Other artifacts",
+    });
+    expect(
+      within(pinnedSection).getByRole("heading", { name: "Pinned" }),
+    ).toBeVisible();
+    expect(within(pinnedSection).getAllByRole("listitem")).toHaveLength(1);
+    expect(
+      within(pinnedSection).getByRole("button", {
+        name: "Open Result one from one",
+      }),
+    ).toBeVisible();
+    expect(
+      within(otherSection).getByRole("button", {
+        name: "Open Result two from two",
+      }),
+    ).toBeVisible();
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(pinnedSection.compareDocumentPosition(otherSection)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    const search = screen.getByRole("searchbox", { name: "Search artifacts" });
+    await user.type(search, "two");
+    expect(screen.queryByRole("region", { name: "Pinned" })).toBeNull();
+    await user.clear(search);
+    await user.click(
+      screen.getByRole("button", { name: "Filters & organization" }),
+    );
+    await user.click(
+      screen.getByRole("checkbox", { name: "Group by project" }),
+    );
+    expect(
+      within(screen.getByRole("region", { name: "Pinned" })).getByRole(
+        "region",
+        { name: "Pinned: Project one" },
+      ),
+    ).toBeVisible();
+    expect(
+      within(screen.getByRole("region", { name: "Other artifacts" })).getByRole(
+        "region",
+        { name: "Other artifacts: Project two" },
+      ),
+    ).toBeVisible();
+  },
+);
+
+test("Artifacts view choice survives a remount for the same account", async () => {
   const user = userEvent.setup();
   const key = "cocalc:agent-library:view:library-persist";
   localStorage.removeItem(key);
@@ -312,7 +374,7 @@ test("a personal artifact name is visible and searchable in grid view", async ()
   await user.click(screen.getByRole("button", { name: "Grid view" }));
   expect(screen.getByText("@my-notebook")).toBeVisible();
   await user.type(
-    screen.getByRole("searchbox", { name: "Search library" }),
+    screen.getByRole("searchbox", { name: "Search artifacts" }),
     "my-notebook",
   );
   expect(
@@ -354,7 +416,7 @@ test("grid tiles use catalog appearance and open the real appearance action", as
   expect(
     screen
       .getByRole("button", { name: "Open Result one from one" })
-      .closest("[role=listitem]"),
+      .closest("[role=listitem]")?.firstElementChild,
   ).toHaveStyle({
     border: "1px solid #123456",
     minHeight: "116px",
@@ -371,7 +433,7 @@ test("grid tiles use catalog appearance and open the real appearance action", as
   expect(
     screen
       .getByRole("button", { name: "Open Result one from one" })
-      .closest("[role=listitem]"),
+      .closest("[role=listitem]")?.firstElementChild,
   ).toHaveStyle({ borderLeft: "3px solid #123456" });
   expect(
     screen
@@ -411,14 +473,14 @@ test("returning retains result DOM, search, organization, scroll and opening-row
     name: "Open Result two from two",
   });
   await user.type(
-    screen.getByRole("searchbox", { name: "Search library" }),
+    screen.getByRole("searchbox", { name: "Search artifacts" }),
     "description",
   );
   await user.click(
     screen.getByRole("button", { name: "Filters & organization" }),
   );
   await user.click(screen.getByRole("checkbox", { name: "Group by project" }));
-  const viewport = screen.getByRole("region", { name: "Library" });
+  const viewport = screen.getByRole("region", { name: "Artifacts" });
   fireEvent.scroll(viewport, { target: { scrollTop: 480 } });
   const groupedRow = screen.getByRole("button", {
     name: "Open Result two from two",
@@ -575,10 +637,10 @@ test("loading and metadata failures are announced, with retry in organization", 
       onSelect={async () => {}}
     />,
   );
-  expect(screen.getByRole("status")).toHaveTextContent("Loading library...");
+  expect(screen.getByRole("status")).toHaveTextContent("Loading artifacts...");
   await act(async () => reject(Error("unavailable")));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Library metadata unavailable",
+    "Artifact metadata unavailable",
   );
   expect(screen.getByRole("alert")).toHaveTextContent("retrying periodically");
   expect(screen.queryByText(/No artifacts yet/)).not.toBeInTheDocument();
@@ -645,7 +707,9 @@ test("keyboard sorting, grouping, filtering, pins and navigation are local", asy
   expect(group).toBeChecked();
   expect(group).toHaveFocus();
   for (const name of ["one", "two"]) {
-    const section = screen.getByRole("region", { name: `Project ${name}` });
+    const section = screen.getByRole("region", {
+      name: `Other artifacts: Project ${name}`,
+    });
     expect(
       within(section).getByRole("heading", { name: `Project ${name}` }),
     ).toBeVisible();
@@ -667,12 +731,16 @@ test("keyboard sorting, grouping, filtering, pins and navigation are local", asy
   expect(setPinned).toHaveBeenCalledWith(id, true);
   pinned = [id];
   view.rerender(<AgentArtifactBrowser {...props} />);
-  expect(titles()[0]).toBe("Open Result one from one");
+  expect(titles()[0]).toBe("Open Result two from two");
   const unpin = screen.getByRole("button", { name: "Unpin Result two" });
   expect(unpin).toHaveAttribute("aria-pressed", "true");
-  unpin.focus();
+  expect(unpin).toHaveFocus();
   await user.keyboard(" ");
   expect(setPinned).toHaveBeenLastCalledWith(id, false);
+  pinned = [];
+  view.rerender(<AgentArtifactBrowser {...props} />);
+  expect(screen.getByRole("button", { name: "Pin Result two" })).toHaveFocus();
+  expect(screen.queryByRole("region", { name: "Pinned" })).toBeNull();
   const filter = screen.getByRole("combobox", {
     name: "Project",
   });
@@ -721,73 +789,77 @@ test("keyboard sorting, grouping, filtering, pins and navigation are local", asy
   expect(listProject).toHaveBeenCalledTimes(2);
 });
 
-test("Custom exposes pinned drag handles and keyboard move menus scoped to groups", async () => {
-  const ids = agents.map((agent) =>
-    JSON.stringify([
-      agent.endpoint.project_id,
-      agent.path,
-      agent.thread_id,
-      "same-id",
-    ]),
-  );
-  pinned = [...ids];
-  const props = {
-    accountId: "library-custom",
-    agents,
-    active: true,
-    onSelect: async () => {},
-  };
-  const view = render(<AgentArtifactBrowser {...props} />);
-  await screen.findByRole("button", { name: "Open Result two from two" });
-  const user = userEvent.setup();
-  await user.click(
-    screen.getByRole("button", { name: "Filters & organization" }),
-  );
-  const sort = screen.getByRole("combobox", {
-    name: "Sort",
-  });
-  act(() => sort.focus());
-  key(sort, "ArrowDown", 40);
-  await waitFor(() => expect(sort).toHaveAttribute("aria-expanded", "true"));
-  key(sort, "ArrowDown", 40);
-  key(sort, "ArrowDown", 40);
-  key(sort, "Enter", 13);
-  const handle = await screen.findByRole("button", {
-    name: "Drag Result one to reorder",
-  });
-  expect(handle).toHaveAttribute("tabindex", "0");
-  const trigger = screen.getByRole("button", { name: "Reorder Result one" });
-  act(() => trigger.focus());
-  await user.keyboard("{Enter}");
-  const down = await screen.findByRole("menuitem", { name: "Move down" });
-  expect(screen.getByRole("menuitem", { name: "Move up" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
-  act(() => down.focus());
-  key(down, "Enter", 13);
-  expect(move).toHaveBeenCalledWith(ids, ids[0], 1);
-  pinned = [...ids].reverse();
-  view.rerender(<AgentArtifactBrowser {...props} />);
-  expect(
-    screen.getAllByRole("button", { name: /^Open Result/ })[0],
-  ).toHaveAccessibleName("Open Result two from two");
-  expect(trigger).toHaveFocus();
-  await user.click(screen.getByRole("checkbox", { name: "Group by project" }));
-  await user.click(screen.getByRole("button", { name: "Reorder Result one" }));
-  expect(
-    await screen.findByRole("menuitem", { name: "Move up" }),
-  ).toHaveAttribute("aria-disabled", "true");
-  expect(screen.getByRole("menuitem", { name: "Move down" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
-  await user.keyboard("{Escape}");
-  expect(
-    screen.getByRole("button", { name: "Reorder Result one" }),
-  ).toHaveFocus();
-  expect(listProject).toHaveBeenCalledTimes(2);
-});
+test.each(["List", "Grid"])(
+  "%s exposes pinned drag handles without redundant move menu actions",
+  async (mode) => {
+    const ids = agents.map((agent) =>
+      JSON.stringify([
+        agent.endpoint.project_id,
+        agent.path,
+        agent.thread_id,
+        "same-id",
+      ]),
+    );
+    pinned = [...ids];
+    const props = {
+      accountId: "library-custom",
+      agents,
+      active: true,
+      onSelect: async () => {},
+    };
+    render(<AgentArtifactBrowser {...props} />);
+    await screen.findByRole("button", { name: "Open Result two from two" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: `${mode} view` }));
+    await user.click(
+      screen.getByRole("button", { name: "Filters & organization" }),
+    );
+    const handle = await screen.findByRole("button", {
+      name: "Drag Result one to reorder",
+    });
+    expect(handle).toHaveAttribute("tabindex", "0");
+    expect(
+      screen.queryByRole("button", { name: /^Reorder Result/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", { name: /^More options for Result/ }),
+    ).toHaveLength(2);
+    const trigger = screen.getByRole("button", {
+      name: "More options for Result one",
+    });
+    act(() => trigger.focus());
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("menuitem", { name: "Edit appearance" }),
+      ).toBeVisible(),
+    );
+    expect(
+      screen.queryByRole("menuitem", { name: /Move up|Move down/ }),
+    ).toBeNull();
+    await user.keyboard("{Escape}");
+    expect(trigger).toHaveFocus();
+    await user.click(
+      screen.getByRole("checkbox", { name: "Group by project" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "More options for Result one" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("menuitem", { name: "Edit appearance" }),
+      ).toBeVisible(),
+    );
+    expect(
+      screen.queryByRole("menuitem", { name: /Move up|Move down/ }),
+    ).toBeNull();
+    await user.keyboard("{Escape}");
+    expect(
+      screen.getByRole("button", { name: "More options for Result one" }),
+    ).toHaveFocus();
+    expect(listProject).toHaveBeenCalledTimes(2);
+  },
+);
 
 test("account switch clears the old view and rejects late loads", async () => {
   let resolve!: (value: unknown) => void;
@@ -822,6 +894,7 @@ test("account switch clears the old view and rejects late loads", async () => {
 });
 
 test("large cache bounds rows across groups and explains partial coverage", async () => {
+  pinned = [JSON.stringify(["p-one", "/one.chat", "t-one", "id-99"])];
   listProject.mockImplementation(async ({ project_id }) => ({
     entries: Array.from({ length: 125 }, (_, i) =>
       entry(project_id.slice(2), `id-${i}`),
@@ -837,6 +910,11 @@ test("large cache bounds rows across groups and explains partial coverage", asyn
     />,
   );
   await screen.findByText(/Showing the first 200 of 250 matches/);
+  expect(
+    within(screen.getByRole("region", { name: "Pinned" })).getAllByRole(
+      "listitem",
+    ),
+  ).toHaveLength(1);
   const user = userEvent.setup();
   expect(screen.getByText(/sources may still be indexing/)).not.toBeVisible();
   await user.click(
@@ -845,13 +923,13 @@ test("large cache bounds rows across groups and explains partial coverage", asyn
   await user.click(screen.getByRole("checkbox", { name: "Group by project" }));
   expect(screen.getAllByRole("listitem")).toHaveLength(200);
   // JSDOM does not implement the native summary keyboard default action.
-  const details = screen.getByText("About this library");
+  const details = screen.getByText("About artifacts");
   await user.click(details);
   expect(details.closest("details")).toHaveAttribute("open");
   expect(screen.getByText(/not a completeness count/)).toBeVisible();
 }, 20_000);
 
-test("failed artifact opens remain visible in the Library", async () => {
+test("failed artifact opens remain visible in the Artifacts", async () => {
   render(
     <AgentArtifactBrowser
       accountId="library-error"

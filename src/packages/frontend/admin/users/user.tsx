@@ -25,6 +25,7 @@ import { AdminBilling } from "./billing";
 import { ManagedEgressHistoryPanel } from "@cocalc/frontend/purchases/managed-egress-history";
 import { AccountStatusTags } from "../account-status-tags";
 import { LegacyMigrationAdmin } from "./legacy-migration";
+import { AdminPersonalUrls } from "./personal-urls";
 
 export type AdminUserSection =
   | "projects"
@@ -215,6 +216,7 @@ export function UserResult({
           )}
           {activeMore === "password" && (
             <>
+              <AdminPersonalUrls account_id={account_id} />
               <PasswordReset
                 account_id={account_id}
                 email_address={email_address ?? ""}

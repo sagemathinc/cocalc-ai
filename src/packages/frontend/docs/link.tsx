@@ -6,7 +6,12 @@
 import type { CSSProperties, MouseEvent, ReactNode } from "react";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { joinUrlPath } from "@cocalc/util/url-path";
-import { normalizeDocsSlug, openAppDocs, openProjectDocs } from "./navigation";
+import {
+  normalizeDocsSlug,
+  openAppDocs,
+  openAppDocsDrawer,
+  openProjectDocs,
+} from "./navigation";
 
 interface DocsLinkProps {
   /**
@@ -19,6 +24,7 @@ interface DocsLinkProps {
   children: ReactNode;
   className?: string;
   href?: string;
+  drawer?: boolean;
   projectId?: string;
   slug: string;
   style?: CSSProperties;
@@ -48,6 +54,7 @@ export function DocsLink({
   children,
   className,
   href,
+  drawer = false,
   projectId,
   slug,
   style,
@@ -63,7 +70,9 @@ export function DocsLink({
       onClick={(event) => {
         if (!isPlainLeftClick(event)) return;
         event.preventDefault();
-        if (projectId != null) {
+        if (drawer) {
+          openAppDocsDrawer(slug, event.currentTarget);
+        } else if (projectId != null) {
           openProjectDocs({ projectId, slug });
         } else {
           openAppDocs(slug);

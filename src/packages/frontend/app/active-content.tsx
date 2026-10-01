@@ -16,12 +16,15 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import { Loading } from "@cocalc/frontend/components/loading";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { SiteName } from "@cocalc/frontend/customize";
+import { AppDocsDrawer } from "@cocalc/frontend/docs/drawer";
 import { DocsLink } from "@cocalc/frontend/docs/link";
 import { Connecting } from "@cocalc/frontend/landing-page/connecting";
+import { lite } from "@cocalc/frontend/lite";
 import { parseManagedEgressBlockedError } from "@cocalc/frontend/purchases/managed-egress-blocked";
 import { KioskModeBanner } from "./kiosk-mode-banner";
 import { ManagedEgressBlockedScreen } from "./managed-egress-blocked-screen";
 import { joinUrlPath } from "@cocalc/util/url-path";
+import { openCollaborators } from "@cocalc/frontend/collaborators/navigation";
 import { CocalcErrorBoundary } from "./error-boundary";
 import { recordSignedInSurfaceReady } from "./bootstrap-ux-latency";
 import { updateMountedProjectIds } from "./mounted-projects";
@@ -29,6 +32,7 @@ import {
   AccountPage,
   AdminPage,
   AuthPage,
+  CollaboratorsPage,
   DocsPage,
   FileUsePage,
   HostsPage,
@@ -40,6 +44,7 @@ import {
   SiteLicenseClaimPage,
   SshPage,
 } from "./route-components";
+import { usesWorkspaceShell } from "./workspace-shell";
 import { markStartupPhaseOnce } from "./startup-phase";
 
 const CONNECTIVITY_DOCS_SLUG = "troubleshooting/connectivity";
@@ -117,17 +122,61 @@ function RouteChunk({
   );
 }
 
-export const ActiveContent: React.FC = React.memo(() => {
+interface Props {
+  navigation?: React.ReactNode;
+}
+
+export const ActiveContent: React.FC<Props> = React.memo(({ navigation }) => {
   const page_actions = useActions("page");
 
   const active_top_tab = useTypedRedux("page", "active_top_tab");
   const otherSettings = useTypedRedux("account", "other_settings");
   const aiDisabled = !!otherSettings?.get("openai_disabled");
+  const accountId = useTypedRedux("account", "account_id");
+  const collaboratorsOpen = !!useTypedRedux("page", "collaborators_open");
+  const collaboratorsEnabled = !!useTypedRedux(
+    "customize",
+    "collaborators_enabled",
+  );
+  const customizeReady = !!useTypedRedux("customize", "_is_configured");
+  const collaboratorsView = useTypedRedux("page", "collaborators_view");
+  const collaboratorsProjectId = useTypedRedux(
+    "page",
+    "collaborators_project_id",
+  );
+  const collaboratorsPersonId = useTypedRedux(
+    "page",
+    "collaborators_person_id",
+  );
+  const collaboratorsContactId = useTypedRedux(
+    "page",
+    "collaborators_contact_id",
+  );
+  const collaboratorsInvitationId = useTypedRedux(
+    "page",
+    "collaborators_invitation_id",
+  );
+  const collaboratorsProjectIds = useTypedRedux(
+    "page",
+    "collaborators_project_ids",
+  );
+  const collaboratorsResourceKind = useTypedRedux(
+    "page",
+    "collaborators_resource_kind",
+  );
+  const collaboratorsResourceId = useTypedRedux(
+    "page",
+    "collaborators_resource_id",
+  );
+  const collaboratorsRouteError = useTypedRedux(
+    "page",
+    "collaborators_route_error",
+  );
   React.useEffect(() => {
-    if (aiDisabled && active_top_tab === "agents") {
+    if (aiDisabled && active_top_tab === "agents" && !collaboratorsOpen) {
       void page_actions.set_active_tab("projects");
     }
-  }, [aiDisabled, active_top_tab, page_actions]);
+  }, [aiDisabled, active_top_tab, collaboratorsOpen, page_actions]);
   const admin_route = useTypedRedux("page", "admin_route");
   const docs_print = useTypedRedux("page", "docs_print");
   const docs_slug = useTypedRedux("page", "docs_slug");
@@ -144,7 +193,15 @@ export const ActiveContent: React.FC = React.memo(() => {
   // initially, we assume a user is signed in – most likely case
   const [notSignedIn, setNotSignedIn] = React.useState<boolean>(false);
   const is_logged_in = useTypedRedux("account", "is_logged_in");
-  const accountId = useTypedRedux("account", "account_id");
+  const examMode = useTypedRedux("customize", "exam_mode") === true;
+  const workspaceShell = usesWorkspaceShell({
+    lite,
+    aiDisabled,
+    signedIn: !!is_logged_in,
+    examMode,
+    fullscreen,
+    activeTab: active_top_tab,
+  });
   const managed_egress_blocked_error = useTypedRedux(
     "account",
     "managed_egress_blocked_error",
@@ -213,8 +270,10 @@ export const ActiveContent: React.FC = React.memo(() => {
   // activated during this browser session. Persisted tab state must not force
   // every project page into the signed-in startup dependency path.
   const mountedProjectIds = React.useRef(new Set<string>());
+  const projectsMounted = React.useRef(false);
+  if (active_top_tab === "projects") projectsMounted.current = true;
   const agentsMounted = React.useRef(false);
-  if (aiDisabled) {
+  if (aiDisabled && !collaboratorsOpen) {
     agentsMounted.current = false;
   } else if (active_top_tab === "agents") {
     agentsMounted.current = true;
@@ -290,18 +349,68 @@ export const ActiveContent: React.FC = React.memo(() => {
     active_top_tab === "agents" &&
     managedEgressBlocked == null &&
     fullscreen !== "kiosk";
-  if (agentsMounted.current) {
+  const standaloneCollaborators = aiDisabled || (lite && collaboratorsOpen);
+  if (agentsMounted.current && !workspaceShell) {
     layers.push(
       renderLayer(
         "agents",
         agentsActive,
-        <RouteChunk route="agents">
-          <SurfaceReady segment="agents" />
-          {/* Account-bound actions must not retain the pre-login workspace. */}
-          <MyAgentsWorkspacePage
-            key={accountId ?? "signed-out"}
-            active={agentsActive}
-          />
+        <RouteChunk
+          route={standaloneCollaborators ? "collaborators" : "agents"}
+        >
+          {standaloneCollaborators ? (
+            collaboratorsEnabled ? (
+              <>
+                {agentsActive && <SurfaceReady segment="collaborators" />}
+                <CollaboratorsPage
+                  key={accountId}
+                  accountId={accountId ?? ""}
+                  active={agentsActive}
+                  view={collaboratorsView}
+                  projectId={collaboratorsProjectId}
+                  projectIds={
+                    collaboratorsProjectIds
+                      ? Array.from(collaboratorsProjectIds)
+                      : undefined
+                  }
+                  personId={collaboratorsPersonId}
+                  contactId={collaboratorsContactId}
+                  invitationId={collaboratorsInvitationId}
+                  resourceKind={collaboratorsResourceKind}
+                  resourceId={collaboratorsResourceId}
+                  routeError={collaboratorsRouteError}
+                  onNavigate={openCollaborators}
+                  navigation={
+                    <Button
+                      onClick={() => page_actions.set_active_tab("projects")}
+                    >
+                      Back to projects
+                    </Button>
+                  }
+                />
+              </>
+            ) : customizeReady ? (
+              <div style={{ padding: 24 }}>
+                <Button onClick={() => page_actions.set_active_tab("projects")}>
+                  Back to projects
+                </Button>
+                <p role="status">
+                  The Collaborators workspace is not enabled on this site.
+                </p>
+              </div>
+            ) : (
+              <p role="status">Loading site settings...</p>
+            )
+          ) : (
+            <>
+              <SurfaceReady segment="agents" />
+              {/* Account-bound actions must not retain the pre-login workspace. */}
+              <MyAgentsWorkspacePage
+                key={accountId ?? "signed-out"}
+                active={agentsActive}
+              />
+            </>
+          )}
         </RouteChunk>,
       ),
     );
@@ -386,13 +495,52 @@ export const ActiveContent: React.FC = React.memo(() => {
     overlay = renderLayer("project-loading", true, renderProjectLoading());
   }
 
+  if (
+    workspaceShell &&
+    projectsMounted.current &&
+    active_top_tab !== "projects"
+  ) {
+    layers.push(
+      renderLayer(
+        "projects",
+        false,
+        <RouteChunk route="projects">
+          <ProjectsPage />
+        </RouteChunk>,
+      ),
+    );
+  }
   if (overlay != null) {
     layers.push(overlay);
   }
 
-  return (
+  const content = (
     <div className="smc-vfill" style={STACK_CONTAINER_STYLE}>
       {layers}
+      <AppDocsDrawer key={accountId ?? "signed-out"} />
     </div>
   );
+  if (workspaceShell)
+    return (
+      <RouteChunk route="workspace">
+        {agentsActive && <SurfaceReady segment="agents" />}
+        <MyAgentsWorkspacePage
+          key={accountId ?? "signed-out"}
+          active={managedEgressBlocked == null}
+          contentLabel={
+            managedEgressBlocked != null
+              ? "Account unavailable"
+              : active_top_tab === "agents"
+                ? undefined
+                : active_top_tab === "projects"
+                  ? "Projects"
+                  : "Project and account pages"
+          }
+          contentNavigation={navigation}
+        >
+          {content}
+        </MyAgentsWorkspacePage>
+      </RouteChunk>
+    );
+  return content;
 });

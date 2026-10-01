@@ -359,8 +359,9 @@ export function useNavigationData() {
   }[] = [
     {
       page: "agents",
-      title: "Agents",
-      keywords: "named registered agents chats artifacts terminals",
+      title: "Home",
+      keywords:
+        "workspace named registered agents chats artifacts terminals collaborators library",
       show: signedIn && !lite,
     },
     {

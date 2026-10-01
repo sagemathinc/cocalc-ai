@@ -12,7 +12,7 @@ test("Back/Forward supersedes delayed navigation, but an intentional push does n
   }).then(() => {
     if (request === token.current) open();
   });
-  window.history.pushState({}, "", "/library");
+  window.history.pushState({}, "", "/artifacts");
   expect(token.current).toBe(request);
   act(() => window.dispatchEvent(new PopStateEvent("popstate")));
   complete();

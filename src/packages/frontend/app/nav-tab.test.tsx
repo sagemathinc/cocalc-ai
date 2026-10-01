@@ -29,20 +29,20 @@ it("restores a transparent background after leaving a navigation tab", () => {
 it("exposes only the selected application destination as the current page", () => {
   const tabs = (active: string) => (
     <>
-      <NavTab name="agents" label="Agents" active_top_tab={active} />
+      <NavTab name="agents" label="Home" active_top_tab={active} />
       <NavTab name="projects" label="Projects" active_top_tab={active} />
       <NavTab name="hosts" label="Compute" active_top_tab={active} />
     </>
   );
   const { rerender } = render(tabs("agents"));
   expect(screen.getByRole("button", { current: "page" })).toHaveAccessibleName(
-    "Agents",
+    "Home",
   );
   rerender(tabs("hosts"));
   expect(screen.getByRole("button", { current: "page" })).toHaveAccessibleName(
     "Compute",
   );
-  expect(screen.getByRole("button", { name: "Agents" })).not.toHaveAttribute(
+  expect(screen.getByRole("button", { name: "Home" })).not.toHaveAttribute(
     "aria-current",
   );
 });

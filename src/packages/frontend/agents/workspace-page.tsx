@@ -18,7 +18,7 @@ import {
   useTypedRedux,
   useEditorRedux,
 } from "@cocalc/frontend/app-framework";
-import { Suspense } from "react";
+import { Suspense, type ReactNode } from "react";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { CocalcErrorBoundary } from "@cocalc/frontend/app/error-boundary";
 import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
@@ -51,18 +51,22 @@ import { agentProjectTitle } from "./project-title";
 import { claimOnboardingName } from "./claim-onboarding-name";
 import { OnboardingAttempt } from "@cocalc/frontend/monitoring/onboarding";
 import type { OnboardingPhase } from "@cocalc/util/onboarding-metrics";
-import { AgentArtifactBrowser } from "./artifact-browser";
+import { WorkspaceCollectionPanels } from "./workspace-collection-panels";
 import { LibraryEntry } from "./library-entry";
+import type { CollaboratorsRoute } from "@cocalc/frontend/collaborators/workspace-types";
+import { openCollaborators } from "@cocalc/frontend/collaborators/navigation";
 import {
   closedLibraryState,
   libraryConversationHit,
   openLibrary,
 } from "./library-navigation";
+import { useLibraryNavigation } from "./use-library-navigation";
 import { useArtifactNames } from "./artifact-names";
 import type { ForeignArtifactTarget } from "@cocalc/frontend/frame-editors/chat-editor/foreign-artifact-source";
 import { agentSearchStore } from "./search-state";
 import { agentMessageFragment } from "./message-fragment";
 import type { AgentSearchHit } from "./search-runner";
+import { hydrateConversationSearchHit } from "../chat/conversation-search/hydrate-hit";
 import {
   harnessRuntimeFromDraft,
   qualifiedHarnessRuntime,
@@ -98,10 +102,11 @@ import {
 } from "@cocalc/frontend/chat/composer-codex-controls";
 import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
 import { stableDraftKeyFromThreadKey } from "@cocalc/frontend/chat/utils";
-import { set_url } from "@cocalc/frontend/history";
+import { set_url, openProjectsWorkspace } from "@cocalc/frontend/history";
 import { set_window_title } from "@cocalc/frontend/browser";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { useWorkspaceRoute } from "./use-workspace-route";
+import { PersonalUrlStatus } from "@cocalc/frontend/personal-url-status";
 import { lite } from "@cocalc/frontend/lite";
 import { useNavigationIntent } from "./use-navigation-intent";
 import {
@@ -109,6 +114,7 @@ import {
   useProjectContextProvider,
 } from "@cocalc/frontend/project/context";
 import { EmbeddedProjectFile } from "@cocalc/frontend/project/page/content";
+import { DocsDrawer } from "@cocalc/frontend/docs/drawer";
 import { ProjectDocsPanel } from "@cocalc/frontend/project/page/flyouts/docs";
 import {
   PROJECT_DOCS_OPEN_EVENT,
@@ -141,7 +147,7 @@ import { chooseAutomaticProjectRootfs } from "@cocalc/frontend/projects/create-p
 import { chooseOnboardingRootfs } from "@cocalc/frontend/projects/onboarding/rootfs";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import { openFileComponentRuntimeIsUsable } from "@cocalc/frontend/project/redux/open-file-runtime";
-import { CompactAgentsTopNav } from "@cocalc/frontend/app/compact-agents-top-nav";
+import { HomeWorkspaceNavigation as AgentsWorkspaceNavigation } from "@cocalc/frontend/app/home-workspace-navigation";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   useEmailVerificationRequired,
@@ -152,14 +158,13 @@ import {
   completeFirstRunWithAgent,
 } from "@cocalc/frontend/projects/onboarding/agent-completion";
 import { joinAbsolutePath } from "@cocalc/util/path-model";
-import { uuid } from "@cocalc/util/misc";
+import { uuid, is_valid_uuid_string } from "@cocalc/util/misc";
 import type { ThemeEditorDraft } from "@cocalc/frontend/theme/types";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { Resizable } from "re-resizable";
 import {
   Alert,
   Button,
-  Drawer,
   Dropdown,
   Empty,
   Input,
@@ -289,40 +294,6 @@ const MAX_AGENT_SIDEBAR_WIDTH = 600;
 const AGENT_SIDEBAR_WIDTH_STORAGE_KEY = "cocalc-agents-sidebar-width-v1";
 const AGENT_SIDEBAR_HIDDEN_STORAGE_KEY = "cocalc-agents-sidebar-hidden-v1";
 const AGENT_DOCS_DRAWER_OPEN_STORAGE_KEY = "cocalc-agents-docs-drawer-open-v1";
-const AGENT_DOCS_DRAWER_WIDTH_STORAGE_KEY =
-  "cocalc-agents-docs-drawer-width-v1";
-const DEFAULT_AGENT_DOCS_DRAWER_WIDTH = 720;
-const MIN_AGENT_DOCS_DRAWER_WIDTH = 360;
-
-function clampAgentDocsDrawerWidth(width: number): number {
-  const maximum =
-    typeof window === "undefined" ? 960 : Math.max(320, window.innerWidth - 32);
-  const minimum = Math.min(MIN_AGENT_DOCS_DRAWER_WIDTH, maximum);
-  return Math.min(maximum, Math.max(minimum, width));
-}
-
-function initialAgentDocsDrawerWidth(): number {
-  if (typeof window === "undefined") return DEFAULT_AGENT_DOCS_DRAWER_WIDTH;
-  try {
-    const stored = Number(
-      window.localStorage.getItem(AGENT_DOCS_DRAWER_WIDTH_STORAGE_KEY),
-    );
-    return Number.isFinite(stored) && stored > 0
-      ? clampAgentDocsDrawerWidth(stored)
-      : clampAgentDocsDrawerWidth(DEFAULT_AGENT_DOCS_DRAWER_WIDTH);
-  } catch {
-    return clampAgentDocsDrawerWidth(DEFAULT_AGENT_DOCS_DRAWER_WIDTH);
-  }
-}
-
-function rememberAgentDocsDrawerWidth(width: number): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(
-    AGENT_DOCS_DRAWER_WIDTH_STORAGE_KEY,
-    `${clampAgentDocsDrawerWidth(width)}`,
-  );
-}
-
 function initialAgentDocsDrawerOpen(): boolean {
   if (typeof window === "undefined") return false;
   return (
@@ -2384,34 +2355,6 @@ function AgentProjectContext({
   );
 }
 
-function AgentsWorkspaceNavigation({
-  onOpenInProject,
-  onOpenTerminal,
-  foregroundColor,
-  workspaceItems,
-  onOpenDocs,
-}: {
-  onOpenInProject?: () => void;
-  onOpenTerminal?: () => void;
-  foregroundColor?: string;
-  workspaceItems?: import("antd").MenuProps["items"];
-  onOpenDocs?: () => void;
-} = {}) {
-  const { pageStyle } = useAppContext();
-  const accountId = useTypedRedux("account", "account_id");
-  return (
-    <CompactAgentsTopNav
-      isLoggedIn={!!accountId}
-      pageStyle={pageStyle}
-      onOpenInProject={onOpenInProject}
-      onOpenTerminal={onOpenTerminal}
-      foregroundColor={foregroundColor}
-      workspaceItems={workspaceItems}
-      onOpenDocs={onOpenDocs}
-    />
-  );
-}
-
 function AgentWorkspace({
   onCopy,
   onFresh,
@@ -2467,9 +2410,6 @@ function AgentWorkspace({
     useState<ThemeEditorDraft | null>(null);
   const [chatActions, setChatActions] = useState<ChatActions>();
   const [docsOpen, setDocsOpen] = useState(initialAgentDocsDrawerOpen);
-  const [docsDrawerWidth, setDocsDrawerWidth] = useState(
-    initialAgentDocsDrawerWidth,
-  );
   const [showEditorControls, setShowEditorControls] = useState(false);
   const [directoryOpen, setDirectoryOpen] = useState(false);
   const [, setChatVersion] = useState(0);
@@ -3060,36 +3000,32 @@ function AgentWorkspace({
           />
         </AvailableConversation>
       </div>
-      <Drawer
-        destroyOnHidden={false}
-        open={active && docsOpen}
-        placement="right"
-        title="Documentation"
-        size={docsDrawerWidth}
-        resizable={{
-          onResize: (width) => {
-            const next = clampAgentDocsDrawerWidth(width);
-            setDocsDrawerWidth(next);
-            try {
-              rememberAgentDocsDrawerWidth(next);
-            } catch {
-              // Resizing still works when localStorage is unavailable.
-            }
-          },
-        }}
-        onClose={closeDocs}
-        styles={{ body: { overflow: "auto", padding: "12px 0 0 14px" } }}
-      >
+      <DocsDrawer open={active && docsOpen} onClose={closeDocs}>
         <ProjectDocsPanel
           layout="flyout"
           project_id={agent.endpoint.project_id}
         />
-      </Drawer>
+      </DocsDrawer>
     </div>
   );
 }
 
-export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
+export function MyAgentsWorkspacePage({
+  active = true,
+  children,
+  contentLabel,
+  contentNavigation,
+}: {
+  active?: boolean;
+  children?: ReactNode;
+  contentLabel?: string;
+  contentNavigation?: ReactNode;
+}) {
+  const contentOpen = contentLabel != null;
+  const activeTopTab = useTypedRedux("page", "active_top_tab");
+  const projectsOpen =
+    contentOpen &&
+    (activeTopTab === "projects" || is_valid_uuid_string(activeTopTab));
   const { pageStyle } = useAppContext();
   const isNarrow = pageStyle.isNarrow;
   const { directory, error, loading } = useNamedAgents();
@@ -3099,10 +3035,108 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const accountId = useTypedRedux("account", "account_id") as
     | string
     | undefined;
-  const searchNavigation = useNavigationIntent(active, accountId);
-  const libraryOpen = !!useTypedRedux("page", "library_open");
+  const searchNavigation = useNavigationIntent(
+    active && !contentOpen,
+    accountId,
+  );
+  const libraryOpen = !!useTypedRedux("page", "library_open") && !contentOpen;
+  const personalUrl = useTypedRedux("page", "personal_url");
+  const personalUrlStatus = useTypedRedux("page", "personal_url_status");
+  const personalUrlError = useTypedRedux("page", "personal_url_error");
+  const personalUrlViewer = useTypedRedux("page", "personal_url_viewer");
+  const personalUrlProjectId = useTypedRedux("page", "personal_url_project_id");
+  const personalUrlBlocked =
+    !contentOpen &&
+    !!personalUrl &&
+    (personalUrlStatus !== "resolved" || personalUrlViewer !== accountId);
+  const collaboratorsOpen =
+    !!useTypedRedux("page", "collaborators_open") && !contentOpen;
+  const collaboratorsEnabled = !!useTypedRedux(
+    "customize",
+    "collaborators_enabled",
+  );
+  const collaboratorsView = useTypedRedux("page", "collaborators_view");
+  const collaboratorsAlias = useTypedRedux("page", "collaborators_alias");
+  const collaboratorsAliasKind = useTypedRedux(
+    "page",
+    "collaborators_alias_kind",
+  );
+  const collaboratorsProjectId = useTypedRedux(
+    "page",
+    "collaborators_project_id",
+  );
+  const collaboratorsPersonId = useTypedRedux(
+    "page",
+    "collaborators_person_id",
+  );
+  const collaboratorsContactId = useTypedRedux(
+    "page",
+    "collaborators_contact_id",
+  );
+  const collaboratorsInvitationId = useTypedRedux(
+    "page",
+    "collaborators_invitation_id",
+  );
+  const collaboratorsProjectIds = useTypedRedux(
+    "page",
+    "collaborators_project_ids",
+  );
+  const collaboratorsResourceKind = useTypedRedux(
+    "page",
+    "collaborators_resource_kind",
+  );
+  const collaboratorsResourceId = useTypedRedux(
+    "page",
+    "collaborators_resource_id",
+  );
+  const collaboratorsRouteError = useTypedRedux(
+    "page",
+    "collaborators_route_error",
+  );
+  const workspaceOverlayOpen =
+    contentOpen || libraryOpen || collaboratorsOpen || personalUrlBlocked;
+  const retainedCollaborators = useRef<{
+    accountId?: string;
+    route: CollaboratorsRoute;
+    error?: string;
+  }>({ accountId, route: { view: "conversations" } });
+  if (retainedCollaborators.current.accountId !== accountId)
+    retainedCollaborators.current = {
+      accountId,
+      route: { view: "conversations" },
+    };
+  if (collaboratorsOpen)
+    retainedCollaborators.current = {
+      accountId,
+      route: {
+        view: collaboratorsView ?? "conversations",
+        projectId: collaboratorsProjectId,
+        projectIds: collaboratorsProjectIds
+          ? Array.from(collaboratorsProjectIds)
+          : undefined,
+        personId: collaboratorsPersonId,
+        contactId: collaboratorsContactId,
+        invitationId: collaboratorsInvitationId,
+        resourceKind: collaboratorsResourceKind,
+        resourceId: collaboratorsResourceId,
+        alias: collaboratorsAlias,
+        aliasKind: collaboratorsAliasKind,
+      },
+      error: collaboratorsRouteError,
+    };
   const libraryProjectId = useTypedRedux("page", "library_project_id");
   const libraryEntryId = useTypedRedux("page", "library_entry_id");
+  const resumeLibrary = useLibraryNavigation({
+    accountId,
+    active: libraryOpen,
+    blocked: personalUrlBlocked,
+    projectId: libraryProjectId,
+    entryId: libraryEntryId,
+    personalUrl:
+      personalUrlStatus === "resolved" && personalUrlViewer === accountId
+        ? personalUrl
+        : undefined,
+  });
   const { names: artifactNames } = useArtifactNames();
   const artifactOpen =
     libraryOpen && (libraryProjectId != null || libraryEntryId != null);
@@ -3124,7 +3158,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const [copyBusy, setCopyBusy] = useState(false);
   const [copyError, setCopyError] = useState("");
   const [retiringAgentId, setRetiringAgentId] = useState<string>();
-  const [mobileList, setMobileList] = useState(!libraryOpen);
+  const [mobileList, setMobileList] = useState(!workspaceOverlayOpen);
   const [showHidden, setShowHidden] = useState(false);
   const [agentSidebarWidth, setAgentSidebarWidth] = useState(
     initialAgentSidebarWidth,
@@ -3139,11 +3173,22 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     Map<string, AgentHeaderAppearance>
   >(() => new Map());
   const rootRef = useRef<HTMLElement>(null);
+  const sidebarFocusPending = useRef(false);
   const boundAccount = useBoundAgentAccount();
 
   useEffect(() => {
-    if (libraryOpen) setMobileList(false);
-  }, [libraryOpen, libraryProjectId, libraryEntryId]);
+    if (workspaceOverlayOpen) setMobileList(false);
+  }, [
+    workspaceOverlayOpen,
+    activeTopTab,
+    libraryProjectId,
+    libraryEntryId,
+    collaboratorsView,
+    collaboratorsProjectId,
+    collaboratorsProjectIds,
+    collaboratorsPersonId,
+    collaboratorsResourceId,
+  ]);
 
   function libraryNavigationControl() {
     return isNarrow ? (
@@ -3151,7 +3196,10 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         type="text"
         aria-label="Show agents"
         icon={<Icon name="bars" />}
-        onClick={() => setMobileList(true)}
+        onClick={() => {
+          sidebarFocusPending.current = true;
+          setMobileList(true);
+        }}
       />
     ) : agentSidebarHidden ? (
       <AgentsSidebarToggle
@@ -3162,6 +3210,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   }
 
   const toggleAgentSidebar = useCallback(() => {
+    sidebarFocusPending.current = true;
     setAgentSidebarHidden((hidden) => {
       const next = !hidden;
       window.localStorage.setItem(AGENT_SIDEBAR_HIDDEN_STORAGE_KEY, `${next}`);
@@ -3173,6 +3222,24 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     if (active || !rootRef.current?.contains(document.activeElement)) return;
     (document.activeElement as HTMLElement | null)?.blur?.();
   }, [active]);
+  useEffect(() => {
+    if (!sidebarFocusPending.current) return;
+    sidebarFocusPending.current = false;
+    const label = isNarrow
+      ? mobileList
+        ? "Hide Agents sidebar"
+        : "Show agents"
+      : agentSidebarHidden
+        ? "Show Agents sidebar"
+        : "Hide Agents sidebar";
+    Array.from(
+      rootRef.current?.querySelectorAll<HTMLButtonElement>(
+        `button[aria-label="${label}"]`,
+      ) ?? [],
+    )
+      .find((button) => button.getClientRects().length > 0)
+      ?.focus();
+  }, [agentSidebarHidden, mobileList, isNarrow]);
   const agents = directory?.agents ?? [];
   const networks = networkDirectory?.networks ?? [];
   const networksByAgent = useMemo(
@@ -3191,22 +3258,31 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         agentOrganization.groups.unpinned[0]);
   const { mountedWorkspaces, mountWorkspace, unmountWorkspace } =
     useRetainedWorkspaces(
-      active && !libraryOpen && !creating && selected
+      active && !workspaceOverlayOpen && !creating && selected
         ? agentWorkspaceKey(selected)
         : undefined,
     );
   useEffect(() => {
-    if (!active) return;
+    if (!active || contentOpen) return;
     set_window_title(
-      libraryOpen
-        ? "Library"
-        : creating
-          ? "New Agent"
-          : selected
-            ? `@${selected.name} - Agents`
-            : "Agents",
+      collaboratorsOpen
+        ? "People"
+        : libraryOpen
+          ? "Artifacts"
+          : creating
+            ? "New Agent"
+            : selected
+              ? `@${selected.name} - Home`
+              : "Home",
     );
-  }, [active, libraryOpen, creating, selected?.name]);
+  }, [
+    active,
+    contentOpen,
+    libraryOpen,
+    collaboratorsOpen,
+    creating,
+    selected?.name,
+  ]);
   const creatingSourceAgent = agentFirstRunStarted(accountId)
     ? undefined
     : (agents.find(
@@ -3214,7 +3290,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       ) ?? selected);
 
   useWorkspaceRoute({
-    active: active && !libraryOpen,
+    active: active && !workspaceOverlayOpen,
     activeAgentId,
     selected,
   });
@@ -3238,7 +3314,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   );
 
   useEffect(() => {
-    if (!selected || libraryOpen || !active) return;
+    if (!selected || workspaceOverlayOpen || !active) return;
     const workspace = agentWorkspaceKey(selected);
     setWorkspaceAgentIds((old) => {
       if (old.get(workspace) === selected.endpoint.agent_id) return old;
@@ -3246,11 +3322,11 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       next.set(workspace, selected.endpoint.agent_id);
       return next;
     });
-  }, [selected?.endpoint.agent_id, libraryOpen, active]);
+  }, [selected?.endpoint.agent_id, workspaceOverlayOpen, active]);
 
   const handleRegisteredThreadSelected = useCallback(
     (workspace: string, nextAgent: NamedAgent) => {
-      if (!active || libraryOpen) return;
+      if (!active || workspaceOverlayOpen) return;
       setWorkspaceAgentIds((old) => {
         if (old.get(workspace) === nextAgent.endpoint.agent_id) return old;
         const next = new Map(old);
@@ -3260,6 +3336,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       const currentAgentId = redux.getStore("page")?.get("active_agent_id");
       if (currentAgentId === nextAgent.endpoint.agent_id) return;
       redux.getActions("page").setState({
+        ...closedLibraryState,
         active_agent_id: nextAgent.endpoint.agent_id,
         active_agent_name: nextAgent.name,
       });
@@ -3267,10 +3344,11 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         getPageUrlPath({
           page: "agents",
           agent_id: nextAgent.name,
+          owner: nextAgent.account_id,
         }),
       );
     },
-    [active, libraryOpen],
+    [active, workspaceOverlayOpen],
   );
 
   function selectAgent(agent: NamedAgent, keepNavigation = false) {
@@ -3304,9 +3382,12 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       getPageUrlPath({
         page: "agents",
         agent_id: routeName ?? agentId,
+        owner: accountId,
       }),
       "",
     );
+    // Push the destination before route effects canonicalize the current entry.
+    void redux.getActions("page").set_active_tab("agents", false);
   }
 
   function openCopyAgent(agent: NamedAgent) {
@@ -3413,21 +3494,15 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       }
       return;
     }
-    if (hit.segment_id !== "head") {
-      const { webapp_client } = await import("@cocalc/frontend/webapp-client");
-      if (superseded()) return;
-      const archived =
-        await webapp_client.conat_client.hub.projects.chatStoreReadArchivedHit({
-          project_id: agent.endpoint.project_id,
-          chat_path: agent.path,
-          thread_id: threadId,
-          row_id: hit.row_id,
-        });
-      if (superseded()) return;
-      if (!archived.row?.row)
-        throw new Error("Archived message is no longer available");
-      chat.hydrateArchivedRows([archived.row.row]);
-    }
+    await hydrateConversationSearchHit(
+      chat,
+      agent.endpoint.project_id,
+      agent.path,
+      threadId,
+      hit,
+      () => !superseded(),
+    );
+    if (superseded()) return;
     await editor.gotoFragment({ thread: threadId, chat: hit.date_ms });
     if (
       !superseded() &&
@@ -3665,7 +3740,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         | undefined,
     );
     const active =
-      !libraryOpen && agent.endpoint.agent_id === selected?.endpoint.agent_id;
+      !workspaceOverlayOpen &&
+      agent.endpoint.agent_id === selected?.endpoint.agent_id;
     const id = agent.endpoint.agent_id;
     const appearance = agentAppearances.get(id);
     const theme = resolveNamedAgentTheme(agent, appearance);
@@ -3887,7 +3963,29 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     );
   }
 
-  if (loading && !directory && !libraryOpen) return <Loading theme="medium" />;
+  if (loading && !directory && !workspaceOverlayOpen)
+    return <Loading theme="medium" />;
+  const libraryNavigationItem = (
+    <Button
+      ref={libraryButton}
+      block
+      type="text"
+      style={{
+        justifyContent: "flex-start",
+        background: libraryOpen ? UI_COLORS.selected : undefined,
+      }}
+      icon={<Icon name="files" />}
+      aria-pressed={libraryOpen}
+      aria-current={libraryOpen ? "page" : undefined}
+      onClick={() => {
+        searchNavigation.current++;
+        resumeLibrary();
+        setMobileList(false);
+      }}
+    >
+      Artifacts
+    </Button>
+  );
   const sidebar = (
     <aside
       id={AGENT_SIDEBAR_ID}
@@ -3902,12 +4000,19 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         boxSizing: "border-box",
         overflow: "hidden",
         minWidth: 0,
-        padding: "12px 0 0 12px",
+        padding: "0 0 0 12px",
         ...(isNarrow && !mobileList ? { display: "none" } : {}),
       }}
     >
       <WorkspaceSidebarActions
-        onHideSidebar={isNarrow ? undefined : toggleAgentSidebar}
+        onHideSidebar={
+          isNarrow
+            ? () => {
+                sidebarFocusPending.current = true;
+                setMobileList(false);
+              }
+            : toggleAgentSidebar
+        }
         footer={
           <div
             style={{
@@ -3918,30 +4023,29 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             <AgentsAccountMenu />
           </div>
         }
-        onProjects={
-          lite
-            ? undefined
-            : () => {
-                void redux.getActions("page").set_active_tab("projects");
-              }
+        firstNavigationItem={
+          lite ? (
+            libraryNavigationItem
+          ) : (
+            <Button
+              block
+              type="text"
+              icon={<Icon name="folder-open" />}
+              style={{
+                justifyContent: "flex-start",
+                background: projectsOpen ? UI_COLORS.selected : undefined,
+              }}
+              aria-current={projectsOpen ? "page" : undefined}
+              onClick={() => {
+                searchNavigation.current++;
+                setMobileList(false);
+                void openProjectsWorkspace();
+              }}
+            >
+              Projects
+            </Button>
+          )
         }
-        onNewAgent={() => {
-          searchNavigation.current++;
-          setCreatingSourceAgentId(selected?.endpoint.agent_id);
-          setCreating(true);
-          redux.getActions("page").setState({
-            ...closedLibraryState,
-            active_agent_id: "new",
-            active_agent_name: undefined,
-          });
-          set_url(
-            getPageUrlPath({
-              page: "agents",
-              agent_id: "new",
-            }),
-          );
-          setMobileList(false);
-        }}
       >
         <AgentSidebarFilter
           render={(search, input) => {
@@ -3976,21 +4080,61 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             return (
               <>
                 <Space direction="vertical" size={10} style={{ width: "100%" }}>
-                  <Button
-                    ref={libraryButton}
-                    block
-                    type="text"
-                    style={{
-                      justifyContent: "flex-start",
-                      background: libraryOpen ? UI_COLORS.selected : undefined,
+                  {!lite && libraryNavigationItem}
+                  {collaboratorsEnabled && (
+                    <Button
+                      block
+                      type="text"
+                      style={{
+                        justifyContent: "flex-start",
+                        background: collaboratorsOpen
+                          ? UI_COLORS.selected
+                          : undefined,
+                      }}
+                      icon={<Icon name="users" />}
+                      aria-pressed={collaboratorsOpen}
+                      aria-current={collaboratorsOpen ? "page" : undefined}
+                      onClick={() => {
+                        searchNavigation.current++;
+                        openCollaborators(
+                          retainedCollaborators.current.error
+                            ? {}
+                            : retainedCollaborators.current.route,
+                        );
+                        setMobileList(false);
+                      }}
+                    >
+                      People
+                    </Button>
+                  )}
+                  <AgentOrganizationControls
+                    mode={agentOrganization.organization.mode}
+                    groupByProject={
+                      agentOrganization.organization.groupByProject
+                    }
+                    onMode={agentOrganization.setMode}
+                    onGroupByProject={agentOrganization.setGroupByProject}
+                    onNewAgent={() => {
+                      searchNavigation.current++;
+                      setCreatingSourceAgentId(selected?.endpoint.agent_id);
+                      setCreating(true);
+                      redux.getActions("page").setState({
+                        ...closedLibraryState,
+                        active_agent_id: "new",
+                        active_agent_name: undefined,
+                      });
+                      set_url(
+                        getPageUrlPath({
+                          page: "agents",
+                          agent_id: "new",
+                        }),
+                      );
+                      void redux
+                        .getActions("page")
+                        .set_active_tab("agents", false);
+                      setMobileList(false);
                     }}
-                    icon={<Icon name="files" />}
-                    aria-pressed={libraryOpen}
-                    aria-current={libraryOpen ? "page" : undefined}
-                    onClick={showLibrary}
-                  >
-                    Library
-                  </Button>
+                  />
                   {accountId && (
                     <AgentSearch
                       accountId={accountId}
@@ -4001,14 +4145,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                       available={(agent) => agent.available}
                     />
                   )}
-                  <AgentOrganizationControls
-                    mode={agentOrganization.organization.mode}
-                    groupByProject={
-                      agentOrganization.organization.groupByProject
-                    }
-                    onMode={agentOrganization.setMode}
-                    onGroupByProject={agentOrganization.setGroupByProject}
-                  />
                   {input}
                   {networkError && (
                     <Alert
@@ -4285,11 +4421,14 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         ref={workspaceContent}
         tabIndex={-1}
         aria-label={
-          libraryOpen
-            ? "Artifact Library"
-            : selected
-              ? `Agent @${selected.name}`
-              : "Agent workspace"
+          contentLabel ??
+          (collaboratorsOpen
+            ? "People"
+            : libraryOpen
+              ? "Artifacts"
+              : selected
+                ? `Agent @${selected.name}`
+                : "Agent workspace")
         }
         style={{
           flex: 1,
@@ -4301,40 +4440,115 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           ...(isNarrow && mobileList ? { display: "none" } : {}),
         }}
       >
-        {accountId && (
-          <AgentArtifactBrowser
-            key={accountId}
-            accountId={accountId}
-            agents={agents}
-            activeAgent={selected}
-            active={
+        <div
+          style={{
+            display: "flex",
+            // Keep editor measurements stable while another workspace is shown.
+            // display:none makes responsive editors rebuild at zero width.
+            ...(!contentOpen
+              ? {
+                  position: "absolute" as const,
+                  inset: 0,
+                  visibility: "hidden" as const,
+                  pointerEvents: "none" as const,
+                }
+              : {}),
+            flex: 1,
+            minHeight: 0,
+            flexDirection: "column",
+          }}
+          inert={!contentOpen}
+          aria-hidden={!contentOpen}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              minWidth: 0,
+              flexShrink: 0,
+            }}
+          >
+            {libraryNavigationControl()}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              {contentNavigation ?? <AgentsWorkspaceNavigation />}
+            </div>
+          </div>
+          {children}
+        </div>
+        <WorkspaceCollectionPanels
+          accountId={accountId}
+          blocked={personalUrlBlocked}
+          status={
+            personalUrlBlocked &&
+            personalUrl && (
+              <div>
+                {libraryNavigationControl()}
+                <PersonalUrlStatus
+                  key={`${accountId}:${personalUrl}`}
+                  url={personalUrl}
+                  loading={
+                    personalUrlStatus !== "error" ||
+                    personalUrlViewer !== accountId
+                  }
+                  error={personalUrlError}
+                  projectId={
+                    personalUrlViewer === accountId
+                      ? personalUrlProjectId
+                      : undefined
+                  }
+                />
+              </div>
+            )
+          }
+          collaboratorsEnabled={collaboratorsEnabled}
+          collaboratorsOpen={collaboratorsOpen}
+          collaborators={{
+            ...retainedCollaborators.current.route,
+            active: active && collaboratorsOpen && (!isNarrow || !mobileList),
+            routeError: retainedCollaborators.current.error,
+            navigation: libraryNavigationControl(),
+            headerActions: <AgentsWorkspaceNavigation />,
+            onNavigate: (route) => {
+              searchNavigation.current++;
+              openCollaborators(route);
+            },
+          }}
+          artifacts={{
+            agents,
+            activeAgent: selected,
+            active:
               active &&
               libraryOpen &&
               !artifactOpen &&
-              (!isNarrow || !mobileList)
-            }
-            navigation={libraryNavigationControl()}
-            onSelect={openLibraryHit}
-            onShowConversation={(result) => openLibraryHit(result, true)}
-          />
-        )}
-        {active && artifactOpen && accountId && (!isNarrow || !mobileList) && (
-          <LibraryEntry
-            navigation={libraryNavigationControl()}
-            accountId={accountId}
-            projectId={libraryProjectId ?? ""}
-            entryId={libraryEntryId ?? ""}
-            agents={agents}
-            onBack={showLibrary}
-            onShowConversation={showLibraryConversation}
-          />
-        )}
+              (!isNarrow || !mobileList),
+            navigation: libraryNavigationControl(),
+            headerActions: <AgentsWorkspaceNavigation />,
+            onSelect: openLibraryHit,
+            onShowConversation: (result) => openLibraryHit(result, true),
+          }}
+        />
+        {active &&
+          !personalUrlBlocked &&
+          artifactOpen &&
+          accountId &&
+          (!isNarrow || !mobileList) && (
+            <LibraryEntry
+              navigation={libraryNavigationControl()}
+              headerActions={<AgentsWorkspaceNavigation />}
+              accountId={accountId}
+              projectId={libraryProjectId ?? ""}
+              entryId={libraryEntryId ?? ""}
+              agents={agents}
+              onBack={showLibrary}
+              onShowConversation={showLibraryConversation}
+            />
+          )}
         <div
           style={{
             flex: 1,
             minHeight: 0,
             position: "relative",
-            display: libraryOpen ? "none" : undefined,
+            display: workspaceOverlayOpen ? "none" : undefined,
           }}
         >
           {active &&
@@ -4407,7 +4621,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                 description="This registered agent is not available in your directory."
               >
                 <Space>
-                  <Button onClick={refreshNamedAgents}>
+                  <Button onClick={() => refreshNamedAgents()}>
                     Refresh directory
                   </Button>
                   <Button onClick={() => setMobileList(true)}>
@@ -4438,7 +4652,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                       accountId={accountId}
                       active={
                         active &&
-                        !libraryOpen &&
+                        !workspaceOverlayOpen &&
                         (!isNarrow || !mobileList) &&
                         !!selected &&
                         agentWorkspaceKey(selected) === workspace

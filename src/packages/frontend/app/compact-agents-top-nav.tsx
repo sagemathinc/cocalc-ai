@@ -13,6 +13,7 @@ import {
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
+import { openAppDocsDrawer } from "@cocalc/frontend/docs/navigation";
 import { Icon } from "@cocalc/frontend/components";
 import { AIUsageWarning } from "@cocalc/frontend/purchases/ai-usage-warning";
 import { AccountCpuWarning } from "@cocalc/frontend/purchases/account-cpu-warning";
@@ -75,7 +76,7 @@ export function CompactAgentsTopNav({
           { type: "divider" as const },
         ]
       : []),
-    { key: "projects", icon: <Icon name="edit" />, label: "Projects" },
+    { key: "projects", icon: <Icon name="folder-open" />, label: "Projects" },
     { key: "hosts", icon: <Icon name="server" />, label: "Compute" },
     {
       key: "notifications",
@@ -104,7 +105,11 @@ export function CompactAgentsTopNav({
     switch (key) {
       case "docs":
         if (onOpenDocs) onOpenDocs();
-        else pageActions.set_active_tab("docs");
+        else
+          openAppDocsDrawer(
+            undefined,
+            menuTriggerRef.current?.querySelector("button") ?? undefined,
+          );
         return;
       case "open-in-project":
         onOpenInProject?.();
@@ -140,7 +145,6 @@ export function CompactAgentsTopNav({
       {isLoggedIn ? (
         <Notification
           active={false}
-          hideWhenEmpty
           pageStyle={pageStyle}
           type="notifications"
         />
@@ -174,6 +178,8 @@ export function CompactAgentsTopNav({
         <span ref={menuTriggerRef}>
           <Button
             aria-label="More navigation"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
             type="text"
             style={{
               color: foregroundColor ?? UI_COLORS.text,
