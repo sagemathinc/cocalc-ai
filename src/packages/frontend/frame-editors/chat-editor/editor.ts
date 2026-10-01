@@ -17,7 +17,7 @@ import type {
   EditorComponentProps,
   EditorDescription,
 } from "@cocalc/frontend/frame-editors/frame-tree/types";
-import { terminal } from "@cocalc/frontend/frame-editors/terminal-editor/editor";
+import { terminal } from "@cocalc/frontend/frame-editors/terminal-editor/spec";
 import { time_travel } from "@cocalc/frontend/frame-editors/time-travel-editor/editor";
 import { set } from "@cocalc/util/misc";
 import { CHATROOM_COMMANDS } from "./commands";

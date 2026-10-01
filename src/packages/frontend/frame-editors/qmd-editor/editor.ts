@@ -17,7 +17,7 @@ import { PDFJS } from "../latex-editor/pdfjs";
 import { RenderedMarkdown } from "../markdown-editor/rendered-markdown";
 import { derive_rmd_output_filename } from "../rmd-editor/utils";
 import { SETTINGS_SPEC } from "../settings/editor";
-import { terminal } from "../terminal-editor/editor";
+import { terminal } from "../terminal-editor/spec";
 import { time_travel } from "../time-travel-editor/editor";
 import { BuildLog } from "./build-log";
 

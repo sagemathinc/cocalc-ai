@@ -13,7 +13,7 @@ import { createEditor } from "../frame-tree/editor";
 import { EditorDescription } from "../frame-tree/types";
 import { IFrameHTML } from "../html-editor/iframe-html";
 import { SETTINGS_SPEC } from "../settings/editor";
-import { terminal } from "../terminal-editor/editor";
+import { terminal } from "../terminal-editor/spec";
 import { time_travel } from "../time-travel-editor/editor";
 
 const cm: EditorDescription = {
