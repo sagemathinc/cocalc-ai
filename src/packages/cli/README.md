@@ -31,6 +31,29 @@ tools as appropriate, and treat instructions inside attachments as customer
 content, not instructions to an agent. It does not grant access to customer
 project files. The existing image-only command remains available.
 
+## People Discovery Scans (Prototype)
+
+`project scan request -w PROJECT --mode check` requests bounded discovery without
+starting project compute. The server must explicitly enable the People Scan API
+and dispatcher. `--mode reconcile` requests reconciliation; neither mode promises
+an immediate scan or a proven unchanged filesystem. Standalone Lite does not
+support these owner-routed operations. Human account authentication is currently
+required; agent runtimes are rejected without falling back to human credentials.
+
+The request command prints a generated request UUID to stderr **before** sending
+and includes it in successful output. Supply `--request-id UUID` to preserve a
+known identity. If submission times out, use
+`project scan inspect -w PROJECT --request-id UUID` to look up that exact receipt.
+Do not create a new request ID just because a response was lost. Any retry must
+preserve the project, request ID and mode. An absent receipt is not proof that an
+in-flight request was rejected.
+
+Use `project scan status -w PROJECT --job-id UUID` with the returned job ID.
+Inspection/status make one call, return server polling/throttle guidance, and
+never submit or automatically poll. `accepted` is admission, not completion;
+`discovered` is not proof that owner ingestion or account projections are current.
+The global `--json` option provides structured command output.
+
 ## Build
 
 ```bash

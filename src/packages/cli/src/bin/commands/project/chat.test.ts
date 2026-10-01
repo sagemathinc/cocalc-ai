@@ -250,6 +250,11 @@ function setup() {
       calls.push(options);
       return { state: "accepted" };
     },
+    projectChatThreadCreateData: async (options: unknown) => {
+      calls.push(options);
+      return { thread_id: "created-thread" };
+    },
+    buildCodexSessionConfig: (options: unknown) => options,
     projectChatThreadStatusData: async (options: unknown) => {
       calls.push(options);
       return {
@@ -374,4 +379,216 @@ test("thread list shows chat IDs and names without dumping session configuration
       archived: false,
     },
   ]);
+});
+
+test("human creation and stdin send select the canonical service with stable request IDs", async () => {
+  const requestId = randomUUID();
+  const threadId = randomUUID();
+  const f = setup();
+  await withoutRuntimeIdentity(async () => {
+    await f.program.parseAsync(
+      [
+        "project",
+        "chat",
+        "thread",
+        "create",
+        "--human",
+        "--project",
+        "target",
+        "--name",
+        "Discussion",
+        "--request-id",
+        requestId,
+      ],
+      { from: "user" },
+    );
+    await f.program.parseAsync(
+      [
+        "project",
+        "chat",
+        "send",
+        "--human",
+        "--project",
+        "target",
+        "--thread-id",
+        threadId,
+        "--request-id",
+        requestId,
+        "--stdin",
+      ],
+      { from: "user" },
+    );
+  });
+  assert.deepEqual(f.calls, [
+    {
+      ctx: f.ctx,
+      projectIdentifier: "target",
+      name: "Discussion",
+      human: true,
+      requestId,
+    },
+    {
+      ctx: f.ctx,
+      projectIdentifier: "target",
+      threadId,
+      prompt: '{"message":"hello"}\n',
+      human: true,
+      requestId,
+    },
+  ]);
+});
+
+test("human create and send expose generated retry IDs before executing", async () => {
+  const f = setup();
+  let output = "";
+  const stderr = mock.method(process.stderr, "write", (chunk: any) => {
+    output += chunk;
+    return true;
+  });
+  try {
+    await withoutRuntimeIdentity(async () => {
+      await f.program.parseAsync(
+        ["project", "chat", "thread", "create", "--human"],
+        { from: "user" },
+      );
+      await f.program.parseAsync(
+        [
+          "project",
+          "chat",
+          "send",
+          "--human",
+          "--thread-id",
+          randomUUID(),
+          "hello",
+        ],
+        { from: "user" },
+      );
+    });
+    for (const call of f.calls) {
+      assert.match(call.requestId, /^[0-9a-f-]{36}$/);
+      assert.ok(output.includes(call.requestId));
+    }
+    assert.notEqual(f.calls[0].requestId, f.calls[1].requestId);
+  } finally {
+    stderr.mock.restore();
+  }
+});
+
+test("human sends reject every agent delivery option before connecting", async () => {
+  for (const extra of [
+    ["--path", "agent.chat"],
+    ["--guidance"],
+    ["--to", "reviewer"],
+    ["--to-agent", randomUUID()],
+    ["--rpc"],
+    ["--external-agent", "profile"],
+    ["--agent-network", "network"],
+    ["--attempt-id", randomUUID()],
+    ["--attach", "file"],
+    ["--request-id", "invalid"],
+  ]) {
+    const f = setup();
+    await assert.rejects(
+      withoutRuntimeIdentity(() =>
+        f.program.parseAsync(
+          [
+            "project",
+            "chat",
+            "send",
+            "--human",
+            "--thread-id",
+            randomUUID(),
+            ...extra,
+            "hello",
+          ],
+          { from: "user" },
+        ),
+      ),
+    );
+    assert.equal(f.calls.length, 0);
+  }
+});
+
+test("human creation rejects explicit agent configuration rather than silently ignoring it", async () => {
+  for (const extra of [
+    ["--path", "agent.chat"],
+    ["--thread-id", randomUUID()],
+    ["--agent-kind", "acp"],
+    ["--agent-kind", "none"],
+    ["--agent-model", "codex-agent"],
+    ["--model", "gpt-5"],
+    ["--agent-mode", "interactive"],
+    ["--reasoning", "high"],
+    ["--service-tier", "fast"],
+    ["--fast"],
+    ["--session-mode", "auto"],
+    ["--workdir", "/home/user"],
+    ["--request-id", "invalid"],
+  ]) {
+    const f = setup();
+    await assert.rejects(
+      withoutRuntimeIdentity(() =>
+        f.program.parseAsync(
+          ["project", "chat", "thread", "create", "--human", ...extra],
+          { from: "user" },
+        ),
+      ),
+    );
+    assert.equal(f.calls.length, 0);
+  }
+});
+
+test("human workflows never fall back from runtime identity to an account credential", async () => {
+  const previous = process.env.COCALC_AGENT_IDENTITY_FILE;
+  process.env.COCALC_AGENT_IDENTITY_FILE = "/runtime/identity";
+  try {
+    for (const args of [
+      ["thread", "create", "--human"],
+      ["send", "--human", "--thread-id", randomUUID(), "hello"],
+    ]) {
+      const f = setup();
+      await assert.rejects(
+        f.program.parseAsync(["project", "chat", ...args], { from: "user" }),
+        /account authentication/,
+      );
+      assert.equal(f.calls.length, 0);
+    }
+  } finally {
+    if (previous == null) delete process.env.COCALC_AGENT_IDENTITY_FILE;
+    else process.env.COCALC_AGENT_IDENTITY_FILE = previous;
+  }
+});
+
+test("non-human thread creation still defaults to interactive ACP", async () => {
+  const f = setup();
+  await f.program.parseAsync(
+    ["project", "chat", "thread", "create", "--path", "agent.chat"],
+    { from: "user" },
+  );
+  assert.equal(f.calls[0].agentKind, "acp");
+  assert.equal(f.calls[0].agentMode, "interactive");
+  assert.ok(f.calls[0].acpConfig);
+  const missing = setup();
+  await assert.rejects(
+    missing.program.parseAsync(["project", "chat", "thread", "create"], {
+      from: "user",
+    }),
+    /--path is required/,
+  );
+  assert.equal(missing.calls.length, 0);
+});
+
+test("send request-ID help documents identity and human workflows", () => {
+  const { program } = setup();
+  const chat = program.commands[0].commands.find(
+    (command) => command.name() === "chat",
+  )!;
+  const send = chat.commands.find((command) => command.name() === "send")!;
+  const requestId = send.options.find(
+    (option) => option.long === "--request-id",
+  )!;
+  assert.equal(
+    requestId.description,
+    "stable idempotency key for identity or --human sends; reuse on retry",
+  );
 });

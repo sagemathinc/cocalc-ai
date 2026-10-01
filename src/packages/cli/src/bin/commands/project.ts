@@ -8,6 +8,7 @@ import { Command } from "commander";
 import { registerProjectSyncCommands } from "./project/sync";
 import { registerProjectCodexCommands } from "./project/codex";
 import { registerProjectCollabCommands } from "./project/collab";
+import { registerProjectScanCommands } from "./project/scan";
 import { registerProjectFileCommands } from "./project/file";
 import { registerProjectLifecycleCommands } from "./project/lifecycle";
 import { registerProjectOpsCommands } from "./project/ops";
@@ -164,6 +165,7 @@ export function registerProjectCommand(
   registerProjectChatCommands(project, dataDeps);
   registerProjectJupyterCommands(project, dataDeps);
   registerProjectCollabCommands(project, deps);
+  registerProjectScanCommands(project, deps);
   registerProjectFileCommands(project, dataDeps);
   registerProjectStorageCommands(project, deps);
   registerProjectPublishCommands(project, deps);

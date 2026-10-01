@@ -3,6 +3,45 @@ import test from "node:test";
 
 import { createHubApiForContext, hubCallByName } from "./context";
 
+test("createHubApiForContext exposes the typed personalUrls namespace", async () => {
+  const calls: Array<{ name: string; args: unknown[] }> = [];
+  const hub = createHubApiForContext(async <T>(name, args = []) => {
+    calls.push({ name, args });
+    return undefined as T;
+  });
+  await hub.personalUrls.getUsername({});
+  await hub.personalUrls.setUsername({ username: null });
+  await hub.personalUrls.resolveOwner({ owner: "alice" });
+  await hub.personalUrls.resolveUrl({
+    url: "/u/alice/artifacts/report",
+    inspect: true,
+  });
+  await hub.personalUrls.releaseRedirect({
+    owner_account_id: "owner-id",
+    username: "old-alice",
+    reason: "support",
+  });
+  assert.deepEqual(calls, [
+    { name: "personalUrls.getUsername", args: [{}] },
+    { name: "personalUrls.setUsername", args: [{ username: null }] },
+    { name: "personalUrls.resolveOwner", args: [{ owner: "alice" }] },
+    {
+      name: "personalUrls.resolveUrl",
+      args: [{ url: "/u/alice/artifacts/report", inspect: true }],
+    },
+    {
+      name: "personalUrls.releaseRedirect",
+      args: [
+        {
+          owner_account_id: "owner-id",
+          username: "old-alice",
+          reason: "support",
+        },
+      ],
+    },
+  ]);
+});
+
 test("createHubApiForContext exposes connected course funding commands", async () => {
   const calls: Array<{ name: string; args: any[] }> = [];
   const hub = createHubApiForContext(async <T>(name, args = []) => {
