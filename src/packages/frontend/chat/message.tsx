@@ -561,6 +561,10 @@ export default function Message({
   );
   // Thread identity/model now comes from thread_config metadata.
   const isCodexThread = typeof isLLMThread === "string";
+  // A message from another agent is a prompt to this thread's agent, so it
+  // sits where prompts sit. Its "From @agent" card keeps the source visible.
+  const usePromptLayout =
+    is_viewers_message || (!!rpcAttribution && isCodexThread);
   const senderId = field<string>(message, "sender_id");
   const hasLanguageModelServiceAuthor = useMemo(() => {
     const author_id = firstHistoryEntry?.author_id;
@@ -2672,13 +2676,12 @@ export default function Message({
           ? undefined
           : 22;
 
-    const { background, color, lighten, message_class } = message_colors(
-      rpcAttribution ? "" : account_id,
-      message,
-    );
+    const colors = message_colors(rpcAttribution ? "" : account_id, message);
+    const { color, lighten, message_class } = colors;
+    const background = usePromptLayout ? UI_COLORS.inset : colors.background;
 
     const marginTop =
-      !is_prev_sender && is_viewers_message ? MARGIN_TOP_VIEWER : "5px";
+      !is_prev_sender && usePromptLayout ? MARGIN_TOP_VIEWER : "5px";
 
     const padding = { paddingTop: 9, paddingLeft: 9, paddingRight: 9 };
     const messageStyle: CSSProperties = {
@@ -2690,7 +2693,7 @@ export default function Message({
       fontSize: `${font_size}px`,
       paddingBottom: 9,
       ...padding,
-      ...(is_viewers_message && mode === "standalone" && !narrow
+      ...(usePromptLayout && mode === "standalone" && !narrow
         ? { marginLeft: VIEWER_MESSAGE_LEFT_MARGIN }
         : undefined),
       ...(mode === "sidechat"
