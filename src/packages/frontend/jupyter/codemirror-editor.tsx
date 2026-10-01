@@ -24,7 +24,10 @@ import {
 import { React, usePrevious, useRef } from "@cocalc/frontend/app-framework";
 import useNotebookFrameActions from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/hook";
 import { COLORS } from "@cocalc/util/theme";
-import { SAVE_DEBOUNCE_MS } from "../frame-editors/code-editor/const";
+import {
+  SAVE_DEBOUNCE_MS,
+  SAVE_MAX_WAIT_MS,
+} from "../frame-editors/code-editor/const";
 import { Complete, Actions as CompleteActions } from "./complete";
 import { Cursors } from "./cursors";
 import { Position } from "./insert-cell/types";
@@ -845,7 +848,9 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       }
     }
 
-    cm_change.current = debounce(cm_save, SAVE_DEBOUNCE_MS);
+    cm_change.current = debounce(cm_save, SAVE_DEBOUNCE_MS, {
+      maxWait: SAVE_MAX_WAIT_MS,
+    });
 
     cm.current.on("change", cm_change.current);
     cm.current.on("change", handleChange);

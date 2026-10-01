@@ -39,7 +39,10 @@ import {
   RichTextSelectionBridgeControl,
   SelectionController,
 } from "@cocalc/frontend/editors/markdown-input/types";
-import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
+import {
+  SAVE_DEBOUNCE_MS,
+  SAVE_MAX_WAIT_MS,
+} from "@cocalc/frontend/frame-editors/code-editor/const";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { Path } from "@cocalc/frontend/frame-editors/frame-tree/path";
 import {
@@ -1592,7 +1595,9 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
   const setSyncstringFromSlate = useMemo(() => {
     if (saveDebounceMs) {
-      return debounce(setSyncstringFromSlateNOW, saveDebounceMs);
+      return debounce(setSyncstringFromSlateNOW, saveDebounceMs, {
+        maxWait: SAVE_MAX_WAIT_MS,
+      });
     } else {
       // this case shouldn't happen
       return setSyncstringFromSlateNOW;
@@ -1610,6 +1615,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     return debounce(
       () => editor.saveValue(),
       saveDebounceMs ?? SAVE_DEBOUNCE_MS,
+      { maxWait: SAVE_MAX_WAIT_MS },
     );
   }, [editor, saveDebounceMs]);
 
