@@ -138,6 +138,7 @@ function fixture(guidance = false) {
     guidance,
   });
   const syncdb = {
+    get: jest.fn((): any[] => []),
     set: jest.fn(() => {
       steps.push("set");
     }),
@@ -208,4 +209,75 @@ test("missing queue acknowledgement is explicit uncertainty", async () => {
   await expect(submitChatSend(f)).rejects.toThrow(
     "submission was not confirmed",
   );
+});
+
+describe.each([false, true])("human-only safety (guidance=%s)", (guidance) => {
+  test.each([
+    [{ event: "collaborators-room", mode: "human" }],
+    [{ event: "collaborators-room" }],
+  ])("room marker overrides agent configuration %j", (marker) => {
+    for (const agent_kind of ["acp", "none", undefined]) {
+      expect(() =>
+        prepareChatSend({
+          projectId: "project",
+          accountId: "account",
+          path: "human.chat",
+          thread: {
+            thread_id: "thread",
+            agent_kind,
+            acp_config: { model: "gpt-5" },
+            agent_model: "codex-agent",
+          } as any,
+          rows: [marker],
+          prompt: "@agent please review",
+          guidance,
+        }),
+      ).toThrow("human-only");
+    }
+  });
+
+  test.each([
+    { acp_config: {} },
+    { agent_model: "codex-agent" },
+    { acp_config: {}, agent_model: "codex-agent" },
+  ])("explicit none overrides stale fields %j", (stale) => {
+    expect(() =>
+      prepareChatSend({
+        projectId: "project",
+        accountId: "account",
+        path: "human.chat",
+        thread: { thread_id: "thread", agent_kind: "none", ...stale } as any,
+        rows: [],
+        prompt: "hello",
+        guidance,
+      }),
+    ).toThrow("human-only");
+  });
+
+  test.each([
+    { event: "collaborators-room" },
+    {
+      event: "chat-thread-config",
+      thread_id: "thread",
+      agent_kind: "none",
+      acp_config: {},
+    },
+  ])("late human mode blocks all persistence and dispatch %j", async (row) => {
+    const f = fixture(guidance);
+    f.syncdb.get.mockReturnValue([row]);
+    await expect(submitChatSend(f)).rejects.toThrow("human-only");
+    expect(f.steps).toEqual([]);
+    expect(f.transport.stream).not.toHaveBeenCalled();
+    expect(f.transport.steer).not.toHaveBeenCalled();
+  });
+
+  test("rechecks live mode after asynchronous persistence before dispatch", async () => {
+    const f = fixture(guidance);
+    f.syncdb.save_to_disk.mockImplementation(async () => {
+      f.syncdb.get.mockReturnValue([{ event: "collaborators-room" }]);
+    });
+    await expect(submitChatSend(f)).rejects.toThrow("human-only");
+    expect(f.transport.stream).not.toHaveBeenCalled();
+    expect(f.transport.steer).not.toHaveBeenCalled();
+  });
 });

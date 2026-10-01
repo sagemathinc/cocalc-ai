@@ -13,6 +13,8 @@ import type { ImmerDB } from "./server";
 import { steerAcp, streamAcp } from "@cocalc/conat/ai/acp/client";
 import type { Client } from "@cocalc/conat/core/client";
 import type { AcpRequest, AcpChatContext } from "@cocalc/conat/ai/acp/types";
+import { isHumanOnlyChat } from "@cocalc/util/collaboration-human-room";
+import { projectChatIdentityRows } from "@cocalc/util/collaboration-chat-identity";
 import {
   isCodexModelName,
   normalizeCodexSessionId,
@@ -27,6 +29,16 @@ import {
   normalizeNotificationPreferencesV2,
   resolveCodexCompletionNotificationEnabled,
 } from "@cocalc/util/notification-preferences";
+
+function assertAgentChat(
+  rows: Iterable<unknown>,
+  thread?: { agent_kind?: string },
+) {
+  if (isHumanOnlyChat(rows) || thread?.agent_kind === "none")
+    throw new Error(
+      "Project conversations are human-only; use project chat send --human or open an agent to run AI work.",
+    );
+}
 
 export function prepareChatSend({
   projectId,
@@ -49,6 +61,9 @@ export function prepareChatSend({
   apiUrl?: string;
   otherSettings?: Record<string, unknown>;
 }) {
+  // The room marker and explicit human mode override stale model/config fields.
+  assertAgentChat(rows, thread);
+  rows = [...projectChatIdentityRows(rows)];
   if (!prompt.trim()) throw new Error("message must not be empty");
   if (!accountId) throw new Error("an authenticated account is required");
   if (thread.archived) throw new Error("cannot send to an archived thread");
@@ -152,18 +167,31 @@ export async function submitChatSend({
   transport = { stream: streamAcp, steer: steerAcp },
 }: {
   prepared: ReturnType<typeof prepareChatSend>;
-  syncdb: Pick<ImmerDB, "set" | "commit" | "save" | "save_to_disk">;
+  syncdb: Pick<ImmerDB, "get" | "set" | "commit" | "save" | "save_to_disk">;
   client: Client;
   timeoutMs?: number;
   transport?: { stream: typeof streamAcp; steer: typeof steerAcp };
 }) {
   const { message, request } = prepared;
+  function checkLiveMode() {
+    const rows = syncdb.get();
+    assertAgentChat(
+      rows,
+      rows.find(
+        (row) =>
+          row.event === "chat-thread-config" &&
+          row.thread_id === message.thread_id,
+      ),
+    );
+  }
+  checkLiveMode();
   // Use the live syncdoc, not .chat JSON. Never create the assistant row here:
   // the backend chat writer owns it and the durable job after acknowledgement.
   syncdb.set(message);
   syncdb.commit();
   await syncdb.save();
   await syncdb.save_to_disk();
+  checkLiveMode();
   await admitPreparedChatSend({ prepared, client, timeoutMs, transport });
   return {
     project_id: request.project_id,
