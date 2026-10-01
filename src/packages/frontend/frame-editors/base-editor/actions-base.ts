@@ -612,7 +612,19 @@ export class BaseEditorActions<
           live_bytes: liveValue.length,
         });
       }
-      this.setState({ value: liveValue });
+      if (differs) {
+        // The editor buffer was created from the value read from disk, which
+        // can be seconds behind the synced document while others edit it, and
+        // a live buffer is not updated from the store (see
+        // codemirror-editor.tsx). Show the synced value in it, and make that
+        // the merge base: the buffer was read-only, so it has no edits of its
+        // own. Otherwise the next merge, or the first save, would take the
+        // stale text for the user's edits and revert everyone's recent work.
+        this.applyMergedBuffer(liveValue);
+        this.getMergeCoordinator().seedBase(liveValue, this.getLatestVersion());
+      } else {
+        this.setState({ value: liveValue });
+      }
     }
     this.optimisticFastOpenValue = undefined;
     if (this.store?.get("status") === FAST_OPEN_SYNCSTRING_STATUS) {
