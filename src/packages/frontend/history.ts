@@ -74,6 +74,57 @@ import {
   consumeGitReviewOnlyNavigation,
 } from "./git/review-route";
 
+import { RetainedWorkspaceNavigation } from "./app/retained-workspace-navigation";
+
+const retainedWorkspaceNavigation = new RetainedWorkspaceNavigation();
+function retainedWorkspaceRuntime(tab: string): object | undefined {
+  if (tab === "projects") return redux.getStore("projects");
+  if (is_valid_uuid_string(tab) && redux.hasProjectStore(tab))
+    return redux.getProjectStore(tab);
+}
+
+/** Capture before the top tab changes, including departures through Library. */
+export function rememberProjectsView() {
+  const activeTab = redux.getStore("page")?.get?.("active_top_tab");
+  const runtime = retainedWorkspaceRuntime(activeTab);
+  const account = redux.getStore("account")?.get("account_id");
+  const currentRoute = parsePageTarget(
+    location.pathname.slice(appBasePath.length).replace(/^\//, ""),
+  );
+  const currentViewMatches =
+    activeTab === "projects"
+      ? currentRoute.page === "projects"
+      : currentRoute.page === "project" &&
+        currentRoute.target.split("/")[0] === activeTab;
+  if (runtime && account && currentViewMatches) {
+    retainedWorkspaceNavigation.remember(
+      activeTab,
+      location.href,
+      account,
+      runtime,
+    );
+  }
+}
+
+/** Sidebar Projects means resume the Projects workspace, not reset to its list. */
+export function openProjectsWorkspace() {
+  const page = redux.getActions("page");
+  const activeTab = redux.getStore("page")?.get("active_top_tab");
+  if (activeTab === "projects" || is_valid_uuid_string(activeTab)) return;
+  const view = retainedWorkspaceNavigation.latest(
+    redux.getStore("account")?.get("account_id"),
+    retainedWorkspaceRuntime,
+  );
+  if (!view) return page.set_active_tab("projects");
+  const url = new URL(view.url);
+  set_url_with_search(
+    url.pathname.slice(appBasePath.length),
+    url.search,
+    url.hash,
+  );
+  return page.set_active_tab(view.tab, false);
+}
+
 const reviewSearchForNavigation = createGitReviewNavigationSearch(
   new URL(location.href),
 );
@@ -127,6 +178,9 @@ export function set_url_with_search(
   if (IS_EMBEDDED) {
     // no need to mess with url in embedded mode.
     return;
+  }
+  if (parsePageTarget(url.replace(/^\//, "")).page === "agents") {
+    rememberProjectsView();
   }
   last_url = url;
   const current = new URL(location.href);
@@ -325,6 +379,17 @@ window.onpopstate = (_) => {
   // The owning chat listens to popstate. Reopening the same file for a drawer
   // selection can create an extra history entry and discard the Forward stack.
   if (consumeGitReviewOnlyNavigation(new URL(location.href))) return;
+  // A suspended workspace is already at this exact address. Do not reopen its
+  // file, directory, search, settings, or other view just to make it visible.
+  const retained = retainedWorkspaceNavigation.find(
+    location.href,
+    redux.getStore("account")?.get("account_id"),
+    retainedWorkspaceRuntime,
+  );
+  if (retained && redux.getStore("page")?.get("active_top_tab") === "agents") {
+    void redux.getActions("page").set_active_tab(retained, false);
+    return;
+  }
   load_target(
     decodeURIComponent(
       document.location.pathname.slice(

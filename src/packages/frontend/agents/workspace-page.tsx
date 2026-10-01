@@ -18,7 +18,7 @@ import {
   useTypedRedux,
   useEditorRedux,
 } from "@cocalc/frontend/app-framework";
-import { Suspense } from "react";
+import { Suspense, type ReactNode } from "react";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { CocalcErrorBoundary } from "@cocalc/frontend/app/error-boundary";
 import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
@@ -98,7 +98,7 @@ import {
 } from "@cocalc/frontend/chat/composer-codex-controls";
 import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
 import { stableDraftKeyFromThreadKey } from "@cocalc/frontend/chat/utils";
-import { set_url } from "@cocalc/frontend/history";
+import { set_url, openProjectsWorkspace } from "@cocalc/frontend/history";
 import { set_window_title } from "@cocalc/frontend/browser";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { useWorkspaceRoute } from "./use-workspace-route";
@@ -152,7 +152,7 @@ import {
   completeFirstRunWithAgent,
 } from "@cocalc/frontend/projects/onboarding/agent-completion";
 import { joinAbsolutePath } from "@cocalc/util/path-model";
-import { uuid } from "@cocalc/util/misc";
+import { uuid, is_valid_uuid_string } from "@cocalc/util/misc";
 import type { ThemeEditorDraft } from "@cocalc/frontend/theme/types";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { Resizable } from "re-resizable";
@@ -3092,7 +3092,24 @@ function AgentWorkspace({
   );
 }
 
-export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
+export function MyAgentsWorkspacePage({
+  active = true,
+  children,
+  contentLabel,
+  contentNavigation,
+}: {
+  active?: boolean;
+  // Project and account pages shown in the content pane beside the sidebar.
+  children?: ReactNode;
+  // Set when the content pane (not an agent or the Library) is showing.
+  contentLabel?: string;
+  contentNavigation?: ReactNode;
+}) {
+  const contentOpen = contentLabel != null;
+  const activeTopTab = useTypedRedux("page", "active_top_tab");
+  const projectsOpen =
+    contentOpen &&
+    (activeTopTab === "projects" || is_valid_uuid_string(activeTopTab));
   const { pageStyle } = useAppContext();
   const isNarrow = pageStyle.isNarrow;
   const { directory, error, loading } = useNamedAgents();
@@ -3102,8 +3119,11 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const accountId = useTypedRedux("account", "account_id") as
     | string
     | undefined;
-  const searchNavigation = useNavigationIntent(active, accountId);
-  const libraryOpen = !!useTypedRedux("page", "library_open");
+  const searchNavigation = useNavigationIntent(
+    active && !contentOpen,
+    accountId,
+  );
+  const libraryOpen = !!useTypedRedux("page", "library_open") && !contentOpen;
   const libraryProjectId = useTypedRedux("page", "library_project_id");
   const libraryEntryId = useTypedRedux("page", "library_entry_id");
   const { names: artifactNames } = useArtifactNames();
@@ -3142,11 +3162,18 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     Map<string, AgentHeaderAppearance>
   >(() => new Map());
   const rootRef = useRef<HTMLElement>(null);
+  const sidebarFocusPending = useRef(false);
   const boundAccount = useBoundAgentAccount();
 
   useEffect(() => {
-    if (libraryOpen) setMobileList(false);
-  }, [libraryOpen, libraryProjectId, libraryEntryId]);
+    if (libraryOpen || contentOpen) setMobileList(false);
+  }, [
+    libraryOpen,
+    contentOpen,
+    activeTopTab,
+    libraryProjectId,
+    libraryEntryId,
+  ]);
 
   function libraryNavigationControl() {
     return isNarrow ? (
@@ -3154,7 +3181,10 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         type="text"
         aria-label="Show agents"
         icon={<Icon name="bars" />}
-        onClick={() => setMobileList(true)}
+        onClick={() => {
+          sidebarFocusPending.current = true;
+          setMobileList(true);
+        }}
       />
     ) : agentSidebarHidden ? (
       <AgentsSidebarToggle
@@ -3165,6 +3195,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   }
 
   const toggleAgentSidebar = useCallback(() => {
+    sidebarFocusPending.current = true;
     setAgentSidebarHidden((hidden) => {
       const next = !hidden;
       window.localStorage.setItem(AGENT_SIDEBAR_HIDDEN_STORAGE_KEY, `${next}`);
@@ -3176,6 +3207,26 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     if (active || !rootRef.current?.contains(document.activeElement)) return;
     (document.activeElement as HTMLElement | null)?.blur?.();
   }, [active]);
+  // After collapsing or restoring the sidebar, move focus to the visible
+  // toggle so keyboard users are not left on a hidden control.
+  useEffect(() => {
+    if (!sidebarFocusPending.current) return;
+    sidebarFocusPending.current = false;
+    const label = isNarrow
+      ? mobileList
+        ? "Hide Agents sidebar"
+        : "Show agents"
+      : agentSidebarHidden
+        ? "Show Agents sidebar"
+        : "Hide Agents sidebar";
+    Array.from(
+      rootRef.current?.querySelectorAll<HTMLButtonElement>(
+        `button[aria-label="${label}"]`,
+      ) ?? [],
+    )
+      .find((button) => button.getClientRects().length > 0)
+      ?.focus();
+  }, [agentSidebarHidden, mobileList, isNarrow]);
   const agents = directory?.agents ?? [];
   const networks = networkDirectory?.networks ?? [];
   const networksByAgent = useMemo(
@@ -3210,13 +3261,13 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   );
   const { mountedWorkspaces, mountWorkspace, unmountWorkspace } =
     useRetainedWorkspaces(
-      active && !libraryOpen && !creating && selected
+      active && !contentOpen && !libraryOpen && !creating && selected
         ? agentWorkspaceKey(selected)
         : undefined,
       { isProtected: isRunningWorkspace },
     );
   useEffect(() => {
-    if (!active) return;
+    if (!active || contentOpen) return;
     set_window_title(
       libraryOpen
         ? "Library"
@@ -3226,7 +3277,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             ? `@${selected.name} - Agents`
             : "Agents",
     );
-  }, [active, libraryOpen, creating, selected?.name]);
+  }, [active, contentOpen, libraryOpen, creating, selected?.name]);
   const creatingSourceAgent = agentFirstRunStarted(accountId)
     ? undefined
     : (agents.find(
@@ -3327,6 +3378,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       }),
       "",
     );
+    // Push the destination before route effects canonicalize the current entry.
+    void redux.getActions("page").set_active_tab("agents", false);
   }
 
   function openCopyAgent(agent: NamedAgent) {
@@ -3907,7 +3960,28 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     );
   }
 
-  if (loading && !directory && !libraryOpen) return <Loading theme="medium" />;
+  function startNewAgent() {
+    searchNavigation.current++;
+    setCreatingSourceAgentId(selected?.endpoint.agent_id);
+    setCreating(true);
+    redux.getActions("page").setState({
+      ...closedLibraryState,
+      active_agent_id: "new",
+      active_agent_name: undefined,
+    });
+    set_url(
+      getPageUrlPath({
+        page: "agents",
+        agent_id: "new",
+      }),
+    );
+    setMobileList(false);
+    // Push the destination before route effects canonicalize the current entry.
+    void redux.getActions("page").set_active_tab("agents", false);
+  }
+
+  if (loading && !directory && !libraryOpen && !contentOpen)
+    return <Loading theme="medium" />;
   const sidebar = (
     <aside
       id={AGENT_SIDEBAR_ID}
@@ -3927,7 +4001,14 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       }}
     >
       <WorkspaceSidebarActions
-        onHideSidebar={isNarrow ? undefined : toggleAgentSidebar}
+        onHideSidebar={
+          isNarrow
+            ? () => {
+                sidebarFocusPending.current = true;
+                setMobileList(false);
+              }
+            : toggleAgentSidebar
+        }
         footer={
           <div
             style={{
@@ -3938,30 +4019,27 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             <AgentsAccountMenu />
           </div>
         }
-        onProjects={
-          lite
-            ? undefined
-            : () => {
-                void redux.getActions("page").set_active_tab("projects");
-              }
+        firstNavigationItem={
+          lite ? null : (
+            <Button
+              block
+              type="text"
+              icon={<Icon name="folder-open" />}
+              style={{
+                justifyContent: "flex-start",
+                background: projectsOpen ? UI_COLORS.selected : undefined,
+              }}
+              aria-current={projectsOpen ? "page" : undefined}
+              onClick={() => {
+                searchNavigation.current++;
+                setMobileList(false);
+                void openProjectsWorkspace();
+              }}
+            >
+              Projects
+            </Button>
+          )
         }
-        onNewAgent={() => {
-          searchNavigation.current++;
-          setCreatingSourceAgentId(selected?.endpoint.agent_id);
-          setCreating(true);
-          redux.getActions("page").setState({
-            ...closedLibraryState,
-            active_agent_id: "new",
-            active_agent_name: undefined,
-          });
-          set_url(
-            getPageUrlPath({
-              page: "agents",
-              agent_id: "new",
-            }),
-          );
-          setMobileList(false);
-        }}
       >
         <AgentSidebarFilter
           render={(search, input) => {
@@ -4028,6 +4106,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                     }
                     onMode={agentOrganization.setMode}
                     onGroupByProject={agentOrganization.setGroupByProject}
+                    onNewAgent={startNewAgent}
                   />
                   {input}
                   {networkError && (
@@ -4305,11 +4384,12 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         ref={workspaceContent}
         tabIndex={-1}
         aria-label={
-          libraryOpen
+          contentLabel ??
+          (libraryOpen
             ? "Artifact Library"
             : selected
               ? `Agent @${selected.name}`
-              : "Agent workspace"
+              : "Agent workspace")
         }
         style={{
           flex: 1,
@@ -4321,6 +4401,41 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           ...(isNarrow && mobileList ? { display: "none" } : {}),
         }}
       >
+        <div
+          style={{
+            display: "flex",
+            flex: 1,
+            minHeight: 0,
+            flexDirection: "column",
+            // Keep editor measurements stable while an agent is shown.
+            // display:none makes responsive editors rebuild at zero width.
+            ...(!contentOpen
+              ? {
+                  position: "absolute" as const,
+                  inset: 0,
+                  visibility: "hidden" as const,
+                  pointerEvents: "none" as const,
+                }
+              : {}),
+          }}
+          inert={!contentOpen}
+          aria-hidden={!contentOpen}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              minWidth: 0,
+              flexShrink: 0,
+            }}
+          >
+            {libraryNavigationControl()}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              {contentNavigation ?? <AgentsWorkspaceNavigation />}
+            </div>
+          </div>
+          {children}
+        </div>
         {accountId && (
           <AgentArtifactBrowser
             key={accountId}
@@ -4354,7 +4469,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             flex: 1,
             minHeight: 0,
             position: "relative",
-            display: libraryOpen ? "none" : undefined,
+            display: libraryOpen || contentOpen ? "none" : undefined,
           }}
         >
           {active &&
@@ -4458,6 +4573,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                       accountId={accountId}
                       active={
                         active &&
+                        !contentOpen &&
                         !libraryOpen &&
                         (!isNarrow || !mobileList) &&
                         !!selected &&

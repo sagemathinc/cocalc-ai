@@ -86,8 +86,13 @@ jest.mock("./quick-navigation", () => ({
   __esModule: true,
   default: () => null,
 }));
+jest.mock("./home-workspace-navigation", () => ({
+  HomeWorkspaceNavigation: () => <button>More navigation</button>,
+}));
 jest.mock("./active-content", () => ({
-  ActiveContent: () => <div>Active content</div>,
+  ActiveContent: ({ navigation }) => (
+    <section aria-label="Workspace content">{navigation}Active content</section>
+  ),
 }));
 jest.mock("./connection-indicator", () => ({
   ConnectionIndicator: () => null,
@@ -161,25 +166,32 @@ beforeEach(() => {
 });
 
 test.each([false, true])(
-  "Agents hides the full navigation and Projects restores it (narrow=%s)",
+  "Projects keeps project navigation inside the shared workspace (narrow=%s)",
   async (isNarrow) => {
     narrow = isNarrow;
     const mounted = render(view());
     const nav = screen.getByRole("navigation");
-    const logo = within(nav).getByRole("link", { name: "CoCalc home" });
-    const agents = within(nav).getByRole("button", { name: "Agents" });
-    const projects = within(nav).getByRole("button", { name: "Projects" });
+    expect(
+      screen.getByRole("region", { name: "Workspace content" }),
+    ).toContainElement(nav);
+    // The sidebar owns the logo, Agents and Projects entries in the shell.
+    expect(within(nav).queryByRole("link", { name: "CoCalc home" })).toBeNull();
+    expect(within(nav).queryByRole("button", { name: "Agents" })).toBeNull();
+    expect(within(nav).queryByRole("button", { name: "Projects" })).toBeNull();
     const hosts = within(nav).getByRole("button", { name: "Compute" });
-    const segment = [logo, agents, projects, hosts];
-    expect(Array.from(nav.children).slice(0, 4)).toEqual(segment);
     expect(
       screen.getByRole("region", { name: "post-surface project navigation" }),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Docs" })).toBeVisible();
+    expect(
+      screen.getByRole("button", {
+        name: isNarrow ? "More navigation" : "Docs",
+      }),
+    ).toBeVisible();
     const user = userEvent.setup();
-    agents.focus();
+    hosts.focus();
+    expect(hosts).toHaveFocus();
     await user.keyboard("{Enter}");
-    expect(actions.set_active_tab).toHaveBeenCalledWith("agents");
+    expect(actions.set_active_tab).toHaveBeenCalledWith("hosts");
     activeTab = "agents";
     mounted.rerender(view());
     expect(screen.queryByRole("navigation")).toBeNull();

@@ -1,5 +1,6 @@
 /** @jest-environment jsdom */
 
+let mockPageState: Record<string, unknown> = {};
 const pageActions = {
   set_active_tab: jest.fn(),
   setState: jest.fn(),
@@ -93,6 +94,8 @@ jest.mock("./notifications/fragment", () => ({
 
 import {
   load_target,
+  rememberProjectsView,
+  openProjectsWorkspace,
   set_url,
   set_url_with_search,
   update_params,
@@ -104,12 +107,16 @@ describe("load_target", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     pageActions.setState.mockReset();
+    mockPageState = {};
+    pageActions.setState.mockImplementation((update) =>
+      Object.assign(mockPageState, update),
+    );
     delete (globalThis as any).__cocalc_public_app;
     mockRedux.getStore.mockImplementation((name: string) => {
       if (name === "account") {
         return accountStore;
       }
-      return {};
+      return { get: (key) => mockPageState[key] };
     });
     webappClient.is_signed_in.mockReturnValue(false);
     accountStore.get.mockImplementation((key: string) => {
@@ -418,4 +425,79 @@ describe("load_target", () => {
 
     expect(mockRedux.getActions).not.toHaveBeenCalled();
   });
+  it("Back reveals a retained project view without replaying its URL", () => {
+    const previous = location.href;
+    const projectId = "12345678-1234-4234-8234-123456789abc";
+    const runtime = {};
+    const hasProjectStore = jest.fn(() => true);
+    Object.assign(mockRedux, {
+      hasProjectStore,
+      getProjectStore: () => runtime,
+    });
+    accountStore.get.mockImplementation((key) =>
+      key === "account_id"
+        ? "retention-viewer"
+        : key === "is_logged_in"
+          ? true
+          : undefined,
+    );
+    try {
+      mockPageState.active_top_tab = projectId;
+      window.history.replaceState({}, "", `/projects/${projectId}/search/`);
+      set_url("/agents/example", "");
+      mockPageState.active_top_tab = "agents";
+      projectsActions.load_target.mockClear();
+      window.history.replaceState({}, "", `/projects/${projectId}/search/`);
+      window.onpopstate?.(new PopStateEvent("popstate"));
+      expect(pageActions.set_active_tab).toHaveBeenLastCalledWith(
+        projectId,
+        false,
+      );
+      expect(projectsActions.load_target).not.toHaveBeenCalled();
+      hasProjectStore.mockReturnValue(false);
+      window.onpopstate?.(new PopStateEvent("popstate"));
+      expect(projectsActions.load_target).toHaveBeenCalled();
+    } finally {
+      window.history.replaceState({}, "", previous);
+    }
+  });
+
+  it.each(["files/home/user/cocalc-ai", "search/", "settings"])(
+    "sidebar Projects resumes %s after the Library without loading a new target",
+    (target) => {
+      const previous = location.href;
+      const id = "12345678-1234-4234-8234-123456789abc";
+      const runtime = {};
+      const hasProjectStore = jest.fn(() => true);
+      Object.assign(mockRedux, {
+        hasProjectStore,
+        getProjectStore: () => runtime,
+      });
+      accountStore.get.mockImplementation((key) =>
+        key === "account_id"
+          ? "sidebar-viewer"
+          : key === "is_logged_in"
+            ? true
+            : undefined,
+      );
+      try {
+        mockPageState.active_top_tab = id;
+        window.history.replaceState({}, "", `/projects/${id}/${target}`);
+        const expected = location.href;
+        // set_active_tab captures this before changing the tab to agents.
+        rememberProjectsView();
+        mockPageState.active_top_tab = "agents";
+        set_url("/library", "");
+        openProjectsWorkspace();
+        expect(location.href).toBe(expected);
+        expect(pageActions.set_active_tab).toHaveBeenLastCalledWith(id, false);
+        expect(projectsActions.load_target).not.toHaveBeenCalled();
+        hasProjectStore.mockReturnValue(false);
+        openProjectsWorkspace();
+        expect(pageActions.set_active_tab).toHaveBeenLastCalledWith("projects");
+      } finally {
+        window.history.replaceState({}, "", previous);
+      }
+    },
+  );
 });

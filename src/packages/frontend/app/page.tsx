@@ -37,6 +37,8 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { IS_IPAD, IS_MOBILE, IS_SAFARI } from "../feature";
 import QuickNavigation from "./quick-navigation";
 import { ActiveContent } from "./active-content";
+import { usesWorkspaceShell } from "./workspace-shell";
+import { HomeWorkspaceNavigation } from "./home-workspace-navigation";
 import { ConnectionIndicator } from "./connection-indicator";
 import { ConnectionInfo } from "./connection-info";
 import { NotificationsDrawer } from "../notifications/drawer";
@@ -240,6 +242,14 @@ export const Page: React.FC = () => {
   const account_id = useTypedRedux("account", "account_id");
   const is_logged_in = useTypedRedux("account", "is_logged_in");
   const examMode = useTypedRedux("customize", "exam_mode") === true;
+  const workspaceShell = usesWorkspaceShell({
+    lite,
+    aiDisabled,
+    signedIn: !!is_logged_in,
+    examMode,
+    fullscreen,
+    activeTab: active_top_tab,
+  });
   const configurationLoadError = useTypedRedux(
     "customize",
     "configuration_load_error",
@@ -529,6 +539,64 @@ export const Page: React.FC = () => {
 
   // Children must define their own padding from navbar and screen borders
   // Note that the parent is a flex container
+  // In the workspace shell this navigation renders inside the content pane,
+  // beside the agent sidebar, instead of across the top of the page.
+  const legacyNavigation = (
+    <>
+      {!lite &&
+        !examMode &&
+        !fullscreen &&
+        !isAuthView &&
+        !compactAgentsNavigation && (
+          <nav className="smc-top-bar" style={topBarStyle}>
+            {!workspaceShell && <AppLogo size={pageStyle.height} />}
+            {!workspaceShell && is_logged_in && render_agents_nav_button()}
+            {!workspaceShell && is_logged_in && render_project_nav_button()}
+            {render_hosts_tab()}
+            {!isNarrow ? (
+              showPostSurfaceNavigation ? (
+                <PostSurfaceSlot scope="app.post-surface-project-navigation">
+                  <PostSurfaceProjectsNav
+                    height={pageStyle.height}
+                    onModeChange={setProjectsNavMode}
+                    style={projectsNavStyle}
+                  />
+                </PostSurfaceSlot>
+              ) : (
+                <div style={{ ...projectsNavStyle, flex: "1 1 auto" }} />
+              )
+            ) : (
+              // we need an expandable placeholder, otherwise the right-nav-buttons won't align to the right
+              <div style={{ flex: "1 1 auto" }} />
+            )}
+            {workspaceShell && isNarrow ? (
+              <HomeWorkspaceNavigation />
+            ) : (
+              render_right_nav()
+            )}
+          </nav>
+        )}
+      {!lite &&
+        !examMode &&
+        isNarrow &&
+        !isAuthView &&
+        !compactAgentsNavigation && (
+          <>
+            {showPostSurfaceNavigation ? (
+              <PostSurfaceSlot scope="app.post-surface-project-navigation-narrow">
+                <PostSurfaceProjectsNav
+                  height={pageStyle.height}
+                  onModeChange={setProjectsNavMode}
+                  style={projectsNavStyle}
+                />
+              </PostSurfaceSlot>
+            ) : (
+              <div style={{ ...projectsNavStyle, height: pageStyle.height }} />
+            )}
+          </>
+        )}
+    </>
+  );
   const body = (
     <div
       style={
@@ -556,55 +624,8 @@ export const Page: React.FC = () => {
         <Alert banner showIcon type="error" title={configurationLoadError} />
       )}
       <ImpersonationBanner />
-      {!lite &&
-        !examMode &&
-        !fullscreen &&
-        !isAuthView &&
-        !compactAgentsNavigation && (
-          <nav className="smc-top-bar" style={topBarStyle}>
-            <AppLogo size={pageStyle.height} />
-            {is_logged_in && render_agents_nav_button()}
-            {is_logged_in && render_project_nav_button()}
-            {render_hosts_tab()}
-            {!isNarrow ? (
-              showPostSurfaceNavigation ? (
-                <PostSurfaceSlot scope="app.post-surface-project-navigation">
-                  <PostSurfaceProjectsNav
-                    height={pageStyle.height}
-                    onModeChange={setProjectsNavMode}
-                    style={projectsNavStyle}
-                  />
-                </PostSurfaceSlot>
-              ) : (
-                <div style={{ ...projectsNavStyle, flex: "1 1 auto" }} />
-              )
-            ) : (
-              // we need an expandable placeholder, otherwise the right-nav-buttons won't align to the right
-              <div style={{ flex: "1 1 auto" }} />
-            )}
-            {render_right_nav()}
-          </nav>
-        )}
+      {!workspaceShell && legacyNavigation}
       {fullscreen && !isAuthView && render_fullscreen()}
-      {!lite &&
-        !examMode &&
-        isNarrow &&
-        !isAuthView &&
-        !compactAgentsNavigation && (
-          <>
-            {showPostSurfaceNavigation ? (
-              <PostSurfaceSlot scope="app.post-surface-project-navigation-narrow">
-                <PostSurfaceProjectsNav
-                  height={pageStyle.height}
-                  onModeChange={setProjectsNavMode}
-                  style={projectsNavStyle}
-                />
-              </PostSurfaceSlot>
-            ) : (
-              <div style={{ ...projectsNavStyle, height: pageStyle.height }} />
-            )}
-          </>
-        )}
       {examMode && !isAuthView && (
         <ScratchpadSessionControls deleteAt={scratchpadDeleteAt} />
       )}
@@ -613,7 +634,9 @@ export const Page: React.FC = () => {
         scope="app.active-content"
         resetKeys={[active_top_tab]}
       >
-        <ActiveContent />
+        <ActiveContent
+          navigation={workspaceShell ? legacyNavigation : undefined}
+        />
       </CocalcErrorBoundary>
       {/* Embedded surfaces (kiosk and project embed) and the auth view hide
           the top navigation and confine what may be shown; keep the global

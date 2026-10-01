@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 
 import { redux, project_redux_name } from "@cocalc/frontend/app-framework";
-import { set_url } from "@cocalc/frontend/history";
+import { set_url, rememberProjectsView } from "@cocalc/frontend/history";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { PageActions } from "./actions";
 import { init_store } from "./store";
@@ -40,6 +40,7 @@ jest.mock("@cocalc/frontend/browser", () => ({ set_window_title: jest.fn() }));
 jest.mock("@cocalc/frontend/history", () => ({
   set_url: jest.fn(),
   update_params: jest.fn(),
+  rememberProjectsView: jest.fn(),
 }));
 jest.mock("@cocalc/frontend/i18n", () => ({
   labels: {
@@ -402,4 +403,15 @@ describe("project context across global navigation", () => {
     expect(page().get("active_top_tab")).toBe(A);
     expect(page().get("last_project_tab")).toBe(A);
   });
+});
+
+test("captures the Projects workspace before switching to the Library", async () => {
+  actions.setState({ active_top_tab: A, library_open: true });
+  let capturedTab: unknown;
+  jest.mocked(rememberProjectsView).mockImplementationOnce(() => {
+    capturedTab = redux.getStore("page").get("active_top_tab");
+  });
+  await actions.set_active_tab("agents");
+  expect(capturedTab).toBe(A);
+  expect(redux.getStore("page").get("active_top_tab")).toBe("agents");
 });

@@ -510,6 +510,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
   const workspaceChrome = workspaceStrongThemeChrome(
     projectCtx.workspaces.current,
   );
+  const lastProjectTab = useTypedRedux("page", "last_project_tab");
   const projectPageIsForeground =
     props.forceForeground || props.publicDirectoryShare
       ? true
@@ -874,12 +875,12 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     if (hardDeleteBlocked) {
       return;
     }
-    if (!is_active) {
+    if (!is_active && lastProjectTab !== project_id) {
       // see https://github.com/sagemathinc/cocalc/issues/3799
       // Some fixed project tabs are expensive and hooked into broad redux
-      // state. We retain hidden fixed tabs only while this project is active,
-      // so switching within the project is smooth without making background
-      // projects do hidden panel work.
+      // state. We retain hidden fixed tabs only for the active project and the
+      // most recently active one (still shown when you return from an agent),
+      // so background projects do not do hidden panel work.
       return;
     }
     if (initialWorkspaceRender.pending) {
@@ -893,7 +894,10 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
         ? retainedFixedTabs
         : [...retainedFixedTabs, activeFixedTab];
       return fixedTabsToRender.map((tab) =>
-        renderFixedFullPageContent(tab, displayProjectTab === tab),
+        renderFixedFullPageContent(
+          tab,
+          projectPageIsForeground && displayProjectTab === tab,
+        ),
       );
     }
     const retainedFixedContent = retainedFixedTabs.map((tab) =>
@@ -906,7 +910,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
       ...retainedFixedContent,
       <Content
         key={displayProjectTab}
-        is_visible={true}
+        is_visible={projectPageIsForeground}
         tab_name={displayProjectTab}
       />,
     ];

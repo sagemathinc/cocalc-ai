@@ -8,11 +8,13 @@ export function AgentOrganizationControls({
   groupByProject,
   onMode,
   onGroupByProject,
+  onNewAgent,
 }: {
   mode: "recent" | "custom";
   groupByProject: boolean;
   onMode: (mode: "recent" | "custom") => void;
   onGroupByProject: (value: boolean) => void;
+  onNewAgent: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const id = useId();
@@ -47,6 +49,15 @@ export function AgentOrganizationControls({
           onClick={() => setOpen((value) => !value)}
         />
       </div>
+      <Button
+        block
+        type="text"
+        icon={<Icon name="plus" />}
+        onClick={onNewAgent}
+        style={{ justifyContent: "flex-start", marginTop: 8 }}
+      >
+        New Agent
+      </Button>
       <div id={id} hidden={!open}>
         <Segmented
           block

@@ -10,7 +10,11 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { set_window_title } from "@cocalc/frontend/browser";
-import { set_url, update_params } from "@cocalc/frontend/history";
+import {
+  set_url,
+  update_params,
+  rememberProjectsView,
+} from "@cocalc/frontend/history";
 import { labels } from "@cocalc/frontend/i18n";
 import { getIntl } from "@cocalc/frontend/i18n/get-intl";
 import {
@@ -214,6 +218,7 @@ export class PageActions extends Actions<PageState> {
       return;
     }
     const prev_key = this.redux.getStore("page").get("active_top_tab");
+    if (prev_key !== key) rememberProjectsView();
     const previousProjectNeedsRuntime =
       prev_key?.length === 36 && !hasReducedProjectState(prev_key);
     const nextProjectNeedsRuntime =
