@@ -189,3 +189,22 @@ test.each([
   );
   expect(screen.getByText(label)).toBeTruthy();
 });
+
+test("View > Zoom font size scales the whole card, not just the review", () => {
+  render(
+    <GitHubPRArtifact
+      artifact={artifact}
+      projectId="p"
+      sourcePath="x.chat"
+      historical={false}
+      fontSize={22}
+    />,
+  );
+  // The card's root carries the zoomed size, so text inherits it.
+  expect(
+    screen
+      .getByText("sagemathinc/cocalc-ai #509")
+      .closest("[style*='font-size: 22px']"),
+  ).not.toBeNull();
+  expect(screen.getByText("PR description")).toBeTruthy();
+});
