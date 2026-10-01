@@ -12,14 +12,21 @@ const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
 
 describeDb("Agent Network account rehome fence", () => {
-  const db = new AgentStore();
+  let db: AgentStore;
   const tables = [
     ...PERSONAL_AGENT_STATE_TABLES,
     ...EXTERNAL_AGENT_STATE_TABLES,
   ];
   beforeAll(async () => {
+    db = new AgentStore();
     await syncSchema(
-      Object.fromEntries(tables.map((name) => [name, SCHEMA[name]])),
+      Object.fromEntries(
+        [
+          ...tables,
+          "collaboration_personal",
+          "collaboration_artifact_bindings",
+        ].map((name) => [name, SCHEMA[name]]),
+      ),
     );
   });
 
@@ -48,5 +55,36 @@ describeDb("Agent Network account rehome fence", () => {
     );
     expect(tables).not.toContain("agent_personal_grants");
     expect(tables).not.toContain("agent_personal_requests");
+    expect(tables).not.toContain("collaboration_personal");
+    expect(tables).not.toContain("collaboration_artifact_bindings");
+  });
+
+  test("portable collaboration aliases no longer trip the unrelated agent guard", async () => {
+    const account = randomUUID();
+    await db.query(
+      "INSERT INTO collaboration_personal(account_id,entry_key,project_id,alias) VALUES($1,$2,$3,'seminar')",
+      [account, "collaboration-test", randomUUID()],
+    );
+    await expect(
+      assertNoPersonalStateForRehome(db, account),
+    ).resolves.toBeUndefined();
+  });
+
+  test("native Library state still blocks rehome alongside portable collaboration state", async () => {
+    const account = randomUUID();
+    await db.query(
+      "INSERT INTO collaboration_artifact_bindings(account_id,entry_key,project_id,entry_id) VALUES($1,'binding',$2,'entry')",
+      [account, randomUUID()],
+    );
+    await expect(
+      assertNoPersonalStateForRehome(db, account),
+    ).resolves.toBeUndefined();
+    await db.query(
+      "INSERT INTO personal_library_controls(account_id) VALUES($1)",
+      [account],
+    );
+    await expect(assertNoPersonalStateForRehome(db, account)).rejects.toThrow(
+      "Account rehome is unavailable",
+    );
   });
 });

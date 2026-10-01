@@ -4,7 +4,36 @@
  */
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
+import { projectWasHardDeleted } from "./hard-delete-confirmation";
+import { pruneCollaborationSummaryReceipts } from "../notifications/collaboration-receipt-cleanup";
+import { MAX_ACCOUNT_SUMMARY_RECEIPTS } from "@cocalc/util/collaboration-notification-limits";
+jest.mock("@cocalc/server/cluster-config", () => ({
+  ...jest.requireActual("@cocalc/server/cluster-config"),
+  getConfiguredClusterBayIdsForStaticEnumerationOnly: () => [],
+}));
 import { uuid } from "@cocalc/util/misc";
+import { SCHEMA } from "@cocalc/util/db-schema";
+import { syncCollaboratorsSchema } from "@cocalc/database/postgres/collaborators/collaborators-common";
+
+// Exercise the current source inventory even when linked package outputs predate it.
+jest.mock("@cocalc/server/projects/hard-delete-tables", () =>
+  jest.requireActual("./hard-delete-tables"),
+);
+
+const collaborationProjectTables = Object.entries(SCHEMA)
+  .filter(
+    ([table, schema]) =>
+      table.startsWith("collaboration_") &&
+      schema.fields.project_id != null &&
+      // Receipts belong to the account home even though they retain project provenance.
+      table !== "collaboration_notification_summary_receipts",
+  )
+  .map(([table]) => table)
+  .sort(
+    (a, b) =>
+      Number(a === "collaboration_participant_index") -
+      Number(b === "collaboration_participant_index"),
+  );
 
 const publishAccountFeedEventBestEffortMock = jest.fn();
 const stopProjectOnHostMock = jest.fn();
@@ -81,6 +110,7 @@ const BLOB_ID = "88888888-8888-4888-8888-888888888888";
 const ARCHIVED_BLOB_ID = "99999999-9999-4999-8999-999999999999";
 const STRING_ID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const BAY_ID = "bay-0";
+const previousBay = process.env.COCALC_BAY_ID;
 
 async function ensureSupplementalSchemas(): Promise<void> {
   await getPool().query(`
@@ -338,9 +368,16 @@ async function countRows(table: string, where: string): Promise<number> {
 
 describe("hard delete project cleanup", () => {
   beforeAll(async () => {
+    process.env.COCALC_BAY_ID = BAY_ID;
     await initEphemeralDatabase({});
     await ensureSupplementalSchemas();
+    await syncCollaboratorsSchema();
   }, 15000);
+
+  afterAll(() => {
+    if (previousBay === undefined) delete process.env.COCALC_BAY_ID;
+    else process.env.COCALC_BAY_ID = previousBay;
+  });
 
   beforeEach(() => {
     publishAccountFeedEventBestEffortMock.mockResolvedValue(undefined);
@@ -358,6 +395,9 @@ describe("hard delete project cleanup", () => {
     jest.clearAllMocks();
     await getPool().query(
       `TRUNCATE
+        ${collaborationProjectTables.join(",")},
+        collaboration_notification_summary_receipts,
+        collaboration_account_state,
         agent_identity_runs,
         agent_identities,
         agent_message_project_fences,
@@ -386,6 +426,126 @@ describe("hard delete project cleanup", () => {
         syncstrings
        CASCADE`,
     );
+  });
+
+  it("reclaims capped receipts after the home was offline through authoritative hard deletion", async () => {
+    await seedProject(PROJECT_ID);
+    await getPool().query(
+      `INSERT INTO accounts(account_id,home_bay_id) VALUES($1,$2) ON CONFLICT(account_id) DO UPDATE SET home_bay_id=$2`,
+      [ACCOUNT_ID, BAY_ID],
+    );
+    await getPool().query(
+      `INSERT INTO collaboration_notification_summary_receipts(account_id,event_id,event_hash,notification_id,project_id,obligation_id,cleanup_after)
+       SELECT $1,gen_random_uuid(),repeat('a',64),gen_random_uuid(),$2,gen_random_uuid(),now()-interval '1 second' FROM generate_series(1,$3::int)`,
+      [ACCOUNT_ID, PROJECT_ID, MAX_ACCOUNT_SUMMARY_RECEIPTS],
+    );
+    const inspectDeleted = async ({ project_id }) => {
+      if (await projectWasHardDeleted(project_id)) return [];
+      throw Error("owner unavailable, no terminal proof");
+    };
+    expect(
+      await pruneCollaborationSummaryReceipts(BAY_ID, inspectDeleted),
+    ).toBe(0);
+    // No home worker runs while the project and owner obligations are purged.
+    const { hardDeleteProject } = await import("./hard-delete");
+    await hardDeleteProject({ project_id: PROJECT_ID, account_id: ACCOUNT_ID });
+    expect(
+      await countRows(
+        "collaboration_notification_summary_receipts",
+        "project_id=$1",
+      ),
+    ).toBe(MAX_ACCOUNT_SUMMARY_RECEIPTS);
+    expect(await countRows("projects", "project_id=$1")).toBe(0);
+    expect(await projectWasHardDeleted(PROJECT_ID)).toBe(true);
+    await getPool().query(
+      `UPDATE collaboration_notification_summary_receipts SET cleanup_after=now()-interval '1 second' WHERE account_id=$1`,
+      [ACCOUNT_ID],
+    );
+    expect(
+      await pruneCollaborationSummaryReceipts(BAY_ID, inspectDeleted),
+    ).toBe(100);
+    expect(
+      await countRows(
+        "collaboration_notification_summary_receipts",
+        "project_id=$1",
+      ),
+    ).toBe(MAX_ACCOUNT_SUMMARY_RECEIPTS - 100);
+    // An absent project without a durable tombstone is still unknown.
+    expect(await projectWasHardDeleted(OTHER_PROJECT_ID)).toBe(false);
+  });
+
+  it("purges all project-scoped collaboration state, preserves another project and invalidates account snapshots", async () => {
+    for (const project_id of [PROJECT_ID, OTHER_PROJECT_ID]) {
+      await seedProject(project_id);
+      const fields: Record<string, unknown> = {
+        project_id,
+        account_id: ACCOUNT_ID,
+        entry_key: `entry-${project_id}`,
+        source_id: `source-${project_id}`,
+        chat_path: "/home/user/room.chat",
+        operation_id: uuid(),
+        event_id: uuid(),
+        id: uuid(),
+        set_key: `set-${project_id}`,
+        participant_id: ACCOUNT_ID,
+        receipt: {},
+        generation: uuid(),
+        revision: 1,
+      };
+      for (const table of collaborationProjectTables) {
+        const schema = SCHEMA[table];
+        const primary = schema.primary_key;
+        const columns = [
+          ...new Set([
+            "project_id",
+            ...(Array.isArray(primary) ? primary : [primary]),
+            ...(table === "collaboration_room_replacements" ? ["receipt"] : []),
+            ...(table === "collaboration_projects"
+              ? ["generation", "revision"]
+              : []),
+          ]),
+        ].filter((column): column is string => typeof column === "string");
+        for (const column of columns) expect(fields[column]).toBeDefined();
+        await getPool().query(
+          `INSERT INTO ${table} (${columns.join(",")}) VALUES (${columns.map((_, i) => `$${i + 1}`).join(",")})`,
+          columns.map((column) => fields[column]),
+        );
+      }
+    }
+    const revisionBefore = Number(
+      (
+        await getPool().query(
+          "SELECT revision FROM collaboration_account_state WHERE account_id=$1",
+          [ACCOUNT_ID],
+        )
+      ).rows[0].revision,
+    );
+    const { hardDeleteProject } = await import("./hard-delete");
+    const result = await hardDeleteProject({
+      project_id: PROJECT_ID,
+      account_id: ACCOUNT_ID,
+    });
+    expect(result.purged_tables).toEqual(
+      expect.arrayContaining(collaborationProjectTables),
+    );
+    for (const table of collaborationProjectTables) {
+      expect(
+        (await getPool().query(`SELECT project_id FROM ${table}`)).rows,
+      ).toEqual([{ project_id: OTHER_PROJECT_ID }]);
+    }
+    expect(
+      Number(
+        (
+          await getPool().query(
+            "SELECT revision FROM collaboration_account_state WHERE account_id=$1",
+            [ACCOUNT_ID],
+          )
+        ).rows[0].revision,
+      ),
+    ).toBeGreaterThan(revisionBefore);
+    await expect(
+      hardDeleteProject({ project_id: PROJECT_ID, account_id: ACCOUNT_ID }),
+    ).resolves.toBeDefined();
   });
 
   it("purges project-scoped projection, runtime, backup, secret, and TimeTravel rows", async () => {

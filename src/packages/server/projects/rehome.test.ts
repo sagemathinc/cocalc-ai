@@ -7,6 +7,8 @@ let clientReleaseMock: jest.Mock;
 let isAdminMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
 let resolveProjectBayDirectMock: jest.Mock;
+let directoryMock: jest.Mock;
+let sourceProjectBayMock: jest.Mock;
 let projectControlMock: jest.Mock;
 let acceptRehomeMock: jest.Mock;
 let rehomeMock: jest.Mock;
@@ -18,6 +20,19 @@ let dstreamMock: jest.Mock;
 let dstreamRowsQueue: any[][];
 let dstreamPublishedRows: any[];
 let operationRow: any;
+
+jest.mock("./collaboration-project-rehome", () => ({
+  ensureProjectCollaborationRehomeSchema: jest.fn(async () => undefined),
+  freezeProjectCollaborationExport: jest.fn(async () => undefined),
+  readProjectCollaborationExportHeader: jest.fn(async () => undefined),
+  readProjectCollaborationExportPage: jest.fn(),
+  readFrozenProjectCollaborationExport: jest.fn(async () => undefined),
+  prepareProjectCollaborationImport: jest.fn(),
+  receiveProjectCollaborationPage: jest.fn(),
+  activateProjectCollaborationImport: jest.fn(),
+  assertProjectCollaborationImportActive: jest.fn(),
+  retireProjectCollaborationExport: jest.fn(),
+}));
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -60,6 +75,7 @@ jest.mock("@cocalc/server/inter-bay/directory", () => ({
 jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   getInterBayBridge: jest.fn(() => ({
     projectControl: (...args: any[]) => projectControlMock(...args),
+    directory: (...args: any[]) => directoryMock(...args),
   })),
 }));
 
@@ -133,6 +149,11 @@ describe("project rehome", () => {
         sql.includes("UPDATE project_rehome_operations") &&
         sql.includes("attempt = attempt + 1")
       ) {
+        if (
+          operationRow?.stage === "complete" &&
+          sql.includes("stage <> 'complete'")
+        )
+          return { rows: [] };
         operationRow = {
           ...operationRow,
           status: "running",
@@ -235,6 +256,10 @@ describe("project rehome", () => {
     resolveProjectBayDirectMock = jest.fn(async () => ({
       bay_id: "bay-0",
       epoch: 0,
+    }));
+    sourceProjectBayMock = jest.fn(async () => ({ bay_id: "bay-0", epoch: 0 }));
+    directoryMock = jest.fn(() => ({
+      resolveProjectBay: sourceProjectBayMock,
     }));
     acceptRehomeMock = jest.fn(async () => ({
       project_id: PROJECT_ID,
@@ -676,5 +701,278 @@ describe("project rehome", () => {
       errors: [],
     });
     expect(acceptRehomeMock).not.toHaveBeenCalled();
+  });
+
+  const collaborationHeader = {
+    version: 1 as const,
+    op_id: "33333333-3333-4333-8333-333333333333",
+    project_id: PROJECT_ID,
+    source_bay_id: "bay-0",
+    dest_bay_id: "bay-2",
+    schema_hash: "a".repeat(64),
+  };
+  const collaborationAck = (complete = false, activated = false) => ({
+    version: 1 as const,
+    op_id: collaborationHeader.op_id,
+    schema_hash: collaborationHeader.schema_hash,
+    next: complete ? null : "0",
+    complete,
+    activated,
+  });
+  async function collaborationOperation() {
+    operationRow = {
+      ...collaborationHeader,
+      requested_by: ACCOUNT_ID,
+      status: "running",
+      stage: "requested",
+      attempt: 0,
+      project: {
+        project_id: PROJECT_ID,
+        owning_bay_id: "bay-0",
+        users: {},
+        title: "Project",
+      },
+    };
+    const helper = await import("./collaboration-project-rehome");
+    jest
+      .mocked(helper.freezeProjectCollaborationExport)
+      .mockResolvedValue(collaborationHeader);
+    jest
+      .mocked(helper.readProjectCollaborationExportHeader)
+      .mockResolvedValue(collaborationHeader);
+    return helper;
+  }
+
+  it("fails before the owner flip when a destination lacks the collaboration protocol", async () => {
+    await collaborationOperation();
+    const collaborationRehome = jest
+      .fn()
+      .mockResolvedValue({ status: "rehomed" });
+    projectControlMock.mockReturnValue({
+      collaborationRehome,
+      acceptRehome: acceptRehomeMock,
+    });
+    const { runProjectRehomeOperation } = await import("./rehome");
+    await expect(
+      runProjectRehomeOperation(collaborationHeader.op_id),
+    ).rejects.toThrow("acknowledge");
+    expect(acceptRehomeMock).not.toHaveBeenCalled();
+    expect(
+      queryMock.mock.calls.some(([sql]) => sql.includes("UPDATE projects")),
+    ).toBe(false);
+    expect(operationRow.status).toBe("failed");
+    expect(operationRow.stage).toBe("requested");
+  });
+
+  it("stages bounded collaboration pages and activates before flipping the source", async () => {
+    const helper = await collaborationOperation();
+    const page = {
+      version: 1 as const,
+      op_id: collaborationHeader.op_id,
+      schema_hash: collaborationHeader.schema_hash,
+      index: 0,
+      previous_hash: "",
+      hash: "b".repeat(64),
+      table: "collaboration_projects" as const,
+      rows: [],
+      table_complete: true,
+      next: null,
+    };
+    jest
+      .mocked(helper.readProjectCollaborationExportPage)
+      .mockResolvedValue(page);
+    const order: string[] = [];
+    const previousQuery = queryMock;
+    queryMock = jest.fn(async (sql, values) => {
+      if (sql.includes("UPDATE projects")) order.push("flip");
+      return previousQuery(sql, values);
+    });
+    const collaborationRehome = jest.fn(async ({ action }) => {
+      order.push(action);
+      return collaborationAck(
+        action !== "prepare",
+        action === "activate" || action === "log",
+      );
+    });
+    projectControlMock.mockReturnValue({
+      collaborationRehome,
+      acceptRehome: acceptRehomeMock,
+    });
+    const { runProjectRehomeOperation } = await import("./rehome");
+    await expect(
+      runProjectRehomeOperation(collaborationHeader.op_id),
+    ).resolves.toMatchObject({ operation_status: "succeeded" });
+    expect(order.slice(0, 4)).toEqual(["prepare", "page", "activate", "flip"]);
+    expect(order.slice(4)).toEqual(["log", "log"]);
+    expect(helper.readProjectCollaborationExportPage).toHaveBeenCalledWith(
+      collaborationHeader,
+      "0",
+    );
+    expect(helper.retireProjectCollaborationExport).toHaveBeenCalledWith(
+      collaborationHeader,
+    );
+    expect(acceptRehomeMock).not.toHaveBeenCalled();
+  });
+
+  it("does not flip or silently fall back after an ambiguous activation response", async () => {
+    await collaborationOperation();
+    const collaborationRehome = jest.fn(async ({ action }) => {
+      if (action === "activate") throw Error("activation acknowledgement lost");
+      return collaborationAck(true);
+    });
+    projectControlMock.mockReturnValue({
+      collaborationRehome,
+      acceptRehome: acceptRehomeMock,
+    });
+    const { runProjectRehomeOperation } = await import("./rehome");
+    await expect(
+      runProjectRehomeOperation(collaborationHeader.op_id),
+    ).rejects.toThrow("acknowledgement lost");
+    expect(acceptRehomeMock).not.toHaveBeenCalled();
+    expect(
+      queryMock.mock.calls.some(([sql]) => sql.includes("UPDATE projects")),
+    ).toBe(false);
+    expect(operationRow.stage).toBe("requested");
+  });
+
+  it("resumes a destination checkpoint without replaying earlier pages", async () => {
+    const helper = await collaborationOperation();
+    jest
+      .mocked(helper.readProjectCollaborationExportPage)
+      .mockResolvedValue({ next: null } as any);
+    const collaborationRehome = jest.fn(async ({ action }) =>
+      action === "prepare"
+        ? { ...collaborationAck(), next: "7" }
+        : collaborationAck(true, action !== "page"),
+    );
+    projectControlMock.mockReturnValue({ collaborationRehome });
+    const { runProjectRehomeOperation } = await import("./rehome");
+    await runProjectRehomeOperation(collaborationHeader.op_id);
+    expect(helper.readProjectCollaborationExportPage).toHaveBeenCalledTimes(1);
+    expect(helper.readProjectCollaborationExportPage).toHaveBeenCalledWith(
+      collaborationHeader,
+      "7",
+    );
+  });
+
+  it("never upserts destination project metadata on an activated retry", async () => {
+    const helper = await import("./collaboration-project-rehome");
+    const header = {
+      ...collaborationHeader,
+      source_bay_id: "bay-1",
+      dest_bay_id: "bay-0",
+    };
+    jest
+      .mocked(helper.activateProjectCollaborationImport)
+      .mockResolvedValue(collaborationAck(true, true));
+    const { acceptProjectCollaborationRehome } = await import("./rehome");
+    await acceptProjectCollaborationRehome({
+      action: "activate",
+      header,
+      project: { project_id: PROJECT_ID, title: "Stale snapshot" },
+    });
+    expect(clientQueryMock.mock.calls.map(([sql]) => sql)).toEqual([
+      "BEGIN",
+      "COMMIT",
+    ]);
+    expect(appendProjectOutboxEventForProjectMock).not.toHaveBeenCalled();
+  });
+
+  it("requires an active identical receipt for prepare after directory cutover", async () => {
+    const helper = await import("./collaboration-project-rehome");
+    const header = {
+      ...collaborationHeader,
+      source_bay_id: "bay-1",
+      dest_bay_id: "bay-0",
+    };
+    jest
+      .mocked(helper.assertProjectCollaborationImportActive)
+      .mockRejectedValue(Error("no matching receipt"));
+    const { acceptProjectCollaborationRehome } = await import("./rehome");
+    await expect(
+      acceptProjectCollaborationRehome({ action: "prepare", header }),
+    ).rejects.toThrow("matching receipt");
+    expect(helper.prepareProjectCollaborationImport).not.toHaveBeenCalled();
+  });
+
+  it("prepares a first-time destination using the source bay directory", async () => {
+    const helper = await import("./collaboration-project-rehome");
+    resolveProjectBayDirectMock.mockResolvedValue(null);
+    sourceProjectBayMock.mockResolvedValue({ bay_id: "bay-1", epoch: 0 });
+    const header = {
+      ...collaborationHeader,
+      source_bay_id: "bay-1",
+      dest_bay_id: "bay-0",
+    };
+    const { acceptProjectCollaborationRehome } = await import("./rehome");
+    await acceptProjectCollaborationRehome({ action: "prepare", header });
+    expect(directoryMock).toHaveBeenCalledWith("bay-1", expect.any(Object));
+    expect(sourceProjectBayMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+    });
+    expect(helper.prepareProjectCollaborationImport).toHaveBeenCalledWith(
+      header,
+    );
+    expect(
+      helper.assertProjectCollaborationImportActive,
+    ).not.toHaveBeenCalled();
+  });
+
+  it.each([null, { bay_id: "bay-3", epoch: 4 }])(
+    "rejects an absent or changed source directory owner: %p",
+    async (owner) => {
+      const helper = await import("./collaboration-project-rehome");
+      resolveProjectBayDirectMock.mockResolvedValue(null);
+      sourceProjectBayMock.mockResolvedValue(owner);
+      const { acceptProjectCollaborationRehome } = await import("./rehome");
+      await expect(
+        acceptProjectCollaborationRehome({
+          action: "prepare",
+          header: {
+            ...collaborationHeader,
+            source_bay_id: "bay-1",
+            dest_bay_id: "bay-0",
+          },
+        }),
+      ).rejects.toThrow("current project ownership");
+      expect(helper.prepareProjectCollaborationImport).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects transfer traffic after ownership moved to a third bay", async () => {
+    const helper = await import("./collaboration-project-rehome");
+    resolveProjectBayDirectMock.mockResolvedValue({
+      bay_id: "bay-3",
+      epoch: 4,
+    });
+    const { acceptProjectCollaborationRehome } = await import("./rehome");
+    await expect(
+      acceptProjectCollaborationRehome({
+        action: "page",
+        header: {
+          ...collaborationHeader,
+          source_bay_id: "bay-1",
+          dest_bay_id: "bay-0",
+        },
+        page: {} as any,
+      }),
+    ).rejects.toThrow("current project ownership");
+    expect(helper.receiveProjectCollaborationPage).not.toHaveBeenCalled();
+  });
+
+  it("returns a completed operation without reopening the handoff or marking it running", async () => {
+    const helper = await collaborationOperation();
+    operationRow.stage = "complete";
+    operationRow.status = "succeeded";
+    const { runProjectRehomeOperation } = await import("./rehome");
+    await expect(
+      runProjectRehomeOperation(collaborationHeader.op_id),
+    ).resolves.toMatchObject({
+      operation_stage: "complete",
+      operation_status: "succeeded",
+    });
+    expect(operationRow.status).toBe("succeeded");
+    expect(helper.freezeProjectCollaborationExport).not.toHaveBeenCalled();
+    expect(projectControlMock).not.toHaveBeenCalled();
   });
 });

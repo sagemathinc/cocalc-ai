@@ -19,13 +19,11 @@ beforeEach(() => {
   local
     .mockReset()
     .mockResolvedValue({ project_id: "p", bay_id: "home", status: "unknown" });
-  remote
-    .mockReset()
-    .mockResolvedValue({
-      project_id: "p",
-      bay_id: "owner",
-      status: "hard-deleted",
-    });
+  remote.mockReset().mockResolvedValue({
+    project_id: "p",
+    bay_id: "owner",
+    status: "hard-deleted",
+  });
 });
 it("recognizes deletion on a different owning bay", async () => {
   await expect(agentProjectWasDeleted("p")).resolves.toBe(true);
@@ -52,5 +50,18 @@ it("rejects mismatched project evidence", async () => {
     bay_id: "owner",
     status: "hard-deleted",
   });
+  await expect(agentProjectWasDeleted("p")).resolves.toBe(false);
+});
+
+it.each([
+  { project_id: "p", bay_id: "wrong-bay", status: "hard-deleted" },
+  { project_id: "p", bay_id: "owner", status: "invalid" },
+])("rejects invalid terminal evidence %j", async (evidence) => {
+  local.mockResolvedValue({
+    project_id: "p",
+    bay_id: "home",
+    status: "hard-deleted",
+  });
+  remote.mockResolvedValue(evidence);
   await expect(agentProjectWasDeleted("p")).resolves.toBe(false);
 });

@@ -8,6 +8,7 @@ import { conat } from "@cocalc/backend/conat";
 import getPool from "@cocalc/database/pool";
 import { ApiKeyActionStore } from "@cocalc/server/api/key-action-store";
 import type {
+  AccountCollaborationHandoff,
   AccountMembershipPortableState,
   AccountRehomeAcceptRequest,
   AccountRehomeOperationStage,
@@ -21,6 +22,7 @@ import { createBrowserSessionClient } from "@cocalc/conat/service/browser-sessio
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { lockAccountRehomeFence } from "@cocalc/server/accounts/rehome-fence";
 import { assertNoPersonalStateForRehome } from "@cocalc/server/agents/personal-rehome";
+import { assertNoPeopleAccountStateForRehome } from "@cocalc/server/people/rehome";
 import {
   getBayPublicOrigin,
   getClusterBayPublicOrigins,
@@ -58,6 +60,24 @@ import {
   remapFinancialRow,
   transaction as financialTransaction,
 } from "./financial-rehome";
+import {
+  ensureCollaborationAccountRehomeSchema,
+  collaborationRehomeTransaction,
+  freezeAccountCollaborationState,
+  getAccountCollaborationHandoff,
+  getAccountCollaborationPage,
+  acceptAccountCollaborationState,
+  receiveAccountCollaborationPage,
+  collaborationImportComplete,
+  importAccountCollaborationState,
+  activateAccountCollaborationState,
+  retireAccountCollaborationState,
+  assertNoCollaborationHandoff,
+  assertLegacyCollaborationRehomeEmpty,
+  sameCollaborationHandoff,
+  withCollaborationCopyLock,
+  withAccountRehomeAttemptLock,
+} from "./collaboration-account-rehome";
 
 const log = getLogger("server:accounts:rehome");
 const ACCOUNT_REHOME_OPERATIONS_TABLE = "account_rehome_operations";
@@ -919,11 +939,13 @@ async function createOperation({
 }): Promise<AccountRehomeOperationRow> {
   await ensureAccountRehomeSchema();
   if (financialRehomeEnabled()) await ensureFinancialRehomeSchema();
+  await ensureCollaborationAccountRehomeSchema();
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
     await lockAccountRehomeFence({ db: client, account_id });
     await assertNoPersonalStateForRehome(client, account_id);
+    await assertNoPeopleAccountStateForRehome(client, account_id);
     const active = await client.query(
       `
         SELECT *
@@ -975,6 +997,11 @@ async function createOperation({
     );
     if (financialRehomeEnabled())
       await freezeAccountFinancialState(client, rows[0]!);
+    await freezeAccountCollaborationState(
+      client,
+      rows[0]!,
+      !financialRehomeEnabled(),
+    );
     await client.query("COMMIT");
     return rows[0]! as AccountRehomeOperationRow;
   } catch (err) {
@@ -993,7 +1020,11 @@ export async function getAccountRehomeOperation(
     `SELECT * FROM ${ACCOUNT_REHOME_OPERATIONS_TABLE} WHERE op_id=$1`,
     [normalizeUuid("op_id", op_id)],
   );
-  return rows[0] ? summarizeOperation(rows[0]) : undefined;
+  if (!rows[0]) return;
+  return {
+    ...summarizeOperation(rows[0]),
+    collaboration_handoff: await getAccountCollaborationHandoff(op_id),
+  };
 }
 
 export async function getAccountRehomeOperationForOperator({
@@ -1266,6 +1297,7 @@ export async function acceptAccountRehome({
   dest_bay_id,
   account,
   financial_handoff,
+  collaboration_handoff,
 }: AccountRehomeAcceptRequest): Promise<AccountRehomeResponse> {
   const accountId = normalizeUuid("target_account_id", target_account_id);
   const sourceBayId = normalizeBayId("source_bay_id", source_bay_id);
@@ -1288,7 +1320,55 @@ export async function acceptAccountRehome({
       primaryKey: ["account_id"],
       db,
     });
-  if (financial_handoff) {
+  if (collaboration_handoff) {
+    if (collaboration_handoff.notifications === !!financial_handoff)
+      throw Error("Collaboration and financial notification handoff mismatch");
+    assertCollaborationEnvelope({
+      target_account_id,
+      source_bay_id,
+      dest_bay_id,
+      collaboration_handoff,
+    });
+    const source = await verifyCollaborationSource(collaboration_handoff);
+    // Only a still-current source can start a new handoff. Replays after cutover
+    // are accepted solely against the destination's identical durable receipt.
+    const existing = await getAccountCollaborationHandoff(
+      collaboration_handoff.op_id,
+    );
+    if (!existing) {
+      const entry = await getClusterAccountById(accountId);
+      if (
+        source.stage !== "requested" ||
+        source.status !== "running" ||
+        entry?.home_bay_id !== sourceBayId
+      )
+        throw Error(
+          "Collaboration accept requires the current source home operation",
+        );
+    }
+    await ensureCollaborationAccountRehomeSchema();
+    if (financial_handoff) {
+      assertFinancialEnvelope({
+        target_account_id,
+        source_bay_id,
+        dest_bay_id,
+        financial_handoff,
+      });
+      if (financial_handoff.op_id !== collaboration_handoff.op_id)
+        throw Error("Account handoff operation mismatch");
+      await ensureFinancialRehomeSchema();
+    } else await assertNoFinancialHandoff(accountId);
+    await collaborationRehomeTransaction(async (db) => {
+      const fresh = await acceptAccountCollaborationState(
+        db,
+        collaboration_handoff,
+      );
+      if (financial_handoff)
+        await acceptAccountFinancialState(db, financial_handoff);
+      if (fresh) await accept(db);
+    });
+  } else if (financial_handoff) {
+    await assertNoCollaborationHandoff(accountId);
     assertFinancialEnvelope({
       target_account_id,
       source_bay_id,
@@ -1314,6 +1394,7 @@ export async function acceptAccountRehome({
         await accept(client);
     });
   } else {
+    await assertNoCollaborationHandoff(accountId);
     await assertNoFinancialHandoff(accountId);
     await accept();
   }
@@ -1432,9 +1513,92 @@ async function copyFinancialRehomeState(
 export async function copyAccountRehomeState(
   opts: AccountRehomeStateCopyRequest,
 ): Promise<void> {
+  const h = opts.collaboration_handoff;
+  if (h) {
+    assertCollaborationEnvelope(opts);
+    if (opts.collaboration_page && opts.collaboration_activate)
+      throw Error("Conflicting collaboration copy actions");
+    if (opts.collaboration_page)
+      return receiveAccountCollaborationPage(h, opts.collaboration_page);
+    return withCollaborationCopyLock(h.account_id, async () => {
+      if (opts.collaboration_activate) {
+        const source = await verifyCollaborationSource(h);
+        const home = await getClusterAccountById(h.account_id);
+        if (
+          home?.home_bay_id !== h.dest_bay_id ||
+          !["directory_updated", "complete"].includes(source.stage)
+        )
+          throw Error(
+            "Collaboration activation requires completed directory cutover",
+          );
+        await activateAccountCollaborationState(h);
+      } else {
+        if (h.notifications === !!opts.financial_handoff)
+          throw Error(
+            "Collaboration and financial notification handoff mismatch",
+          );
+        if (await collaborationImportComplete(h)) return;
+        if (opts.financial_handoff) {
+          if (opts.financial_handoff.op_id !== h.op_id)
+            throw Error("Account handoff operation mismatch");
+          await copyFinancialRehomeState(opts);
+        } else {
+          await assertNoFinancialHandoff(h.account_id);
+          await copyLegacyAccountRehomeState(opts);
+        }
+        await importAccountCollaborationState(h);
+      }
+    });
+  }
+  if (opts.collaboration_page || opts.collaboration_activate)
+    throw Error("Missing collaboration handoff");
+  await assertNoCollaborationHandoff(opts.target_account_id);
   if (opts.financial_handoff) return copyFinancialRehomeState(opts);
   await assertNoFinancialHandoff(opts.target_account_id);
   return copyLegacyAccountRehomeState(opts);
+}
+
+function assertCollaborationEnvelope(
+  opts: Pick<
+    AccountRehomeStateCopyRequest,
+    | "target_account_id"
+    | "source_bay_id"
+    | "dest_bay_id"
+    | "collaboration_handoff"
+  >,
+) {
+  const h = opts.collaboration_handoff;
+  if (
+    !h ||
+    h.account_id !== opts.target_account_id ||
+    h.source_bay_id !== opts.source_bay_id ||
+    h.dest_bay_id !== opts.dest_bay_id ||
+    h.dest_bay_id !== getConfiguredBayId()
+  )
+    throw Error(
+      "Account collaboration handoff identity or destination mismatch",
+    );
+}
+
+async function verifyCollaborationSource(
+  h: AccountCollaborationHandoff,
+): Promise<AccountRehomeOperationSummary> {
+  const source = await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: h.source_bay_id,
+  }).getRehomeOperation({ op_id: h.op_id });
+  if (
+    !source ||
+    source.account_id !== h.account_id ||
+    source.source_bay_id !== h.source_bay_id ||
+    source.dest_bay_id !== h.dest_bay_id ||
+    !source.collaboration_handoff ||
+    !sameCollaborationHandoff(source.collaboration_handoff, h)
+  )
+    throw Error(
+      "Collaboration snapshot does not match a committed source operation",
+    );
+  return source;
 }
 
 async function copyLegacyAccountRehomeState({
@@ -1649,6 +1813,14 @@ export async function rehomeAccountOnHomeBay({
 export async function runAccountRehomeOperation(
   op_id: string,
 ): Promise<AccountRehomeResponse> {
+  return withAccountRehomeAttemptLock(normalizeUuid("op_id", op_id), () =>
+    runAccountRehomeOperationLocked(op_id),
+  );
+}
+
+async function runAccountRehomeOperationLocked(
+  op_id: string,
+): Promise<AccountRehomeResponse> {
   let op = await startAttempt(normalizeUuid("op_id", op_id));
   const localBayId = getConfiguredBayId();
   if (op.source_bay_id !== localBayId) {
@@ -1661,11 +1833,23 @@ export async function runAccountRehomeOperation(
     // Recheck resumed/old operations before any remote accept, home flip, or
     // cleanup. Personal writes use this same fence and reject running rehomes.
     if (op.stage !== "complete") {
+      await ensureCollaborationAccountRehomeSchema();
       const client = await getPool().connect();
       try {
         await client.query("BEGIN");
         await lockAccountRehomeFence({ db: client, account_id: op.account_id });
         await assertNoPersonalStateForRehome(client, op.account_id);
+        await assertNoPeopleAccountStateForRehome(client, op.account_id);
+        if (!(await getAccountCollaborationHandoff(op_id, client))) {
+          if (op.stage === "requested")
+            await freezeAccountCollaborationState(
+              client,
+              op,
+              !(await getAccountFinancialHandoff(op_id)),
+            );
+          else
+            await assertLegacyCollaborationRehomeEmpty(client, op.account_id);
+        }
         await client.query("COMMIT");
       } catch (err) {
         await client.query("ROLLBACK");
@@ -1675,6 +1859,7 @@ export async function runAccountRehomeOperation(
       }
     }
     const financial_handoff = await getAccountFinancialHandoff(op_id);
+    const collaboration_handoff = await getAccountCollaborationHandoff(op_id);
     let account = op.account;
     if (!account) {
       account = await loadAccountRowForRehome(op.account_id);
@@ -1692,6 +1877,7 @@ export async function runAccountRehomeOperation(
         dest_bay_id: op.dest_bay_id,
         account,
         financial_handoff,
+        collaboration_handoff,
       });
       op = await updateOperation({
         op_id,
@@ -1711,6 +1897,25 @@ export async function runAccountRehomeOperation(
     }
 
     if (op.stage === "source_flipped") {
+      if (collaboration_handoff) {
+        const destination = createInterBayAccountLocalClient({
+          client: getInterBayFabricClient(),
+          dest_bay: op.dest_bay_id,
+          timeout: ACCOUNT_REHOME_TIMEOUT_MS,
+        });
+        for (let page = 0; page < collaboration_handoff.page_count; page++) {
+          await destination.copyRehomeState({
+            target_account_id: op.account_id,
+            source_bay_id: op.source_bay_id,
+            dest_bay_id: op.dest_bay_id,
+            collaboration_handoff,
+            collaboration_page: await getAccountCollaborationPage(
+              collaboration_handoff,
+              page,
+            ),
+          });
+        }
+      }
       const state = await loadPortableState(op.account_id);
       await createInterBayAccountLocalClient({
         client: getInterBayFabricClient(),
@@ -1721,6 +1926,7 @@ export async function runAccountRehomeOperation(
         source_bay_id: op.source_bay_id,
         dest_bay_id: op.dest_bay_id,
         financial_handoff,
+        collaboration_handoff,
       });
       op = await updateOperation({
         op_id,
@@ -1730,6 +1936,8 @@ export async function runAccountRehomeOperation(
 
     if (op.stage === "projections_copied") {
       if (financial_handoff) await retireAccountFinancialState(op_id);
+      if (collaboration_handoff)
+        await retireAccountCollaborationState(collaboration_handoff);
       await clearPortableState(op.account_id);
       await clearAccountPersistState(op.account_id);
       const accountEntry = await getClusterAccountById(op.account_id);
@@ -1789,6 +1997,19 @@ export async function runAccountRehomeOperation(
           target_account_id: op.account_id,
           source_bay_id: op.source_bay_id,
           dest_bay_id: op.dest_bay_id,
+        });
+      }
+      if (collaboration_handoff) {
+        await createInterBayAccountLocalClient({
+          client: getInterBayFabricClient(),
+          dest_bay: op.dest_bay_id,
+          timeout: ACCOUNT_REHOME_TIMEOUT_MS,
+        }).copyRehomeState({
+          target_account_id: op.account_id,
+          source_bay_id: op.source_bay_id,
+          dest_bay_id: op.dest_bay_id,
+          collaboration_handoff,
+          collaboration_activate: true,
         });
       }
       op = await updateOperation({

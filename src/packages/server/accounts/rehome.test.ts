@@ -21,6 +21,46 @@ let restoreAccountPersistStateMock: jest.Mock;
 let clearAccountPersistStateMock: jest.Mock;
 let createInterBayAccountLocalClientMock: jest.Mock;
 let personalRehomeGuardMock: jest.Mock;
+let peopleRehomeGuardMock: jest.Mock;
+let collaborationHandoffMock: jest.Mock;
+let collaborationFreezeMock: jest.Mock;
+let collaborationImportMock: jest.Mock;
+let collaborationActivateMock: jest.Mock;
+let collaborationRetireMock: jest.Mock;
+let collaborationPageMock: jest.Mock;
+let collaborationReceiveMock: jest.Mock;
+let collaborationCompleteMock: jest.Mock;
+let collaborationSourceMock: jest.Mock;
+
+jest.mock("@cocalc/server/people/rehome", () => ({
+  assertNoPeopleAccountStateForRehome: (...args) =>
+    peopleRehomeGuardMock(...args),
+}));
+
+jest.mock("./collaboration-account-rehome", () => ({
+  ensureCollaborationAccountRehomeSchema: jest.fn(async () => {}),
+  collaborationRehomeTransaction: async (fn) => fn({ query: queryMock }),
+  freezeAccountCollaborationState: (...args) =>
+    collaborationFreezeMock(...args),
+  getAccountCollaborationHandoff: (...args) =>
+    collaborationHandoffMock(...args),
+  getAccountCollaborationPage: (...args) => collaborationPageMock(...args),
+  acceptAccountCollaborationState: jest.fn(async () => true),
+  receiveAccountCollaborationPage: (...args) =>
+    collaborationReceiveMock(...args),
+  collaborationImportComplete: (...args) => collaborationCompleteMock(...args),
+  importAccountCollaborationState: (...args) =>
+    collaborationImportMock(...args),
+  activateAccountCollaborationState: (...args) =>
+    collaborationActivateMock(...args),
+  retireAccountCollaborationState: (...args) =>
+    collaborationRetireMock(...args),
+  assertNoCollaborationHandoff: jest.fn(async () => {}),
+  assertLegacyCollaborationRehomeEmpty: jest.fn(async () => {}),
+  sameCollaborationHandoff: (a, b) => JSON.stringify(a) === JSON.stringify(b),
+  withCollaborationCopyLock: async (_account, fn) => fn(),
+  withAccountRehomeAttemptLock: async (_op, fn) => fn(),
+}));
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -152,6 +192,20 @@ describe("account rehome", () => {
   beforeEach(() => {
     jest.resetModules();
     personalRehomeGuardMock = jest.fn(async () => {});
+    peopleRehomeGuardMock = jest.fn(async () => {});
+    collaborationHandoffMock = jest.fn(async () => undefined);
+    collaborationFreezeMock = jest.fn(async () => undefined);
+    collaborationImportMock = jest.fn(async () => undefined);
+    collaborationActivateMock = jest.fn(async () => undefined);
+    collaborationRetireMock = jest.fn(async () => undefined);
+    collaborationPageMock = jest.fn(async (_h, page) => ({
+      page,
+      body: "page",
+      hash: "hash",
+    }));
+    collaborationReceiveMock = jest.fn(async () => undefined);
+    collaborationCompleteMock = jest.fn(async () => false);
+    collaborationSourceMock = jest.fn(async () => null);
     operationRow = {
       op_id: OP_ID,
       account_id: TARGET_ACCOUNT_ID,
@@ -173,6 +227,7 @@ describe("account rehome", () => {
       finished_at: null,
     };
     queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("jsonb_agg")) return { rows: [{ rows: [] }] };
       if (
         sql.includes("api_key_action_requests") ||
         sql.includes("api_key_action_pending_idx")
@@ -380,7 +435,7 @@ describe("account rehome", () => {
     createInterBayAccountLocalClientMock = jest.fn(({ dest_bay }) => ({
       acceptRehome: async (opts: any) => await acceptRehomeMock(opts),
       copyRehomeState: async (opts: any) => await copyRehomeStateMock(opts),
-      getRehomeOperation: jest.fn(async () => null),
+      getRehomeOperation: (...args) => collaborationSourceMock(...args),
       reconcileRehome: jest.fn(async () => undefined),
       getMembershipPortableState: async (opts: any) =>
         await getMembershipPortableStateMock({ dest_bay, ...opts }),
@@ -452,6 +507,32 @@ describe("account rehome", () => {
         ),
       ).toBe(false);
       expect(operationRow.status).toBe("failed");
+    },
+  );
+
+  it.each([
+    "requested",
+    "destination_accepted",
+    "source_flipped",
+    "projections_copied",
+  ])(
+    "people state blocks resumed rehome at %s before copy or cutover",
+    async (stage) => {
+      operationRow.stage = stage;
+      peopleRehomeGuardMock.mockRejectedValue(
+        Error("people state portability is not supported"),
+      );
+      const { runAccountRehomeOperation } = await import("./rehome");
+      await expect(runAccountRehomeOperation(OP_ID)).rejects.toThrow(
+        "people state portability",
+      );
+      expect(peopleRehomeGuardMock).toHaveBeenCalledWith(
+        expect.anything(),
+        TARGET_ACCOUNT_ID,
+      );
+      expect(copyRehomeStateMock).not.toHaveBeenCalled();
+      expect(updateClusterAccountHomeBayMock).not.toHaveBeenCalled();
+      expect(clearAccountPersistStateMock).not.toHaveBeenCalled();
     },
   );
 
@@ -1203,6 +1284,153 @@ describe("account rehome", () => {
       expect.stringContaining("COALESCE(kind, '') <> 'site'"),
       [TARGET_ACCOUNT_ID],
     );
+  });
+
+  it("sends bounded collaboration pages before legacy copy and activates only after directory cutover", async () => {
+    operationRow.stage = "source_flipped";
+    const h = {
+      version: 1,
+      op_id: OP_ID,
+      account_id: TARGET_ACCOUNT_ID,
+      source_bay_id: "bay-1",
+      dest_bay_id: "bay-2",
+      page_count: 3,
+      row_count: 400,
+      byte_count: 1000,
+      snapshot_hash: "a".repeat(64),
+      notifications: true,
+    };
+    collaborationHandoffMock.mockResolvedValue(h);
+    const { runAccountRehomeOperation } = await import("./rehome");
+    await runAccountRehomeOperation(OP_ID);
+    expect(
+      copyRehomeStateMock.mock.calls.map(
+        ([arg]) =>
+          arg.collaboration_page?.page ??
+          (arg.collaboration_activate ? "activate" : "legacy"),
+      ),
+    ).toEqual([0, 1, 2, "legacy", "activate"]);
+    expect(collaborationRetireMock).toHaveBeenCalledWith(h);
+    const activationOrder = copyRehomeStateMock.mock.invocationCallOrder[4];
+    expect(activationOrder).toBeGreaterThan(
+      updateClusterAccountHomeBayMock.mock.invocationCallOrder[0],
+    );
+    expect(collaborationRetireMock.mock.invocationCallOrder[0]).toBeLessThan(
+      updateClusterAccountHomeBayMock.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("failed collaboration copy retries the same frozen pages without source cleanup or cutover", async () => {
+    operationRow.stage = "source_flipped";
+    const h = {
+      version: 1,
+      op_id: OP_ID,
+      account_id: TARGET_ACCOUNT_ID,
+      source_bay_id: "bay-1",
+      dest_bay_id: "bay-2",
+      page_count: 2,
+      row_count: 201,
+      byte_count: 1000,
+      snapshot_hash: "a".repeat(64),
+      notifications: true,
+    };
+    collaborationHandoffMock.mockResolvedValue(h);
+    copyRehomeStateMock.mockRejectedValueOnce(Error("transport interrupted"));
+    const { runAccountRehomeOperation } = await import("./rehome");
+    await expect(runAccountRehomeOperation(OP_ID)).rejects.toThrow(
+      "transport interrupted",
+    );
+    expect(operationRow.status).toBe("failed");
+    expect(collaborationRetireMock).not.toHaveBeenCalled();
+    expect(updateClusterAccountHomeBayMock).not.toHaveBeenCalled();
+    await runAccountRehomeOperation(OP_ID);
+    expect(collaborationFreezeMock).not.toHaveBeenCalled();
+    expect(collaborationPageMock.mock.calls.map(([, page]) => page)).toEqual([
+      0, 0, 1,
+    ]);
+    expect(operationRow.status).toBe("succeeded");
+  });
+
+  it("destination activation rejects a pre-cutover route and a forged source snapshot", async () => {
+    const h = {
+      version: 1 as const,
+      op_id: OP_ID,
+      account_id: TARGET_ACCOUNT_ID,
+      source_bay_id: "bay-2",
+      dest_bay_id: "bay-1",
+      page_count: 0,
+      row_count: 0,
+      byte_count: 0,
+      snapshot_hash: "a".repeat(64),
+      notifications: true,
+    };
+    const opts = {
+      target_account_id: TARGET_ACCOUNT_ID,
+      source_bay_id: "bay-2",
+      dest_bay_id: "bay-1",
+      collaboration_handoff: h,
+      collaboration_activate: true,
+    };
+    collaborationSourceMock.mockResolvedValue({
+      ...operationRow,
+      source_bay_id: h.source_bay_id,
+      dest_bay_id: h.dest_bay_id,
+      stage: "projections_copied",
+      collaboration_handoff: h,
+    });
+    const { copyAccountRehomeState } = await import("./rehome");
+    await expect(copyAccountRehomeState(opts)).rejects.toThrow(
+      "directory cutover",
+    );
+    expect(collaborationActivateMock).not.toHaveBeenCalled();
+    collaborationSourceMock.mockResolvedValue({
+      ...operationRow,
+      source_bay_id: h.source_bay_id,
+      dest_bay_id: h.dest_bay_id,
+      stage: "directory_updated",
+      collaboration_handoff: { ...h, snapshot_hash: "b".repeat(64) },
+    });
+    await expect(copyAccountRehomeState(opts)).rejects.toThrow(
+      "committed source operation",
+    );
+    collaborationSourceMock.mockResolvedValue({
+      ...operationRow,
+      source_bay_id: h.source_bay_id,
+      dest_bay_id: h.dest_bay_id,
+      stage: "directory_updated",
+      collaboration_handoff: h,
+    });
+    getClusterAccountByIdMock.mockResolvedValue({
+      account_id: TARGET_ACCOUNT_ID,
+      home_bay_id: "bay-1",
+    });
+    await copyAccountRehomeState(opts);
+    expect(collaborationActivateMock).toHaveBeenCalledWith(h);
+  });
+
+  it("an imported destination ignores a late legacy-copy retry", async () => {
+    const h = {
+      version: 1 as const,
+      op_id: OP_ID,
+      account_id: TARGET_ACCOUNT_ID,
+      source_bay_id: "bay-2",
+      dest_bay_id: "bay-1",
+      page_count: 0,
+      row_count: 0,
+      byte_count: 0,
+      snapshot_hash: "a".repeat(64),
+      notifications: true,
+    };
+    collaborationCompleteMock.mockResolvedValue(true);
+    const { copyAccountRehomeState } = await import("./rehome");
+    await copyAccountRehomeState({
+      target_account_id: TARGET_ACCOUNT_ID,
+      source_bay_id: "bay-2",
+      dest_bay_id: "bay-1",
+      collaboration_handoff: h,
+    });
+    expect(restoreAccountPersistStateMock).not.toHaveBeenCalled();
+    expect(collaborationImportMock).not.toHaveBeenCalled();
   });
 
   it("restores account persist files when copying account rehome state", async () => {

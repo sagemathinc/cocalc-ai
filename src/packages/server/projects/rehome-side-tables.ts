@@ -9,6 +9,7 @@ export type ProjectRehomeSqlSideTableDecisionStatus =
   | "projection"
   | "seed-global-cleanup"
   | "data-plane-excluded"
+  | "account-home-excluded"
   | "legacy-unused"
   | "audit-local"
   | "operation-local";
@@ -27,6 +28,150 @@ export interface ProjectRehomeSqlSideTablePreflight {
 }
 
 export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
+  collaboration_relation_sets: {
+    table: "collaboration_relation_sets",
+    status: "portable",
+    reason:
+      "Immutable relation manifests and active catalog bindings transfer with owner metadata; renewed source epochs fence uncommitted work.",
+  },
+  collaboration_participants: {
+    table: "collaboration_participants",
+    status: "portable",
+    reason:
+      "Complete native-thread participation edges transfer with their immutable set identity, without granting project membership.",
+  },
+  collaboration_references: {
+    table: "collaboration_references",
+    status: "portable",
+    reason:
+      "Typed source-message edges transfer with the source catalog; targets remain independently authorized.",
+  },
+  collaboration_relation_pages: {
+    table: "collaboration_relation_pages",
+    status: "operation-local",
+    reason:
+      "Host upload pages are staged work, not catalog authority. Destination writer epochs require fresh uploads; committed normalized edges transfer separately.",
+  },
+  collaboration_participant_index: {
+    table: "collaboration_participant_index",
+    status: "projection",
+    reason:
+      "Account-home participant projections rebuild under fresh owner access generations, never transfer as grants.",
+  },
+  collaboration_discovery: {
+    table: "collaboration_discovery",
+    status: "projection",
+    reason:
+      "Host census telemetry is rebuilt under current owner/host authorization; absence after rehome is pending, never complete. Resource identities remain in the portable catalog.",
+  },
+  collaboration_memberships: {
+    table: "collaboration_memberships",
+    status: "portable",
+    reason:
+      "The fenced collaboration handoff preserves recipient epochs and notification cutovers without copying access leases.",
+  },
+  collaboration_notification_events: {
+    table: "collaboration_notification_events",
+    status: "portable",
+    reason:
+      "Immutable human-message facts and project-local delivery positions transfer before ownership changes through hash-checked pages.",
+  },
+  collaboration_notification_floors: {
+    table: "collaboration_notification_floors",
+    status: "portable",
+    reason:
+      "Notification replay floors transfer atomically with the owner's retained message events and recipient cutovers.",
+  },
+  collaboration_notification_subscriptions: {
+    table: "collaboration_notification_subscriptions",
+    status: "portable",
+    reason:
+      "Follower routing hints transfer with the project; homes retain authoritative Follow and mute choices.",
+  },
+  collaboration_notification_recipients: {
+    table: "collaboration_notification_recipients",
+    status: "portable",
+    reason:
+      "Pending event-recipient obligations move with the fenced owner event log; they are not disposable account projections.",
+  },
+  collaboration_relocations: {
+    table: "collaboration_relocations",
+    status: "portable",
+    reason:
+      "Stable relocation retry receipts transfer with catalog bindings; current writer epochs are renewed on activation.",
+  },
+  collaboration_artifact_bindings: {
+    table: "collaboration_artifact_bindings",
+    status: "account-home-excluded",
+    reason:
+      "Personal Library identity bindings remain on the account home bay; project relocation must not rewrite another account's aliases.",
+  },
+  collaboration_projects: {
+    table: "collaboration_projects",
+    status: "portable",
+    reason:
+      "The fenced handoff preserves catalog revision and rotates destination generation before rebuilding access projections.",
+  },
+  collaboration_sources: {
+    table: "collaboration_sources",
+    status: "portable",
+    reason:
+      "Source bindings transfer with renewed writer epochs and reset registration state; old source writers remain fenced.",
+  },
+  collaboration_source_requests: {
+    table: "collaboration_source_requests",
+    status: "portable",
+    reason:
+      "Pending opt-in indexing requests transfer with their authoritative source catalog.",
+  },
+  collaboration_catalog: {
+    table: "collaboration_catalog",
+    status: "portable",
+    reason:
+      "Stable resource identities, locator bindings, activity floors and tombstones are restored atomically from validated transfer pages.",
+  },
+  collaboration_rooms: {
+    table: "collaboration_rooms",
+    status: "portable",
+    reason:
+      "Canonical room identity, location and initialization lifecycle transfer unchanged; transfer never opens or creates a chat file.",
+  },
+  collaboration_room_replacements: {
+    table: "collaboration_room_replacements",
+    status: "portable",
+    reason:
+      "Permanent actor-bound room replacement receipts and retired identities transfer with the canonical pointer; rehome never replays file initialization.",
+  },
+  project_collaboration_rehome_pages: {
+    table: "project_collaboration_rehome_pages",
+    status: "operation-local",
+    reason:
+      "Immutable bounded transfer pages belong to their source or destination handoff receipt and are not recursively copied.",
+  },
+  project_collaboration_rehome_transfers: {
+    table: "project_collaboration_rehome_transfers",
+    status: "operation-local",
+    reason:
+      "Durable retry checkpoints and frozen/activated receipts remain on the bay that performed the handoff.",
+  },
+  collaboration_access: {
+    table: "collaboration_access",
+    status: "projection",
+    reason:
+      "Account-home access leases must be refreshed from the new project owner, never copied as grants.",
+  },
+  collaboration_index: {
+    table: "collaboration_index",
+    status: "projection",
+    reason:
+      "Account discovery summaries rebuild only under current owner-issued generations and membership leases.",
+  },
+  collaboration_personal: {
+    table: "collaboration_personal",
+    status: "account-home-excluded",
+    reason:
+      "Personal collection and attention belong to the account home bay, not the project owner.",
+  },
   agent_identities: {
     table: "agent_identities",
     status: "not-portable",
@@ -322,6 +467,7 @@ const IGNORED_REHOME_STATUSES =
     "seed-global-cleanup",
     "legacy-unused",
     "audit-local",
+    "account-home-excluded",
   ]);
 
 export function getProjectRehomeSqlSideTablePreflight(): ProjectRehomeSqlSideTablePreflight {
