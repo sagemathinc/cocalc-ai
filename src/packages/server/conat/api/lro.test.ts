@@ -12,6 +12,11 @@ let cancelStaleProjectStartLrosMock: jest.Mock;
 let resolveHostBayMock: jest.Mock;
 let listHostOperationsMock: jest.Mock;
 
+const scanProjectsMock = jest.fn(async (_opts: any) => ({}));
+jest.mock("@cocalc/server/collaborators/api", () => ({
+  collaboratorsApi: { scanProjects: (opts: any) => scanProjectsMock(opts) },
+}));
+
 jest.mock("@cocalc/server/inter-bay/directory", () => ({
   resolveHostBay: (...args: any[]) => resolveHostBayMock(...args),
 }));
@@ -298,4 +303,25 @@ describe("lro host authorization", () => {
       op_id: "op-collect",
     });
   });
+});
+
+test("Scan cancellation records intent through the home API instead of marking stopped", async () => {
+  getLroMock = jest.fn(async () => ({
+    op_id: "scan",
+    kind: "people-project-scan",
+    scope_type: "account",
+    scope_id: "account",
+    created_by: "account",
+    status: "running",
+  }));
+  updateLroMock = jest.fn();
+  scanProjectsMock.mockClear();
+  const { cancel } = await import("./lro");
+  await cancel({ account_id: "account", op_id: "scan" });
+  expect(scanProjectsMock).toHaveBeenCalledWith({
+    account_id: "account",
+    action: "cancel",
+    op_id: "scan",
+  });
+  expect(updateLroMock).not.toHaveBeenCalled();
 });

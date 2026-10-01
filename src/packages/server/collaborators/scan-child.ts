@@ -1,0 +1,217 @@
+/*
+ * This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
+ * License: MS-RSL - see LICENSE.md for details
+ */
+import getPool from "@cocalc/database/pool";
+import getLogger from "@cocalc/backend/logger";
+import {
+  prepareScanChild,
+  finishScanChild,
+  stageScanChildFinish,
+  finishUnsubmittedScanChild,
+  recordScanChildBusy,
+} from "@cocalc/database/postgres/collaborators/collaborators-scan-child";
+import type { CollaborationOwnerAuthority } from "@cocalc/database/postgres/collaborators/collaborators-owner";
+import type {
+  ScanChild,
+  ScanChildRequest,
+} from "@cocalc/util/collaboration-scan-batch";
+import { scanChildTerminal } from "@cocalc/util/collaboration-scan-batch";
+import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
+import { dispatchCollaborationScan } from "./scan-dispatch";
+import { retainUnavailableScanChild } from "@cocalc/database/postgres/collaborators/collaborators-scan-recovery";
+import { ScanHostBusy, ScanHostUnavailable, scanHostCall } from "./scan-host";
+
+const logger = getLogger("server:collaborators:scan-child");
+
+export async function stepScanChild(
+  opts: ScanChildRequest,
+  authority: CollaborationOwnerAuthority,
+): Promise<ScanChild> {
+  try {
+    const result = await step(opts, authority);
+    if (opts.action !== "inspect" && !scanChildTerminal(result.state))
+      await recordScanChildBusy(opts, authority, false);
+    return result;
+  } catch (error) {
+    const busy = error instanceof ScanHostBusy;
+    if (busy) {
+      if (!(await recordScanChildBusy(opts, authority, true)))
+        return prepareScanChild({ ...opts, action: "inspect" }, authority);
+      const unsubmitted = await finishUnsubmittedScanChild(
+        opts,
+        authority,
+        "busy",
+      );
+      if (unsubmitted) return unsubmitted;
+    }
+    if (!busy && !(error instanceof ScanHostUnavailable)) throw error;
+    const result = await retainUnavailableScanChild(
+      opts,
+      authority,
+      busy ? "busy" : "unreachable",
+    );
+    if (!result) throw error;
+    logger.warn("scan host unavailable; exact stop retained for recovery", {
+      project_id: opts.project_id,
+      job_id: opts.request_id,
+      batch_id: opts.batch_id,
+      error: String(error).slice(0, 1000),
+    });
+    return result;
+  }
+}
+
+async function step(
+  opts: ScanChildRequest,
+  authority: CollaborationOwnerAuthority,
+): Promise<ScanChild> {
+  let child = await prepareScanChild(opts, authority);
+  if (scanChildTerminal(child.state) || opts.action === "inspect") return child;
+  let unavailable = false;
+  let deferredUntil: number | undefined;
+  if (child.state !== "cancelling" && !child.finish_result) {
+    try {
+      const dispatch = await dispatchCollaborationScan(
+        { ...opts, job_id: opts.request_id },
+        authority,
+      );
+      if ("host_deferred" in dispatch && dispatch.host_deferred)
+        deferredUntil = Date.now() + (dispatch.retry_after_ms ?? 30000);
+    } catch (error) {
+      if (error instanceof ScanHostBusy) throw error;
+      const unsubmitted = await finishUnsubmittedScanChild(opts, authority);
+      if (unsubmitted) {
+        logger.warn("scan ended before host submission", {
+          project_id: opts.project_id,
+          job_id: opts.request_id,
+          batch_id: opts.batch_id,
+          error: String(error).slice(0, 1000),
+        });
+        return unsubmitted;
+      }
+      if (error instanceof ScanHostUnavailable) throw error;
+      // Only a definitive host storage rejection can become unavailable. Fence
+      // the exact run first so an earlier delayed submission cannot execute.
+      unavailable = [
+        "ENODEV",
+        "PROJECT_UNAVAILABLE",
+        "ESTALE",
+        "ENOENT",
+      ].includes((error as { code?: string })?.code ?? "");
+      // A lost acknowledgement is neither failure nor permission for a new ID.
+    }
+    child = await prepareScanChild({ ...opts, action: "inspect" }, authority);
+  }
+  if (!child.host_id || !child.job_id) return child;
+  const host_id = child.host_id;
+  const host = await scanHostCall(() =>
+    getRoutedHostControlClient({
+      host_id,
+      timeout: 30000,
+    }),
+  );
+  const request = {
+    protocol_version: 1 as const,
+    project_id: opts.project_id,
+    run_id: child.job_id,
+  };
+  async function finishAfterFence(result: ScanChild) {
+    const pending = await stageScanChildFinish(opts, authority, result);
+    const stopped = await scanHostCall(() =>
+      host.cancelCollaborationReconciliation(request),
+    );
+    if (stopped.state !== "cancelled" || stopped.run_id !== request.run_id)
+      throw Error("scan cancellation not acknowledged");
+    return finishScanChild(opts, authority, pending, true);
+  }
+  if (child.finish_result) return finishAfterFence(child.finish_result);
+  if (child.state === "cancelling" || unavailable || deferredUntil) {
+    return finishAfterFence({
+      project_id: opts.project_id,
+      request_id: opts.request_id,
+      entries: child.entries,
+      candidates: child.candidates,
+      state:
+        child.state === "cancelling"
+          ? "cancelled"
+          : unavailable
+            ? "unavailable"
+            : "deferred",
+      ...(deferredUntil
+        ? {
+            next_eligible_at: deferredUntil,
+            message:
+              "Host deferred this scan; retry explicitly after cooldown.",
+          }
+        : {}),
+    });
+  }
+  const status = await scanHostCall(() =>
+    host.getCollaborationReconciliationStatus(request),
+  );
+  if (status.state === "unknown") return child;
+  if (status.run_id !== child.job_id)
+    throw Error("scan host returned different run");
+  if (status.state === "cancelled")
+    return finishScanChild(opts, authority, { ...child, state: "cancelled" });
+  const progress = {
+    last_success: status.last_success,
+    last_fail: status.last_fail,
+    entries: status.entries,
+    candidates: status.candidates,
+    ...(status.source_pending != null
+      ? { indexed: Math.max(0, status.candidates - status.source_pending) }
+      : {}),
+    ...(status.source_issues?.length
+      ? { source_issues: status.source_issues }
+      : {}),
+  };
+  await getPool().query(
+    "UPDATE collaboration_scan_jobs SET progress=$3::jsonb WHERE project_id=$1 AND job_id=$2 AND NOT cancel_requested",
+    [opts.project_id, child.job_id, JSON.stringify(progress)],
+  );
+  if (status.state === "discovered" && status.pending_candidates === 0) {
+    return finishScanChild(opts, authority, {
+      project_id: opts.project_id,
+      request_id: opts.request_id,
+      ...progress,
+      state: "successful",
+    });
+  }
+  // Discovery/handoff can finish while source parsing or owner ingestion is
+  // still pending. Do not report successful or partial solely for that phase.
+  if (
+    status.source_pending &&
+    status.source_pending > (status.source_errors ?? 0) &&
+    !status.blocked_reason
+  )
+    return child;
+  if (
+    status.blocked_reason ||
+    (status.traversal_complete && status.pending_candidates === 0) ||
+    (status.blocked_directories &&
+      status.completed_directories + status.blocked_directories ===
+        status.directories)
+  ) {
+    // Bounded partial traversal is a terminal, honest outcome. Fence retries
+    // before freeing admission; do not leave blocked traversal running forever.
+    return finishAfterFence({
+      project_id: opts.project_id,
+      request_id: opts.request_id,
+      ...progress,
+      state:
+        !status.blocked_reason &&
+        status.errors === 0 &&
+        status.source_errors === status.source_file_errors
+          ? "successful"
+          : "failed",
+      message: status.source_errors
+        ? status.source_file_errors === status.source_errors
+          ? `${status.source_errors} chat file${status.source_errors === 1 ? " was" : "s were"} skipped. Previously indexed results were kept.`
+          : "A storage or indexing service failure prevented completion. Changes since the last successful scan will be retried."
+        : "The filename search was incomplete or exceeded a limit. Previously indexed results were kept.",
+    });
+  }
+  return { ...child, ...progress };
+}

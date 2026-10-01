@@ -163,6 +163,16 @@ export async function cancel({
       scope_id: row.scope_id,
     });
   }
+  if (row.kind === "people-project-scan") {
+    const { collaboratorsApi } =
+      await import("@cocalc/server/collaborators/api");
+    await collaboratorsApi.scanProjects({
+      account_id,
+      action: "cancel",
+      op_id,
+    });
+    return;
+  }
   const updated = await updateLro({
     op_id,
     status: "canceled",

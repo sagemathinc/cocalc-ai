@@ -148,6 +148,12 @@ export async function getRoutedHostControlClient({
         await bridge.deleteRootfsImage({ host_id, del }),
       scanRootfsRelease: async (scan) =>
         await bridge.scanRootfsRelease({ host_id, scan }),
+      requestCollaborationReconciliation: async (scan) =>
+        await bridge.requestCollaborationReconciliation({ host_id, scan }),
+      cancelCollaborationReconciliation: async (scan) =>
+        await bridge.cancelCollaborationReconciliation({ host_id, scan }),
+      getCollaborationReconciliationStatus: async (scan) =>
+        await bridge.getCollaborationReconciliationStatus({ host_id, scan }),
       scanProjectRootfs: async (scan) =>
         await bridge.scanProjectRootfs({ host_id, scan }),
       listHostSshAuthorizedKeys: async () =>

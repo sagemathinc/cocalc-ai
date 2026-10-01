@@ -38,6 +38,39 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
 }));
 
 describe("project-host client routing", () => {
+  it.each([
+    "requestCollaborationReconciliation",
+    "getCollaborationReconciliationStatus",
+  ] as const)(
+    "routes %s to the host's bay without starting compute",
+    async (method) => {
+      resolveHostBayAcrossClusterMock.mockResolvedValue({
+        bay_id: "bay-remote",
+        epoch: 4,
+      });
+      const forward = jest.fn(async () => ({ state: "unknown" }));
+      bridgeHostControlMock.mockReturnValue({ [method]: forward });
+      const { getRoutedHostControlClient } = await import("./client");
+      const client = await getRoutedHostControlClient({
+        host_id: "h-scan",
+        timeout: 30000,
+      });
+      const scan = {
+        protocol_version: 1 as const,
+        project_id: "p-scan",
+        run_id: "stable-run",
+      };
+      await client[method](scan);
+      expect(bridgeHostControlMock).toHaveBeenCalledWith("bay-remote", {
+        timeout_ms: 30000,
+      });
+      expect(forward).toHaveBeenCalledWith({ host_id: "h-scan", scan });
+      expect(bridgeStartProjectMock).not.toHaveBeenCalled();
+      expect(bridgeCreateProjectMock).not.toHaveBeenCalled();
+      expect(getExplicitHostControlClientMock).not.toHaveBeenCalled();
+    },
+  );
+
   beforeEach(() => {
     jest.resetModules();
     process.env.COCALC_BAY_ID = "bay-0";
