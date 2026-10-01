@@ -124,7 +124,16 @@ function installDebugHook(): void {
 
 async function openNotebook(page: Page, path: string): Promise<void> {
   await page.goto(fileUrl(path), { waitUntil: "domcontentloaded" });
-  await page.waitForSelector(".CodeMirror", { timeout: 60_000 });
+  // Any visible cell editor: the first one in the page can be hidden (e.g. a
+  // rendered Markdown cell's).
+  await page.waitForFunction(
+    () =>
+      Array.from(document.querySelectorAll(".CodeMirror")).some(
+        (e) => (e as HTMLElement).offsetParent != null,
+      ),
+    null,
+    { timeout: 60_000 },
+  );
   await page.waitForTimeout(Number(process.env.COLLAB_SETTLE_MS ?? 3_000));
 }
 
