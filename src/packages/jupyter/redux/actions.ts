@@ -935,7 +935,11 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     if (current === input) {
       // Nothing changed, but a caller that asks to save may have made other
       // changes it relies on this to commit (e.g. split_cell's new cell).
-      if (save) this._sync();
+      // Commit only then: an editor applies every collaborator's change it
+      // receives through here, and committing with several heads always
+      // makes a merge patch, which every other client receives in turn --
+      // with ten people in a notebook, a storm of patches that never ends.
+      if (save && this.syncdb?.hasDraft?.()) this._sync();
       return input;
     }
     if (this.check_edit_protection(id, "changing input")) {
@@ -1450,6 +1454,14 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     ) {
       // no possible way to do anything.
       return;
+    }
+    const debugHook = (globalThis as any).__simpleInputMergeDebug;
+    if (typeof debugHook === "function") {
+      // Debugging aid (see SimpleInputMerge): every write, and its caller.
+      debugHook("jupyter:set", {
+        obj: { ...obj, input: obj.input },
+        stack: new Error().stack?.split("\n").slice(2, 9).join("\n"),
+      });
     }
     if (this.wouldCreatePartialCell(obj)) {
       // E.g., an input editor saving as it unmounts because its cell was just

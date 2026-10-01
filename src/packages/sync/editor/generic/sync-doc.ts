@@ -206,6 +206,14 @@ export interface SyncOpts extends SyncOpts0 {
 // not on the frontend.
 
 const logger = getLogger("sync-doc");
+
+// Debugging aid (see SimpleInputMerge): set
+// globalThis.__simpleInputMergeDebug to a function to receive events; the
+// data is only computed when it is set.
+function syncDebug(event: string, data: () => Record<string, unknown>): void {
+  const hook = (globalThis as any).__simpleInputMergeDebug;
+  if (typeof hook === "function") hook(event, data());
+}
 logger.debug("init");
 
 export function prevSeqForMoreHistoryFromHistory(
@@ -3299,6 +3307,10 @@ export class SyncDoc extends EventEmitter {
      written to disk; however, it does mean that it safe for
      the user to close their browser.
   */
+  // Whether the live document has changes not committed as a patch yet.
+  hasDraft = (): boolean =>
+    this.doc != null && this.last != null && !this.doc.is_equal(this.last);
+
   has_uncommitted_changes = (): boolean => {
     if (!this.isReady()) {
       return false;
@@ -3355,6 +3367,13 @@ export class SyncDoc extends EventEmitter {
     const previous = this.doc;
     const next =
       previous == null ? committed : this.rebaseDraftOnto(previous, committed);
+    syncDebug("syncdoc:remote", () => ({
+      path: this.path,
+      hadDraft:
+        previous != null && this.last != null && !previous.is_equal(this.last),
+      hadDraftBase: this.draftBase != null,
+      rebasedDiffers: previous != null && !next.is_equal(committed),
+    }));
     this.last = committed;
     this.doc = next;
     // The draft is now relative to the committed document.
@@ -3575,10 +3594,20 @@ export class SyncDoc extends EventEmitter {
     }
     // A remote patch can advance the committed graph while this.doc still
     // contains a local draft. Replay only the local delta onto that graph.
+    const draftBase = this.draftBase;
     const next = this.rebaseDraftOnto(draft, current);
     this.draftBase = undefined;
     this.doc = next;
     const compareAgainst = current;
+    syncDebug("syncdoc:commit", () => ({
+      path: this.path,
+      heads: this.patchflowSession?.getHeads().length,
+      forceMerge,
+      changed: !this.documentsEqual(current as Document, next),
+      hadDraftBase: draftBase != null,
+      draftIsLast: this.last != null && draft.is_equal(this.last),
+      stack: new Error().stack?.split("\n").slice(2, 8).join("\n"),
+    }));
     if (
       !allowDuplicate &&
       !forceMerge &&
