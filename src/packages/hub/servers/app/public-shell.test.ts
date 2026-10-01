@@ -116,6 +116,26 @@ describe("public shell rendering", () => {
     expect(body).not.toContain(PUBLIC_BODY_PLACEHOLDER);
   });
 
+  it("uses the current terminal capture as the Terminal page's link preview", async () => {
+    const { html, status } = await renderPublicShell(
+      request("/features/terminal"),
+    );
+
+    expect(status).toBe(200);
+    for (const [value, property] of [
+      [
+        "https://cocalc.ai/public/landing/project-terminal-20260916.jpg",
+        "og:image",
+      ],
+      ["800", "og:image:width"],
+      ["400", "og:image:height"],
+    ]) {
+      expect(html).toContain(
+        `content="${value}" data-cocalc-public-route-meta="${property}"`,
+      );
+    }
+  });
+
   it("hides the crawler fallback before deferred public scripts run", async () => {
     const { html } = await renderPublicShell(request("/"));
     const guardIndex = html.indexOf('id="cocalc-public-prerender-guard"');

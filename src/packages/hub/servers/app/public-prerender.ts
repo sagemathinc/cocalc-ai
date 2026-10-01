@@ -287,19 +287,22 @@ function renderFeatureDetail(
     .map((section) => renderSection(section, basePath, config))
     .join("");
   const title = page.metadataTitle ?? page.title;
+  const highlights = (page.highlights ?? [])
+    .map((item) => `<li>${htmlEscape(item)}</li>`)
+    .join("");
   return `<article data-cocalc-public-prerender="feature" style="${ARTICLE_STYLE}">
 <header>
   <p>CoCalc feature</p>
   <h1>${htmlEscape(title)}</h1>
   <p>${htmlEscape(page.tagline)}</p>
   <p>${htmlEscape(page.metadataSummary ?? page.summary)}</p>
-  <p>${htmlEscape(page.summary)}</p>
+  <p>${htmlEscape(page.summary)}</p>${highlights ? `<ul>${highlights}</ul>` : ""}
 </header>
 ${sections}
 ${renderFeatureNavigation(basePath, page.slug, config)}
 <p><a href="${htmlEscape(
     joinUrlPath(basePath, "auth/sign-up"),
-  )}">Start using CoCalc</a></p>
+  )}">${htmlEscape(page.signUpLabel ?? "Start using CoCalc")}</a></p>
 </article>`;
 }
 
