@@ -4119,8 +4119,19 @@ export function MyAgentsWorkspacePage({
               visibleGroups.unpinned,
               agentOrganization.organization.lastOpened,
             );
+            // Grouped by project, pins still form one section at the top
+            // (grouped by project, in pin order), as on the Agents page.
+            const pinnedProjectGroups: NamedAgent[][] = [];
+            for (const agent of visibleGroups.pinned) {
+              const group = pinnedProjectGroups.find(
+                ([first]) =>
+                  first.endpoint.project_id === agent.endpoint.project_id,
+              );
+              if (group) group.push(agent);
+              else pinnedProjectGroups.push([agent]);
+            }
             const projectGroups = groupAgentsByProject(
-              visibleGroups.pinned,
+              [],
               visibleGroups.unpinned,
               agentOrganization.organization.lastOpened,
             );
@@ -4211,9 +4222,71 @@ export function MyAgentsWorkspacePage({
                   />
                 </Space>
                 <div>
+                  {agentOrganization.organization.groupByProject &&
+                    pinnedProjectGroups.length > 0 && (
+                      <section aria-label="Pinned agents">
+                        <Text
+                          type="secondary"
+                          style={{ display: "block", padding: 6 }}
+                        >
+                          Pinned
+                        </Text>
+                        {pinnedProjectGroups.map((group) => {
+                          const title = agentProjectTitle(
+                            group[0],
+                            liveProjects?.getIn([
+                              group[0].endpoint.project_id,
+                              "title",
+                            ]) as string | undefined,
+                          );
+                          return (
+                            <div
+                              key={group[0].endpoint.project_id}
+                              role="list"
+                              aria-label={`Pinned agents in ${title}`}
+                              style={{ marginBottom: 8 }}
+                            >
+                              <Text
+                                strong
+                                ellipsis
+                                title={title}
+                                style={{
+                                  display: "block",
+                                  padding: "2px 8px",
+                                }}
+                              >
+                                {title}
+                              </Text>
+                              {renderSortableAgentGroup(
+                                group,
+                                true,
+                                true,
+                                {
+                                  projectAgentIds: group.map(
+                                    ({ endpoint }) => endpoint.agent_id,
+                                  ),
+                                  showProjectTitle: false,
+                                },
+                                search,
+                              )}
+                            </div>
+                          );
+                        })}
+                      </section>
+                    )}
+                  {agentOrganization.organization.groupByProject &&
+                    pinnedProjectGroups.length > 0 &&
+                    projectGroups.length > 0 && (
+                      <Text
+                        type="secondary"
+                        style={{ display: "block", padding: 6 }}
+                      >
+                        Agents
+                      </Text>
+                    )}
                   {agentOrganization.organization.groupByProject ? (
                     projectGroups.map((group) => {
-                      const count = group.pinned.length + group.unpinned.length;
+                      const count = group.unpinned.length;
                       const collapsed =
                         !search.trim() &&
                         agentOrganization.organization.collapsedProjects.includes(
@@ -4272,18 +4345,6 @@ export function MyAgentsWorkspacePage({
                               role="list"
                               aria-label={`Agents in ${group.projectTitle}`}
                             >
-                              {renderSortableAgentGroup(
-                                group.pinned,
-                                true,
-                                true,
-                                {
-                                  projectAgentIds: group.pinned.map(
-                                    ({ endpoint }) => endpoint.agent_id,
-                                  ),
-                                  showProjectTitle: false,
-                                },
-                                search,
-                              )}
                               {renderSortableAgentGroup(
                                 group.unpinned,
                                 false,
