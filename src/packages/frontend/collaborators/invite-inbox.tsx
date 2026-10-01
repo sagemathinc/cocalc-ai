@@ -200,6 +200,10 @@ export function useInviteInboxState({
   projectWideOutgoing = false,
 }: UseInviteInboxStateOptions): InviteInboxState {
   const account_id = useTypedRedux("account", "account_id");
+  const collaboratorsEnabled = useTypedRedux(
+    "customize",
+    "collaborators_enabled",
+  );
   const [loading, set_loading] = useState<boolean>(false);
   const [loadedAccountId, set_loaded_account_id] = useState<string>();
   const [error, set_error] = useState<string>("");
@@ -230,30 +234,41 @@ export function useInviteInboxState({
       ? beginUnreadIncomingInviteCountRefresh(account_id)
       : undefined;
     try {
-      const [incomingRows, outgoingRows, blockRows] = await Promise.all([
-        includeIncoming
-          ? webapp_client.project_collaborators.list_invites({
-              project_id,
-              direction: "inbound",
-              status: "pending",
-              limit: 200,
-            })
-          : Promise.resolve([]),
-        includeOutgoing
-          ? webapp_client.project_collaborators.list_invites({
-              project_id,
-              direction: projectWideOutgoing ? "all" : "outbound",
-              status: "pending",
-              limit: 200,
-              projectWide: projectWideOutgoing,
-            })
-          : Promise.resolve([]),
-        includeBlocks
-          ? webapp_client.project_collaborators.list_invite_blocks({
-              limit: 200,
-            })
-          : Promise.resolve([]),
-      ]);
+      const [incomingRows, outgoingRows, blockRows, countResult] =
+        await Promise.all([
+          includeIncoming
+            ? webapp_client.project_collaborators.list_invites({
+                project_id,
+                direction: "inbound",
+                status: "pending",
+                limit: 200,
+              })
+            : Promise.resolve([]),
+          includeOutgoing
+            ? webapp_client.project_collaborators.list_invites({
+                project_id,
+                direction: projectWideOutgoing ? "all" : "outbound",
+                status: "pending",
+                limit: 200,
+                projectWide: projectWideOutgoing,
+              })
+            : Promise.resolve([]),
+          includeBlocks
+            ? webapp_client.project_collaborators.list_invite_blocks({
+                limit: 200,
+              })
+            : Promise.resolve([]),
+          updatesGlobalIncomingCount && collaboratorsEnabled
+            ? webapp_client.conat_client.hub.collaborators
+                .getInvitationCounts({
+                  account_id,
+                })
+                .then(
+                  (counts) => ({ counts, error: undefined }),
+                  (err) => ({ counts: undefined, error: `${err}` }),
+                )
+            : Promise.resolve(undefined),
+        ]);
       if (revision !== loadRevision.current) {
         return;
       }
@@ -263,20 +278,27 @@ export function useInviteInboxState({
       set_outgoing(outgoingRows ?? []);
       set_blocks(blockRows ?? []);
       if (updatesGlobalIncomingCount) {
-        setUnreadIncomingInviteCount(
-          account_id,
-          nextIncoming.length,
-          countRefresh,
-        );
+        // Keep the legacy/course inbox available when People is disabled.
+        const receivedCount = collaboratorsEnabled
+          ? countResult?.counts?.pending?.received
+          : nextIncoming.length;
+        if (countResult?.error) {
+          set_error(countResult.error);
+        } else if (
+          typeof receivedCount !== "number" ||
+          !Number.isSafeInteger(receivedCount) ||
+          receivedCount < 0
+        ) {
+          set_error("Invalid pending invitation count");
+        } else {
+          setUnreadIncomingInviteCount(account_id, receivedCount, countRefresh);
+        }
       }
     } catch (err) {
       if (revision !== loadRevision.current) {
         return;
       }
       set_error(`${err}`);
-      if (updatesGlobalIncomingCount) {
-        setUnreadIncomingInviteCount(account_id, 0, countRefresh);
-      }
     } finally {
       if (revision === loadRevision.current) {
         set_loading(false);
@@ -284,6 +306,7 @@ export function useInviteInboxState({
     }
   }, [
     account_id,
+    collaboratorsEnabled,
     includeBlocks,
     includeIncoming,
     includeOutgoing,
@@ -610,7 +633,7 @@ export function IncomingInviteBanner({
   if (!loading && !error && incoming.length === 0) {
     return null;
   }
-  if (error) {
+  if (error && incoming.length === 0) {
     return (
       <Alert
         type="error"

@@ -44,7 +44,10 @@ import {
 import { Project } from "../projects/store";
 import { Avatar } from "../account/avatar/avatar";
 import { alert_message } from "../alerts";
-import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
+import {
+  getStudentProjectFunctionality,
+  useStudentProjectFunctionality,
+} from "@cocalc/frontend/course";
 import { ShowSupportLink } from "@cocalc/frontend/support/link";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { joinUrlPath } from "@cocalc/util/url-path";
@@ -99,7 +102,78 @@ interface NonregisteredUser {
   extra?: string[];
 }
 
-type User = RegisteredUser | NonregisteredUser;
+export type CollaboratorInvitePerson = RegisteredUser | NonregisteredUser;
+type User = CollaboratorInvitePerson;
+
+export interface ProjectInvitationOutcome {
+  project_id: string;
+  title: string;
+  status: "success" | "failed" | "skipped";
+  message: string;
+  invite_urls?: string[];
+}
+
+/** One explicit attempt per project, never a retry of a partially completed batch. */
+export async function inviteToProjects({
+  projectIds,
+  invite,
+  check,
+  title,
+  onResult,
+}: {
+  projectIds: string[];
+  invite: (
+    projectId: string,
+  ) => Promise<
+    ProjectEmailInviteDeliveryResult | ProjectInviteDeliveryResult | undefined
+  >;
+  check: (projectId: string) => Promise<string | undefined>;
+  title: (projectId: string) => string;
+  onResult: (result: ProjectInvitationOutcome) => void;
+}): Promise<void> {
+  for (const project_id of new Set(projectIds)) {
+    let outcome: ProjectInvitationOutcome;
+    try {
+      const skip = await check(project_id);
+      if (skip) {
+        outcome = {
+          project_id,
+          title: title(project_id),
+          status: "skipped",
+          message: skip,
+        };
+      } else {
+        const result = await invite(project_id);
+        if (result == null)
+          throw Error(
+            "Invitation was not confirmed. Check pending invitations before trying again.",
+          );
+        const summary = emptyInviteDeliverySummary();
+        addInviteDeliveryResult(summary, result);
+        outcome = {
+          project_id,
+          title: title(project_id),
+          status: "success",
+          message: inviteDeliveryResultMessage({ count: 1, summary }),
+          invite_urls:
+            "invites" in result
+              ? result.invites?.flatMap((invite) =>
+                  invite.invite_url ? [invite.invite_url] : [],
+                )
+              : undefined,
+        };
+      }
+    } catch (error) {
+      outcome = {
+        project_id,
+        title: title(project_id),
+        status: "failed",
+        message: `${error}`,
+      };
+    }
+    onResult(outcome);
+  }
+}
 
 function userKey(user: User): string {
   return user.account_id ?? user.email_address;
@@ -191,6 +265,10 @@ export function addCollaboratorQueryResults(
 
 interface Props {
   project_id: string;
+  // Fixed targets for the one-person-to-many-projects workflow. Remount to change.
+  project_ids?: string[];
+  initialPerson?: CollaboratorInvitePerson;
+  onBusyChange?: (busy: boolean) => void;
   autoFocus?: boolean;
   where: string;
   mode?: "project" | "flyout";
@@ -280,6 +358,9 @@ function inviteBlockedReasonText(reason?: string): string {
 export const AddCollaborators: React.FC<Props> = ({
   autoFocus,
   project_id,
+  project_ids,
+  initialPerson,
+  onBusyChange,
   mode = "project",
 }) => {
   const intl = useIntl();
@@ -308,12 +389,26 @@ export const AddCollaborators: React.FC<Props> = ({
   const [num_matching_already, set_num_matching_already] = useState<number>(0);
 
   // list of actually selected entries in the selector list
-  const [selected_entries, set_selected_entries] = useState<string[]>([]);
-  const [selected_users, set_selected_users] = useState<User[]>([]);
+  const [selected_entries, set_selected_entries] = useState<string[]>(
+    initialPerson ? [userKey(initialPerson)] : [],
+  );
+  const [selected_users, set_selected_users] = useState<User[]>(
+    initialPerson ? [initialPerson] : [],
+  );
   const select_ref = useRef<any>(null);
 
   // currently carrying out a search
-  const [state, set_state] = useState<State>("input");
+  const [state, set_state] = useState<State>(
+    initialPerson ? "searched" : "input",
+  );
+  const submitting = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [batchStarted, setBatchStarted] = useState(false);
+  const [outcomes, setOutcomes] = useState<ProjectInvitationOutcome[]>([]);
+  const resultRef = useRef<HTMLElement>(null);
+  const batchTargets = useRef(project_ids);
+  const sessionAccount = useRef(webapp_client.account_id);
+  const sessionClient = useRef(webapp_client.conat_client);
   const [select_open, set_select_open] = useState<boolean>(false);
   // display an error in case something went wrong doing a search
   const [err, set_err] = useState<string>("");
@@ -339,6 +434,10 @@ export const AddCollaborators: React.FC<Props> = ({
   const isMountedRef = useIsMountedRef();
 
   const project_actions = useActions("projects");
+
+  useEffect(() => {
+    if (batchStarted) resultRef.current?.focus();
+  }, [batchStarted]);
 
   async function load_invite_usage(): Promise<void> {
     try {
@@ -412,7 +511,7 @@ export const AddCollaborators: React.FC<Props> = ({
     let err = "";
     const acc = emptyCollaboratorSearchResults();
     try {
-      for (let query of search.split(",")) {
+      for (let query of project_ids ? [search] : search.split(",")) {
         query = query.trim().toLowerCase();
         if (!query) continue;
         const query_results = await webapp_client.users_client.user_search({
@@ -424,7 +523,8 @@ export const AddCollaborators: React.FC<Props> = ({
           acc,
           query,
           query_results,
-          (account_id) => project.getIn(["users", account_id]) != null,
+          (account_id) =>
+            !project_ids && project.getIn(["users", account_id]) != null,
         );
       }
     } catch (e) {
@@ -547,16 +647,17 @@ export const AddCollaborators: React.FC<Props> = ({
 
   async function invite_collaborator(
     account_id: string,
+    targetProjectId = project_id,
   ): Promise<ProjectInviteDeliveryResult | undefined> {
     if (project == null) return;
-    const { subject, replyto, replyto_name } = sender_info();
+    const { subject, replyto, replyto_name } = sender_info(targetProjectId);
 
     const result = await project_actions.invite_collaborator(
-      project_id,
+      targetProjectId,
       account_id,
       email_body,
       subject,
-      false,
+      !!project_ids,
       replyto,
       replyto_name,
       invite_role,
@@ -566,6 +667,10 @@ export const AddCollaborators: React.FC<Props> = ({
   }
 
   async function add_selected(): Promise<void> {
+    if (project_ids) {
+      await add_to_projects(selected_entries);
+      return;
+    }
     const errors: string[] = [];
     const manualDeliveryLinks: ManualInviteLink[] = [];
     const deliverySummary = emptyInviteDeliverySummary();
@@ -618,12 +723,89 @@ export const AddCollaborators: React.FC<Props> = ({
     }
   }
 
+  async function add_to_projects(entries: string[]): Promise<void> {
+    if (
+      submitting.current ||
+      batchStarted ||
+      entries.length !== 1 ||
+      viewer_policy_empty
+    )
+      return;
+    const entry = entries[0];
+    if (!is_valid_email_address(entry) && !is_valid_uuid_string(entry)) return;
+    submitting.current = true;
+    setBusy(true);
+    setBatchStarted(true);
+    onBusyChange?.(true);
+    const currentProject = (id: string) =>
+      redux.getStore("projects").getIn(["project_map", id]);
+    try {
+      await inviteToProjects({
+        projectIds: batchTargets.current ?? [],
+        title: (id) => currentProject(id)?.get("title") || id,
+        check: async (id) => {
+          const assertAllowed = () => {
+            if (
+              !isMountedRef.current ||
+              sessionAccount.current !== webapp_client.account_id ||
+              sessionClient.current !== webapp_client.conat_client
+            )
+              throw Error(
+                "Invitation stopped because the session changed or the dialog closed.",
+              );
+            const group = currentProject(id)?.getIn([
+              "users",
+              sessionAccount.current ?? "",
+              "group",
+            ]);
+            if (group !== "owner" && group !== "collaborator")
+              throw Error("Full collaborator access is required.");
+            if (
+              redux
+                .getStore("account")
+                .getIn(["customize", "disableCollaborators"]) ||
+              getStudentProjectFunctionality(id).disableCollaborators
+            )
+              throw Error("Collaborator invitations are disabled.");
+          };
+          assertAllowed();
+          if (currentProject(id)?.getIn(["users", entry]))
+            return "Already a project member; no invitation sent.";
+          const usage =
+            await webapp_client.project_collaborators.get_invite_usage({
+              project_id: id,
+            });
+          assertAllowed();
+          if (
+            invite_role === "collaborator" &&
+            usage.remaining != null &&
+            usage.remaining <= 0
+          )
+            throw Error("No collaborator invite slots remain.");
+          return undefined;
+        },
+        invite: (id) =>
+          is_valid_email_address(entry)
+            ? invite_noncloud_collaborator(entry, true, id)
+            : invite_collaborator(entry, id),
+        onResult: (result) => {
+          if (isMountedRef.current)
+            setOutcomes((previous) => [...previous, result]);
+        },
+      });
+    } finally {
+      // Do not offer automatic retry: a failed response can still have created an invite.
+      if (isMountedRef.current) setBusy(false);
+      onBusyChange?.(false);
+    }
+  }
+
   function write_email_invite(): void {
     if (project == null) return;
 
     const name = redux.getStore("account").get_fullname();
     const title = project.get("title");
-    const target = `'${title}'`;
+    const target = project_ids ? "the selected projects" : `'${title}'`;
     const SiteName = redux.getStore("customize").get("site_name") ?? SITE_NAME;
     const action =
       invite_role === "viewer"
@@ -634,7 +816,7 @@ export const AddCollaborators: React.FC<Props> = ({
     set_email_body(body);
   }
 
-  function sender_info(): {
+  function sender_info(targetProjectId = project_id): {
     subject: string;
     replyto?: string;
     replyto_name: string;
@@ -643,11 +825,16 @@ export const AddCollaborators: React.FC<Props> = ({
     const replyto_name = redux.getStore("account").get_fullname();
     const SiteName = redux.getStore("customize").get("site_name") ?? SITE_NAME;
     let subject;
+    const title =
+      redux
+        .getStore("projects")
+        .getIn(["project_map", targetProjectId, "title"]) ??
+      project?.get("title");
     const access = invite_role === "viewer" ? "view" : "collaborate on";
     if (replyto_name != null) {
-      subject = `${replyto_name} invited you to ${access} '${project?.get("title")}'`;
+      subject = `${replyto_name} invited you to ${access} '${title}'`;
     } else {
-      subject = `${SiteName} Invitation to '${project?.get("title")}'`;
+      subject = `${SiteName} Invitation to '${title}'`;
     }
     return { subject, replyto, replyto_name };
   }
@@ -655,11 +842,12 @@ export const AddCollaborators: React.FC<Props> = ({
   async function invite_noncloud_collaborator(
     email_address,
     silent = false,
+    targetProjectId = project_id,
   ): Promise<ProjectEmailInviteDeliveryResult | undefined> {
     if (project == null) return;
-    const { subject, replyto, replyto_name } = sender_info();
+    const { subject, replyto, replyto_name } = sender_info(targetProjectId);
     const result = await project_actions.invite_collaborators_by_email(
-      project_id,
+      targetProjectId,
       email_address,
       email_body,
       subject,
@@ -725,6 +913,7 @@ export const AddCollaborators: React.FC<Props> = ({
     return (
       <>
         <Input.TextArea
+          aria-label="Invitation message"
           value={email_body}
           autoSize={true}
           maxLength={INVITE_MESSAGE_MAX_LENGTH}
@@ -781,7 +970,7 @@ export const AddCollaborators: React.FC<Props> = ({
   }
 
   function render_send_email(): React.JSX.Element | undefined {
-    if (!email_to) {
+    if (project_ids || !email_to) {
       return;
     }
     const recipientCount = email_to
@@ -857,6 +1046,7 @@ export const AddCollaborators: React.FC<Props> = ({
       >
         <div style={{ fontWeight: 600, marginBottom: 6 }}>Access level</div>
         <Select
+          aria-label="Access level"
           style={{ width: "100%" }}
           value={invite_role}
           onChange={(value) => set_invite_role(value as InviteRole)}
@@ -895,6 +1085,14 @@ export const AddCollaborators: React.FC<Props> = ({
   }
 
   function render_invite_slots(): React.JSX.Element | undefined {
+    if (project_ids) {
+      return (
+        <p>
+          Collaborator slot availability is checked separately for each project
+          when you invite.
+        </p>
+      );
+    }
     if (invite_usage_error) {
       return (
         <Alert
@@ -950,7 +1148,7 @@ export const AddCollaborators: React.FC<Props> = ({
     const users: User[] = [];
     const existing: User[] = [];
     for (const r of results) {
-      if (project.getIn(["users", r.account_id]) != null) {
+      if (!project_ids && project.getIn(["users", r.account_id]) != null) {
         existing.push(r);
       } else {
         users.push(r);
@@ -1020,8 +1218,10 @@ export const AddCollaborators: React.FC<Props> = ({
         />
         {showSelector && (
           <Select
+            aria-label="Invitation recipient"
             ref={select_ref}
             mode="multiple"
+            maxCount={project_ids ? 1 : undefined}
             allowClear
             open={select_open}
             showSearch={false}
@@ -1141,6 +1341,10 @@ export const AddCollaborators: React.FC<Props> = ({
     if (viewer_policy_empty) {
       disabled = true;
       label = "Viewer policy allows no files";
+    }
+    if (project_ids) {
+      disabled = number_selected !== 1 || viewer_policy_empty;
+      label = `Invite selected person to ${project_ids.length} ${plural(project_ids.length, "project")}`;
     }
     return (
       <div
@@ -1372,6 +1576,48 @@ export const AddCollaborators: React.FC<Props> = ({
 
   if (student.disableCollaborators || accountCustomize?.disableCollaborators) {
     return <div></div>;
+  }
+
+  if (project_ids && batchStarted) {
+    return (
+      <section
+        ref={resultRef}
+        tabIndex={-1}
+        aria-label="Project invitation results"
+        aria-live="polite"
+        aria-busy={busy}
+      >
+        <p role="status">
+          {busy
+            ? "Sending invitations..."
+            : "Invitation attempts complete. No invitations will be retried automatically."}
+        </p>
+        <ul>
+          {outcomes.map((outcome) => (
+            <li key={outcome.project_id}>
+              <strong>
+                {outcome.title}:{" "}
+                {outcome.status === "success"
+                  ? "Invitation created"
+                  : outcome.status === "skipped"
+                    ? "Skipped"
+                    : "Failed"}
+              </strong>
+              <p>{outcome.message}</p>
+              {outcome.invite_urls?.map((url) => (
+                <Input
+                  key={url}
+                  aria-label={`Invitation link for ${outcome.title}`}
+                  readOnly
+                  value={url}
+                  onFocus={(event) => event.target.select()}
+                />
+              ))}
+            </li>
+          ))}
+        </ul>
+      </section>
+    );
   }
 
   return (

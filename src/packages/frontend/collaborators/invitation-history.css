@@ -1,0 +1,54 @@
+.invitation-history {
+  --collection-grid-min-width: 260px;
+}
+.invitation-history-card {
+  margin-bottom: 8px;
+  overflow-wrap: anywhere;
+}
+.invitation-history-card .ant-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.invitation-history-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.invitation-history-title {
+  flex: 1;
+  min-width: 0;
+}
+.invitation-history-heading .ant-tag {
+  flex-shrink: 0;
+  margin: 0;
+}
+.invitation-history-card .invitation-history-meta,
+.invitation-history-card .invitation-history-message {
+  margin: 0;
+}
+.invitation-history-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.invitation-history[data-view="grid"] [role="list"] > div,
+.invitation-history[data-view="grid"] [role="listitem"] {
+  display: flex;
+  min-width: 0;
+}
+.invitation-history[data-view="grid"] [role="listitem"],
+.invitation-history[data-view="grid"] .invitation-history-card {
+  flex: 1;
+}
+.invitation-history[data-view="grid"] .invitation-history-card {
+  margin-bottom: 0;
+}
+.invitation-history[data-view="grid"] .invitation-history-title,
+.invitation-history[data-view="grid"] .invitation-history-meta {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
