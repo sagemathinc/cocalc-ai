@@ -340,6 +340,7 @@ export function InviteToProjectsModal({
             project_id: p.project_id,
             invitee_account_id: account_id,
             message: note.trim() || undefined,
+            browser_id: webapp_client.browser_id,
           });
         lines.push(`${p.title}: ${created ? "invited" : "already invited"}`);
       } catch (err) {
