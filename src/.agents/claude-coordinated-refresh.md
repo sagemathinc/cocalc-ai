@@ -1,6 +1,6 @@
 # Coordinated Claude Subscription Refresh
 
-Status: initial serialized implementation. Different subscriptions and API-key
+Status: initial serialized implementation. Different accounts and API-key
 turns remain independent. Temporarily, the UI allows one Claude subscription
 connection per account; existing explicit credential references are preserved.
 
@@ -62,7 +62,7 @@ reconciliation of ambiguous sign-in exchanges and permanently lost host homes
 remains follow-up work.
 
 Retired holder UUIDs are retained so a delayed acquisition cannot revive stopped
-work. They are currently stored with the credential row; there is no time-based
+work. They are currently stored with the account/profile record; there is no time-based
 pruning without a bound on delayed admission. At scale, move these tombstones
 to a dedicated indexed ownership-attempt table with an explicit retention/fencing
 protocol rather than truncating them.
