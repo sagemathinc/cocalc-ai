@@ -36,6 +36,7 @@ const DEBUG = !!process.env.COLLAB_DEBUG;
 // COLLAB_DEBUG=idle records only after the typing stops: anything changing
 // then is not caused by typing.
 const DEBUG_IDLE = process.env.COLLAB_DEBUG === "idle";
+const DEBUG_MAX = Number(process.env.COLLAB_DEBUG_MAX ?? 20_000);
 
 function makeRng(seed: number) {
   let s = seed;
@@ -183,7 +184,7 @@ test("a meeting's notebook stays consistent with many people typing", async ({
       page.on("console", (msg) => {
         const text = msg.text();
         const tag = text.indexOf("[collab-debug]");
-        if (tag < 0 || debugEvents.length >= 4000) return;
+        if (tag < 0 || debugEvents.length >= DEBUG_MAX) return;
         const { event, data } = JSON.parse(
           text.slice(tag + "[collab-debug]".length),
         );
