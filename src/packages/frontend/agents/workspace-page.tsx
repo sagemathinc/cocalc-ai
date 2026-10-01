@@ -3737,8 +3737,11 @@ export function MyAgentsWorkspacePage({
         | string
         | undefined,
     );
+    // Only one sidebar entry is current: Projects, the Library or an agent.
     const active =
-      !libraryOpen && agent.endpoint.agent_id === selected?.endpoint.agent_id;
+      !libraryOpen &&
+      !contentOpen &&
+      agent.endpoint.agent_id === selected?.endpoint.agent_id;
     const id = agent.endpoint.agent_id;
     const appearance = agentAppearances.get(id);
     const theme = resolveNamedAgentTheme(agent, appearance);
