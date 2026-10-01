@@ -423,11 +423,12 @@ test("a meeting's notes stay consistent with many people typing", async ({
   for (const t of text.match(TOKEN_RE) ?? [])
     counts.set(t, (counts.get(t) ?? 0) + 1);
   // A word someone else's typing went into the middle of (e.g. "tk2n3 tk7n3q
-  // 4q" for tk2n34q) is split, not lost: its characters are all there.
+  // 4q" for tk2n34q, or a new paragraph: "tk4n11\n\ntk6n12qq" for tk4n11q) is
+  // split, not lost: its characters are all there.
   const isSplit = (t: string) => {
     for (let k = 2; k < t.length; k++) {
       const re = new RegExp(
-        `${t.slice(0, k)}(?: tk\\d+n\\d+q)+ ?${t.slice(k)}`,
+        `${t.slice(0, k)}\\s*(?:tk\\d+n\\d+q\\s*)+${t.slice(k)}`,
       );
       if (re.test(text)) return true;
     }
