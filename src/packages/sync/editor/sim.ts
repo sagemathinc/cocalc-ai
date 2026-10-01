@@ -245,6 +245,7 @@ export class SimSyncDB extends EventEmitter {
   get_one = (x?: any): any => this.doc.get_one?.(x);
   get_doc = (): any => this.doc;
   to_str = (): string => this.doc.to_str();
+  hasDraft = (): boolean => !this.doc.is_equal(this.last);
 
   commit = (): boolean => {
     const draft = this.doc;

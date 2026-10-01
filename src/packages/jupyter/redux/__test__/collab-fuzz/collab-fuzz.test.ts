@@ -6,7 +6,8 @@ Oracle: every fragment typed or inserted carries a unique token. After the
 network is quiet, all clients must converge; every cell must be a whole
 record (string input, numeric position); no token may be duplicated; no
 token may be lost unless the client that deleted it could see it; and every
-open cell editor must show its cell's input.
+open cell editor must show its cell's input, and once nobody edits, the
+clients must stop sending patches.
 
 FUZZ_RUNS (default 6) and FUZZ_SEED (default 1) select the seeds; a failure
 prints its seed, so it can be replayed with FUZZ_SEED=<seed> FUZZ_RUNS=1.
@@ -331,6 +332,11 @@ async function runSession(seed: number, steps = STEPS) {
     jest.advanceTimersByTime(100);
     const after = clients.map((c) => c.doc()).join("\u0000");
     stable = before === after && net.pending() === 0 ? stable + 1 : 0;
+  }
+  if (stable < 3) {
+    // Clients that keep sending patches with nobody editing: e.g. answering
+    // every merge patch with another (a real browser then never settles).
+    problems.push(`network never went quiet (${net.pending()} pending)`);
   }
 
   const docs = clients.map((c) => c.doc());
