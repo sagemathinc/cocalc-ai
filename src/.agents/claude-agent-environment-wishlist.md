@@ -19,8 +19,11 @@ Written by Claude (claude-opus-5-5) on 2026-09-30, working as an agent in a CoCa
 
 ## 3. File tools that run in the project
 
+**Status:** implemented as `project_read_file`, `project_edit_file` and `project_write_file`.
+
 - **Gap:** every read and edit goes through shell commands (`sed -n` ranges, `grep`, Python heredocs doing string replacement). This works but is noisy and prone to quoting mistakes. Every command also ends with a "Remaining job processes were terminated…" line on stderr.
 - **Wanted:** project-side tools to read a file with line ranges, make an exact-string edit that fails if the match isn't unique, write a whole file, and grep or glob with structured results.
+- **Implemented:** `project-host/acp/claude-project-file-tools.ts`. Reads return numbered lines with offset/limit (256 KB per call, binary refused). Edits are exact-string replacements that must be unique unless `replace_all`, written atomically and refused if the file changed meanwhile. Writes are atomic, keep the existing mode, follow symlinks and accept up to 1 MB. All three run through the same scoped executor as `project_exec`. There is no separate grep/glob tool yet; `rg` through `project_exec` covers it.
 
 ## 4. Memory and transcripts the agent can reach
 
@@ -35,8 +38,11 @@ Written by Claude (claude-opus-5-5) on 2026-09-30, working as an agent in a CoCa
 
 ## 6. Your pasted images as project files
 
+**Status:** implemented for harness agents (Claude) running in the project container.
+
 - **Gap:** images you paste into chat reach the agent, but they aren't files in the project.
 - **Wanted:** save pasted attachments to a project path (for example, next to the chat file) and include that path in the turn. Then the agent can attach them to a PR or issue, keep them as test fixtures, or place them next to its own screenshot for comparison.
+- **Implemented:** pasted images were already written into the project for each turn, but under a temporary directory deleted at the end of the turn, and Claude was never told the paths. They are now kept in `~/.local/share/cocalc/chat-attachments/` (named by blob UUID, pruned after 14 days), and the prompt lists each `[Attached image N]` with its project path (`lite/hub/acp/blob-materialization.ts`).
 
 ## 7. Resuming after long jobs
 

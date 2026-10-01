@@ -98,7 +98,9 @@ import {
   buildSafeBlobFilename,
   dedupeBlobReferences,
   extractBlobReferences,
+  harnessAttachmentNote,
   projectBlobMaterializationRoots,
+  pruneChatAttachments,
   rewriteBlobReferencesInPrompt,
   type MaterializedBlobAttachment,
 } from "./blob-materialization";
@@ -12710,7 +12712,11 @@ export async function init(
 async function materializeBlobs(
   prompt: string,
   projectId: string,
-  projectRoots?: { host: string; runtime: string },
+  projectRoots?: {
+    host: string;
+    runtime: string;
+    attachments?: { host: string; runtime: string };
+  },
   forHarness = false,
 ): Promise<{
   prompt: string;
@@ -12732,14 +12738,28 @@ async function materializeBlobs(
     return { prompt, local_images: [], cleanup: async () => {} };
   }
   const started = performance.now();
-  const hostTempRoot = projectRoots?.host ?? os.tmpdir();
-  await fs.mkdir(hostTempRoot, { recursive: true });
-  const tempDir = await fs.mkdtemp(
-    path.join(hostTempRoot, `cocalc-blobs-${randomUUID()}-`),
-  );
-  const runtimeTempDir = projectRoots
-    ? path.posix.join(projectRoots.runtime, path.basename(tempDir))
-    : tempDir;
+  // Harness agents keep pasted images as project files beyond the turn.
+  const persist = forHarness && projectRoots?.attachments != null;
+  let tempDir: string;
+  let runtimeTempDir: string;
+  if (persist) {
+    tempDir = projectRoots!.attachments!.host;
+    runtimeTempDir = projectRoots!.attachments!.runtime;
+    await fs.mkdir(tempDir, { recursive: true });
+    void pruneChatAttachments(tempDir).catch(() => {});
+  } else {
+    const hostTempRoot = projectRoots?.host ?? os.tmpdir();
+    await fs.mkdir(hostTempRoot, { recursive: true });
+    tempDir = await fs.mkdtemp(
+      path.join(hostTempRoot, `cocalc-blobs-${randomUUID()}-`),
+    );
+    runtimeTempDir = projectRoots
+      ? path.posix.join(projectRoots.runtime, path.basename(tempDir))
+      : tempDir;
+  }
+  const removeTempDir = async () => {
+    if (!persist) await fs.rm(tempDir, { recursive: true, force: true });
+  };
   const attachments: MaterializedBlobAttachment[] = [];
   const imageAttachments: ReturnType<typeof acpImageAttachment>[] = [];
   let bytes = 0;
@@ -12804,7 +12824,7 @@ async function materializeBlobs(
       });
     }
     if (!attachments.length) {
-      await fs.rm(tempDir, { recursive: true, force: true });
+      await removeTempDir();
       return { prompt, local_images: [], cleanup: async () => {} };
     }
     const sanitizedPrompt = rewriteBlobReferencesInPrompt(prompt, attachments);
@@ -12814,15 +12834,13 @@ async function materializeBlobs(
       )
       .join("\n");
     const augmented = forHarness
-      ? sanitizedPrompt
+      ? sanitizedPrompt + (persist ? harnessAttachmentNote(attachments) : "")
       : `${sanitizedPrompt}\n\nAttached images are already included with this request. Local fallback paths:\n${info}\n`;
     return {
       prompt: augmented,
       local_images: attachments.map((att) => att.path),
       image_attachments: forHarness ? imageAttachments : undefined,
-      cleanup: async () => {
-        await fs.rm(tempDir, { recursive: true, force: true });
-      },
+      cleanup: removeTempDir,
     };
   } catch (err) {
     logger.warn("failed to prepare attachments", {
@@ -12832,7 +12850,7 @@ async function materializeBlobs(
       durationMs: roundMs(performance.now() - started),
       err,
     });
-    await fs.rm(tempDir, { recursive: true, force: true });
+    await removeTempDir();
     if (forHarness) throw err;
     return { prompt, local_images: [], cleanup: async () => {} };
   }
