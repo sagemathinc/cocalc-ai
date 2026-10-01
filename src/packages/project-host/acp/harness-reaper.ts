@@ -2,6 +2,12 @@ import { execFile } from "node:child_process";
 import { lstat, readFile, rm } from "node:fs/promises";
 import { podmanEnv } from "@cocalc/backend/podman/env";
 import getLogger from "@cocalc/backend/logger";
+import {
+  CLAUDE_CONTROLLER_HOLDER_LABEL,
+  listClaudeControllerJournals,
+  recoverClaudeControllerJournal,
+} from "./claude-controller-journal";
+import { projectPoolPodmanLauncher } from "@cocalc/project-runner/run/podman";
 import { reapManagedSandboxCommands } from "@cocalc/project-runner/run/sandbox-command-containment";
 import {
   CLAUDE_CONTROLLER_HOME_LABEL,
@@ -86,7 +92,10 @@ export async function reapAbandonedHarnesses(): Promise<void> {
       continue;
     }
     const credentialHome = row?.Labels?.[CLAUDE_CONTROLLER_HOME_LABEL];
-    if (isManagedClaudeControllerHome(credentialHome)) {
+    if (
+      isManagedClaudeControllerHome(credentialHome) &&
+      !row?.Labels?.[CLAUDE_CONTROLLER_HOLDER_LABEL]
+    ) {
       try {
         const stat = await lstat(credentialHome);
         if (!stat.isDirectory() || stat.isSymbolicLink())
@@ -123,6 +132,7 @@ export function startHarnessReaper(): () => void {
     }
     try {
       await reapAbandonedHarnesses();
+      await reapAbandonedClaudeControllerJournals();
     } catch {
       logger.warn("ACP sidecar reconciliation failed");
     } finally {
@@ -135,4 +145,52 @@ export function startHarnessReaper(): () => void {
   timer.unref();
   void sweep();
   return () => clearInterval(timer);
+}
+
+export async function reapAbandonedClaudeControllerJournals(): Promise<void> {
+  for (const record of await listClaudeControllerJournals()) {
+    if (!/^\d+:[0-9a-f-]{36}:\d+$/.test(record.worker)) continue;
+    try {
+      if (
+        (await harnessOwner(Number(record.worker.split(":")[0]))) ===
+        record.worker
+      )
+        continue;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ACP_WORKER_NOT_FOUND")
+        continue;
+    }
+    try {
+      await recoverClaudeControllerJournal(
+        record,
+        () =>
+          new Promise<void>((resolve, reject) => {
+            const launcher = projectPoolPodmanLauncher(record.projectId);
+            execFile(
+              launcher.command,
+              [
+                ...launcher.argsPrefix,
+                "rm",
+                "--ignore",
+                "--force",
+                "--time",
+                "0",
+                `claude-controller-${record.projectId}-${record.holder}`,
+              ],
+              { env: podmanEnv(), timeout: 30_000, maxBuffer: 1024 * 1024 },
+              (error) =>
+                error
+                  ? reject(Error("Claude controller stop unconfirmed"))
+                  : resolve(),
+            );
+          }),
+      );
+    } catch {
+      logger.warn("Claude ownership recovery requires retry", {
+        holder: record.holder,
+        projectId: record.projectId,
+        category: "recovery_unconfirmed",
+      });
+    }
+  }
 }

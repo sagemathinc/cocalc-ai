@@ -36,6 +36,9 @@ export class HarnessAgent implements AcpAgent {
   private binding: HarnessBinding;
   private conversation: { path: string; threadId: string };
   private attentionContext?: CodexAttentionContext;
+  private startup?: AbortController;
+  private resumeSessionId?: string;
+  private requestedSessionId?: string;
 
   constructor(
     binding: HarnessBinding,
@@ -94,6 +97,8 @@ export class HarnessAgent implements AcpAgent {
       throw Error("ACP native session binding mismatch");
 
     this.busy = true;
+    this.startup = new AbortController();
+    this.requestedSessionId = request.session_id;
     this.interrupted = false;
     // The client whose CoCalc connector credential this turn issued.
     let connectorClient: AcpHarnessClient | undefined;
@@ -111,7 +116,7 @@ export class HarnessAgent implements AcpAgent {
         const client = await AcpHarnessClient.start(
           this.binding,
           async (binding) => {
-            const process = await this.launch(binding);
+            const process = await this.launch(binding, this.startup?.signal);
             process.setAsyncQuestionHandler?.(async (input) => {
               const context = this.attentionContext;
               if (
@@ -195,9 +200,20 @@ export class HarnessAgent implements AcpAgent {
           await client.dispose();
           throw Error("ACP conversation was disposed during startup");
         }
-        await client.open(request.session_id);
+        await client.open(
+          request.session_id === ""
+            ? undefined
+            : (request.session_id ?? this.resumeSessionId),
+        );
       }
       const client = this.client;
+      if (client.controllerDiagnostics)
+        logger.debug("subscription controller turn", {
+          ...client.controllerDiagnostics,
+          projectId: request.project_id,
+          threadId: request.chat.thread_id,
+          messageId: request.chat.message_id,
+        });
       this.attentionContext = {
         projectId: request.project_id,
         accountId: request.account_id,
@@ -349,6 +365,15 @@ export class HarnessAgent implements AcpAgent {
         threadId: client.sessionId,
       });
     } catch (error) {
+      if (this.binding.credential.mode === "account-subscription")
+        logger.warn("subscription turn failed", {
+          ...this.client?.controllerDiagnostics,
+          projectId: request.project_id,
+          threadId: request.chat.thread_id,
+          messageId: request.chat.message_id,
+          category:
+            error instanceof HarnessError ? error.code : "lifecycle_failure",
+        });
       // Never silently start a fresh native session after an ambiguous failure.
       return await disposeFailedHarness(error, () => this.dispose());
     } finally {
@@ -358,12 +383,31 @@ export class HarnessAgent implements AcpAgent {
         });
       });
       this.attentionContext = undefined;
-      this.busy = false;
+      // No idle subscription runtime may keep refresh authority or cached
+      // credentials. Native transcripts remain on the existing scoped mount.
+      try {
+        if (
+          this.binding.credential.mode === "account-subscription" &&
+          this.client
+        ) {
+          const client = this.client;
+          this.resumeSessionId = client.sessionId;
+          this.client = undefined;
+          await client.dispose();
+        }
+      } finally {
+        this.startup = undefined;
+        this.busy = false;
+      }
     }
   }
 
   hasRunningTurn(threadId: string): boolean {
-    return this.busy && threadId === this.client?.sessionId;
+    return (
+      this.busy &&
+      (threadId === this.client?.sessionId ||
+        threadId === this.requestedSessionId)
+    );
   }
 
   async steer(
@@ -403,12 +447,14 @@ export class HarnessAgent implements AcpAgent {
   async interruptOutstanding(threadId: string): Promise<boolean> {
     if (!this.hasRunningTurn(threadId)) return false;
     this.interrupted = true;
-    await this.client!.cancel();
+    this.startup?.abort();
+    await this.client?.cancel();
     return true;
   }
 
   async dispose(): Promise<void> {
     this.closed = true;
+    this.startup?.abort();
     try {
       await this.client?.dispose();
     } finally {

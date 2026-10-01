@@ -93,6 +93,55 @@ beforeAll(() => {
   listAcpAutomationsForProject("project-init");
 });
 
+test("private attempt history preserves failed authentication across retries without copying provider output", () => {
+  const request = makeRequest({
+    userMessageId: randomUUID(),
+    assistantMessageId: randomUUID(),
+    assistantDate: new Date().toISOString(),
+  });
+  const job = enqueueAcpJob(request);
+  const claimed = claimNextQueuedAcpJobForThread({
+    project_id: job.project_id,
+    path: job.path,
+    thread_id: job.thread_id,
+    worker_id: "history-worker",
+  });
+  expect(claimed?.op_id).toBe(job.op_id);
+  setAcpJobState({
+    op_id: job.op_id,
+    state: "error",
+    error: "OAuth expired private-provider-detail",
+    worker_id: "history-worker",
+  });
+  resendCanceledAcpJob({
+    project_id: job.project_id,
+    path: job.path,
+    user_message_id: job.user_message_id,
+  });
+  claimNextQueuedAcpJobForThread({
+    project_id: job.project_id,
+    path: job.path,
+    thread_id: job.thread_id,
+    worker_id: "history-worker",
+  });
+  setAcpJobState({
+    op_id: job.op_id,
+    state: "completed",
+    worker_id: "history-worker",
+  });
+  const rows = getAcpDatabase()
+    .prepare("SELECT * FROM acp_job_attempt_history WHERE op_id=? ORDER BY id")
+    .all(job.op_id) as any[];
+  expect(
+    rows.map(({ state, failure_category }) => [state, failure_category]),
+  ).toEqual([
+    ["error", "authentication"],
+    ["completed", "none"],
+  ]);
+  expect(JSON.stringify(rows)).not.toContain("private-provider-detail");
+  expect(rows[0].worker_id).toBe("history-worker");
+});
+
 beforeEach(() => {
   setAcpAdmissionDenialRecorder(undefined);
   getAcpDatabase().prepare("DELETE FROM acp_jobs").run();

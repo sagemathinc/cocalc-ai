@@ -63,6 +63,11 @@ import type {
   AccountUsageOverview,
   MembershipEffectiveLimits,
 } from "@cocalc/conat/hub/api/purchases";
+import { manageClaudeControllerOwnershipRouted } from "@cocalc/server/external-credentials/routing";
+import type {
+  ClaudeControllerOwnershipRequest,
+  ClaudeControllerOwnershipResult,
+} from "@cocalc/util/ai/claude-controller-ownership";
 import {
   normalizeProviderId,
   type HostSpec,
@@ -2769,6 +2774,23 @@ function assertExternalCredentialId(id: string | undefined): void {
   }
 }
 
+export async function manageClaudeControllerOwnership(
+  request: Omit<ClaudeControllerOwnershipRequest, "host_id"> & {
+    host_id?: string;
+  },
+): Promise<ClaudeControllerOwnershipResult> {
+  if (!request.host_id) throw Error("host_id must be specified");
+  await assertHostCredentialProjectAccess({
+    host_id: request.host_id,
+    project_id: request.project_id,
+    owner_account_id: request.owner_account_id,
+  });
+  return await manageClaudeControllerOwnershipRouted({
+    ...request,
+    host_id: request.host_id,
+  });
+}
+
 export async function upsertExternalCredential({
   host_id,
   project_id,
@@ -2780,6 +2802,7 @@ export async function upsertExternalCredential({
   max_active,
   deduplicate_metadata,
   expected_payload_sha256,
+  controller_holder,
 }: {
   host_id?: string;
   project_id: string;
@@ -2798,6 +2821,7 @@ export async function upsertExternalCredential({
   max_active?: number;
   deduplicate_metadata?: { key: string; value: string };
   expected_payload_sha256?: string;
+  controller_holder?: string;
 }): Promise<{ id: string; created: boolean }> {
   assertExternalCredentialId(credential_id);
   if (!host_id) {
@@ -2875,6 +2899,9 @@ export async function upsertExternalCredential({
       payload,
       metadata: safeMetadata,
       expected_payload_sha256,
+      controller_owner: controller_holder
+        ? { holder: controller_holder, host_id, project_id }
+        : undefined,
     });
     if (!updated) throw new Error("credential is unavailable");
     return { id: credential_id, created: false };

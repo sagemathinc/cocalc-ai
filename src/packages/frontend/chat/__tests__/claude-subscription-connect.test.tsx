@@ -13,11 +13,12 @@ beforeEach(() => {
     .mockResolvedValue(undefined as any);
 });
 
-test("an existing connection labels sign-in as optional and remains keyboard accessible", async () => {
+test("an existing connection disallows adding another subscription but reconnect remains keyboard accessible", async () => {
   render(
     <ClaudeSubscriptionConnect
       projectId="project-a"
       hasConnection
+      reconnectCredentialId="credential-1"
       onConnected={jest.fn()}
     />,
   );
@@ -25,7 +26,7 @@ test("an existing connection labels sign-in as optional and remains keyboard acc
   await user.tab();
   expect(document.activeElement).toBe(
     screen.getByRole("button", {
-      name: "Connect another Claude subscription",
+      name: "Reconnect Claude",
     }),
   );
   expect(
@@ -33,6 +34,55 @@ test("an existing connection labels sign-in as optional and remains keyboard acc
       name: "Connect Claude Pro/Max",
     }),
   ).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: /another.*subscription/i }),
+  ).toBeNull();
+});
+
+test("reconnect opens its modal by keyboard and retries the same subscription", async () => {
+  const start = jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginStart",
+    )
+    .mockRejectedValueOnce(Error("temporary failure"))
+    .mockResolvedValue({
+      id: "reconnect",
+      state: "pending",
+      verificationUrl: "https://claude.com/oauth/authorize",
+    } as any);
+  try {
+    render(
+      <ClaudeSubscriptionConnect
+        modal
+        hasConnection
+        reconnectCredentialId="credential-1"
+        projectId="project-a"
+        onConnected={jest.fn()}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.tab();
+    expect(
+      screen.getByRole("button", { name: "Reconnect Claude" }),
+    ).toHaveFocus();
+    await user.keyboard("{Enter}");
+    await screen.findByRole("dialog", { name: "Connect Claude Pro/Max" });
+    await screen.findByRole("alert");
+    await user.click(screen.getByRole("button", { name: "Retry sign-in" }));
+    for (const [request] of start.mock.calls)
+      expect(request).toEqual({
+        project_id: "project-a",
+        credential_id: "credential-1",
+      });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(
+      screen.getByRole("button", { name: "Reconnect Claude" }),
+    ).toHaveFocus();
+  } finally {
+    start.mockRestore();
+  }
 });
 
 test.each([false, true])(

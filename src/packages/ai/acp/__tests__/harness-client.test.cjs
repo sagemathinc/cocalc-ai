@@ -2889,6 +2889,29 @@ test("a Claude connector credential that cannot be issued fails the turn and is 
   assert.equal(ended, 1);
 });
 
+test("subscription controllers retire between turns and resume the same native conversation", async (t) => {
+  const { agent, request, events, launches, stops } = adapter(
+    t,
+    ["--claude-adapter", "--subscription-status"],
+    undefined,
+    false,
+    undefined,
+    true,
+  );
+  await agent.evaluate(request);
+  assert.equal(launches(), 1);
+  assert.equal(stops(), 1);
+  const sessionId = events.find((event) => event.type === "summary").threadId;
+  events.length = 0;
+  await agent.evaluate({ ...request, session_id: sessionId });
+  assert.equal(launches(), 2);
+  assert.equal(stops(), 2);
+  assert.equal(
+    events.find((event) => event.type === "summary").threadId,
+    sessionId,
+  );
+});
+
 test("an arbitrary ACP harness never begins a CoCalc connector turn", async (t) => {
   const calls = [];
   const connector = {

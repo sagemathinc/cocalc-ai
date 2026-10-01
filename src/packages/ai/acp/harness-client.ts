@@ -57,6 +57,8 @@ function unsupportedCallback(method: string): () => Promise<never> {
 }
 
 export interface HarnessProcess {
+  /** Private launcher diagnostics; never supplied to the provider or transcript. */
+  controllerDiagnostics?: { controllerId: string; credentialRevision: string };
   /** Trusted launcher-owned instructions, never a user-supplied session option. */
   systemPromptAppend?: string;
   projectToolServerName?: string;
@@ -93,6 +95,7 @@ export interface HarnessBinding {
 
 export type HarnessLauncher = (
   binding: HarnessBinding,
+  signal?: AbortSignal,
 ) => Promise<HarnessProcess>;
 export type HarnessQuestionHandler = (
   questions: AcpAttentionQuestion[],
@@ -199,6 +202,9 @@ export async function disposeFailedHarness(
 
 /** One principal/profile-bound native session, independent of Codex auth/recovery. */
 export class AcpHarnessClient {
+  get controllerDiagnostics() {
+    return this.process.controllerDiagnostics;
+  }
   private connection: ClientSideConnection;
   private session?: NewSessionResponse;
   private active = false;

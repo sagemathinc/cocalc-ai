@@ -88,6 +88,7 @@ export function resolveHarnessCommand(
 export async function launchHarnessInProject(
   binding: HarnessBinding,
   conversation: { path: string; threadId: string },
+  signal?: AbortSignal,
 ): Promise<HarnessProcess> {
   const { projectId, accountId } = binding;
   const path = conversation?.path;
@@ -105,10 +106,15 @@ export async function launchHarnessInProject(
       candidate?.package.version !== profile.revision
     )
       throw Error("Unsupported Claude subscription profile");
-    return await launchClaudeSubscriptionController(binding, "agent", {
-      path,
-      threadId,
-    });
+    return await launchClaudeSubscriptionController(
+      binding,
+      "agent",
+      {
+        path,
+        threadId,
+      },
+      signal,
+    );
   }
   const harnessCommand = resolveHarnessCommand(
     profile,

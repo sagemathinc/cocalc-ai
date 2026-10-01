@@ -3,7 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { claudeUsageScript } from "./claude-usage-script";
 import { CLAUDE_PROJECT_MCP_NAME } from "./claude-project-tool-source";
 import { CLAUDE_PROJECT_JOB_GUIDANCE } from "@cocalc/util/ai/claude-project-tools";
@@ -27,7 +27,18 @@ import {
   projectPoolPodmanLauncher,
 } from "@cocalc/project-runner/run/podman";
 import { extractBaseImage } from "@cocalc/project-runner/run/rootfs-base";
-import { getClaudeSubscriptionCredential } from "./claude-subscription-registry";
+import {
+  getClaudeSubscriptionCredential,
+  manageClaudeControllerOwnership,
+} from "./claude-subscription-registry";
+import { acquireClaudeController } from "./claude-controller-queue";
+import {
+  CLAUDE_CONTROLLER_HOLDER_LABEL,
+  saveClaudeControllerJournal,
+  removeClaudeControllerJournal,
+} from "./claude-controller-journal";
+import type { ClaudeControllerJournal } from "./claude-controller-journal";
+import { packClaudeSubscriptionBundle } from "./claude-subscription-home";
 import { restoreClaudeSubscriptionHome } from "./claude-subscription-home";
 import { createClaudeCredentialSync } from "./claude-credential-sync";
 import {
@@ -118,6 +129,7 @@ export async function cleanupClaudeSubscriptionController(options: {
 
 export function claudeSubscriptionContainerArgs(options: {
   name: string;
+  controllerHolder?: string;
   projectId: string;
   owner: string;
   home: string;
@@ -163,6 +175,12 @@ export function claudeSubscriptionContainerArgs(options: {
     `cocalc.project=${projectId}`,
     "--label",
     `${CLAUDE_CONTROLLER_HOME_LABEL}=${home}`,
+    ...(options.controllerHolder
+      ? [
+          "--label",
+          `${CLAUDE_CONTROLLER_HOLDER_LABEL}=${options.controllerHolder}`,
+        ]
+      : []),
     "--interactive",
     "--read-only",
     "--security-opt=no-new-privileges",
@@ -245,6 +263,7 @@ export async function launchClaudeSubscriptionController(
   binding: HarnessBinding,
   purpose: "agent" | "usage" = "agent",
   conversation?: { path: string; threadId: string },
+  signal?: AbortSignal,
 ): Promise<HarnessProcess> {
   const { projectId, accountId, credential } = binding;
   if (
@@ -274,17 +293,24 @@ The project_exec environment contains the runtime-issued CoCalc agent identity f
 <cocalc-skill>
 ${skill}
 </cocalc-skill>`;
-  const registered = await getClaudeSubscriptionCredential({
-    projectId,
-    accountId,
-    credentialId,
-  });
   if (purpose === "agent")
     await ensureProjectContainerRunning({ projectId, accountId });
   const rootfs = await extractBaseImage(CLAUDE_CONTROLLER_BASE_IMAGE);
   const home = await mkdtemp(claudeControllerHomePrefix());
   const launcher = projectPoolPodmanLauncher(projectId);
-  const name = `claude-controller-${projectId}-${randomUUID()}`;
+  const holder = randomUUID();
+  const name = `claude-controller-${projectId}-${holder}`;
+  let acquisitionAttempted = false;
+  let acquired = false;
+  const journal: ClaudeControllerJournal = {
+    projectId,
+    accountId,
+    credentialId,
+    holder,
+    home,
+    worker: await harnessOwner(),
+    mayHaveLaunched: false,
+  };
   let created = false;
   let launched = false;
   let toolBridge: ClaudeProjectToolBridge | undefined;
@@ -293,13 +319,7 @@ ${skill}
   let stopped: Promise<void> | undefined;
   let cleanupRetries = 0;
   let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
-  const credentialSync = createClaudeCredentialSync({
-    projectId,
-    accountId,
-    credentialId,
-    home,
-    restoredPayload: registered.payload,
-  });
+  let credentialSync: ReturnType<typeof createClaudeCredentialSync> | undefined;
   const command = (args: string[]) =>
     new Promise<void>((resolve, reject) => {
       execFile(
@@ -349,19 +369,50 @@ ${skill}
         const failure = results.find((result) => result.status === "rejected");
         if (failure?.status === "rejected") throw failure.reason;
       },
-      refreshCredential: () => credentialSync.finish(),
+      refreshCredential: async () => {
+        await credentialSync?.finish();
+      },
       removeHome: async () => {
-        await credentialSync.idle();
-        await rm(home, { recursive: true, force: true });
+        await credentialSync?.idle();
+        // Keep the home and journal until publication and release are confirmed.
       },
       launched,
     })
-      .then(() => {
+      .then(async () => {
+        if (acquisitionAttempted) {
+          try {
+            await manageClaudeControllerOwnership({
+              projectId,
+              accountId,
+              credentialId,
+              holder,
+              operation: "release",
+            });
+          } catch (error) {
+            // A failed/aborted acquisition can have an unknown outcome. A
+            // fenced release means this holder never acquired ownership.
+            if (acquired || !`${error}`.includes("CLAUDE_CONTROLLER_FENCED"))
+              throw error;
+          }
+        }
+        logger.debug("Claude controller released", {
+          holder,
+          projectId,
+          credentialId,
+          purpose,
+        });
+        await rm(home, { recursive: true, force: true });
+        await removeClaudeControllerJournal(holder);
         clearTimeout(cleanupTimer);
       })
       .catch((error) => {
         stopped = undefined;
-        logger.warn("Claude controller cleanup failed", error);
+        logger.warn("Claude controller cleanup failed", {
+          holder,
+          projectId,
+          credentialId,
+          category: "cleanup_unconfirmed",
+        });
         if (!cleanupTimer && cleanupRetries < 5) {
           cleanupRetries++;
           cleanupTimer = setTimeout(() => {
@@ -373,6 +424,45 @@ ${skill}
         throw error;
       }));
   try {
+    await saveClaudeControllerJournal(journal);
+    acquisitionAttempted = true;
+    await acquireClaudeController({
+      projectId,
+      accountId,
+      credentialId,
+      holder,
+      signal,
+      timeoutMs: purpose === "usage" || !signal ? 5000 : undefined,
+    });
+    acquired = true;
+    signal?.throwIfAborted();
+    // Read only AFTER acquiring: another host may have rotated while queued.
+    const registered = await getClaudeSubscriptionCredential({
+      projectId,
+      accountId,
+      credentialId,
+    });
+    journal.baseline = registered.payload;
+    await saveClaudeControllerJournal(journal);
+    credentialSync = createClaudeCredentialSync({
+      projectId,
+      accountId,
+      credentialId,
+      home,
+      restoredPayload: registered.payload,
+      controllerHolder: holder,
+      onBaseline: async (files) => {
+        journal.baseline = packClaudeSubscriptionBundle(files);
+        await saveClaudeControllerJournal(journal);
+      },
+    });
+    logger.debug("Claude controller acquired", {
+      holder,
+      projectId,
+      credentialId,
+      purpose,
+      threadId: conversation?.threadId,
+    });
     await restoreClaudeSubscriptionHome(home, registered.payload);
     let sessionDirectory: string | undefined;
     if (purpose === "agent") {
@@ -474,6 +564,7 @@ ${skill}
     await command(
       claudeSubscriptionContainerArgs({
         name,
+        controllerHolder: holder,
         projectId,
         owner,
         rootfs,
@@ -491,6 +582,9 @@ ${skill}
       }),
     );
     launched = true;
+    journal.mayHaveLaunched = true;
+    await saveClaudeControllerJournal(journal);
+    signal?.throwIfAborted();
     credentialSync.start();
     const proc = spawn(
       launcher.command,
@@ -503,10 +597,21 @@ ${skill}
     });
     void closed
       .then(cleanup)
-      .catch((error) =>
-        logger.warn("Claude controller stopped without cleanup", error),
+      .catch(() =>
+        logger.warn("Claude controller stopped without cleanup", {
+          holder,
+          projectId,
+          credentialId,
+          category: "cleanup_unconfirmed",
+        }),
       );
     return {
+      controllerDiagnostics: {
+        controllerId: holder,
+        credentialRevision: createHash("sha256")
+          .update(registered.payload)
+          .digest("hex"),
+      },
       systemPromptAppend,
       projectToolServerName: CLAUDE_PROJECT_MCP_NAME,
       cancelTools: toolBridge ? () => toolBridge!.cancel() : undefined,

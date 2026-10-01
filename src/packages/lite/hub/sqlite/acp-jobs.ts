@@ -153,6 +153,45 @@ function init(): void {
     `CREATE INDEX IF NOT EXISTS acp_jobs_worker_updated_idx ON ${TABLE}(worker_id, updated_at)`,
   );
   ensureAcpTableMigrated(TABLE);
+  // Private metadata only. Triggers cover every retry/recovery path, including
+  // worker loss; no prompt, provider output, or credentials are copied here.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS acp_job_attempt_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      op_id TEXT NOT NULL,
+      started_at INTEGER,
+      finished_at INTEGER NOT NULL,
+      state TEXT NOT NULL,
+      worker_id TEXT,
+      worker_bundle_version TEXT,
+      failure_category TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS acp_job_attempt_history_op_idx
+      ON acp_job_attempt_history(op_id, id);
+    CREATE TRIGGER IF NOT EXISTS acp_job_preserve_attempt
+    BEFORE UPDATE OF state ON acp_jobs
+    WHEN (OLD.state = 'running' AND NEW.state <> 'running')
+      OR (OLD.state IN ('error', 'interrupted', 'canceled') AND NEW.state = 'queued'
+          AND NOT EXISTS (SELECT 1 FROM acp_job_attempt_history
+            WHERE op_id=OLD.op_id AND started_at IS OLD.started_at))
+    BEGIN
+      INSERT INTO acp_job_attempt_history
+        (op_id, started_at, finished_at, state, worker_id, worker_bundle_version, failure_category)
+      VALUES (OLD.op_id, OLD.started_at, COALESCE(NEW.finished_at, NEW.updated_at),
+        CASE WHEN NEW.state='queued' THEN OLD.state ELSE NEW.state END,
+        OLD.worker_id, OLD.worker_bundle_version,
+        CASE
+          WHEN NEW.state='completed' THEN 'none'
+          WHEN lower(COALESCE(NEW.error, OLD.error, '')) LIKE '%auth%'
+            OR lower(COALESCE(NEW.error, OLD.error, '')) LIKE '%oauth%' THEN 'authentication'
+          WHEN COALESCE(NEW.error, OLD.error, '') LIKE '%CLAUDE_CONTROLLER_FENCED%' THEN 'ownership_fenced'
+          WHEN COALESCE(NEW.error, OLD.error, '') LIKE '%REVISION_CONFLICT%' THEN 'revision_conflict'
+          WHEN NEW.state='canceled' THEN 'canceled'
+          WHEN NEW.state='interrupted' THEN 'interrupted'
+          ELSE 'runtime_failure'
+        END);
+    END;
+  `);
   installThreadSuccessorFence(TABLE);
 }
 

@@ -27,12 +27,24 @@ jest.mock("../codex/codex-project", () => ({
   resolveProjectRuntimeApiUrl: () => "http://project-hub",
 }));
 jest.mock("./claude-subscription-registry", () => ({
-  getClaudeSubscriptionCredential: async () => ({ payload: {}, identity: {} }),
+  manageClaudeControllerOwnership: jest.fn(async ({ operation }) =>
+    operation === "acquire" ? "acquired" : "released",
+  ),
+  getClaudeSubscriptionCredential: async () => ({
+    payload: "synthetic",
+    identity: {},
+  }),
   syncClaudeSubscriptionCredential: jest.fn(async ({ baseline }) => baseline),
+}));
+jest.mock("./claude-controller-journal", () => ({
+  CLAUDE_CONTROLLER_HOLDER_LABEL: "cocalc.acp.controller-holder",
+  saveClaudeControllerJournal: jest.fn(async () => {}),
+  removeClaudeControllerJournal: jest.fn(async () => {}),
 }));
 jest.mock("./claude-subscription-home", () => ({
   restoreClaudeSubscriptionHome: jest.fn(),
   claudeSubscriptionBundleFiles: () => new Map(),
+  packClaudeSubscriptionBundle: () => "synthetic",
   readClaudeSubscriptionHomeFiles: async () => new Map(),
 }));
 jest.mock("./claude-subscription-paths", () => ({

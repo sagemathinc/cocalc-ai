@@ -6,9 +6,47 @@ import { lstat, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { harnessOwner } from "./harness-reaper";
+import { isValidUUID } from "@cocalc/util/misc";
 
 export const CLAUDE_LOGIN_PREFIX = "cocalc-claude-login-";
 export const CLAUDE_LOGIN_OWNER = ".cocalc-login-owner";
+export const CLAUDE_LOGIN_RECOVERY = ".cocalc-login-recovery.json";
+export interface ClaudeLoginRecovery {
+  projectId: string;
+  accountId: string;
+  credentialId: string;
+  holder: string;
+  codeSubmitted: boolean;
+  published: boolean;
+  abandoned?: boolean;
+}
+
+async function readRecovery(
+  home: string,
+): Promise<ClaudeLoginRecovery | undefined> {
+  const path = join(home, CLAUDE_LOGIN_RECOVERY);
+  try {
+    const stat = await lstat(path);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4096)
+      throw Error("Invalid Claude sign-in recovery record");
+    const record = JSON.parse(await readFile(path, "utf8"));
+    if (
+      ![
+        record.projectId,
+        record.accountId,
+        record.credentialId,
+        record.holder,
+      ].every(isValidUUID) ||
+      typeof record.codeSubmitted !== "boolean" ||
+      typeof record.published !== "boolean"
+    )
+      throw Error("Invalid Claude sign-in recovery record");
+    return record;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+}
 
 async function ownerAlive(owner: string): Promise<boolean> {
   if (!/^\d+:[0-9a-f-]{36}:\d+$/.test(owner))
@@ -111,7 +149,11 @@ async function reapHome(home: string): Promise<void> {
       ownerStat.size > 256
     )
       return;
-    if (await ownerAlive((await readFile(marker, "utf8")).trim())) return;
+    if (
+      (await ownerAlive((await readFile(marker, "utf8")).trim())) &&
+      !(await readRecovery(home))?.abandoned
+    )
+      return;
   } catch (error) {
     // Also clean legacy staging homes from versions without an owner marker.
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -119,5 +161,18 @@ async function reapHome(home: string): Promise<void> {
     if (Date.now() - stat.mtimeMs < 60_000) return;
   }
   await killClaudeLoginProcesses(home);
+  const recovery = await readRecovery(home);
+  if (recovery) {
+    // An uncertain exchange may have rotated the provider's credential. Keep
+    // both the private home and ownership until an operator reconciles it.
+    if (recovery.codeSubmitted && !recovery.published)
+      throw Error("Claude sign-in requires credential reconciliation");
+    const { manageClaudeControllerOwnership } =
+      await import("./claude-subscription-registry");
+    await manageClaudeControllerOwnership({
+      ...recovery,
+      operation: "release",
+    });
+  }
   await rm(home, { recursive: true, force: true });
 }

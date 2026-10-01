@@ -3269,6 +3269,7 @@ export type ProjectSecretsMethod =
   | "install-course-managed"
   | "remove-course-managed";
 export type ExternalCredentialMethod =
+  | "manage-claude-controller-ownership"
   | "upsert"
   | "create"
   | "update-by-id"
@@ -3629,6 +3630,11 @@ export interface InterBayExternalCredentialRecord extends InterBayExternalCreden
 }
 
 export interface InterBayExternalCredentialsApi {
+  manageClaudeControllerOwnership: (
+    opts: import("@cocalc/util/ai/claude-controller-ownership").ClaudeControllerOwnershipRequest,
+  ) => Promise<
+    import("@cocalc/util/ai/claude-controller-ownership").ClaudeControllerOwnershipResult
+  >;
   upsert: (opts: {
     selector: ExternalCredentialSelector;
     payload: string;
@@ -3651,6 +3657,7 @@ export interface InterBayExternalCredentialsApi {
     // Compare-and-swap: fail with a conflict unless the stored payload has
     // this SHA-256 (hex).
     expected_payload_sha256?: string;
+    controller_owner?: import("@cocalc/util/ai/claude-controller-ownership").ClaudeControllerOwner;
   }) => Promise<boolean>;
   updateLabelById: (opts: {
     id: string;
@@ -5708,6 +5715,10 @@ const PROJECT_SECRETS_METHOD_SPECS = [
 type ExternalCredentialName = keyof InterBayExternalCredentialsApi;
 
 const EXTERNAL_CREDENTIAL_METHOD_SPECS = [
+  {
+    name: "manageClaudeControllerOwnership",
+    method: "manage-claude-controller-ownership",
+  },
   { name: "upsert", method: "upsert" },
   { name: "create", method: "create" },
   { name: "updateById", method: "update-by-id" },

@@ -12,6 +12,7 @@ type Conversation = { path: string; threadId: string };
 type Factory = (
   binding: HarnessBinding,
   conversation: Conversation,
+  signal?: AbortSignal,
 ) => ReturnType<HarnessLauncher>;
 let launcher: Factory | undefined;
 let authorityValidator:
@@ -314,7 +315,7 @@ export async function createHarnessAgent(
       credential: prepared.harness_credential!,
     },
     conversation,
-    (binding) => factory(binding, conversation),
+    (binding, signal) => factory(binding, conversation, signal),
     attention,
     authorityValidator,
   );

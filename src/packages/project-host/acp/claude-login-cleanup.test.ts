@@ -6,8 +6,13 @@ import { once } from "node:events";
 import { harnessOwner } from "./harness-reaper";
 import {
   CLAUDE_LOGIN_OWNER,
+  CLAUDE_LOGIN_RECOVERY,
   reapAbandonedClaudeLogins,
 } from "./claude-login-cleanup";
+
+jest.mock("./claude-subscription-registry", () => ({
+  manageClaudeControllerOwnership: jest.fn(async () => "released"),
+}));
 
 test("reconciliation removes crashed-owner login state and its detached process, preserving live and symlink homes", async () => {
   const root = await mkdtemp(join(tmpdir(), "login-reaper-test-"));
@@ -77,3 +82,44 @@ test("one malformed owner does not prevent cleanup of other abandoned homes", as
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test.each([false, true])(
+  "abandoned reconnect retires an unused reservation but preserves an uncertain exchange (submitted=%s)",
+  async (codeSubmitted) => {
+    const root = await mkdtemp(join(tmpdir(), "login-reaper-test-"));
+    const home = join(root, "cocalc-claude-login-reserved");
+    await mkdir(home, { mode: 0o700 });
+    await writeFile(join(home, CLAUDE_LOGIN_OWNER), await harnessOwner());
+    const record = {
+      projectId: "3807103b-f2f9-4ced-8885-eeb442d623b7",
+      accountId: "d62ec7c2-7b5a-49b7-9662-5c280bbac40b",
+      credentialId: "02bfd0a0-50f1-4378-a7fd-bf87a12a2860",
+      holder: "2900a1aa-219a-4b6c-879c-0154d4096a70",
+      codeSubmitted,
+      published: false,
+      abandoned: true,
+    };
+    await writeFile(join(home, CLAUDE_LOGIN_RECOVERY), JSON.stringify(record));
+    const { manageClaudeControllerOwnership } =
+      await import("./claude-subscription-registry");
+    jest.mocked(manageClaudeControllerOwnership).mockClear();
+    try {
+      if (codeSubmitted) {
+        await expect(reapAbandonedClaudeLogins(root)).rejects.toThrow(
+          "requires retry",
+        );
+        expect(manageClaudeControllerOwnership).not.toHaveBeenCalled();
+        expect((await stat(home)).isDirectory()).toBe(true);
+      } else {
+        await reapAbandonedClaudeLogins(root);
+        expect(manageClaudeControllerOwnership).toHaveBeenCalledWith({
+          ...record,
+          operation: "release",
+        });
+        await expect(stat(home)).rejects.toMatchObject({ code: "ENOENT" });
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);

@@ -1,4 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { ClaudeControllerOwner } from "@cocalc/util/ai/claude-controller-ownership";
+import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-profiles";
+import { assertClaudeControllerWriter } from "./claude-controller-ownership";
 import { EXTERNAL_CREDENTIAL_CONFLICT } from "@cocalc/util/external-credential-conflict";
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import {
@@ -272,6 +275,14 @@ export async function upsertExternalCredential({
 }): Promise<{ id: string; created: boolean }> {
   const normalized = normalizeSelector(selector);
   validatePayload(payload);
+  if (
+    normalized.provider === "anthropic" &&
+    normalized.kind === CLAUDE_SUBSCRIPTION_KIND &&
+    normalized.scope === "account"
+  )
+    throw Error(
+      "Claude subscription writes require an explicit credential id or creation",
+    );
   const encrypted_payload = await encryptPayload(normalized, payload);
   const id = randomUUID();
 
@@ -464,6 +475,8 @@ FOR UPDATE
       );
       const duplicate = rows[0];
       if (duplicate) {
+        if (normalized.provider === "anthropic")
+          await assertClaudeControllerWriter(client, duplicate.id);
         await client.query(
           `
 UPDATE external_credentials
@@ -550,6 +563,7 @@ export async function updateExternalCredentialById({
   metadata,
   revive = false,
   expectedPayloadSha256,
+  controllerOwner,
 }: {
   id: string;
   selector: ExternalCredentialSelector;
@@ -559,6 +573,7 @@ export async function updateExternalCredentialById({
   // Compare-and-swap: update only if the stored payload still has this
   // SHA-256 (hex); otherwise throw EXTERNAL_CREDENTIAL_CONFLICT.
   expectedPayloadSha256?: string;
+  controllerOwner?: ClaudeControllerOwner;
 }): Promise<boolean> {
   const normalized = normalizeSelector(selector);
   if (
@@ -576,6 +591,13 @@ export async function updateExternalCredentialById({
     ]);
     const defaultMetadataKey =
       defaultMetadataKeyForCredentialSelector(normalized);
+    if (normalized.provider === "anthropic")
+      await assertClaudeControllerWriter(
+        client,
+        id,
+        controllerOwner,
+        expectedPayloadSha256,
+      );
     if (defaultMetadataKey) {
       await ensureDefaultExternalCredentialLocked({
         client,
@@ -916,6 +938,7 @@ FOR UPDATE
     };
     const next = await update(credential);
     if (next) {
+      await assertClaudeControllerWriter(client, row.id);
       validatePayload(next.payload);
       const encryptedPayload = await encryptPayload(normalized, next.payload);
       const metadata = next.metadata ?? credential.metadata;

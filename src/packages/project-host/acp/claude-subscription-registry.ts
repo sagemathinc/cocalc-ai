@@ -8,6 +8,7 @@ import callHub from "@cocalc/conat/hub/call-hub";
 import getLogger from "@cocalc/backend/logger";
 import { isExternalCredentialConflict } from "@cocalc/util/external-credential-conflict";
 import { isValidUUID } from "@cocalc/util/misc";
+import type { ClaudeControllerOwnershipResult } from "@cocalc/util/ai/claude-controller-ownership";
 import {
   ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY,
   ACCOUNT_CREDENTIAL_PROFILE_METADATA_KEY,
@@ -48,6 +49,29 @@ function selector(accountId: string) {
   };
 }
 
+export async function manageClaudeControllerOwnership(options: {
+  projectId: string;
+  accountId: string;
+  credentialId: string;
+  holder: string;
+  operation: "acquire" | "release";
+}): Promise<ClaudeControllerOwnershipResult> {
+  return await callHub({
+    ...caller(),
+    name: "hosts.manageClaudeControllerOwnership",
+    args: [
+      {
+        project_id: options.projectId,
+        owner_account_id: options.accountId,
+        credential_id: options.credentialId,
+        holder: options.holder,
+        operation: options.operation,
+      },
+    ],
+    timeout: 15_000,
+  });
+}
+
 export async function getClaudeSubscriptionCredential(options: {
   projectId: string;
   accountId: string;
@@ -85,6 +109,29 @@ export async function getClaudeSubscriptionCredential(options: {
   };
 }
 
+/** An omitted sign-in target reconnects the existing account subscription. */
+export async function getExistingClaudeSubscriptionCredentialId(options: {
+  projectId: string;
+  accountId: string;
+}): Promise<string | undefined> {
+  const current = await callHub({
+    ...caller(),
+    name: "hosts.getExternalCredential",
+    args: [
+      { project_id: options.projectId, selector: selector(options.accountId) },
+    ],
+    timeout: 15_000,
+  });
+  if (!current) return undefined;
+  if (
+    !isValidUUID(current.id) ||
+    current.metadata?.[ACCOUNT_CREDENTIAL_PROFILE_METADATA_KEY] !==
+      CLAUDE_SUBSCRIPTION_PROFILE_ID
+  )
+    throw Error("Claude subscription credential is unavailable");
+  return current.id;
+}
+
 export async function publishClaudeSubscriptionCredential(options: {
   projectId: string;
   accountId: string;
@@ -93,6 +140,7 @@ export async function publishClaudeSubscriptionCredential(options: {
   plan: string;
   credentialId?: string;
   allowedPaths?: ReadonlySet<string>;
+  controllerHolder?: string;
 }): Promise<string> {
   const {
     projectId,
@@ -124,6 +172,7 @@ export async function publishClaudeSubscriptionCredential(options: {
     identity,
     plan,
     credentialId,
+    controllerHolder: options.controllerHolder,
   });
 }
 
@@ -135,6 +184,7 @@ async function upsertClaudeSubscriptionPayload(options: {
   plan: string;
   credentialId?: string;
   expectedPayloadSha256?: string;
+  controllerHolder?: string;
 }): Promise<string> {
   const {
     projectId,
@@ -144,6 +194,7 @@ async function upsertClaudeSubscriptionPayload(options: {
     plan,
     credentialId,
     expectedPayloadSha256,
+    controllerHolder,
   } = options;
   const result = await callHub({
     ...caller(),
@@ -164,6 +215,7 @@ async function upsertClaudeSubscriptionPayload(options: {
         },
         credential_id: credentialId,
         expected_payload_sha256: expectedPayloadSha256,
+        controller_holder: controllerHolder,
         create: !credentialId,
         max_active: credentialId ? undefined : 3,
         deduplicate_metadata: credentialId
@@ -206,6 +258,7 @@ export async function syncClaudeSubscriptionCredential(options: {
   credentialId: string;
   baseline: ReadonlyMap<string, Buffer>;
   current: ReadonlyMap<string, Buffer>;
+  controllerHolder?: string;
 }): Promise<ReadonlyMap<string, Buffer>> {
   const { projectId, accountId, credentialId, baseline, current } = options;
   const changed = changedClaudeSubscriptionFiles(baseline, current);
@@ -236,10 +289,12 @@ export async function syncClaudeSubscriptionCredential(options: {
       }
     }
     if (kept.length > 0)
-      logger.debug("kept newer stored Claude credential files", {
+      logger.debug("unresolved Claude credential file conflict", {
         credentialId,
         files: kept.length,
       });
+    if (kept.length > 0 && options.controllerHolder)
+      throw Error("CLAUDE_CREDENTIAL_REVISION_CONFLICT");
     if (writes === 0) return current;
     try {
       await upsertClaudeSubscriptionPayload({
@@ -252,6 +307,7 @@ export async function syncClaudeSubscriptionCredential(options: {
         expectedPayloadSha256: createHash("sha256")
           .update(stored.payload, "utf8")
           .digest("hex"),
+        controllerHolder: options.controllerHolder,
       });
       return current;
     } catch (error) {

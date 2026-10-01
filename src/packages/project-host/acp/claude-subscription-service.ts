@@ -10,6 +10,8 @@ import { ClaudeSubscriptionLoginService } from "./claude-subscription-login";
 import {
   getClaudeSubscriptionCredential,
   publishClaudeSubscriptionCredential,
+  manageClaudeControllerOwnership,
+  getExistingClaudeSubscriptionCredentialId,
 } from "./claude-subscription-registry";
 import { reapAbandonedClaudeLogins } from "./claude-login-cleanup";
 import getLogger from "@cocalc/backend/logger";
@@ -63,5 +65,22 @@ export async function getClaudeSubscriptionLoginService(): Promise<ClaudeSubscri
     cliPath,
     publish: publishClaudeSubscriptionCredential,
     validateReconnect: getClaudeSubscriptionCredential,
+    existingCredential: getExistingClaudeSubscriptionCredentialId,
+    reserveReconnect: async (options) => {
+      const result = await manageClaudeControllerOwnership({
+        ...options,
+        operation: "acquire",
+      });
+      if (result !== "acquired")
+        throw Error(
+          "Claude subscription is in use. Finish its active turn before reconnecting.",
+        );
+      return async () => {
+        await manageClaudeControllerOwnership({
+          ...options,
+          operation: "release",
+        });
+      };
+    },
   }));
 }

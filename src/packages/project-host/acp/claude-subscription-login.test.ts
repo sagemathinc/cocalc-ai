@@ -99,6 +99,71 @@ test("reconnect rejects unavailable credentials before starting sign-in", async 
   }
 });
 
+test("existing subscriptions are reconnected under ownership, and publication precedes release", async () => {
+  const order: string[] = [];
+  const release = jest.fn(async () => {
+    order.push("release");
+  });
+  const reserve = jest.fn(async () => {
+    order.push("acquire");
+    return release;
+  });
+  const publish = jest.fn(async () => {
+    order.push("publish");
+    return credentialId;
+  });
+  const service = new ClaudeSubscriptionLoginService({
+    cliPath: process.execPath,
+    argsPrefix: [fixture],
+    publish,
+    validateReconnect: async () => {},
+    existingCredential: async () => credentialId,
+    reserveReconnect: reserve,
+  });
+  try {
+    const started = await service.start(projectId, accountId);
+    expect(reserve).toHaveBeenCalledWith({
+      projectId,
+      accountId,
+      credentialId,
+      holder: started.id,
+    });
+    for (
+      let i = 0;
+      i < 100 &&
+      !service.status(started.id, projectId, accountId).verificationUrl;
+      i++
+    )
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    service.submitCode(started.id, projectId, accountId, "fixture-code");
+    await waitFor(service, started.id, "completed");
+    expect(order).toEqual(["acquire", "publish", "release"]);
+    expect(publish).toHaveBeenCalledWith(
+      expect.objectContaining({ credentialId, controllerHolder: started.id }),
+    );
+  } finally {
+    await service.close();
+  }
+});
+
+test("busy ownership rejects reconnect before launching the native login", async () => {
+  const publish = jest.fn();
+  const service = new ClaudeSubscriptionLoginService({
+    cliPath: process.execPath,
+    argsPrefix: [fixture],
+    publish,
+    validateReconnect: async () => {},
+    reserveReconnect: async () => {
+      throw Error("subscription busy");
+    },
+  });
+  await expect(
+    service.start(projectId, accountId, credentialId),
+  ).rejects.toThrow("subscription busy");
+  expect(publish).not.toHaveBeenCalled();
+  await service.close();
+});
+
 test("login stages outside projects, accepts one code, verifies and cleans up", async () => {
   let publishedHome: string | undefined;
   const service = new ClaudeSubscriptionLoginService({
@@ -246,14 +311,18 @@ test("verification cannot report cancellation after publication starts", async (
 
 test("shutdown cancels pending sign-in and rejects new login attempts", async () => {
   const publish = jest.fn();
+  const release = jest.fn(async () => {});
   const service = new ClaudeSubscriptionLoginService({
     cliPath: process.execPath,
     argsPrefix: [fixture],
     publish,
+    validateReconnect: async () => {},
+    reserveReconnect: async () => release,
   });
-  const started = await service.start(projectId, accountId);
+  const started = await service.start(projectId, accountId, credentialId);
   await service.close();
   expect(publish).not.toHaveBeenCalled();
+  expect(release).toHaveBeenCalledTimes(1);
   expect(() => service.status(started.id, projectId, accountId)).toThrow(
     "Unknown",
   );

@@ -1838,6 +1838,7 @@ export const hosts = {
   updateCopyStatus: authFirstRequireHost,
   hasExternalCredential: authFirstRequireHost,
   getExternalCredential: authFirstRequireHost,
+  manageClaudeControllerOwnership: authFirstRequireHost,
   touchExternalCredential: authFirstRequireHost,
   upsertExternalCredential: authFirstRequireHost,
   releaseCodexDeviceAuthLease: authFirstRequireHost,
@@ -2282,6 +2283,14 @@ export interface Hosts {
     selector: ExternalCredentialSelector;
     credential_id?: string;
   }) => Promise<boolean>;
+  manageClaudeControllerOwnership: (
+    opts: Omit<
+      import("@cocalc/util/ai/claude-controller-ownership").ClaudeControllerOwnershipRequest,
+      "host_id"
+    > & { host_id?: string },
+  ) => Promise<
+    import("@cocalc/util/ai/claude-controller-ownership").ClaudeControllerOwnershipResult
+  >;
   getExternalCredential: (opts: {
     host_id?: string;
     project_id: string;
@@ -2307,6 +2316,7 @@ export interface Hosts {
     // With credential_id: update only if the stored payload still has this
     // SHA-256 (hex); otherwise fail with EXTERNAL_CREDENTIAL_CONFLICT.
     expected_payload_sha256?: string;
+    controller_holder?: string;
   }) => Promise<{ id: string; created: boolean }>;
   releaseCodexDeviceAuthLease: (opts: {
     host_id?: string;

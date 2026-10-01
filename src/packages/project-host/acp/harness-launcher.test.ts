@@ -263,6 +263,7 @@ test("subscription controller receives the admitted conversation for agent ident
     subscription,
     "agent",
     conversation,
+    undefined,
   );
   expect(mockLease).not.toHaveBeenCalled();
 });

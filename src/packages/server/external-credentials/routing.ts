@@ -4,6 +4,13 @@
  */
 
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import type {
+  ClaudeControllerOwner,
+  ClaudeControllerOwnershipRequest,
+  ClaudeControllerOwnershipResult,
+} from "@cocalc/util/ai/claude-controller-ownership";
+import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-profiles";
+import { manageClaudeControllerOwnership } from "./claude-controller-ownership";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
@@ -162,6 +169,7 @@ export async function updateExternalCredentialByIdRouted({
   metadata,
   revive,
   expected_payload_sha256,
+  controller_owner,
 }: {
   id: string;
   selector: ExternalCredentialSelector;
@@ -170,6 +178,7 @@ export async function updateExternalCredentialByIdRouted({
   revive?: boolean;
   // Compare-and-swap against the stored payload (see the store).
   expected_payload_sha256?: string;
+  controller_owner?: ClaudeControllerOwner;
 }): Promise<boolean> {
   return await withExternalCredentialAuthority({
     selector,
@@ -181,6 +190,7 @@ export async function updateExternalCredentialByIdRouted({
         metadata: metadata ?? {},
         revive,
         expectedPayloadSha256: expected_payload_sha256,
+        controllerOwner: controller_owner,
       }),
     remote: async (dest_bay) =>
       await remoteCredentialsClient(dest_bay).updateById({
@@ -190,7 +200,26 @@ export async function updateExternalCredentialByIdRouted({
         metadata,
         revive,
         expected_payload_sha256,
+        controller_owner,
       }),
+  });
+}
+
+export async function manageClaudeControllerOwnershipRouted(
+  request: ClaudeControllerOwnershipRequest,
+): Promise<ClaudeControllerOwnershipResult> {
+  return await withExternalCredentialAuthority({
+    selector: {
+      provider: "anthropic",
+      kind: CLAUDE_SUBSCRIPTION_KIND,
+      scope: "account",
+      owner_account_id: request.owner_account_id,
+    },
+    local: () => manageClaudeControllerOwnership(request),
+    remote: (dest_bay) =>
+      remoteCredentialsClient(dest_bay).manageClaudeControllerOwnership(
+        request,
+      ),
   });
 }
 

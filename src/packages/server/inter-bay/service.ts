@@ -15,6 +15,7 @@ import { createInterBayAgentConnectorHandler } from "@cocalc/conat/inter-bay/age
 import { agentConnectorControl } from "@cocalc/server/agents/cocalc-connector-routing";
 import { agentRpcControl } from "@cocalc/server/agents/rpc";
 import { list as listOperations } from "@cocalc/server/conat/api/lro";
+import { manageClaudeControllerOwnership } from "@cocalc/server/external-credentials/claude-controller-ownership";
 import {
   createProjectOnOwningBay,
   getProjectCreationStatus,
@@ -2601,6 +2602,7 @@ async function startExternalCredentialsService(): Promise<void> {
         deduplicateMetadata: deduplicate_metadata,
         defaultMetadataKey: default_metadata_key,
       }),
+    manageClaudeControllerOwnership,
     updateById: async ({
       id,
       selector,
@@ -2608,6 +2610,7 @@ async function startExternalCredentialsService(): Promise<void> {
       metadata,
       revive,
       expected_payload_sha256,
+      controller_owner,
     }) =>
       await updateExternalCredentialById({
         id,
@@ -2616,6 +2619,7 @@ async function startExternalCredentialsService(): Promise<void> {
         metadata: metadata ?? {},
         revive,
         expectedPayloadSha256: expected_payload_sha256,
+        controllerOwner: controller_owner,
       }),
     updateLabelById: async ({ id, selector, label }) =>
       await updateExternalCredentialLabelById({ id, selector, label }),

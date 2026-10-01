@@ -256,7 +256,9 @@ export function ClaudeSubscriptionConnect({
         !signingIn &&
         (error || login?.state === "failed") &&
         !isProjectHostUnavailable(error) && (
-          <Button onClick={() => void start()}>Retry sign-in</Button>
+          <Button onClick={() => void start(reconnectCredentialId)}>
+            Retry sign-in
+          </Button>
         )}
     </Space>
   );
@@ -280,12 +282,15 @@ export function ClaudeSubscriptionConnect({
           type={reconnectOnly ? "primary" : undefined}
           disabled={disabled || signingIn}
           loading={reconnectOnly && busy}
-          onClick={() => void start(reconnectCredentialId)}
+          onClick={() => {
+            if (modal) setOpen(true);
+            void start(reconnectCredentialId);
+          }}
         >
           Reconnect Claude
         </Button>
       )}
-      {!reconnectOnly && (
+      {!reconnectOnly && !hasConnection && (
         <Button
           size={inline ? "small" : undefined}
           style={
@@ -301,11 +306,7 @@ export function ClaudeSubscriptionConnect({
             void start();
           }}
         >
-          {hasConnection
-            ? compact
-              ? "Connect another subscription"
-              : "Connect another Claude subscription"
-            : "Connect Claude Pro/Max"}
+          Connect Claude Pro/Max
         </Button>
       )}
       {modal ? (

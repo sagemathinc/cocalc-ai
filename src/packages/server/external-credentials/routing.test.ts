@@ -14,6 +14,7 @@ let upsertExternalCredentialMock: jest.Mock;
 let getExternalCredentialMock: jest.Mock;
 let listExternalCredentialsMock: jest.Mock;
 let refreshCodexSubscriptionAuthMock: jest.Mock;
+let manageClaudeControllerOwnershipMock: jest.Mock;
 
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: (...args: any[]) => getConfiguredBayIdMock(...args),
@@ -51,11 +52,16 @@ jest.mock("./codex-subscription-refresh", () => ({
   refreshCodexSubscriptionAuth: (...args: any[]) =>
     refreshCodexSubscriptionAuthMock(...args),
 }));
+jest.mock("./claude-controller-ownership", () => ({
+  manageClaudeControllerOwnership: (...args: any[]) =>
+    manageClaudeControllerOwnershipMock(...args),
+}));
 
 describe("external credential bay routing", () => {
   beforeEach(() => {
     jest.resetModules();
     getConfiguredBayIdMock = jest.fn(() => "bay-local");
+    manageClaudeControllerOwnershipMock = jest.fn(async () => "acquired");
     getConfiguredClusterSeedBayIdMock = jest.fn(() => "bay-seed");
     resolveAccountHomeBayMock = jest.fn(async () => ({
       home_bay_id: "bay-local",
@@ -106,6 +112,33 @@ describe("external credential bay routing", () => {
     });
     expect(upsertExternalCredentialMock).toHaveBeenCalled();
     expect(getInterBayBridgeMock).not.toHaveBeenCalled();
+  });
+
+  it("routes Claude ownership to the account home bay, not the project or host bay", async () => {
+    resolveAccountHomeBayMock.mockResolvedValue({
+      home_bay_id: "account-home-remote",
+    });
+    const remoteManage = jest.fn(async () => "busy");
+    const externalCredentials = jest.fn(() => ({
+      manageClaudeControllerOwnership: remoteManage,
+    }));
+    getInterBayBridgeMock.mockReturnValue({ externalCredentials });
+    const { manageClaudeControllerOwnershipRouted } = await import("./routing");
+    const request = {
+      holder: "holder",
+      host_id: "host",
+      project_id: "project",
+      owner_account_id: "account",
+      credential_id: "credential",
+      operation: "acquire" as const,
+    };
+    expect(await manageClaudeControllerOwnershipRouted(request)).toBe("busy");
+    expect(externalCredentials).toHaveBeenCalledWith("account-home-remote", {
+      timeout_ms: 15_000,
+    });
+    expect(remoteManage).toHaveBeenCalledWith(request);
+    expect(resolveProjectBayMock).not.toHaveBeenCalled();
+    expect(manageClaudeControllerOwnershipMock).not.toHaveBeenCalled();
   });
 
   it("forwards account credential lists to the account home bay", async () => {

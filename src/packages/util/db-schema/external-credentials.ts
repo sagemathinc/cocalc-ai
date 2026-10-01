@@ -60,6 +60,10 @@ Table({
       type: "map",
       desc: "Non-secret metadata used for diagnostics and compatibility checks.",
     },
+    controller_ownership: {
+      type: "map",
+      desc: "Private Claude controller ownership fence. Never expires automatically; release only after confirmed stop and credential publication.",
+    },
     created: {
       type: "timestamp",
       desc: "When this credential record was created.",

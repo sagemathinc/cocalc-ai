@@ -32,6 +32,8 @@ export function createClaudeCredentialSync(options: {
   home: string;
   // The stored payload the home was restored from.
   restoredPayload: string;
+  controllerHolder?: string;
+  onBaseline?: (files: Files) => Promise<void>;
   intervalMs?: number;
   finalRetryDelaysMs?: number[];
   // For tests.
@@ -67,7 +69,11 @@ export function createClaudeCredentialSync(options: {
           credentialId,
           baseline,
           current: current ?? (await read(home, paths)),
+          ...(options.controllerHolder
+            ? { controllerHolder: options.controllerHolder }
+            : {}),
         });
+        await options.onBaseline?.(baseline);
       }));
 
   const stop = () => {

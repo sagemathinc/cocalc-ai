@@ -132,6 +132,31 @@ test("an unchanged controller saves nothing", async () => {
   expect(mockCallHub).not.toHaveBeenCalled();
 });
 
+test("an owned controller quarantines an opaque conflict instead of treating stored bytes as newer", async () => {
+  const baseline = claudeSubscriptionBundleFiles(stored);
+  const current = claudeSubscriptionBundleFiles(
+    bundle({
+      ".credentials.json": "later-valid-rotation",
+      ".claude.json": "settings-old",
+    }),
+  );
+  stored = bundle({
+    ".credentials.json": "old-token-metadata-rewrite",
+    ".claude.json": "settings-old",
+  });
+  await expect(
+    syncClaudeSubscriptionCredential({
+      projectId,
+      accountId,
+      credentialId,
+      baseline,
+      current,
+      controllerHolder: "owned-controller",
+    }),
+  ).rejects.toThrow("CLAUDE_CREDENTIAL_REVISION_CONFLICT");
+  expect(upserts).toBe(0);
+});
+
 test("a settings-only write that read before a token rotation cannot restore the old token", async () => {
   const a = await controller();
   const b = await controller();

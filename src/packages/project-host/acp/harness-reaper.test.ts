@@ -15,6 +15,14 @@ jest.mock("node:fs/promises", () => ({
   rm: (...args) => mockRm(...args),
 }));
 jest.mock("@cocalc/backend/podman/env", () => ({ podmanEnv: () => ({}) }));
+jest.mock("@cocalc/project-runner/run/podman", () => ({
+  projectPoolPodmanLauncher: jest.fn(),
+}));
+jest.mock("./claude-controller-journal", () => ({
+  CLAUDE_CONTROLLER_HOLDER_LABEL: "cocalc.acp.controller-holder",
+  listClaudeControllerJournals: jest.fn(async () => []),
+  recoverClaudeControllerJournal: jest.fn(),
+}));
 jest.mock("@cocalc/backend/logger", () => () => ({
   info: jest.fn(),
   warn: jest.fn(),

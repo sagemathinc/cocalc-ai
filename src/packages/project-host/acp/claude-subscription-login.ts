@@ -9,6 +9,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { writeFileSync } from "node:fs";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
   isSupportedClaudeSubscriptionPlan,
@@ -18,6 +19,8 @@ import { harnessOwner } from "./harness-reaper";
 import {
   CLAUDE_LOGIN_PREFIX,
   CLAUDE_LOGIN_OWNER,
+  CLAUDE_LOGIN_RECOVERY,
+  type ClaudeLoginRecovery,
   killClaudeLoginProcesses,
 } from "./claude-login-cleanup";
 
@@ -45,6 +48,8 @@ type LoginSession = ClaudeSubscriptionLoginStatus & {
   output: string;
   codeSubmitted: boolean;
   completion?: Promise<void>;
+  releaseOwnership?: () => Promise<void>;
+  recovery?: ClaudeLoginRecovery;
 };
 
 function loginEnvironment(home: string): NodeJS.ProcessEnv {
@@ -118,6 +123,13 @@ export class ClaudeSubscriptionLoginService {
         // Let an already-admitted publication finish before deleting its input.
         await session.completion;
         await killClaudeLoginProcesses(session.home);
+        if (session.recovery?.codeSubmitted && !session.recovery.published) {
+          session.recovery.abandoned = true;
+          this.saveRecovery(session);
+          return;
+        }
+        await session.releaseOwnership?.();
+        session.releaseOwnership = undefined;
         await rm(session.home, { recursive: true, force: true });
       }),
     );
@@ -137,12 +149,23 @@ export class ClaudeSubscriptionLoginService {
         identity: string;
         plan: string;
         credentialId?: string;
+        controllerHolder?: string;
       }) => Promise<string>;
       validateReconnect?: (options: {
         projectId: string;
         accountId: string;
         credentialId: string;
       }) => Promise<unknown>;
+      reserveReconnect?: (options: {
+        projectId: string;
+        accountId: string;
+        credentialId: string;
+        holder: string;
+      }) => Promise<() => Promise<void>>;
+      existingCredential?: (options: {
+        projectId: string;
+        accountId: string;
+      }) => Promise<string | undefined>;
     },
   ) {}
 
@@ -166,6 +189,10 @@ export class ClaudeSubscriptionLoginService {
   ): Promise<ClaudeSubscriptionLoginStatus> {
     if (!isValidUUID(projectId) || !isValidUUID(accountId))
       throw Error("Invalid Claude sign-in principal");
+    credentialId ??= await this.options.existingCredential?.({
+      projectId,
+      accountId,
+    });
     if (credentialId != null) {
       if (!isValidUUID(credentialId) || !this.options.validateReconnect)
         throw Error("Invalid Claude reconnect request");
@@ -186,10 +213,35 @@ export class ClaudeSubscriptionLoginService {
     const home = await mkdtemp(join(tmpdir(), CLAUDE_LOGIN_PREFIX));
     const id = randomUUID();
     let child: ChildProcess;
+    let releaseOwnership: (() => Promise<void>) | undefined;
+    const recovery: ClaudeLoginRecovery | undefined =
+      credentialId && this.options.reserveReconnect
+        ? {
+            projectId,
+            accountId,
+            credentialId,
+            holder: id,
+            codeSubmitted: false,
+            published: false,
+          }
+        : undefined;
     try {
       await writeFile(join(home, CLAUDE_LOGIN_OWNER), await harnessOwner(), {
         mode: 0o600,
       });
+      if (recovery)
+        writeFileSync(
+          join(home, CLAUDE_LOGIN_RECOVERY),
+          JSON.stringify(recovery),
+          { mode: 0o600 },
+        );
+      if (credentialId)
+        releaseOwnership = await this.options.reserveReconnect?.({
+          projectId,
+          accountId,
+          credentialId,
+          holder: id,
+        });
       if (this.closed) throw Error("Claude sign-in service is closed");
       child = spawn(
         this.options.cliPath,
@@ -202,7 +254,16 @@ export class ClaudeSubscriptionLoginService {
         },
       );
     } catch (error) {
-      await rm(home, { recursive: true, force: true });
+      if (recovery) {
+        recovery.abandoned = true;
+        writeFileSync(
+          join(home, CLAUDE_LOGIN_RECOVERY),
+          JSON.stringify(recovery),
+          { mode: 0o600 },
+        );
+        // The reaper retires even an acquisition with an unknown acknowledgement.
+      } else await rm(home, { recursive: true, force: true });
+      await releaseOwnership?.();
       throw error;
     }
     const timer = setTimeout(() => {
@@ -220,6 +281,8 @@ export class ClaudeSubscriptionLoginService {
       state: "pending",
       output: "",
       codeSubmitted: false,
+      releaseOwnership,
+      recovery,
     };
     this.sessions.set(id, session);
     const append = (chunk: Buffer) => {
@@ -272,6 +335,10 @@ export class ClaudeSubscriptionLoginService {
     )
       throw Error("Invalid Claude sign-in code");
     session.codeSubmitted = true;
+    if (session.recovery) {
+      session.recovery.codeSubmitted = true;
+      this.saveRecovery(session);
+    }
     session.child.stdin?.end(`${code}\n`);
   }
 
@@ -317,12 +384,23 @@ export class ClaudeSubscriptionLoginService {
         identity,
         plan,
         ...(session.reconnectCredentialId
-          ? { credentialId: session.reconnectCredentialId }
+          ? {
+              credentialId: session.reconnectCredentialId,
+              ...(session.releaseOwnership
+                ? { controllerHolder: session.id }
+                : {}),
+            }
           : {}),
       });
       if (!isValidUUID(credentialId))
         throw Error("Published Claude credential ID is invalid");
       session.credentialId = credentialId;
+      if (session.recovery) {
+        session.recovery.published = true;
+        this.saveRecovery(session);
+      }
+      await session.releaseOwnership?.();
+      session.releaseOwnership = undefined;
       session.state = "completed";
       this.retire(session);
     } catch (error) {
@@ -335,7 +413,8 @@ export class ClaudeSubscriptionLoginService {
           : "Claude subscription verification failed",
       );
     } finally {
-      await rm(session.home, { recursive: true, force: true });
+      if (!session.releaseOwnership)
+        await rm(session.home, { recursive: true, force: true });
     }
   }
 
@@ -350,11 +429,23 @@ export class ClaudeSubscriptionLoginService {
   }
 
   private removeHomeAfterExit(session: LoginSession): void {
+    const remove = async () => {
+      // A failed code exchange may have issued a new credential that was not
+      // published. Quarantine that owner rather than guessing token validity.
+      if (!session.codeSubmitted) {
+        await session.releaseOwnership?.();
+        session.releaseOwnership = undefined;
+      }
+      if (session.recovery && session.releaseOwnership) {
+        session.recovery.abandoned = true;
+        this.saveRecovery(session);
+      } else await rm(session.home, { recursive: true, force: true });
+    };
     if (session.child.exitCode !== null || session.child.signalCode !== null) {
-      void rm(session.home, { recursive: true, force: true });
+      void remove().catch(() => {});
     } else {
       session.child.once("close", () => {
-        void rm(session.home, { recursive: true, force: true });
+        void remove().catch(() => {});
       });
     }
   }
@@ -366,6 +457,14 @@ export class ClaudeSubscriptionLoginService {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
     }
+  }
+
+  private saveRecovery(session: LoginSession): void {
+    writeFileSync(
+      join(session.home, CLAUDE_LOGIN_RECOVERY),
+      JSON.stringify(session.recovery),
+      { mode: 0o600 },
+    );
   }
 
   private retire(session: LoginSession): void {
