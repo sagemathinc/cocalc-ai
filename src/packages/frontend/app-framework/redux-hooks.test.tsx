@@ -126,4 +126,19 @@ describe("useRedux", () => {
     expect(getProjectStore).not.toHaveBeenCalled();
     getProjectStore.mockRestore();
   });
+
+  it("stops waiting for a named store when its last consumer unmounts", () => {
+    const storeName = `test-redux-hooks-unmounted-${Date.now()}`;
+    storeNames.push(storeName);
+    const { unmount } = render(<Value storeName={storeName} />);
+    unmount();
+
+    const store = redux.createStore(storeName, { value: "too late" });
+    expect(store.listenerCount("change")).toBe(0);
+    expect(
+      collectReduxHookSubscriptionDiagnostics().topSubscriptions.find(
+        ({ storeName: name }) => name === storeName,
+      ),
+    ).toBeUndefined();
+  });
 });

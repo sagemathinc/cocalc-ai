@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { render, within } from "@testing-library/react";
 import { IntlProvider } from "react-intl";
 import Message from "../message";
 
@@ -73,6 +73,13 @@ test("a message from another agent sits in the prompt position of an agent threa
   expect(fromAgent.style.marginTop).toBe(own.style.marginTop);
   // It is not presented as the viewer's own message.
   expect(fromAgent.className).not.toContain("smc-message-from-viewer");
+  // PR #792's reply footer must not appear on PR #794's network prompts.
+  expect(
+    within(fromAgent).queryByRole("button", { name: "Copy message" }),
+  ).toBeNull();
+  expect(
+    within(fromAgent).queryByRole("button", { name: "Read aloud" }),
+  ).toBeNull();
 });
 
 test("agent messages outside agent threads keep the ordinary layout", () => {
