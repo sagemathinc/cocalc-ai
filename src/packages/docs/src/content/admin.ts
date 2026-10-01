@@ -1633,7 +1633,9 @@ Each campaign also has a recovery and latency health gate:
   baseline, if either becomes unknown after being known, or if an upgraded host
   records a new failed snapshot or backup attempt, falls further behind on
   backups than the time elapsed, enters emergency storage pressure, or stops
-  reporting fresh storage pressure.
+  reporting fresh storage pressure. An attempt that fails because a project is
+  over its storage quota does not stop the campaign; it still appears in the
+  **Project snapshots and backups** health check.
 - Before default promotion, it also requires measured browser latency. If
   **Browser-observed latency** is unknown, the campaign stops without
   promoting.
