@@ -77,7 +77,22 @@ the complete review unit rather than hundreds of chronological trial changes.
 | [c1cf29e4f2](https://github.com/sagemathinc/cocalc-ai/commit/c1cf29e4f254efe487ea3d170a8e5c2ae27008a3) | render and share typed resource references                                   |    78 |       6,487 |
 | [e12777bd02](https://github.com/sagemathinc/cocalc-ai/commit/e12777bd0215e94e8ad2301ce138302753ed02ff) | retain Projects, People and Artifacts in one shell                           |   110 |       7,868 |
 | [cc2f4bcb96](https://github.com/sagemathinc/cocalc-ai/commit/cc2f4bcb9691b8d5a153d59560edb8491aa34747) | expose typed chat, scan and address operations                               |    22 |       2,658 |
-| Final documentation commit                                                                             | Product contract, audit guide, docs drawer content and browser audit helpers |    13 |           — |
+| [bdf7e3f38d](https://github.com/sagemathinc/cocalc-ai/commit/bdf7e3f38d47dfb3ee4d38cdbcdf775a026e581e) | Product contract, audit guide, docs drawer content and browser audit helpers |    13 |       1,404 |
+
+## Integration audit follow-ups
+
+The source inventory records a disposition for all 785 paths in the final source
+snapshot. It also records the additional review documentation, import-boundary
+cleanup and existing integration fixtures changed during this audit. The file
+inventory is published alongside the PR in the originating workbench.
+
+- [c3cd0348d9](https://github.com/sagemathinc/cocalc-ai/commit/c3cd0348d9a69627528b2295f619696de7d45865)
+  corrects the documentation vocabulary anchor and collaborator projector test
+  initialization; reference access dialogs load only after activation and retain
+  their close transition and focus restoration.
+- [7ed0ec44ef](https://github.com/sagemathinc/cocalc-ai/commit/7ed0ec44ef)
+  completes ownership-transfer and queued-agent fixtures exposed by the broad CI
+  run. Production ownership fences and startup sequencing remain intact.
 
 ## Merge and enablement gates
 
@@ -124,8 +139,13 @@ results and unverified live scenarios in the PR description.
 - Database catalog: 184 passed. Shared utilities: 2,209 passed after adding the
   missing secondary ownership note. Conat API: 120 passed. CLI: 84 passed.
   Chat extraction: 46 passed; chat-client: 14 passed; archive store: 4 passed.
+- The initial PR CI full workspace build passed. Local `test:checks`, including
+  dependency consistency, both lint scopes and documentation verification,
+  passed after correcting the stale menu anchor. Follow-up reference tests:
+  17 passed; collaborator delivery-order fixture: 8 passed, 1 PostgreSQL-only
+  skip; ownership-transfer and queued-agent integration fixtures: 27 passed.
 - Production module guards pass. Signed-in startup size budgets and the ultralite
   notification budget remain failing; see the PR for measured values.
-- Independent-process PostgreSQL acceptance, full development build completion,
+- Independent-process PostgreSQL acceptance, local full development build completion,
   deployment/browser validation and sustained-load release approval are not
   claimed. Original development deployment remains untouched.
