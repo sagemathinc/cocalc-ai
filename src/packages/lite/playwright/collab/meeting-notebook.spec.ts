@@ -14,6 +14,10 @@ COLLAB_USERS, COLLAB_SECONDS, COLLAB_RELOADS, COLLAB_SEED, COLLAB_SETTLE_MS),
 plus
   COLLAB_QUIESCE_SECONDS  how long to wait for the browsers to agree (120)
   COLLAB_NEW_CELLS  probability that an action inserts a cell (default 0.1)
+  COLLAB_LOAD_DEBUG record when a browser replaces the live notebook with the
+                    file on disk (<notebook>.load-events.json)
+  COLLAB_OBSERVERS  more participants who only have the notebook open (and
+                    reload like the others) without typing (default 0)
   COLLAB_DEBUG      record the merge decisions of cell inputs to
                     <notebook>.debug.json
 */
@@ -26,6 +30,9 @@ const BASE = process.env.COLLAB_BASE_URL ?? "http://localhost:7001";
 const HOME =
   process.env.COLLAB_HOME ?? join(process.env.HOME ?? "", "scratch/lite-bench");
 const USERS = Number(process.env.COLLAB_USERS ?? 10);
+const OBSERVERS = Number(process.env.COLLAB_OBSERVERS ?? 0);
+const LOAD_DEBUG = !!process.env.COLLAB_LOAD_DEBUG;
+const loadEvents: string[] = [];
 const SECONDS = Number(process.env.COLLAB_SECONDS ?? 180);
 const RELOADS = Number(process.env.COLLAB_RELOADS ?? 0.01);
 const NEW_CELLS = Number(process.env.COLLAB_NEW_CELLS ?? 0.1);
@@ -123,7 +130,8 @@ function installDebugHook(): void {
 }
 
 async function openNotebook(page: Page, path: string): Promise<void> {
-  await page.goto(fileUrl(path), { waitUntil: "domcontentloaded" });
+  const url = fileUrl(path) + (LOAD_DEBUG ? "?jupyter_run_debug=json" : "");
+  await page.goto(url, { waitUntil: "domcontentloaded" });
   // Any visible cell editor: the first one in the page can be hidden (e.g. a
   // rendered Markdown cell's).
   await page.waitForFunction(
@@ -183,13 +191,15 @@ test("a meeting's notebook stays consistent with many people typing", async ({
   const path = join(HOME, `collab/meeting-${SEED}-${Date.now()}.ipynb`);
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, JSON.stringify(NOTEBOOK));
-  console.log(`seed ${SEED}, ${USERS} users, ${SECONDS}s, notebook ${path}`);
+  console.log(
+    `seed ${SEED}, ${USERS} users, ${OBSERVERS} observers, ${SECONDS}s, notebook ${path}`,
+  );
 
   const pages: Page[] = [];
   const errors: string[] = [];
   const debugEvents: { t: number; user: number; event: string; data: any }[] =
     [];
-  for (let u = 0; u < USERS; u++) {
+  for (let u = 0; u < USERS + OBSERVERS; u++) {
     const context = await (browser as Browser).newContext();
     const page = await context.newPage();
     watchInconsistencies(page, u);
@@ -201,6 +211,17 @@ test("a meeting's notebook stays consistent with many people typing", async ({
         errors.push(`u${u} console: ${msg.text().slice(0, 300)}`);
       }
     });
+    if (LOAD_DEBUG) {
+      page.on("console", (msg) => {
+        const text = msg.text();
+        const m = text.match(
+          /\[jupyter-run-debug\] ((?:watch|ipynb)\.[\w.]+) (.*)/,
+        );
+        if (m && !m[1].startsWith("ipynb.save")) {
+          loadEvents.push(`${Date.now()} u${u} ${m[1]} ${m[2].slice(0, 400)}`);
+        }
+      });
+    }
     if (DEBUG) {
       if (!DEBUG_IDLE) await page.addInitScript(installDebugHook);
       // CoCalc prefixes console messages with a timestamp, so look inside.
@@ -236,6 +257,7 @@ test("a meeting's notebook stays consistent with many people typing", async ({
           await openNotebook(page, path);
           continue;
         }
+        if (u >= USERS) continue; // an observer
         const token = `tk${u}n${k++}q`;
         await typeToken(page, r, token);
         // Did it reach this participant's own notebook? If not, the typing
@@ -303,6 +325,7 @@ test("a meeting's notebook stays consistent with many people typing", async ({
     JSON.stringify({
       seed: SEED,
       users: USERS,
+      observers: OBSERVERS,
       typed: typed.length,
       missed: missed.length,
       reloads,
@@ -323,6 +346,15 @@ test("a meeting's notebook stays consistent with many people typing", async ({
       `${path}.final.json`,
       JSON.stringify({ values, typed, missed, lost, events, errors }, null, 1),
     );
+  }
+  if (LOAD_DEBUG) {
+    await writeFile(
+      `${path}.load-events.json`,
+      JSON.stringify(loadEvents, null, 1),
+    );
+    const loads = loadEvents.filter((e) => / ipynb\.load\.done /.test(e));
+    console.log(`loads from disk: ${loads.length}`);
+    for (const e of loads) console.log(e.slice(0, 200));
   }
   if (DEBUG) {
     await writeFile(`${path}.debug.json`, JSON.stringify(debugEvents));
