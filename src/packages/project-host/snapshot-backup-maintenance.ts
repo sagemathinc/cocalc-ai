@@ -33,6 +33,8 @@ import {
 import type { StorageAdmissionTicket } from "./storage-admission";
 import type { StorageOperationKind } from "./storage-operation-registry";
 import { orderProjectMaintenance } from "./maintenance-priority";
+import { MaintenanceDispatchQueue } from "./maintenance-dispatch-queue";
+import { MaintenanceScheduleRefresh } from "./maintenance-schedule-refresh";
 import { createMaintenanceStarvationQueue } from "./maintenance-starvation";
 import type { StarvedMaintenance } from "./maintenance-starvation";
 import { recoveryFailureReason } from "./recovery-failure-reason";
@@ -75,9 +77,28 @@ const BEES_CGROUP = "cocalc-bees";
 
 const inFlightSnapshots = new Set<string>();
 const inFlightBackups = new Set<string>();
-let snapshotLaneRunning = false;
-let backupLaneRunning = false;
+const dispatchQueues = new Map<
+  string,
+  {
+    snapshot: MaintenanceDispatchQueue;
+    backup: MaintenanceDispatchQueue;
+    refresh: MaintenanceScheduleRefresh;
+  }
+>();
+function queuesForHost(hostId: string) {
+  let queues = dispatchQueues.get(hostId);
+  if (!queues) {
+    queues = {
+      snapshot: new MaintenanceDispatchQueue(),
+      backup: new MaintenanceDispatchQueue(),
+      refresh: new MaintenanceScheduleRefresh(),
+    };
+    dispatchQueues.set(hostId, queues);
+  }
+  return queues;
+}
 let scheduleListing: Promise<HostProjectMaintenanceSchedule[]> | undefined;
+let inventoryVersion = 0;
 let starvationQueue = createMaintenanceStarvationQueue(() => Date.now());
 
 function parsePositiveInteger(value: string | undefined, fallback: number) {
@@ -646,6 +667,70 @@ function snapshotDueAt(
     : candidate;
 }
 
+function reconciliationDue(
+  row: HostProjectMaintenanceSchedule,
+  kind: "snapshot" | "backup",
+  now: number,
+): boolean {
+  const lastObserved = parseTimestampMs(
+    kind === "snapshot"
+      ? row.last_snapshot_observed_at
+      : row.last_backup_observed_at,
+  );
+  return lastObserved == null || now - lastObserved >= 24 * 60 * 60_000;
+}
+
+function needsConfirmedBackupReconciliation(
+  row: HostProjectMaintenanceSchedule,
+  dueAt: number | undefined,
+  now: number,
+): boolean {
+  const previousDue = parseTimestampMs(row.backup_status_due_at);
+  const lastBackup = parseTimestampMs(row.last_backup);
+  return !!(
+    ((row.backup_status_outcome === "failed" &&
+      row.backup_status_reason?.includes("hosts.recordProjectBackup")) ||
+      (row.backup_status_outcome === "deferred" &&
+        row.backup_status_reason === "change_generation_changed")) &&
+    previousDue != null &&
+    lastBackup != null &&
+    lastBackup >= previousDue &&
+    (dueAt == null || dueAt > now)
+  );
+}
+
+function actionableMaintenance(
+  row: HostProjectMaintenanceSchedule,
+  kind: "snapshot" | "backup",
+  now: number,
+): boolean {
+  const schedule = mergeSchedule(
+    kind === "snapshot" ? DEFAULT_SNAPSHOT_COUNTS : DEFAULT_BACKUP_COUNTS,
+    kind === "snapshot" ? row.snapshots : row.backups,
+  );
+  if (schedule.disabled) return false;
+  const due =
+    kind === "snapshot"
+      ? snapshotDueAt(row, schedule)
+      : backupDueAt(row, schedule);
+  const retry = parseTimestampMs(
+    kind === "snapshot" ? row.snapshot_retry_at : row.backup_retry_at,
+  );
+  if (kind === "snapshot") {
+    return (
+      (retry ?? 0) <= now &&
+      ((due != null && due <= now) || reconciliationDue(row, kind, now))
+    );
+  }
+  return (
+    (due != null && due <= now && (retry ?? 0) <= now) ||
+    needsConfirmedBackupReconciliation(row, due, now) ||
+    ((due == null || due > now) &&
+      reconciliationDue(row, kind, now) &&
+      row.backup_status_outcome !== "failed")
+  );
+}
+
 function retryAt(
   outcome: "succeeded" | "deferred" | "failed" | "skipped",
   failures: number,
@@ -665,11 +750,13 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
   projectIds,
   onFutureDue,
   shadow = false,
+  onDispatched,
 }: {
   hostId: string;
   projectIds?: string[];
   onFutureDue?: (projectId: string, at: number) => void;
   shadow?: boolean;
+  onDispatched?: () => void;
 }): Promise<boolean> {
   const admission = getStorageAdmissionStatus();
   const sweepRestricted =
@@ -779,6 +866,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     });
   }
   const listingStartedAt = Date.now();
+  const listingVersion = ++inventoryVersion;
   const listing = projectIds
     ? statusClient.listProjectMaintenanceSchedules({
         host_id: hostId,
@@ -829,6 +917,15 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       hostId,
       rows,
       requestedProjectIds: projectIds,
+    });
+  }
+  const queues = queuesForHost(hostId);
+  if (!usedOwnershipLease) {
+    queues.refresh.observe({
+      rows,
+      version: listingVersion,
+      at: listingStartedAt,
+      projectIds,
     });
   }
   if (!rows.length) {
@@ -1075,22 +1172,53 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       );
     },
   );
+  const refreshQueuedRow = (row: HostProjectMaintenanceSchedule) =>
+    usedOwnershipLease
+      ? Promise.resolve(row)
+      : queues.refresh.get({
+          row,
+          pendingProjectIds: () => [
+            ...queues.snapshot.pendingProjectIds(100),
+            ...queues.backup.pendingProjectIds(100),
+          ],
+          list: (project_ids) =>
+            statusClient.listProjectMaintenanceSchedules({
+              host_id: hostId,
+              project_ids,
+              limit: project_ids.length,
+            }),
+          onError: (err) =>
+            logger.warn("queued maintenance batch refresh failed", {
+              hostId,
+              err: `${err}`,
+            }),
+        });
   const snapshotLane = async () => {
-    if (snapshotLaneRunning) return;
-    snapshotLaneRunning = true;
-    try {
-      await runWithParallelism(snapshotRows, parallelism, async (row) => {
+    await queues.snapshot.submit({
+      rows: snapshotRows.filter((row) =>
+        actionableMaintenance(row, "snapshot", queuedAt),
+      ),
+      observedAt: listingVersion,
+      parallelism,
+      due: (row) => {
+        const at = snapshotDueAt(
+          row,
+          mergeSchedule(DEFAULT_SNAPSHOT_COUNTS, row.snapshots),
+        );
+        return at == null ? null : new Date(at).toISOString();
+      },
+      run: async (candidate) => {
+        const row = await refreshQueuedRow(candidate);
+        if (!row) return;
         const project_id = row.project_id;
         const schedule = mergeSchedule(DEFAULT_SNAPSHOT_COUNTS, row.snapshots);
         const dueAt = snapshotDueAt(row, schedule);
-        const lastObserved = parseTimestampMs(row.last_snapshot_observed_at);
-        const reconciliationDue =
-          lastObserved == null || Date.now() - lastObserved >= 24 * 60 * 60_000;
         if (
           !project_id ||
           schedule.disabled ||
           (parseTimestampMs(row.snapshot_retry_at) ?? 0) > Date.now() ||
-          ((dueAt == null || dueAt > Date.now()) && !reconciliationDue) ||
+          ((dueAt == null || dueAt > Date.now()) &&
+            !reconciliationDue(row, "snapshot", Date.now())) ||
           inFlightSnapshots.has(project_id)
         ) {
           return;
@@ -1254,33 +1382,29 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         } finally {
           inFlightSnapshots.delete(project_id);
         }
-      });
-    } finally {
-      snapshotLaneRunning = false;
-    }
+      },
+    });
   };
   const backupLane = async () => {
-    if (backupLaneRunning) return;
-    backupLaneRunning = true;
-    try {
-      await runWithParallelism(backupRows, parallelism, async (row) => {
+    await queues.backup.submit({
+      rows: backupRows.filter((row) =>
+        actionableMaintenance(row, "backup", queuedAt),
+      ),
+      observedAt: listingVersion,
+      parallelism,
+      due: (row) => row.backup_due_since,
+      run: async (candidate) => {
+        const row = await refreshQueuedRow(candidate);
+        if (!row) return;
         const project_id = row.project_id;
         const schedule = mergeSchedule(DEFAULT_BACKUP_COUNTS, row.backups);
         const dueAt = backupDueAt(row, schedule);
-        const lastObserved = parseTimestampMs(row.last_backup_observed_at);
-        const reconciliationDue =
-          lastObserved == null || Date.now() - lastObserved >= 24 * 60 * 60_000;
         const previousDue = parseTimestampMs(row.backup_status_due_at);
         const lastBackup = parseTimestampMs(row.last_backup);
-        const needsConfirmedBackupReconciliation =
-          (row.backup_status_outcome === "failed" &&
-            row.backup_status_reason?.includes("hosts.recordProjectBackup")) ||
-          (row.backup_status_outcome === "deferred" &&
-            row.backup_status_reason === "change_generation_changed");
         if (
           project_id &&
           !schedule.disabled &&
-          needsConfirmedBackupReconciliation &&
+          needsConfirmedBackupReconciliation(row, dueAt, Date.now()) &&
           previousDue != null &&
           lastBackup != null &&
           lastBackup >= previousDue &&
@@ -1325,7 +1449,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
           project_id &&
           !schedule.disabled &&
           (dueAt == null || dueAt > Date.now()) &&
-          reconciliationDue &&
+          reconciliationDue(row, "backup", Date.now()) &&
           row.backup_status_outcome !== "failed"
         ) {
           await report({
@@ -1456,13 +1580,12 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         } finally {
           inFlightBackups.delete(project_id);
         }
-      });
-    } finally {
-      backupLaneRunning = false;
-    }
+      },
+    });
   };
-  const overlappingLane = snapshotLaneRunning || backupLaneRunning;
-  await Promise.all([snapshotLane(), backupLane()]);
+  const lanes = [snapshotLane(), backupLane()];
+  onDispatched?.();
+  await Promise.all(lanes);
   const nextStarved = starvationQueue.next();
   if (starvationOverrideEligible && nextStarved) {
     // Wake the globally fair winner even when it was outside this event batch.
@@ -1474,9 +1597,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       ),
     );
   }
-  // One lane may have been occupied by an event-triggered batch. A full
-  // reconciliation is incomplete until both lanes have seen its inventory.
-  return !overlappingLane;
+  return true;
 }
 
 export async function runProjectSnapshotBackupMaintenanceSweepOnce({
@@ -1484,17 +1605,20 @@ export async function runProjectSnapshotBackupMaintenanceSweepOnce({
   projectIds,
   onFutureDue,
   shadow = false,
+  onDispatched,
 }: {
   hostId: string;
   projectIds?: string[];
   onFutureDue?: (projectId: string, at: number) => void;
   shadow?: boolean;
+  onDispatched?: () => void;
 }) {
   return await runProjectSnapshotBackupMaintenanceSweepUnlocked({
     hostId,
     projectIds,
     onFutureDue,
     shadow,
+    onDispatched,
   });
 }
 
@@ -1523,6 +1647,7 @@ export function startProjectSnapshotBackupMaintenance({
   const futureDue = new Map<string, number>();
   let changedTimer: ReturnType<typeof setTimeout> | undefined;
   let dueTimer: ReturnType<typeof setTimeout> | undefined;
+  let dueTimerAt: number | undefined;
   let sweepRetryTimer: ReturnType<typeof setTimeout> | undefined;
   let changedDrainRunning = false;
   let fullSweepRunning = false;
@@ -1538,16 +1663,20 @@ export function startProjectSnapshotBackupMaintenance({
     if (!Number.isFinite(at) || at <= Date.now()) return;
     const previous = futureDue.get(projectId);
     if (previous == null || at < previous) futureDue.set(projectId, at);
+    if (!dueTimer || at < (dueTimerAt ?? Infinity)) scheduleFutureDue();
   };
   const scheduleFutureDue = () => {
     clearTimeout(dueTimer);
     dueTimer = undefined;
+    dueTimerAt = undefined;
     if (closed || !futureDue.size) return;
     let earliest = Number.POSITIVE_INFINITY;
     for (const due of futureDue.values()) earliest = Math.min(earliest, due);
+    dueTimerAt = earliest;
     dueTimer = setTimeout(
       () => {
         dueTimer = undefined;
+        dueTimerAt = undefined;
         const now = Date.now();
         for (const [projectId, due] of futureDue) {
           if (due > now) continue;
@@ -1570,16 +1699,22 @@ export function startProjectSnapshotBackupMaintenance({
     );
     for (const projectId of projectIds) changedProjects.delete(projectId);
     for (const projectId of projectIds) futureDue.delete(projectId);
-    const laneBusy = snapshotLaneRunning || backupLaneRunning;
-    let needsRetry = laneBusy;
+    let needsRetry = false;
+    let dispatched = false;
     try {
       const reconciled = await runProjectSnapshotBackupMaintenanceSweepOnce({
         hostId,
         projectIds,
         onFutureDue: rememberFutureDue,
         shadow,
+        onDispatched: () => {
+          dispatched = true;
+          changedDrainRunning = false;
+          scheduleFutureDue();
+          scheduleChangedDrain(CHANGE_EVENT_DELAY_MS);
+        },
       });
-      if (!reconciled || laneBusy) {
+      if (!reconciled) {
         needsRetry = true;
         for (const projectId of projectIds) changedProjects.add(projectId);
       }
@@ -1592,7 +1727,7 @@ export function startProjectSnapshotBackupMaintenance({
         err: `${err}`,
       });
     } finally {
-      changedDrainRunning = false;
+      if (!dispatched) changedDrainRunning = false;
       scheduleFutureDue();
       scheduleChangedDrain(
         needsRetry ? CHANGE_EVENT_RETRY_MS : CHANGE_EVENT_DELAY_MS,
