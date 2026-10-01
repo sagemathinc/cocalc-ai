@@ -23,6 +23,7 @@ import {
   validPath,
   writeProjectFile,
 } from "./claude-project-file-tools";
+import type { AgentMemory } from "./claude-agent-memory";
 
 // Room for project_write_file content (1 MB, JSON-escaped).
 const MAX_REQUEST_BYTES = 2_500_000;
@@ -107,6 +108,8 @@ export interface ClaudeProjectToolBridge {
   setAsyncQuestionHandler: NonNullable<
     HarnessProcess["setAsyncQuestionHandler"]
   >;
+  /** Memory of the account that launched this controller's turns. */
+  setMemory(memory: AgentMemory): void;
 }
 
 export async function createClaudeProjectToolBridge(
@@ -129,6 +132,7 @@ export async function createClaudeProjectToolBridge(
   let closed: Promise<void> | undefined;
   let fenced = false;
   let paused = false;
+  let memory: AgentMemory | undefined;
   let asyncQuestion:
     | Parameters<ClaudeProjectToolBridge["setAsyncQuestionHandler"]>[0]
     | undefined;
@@ -219,7 +223,15 @@ export async function createClaudeProjectToolBridge(
             result = await writeProjectFile(execute, args, signal);
           else if (tool === "project_edit_file")
             result = await editProjectFile(execute, args, signal);
-          else if (tool === "request_user_input_async" && asyncQuestion)
+          else if (tool.startsWith("memory_")) {
+            if (!memory) throw Error("Agent memory is not available");
+            if (tool === "memory_list") result = await memory.list();
+            else if (tool === "memory_read") result = await memory.read(args);
+            else if (tool === "memory_write") result = await memory.write(args);
+            else if (tool === "memory_delete")
+              result = await memory.delete(args);
+            else throw Error("Unsupported project tool");
+          } else if (tool === "request_user_input_async" && asyncQuestion)
             result = await asyncQuestion(args);
           else throw Error("Unsupported project tool");
           socket.end(JSON.stringify(result) + "\n");
@@ -254,6 +266,9 @@ export async function createClaudeProjectToolBridge(
     });
     return {
       directory,
+      setMemory: (value) => {
+        memory = value;
+      },
       setAsyncQuestionHandler: (handler) => {
         asyncQuestion = handler;
       },

@@ -53,6 +53,12 @@ import {
   CLAUDE_CONTROLLER_HOME_LABEL,
   claudeControllerHomePrefix,
 } from "./claude-subscription-paths";
+import {
+  accountMemoryHub,
+  createAgentMemory,
+  memoryPromptSection,
+  type MemoryEntry,
+} from "./claude-agent-memory";
 
 const CONTROLLER_HOME = "/home/claude";
 const CONTROLLER_WORKSPACE = "/workspace";
@@ -264,6 +270,20 @@ export async function launchClaudeSubscriptionController(
     throw Error("ACP launch requires an admitted conversation");
   const credentialId = credential.credentialId;
   const skill = purpose === "agent" ? await getBuiltinClaudeSkillText() : "";
+  // Memory of the account that launched this turn, never a collaborator's.
+  const memory =
+    purpose === "agent"
+      ? createAgentMemory(accountMemoryHub({ projectId, accountId }))
+      : undefined;
+  let memoryEntries: MemoryEntry[] = [];
+  if (memory) {
+    try {
+      memoryEntries = await memory.entries();
+    } catch (error) {
+      // Memory must never block a turn; the tools still work once the hub does.
+      logger.warn("could not load agent memory index", { error: `${error}` });
+    }
+  }
   const systemPromptAppend = `The CoCalc skill is preloaded below as session instructions, not as a separate Skill tool. Follow it for CoCalc workflows.
 This is an isolated subscription controller. Run ALL project filesystem and CLI operations through the project_exec tool on ${CLAUDE_PROJECT_MCP_NAME}, not in the controller. Read applicable project CLAUDE.md instructions through that tool before editing. Skill reference files are available in the project at /home/user/.claude/skills/cocalc/.
 Current project tool server: ${CLAUDE_PROJECT_MCP_NAME}.
@@ -273,7 +293,7 @@ The project_exec environment contains the runtime-issued CoCalc agent identity f
 
 <cocalc-skill>
 ${skill}
-</cocalc-skill>`;
+</cocalc-skill>${memory ? `\n\n${memoryPromptSection(memoryEntries)}` : ""}`;
   const registered = await getClaudeSubscriptionCredential({
     projectId,
     accountId,
@@ -450,6 +470,7 @@ ${skill}
           });
         },
       );
+      if (memory) toolBridge.setMemory(memory);
     }
     if (projectNeedsRestrictedClaudeEgress(projectId)) {
       // The controller runs in the project's network containment, which

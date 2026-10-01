@@ -422,8 +422,41 @@ test("trusted MCP helper executes only through the scoped project socket", async
       "project_read_file",
       "project_edit_file",
       "project_write_file",
+      "memory_list",
+      "memory_read",
+      "memory_write",
+      "memory_delete",
       "request_user_input_async",
     ]);
+    const unavailable = await request(30, "tools/call", {
+      name: "memory_list",
+      arguments: {},
+    });
+    expect(unavailable.result.isError).toBe(true);
+    const saved: any[] = [];
+    bridge.setMemory({
+      list: async () => ({ count: saved.length, notes: saved }),
+      read: async () => ({ error: "unused" }),
+      write: async (args: any) => {
+        saved.push({ name: args.name, description: args.description });
+        return { name: args.name, saved: "created" };
+      },
+      delete: async () => ({ name: "x", deleted: false }),
+      entries: async () => [],
+    } as any);
+    const wrote = await request(31, "tools/call", {
+      name: "memory_write",
+      arguments: { name: "deploy", description: "How to deploy", body: "..." },
+    });
+    expect(wrote.result.isError).toBe(false);
+    const listedNotes = await request(32, "tools/call", {
+      name: "memory_list",
+      arguments: {},
+    });
+    expect(JSON.parse(listedNotes.result.content[0].text)).toEqual({
+      count: 1,
+      notes: [{ name: "deploy", description: "How to deploy" }],
+    });
     const called = await request(3, "tools/call", {
       name: "project_exec",
       arguments: { script: "pwd", cwd: "/home/user" },
