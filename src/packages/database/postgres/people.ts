@@ -18,6 +18,7 @@ import {
   type PersonalStatePatch,
   type PersonalStateRow,
   type SharedWork,
+  type AgentCollaboratorAccess,
   MAX_SHARED_WORK_ITEMS,
   assertPeopleStateKind,
   normalizeAlias,
@@ -466,7 +467,8 @@ export async function listSharedWork({
       AND p.users -> $3::text ->> 'group' IN ('owner', 'collaborator')`;
   const params = [project_ids, viewer_id, person_id, MAX_SHARED_WORK_ITEMS];
   const agents = await getPool().query(
-    `SELECT agent_id, project_id, name, path, thread_id, created_at
+    `SELECT agent_id, project_id, name, path, thread_id, created_at,
+            collaborator_access
      FROM agent_identities
      WHERE project_id IN (${shared})
        AND created_by = $3::uuid AND disabled_at IS NULL
@@ -499,6 +501,8 @@ export async function listSharedWork({
       name: row.name,
       path: row.path,
       thread_id: row.thread_id,
+      collaborator_access:
+        row.collaborator_access === "view" ? "view" : "message",
       created_at: new Date(row.created_at).valueOf(),
     })),
     artifacts: artifacts.rows.map((row) => ({
@@ -514,4 +518,52 @@ export async function listSharedWork({
       agent_name: row.agent_name,
     })),
   };
+}
+
+// Read an agent's stated collaborator access; any current collaborator may.
+export async function getAgentAccess({
+  account_id,
+  project_id,
+  agent_id,
+}: {
+  account_id: string;
+  project_id: string;
+  agent_id: string;
+}): Promise<{ access: AgentCollaboratorAccess; is_creator: boolean } | null> {
+  const { rows } = await getPool().query(
+    `SELECT a.collaborator_access, a.created_by FROM agent_identities a
+     JOIN projects c ON c.project_id = a.project_id
+     WHERE a.project_id = $1 AND a.agent_id = $2 AND a.disabled_at IS NULL
+       AND ${collaborator(3)}`,
+    [project_id, agent_id, account_id],
+  );
+  if (rows[0] == null) return null;
+  return {
+    access: rows[0].collaborator_access === "view" ? "view" : "message",
+    is_creator: rows[0].created_by === account_id,
+  };
+}
+
+// Only the agent's creator may state the preference.
+export async function setAgentAccess({
+  account_id,
+  project_id,
+  agent_id,
+  access,
+}: {
+  account_id: string;
+  project_id: string;
+  agent_id: string;
+  access: AgentCollaboratorAccess;
+}): Promise<void> {
+  if (access !== "view" && access !== "message") throw Error("invalid access");
+  const { rowCount } = await getPool().query(
+    `UPDATE agent_identities a SET collaborator_access = $4
+     FROM projects c
+     WHERE c.project_id = a.project_id
+       AND a.project_id = $1 AND a.agent_id = $2 AND a.disabled_at IS NULL
+       AND a.created_by = $3::uuid AND ${collaborator(3)}`,
+    [project_id, agent_id, account_id, access === "view" ? "view" : null],
+  );
+  if (!rowCount) throw Error("only the agent's creator can change this");
 }

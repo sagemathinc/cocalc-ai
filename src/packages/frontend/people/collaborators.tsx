@@ -23,6 +23,7 @@ import type {
   SharedWork,
 } from "@cocalc/util/people";
 import { AliasDialog } from "./alias-dialog";
+import { VIEW_ONLY_NOTE } from "./agent-access-dialog";
 import { conversationEvents, conversationsChanged, peopleApi } from "./api";
 import { ConversationCollection } from "./conversation-collection";
 import { useCollaboratorProjects } from "./new-conversation";
@@ -421,7 +422,21 @@ export function PersonDetail({
                               )
                           }
                         >
-                          <Cell>@{agent.name}</Cell>
+                          <Cell>
+                            @{agent.name}
+                            {agent.collaborator_access === "view" && (
+                              <span
+                                title={VIEW_ONLY_NOTE}
+                                style={{
+                                  marginLeft: 8,
+                                  color: UI_COLORS.warning,
+                                  fontSize: 12,
+                                }}
+                              >
+                                view only, by request
+                              </span>
+                            )}
+                          </Cell>
                           <Cell secondary>
                             {projectTitle(agent.project_id)}
                           </Cell>

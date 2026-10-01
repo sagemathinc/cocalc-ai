@@ -14,6 +14,8 @@ import {
   mentionKey,
   listPersonalStates,
   listSharedWork,
+  getAgentAccess,
+  setAgentAccess,
   markConversationRead,
   refreshConversationActivity,
   removeConversation,
@@ -382,6 +384,25 @@ test("shared work: a person's agents and their artifacts in shared projects only
     project_ids: [project_id, other_project_id],
   });
   expect(work.agents.map((a) => a.name)).toEqual(["helper"]);
+  expect(work.agents[0].collaborator_access).toBe("message");
+  // Only the creator can state "view only"; others can read it.
+  await expect(
+    setAgentAccess({
+      account_id: alice,
+      project_id,
+      agent_id: agent,
+      access: "view",
+    }),
+  ).rejects.toThrow("creator");
+  await setAgentAccess({
+    account_id: bob,
+    project_id,
+    agent_id: agent,
+    access: "view",
+  });
+  expect(
+    await getAgentAccess({ account_id: alice, project_id, agent_id: agent }),
+  ).toEqual({ access: "view", is_creator: false });
   expect(work.artifacts.map((a) => a.title).sort()).toEqual([
     "From current thread",
     "From earlier thread",

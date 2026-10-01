@@ -77,12 +77,18 @@ export const DEFAULT_PERSONAL_STATE: PersonalState = {
 
 // A collaborator's registered agents and the artifacts they published, in
 // projects shared with the viewer.
+// The creator's preference for other collaborators. Any project collaborator
+// can technically message any agent (turns use their own credentials), so
+// "view" is a convention, not an enforced permission.
+export type AgentCollaboratorAccess = "message" | "view";
+
 export interface SharedAgent {
   agent_id: string;
   project_id: string;
   name: string;
   path: string;
   thread_id: string;
+  collaborator_access: AgentCollaboratorAccess;
   created_at: number;
 }
 

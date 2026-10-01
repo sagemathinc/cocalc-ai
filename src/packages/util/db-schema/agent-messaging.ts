@@ -133,6 +133,11 @@ Table({
       type: "uuid",
       desc: "Replacement identity created by explicit owner recovery.",
     },
+    collaborator_access: {
+      type: "string",
+      pg_type: "VARCHAR(16)",
+      desc: "Creator's stated preference for other collaborators: 'view' asks them to only view; null means they may message. A convention, not enforced.",
+    },
   },
 });
 

@@ -59,6 +59,8 @@ export interface InterBayPeopleApi {
     person_id: string;
     project_ids: string[];
   }): Promise<SharedWork>;
+  getAgentAccess: PeopleApi["getAgentAccess"];
+  setAgentAccess: PeopleApi["setAgentAccess"];
   // home
   listSharedWork: PeopleApi["listSharedWork"];
   listConversations: PeopleApi["listConversations"];

@@ -23,6 +23,8 @@ import {
   mentionKey,
   listPersonalStates,
   listSharedWork,
+  getAgentAccess,
+  setAgentAccess,
   markConversationRead,
   refreshConversationActivity,
   removeConversation,
@@ -197,6 +199,18 @@ export const peopleControl: InterBayPeopleApi = {
   async touch(opts) {
     await assertOwner(opts.project_id);
     return await touchConversation(opts);
+  },
+
+  async getAgentAccess(opts) {
+    await assertOwner(opts.project_id);
+    requireUuid(opts.agent_id, "agent_id");
+    return await getAgentAccess({ ...opts, account_id: opts.account_id! });
+  },
+
+  async setAgentAccess(opts) {
+    await assertOwner(opts.project_id);
+    requireUuid(opts.agent_id, "agent_id");
+    await setAgentAccess({ ...opts, account_id: opts.account_id! });
   },
 
   async refresh(opts) {
@@ -374,6 +388,14 @@ export const peopleApi: PeopleApi = {
 
   async listSharedWork(opts) {
     return await (await home(opts.account_id!)).listSharedWork(opts);
+  },
+
+  async getAgentAccess(opts) {
+    return await (await owner(opts.project_id)).getAgentAccess(opts);
+  },
+
+  async setAgentAccess(opts) {
+    await (await owner(opts.project_id)).setAgentAccess(opts);
   },
 
   async setState(opts) {

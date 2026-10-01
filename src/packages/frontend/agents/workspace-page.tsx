@@ -20,6 +20,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { Suspense, type ReactNode } from "react";
 import { WorkspaceContentNavigation } from "./workspace-content-navigation";
+import { AgentAccessDialog } from "@cocalc/frontend/people/agent-access-dialog";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { CocalcErrorBoundary } from "@cocalc/frontend/app/error-boundary";
 import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
@@ -3146,6 +3147,7 @@ export function MyAgentsWorkspacePage({
   const [creatingSourceAgentId, setCreatingSourceAgentId] = useState<string>();
   const [copyingAgent, setCopyingAgent] = useState<NamedAgent>();
   const [freshAgent, startFresh] = useState<NamedAgent>();
+  const [accessAgent, setAccessAgent] = useState<NamedAgent>();
   const [initialCopyName, setInitialCopyName] = useState("");
   const [copyBusy, setCopyBusy] = useState(false);
   const [copyError, setCopyError] = useState("");
@@ -3859,6 +3861,11 @@ export function MyAgentsWorkspacePage({
                 icon: <Icon name="plus-circle" />,
               },
               {
+                key: "access",
+                label: "Collaborator access…",
+                icon: <Icon name="users" />,
+              },
+              {
                 key: hidden ? "show" : "hide",
                 icon: <Icon name={hidden ? "eye" : "eye-slash"} />,
                 label: hidden ? "Show in Agents" : "Hide from Agents",
@@ -3883,6 +3890,10 @@ export function MyAgentsWorkspacePage({
               }
               if (key === "fresh") {
                 startFresh(agent);
+                return;
+              }
+              if (key === "access") {
+                setAccessAgent(agent);
                 return;
               }
               if (key === "remove") {
@@ -4661,6 +4672,15 @@ export function MyAgentsWorkspacePage({
             setCopyingAgent(undefined);
             setCopyError("");
           }}
+        />
+      )}
+      {accessAgent && (
+        <AgentAccessDialog
+          open
+          project_id={accessAgent.endpoint.project_id}
+          agent_id={accessAgent.endpoint.agent_id}
+          name={accessAgent.name}
+          onClose={() => setAccessAgent(undefined)}
         />
       )}
       {freshAgent && (
