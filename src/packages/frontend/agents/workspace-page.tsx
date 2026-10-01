@@ -3110,6 +3110,7 @@ export function MyAgentsWorkspacePage({
   const projectsOpen =
     contentOpen &&
     (activeTopTab === "projects" || is_valid_uuid_string(activeTopTab));
+  const peopleOpen = contentOpen && activeTopTab === "people";
   const { pageStyle } = useAppContext();
   const isNarrow = pageStyle.isNarrow;
   const { directory, error, loading } = useNamedAgents();
@@ -4092,6 +4093,25 @@ export function MyAgentsWorkspacePage({
                   >
                     Library
                   </Button>
+                  {!lite && (
+                    <Button
+                      block
+                      type="text"
+                      style={{
+                        justifyContent: "flex-start",
+                        background: peopleOpen ? UI_COLORS.selected : undefined,
+                      }}
+                      icon={<Icon name="users" />}
+                      aria-current={peopleOpen ? "page" : undefined}
+                      onClick={() => {
+                        searchNavigation.current++;
+                        setMobileList(false);
+                        void redux.getActions("page").set_active_tab("people");
+                      }}
+                    >
+                      People
+                    </Button>
+                  )}
                   {accountId && (
                     <AgentSearch
                       accountId={accountId}

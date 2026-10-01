@@ -4,8 +4,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ListedConversation } from "@cocalc/util/conversations";
-import { conversationEvents, conversationsApi } from "./api";
+import type { ListedConversation } from "@cocalc/util/people";
+import { conversationEvents, peopleApi } from "./api";
 
 const POLL_MS = 30_000;
 
@@ -30,7 +30,7 @@ export function useConversations(active: boolean): ConversationsState {
     const current = ++generation.current;
     void (async () => {
       try {
-        const result = await conversationsApi().list({});
+        const result = await peopleApi().listConversations({});
         if (current !== generation.current) return;
         setConversations(result.conversations);
         setUnavailableBays(result.unavailable_bays);

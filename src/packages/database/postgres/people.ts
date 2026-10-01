@@ -4,7 +4,7 @@
  */
 
 // project_conversations lives on the project's owning bay;
-// account_conversation_state lives on the account's home bay.
+// account_people_state lives on the account's home bay.
 // Callers are responsible for routing to the right bay.
 
 import { randomUUID } from "node:crypto";
@@ -14,10 +14,14 @@ import {
   MAX_CONVERSATIONS_PER_PROJECT,
   MAX_LISTED_PROJECTS,
   type Conversation,
-  type ConversationPersonalState,
+  type PeopleStateKind,
+  type PersonalStatePatch,
+  type PersonalStateRow,
+  assertPeopleStateKind,
+  normalizeAlias,
   normalizeConversationPath,
   normalizeConversationTitle,
-} from "@cocalc/util/conversations";
+} from "@cocalc/util/people";
 
 const COLUMNS = `conversation_id, project_id, path, title, created_by, created,
   last_activity, last_sender_id, participant_ids`;
@@ -212,48 +216,142 @@ export async function removeConversation({
 
 // ---- account home bay: personal state ----
 
-export async function getConversationStates({
+const STATE_COLUMNS = `kind, target_id, project_id, pinned, pin_order, alias,
+  following, muted, collected, last_read`;
+
+function toState(row: any): PersonalStateRow {
+  return {
+    kind: row.kind,
+    target_id: row.target_id,
+    project_id: row.project_id ?? null,
+    pinned: !!row.pinned,
+    pin_order: row.pin_order ?? null,
+    alias: row.alias ?? null,
+    following: !!row.following,
+    muted: !!row.muted,
+    collected: !!row.collected,
+    last_read: row.last_read == null ? null : row.last_read.valueOf(),
+  };
+}
+
+export async function getPersonalStates({
   account_id,
-  conversation_ids,
+  kind,
+  target_ids,
 }: {
   account_id: string;
-  conversation_ids: string[];
-}): Promise<Map<string, ConversationPersonalState>> {
-  const states = new Map<string, ConversationPersonalState>();
-  if (conversation_ids.length === 0) return states;
+  kind: PeopleStateKind;
+  target_ids: string[];
+}): Promise<Map<string, PersonalStateRow>> {
+  const states = new Map<string, PersonalStateRow>();
+  if (target_ids.length === 0) return states;
   const { rows } = await getPool().query(
-    `SELECT conversation_id, pinned, last_read FROM account_conversation_state
-     WHERE account_id = $1 AND conversation_id = ANY($2::uuid[])`,
-    [account_id, conversation_ids],
+    `SELECT ${STATE_COLUMNS} FROM account_people_state
+     WHERE account_id = $1 AND kind = $2 AND target_id = ANY($3::uuid[])`,
+    [account_id, assertPeopleStateKind(kind), target_ids],
   );
-  for (const row of rows) {
-    states.set(row.conversation_id, {
-      pinned: !!row.pinned,
-      last_read: row.last_read == null ? null : row.last_read.valueOf(),
-    });
-  }
+  for (const row of rows) states.set(row.target_id, toState(row));
   return states;
 }
 
-export async function setConversationPinned({
+export async function listPersonalStates({
   account_id,
-  project_id,
-  conversation_id,
-  pinned,
+  kind,
 }: {
   account_id: string;
-  project_id: string;
-  conversation_id: string;
-  pinned: boolean;
-}): Promise<void> {
-  await getPool().query(
-    `INSERT INTO account_conversation_state
-       (account_id, conversation_id, project_id, pinned, updated)
-     VALUES ($1, $2, $3, $4, NOW())
-     ON CONFLICT (account_id, conversation_id)
-     DO UPDATE SET pinned = EXCLUDED.pinned, updated = NOW()`,
-    [account_id, conversation_id, project_id, !!pinned],
+  kind: PeopleStateKind;
+}): Promise<PersonalStateRow[]> {
+  const { rows } = await getPool().query(
+    `SELECT ${STATE_COLUMNS} FROM account_people_state
+     WHERE account_id = $1 AND kind = $2
+     ORDER BY pin_order NULLS LAST, updated DESC
+     LIMIT 10000`,
+    [account_id, assertPeopleStateKind(kind)],
   );
+  return rows.map(toState);
+}
+
+// Upsert only the fields present in the patch. An empty alias clears it.
+export async function setPersonalState({
+  account_id,
+  kind,
+  target_id,
+  project_id,
+  patch,
+}: {
+  account_id: string;
+  kind: PeopleStateKind;
+  target_id: string;
+  project_id?: string | null;
+  patch: PersonalStatePatch;
+}): Promise<PersonalStateRow> {
+  assertPeopleStateKind(kind);
+  const values: Record<string, unknown> = {};
+  if (patch.pinned !== undefined) values.pinned = !!patch.pinned;
+  if (patch.pin_order !== undefined) {
+    if (patch.pin_order != null && !Number.isFinite(patch.pin_order)) {
+      throw Error("invalid pin_order");
+    }
+    values.pin_order = patch.pin_order;
+  }
+  if (patch.alias !== undefined) values.alias = normalizeAlias(patch.alias);
+  if (patch.following !== undefined) values.following = !!patch.following;
+  if (patch.muted !== undefined) values.muted = !!patch.muted;
+  if (patch.collected !== undefined) values.collected = !!patch.collected;
+  const columns = Object.keys(values);
+  const params: unknown[] = [account_id, kind, target_id, project_id ?? null];
+  const insertColumns = columns.map((column) => {
+    params.push(values[column]);
+    return column;
+  });
+  const placeholders = insertColumns.map((_, n) => `$${n + 5}`);
+  const updates = [
+    "updated = NOW()",
+    "project_id = COALESCE(EXCLUDED.project_id, account_people_state.project_id)",
+    ...insertColumns.map((column) => `${column} = EXCLUDED.${column}`),
+  ];
+  try {
+    const { rows } = await getPool().query(
+      `INSERT INTO account_people_state
+         (account_id, kind, target_id, project_id, updated${insertColumns
+           .map((column) => `, ${column}`)
+           .join("")})
+       VALUES ($1, $2, $3, $4, NOW()${placeholders
+         .map((placeholder) => `, ${placeholder}`)
+         .join("")})
+       ON CONFLICT (account_id, kind, target_id)
+       DO UPDATE SET ${updates.join(", ")}
+       RETURNING ${STATE_COLUMNS}`,
+      params,
+    );
+    return toState(rows[0]);
+  } catch (err) {
+    if ((err as { code?: string })?.code === "23505") {
+      throw Error(`you already use the alias @${values.alias}`);
+    }
+    throw err;
+  }
+}
+
+export async function resolveAlias({
+  account_id,
+  kind,
+  alias,
+}: {
+  account_id: string;
+  kind: PeopleStateKind;
+  alias: string;
+}): Promise<{ target_id: string; project_id: string | null } | null> {
+  const normalized = normalizeAlias(alias);
+  if (normalized == null) return null;
+  const { rows } = await getPool().query(
+    `SELECT target_id, project_id FROM account_people_state
+     WHERE account_id = $1 AND kind = $2 AND alias = $3`,
+    [account_id, assertPeopleStateKind(kind), normalized],
+  );
+  return rows[0] == null
+    ? null
+    : { target_id: rows[0].target_id, project_id: rows[0].project_id ?? null };
 }
 
 // Monotone: a delayed or stale call can never move the read marker backwards.
@@ -270,12 +368,12 @@ export async function markConversationRead({
 }): Promise<void> {
   if (!Number.isFinite(read_through)) throw Error("invalid read_through");
   await getPool().query(
-    `INSERT INTO account_conversation_state
-       (account_id, conversation_id, project_id, pinned, last_read, updated)
-     VALUES ($1, $2, $3, false, $4, NOW())
-     ON CONFLICT (account_id, conversation_id)
+    `INSERT INTO account_people_state
+       (account_id, kind, target_id, project_id, last_read, updated)
+     VALUES ($1, 'conversation', $2, $3, $4, NOW())
+     ON CONFLICT (account_id, kind, target_id)
      DO UPDATE SET
-       last_read = GREATEST(account_conversation_state.last_read, EXCLUDED.last_read),
+       last_read = GREATEST(account_people_state.last_read, EXCLUDED.last_read),
        updated = NOW()`,
     [account_id, conversation_id, project_id, new Date(read_through)],
   );

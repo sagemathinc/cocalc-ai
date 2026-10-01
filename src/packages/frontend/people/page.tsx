@@ -8,11 +8,12 @@ import { Alert, Button, Input, Tabs, Typography } from "antd";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
-import type {
-  Conversation,
-  ListedConversation,
-} from "@cocalc/util/conversations";
-import { conversationsApi } from "./api";
+import {
+  DEFAULT_PERSONAL_STATE,
+  type Conversation,
+  type ListedConversation,
+} from "@cocalc/util/people";
+import { peopleApi } from "./api";
 import { CollaboratorList, PersonDetail, usePeople } from "./collaborators";
 import { ConversationList } from "./conversation-list";
 import { ConversationView } from "./conversation-view";
@@ -215,11 +216,10 @@ function useSelectedConversation(
     setFetched(undefined);
     if (!project_id || !conversation_id || inList) return;
     let canceled = false;
-    void conversationsApi()
-      .get({ project_id, conversation_id })
+    void peopleApi()
+      .getConversation({ project_id, conversation_id })
       .then((c) => {
-        if (!canceled && c)
-          setFetched({ ...c, pinned: false, last_read: null });
+        if (!canceled && c) setFetched({ ...c, ...DEFAULT_PERSONAL_STATE });
       })
       .catch(() => {});
     return () => {

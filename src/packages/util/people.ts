@@ -29,12 +29,75 @@ export interface Conversation {
   participant_ids: string[];
 }
 
-export interface ConversationPersonalState {
+// Things an account keeps private choices about. Artifacts, agents and
+// projects keep using their existing stores (Library, named agents,
+// project bookmarks).
+export const PEOPLE_STATE_KINDS = ["conversation", "person"] as const;
+export type PeopleStateKind = (typeof PEOPLE_STATE_KINDS)[number];
+
+export const MAX_ALIAS_LENGTH = 64;
+
+// One account's private choices about one conversation or person.
+export interface PersonalState {
   pinned: boolean;
+  // Manual order among pinned items; lower sorts first.
+  pin_order?: number | null;
+  // Private, stable handle (without "@"). Unique per account and kind.
+  alias?: string | null;
+  following: boolean;
+  muted: boolean;
+  collected: boolean;
+  // Conversations only: activity time this account has read through.
   last_read?: number | null;
 }
 
-export type ListedConversation = Conversation & ConversationPersonalState;
+export type PersonalStatePatch = Partial<
+  Pick<
+    PersonalState,
+    "pinned" | "pin_order" | "alias" | "following" | "muted" | "collected"
+  >
+>;
+
+export interface PersonalStateRow extends PersonalState {
+  kind: PeopleStateKind;
+  target_id: string;
+  project_id?: string | null;
+}
+
+export const DEFAULT_PERSONAL_STATE: PersonalState = {
+  pinned: false,
+  pin_order: null,
+  alias: null,
+  following: false,
+  muted: false,
+  collected: false,
+  last_read: null,
+};
+
+export type ListedConversation = Conversation & PersonalState;
+
+export function assertPeopleStateKind(kind: unknown): PeopleStateKind {
+  if (!PEOPLE_STATE_KINDS.includes(kind as PeopleStateKind)) {
+    throw Error(`invalid kind: ${kind}`);
+  }
+  return kind as PeopleStateKind;
+}
+
+// Aliases are case-insensitive handles like @chat2 or @bella. Returns null to
+// clear the alias.
+export function normalizeAlias(alias: unknown): string | null {
+  const value = `${alias ?? ""}`.trim().replace(/^@/, "").toLowerCase();
+  if (!value) return null;
+  if (
+    !/^[a-z0-9][a-z0-9._-]*$/.test(value) ||
+    value.length > MAX_ALIAS_LENGTH
+  ) {
+    throw Error(
+      "an alias uses letters, digits, '.', '_' or '-', starts with a letter or digit, and has at most 64 characters",
+    );
+  }
+  return value;
+}
 
 export function normalizeConversationTitle(title: unknown): string {
   const value = `${title ?? ""}`.replace(/\s+/g, " ").trim();

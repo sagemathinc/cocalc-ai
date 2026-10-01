@@ -11,7 +11,7 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   isConversationUnread,
   type ListedConversation,
-} from "@cocalc/util/conversations";
+} from "@cocalc/util/people";
 
 const VISUALLY_HIDDEN = {
   position: "absolute",

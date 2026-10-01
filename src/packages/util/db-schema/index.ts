@@ -65,7 +65,7 @@ import "./compute-vm-instances";
 import "./compute-vms";
 import "./compute-volumes";
 import "./collaborators";
-import "./conversations";
+import "./people";
 import "./commercial-orders";
 import "./crm";
 import "./crm-outreach";

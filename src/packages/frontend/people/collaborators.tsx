@@ -10,7 +10,7 @@ import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { Icon } from "@cocalc/frontend/components";
 import { displayNameFromUserRecord } from "@cocalc/frontend/users/display-name";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
-import type { ListedConversation } from "@cocalc/util/conversations";
+import type { ListedConversation } from "@cocalc/util/people";
 import { ConversationList } from "./conversation-list";
 import { useCollaboratorProjects } from "./new-conversation";
 

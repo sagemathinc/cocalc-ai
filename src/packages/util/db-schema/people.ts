@@ -41,23 +41,51 @@ Table({
   },
 });
 
-// Per-account choices about conversations, stored on the account's home bay.
+// Per-account private choices about conversations and people, stored on the
+// account's home bay. One row per (account, kind, target).
 Table({
-  name: "account_conversation_state",
+  name: "account_people_state",
   rules: {
-    primary_key: ["account_id", "conversation_id"],
+    primary_key: ["account_id", "kind", "target_id"],
+    pg_custom_indexes: [
+      {
+        name: "account_people_state_alias",
+        unique: true,
+        query: "(account_id, kind, alias) WHERE alias IS NOT NULL",
+      },
+    ],
   },
   fields: {
     account_id: { type: "uuid", desc: "Account these choices belong to." },
-    conversation_id: { type: "uuid", desc: "Conversation identity." },
+    kind: {
+      type: "string",
+      pg_type: "VARCHAR(32)",
+      desc: "What the target is: conversation or person.",
+    },
+    target_id: {
+      type: "uuid",
+      desc: "conversation_id or the person's account_id.",
+    },
     project_id: {
       type: "uuid",
-      desc: "Project of the conversation (reference only, not authority).",
+      desc: "Project of a conversation (reference only, not authority).",
     },
     pinned: { type: "boolean", desc: "Pinned by this account." },
+    pin_order: {
+      type: "number",
+      desc: "Manual order among pinned items; lower sorts first.",
+    },
+    alias: {
+      type: "string",
+      pg_type: "VARCHAR(64)",
+      desc: "Private lowercase handle, unique per account and kind.",
+    },
+    following: { type: "boolean", desc: "Explicitly followed." },
+    muted: { type: "boolean", desc: "Explicitly muted." },
+    collected: { type: "boolean", desc: "In this account's collection." },
     last_read: {
       type: "timestamp",
-      desc: "Activity time this account has read through.",
+      desc: "Conversation activity time this account has read through.",
     },
     updated: { type: "timestamp", desc: "Last change to this row." },
   },

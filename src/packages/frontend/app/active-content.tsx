@@ -450,7 +450,9 @@ export const ActiveContent: React.FC<Props> = React.memo(({ navigation }) => {
                 ? undefined
                 : active_top_tab === "projects"
                   ? "Projects"
-                  : "Project and account pages"
+                  : active_top_tab === "people"
+                    ? "People"
+                    : "Project and account pages"
           }
           contentNavigation={navigation}
         >

@@ -8,14 +8,16 @@ import { testCleanup } from "@cocalc/database/test-utils";
 import {
   createConversationRecord,
   getConversation,
-  getConversationStates,
+  getPersonalStates,
   listConversationsForProjects,
+  listPersonalStates,
   markConversationRead,
   removeConversation,
   renameConversation,
-  setConversationPinned,
+  resolveAlias,
+  setPersonalState,
   touchConversation,
-} from "./conversations";
+} from "./people";
 
 const project_id = "11111111-1111-4111-8111-111111111111";
 const other_project_id = "22222222-2222-4222-8222-222222222222";
@@ -40,7 +42,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await getPool().query(
-    "TRUNCATE project_conversations, account_conversation_state, projects CASCADE",
+    "TRUNCATE project_conversations, account_people_state, projects CASCADE",
   );
   await setUsers(project_id, { [alice]: "owner", [bob]: "collaborator" });
   await setUsers(other_project_id, { [alice]: "owner" });
@@ -141,20 +143,99 @@ test("read markers and pins are per account and monotone", async () => {
   const key = { project_id, conversation_id: c.conversation_id };
   await markConversationRead({ account_id: bob, ...key, read_through: 2000 });
   await markConversationRead({ account_id: bob, ...key, read_through: 1000 });
-  await setConversationPinned({ account_id: bob, ...key, pinned: true });
-  const bobs = await getConversationStates({
+  await setPersonalState({
     account_id: bob,
-    conversation_ids: [c.conversation_id],
+    kind: "conversation",
+    target_id: c.conversation_id,
+    project_id,
+    patch: { pinned: true, pin_order: 3 },
   });
-  expect(bobs.get(c.conversation_id)).toEqual({
+  const bobs = await getPersonalStates({
+    account_id: bob,
+    kind: "conversation",
+    target_ids: [c.conversation_id],
+  });
+  expect(bobs.get(c.conversation_id)).toMatchObject({
     pinned: true,
+    pin_order: 3,
     last_read: 2000,
+    following: false,
   });
-  const alices = await getConversationStates({
+  const alices = await getPersonalStates({
     account_id: alice,
-    conversation_ids: [c.conversation_id],
+    kind: "conversation",
+    target_ids: [c.conversation_id],
   });
   expect(alices.size).toBe(0);
+});
+
+test("a patch changes only the fields it names", async () => {
+  const target = { account_id: alice, kind: "person" as const, target_id: bob };
+  await setPersonalState({
+    ...target,
+    patch: { following: true, alias: "Bob" },
+  });
+  const state = await setPersonalState({ ...target, patch: { pinned: true } });
+  expect(state).toMatchObject({
+    pinned: true,
+    following: true,
+    alias: "bob",
+    muted: false,
+  });
+  // an empty alias clears it
+  expect(
+    (await setPersonalState({ ...target, patch: { alias: "" } })).alias,
+  ).toBeNull();
+});
+
+test("aliases are private, case-insensitive and unique per account and kind", async () => {
+  await setPersonalState({
+    account_id: alice,
+    kind: "person",
+    target_id: bob,
+    patch: { alias: "@Bella" },
+  });
+  expect(
+    await resolveAlias({ account_id: alice, kind: "person", alias: "BELLA" }),
+  ).toEqual({ target_id: bob, project_id: null });
+  // same alias for another person of the same account is rejected
+  await expect(
+    setPersonalState({
+      account_id: alice,
+      kind: "person",
+      target_id: viewer,
+      patch: { alias: "bella" },
+    }),
+  ).rejects.toThrow("already use the alias");
+  // other kinds and other accounts are independent
+  await setPersonalState({
+    account_id: alice,
+    kind: "conversation",
+    target_id: viewer,
+    patch: { alias: "bella" },
+  });
+  await setPersonalState({
+    account_id: bob,
+    kind: "person",
+    target_id: alice,
+    patch: { alias: "bella" },
+  });
+  expect(
+    await resolveAlias({ account_id: bob, kind: "person", alias: "bella" }),
+  ).toEqual({ target_id: alice, project_id: null });
+  await expect(
+    setPersonalState({
+      account_id: alice,
+      kind: "person",
+      target_id: bob,
+      patch: { alias: "no spaces" },
+    }),
+  ).rejects.toThrow("alias");
+  expect(
+    (await listPersonalStates({ account_id: alice, kind: "person" })).map(
+      (row) => row.alias,
+    ),
+  ).toEqual(["bella"]);
 });
 
 test("rename and remove change only the record", async () => {

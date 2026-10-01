@@ -6,9 +6,9 @@
 import { useMemo, useState } from "react";
 import { Alert, Form, Input, Modal, Radio, Select } from "antd";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import type { Conversation } from "@cocalc/util/conversations";
+import type { Conversation } from "@cocalc/util/people";
 import { isProjectCollaboratorRole } from "@cocalc/util/project-access";
-import { conversationsApi, conversationsChanged } from "./api";
+import { peopleApi, conversationsChanged } from "./api";
 import { createConversation } from "./create";
 
 // Projects where the current account is an owner or collaborator, optionally
@@ -63,7 +63,7 @@ export function NewConversationModal({
       const conversation =
         mode === "new"
           ? await createConversation({ project_id, title })
-          : await conversationsApi().addExisting({ project_id, path, title });
+          : await peopleApi().addConversation({ project_id, path, title });
       conversationsChanged();
       setTitle("");
       setPath("");

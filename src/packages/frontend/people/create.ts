@@ -12,9 +12,9 @@ import {
   type Conversation,
   newConversationPath,
   normalizeConversationTitle,
-} from "@cocalc/util/conversations";
+} from "@cocalc/util/people";
 import { uuid } from "@cocalc/util/misc";
-import { conversationsApi, conversationsChanged } from "./api";
+import { peopleApi, conversationsChanged } from "./api";
 
 export async function waitForChatReady(chat: ChatActions): Promise<void> {
   const syncdb: any = chat.syncdb;
@@ -69,7 +69,7 @@ export async function createConversation({
   } finally {
     removeWithInstance(path, redux, project_id, { instanceKey });
   }
-  const conversation = await conversationsApi().addExisting({
+  const conversation = await peopleApi().addConversation({
     project_id,
     path,
     title,

@@ -9,13 +9,13 @@ import {
   createServiceHandler,
 } from "@cocalc/conat/service/typed";
 import type { Options } from "@cocalc/conat/service/service";
-import type { Conversation } from "@cocalc/util/conversations";
-import type { ConversationsApi } from "@cocalc/conat/hub/api/conversations";
+import type { Conversation } from "@cocalc/util/people";
+import type { PeopleApi } from "@cocalc/conat/hub/api/people";
 
 // Trusted bay-to-bay calls. "Owner" methods run on the project's owning bay;
 // "home" methods run on the account's home bay. Each side re-checks that it
 // is the authority before touching its tables.
-export interface InterBayConversationsApi {
+export interface InterBayPeopleApi {
   // owner
   listForProjects(opts: {
     account_id: string;
@@ -49,43 +49,45 @@ export interface InterBayConversationsApi {
     conversation_id: string;
   }): Promise<void>;
   // home
-  list: ConversationsApi["list"];
-  setPinned: ConversationsApi["setPinned"];
-  markRead: ConversationsApi["markRead"];
+  listConversations: PeopleApi["listConversations"];
+  markRead: PeopleApi["markRead"];
+  setState: PeopleApi["setState"];
+  listStates: PeopleApi["listStates"];
+  resolveAlias: PeopleApi["resolveAlias"];
 }
 
 function subject(bay_id: string) {
   if (!/^[a-zA-Z0-9_-]+$/.test(bay_id)) throw Error("invalid bay id");
-  return `bay.${bay_id}.rpc.conversations.v1`;
+  return `bay.${bay_id}.rpc.people.v1`;
 }
 
-export function createInterBayConversationsClient({
+export function createInterBayPeopleClient({
   client,
   bay_id,
 }: {
   client: Client;
   bay_id: string;
-}): InterBayConversationsApi {
-  return createServiceClient<InterBayConversationsApi>({
+}): InterBayPeopleApi {
+  return createServiceClient<InterBayPeopleApi>({
     client,
     subject: subject(bay_id),
-    service: "inter-bay-conversations",
+    service: "inter-bay-people",
     timeout: 15000,
   });
 }
 
-export function createInterBayConversationsHandler({
+export function createInterBayPeopleHandler({
   bay_id,
   impl,
   ...options
-}: { bay_id: string; impl: InterBayConversationsApi } & Omit<
+}: { bay_id: string; impl: InterBayPeopleApi } & Omit<
   Options,
   "handler" | "service" | "subject"
 >) {
-  return createServiceHandler<InterBayConversationsApi>({
+  return createServiceHandler<InterBayPeopleApi>({
     ...options,
     impl,
     subject: subject(bay_id),
-    service: "inter-bay-conversations",
+    service: "inter-bay-people",
   });
 }

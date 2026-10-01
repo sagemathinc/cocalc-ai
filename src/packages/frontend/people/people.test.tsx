@@ -4,7 +4,7 @@
  */
 
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import type { ListedConversation } from "@cocalc/util/conversations";
+import type { ListedConversation } from "@cocalc/util/people";
 import { ConversationList } from "./conversation-list";
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
@@ -23,6 +23,11 @@ const base = {
   created_by: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   created: 1000,
   participant_ids: [],
+  pin_order: null,
+  alias: null,
+  following: false,
+  muted: false,
+  collected: false,
 };
 
 const conversations: ListedConversation[] = [

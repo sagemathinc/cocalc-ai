@@ -18,8 +18,8 @@ import {
   useProjectContextProvider,
 } from "@cocalc/frontend/project/context";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
-import type { ListedConversation } from "@cocalc/util/conversations";
-import { conversationsApi, conversationsChanged } from "./api";
+import type { ListedConversation } from "@cocalc/util/people";
+import { peopleApi, conversationsChanged } from "./api";
 import { waitForChatReady } from "./create";
 
 export function ConversationView({
@@ -71,7 +71,7 @@ export function ConversationView({
 
   // Opening (and staying on) a conversation reads it through its activity.
   useEffect(() => {
-    void conversationsApi()
+    void peopleApi()
       .markRead({
         project_id,
         conversation_id,
@@ -179,7 +179,11 @@ function ConversationHeader({
 
   async function rename() {
     try {
-      await conversationsApi().rename({ project_id, conversation_id, title });
+      await peopleApi().renameConversation({
+        project_id,
+        conversation_id,
+        title,
+      });
       setEditing(false);
       setError("");
       conversationsChanged();
@@ -190,10 +194,11 @@ function ConversationHeader({
 
   async function togglePin() {
     try {
-      await conversationsApi().setPinned({
+      await peopleApi().setState({
+        kind: "conversation",
+        target_id: conversation_id,
         project_id,
-        conversation_id,
-        pinned: !conversation.pinned,
+        patch: { pinned: !conversation.pinned },
       });
       conversationsChanged();
     } catch (err) {
@@ -300,7 +305,7 @@ function RemoveButton({
       description="The chat file and its messages are kept in the project."
       okText="Remove"
       onConfirm={async () => {
-        await conversationsApi().remove({
+        await peopleApi().removeConversation({
           project_id: conversation.project_id,
           conversation_id: conversation.conversation_id,
         });

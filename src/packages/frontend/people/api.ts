@@ -7,8 +7,8 @@ import { EventEmitter } from "events";
 import { lite } from "@cocalc/frontend/lite";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
-export function conversationsApi() {
-  return webapp_client.conat_client.hub.conversations;
+export function peopleApi() {
+  return webapp_client.conat_client.hub.people;
 }
 
 // Local signal that the conversation list is stale (e.g., this browser just
@@ -25,7 +25,7 @@ export function conversationsChanged(): void {
 export function touchConversation(project_id: string, path: string): void {
   if (lite) return;
   void (async () => {
-    const { conversation_id } = await conversationsApi().touch({
+    const { conversation_id } = await peopleApi().touchConversation({
       project_id,
       path,
     });

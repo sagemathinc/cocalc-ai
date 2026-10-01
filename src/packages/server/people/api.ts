@@ -8,38 +8,43 @@
 // conversation list is built on the home bay with one request per owning bay.
 
 import { requireUuid } from "@cocalc/conat/agents/protocol";
-import type { ConversationsApi } from "@cocalc/conat/hub/api/conversations";
+import type { PeopleApi } from "@cocalc/conat/hub/api/people";
 import {
-  createInterBayConversationsClient,
-  type InterBayConversationsApi,
-} from "@cocalc/conat/inter-bay/conversations";
+  createInterBayPeopleClient,
+  type InterBayPeopleApi,
+} from "@cocalc/conat/inter-bay/people";
 import getPool from "@cocalc/database/pool";
 import {
   createConversationRecord,
   getConversation,
-  getConversationStates,
+  getPersonalStates,
   listConversationsForProjects,
+  listPersonalStates,
   markConversationRead,
   removeConversation,
   renameConversation,
-  setConversationPinned,
+  resolveAlias,
+  setPersonalState,
   touchConversation,
-} from "@cocalc/database/postgres/conversations";
+} from "@cocalc/database/postgres/people";
 import { getLogger } from "@cocalc/backend/logger";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import {
+  DEFAULT_PERSONAL_STATE,
   MAX_LISTED_PROJECTS,
+  assertPeopleStateKind,
   type Conversation,
   type ListedConversation,
-} from "@cocalc/util/conversations";
+  type PersonalState,
+} from "@cocalc/util/people";
 
-const logger = getLogger("server:conversations");
+const logger = getLogger("server:people");
 
-function remote(bay_id: string): InterBayConversationsApi {
-  return createInterBayConversationsClient({
+function remote(bay_id: string): InterBayPeopleApi {
+  return createInterBayPeopleClient({
     client: getInterBayFabricClient(),
     bay_id,
   });
@@ -49,18 +54,18 @@ function local(bay_id: string): boolean {
   return bay_id === getConfiguredBayId();
 }
 
-async function owner(project_id: string): Promise<InterBayConversationsApi> {
+async function owner(project_id: string): Promise<InterBayPeopleApi> {
   requireUuid(project_id, "project_id");
   const bay = await resolveProjectBay(project_id);
   if (!bay) throw Error("project not found");
-  return local(bay.bay_id) ? conversationsControl : remote(bay.bay_id);
+  return local(bay.bay_id) ? peopleControl : remote(bay.bay_id);
 }
 
-async function home(account_id: string): Promise<InterBayConversationsApi> {
+async function home(account_id: string): Promise<InterBayPeopleApi> {
   requireUuid(account_id, "account_id");
   const { home_bay_id } = await resolveAccountHomeBay({ account_id });
   if (!home_bay_id) throw Error("account home unavailable");
-  return local(home_bay_id) ? conversationsControl : remote(home_bay_id);
+  return local(home_bay_id) ? peopleControl : remote(home_bay_id);
 }
 
 async function assertOwner(project_id: string): Promise<void> {
@@ -98,7 +103,7 @@ async function markReadBestEffort(
 
 export function mergeListed(
   records: Conversation[],
-  states: Map<string, { pinned: boolean; last_read?: number | null }>,
+  states: Map<string, Partial<PersonalState>>,
 ): ListedConversation[] {
   const seen = new Set<string>();
   const result: ListedConversation[] = [];
@@ -108,7 +113,13 @@ export function mergeListed(
     const state = states.get(record.conversation_id);
     result.push({
       ...record,
+      ...DEFAULT_PERSONAL_STATE,
       pinned: state?.pinned ?? false,
+      pin_order: state?.pin_order ?? null,
+      alias: state?.alias ?? null,
+      following: state?.following ?? false,
+      muted: state?.muted ?? false,
+      collected: state?.collected ?? false,
       last_read: state?.last_read ?? null,
     });
   }
@@ -116,7 +127,7 @@ export function mergeListed(
 }
 
 /** Trusted inter-bay entrypoint. Each method checks it is the authority. */
-export const conversationsControl: InterBayConversationsApi = {
+export const peopleControl: InterBayPeopleApi = {
   async listForProjects({ account_id, project_ids }) {
     requireUuid(account_id, "account_id");
     const { rows } = await getPool().query(
@@ -161,7 +172,7 @@ export const conversationsControl: InterBayConversationsApi = {
     await removeConversation(opts);
   },
 
-  async list({ account_id }) {
+  async listConversations({ account_id }) {
     await assertHome(account_id!);
     const { rows } = await getPool().query(
       `SELECT project_id, owning_bay_id FROM account_project_index
@@ -177,9 +188,10 @@ export const conversationsControl: InterBayConversationsApi = {
     }
     const results = await Promise.allSettled(
       [...byBay].map(([bay_id, project_ids]) =>
-        (local(bay_id) ? conversationsControl : remote(bay_id)).listForProjects(
-          { account_id: account_id!, project_ids },
-        ),
+        (local(bay_id) ? peopleControl : remote(bay_id)).listForProjects({
+          account_id: account_id!,
+          project_ids,
+        }),
       ),
     );
     const records: Conversation[] = [];
@@ -191,18 +203,12 @@ export const conversationsControl: InterBayConversationsApi = {
         logger.debug("listForProjects failed", { err: `${result.reason}` });
       }
     }
-    const states = await getConversationStates({
+    const states = await getPersonalStates({
       account_id: account_id!,
-      conversation_ids: records.map((c) => c.conversation_id),
+      kind: "conversation",
+      target_ids: records.map((c) => c.conversation_id),
     });
     return { conversations: mergeListed(records, states), unavailable_bays };
-  },
-
-  async setPinned(opts) {
-    await assertHome(opts.account_id!);
-    requireUuid(opts.project_id, "project_id");
-    requireUuid(opts.conversation_id, "conversation_id");
-    await setConversationPinned({ ...opts, account_id: opts.account_id! });
   },
 
   async markRead(opts) {
@@ -211,21 +217,52 @@ export const conversationsControl: InterBayConversationsApi = {
     requireUuid(opts.conversation_id, "conversation_id");
     await markConversationRead({ ...opts, account_id: opts.account_id! });
   },
+
+  async setState({ account_id, kind, target_id, project_id, patch }) {
+    await assertHome(account_id!);
+    assertPeopleStateKind(kind);
+    requireUuid(target_id, "target_id");
+    if (project_id != null) requireUuid(project_id, "project_id");
+    return await setPersonalState({
+      account_id: account_id!,
+      kind,
+      target_id,
+      project_id,
+      patch: patch ?? {},
+    });
+  },
+
+  async listStates({ account_id, kind }) {
+    await assertHome(account_id!);
+    return await listPersonalStates({
+      account_id: account_id!,
+      kind: assertPeopleStateKind(kind),
+    });
+  },
+
+  async resolveAlias({ account_id, kind, alias }) {
+    await assertHome(account_id!);
+    return await resolveAlias({
+      account_id: account_id!,
+      kind: assertPeopleStateKind(kind),
+      alias,
+    });
+  },
 };
 
 /** Browser-facing hub API; account_id is bound by the auth policy. */
-export const conversationsApi: ConversationsApi = {
-  async list({ account_id }) {
-    return await (await home(account_id!)).list({ account_id });
+export const peopleApi: PeopleApi = {
+  async listConversations({ account_id }) {
+    return await (await home(account_id!)).listConversations({ account_id });
   },
 
-  async get({ account_id, project_id, conversation_id }) {
+  async getConversation({ account_id, project_id, conversation_id }) {
     return await (
       await owner(project_id)
     ).getRecord({ account_id: account_id!, project_id, conversation_id });
   },
 
-  async addExisting({ account_id, project_id, path, title }) {
+  async addConversation({ account_id, project_id, path, title }) {
     const c = await (
       await owner(project_id)
     ).createRecord({ account_id: account_id!, project_id, path, title });
@@ -233,7 +270,7 @@ export const conversationsApi: ConversationsApi = {
     return c;
   },
 
-  async touch({ account_id, project_id, path }) {
+  async touchConversation({ account_id, project_id, path }) {
     const c = await (
       await owner(project_id)
     ).touch({ account_id: account_id!, project_id, path });
@@ -242,23 +279,31 @@ export const conversationsApi: ConversationsApi = {
     return { conversation_id: c.conversation_id };
   },
 
-  async rename({ account_id, project_id, conversation_id, title }) {
+  async renameConversation({ account_id, project_id, conversation_id, title }) {
     return await (
       await owner(project_id)
     ).rename({ account_id: account_id!, project_id, conversation_id, title });
   },
 
-  async remove({ account_id, project_id, conversation_id }) {
+  async removeConversation({ account_id, project_id, conversation_id }) {
     await (
       await owner(project_id)
     ).remove({ account_id: account_id!, project_id, conversation_id });
   },
 
-  async setPinned(opts) {
-    await (await home(opts.account_id!)).setPinned(opts);
-  },
-
   async markRead(opts) {
     await (await home(opts.account_id!)).markRead(opts);
+  },
+
+  async setState(opts) {
+    return await (await home(opts.account_id!)).setState(opts);
+  },
+
+  async listStates(opts) {
+    return await (await home(opts.account_id!)).listStates(opts);
+  },
+
+  async resolveAlias(opts) {
+    return await (await home(opts.account_id!)).resolveAlias(opts);
   },
 };
