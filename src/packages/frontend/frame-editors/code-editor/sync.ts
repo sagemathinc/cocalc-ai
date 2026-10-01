@@ -40,6 +40,11 @@ export class MergeCoordinator {
     // Exact three-way merge: concurrent edits are applied once and never
     // relocated onto similar text; conflicting edits keep both versions.
     const merged = mergeText({ base, local, remote: remoteValue });
+    // Debugging aid (see SimpleInputMerge).
+    const hook = (globalThis as any).__simpleInputMergeDebug;
+    if (typeof hook === "function") {
+      hook("cm:merge", { base, local, remote: remoteValue, merged });
+    }
     // Keep the base anchored to upstream/remote for future merges, even if
     // merged contains uncommitted local edits.
     this.baseValue = remoteValue;

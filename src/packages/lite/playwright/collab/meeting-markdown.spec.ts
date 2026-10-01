@@ -18,7 +18,8 @@ Environment:
   COLLAB_SEED       random seed (default: time)
   COLLAB_VIEW       "rich" (default), "source", or "mixed" (alternating:
                     even participants rich text, odd ones source)
-  COLLAB_DEBUG      record the editors' merge/save decisions and, for each
+  COLLAB_DEBUG      record the editors' merge/save decisions ("dups": only
+                    those that duplicate a word) and, for each
                     lost word, report the first one that dropped it
 */
 
@@ -268,13 +269,38 @@ test("a meeting's notes stay consistent with many people typing", async ({
     VIEWS.set(page, view);
     if (view === "source") await useSourceView(page, path);
     if (DEBUG) {
-      await page.addInitScript(() => {
-        (window as any).__slateDebugLog = true;
+      await page.addInitScript((dupsOnly) => {
+        (window as any).__slateDebugLog = !dupsOnly;
+        const count = (text: string) => {
+          const counts = new Map<string, number>();
+          for (const t of text.match(/tk\d+n\d+q/g) ?? []) {
+            counts.set(t, (counts.get(t) ?? 0) + 1);
+          }
+          return counts;
+        };
+        // COLLAB_DEBUG=dups: only decisions whose output has more copies of
+        // some word than every input (recording everything is too much for
+        // long runs).
+        const duplicates = (data: any): boolean => {
+          const out =
+            data?.merged ?? data?.result ?? data?.written ?? data?.saved;
+          if (typeof out !== "string") return false;
+          const inputs = Object.values(data)
+            .filter((v) => typeof v === "string" && v !== out)
+            .map((v) => count(v as string));
+          for (const [t, n] of count(out)) {
+            if (n > 1 && inputs.every((c) => (c.get(t) ?? 0) < n)) return true;
+          }
+          return false;
+        };
         (globalThis as any).__simpleInputMergeDebug = (
           event: string,
           data: unknown,
-        ) => console.log("[collab-debug]" + JSON.stringify({ event, data }));
-      });
+        ) => {
+          if (dupsOnly && !duplicates(data)) return;
+          console.log("[collab-debug]" + JSON.stringify({ event, data }));
+        };
+      }, process.env.COLLAB_DEBUG === "dups");
       // CoCalc prefixes console messages with a timestamp, so look inside.
       page.on("console", (msg) => {
         const text = msg.text();

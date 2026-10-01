@@ -814,7 +814,15 @@ export class SyncDoc extends EventEmitter {
     if (merge3 != null) {
       // Exact three-way merge from the draft's base: the draft's changes are
       // applied once, never relocated onto similar text.
-      return merge3(draftBase as any, draft as any, committed as any) as any;
+      const result = merge3(draftBase as any, draft as any, committed as any);
+      syncDebug("syncdoc:rebase", () => ({
+        path: this.path,
+        base: draftBase.to_str(),
+        draft: draft.to_str(),
+        committed: committed.to_str(),
+        merged: (result as any).to_str(),
+      }));
+      return result as any;
     }
     return rebaseLocalDocument({ base: draftBase, draft, committed });
   };
