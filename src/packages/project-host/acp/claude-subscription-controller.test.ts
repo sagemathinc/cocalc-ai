@@ -18,6 +18,28 @@ test("controller uses the same normalized image cache key as project startup", (
   expect(CLAUDE_CONTROLLER_BASE_IMAGE).toBe("docker.io/buildpack-deps:26.04");
 });
 
+test.each(["agent", "usage"] as const)(
+  "%s controller overlays the immutable image while keeping the root read-only",
+  (purpose) => {
+    const args = claudeSubscriptionContainerArgs({
+      name: "readonly-cache",
+      projectId: "project",
+      owner: "owner",
+      home: "/auth",
+      rootfs: "/immutable-image",
+      managedHarnesses: "/harnesses",
+      nodeMounts: {},
+      uid: 1000,
+      gid: 1000,
+      purpose,
+    });
+    expect(args[args.indexOf("--rootfs") + 1]).toBe("/immutable-image:O");
+    expect(args).toContain("--read-only");
+    expect(args).toContain("--cap-drop=all");
+    expect(args).toContain("--security-opt=no-new-privileges");
+  },
+);
+
 test.each([undefined, true, false])(
   "connector preference %s preserves explicit project tools",
   (claudeAiConnectors) => {
@@ -158,7 +180,7 @@ test("subscription controller mounts only its transcript, not project secrets or
     /project-home|project-secrets|\/run\/secrets|COCALC_BEARER_TOKEN/,
   );
   expect(args.slice(-3)).toEqual([
-    "/trusted-base-rootfs",
+    "/trusted-base-rootfs:O",
     "/opt/cocalc/bin/node",
     "/opt/cocalc/harnesses/claude-code/0.81.1/app/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
   ]);
