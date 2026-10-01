@@ -1365,6 +1365,14 @@ export function MessageList({
     anchorRestoreTimersRef.current = [];
   };
 
+  const clearVisibilityRestoreTimers = () => {
+    visibilityRestoreTokenRef.current += 1;
+    for (const timer of visibilityRestoreTimersRef.current) {
+      clearTimeout(timer);
+    }
+    visibilityRestoreTimersRef.current = [];
+  };
+
   const scheduleAnchorCapture = useCallback(
     (forceAtBottom?: boolean) => {
       if (!useVirtuoso) return;
@@ -1372,8 +1380,13 @@ export function MessageList({
       if (!forceAtBottom && Date.now() < suppressAnchorCaptureUntilRef.current)
         return;
       if (anchorCaptureFrameRef.current != null) return;
+      // A capture runs a frame later. If the thread changed meanwhile (e.g.,
+      // momentum scrolling while clicking another thread), the rows and
+      // scroller now belong to that thread; saving them under this thread's
+      // key would later restore this thread to a foreign message.
       const capture = () => {
         anchorCaptureFrameRef.current = undefined;
+        if (cacheIdRef.current !== cacheId) return;
         if (
           !forceAtBottom &&
           Date.now() < suppressAnchorCaptureUntilRef.current
@@ -1421,11 +1434,8 @@ export function MessageList({
     clearAnchorRestoreTimers();
     // Foreground/layout retries predate this input. They must not reload a
     // cached bottom anchor and erase the user's newer manual-scroll intent.
-    visibilityRestoreTokenRef.current += 1;
-    for (const timer of visibilityRestoreTimersRef.current) {
-      clearTimeout(timer);
-    }
-    visibilityRestoreTimersRef.current = [];
+    clearVisibilityRestoreTimers();
+    suppressAnchorCaptureUntilRef.current = 0;
     userScrollIntentRef.current = true;
     clearUserScrollIntentLater();
   };
@@ -1499,9 +1509,9 @@ export function MessageList({
     const editableTarget = isEditableOrOverlayInteractionTarget(
       event.target ?? null,
     );
-    if (!editableTarget && (event.deltaY == null || event.deltaY < 0)) {
+    if (!editableTarget && event.deltaY !== 0) {
       markUserScrollIntent();
-      markManualScrollAway();
+      if (event.deltaY == null || event.deltaY < 0) markManualScrollAway();
     }
     if (!blockScrollInput) return;
     if (editableTarget) return;
@@ -1517,13 +1527,25 @@ export function MessageList({
       return;
     }
     const key = `${event.key ?? ""}`.toLowerCase();
-    if (key === "arrowup" || key === "pageup" || key === "home") {
+    if (
+      [
+        "arrowup",
+        "arrowdown",
+        "pageup",
+        "pagedown",
+        "home",
+        "end",
+        " ",
+        "spacebar",
+      ].includes(key)
+    ) {
       markUserScrollIntent();
+    }
+    if (key === "arrowup" || key === "pageup" || key === "home") {
       markManualScrollAway();
     }
     if (!blockScrollInput) return;
     if (key === " " || key === "spacebar") {
-      markUserScrollIntent();
       markManualScrollAway();
     }
     if (
@@ -1545,6 +1567,8 @@ export function MessageList({
     // Explicit sends/newest requests supersede cached reading positions,
     // including delayed offset restoration already scheduled for them.
     clearAnchorRestoreTimers();
+    clearVisibilityRestoreTimers();
+    suppressAnchorCaptureUntilRef.current = 0;
     userScrollIntentRef.current = false;
     if (keepBottomAnchoredRef) keepBottomAnchoredRef.current = true;
     if (manualScrollRef) manualScrollRef.current = false;
@@ -1602,7 +1626,12 @@ export function MessageList({
       clearAnchorRestoreTimers();
       suppressAnchorCaptureUntilRef.current = Date.now() + 1200;
 
-      if (anchor.atBottom) {
+      // An anchor whose message is not among the rows (e.g., archived, or
+      // from another thread) opens at the newest messages, like a fresh open.
+      const index = anchor.atBottom
+        ? undefined
+        : resolveChatViewportAnchorIndex(anchor, dates);
+      if (anchor.atBottom || index == null) {
         if (keepBottomAnchoredRef) {
           keepBottomAnchoredRef.current = true;
         }
@@ -1619,8 +1648,9 @@ export function MessageList({
         return;
       }
 
-      const index = resolveChatViewportAnchorIndex(anchor, dates);
-      if (index == null) return;
+      // A freshly mounted list can report a transient bottom before this lands,
+      // which saves an at-bottom anchor. Keep the reader's position saved.
+      saveChatViewportAnchor(cacheId, anchor);
       if (keepBottomAnchoredRef) {
         keepBottomAnchoredRef.current = false;
       }
@@ -1629,11 +1659,26 @@ export function MessageList({
       }
       setManualScroll?.(true);
       setAtBottom(false);
-      listVirtuosoRef.current?.scrollToIndex({
-        index,
-        align: "start",
-        behavior: INSTANT_SCROLL_BEHAVIOR,
-      });
+      // A retained chat shown again usually still renders its saved row, often
+      // exactly in place. Snapping that row to the top first and then applying
+      // the saved offset (on every retry) made the view flicker up and down;
+      // only jump when the row is not rendered, otherwise just correct offset.
+      const rendered =
+        scrollerRef.current?.querySelector(`[data-item-index="${index}"]`) !=
+        null;
+      if (rendered) {
+        restoreChatViewportAnchorOffset({
+          anchor,
+          scroller: scrollerRef.current,
+          sortedDates: dates,
+        });
+      } else {
+        listVirtuosoRef.current?.scrollToIndex({
+          index,
+          align: "start",
+          behavior: INSTANT_SCROLL_BEHAVIOR,
+        });
+      }
 
       const token = ++anchorRestoreTokenRef.current;
       for (const delayMs of [0, 16, 75, 200, 500, 1000]) {
@@ -1708,11 +1753,14 @@ export function MessageList({
     }
     visibilityRestoreTimersRef.current = [];
     const token = ++visibilityRestoreTokenRef.current;
-    restoreSavedAnchorRef.current();
+    // Every retry restores the position saved when the chat was left, not
+    // whatever the settling list captured in between.
+    const anchor = loadChatViewportAnchor(cacheId);
+    restoreSavedAnchorRef.current(anchor);
     for (const delayMs of [16, 75, 250]) {
       const timer = setTimeout(() => {
         if (visibilityRestoreTokenRef.current !== token) return;
-        restoreSavedAnchorRef.current();
+        restoreSavedAnchorRef.current(anchor);
       }, delayMs);
       visibilityRestoreTimersRef.current.push(timer);
     }

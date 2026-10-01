@@ -18,7 +18,7 @@ import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { DownOutlined } from "@ant-design/icons";
 import { Button, Dropdown, Menu } from "antd";
 import type { DropdownProps, MenuProps } from "antd";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 export const STAY_OPEN_ON_CLICK = "stay-open-on-click";
 
@@ -68,12 +68,14 @@ export function DropdownMenu({
   ariaLabel,
 }: Props) {
   const [open, setOpen] = useState<boolean>(!!defaultOpen);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const items = useMemo(() => {
     return IS_MOBILE ? flatten(items0) : items0;
   }, [items0]);
 
   let body = (
     <Button
+      ref={triggerRef}
       aria-label={ariaLabel}
       style={style}
       disabled={disabled}
@@ -123,6 +125,13 @@ export function DropdownMenu({
         },
         mode,
         onClick: handleMenuClick,
+        onKeyDown: (event) => {
+          if (event.key !== "Escape") return;
+          // Restore focus before destroyOnHidden removes the focused item.
+          event.stopPropagation();
+          setOpen(false);
+          triggerRef.current?.focus();
+        },
       }}
       disabled={disabled}
       onOpenChange={handleOpenChange}

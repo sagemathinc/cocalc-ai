@@ -200,7 +200,10 @@ import { AgentLoadingPreview } from "./loading-preview";
 import { AgentDirectoryContent } from "./directory-content";
 import { NameAgent } from "./name-agent";
 import { AgentsAccountMenu } from "./account-menu";
-import { AgentRunningIndicator } from "./agent-running-indicator";
+import {
+  AgentRunningIndicator,
+  isAgentPathRunning,
+} from "./agent-running-indicator";
 import { AgentProjectSelector } from "./agent-project-selector";
 import { AgentProjectStatus } from "./project-status";
 import { AgentHostRecovery } from "./host-recovery";
@@ -3189,11 +3192,28 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         )
       : (agentOrganization.groups.pinned[0] ??
         agentOrganization.groups.unpinned[0]);
+  // Agents with a running turn stay mounted: they are likely to be revisited.
+  const isRunningWorkspace = useCallback(
+    (workspace: string) => {
+      const split = workspace.indexOf("\0");
+      return (
+        !!accountId &&
+        split > 0 &&
+        isAgentPathRunning(
+          accountId,
+          workspace.slice(0, split),
+          workspace.slice(split + 1),
+        )
+      );
+    },
+    [accountId],
+  );
   const { mountedWorkspaces, mountWorkspace, unmountWorkspace } =
     useRetainedWorkspaces(
       active && !libraryOpen && !creating && selected
         ? agentWorkspaceKey(selected)
         : undefined,
+      { isProtected: isRunningWorkspace },
     );
   useEffect(() => {
     if (!active) return;
