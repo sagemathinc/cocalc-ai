@@ -390,13 +390,24 @@ contain every typed word exactly once. 10 users, 60 s per run unless noted.
   - 30 min with reloads (seed 71) and 15 min with more reloads (seed 74):
     after ~10-14 min, duplication cascades (the file reached 70 KB / 500 KB)
     and the browsers eventually stall.
-  - Cause, from replaying the patch stream: a freshly (re)loaded Slate
-    editor writes its markdown normalization (blank lines, leading spaces)
-    across the whole document -- its first patch can be whitespace-only, in
-    many places. Its merge baseline is the raw markdown, so normalization
-    counts as the user's edits. With others editing those lines, the line
-    merge keeps both versions; other editors merge the duplicates in, and it
-    cascades.
-  - Next: make Slate's merge baseline what the editor shows (its normalized
-    rendering of the last value), so normalization is never saved as an edit;
-    then rerun the long runs (and a 30 min notebook run, not yet done).
+  - First theory (Slate saving its markdown normalization as edits) was
+    wrong for this cascade: the normalized form was identical. Still fixed
+    (Slate merges and saves against its canonical markdown), along with
+    saves at least every 3 s while typing and the fast-open handoff showing
+    the synced value.
+  - Cause, from replaying the patch stream: snapshots at 370 s and 432 s,
+    written by a client that had reloaded, held 20 KB with 383 duplicated
+    words where the exact value had none; everyone who opened the document
+    later started from them. That client loaded the latest snapshot, then
+    older history; patchflow's `PatchGraph.add` dropped the snapshotted
+    patch itself (arriving after its snapshot record, which has no parents)
+    as a duplicate, so the patch stayed a root and a merge across it used an
+    empty base. Adding the records before the patches reproduces the bad
+    snapshot byte for byte.
+  - Fixed in patchflow#10 (keep the patch's parents; the snapshot fuzz test
+    now writes records as CoCalc does and fails without the fix), plus
+    SyncDoc does not snapshot while `needsMoreHistory()`.
+  - Rerun, 15 min with reloads (seed 74, 18 reloads, 5315 words): all
+    browsers agree, 0 duplicated, every snapshot equals the exact replay;
+    11 words lost, none of them in any patch (typed just before a reload).
+  - Next: release patchflow with #10; a 30 min notebook run.
