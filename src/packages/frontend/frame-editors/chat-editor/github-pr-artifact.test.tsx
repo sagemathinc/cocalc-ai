@@ -62,7 +62,7 @@ test("opens an explicit comparison and keeps it pinned across metadata refresh",
       onRequestAgentTurn={request}
     />,
   );
-  expect(screen.getByRole("link", { name: "GitHub" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: /Open on GitHub/ })).toHaveAttribute(
     "href",
     "https://github.com/sagemathinc/cocalc-ai/pull/509",
   );
@@ -98,7 +98,10 @@ test("missing local repository leaves external browsing available", () => {
     />,
   );
   expect(screen.getByRole("button", { name: "Review locally" })).toBeDisabled();
-  expect(screen.getByRole("note")).toHaveTextContent("Published metadata");
+  expect(screen.getByRole("note")).toHaveTextContent("Published");
+  // Historical snapshots cannot be refreshed or fetched.
+  expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "More PR actions" })).toBeNull();
 });
 
 test("repository mismatch never opens a misleading local review", async () => {
@@ -141,4 +144,48 @@ test("refresh is explicit and saves against the exact observed artifact", async 
   await screen.findByText(/PR metadata refreshed/);
   expect(onRefresh).toHaveBeenCalledWith(next, artifact);
   expect(fetchPRCommits).not.toHaveBeenCalled();
+});
+
+test("shows a GitHub-style summary instead of raw metadata", () => {
+  render(
+    <GitHubPRArtifact
+      artifact={artifact}
+      projectId="p"
+      sourcePath="x.chat"
+      historical={false}
+    />,
+  );
+  // Draft state badge, readable check status, short SHAs, no duplicate title.
+  expect(screen.getByText("Draft")).toBeTruthy();
+  expect(screen.getByText("Checks running")).toBeTruthy();
+  expect(screen.getByText("aaaaaaa").closest("[title]")).toHaveAttribute(
+    "title",
+    `base ${pr.base_sha}`,
+  );
+  expect(screen.getByText("bbbbbbb").closest("[title]")).toHaveAttribute(
+    "title",
+    `head ${pr.head_sha}`,
+  );
+  expect(screen.queryByText(pr.head_sha)).toBeNull();
+  expect(screen.queryByText("Workbench")).toBeNull();
+  expect(screen.getByText("sagemathinc/cocalc-ai #509")).toBeTruthy();
+  // Fetching commits lives in the overflow menu.
+  expect(screen.queryByRole("button", { name: "Fetch PR commits" })).toBeNull();
+  expect(screen.getByRole("button", { name: "More PR actions" })).toBeTruthy();
+});
+
+test.each([
+  [{ state: "open", draft: false }, "Open"],
+  [{ state: "merged", draft: false }, "Merged"],
+  [{ state: "closed", draft: false }, "Closed"],
+])("labels %j as %s", (patch, label) => {
+  render(
+    <GitHubPRArtifact
+      artifact={{ ...artifact, github_pr: { ...pr, ...patch } }}
+      projectId="p"
+      sourcePath="x.chat"
+      historical={false}
+    />,
+  );
+  expect(screen.getByText(label)).toBeTruthy();
 });
