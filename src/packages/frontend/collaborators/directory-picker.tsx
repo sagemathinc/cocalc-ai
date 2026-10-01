@@ -1,0 +1,215 @@
+/*
+ * This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
+ * License: MS-RSL - see LICENSE.md for details
+ */
+import { useId, useState } from "react";
+import { Button, Input } from "antd";
+import type { DirectoryApi } from "./workspace-api";
+import type {
+  CollaborationPerson,
+  CollaborationProject,
+} from "@cocalc/util/collaborators";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
+import { DirectoryResults } from "./directory-results";
+import { CollaboratorsModal } from "./modal";
+import { useDirectory, useDirectorySearch } from "./use-directory";
+import { SelectProject } from "@cocalc/frontend/projects/select-project";
+import { VirtualCollectionList } from "@cocalc/frontend/components/virtual-collection";
+
+export function DirectoryPicker({
+  api,
+  kind,
+  title,
+  projectId,
+  projectIds,
+  selectedProjects = [],
+  onSelectProjects,
+  personId,
+  sharedOnly = false,
+  onSelect,
+  onClose,
+  onCreateProject,
+}: {
+  api: DirectoryApi;
+  kind: "project" | "person";
+  title: string;
+  projectId?: string;
+  projectIds?: string[];
+  selectedProjects?: { id: string; title: string }[];
+  onSelectProjects?: (items: { id: string; title: string }[]) => void;
+  personId?: string;
+  sharedOnly?: boolean;
+  onSelect: (item: { id: string; title: string }) => void;
+  onClose: () => void;
+  onCreateProject?: () => void;
+}) {
+  const id = useId();
+  const [returnFocus] = useState(() =>
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : undefined,
+  );
+  const [input, setInput] = useState("");
+  const [selected, setSelected] = useState(selectedProjects);
+  const search = useDirectorySearch(input);
+  const result = useDirectory<CollaborationProject | CollaborationPerson>(
+    JSON.stringify([kind, search, projectId, projectIds, personId, sharedOnly]),
+    (after) =>
+      kind === "project"
+        ? api.listProjects({
+            search,
+            person_id: personId,
+            shared_only: sharedOnly,
+            after,
+            limit: 25,
+          })
+        : api.listPeople({
+            search,
+            project_id: projectIds ? undefined : projectId,
+            project_ids: projectIds?.length ? projectIds : undefined,
+            after,
+            limit: 25,
+          }),
+  );
+  const projects = ((result.page?.items ?? []) as CollaborationProject[]).map(
+    (project) => ({
+      id: project.project_id,
+      title: project.title || "Untitled",
+      group: project.role,
+    }),
+  );
+  // Keep labels when a selected project is outside the current search page.
+  for (const item of selected) {
+    if (!projects.some(({ id }) => id === item.id))
+      projects.push({ ...item, group: "collaborator" });
+  }
+  function restoreFocus() {
+    // This picker unmounts immediately, before the modal's closing animation.
+    requestAnimationFrame(() => {
+      if (returnFocus?.isConnected && document.activeElement === document.body)
+        returnFocus.focus({ preventScroll: true });
+    });
+  }
+  function cancel() {
+    onClose();
+    restoreFocus();
+  }
+  return (
+    <CollaboratorsModal
+      open
+      title={title}
+      onCancel={cancel}
+      footer={
+        <>
+          {onCreateProject && (
+            <Button onClick={onCreateProject}>Create project</Button>
+          )}
+          <Button onClick={cancel}>Cancel</Button>
+          {onSelectProjects && (
+            <Button
+              type="primary"
+              onClick={() => {
+                onSelectProjects(selected);
+                restoreFocus();
+              }}
+            >
+              Apply
+            </Button>
+          )}
+        </>
+      }
+    >
+      <KeyboardBoundary
+        boundary="collaborators-picker"
+        onKeyDown={(event) => {
+          if (event.key !== "Escape" || event.defaultPrevented) return;
+          event.preventDefault();
+          event.stopPropagation();
+          cancel();
+        }}
+      >
+        {kind === "person" && (
+          <>
+            <label htmlFor={id}>Search people</label>
+            <Input
+              id={id}
+              autoFocus
+              value={input}
+              maxLength={200}
+              onChange={(e) => setInput(e.target.value)}
+            />
+          </>
+        )}
+        {kind === "project" && (
+          <SelectProject
+            ariaLabel="Search projects"
+            autoFocus
+            fullCollaboratorOnly
+            maxResults={result.page?.items.length || 25}
+            onLoadMore={result.next}
+            onSearch={(value) => setInput(value.slice(0, 200))}
+            projects={projects}
+            {...(onSelectProjects
+              ? {
+                  multiple: true as const,
+                  maxSelections: 50,
+                  value: selected.map(({ id }) => id),
+                  onChange: (ids: string[]) =>
+                    setSelected(
+                      ids.map((id) => ({
+                        id,
+                        title:
+                          projects.find((item) => item.id === id)?.title ?? id,
+                      })),
+                    ),
+                }
+              : {
+                  onChange: (id: string) => {
+                    const item = (
+                      result.page?.items as CollaborationProject[] | undefined
+                    )?.find((project) => project.project_id === id);
+                    if (!item) return;
+                    onSelect({ id, title: item.title });
+                    restoreFocus();
+                  },
+                })}
+          />
+        )}
+        <DirectoryResults
+          autoLoad={kind !== "project"}
+          result={result}
+          label={kind === "project" ? "Projects" : "People"}
+        >
+          {(items) =>
+            kind === "project" ? null : (
+              <VirtualCollectionList
+                className="collaborators-list"
+                items={items}
+                itemId={(item) =>
+                  "project_id" in item ? item.project_id : item.account_id
+                }
+                renderItem={(item) => {
+                  const id =
+                    "project_id" in item ? item.project_id : item.account_id;
+                  const title =
+                    "title" in item ? item.title : item.display_name;
+                  return (
+                    <Button
+                      block
+                      onClick={() => {
+                        onSelect({ id, title });
+                        restoreFocus();
+                      }}
+                    >
+                      {title || "Untitled"}
+                    </Button>
+                  );
+                }}
+              />
+            )
+          }
+        </DirectoryResults>
+      </KeyboardBoundary>
+    </CollaboratorsModal>
+  );
+}
