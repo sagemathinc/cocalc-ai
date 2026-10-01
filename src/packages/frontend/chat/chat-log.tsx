@@ -1365,6 +1365,14 @@ export function MessageList({
     anchorRestoreTimersRef.current = [];
   };
 
+  const clearVisibilityRestoreTimers = () => {
+    visibilityRestoreTokenRef.current += 1;
+    for (const timer of visibilityRestoreTimersRef.current) {
+      clearTimeout(timer);
+    }
+    visibilityRestoreTimersRef.current = [];
+  };
+
   const scheduleAnchorCapture = useCallback(
     (forceAtBottom?: boolean) => {
       if (!useVirtuoso) return;
@@ -1426,11 +1434,8 @@ export function MessageList({
     clearAnchorRestoreTimers();
     // Foreground/layout retries predate this input. They must not reload a
     // cached bottom anchor and erase the user's newer manual-scroll intent.
-    visibilityRestoreTokenRef.current += 1;
-    for (const timer of visibilityRestoreTimersRef.current) {
-      clearTimeout(timer);
-    }
-    visibilityRestoreTimersRef.current = [];
+    clearVisibilityRestoreTimers();
+    suppressAnchorCaptureUntilRef.current = 0;
     userScrollIntentRef.current = true;
     clearUserScrollIntentLater();
   };
@@ -1504,9 +1509,9 @@ export function MessageList({
     const editableTarget = isEditableOrOverlayInteractionTarget(
       event.target ?? null,
     );
-    if (!editableTarget && (event.deltaY == null || event.deltaY < 0)) {
+    if (!editableTarget && event.deltaY !== 0) {
       markUserScrollIntent();
-      markManualScrollAway();
+      if (event.deltaY == null || event.deltaY < 0) markManualScrollAway();
     }
     if (!blockScrollInput) return;
     if (editableTarget) return;
@@ -1522,13 +1527,25 @@ export function MessageList({
       return;
     }
     const key = `${event.key ?? ""}`.toLowerCase();
-    if (key === "arrowup" || key === "pageup" || key === "home") {
+    if (
+      [
+        "arrowup",
+        "arrowdown",
+        "pageup",
+        "pagedown",
+        "home",
+        "end",
+        " ",
+        "spacebar",
+      ].includes(key)
+    ) {
       markUserScrollIntent();
+    }
+    if (key === "arrowup" || key === "pageup" || key === "home") {
       markManualScrollAway();
     }
     if (!blockScrollInput) return;
     if (key === " " || key === "spacebar") {
-      markUserScrollIntent();
       markManualScrollAway();
     }
     if (
@@ -1550,6 +1567,8 @@ export function MessageList({
     // Explicit sends/newest requests supersede cached reading positions,
     // including delayed offset restoration already scheduled for them.
     clearAnchorRestoreTimers();
+    clearVisibilityRestoreTimers();
+    suppressAnchorCaptureUntilRef.current = 0;
     userScrollIntentRef.current = false;
     if (keepBottomAnchoredRef) keepBottomAnchoredRef.current = true;
     if (manualScrollRef) manualScrollRef.current = false;

@@ -190,6 +190,51 @@ async function atBottom(page: Page) {
   return (await gapFromBottom(page, "a")) < 60;
 }
 
+for (const resume of ["button", "wheel"] as const) {
+  test(`returning to the bottom via ${resume} during restoration follows streaming`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1000, height: 800 });
+    await page.goto("/?mode=chat-switch&reorder=0&chatMode=sidechat");
+    const a = page.getByTestId("log-a");
+    await expect(a.locator("[data-item-index]").first()).toBeVisible();
+    await page.waitForTimeout(1500);
+    await a.hover();
+    await page.mouse.wheel(0, -2000);
+    await page.waitForTimeout(1500);
+    expect(await gapFromBottom(page, "a")).toBeGreaterThan(1000);
+    await page.evaluate(() => (window as any).__chatSwitch("b"));
+    await page.waitForTimeout(500);
+    await page.evaluate(() => (window as any).__chatSwitch("a"));
+    // Act before the delayed restore retries finish, without pointer-down
+    // cancelling them on behalf of a wheel/trackpad user.
+    if (resume === "button") {
+      await a
+        .getByRole("button", { name: "Scroll to newest messages" })
+        .press("Enter");
+    } else {
+      await page.mouse.wheel(0, 100000);
+    }
+    await expect.poll(() => gapFromBottom(page, "a")).toBeLessThan(200);
+    await page.evaluate(() => {
+      (window as any).__chatStream = setInterval(
+        () => (window as any).__chatGrow("a"),
+        200,
+      );
+    });
+    const gaps: number[] = [];
+    for (let i = 0; i < 8; i++) {
+      await page.waitForTimeout(300);
+      gaps.push(await gapFromBottom(page, "a"));
+    }
+    await page.evaluate(() => clearInterval((window as any).__chatStream));
+    expect(Math.max(...gaps)).toBeLessThan(200);
+    await expect(
+      a.getByRole("button", { name: "Scroll to newest messages" }),
+    ).toHaveCount(0);
+  });
+}
+
 test("switching threads within a chat keeps each thread's reading position", async ({
   page,
 }) => {
