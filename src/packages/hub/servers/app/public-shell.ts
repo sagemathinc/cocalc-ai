@@ -12,7 +12,14 @@ import basePath from "@cocalc/backend/base-path";
 import { getNewsItem } from "@cocalc/database/postgres/news";
 import getCustomize from "@cocalc/database/settings/customize";
 import { getLogger } from "@cocalc/hub/logger";
+import { withTimeout } from "@cocalc/util/async-utils";
+import { buildMembershipTierPresentation } from "@cocalc/util/membership-tier-presentation";
 import { slugURL } from "@cocalc/util/news";
+import {
+  publicStoreMembershipTiers,
+  type PublicPricingTier,
+} from "@cocalc/util/public-pricing";
+import { isCanonicalPublicSiteHost } from "@cocalc/util/public-site-policy";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { path as STATIC_PATH } from "@cocalc/static";
 import {
@@ -240,6 +247,63 @@ const anonymousRootfsImages = reuseInFlight(
   },
 );
 
+// The /pricing crawler fallback lists the store-visible membership tiers,
+// read from the same source as the tier API the React page fetches; crawlers
+// cannot use that API because robots.txt disallows /api/. Only on cocalc.ai:
+// other hosts canonicalize /pricing to cocalc.ai, leave it out of their
+// sitemap, and would show their own prices under the fallback's "CoCalc.ai"
+// heading. Every visitor gets this shell, so the tiers are cached for a
+// minute, concurrent fills share one read, and failures are not cached. A
+// slow read does not hold the page: it renders without tiers, as before, and
+// the React page still loads them itself.
+const PRICING_TIERS_TTL_MS = 60_000;
+const PRICING_TIERS_WAIT_MS = 2_000;
+let pricingTiersCache: { at: number; tiers: PublicPricingTier[] } | undefined;
+
+const loadPricingTiers = reuseInFlight(
+  async (): Promise<PublicPricingTier[]> => {
+    // Like the RootFS catalog above, load the membership module only when a
+    // pricing page needs it.
+    const { getSeedMembershipTiers } =
+      await import("@cocalc/server/membership/tiers");
+    const tiers = publicStoreMembershipTiers(
+      await getSeedMembershipTiers({ includeDisabled: false }),
+    ).map((tier) => ({
+      ...tier,
+      presentation: buildMembershipTierPresentation(tier),
+    }));
+    pricingTiersCache = { at: Date.now(), tiers };
+    return tiers;
+  },
+);
+
+async function resolvePricingTiers(
+  route: ReturnType<typeof getPublicMetadataRouteFromPath>,
+  config: PublicRouteMetadataConfig,
+): Promise<PublicPricingTier[] | undefined> {
+  if (
+    route.section !== "pricing" ||
+    config.cocalc_product === "plus" ||
+    !isCanonicalPublicSiteHost(config.dns)
+  ) {
+    return undefined;
+  }
+  if (
+    pricingTiersCache != null &&
+    Date.now() - pricingTiersCache.at <= PRICING_TIERS_TTL_MS
+  ) {
+    return pricingTiersCache.tiers;
+  }
+  try {
+    return await withTimeout(loadPricingTiers(), PRICING_TIERS_WAIT_MS);
+  } catch (err) {
+    logger.warn("loading membership tiers for the pricing page failed", {
+      err: `${err}`,
+    });
+    return undefined;
+  }
+}
+
 // Rootfs detail metadata mirrors resolveNewsMetadata: the runtime-image
 // catalog lives in the database, so resolve the image server-side. An
 // unknown slug/id becomes a real 404 instead of echoing the requested path
@@ -348,6 +412,7 @@ async function buildHead(req: Request): Promise<{
   });
   metadata = await resolveNewsMetadata(req, route, metadata);
   metadata = await resolveRootfsMetadata(req, route, metadata);
+  const pricingTiers = await resolvePricingTiers(route, config);
   const redirectPath = newsRedirectPath(req, route, metadata, path);
   const canonicalUrl = absolutePublicUrl(req, metadata.canonicalPath);
   const imageUrl = absolutePublicUrl(req, metadata.imagePath);
@@ -434,7 +499,7 @@ async function buildHead(req: Request): Promise<{
   return {
     body:
       renderPublicDocsPrerender(route, basePath, config) ||
-      renderPublicRoutePrerender(route, basePath, config),
+      renderPublicRoutePrerender(route, basePath, config, { pricingTiers }),
     head: `${basePathMetaTag()}\n  <title>${htmlEscape(
       metadata.title,
     )}</title>\n  ${PUBLIC_PRERENDER_GUARD}\n  ${socialTags}`,

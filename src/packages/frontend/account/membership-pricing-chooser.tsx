@@ -16,12 +16,25 @@ import {
 } from "antd";
 
 import type { MembershipTierWithPresentation } from "./membership-tier-benefits";
-import { currency } from "@cocalc/util/misc";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import {
+  BILLING_INTERVAL_LABELS,
+  membershipPriceDisplay,
+  membershipStoreDescription,
+  membershipStoreHighlights,
+  membershipTrialLabel,
+  type BillingInterval,
+} from "@cocalc/util/public-pricing";
 
 const { Paragraph, Text, Title } = Typography;
 
-export type BillingInterval = "month" | "year";
+export {
+  filterMembershipTiersForBillingInterval,
+  hasPriceForBillingInterval,
+  isFreeMembershipTier,
+  membershipPriceValue,
+} from "@cocalc/util/public-pricing";
+export type { BillingInterval };
 
 export interface MembershipPricingTier extends MembershipTierWithPresentation {
   ai_limits?: Record<string, unknown>;
@@ -38,61 +51,6 @@ export interface MembershipPricingTier extends MembershipTierWithPresentation {
   store_visible?: boolean;
   trial_days?: number;
   usage_limits?: Record<string, unknown>;
-}
-
-export function membershipPriceValue(value: unknown): number | undefined {
-  const numberValue = Number(value);
-  return Number.isFinite(numberValue) && numberValue >= 0
-    ? numberValue
-    : undefined;
-}
-
-export function isFreeMembershipTier(tier: MembershipPricingTier): boolean {
-  return (
-    membershipPriceValue(tier.price_monthly) === 0 &&
-    membershipPriceValue(tier.price_yearly) === 0
-  );
-}
-
-export function hasPriceForBillingInterval(
-  tier: MembershipPricingTier,
-  billingInterval: BillingInterval,
-): boolean {
-  if (isFreeMembershipTier(tier)) return true;
-  return billingInterval === "month"
-    ? membershipPriceValue(tier.price_monthly) != null
-    : membershipPriceValue(tier.price_yearly) != null;
-}
-
-export function filterMembershipTiersForBillingInterval<
-  T extends MembershipPricingTier,
->(tiers: readonly T[], billingInterval: BillingInterval): T[] {
-  return tiers.filter((tier) =>
-    hasPriceForBillingInterval(tier, billingInterval),
-  );
-}
-
-function annualSavingsPercent(tier: MembershipPricingTier): number | undefined {
-  const monthly = membershipPriceValue(tier.price_monthly);
-  const yearly = membershipPriceValue(tier.price_yearly);
-  if (!(monthly != null && yearly != null && monthly > 0 && yearly > 0)) {
-    return;
-  }
-  const yearlyEquivalent = monthly * 12;
-  if (yearlyEquivalent <= yearly) return;
-  const savings = Math.round((1 - yearly / yearlyEquivalent) * 100);
-  return savings > 0 ? savings : undefined;
-}
-
-function formatMonthlyDisplayPrice(value: number): {
-  amount: string;
-  suffix: string;
-} {
-  const rounded = Math.round(value);
-  if (Math.abs(value - rounded) < 0.005) {
-    return { amount: currency(rounded, 0), suffix: "/ month" };
-  }
-  return { amount: currency(value), suffix: "/ mo" };
 }
 
 export function MembershipBillingSelector({
@@ -119,8 +77,8 @@ export function MembershipBillingSelector({
         <Segmented<BillingInterval>
           onChange={setBillingInterval}
           options={[
-            { label: "Annual", value: "year" },
-            { label: "Monthly", value: "month" },
+            { label: BILLING_INTERVAL_LABELS.year, value: "year" },
+            { label: BILLING_INTERVAL_LABELS.month, value: "month" },
           ]}
           size="large"
           value={billingInterval}
@@ -139,31 +97,11 @@ function MembershipPricingTierPayment({
   label: string;
   tier: MembershipPricingTier;
 }) {
-  let price: { amount: string; suffix: string } | undefined;
-  let billingLine = "\u00a0";
-  if (!isFreeMembershipTier(tier)) {
-    const savings = annualSavingsPercent(tier);
-    if (billingInterval === "month") {
-      price = formatMonthlyDisplayPrice(
-        membershipPriceValue(tier.price_monthly) ?? 0,
-      );
-      billingLine =
-        savings != null ? `Save ${savings}% with annual billing` : "\u00a0";
-    } else {
-      const yearly = membershipPriceValue(tier.price_yearly) ?? 0;
-      price = formatMonthlyDisplayPrice(yearly / 12);
-      billingLine =
-        savings != null
-          ? `Billed annually, saving ${savings}%`
-          : "Billed annually";
-    }
-  }
+  const price = membershipPriceDisplay(tier, billingInterval);
+  const billingLine = price?.billingLine ?? "\u00a0";
 
   const { token } = theme.useToken();
-  const promotion =
-    typeof tier.trial_days === "number" && tier.trial_days > 0
-      ? `${Math.floor(tier.trial_days)}-day free trial`
-      : undefined;
+  const promotion = membershipTrialLabel(tier);
   const promotionPlaceholder = "7-day free trial";
 
   return (
@@ -229,14 +167,8 @@ function MembershipPricingTierPayment({
 
 function MembershipPricingTierBody({ tier }: { tier: MembershipPricingTier }) {
   const { token } = theme.useToken();
-  const description =
-    tier.store_description?.trim() || tier.presentation?.tagline;
-  const configuredHighlights = Array.isArray(tier.store_highlights)
-    ? tier.store_highlights.filter(
-        (item): item is string =>
-          typeof item === "string" && item.trim() !== "",
-      )
-    : [];
+  const description = membershipStoreDescription(tier);
+  const configuredHighlights = membershipStoreHighlights(tier);
 
   return (
     <Flex vertical gap="middle">
