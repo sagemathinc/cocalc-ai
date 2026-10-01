@@ -207,6 +207,7 @@ export function ConversationCollection({
         open={aliasFor != null}
         title={aliasFor?.title ?? ""}
         alias={aliasFor?.alias}
+        urlKind="chats"
         onClose={() => setAliasFor(undefined)}
         onSave={async (alias) => {
           if (!aliasFor) return;

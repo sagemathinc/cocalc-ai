@@ -338,6 +338,12 @@ export function load_target(
       redux.getActions("page").set_active_tab("hosts", change_history);
       break;
 
+    case "u":
+      void import("./personal-url-navigation").then(({ openPersonalUrl }) =>
+        openPersonalUrl(parsed.path),
+      );
+      break;
+
     case "people":
       redux.getActions("page").setState({ people_route: parsed.route });
       redux.getActions("page").set_active_tab("people", change_history);

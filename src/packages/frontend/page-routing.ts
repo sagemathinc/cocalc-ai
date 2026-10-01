@@ -56,6 +56,8 @@ export type ParsedPageTarget =
   // route: "conversations/<project_id>/<conversation_id>" or
   // "collaborators/<account_id>"
   | { page: "people"; route?: string }
+  // A personal URL: "u/<owner>/<kind>/<alias>", resolved on load.
+  | { page: "u"; path: string }
   | { page: "file-use" }
   | { page: "admin"; route: AdminRoute }
   | { page: "hosts" }
@@ -141,6 +143,8 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
         page: "people",
         route: segments.slice(1).filter(Boolean).join("/") || undefined,
       };
+    case "u":
+      return { page: "u", path: segments.filter(Boolean).join("/") };
     case "admin":
       return {
         page: "admin",
@@ -173,6 +177,9 @@ export function getPageTopTab(parsed: ParsedPageTarget): PageTopTab {
       return "project";
     case "account":
       return "account";
+    case "u":
+      // Shown while the personal URL resolves.
+      return "people";
     default:
       return parsed.page;
   }
@@ -229,6 +236,8 @@ export function getPageTargetPath(parsed: ParsedPageTarget): string {
       return "file-use";
     case "people":
       return parsed.route ? `people/${parsed.route}` : "people";
+    case "u":
+      return parsed.path;
     case "admin":
       return getAdminTargetPath(parsed.route);
     case "hosts":

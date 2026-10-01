@@ -213,3 +213,10 @@ describe("page-routing", () => {
     expect(getPageUrlPath({ page: "people" })).toBe("/people");
   });
 });
+
+test("personal URLs round-trip and show People while resolving", () => {
+  const parsed = parsePageTarget("u/alice/chats/weekly");
+  expect(parsed).toEqual({ page: "u", path: "u/alice/chats/weekly" });
+  expect(getPageUrlPath(parsed)).toBe("/u/alice/chats/weekly");
+  expect(getPageTopTab(parsed)).toBe("people");
+});

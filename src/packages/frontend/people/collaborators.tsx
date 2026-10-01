@@ -238,6 +238,7 @@ export function CollaboratorList({
         open={aliasFor != null}
         title={aliasFor?.name ?? ""}
         alias={aliasFor?.alias}
+        urlKind="people"
         onClose={() => setAliasFor(undefined)}
         onSave={async (alias) => {
           if (aliasFor) await setPersonState(aliasFor.account_id, { alias });
@@ -536,6 +537,7 @@ export function PersonDetail({
         open={aliasOpen}
         title={person?.name ?? ""}
         alias={person?.alias}
+        urlKind="people"
         onClose={() => setAliasOpen(false)}
         onSave={(alias) => setPersonState(account_id, { alias })}
       />

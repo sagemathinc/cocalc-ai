@@ -5,18 +5,70 @@
 
 import { useEffect, useState } from "react";
 import { Alert, Form, Input, Modal } from "antd";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import CopyToClipBoard from "@cocalc/frontend/components/copy-to-clipboard";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
+import {
+  personalUrlPath,
+  type PersonalUrlKind,
+} from "@cocalc/util/personal-urls";
+
+// The saved alias as a /u/<username or account id>/<kind>/<alias> link.
+function PersonalLink({
+  kind,
+  alias,
+}: {
+  kind: PersonalUrlKind;
+  alias: string;
+}) {
+  const account_id = useTypedRedux("account", "account_id");
+  const [username, setUsername] = useState<string | null>(null);
+  useEffect(() => {
+    let canceled = false;
+    webapp_client.conat_client.hub.personalUrls
+      .getUsername({})
+      .then((r) => !canceled && setUsername(r.username))
+      .catch(() => {});
+    return () => {
+      canceled = true;
+    };
+  }, []);
+  if (!account_id) return null;
+  let path: string;
+  try {
+    path = personalUrlPath(username ?? account_id, kind, alias);
+  } catch {
+    return null;
+  }
+  const base = appBasePath === "/" ? "" : appBasePath;
+  return (
+    <Form.Item
+      label="Personal link"
+      extra={
+        kind === "people"
+          ? "Only you can open this link."
+          : "Opens for anyone who already has access to the project."
+      }
+    >
+      <CopyToClipBoard value={`${location.origin}${base}${path}`} />
+    </Form.Item>
+  );
+}
 
 // Edit a private @alias. Saving an empty value clears it.
 export function AliasDialog({
   open,
   title,
   alias,
+  urlKind,
   onSave,
   onClose,
 }: {
   open: boolean;
   title: string;
   alias?: string | null;
+  urlKind?: PersonalUrlKind;
   onSave: (alias: string) => Promise<void>;
   onClose: () => void;
 }) {
@@ -66,6 +118,9 @@ export function AliasDialog({
             onChange={(e) => setValue(e.target.value)}
           />
         </Form.Item>
+        {urlKind && alias && value.replace(/^@/, "") === alias && (
+          <PersonalLink kind={urlKind} alias={alias} />
+        )}
         {error && <Alert role="alert" type="error" title={error} />}
       </Form>
     </Modal>
