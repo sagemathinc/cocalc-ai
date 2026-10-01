@@ -70,3 +70,45 @@ written under `src/.local/accessibility/` by default.
 Lighthouse and axe do not prove WCAG conformance. Manually review keyboard
 operation, focus visibility, responsive reflow, zoom, contrast across affected
 states, and motion behavior for substantial UI changes.
+
+`collaborators-workspace.mjs` exports additional interaction checks for an
+isolated, populated Collaborators fixture. `checkCollaboratorsProjectPins(page,
+projectTitle)` exercises keyboard pinning, the pinned-only view, removal focus,
+and restores the original pin. `checkCollaboratorsSharing(page, options)` starts
+from an open resource overview and checks destination selection, audience,
+Escape, focus restoration and reachable controls. Supply the destination's full
+accessible button name. Its optional `addReference: true` changes a private draft
+only, so use a disposable fixture; neither check sends messages or runs agents.
+Run at desktop and 320px widths, light/dark themes and 200% browser zoom. These
+helpers supplement, not replace, the automated component and axe audits.
+
+Run the isolated Manual Scan dialog audit from the repository root:
+
+```sh
+node src/scripts/accessibility/manual-scan.mjs
+```
+
+It renders the actual component against deterministic RPC responses and uses
+disposable Chromium profiles for light/dark at 100% and 200% native browser
+zoom. The audit verifies the resulting 320 CSS-pixel viewport and device scale;
+it does not substitute CSS `zoom`. It checks keyboard selection/start/cancel,
+reload, result pagination, explicit retry, Escape focus restoration, reachable
+controls, and axe violations. It needs Chromium (default `/usr/bin/chromium`,
+override with `CHROME_BIN`) but no live CoCalc login. The separate
+`server/collaborators/scan-browser.acceptance.test.ts` covers real service RPCs;
+neither fixture substitutes for a signed-in deployment check.
+
+`checkCollectionViews(page, label, pinnedTitle?)` exercises the shared collection
+controls on Artifacts or populated Collaborators People/Projects/Conversations.
+It switches list/grid using the keyboard, checks reachable controls and the
+optional pinned-item keyboard drag/cancel, then restores the original view. Run against
+isolated fixtures at the same widths/themes above; it does not alter pin order.
+
+`workspace-shell.mjs` exports `checkWorkspaceSidebar(page, { narrow })` for a
+signed-in Projects list or opened project. It checks the current navigation
+entry, keyboard collapse/restore, focus transfer, and the reveal control's
+viewport bounds. Run it at desktop and 320px widths, both themes, and 200% zoom.
+Use `checkWorkspaceProjectHistory(page, agentAccessibleName)` with an existing
+file open and an agent in a different project to check retained project DOM and
+the exact file URL after browser Back. The app component tests cover retention
+and the Lite, AI-disabled, exam, and embedded-navigation exceptions.

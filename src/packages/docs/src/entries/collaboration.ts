@@ -7,7 +7,23 @@ import type { DocsEntry } from "../types";
 import { docsIcon, projectActionParameters } from "../helpers";
 import { CHAT_BODY, MENTIONS_BODY } from "../content/collaboration";
 
+import { SCAN_FILES_BODY } from "../content/scan-files";
+
 export const COLLABORATION_ENTRIES: DocsEntry[] = [
+  {
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: SCAN_FILES_BODY.trim(),
+    category: "Collaboration",
+    id: "collaboration.scan-files",
+    lastReviewed: "2026-09-30",
+    noActionReason:
+      "Manual scans require the user's project selection and explicit admission.",
+    slug: "collaboration/scan-files",
+    status: "ready",
+    summary:
+      "Understand automatic indexing, choose likely changed projects, and run or cancel a manual recovery scan.",
+    title: "Index resources and scan project files",
+  },
   {
     actions: [
       {

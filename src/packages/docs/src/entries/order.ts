@@ -109,6 +109,7 @@ export const DOCS_ENTRY_IDS = [
   "projects.collaborators",
   "collaboration.chat",
   "collaboration.mentions",
+  "collaboration.scan-files",
   "files.timetravel",
   "files.git",
   "teaching.course-workflow",

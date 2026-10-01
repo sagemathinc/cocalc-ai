@@ -2,32 +2,112 @@
   "version": 1,
   "pages": [
     {
-      "id": "agent-artifact-library",
-      "title": "Agent artifact Library navigation",
-      "path": "/agents",
+      "id": "people-person-first-invitation",
+      "title": "People person-first invitation keyboard and focus",
+      "path": "/people/collaborators/",
       "authentication": "account",
       "engine": "axe",
       "minimumScore": 1,
-      "readySelector": "button:has-text('Library')",
+      "readySelector": "[aria-label='People views']",
       "settleMs": 500,
       "actions": [
         {
           "type": "remember",
           "key": "trigger",
-          "selector": "button:has-text('Library')"
+          "role": "button",
+          "name": "Invite"
+        },
+        { "type": "focus", "role": "button", "name": "Invite" },
+        { "type": "press", "key": "Enter" },
+        { "type": "wait", "role": "dialog", "name": "Invite a person" },
+        {
+          "type": "assertFocus",
+          "role": "searchbox",
+          "name": "Email, name, or @username"
+        },
+        {
+          "type": "assertFocusWithin",
+          "role": "dialog",
+          "name": "Invite a person"
+        }
+      ],
+      "cleanupActions": [
+        { "type": "press", "key": "Escape" },
+        { "type": "assertHidden", "role": "dialog", "name": "Invite a person" },
+        { "type": "waitForTimeout", "timeoutMs": 250 },
+        { "type": "assertFocus", "key": "trigger" }
+      ]
+    },
+    {
+      "id": "collaborators-project-filter",
+      "title": "People project selector keyboard and focus",
+      "path": "/people/conversations",
+      "authentication": "account",
+      "engine": "axe",
+      "minimumScore": 1,
+      "readySelector": "[aria-label='People views']",
+      "settleMs": 500,
+      "actions": [
+        {
+          "type": "remember",
+          "key": "trigger",
+          "role": "button",
+          "name": "Filters"
+        },
+        { "type": "focus", "role": "button", "name": "Filters" },
+        { "type": "press", "key": "Enter" },
+        { "type": "wait", "role": "dialog", "name": "People filters" },
+        {
+          "type": "focus",
+          "role": "button",
+          "name": "Filter by project"
+        },
+        { "type": "press", "key": "Enter" },
+        { "type": "wait", "role": "dialog", "name": "Filter by project" },
+        {
+          "type": "assertFocusWithin",
+          "role": "dialog",
+          "name": "Filter by project"
+        }
+      ],
+      "cleanupActions": [
+        { "type": "press", "key": "Escape" },
+        {
+          "type": "assertHidden",
+          "role": "dialog",
+          "name": "Filter by project"
+        },
+        { "type": "waitForTimeout", "timeoutMs": 250 },
+        { "type": "assertFocus", "key": "trigger" }
+      ]
+    },
+    {
+      "id": "agent-artifact-library",
+      "title": "Agent artifact navigation",
+      "path": "/agents",
+      "authentication": "account",
+      "engine": "axe",
+      "minimumScore": 1,
+      "readySelector": "button:has-text('Artifacts')",
+      "settleMs": 500,
+      "actions": [
+        {
+          "type": "remember",
+          "key": "trigger",
+          "selector": "button:has-text('Artifacts')"
         },
         {
           "type": "focus",
-          "selector": "button:has-text('Library')"
+          "selector": "button:has-text('Artifacts')"
         },
         { "type": "press", "key": "Enter" },
         {
           "type": "wait",
-          "selector": "[aria-label='Search library']"
+          "selector": "[aria-label='Search artifacts']"
         },
         {
           "type": "assertFocusWithin",
-          "selector": "[aria-label='Artifact Library']"
+          "selector": "[aria-label='Artifacts'][role='region']"
         },
         {
           "type": "focus",
