@@ -2229,7 +2229,7 @@ describe("feature configuration loading", () => {
       screen.queryByRole("heading", { name: "Research Compute", level: 1 }),
     ).toBeNull();
     expect(
-      screen.queryByRole("link", { name: "Understand project hosts" }),
+      screen.queryByRole("link", { name: "Use project hosts" }),
     ).toBeNull();
   }
 
@@ -2328,7 +2328,7 @@ describe("feature configuration loading", () => {
       }),
     ).not.toBeNull();
     expect(
-      screen.getByRole("link", { name: "Understand project hosts" }),
+      screen.getByRole("link", { name: "Use project hosts" }),
     ).toHaveAttribute("href", "/docs/hosts/project-hosts");
     expect(document.title).toContain("CPU, RAM, and GPU");
     expect(canonicalHref()).toContain("/features/research-compute");

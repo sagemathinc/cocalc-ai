@@ -495,6 +495,60 @@ describe("feature initial HTML product availability", () => {
     },
   );
 
+  it.each(["/", "/prefix"])(
+    "renders the research compute record that the React page renders, on %s",
+    (basePath) => {
+      const page = getPublicFeaturePage("research-compute")!;
+      const html = renderPublicRoutePrerender(
+        { section: "features", route: { view: "detail", slug: page.slug } },
+        basePath,
+        { cocalc_product: "launchpad" },
+      );
+      const prefix = basePath === "/" ? "" : basePath;
+
+      expect(html).toContain(`<h1>${page.metadataTitle}</h1>`);
+      expect(page.sections).toHaveLength(2);
+      const [options, sizing] = page.sections!;
+      for (const text of [
+        `<p>${page.tagline}</p>`,
+        `<p>${page.summary}</p>`,
+        ...page.sections!.flatMap(({ paragraphs, title }) => [
+          `<h2>${title}</h2>`,
+          ...paragraphs!.map((paragraph) => `<p>${paragraph}</p>`),
+        ]),
+        ...options.cards!.map(
+          ({ body, title }) => `<h3>${title}</h3><p>${body}</p>`,
+        ),
+        `<details><summary>${sizing.detailsLabel}</summary><ul>${sizing
+          .bullets!.map((bullet) => `<li>${bullet}</li>`)
+          .join("")}</ul></details>`,
+      ]) {
+        expect(html).toContain(text);
+      }
+      const links = [
+        ...options.cards!.flatMap(({ link }) => (link ? [link] : [])),
+        ...sizing.links!,
+      ];
+      expect(links.map(({ href }) => href)).toEqual([
+        "/docs/hosts/project-hosts",
+        "/docs/jupyter/remote-kernels",
+        "/docs/hosts/choose-compute",
+      ]);
+      for (const { href, label } of links) {
+        expect(html).toContain(`href="${prefix}${href}">${label}</a>`);
+      }
+      expect(page.signUpLabel).toBe("Start on CoCalc.ai");
+      expect(html).toContain(
+        `href="${prefix}/auth/sign-up">${page.signUpLabel}</a>`,
+      );
+      expect(html).not.toContain("Start using CoCalc");
+      // Managed VMs stay off the page, as an option, a detail or a guide
+      // link, until they are generally available.
+      expect(html).not.toMatch(/\bVMs?\b|virtual machines?|\bWindows\b/i);
+      expect(html).not.toContain("projects/virtual-machines");
+    },
+  );
+
   it("leaves documentation rendering to its existing owner", () => {
     expect(
       renderPublicRoutePrerender(

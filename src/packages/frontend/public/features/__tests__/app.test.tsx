@@ -905,6 +905,10 @@ describe("PublicFeaturesApp", () => {
   });
 });
 
+// Managed VMs stay off the compute page, as an option or as a detail, until
+// they are generally available.
+const MANAGED_VM_TERMS = /\bVMs?\b|virtual machines?|\bWindows\b/i;
+
 describe("research compute product visibility", () => {
   it.each(["plus", undefined, "unknown"])(
     "omits only compute from the index and subnav for product %s",
@@ -976,25 +980,19 @@ describe("research compute product visibility", () => {
         screen.getByRole("heading", { name: "Research Compute", level: 1 }),
       ).not.toBeNull();
       expect(
-        screen.getByRole("link", { name: "Understand project hosts" }),
+        screen.getByRole("link", { name: "Use project hosts" }),
       ).toHaveAttribute("href", "/docs/hosts/project-hosts");
       expect(
         screen.getByRole("heading", {
-          name: "Put the right compute behind the research.",
+          name: "Compute for demanding analysis and simulation.",
           level: 2,
         }),
       ).not.toBeNull();
-      expect(
-        screen.getByRole("link", { name: "Choose a compute path" }),
-      ).toHaveAttribute("href", "/docs/hosts/choose-compute");
-      expect(
-        screen.getByText(
-          /Selecting a machine does not reserve provider capacity/,
-        ),
-      ).not.toBeNull();
-      expect(
-        screen.getByRole("link", { name: "Compare operating models" }),
-      ).toHaveAttribute("href", "/products");
+      for (const link of screen.getAllByRole("link", {
+        name: "Choose compute for research",
+      })) {
+        expect(link).toHaveAttribute("href", "/docs/hosts/choose-compute");
+      }
       rerender(
         <PublicFeaturesApp
           config={{ cocalc_product: "plus" }}
@@ -1003,8 +1001,113 @@ describe("research compute product visibility", () => {
       );
       expect(screen.getByText("Feature page not found")).not.toBeNull();
       expect(
-        screen.queryByRole("link", { name: "Understand project hosts" }),
+        screen.queryByRole("link", { name: "Use project hosts" }),
       ).toBeNull();
     },
   );
+
+  it("renders the compute page from its feature record, like the crawler fallback", () => {
+    const page = getPublicFeaturePage("research-compute")!;
+    const { container } = render(
+      <PublicFeaturesApp
+        config={{
+          cocalc_product: "launchpad",
+          help_email: "help@example.com",
+          site_name: "CoCalc",
+        }}
+        initialRoute={{ view: "detail", slug: page.slug }}
+      />,
+    );
+
+    // One H1, the record's title; the hero line is the record's tagline.
+    expect(
+      Array.from(container.querySelectorAll("h1")).map((h) => h.textContent),
+    ).toEqual([page.title]);
+    expect(
+      screen.getByRole("heading", { level: 2, name: page.tagline }),
+    ).not.toBeNull();
+    expect(screen.getByText(page.summary)).not.toBeNull();
+
+    // In order: the options with the cost line, and the sizing section with
+    // its collapsed technical details.
+    expect(page.sections).toHaveLength(2);
+    const [options, sizing] = page.sections!;
+    for (const { paragraphs, title } of page.sections!) {
+      expect(
+        screen.getByRole("heading", { level: 2, name: title }),
+      ).not.toBeNull();
+      expect(paragraphs).toHaveLength(1);
+      expect(screen.getByText(paragraphs![0])).not.toBeNull();
+    }
+    expect(options.cards).toHaveLength(2);
+    for (const { body, link, title } of options.cards!) {
+      expect(
+        screen.getByRole("heading", { level: 3, name: title }),
+      ).not.toBeNull();
+      expect(screen.getByText(body)).not.toBeNull();
+      if (link) {
+        expect(
+          screen.getByRole("link", { name: link.label }).getAttribute("href"),
+        ).toBe(link.href);
+      }
+    }
+    expect(sizing.detailsLabel).toBe("Technical details");
+    const disclosure = container.querySelector("details")!;
+    expect(disclosure.hasAttribute("open")).toBe(false);
+    expect(disclosure.querySelector("summary")?.textContent).toBe(
+      sizing.detailsLabel,
+    );
+    expect(
+      Array.from(disclosure.querySelectorAll("li")).map((li) => li.textContent),
+    ).toEqual(sizing.bullets);
+    expect(sizing.links).toHaveLength(1);
+    for (const { href, label } of sizing.links!) {
+      const links = screen.getAllByRole("link", { name: label });
+      // The hero's documentation button and the link at the end.
+      expect(links).toHaveLength(2);
+      for (const link of links) {
+        expect(link.getAttribute("href")).toBe(href);
+      }
+    }
+    expect(page.docsUrl).toBe(sizing.links![0].href);
+
+    expect(page.signUpLabel).toBe("Start on CoCalc.ai");
+    const ctas = screen.getAllByRole("link", { name: page.signUpLabel });
+    expect(ctas).toHaveLength(2);
+    for (const cta of ctas) {
+      expect(cta.getAttribute("href")).toBe("/auth/sign-up?intent=code");
+    }
+    expect(
+      screen.getByRole("link", { name: "Contact CoCalc" }).getAttribute("href"),
+    ).toBe("mailto:help@example.com");
+
+    // The hero is text only, so no claim rests on an image.
+    expect(container.querySelector("figure")).toBeNull();
+    // No managed VM option, detail or guide link.
+    expect(container.textContent).not.toMatch(MANAGED_VM_TERMS);
+    expect(
+      container.querySelector('a[href*="projects/virtual-machines"]'),
+    ).toBeNull();
+  });
+
+  it("opens project hosts for signed-in visitors", () => {
+    const { container } = render(
+      <PublicFeaturesApp
+        config={{ cocalc_product: "launchpad", is_authenticated: true }}
+        initialRoute={{ view: "detail", slug: "research-compute" }}
+      />,
+    );
+
+    expect(container.textContent).not.toMatch(MANAGED_VM_TERMS);
+    const ctas = screen.getAllByRole("link", { name: "Open project hosts" });
+    expect(ctas).toHaveLength(2);
+    for (const cta of ctas) {
+      expect(cta.getAttribute("href")).toBe("/hosts");
+    }
+    expect(
+      screen.queryByRole("link", {
+        name: getPublicFeaturePage("research-compute")!.signUpLabel,
+      }),
+    ).toBeNull();
+  });
 });

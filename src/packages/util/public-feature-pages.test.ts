@@ -61,10 +61,14 @@ describe("public feature page catalog", () => {
     ).toBe(true);
     const links = [
       page?.docsUrl,
-      ...(page?.sections?.flatMap(
-        (section) => section.links?.map((link) => link.href) ?? [],
-      ) ?? []),
+      ...(page?.sections?.flatMap((section) => [
+        ...(section.links?.map((link) => link.href) ?? []),
+        ...(section.cards?.flatMap((card) =>
+          card.link ? [card.link.href] : [],
+        ) ?? []),
+      ]) ?? []),
     ];
+    expect(links).toContain("/docs/hosts/project-hosts");
     expect(links.length).toBeGreaterThan(1);
     for (const href of links) {
       expect(href).toMatch(/^\/docs\//);
@@ -74,6 +78,14 @@ describe("public feature page catalog", () => {
         }),
       ).toBeDefined();
     }
+  });
+
+  it("keeps managed VMs off the research compute page", () => {
+    // The page and its crawler fallback take their copy from this record.
+    // Managed VMs come back only once they are generally available.
+    expect(
+      JSON.stringify(getPublicFeaturePage("research-compute")),
+    ).not.toMatch(/\bVMs?\b|virtual machines?|\bWindows\b/i);
   });
 
   it("keeps agent discovery connected to current internal documentation", () => {
