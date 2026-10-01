@@ -94,6 +94,10 @@ inventory is published alongside the PR in the originating workbench.
   completes ownership-transfer and queued-agent fixtures exposed by the broad CI
   run. Production ownership fences and startup sequencing remain intact.
 
+- [4436d7cce4](https://github.com/sagemathinc/cocalc-ai/commit/4436d7cce4)
+  excludes project file paths from app-root inference and requires route segment
+  boundaries; the remote project-feed fixture now runs on its explicit home bay.
+
 ## Merge and enablement gates
 
 The feature remains draft and default-off. Existing functional tests do not close:
@@ -144,6 +148,10 @@ results and unverified live scenarios in the PR description.
   passed after correcting the stale menu anchor. Follow-up reference tests:
   17 passed; collaborator delivery-order fixture: 8 passed, 1 PostgreSQL-only
   skip; ownership-transfer and queued-agent integration fixtures: 27 passed.
+  Existing chat search/modal suites pass with the deferred access-dialog import;
+  app-root inference: 10 passed; remote home-bay project-feed fixture: 1 passed.
+  Broad CI exposed these integration gaps; fixed suites were rerun individually,
+  so this is not a claim of an all-green aggregate CI run.
 - Production module guards pass. Signed-in startup size budgets and the ultralite
   notification budget remain failing; see the PR for measured values.
 - Independent-process PostgreSQL acceptance, local full development build completion,
