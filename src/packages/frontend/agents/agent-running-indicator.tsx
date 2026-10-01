@@ -80,6 +80,22 @@ async function refreshProject(projectId: string, entry: ActivityEntry) {
   }
 }
 
+// Best effort from the status already polled for the agent list: whether any
+// thread of this chat file is running.
+export function isAgentPathRunning(
+  accountId: string,
+  projectId: string,
+  path: string,
+): boolean {
+  const entry = activityByProject.get(`${accountId}\0${projectId}`);
+  if (!entry) return false;
+  const prefix = `${path}\0`;
+  for (const key of entry.threads) {
+    if (key.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
 function useActiveProjectThreads(
   accountId: string,
   projectId: string,
