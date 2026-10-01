@@ -6,7 +6,8 @@
 // Compact GitHub-style status for a PR artifact: state badge, check status,
 // how fresh the cached data is, and the reviewed revisions.
 
-import { Tag, Tooltip, Typography } from "antd";
+import { Tag, Typography } from "antd";
+import { Tooltip } from "@cocalc/frontend/components/tip";
 import type { ArtifactGitHubPR } from "@cocalc/chat";
 import { artifactGitHubPRUrl } from "@cocalc/chat";
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";

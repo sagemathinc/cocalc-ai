@@ -1,5 +1,6 @@
 import { Suspense, useState } from "react";
-import { Alert, Button, Space, Tooltip } from "antd";
+import { Alert, Button, Space } from "antd";
+import { Tooltip } from "@cocalc/frontend/components/tip";
 import type { ArtifactRecord } from "@cocalc/chat";
 import { artifactGitHubPRUrl } from "@cocalc/chat";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
