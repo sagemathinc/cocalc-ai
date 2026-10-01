@@ -5,6 +5,7 @@
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { drainAccountProjectIndexProjection } from "@cocalc/database/postgres/account-project-index-projector";
+import { syncCollaborationDemandSchema } from "@cocalc/database/postgres/collaborators/collaborators-demand";
 
 const publishAccountFeedEventBestEffortMock = jest.fn();
 const syncProjectUsersOnHostMock = jest.fn();
@@ -175,6 +176,7 @@ async function projectedProjectCount({
 describe("project ownership transfer integration", () => {
   beforeAll(async () => {
     await initEphemeralDatabase({});
+    await syncCollaborationDemandSchema(getPool());
   }, 15000);
 
   beforeEach(() => {
@@ -186,7 +188,7 @@ describe("project ownership transfer integration", () => {
   afterEach(async () => {
     jest.clearAllMocks();
     await getPool().query(
-      "TRUNCATE account_project_index, project_events_outbox, projects, accounts, central_log CASCADE",
+      "TRUNCATE collaboration_demand, collaboration_demand_activation, account_project_index, project_events_outbox, projects, accounts, central_log CASCADE",
     );
   });
 

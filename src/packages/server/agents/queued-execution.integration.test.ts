@@ -109,7 +109,9 @@ describeDb("accepted queued work outlives the sending run", () => {
 
   beforeAll(async () => {
     await db.query(
-      "CREATE TABLE IF NOT EXISTS projects(project_id uuid PRIMARY KEY, users jsonb)",
+      `CREATE TABLE IF NOT EXISTS projects(
+        project_id uuid PRIMARY KEY, users jsonb,
+        owning_bay_id text, deleted boolean NOT NULL DEFAULT false)`,
     );
     await syncSchema(
       Object.fromEntries(tables.map((name) => [name, SCHEMA[name]])),
