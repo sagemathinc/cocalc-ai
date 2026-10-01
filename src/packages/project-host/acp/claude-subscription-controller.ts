@@ -275,16 +275,17 @@ export async function launchClaudeSubscriptionController(
     purpose === "agent"
       ? createAgentMemory(accountMemoryHub({ projectId, accountId }))
       : undefined;
-  let memoryEntries: MemoryEntry[] = [];
-  if (memory) {
-    try {
-      memoryEntries = await memory.entries();
-    } catch (error) {
-      // Memory must never block a turn; the tools still work once the hub does.
-      logger.warn("could not load agent memory index", { error: `${error}` });
-    }
-  }
-  const systemPromptAppend = `The CoCalc skill is preloaded below as session instructions, not as a separate Skill tool. Follow it for CoCalc workflows.
+  // Load the index alongside the credential fetch below. Memory must never
+  // block a turn; the tools still work once the hub does.
+  const memoryLoad: Promise<MemoryEntry[]> = memory
+    ? memory.entries().catch((error) => {
+        logger.warn("could not load agent memory index", {
+          error: `${error}`,
+        });
+        return [];
+      })
+    : Promise.resolve([]);
+  const instructions = `The CoCalc skill is preloaded below as session instructions, not as a separate Skill tool. Follow it for CoCalc workflows.
 This is an isolated subscription controller. Run ALL project filesystem and CLI operations through the project_exec tool on ${CLAUDE_PROJECT_MCP_NAME}, not in the controller. Read applicable project CLAUDE.md instructions through that tool before editing. Skill reference files are available in the project at /home/user/.claude/skills/cocalc/.
 Current project tool server: ${CLAUDE_PROJECT_MCP_NAME}.
 ${CLAUDE_PROJECT_JOB_GUIDANCE}
@@ -293,12 +294,18 @@ The project_exec environment contains the runtime-issued CoCalc agent identity f
 
 <cocalc-skill>
 ${skill}
-</cocalc-skill>${memory ? `\n\n${memoryPromptSection(memoryEntries)}` : ""}`;
-  const registered = await getClaudeSubscriptionCredential({
-    projectId,
-    accountId,
-    credentialId,
-  });
+</cocalc-skill>`;
+  const [registered, memoryEntries] = await Promise.all([
+    getClaudeSubscriptionCredential({
+      projectId,
+      accountId,
+      credentialId,
+    }),
+    memoryLoad,
+  ]);
+  const systemPromptAppend = memory
+    ? `${instructions}\n\n${memoryPromptSection(memoryEntries)}`
+    : instructions;
   if (purpose === "agent")
     await ensureProjectContainerRunning({ projectId, accountId });
   const rootfs = await extractBaseImage(CLAUDE_CONTROLLER_BASE_IMAGE);
