@@ -75,6 +75,34 @@ export const DEFAULT_PERSONAL_STATE: PersonalState = {
   last_read: null,
 };
 
+// A collaborator's registered agents and the artifacts they published, in
+// projects shared with the viewer.
+export interface SharedAgent {
+  agent_id: string;
+  project_id: string;
+  name: string;
+  path: string;
+  thread_id: string;
+  created_at: number;
+}
+
+export interface SharedArtifact {
+  entry_id: string;
+  project_id: string;
+  title: string;
+  kind: string;
+  created_at: number;
+  agent_id: string;
+  agent_name: string;
+}
+
+export interface SharedWork {
+  agents: SharedAgent[];
+  artifacts: SharedArtifact[];
+}
+
+export const MAX_SHARED_WORK_ITEMS = 500;
+
 export type ListedConversation = Conversation &
   PersonalState & {
     // Latest time someone explicitly @mentioned this account here.

@@ -14,6 +14,7 @@ export const {
   renameConversation,
   removeConversation,
   markRead,
+  listSharedWork,
   setState,
   listStates,
   resolveAlias,

@@ -9,6 +9,7 @@ import type {
   PeopleStateKind,
   PersonalStatePatch,
   PersonalStateRow,
+  SharedWork,
 } from "@cocalc/util/people";
 import { authFirstRequireAccount } from "./util";
 
@@ -57,6 +58,13 @@ export interface PeopleApi {
   removeConversation(opts: ConversationRef): Promise<void>;
   markRead(opts: ConversationRef & { read_through: number }): Promise<void>;
 
+  // A collaborator's registered agents and their artifacts, in projects
+  // shared with the caller.
+  listSharedWork(opts: {
+    account_id?: string;
+    person_id: string;
+  }): Promise<SharedWork & { unavailable_bays: number }>;
+
   // Private per-account state for conversations and people.
   setState(opts: {
     account_id?: string;
@@ -85,6 +93,7 @@ export const people = {
   renameConversation: authFirstRequireAccount,
   removeConversation: authFirstRequireAccount,
   markRead: authFirstRequireAccount,
+  listSharedWork: authFirstRequireAccount,
   setState: authFirstRequireAccount,
   listStates: authFirstRequireAccount,
   resolveAlias: authFirstRequireAccount,

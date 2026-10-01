@@ -13,6 +13,7 @@ import {
   listConversationsForProjects,
   mentionKey,
   listPersonalStates,
+  listSharedWork,
   markConversationRead,
   refreshConversationActivity,
   removeConversation,
@@ -45,7 +46,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await getPool().query(
-    "TRUNCATE project_conversations, account_people_state, account_notification_index, projects CASCADE",
+    "TRUNCATE project_conversations, account_people_state, account_notification_index, artifact_catalog, artifact_catalog_sources, agent_identities, projects CASCADE",
   );
   await setUsers(project_id, { [alice]: "owner", [bob]: "collaborator" });
   await setUsers(other_project_id, { [alice]: "owner" });
@@ -346,4 +347,52 @@ test("scanned_at is recorded per account and project", async () => {
     (await listPersonalStates({ account_id: alice, kind: "project" }))[0]
       .scanned_at,
   ).toBe(5000);
+});
+
+test("shared work: a person's agents and their artifacts in shared projects only", async () => {
+  const agent = "33333333-3333-4333-8333-333333333333";
+  const unregistered = "44444444-4444-4444-8444-444444444444";
+  await getPool().query(
+    `INSERT INTO agent_identities
+       (agent_id, project_id, path, thread_id, name, created_by, created_at,
+        conversation_history)
+     VALUES ($1, $2, '/home/user/a.chat', 'current', 'helper', $3, NOW(),
+             '[{"thread_id": "older", "ended_at": "2026-01-01"}]'::jsonb)`,
+    [agent, project_id, bob],
+  );
+  await getPool().query(
+    `INSERT INTO artifact_catalog_sources (source_id, project_id, chat_path)
+     VALUES ('src', $1, '/home/user/a.chat')`,
+    [project_id],
+  );
+  const artifact = (entry: string, thread: string, title: string) =>
+    getPool().query(
+      `INSERT INTO artifact_catalog
+         (entry_id, source_id, project_id, thread_id, artifact_id, metadata,
+          created_at, deleted)
+       VALUES ($1, 'src', $2, $3, $1, $4, NOW(), false)`,
+      [entry, project_id, thread, JSON.stringify({ title, kind: "file" })],
+    );
+  await artifact("a".repeat(64), "current", "From current thread");
+  await artifact("b".repeat(64), "older", "From earlier thread");
+  await artifact("c".repeat(64), unregistered, "Unattributed");
+  const work = await listSharedWork({
+    viewer_id: alice,
+    person_id: bob,
+    project_ids: [project_id, other_project_id],
+  });
+  expect(work.agents.map((a) => a.name)).toEqual(["helper"]);
+  expect(work.artifacts.map((a) => a.title).sort()).toEqual([
+    "From current thread",
+    "From earlier thread",
+  ]);
+  // Removing the viewer from the project hides everything there.
+  await setUsers(project_id, { [bob]: "collaborator" });
+  expect(
+    await listSharedWork({
+      viewer_id: alice,
+      person_id: bob,
+      project_ids: [project_id],
+    }),
+  ).toEqual({ agents: [], artifacts: [] });
 });

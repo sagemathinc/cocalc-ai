@@ -66,6 +66,9 @@ export function PeoplePage() {
   const account_id = useTypedRedux("account", "account_id");
   const project_map = useTypedRedux("projects", "project_map");
   const preferences = useCollectionPreferences("conversations");
+  const peoplePreferences = useCollectionPreferences("people");
+  const tabPreferences =
+    route.tab === "conversations" ? preferences : peoplePreferences;
   const [scope, setScope] = useScope();
 
   const selected = useSelectedConversation(
@@ -160,6 +163,8 @@ export function PeoplePage() {
   ) : (
     <CollaboratorList
       search={filter}
+      view={peoplePreferences.value.view}
+      preferences={peoplePreferences}
       onSelect={(id) => navigate(`collaborators/${id}`)}
     />
   );
@@ -214,11 +219,15 @@ export function PeoplePage() {
           >
             People
           </h1>
-          {route.tab === "conversations" && (
+          {!route.account_id && (
             <CollectionViewControl
-              view={preferences.value.view}
-              onChange={preferences.setView}
-              label="Conversations"
+              view={tabPreferences.value.view}
+              onChange={tabPreferences.setView}
+              label={
+                route.tab === "conversations"
+                  ? "Conversations"
+                  : "Collaborators"
+              }
             />
           )}
           <Input

@@ -64,3 +64,15 @@ export function matchesSearch(
     (projectTitle ?? "").toLowerCase().includes(q)
   );
 }
+
+export function matchesPerson(
+  person: { name: string; alias?: string | null },
+  query: string,
+): boolean {
+  const q = query.trim().toLowerCase().replace(/^@/, "");
+  return (
+    !q ||
+    person.name.toLowerCase().includes(q) ||
+    (person.alias ?? "").includes(q)
+  );
+}

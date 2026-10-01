@@ -9,7 +9,7 @@ import {
   createServiceHandler,
 } from "@cocalc/conat/service/typed";
 import type { Options } from "@cocalc/conat/service/service";
-import type { Conversation } from "@cocalc/util/people";
+import type { Conversation, SharedWork } from "@cocalc/util/people";
 import type { PeopleApi } from "@cocalc/conat/hub/api/people";
 
 // Trusted bay-to-bay calls. "Owner" methods run on the project's owning bay;
@@ -54,7 +54,13 @@ export interface InterBayPeopleApi {
     project_id: string;
     conversation_id: string;
   }): Promise<void>;
+  sharedWorkForProjects(opts: {
+    viewer_id: string;
+    person_id: string;
+    project_ids: string[];
+  }): Promise<SharedWork>;
   // home
+  listSharedWork: PeopleApi["listSharedWork"];
   listConversations: PeopleApi["listConversations"];
   markRead: PeopleApi["markRead"];
   setState: PeopleApi["setState"];

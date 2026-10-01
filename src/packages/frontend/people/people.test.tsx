@@ -7,7 +7,13 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ListedConversation } from "@cocalc/util/people";
 import { ConversationCollection } from "./conversation-collection";
-import { isMentioned, isUnread, matchesScope, matchesSearch } from "./scope";
+import {
+  isMentioned,
+  isUnread,
+  matchesPerson,
+  matchesScope,
+  matchesSearch,
+} from "./scope";
 
 const me = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const other = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -175,5 +181,20 @@ describe("ConversationCollection", () => {
       />,
     );
     expect(screen.getByText("None")).toBeInTheDocument();
+  });
+});
+
+describe("collaborator search", () => {
+  it("matches name or private alias, with or without @", () => {
+    const bella = {
+      account_id: other,
+      name: "Bella Boo",
+      alias: "bb",
+      pinned: false,
+      sharedProjects: 3,
+    };
+    expect(matchesPerson(bella, "boo")).toBe(true);
+    expect(matchesPerson(bella, "@bb")).toBe(true);
+    expect(matchesPerson(bella, "zz")).toBe(false);
   });
 });

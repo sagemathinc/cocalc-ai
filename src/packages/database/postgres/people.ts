@@ -17,6 +17,8 @@ import {
   type PeopleStateKind,
   type PersonalStatePatch,
   type PersonalStateRow,
+  type SharedWork,
+  MAX_SHARED_WORK_ITEMS,
   assertPeopleStateKind,
   normalizeAlias,
   normalizeConversationPath,
@@ -441,4 +443,75 @@ export async function latestMentions({
 
 export function mentionKey(project_id: string, path: string): string {
   return `${project_id}:${path}`;
+}
+
+// A person's registered agents, and the artifacts those agents published, in
+// the given projects where both the viewer and the person are currently
+// owners or collaborators. Unregistered agent threads are not attributed.
+export async function listSharedWork({
+  viewer_id,
+  person_id,
+  project_ids,
+}: {
+  viewer_id: string;
+  person_id: string;
+  project_ids: string[];
+}): Promise<SharedWork> {
+  if (project_ids.length === 0) return { agents: [], artifacts: [] };
+  const shared = `
+    SELECT p.project_id FROM projects p
+    WHERE p.project_id = ANY($1::uuid[])
+      AND p.deleted IS NOT TRUE
+      AND p.users -> $2::text ->> 'group' IN ('owner', 'collaborator')
+      AND p.users -> $3::text ->> 'group' IN ('owner', 'collaborator')`;
+  const params = [project_ids, viewer_id, person_id, MAX_SHARED_WORK_ITEMS];
+  const agents = await getPool().query(
+    `SELECT agent_id, project_id, name, path, thread_id, created_at
+     FROM agent_identities
+     WHERE project_id IN (${shared})
+       AND created_by = $3::uuid AND disabled_at IS NULL
+     ORDER BY created_at DESC
+     LIMIT $4`,
+    params,
+  );
+  const artifacts = await getPool().query(
+    `SELECT c.entry_id, c.project_id, c.metadata, c.created_at,
+            a.agent_id, a.name AS agent_name
+     FROM artifact_catalog c
+     JOIN artifact_catalog_sources s USING (source_id)
+     JOIN agent_identities a
+       ON a.project_id = c.project_id
+      AND a.path = s.chat_path
+      AND (a.thread_id = c.thread_id
+           OR COALESCE(a.conversation_history, '[]'::jsonb)
+              @> jsonb_build_array(jsonb_build_object('thread_id', c.thread_id)))
+     WHERE c.project_id IN (${shared})
+       AND NOT c.deleted
+       AND a.created_by = $3::uuid AND a.disabled_at IS NULL
+     ORDER BY c.created_at DESC NULLS LAST
+     LIMIT $4`,
+    params,
+  );
+  return {
+    agents: agents.rows.map((row) => ({
+      agent_id: row.agent_id,
+      project_id: row.project_id,
+      name: row.name,
+      path: row.path,
+      thread_id: row.thread_id,
+      created_at: new Date(row.created_at).valueOf(),
+    })),
+    artifacts: artifacts.rows.map((row) => ({
+      entry_id: row.entry_id,
+      project_id: row.project_id,
+      title: `${row.metadata?.title ?? ""}` || "Untitled artifact",
+      kind: `${row.metadata?.kind ?? ""}`,
+      created_at:
+        row.created_at == null
+          ? Number(row.metadata?.created_at ?? 0)
+          : new Date(row.created_at).valueOf(),
+      agent_id: row.agent_id,
+      agent_name: row.agent_name,
+    })),
+  };
 }

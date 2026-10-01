@@ -22,6 +22,7 @@ import {
   listConversationsForProjects,
   mentionKey,
   listPersonalStates,
+  listSharedWork,
   markConversationRead,
   refreshConversationActivity,
   removeConversation,
@@ -42,6 +43,7 @@ import {
   type Conversation,
   type ListedConversation,
   type PersonalState,
+  type SharedWork,
 } from "@cocalc/util/people";
 
 const logger = getLogger("server:people");
@@ -127,19 +129,53 @@ export function mergeListed(
   return result.sort((a, b) => b.last_activity - a.last_activity);
 }
 
+// The given projects that this bay owns.
+async function ownedHere(project_ids: string[]): Promise<string[]> {
+  const { rows } = await getPool().query(
+    `SELECT project_id FROM projects
+     WHERE project_id = ANY($1::uuid[])
+       AND COALESCE(owning_bay_id, $2) = $2`,
+    [project_ids.slice(0, MAX_LISTED_PROJECTS), getConfiguredBayId()],
+  );
+  return rows.map((row) => row.project_id);
+}
+
+// This account's projects grouped by owning bay (home bay only).
+async function projectsByBay(
+  account_id: string,
+): Promise<Map<string, string[]>> {
+  const { rows } = await getPool().query(
+    `SELECT project_id, owning_bay_id FROM account_project_index
+     WHERE account_id = $1
+     ORDER BY last_activity_at DESC NULLS LAST
+     LIMIT $2`,
+    [account_id, MAX_LISTED_PROJECTS],
+  );
+  const byBay = new Map<string, string[]>();
+  for (const { project_id, owning_bay_id } of rows) {
+    const bay_id = owning_bay_id || getConfiguredBayId();
+    byBay.set(bay_id, [...(byBay.get(bay_id) ?? []), project_id]);
+  }
+  return byBay;
+}
+
 /** Trusted inter-bay entrypoint. Each method checks it is the authority. */
 export const peopleControl: InterBayPeopleApi = {
   async listForProjects({ account_id, project_ids }) {
     requireUuid(account_id, "account_id");
-    const { rows } = await getPool().query(
-      `SELECT project_id FROM projects
-       WHERE project_id = ANY($1::uuid[])
-         AND COALESCE(owning_bay_id, $2) = $2`,
-      [project_ids.slice(0, MAX_LISTED_PROJECTS), getConfiguredBayId()],
-    );
     return await listConversationsForProjects({
       account_id,
-      project_ids: rows.map((row) => row.project_id),
+      project_ids: await ownedHere(project_ids),
+    });
+  },
+
+  async sharedWorkForProjects({ viewer_id, person_id, project_ids }) {
+    requireUuid(viewer_id, "viewer_id");
+    requireUuid(person_id, "person_id");
+    return await listSharedWork({
+      viewer_id,
+      person_id,
+      project_ids: await ownedHere(project_ids),
     });
   },
 
@@ -180,18 +216,7 @@ export const peopleControl: InterBayPeopleApi = {
 
   async listConversations({ account_id }) {
     await assertHome(account_id!);
-    const { rows } = await getPool().query(
-      `SELECT project_id, owning_bay_id FROM account_project_index
-       WHERE account_id = $1
-       ORDER BY last_activity_at DESC NULLS LAST
-       LIMIT $2`,
-      [account_id, MAX_LISTED_PROJECTS],
-    );
-    const byBay = new Map<string, string[]>();
-    for (const { project_id, owning_bay_id } of rows) {
-      const bay_id = owning_bay_id || getConfiguredBayId();
-      byBay.set(bay_id, [...(byBay.get(bay_id) ?? []), project_id]);
-    }
+    const byBay = await projectsByBay(account_id!);
     const results = await Promise.allSettled(
       [...byBay].map(([bay_id, project_ids]) =>
         (local(bay_id) ? peopleControl : remote(bay_id)).listForProjects({
@@ -230,6 +255,37 @@ export const peopleControl: InterBayPeopleApi = {
     requireUuid(opts.project_id, "project_id");
     requireUuid(opts.conversation_id, "conversation_id");
     await markConversationRead({ ...opts, account_id: opts.account_id! });
+  },
+
+  async listSharedWork({ account_id, person_id }) {
+    await assertHome(account_id!);
+    requireUuid(person_id, "person_id");
+    const byBay = await projectsByBay(account_id!);
+    const results = await Promise.allSettled(
+      [...byBay].map(([bay_id, project_ids]) =>
+        (local(bay_id) ? peopleControl : remote(bay_id)).sharedWorkForProjects({
+          viewer_id: account_id!,
+          person_id,
+          project_ids,
+        }),
+      ),
+    );
+    const work = {
+      agents: [] as SharedWork["agents"],
+      artifacts: [] as SharedWork["artifacts"],
+    };
+    let unavailable_bays = 0;
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        work.agents.push(...result.value.agents);
+        work.artifacts.push(...result.value.artifacts);
+      } else {
+        unavailable_bays += 1;
+      }
+    }
+    work.agents.sort((a, b) => b.created_at - a.created_at);
+    work.artifacts.sort((a, b) => b.created_at - a.created_at);
+    return { ...work, unavailable_bays };
   },
 
   async setState({ account_id, kind, target_id, project_id, patch }) {
@@ -314,6 +370,10 @@ export const peopleApi: PeopleApi = {
 
   async markRead(opts) {
     await (await home(opts.account_id!)).markRead(opts);
+  },
+
+  async listSharedWork(opts) {
+    return await (await home(opts.account_id!)).listSharedWork(opts);
   },
 
   async setState(opts) {
