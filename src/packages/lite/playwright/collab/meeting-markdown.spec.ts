@@ -16,7 +16,8 @@ Environment:
   COLLAB_SECONDS    how long they type (default 180)
   COLLAB_RELOADS    probability that an action is a reload (default 0.01)
   COLLAB_SEED       random seed (default: time)
-  COLLAB_VIEW       "rich" (default) or "source"
+  COLLAB_VIEW       "rich" (default), "source", or "mixed" (alternating:
+                    even participants rich text, odd ones source)
   COLLAB_DEBUG      record the editors' merge/save decisions and, for each
                     lost word, report the first one that dropped it
 */
@@ -34,7 +35,12 @@ const RELOADS = Number(process.env.COLLAB_RELOADS ?? 0.01);
 const SEED = Number(process.env.COLLAB_SEED ?? Date.now() % 1_000_000);
 const PROJECT_ID = "00000000-1000-4000-8000-000000000000";
 const VIEW = process.env.COLLAB_VIEW ?? "rich";
-const EDITOR = VIEW === "source" ? ".CodeMirror" : "[data-slate-editor]";
+type View = "rich" | "source";
+// Each participant's view (COLLAB_VIEW=mixed alternates them).
+const VIEWS = new Map<Page, View>();
+const viewOf = (page: Page): View => VIEWS.get(page) ?? "rich";
+const editorOf = (page: Page) =>
+  viewOf(page) === "source" ? ".CodeMirror" : "[data-slate-editor]";
 const TOKEN_RE = /tk\d+n\d+q/g;
 const DEBUG = !!process.env.COLLAB_DEBUG;
 
@@ -122,14 +128,31 @@ async function shown(page: Page): Promise<string> {
       (document.querySelector("[data-slate-editor]") as HTMLElement)
         ?.innerText ?? ""
     );
-  }, VIEW);
+  }, viewOf(page));
 }
+
+// The typed words in order: the same in every view once they agree (rich
+// text and markdown source differ in markup only).
+const words = (text: string) => (text.match(TOKEN_RE) ?? []).join(" ");
 
 async function openNotes(page: Page, path: string): Promise<void> {
   await page.goto(fileUrl(path), { waitUntil: "domcontentloaded" });
-  await page.waitForSelector(EDITOR, { timeout: 60_000 });
+  await page.waitForSelector(editorOf(page), { timeout: 60_000 });
   // Let the sync session settle before typing (COLLAB_SETTLE_MS).
   await page.waitForTimeout(Number(process.env.COLLAB_SETTLE_MS ?? 3_000));
+}
+
+// Markdown opens in the rich text editor. The frame layout is kept per file
+// in localStorage under the editor's redux name (editor-<project>-<path>);
+// a layout with one source ("cm") frame, set before the page loads, opens the
+// source editor, as choosing it in the frame's menu would.
+async function useSourceView(page: Page, path: string): Promise<void> {
+  await page.addInitScript(
+    ({ key }) => {
+      localStorage.setItem(key, JSON.stringify({ frame_tree: { type: "cm" } }));
+    },
+    { key: `editor-${PROJECT_ID}-${path}` },
+  );
 }
 
 // Rich text: click a random block (mostly in Discussion), go to its end, type.
@@ -188,7 +211,7 @@ async function typeToken(
   rng: () => number,
   token: string,
 ): Promise<void> {
-  if (VIEW !== "source") return await typeTokenRich(page, rng, token);
+  if (viewOf(page) !== "source") return await typeTokenRich(page, rng, token);
   const where = rng();
   await page.evaluate(
     ({ where, newLine }) => {
@@ -233,6 +256,10 @@ test("a meeting's notes stay consistent with many people typing", async ({
   for (let u = 0; u < USERS; u++) {
     const context = await (browser as Browser).newContext();
     const page = await context.newPage();
+    const view: View =
+      VIEW === "mixed" ? (u % 2 ? "source" : "rich") : (VIEW as View);
+    VIEWS.set(page, view);
+    if (view === "source") await useSourceView(page, path);
     if (DEBUG) {
       await page.addInitScript(() => {
         (window as any).__slateDebugLog = true;
@@ -311,7 +338,7 @@ test("a meeting's notes stay consistent with many people typing", async ({
                     )?.innerText ?? "");
               return text.includes(token);
             },
-            { token, view: VIEW },
+            { token, view: viewOf(page) },
             { timeout: 3_000 },
           )
           .then(() => true)
@@ -330,8 +357,8 @@ test("a meeting's notes stay consistent with many people typing", async ({
   const quiesceDeadline = Date.now() + 120_000;
   while (Date.now() < quiesceDeadline) {
     const next = await Promise.all(pages.map(shown));
-    const same = new Set(next).size === 1;
-    if (same && next[0] === values[0]) {
+    const same = new Set(next.map(words)).size === 1;
+    if (same && words(next[0]) === words(values[0] ?? "")) {
       if (!stableSince) stableSince = Date.now();
       if (Date.now() - stableSince > 8_000) break;
     } else {
@@ -341,7 +368,7 @@ test("a meeting's notes stay consistent with many people typing", async ({
     await pages[0].waitForTimeout(1_000);
   }
 
-  const distinct = new Set(values).size;
+  const distinct = new Set(values.map(words)).size;
   const text = values[0] ?? "";
   const counts = new Map<string, number>();
   for (const t of text.match(TOKEN_RE) ?? [])
