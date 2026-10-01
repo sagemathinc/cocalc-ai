@@ -198,6 +198,7 @@ export class ClaudeSubscriptionLoginService {
       )
     )
       throw Error("Claude sign-in is already in progress for this account");
+    const runtimeId = await harnessOwner();
     const home = await mkdtemp(join(tmpdir(), CLAUDE_LOGIN_PREFIX));
     const id = randomUUID();
     let child: ChildProcess;
@@ -206,7 +207,7 @@ export class ClaudeSubscriptionLoginService {
       projectId,
       holder: id,
       home,
-      runtimeId: await harnessOwner(),
+      runtimeId,
     };
     const recovery: ClaudeLoginRecovery | undefined = this.options
       .reserveReconnect

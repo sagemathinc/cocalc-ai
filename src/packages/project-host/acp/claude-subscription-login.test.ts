@@ -465,6 +465,31 @@ test("unknown launch and shutdown acknowledgements retain ownership and staging 
   }
 });
 
+test("fingerprint failure leaves no unmarked staging directory or admission", async () => {
+  const fingerprint = jest
+    .spyOn(require("./harness-reaper"), "harnessOwner")
+    .mockRejectedValueOnce(Error("fingerprint unavailable"));
+  const temporaryHome = jest.spyOn(require("node:fs/promises"), "mkdtemp");
+  const reserve = jest.fn();
+  const service = new ClaudeSubscriptionLoginService({
+    cliPath: process.execPath,
+    argsPrefix: [fixture],
+    publish: jest.fn(),
+    reserveReconnect: reserve,
+  });
+  try {
+    await expect(service.start(projectId, accountId)).rejects.toThrow(
+      "fingerprint unavailable",
+    );
+    expect(temporaryHome).not.toHaveBeenCalled();
+    expect(reserve).not.toHaveBeenCalled();
+  } finally {
+    await service.close();
+    fingerprint.mockRestore();
+    temporaryHome.mockRestore();
+  }
+});
+
 test.each([false, true])(
   "shutdown proof gates publication and release (unconfirmed=%s)",
   async (stopFails) => {
