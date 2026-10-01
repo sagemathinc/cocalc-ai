@@ -29,6 +29,7 @@ import { readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { githubPrArtifactPayload } from "../../core/github-pr-artifact";
 
 import type { ProjectCommandDeps } from "../project";
 
@@ -103,8 +104,12 @@ export function registerProjectChatCommands(
       "pin a commit resolved from the local repository",
     )
     .option(
+      "--github-pr <pr>",
+      "publish a GitHub PR card from GitHub via gh: 123, owner/name#123 or a PR URL",
+    )
+    .option(
       "--repo <path>",
-      "local repository/worktree for --commit",
+      "local repository/worktree for --commit and --github-pr",
       process.cwd(),
     )
     .option(
@@ -137,9 +142,12 @@ export function registerProjectChatCommands(
               "Publication requires a workbench-enabled turn or --experimental",
             );
           if (
-            [opts.source, opts.commit, opts.file].filter(Boolean).length !== 1
+            [opts.source, opts.commit, opts.githubPr, opts.file].filter(Boolean)
+              .length !== 1
           )
-            throw Error("Choose exactly one of --source, --commit, --file");
+            throw Error(
+              "Choose exactly one of --source, --commit, --github-pr, --file",
+            );
           let payload: any;
           if (opts.source) {
             if (!opts.source.startsWith("/"))
@@ -148,6 +156,18 @@ export function registerProjectChatCommands(
               title: basename(opts.source),
               file: { path: opts.source },
             };
+          } else if (opts.githubPr) {
+            payload = await githubPrArtifactPayload({
+              ref: opts.githubPr,
+              repoDir: resolve(opts.repo),
+              run: async (command, args, cwd) =>
+                (
+                  await promisify(execFile)(command, args, {
+                    cwd,
+                    maxBuffer: 4 * 1024 * 1024,
+                  })
+                ).stdout.trim(),
+            });
           } else if (opts.commit) {
             const git = async (...args: string[]) =>
               (
