@@ -446,27 +446,39 @@ export function setAgentMemoryContextProvider(
   agentMemoryContextProvider = provider;
 }
 
-// The saved-note index for this turn's account, or undefined when memory is
-// off or unavailable. Never blocks a turn for long.
+// The saved-note index for this turn's account, or no context when memory is
+// off or unavailable, plus the activity event that shows which happened. Never
+// blocks a turn for long.
 async function loadAgentMemoryContext(
   projectId: string,
   accountId: string,
-): Promise<string | undefined> {
-  if (!agentMemoryContextProvider || !accountId) return undefined;
+): Promise<{ context?: string; event?: AcpStreamEvent }> {
+  if (!agentMemoryContextProvider || !accountId) return {};
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const result = await Promise.race([
       agentMemoryContextProvider({ projectId, accountId }),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
+      new Promise<"timeout">((resolve) => {
+        timer = setTimeout(() => resolve("timeout"), 5_000);
+      }),
     ]);
-    return result
-      ? agentMemoryTurnContext(
-          result.index,
-          '"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"',
-        )
-      : undefined;
+    if (result === "timeout") {
+      logger.warn("agent memory context timed out");
+      return { event: { type: "memory", state: "unavailable" } };
+    }
+    if (!result) return {};
+    return {
+      context: agentMemoryTurnContext(
+        result.index,
+        '"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"',
+      ),
+      event: { type: "memory", state: "loaded", notes: result.notes },
+    };
   } catch (err) {
     logger.warn("agent memory context unavailable", { err: `${err}` });
-    return undefined;
+    return { event: { type: "memory", state: "unavailable" } };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -8079,14 +8091,18 @@ async function executeAcpRequest({
     stream({ type: "status", state: "running" });
     let terminalFallbackError: string | undefined;
     try {
+      // Host-computed for this turn's account and only for native Codex and
+      // the qualified Claude harness; any wire value is dropped.
+      const memory =
+        !harness || isQualifiedClaudeCodeProfile(request.runtime?.profile)
+          ? await loadAgentMemoryContext(projectId, request.account_id)
+          : {};
+      if (memory.event) {
+        await wrappedStream({ type: "event", event: memory.event });
+      }
       await currentAgent.evaluate({
         ...request,
-        // Host-computed for this turn's account and only for native Codex and
-        // the qualified Claude harness; any wire value is dropped.
-        agent_memory_context:
-          !harness || isQualifiedClaudeCodeProfile(request.runtime?.profile)
-            ? await loadAgentMemoryContext(projectId, request.account_id)
-            : undefined,
+        agent_memory_context: memory.context,
         mentionReferences,
         readPendingGoal: harness ? undefined : chatWriter?.readPendingGoal,
         prompt: artifactReferences.length
@@ -13364,6 +13380,7 @@ export function getAcpAgentRuntimeStatus(): {
 }
 
 export const acpTestInternals = {
+  loadAgentMemoryContext,
   handleAcpAttentionRequest,
   persistAttentionResponseProjection,
   handleAcpControlRequest,
