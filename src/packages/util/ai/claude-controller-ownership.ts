@@ -21,5 +21,13 @@ export interface ClaudeControllerOwnershipRequest extends ClaudeControllerOwner 
 
 export type ClaudeControllerOwnershipResult = "acquired" | "busy" | "released";
 
+/** Write-only cleanup after confirmed native stop; never authorizes launch or reads. */
+export interface ClaudeControllerFinalizationRequest extends ClaudeControllerOwner {
+  owner_account_id: string;
+  credential_id?: string;
+  final_payload?: string;
+  expected_payload_sha256?: string;
+}
+
 export const CLAUDE_CONTROLLER_BUSY = "CLAUDE_CONTROLLER_BUSY";
 export const CLAUDE_CONTROLLER_FENCED = "CLAUDE_CONTROLLER_FENCED";

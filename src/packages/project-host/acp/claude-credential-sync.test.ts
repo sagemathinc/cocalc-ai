@@ -9,6 +9,7 @@ import { packClaudeSubscriptionBundle } from "./claude-subscription-home";
 jest.mock("@cocalc/backend/logger", () => () => ({ warn: jest.fn() }));
 jest.mock("./claude-subscription-registry", () => ({
   syncClaudeSubscriptionCredential: jest.fn(),
+  finalizeClaudeSubscriptionCredential: jest.fn(),
 }));
 
 const files = (token: string) =>
@@ -76,4 +77,39 @@ test("periodic syncs run while started and stop when idle", async () => {
   expect(calls).toBeGreaterThan(0);
   await new Promise((resolve) => setTimeout(resolve, 50));
   expect(sync.mock.calls.length).toBe(calls);
+});
+
+test("owned final cleanup is write-only even when ordinary credential access was removed", async () => {
+  const sync = jest.fn().mockRejectedValue(Error("collaborator removed"));
+  const finalize = jest
+    .fn()
+    .mockRejectedValueOnce(Error("ack lost"))
+    .mockImplementation(async ({ current }) => current);
+  const read = jest.fn(async () => files("final-rotation"));
+  const restoredPayload = packClaudeSubscriptionBundle(files("original"));
+  const credentialSync = createClaudeCredentialSync({
+    projectId: "project",
+    accountId: "account",
+    credentialId: "credential",
+    controllerHolder: "holder",
+    home: "/private-home",
+    restoredPayload,
+    intervalMs: 5,
+    finalRetryDelaysMs: [1],
+    read,
+    sync,
+    finalize,
+  });
+  credentialSync.start();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await credentialSync.idle();
+  expect(sync).toHaveBeenCalled();
+  sync.mockClear();
+  await credentialSync.finish();
+  expect(sync).not.toHaveBeenCalled();
+  expect(finalize).toHaveBeenCalledTimes(2);
+  expect(finalize.mock.calls[0][0].expectedPayload).toBe(restoredPayload);
+  expect(
+    finalize.mock.calls[1][0].current.get(".credentials.json").toString(),
+  ).toBe("final-rotation");
 });

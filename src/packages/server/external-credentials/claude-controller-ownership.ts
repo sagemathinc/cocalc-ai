@@ -4,6 +4,12 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import { createHash } from "node:crypto";
+import {
+  decryptSecretStorageValue,
+  encryptSecretStorageValue,
+} from "@cocalc/database/settings/secret-settings";
+import { EXTERNAL_CREDENTIAL_CONFLICT } from "@cocalc/util/external-credential-conflict";
 import type { PoolClient } from "@cocalc/database/pool";
 import { isValidUUID } from "@cocalc/util/misc";
 import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-profiles";
@@ -12,6 +18,7 @@ import type {
   ClaudeControllerOwner,
   ClaudeControllerOwnershipRequest,
   ClaudeControllerOwnershipResult,
+  ClaudeControllerFinalizationRequest,
 } from "@cocalc/util/ai/claude-controller-ownership";
 
 interface Ownership extends ClaudeControllerOwner {
@@ -23,6 +30,24 @@ interface Ownership extends ClaudeControllerOwner {
   purpose?: "controller" | "sign-in";
   state?: "active" | "released";
   transitioned_at?: string;
+  retired_bindings?: RetiredBinding[];
+  final_payload_sha256?: string;
+}
+
+interface RetiredBinding extends ClaudeControllerOwner {
+  credential_id?: string;
+  final_payload_sha256?: string;
+}
+
+function retiredBinding(value: Ownership): RetiredBinding {
+  return {
+    holder: value.holder,
+    host_id: value.host_id,
+    project_id: value.project_id,
+    runtime_id: value.runtime_id,
+    credential_id: value.credential_id,
+    final_payload_sha256: value.final_payload_sha256,
+  };
 }
 
 export function sameClaudeControllerOwner(
@@ -116,18 +141,27 @@ export async function manageClaudeControllerOwnership(
         ...(operation === "release" ? [owner.holder] : []),
       ]),
     ];
+    const retired_bindings = [...(stored?.retired_bindings ?? [])];
+    if (
+      operation === "release" &&
+      stored &&
+      sameClaudeControllerOwner(stored, owner) &&
+      !retired_bindings.some((binding) => binding.holder === stored.holder)
+    )
+      retired_bindings.push(retiredBinding(stored));
     let next = stored;
     let result: ClaudeControllerOwnershipResult;
     if (operation === "release") {
       next =
         stored && !sameClaudeControllerOwner(stored, owner)
-          ? { ...stored, retired }
+          ? { ...stored, retired, retired_bindings }
           : {
               ...owner,
               credential_id,
               acquired_at: stored?.acquired_at ?? new Date().toISOString(),
               released: true,
               retired,
+              retired_bindings,
               generation: stored?.generation ?? 0,
               purpose: stored?.purpose ?? purpose,
               state: "released",
@@ -182,6 +216,7 @@ export async function manageClaudeControllerOwnership(
         credential_id,
         acquired_at: new Date().toISOString(),
         retired,
+        retired_bindings,
         generation: (stored?.generation ?? 0) + 1,
         purpose,
         state: "active",
@@ -198,6 +233,124 @@ export async function manageClaudeControllerOwnership(
       );
     await client.query("COMMIT");
     return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Authenticated host cleanup is authorized by the admission record, not current
+ * project placement/access. Atomic final CAS + retirement cannot grant new work.
+ */
+export async function finalizeClaudeControllerOwnership(
+  request: ClaudeControllerFinalizationRequest,
+): Promise<"released"> {
+  const {
+    owner_account_id: account,
+    credential_id: id,
+    final_payload: payload,
+    expected_payload_sha256: expected,
+    ...owner
+  } = request;
+  if (
+    ![
+      account,
+      owner.holder,
+      owner.host_id,
+      owner.project_id,
+      ...(id == null ? [] : [id]),
+    ].every(isValidUUID) ||
+    (owner.runtime_id != null &&
+      !/^\d+:[0-9a-f-]{36}:\d+$/.test(owner.runtime_id)) ||
+    (payload != null &&
+      (typeof payload !== "string" ||
+        !id ||
+        Buffer.byteLength(payload, "utf8") > 2_000_000 ||
+        !/^[0-9a-f]{64}$/.test(expected ?? ""))) ||
+    (payload == null && expected != null)
+  )
+    throw Error("Invalid Claude controller finalization request");
+  const digest =
+    payload == null
+      ? undefined
+      : createHash("sha256").update(payload, "utf8").digest("hex");
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await lockAccount(client, account);
+    const stored = await readOwnership(client, account);
+    const exact = (binding: RetiredBinding) =>
+      sameClaudeControllerOwner(binding, owner) && binding.credential_id === id;
+    const retired = stored?.retired_bindings?.find(exact);
+    if (retired || (stored?.released && exact(stored))) {
+      // Lost acknowledgements may be retried after another controller acquired.
+      // Do not write, decrypt, or retire the newer controller in this path.
+      const previous = retired ?? stored!;
+      if (payload != null && previous.final_payload_sha256 !== digest)
+        throw Error(CLAUDE_CONTROLLER_FENCED);
+    } else {
+      if (!stored || stored.released || !exact(stored))
+        throw Error(CLAUDE_CONTROLLER_FENCED);
+      if (payload != null) {
+        const { rows } = await client.query<{ encrypted_payload: string }>(
+          `SELECT encrypted_payload FROM external_credentials WHERE id=$1 AND owner_account_id=$2
+           AND scope='account' AND provider='anthropic' AND kind=$3 FOR UPDATE`,
+          [id, account, CLAUDE_SUBSCRIPTION_KIND],
+        );
+        if (!rows.length) throw Error(CLAUDE_CONTROLLER_FENCED);
+        const aad = `external_credentials:anthropic:${CLAUDE_SUBSCRIPTION_KIND}:account`;
+        const current = (
+          await decryptSecretStorageValue(aad, rows[0].encrypted_payload)
+        ).value;
+        // Same final bytes make a lost publication acknowledgement idempotent.
+        if (
+          current !== payload &&
+          createHash("sha256").update(current, "utf8").digest("hex") !==
+            expected
+        )
+          throw Error(EXTERNAL_CREDENTIAL_CONFLICT);
+        if (current !== payload)
+          await client.query(
+            "UPDATE external_credentials SET encrypted_payload=$2, updated=NOW() WHERE id=$1",
+            [id, await encryptSecretStorageValue(aad, payload)],
+          );
+        // Deliberately preserve revoked, metadata and last_used. Cleanup cannot revive.
+      }
+      const next: Ownership = {
+        ...stored,
+        released: true,
+        state: "released",
+        transitioned_at: new Date().toISOString(),
+        final_payload_sha256: digest,
+        retired: [...new Set([...(stored.retired ?? []), owner.holder])],
+        retired_bindings: [
+          ...(stored.retired_bindings ?? []),
+          retiredBinding({ ...stored, final_payload_sha256: digest }),
+        ],
+      };
+      await client.query(
+        "UPDATE claude_controller_ownership SET ownership=$2, updated=NOW() WHERE account_id=$1",
+        [account, next],
+      );
+      await client.query(
+        `UPDATE external_credentials SET controller_ownership=jsonb_set(controller_ownership,'{released}','true')
+         WHERE owner_account_id=$1 AND provider='anthropic' AND kind=$2 AND scope='account'
+         AND controller_ownership->>'holder'=$3 AND controller_ownership->>'host_id'=$4
+         AND controller_ownership->>'project_id'=$5`,
+        [
+          account,
+          CLAUDE_SUBSCRIPTION_KIND,
+          owner.holder,
+          owner.host_id,
+          owner.project_id,
+        ],
+      );
+    }
+    await client.query("COMMIT");
+    return "released";
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

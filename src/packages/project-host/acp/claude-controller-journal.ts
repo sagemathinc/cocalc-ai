@@ -24,7 +24,7 @@ import {
 } from "./claude-subscription-home";
 import {
   manageClaudeControllerOwnership,
-  syncClaudeSubscriptionCredential,
+  finalizeClaudeSubscriptionCredential,
 } from "./claude-subscription-registry";
 import { isManagedClaudeControllerHome } from "./claude-subscription-paths";
 
@@ -93,9 +93,10 @@ export async function recoverClaudeControllerJournal(
     const current = await readClaudeSubscriptionHomeFiles(record.home, [
       ...baseline.keys(),
     ]);
-    await syncClaudeSubscriptionCredential({
+    await finalizeClaudeSubscriptionCredential({
       ...record,
       baseline,
+      expectedPayload: record.baseline,
       current,
       controllerHolder: record.holder,
       runtimeId: record.worker,

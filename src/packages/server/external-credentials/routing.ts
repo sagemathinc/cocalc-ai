@@ -8,9 +8,13 @@ import type {
   ClaudeControllerOwner,
   ClaudeControllerOwnershipRequest,
   ClaudeControllerOwnershipResult,
+  ClaudeControllerFinalizationRequest,
 } from "@cocalc/util/ai/claude-controller-ownership";
 import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-profiles";
-import { manageClaudeControllerOwnership } from "./claude-controller-ownership";
+import {
+  manageClaudeControllerOwnership,
+  finalizeClaudeControllerOwnership,
+} from "./claude-controller-ownership";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
@@ -222,6 +226,24 @@ export async function manageClaudeControllerOwnershipRouted(
     local: () => manageClaudeControllerOwnership(request),
     remote: (dest_bay) =>
       remoteCredentialsClient(dest_bay).manageClaudeControllerOwnership(
+        request,
+      ),
+  });
+}
+
+export async function finalizeClaudeControllerOwnershipRouted(
+  request: ClaudeControllerFinalizationRequest,
+): Promise<"released"> {
+  return await withExternalCredentialAuthority({
+    selector: {
+      provider: "anthropic",
+      kind: CLAUDE_SUBSCRIPTION_KIND,
+      scope: "account",
+      owner_account_id: request.owner_account_id,
+    },
+    local: () => finalizeClaudeControllerOwnership(request),
+    remote: (dest_bay) =>
+      remoteCredentialsClient(dest_bay).finalizeClaudeControllerOwnership(
         request,
       ),
   });

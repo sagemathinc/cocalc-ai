@@ -35,6 +35,7 @@ jest.mock("./claude-subscription-registry", () => ({
     identity: {},
   }),
   syncClaudeSubscriptionCredential: jest.fn(async ({ baseline }) => baseline),
+  finalizeClaudeSubscriptionCredential: jest.fn(async ({ current }) => current),
 }));
 jest.mock("./claude-controller-journal", () => ({
   CLAUDE_CONTROLLER_HOLDER_LABEL: "cocalc.acp.controller-holder",

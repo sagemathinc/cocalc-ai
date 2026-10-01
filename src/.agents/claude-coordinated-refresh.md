@@ -14,14 +14,22 @@ the backend regardless of caller limits. Existing multiple rows are preserved
 and share this fence; explicit bindings never silently select another row.
 Legacy row fences (including revoked rows) are honored during upgrade.
 Host RPCs reauthorize the host,
-project, account, and credential. Inter-bay forwarding resolves account ownership;
+project, account, and credential before admission and during ordinary use.
+After confirmed native stop, a separate write-only finalization RPC uses the
+stored exact holder/host/project/incarnation binding, even if project access or
+placement has since changed. It atomically CAS-publishes the final bundle and
+retires ownership; it never returns credentials, revives a revoked row, or grants
+launch authority. Exact binding and final-digest tombstones make lost-ack retries
+safe after a newer owner acquires. Inter-bay forwarding resolves account ownership;
 project tools and native Claude traffic retain their isolated/direct paths.
 
 A controller acquires an opaque holder UUID before reading credentials or
 starting native Claude. Other work sharing that credential waits before any
 model/tool execution. Agent startup supports cancellation and a bounded wait;
 usage/discovery have a shorter wait. Polling uses capped jitter/backoff; it is not
-a strict FIFO scheduler. Every acquisition poll rechecks project/account access
+a strict FIFO scheduler. First-turn cancellation recognizes the CoCalc chat
+thread before a native session exists and aborts the pending admission signal.
+Every acquisition poll rechecks project/account access
 and credential revocation before native launch.
 
 Ownership does not expire. A TTL cannot stop an isolated native process from

@@ -8,10 +8,38 @@ import {
   createInterBayHostControlClient,
   createInterBayHostConnectionClient,
   createInterBayProjectControlClient,
+  createInterBayExternalCredentialsClient,
 } from "./api";
 import { DataEncoding, encode } from "@cocalc/conat/core/codec";
 
 describe("inter-bay typed service transport", () => {
+  it("carries write-only Claude finalization to the account authority", async () => {
+    const fastRpcRequest = jest.fn(async () => ({
+      raw: encode({ encoding: DataEncoding.MsgPack, mesg: "released" }),
+    }));
+    const client = createInterBayExternalCredentialsClient({
+      client: { fastRpcRequest } as any,
+      dest_bay: "home",
+      timeout: 15_000,
+    });
+    await expect(
+      client.finalizeClaudeControllerOwnership({
+        host_id: "original-host",
+        owner_account_id: "account",
+        holder: "holder",
+        project_id: "original-project",
+        credential_id: "credential",
+        runtime_id: "original-runtime",
+        final_payload: "opaque-final",
+        expected_payload_sha256: "baseline-hash",
+      }),
+    ).resolves.toBe("released");
+    expect(fastRpcRequest).toHaveBeenCalledWith(
+      "bay.home.rpc.external-credentials.finalize-claude-controller-ownership",
+      { raw: expect.any(Uint8Array) },
+      { timeout: 15_000 },
+    );
+  });
   it.each([
     ["updateApiRelayUsage", "update-api-relay-usage"],
     ["updateApiRelayAccountUsage", "update-api-relay-account-usage"],

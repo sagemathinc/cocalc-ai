@@ -10,15 +10,15 @@ import {
 import { packClaudeSubscriptionBundle } from "./claude-subscription-home";
 import {
   manageClaudeControllerOwnership,
-  syncClaudeSubscriptionCredential,
+  finalizeClaudeSubscriptionCredential,
 } from "./claude-subscription-registry";
 
 jest.mock("./claude-subscription-registry", () => ({
   manageClaudeControllerOwnership: jest.fn(),
-  syncClaudeSubscriptionCredential: jest.fn(),
+  finalizeClaudeSubscriptionCredential: jest.fn(),
 }));
 const manage = jest.mocked(manageClaudeControllerOwnership);
-const sync = jest.mocked(syncClaudeSubscriptionCredential);
+const sync = jest.mocked(finalizeClaudeSubscriptionCredential);
 let directory: string;
 let home: string;
 const references = {

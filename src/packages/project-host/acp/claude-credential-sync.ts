@@ -7,8 +7,12 @@ import getLogger from "@cocalc/backend/logger";
 import {
   claudeSubscriptionBundleFiles,
   readClaudeSubscriptionHomeFiles,
+  packClaudeSubscriptionBundle,
 } from "./claude-subscription-home";
-import { syncClaudeSubscriptionCredential } from "./claude-subscription-registry";
+import {
+  syncClaudeSubscriptionCredential,
+  finalizeClaudeSubscriptionCredential,
+} from "./claude-subscription-registry";
 
 const logger = getLogger("project-host:acp:claude-credential-sync");
 
@@ -39,6 +43,7 @@ export function createClaudeCredentialSync(options: {
   // For tests.
   read?: (home: string, paths: string[]) => Promise<Files>;
   sync?: typeof syncClaudeSubscriptionCredential;
+  finalize?: typeof finalizeClaudeSubscriptionCredential;
 }) {
   const {
     projectId,
@@ -52,6 +57,7 @@ export function createClaudeCredentialSync(options: {
   } = options;
   // This controller's credential files as of its last sync.
   let baseline: Files = claudeSubscriptionBundleFiles(options.restoredPayload);
+  let expectedPayload = options.restoredPayload;
   const paths = [...baseline.keys()];
   // Taken once after the controller stops, so a failed final sync can still
   // be retried after its home is removed.
@@ -59,20 +65,39 @@ export function createClaudeCredentialSync(options: {
   let running: Promise<void> = Promise.resolve();
   let timer: ReturnType<typeof setInterval> | undefined;
 
-  const syncOnce = (current?: Files) =>
+  const syncOnce = (current?: Files, final = false) =>
     (running = running
       .catch(() => {})
       .then(async () => {
-        baseline = await sync({
-          projectId,
-          accountId,
-          credentialId,
-          baseline,
-          current: current ?? (await read(home, paths)),
-          ...(options.controllerHolder
-            ? { controllerHolder: options.controllerHolder }
-            : {}),
-        });
+        const snapshot = current ?? (await read(home, paths));
+        if (final && options.controllerHolder) {
+          baseline = await (
+            options.finalize ?? finalizeClaudeSubscriptionCredential
+          )({
+            projectId,
+            accountId,
+            credentialId,
+            baseline,
+            current: snapshot,
+            controllerHolder: options.controllerHolder,
+            expectedPayload,
+          });
+        } else {
+          const changed = [...snapshot].some(
+            ([path, bytes]) => !baseline.get(path)?.equals(bytes),
+          );
+          baseline = await sync({
+            projectId,
+            accountId,
+            credentialId,
+            baseline,
+            current: snapshot,
+            ...(options.controllerHolder
+              ? { controllerHolder: options.controllerHolder }
+              : {}),
+          });
+          if (changed) expectedPayload = packClaudeSubscriptionBundle(baseline);
+        }
         await options.onBaseline?.(baseline);
       }));
 
@@ -106,7 +131,7 @@ export function createClaudeCredentialSync(options: {
       finalFiles ??= await read(home, paths);
       for (let attempt = 0; ; attempt++) {
         try {
-          await syncOnce(finalFiles);
+          await syncOnce(finalFiles, true);
           return;
         } catch (error) {
           const delay = finalRetryDelaysMs[attempt];

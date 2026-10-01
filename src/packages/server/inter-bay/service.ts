@@ -15,7 +15,10 @@ import { createInterBayAgentConnectorHandler } from "@cocalc/conat/inter-bay/age
 import { agentConnectorControl } from "@cocalc/server/agents/cocalc-connector-routing";
 import { agentRpcControl } from "@cocalc/server/agents/rpc";
 import { list as listOperations } from "@cocalc/server/conat/api/lro";
-import { manageClaudeControllerOwnership } from "@cocalc/server/external-credentials/claude-controller-ownership";
+import {
+  manageClaudeControllerOwnership,
+  finalizeClaudeControllerOwnership,
+} from "@cocalc/server/external-credentials/claude-controller-ownership";
 import {
   createProjectOnOwningBay,
   getProjectCreationStatus,
@@ -2605,6 +2608,7 @@ async function startExternalCredentialsService(): Promise<void> {
         defaultMetadataKey: default_metadata_key,
       }),
     manageClaudeControllerOwnership,
+    finalizeClaudeControllerOwnership,
     updateById: async ({
       id,
       selector,

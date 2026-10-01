@@ -59,6 +59,15 @@ export async function manageClaudeControllerOwnership(options: {
   runtimeId?: string;
   purpose?: "controller" | "sign-in";
 }): Promise<ClaudeControllerOwnershipResult> {
+  if (options.operation === "release") {
+    try {
+      return await finalizeClaudeControllerOwnership(options);
+    } catch (error) {
+      // A cancelled admission may have arrived after this retirement request.
+      // Only the normal, currently authorized path may retire an unowned UUID.
+      if (!`${error}`.includes("CLAUDE_CONTROLLER_FENCED")) throw error;
+    }
+  }
   return await callHub({
     ...caller(),
     name: "hosts.manageClaudeControllerOwnership",
@@ -75,6 +84,58 @@ export async function manageClaudeControllerOwnership(options: {
     ],
     timeout: 15_000,
   });
+}
+
+export async function finalizeClaudeControllerOwnership(options: {
+  projectId: string;
+  accountId: string;
+  credentialId?: string;
+  holder: string;
+  runtimeId?: string;
+  finalPayload?: string;
+  expectedPayload?: string;
+}): Promise<"released"> {
+  return await callHub({
+    ...caller(),
+    name: "hosts.finalizeClaudeControllerOwnership",
+    args: [
+      {
+        project_id: options.projectId,
+        owner_account_id: options.accountId,
+        credential_id: options.credentialId,
+        holder: options.holder,
+        runtime_id: options.runtimeId ?? (await harnessOwner()),
+        final_payload: options.finalPayload,
+        expected_payload_sha256:
+          options.expectedPayload == null
+            ? undefined
+            : createHash("sha256")
+                .update(options.expectedPayload, "utf8")
+                .digest("hex"),
+      },
+    ],
+    timeout: 15_000,
+  });
+}
+
+export async function finalizeClaudeSubscriptionCredential(options: {
+  projectId: string;
+  accountId: string;
+  credentialId: string;
+  controllerHolder: string;
+  runtimeId?: string;
+  baseline: ReadonlyMap<string, Buffer>;
+  current: ReadonlyMap<string, Buffer>;
+  expectedPayload?: string;
+}): Promise<ReadonlyMap<string, Buffer>> {
+  await finalizeClaudeControllerOwnership({
+    ...options,
+    holder: options.controllerHolder,
+    expectedPayload:
+      options.expectedPayload ?? packClaudeSubscriptionBundle(options.baseline),
+    finalPayload: packClaudeSubscriptionBundle(options.current),
+  });
+  return options.current;
 }
 
 export async function getClaudeSubscriptionCredential(options: {

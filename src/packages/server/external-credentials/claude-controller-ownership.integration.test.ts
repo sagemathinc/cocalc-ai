@@ -9,7 +9,10 @@ import { syncSchema } from "@cocalc/database/postgres/schema/sync";
 import { SCHEMA } from "@cocalc/util/db-schema";
 import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-profiles";
 import { EXTERNAL_CREDENTIAL_CONFLICT } from "@cocalc/util/external-credential-conflict";
-import { manageClaudeControllerOwnership } from "./claude-controller-ownership";
+import {
+  manageClaudeControllerOwnership,
+  finalizeClaudeControllerOwnership,
+} from "./claude-controller-ownership";
 import {
   createExternalCredential,
   getExternalCredential,
@@ -74,6 +77,20 @@ describeDb("account-home Claude refresh ownership", () => {
       metadata: {},
       controllerOwner,
       expectedPayloadSha256,
+    });
+  const sha256 = (value: string) =>
+    createHash("sha256").update(value).digest("hex");
+  const finalize = (
+    owner = a,
+    payload: string | undefined = "rotation-final",
+    expected = "rotation-1",
+  ) =>
+    finalizeClaudeControllerOwnership({
+      ...owner,
+      owner_account_id: account,
+      credential_id: id,
+      final_payload: payload,
+      expected_payload_sha256: payload == null ? undefined : sha256(expected),
     });
   beforeAll(async () => {
     await syncSchema({
@@ -329,6 +346,71 @@ describeDb("account-home Claude refresh ownership", () => {
       }),
     ).toBe("acquired");
   });
+  test("final cleanup publishes and retires atomically without granting reads or acquisition", async () => {
+    await manage();
+    expect(await finalize()).toBe("released");
+    expect((await getExternalCredentialById({ id, selector }))?.payload).toBe(
+      "rotation-final",
+    );
+    await expect(write(a)).rejects.toThrow("CLAUDE_CONTROLLER_FENCED");
+    expect(await manage(a)).toBe("released");
+    expect(await manage(b)).toBe("acquired");
+  });
+  test("revoked credentials accept their stopped owner's final rotation without being revived", async () => {
+    await manage();
+    await revokeExternalCredential({ id, owner_account_id: account });
+    await finalize();
+    expect(await getExternalCredentialById({ id, selector })).toBeUndefined();
+    const row = (
+      await getPool().query(
+        "SELECT encrypted_payload, revoked FROM external_credentials WHERE id=$1",
+        [id],
+      )
+    ).rows[0];
+    expect(row.encrypted_payload).toBe("rotation-final");
+    expect(row.revoked).not.toBeNull();
+    await expect(manage(b)).rejects.toThrow("revoked");
+  });
+  test("cleanup requires the exact original host, project, incarnation and credential", async () => {
+    await manage();
+    for (const owner of [
+      b,
+      { ...a, host_id: b.host_id },
+      { ...a, project_id: b.project_id },
+      { ...a, runtime_id: b.runtime_id },
+    ])
+      await expect(finalize(owner)).rejects.toThrow("CLAUDE_CONTROLLER_FENCED");
+    await expect(
+      finalizeClaudeControllerOwnership({
+        ...a,
+        owner_account_id: account,
+        credential_id: randomUUID(),
+      }),
+    ).rejects.toThrow("CLAUDE_CONTROLLER_FENCED");
+    expect(await manage(b)).toBe("busy");
+  });
+  test("CAS conflicts keep the owner quarantined; matching final bytes tolerate a lost publication ack", async () => {
+    await manage();
+    await write(a, "rotation-2");
+    await expect(finalize()).rejects.toThrow(EXTERNAL_CREDENTIAL_CONFLICT);
+    expect(await manage(b)).toBe("busy");
+    expect(await finalize(a, "rotation-2")).toBe("released");
+  });
+  test("lost cleanup acknowledgements remain idempotent across new-owner acquisition without overwrites", async () => {
+    await manage();
+    await finalize();
+    await manage(b);
+    await write(b, "rotation-3");
+    expect(await finalize()).toBe("released");
+    await expect(finalize(a, "different-final")).rejects.toThrow(
+      "CLAUDE_CONTROLLER_FENCED",
+    );
+    expect((await getExternalCredentialById({ id, selector }))?.payload).toBe(
+      "rotation-3",
+    );
+    expect(await manage(b)).toBe("acquired");
+  });
+
   test("account ownership is checked even with a valid credential UUID", async () => {
     await expect(
       manageClaudeControllerOwnership({

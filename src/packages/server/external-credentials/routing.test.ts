@@ -15,6 +15,7 @@ let getExternalCredentialMock: jest.Mock;
 let listExternalCredentialsMock: jest.Mock;
 let refreshCodexSubscriptionAuthMock: jest.Mock;
 let manageClaudeControllerOwnershipMock: jest.Mock;
+let finalizeClaudeControllerOwnershipMock: jest.Mock;
 
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: (...args: any[]) => getConfiguredBayIdMock(...args),
@@ -55,6 +56,8 @@ jest.mock("./codex-subscription-refresh", () => ({
 jest.mock("./claude-controller-ownership", () => ({
   manageClaudeControllerOwnership: (...args: any[]) =>
     manageClaudeControllerOwnershipMock(...args),
+  finalizeClaudeControllerOwnership: (...args: any[]) =>
+    finalizeClaudeControllerOwnershipMock(...args),
 }));
 
 describe("external credential bay routing", () => {
@@ -62,6 +65,7 @@ describe("external credential bay routing", () => {
     jest.resetModules();
     getConfiguredBayIdMock = jest.fn(() => "bay-local");
     manageClaudeControllerOwnershipMock = jest.fn(async () => "acquired");
+    finalizeClaudeControllerOwnershipMock = jest.fn(async () => "released");
     getConfiguredClusterSeedBayIdMock = jest.fn(() => "bay-seed");
     resolveAccountHomeBayMock = jest.fn(async () => ({
       home_bay_id: "bay-local",
@@ -139,6 +143,34 @@ describe("external credential bay routing", () => {
     expect(remoteManage).toHaveBeenCalledWith(request);
     expect(resolveProjectBayMock).not.toHaveBeenCalled();
     expect(manageClaudeControllerOwnershipMock).not.toHaveBeenCalled();
+  });
+
+  it("routes stopped-holder cleanup to the account home without consulting project placement", async () => {
+    resolveAccountHomeBayMock.mockResolvedValue({ home_bay_id: "bay-remote" });
+    resolveProjectBayMock.mockRejectedValue(Error("project deleted"));
+    const finalize = jest.fn(async () => "released");
+    getInterBayBridgeMock.mockReturnValue({
+      externalCredentials: () => ({
+        finalizeClaudeControllerOwnership: finalize,
+      }),
+    });
+    const { finalizeClaudeControllerOwnershipRouted } =
+      await import("./routing");
+    const request = {
+      holder: "holder",
+      host_id: "original-host",
+      project_id: "deleted-project",
+      owner_account_id: "account",
+      credential_id: "credential",
+      final_payload: "final-bytes",
+      expected_payload_sha256: "baseline",
+    };
+    expect(await finalizeClaudeControllerOwnershipRouted(request)).toBe(
+      "released",
+    );
+    expect(finalize).toHaveBeenCalledWith(request);
+    expect(resolveProjectBayMock).not.toHaveBeenCalled();
+    expect(finalizeClaudeControllerOwnershipMock).not.toHaveBeenCalled();
   });
 
   it("forwards account credential lists to the account home bay", async () => {

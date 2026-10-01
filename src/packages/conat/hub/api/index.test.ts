@@ -123,6 +123,8 @@ describe("hub API argument transforms", () => {
     "hosts.updateProjectApiRelayUsage",
     "hosts.resolveProjectApiRelayHub",
     "hosts.resolveProjectApiRelayTarget",
+    "hosts.manageClaudeControllerOwnership",
+    "hosts.finalizeClaudeControllerOwnership",
   ])("binds %s to the authenticated host only", async (name) => {
     expect(
       await transformArgs({

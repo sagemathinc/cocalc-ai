@@ -626,6 +626,7 @@ function adapter(
   validateAuthority,
   subscription = false,
   connector,
+  beforeLaunch,
 ) {
   let launches = 0;
   let stops = 0;
@@ -657,7 +658,8 @@ function adapter(
         : {}),
     },
     { path: "a.chat", threadId: "conversation-a" },
-    async ({ profile: launchProfile }) => {
+    async ({ profile: launchProfile }, signal) => {
+      await beforeLaunch?.(signal);
       launches++;
       const child = spawn(
         subscription ? profile.executable : launchProfile.executable,
@@ -1793,6 +1795,51 @@ test("normal completion after interruption is uncertain, not a successful summar
   );
   assert.ok(!events.some((event) => event.type === "summary"));
   await assert.rejects(agent.evaluate(request), /not idle/);
+});
+
+test("a queued first turn is cancelled by its chat thread before native launch", async (t) => {
+  let waiting;
+  const ready = new Promise((resolve) => {
+    waiting = resolve;
+  });
+  let admit;
+  const available = new Promise((resolve) => {
+    admit = resolve;
+  });
+  const { agent, request, events, launches } = adapter(
+    t,
+    [],
+    undefined,
+    false,
+    undefined,
+    true,
+    undefined,
+    async (signal) => {
+      waiting();
+      await new Promise((resolve, reject) => {
+        signal.addEventListener(
+          "abort",
+          () => reject(Error("queued startup cancelled")),
+          { once: true },
+        );
+        available.then(resolve);
+      });
+      signal.throwIfAborted();
+    },
+  );
+  assert.equal(request.session_id, undefined);
+  const run = agent.evaluate(request);
+  const rejected = assert.rejects(run, /queued startup cancelled/);
+  await ready;
+  assert.equal(agent.hasRunningTurn("conversation-a"), true);
+  assert.equal(await agent.interruptOutstanding("other"), false);
+  assert.equal(await agent.interruptOutstanding("conversation-a"), true);
+  await rejected;
+  admit();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(launches(), 0);
+  assert.ok(!events.some((event) => event.event?.type === "message"));
+  assert.ok(!events.some((event) => event.type === "summary"));
 });
 
 test("interruption before prompt submission does not send inference", async (t) => {

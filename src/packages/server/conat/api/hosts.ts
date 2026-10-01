@@ -63,10 +63,14 @@ import type {
   AccountUsageOverview,
   MembershipEffectiveLimits,
 } from "@cocalc/conat/hub/api/purchases";
-import { manageClaudeControllerOwnershipRouted } from "@cocalc/server/external-credentials/routing";
+import {
+  manageClaudeControllerOwnershipRouted,
+  finalizeClaudeControllerOwnershipRouted,
+} from "@cocalc/server/external-credentials/routing";
 import type {
   ClaudeControllerOwnershipRequest,
   ClaudeControllerOwnershipResult,
+  ClaudeControllerFinalizationRequest,
 } from "@cocalc/util/ai/claude-controller-ownership";
 import {
   normalizeProviderId,
@@ -2786,6 +2790,20 @@ export async function manageClaudeControllerOwnership(
     owner_account_id: request.owner_account_id,
   });
   return await manageClaudeControllerOwnershipRouted({
+    ...request,
+    host_id: request.host_id,
+  });
+}
+
+export async function finalizeClaudeControllerOwnership(
+  request: Omit<ClaudeControllerFinalizationRequest, "host_id"> & {
+    host_id?: string;
+  },
+): Promise<"released"> {
+  if (!request.host_id) throw Error("host_id must be specified");
+  // Host identity is injected by authFirstRequireHost. Placement/collaboration
+  // can change after admission; only the stored exact holder permits cleanup.
+  return await finalizeClaudeControllerOwnershipRouted({
     ...request,
     host_id: request.host_id,
   });

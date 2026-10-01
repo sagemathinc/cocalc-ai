@@ -1839,6 +1839,7 @@ export const hosts = {
   hasExternalCredential: authFirstRequireHost,
   getExternalCredential: authFirstRequireHost,
   manageClaudeControllerOwnership: authFirstRequireHost,
+  finalizeClaudeControllerOwnership: authFirstRequireHost,
   touchExternalCredential: authFirstRequireHost,
   upsertExternalCredential: authFirstRequireHost,
   releaseCodexDeviceAuthLease: authFirstRequireHost,
@@ -2291,6 +2292,12 @@ export interface Hosts {
   ) => Promise<
     import("@cocalc/util/ai/claude-controller-ownership").ClaudeControllerOwnershipResult
   >;
+  finalizeClaudeControllerOwnership: (
+    opts: Omit<
+      import("@cocalc/util/ai/claude-controller-ownership").ClaudeControllerFinalizationRequest,
+      "host_id"
+    > & { host_id?: string },
+  ) => Promise<"released">;
   getExternalCredential: (opts: {
     host_id?: string;
     project_id: string;

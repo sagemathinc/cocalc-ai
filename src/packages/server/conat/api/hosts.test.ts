@@ -555,6 +555,69 @@ const HOST_ID = "host-123";
 const ACCOUNT_ID = "acct-123";
 const CUSTOMER_ACCOUNT_ID = "customer-acct-456";
 
+describe("Claude stopped-holder cleanup authorization", () => {
+  let finalize: jest.SpyInstance;
+  let acquire: jest.SpyInstance;
+  const request = {
+    host_id: HOST_ID,
+    project_id: "original-project",
+    owner_account_id: ACCOUNT_ID,
+    holder: "exact-holder",
+    credential_id: "exact-credential",
+    runtime_id: "original-runtime",
+  };
+  beforeEach(async () => {
+    queryMock = jest.fn(async () => ({ rows: [], rowCount: 0 }));
+    resolveProjectReferenceAllowRemoteMock = jest.fn(async () => null);
+    const routing = await import("@cocalc/server/external-credentials/routing");
+    finalize = jest
+      .spyOn(routing, "finalizeClaudeControllerOwnershipRouted")
+      .mockResolvedValue("released");
+    acquire = jest
+      .spyOn(routing, "manageClaudeControllerOwnershipRouted")
+      .mockResolvedValue("acquired");
+  });
+  afterEach(() => {
+    finalize.mockRestore();
+    acquire.mockRestore();
+  });
+  for (const situation of [
+    "collaborator removed",
+    "project deleted",
+    "project moved to another host",
+  ]) {
+    it(`permits exact-holder write-only cleanup, but not admission, after ${situation}`, async () => {
+      if (situation === "project moved to another host")
+        resolveProjectReferenceAllowRemoteMock.mockResolvedValue({
+          host_id: "new-host",
+        });
+      const api = await import("./hosts");
+      await expect(
+        api.manageClaudeControllerOwnership({
+          ...request,
+          operation: "acquire",
+        }),
+      ).rejects.toThrow("host is not authorized");
+      expect(acquire).not.toHaveBeenCalled();
+      queryMock.mockClear();
+      resolveProjectReferenceAllowRemoteMock.mockClear();
+      await expect(
+        api.finalizeClaudeControllerOwnership(request),
+      ).resolves.toBe("released");
+      expect(finalize).toHaveBeenCalledWith(request);
+      expect(queryMock).not.toHaveBeenCalled();
+      expect(resolveProjectReferenceAllowRemoteMock).not.toHaveBeenCalled();
+    });
+  }
+  it("does not expose cleanup to a caller lacking authenticated host identity", async () => {
+    const api = await import("./hosts");
+    await expect(
+      api.finalizeClaudeControllerOwnership({ ...request, host_id: undefined }),
+    ).rejects.toThrow("host_id");
+    expect(finalize).not.toHaveBeenCalled();
+  });
+});
+
 describe("site-funded Codex account directory routing", () => {
   const request = {
     host_id: HOST_ID,

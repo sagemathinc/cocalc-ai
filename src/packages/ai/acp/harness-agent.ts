@@ -405,7 +405,8 @@ export class HarnessAgent implements AcpAgent {
   hasRunningTurn(threadId: string): boolean {
     return (
       this.busy &&
-      (threadId === this.client?.sessionId ||
+      (threadId === this.conversation.threadId ||
+        threadId === this.client?.sessionId ||
         threadId === this.requestedSessionId)
     );
   }

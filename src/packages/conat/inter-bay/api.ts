@@ -3270,6 +3270,7 @@ export type ProjectSecretsMethod =
   | "remove-course-managed";
 export type ExternalCredentialMethod =
   | "manage-claude-controller-ownership"
+  | "finalize-claude-controller-ownership"
   | "upsert"
   | "create"
   | "update-by-id"
@@ -3630,6 +3631,9 @@ export interface InterBayExternalCredentialRecord extends InterBayExternalCreden
 }
 
 export interface InterBayExternalCredentialsApi {
+  finalizeClaudeControllerOwnership: (
+    opts: import("@cocalc/util/ai/claude-controller-ownership").ClaudeControllerFinalizationRequest,
+  ) => Promise<"released">;
   manageClaudeControllerOwnership: (
     opts: import("@cocalc/util/ai/claude-controller-ownership").ClaudeControllerOwnershipRequest,
   ) => Promise<
@@ -5716,6 +5720,10 @@ const PROJECT_SECRETS_METHOD_SPECS = [
 type ExternalCredentialName = keyof InterBayExternalCredentialsApi;
 
 const EXTERNAL_CREDENTIAL_METHOD_SPECS = [
+  {
+    name: "finalizeClaudeControllerOwnership",
+    method: "finalize-claude-controller-ownership",
+  },
   {
     name: "manageClaudeControllerOwnership",
     method: "manage-claude-controller-ownership",
