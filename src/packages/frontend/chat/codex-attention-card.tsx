@@ -31,6 +31,8 @@ import { lite } from "@cocalc/frontend/lite";
 import { useNamedAgents } from "@cocalc/frontend/agents/api";
 import { findWorkspaceAgentForThread } from "@cocalc/frontend/agents/workspace-model";
 
+import { readCodexSubscriptionSelection } from "./codex-subscription-selection";
+
 const { Paragraph, Text, Title } = Typography;
 const POLL_MS = 2_000;
 const RESPONSE_PREVIEW_LENGTH = 400;
@@ -288,6 +290,13 @@ function RuntimeCodexAttentionCard({
       ),
   );
 
+  const selectedCredentialId = () =>
+    readCodexSubscriptionSelection({
+      accountId: record.account_id,
+      projectId: record.project_id,
+      threadKey: record.thread_id,
+    });
+
   const respond = async (decline = false) => {
     setSubmitting(true);
     setError(undefined);
@@ -295,6 +304,7 @@ function RuntimeCodexAttentionCard({
     try {
       const result = await webapp_client.conat_client.attentionAcp({
         action: "respond",
+        codex_credential_id: selectedCredentialId(),
         project_id: record.project_id,
         attention_id: record.attention_id,
         response_id: responseIdRef.current,
@@ -358,6 +368,7 @@ function RuntimeCodexAttentionCard({
     try {
       const result = await webapp_client.conat_client.attentionAcp({
         action: "continue",
+        codex_credential_id: selectedCredentialId(),
         project_id: record.project_id,
         attention_id: record.attention_id,
       });
@@ -433,7 +444,7 @@ function RuntimeCodexAttentionCard({
   const responseDescription = received
     ? `${responseAgent} accepted your response.`
     : staleWithAnswer
-      ? "Your response is saved, but could not be delivered. You can retry with this answer."
+      ? `Your response is saved, but could not be delivered. You can retry with this answer.${record.resolution_reason ? ` ${record.resolution_reason}` : ""}`
       : "Your response is saved. Receipt by the agent is not confirmed.";
   const setDismissed = (value: boolean) => {
     setCollapsed(value);

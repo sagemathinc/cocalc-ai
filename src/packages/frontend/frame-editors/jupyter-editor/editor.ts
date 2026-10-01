@@ -29,7 +29,7 @@ import { shortcut_to_string } from "@cocalc/frontend/jupyter/keyboard-shortcuts"
 import { capitalize, field_cmp, set } from "@cocalc/util/misc";
 import { createEditor } from "../frame-tree/editor";
 import { EditorDescription } from "../frame-tree/types";
-import { terminal } from "../terminal-editor/editor";
+import { terminal } from "../terminal-editor/spec";
 import { time_travel } from "../time-travel-editor/editor";
 import { CellNotebook } from "./cell-notebook/cell-notebook";
 import { Introspect } from "./introspect/introspect";

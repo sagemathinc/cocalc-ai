@@ -1358,3 +1358,79 @@ describe("agent RPC live guidance funding", () => {
     expect(rows[2].acp_guidance_delivered_at_ms).toBeUndefined();
   });
 });
+
+it.each([false, true])(
+  "uses the answer's selected subscription for a new turn (deferred=%s)",
+  async (deferred) => {
+    rows[0].acp_config.paymentSource = "subscription";
+    const resolve = jest.fn(async ({ credential_id }) => {
+      if (!credential_id)
+        throw Error(
+          "The selected Codex payment source (subscription) is not configured.",
+        );
+      return { source: "subscription", credentialId: credential_id };
+    });
+    setCodexCredentialAdmissionResolver(resolve);
+    mockSteer.mockResolvedValue({ state: "missing" });
+    let job;
+    if (deferred) {
+      job = startRunningTurn(
+        turnRequest({
+          paymentSource: "subscription-credential",
+          credentialId: "active-credential",
+        }),
+      );
+      jest.mocked(listRunningAcpTurnLeases).mockReturnValue([
+        {
+          project_id: projectId,
+          path: record.path,
+          thread_id: record.thread_id,
+          session_id: sessionId,
+          owner_instance_id: "other-worker",
+        } as any,
+      ]);
+    }
+    await expect(
+      acpTestInternals.deliverAsyncAttentionAnswer({
+        ...record,
+        response_credential_id: "selected-credential",
+      }),
+    ).resolves.toMatchObject({ state: deferred ? "pending" : "queued" });
+    if (job) {
+      expect(
+        decodeAcpSteerRequest(listPendingAcpSteers()[0]).config?.credentialId,
+      ).toBe("active-credential");
+      setAcpJobState({ op_id: job.op_id, state: "completed" });
+      jest.mocked(listRunningAcpTurnLeases).mockReturnValue([]);
+      await acpTestInternals.processPendingAcpSteersOnce();
+    }
+    expect(listQueuedAcpJobs()).toHaveLength(1);
+    expect(decodeAcpJobRequest(listQueuedAcpJobs()[0]).config).toMatchObject({
+      paymentSource: "subscription-credential",
+      credentialId: "selected-credential",
+    });
+    expect(resolve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: accountId,
+        project_id: projectId,
+        credential_id: "selected-credential",
+      }),
+    );
+    expect(rows[0].acp_config.credentialId).toBeUndefined();
+  },
+);
+
+it("does not switch to another payer when the answer's selected subscription is unavailable", async () => {
+  rows[0].acp_config.paymentSource = "subscription";
+  setCodexCredentialAdmissionResolver(async () => {
+    throw Error("Selected subscription revoked");
+  });
+  mockSteer.mockResolvedValue({ state: "missing" });
+  await expect(
+    acpTestInternals.deliverAsyncAttentionAnswer({
+      ...record,
+      response_credential_id: "revoked-credential",
+    }),
+  ).rejects.toThrow("Selected subscription revoked");
+  expect(listQueuedAcpJobs()).toEqual([]);
+});

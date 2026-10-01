@@ -767,6 +767,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   }
 
   toIpynb = async () => {
+    if (this.isClosed()) return;
     const blobsBase64 = new Set<string>();
     const blobsString = new Set<string>();
     const collectBlobRefs = {
@@ -791,8 +792,10 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     for (const hash of blobsBase64) {
       try {
         const ar = await this.asyncBlobStore.get(hash);
+        if (this.isClosed()) return;
         blobs[hash] = ar == null ? null : misc.uint8ArrayToBase64(ar);
       } catch (err) {
+        if (this.isClosed()) return;
         dbg("missing base64 blob", { hash, err: `${err}` });
         blobs[hash] = null;
       }
@@ -801,8 +804,10 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     for (const hash of blobsString) {
       try {
         const ar = await this.asyncBlobStore.get(hash);
+        if (this.isClosed()) return;
         blobs[hash] = ar == null ? null : decoder.decode(ar);
       } catch (err) {
+        if (this.isClosed()) return;
         dbg("missing string blob", { hash, err: `${err}` });
         blobs[hash] = null;
       }
@@ -2369,11 +2374,12 @@ export class JupyterActions extends Actions<JupyterStoreState> {
 
   public get_output_limit_bytes(): number {
     return outputLimitBytes(
-      this.store.getIn(["metadata", "cocalc", "output_limit_bytes"]),
+      this.store?.getIn(["metadata", "cocalc", "output_limit_bytes"]),
     );
   }
 
   public set_output_limit_bytes(bytes: number): void {
+    if (!this.syncdb?.isReady()) return;
     const cocalc =
       this.syncdb
         .get_one({ type: "settings" })

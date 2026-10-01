@@ -36,8 +36,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Only affected-package planning needs commit history.
-          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
+          # A PR merge commit and its parents suffice for base...HEAD planning.
+          fetch-depth: ${{ github.event_name == 'pull_request' && '2' || '1' }}
 
       - name: install pnpm
         uses: pnpm/action-setup@v4
@@ -61,6 +61,10 @@ jobs:
         run: |
           cd src
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # Fail closed if the event base is outside the shallow checkout.
+            if ! git merge-base --is-ancestor "$PR_BASE_SHA" HEAD 2>/dev/null; then
+              git fetch --no-tags --unshallow origin
+            fi
             node scripts/ci-test-plan.mjs --base="$PR_BASE_SHA" --github-output --pretty
           else
             node scripts/ci-test-plan.mjs --full --github-output --pretty
@@ -211,9 +215,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: src/.cache/jest
-          key: jest-v2-${{ runner.os }}-node24-${{ needs.plan.outputs.jest_cache_key }}-${{ matrix.lane }}-${{ github.sha }}
+          # Jest hashes each source file itself. Reuse one immutable baseline
+          # per compiler/configuration and lane instead of copying it per commit.
+          key: jest-v2-${{ runner.os }}-node24-${{ needs.plan.outputs.jest_cache_key }}-${{ matrix.lane }}
+          # These also restore the older commit-suffixed and unsplit caches.
           restore-keys: |
             jest-v2-${{ runner.os }}-node24-${{ needs.plan.outputs.jest_cache_key }}-${{ matrix.lane }}-
+            jest-v2-${{ runner.os }}-node24-${{ needs.plan.outputs.jest_cache_key }}-${{ matrix.cache_fallback_lane || matrix.lane }}-
 
       - name: Cache pip
         if: matrix.lane == 'rest'

@@ -15,6 +15,7 @@ import { appUrl } from "@cocalc/frontend/auth/util";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { ProjectPage } from "@cocalc/frontend/project/page/page";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { tab_to_path } from "@cocalc/util/misc";
@@ -332,7 +333,15 @@ export function PublicDirectorySharePage({ slug }: { slug?: string }) {
     setView(null);
     grantShareRoute(normalizedSlug)
       .then(
-        ({ grant, projectId, relativePath, relativePathIsDirectory, slug }) => {
+        async ({
+          grant,
+          projectId,
+          relativePath,
+          relativePathIsDirectory,
+          slug,
+        }) => {
+          if (canceled) return;
+          await ensureProjectReduxRuntime();
           if (canceled) return;
           materializeTemporaryViewerProject({ accountId, grant });
           webapp_client.conat_client.registerPublicDirectoryShareRouting({
