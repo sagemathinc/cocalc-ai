@@ -367,3 +367,36 @@ deploying; editor fixes can follow in any later deploy.
   snapshots, `needsMoreHistory` only for dependencies of the current heads,
   recent merged values kept) and released as 0.9.2; this branch uses it, and
   the snapshot integration test runs.
+
+### 2026-10-01: real-browser tests (Playwright on a Lite server, 8-core VM)
+
+`lite/playwright/collab/meeting-markdown.spec.ts` and `meeting-notebook.spec.ts`:
+N browser contexts type tagged words with real keystrokes; all must agree and
+contain every typed word exactly once. 10 users, 60 s per run unless noted.
+
+- Markdown, rich / source / mixed views: 0 lost, 0 duplicated (seeds 22,
+  24-28, 51) after: base-carrying saves; Slate baseline fixes; caret mapping
+  by words in Slate and CodeMirror (`misc/map-text-offset`); patchflow 0.9.3.
+- Notebooks: before, browsers never agreed, 60-100 of ~250 words were lost,
+  and a cell could grow to 1 MB with nobody typing (a merge-patch storm:
+  `set_cell_input` committed with nothing to commit). Now 0 lost, 0
+  duplicated over 4 seeds (~400 words each) after that fix and three cell
+  editor fixes (show merged results synchronously; don't read a destroyed
+  editor's text; merge new values into unsaved edits).
+- Reloads: typing in the last ~3 s before a reload can be lost (not sent).
+- Long runs, Markdown, mixed views:
+  - 15 min, no reloads (seed 73): 5668 words, all agree, 0 duplicated,
+    2 lost.
+  - 30 min with reloads (seed 71) and 15 min with more reloads (seed 74):
+    after ~10-14 min, duplication cascades (the file reached 70 KB / 500 KB)
+    and the browsers eventually stall.
+  - Cause, from replaying the patch stream: a freshly (re)loaded Slate
+    editor writes its markdown normalization (blank lines, leading spaces)
+    across the whole document -- its first patch can be whitespace-only, in
+    many places. Its merge baseline is the raw markdown, so normalization
+    counts as the user's edits. With others editing those lines, the line
+    merge keeps both versions; other editors merge the duplicates in, and it
+    cascades.
+  - Next: make Slate's merge baseline what the editor shows (its normalized
+    rendering of the last value), so normalization is never saved as an edit;
+    then rerun the long runs (and a 30 min notebook run, not yet done).
