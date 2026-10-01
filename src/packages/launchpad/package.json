@@ -47,7 +47,7 @@
     "@electron/rebuild": "^4.0.3",
     "@types/node": "^22.10.10",
     "@vercel/ncc": "^0.38.4",
-    "electron": "^41.10.4"
+    "electron": "^41.10.6"
   },
   "repository": {
     "type": "git",
