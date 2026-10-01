@@ -33,6 +33,19 @@ const SEED = Number(process.env.COLLAB_SEED ?? Date.now() % 1_000_000);
 const PROJECT_ID = "00000000-1000-4000-8000-000000000000";
 const TOKEN_RE = /tk\d+n\d+q/g;
 const DEBUG = !!process.env.COLLAB_DEBUG;
+
+// A browser whose document value differs from the hash its author recorded
+// logs it (SyncDoc's value-hash check); any such report fails the test.
+const INCONSISTENCY = "differs from its recorded hash";
+const inconsistencies: string[] = [];
+function watchInconsistencies(page: Page, user: number): void {
+  page.on("console", (msg) => {
+    const text = msg.text();
+    if (text.includes(INCONSISTENCY) && inconsistencies.length < 50) {
+      inconsistencies.push(`u${user}: ${text.slice(0, 500)}`);
+    }
+  });
+}
 // COLLAB_DEBUG=idle records only after the typing stops: anything changing
 // then is not caused by typing.
 const DEBUG_IDLE = process.env.COLLAB_DEBUG === "idle";
@@ -170,6 +183,7 @@ test("a meeting's notebook stays consistent with many people typing", async ({
   for (let u = 0; u < USERS; u++) {
     const context = await (browser as Browser).newContext();
     const page = await context.newPage();
+    watchInconsistencies(page, u);
     page.on("pageerror", (err) => {
       if (errors.length < 50) errors.push(`u${u} pageerror: ${err.message}`);
     });
@@ -288,6 +302,7 @@ test("a meeting's notebook stays consistent with many people typing", async ({
       distinctWords: new Set(values.map(words)).size,
       lost: lost.length,
       duplicated: duplicated.length,
+      inconsistencies: inconsistencies.length,
       errors: errors.length,
       lostSample: lost.slice(0, 10),
       duplicatedSample: duplicated.slice(0, 10),
@@ -303,6 +318,9 @@ test("a meeting's notebook stays consistent with many people typing", async ({
   if (DEBUG) {
     await writeFile(`${path}.debug.json`, JSON.stringify(debugEvents));
   }
+  if (inconsistencies.length)
+    console.log(inconsistencies.slice(0, 5).join("\n"));
+  expect(inconsistencies).toEqual([]);
   expect(distinct).toBe(1);
   expect(lost).toEqual([]);
   expect(duplicated).toEqual([]);

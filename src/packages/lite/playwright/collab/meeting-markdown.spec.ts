@@ -45,6 +45,19 @@ const editorOf = (page: Page) =>
 const TOKEN_RE = /tk\d+n\d+q/g;
 const DEBUG = !!process.env.COLLAB_DEBUG;
 
+// A browser whose document value differs from the hash its author recorded
+// logs it (SyncDoc's value-hash check); any such report fails the test.
+const INCONSISTENCY = "differs from its recorded hash";
+const inconsistencies: string[] = [];
+function watchInconsistencies(page: Page, user: number): void {
+  page.on("console", (msg) => {
+    const text = msg.text();
+    if (text.includes(INCONSISTENCY) && inconsistencies.length < 50) {
+      inconsistencies.push(`u${user}: ${text.slice(0, 500)}`);
+    }
+  });
+}
+
 interface DebugEvent {
   t: number;
   user: number;
@@ -269,6 +282,7 @@ test("a meeting's notes stay consistent with many people typing", async ({
     const view: View =
       VIEW === "mixed" ? (u % 2 ? "source" : "rich") : (VIEW as View);
     VIEWS.set(page, view);
+    watchInconsistencies(page, u);
     if (view === "source") await useSourceView(page, path);
     if (DEBUG) {
       await page.addInitScript((dupsOnly) => {
@@ -433,6 +447,7 @@ test("a meeting's notes stay consistent with many people typing", async ({
       lost: lost.length,
       split: split.length,
       duplicated: duplicated.length,
+      inconsistencies: inconsistencies.length,
       lostSample: lost.slice(0, 10),
       duplicatedSample: duplicated.slice(0, 10),
     }),
@@ -476,6 +491,9 @@ test("a meeting's notes stay consistent with many people typing", async ({
       JSON.stringify({ values, typed, missed, lost, events }, null, 1),
     );
   }
+  if (inconsistencies.length)
+    console.log(inconsistencies.slice(0, 5).join("\n"));
+  expect(inconsistencies).toEqual([]);
   expect(distinct).toBe(1);
   expect(lost).toEqual([]);
   expect(split).toEqual([]);

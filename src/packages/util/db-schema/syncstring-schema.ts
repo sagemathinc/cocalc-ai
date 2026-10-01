@@ -337,6 +337,10 @@ Table({
       type: "integer",
       desc: "Version number of this patch.  Not necessarily globally unique across branches.  Used only to provide users a convenient way to refer to a particular version.",
     },
+    hash: {
+      type: "string",
+      desc: "Hash of the document right after this patch, as its author computed it (patchflow's value-hash format, e.g. 's1:...'); every client checks its own value against it, so an inconsistency is detected and reported. A snapshot carries the hash of the patch it is a snapshot of.",
+    },
   },
   rules: {
     primary_key: ["string_id", "time", "is_snapshot"], // compound primary key
@@ -360,6 +364,7 @@ Table({
           format: null,
           parents: null,
           meta: null,
+          hash: null,
         },
         check_hook(db, obj, account_id, project_id, cb) {
           // this verifies that user has read access to these patches
@@ -387,6 +392,7 @@ Table({
           parents: true,
           format: true,
           meta: true,
+          hash: true,
         },
         required_fields: {
           string_id: true,

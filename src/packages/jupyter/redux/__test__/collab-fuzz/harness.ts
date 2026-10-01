@@ -149,6 +149,9 @@ export class NotebookClient {
   public actions!: any;
   public store!: any;
   public editor?: CellEditor;
+  // Values this client computed that differ from the hash their author
+  // recorded (patchflow value hashes): must never happen.
+  public inconsistencies: unknown[] = [];
 
   constructor(
     public id: number,
@@ -165,6 +168,7 @@ export class NotebookClient {
       initial: this.initial,
       codec,
     });
+    this.session.on("inconsistency", (e) => this.inconsistencies.push(e));
     this.syncdb = new SimSyncDB(this.session, {
       changeThrottle: SYNCDB_OPTIONS.change_throttle,
     });

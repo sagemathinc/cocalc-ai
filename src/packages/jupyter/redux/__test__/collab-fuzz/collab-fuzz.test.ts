@@ -179,7 +179,8 @@ async function runSession(seed: number, steps = STEPS) {
     }
   };
   let counter = 0;
-  const newToken = (c: NotebookClient) => `tk${"abcdefghijklmnop"[c.id]}${counter++}q`;
+  const newToken = (c: NotebookClient) =>
+    `tk${"abcdefghijklmnop"[c.id]}${counter++}q`;
 
   const settle = async (ms: number) => {
     jest.advanceTimersByTime(ms);
@@ -337,6 +338,17 @@ async function runSession(seed: number, steps = STEPS) {
     // Clients that keep sending patches with nobody editing: e.g. answering
     // every merge patch with another (a real browser then never settles).
     problems.push(`network never went quiet (${net.pending()} pending)`);
+  }
+  const hashed = clients[0].session
+    .versions()
+    .filter((t) => clients[0].session.getPatch(t).hash != null).length;
+  if (hashed === 0) problems.push("no patch records a value hash");
+  for (const c of clients) {
+    if (c.inconsistencies.length > 0) {
+      problems.push(
+        `client ${c.id}: ${c.inconsistencies.length} values differ from their hashes, e.g. ${JSON.stringify(c.inconsistencies[0])}`,
+      );
+    }
   }
 
   const docs = clients.map((c) => c.doc());

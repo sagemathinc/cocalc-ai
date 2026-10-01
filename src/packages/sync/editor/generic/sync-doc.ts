@@ -57,6 +57,7 @@ import {
   decodePatchId,
   legacyPatchId,
   type PatchEnvelope,
+  type Inconsistency,
   type PatchStore as PatchflowPatchStore,
   type PresenceAdapter as PatchflowPresenceAdapter,
   MemoryPresenceAdapter as PatchflowMemoryPresenceAdapter,
@@ -992,8 +993,7 @@ export class SyncDoc extends EventEmitter {
           ? (rawMetadata as PatchDocMetadataV1)
           : undefined;
       const checkpoint = dstream.getCheckpoint(LATEST_SNAPSHOT_CHECKPOINT) as
-        | { seq: number; data?: { patchId?: string } }
-        | undefined;
+        { seq: number; data?: { patchId?: string } } | undefined;
       this.setSyncMetadataState({ metadata, checkpoint });
     }
     return this.syncMetadata ?? Map();
@@ -1108,8 +1108,7 @@ export class SyncDoc extends EventEmitter {
         ? (rawMetadata as PatchDocMetadataV1)
         : undefined;
     const checkpoint = dstream.getCheckpoint?.(LATEST_SNAPSHOT_CHECKPOINT) as
-      | { seq: number; data?: { patchId?: string } }
-      | undefined;
+      { seq: number; data?: { patchId?: string } } | undefined;
 
     this.setLastSnapshot(
       typeof checkpoint?.data?.patchId === "string"
@@ -1172,8 +1171,7 @@ export class SyncDoc extends EventEmitter {
     let checkpoint;
     try {
       checkpoint = dstream.getCheckpoint?.(LATEST_SNAPSHOT_CHECKPOINT) as
-        | { seq: number; data?: { patchId?: string } }
-        | undefined;
+        { seq: number; data?: { patchId?: string } } | undefined;
     } catch (err) {
       const message = `${err ?? ""}`.toLowerCase();
       if (
@@ -1867,6 +1865,7 @@ export class SyncDoc extends EventEmitter {
       parents: null,
       version: null,
       meta: null,
+      hash: null,
     };
     if (this.doctype.patch_format != null) {
       (query as any).format = this.doctype.patch_format;
@@ -1955,6 +1954,7 @@ export class SyncDoc extends EventEmitter {
     }
     this.patchflowSession.on("patch", this.handlePatchflowPatch);
     this.patchflowSession.on("change", this.handlePatchflowChange);
+    this.patchflowSession.on("inconsistency", this.handleInconsistency);
     try {
       await this.patchflowSession.init();
     } catch (err) {
@@ -2303,6 +2303,14 @@ export class SyncDoc extends EventEmitter {
       return;
     }
     user_id = p.userId ?? user_id;
+    // Never pass on a value that differs from what the patch's author
+    // recorded: every client opening the document later would start from it.
+    // ("unknown": a patch from before hashes, or no exact value.)
+    if (this.patchflowSession.verifyValue(time) === "mismatch") {
+      throw Error(
+        `not making a snapshot at ${time}: value differs from its hash`,
+      );
+    }
     const doc = this.patchflowSession.value({ time }) as any;
     snapshot = (doc?.to_str?.() ?? doc?.toString?.() ?? `${doc}`) as string;
     if (snapshot == null) {
@@ -2319,6 +2327,9 @@ export class SyncDoc extends EventEmitter {
       snapshot,
       user_id,
       seq_info,
+      // The hash its author recorded, so a client that starts from this
+      // snapshot can check it (see Patch.hash).
+      ...(p.hash != null ? { hash: p.hash } : {}),
       __checkpoint: {
         name: LATEST_SNAPSHOT_CHECKPOINT,
         seq: seq_info.seq,
@@ -2461,6 +2472,10 @@ export class SyncDoc extends EventEmitter {
       const m = x.get("meta");
       obj.meta = Map.isMap(m) ? m.toJS() : m;
     }
+    const hash = x.get("hash");
+    if (typeof hash === "string") {
+      obj.hash = hash;
+    }
     if (is_snapshot) {
       obj.snapshot = x.get("snapshot"); // this is a string
       obj.seq_info = x.get("seq_info")?.toJS();
@@ -2493,6 +2508,7 @@ export class SyncDoc extends EventEmitter {
       seqInfo: p.seq_info,
       file: p.file,
       meta: p.meta,
+      hash: p.hash,
     };
   };
 
@@ -2510,6 +2526,7 @@ export class SyncDoc extends EventEmitter {
       seq_info: env.seqInfo,
       file: env.file,
       meta: env.meta,
+      hash: env.hash,
     };
   };
 
@@ -2695,6 +2712,9 @@ export class SyncDoc extends EventEmitter {
           }
           if (patch.meta != null) {
             obj.meta = patch.meta;
+          }
+          if (patch.hash != null) {
+            obj.hash = patch.hash;
           }
           if (this.doctype.patch_format != null) {
             obj.format = this.doctype.patch_format;
@@ -3366,6 +3386,46 @@ export class SyncDoc extends EventEmitter {
     }
   };
 
+  // This client computed a value that differs from the one the patch's author
+  // recorded (patchflow checks values against Patch.hash): the document is
+  // not what everyone else sees. Never silent: log it, report it to the
+  // server's client error log, and emit "inconsistency" (for tests, tools and
+  // agents working on the document).
+  private inconsistencyCount = 0;
+  private handleInconsistency = (e: Inconsistency): void => {
+    this.inconsistencyCount += 1;
+    const info = {
+      ...e,
+      path: this.path,
+      project_id: this.project_id,
+      string_id: this.string_id,
+      count: this.inconsistencyCount,
+      hasFullHistory: this.hasFullHistory(),
+    };
+    syncDebug("syncdoc:inconsistency", () => info);
+    if (this.inconsistencyCount <= 10) {
+      console.warn("sync: document value differs from its recorded hash", info);
+    }
+    this.dbg("inconsistency")(JSON.stringify(info));
+    this.emit("inconsistency", info);
+    if (this.inconsistencyCount <= 3) {
+      try {
+        this.client?.log_error?.({
+          project_id: this.project_id,
+          path: this.path,
+          string_id: this.string_id,
+          error: { type: "sync-inconsistency", ...info },
+        });
+      } catch {
+        // reporting must never break editing
+      }
+    }
+  };
+
+  // Number of inconsistencies detected in this session (see
+  // handleInconsistency).
+  getInconsistencyCount = (): number => this.inconsistencyCount;
+
   private handlePatchflowPatch = (env: PatchEnvelope): void => {
     if (env.meta?.deleted) {
       this.emitDeleted();
@@ -3534,8 +3594,7 @@ export class SyncDoc extends EventEmitter {
         return;
       }
       const current = this.patchflowSession?.getDocument() as
-        | Document
-        | undefined;
+        Document | undefined;
       const diskDoc = this._from_str(diskValue);
       if (current != null && this.documentsEqual(current, diskDoc)) {
         this.last = this.doc = current;

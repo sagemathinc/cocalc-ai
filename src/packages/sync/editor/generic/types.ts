@@ -36,6 +36,11 @@ export interface Patch {
                      syncstring table has id-->account_id map) */;
   size: number; // size of the patch (by defn length of string representation)
 
+  // Hash of the document value right after this patch, as its author
+  // computed it (patchflow's Patch.hash); every client checks its own value
+  // against it. A snapshot carries the hash of the patch it is of.
+  hash?: string;
+
   is_snapshot?: boolean;
   snapshot?: string; // to_str() applied to the document at this point in time
   seq_info?: {
