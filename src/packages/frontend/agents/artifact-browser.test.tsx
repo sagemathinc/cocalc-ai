@@ -352,12 +352,11 @@ test("grid tiles use catalog appearance and open the real appearance action", as
   await screen.findByRole("button", { name: "Open Result one from one" });
   await user.click(screen.getByRole("button", { name: "Grid view" }));
   expect(
-    screen
-      .getByRole("button", { name: "Open Result one from one" })
-      .closest("[role=listitem]"),
+    screen.getByRole("button", { name: "Open Result one from one" })
+      .parentElement,
   ).toHaveStyle({
     border: "1px solid #123456",
-    minHeight: "116px",
+    height: "150px",
   });
   expect(
     screen
@@ -369,9 +368,8 @@ test("grid tiles use catalog appearance and open the real appearance action", as
   );
   await user.click(screen.getByRole("button", { name: "List view" }));
   expect(
-    screen
-      .getByRole("button", { name: "Open Result one from one" })
-      .closest("[role=listitem]"),
+    screen.getByRole("button", { name: "Open Result one from one" })
+      .parentElement,
   ).toHaveStyle({ borderLeft: "3px solid #123456" });
   expect(
     screen
@@ -645,7 +643,9 @@ test("keyboard sorting, grouping, filtering, pins and navigation are local", asy
   expect(group).toBeChecked();
   expect(group).toHaveFocus();
   for (const name of ["one", "two"]) {
-    const section = screen.getByRole("region", { name: `Project ${name}` });
+    const section = screen.getByRole("region", {
+      name: `Artifacts: Project ${name}`,
+    });
     expect(
       within(section).getByRole("heading", { name: `Project ${name}` }),
     ).toBeVisible();
@@ -667,7 +667,13 @@ test("keyboard sorting, grouping, filtering, pins and navigation are local", asy
   expect(setPinned).toHaveBeenCalledWith(id, true);
   pinned = [id];
   view.rerender(<AgentArtifactBrowser {...props} />);
-  expect(titles()[0]).toBe("Open Result one from one");
+  // A pin moves the artifact into its own section, above the sorted rest.
+  expect(titles()[0]).toBe("Open Result two from two");
+  expect(
+    within(screen.getByRole("region", { name: "Pinned" })).getByRole("button", {
+      name: "Open Result two from two",
+    }),
+  ).toBeInTheDocument();
   const unpin = screen.getByRole("button", { name: "Unpin Result two" });
   expect(unpin).toHaveAttribute("aria-pressed", "true");
   unpin.focus();
@@ -721,7 +727,7 @@ test("keyboard sorting, grouping, filtering, pins and navigation are local", asy
   expect(listProject).toHaveBeenCalledTimes(2);
 });
 
-test("Custom exposes pinned drag handles and keyboard move menus scoped to groups", async () => {
+test("pinned artifacts have their own section with drag handles, like People", async () => {
   const ids = agents.map((agent) =>
     JSON.stringify([
       agent.endpoint.project_id,
@@ -730,62 +736,47 @@ test("Custom exposes pinned drag handles and keyboard move menus scoped to group
       "same-id",
     ]),
   );
-  pinned = [...ids];
+  pinned = [ids[0]];
   const props = {
-    accountId: "library-custom",
+    accountId: "library-pins",
     agents,
     active: true,
     onSelect: async () => {},
   };
   const view = render(<AgentArtifactBrowser {...props} />);
-  await screen.findByRole("button", { name: "Open Result two from two" });
-  const user = userEvent.setup();
-  await user.click(
-    screen.getByRole("button", { name: "Filters & organization" }),
-  );
-  const sort = screen.getByRole("combobox", {
-    name: "Sort",
-  });
-  act(() => sort.focus());
-  key(sort, "ArrowDown", 40);
-  await waitFor(() => expect(sort).toHaveAttribute("aria-expanded", "true"));
-  key(sort, "ArrowDown", 40);
-  key(sort, "ArrowDown", 40);
-  key(sort, "Enter", 13);
-  const handle = await screen.findByRole("button", {
-    name: "Drag Result one to reorder",
-  });
-  expect(handle).toHaveAttribute("tabindex", "0");
-  const trigger = screen.getByRole("button", { name: "Reorder Result one" });
-  act(() => trigger.focus());
-  await user.keyboard("{Enter}");
-  const down = await screen.findByRole("menuitem", { name: "Move down" });
-  expect(screen.getByRole("menuitem", { name: "Move up" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
-  act(() => down.focus());
-  key(down, "Enter", 13);
-  expect(move).toHaveBeenCalledWith(ids, ids[0], 1);
+  const pinnedSection = await screen.findByRole("region", { name: "Pinned" });
+  expect(
+    within(pinnedSection).getByRole("heading", { name: "Pinned" }),
+  ).toBeVisible();
+  expect(
+    within(pinnedSection).getByRole("button", {
+      name: "Drag Result one to reorder",
+    }),
+  ).toHaveAttribute("tabindex", "0");
+  const rest = screen.getByRole("region", { name: "Artifacts" });
+  expect(
+    within(rest).getByRole("button", { name: "Open Result two from two" }),
+  ).toBeInTheDocument();
+  // Only pins are reorderable; the rest follows the chosen sort.
+  expect(
+    screen.queryByRole("button", { name: "Drag Result two to reorder" }),
+  ).not.toBeInTheDocument();
+  // Pin order is the saved order, in grid view as well.
   pinned = [...ids].reverse();
   view.rerender(<AgentArtifactBrowser {...props} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Grid view" }));
   expect(
-    screen.getAllByRole("button", { name: /^Open Result/ })[0],
-  ).toHaveAccessibleName("Open Result two from two");
-  expect(trigger).toHaveFocus();
-  await user.click(screen.getByRole("checkbox", { name: "Group by project" }));
-  await user.click(screen.getByRole("button", { name: "Reorder Result one" }));
+    within(screen.getByRole("region", { name: "Pinned" }))
+      .getAllByRole("button", { name: /^Open Result/ })
+      .map((button) => button.getAttribute("aria-label")),
+  ).toEqual(["Open Result two from two", "Open Result one from one"]);
   expect(
-    await screen.findByRole("menuitem", { name: "Move up" }),
-  ).toHaveAttribute("aria-disabled", "true");
-  expect(screen.getByRole("menuitem", { name: "Move down" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
-  await user.keyboard("{Escape}");
+    screen.queryByRole("region", { name: "Artifacts" }),
+  ).not.toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: "Reorder Result one" }),
-  ).toHaveFocus();
+    screen.getByRole("button", { name: "Drag Result two to reorder" }),
+  ).toBeInTheDocument();
   expect(listProject).toHaveBeenCalledTimes(2);
 });
 
