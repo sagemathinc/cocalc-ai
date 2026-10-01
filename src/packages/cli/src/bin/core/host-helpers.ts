@@ -4,10 +4,11 @@
  * This module centralizes host option parsing, catalog summarization, and host
  * readiness/SSH endpoint resolution used by CLI host operations.
  */
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import type {
   HostCatalog,
   HostCatalogEntry,
-  HostConnectionInfo,
   HostMachine,
   HostSoftwareArtifact,
   HostSoftwareChannel,
@@ -25,6 +26,8 @@ type HostLike = {
   last_action_error?: string | null;
   last_error?: string | null;
   public_ip?: string | null;
+  private_ip?: string | null;
+  internal_url?: string | null;
   machine?: Record<string, any> | null;
   bootstrap?: {
     status?: string | null;
@@ -55,6 +58,7 @@ type HostHelpersDeps<Ctx, Host extends HostLike> = {
   parseSshServer: (value: string) => { host: string; port?: number | null };
   cliDebug: (...args: unknown[]) => void;
   hostSshResolveTimeoutMs?: number;
+  lookupHost?: (hostname: string) => Promise<{ address: string }>;
 };
 
 export function normalizeHostSoftwareArtifactValue(
@@ -232,7 +236,7 @@ export function summarizeHostCatalogEntries(
 export function createHostHelpers<Ctx, Host extends HostLike>(
   deps: HostHelpersDeps<Ctx, Host>,
 ) {
-  const { listHosts, resolveHost, parseSshServer, cliDebug } = deps;
+  const { listHosts, resolveHost, cliDebug } = deps;
   const hostSshResolveTimeoutMs = deps.hostSshResolveTimeoutMs ?? 5_000;
 
   function resolveHostSshUser(host: Host): string {
@@ -319,70 +323,117 @@ export function createHostHelpers<Ctx, Host extends HostLike>(
   async function resolveHostSshEndpoint(
     ctx: Ctx,
     hostIdentifier: string,
+    network = "auto",
   ): Promise<{
     host: Host;
     ssh_host: string;
     ssh_port: number | null;
     ssh_server: string | null;
     ssh_user: string;
+    network: "private" | "public";
+    requested_network: string;
+    resolved_ip: string | null;
+    selection_reason: string;
   }> {
+    if (!["private", "public", "auto"].includes(network)) {
+      throw new Error("--network must be private, public, or auto");
+    }
     const host = await resolveHost(ctx, hostIdentifier);
     const ssh_user = resolveHostSshUser(host);
     const machine = (host.machine ?? {}) as Record<string, any>;
-    const directHost =
-      `${host.public_ip ?? machine?.metadata?.public_ip ?? ""}`.trim();
-    if (directHost) {
-      const configuredPort = Number(machine?.metadata?.ssh_port);
-      const directPort =
-        Number.isInteger(configuredPort) &&
-        configuredPort > 0 &&
-        configuredPort <= 65535
-          ? configuredPort
-          : 22;
-      return {
-        host,
-        ssh_host: directHost,
-        ssh_port: directPort,
-        ssh_server: `${directHost}:${directPort}`,
-        ssh_user,
-      };
+    const configuredPort = Number(machine?.metadata?.ssh_port);
+    const port =
+      Number.isInteger(configuredPort) &&
+      configuredPort > 0 &&
+      configuredPort <= 65535
+        ? configuredPort
+        : 22;
+    const endpoint = (
+      hostname: string,
+      selected: "private" | "public",
+      address: string | null,
+      reason: string,
+    ) => ({
+      host,
+      ssh_host: hostname,
+      ssh_port: port,
+      ssh_server: `${isIP(hostname) === 6 ? `[${hostname}]` : hostname}:${port}`,
+      ssh_user,
+      network: selected,
+      requested_network: network,
+      resolved_ip: address,
+      selection_reason: reason,
+    });
+    const resolveAddress = async (hostname: string): Promise<string> => {
+      if (isIP(hostname)) return hostname;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const result = await Promise.race([
+          (deps.lookupHost ?? lookup)(hostname),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error("private host DNS lookup timed out")),
+              hostSshResolveTimeoutMs,
+            );
+          }),
+        ]);
+        return result.address;
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    let privateError = "no private endpoint in host metadata";
+    if (network !== "public") {
+      if (host.internal_url) {
+        try {
+          const url = new URL(host.internal_url);
+          if (!["http:", "https:"].includes(url.protocol) || !url.hostname) {
+            throw new Error("invalid internal_url");
+          }
+          // This is a host name discovery source, not an SSH port source.
+          const hostname = url.hostname.replace(/^\[|\]$/g, "");
+          return endpoint(
+            hostname,
+            "private",
+            await resolveAddress(hostname),
+            "internal_url hostname resolved; DNS resolution does not guarantee SSH reachability",
+          );
+        } catch (err) {
+          privateError = err instanceof Error ? err.message : String(err);
+        }
+      }
+      const privateIp =
+        `${host.private_ip ?? machine.metadata?.runtime?.private_ip ?? ""}`.trim();
+      if (isIP(privateIp)) {
+        return endpoint(privateIp, "private", privateIp, "provider private_ip");
+      }
+      if (network === "private") {
+        throw new Error(
+          `private SSH endpoint unavailable: ${privateError}; refusing public fallback`,
+        );
+      }
+      cliDebug("host ssh: private endpoint unavailable", {
+        host_id: host.id,
+        reason: privateError,
+      });
     }
-    let connection: HostConnectionInfo | null = null;
-    try {
-      connection = await Promise.race([
-        (ctx as any).hub.hosts.resolveHostConnection({ host_id: host.id }),
-        new Promise<HostConnectionInfo>((_, reject) =>
-          setTimeout(
-            () =>
-              reject(
-                new Error(
-                  `hosts.resolveHostConnection timed out after ${hostSshResolveTimeoutMs}ms`,
-                ),
-              ),
-            hostSshResolveTimeoutMs,
-          ),
-        ),
-      ]);
-    } catch (err) {
-      cliDebug(
-        "host ssh: resolveHostConnection failed, falling back to host ip",
-        {
-          host_id: host.id,
-          err: err instanceof Error ? err.message : `${err}`,
-        },
+    const publicIp =
+      `${host.public_ip ?? machine.metadata?.runtime?.public_ip ?? machine.metadata?.public_ip ?? ""}`.trim();
+    if (publicIp) {
+      return endpoint(
+        publicIp,
+        "public",
+        isIP(publicIp) ? publicIp : null,
+        network === "public"
+          ? "public network explicitly selected"
+          : `auto: ${privateError}`,
       );
     }
-    if (connection?.ssh_server) {
-      const parsed = parseSshServer(connection.ssh_server);
-      return {
-        host,
-        ssh_host: parsed.host,
-        ssh_port: parsed.port ?? null,
-        ssh_server: connection.ssh_server,
-        ssh_user,
-      };
-    }
-    throw new Error("host has no direct public ip and no routed ssh endpoint");
+    // ssh_server/resolveHostConnection describe project SSH routing, not the
+    // administrative host sshd. Never use them as a host-shell fallback.
+    throw new Error(
+      "host has no administrative SSH endpoint for the selected network",
+    );
   }
 
   return {

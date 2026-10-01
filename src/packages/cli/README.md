@@ -2,6 +2,37 @@
 
 Commander-based CoCalc CLI (network transport via conat).
 
+## Host SSH Networks
+
+`host ssh <host> --network private|public|auto --print` selects an
+administrative SSH endpoint without opening a session or installing a key.
+Use private mode from a management network with access to the hosts' private
+addresses:
+
+```bash
+cocalc --profile prod auth ssh-network private
+cocalc --profile prod host ssh my-host --print
+cocalc --profile prod host ssh my-host
+```
+
+The command flag overrides the selected auth profile's preference. Without
+either, `auto` tries the hostname from `internal_url`, then the provider's
+`private_ip`, then the public address. DNS lookup is bounded; successful DNS
+resolution is not a connectivity test. There is no automatic retry on the
+public endpoint if a private SSH connection fails. Explicit `private` never
+falls back to public. Explicit `public` skips private discovery.
+
+The internal URL supplies only the hostname, not its HTTP port. Administrative
+SSH uses port 22 (or configured host SSH port / explicit `--port`); project
+`ssh_server` routing is not a host-shell fallback. Printed output includes
+`network`, `requested_network`, `resolved_ip`, and `selection_reason`.
+`host get` also exposes the provider's optional `private_ip` and
+`network_observed_at` timestamp. These are observations, not reachability
+guarantees. Older hubs can still supply private DNS through `internal_url`.
+
+This does not open firewall ports, grant SSH authorization, or install keys.
+Existing SSH credentials and host-key verification still apply.
+
 ## Support attachments
 
 Use `admin support show <ticket-id> --reason "..."` to discover generated

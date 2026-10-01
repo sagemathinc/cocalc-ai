@@ -9,6 +9,24 @@ import {
 } from "./hosts-normalization";
 
 describe("parseRow host metrics normalization", () => {
+  it("exposes provider network observations without expanding runtime metadata", () => {
+    const observed_at = "2026-10-01T12:00:00.000Z";
+    const host = parseRow({
+      id: "host-network",
+      metadata: {
+        runtime: {
+          private_ip: "10.0.0.2",
+          public_ip: "192.0.2.1",
+          observed_at,
+        },
+      },
+      internal_url: "http://host.example.internal:9002",
+    });
+    expect(host.private_ip).toBe("10.0.0.2");
+    expect(host.network_observed_at).toBe(observed_at);
+    expect(host.internal_url).toBe("http://host.example.internal:9002");
+    expect(parseRow({ id: "old-host" }).private_ip).toBeUndefined();
+  });
   it("preserves a bounded RootFS placement cache snapshot", () => {
     const observed_at = new Date().toISOString();
     const host = parseRow({

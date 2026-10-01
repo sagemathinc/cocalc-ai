@@ -7,6 +7,115 @@ import {
   parseHostSoftwareArtifactsOption,
 } from "./host-helpers";
 
+function sshHelpers(
+  host: Record<string, any>,
+  lookupHost = async (_hostname: string) => ({ address: "10.0.0.2" }),
+) {
+  return createHostHelpers({
+    listHosts: async () => [],
+    resolveHost: async () => ({ id: "host-1", ...host }),
+    parseSshServer: () => {
+      throw new Error("must not use project SSH routing");
+    },
+    cliDebug: () => {},
+    lookupHost,
+    hostSshResolveTimeoutMs: 10,
+  });
+}
+
+test("SSH auto uses private DNS, not the internal HTTP port or project SSH proxy", async () => {
+  const result = await sshHelpers({
+    internal_url: "http://host.example.internal:9002",
+    public_ip: "192.0.2.1",
+    ssh_server: "192.0.2.1:2222",
+  }).resolveHostSshEndpoint({}, "host-1");
+  assert.equal(result.network, "private");
+  assert.equal(result.ssh_host, "host.example.internal");
+  assert.equal(result.resolved_ip, "10.0.0.2");
+  assert.equal(result.ssh_port, 22);
+});
+
+test("SSH public selection does not perform private DNS lookup", async () => {
+  const result = await sshHelpers(
+    {
+      internal_url: "http://host.internal:9002",
+      public_ip: "192.0.2.1",
+      machine: { metadata: { ssh_port: 2200 } },
+    },
+    async () => {
+      throw new Error("unexpected lookup");
+    },
+  ).resolveHostSshEndpoint({}, "host-1", "public");
+  assert.equal(result.ssh_host, "192.0.2.1");
+  assert.equal(result.ssh_port, 2200);
+  assert.equal(result.network, "public");
+});
+
+test("SSH private selection fails closed for absent, malformed and unresolvable metadata", async () => {
+  for (const internal_url of [
+    undefined,
+    "not a URL",
+    "http://missing.internal:9002",
+  ]) {
+    await assert.rejects(
+      sshHelpers(
+        {
+          internal_url,
+          public_ip: "192.0.2.1",
+        },
+        async () => {
+          throw new Error("DNS failed");
+        },
+      ).resolveHostSshEndpoint({}, "host-1", "private"),
+      /refusing public fallback/,
+    );
+  }
+});
+
+test("SSH uses provider private IP when internal DNS fails, including IPv6", async () => {
+  for (const private_ip of ["10.0.0.2", "fd00::2"]) {
+    const result = await sshHelpers(
+      {
+        internal_url: "http://missing.internal:9002",
+        private_ip,
+      },
+      async () => {
+        throw new Error("DNS failed");
+      },
+    ).resolveHostSshEndpoint({}, "host-1", "private");
+    assert.equal(result.ssh_host, private_ip);
+    assert.equal(result.network, "private");
+    assert.equal(
+      result.ssh_server,
+      private_ip.includes(":") ? "[fd00::2]:22" : "10.0.0.2:22",
+    );
+  }
+});
+
+test("SSH auto DNS timeout is bounded and explains public fallback", async () => {
+  const result = await sshHelpers(
+    {
+      internal_url: "http://missing.internal:9002",
+      public_ip: "192.0.2.1",
+    },
+    () => new Promise(() => {}),
+  ).resolveHostSshEndpoint({}, "host-1", "auto");
+  assert.equal(result.network, "public");
+  assert.match(result.selection_reason, /timed out/);
+});
+
+test("SSH rejects invalid network and never falls back to project SSH", async () => {
+  const helpers = sshHelpers({ ssh_server: "192.0.2.1:2222" });
+  await assert.rejects(
+    helpers.resolveHostSshEndpoint({}, "host-1", "invalid"),
+    /--network/,
+  );
+  await assert.rejects(
+    helpers.resolveHostSshEndpoint({}, "host-1"),
+    /no administrative SSH endpoint/,
+  );
+});
+
 test("container runtime host upgrades are explicit-only", () => {
   assert.equal(
     normalizeHostSoftwareArtifactValue("podman"),

@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { applyPrivateMode, cocalcCliConfigDir } from "./platform-paths";
 
 export type AuthProfile = {
+  host_ssh_network?: "private" | "public" | "auto";
   api?: string;
   account_id?: string;
   email_address?: string;
@@ -25,6 +26,7 @@ export type AuthConfig = {
 };
 
 export type GlobalAuthOptions = {
+  hostSshNetwork?: "private" | "public" | "auto";
   profile?: string;
   api?: string;
   accountId?: string;
@@ -176,6 +178,9 @@ export function applyAuthProfile(
     requestedApiScope === profileApiScope;
   if (!resolved.api && data.api) {
     resolved.api = data.api;
+  }
+  if (allowSecretInheritance && !resolved.hostSshNetwork) {
+    resolved.hostSshNetwork = data.host_ssh_network;
   }
   if (
     allowSecretInheritance &&
