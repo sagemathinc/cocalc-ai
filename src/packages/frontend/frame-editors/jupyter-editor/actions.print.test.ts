@@ -25,7 +25,12 @@ describe("notebook Print", () => {
     "%s opens the browser print flow without downloading HTML",
     async (command) => {
       const popup: any = {
-        document: { open: jest.fn(), write: jest.fn(), close: jest.fn() },
+        document: {
+          open: jest.fn(),
+          write: jest.fn(),
+          close: jest.fn(),
+          images: [],
+        },
         print: jest.fn(),
         close: jest.fn(),
       };
@@ -62,7 +67,7 @@ describe("notebook Print", () => {
       expect(popup.document.write).toHaveBeenCalledWith(
         "<html>Notebook</html>",
       );
-      popup.onload();
+      await popup.onload();
       expect(popup.print).toHaveBeenCalledTimes(1);
       expect(downloadHTML).not.toHaveBeenCalled();
       popup.onafterprint();
