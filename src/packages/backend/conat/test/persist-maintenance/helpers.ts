@@ -32,6 +32,7 @@ export function maintenanceTestConfig({
     scanIntervalMs: 1000,
     scanEntryLimit: 10_000,
     scanByteLimit: 1024 * 1024 * 1024,
+    scanTimeLimitMs: 60_000,
     minFreeBytes: 0,
     freeSpaceMultiplier: 1,
     maxLoadPerCpu: 1000,

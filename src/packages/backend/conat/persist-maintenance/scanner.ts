@@ -4,6 +4,7 @@
  */
 
 import { lstat, readdir } from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
 import type { PersistMaintenanceConfig } from "./config";
@@ -15,7 +16,7 @@ interface ScanCursor {
   roots: string[];
   rootIndex: number;
   stack: string[];
-  current?: { path: string; index: number };
+  current?: { path: string; index: number; after?: string };
   files: number;
   entries: number;
   bytes: number;
@@ -105,32 +106,50 @@ export class PersistMaintenanceScanner {
     }
     const startEntries = cursor.entries;
     const startBytes = cursor.bytes;
+    const deadline = Date.now() + this.config.scanTimeLimitMs;
     const errors: string[] = [];
+    let entries: Dirent[] | undefined;
 
     while (
       cursor.entries - startEntries < this.config.scanEntryLimit &&
-      cursor.bytes - startBytes < this.config.scanByteLimit
+      cursor.bytes - startBytes < this.config.scanByteLimit &&
+      Date.now() < deadline
     ) {
       if (!cursor.current) {
         const next = cursor.stack.pop() ?? cursor.roots[cursor.rootIndex++];
         if (!next) break;
         cursor.current = { path: next, index: 0 };
       }
-      let entries;
-      try {
-        entries = await readdir(cursor.current.path, { withFileTypes: true });
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-          errors.push(`${cursor.current.path}: ${err}`);
+      if (!entries) {
+        try {
+          entries = await readdir(cursor.current.path, { withFileTypes: true });
+          entries.sort((a, b) =>
+            a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+          );
+          // Names survive directory insertions/deletions between batches. Old
+          // positional cursors restart this directory rather than skip entries.
+          cursor.current.index =
+            cursor.current.after == null
+              ? 0
+              : entries.findIndex(
+                  (entry) => entry.name > cursor.current!.after!,
+                );
+          if (cursor.current.index < 0) cursor.current.index = entries.length;
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+            errors.push(`${cursor.current.path}: ${err}`);
+          }
+          cursor.current = undefined;
+          continue;
         }
-        cursor.current = undefined;
-        continue;
       }
       if (cursor.current.index >= entries.length) {
         cursor.current = undefined;
+        entries = undefined;
         continue;
       }
       const entry = entries[cursor.current.index++];
+      cursor.current.after = entry.name;
       cursor.entries += 1;
       const path = join(cursor.current.path, entry.name);
       if (entry.isSymbolicLink()) continue;
