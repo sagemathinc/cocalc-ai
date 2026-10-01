@@ -180,7 +180,7 @@ const tools = [
   {
     name: "memory_list",
     description:
-      "List your persistent memory notes (name, one-line description, last update). Memory belongs to the account that launched this turn, follows it across projects and sessions, and only that account's turns can read it.",
+      "List your persistent memory notes (name, one-line description, last update). Memory belongs to the account this turn runs as and follows it across projects and sessions. It works only after that account's owner turns it on in Settings > AI; otherwise these tools return an error.",
     inputSchema: {
       type: "object",
       properties: {},

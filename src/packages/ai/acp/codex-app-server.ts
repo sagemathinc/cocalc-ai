@@ -1744,17 +1744,18 @@ function getCoCalcCliCommand(runtimeEnv?: Record<string, string>): string {
 
 function decoratePrompt(
   prompt: string,
-  opts?: { runtimeEnv?: Record<string, string> },
+  opts?: { runtimeEnv?: Record<string, string>; memoryContext?: string },
 ): string {
   if (/^\s*\/\w+/.test(prompt)) {
     return prompt;
   }
-  return addRuntimeGuidance(prompt, opts?.runtimeEnv);
+  return addRuntimeGuidance(prompt, opts?.runtimeEnv, opts?.memoryContext);
 }
 
 function addRuntimeGuidance(
   prompt: string,
   runtimeEnv?: Record<string, string>,
+  memoryContext?: string,
 ): string {
   const hasProject = `${runtimeEnv?.COCALC_PROJECT_ID ?? ""}`.trim();
   const hasBrowser = `${runtimeEnv?.COCALC_BROWSER_ID ?? ""}`.trim();
@@ -1779,14 +1780,16 @@ function addRuntimeGuidance(
   )}`;
   return `${getCoCalcRuntimeGuidanceHeader(getCoCalcCliCommand(runtimeEnv), {
     hasBrowser: !!hasBrowser,
-  })}${attribution}${workbench}\n\n${prompt}`;
+  })}${attribution}${workbench}${memoryContext ? `\n\n${memoryContext}` : ""}\n\n${prompt}`;
 }
 
 function buildTurnInput({
   local_images,
   prompt,
   runtimeEnv,
+  memoryContext,
 }: {
+  memoryContext?: string;
   local_images?: string[];
   prompt: string;
   runtimeEnv?: Record<string, string>;
@@ -1805,7 +1808,7 @@ function buildTurnInput({
   }
   input.push({
     type: "text",
-    text: decoratePrompt(prompt, { runtimeEnv }),
+    text: decoratePrompt(prompt, { runtimeEnv, memoryContext }),
     textElements: [],
   });
   return input;
@@ -3203,6 +3206,7 @@ export class CodexAppServerAgent implements AcpAgent {
           local_images: request.local_images,
           prompt,
           runtimeEnv: turnEnv,
+          memoryContext: request.agent_memory_context,
         }),
       });
 

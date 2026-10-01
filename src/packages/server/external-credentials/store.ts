@@ -15,6 +15,11 @@ export {
   CODEX_SUBSCRIPTION_KIND,
 } from "./provider-policy";
 
+import {
+  checkAgentMemoryAccess,
+  isAgentMemorySelector,
+} from "@cocalc/server/agents/memory-limits";
+
 const MAX_PAYLOAD_BYTES = 2_000_000;
 
 export type ExternalCredentialScope =
@@ -387,6 +392,12 @@ export async function createExternalCredential({
 }): Promise<{ id: string; created: boolean }> {
   const normalized = normalizeSelector(selector);
   validatePayload(payload);
+  if (isAgentMemorySelector(normalized))
+    checkAgentMemoryAccess(
+      `${normalized.owner_account_id}`,
+      "write",
+      Buffer.byteLength(payload, "utf8"),
+    );
   const encryptedPayload = await encryptPayload(normalized, payload);
   const id = randomUUID();
   const client = await pool().connect();
@@ -567,6 +578,12 @@ export async function updateExternalCredentialById({
   )
     throw new Error("invalid expected payload hash");
   validatePayload(payload);
+  if (isAgentMemorySelector(normalized))
+    checkAgentMemoryAccess(
+      `${normalized.owner_account_id}`,
+      "write",
+      Buffer.byteLength(payload, "utf8"),
+    );
   const encryptedPayload = await encryptPayload(normalized, payload);
   const client = await pool().connect();
   try {
@@ -702,6 +719,8 @@ export async function getExternalCredential({
   touchLastUsed?: boolean;
 }): Promise<ExternalCredentialRecord | undefined> {
   const normalized = normalizeSelector(selector);
+  if (isAgentMemorySelector(normalized))
+    checkAgentMemoryAccess(`${normalized.owner_account_id}`, "read");
   const defaultMetadataKey =
     defaultMetadataKeyForCredentialSelector(normalized);
   if (defaultMetadataKey) {

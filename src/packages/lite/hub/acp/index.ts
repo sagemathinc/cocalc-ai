@@ -1,3 +1,4 @@
+import { agentMemoryTurnContext } from "@cocalc/conat/agents/memory";
 import path from "node:path";
 import { hubApi } from "../api";
 import { installLiteCodexSpawner } from "../codex-runtime";
@@ -431,6 +432,42 @@ type GeneratedImageBlobWriter = (opts: {
 
 let generatedImageBlobWriter: GeneratedImageBlobWriter | undefined;
 let attachmentBlobReader: AttachmentBlobReader | undefined;
+
+type AgentMemoryContextProvider = (opts: {
+  projectId: string;
+  accountId: string;
+}) => Promise<{ notes: number; index: string } | null>;
+let agentMemoryContextProvider: AgentMemoryContextProvider | undefined;
+
+export function setAgentMemoryContextProvider(
+  provider: AgentMemoryContextProvider | undefined,
+): void {
+  agentMemoryContextProvider = provider;
+}
+
+// The saved-note index for this turn's account, or undefined when memory is
+// off or unavailable. Never blocks a turn for long.
+async function loadAgentMemoryContext(
+  projectId: string,
+  accountId: string,
+): Promise<string | undefined> {
+  if (!agentMemoryContextProvider || !accountId) return undefined;
+  try {
+    const result = await Promise.race([
+      agentMemoryContextProvider({ projectId, accountId }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
+    ]);
+    return result
+      ? agentMemoryTurnContext(
+          result.index,
+          '"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"',
+        )
+      : undefined;
+  } catch (err) {
+    logger.warn("agent memory context unavailable", { err: `${err}` });
+    return undefined;
+  }
+}
 
 export function setAttachmentBlobReader(
   reader: AttachmentBlobReader | undefined,
@@ -8043,6 +8080,11 @@ async function executeAcpRequest({
     try {
       await currentAgent.evaluate({
         ...request,
+        // Always host-computed for this turn's account; any wire value is dropped.
+        agent_memory_context: await loadAgentMemoryContext(
+          projectId,
+          request.account_id,
+        ),
         mentionReferences,
         readPendingGoal: harness ? undefined : chatWriter?.readPendingGoal,
         prompt: artifactReferences.length
