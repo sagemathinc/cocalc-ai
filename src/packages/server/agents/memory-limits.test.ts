@@ -1,39 +1,93 @@
+jest.mock("@cocalc/database/pool", () => ({
+  __esModule: true,
+  default: jest.fn(),
+}));
 import {
   AGENT_MEMORY_RATE_LIMITS,
-  checkAgentMemoryAccess,
+  agentMemoryLimitExceeded,
+  chargeAgentMemoryUsage,
+  isAgentActor,
   isAgentMemorySelector,
-  resetAgentMemoryLimits,
 } from "./memory-limits";
 
-beforeEach(() => resetAgentMemoryLimits());
+// A shared table standing in for the home bay's agent_memory_usage row, with
+// the same fixed-window semantics as the SQL upsert.
+function sharedTable() {
+  const rows = new Map<string, any>();
+  let now = 1_000_000;
+  const query = async (
+    _sql: string,
+    [account, reads, writes, bytes]: any[],
+  ) => {
+    const row = rows.get(account);
+    if (!row) {
+      const fresh = {
+        minute_start: now,
+        minute_reads: reads,
+        minute_writes: writes,
+        hour_start: now,
+        hour_bytes: bytes,
+      };
+      rows.set(account, fresh);
+      return { rows: [fresh] };
+    }
+    const inMinute = row.minute_start > now - 60_000;
+    const inHour = row.hour_start > now - 3_600_000;
+    row.minute_reads = inMinute ? row.minute_reads + reads : reads;
+    row.minute_writes = inMinute ? row.minute_writes + writes : writes;
+    row.minute_start = inMinute ? row.minute_start : now;
+    row.hour_bytes = inHour ? row.hour_bytes + bytes : bytes;
+    row.hour_start = inHour ? row.hour_start : now;
+    return { rows: [row] };
+  };
+  return { query, advance: (ms: number) => (now += ms) };
+}
 
-test("enforces per-account read and write rates and the hourly byte budget", () => {
-  const now = 1_000_000;
+test("limits are shared by every caller of the same table and reset by window", async () => {
+  const { query, advance } = sharedTable();
+  // Two "hub processes" share one counter row.
   for (let i = 0; i < AGENT_MEMORY_RATE_LIMITS.readsPerMinute; i++)
-    checkAgentMemoryAccess("a", "read", 0, now);
-  expect(() => checkAgentMemoryAccess("a", "read", 0, now)).toThrow(
-    /rate limit/,
+    await chargeAgentMemoryUsage("a", "read", 0, query);
+  await expect(chargeAgentMemoryUsage("a", "read", 0, query)).rejects.toThrow(
+    /read rate limit/,
   );
-  // Other accounts are unaffected, and the window slides.
-  checkAgentMemoryAccess("b", "read", 0, now);
-  checkAgentMemoryAccess("a", "read", 0, now + 61_000);
+  // Rejected attempts still count; other accounts are unaffected.
+  await expect(chargeAgentMemoryUsage("a", "read", 0, query)).rejects.toThrow();
+  await chargeAgentMemoryUsage("b", "read", 0, query);
+  advance(61_000);
+  await chargeAgentMemoryUsage("a", "read", 0, query);
+});
+
+test("enforces the write rate and the hourly byte budget", async () => {
+  const { query, advance } = sharedTable();
   for (let i = 0; i < AGENT_MEMORY_RATE_LIMITS.writesPerMinute; i++)
-    checkAgentMemoryAccess("c", "write", 10, now);
-  expect(() => checkAgentMemoryAccess("c", "write", 10, now)).toThrow(
-    /rate limit/,
+    await chargeAgentMemoryUsage("c", "write", 10, query);
+  await expect(chargeAgentMemoryUsage("c", "write", 10, query)).rejects.toThrow(
+    /write rate limit/,
   );
-  checkAgentMemoryAccess(
+  await chargeAgentMemoryUsage(
     "d",
     "write",
-    AGENT_MEMORY_RATE_LIMITS.writtenBytesPerHour - 1,
-    now,
+    AGENT_MEMORY_RATE_LIMITS.writtenBytesPerHour,
+    query,
   );
-  expect(() => checkAgentMemoryAccess("d", "write", 2, now + 120_000)).toThrow(
+  advance(61_000);
+  await expect(chargeAgentMemoryUsage("d", "write", 1, query)).rejects.toThrow(
     /hourly/,
   );
 });
 
-test("matches only the agent-memory selector", () => {
+test("decision helpers", () => {
+  expect(
+    agentMemoryLimitExceeded({
+      minute_reads: 1,
+      minute_writes: 1,
+      hour_bytes: "10",
+    }),
+  ).toBeUndefined();
+  expect(isAgentActor({ actor: "agent" })).toBe(true);
+  expect(isAgentActor({ actor: "owner" })).toBe(false);
+  expect(isAgentActor(undefined)).toBe(false);
   expect(
     isAgentMemorySelector({
       provider: "cocalc",

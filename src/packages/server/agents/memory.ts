@@ -32,14 +32,21 @@ const WRITE_ATTEMPTS = 4;
 export const AGENT_MEMORY_DISABLED =
   "Agent memory is off for this account. The account owner can turn it on in Settings > AI.";
 
+// "agent" operations are rate limited on the home bay; "owner" settings
+// actions are not, so an agent cannot lock the owner out of turning memory off.
+type Actor = "agent" | "owner";
 type Store = {
-  get(account_id: string): Promise<{ id: string; payload: string } | undefined>;
-  create(account_id: string, payload: string): Promise<void>;
+  get(
+    account_id: string,
+    actor: Actor,
+  ): Promise<{ id: string; payload: string } | undefined>;
+  create(account_id: string, payload: string, actor: Actor): Promise<void>;
   update(
     account_id: string,
     id: string,
     payload: string,
     expectedSha256: string,
+    actor: Actor,
   ): Promise<void>;
 };
 
@@ -54,31 +61,32 @@ function selector(account_id: string) {
 }
 
 export const routedStore: Store = {
-  async get(account_id) {
+  async get(account_id, actor) {
     const row = await getExternalCredentialRouted({
       selector: selector(account_id),
-      touchLastUsed: false,
+      // The store charges agent reads (touchLastUsed) but not owner reads.
+      touchLastUsed: actor === "agent",
     });
     return row && !row.revoked
       ? { id: row.id, payload: row.payload }
       : undefined;
   },
-  async create(account_id, payload) {
+  async create(account_id, payload, actor) {
     await createExternalCredentialRouted({
       selector: selector(account_id),
       payload,
-      metadata: { purpose: "agent-memory" },
+      metadata: { purpose: "agent-memory", actor },
       // Under the store's lock, a concurrent first write fails here and
       // retries as an update instead of creating a second record.
       maxActive: 1,
     });
   },
-  async update(account_id, id, payload, expectedSha256) {
+  async update(account_id, id, payload, expectedSha256, actor) {
     await updateExternalCredentialByIdRouted({
       id,
       selector: selector(account_id),
       payload,
-      metadata: { purpose: "agent-memory" },
+      metadata: { purpose: "agent-memory", actor },
       expected_payload_sha256: expectedSha256,
     });
   },
@@ -111,8 +119,8 @@ export function createAgentMemory(store: Store = routedStore) {
 
   // repair: treat a malformed stored record as empty and disabled, so the
   // owner can always clear it. Everything else fails closed.
-  const load = async (account_id: string, repair = false) => {
-    const row = await store.get(account_id);
+  const load = async (account_id: string, actor: Actor, repair = false) => {
+    const row = await store.get(account_id, actor);
     let record: AgentMemoryRecord;
     try {
       record = parseAgentMemoryRecord(row?.payload);
@@ -126,12 +134,13 @@ export function createAgentMemory(store: Store = routedStore) {
   // Applies change; returns undefined from change to skip writing.
   const mutate = <T>(
     account_id: string,
+    actor: Actor,
     change: (record: AgentMemoryRecord) => { result: T; write: boolean },
     repair = false,
   ): Promise<T> =>
     serialized(account_id, async () => {
       for (let attempt = 1; ; attempt++) {
-        const { id, sha, record } = await load(account_id, repair);
+        const { id, sha, record } = await load(account_id, actor, repair);
         const { result, write } = change(record);
         if (!write) return result;
         const payload = JSON.stringify(record);
@@ -143,8 +152,9 @@ export function createAgentMemory(store: Store = routedStore) {
             `agent memory would exceed ${AGENT_MEMORY_LIMITS.maxRecordBytes} bytes; delete or shorten notes first`,
           );
         try {
-          if (id && sha) await store.update(account_id, id, payload, sha);
-          else await store.create(account_id, payload);
+          if (id && sha)
+            await store.update(account_id, id, payload, sha, actor);
+          else await store.create(account_id, payload, actor);
           return result;
         } catch (error) {
           const retry =
@@ -172,7 +182,7 @@ export function createAgentMemory(store: Store = routedStore) {
     async agent(account_id: string, request: AgentMemoryRequest) {
       validateAgentMemoryRequest(request);
       if (request.op === "list" || request.op === "read") {
-        const { record } = await load(account_id);
+        const { record } = await load(account_id, "agent");
         if (!record.enabled) throw new Error(AGENT_MEMORY_DISABLED);
         if (request.op === "list")
           return {
@@ -190,7 +200,7 @@ export function createAgentMemory(store: Store = routedStore) {
       }
       if (request.op === "write") {
         const valid = validateMemoryWrite(request);
-        return await mutate(account_id, (record) => {
+        return await mutate(account_id, "agent", (record) => {
           if (!record.enabled) throw new Error(AGENT_MEMORY_DISABLED);
           const index = record.notes.findIndex((n) => n.name === valid.name);
           if (index < 0 && record.notes.length >= AGENT_MEMORY_LIMITS.maxNotes)
@@ -210,7 +220,7 @@ export function createAgentMemory(store: Store = routedStore) {
         });
       }
       const name = validateMemoryName(request.name);
-      return await mutate(account_id, (record) => {
+      return await mutate(account_id, "agent", (record) => {
         if (!record.enabled) throw new Error(AGENT_MEMORY_DISABLED);
         const before = record.notes.length;
         record.notes = record.notes.filter((n) => n.name !== name);
@@ -221,7 +231,7 @@ export function createAgentMemory(store: Store = routedStore) {
 
     /** Index for the turn context; undefined when memory is off. */
     async turnIndex(account_id: string) {
-      const { record } = await load(account_id);
+      const { record } = await load(account_id, "agent");
       if (!record.enabled) return undefined;
       return {
         notes: record.notes.length,
@@ -240,7 +250,7 @@ export function createAgentMemory(store: Store = routedStore) {
         | { op: "delete-all" },
     ) {
       if (request.op === "status" || request.op === "list") {
-        const row = await store.get(account_id);
+        const row = await store.get(account_id, "owner");
         const record = parseAgentMemoryRecord(row?.payload);
         const bytes = row ? new TextEncoder().encode(row.payload).length : 0;
         return request.op === "status"
@@ -250,7 +260,7 @@ export function createAgentMemory(store: Store = routedStore) {
       if (request.op === "set-enabled") {
         if (typeof request.enabled !== "boolean")
           throw new Error("enabled must be true or false");
-        return await mutate(account_id, (record) => {
+        return await mutate(account_id, "owner", (record) => {
           const write = record.enabled !== request.enabled;
           record.enabled = request.enabled;
           return { result: { enabled: request.enabled }, write };
@@ -258,7 +268,7 @@ export function createAgentMemory(store: Store = routedStore) {
       }
       if (request.op === "delete") {
         const name = validateMemoryName(request.name);
-        return await mutate(account_id, (record) => {
+        return await mutate(account_id, "owner", (record) => {
           const before = record.notes.length;
           record.notes = record.notes.filter((n) => n.name !== name);
           const deleted = record.notes.length < before;
@@ -268,6 +278,7 @@ export function createAgentMemory(store: Store = routedStore) {
       if (request.op === "delete-all")
         return await mutate(
           account_id,
+          "owner",
           (record) => {
             const deleted = record.notes.length;
             record.notes = [];

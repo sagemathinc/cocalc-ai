@@ -16,7 +16,8 @@ export {
 } from "./provider-policy";
 
 import {
-  checkAgentMemoryAccess,
+  chargeAgentMemoryUsage,
+  isAgentActor,
   isAgentMemorySelector,
 } from "@cocalc/server/agents/memory-limits";
 
@@ -392,8 +393,9 @@ export async function createExternalCredential({
 }): Promise<{ id: string; created: boolean }> {
   const normalized = normalizeSelector(selector);
   validatePayload(payload);
-  if (isAgentMemorySelector(normalized))
-    checkAgentMemoryAccess(
+  // Agent memory: charge agent writes (not the owner's) on the home bay.
+  if (isAgentMemorySelector(normalized) && isAgentActor(metadata))
+    await chargeAgentMemoryUsage(
       `${normalized.owner_account_id}`,
       "write",
       Buffer.byteLength(payload, "utf8"),
@@ -578,8 +580,9 @@ export async function updateExternalCredentialById({
   )
     throw new Error("invalid expected payload hash");
   validatePayload(payload);
-  if (isAgentMemorySelector(normalized))
-    checkAgentMemoryAccess(
+  // Agent memory: charge agent writes (not the owner's) on the home bay.
+  if (isAgentMemorySelector(normalized) && isAgentActor(metadata))
+    await chargeAgentMemoryUsage(
       `${normalized.owner_account_id}`,
       "write",
       Buffer.byteLength(payload, "utf8"),
@@ -719,8 +722,10 @@ export async function getExternalCredential({
   touchLastUsed?: boolean;
 }): Promise<ExternalCredentialRecord | undefined> {
   const normalized = normalizeSelector(selector);
-  if (isAgentMemorySelector(normalized))
-    checkAgentMemoryAccess(`${normalized.owner_account_id}`, "read");
+  // Agent memory: agent reads touch last_used; owner reads do not and are
+  // never charged.
+  if (isAgentMemorySelector(normalized) && touchLastUsed)
+    await chargeAgentMemoryUsage(`${normalized.owner_account_id}`, "read");
   const defaultMetadataKey =
     defaultMetadataKeyForCredentialSelector(normalized);
   if (defaultMetadataKey) {

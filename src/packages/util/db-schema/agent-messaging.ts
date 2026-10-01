@@ -263,3 +263,32 @@ Table({
     renewed_at: created("Last successful renewal time."),
   },
 });
+
+// Per-account agent memory usage counters in the account's home bay. One row
+// per account; updated atomically by every hub process in the bay.
+Table({
+  name: "agent_memory_usage",
+  rules: {
+    primary_key: "account_id",
+  },
+  fields: {
+    account_id: required("uuid", "Account whose agent memory is used."),
+    minute_start: {
+      ...created("Start of the current one-minute window."),
+    },
+    minute_reads: {
+      ...required("integer", "Agent reads this minute."),
+      pg_default: "0",
+    },
+    minute_writes: {
+      ...required("integer", "Agent writes this minute."),
+      pg_default: "0",
+    },
+    hour_start: { ...created("Start of the current one-hour window.") },
+    hour_bytes: {
+      ...required("number", "Bytes written by agents this hour."),
+      pg_type: "BIGINT",
+      pg_default: "0",
+    },
+  },
+});

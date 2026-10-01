@@ -3,9 +3,13 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-// Per-account abuse limits for agent memory. They are checked in the
-// external-credential store functions, which always run on the record's home
-// bay, so they hold across every host, project and bay that routes there.
+// Per-account abuse limits for agent memory. Charged only for operations an
+// agent performs (never the owner's settings actions), inside the
+// external-credential store functions, which run on the account's home bay.
+// The counters are one Postgres row per account, updated atomically, so the
+// limit is shared by every hub process in that bay and survives restarts.
+
+import getPool from "@cocalc/database/pool";
 
 export const AGENT_MEMORY_RATE_LIMITS = {
   readsPerMinute: 120,
@@ -13,70 +17,61 @@ export const AGENT_MEMORY_RATE_LIMITS = {
   writtenBytesPerHour: 4_000_000,
 } as const;
 
-const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
-// Bound the limiter's own memory.
-const MAX_TRACKED_ACCOUNTS = 50_000;
-
-type Usage = { reads: number[]; writes: number[]; bytes: [number, number][] };
-const usage = new Map<string, Usage>();
-
-function prune(entry: Usage, now: number) {
-  entry.reads = entry.reads.filter((t) => now - t < MINUTE);
-  entry.writes = entry.writes.filter((t) => now - t < MINUTE);
-  entry.bytes = entry.bytes.filter(([t]) => now - t < HOUR);
-}
-
-function usageFor(account_id: string, now: number): Usage {
-  let entry = usage.get(account_id);
-  if (!entry) {
-    if (usage.size >= MAX_TRACKED_ACCOUNTS) {
-      for (const [key, value] of usage) {
-        prune(value, now);
-        if (!value.reads.length && !value.writes.length && !value.bytes.length)
-          usage.delete(key);
-        if (usage.size < MAX_TRACKED_ACCOUNTS) break;
-      }
-    }
-    entry = { reads: [], writes: [], bytes: [] };
-    usage.set(account_id, entry);
-  } else {
-    // Refresh recency for the bounded map.
-    usage.delete(account_id);
-    usage.set(account_id, entry);
-  }
-  prune(entry, now);
-  return entry;
-}
-
 export class AgentMemoryRateLimitError extends Error {}
 
-export function checkAgentMemoryAccess(
+type Counters = {
+  minute_reads: number;
+  minute_writes: number;
+  hour_bytes: number | string;
+};
+
+export function agentMemoryLimitExceeded(row: Counters): string | undefined {
+  if (row.minute_reads > AGENT_MEMORY_RATE_LIMITS.readsPerMinute)
+    return "agent memory read rate limit reached; try again in a minute";
+  if (row.minute_writes > AGENT_MEMORY_RATE_LIMITS.writesPerMinute)
+    return "agent memory write rate limit reached; try again in a minute";
+  if (Number(row.hour_bytes) > AGENT_MEMORY_RATE_LIMITS.writtenBytesPerHour)
+    return "agent memory hourly write budget reached; try again later";
+  return undefined;
+}
+
+// Atomically counts this operation, then rejects if the account is over its
+// limit. Rejected attempts still count, so retries cannot bypass the limit.
+export async function chargeAgentMemoryUsage(
   account_id: string,
   op: "read" | "write",
   payloadBytes = 0,
-  now = Date.now(),
-): void {
-  const entry = usageFor(account_id, now);
-  if (op === "read") {
-    if (entry.reads.length >= AGENT_MEMORY_RATE_LIMITS.readsPerMinute)
-      throw new AgentMemoryRateLimitError(
-        "agent memory read rate limit reached; try again in a minute",
-      );
-    entry.reads.push(now);
-    return;
-  }
-  const written = entry.bytes.reduce((sum, [, n]) => sum + n, 0);
-  if (entry.writes.length >= AGENT_MEMORY_RATE_LIMITS.writesPerMinute)
-    throw new AgentMemoryRateLimitError(
-      "agent memory write rate limit reached; try again in a minute",
-    );
-  if (written + payloadBytes > AGENT_MEMORY_RATE_LIMITS.writtenBytesPerHour)
-    throw new AgentMemoryRateLimitError(
-      "agent memory hourly write budget reached; try again later",
-    );
-  entry.writes.push(now);
-  entry.bytes.push([now, payloadBytes]);
+  query: (sql: string, params: unknown[]) => Promise<{ rows: Counters[] }> = (
+    sql,
+    params,
+  ) => getPool().query(sql, params),
+): Promise<void> {
+  const reads = op === "read" ? 1 : 0;
+  const writes = op === "write" ? 1 : 0;
+  const bytes = op === "write" ? Math.max(0, Math.floor(payloadBytes)) : 0;
+  const { rows } = await query(
+    `INSERT INTO agent_memory_usage
+       (account_id, minute_start, minute_reads, minute_writes, hour_start, hour_bytes)
+     VALUES ($1, NOW(), $2, $3, NOW(), $4)
+     ON CONFLICT (account_id) DO UPDATE SET
+       minute_reads = CASE WHEN agent_memory_usage.minute_start > NOW() - INTERVAL '1 minute'
+         THEN agent_memory_usage.minute_reads + $2 ELSE $2 END,
+       minute_writes = CASE WHEN agent_memory_usage.minute_start > NOW() - INTERVAL '1 minute'
+         THEN agent_memory_usage.minute_writes + $3 ELSE $3 END,
+       minute_start = CASE WHEN agent_memory_usage.minute_start > NOW() - INTERVAL '1 minute'
+         THEN agent_memory_usage.minute_start ELSE NOW() END,
+       hour_bytes = CASE WHEN agent_memory_usage.hour_start > NOW() - INTERVAL '1 hour'
+         THEN agent_memory_usage.hour_bytes + $4 ELSE $4 END,
+       hour_start = CASE WHEN agent_memory_usage.hour_start > NOW() - INTERVAL '1 hour'
+         THEN agent_memory_usage.hour_start ELSE NOW() END
+     RETURNING minute_reads, minute_writes, hour_bytes`,
+    [account_id, reads, writes, bytes],
+  );
+  const row = rows[0];
+  if (!row)
+    throw new AgentMemoryRateLimitError("agent memory usage unavailable");
+  const exceeded = agentMemoryLimitExceeded(row);
+  if (exceeded) throw new AgentMemoryRateLimitError(exceeded);
 }
 
 export function isAgentMemorySelector(selector: {
@@ -91,7 +86,10 @@ export function isAgentMemorySelector(selector: {
   );
 }
 
-/** For tests. */
-export function resetAgentMemoryLimits(): void {
-  usage.clear();
+// Only server code sets this metadata, on behalf of an agent identity run;
+// owner settings actions use "owner" and are never charged.
+export function isAgentActor(
+  metadata: Record<string, any> | undefined,
+): boolean {
+  return metadata?.actor === "agent";
 }
