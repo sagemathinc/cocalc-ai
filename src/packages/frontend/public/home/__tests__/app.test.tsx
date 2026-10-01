@@ -671,7 +671,7 @@ describe("PublicHomeApp", () => {
       ],
     ],
     [
-      "CoCalc Plus",
+      "CoCalc Plus, the local one-user runtime",
       { cocalc_product: "plus", dns: "localhost", site_name: "CoCalc" },
       ["Restore earlier versions"],
     ],
@@ -691,7 +691,7 @@ describe("PublicHomeApp", () => {
       ["Collaborators see edits live", "Restore earlier versions"],
     ],
   ])(
-    "names Claude Code in the highlights only on cocalc.ai: %s",
+    "shows only the highlights that hold on each site: %s",
     (_site, config, expected) => {
       render(<PublicHomeApp config={config} />);
       const hero = screen.getByRole("region", { name: "CoCalc hero" });
