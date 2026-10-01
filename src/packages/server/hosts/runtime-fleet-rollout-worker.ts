@@ -25,10 +25,7 @@ import {
 } from "./runtime-fleet-overrides";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getLaunchHealth } from "@cocalc/server/conat/api/system";
-import {
-  getProjectRecoveryAttemptHealth,
-  getProjectRecoveryHealth,
-} from "@cocalc/server/projects/maintenance-status";
+import { getProjectRecoveryHealth } from "@cocalc/server/projects/maintenance-status";
 import {
   claimLroOps,
   getLro,
@@ -65,7 +62,6 @@ type RolloutWave = {
 };
 
 type RecoveryStopGateHost = {
-  failed_attempts: number;
   oldest_backup_delay_seconds: number;
   emergency_seconds: number | null;
   latest_valid_pressure_at: string | null;
@@ -88,10 +84,9 @@ async function captureRecoveryStopGate({
   account_id: string;
   host_ids: string[];
 }): Promise<RecoveryStopGateSnapshot> {
-  const [health, recovery, attempts, pressure] = await Promise.all([
+  const [health, recovery, pressure] = await Promise.all([
     getLaunchHealth({ account_id }),
     getProjectRecoveryHealth(),
-    getProjectRecoveryAttemptHealth(),
     getProjectHostStoragePressureWindows({ bay_id: getConfiguredBayId() }),
   ]);
   const level = (id: string): LaunchHealthLevel =>
@@ -100,9 +95,6 @@ async function captureRecoveryStopGate({
   for (const host_id of host_ids) {
     const hostPressure = pressure.find((row) => row.host_id === host_id);
     hosts[host_id] = {
-      failed_attempts: attempts.by_host
-        .filter((row) => row.host_id === host_id)
-        .reduce((total, row) => total + row.failed, 0),
       oldest_backup_delay_seconds: Math.max(
         0,
         ...recovery.by_host_class
@@ -134,7 +126,8 @@ async function countFailedRecoveryAttemptsSince({
        FROM project_maintenance_attempts
       WHERE observed_at > ($1::timestamptz AT TIME ZONE 'UTC')
         AND host_id = ANY($2::uuid[])
-        AND outcome = 'failed'`,
+        AND outcome = 'failed'
+        AND reason IS DISTINCT FROM 'storage_quota_exceeded'`,
     [since, host_ids],
   );
   return rows[0]?.failed ?? 0;
@@ -183,9 +176,6 @@ function recoveryStopGateFailure({
     const after = current.hosts[host_id];
     if (!before || !after) {
       return `missing recovery stop-gate data for host ${host_id}`;
-    }
-    if (after.failed_attempts > before.failed_attempts) {
-      return `host ${host_id} recorded new failed recovery attempts`;
     }
     if (
       after.oldest_backup_delay_seconds >
@@ -254,6 +244,8 @@ async function assertRecoveryStopGate({
     require_measured_latency,
   });
   if (failure) throw new Error(`fleet rollout health gate stopped: ${failure}`);
+  // Project quotas are customer-controlled and are not deployment regressions.
+  // Keep quota failures in recovery health, but not in this rollout stop count.
   const newFailures = await countFailedRecoveryAttemptsSince({
     since: baseline.checked_at,
     host_ids,
@@ -1092,6 +1084,7 @@ export function startHostRuntimeFleetRolloutWorker({
 }
 
 export const __test__ = {
+  assertRecoveryStopGate,
   buildRolloutWaves,
   componentRuntimeVersionsForPromotion,
   normalizedRolloutComponents,

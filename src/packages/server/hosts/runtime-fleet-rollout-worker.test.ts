@@ -4,6 +4,12 @@
  */
 
 import { __test__ } from "./runtime-fleet-rollout-worker";
+import { after, before, getPool } from "@cocalc/server/test";
+import { uuid } from "@cocalc/util/misc";
+import {
+  ensureProjectMaintenanceStatusTable,
+  getProjectRecoveryAttemptHealth,
+} from "@cocalc/server/projects/maintenance-status";
 
 describe("host runtime fleet rollout planning", () => {
   test("accepts an aligned build whose deployment and build IDs differ", () => {
@@ -396,7 +402,6 @@ describe("fleet recovery stop gates", () => {
     latency_level: "healthy",
     hosts: {
       canary: {
-        failed_attempts: 2,
         oldest_backup_delay_seconds: 100,
         emergency_seconds: 0,
         latest_valid_pressure_at: "2026-09-24T04:00:00.000Z",
@@ -446,11 +451,7 @@ describe("fleet recovery stop gates", () => {
     ).toMatch(/global promotion requires browser latency samples/);
   });
 
-  test("stops on a new failure, backup age jump, or emergency pressure", () => {
-    const newFailure = current();
-    newFailure.hosts.canary.failed_attempts += 1;
-    expect(gate(newFailure)).toMatch(/failed recovery/);
-
+  test("stops on a backup age jump or emergency pressure", () => {
     const ageJump = current();
     ageJump.hosts.canary.oldest_backup_delay_seconds = 600;
     expect(gate(ageJump)).toMatch(/backup debt age/);
@@ -458,6 +459,14 @@ describe("fleet recovery stop gates", () => {
     const pressure = current();
     pressure.hosts.canary.emergency_seconds = 30;
     expect(gate(pressure)).toMatch(/emergency storage pressure/);
+  });
+
+  test("ignores legacy aggregate failure counters in saved snapshots", () => {
+    const before = baseline();
+    const after = current();
+    Object.assign(before.hosts.canary, { failed_attempts: 2 });
+    Object.assign(after.hosts.canary, { failed_attempts: 3 });
+    expect(gate(after, before)).toBeUndefined();
   });
 
   test("stops on lost pressure telemetry and rejects incomplete saved baselines", () => {
@@ -470,5 +479,84 @@ describe("fleet recovery stop gates", () => {
     expect(
       __test__.savedRecoveryStopGateBaseline(baseline(), ["other"]),
     ).toBeUndefined();
+  });
+});
+
+describe("fleet recovery failure admission", () => {
+  beforeAll(async () => {
+    await before({ noConat: true });
+    await ensureProjectMaintenanceStatusTable();
+  }, 15000);
+
+  afterAll(after);
+
+  test("only quota exhaustion is excluded; other failures still block", async () => {
+    const host_id = uuid();
+    const since = new Date(Date.now() - 120_000).toISOString();
+    const after = new Date(Date.now() - 60_000).toISOString();
+    const snapshot = {
+      checked_at: since,
+      recovery_level: "healthy" as const,
+      latency_level: "healthy" as const,
+      hosts: {
+        [host_id]: {
+          oldest_backup_delay_seconds: 0,
+          emergency_seconds: 0,
+          latest_valid_pressure_at: since,
+        },
+      },
+    };
+    const assertGate = () =>
+      __test__.assertRecoveryStopGate({
+        baseline: snapshot,
+        current: snapshot,
+        host_ids: [host_id],
+        require_measured_latency: true,
+      });
+    const insert = async (
+      reason: string | null,
+      serviceClass = "free",
+      host = host_id,
+      observed = after,
+    ) => {
+      await getPool().query(
+        `INSERT INTO project_maintenance_attempts
+          (project_id, kind, host_id, storage_service_class, observed_at,
+           outcome, reason)
+         VALUES ($1, 'snapshot', $2, $3, $4, 'failed', $5)`,
+        [uuid(), host, serviceClass, observed, reason],
+      );
+    };
+    await insert("storage_quota_exceeded");
+    await insert("storage_quota_exceeded", "paying");
+    await insert("repository_credentials_invalid", "free", uuid());
+    await insert("object_store_unavailable", "free", host_id, since);
+    await expect(assertGate()).resolves.toBeUndefined();
+
+    const health = await getProjectRecoveryAttemptHealth();
+    expect(
+      health.by_host
+        .filter((row) => row.host_id === host_id)
+        .reduce((sum, row) => sum + row.failed, 0),
+    ).toBe(3);
+
+    for (const reason of [
+      null,
+      "unknown_failure",
+      "repository_credentials_invalid",
+      "object_store_unavailable",
+      "No space left on device",
+      "quota lookup failed",
+    ]) {
+      await insert(reason);
+      await expect(assertGate()).rejects.toThrow(
+        "new failed recovery attempt(s) on the upgraded hosts",
+      );
+      await getPool().query(
+        `DELETE FROM project_maintenance_attempts
+          WHERE host_id=$1 AND reason IS NOT DISTINCT FROM $2`,
+        [host_id, reason],
+      );
+    }
   });
 });
