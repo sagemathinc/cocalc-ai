@@ -7,6 +7,7 @@
 // The record is the authority for "which conversations exist"; the .chat
 // file is only where the messages are stored. Nothing crawls projects.
 
+import type { AgentAppearance } from "./agent-appearance";
 import { normalizeAbsolutePath } from "./path-model";
 import { DEFAULT_PROJECT_RUNTIME_HOME } from "./project-runtime";
 
@@ -105,6 +106,7 @@ export interface SharedArtifact {
 // Another collaborator's registered agent in a project shared with the viewer.
 export interface ProjectAgent extends SharedAgent {
   created_by: string;
+  appearance?: AgentAppearance | null;
 }
 
 export interface SharedWork {

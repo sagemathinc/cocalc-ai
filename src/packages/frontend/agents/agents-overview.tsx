@@ -26,6 +26,8 @@ import { peopleApi } from "@cocalc/frontend/people/api";
 import { displayNameFromUserRecord } from "@cocalc/frontend/users/display-name";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { ProjectAgent } from "@cocalc/util/people";
+import type { AgentAppearance } from "@cocalc/util/agent-appearance";
+import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 
 export interface OverviewItem {
   id: string;
@@ -171,7 +173,7 @@ export function AgentsOverview(props: Props) {
   const sharedItems: OverviewItem[] = shared.agents.map((agent) => ({
     id: agent.agent_id,
     name: agent.name,
-    title: agent.name,
+    title: agent.appearance?.name || agent.name,
     project_id: agent.project_id,
     activity: agent.created_at,
     available: true,
@@ -286,7 +288,11 @@ export function AgentsOverview(props: Props) {
             );
             const cardProps = {
               item,
-              badge: item.mine ? props.renderBadge(item.mine) : <SharedBadge />,
+              badge: item.mine ? (
+                props.renderBadge(item.mine)
+              ) : (
+                <SharedBadge appearance={item.shared?.appearance} />
+              ),
               project: projectTitle(item.project_id),
               person: item.created_by ? personName(item.created_by) : "",
               onOpen: () => open(item),
@@ -472,7 +478,25 @@ const OPEN_BUTTON: CSSProperties = {
   minWidth: 0,
 };
 
-function SharedBadge() {
+// The agent's stored theme, like the sidebar's badge (without run state).
+function SharedBadge({ appearance }: { appearance?: AgentAppearance | null }) {
+  if (appearance)
+    return (
+      <ThreadBadge
+        icon={appearance.thread_icon}
+        color={appearance.thread_color}
+        accentColor={appearance.thread_accent_color}
+        image={appearance.thread_image}
+        fallbackIcon={
+          appearance.thread_color ||
+          appearance.thread_accent_color ||
+          appearance.thread_image
+            ? undefined
+            : "robot"
+        }
+        size={30}
+      />
+    );
   return (
     <span
       aria-hidden

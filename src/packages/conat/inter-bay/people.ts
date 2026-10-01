@@ -79,6 +79,7 @@ export interface InterBayPeopleApi {
   }): Promise<ProjectCollabInviteRow[]>;
   getAgentAccess: PeopleApi["getAgentAccess"];
   setAgentAccess: PeopleApi["setAgentAccess"];
+  setAgentAppearance: PeopleApi["setAgentAppearance"];
   // home
   listSharedWork: PeopleApi["listSharedWork"];
   listAgents: PeopleApi["listAgents"];

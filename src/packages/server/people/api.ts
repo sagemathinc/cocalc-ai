@@ -26,6 +26,7 @@ import {
   listProjectAgents,
   getAgentAccess,
   setAgentAccess,
+  setAgentAppearance,
   markConversationRead,
   refreshConversationActivity,
   removeConversation,
@@ -234,6 +235,12 @@ export const peopleControl: InterBayPeopleApi = {
     await assertOwner(opts.project_id);
     requireUuid(opts.agent_id, "agent_id");
     await setAgentAccess({ ...opts, account_id: opts.account_id! });
+  },
+
+  async setAgentAppearance(opts) {
+    await assertOwner(opts.project_id);
+    requireUuid(opts.agent_id, "agent_id");
+    await setAgentAppearance({ ...opts, account_id: opts.account_id! });
   },
 
   async refresh(opts) {
@@ -490,6 +497,10 @@ export const peopleApi: PeopleApi = {
 
   async setAgentAccess(opts) {
     await (await owner(opts.project_id)).setAgentAccess(opts);
+  },
+
+  async setAgentAppearance(opts) {
+    await (await owner(opts.project_id)).setAgentAppearance(opts);
   },
 
   async setState(opts) {

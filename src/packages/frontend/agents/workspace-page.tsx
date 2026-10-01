@@ -50,6 +50,10 @@ import {
 import { PreparationStatus } from "./preparation-status";
 import { AvailableConversation } from "./available-conversation";
 import { agentProjectTitle } from "./project-title";
+import {
+  appearanceWrites,
+  mergeAgentAppearances,
+} from "./agent-appearance-sync";
 import { claimOnboardingName } from "./claim-onboarding-name";
 import { OnboardingAttempt } from "@cocalc/frontend/monitoring/onboarding";
 import type { OnboardingPhase } from "@cocalc/util/onboarding-metrics";
@@ -3176,9 +3180,11 @@ export function MyAgentsWorkspacePage({
   const [workspaceAgentIds, setWorkspaceAgentIds] = useState<
     Map<string, string>
   >(() => new Map());
-  const [agentAppearances, setAgentAppearances] = useState<
+  // Themes read from loaded chats (the source of truth).
+  const [loadedAppearances, setLoadedAppearances] = useState<
     Map<string, AgentHeaderAppearance>
   >(() => new Map());
+  const writtenAppearances = useRef(new Map<string, string>());
   const rootRef = useRef<HTMLElement>(null);
   const sidebarFocusPending = useRef(false);
   const boundAccount = useBoundAgentAccount();
@@ -3246,6 +3252,26 @@ export function MyAgentsWorkspacePage({
       ?.focus();
   }, [agentSidebarHidden, mobileList, isNarrow]);
   const agents = directory?.agents ?? [];
+  // Each agent's identity record keeps a copy of its theme, so badges and
+  // titles are right before its chat loads; a loaded chat's theme wins.
+  const agentAppearances = useMemo(
+    () => mergeAgentAppearances(agents, loadedAppearances),
+    [agents, loadedAppearances],
+  );
+  // Keep that copy current: record a loaded theme that differs from it.
+  useEffect(() => {
+    const sent = writtenAppearances.current;
+    for (const write of appearanceWrites(agents, loadedAppearances, sent)) {
+      sent.set(write.agent_id, write.key);
+      webapp_client.conat_client.hub.people
+        .setAgentAppearance({
+          project_id: write.project_id,
+          agent_id: write.agent_id,
+          appearance: write.appearance,
+        })
+        .catch(() => sent.delete(write.agent_id));
+    }
+  }, [agents, loadedAppearances]);
   const networks = networkDirectory?.networks ?? [];
   const networksByAgent = useMemo(
     () => indexAgentNetworks(networks),
@@ -3316,7 +3342,7 @@ export function MyAgentsWorkspacePage({
 
   const handleAgentAppearance = useCallback(
     (agentId: string, appearance: AgentHeaderAppearance) => {
-      setAgentAppearances((current) => {
+      setLoadedAppearances((current) => {
         if (sameAgentHeaderAppearance(current.get(agentId), appearance)) {
           return current;
         }

@@ -15,6 +15,7 @@ import {
   listPersonalStates,
   listSharedWork,
   listProjectAgents,
+  setAgentAppearance,
   getAgentAccess,
   setAgentAccess,
   markConversationRead,
@@ -445,4 +446,50 @@ test("project agents: other people's registered agents in the viewer's projects"
   // Not a collaborator: nothing.
   await setUsers(project_id, { [bob]: "owner" });
   expect(await list()).toEqual([]);
+});
+
+test("agent appearance: any collaborator records the thread theme; lists include it", async () => {
+  const agent_id = "88888888-8888-4888-8888-888888888888";
+  await getPool().query(
+    `INSERT INTO agent_identities
+       (agent_id, project_id, path, thread_id, name, created_by, created_at)
+     VALUES ($1, $2, '/home/user/t.chat', 't', 'themed', $3, NOW())`,
+    [agent_id, project_id, bob],
+  );
+  // alice is a collaborator, not the creator.
+  await setAgentAppearance({
+    account_id: alice,
+    project_id,
+    agent_id,
+    appearance: { name: " Reviewer ", thread_color: "#123456", extra: "x" },
+  });
+  const [listed] = await listProjectAgents({
+    viewer_id: alice,
+    project_ids: [project_id],
+  });
+  expect(listed.appearance).toEqual({
+    name: "Reviewer",
+    thread_color: "#123456",
+  });
+  await setAgentAppearance({
+    account_id: alice,
+    project_id,
+    agent_id,
+    appearance: null,
+  });
+  expect(
+    (
+      await listProjectAgents({ viewer_id: alice, project_ids: [project_id] })
+    )[0].appearance,
+  ).toBeNull();
+  // Not a collaborator: refused.
+  await setUsers(project_id, { [bob]: "owner" });
+  await expect(
+    setAgentAppearance({
+      account_id: alice,
+      project_id,
+      agent_id,
+      appearance: {},
+    }),
+  ).rejects.toThrow("agent not found");
 });

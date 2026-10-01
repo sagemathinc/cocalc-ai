@@ -66,6 +66,7 @@ const shared: ProjectAgent[] = [
     created_by: bob,
     created_at: 1000,
     collaborator_access: "view",
+    appearance: { name: "Bob's Helper", thread_color: "#123456" },
   },
 ];
 
@@ -114,6 +115,10 @@ it("lists other people's agents, with creator and view-only note, and pins them 
   expect(
     await screen.findByRole("button", { name: "Open @bobs-helper" }),
   ).toHaveTextContent("Bob Lee");
+  // The stored theme's title, before any chat is loaded.
+  expect(
+    screen.getByRole("button", { name: "Open @bobs-helper" }),
+  ).toHaveTextContent("Bob's Helper");
   expect(screen.getByText(/view only, by request/)).toBeInTheDocument();
   expect(listAgents).toHaveBeenCalledTimes(1);
   await user.click(screen.getByRole("button", { name: "Pin @bobs-helper" }));

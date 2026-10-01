@@ -19,6 +19,7 @@ export const {
   listInvites,
   getAgentAccess,
   setAgentAccess,
+  setAgentAppearance,
   setState,
   listStates,
   resolveAlias,

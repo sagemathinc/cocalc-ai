@@ -1,4 +1,5 @@
 import type { ExternalAgentSource } from "./external";
+import type { AgentAppearance } from "@cocalc/util/agent-appearance";
 import type { AgentEndpoint, AgentRpcSource } from "./rpc";
 
 export type PersonalAgentDenialCode =
@@ -33,6 +34,8 @@ export interface NamedAgent {
   description?: string;
   available: boolean;
   updated_at: string;
+  // The thread's theme, from the agent's identity record.
+  appearance?: AgentAppearance;
 }
 
 export interface PersonalMessagingControls {

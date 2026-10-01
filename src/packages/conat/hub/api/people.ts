@@ -18,6 +18,7 @@ import type {
   ProjectCollabInviteStatus,
 } from "./projects";
 import { authFirstRequireAccount } from "./util";
+import type { AgentAppearance } from "@cocalc/util/agent-appearance";
 
 export interface ConversationRef {
   account_id?: string;
@@ -97,6 +98,14 @@ export interface PeopleApi {
     agent_id: string;
     access: AgentCollaboratorAccess;
   }): Promise<void>;
+  // Record the agent thread's theme (from its .chat) so lists show it
+  // without loading the chat. Any project collaborator may.
+  setAgentAppearance(opts: {
+    account_id?: string;
+    project_id: string;
+    agent_id: string;
+    appearance: AgentAppearance | null;
+  }): Promise<void>;
 
   // Private per-account state for conversations and people.
   setState(opts: {
@@ -131,6 +140,7 @@ export const people = {
   listInvites: authFirstRequireAccount,
   getAgentAccess: authFirstRequireAccount,
   setAgentAccess: authFirstRequireAccount,
+  setAgentAppearance: authFirstRequireAccount,
   setState: authFirstRequireAccount,
   listStates: authFirstRequireAccount,
   resolveAlias: authFirstRequireAccount,

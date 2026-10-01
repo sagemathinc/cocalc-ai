@@ -9,6 +9,7 @@
 
 import { randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
+import { normalizeAgentAppearance } from "@cocalc/util/agent-appearance";
 import {
   MAX_CONVERSATION_PARTICIPANTS,
   MAX_CONVERSATIONS_PER_PROJECT,
@@ -533,7 +534,7 @@ export async function listProjectAgents({
   if (project_ids.length === 0) return [];
   const { rows } = await getPool().query(
     `SELECT a.agent_id, a.project_id, a.name, a.path, a.thread_id,
-            a.created_by, a.created_at, a.collaborator_access
+            a.created_by, a.created_at, a.collaborator_access, a.appearance
      FROM agent_identities a
      JOIN projects p ON p.project_id = a.project_id
      WHERE a.project_id = ANY($1::uuid[])
@@ -551,9 +552,41 @@ export async function listProjectAgents({
     path: row.path,
     thread_id: row.thread_id,
     created_by: row.created_by,
-    collaborator_access: row.collaborator_access === "view" ? "view" : "message",
+    collaborator_access:
+      row.collaborator_access === "view" ? "view" : "message",
     created_at: new Date(row.created_at).valueOf(),
+    appearance: row.appearance ?? null,
   }));
+}
+
+// Record the agent thread's theme. Any current collaborator may, since any
+// collaborator can change the theme in the .chat file it mirrors.
+export async function setAgentAppearance({
+  account_id,
+  project_id,
+  agent_id,
+  appearance,
+}: {
+  account_id: string;
+  project_id: string;
+  agent_id: string;
+  appearance: unknown;
+}): Promise<void> {
+  const value = normalizeAgentAppearance(appearance);
+  const { rowCount } = await getPool().query(
+    `UPDATE agent_identities a SET appearance = $4::jsonb
+     FROM projects c
+     WHERE c.project_id = a.project_id
+       AND a.project_id = $1 AND a.agent_id = $2 AND a.disabled_at IS NULL
+       AND ${collaborator(3)}`,
+    [
+      project_id,
+      agent_id,
+      account_id,
+      value == null ? null : JSON.stringify(value),
+    ],
+  );
+  if (!rowCount) throw Error("agent not found");
 }
 
 // Read an agent's stated collaborator access; any current collaborator may.
