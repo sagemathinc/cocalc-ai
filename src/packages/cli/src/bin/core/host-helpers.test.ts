@@ -35,6 +35,66 @@ test("SSH auto uses private DNS, not the internal HTTP port or project SSH proxy
   assert.equal(result.ssh_port, 22);
 });
 
+test("SSH skips public internal_url aliases before trying provider private IP", async () => {
+  for (const network of ["private", "auto"]) {
+    for (const internal_url of [
+      "https://public.example",
+      "http://PUBLIC.example.:9002",
+      "http://192.0.2.1:9002",
+    ]) {
+      const result = await sshHelpers(
+        {
+          public_url: "https://public.example",
+          internal_url,
+          public_ip: "192.0.2.1",
+          private_ip: "10.0.0.2",
+        },
+        async () => {
+          throw new Error("public alias must not be looked up");
+        },
+      ).resolveHostSshEndpoint({}, "host-1", network);
+      assert.equal(result.ssh_host, "10.0.0.2");
+      assert.equal(result.network, "private");
+    }
+  }
+});
+
+test("SSH private fails closed for public aliases without a private IP", async () => {
+  const host = {
+    public_url: "https://public.example",
+    internal_url: "https://public.example",
+    public_ip: "192.0.2.1",
+  };
+  await assert.rejects(
+    sshHelpers(host).resolveHostSshEndpoint({}, "host-1", "private"),
+    /refusing public fallback/,
+  );
+  const result = await sshHelpers(host).resolveHostSshEndpoint(
+    {},
+    "host-1",
+    "auto",
+  );
+  assert.equal(result.network, "public");
+  assert.equal(result.ssh_host, "192.0.2.1");
+});
+
+test("SSH detects DNS aliases of the public IP", async () => {
+  const host = {
+    internal_url: "https://alias.example",
+    public_ip: "192.0.2.1",
+  };
+  const lookup = async () => ({ address: "192.0.2.1" });
+  await assert.rejects(
+    sshHelpers(host, lookup).resolveHostSshEndpoint({}, "host-1", "private"),
+    /refusing public fallback/,
+  );
+  const result = await sshHelpers(
+    { ...host, private_ip: "10.0.0.2" },
+    lookup,
+  ).resolveHostSshEndpoint({}, "host-1", "private");
+  assert.equal(result.ssh_host, "10.0.0.2");
+});
+
 test("SSH public selection does not perform private DNS lookup", async () => {
   const result = await sshHelpers(
     {

@@ -27,6 +27,7 @@ type HostLike = {
   last_error?: string | null;
   public_ip?: string | null;
   private_ip?: string | null;
+  public_url?: string | null;
   internal_url?: string | null;
   machine?: Record<string, any> | null;
   bootstrap?: {
@@ -382,6 +383,19 @@ export function createHostHelpers<Ctx, Host extends HostLike>(
         clearTimeout(timer);
       }
     };
+    const publicIp =
+      `${host.public_ip ?? machine.metadata?.runtime?.public_ip ?? machine.metadata?.public_ip ?? ""}`.trim();
+    const hostnameOf = (value: string): string => {
+      try {
+        return new URL(value).hostname
+          .replace(/^\[|\]$/g, "")
+          .toLowerCase()
+          .replace(/\.$/, "");
+      } catch {
+        return "";
+      }
+    };
+    const publicHostname = hostnameOf(host.public_url ?? "");
     let privateError = "no private endpoint in host metadata";
     if (network !== "public") {
       if (host.internal_url) {
@@ -392,10 +406,22 @@ export function createHostHelpers<Ctx, Host extends HostLike>(
           }
           // This is a host name discovery source, not an SSH port source.
           const hostname = url.hostname.replace(/^\[|\]$/g, "");
+          // Public routing mode intentionally copies public_url to internal_url.
+          // Compare hostnames, not full URLs: HTTP scheme/port are irrelevant.
+          if (
+            hostnameOf(host.internal_url) === publicHostname ||
+            hostname === publicIp
+          ) {
+            throw new Error("internal_url aliases the public endpoint");
+          }
+          const address = await resolveAddress(hostname);
+          if (address === publicIp) {
+            throw new Error("internal_url resolves to the public IP");
+          }
           return endpoint(
             hostname,
             "private",
-            await resolveAddress(hostname),
+            address,
             "internal_url hostname resolved; DNS resolution does not guarantee SSH reachability",
           );
         } catch (err) {
@@ -404,7 +430,7 @@ export function createHostHelpers<Ctx, Host extends HostLike>(
       }
       const privateIp =
         `${host.private_ip ?? machine.metadata?.runtime?.private_ip ?? ""}`.trim();
-      if (isIP(privateIp)) {
+      if (isIP(privateIp) && privateIp !== publicIp) {
         return endpoint(privateIp, "private", privateIp, "provider private_ip");
       }
       if (network === "private") {
@@ -417,8 +443,6 @@ export function createHostHelpers<Ctx, Host extends HostLike>(
         reason: privateError,
       });
     }
-    const publicIp =
-      `${host.public_ip ?? machine.metadata?.runtime?.public_ip ?? machine.metadata?.public_ip ?? ""}`.trim();
     if (publicIp) {
       return endpoint(
         publicIp,
