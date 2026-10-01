@@ -134,6 +134,19 @@ function inStoredOrder(agents: NamedAgent[], order: string[]): NamedAgent[] {
   });
 }
 
+// Last activity used for recency ordering. An agent with no recorded activity
+// yet (for example, one just created) counts from when it was named, not as
+// never used.
+export function agentActivityAt(
+  agent: NamedAgent,
+  lastOpened: Record<string, number>,
+): number {
+  const opened = lastOpened[agent.endpoint.agent_id] ?? 0;
+  if (opened > 0) return opened;
+  const named = Date.parse(agent.updated_at ?? "");
+  return Number.isFinite(named) && named > 0 ? named : 0;
+}
+
 export function organizeAgents(
   agents: NamedAgent[],
   organization: AgentWorkspaceOrganization,
@@ -160,8 +173,8 @@ export function organizeAgents(
       ? inStoredOrder(remainder, organization.custom)
       : [...remainder].sort((a, b) => {
           const delta =
-            (organization.lastOpened[b.endpoint.agent_id] ?? 0) -
-            (organization.lastOpened[a.endpoint.agent_id] ?? 0);
+            agentActivityAt(b, organization.lastOpened) -
+            agentActivityAt(a, organization.lastOpened);
           return delta || byName(a, b);
         });
   return { pinned, unpinned, hidden };
@@ -186,7 +199,7 @@ export function groupAgentsByRecency(
     { key: "older", title: "Older", agents: [] },
   ];
   for (const agent of agents) {
-    const opened = lastOpened[agent.endpoint.agent_id] ?? 0;
+    const opened = agentActivityAt(agent, lastOpened);
     const delta = Math.max(0, now - opened);
     const section =
       opened > 0 && delta < DAY_MS
@@ -232,7 +245,7 @@ export function groupAgentsByProject(
       (isPinned ? group.pinned : group.unpinned).push(agent);
       group.lastOpened = Math.max(
         group.lastOpened,
-        lastOpened[agent.endpoint.agent_id] ?? 0,
+        agentActivityAt(agent, lastOpened),
       );
       groups.set(projectId, group);
     }
