@@ -323,7 +323,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   };
 
   // Recorded saves of the .ipynb file, newest first.
-  private getIpynbSaves = (): JupyterRuntimeIpynbSave[] => {
+  protected getIpynbSaves = (): JupyterRuntimeIpynbSave[] => {
     const keys = new Set<string>(this.pendingRuntimeRecords.keys());
     for (const key of Object.keys(this.runtimeState?.getAll() ?? {})) {
       keys.add(key);

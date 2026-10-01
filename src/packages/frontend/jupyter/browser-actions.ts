@@ -4514,6 +4514,16 @@ export class JupyterActions extends JupyterActions0 {
     }
     const mtimeMs = await this.getDiskMtimeMs();
     if (!(await this.isIpynbSave({ text: read.text, mtimeMs }))) {
+      this.runDebug("watch.load.not_own_save", () => {
+        const saves = this.getIpynbSaves();
+        return {
+          patchSeq,
+          mtimeMs,
+          saves: saves.length,
+          newestSaveMtimeMs: saves[0]?.mtimeMs,
+          newestSavedAt: saves[0]?.savedAt,
+        };
+      });
       return false;
     }
     this.runDebug("watch.load.skipped.own_save", { patchSeq, mtimeMs });
