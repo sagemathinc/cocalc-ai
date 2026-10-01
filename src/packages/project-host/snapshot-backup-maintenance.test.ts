@@ -2127,6 +2127,74 @@ describe("snapshot-backup-maintenance", () => {
     expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(2);
   });
 
+  it.each(["snapshot", "backup"])(
+    "rearms %s work postponed by a queued schedule refresh",
+    async (kind) => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date("2026-09-30T16:00:00Z"));
+      const original = ["a", "b"].map((project_id) => ({
+        project_id,
+        storage_service_class: "free",
+        last_changed: "2026-09-29T14:00:00Z",
+        backup_due_since: "2026-09-29T14:00:00Z",
+        snapshots:
+          kind === "snapshot" ? { frequent: 0, daily: 1 } : { disabled: true },
+        backups: kind === "backup" ? { daily: 1 } : { disabled: true },
+        last_snapshot_observed_at: new Date().toISOString(),
+        last_backup_observed_at: new Date().toISOString(),
+      }));
+      const latest = "2026-09-30T15:00:00Z";
+      listProjectMaintenanceSchedulesMock.mockImplementation(
+        async ({ project_ids }) =>
+          project_ids
+            ? [
+                {
+                  ...original[1],
+                  last_snapshot: latest,
+                  last_backup: latest,
+                  last_changed: "2026-09-30T15:30:00Z",
+                  backup_due_since: "2026-09-30T15:30:00Z",
+                },
+              ]
+            : original,
+      );
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const run =
+        kind === "snapshot"
+          ? runScheduledSnapshotMaintenanceMock
+          : runScheduledBackupMaintenanceMock;
+      run.mockImplementation(async ({ project_id }) => {
+        if (project_id === "a") await held;
+        return {
+          created: true,
+          changed: true,
+          created_snapshot_at: new Date().toISOString(),
+          latest_snapshot_at: new Date().toISOString(),
+        };
+      });
+      const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+        await import("./snapshot-backup-maintenance");
+      const onFutureDue = jest.fn();
+      const sweep = runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: `postponed-${kind}-host`,
+        onFutureDue,
+      });
+      await jest.advanceTimersByTimeAsync(0);
+      expect(run).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(60_001);
+      release();
+      await sweep;
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(onFutureDue).toHaveBeenCalledWith(
+        "b",
+        Date.parse(latest) + 24 * 60 * 60_000,
+      );
+    },
+  );
+
   it("bounds refresh RPCs across a large stale backlog and leaves non-due inventory out of both queues", async () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date("2026-09-30T16:00:00Z"));

@@ -984,7 +984,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     });
   }
   const now = Date.now();
-  for (const row of rows) {
+  const rememberRowFutureDue = (row: HostProjectMaintenanceSchedule) => {
     const snapshotSchedule = mergeSchedule(
       DEFAULT_SNAPSHOT_COUNTS,
       row.snapshots,
@@ -1002,9 +1002,10 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     ]) {
       if (due == null) continue;
       const next = Math.max(due, retry ?? 0);
-      if (next > now) onFutureDue?.(row.project_id, next);
+      if (next > Date.now()) onFutureDue?.(row.project_id, next);
     }
-  }
+  };
+  for (const row of rows) rememberRowFutureDue(row);
   const snapshotRows = orderProjectMaintenance(rows, (row) => {
     const due = snapshotDueAt(
       row,
@@ -1172,8 +1173,8 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       );
     },
   );
-  const refreshQueuedRow = (row: HostProjectMaintenanceSchedule) =>
-    usedOwnershipLease
+  const refreshQueuedRow = async (row: HostProjectMaintenanceSchedule) => {
+    const refreshed = await (usedOwnershipLease
       ? Promise.resolve(row)
       : queues.refresh.get({
           row,
@@ -1192,7 +1193,12 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
               hostId,
               err: `${err}`,
             }),
-        });
+        }));
+    // A refreshed schedule can postpone an already queued operation. Preserve
+    // its wakeup before the lane skips it, without waiting for a full sweep.
+    if (refreshed && refreshed !== row) rememberRowFutureDue(refreshed);
+    return refreshed;
+  };
   const snapshotLane = async () => {
     await queues.snapshot.submit({
       rows: snapshotRows.filter((row) =>
