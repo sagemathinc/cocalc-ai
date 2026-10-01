@@ -106,6 +106,8 @@ export interface Customize {
   policies?: string;
   shareServer?: boolean;
   legacy_migration_enabled?: boolean;
+  collaborators_enabled?: boolean;
+  people_scan_enabled?: boolean;
   commercial_receivables_visible?: boolean;
   commercial_receivables_mutations_enabled?: boolean;
   commercial_receivables_stripe_drafts_enabled?: boolean;

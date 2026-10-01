@@ -263,6 +263,21 @@ function checkReferenceFieldConsistency(
 }
 
 describe("table ownership manifest", () => {
+  it("classifies collaboration notification schema tables without dual ownership", () => {
+    for (const table of [
+      "collaboration_notification_events",
+      "collaboration_notification_recipients",
+      "collaboration_notification_floors",
+    ]) {
+      expect(SCHEMA[table]).toBeDefined();
+      expect(AD_HOC_POSTGRES_TABLE_OWNERSHIP[table]).toBeUndefined();
+      expect(TABLE_OWNERSHIP[table]).toMatchObject({
+        authority: "project_id",
+        ownership: "project-owning",
+        portability: "portable",
+      });
+    }
+  });
   it("classifies every durable db-schema table", () => {
     const durableTables = Object.values(SCHEMA)
       .filter((table) => !table.virtual && !table.external)

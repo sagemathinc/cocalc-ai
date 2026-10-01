@@ -7,7 +7,12 @@
 export const APP_ROUTES = new Set([
   "admin",
   "agents",
-  "library",
+  "home",
+  "artifacts",
+  "collaborators",
+  "chats",
+  "people",
+  "u",
   "app-docs",
   "file-use",
   "help",
@@ -49,7 +54,9 @@ export function hasHostAbsoluteRoutePrefix(path?: string): boolean {
   return HOST_ABSOLUTE_ROUTE_PREFIXES.some(
     (prefix) =>
       path === prefix ||
-      path.startsWith(`${prefix}/`) ||
+      (prefix === "/home"
+        ? path === "/home/" || path.startsWith("/home/?")
+        : path.startsWith(`${prefix}/`)) ||
       path.startsWith(`${prefix}?`),
   );
 }

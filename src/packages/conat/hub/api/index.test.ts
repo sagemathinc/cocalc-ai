@@ -32,7 +32,47 @@ describe("hub API response handling", () => {
 
 describe("hub API argument transforms", () => {
   it.each([
+    "check",
+    "scanProjects",
+    "requestScan",
+    "inspectScan",
+    "getScanStatus",
+    "resolveChatAlias",
+    "resolvePersonAlias",
+    "getPersonAlias",
+    "setPersonAlias",
+    "listPeople",
+    "listProjects",
+    "listResources",
+    "getResource",
+    "setPersonalState",
+    "ensureRoom",
+  ])("binds collaborators.%s to a human account", async (method) => {
+    const name = `collaborators.${method}`;
+    expect(
+      await transformArgs({
+        name,
+        args: [{ account_id: "forged", project_id: "target" }],
+        account_id: "actual",
+      }),
+    ).toEqual([{ account_id: "actual", project_id: "target" }]);
+    for (const actor of [
+      {},
+      { host_id: "host" },
+      { project_id: "project" },
+      { account_id: "human", auth_actor: "agent" as const },
+    ]) {
+      await expect(
+        transformArgs({ name, args: [{}], ...actor }),
+      ).rejects.toThrow();
+    }
+  });
+  it.each([
     "apiKeys.decideAction",
+    "collaborators.prepareInvitation",
+    "collaborators.reviewInvitation",
+    "collaborators.sendInvitation",
+    "collaborators.getInvitationOperation",
     "apiKeys.listActions",
     "agent.removeCocalcConnectorConfig",
   ])("binds %s to the actual human session", async (name) => {
@@ -120,6 +160,13 @@ describe("hub API argument transforms", () => {
     "artifactCatalog.registerSource",
     "artifactCatalog.ingest",
     "artifactCatalog.sourcePage",
+    "collaborators.registerSource",
+    "collaborators.writerState",
+    "collaborators.sourcePage",
+    "collaborators.ingest",
+    "collaborators.roomForHost",
+    "collaborators.markRoomInitialized",
+    "collaborators.relocateSource",
     "hosts.updateProjectApiRelayUsage",
     "hosts.resolveProjectApiRelayHub",
     "hosts.resolveProjectApiRelayTarget",

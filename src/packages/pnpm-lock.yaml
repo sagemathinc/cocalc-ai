@@ -420,6 +420,9 @@ importers:
         specifier: ^3.0.3
         version: 3.0.3
     devDependencies:
+      '@cocalc/chat':
+        specifier: workspace:*
+        version: link:../chat
       '@types/debug':
         specifier: ^4.1.12
         version: 4.1.12
@@ -1047,6 +1050,9 @@ importers:
       '@rc-component/tabs':
         specifier: 1.7.0
         version: 1.7.0(patch_hash=3545851304665e492072e9f07920574f7dbccd16fab7e709bc7fa6482d032c46)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@rc-component/util':
+        specifier: 1.10.0
+        version: 1.10.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@simplewebauthn/browser':
         specifier: ^13.3.0
         version: 13.3.0
@@ -2278,6 +2284,9 @@ importers:
         specifier: ^8.21.0
         version: 8.21.3(bufferutil@4.0.9)(utf-8-validate@6.0.5)
     devDependencies:
+      '@cocalc/sync':
+        specifier: workspace:*
+        version: link:../sync
       '@types/async':
         specifier: ^2.0.43
         version: 2.4.2

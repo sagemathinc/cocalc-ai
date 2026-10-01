@@ -8,6 +8,11 @@ import type {
  */
 
 import type { ProjectOnboardingIntent } from "@cocalc/util/accounts/onboarding-intent";
+import type {
+  ProjectCollaborationRehomeHeader,
+  ProjectCollaborationRehomePage,
+  ProjectCollaborationRehomeAck,
+} from "@cocalc/util/project-collaboration-rehome";
 import type { ProjectRecoveryStatus } from "@cocalc/conat/hub/api/projects";
 import type { CreatedProjectBootstrap } from "@cocalc/conat/hub/api/projects";
 import type { CreateProjectOptions } from "@cocalc/util/db-schema/projects";
@@ -221,6 +226,8 @@ import type {
   CourseStudentInviteAccountRepairRow,
   ProjectCollabInviteAction,
   ProjectCollabInviteDirection,
+  ProjectCollabInviteResendRequest,
+  ProjectCollabInviteResendResult,
   ProjectCollabInviteRow,
   ProjectCollabInviteStatus,
   ProjectCourseInfo,
@@ -509,6 +516,15 @@ export interface ProjectControlAcceptRehomeRequest {
 export interface ProjectControlPortableProjectState {
   project_log?: ProjectLogRow[];
 }
+
+export type ProjectControlCollaborationRehomeRequest = {
+  header: ProjectCollaborationRehomeHeader;
+} & (
+  | { action: "prepare" }
+  | { action: "page"; page: ProjectCollaborationRehomePage }
+  | { action: "activate"; project: Record<string, unknown> }
+  | { action: "log"; project_log: ProjectLogRow[] }
+);
 
 export interface ProjectControlRehomeResponse {
   op_id?: string;
@@ -1004,6 +1020,27 @@ export interface AccountRehomeAcceptRequest {
   dest_bay_id: string;
   account: Record<string, unknown>;
   financial_handoff?: AccountFinancialHandoff;
+  collaboration_handoff?: AccountCollaborationHandoff;
+}
+
+/** Immutable, account-fenced collaboration snapshot. Pages travel separately. */
+export interface AccountCollaborationHandoff {
+  version: 1;
+  op_id: string;
+  account_id: string;
+  source_bay_id: string;
+  dest_bay_id: string;
+  page_count: number;
+  row_count: number;
+  byte_count: number;
+  snapshot_hash: string;
+  notifications: boolean;
+}
+
+export interface AccountCollaborationPage {
+  page: number;
+  body: string;
+  hash: string;
 }
 
 export interface AccountPersistFileV1 {
@@ -1019,6 +1056,10 @@ export interface AccountRehomeStateCopyRequest {
   source_bay_id: string;
   dest_bay_id: string;
   financial_handoff?: AccountFinancialHandoff;
+  collaboration_handoff?: AccountCollaborationHandoff;
+  // Page and activation requests do not run the legacy portable-state copy.
+  collaboration_page?: AccountCollaborationPage;
+  collaboration_activate?: boolean;
   account_persist_files?: AccountPersistFileV1[];
   account_project_index?: Record<string, unknown>[];
   account_collaborator_index?: Record<string, unknown>[];
@@ -2104,6 +2145,7 @@ export type AccountRehomeOperationStage =
 export type AccountRehomeOperationStatus = "running" | "succeeded" | "failed";
 
 export interface AccountRehomeOperationSummary {
+  collaboration_handoff?: AccountCollaborationHandoff;
   op_id: string;
   account_id: string;
   source_bay_id: string;
@@ -2817,6 +2859,7 @@ export type ProjectControlMethod =
   | "move"
   | "rehome"
   | "accept-rehome"
+  | "collaboration-rehome"
   | "active-op"
   | "get-project-entitlement-override"
   | "set-project-entitlement-override"
@@ -2954,6 +2997,9 @@ export type HostControlMethod =
   | "pull-rootfs-image"
   | "delete-rootfs-image"
   | "scan-rootfs-release"
+  | "request-collaboration-reconciliation"
+  | "cancel-collaboration-reconciliation"
+  | "get-collaboration-reconciliation-status"
   | "scan-project-rootfs"
   | "list-host-ssh-authorized-keys"
   | "add-host-ssh-authorized-key"
@@ -3212,6 +3258,7 @@ export type BayOpsMethod =
   | "crm-outreach-apply-opt-out-internal"
   | "crm";
 export type ProjectCollabInviteMethod =
+  | "resend"
   | "upsert-inbox"
   | "delete-inbox"
   | "list"
@@ -3387,6 +3434,9 @@ export interface InterBayProjectControlApi {
   acceptRehome: (
     opts: ProjectControlAcceptRehomeRequest,
   ) => Promise<ProjectControlRehomeResponse>;
+  collaborationRehome: (
+    opts: ProjectControlCollaborationRehomeRequest,
+  ) => Promise<ProjectCollaborationRehomeAck>;
   activeOp: (
     opts: ProjectControlActiveOperationRequest,
   ) => Promise<ProjectActiveOperationSummary | null>;
@@ -4383,6 +4433,24 @@ export interface InterBayHostControlApi {
     host_id: string;
     scan: HostControlArg<"scanRootfsRelease">;
   }) => Promise<Awaited<ReturnType<HostControlApi["scanRootfsRelease"]>>>;
+  requestCollaborationReconciliation: (opts: {
+    host_id: string;
+    scan: HostControlArg<"requestCollaborationReconciliation">;
+  }) => Promise<
+    Awaited<ReturnType<HostControlApi["requestCollaborationReconciliation"]>>
+  >;
+  cancelCollaborationReconciliation: (opts: {
+    host_id: string;
+    scan: HostControlArg<"cancelCollaborationReconciliation">;
+  }) => Promise<
+    Awaited<ReturnType<HostControlApi["cancelCollaborationReconciliation"]>>
+  >;
+  getCollaborationReconciliationStatus: (opts: {
+    host_id: string;
+    scan: HostControlArg<"getCollaborationReconciliationStatus">;
+  }) => Promise<
+    Awaited<ReturnType<HostControlApi["getCollaborationReconciliationStatus"]>>
+  >;
   scanProjectRootfs: (opts: {
     host_id: string;
     scan: HostControlArg<"scanProjectRootfs">;
@@ -5371,6 +5439,11 @@ export interface InterBayAuthTokenApi {
 }
 
 export interface InterBayProjectCollabInviteApi {
+  resend: (
+    opts: ProjectCollabInviteResendRequest & {
+      account_id: string;
+    },
+  ) => Promise<ProjectCollabInviteResendResult>;
   upsertInbox: (opts: ProjectCollabInviteInboxUpsertRequest) => Promise<void>;
   deleteInbox: (opts: ProjectCollabInviteInboxDeleteRequest) => Promise<void>;
   list: (
@@ -5626,6 +5699,18 @@ const HOST_CONTROL_METHOD_SPECS = [
   { name: "pullRootfsImage", method: "pull-rootfs-image" },
   { name: "deleteRootfsImage", method: "delete-rootfs-image" },
   { name: "scanRootfsRelease", method: "scan-rootfs-release" },
+  {
+    name: "requestCollaborationReconciliation",
+    method: "request-collaboration-reconciliation",
+  },
+  {
+    name: "cancelCollaborationReconciliation",
+    method: "cancel-collaboration-reconciliation",
+  },
+  {
+    name: "getCollaborationReconciliationStatus",
+    method: "get-collaboration-reconciliation-status",
+  },
   { name: "scanProjectRootfs", method: "scan-project-rootfs" },
   {
     name: "listHostSshAuthorizedKeys",
@@ -6246,6 +6331,15 @@ export function createInterBayProjectControlClient({
     ...serviceClientOptions({ client, timeout }),
     subject: projectControlSubject({ dest_bay, method: "accept-rehome" }),
   });
+  const collaborationRehomeClient = createServiceClient<
+    Pick<InterBayProjectControlApi, "collaborationRehome">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectControlSubject({
+      dest_bay,
+      method: "collaboration-rehome",
+    }),
+  });
   const activeOpClient = createServiceClient<
     Pick<InterBayProjectControlApi, "activeOp">
   >({
@@ -6302,6 +6396,8 @@ export function createInterBayProjectControlClient({
     move: async (opts) => await moveClient.move(opts),
     rehome: async (opts) => await rehomeClient.rehome(opts),
     acceptRehome: async (opts) => await acceptRehomeClient.acceptRehome(opts),
+    collaborationRehome: async (opts) =>
+      await collaborationRehomeClient.collaborationRehome(opts),
     activeOp: async (opts) => await activeOpClient.activeOp(opts),
     getProjectEntitlementOverride: async (opts) =>
       await getProjectEntitlementOverrideClient.getProjectEntitlementOverride(
@@ -12739,6 +12835,12 @@ export function createInterBayProjectCollabInviteClient({
       method: "invite-without-account",
     }),
   });
+  const resendClient = createServiceClient<
+    Pick<InterBayProjectCollabInviteApi, "resend">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectCollabInviteSubject({ dest_bay, method: "resend" }),
+  });
   const copyEmailLinkClient = createServiceClient<
     Pick<InterBayProjectCollabInviteApi, "copyEmailLink">
   >({
@@ -13024,6 +13126,7 @@ export function createInterBayProjectCollabInviteClient({
     create: async (opts) => await createClient.create(opts),
     inviteWithoutAccount: async (opts) =>
       await inviteWithoutAccountClient.inviteWithoutAccount(opts),
+    resend: async (opts) => await resendClient.resend(opts),
     copyEmailLink: async (opts) =>
       await copyEmailLinkClient.copyEmailLink(opts),
     redeemEmail: async (opts) => await redeemEmailClient.redeemEmail(opts),
@@ -13105,6 +13208,15 @@ export function createInterBayProjectCollabInviteHandlers({
   impl: InterBayProjectCollabInviteApi;
 }): ConatService[] {
   return [
+    createServiceHandler<Pick<InterBayProjectCollabInviteApi, "resend">>({
+      ...options,
+      service: "inter-bay-project-collab-invite",
+      subject: projectCollabInviteSubject({
+        dest_bay: bay_id,
+        method: "resend",
+      }),
+      impl: { resend: async (opts) => await impl.resend(opts) },
+    }),
     createServiceHandler<Pick<InterBayProjectCollabInviteApi, "upsertInbox">>({
       ...options,
       service: "inter-bay-project-collab-invite",
@@ -13861,6 +13973,29 @@ export function createInterBayProjectControlAcceptRehomeHandler({
     }),
     impl: {
       acceptRehome: async (opts) => await impl.acceptRehome(opts),
+    },
+  });
+}
+
+export function createInterBayProjectControlCollaborationRehomeHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayProjectControlApi;
+}): ConatService {
+  return createServiceHandler<
+    Pick<InterBayProjectControlApi, "collaborationRehome">
+  >({
+    ...options,
+    service: "inter-bay-project-control",
+    subject: projectControlSubject({
+      dest_bay: bay_id,
+      method: "collaboration-rehome",
+    }),
+    impl: {
+      collaborationRehome: async (opts) => await impl.collaborationRehome(opts),
     },
   });
 }

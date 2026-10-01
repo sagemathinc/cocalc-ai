@@ -13,6 +13,41 @@ import { DataEncoding, encode } from "@cocalc/conat/core/codec";
 
 describe("inter-bay typed service transport", () => {
   it.each([
+    [
+      "requestCollaborationReconciliation",
+      "request-collaboration-reconciliation",
+    ],
+    [
+      "getCollaborationReconciliationStatus",
+      "get-collaboration-reconciliation-status",
+    ],
+  ] as const)(
+    "registers %s on the destination host-control subject",
+    async (method, suffix) => {
+      const request = jest.fn(async () => ({ data: { state: "unknown" } }));
+      const client = createInterBayHostControlClient({
+        client: { request } as any,
+        dest_bay: "bay-storage",
+        timeout: 60000,
+      });
+      const opts = {
+        host_id: "host-storage",
+        scan: {
+          protocol_version: 1 as const,
+          project_id: "project",
+          run_id: "stable-run",
+        },
+      };
+      await client[method](opts);
+      expect(request).toHaveBeenCalledWith(
+        `bay.bay-storage.rpc.host-control.${suffix}`,
+        { name: method, args: [opts] },
+        { timeout: 60000, waitForInterest: true },
+      );
+    },
+  );
+
+  it.each([
     ["updateApiRelayUsage", "update-api-relay-usage"],
     ["updateApiRelayAccountUsage", "update-api-relay-account-usage"],
   ] as const)("routes %s to its authoritative bay", async (method, suffix) => {

@@ -65,7 +65,212 @@ function entries(
   );
 }
 
+const PEOPLE_TABLE_OWNERSHIP = {
+  ...adHocEntries(
+    [
+      "people_contacts",
+      "people_account_state",
+      "people_invitation_drafts",
+      "people_invitation_operations",
+      "people_collaboration_outbox",
+    ],
+    {
+      ownership: "account-home",
+      authority: "account_id",
+      portability: "unsupported",
+      source:
+        "server/people/schema.ts; server/collaborators/invitations-store.ts",
+      migrate_to_schema: true,
+      notes:
+        "Canonical private People state, reviewed operation receipts and pending delivery intent. The People rehome guard blocks movement until these families and their encryption bindings have a tested handoff; do not discard as cold cache.",
+    },
+  ),
+  ...adHocEntries(["people_invitation_index"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
+    source: "server/people/schema.ts",
+    migrate_to_schema: true,
+    secondary_reference_fields: {
+      project_id:
+        "Invitation target; history is materialized privately at the viewing account's home.",
+    },
+    notes:
+      "Private invitation history. Reconstruction from retained canonical operations is not yet proven; the People rehome guard remains required.",
+  }),
+  ...adHocEntries(["people_invite_outbox"], {
+    ownership: "project-owning",
+    authority: "project_id",
+    portability: "unsupported",
+    source: "server/people/schema.ts",
+    migrate_to_schema: true,
+    notes:
+      "Durable coalesced access-invitation lifecycle intent, including deletion tombstones and audience. Protected by the People project rehome guard until transfer is implemented.",
+  }),
+  ...adHocEntries(
+    ["people_invitation_action_receipts", "people_invite_resend_operations"],
+    {
+      ownership: "project-owning",
+      authority: "project_id",
+      portability: "unsupported",
+      source:
+        "server/people/invitation-action-store.ts; server/projects/people-invite-resend.ts",
+      migrate_to_schema: true,
+      secondary_reference_fields: {
+        account_id:
+          "Requesting actor and idempotency namespace, not the storage authority for the project action.",
+      },
+      notes:
+        "Project-side action and resend idempotency receipts. The People project rehome guard prevents losing replay evidence during movement.",
+    },
+  ),
+  ...adHocEntries(["people_invite_backfill"], {
+    ownership: "stable-bay",
+    authority: "local",
+    portability: "stable",
+    source: "server/people/schema.ts",
+    migrate_to_schema: true,
+    notes:
+      "Local resumable access-invitation backfill cursor; not authoritative invitation or account state.",
+  }),
+};
+
 export const TABLE_OWNERSHIP = {
+  ...entries(["collaboration_relation_pages"], {
+    ownership: "stable-bay",
+    authority: "local",
+    portability: "stable",
+    secondary_reference_fields: {
+      project_id:
+        "Authenticated source writer's project; staging never grants metadata access.",
+    },
+    notes:
+      "Immutable bounded host upload pages are local staging. Project handoff transfers committed normalized relations and renews writer epochs; interrupted producers republish under the destination fence.",
+  }),
+  ...entries(
+    [
+      "collaboration_projects",
+      "collaboration_relation_sets",
+      "collaboration_participants",
+      "collaboration_references",
+      "collaboration_sources",
+      "collaboration_source_requests",
+      "collaboration_catalog",
+      "collaboration_rooms",
+      "collaboration_room_replacements",
+      "collaboration_relocations",
+      "collaboration_notification_events",
+      "collaboration_notification_floors",
+    ],
+    {
+      ownership: "project-owning",
+      authority: "project_id",
+      portability: "portable",
+      notes:
+        "The project collaboration handoff transfers bounded hash-checked metadata pages under durable source fencing, atomically restores the canonical room and catalog, and renews destination generations and writer epochs.",
+    },
+  ),
+  ...entries(["collaboration_memberships"], {
+    ownership: "project-owning",
+    authority: "project_id",
+    portability: "portable",
+    secondary_reference_fields: {
+      account_id:
+        "Recipient membership cutover, issued only by the project owner.",
+    },
+    notes:
+      "Per-recipient membership epochs survive the fenced catalog handoff with notification cutovers. Access leases are separately rebuilt from the destination owner.",
+  }),
+  ...entries(
+    [
+      "collaboration_notification_recipients",
+      "collaboration_notification_subscriptions",
+    ],
+    {
+      ownership: "project-owning",
+      authority: "project_id",
+      portability: "portable",
+      secondary_reference_fields: {
+        account_id:
+          "Recipient reference; delivery routes to its current home. The obligation remains owned by the project event authority.",
+      },
+      notes:
+        "Durable unacknowledged event-recipient obligations transfer with the source event log and preserve membership epochs.",
+    },
+  ),
+  ...entries(
+    [
+      "collaboration_notification_delivery_budget",
+      "collaboration_notification_summary",
+      "collaboration_notification_summary_receipts",
+    ],
+    {
+      ownership: "account-home",
+      authority: "account_id",
+      portability: "portable",
+      secondary_reference_fields: {
+        project_id:
+          "Owner event reference used to settle delivery receipts; account_id determines receipt placement.",
+      },
+      notes:
+        "Recipient notification budgets, pending summaries and immutable replay receipts transfer in the fenced account collaboration handoff.",
+    },
+  ),
+  ...entries(["collaboration_personal", "collaboration_artifact_bindings"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "portable",
+    secondary_reference_fields: {
+      project_id:
+        "Project-owned resource identity; not an authorization grant.",
+    },
+    notes:
+      "Private names, collection, attention and Library compatibility bindings move via the fenced account collaboration handoff. Project membership and metadata leases are rebuilt, never copied as grants.",
+  }),
+  ...entries(
+    [
+      "collaboration_access",
+      "collaboration_index",
+      "collaboration_participant_index",
+    ],
+    {
+      ownership: "projection",
+      authority: "account_id",
+      portability: "rebuildable",
+      secondary_reference_fields: {
+        project_id: "Project owner provides fresh membership and metadata.",
+      },
+      notes:
+        "Account-home discovery metadata with expiring owner membership leases. Invalidate on rehome or removal; never copy as an access grant.",
+      rebuild:
+        "Collaborators maintenance refreshes bounded project metadata pages from current owners.",
+    },
+  ),
+  ...entries(["collaboration_discovery"], {
+    ownership: "projection",
+    authority: "project_id",
+    portability: "rebuildable",
+    notes:
+      "Bounded metadata-only census telemetry from the current authorized project host; never an access grant or source identity.",
+    rebuild:
+      "The current host republishes its persisted census under the new project owner; missing or stale reports remain pending/unavailable.",
+  }),
+  ...entries(["collaboration_account_state"], {
+    ownership: "projection",
+    authority: "account_id",
+    portability: "rebuildable",
+    notes:
+      "Account-home durable page invalidation revision, not personal state or authorization.",
+    rebuild:
+      "Discard old bounded revision tokens and resnapshot on the new account home.",
+  }),
+  ...entries(["collaboration_maintenance"], {
+    ownership: "ephemeral",
+    authority: "local",
+    portability: "rebuildable",
+    notes:
+      "Local bounded index maintenance continuation; not a resource identity or authorization record.",
+  }),
   ...entries(
     [
       "account_funding_authorities",
@@ -88,6 +293,19 @@ export const TABLE_OWNERSHIP = {
         "Seed-authoritative sponsorship budgets, grants, reservations, events, attributions, and personal funding consents. Account rehome changes routing metadata but never moves or duplicates this financial state.",
     },
   ),
+  ...entries(["account_usernames", "account_username_release_log"], {
+    ownership: "seed-global",
+    authority: "seed",
+    portability: "stable",
+    secondary_reference_fields: {
+      account_id:
+        "Username identity owner, not account-home placement authority.",
+      owner_account_id:
+        "Released username owner, not account-home placement authority.",
+    },
+    notes:
+      "Global username reservations, current names, redirects, and transactional release audits. All operations route to the seed; account rehome must not move or delete this state.",
+  }),
   ...entries(["compute_funding_exposure_policy"], {
     ownership: "stable-bay",
     authority: "bay_id",
@@ -795,6 +1013,7 @@ function adHocEntries(
 }
 
 export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
+  ...PEOPLE_TABLE_OWNERSHIP,
   ...adHocEntries(["api_key_action_requests"], {
     ownership: "account-home",
     authority: "account_id",
@@ -856,6 +1075,22 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
     notes:
       "Bay-local source/destination handoff journal and fencing history. Each side retains its own durable operation state; the account's financial snapshot is transferred through this protocol rather than copying the coordinator journal.",
   }),
+  ...adHocEntries(
+    ["account_collaboration_handoffs", "account_collaboration_rehome_pages"],
+    {
+      ownership: "stable-bay",
+      authority: "local",
+      portability: "stable",
+      source: "account collaboration rehome coordinator bootstrap",
+      migrate_to_schema: true,
+      secondary_reference_fields: {
+        account_id:
+          "Account being moved; bay-local transfer receipts remain at each endpoint.",
+      },
+      notes:
+        "Immutable bounded snapshot pages and durable source/destination fences. Payloads are discarded after retirement/activation; hashes retain replay protection.",
+    },
+  ),
   ...adHocEntries(["course_funding_approval_intents"], {
     ownership: "account-home",
     authority: "payer_account_id",
@@ -1145,6 +1380,8 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
       "long_running_operations",
       "parallel_ops_limits",
       "project_rehome_operations",
+      "project_collaboration_rehome_transfers",
+      "project_collaboration_rehome_pages",
     ],
     {
       ownership: "stable-bay",
@@ -1224,6 +1461,109 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
     },
   ),
 
+  ...adHocEntries(
+    [
+      "collaboration_demand",
+      "collaboration_demand_activation",
+      "collaboration_project_demand",
+    ],
+    {
+      ownership: "account-home",
+      authority: "account_id",
+      portability: "rebuildable",
+      source: "database/postgres/collaborators/collaborators-demand.ts",
+      migrate_to_schema: true,
+      notes:
+        "Short-lived view scheduling leases, never access grants or canonical user state. Home routing and account rehome fences guard admission.",
+      rebuild:
+        "Consumers reacquire bounded interest at the current home after expiry or rehome; old-home leases may expire without transfer.",
+    },
+  ),
+
+  ...adHocEntries(
+    [
+      "collaboration_scan_jobs",
+      "collaboration_scan_receipts",
+      "collaboration_scan_budget",
+    ],
+    {
+      ownership: "project-owning",
+      authority: "project_id",
+      portability: "unsupported",
+      source: "database/postgres/collaborators/collaborators-scan.ts",
+      migrate_to_schema: true,
+      notes:
+        "Durable Scan admission receipts and queued work. Explicit prototype installation only; project rehome is guarded until transfer is implemented, not discarded as view cache.",
+    },
+  ),
+
+  ...adHocEntries(
+    [
+      "collaboration_scan_batch_accounts",
+      "collaboration_scan_batch_requests",
+      "collaboration_scan_batch_children",
+    ],
+    {
+      ownership: "account-home",
+      authority: "account_id",
+      portability: "unsupported",
+      source: "server/collaborators/scan-batch.ts",
+      migrate_to_schema: true,
+      notes:
+        "Durable account Scan admission, preflight reservation and child tracking. Child rows are owned by the account-home LRO referenced by op_id; project_id is a target reference. Rehome is guarded while this state exists.",
+    },
+  ),
+
+  ...adHocEntries(["collaboration_revision_interests"], {
+    ownership: "project-owning",
+    authority: "project_id",
+    portability: "rebuildable",
+    source:
+      "database/postgres/collaborators/collaborators-revision-interest.ts",
+    migrate_to_schema: true,
+    rebuild:
+      "Active homes register current owner subscriptions under their existing demand leases.",
+    notes:
+      "Expiring project/home-bay scheduling hints, never access grants. Rebuilt by active homes against the new owner and catalog generation after rehome.",
+  }),
+
+  ...adHocEntries(["collaboration_revision_outbox"], {
+    ownership: "project-owning",
+    authority: "project_id",
+    portability: "rebuildable",
+    source: "database/postgres/collaborators/collaborators-revision-outbox.ts",
+    migrate_to_schema: true,
+    rebuild:
+      "Catalog activation installs a new generation and transactionally enqueues its revision.",
+    notes:
+      "Coalesced catalog invalidation intent. Disabling delivery retains capture; project rehome creates fresh intent from the transferred catalog and new generation.",
+  }),
+
+  ...adHocEntries(["collaboration_revision_receivers"], {
+    ownership: "ephemeral",
+    authority: "local",
+    portability: "rebuildable",
+    source:
+      "database/postgres/collaborators/collaborators-revision-receiver.ts",
+    migrate_to_schema: true,
+    notes:
+      "Shared home-bay wakeup state, never metadata authority or access grants. Rebuilt from active demand and current owner registration.",
+    rebuild:
+      "Re-arm from current demand and owner registration, requiring catalog catch-up even if hints were lost. No identity, personal state or notification obligation is stored here.",
+  }),
+
+  ...adHocEntries(
+    ["collaboration_scan_actor_budget", "collaboration_scan_actor_receipts"],
+    {
+      ownership: "account-home",
+      authority: "account_id",
+      portability: "unsupported",
+      source: "database/postgres/collaborators/collaborators-scan-actor.ts",
+      migrate_to_schema: true,
+      notes:
+        "Explicit prototype actor-wide Scan reservations. Rehome is guarded until durable budget/receipt transfer is implemented.",
+    },
+  ),
   ...adHocEntries(["membership_trial_claims"], {
     ownership: "seed-global",
     authority: "seed",

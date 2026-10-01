@@ -81,6 +81,8 @@ export type SiteSettingsKeys =
   | "cookie_banner_text"
   | "openai_enabled"
   | "agent_openai_codex_enabled"
+  | "collaborators_enabled"
+  | "people_scan_enabled"
   | "codex_notification_toast_enabled"
   | "codex_notification_browser_enabled"
   | "google_vertexai_enabled"
@@ -1507,6 +1509,26 @@ export const site_settings_conf: SiteSettings = {
     tags: ["OpenAI", "AI"],
     group: "AI & Agents",
     subgroup: "OpenAI",
+  },
+  people_scan_enabled: {
+    name: "Enable Manual People Scan",
+    desc: "Allow people to explicitly scan selected project storage for collaboration resources. Disabling new scans retains existing progress and cancellation. Normal indexing continues independently.",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["Conat"],
+    group: "AI & Agents",
+    subgroup: "Collaboration",
+  },
+  collaborators_enabled: {
+    name: "Enable Collaborators Workspace",
+    desc: "Enable the staged human conversations and shared resource discovery workspace. Existing project permissions and execution controls remain unchanged.",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["Conat"],
+    group: "AI & Agents",
+    subgroup: "Collaboration",
   },
   agent_openai_codex_enabled: {
     name: "Enable Codex Agent UI",
