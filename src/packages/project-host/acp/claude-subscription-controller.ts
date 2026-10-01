@@ -226,7 +226,9 @@ export function claudeSubscriptionContainerArgs(options: {
       `${key}=${value}`,
     ]),
     "--rootfs",
-    rootfs,
+    // The shared image cache is immutable. Give OCI setup its own mount-point
+    // layer; --read-only still prevents the controller from writing the rootfs.
+    `${rootfs}:O`,
     "/opt/cocalc/bin/node",
     ...(purpose === "usage"
       ? [
