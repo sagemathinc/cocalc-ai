@@ -18,6 +18,7 @@ import {
   type PersonalStatePatch,
   type PersonalStateRow,
   type SharedWork,
+  type ProjectAgent,
   type AgentCollaboratorAccess,
   MAX_SHARED_WORK_ITEMS,
   assertPeopleStateKind,
@@ -518,6 +519,41 @@ export async function listSharedWork({
       agent_name: row.agent_name,
     })),
   };
+}
+
+// Registered agents created by other people in the given projects, where the
+// viewer is a current owner or collaborator.
+export async function listProjectAgents({
+  viewer_id,
+  project_ids,
+}: {
+  viewer_id: string;
+  project_ids: string[];
+}): Promise<ProjectAgent[]> {
+  if (project_ids.length === 0) return [];
+  const { rows } = await getPool().query(
+    `SELECT a.agent_id, a.project_id, a.name, a.path, a.thread_id,
+            a.created_by, a.created_at, a.collaborator_access
+     FROM agent_identities a
+     JOIN projects p ON p.project_id = a.project_id
+     WHERE a.project_id = ANY($1::uuid[])
+       AND p.deleted IS NOT TRUE
+       AND p.users -> $2::text ->> 'group' IN ('owner', 'collaborator')
+       AND a.created_by <> $2::uuid AND a.disabled_at IS NULL
+     ORDER BY a.created_at DESC
+     LIMIT $3`,
+    [project_ids, viewer_id, MAX_SHARED_WORK_ITEMS],
+  );
+  return rows.map((row) => ({
+    agent_id: row.agent_id,
+    project_id: row.project_id,
+    name: row.name,
+    path: row.path,
+    thread_id: row.thread_id,
+    created_by: row.created_by,
+    collaborator_access: row.collaborator_access === "view" ? "view" : "message",
+    created_at: new Date(row.created_at).valueOf(),
+  }));
 }
 
 // Read an agent's stated collaborator access; any current collaborator may.

@@ -220,3 +220,10 @@ test("personal URLs round-trip and show People while resolving", () => {
   expect(getPageUrlPath(parsed)).toBe("/u/alice/chats/weekly");
   expect(getPageTopTab(parsed)).toBe("people");
 });
+
+test("the Agents page has its own address and keeps the agents tab", () => {
+  const parsed = parsePageTarget("all-agents");
+  expect(parsed).toEqual({ page: "agents", overview: true });
+  expect(getPageUrlPath(parsed)).toBe("/all-agents");
+  expect(getPageTopTab(parsed)).toBe("agents");
+});

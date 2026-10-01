@@ -14,6 +14,7 @@ import {
   mentionKey,
   listPersonalStates,
   listSharedWork,
+  listProjectAgents,
   getAgentAccess,
   setAgentAccess,
   markConversationRead,
@@ -416,4 +417,32 @@ test("shared work: a person's agents and their artifacts in shared projects only
       project_ids: [project_id],
     }),
   ).toEqual({ agents: [], artifacts: [] });
+});
+
+test("project agents: other people's registered agents in the viewer's projects", async () => {
+  const insert = (agent_id: string, created_by: string, name: string) =>
+    getPool().query(
+      `INSERT INTO agent_identities
+         (agent_id, project_id, path, thread_id, name, created_by, created_at)
+       VALUES ($1, $2, $4, 't', $3, $5, NOW())`,
+      [agent_id, project_id, name, `/home/user/${name}.chat`, created_by],
+    );
+  await insert("55555555-5555-4555-8555-555555555555", bob, "bobs");
+  await insert("66666666-6666-4666-8666-666666666666", alice, "mine");
+  const list = () =>
+    listProjectAgents({ viewer_id: alice, project_ids: [project_id] });
+  // The viewer's own agents are not "shared with me".
+  expect((await list()).map((a) => [a.name, a.created_by])).toEqual([
+    ["bobs", bob],
+  ]);
+  await getPool().query(
+    "UPDATE agent_identities SET disabled_at = NOW() WHERE name = 'bobs'",
+  );
+  expect(await list()).toEqual([]);
+  await getPool().query(
+    "UPDATE agent_identities SET disabled_at = NULL WHERE name = 'bobs'",
+  );
+  // Not a collaborator: nothing.
+  await setUsers(project_id, { [bob]: "owner" });
+  expect(await list()).toEqual([]);
 });

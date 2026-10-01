@@ -263,10 +263,13 @@ export class PageActions extends Actions<PageState> {
               page: "agents",
               agent_id: agent_name ?? agent_id,
               library: page.get("library_open"),
+              overview: page.get("agents_overview_open"),
               artifact_project_id: page.get("library_project_id"),
               artifact_entry_id: page.get("library_entry_id"),
             }),
-            page.get("library_open") ? "" : undefined,
+            page.get("library_open") || page.get("agents_overview_open")
+              ? ""
+              : undefined,
           );
         }
         set_window_title(page.get("library_open") ? "Library" : "Agents");

@@ -243,6 +243,7 @@ describe("load_target", () => {
       load_target(target);
       expect(pageActions.setState).toHaveBeenLastCalledWith({
         library_open: false,
+        agents_overview_open: false,
         library_project_id: undefined,
         library_entry_id: undefined,
         active_agent_id: target.split("/")[1],
@@ -250,6 +251,17 @@ describe("load_target", () => {
       });
     },
   );
+
+  it("opens the Agents page without changing the selected agent", () => {
+    load_target("all-agents");
+    expect(pageActions.set_active_tab).toHaveBeenLastCalledWith("agents", true);
+    expect(pageActions.setState).toHaveBeenLastCalledWith({
+      library_open: false,
+      agents_overview_open: true,
+      library_project_id: undefined,
+      library_entry_id: undefined,
+    });
+  });
 
   it.each([
     "library/bad-project",
@@ -261,6 +273,7 @@ describe("load_target", () => {
     expect(projectsActions.load_target).not.toHaveBeenCalled();
     expect(pageActions.setState).toHaveBeenCalledWith({
       library_open: true,
+      agents_overview_open: false,
       library_project_id: target.split("/")[1],
       library_entry_id: target.split("/").slice(2).join("/") || undefined,
     });
@@ -290,6 +303,7 @@ describe("load_target", () => {
     );
     expect(pageActions.setState).toHaveBeenLastCalledWith({
       library_open: true,
+      agents_overview_open: false,
       library_project_id: "project-1",
       library_entry_id: "entry-1",
     });
@@ -314,6 +328,7 @@ describe("load_target", () => {
       window.onpopstate?.(new PopStateEvent("popstate"));
       expect(pageActions.setState).toHaveBeenLastCalledWith({
         library_open: true,
+        agents_overview_open: false,
         library_project_id: target.split("/")[1],
         library_entry_id: target.split("/").slice(2).join("/"),
       });

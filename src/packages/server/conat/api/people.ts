@@ -15,6 +15,7 @@ export const {
   removeConversation,
   markRead,
   listSharedWork,
+  listAgents,
   listInvites,
   getAgentAccess,
   setAgentAccess,

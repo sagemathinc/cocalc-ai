@@ -102,6 +102,11 @@ export interface SharedArtifact {
   agent_name: string;
 }
 
+// Another collaborator's registered agent in a project shared with the viewer.
+export interface ProjectAgent extends SharedAgent {
+  created_by: string;
+}
+
 export interface SharedWork {
   agents: SharedAgent[];
   artifacts: SharedArtifact[];

@@ -9,7 +9,11 @@ import {
   createServiceHandler,
 } from "@cocalc/conat/service/typed";
 import type { Options } from "@cocalc/conat/service/service";
-import type { Conversation, SharedWork } from "@cocalc/util/people";
+import type {
+  Conversation,
+  ProjectAgent,
+  SharedWork,
+} from "@cocalc/util/people";
 import type { PeopleApi } from "@cocalc/conat/hub/api/people";
 import type {
   ProjectCollabInviteRow,
@@ -63,6 +67,10 @@ export interface InterBayPeopleApi {
     person_id: string;
     project_ids: string[];
   }): Promise<SharedWork>;
+  agentsForProjects(opts: {
+    viewer_id: string;
+    project_ids: string[];
+  }): Promise<ProjectAgent[]>;
   // Invites the account sent for projects owned by this bay.
   sentInvites(opts: {
     account_id: string;
@@ -73,6 +81,7 @@ export interface InterBayPeopleApi {
   setAgentAccess: PeopleApi["setAgentAccess"];
   // home
   listSharedWork: PeopleApi["listSharedWork"];
+  listAgents: PeopleApi["listAgents"];
   listInvites: PeopleApi["listInvites"];
   listConversations: PeopleApi["listConversations"];
   markRead: PeopleApi["markRead"];

@@ -57,6 +57,7 @@ import { AgentArtifactBrowser } from "./artifact-browser";
 import { LibraryEntry } from "./library-entry";
 import {
   closedLibraryState,
+  openAgentsOverview,
   libraryConversationHit,
   openLibrary,
 } from "./library-navigation";
@@ -127,6 +128,7 @@ import { WorkspaceSidebarActions } from "./workspace-sidebar-actions";
 import "./workspace-sidebar-row.css";
 import "./new-agent-composer.css";
 import { AgentOrganizationControls } from "./organization-controls";
+import { AgentsOverview } from "./agents-overview";
 import { AgentsSidebarResizeHandle } from "./sidebar-resize-handle";
 import {
   DragHandle,
@@ -3127,17 +3129,28 @@ export function MyAgentsWorkspacePage({
     active && !contentOpen,
     accountId,
   );
-  const libraryOpen = !!useTypedRedux("page", "library_open") && !contentOpen;
+  const overviewOpen =
+    !!useTypedRedux("page", "agents_overview_open") && !contentOpen;
+  const artifactLibraryOpen =
+    !!useTypedRedux("page", "library_open") && !contentOpen && !overviewOpen;
+  // A full-pane page (the Library or the Agents page) covers the agent
+  // workspace; both keep the selected agent for when you return.
+  const libraryOpen = artifactLibraryOpen || overviewOpen;
   const libraryProjectId = useTypedRedux("page", "library_project_id");
   const libraryEntryId = useTypedRedux("page", "library_entry_id");
   const { names: artifactNames } = useArtifactNames();
   const artifactOpen =
-    libraryOpen && (libraryProjectId != null || libraryEntryId != null);
+    artifactLibraryOpen && (libraryProjectId != null || libraryEntryId != null);
   const libraryButton = useRef<HTMLButtonElement>(null);
   const workspaceContent = useRef<HTMLElement>(null);
   function showLibrary() {
     searchNavigation.current++;
     openLibrary();
+    setMobileList(false);
+  }
+  function showAgentsOverview() {
+    searchNavigation.current++;
+    openAgentsOverview();
     setMobileList(false);
   }
   const activeAgentId = useTypedRedux("page", "active_agent_id") as
@@ -3274,13 +3287,15 @@ export function MyAgentsWorkspacePage({
   useEffect(() => {
     if (!active || contentOpen) return;
     set_window_title(
-      libraryOpen
-        ? "Library"
-        : creating
-          ? "New Agent"
-          : selected
-            ? `@${selected.name} - Agents`
-            : "Agents",
+      overviewOpen
+        ? "Agents"
+        : libraryOpen
+          ? "Library"
+          : creating
+            ? "New Agent"
+            : selected
+              ? `@${selected.name} - Agents`
+              : "Agents",
     );
   }, [active, contentOpen, libraryOpen, creating, selected?.name]);
   const creatingSourceAgent = agentFirstRunStarted(accountId)
@@ -3729,6 +3744,58 @@ export function MyAgentsWorkspacePage({
     });
   }
 
+  // The sidebar's per-agent menu, shared with the Agents page.
+  function runAgentAction(agent: NamedAgent, key: string) {
+    const id = agent.endpoint.agent_id;
+    if (key === "copy") openCopyAgent(agent);
+    else if (key === "fresh") startFresh(agent);
+    else if (key === "access") setAccessAgent(agent);
+    else if (key === "remove") confirmRetireAgent(agent);
+    else if (key === "artifacts")
+      void openLibrary(undefined, undefined, agent.name);
+    else if (key === "hide" || key === "show")
+      agentOrganization.setHidden(id, key === "hide");
+  }
+
+  function overviewActions(agent: NamedAgent) {
+    const hidden = agentOrganization.groups.hidden.includes(agent);
+    return [
+      { key: "artifacts", label: "Show artifacts" },
+      { key: "copy", label: "Copy agent…" },
+      { key: "fresh", label: "Start fresh conversation…" },
+      { key: "access", label: "Collaborator access…" },
+      hidden
+        ? { key: "show", label: "Show in sidebar" }
+        : { key: "hide", label: "Hide from sidebar" },
+      { key: "remove", label: "Remove from Agents…" },
+    ].map(({ key, label }) => ({
+      key,
+      label,
+      onClick: () => runAgentAction(agent, key),
+    }));
+  }
+
+  function renderAgentBadge(agent: NamedAgent) {
+    const appearance = agentAppearances.get(agent.endpoint.agent_id);
+    const theme = resolveNamedAgentTheme(agent, appearance);
+    return (
+      <AgentRunningIndicator agent={agent}>
+        <ThreadBadge
+          icon={appearance?.thread_icon}
+          color={theme.primaryColor}
+          accentColor={theme.accentColor}
+          image={appearance?.thread_image}
+          fallbackIcon={
+            theme.primaryColor || theme.accentColor || appearance?.thread_image
+              ? undefined
+              : "robot"
+          }
+          size={30}
+        />
+      </AgentRunningIndicator>
+    );
+  }
+
   function renderAgentRow(
     agent: NamedAgent,
     pinned: boolean,
@@ -3801,22 +3868,7 @@ export function MyAgentsWorkspacePage({
               width: "100%",
             }}
           >
-            <AgentRunningIndicator agent={agent}>
-              <ThreadBadge
-                icon={appearance?.thread_icon}
-                color={theme.primaryColor}
-                accentColor={theme.accentColor}
-                image={appearance?.thread_image}
-                fallbackIcon={
-                  theme.primaryColor ||
-                  theme.accentColor ||
-                  appearance?.thread_image
-                    ? undefined
-                    : "robot"
-                }
-                size={30}
-              />
-            </AgentRunningIndicator>
+            {renderAgentBadge(agent)}
             <span style={{ minWidth: 0, flex: 1 }}>
               <Text strong ellipsis style={{ display: "block" }}>
                 {theme.title}
@@ -3884,23 +3936,7 @@ export function MyAgentsWorkspacePage({
             ],
             onClick: ({ key, domEvent }) => {
               domEvent.stopPropagation();
-              if (key === "copy") {
-                openCopyAgent(agent);
-                return;
-              }
-              if (key === "fresh") {
-                startFresh(agent);
-                return;
-              }
-              if (key === "access") {
-                setAccessAgent(agent);
-                return;
-              }
-              if (key === "remove") {
-                confirmRetireAgent(agent);
-                return;
-              }
-              agentOrganization.setHidden(id, !hidden);
+              runAgentAction(agent, key);
             },
           }}
         >
@@ -4092,16 +4128,31 @@ export function MyAgentsWorkspacePage({
               <>
                 <Space direction="vertical" size={10} style={{ width: "100%" }}>
                   <Button
+                    block
+                    type="text"
+                    style={{
+                      justifyContent: "flex-start",
+                      background: overviewOpen ? UI_COLORS.selected : undefined,
+                    }}
+                    icon={<Icon name="robot" />}
+                    aria-current={overviewOpen ? "page" : undefined}
+                    onClick={showAgentsOverview}
+                  >
+                    All agents
+                  </Button>
+                  <Button
                     ref={libraryButton}
                     block
                     type="text"
                     style={{
                       justifyContent: "flex-start",
-                      background: libraryOpen ? UI_COLORS.selected : undefined,
+                      background: artifactLibraryOpen
+                        ? UI_COLORS.selected
+                        : undefined,
                     }}
                     icon={<Icon name="files" />}
-                    aria-pressed={libraryOpen}
-                    aria-current={libraryOpen ? "page" : undefined}
+                    aria-pressed={artifactLibraryOpen}
+                    aria-current={artifactLibraryOpen ? "page" : undefined}
                     onClick={showLibrary}
                   >
                     Library
@@ -4421,11 +4472,13 @@ export function MyAgentsWorkspacePage({
         tabIndex={-1}
         aria-label={
           contentLabel ??
-          (libraryOpen
-            ? "Artifact Library"
-            : selected
-              ? `Agent @${selected.name}`
-              : "Agent workspace")
+          (overviewOpen
+            ? "All agents"
+            : libraryOpen
+              ? "Artifact Library"
+              : selected
+                ? `Agent @${selected.name}`
+                : "Agent workspace")
         }
         style={{
           flex: 1,
@@ -4488,13 +4541,42 @@ export function MyAgentsWorkspacePage({
             activeAgent={selected}
             active={
               active &&
-              libraryOpen &&
+              artifactLibraryOpen &&
               !artifactOpen &&
               (!isNarrow || !mobileList)
             }
             navigation={libraryNavigationControl()}
             onSelect={openLibraryHit}
             onShowConversation={(result) => openLibraryHit(result, true)}
+          />
+        )}
+        {accountId && (
+          <AgentsOverview
+            active={active && overviewOpen && (!isNarrow || !mobileList)}
+            navigation={libraryNavigationControl()}
+            mine={[
+              ...agentOrganization.groups.pinned,
+              ...agentOrganization.groups.unpinned,
+              ...agentOrganization.groups.hidden,
+            ]}
+            hiddenIds={agentOrganization.groups.hidden.map(
+              ({ endpoint }) => endpoint.agent_id,
+            )}
+            minePins={agentOrganization.groups.pinned.map(
+              ({ endpoint }) => endpoint.agent_id,
+            )}
+            lastOpened={agentOrganization.organization.lastOpened}
+            agentTitle={(agent) =>
+              resolveNamedAgentTheme(
+                agent,
+                agentAppearances.get(agent.endpoint.agent_id),
+              ).title
+            }
+            renderBadge={renderAgentBadge}
+            mineActions={overviewActions}
+            onPinMine={agentOrganization.setPinned}
+            onMoveMine={agentOrganization.moveToIndex}
+            onOpenMine={(agent) => selectAgent(agent)}
           />
         )}
         {active && artifactOpen && accountId && (!isNarrow || !mobileList) && (

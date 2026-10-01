@@ -23,6 +23,7 @@ import {
   mentionKey,
   listPersonalStates,
   listSharedWork,
+  listProjectAgents,
   getAgentAccess,
   setAgentAccess,
   markConversationRead,
@@ -48,6 +49,7 @@ import {
   type ListedConversation,
   type PersonalState,
   type SharedWork,
+  type ProjectAgent,
 } from "@cocalc/util/people";
 
 const logger = getLogger("server:people");
@@ -180,6 +182,14 @@ export const peopleControl: InterBayPeopleApi = {
     return await listSharedWork({
       viewer_id,
       person_id,
+      project_ids: await ownedHere(project_ids),
+    });
+  },
+
+  async agentsForProjects({ viewer_id, project_ids }) {
+    requireUuid(viewer_id, "viewer_id");
+    return await listProjectAgents({
+      viewer_id,
       project_ids: await ownedHere(project_ids),
     });
   },
@@ -357,6 +367,27 @@ export const peopleControl: InterBayPeopleApi = {
     return { ...work, unavailable_bays };
   },
 
+  async listAgents({ account_id }) {
+    await assertHome(account_id!);
+    const byBay = await projectsByBay(account_id!);
+    const results = await Promise.allSettled(
+      [...byBay].map(([bay_id, project_ids]) =>
+        (local(bay_id) ? peopleControl : remote(bay_id)).agentsForProjects({
+          viewer_id: account_id!,
+          project_ids,
+        }),
+      ),
+    );
+    const agents: ProjectAgent[] = [];
+    let unavailable_bays = 0;
+    for (const result of results) {
+      if (result.status === "fulfilled") agents.push(...result.value);
+      else unavailable_bays += 1;
+    }
+    agents.sort((a, b) => b.created_at - a.created_at);
+    return { agents, unavailable_bays };
+  },
+
   async setState({ account_id, kind, target_id, project_id, patch }) {
     await assertHome(account_id!);
     assertPeopleStateKind(kind);
@@ -443,6 +474,10 @@ export const peopleApi: PeopleApi = {
 
   async listSharedWork(opts) {
     return await (await home(opts.account_id!)).listSharedWork(opts);
+  },
+
+  async listAgents(opts) {
+    return await (await home(opts.account_id!)).listAgents(opts);
   },
 
   async getAgentAccess(opts) {

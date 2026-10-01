@@ -16,6 +16,7 @@ import { Icon, isIconName } from "@cocalc/frontend/components";
 import { blobImageUrl } from "@cocalc/frontend/components/theme-image-url";
 import type { ForeignArtifactTarget } from "@cocalc/frontend/frame-editors/chat-editor/foreign-artifact-source";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { AgentSearchHit } from "./search-runner";
@@ -80,6 +81,13 @@ function AccountArtifactBrowser({
   selectedArtifactIdentity,
 }: Props) {
   const [query, setQuery] = useState("");
+  // Another page asked to open the Library on a search (e.g. an agent's name).
+  const requestedQuery = useTypedRedux("page", "library_query");
+  useEffect(() => {
+    if (requestedQuery == null) return;
+    setQuery(requestedQuery);
+    redux.getActions("page").setState({ library_query: undefined });
+  }, [requestedQuery]);
   const [project, setProject] = useState<string>();
   const [sort, setSort] = useState("recent");
   const [view, setView] = useState<"list" | "grid">(() =>

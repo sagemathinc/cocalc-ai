@@ -28,6 +28,9 @@ export interface PageState {
   active_agent_id?: string;
   active_agent_name?: string;
   library_open?: boolean;
+  agents_overview_open?: boolean;
+  // Search to apply when the Library next opens.
+  library_query?: string;
   library_project_id?: string;
   library_entry_id?: string;
   last_project_tab?: string; // project context retained while viewing global pages
@@ -82,6 +85,7 @@ export function init_store() {
   const DEFAULT_STATE: PageState = {
     active_top_tab: getPageTopTab(parsed) as TopTab,
     library_open: parsed.page === "agents" && parsed.library === true,
+    agents_overview_open: parsed.page === "agents" && parsed.overview === true,
     library_project_id:
       parsed.page === "agents" ? parsed.artifact_project_id : undefined,
     library_entry_id:

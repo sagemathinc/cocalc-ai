@@ -10,6 +10,7 @@ import type {
   PersonalStatePatch,
   PersonalStateRow,
   SharedWork,
+  ProjectAgent,
   AgentCollaboratorAccess,
 } from "@cocalc/util/people";
 import type {
@@ -70,6 +71,12 @@ export interface PeopleApi {
     person_id: string;
   }): Promise<SharedWork & { unavailable_bays: number }>;
 
+  // Registered agents other people created in projects shared with the
+  // caller, newest first.
+  listAgents(opts: {
+    account_id?: string;
+  }): Promise<{ agents: ProjectAgent[]; unavailable_bays: number }>;
+
   // Invites this account sent (from every bay that owns one of its projects)
   // or received (including the cross-bay inbox), newest first.
   listInvites(opts: {
@@ -120,6 +127,7 @@ export const people = {
   removeConversation: authFirstRequireAccount,
   markRead: authFirstRequireAccount,
   listSharedWork: authFirstRequireAccount,
+  listAgents: authFirstRequireAccount,
   listInvites: authFirstRequireAccount,
   getAgentAccess: authFirstRequireAccount,
   setAgentAccess: authFirstRequireAccount,

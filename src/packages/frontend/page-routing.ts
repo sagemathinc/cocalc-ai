@@ -40,6 +40,8 @@ export type ParsedPageTarget =
       page: "agents";
       agent_id?: string;
       library?: boolean;
+      // The Agents page (all your agents and shared ones).
+      overview?: boolean;
       artifact_project_id?: string;
       artifact_entry_id?: string;
     }
@@ -92,6 +94,8 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
   const cleanTarget = normalizedTarget.split(/[?#]/)[0];
   const segments = cleanTarget.split("/");
   switch (segments[0]) {
+    case "all-agents":
+      return { page: "agents", overview: true };
     case "library":
       return {
         page: "agents",
@@ -201,6 +205,7 @@ export function getInitialAccountPageState(parsed: ParsedPageTarget):
 export function getPageTargetPath(parsed: ParsedPageTarget): string {
   switch (parsed.page) {
     case "agents":
+      if (parsed.overview) return "all-agents";
       if (parsed.library) {
         if (parsed.artifact_project_id == null) return "library";
         const suffix =

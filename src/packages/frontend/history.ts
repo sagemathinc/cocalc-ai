@@ -242,10 +242,11 @@ export function load_target(
     case "agents":
       redux.getActions("page").setState({
         library_open: parsed.library === true,
+        agents_overview_open: parsed.overview === true,
         library_project_id: parsed.artifact_project_id,
         library_entry_id: parsed.artifact_entry_id,
         // Library overlays the workspace; keep its selected conversation.
-        ...(!parsed.library
+        ...(!parsed.library && !parsed.overview
           ? {
               active_agent_id: parsed.agent_id,
               active_agent_name:
