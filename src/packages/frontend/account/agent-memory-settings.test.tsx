@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import {
   AgentMemoryButton,
   AgentMemoryPanel,
@@ -95,4 +95,25 @@ test("the settings-modal button shows whether memory is on", async () => {
   expect(
     await screen.findByRole("button", { name: /Memory: on · 2 notes/ }),
   ).toBeTruthy();
+});
+
+test("offers a reset when saved memory cannot be read", async () => {
+  manageAgentMemory.mockImplementation(async (req: any) => {
+    if (req.op === "status")
+      throw new Error("stored agent memory is malformed");
+    return {};
+  });
+  render(<AgentMemoryPanel />);
+  expect(
+    await screen.findByText(/stored agent memory is malformed/),
+  ).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Reset memory" }));
+  const dialog = (await screen.findAllByRole("dialog")).at(-1)!;
+  expect(
+    within(dialog).getAllByText("Reset agent memory?").length,
+  ).toBeGreaterThan(0);
+  await act(async () => {
+    fireEvent.click(within(dialog).getByRole("button", { name: "Reset" }));
+  });
+  expect(manageAgentMemory).toHaveBeenCalledWith({ op: "delete-all" });
 });

@@ -26,16 +26,17 @@ export function AgentMemoryDisclosure() {
   return (
     <div>
       <p>
-        When on, your agents (Claude and Codex) can save short notes that they
-        see again in future sessions, in all of your projects.
+        When on, your agents can save short notes that they see again in future
+        sessions, in all of your projects. This includes Claude and Codex, and
+        any other agent runtime you set up that can run the CoCalc CLI.
       </p>
       <ul style={{ paddingLeft: 20 }}>
         <li>
           <b>Your memory follows you into every project.</b> A note saved while
           working in one project can appear in sessions in your other projects,
-          and collaborators on those projects can see it in agent activity and
-          logs. Do not use memory for anything you would not share with
-          collaborators on all your projects.
+          and collaborators on those projects can see it in agent activity, logs
+          and conversations. Do not use memory for anything you would not share
+          with collaborators on all your projects.
         </li>
         <li>
           <b>Agents decide what to save.</b> Content an agent reads (files, web
@@ -45,24 +46,27 @@ export function AgentMemoryDisclosure() {
           notes at any time.
         </li>
         <li>
-          <b>It goes where your agents go.</b> When one of your agents sends a
-          message that starts a turn in another agent's thread (for example a
-          collaborator's agent in a shared project), that turn runs as you and
-          uses your memory there. Other people's agents never get your memory:
-          turns they start run as them, with their own memory.
+          <b>It goes where your agents go.</b> When one of your agents starts a
+          turn in another agent's thread in a project you both belong to, that
+          turn runs as you and uses your memory there. Other people's agents
+          read and save their own memory, not yours, but they can see anything
+          from your memory that already appeared in projects or conversations
+          you share with them.
         </li>
         <li>
           <b>Never store secrets.</b> Saves that look like credentials (keys,
           tokens, passwords) are rejected, but detection is not complete.
         </li>
         <li>
-          <b>Limits.</b> At most 200 notes and 400 KB. Notes are rate-limited
-          per account.
+          <b>Limits.</b> At most 200 notes and 400 KB. Agent use of memory is
+          rate-limited per account.
         </li>
       </ul>
       <p style={{ marginBottom: 0 }}>
-        Turning memory off stops it immediately. Deleting your notes removes
-        them permanently.
+        Turning memory off stops new reads and saves right away; notes already
+        loaded into a turn that is running stay in that turn. Deleting notes
+        removes them from your memory, but not copies that already appeared in
+        project chats, logs or backups.
       </p>
     </div>
   );
@@ -151,7 +155,37 @@ export function AgentMemoryPanel() {
         Agent memory lets Claude and Codex keep short notes across sessions and
         projects. It is off by default.
       </Typography.Paragraph>
-      {error && <Alert type="warning" showIcon title={error} />}
+      {error && (
+        <Alert
+          type="warning"
+          showIcon
+          title={error}
+          action={
+            <Button
+              size="small"
+              danger
+              disabled={busy}
+              onClick={() =>
+                Modal.confirm({
+                  title: "Reset agent memory?",
+                  content:
+                    "Your saved memory could not be read. Resetting deletes all notes and turns memory off.",
+                  okText: "Reset",
+                  okButtonProps: { danger: true },
+                  onOk: () =>
+                    act(() =>
+                      personalAgentApi().manageAgentMemory({
+                        op: "delete-all",
+                      }),
+                    ),
+                })
+              }
+            >
+              Reset memory
+            </Button>
+          }
+        />
+      )}
       {actionError && <Alert type="error" showIcon title={actionError} />}
       {status && (
         <Space wrap>

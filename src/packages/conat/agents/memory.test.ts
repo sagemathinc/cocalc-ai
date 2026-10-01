@@ -102,3 +102,71 @@ test("requests reject unknown fields and operations", () => {
     validateAgentMemoryRequest({ action: "memory", op: "enable" }),
   ).toThrow(/unsupported/);
 });
+
+test("migrates withdrawn v1 records as disabled, keeping only valid notes", () => {
+  const legacy = JSON.stringify({
+    version: 1,
+    entries: [
+      {
+        name: "deploy",
+        description: "How to deploy",
+        body: "Use a terminal.",
+        updated_at: "2026-10-01T06:00:00.000Z",
+      },
+      {
+        name: "deploy",
+        description: "dup",
+        body: "dup",
+        updated_at: "2026-10-01T06:00:00.000Z",
+      },
+      { name: "Bad Name", description: "x", body: "y", updated_at: "" },
+      {
+        name: "token",
+        description: "t",
+        body: "ghp_" + "a".repeat(36),
+        updated_at: "",
+      },
+    ],
+  });
+  expect(parseAgentMemoryRecord(legacy)).toEqual({
+    version: 1,
+    enabled: false,
+    notes: [
+      {
+        name: "deploy",
+        description: "How to deploy",
+        body: "Use a terminal.",
+        updated_at: "2026-10-01T06:00:00.000Z",
+      },
+    ],
+  });
+});
+
+test("rejects line and paragraph separators", () => {
+  const lineSeparator = String.fromCharCode(0x2028);
+  const paragraphSeparator = String.fromCharCode(0x2029);
+  expect(() =>
+    validateMemoryWrite({
+      name: "ok",
+      description: `a${lineSeparator}b`,
+      body: "b",
+    }),
+  ).toThrow(/one line/);
+  expect(() =>
+    validateMemoryWrite({
+      name: "ok",
+      description: "d",
+      body: `a${paragraphSeparator}b`,
+    }),
+  ).toThrow(/control/);
+});
+
+test("the index never exceeds its byte cap, truncation marker included", () => {
+  const notes = Array.from({ length: 2000 }, (_, i) => ({
+    ...note(`n-${String(i).padStart(4, "0")}`),
+    description: "x".repeat(150),
+  }));
+  expect(
+    new TextEncoder().encode(agentMemoryIndex(notes)).length,
+  ).toBeLessThanOrEqual(AGENT_MEMORY_LIMITS.maxIndexBytes);
+});

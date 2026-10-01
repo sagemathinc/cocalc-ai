@@ -51,8 +51,10 @@ export type AgentMemoryStatus = {
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 // Allow tab and newline in bodies; reject other C0/C1 controls and bidi
 // overrides that can hide text.
-const BODY_CONTROL_RE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f‪-‮⁦-⁩]/;
-const LINE_CONTROL_RE = /[\u0000-\u001f\u007f-\u009f‪-‮⁦-⁩]/;
+const BODY_CONTROL_RE =
+  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
+const LINE_CONTROL_RE =
+  /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
 
 function bytes(text: string): number {
   return new TextEncoder().encode(text).length;
@@ -163,6 +165,33 @@ export function parseAgentMemoryRecord(
   } catch {
     throw new Error("stored agent memory is unreadable");
   }
+  // Records written by the withdrawn v1 ({version:1, entries}) migrate as
+  // disabled, keeping only entries that pass today's validation.
+  if (
+    value?.version === 1 &&
+    value.enabled === undefined &&
+    value.notes === undefined &&
+    Array.isArray(value.entries)
+  ) {
+    const seen = new Set<string>();
+    const notes: AgentMemoryNote[] = [];
+    for (const entry of value.entries.slice(0, AGENT_MEMORY_LIMITS.maxNotes)) {
+      try {
+        const valid = validateMemoryWrite(entry);
+        if (seen.has(valid.name)) continue;
+        seen.add(valid.name);
+        notes.push({
+          ...valid,
+          updated_at: Number.isFinite(Date.parse(entry?.updated_at))
+            ? entry.updated_at
+            : new Date(0).toISOString(),
+        });
+      } catch {
+        // Drop entries that are not valid notes today.
+      }
+    }
+    return { version: 1, enabled: false, notes };
+  }
   if (
     value?.version !== 1 ||
     typeof value.enabled !== "boolean" ||
@@ -193,7 +222,8 @@ export function agentMemoryIndex(notes: readonly AgentMemoryNote[]): string {
   for (const [i, note] of sorted.entries()) {
     const line = `- ${note.name}: ${note.description}`;
     const lineBytes = bytes(line) + 1;
-    if (size + lineBytes > AGENT_MEMORY_LIMITS.maxIndexBytes) {
+    // Reserve room for the truncation marker so the index never exceeds the cap.
+    if (size + lineBytes > AGENT_MEMORY_LIMITS.maxIndexBytes - 64) {
       lines.push(`- (${sorted.length - i} more; list them to see all)`);
       break;
     }

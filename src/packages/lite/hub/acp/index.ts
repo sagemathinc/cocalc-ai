@@ -8080,11 +8080,12 @@ async function executeAcpRequest({
     try {
       await currentAgent.evaluate({
         ...request,
-        // Always host-computed for this turn's account; any wire value is dropped.
-        agent_memory_context: await loadAgentMemoryContext(
-          projectId,
-          request.account_id,
-        ),
+        // Host-computed for this turn's account and only for native Codex and
+        // the qualified Claude harness; any wire value is dropped.
+        agent_memory_context:
+          !harness || request.runtime?.profile.id === "claude-code"
+            ? await loadAgentMemoryContext(projectId, request.account_id)
+            : undefined,
         mentionReferences,
         readPendingGoal: harness ? undefined : chatWriter?.readPendingGoal,
         prompt: artifactReferences.length
