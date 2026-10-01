@@ -159,7 +159,7 @@ export class ClaudeSubscriptionLoginService {
       reserveReconnect?: (options: {
         projectId: string;
         accountId: string;
-        credentialId: string;
+        credentialId?: string;
         holder: string;
       }) => Promise<() => Promise<void>>;
       existingCredential?: (options: {
@@ -214,19 +214,21 @@ export class ClaudeSubscriptionLoginService {
     const id = randomUUID();
     let child: ChildProcess;
     let releaseOwnership: (() => Promise<void>) | undefined;
-    const recovery: ClaudeLoginRecovery | undefined =
-      credentialId && this.options.reserveReconnect
-        ? {
-            projectId,
-            accountId,
-            credentialId,
-            holder: id,
-            codeSubmitted: false,
-            published: false,
-          }
-        : undefined;
+    const recovery: ClaudeLoginRecovery | undefined = this.options
+      .reserveReconnect
+      ? {
+          projectId,
+          accountId,
+          credentialId,
+          holder: id,
+          codeSubmitted: false,
+          published: false,
+        }
+      : undefined;
     try {
-      await writeFile(join(home, CLAUDE_LOGIN_OWNER), await harnessOwner(), {
+      const runtimeId = await harnessOwner();
+      if (recovery) recovery.runtimeId = runtimeId;
+      await writeFile(join(home, CLAUDE_LOGIN_OWNER), runtimeId, {
         mode: 0o600,
       });
       if (recovery)
@@ -235,13 +237,12 @@ export class ClaudeSubscriptionLoginService {
           JSON.stringify(recovery),
           { mode: 0o600 },
         );
-      if (credentialId)
-        releaseOwnership = await this.options.reserveReconnect?.({
-          projectId,
-          accountId,
-          credentialId,
-          holder: id,
-        });
+      releaseOwnership = await this.options.reserveReconnect?.({
+        projectId,
+        accountId,
+        credentialId,
+        holder: id,
+      });
       if (this.closed) throw Error("Claude sign-in service is closed");
       child = spawn(
         this.options.cliPath,
@@ -376,6 +377,8 @@ export class ClaudeSubscriptionLoginService {
         },
       );
       const { plan, identity } = verifiedClaudeSubscriptionStatus(stdout);
+      // Snapshot only after all login/status descendants have stopped rotating files.
+      await killClaudeLoginProcesses(session.home);
       if (this.closed) throw Error("Claude sign-in service is closed");
       const credentialId = await this.options.publish({
         projectId: session.projectId,
@@ -383,14 +386,8 @@ export class ClaudeSubscriptionLoginService {
         home: session.home,
         identity,
         plan,
-        ...(session.reconnectCredentialId
-          ? {
-              credentialId: session.reconnectCredentialId,
-              ...(session.releaseOwnership
-                ? { controllerHolder: session.id }
-                : {}),
-            }
-          : {}),
+        credentialId: session.reconnectCredentialId,
+        ...(session.releaseOwnership ? { controllerHolder: session.id } : {}),
       });
       if (!isValidUUID(credentialId))
         throw Error("Published Claude credential ID is invalid");
@@ -430,6 +427,8 @@ export class ClaudeSubscriptionLoginService {
 
   private removeHomeAfterExit(session: LoginSession): void {
     const remove = async () => {
+      // Parent close alone is not proof that credential-bearing descendants died.
+      await killClaudeLoginProcesses(session.home);
       // A failed code exchange may have issued a new credential that was not
       // published. Quarantine that owner rather than guessing token validity.
       if (!session.codeSubmitted) {

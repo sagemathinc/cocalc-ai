@@ -131,6 +131,7 @@ export async function createExternalCredentialRouted({
   maxActive,
   deduplicateMetadata,
   defaultMetadataKey,
+  controller_owner,
 }: {
   selector: ExternalCredentialSelector;
   payload: string;
@@ -138,6 +139,7 @@ export async function createExternalCredentialRouted({
   maxActive?: number;
   deduplicateMetadata?: { key: string; value: string };
   defaultMetadataKey?: string;
+  controller_owner?: ClaudeControllerOwner;
 }): Promise<{ id: string; created: boolean }> {
   return await withExternalCredentialAuthority({
     selector,
@@ -149,6 +151,7 @@ export async function createExternalCredentialRouted({
         maxActive,
         deduplicateMetadata,
         defaultMetadataKey,
+        controllerOwner: controller_owner,
       }),
     remote: async (dest_bay) =>
       await remoteCredentialsClient(dest_bay).create({
@@ -158,6 +161,7 @@ export async function createExternalCredentialRouted({
         max_active: maxActive,
         deduplicate_metadata: deduplicateMetadata,
         default_metadata_key: defaultMetadataKey,
+        controller_owner,
       }),
   });
 }

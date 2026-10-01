@@ -70,6 +70,7 @@ export async function getClaudeSubscriptionLoginService(): Promise<ClaudeSubscri
       const result = await manageClaudeControllerOwnership({
         ...options,
         operation: "acquire",
+        purpose: "sign-in",
       });
       if (result !== "acquired")
         throw Error(

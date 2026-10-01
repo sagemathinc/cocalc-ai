@@ -12,6 +12,7 @@ import { EXTERNAL_CREDENTIAL_CONFLICT } from "@cocalc/util/external-credential-c
 import { manageClaudeControllerOwnership } from "./claude-controller-ownership";
 import {
   createExternalCredential,
+  getExternalCredential,
   getExternalCredentialById,
   listExternalCredentials,
   revokeExternalCredential,
@@ -42,11 +43,13 @@ describeDb("account-home Claude refresh ownership", () => {
     holder: randomUUID(),
     host_id: randomUUID(),
     project_id: randomUUID(),
+    runtime_id: `100:${randomUUID()}:1`,
   };
   const b = {
     holder: randomUUID(),
     host_id: randomUUID(),
     project_id: randomUUID(),
+    runtime_id: `200:${randomUUID()}:2`,
   };
   const manage = (
     owner = a,
@@ -73,10 +76,14 @@ describeDb("account-home Claude refresh ownership", () => {
       expectedPayloadSha256,
     });
   beforeAll(async () => {
-    await syncSchema({ external_credentials: SCHEMA.external_credentials });
+    await syncSchema({
+      external_credentials: SCHEMA.external_credentials,
+      claude_controller_ownership: SCHEMA.claude_controller_ownership,
+    });
   });
   beforeEach(async () => {
     await getPool().query("DELETE FROM external_credentials");
+    await getPool().query("DELETE FROM claude_controller_ownership");
     id = (await createExternalCredential({ selector, payload: "rotation-1" }))
       .id;
   });
@@ -86,8 +93,8 @@ describeDb("account-home Claude refresh ownership", () => {
     // Test a known owner independently of the ordering of database promises.
     const row = (
       await getPool().query(
-        "SELECT controller_ownership FROM external_credentials WHERE id=$1",
-        [id],
+        "SELECT ownership AS controller_ownership FROM claude_controller_ownership WHERE account_id=$1",
+        [account],
       )
     ).rows[0];
     const winner = row.controller_ownership.holder === a.holder ? a : b;
@@ -100,8 +107,8 @@ describeDb("account-home Claude refresh ownership", () => {
   test("age alone never permits another host to refresh", async () => {
     await manage();
     await getPool().query(
-      "UPDATE external_credentials SET controller_ownership=jsonb_set(controller_ownership, '{acquired_at}', '\"2000-01-01T00:00:00Z\"') WHERE id=$1",
-      [id],
+      "UPDATE claude_controller_ownership SET ownership=jsonb_set(ownership, '{acquired_at}', '\"2000-01-01T00:00:00Z\"') WHERE account_id=$1",
+      [account],
     );
     expect(await manage(b)).toBe("busy");
   });
@@ -126,6 +133,7 @@ describeDb("account-home Claude refresh ownership", () => {
       b,
       { ...a, host_id: b.host_id },
       { ...a, project_id: b.project_id },
+      { ...a, runtime_id: b.runtime_id },
     ])
       await expect(write(owner)).rejects.toThrow("CLAUDE_CONTROLLER_FENCED");
     expect(await write(a)).toBe(true);
@@ -184,13 +192,142 @@ describeDb("account-home Claude refresh ownership", () => {
     await expect(write(a)).resolves.toBe(false);
     expect(await manage(a, "release")).toBe("released");
   });
-  test("a different credential remains independently usable", async () => {
+  test("a different account remains independently usable", async () => {
     await manage();
+    const otherAccount = randomUUID();
     const other = await createExternalCredential({
-      selector,
+      selector: { ...selector, owner_account_id: otherAccount },
       payload: "other-subscription",
     });
-    expect(await manage(b, "acquire", other.id)).toBe("acquired");
+    expect(
+      await manageClaudeControllerOwnership({
+        ...b,
+        owner_account_id: otherAccount,
+        credential_id: other.id,
+        operation: "acquire",
+      }),
+    ).toBe("acquired");
+  });
+  test("creation cannot override the one-subscription backend limit", async () => {
+    await expect(
+      createExternalCredential({ selector, payload: "other", maxActive: 3 }),
+    ).rejects.toThrow("at most 1");
+  });
+  test("pre-existing rows share a fence and explicit bindings are preserved", async () => {
+    const other = randomUUID();
+    await getPool().query(
+      `INSERT INTO external_credentials(id, provider, kind, scope, owner_account_id, encrypted_payload)
+      VALUES($1,'anthropic',$2,'account',$3,'synthetic-other')`,
+      [other, CLAUDE_SUBSCRIPTION_KIND, account],
+    );
+    await manage(a);
+    await expect(getExternalCredential({ selector })).rejects.toThrow(
+      "Choose an explicit Claude subscription",
+    );
+    expect((await getExternalCredentialById({ selector, id: other }))?.id).toBe(
+      other,
+    );
+    expect(await manage(b, "acquire", other)).toBe("busy");
+    await manage(a, "release");
+    expect(await manage(b, "acquire", other)).toBe("acquired");
+    await expect(write(a)).rejects.toThrow("CLAUDE_CONTROLLER_FENCED");
+  });
+  test("revocation does not permit replacement or first sign-in while the old owner lives", async () => {
+    await manage();
+    await revokeExternalCredential({ id, owner_account_id: account });
+    expect(
+      await manageClaudeControllerOwnership({
+        ...b,
+        owner_account_id: account,
+        operation: "acquire",
+      }),
+    ).toBe("busy");
+    await expect(
+      createExternalCredential({ selector, payload: "replacement" }),
+    ).rejects.toThrow("CLAUDE_CONTROLLER_FENCED");
+    await manage(a, "release");
+    const replacement = await createExternalCredential({
+      selector,
+      payload: "replacement",
+    });
+    expect(await manage(b, "acquire", replacement.id)).toBe("acquired");
+    expect(await manage(a, "release")).toBe("released");
+    expect(await manage(b, "acquire", replacement.id)).toBe("acquired");
+  });
+  test("first sign-in reserves account authority before any credential exists", async () => {
+    await getPool().query("DELETE FROM external_credentials");
+    const login = (owner = a, operation: "acquire" | "release" = "acquire") =>
+      manageClaudeControllerOwnership({
+        ...owner,
+        owner_account_id: account,
+        operation,
+      });
+    expect(await login()).toBe("acquired");
+    expect(await login(b)).toBe("busy");
+    await expect(
+      createExternalCredential({ selector, payload: "unreserved" }),
+    ).rejects.toThrow("CLAUDE_CONTROLLER_FENCED");
+    const created = await createExternalCredential({
+      selector,
+      payload: "sign-in",
+      controllerOwner: a,
+    });
+    expect(await manage(b, "acquire", created.id)).toBe("busy");
+    expect(await login(a, "release")).toBe("released");
+    expect(await login()).toBe("released");
+    expect(await manage(b, "acquire", created.id)).toBe("acquired");
+  });
+  test("ownership binds host incarnation and advances its generation only after stopped release", async () => {
+    expect(await manage()).toBe("acquired");
+    expect(await manage({ ...a, runtime_id: b.runtime_id })).toBe("busy");
+    const read = async () =>
+      (
+        await getPool().query(
+          "SELECT ownership FROM claude_controller_ownership WHERE account_id=$1",
+          [account],
+        )
+      ).rows[0].ownership;
+    const first = await read();
+    expect(first).toMatchObject({
+      runtime_id: a.runtime_id,
+      state: "active",
+      purpose: "controller",
+      generation: 1,
+    });
+    await manage(a, "release");
+    expect((await read()).state).toBe("released");
+    await manage(b);
+    expect((await read()).generation).toBe(2);
+    await manage(a, "release");
+    expect(await read()).toMatchObject({
+      holder: b.holder,
+      state: "active",
+      generation: 2,
+    });
+  });
+  test("legacy row ownership remains a fence even after revocation", async () => {
+    await getPool().query(
+      "UPDATE external_credentials SET controller_ownership=$2, revoked=NOW() WHERE id=$1",
+      [id, { ...a, acquired_at: new Date().toISOString() }],
+    );
+    await expect(
+      createExternalCredential({ selector, payload: "replacement" }),
+    ).rejects.toThrow("CLAUDE_CONTROLLER_FENCED");
+    expect(
+      await manageClaudeControllerOwnership({
+        ...b,
+        owner_account_id: account,
+        operation: "acquire",
+      }),
+    ).toBe("busy");
+    await manage(a, "release");
+    expect(
+      await manageClaudeControllerOwnership({
+        ...b,
+        owner_account_id: account,
+        operation: "acquire",
+      }),
+    ).toBe("acquired");
   });
   test("account ownership is checked even with a valid credential UUID", async () => {
     await expect(

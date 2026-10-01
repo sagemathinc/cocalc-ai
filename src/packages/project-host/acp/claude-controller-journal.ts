@@ -98,11 +98,16 @@ export async function recoverClaudeControllerJournal(
       baseline,
       current,
       controllerHolder: record.holder,
+      runtimeId: record.worker,
     });
     record.baseline = packClaudeSubscriptionBundle(current);
     await saveClaudeControllerJournal(record, directory);
   }
-  await manageClaudeControllerOwnership({ ...record, operation: "release" });
+  await manageClaudeControllerOwnership({
+    ...record,
+    runtimeId: record.worker,
+    operation: "release",
+  });
   await rm(record.home, { recursive: true, force: true });
   await removeClaudeControllerJournal(record.holder, directory);
 }

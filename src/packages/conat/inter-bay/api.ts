@@ -3647,6 +3647,7 @@ export interface InterBayExternalCredentialsApi {
     max_active?: number;
     deduplicate_metadata?: { key: string; value: string };
     default_metadata_key?: string;
+    controller_owner?: import("@cocalc/util/ai/claude-controller-ownership").ClaudeControllerOwner;
   }) => Promise<{ id: string; created: boolean }>;
   updateById: (opts: {
     id: string;

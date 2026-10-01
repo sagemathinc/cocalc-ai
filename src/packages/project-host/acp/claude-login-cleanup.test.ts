@@ -1,4 +1,12 @@
-import { mkdtemp, mkdir, writeFile, stat, rm, symlink } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  writeFile,
+  stat,
+  rm,
+  symlink,
+  readFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -83,9 +91,69 @@ test("one malformed owner does not prevent cleanup of other abandoned homes", as
   }
 });
 
-test.each([false, true])(
-  "abandoned reconnect retires an unused reservation but preserves an uncertain exchange (submitted=%s)",
-  async (codeSubmitted) => {
+test("first-sign-in recovery stops an orphaned native grandchild before releasing account ownership", async () => {
+  const root = await mkdtemp(join(tmpdir(), "login-reaper-test-"));
+  const home = join(root, "cocalc-claude-login-grandchild");
+  await mkdir(home, { mode: 0o700 });
+  await writeFile(join(home, CLAUDE_LOGIN_OWNER), await harnessOwner());
+  const record = {
+    projectId: "3807103b-f2f9-4ced-8885-eeb442d623b7",
+    accountId: "d62ec7c2-7b5a-49b7-9662-5c280bbac40b",
+    holder: "2900a1aa-219a-4b6c-879c-0154d4096a70",
+    codeSubmitted: false,
+    published: false,
+    abandoned: true,
+  };
+  await writeFile(join(home, CLAUDE_LOGIN_RECOVERY), JSON.stringify(record));
+  const parent = spawn(
+    process.execPath,
+    [
+      "-e",
+      `
+    const child = require('node:child_process').spawn(process.execPath,
+      ['-e', 'setInterval(()=>{},1000)'], {detached:true,stdio:'ignore'});
+    console.log(child.pid); child.unref();
+  `,
+    ],
+    { env: { ...process.env, CLAUDE_CONFIG_DIR: home }, stdio: "pipe" },
+  );
+  const closed = once(parent, "close");
+  const [chunk] = await once(parent.stdout!, "data");
+  const pid = Number(chunk.toString().trim());
+  await closed;
+  const { manageClaudeControllerOwnership } =
+    await import("./claude-subscription-registry");
+  const manage = jest.mocked(manageClaudeControllerOwnership);
+  manage.mockClear();
+  manage.mockImplementationOnce(async () => {
+    const state = await readFile(`/proc/${pid}/stat`, "utf8").catch(
+      () => undefined,
+    );
+    expect(
+      state == null || state.slice(state.lastIndexOf(")") + 2).startsWith("Z "),
+    ).toBe(true);
+    return "released";
+  });
+  try {
+    await reapAbandonedClaudeLogins(root);
+    expect(manage).toHaveBeenCalledWith({ ...record, operation: "release" });
+    await expect(stat(home)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {}
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  [false, undefined],
+  [false, "02bfd0a0-50f1-4378-a7fd-bf87a12a2860"],
+  [true, undefined],
+  [true, "02bfd0a0-50f1-4378-a7fd-bf87a12a2860"],
+])(
+  "abandoned sign-in retires unused reservations but preserves uncertain exchange (submitted=%s, credential=%s)",
+  async (codeSubmitted, credentialId) => {
     const root = await mkdtemp(join(tmpdir(), "login-reaper-test-"));
     const home = join(root, "cocalc-claude-login-reserved");
     await mkdir(home, { mode: 0o700 });
@@ -93,7 +161,7 @@ test.each([false, true])(
     const record = {
       projectId: "3807103b-f2f9-4ced-8885-eeb442d623b7",
       accountId: "d62ec7c2-7b5a-49b7-9662-5c280bbac40b",
-      credentialId: "02bfd0a0-50f1-4378-a7fd-bf87a12a2860",
+      credentialId,
       holder: "2900a1aa-219a-4b6c-879c-0154d4096a70",
       codeSubmitted,
       published: false,
@@ -113,7 +181,7 @@ test.each([false, true])(
       } else {
         await reapAbandonedClaudeLogins(root);
         expect(manageClaudeControllerOwnership).toHaveBeenCalledWith({
-          ...record,
+          ...JSON.parse(JSON.stringify(record)),
           operation: "release",
         });
         await expect(stat(home)).rejects.toMatchObject({ code: "ENOENT" });

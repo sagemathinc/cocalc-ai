@@ -72,6 +72,7 @@ import "./deleted-projects";
 import "./email-counter";
 import "./email-auth";
 import "./external-credentials";
+import "./claude-controller-ownership";
 import "./global-config";
 import "./growth-analytics";
 import "./hub-servers";

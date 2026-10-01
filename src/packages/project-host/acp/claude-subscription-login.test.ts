@@ -146,22 +146,64 @@ test("existing subscriptions are reconnected under ownership, and publication pr
   }
 });
 
-test("busy ownership rejects reconnect before launching the native login", async () => {
-  const publish = jest.fn();
+test.each([undefined, credentialId])(
+  "busy ownership rejects every sign-in before native launch (credential=%s)",
+  async (selected) => {
+    const publish = jest.fn();
+    const service = new ClaudeSubscriptionLoginService({
+      cliPath: process.execPath,
+      argsPrefix: [fixture],
+      publish,
+      validateReconnect: async () => {},
+      reserveReconnect: async () => {
+        throw Error("subscription busy");
+      },
+    });
+    await expect(service.start(projectId, accountId, selected)).rejects.toThrow(
+      "subscription busy",
+    );
+    expect(publish).not.toHaveBeenCalled();
+    await service.close();
+  },
+);
+
+test("first sign-in reserves account ownership and carries the holder through creation", async () => {
+  const release = jest.fn(async () => {});
+  const reserve = jest.fn(async () => release);
+  const publish = jest.fn(async () => credentialId);
   const service = new ClaudeSubscriptionLoginService({
     cliPath: process.execPath,
     argsPrefix: [fixture],
     publish,
-    validateReconnect: async () => {},
-    reserveReconnect: async () => {
-      throw Error("subscription busy");
-    },
+    reserveReconnect: reserve,
   });
-  await expect(
-    service.start(projectId, accountId, credentialId),
-  ).rejects.toThrow("subscription busy");
-  expect(publish).not.toHaveBeenCalled();
-  await service.close();
+  try {
+    const started = await service.start(projectId, accountId);
+    expect(reserve).toHaveBeenCalledWith({
+      projectId,
+      accountId,
+      credentialId: undefined,
+      holder: started.id,
+    });
+    for (
+      let i = 0;
+      i < 100 &&
+      !service.status(started.id, projectId, accountId).verificationUrl;
+      i++
+    )
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    service.submitCode(started.id, projectId, accountId, "fixture-code");
+    await waitFor(service, started.id, "completed");
+    expect(publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        credentialId: undefined,
+        controllerHolder: started.id,
+      }),
+    );
+    expect(release).toHaveBeenCalledTimes(1);
+  } finally {
+    await service.close();
+  }
 });
 
 test("login stages outside projects, accepts one code, verifies and cleans up", async () => {

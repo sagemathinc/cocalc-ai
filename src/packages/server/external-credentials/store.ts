@@ -1,7 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { ClaudeControllerOwner } from "@cocalc/util/ai/claude-controller-ownership";
 import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-profiles";
-import { assertClaudeControllerWriter } from "./claude-controller-ownership";
+import {
+  assertClaudeControllerWriter,
+  assertClaudeAccountWriter,
+} from "./claude-controller-ownership";
 import { EXTERNAL_CREDENTIAL_CONFLICT } from "@cocalc/util/external-credential-conflict";
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import {
@@ -388,6 +391,7 @@ export async function createExternalCredential({
   maxActive,
   deduplicateMetadata,
   defaultMetadataKey,
+  controllerOwner,
 }: {
   selector: ExternalCredentialSelector;
   payload: string;
@@ -395,6 +399,7 @@ export async function createExternalCredential({
   maxActive?: number;
   deduplicateMetadata?: { key: string; value: string };
   defaultMetadataKey?: string;
+  controllerOwner?: ClaudeControllerOwner;
 }): Promise<{ id: string; created: boolean }> {
   const normalized = normalizeSelector(selector);
   validatePayload(payload);
@@ -406,6 +411,19 @@ export async function createExternalCredential({
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
       selectorLockKey(normalized),
     ]);
+    const isClaudeAccount =
+      normalized.provider === "anthropic" &&
+      normalized.kind === CLAUDE_SUBSCRIPTION_KIND &&
+      normalized.scope === "account";
+    if (isClaudeAccount) {
+      await assertClaudeAccountWriter(
+        client,
+        normalized.owner_account_id!,
+        controllerOwner,
+      );
+      // Callers cannot increase the profile's backend limit via maxActive.
+      maxActive = 1;
+    }
     let insertedMetadata = metadata;
     if (defaultMetadataKey) {
       const designated = await ensureDefaultExternalCredentialLocked({
@@ -598,6 +616,19 @@ export async function updateExternalCredentialById({
         controllerOwner,
         expectedPayloadSha256,
       );
+    if (
+      revive &&
+      normalized.provider === "anthropic" &&
+      normalized.kind === CLAUDE_SUBSCRIPTION_KIND &&
+      normalized.scope === "account"
+    ) {
+      const { rows } = await client.query(
+        `SELECT id FROM external_credentials WHERE ${ownershipClause(1)}
+         AND revoked IS NULL AND id <> $7 LIMIT 1`,
+        [...selectorValues(normalized), id],
+      );
+      if (rows.length) throw Error("at most 1 active credentials are allowed");
+    }
     if (defaultMetadataKey) {
       await ensureDefaultExternalCredentialLocked({
         client,
@@ -724,6 +755,26 @@ export async function getExternalCredential({
   touchLastUsed?: boolean;
 }): Promise<ExternalCredentialRecord | undefined> {
   const normalized = normalizeSelector(selector);
+  if (
+    normalized.provider === "anthropic" &&
+    normalized.kind === CLAUDE_SUBSCRIPTION_KIND &&
+    normalized.scope === "account"
+  ) {
+    const { rows } = await pool().query<{ id: string }>(
+      `SELECT id FROM external_credentials WHERE ${ownershipClause(1)} AND revoked IS NULL LIMIT 2`,
+      [...selectorValues(normalized)],
+    );
+    if (rows.length > 1)
+      throw Error(
+        "Choose an explicit Claude subscription; multiple existing connections cannot be selected automatically",
+      );
+    if (!rows.length) return undefined;
+    return await getExternalCredentialById({
+      id: rows[0].id,
+      selector: normalized,
+      touchLastUsed,
+    });
+  }
   const defaultMetadataKey =
     defaultMetadataKeyForCredentialSelector(normalized);
   if (defaultMetadataKey) {

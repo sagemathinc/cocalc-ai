@@ -412,6 +412,14 @@ export const TABLE_OWNERSHIP = {
     rebuild: "No rebuild: callers must start a new explicit send attempt.",
   }),
 
+  ...entries(["claude_controller_ownership"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
+    notes:
+      "Private non-expiring Claude profile fence. Rehome must migrate this record and retired holders together with credentials after all refresh-capable processes are confirmed stopped; never reconstruct it from active credential rows.",
+  }),
+
   ...entries(["external_credentials"], {
     ownership: "row-scoped",
     authority: "mixed",

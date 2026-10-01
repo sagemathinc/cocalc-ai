@@ -2592,6 +2592,7 @@ async function startExternalCredentialsService(): Promise<void> {
       metadata,
       max_active,
       deduplicate_metadata,
+      controller_owner,
       default_metadata_key,
     }) =>
       await createExternalCredential({
@@ -2600,6 +2601,7 @@ async function startExternalCredentialsService(): Promise<void> {
         metadata,
         maxActive: max_active,
         deduplicateMetadata: deduplicate_metadata,
+        controllerOwner: controller_owner,
         defaultMetadataKey: default_metadata_key,
       }),
     manageClaudeControllerOwnership,

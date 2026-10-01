@@ -7,14 +7,22 @@ connection per account; existing explicit credential references are preserved.
 ## Authority And Lifecycle
 
 The account home bay owns both the encrypted subscription bundle and private
-`external_credentials.controller_ownership`. Host RPCs reauthorize the host,
+`claude_controller_ownership`, keyed by account and the fixed Claude profile.
+The record survives credential revocation/replacement and remains occupied until
+confirmed release. New credential creation enforces one active subscription on
+the backend regardless of caller limits. Existing multiple rows are preserved
+and share this fence; explicit bindings never silently select another row.
+Legacy row fences (including revoked rows) are honored during upgrade.
+Host RPCs reauthorize the host,
 project, account, and credential. Inter-bay forwarding resolves account ownership;
 project tools and native Claude traffic retain their isolated/direct paths.
 
 A controller acquires an opaque holder UUID before reading credentials or
 starting native Claude. Other work sharing that credential waits before any
 model/tool execution. Agent startup supports cancellation and a bounded wait;
-usage/discovery have a shorter wait. Polling is not a strict FIFO scheduler.
+usage/discovery have a shorter wait. Polling uses capped jitter/backoff; it is not
+a strict FIFO scheduler. Every acquisition poll rechecks project/account access
+and credential revocation before native launch.
 
 Ownership does not expire. A TTL cannot stop an isolated native process from
 refreshing at the provider. Publication requires the current holder, host, and
@@ -28,7 +36,9 @@ rehydrates the latest bundle and resumes the same native conversation. This also
 discards the SDK's in-memory credential cache. API-key controllers retain their
 existing lifecycle.
 
-Reconnect reserves the same credential before opening native sign-in. A busy
+Every sign-in reserves account ownership before opening native authentication,
+including the first sign-in before any credential row exists. Reconnect retains
+its explicit credential binding. A busy
 credential asks the user to finish the active turn. Publication must retain the
 same provider account and explicit credential ID. Adding a second subscription
 is hidden in the UI, not a destructive migration of existing credentials.
@@ -57,6 +67,10 @@ pruning without a bound on delayed admission. At scale, move these tombstones
 to a dedicated indexed ownership-attempt table with an explicit retention/fencing
 protocol rather than truncating them.
 
+Ownership records include native-holder UUID, host/worker incarnation, purpose,
+monotonic generation, active/released state, and transition timestamps. Recovery
+publishes/releases using the journal's original incarnation rather than its own
+worker identity. No automatic age-based takeover or user quarantine-clear exists.
 Controller logs contain opaque holder/revision identifiers, turn references,
 and fixed failure categories, not provider output or token bytes. Host-private
 SQLite `acp_job_attempt_history` preserves worker/version, timestamps, state,

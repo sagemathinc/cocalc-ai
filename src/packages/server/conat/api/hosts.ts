@@ -2803,6 +2803,7 @@ export async function upsertExternalCredential({
   deduplicate_metadata,
   expected_payload_sha256,
   controller_holder,
+  controller_runtime_id,
 }: {
   host_id?: string;
   project_id: string;
@@ -2822,6 +2823,7 @@ export async function upsertExternalCredential({
   deduplicate_metadata?: { key: string; value: string };
   expected_payload_sha256?: string;
   controller_holder?: string;
+  controller_runtime_id?: string;
 }): Promise<{ id: string; created: boolean }> {
   assertExternalCredentialId(credential_id);
   if (!host_id) {
@@ -2900,7 +2902,12 @@ export async function upsertExternalCredential({
       metadata: safeMetadata,
       expected_payload_sha256,
       controller_owner: controller_holder
-        ? { holder: controller_holder, host_id, project_id }
+        ? {
+            holder: controller_holder,
+            host_id,
+            project_id,
+            runtime_id: controller_runtime_id,
+          }
         : undefined,
     });
     if (!updated) throw new Error("credential is unavailable");
@@ -2913,6 +2920,14 @@ export async function upsertExternalCredential({
       metadata: safeMetadata,
       maxActive: max_active,
       deduplicateMetadata: deduplicate_metadata,
+      controller_owner: controller_holder
+        ? {
+            holder: controller_holder,
+            host_id,
+            project_id,
+            runtime_id: controller_runtime_id,
+          }
+        : undefined,
       defaultMetadataKey: isAccountSubscription
         ? CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY
         : undefined,

@@ -14,11 +14,12 @@ export const CLAUDE_LOGIN_RECOVERY = ".cocalc-login-recovery.json";
 export interface ClaudeLoginRecovery {
   projectId: string;
   accountId: string;
-  credentialId: string;
+  credentialId?: string;
   holder: string;
   codeSubmitted: boolean;
   published: boolean;
   abandoned?: boolean;
+  runtimeId?: string;
 }
 
 async function readRecovery(
@@ -31,12 +32,10 @@ async function readRecovery(
       throw Error("Invalid Claude sign-in recovery record");
     const record = JSON.parse(await readFile(path, "utf8"));
     if (
-      ![
-        record.projectId,
-        record.accountId,
-        record.credentialId,
-        record.holder,
-      ].every(isValidUUID) ||
+      ![record.projectId, record.accountId, record.holder].every(isValidUUID) ||
+      (record.credentialId != null && !isValidUUID(record.credentialId)) ||
+      (record.runtimeId != null &&
+        !/^\d+:[0-9a-f-]{36}:\d+$/.test(record.runtimeId)) ||
       typeof record.codeSubmitted !== "boolean" ||
       typeof record.published !== "boolean"
     )
@@ -62,6 +61,15 @@ async function ownerAlive(owner: string): Promise<boolean> {
 
 /** Called only for private, host-owned staging homes, never project paths. */
 export async function killClaudeLoginProcesses(home: string): Promise<void> {
+  await stopLoginProcesses(home, Date.now() + 5000);
+}
+
+async function stopLoginProcesses(
+  home: string,
+  deadline: number,
+): Promise<void> {
+  if (Date.now() > deadline)
+    throw Error("Claude login processes have not stopped");
   const killed = new Map<number, string>();
   for (const entry of await readdir("/proc")) {
     if (!/^\d+$/.test(entry)) continue;
@@ -87,7 +95,7 @@ export async function killClaudeLoginProcesses(home: string): Promise<void> {
         throw error;
     }
   }
-  const deadline = Date.now() + 5000;
+  const foundNative = killed.size > 0;
   while (killed.size) {
     for (const [pid, owner] of killed) {
       try {
@@ -112,6 +120,9 @@ export async function killClaudeLoginProcesses(home: string): Promise<void> {
       throw Error("Claude login processes have not stopped");
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
+  // A native child can fork while the first /proc inventory is being read.
+  // Confirm a clean second inventory under the same stop deadline.
+  if (foundNative) await stopLoginProcesses(home, deadline);
 }
 
 export async function reapAbandonedClaudeLogins(

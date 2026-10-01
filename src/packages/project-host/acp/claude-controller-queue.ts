@@ -28,6 +28,7 @@ export async function acquireClaudeController(options: {
     manage = manageClaudeControllerOwnership,
   } = options;
   const deadline = Date.now() + timeoutMs;
+  let polls = 0;
   for (;;) {
     signal?.throwIfAborted();
     const result = await manage({
@@ -47,7 +48,10 @@ export async function acquireClaudeController(options: {
         { code: CLAUDE_CONTROLLER_BUSY },
       );
     await delay(
-      Math.min(pollMs, Math.max(0, deadline - Date.now())),
+      Math.min(
+        pollMs * Math.min(8, 2 ** polls++) * (0.5 + Math.random()),
+        Math.max(0, deadline - Date.now()),
+      ),
       undefined,
       { signal },
     );

@@ -75,6 +75,8 @@ test("abandoned controller confirms stop, saves final opaque rotation, and only 
     directory,
   );
   expect(order).toEqual(["stop", "publish", "release"]);
+  expect(sync.mock.calls[0][0].runtimeId).toBe(references.worker);
+  expect(manage.mock.calls[0][0].runtimeId).toBe(references.worker);
   expect(
     sync.mock.calls[0][0].current.get(".credentials.json")?.toString(),
   ).toBe("synthetic-rotation");

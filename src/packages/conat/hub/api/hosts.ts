@@ -2317,6 +2317,7 @@ export interface Hosts {
     // SHA-256 (hex); otherwise fail with EXTERNAL_CREDENTIAL_CONFLICT.
     expected_payload_sha256?: string;
     controller_holder?: string;
+    controller_runtime_id?: string;
   }) => Promise<{ id: string; created: boolean }>;
   releaseCodexDeviceAuthLease: (opts: {
     host_id?: string;

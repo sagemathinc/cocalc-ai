@@ -18,6 +18,7 @@ import {
 } from "@cocalc/util/ai/external-credential-profiles";
 import { getMasterConatClient } from "../master-conat-client";
 import { getLocalHostId } from "../sqlite/hosts";
+import { harnessOwner } from "./harness-reaper";
 import {
   changedClaudeSubscriptionFiles,
   claudeSubscriptionBundleFiles,
@@ -52,9 +53,11 @@ function selector(accountId: string) {
 export async function manageClaudeControllerOwnership(options: {
   projectId: string;
   accountId: string;
-  credentialId: string;
+  credentialId?: string;
   holder: string;
   operation: "acquire" | "release";
+  runtimeId?: string;
+  purpose?: "controller" | "sign-in";
 }): Promise<ClaudeControllerOwnershipResult> {
   return await callHub({
     ...caller(),
@@ -66,6 +69,8 @@ export async function manageClaudeControllerOwnership(options: {
         credential_id: options.credentialId,
         holder: options.holder,
         operation: options.operation,
+        runtime_id: options.runtimeId ?? (await harnessOwner()),
+        purpose: options.purpose ?? "controller",
       },
     ],
     timeout: 15_000,
@@ -141,6 +146,7 @@ export async function publishClaudeSubscriptionCredential(options: {
   credentialId?: string;
   allowedPaths?: ReadonlySet<string>;
   controllerHolder?: string;
+  runtimeId?: string;
 }): Promise<string> {
   const {
     projectId,
@@ -173,6 +179,7 @@ export async function publishClaudeSubscriptionCredential(options: {
     plan,
     credentialId,
     controllerHolder: options.controllerHolder,
+    runtimeId: options.runtimeId,
   });
 }
 
@@ -185,6 +192,7 @@ async function upsertClaudeSubscriptionPayload(options: {
   credentialId?: string;
   expectedPayloadSha256?: string;
   controllerHolder?: string;
+  runtimeId?: string;
 }): Promise<string> {
   const {
     projectId,
@@ -216,8 +224,11 @@ async function upsertClaudeSubscriptionPayload(options: {
         credential_id: credentialId,
         expected_payload_sha256: expectedPayloadSha256,
         controller_holder: controllerHolder,
+        controller_runtime_id: controllerHolder
+          ? (options.runtimeId ?? (await harnessOwner()))
+          : undefined,
         create: !credentialId,
-        max_active: credentialId ? undefined : 3,
+        max_active: credentialId ? undefined : 1,
         deduplicate_metadata: credentialId
           ? undefined
           : {
@@ -259,6 +270,7 @@ export async function syncClaudeSubscriptionCredential(options: {
   baseline: ReadonlyMap<string, Buffer>;
   current: ReadonlyMap<string, Buffer>;
   controllerHolder?: string;
+  runtimeId?: string;
 }): Promise<ReadonlyMap<string, Buffer>> {
   const { projectId, accountId, credentialId, baseline, current } = options;
   const changed = changedClaudeSubscriptionFiles(baseline, current);
@@ -308,6 +320,7 @@ export async function syncClaudeSubscriptionCredential(options: {
           .update(stored.payload, "utf8")
           .digest("hex"),
         controllerHolder: options.controllerHolder,
+        runtimeId: options.runtimeId,
       });
       return current;
     } catch (error) {
