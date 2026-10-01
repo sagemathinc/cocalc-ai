@@ -53,9 +53,9 @@ The cocalc.com site now redirects to cocalc.ai. If you used cocalc.com, see
   mention a named agent with @ in another agent's conversation and choose
   **Create network** in the **Connect agents** dialog, or give both named
   agents the same network tag with **+ > Agent Networks** in each one's
-  composer. For Claude Code, messaging within one project is a preview.
-- Continuing goals and schedules work with Codex agents, not Claude Code.
-- For the status of each feature by agent, see
+  composer.
+- Some features still differ between Codex and Claude Code. For the current
+  status of each feature by agent, see
   [Agent features: Codex and Claude Code](/docs/ai/agent-features) and
   [Claude Code in CoCalc (Experimental Preview)](/docs/ai/claude-code).
 - A Codex agent or a Claude Code agent can be given access to other projects
