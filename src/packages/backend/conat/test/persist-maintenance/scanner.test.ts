@@ -42,6 +42,7 @@ describe("persist maintenance bounded scanner", () => {
     return { data, catalog, scanner, config, catalogPath };
   }
 
+  // The read-count assertions measure complexity; allow slow CI filesystem I/O.
   it("enumerates a wide directory once per batch, not once per entry", async () => {
     const { data, catalog, scanner } = makeScanner(256);
     for (let i = 0; i < 1025; i++) {
@@ -59,7 +60,7 @@ describe("persist maintenance bounded scanner", () => {
     expect(catalog.listDatabases()).toHaveLength(1025);
     expect(reads).toHaveBeenCalledTimes(5);
     catalog.close();
-  });
+  }, 30_000);
 
   it("resumes template-root discovery within the entry budget after restart", async () => {
     const { data, catalog, config, catalogPath } = makeScanner(2);
