@@ -23,6 +23,7 @@ import type {
   SharedWork,
 } from "@cocalc/util/people";
 import { AliasDialog } from "./alias-dialog";
+import { InviteToProjectsModal } from "./invites";
 import { VIEW_ONLY_NOTE } from "./agent-access-dialog";
 import { conversationEvents, conversationsChanged, peopleApi } from "./api";
 import { ConversationCollection } from "./conversation-collection";
@@ -328,6 +329,7 @@ export function PersonDetail({
   const project_map = useTypedRedux("projects", "project_map");
   const { work, error } = useSharedWork(account_id);
   const [aliasOpen, setAliasOpen] = useState(false);
+  const [inviteOpen, setInviteOpen] = useState(false);
   const sharedIds = new Set(shared.map((p) => p.project_id));
   const projectTitle = (id: string) =>
     (project_map?.getIn([id, "title"]) as string | undefined) ?? "";
@@ -368,6 +370,7 @@ export function PersonDetail({
           {person?.pinned ? "Unpin" : "Pin"}
         </Button>
         <Button onClick={() => setAliasOpen(true)}>Personal alias</Button>
+        <Button onClick={() => setInviteOpen(true)}>Invite to projects</Button>
       </Space>
       {error && <Alert role="alert" type="error" title={error} />}
       <Tabs
@@ -523,6 +526,12 @@ export function PersonDetail({
           title="Some shared projects could not be checked right now."
         />
       )}
+      <InviteToProjectsModal
+        open={inviteOpen}
+        account_id={account_id}
+        name={person?.name ?? "this person"}
+        onClose={() => setInviteOpen(false)}
+      />
       <AliasDialog
         open={aliasOpen}
         title={person?.name ?? ""}

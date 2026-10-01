@@ -12,6 +12,10 @@ import type {
   SharedWork,
   AgentCollaboratorAccess,
 } from "@cocalc/util/people";
+import type {
+  ProjectCollabInviteRow,
+  ProjectCollabInviteStatus,
+} from "./projects";
 import { authFirstRequireAccount } from "./util";
 
 export interface ConversationRef {
@@ -66,6 +70,14 @@ export interface PeopleApi {
     person_id: string;
   }): Promise<SharedWork & { unavailable_bays: number }>;
 
+  // Invites this account sent (from every bay that owns one of its projects)
+  // or received (including the cross-bay inbox), newest first.
+  listInvites(opts: {
+    account_id?: string;
+    direction: "inbound" | "outbound";
+    status?: ProjectCollabInviteStatus;
+  }): Promise<{ invites: ProjectCollabInviteRow[]; unavailable_bays: number }>;
+
   // An agent creator's stated preference for other collaborators.
   getAgentAccess(opts: {
     account_id?: string;
@@ -108,6 +120,7 @@ export const people = {
   removeConversation: authFirstRequireAccount,
   markRead: authFirstRequireAccount,
   listSharedWork: authFirstRequireAccount,
+  listInvites: authFirstRequireAccount,
   getAgentAccess: authFirstRequireAccount,
   setAgentAccess: authFirstRequireAccount,
   setState: authFirstRequireAccount,

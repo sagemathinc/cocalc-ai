@@ -38,6 +38,8 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { listCollabInvites } from "@cocalc/server/projects/collaborators";
+import type { ProjectCollabInviteRow } from "@cocalc/conat/hub/api/projects";
 import {
   DEFAULT_PERSONAL_STATE,
   MAX_LISTED_PROJECTS,
@@ -49,6 +51,7 @@ import {
 } from "@cocalc/util/people";
 
 const logger = getLogger("server:people");
+const MAX_INVITES = 500;
 
 function remote(bay_id: string): InterBayPeopleApi {
   return createInterBayPeopleClient({
@@ -201,6 +204,16 @@ export const peopleControl: InterBayPeopleApi = {
     return await touchConversation(opts);
   },
 
+  async sentInvites({ account_id, status, limit }) {
+    requireUuid(account_id, "account_id");
+    return await listCollabInvites({
+      account_id,
+      direction: "outbound",
+      status,
+      limit: Math.min(MAX_INVITES, limit),
+    });
+  },
+
   async getAgentAccess(opts) {
     await assertOwner(opts.project_id);
     requireUuid(opts.agent_id, "agent_id");
@@ -269,6 +282,48 @@ export const peopleControl: InterBayPeopleApi = {
     requireUuid(opts.project_id, "project_id");
     requireUuid(opts.conversation_id, "conversation_id");
     await markConversationRead({ ...opts, account_id: opts.account_id! });
+  },
+
+  async listInvites({ account_id, direction, status }) {
+    await assertHome(account_id!);
+    // This bay: received (with the cross-bay inbox) or sent for local projects.
+    const invites: ProjectCollabInviteRow[] = await listCollabInvites({
+      account_id: account_id!,
+      direction: direction === "inbound" ? "inbound" : "outbound",
+      status,
+      limit: MAX_INVITES,
+    });
+    let unavailable_bays = 0;
+    if (direction === "outbound") {
+      // Sent invites live with their project; ask every other bay that owns
+      // one of this account's projects.
+      const others = [...(await projectsByBay(account_id!)).keys()].filter(
+        (bay_id) => !local(bay_id),
+      );
+      const results = await Promise.allSettled(
+        others.map((bay_id) =>
+          remote(bay_id).sentInvites({
+            account_id: account_id!,
+            status,
+            limit: MAX_INVITES,
+          }),
+        ),
+      );
+      for (const result of results) {
+        if (result.status === "fulfilled") invites.push(...result.value);
+        else unavailable_bays += 1;
+      }
+    }
+    const seen = new Set<string>();
+    const unique = invites.filter((invite) => {
+      if (seen.has(invite.invite_id)) return false;
+      seen.add(invite.invite_id);
+      return true;
+    });
+    unique.sort(
+      (a, b) => new Date(b.created).valueOf() - new Date(a.created).valueOf(),
+    );
+    return { invites: unique.slice(0, MAX_INVITES), unavailable_bays };
   },
 
   async listSharedWork({ account_id, person_id }) {
@@ -392,6 +447,10 @@ export const peopleApi: PeopleApi = {
 
   async getAgentAccess(opts) {
     return await (await owner(opts.project_id)).getAgentAccess(opts);
+  },
+
+  async listInvites(opts) {
+    return await (await home(opts.account_id!)).listInvites(opts);
   },
 
   async setAgentAccess(opts) {

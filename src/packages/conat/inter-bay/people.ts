@@ -11,6 +11,10 @@ import {
 import type { Options } from "@cocalc/conat/service/service";
 import type { Conversation, SharedWork } from "@cocalc/util/people";
 import type { PeopleApi } from "@cocalc/conat/hub/api/people";
+import type {
+  ProjectCollabInviteRow,
+  ProjectCollabInviteStatus,
+} from "@cocalc/conat/hub/api/projects";
 
 // Trusted bay-to-bay calls. "Owner" methods run on the project's owning bay;
 // "home" methods run on the account's home bay. Each side re-checks that it
@@ -59,10 +63,17 @@ export interface InterBayPeopleApi {
     person_id: string;
     project_ids: string[];
   }): Promise<SharedWork>;
+  // Invites the account sent for projects owned by this bay.
+  sentInvites(opts: {
+    account_id: string;
+    status?: ProjectCollabInviteStatus;
+    limit: number;
+  }): Promise<ProjectCollabInviteRow[]>;
   getAgentAccess: PeopleApi["getAgentAccess"];
   setAgentAccess: PeopleApi["setAgentAccess"];
   // home
   listSharedWork: PeopleApi["listSharedWork"];
+  listInvites: PeopleApi["listInvites"];
   listConversations: PeopleApi["listConversations"];
   markRead: PeopleApi["markRead"];
   setState: PeopleApi["setState"];

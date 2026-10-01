@@ -22,6 +22,7 @@ import { useCollectionPreferences } from "@cocalc/frontend/components/use-collec
 import { ConversationView } from "./conversation-view";
 import { NewConversationModal } from "./new-conversation";
 import { ScanDialog } from "./scan-dialog";
+import { InvitesPanel } from "./invites";
 import { SearchDialog } from "./search-dialog";
 import { useConversations } from "./use-conversations";
 import { useWorkspaceContentNavigation } from "@cocalc/frontend/agents/workspace-content-navigation";
@@ -29,13 +30,14 @@ import { useWorkspaceContentNavigation } from "@cocalc/frontend/agents/workspace
 // people_route is "", "conversations/<project_id>/<conversation_id>",
 // "collaborators" or "collaborators/<account_id>".
 export function parsePeopleRoute(route?: string): {
-  tab: "conversations" | "collaborators";
+  tab: "conversations" | "collaborators" | "invites";
   project_id?: string;
   conversation_id?: string;
   account_id?: string;
 } {
   const [head, a, b] = (route ?? "").split("/");
   if (head === "collaborators") return { tab: "collaborators", account_id: a };
+  if (head === "invites") return { tab: "invites" };
   if (head === "conversations" && a && b) {
     return { tab: "conversations", project_id: a, conversation_id: b };
   }
@@ -172,7 +174,14 @@ export function PeoplePage() {
   const count =
     route.tab === "conversations"
       ? `${filtered.length} ${filtered.length === 1 ? "conversation" : "conversations"}`
-      : `${people.length} ${people.length === 1 ? "collaborator" : "collaborators"}`;
+      : route.tab === "collaborators"
+        ? `${people.length} ${people.length === 1 ? "collaborator" : "collaborators"}`
+        : "Invitations you sent or received";
+  const searchLabel = {
+    conversations: "Search conversations",
+    collaborators: "Search collaborators",
+    invites: "Search invitations",
+  }[route.tab];
 
   return (
     <div
@@ -219,7 +228,7 @@ export function PeoplePage() {
           >
             People
           </h1>
-          {!route.account_id && (
+          {!route.account_id && route.tab !== "invites" && (
             <CollectionViewControl
               view={tabPreferences.value.view}
               onChange={tabPreferences.setView}
@@ -232,16 +241,8 @@ export function PeoplePage() {
           )}
           <Input
             type="search"
-            aria-label={
-              route.tab === "conversations"
-                ? "Search conversations"
-                : "Search collaborators"
-            }
-            placeholder={
-              route.tab === "conversations"
-                ? "Search conversations"
-                : "Search collaborators"
-            }
+            aria-label={searchLabel}
+            placeholder={searchLabel}
             prefix={<Icon name="search" />}
             allowClear
             style={{ flex: "0 1 320px", minWidth: 0 }}
@@ -311,7 +312,7 @@ export function PeoplePage() {
         </div>
         <Tabs
           activeKey={route.tab}
-          onChange={(key) => navigate(key === "collaborators" ? key : "")}
+          onChange={(key) => navigate(key === "conversations" ? "" : key)}
           className="smc-vfill"
           style={{ minHeight: 0 }}
           items={[
@@ -324,6 +325,11 @@ export function PeoplePage() {
               key: "collaborators",
               label: "Collaborators",
               children: collaboratorsTab,
+            },
+            {
+              key: "invites",
+              label: "Invites",
+              children: <InvitesPanel search={filter} />,
             },
           ]}
         />
