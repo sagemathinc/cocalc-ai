@@ -419,6 +419,9 @@ test("trusted MCP helper executes only through the scoped project socket", async
       "project_exec_cancel",
       "project_exec_list",
       "project_read_image",
+      "project_read_file",
+      "project_edit_file",
+      "project_write_file",
       "request_user_input_async",
     ]);
     const called = await request(3, "tools/call", {
@@ -458,6 +461,25 @@ test("trusted MCP helper executes only through the scoped project socket", async
       path: "/home/user/plot.png",
       bytes: png.length,
       mimeType: "image/png",
+    });
+    execute.mockImplementationOnce(async () => ({
+      code: 0,
+      cleanupConfirmed: true,
+      stdout: `2\n${Buffer.from("alpha\nbeta\n").toString("base64")}`,
+      stderr: "",
+    }));
+    const read = await request(6, "tools/call", {
+      name: "project_read_file",
+      arguments: { path: "notes.txt" },
+    });
+    expect(read.result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: "notes.txt: lines 1-2 of 2\n     1\talpha\n     2\tbeta",
+        },
+      ],
+      isError: false,
     });
     const question = {
       request_id: "target",
@@ -507,7 +529,7 @@ test("trusted MCP helper executes only through the scoped project socket", async
       socket.on("end", () => resolve(response));
     });
     expect(unauthorized).toContain("Invalid project tool request");
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(3);
   } finally {
     child.kill("SIGKILL");
     await bridge.close();

@@ -15,8 +15,17 @@ import {
   ClaudeProjectJobs,
   type ProjectJobExecutor,
 } from "./claude-project-jobs";
+import {
+  editProjectFile,
+  readProjectFile,
+  runCaptured,
+  shellQuote,
+  validPath,
+  writeProjectFile,
+} from "./claude-project-file-tools";
 
-const MAX_REQUEST_BYTES = 40 * 1024;
+// Room for project_write_file content (1 MB, JSON-escaped).
+const MAX_REQUEST_BYTES = 2_500_000;
 const MAX_CONCURRENT_TOOLS = 8;
 const MAX_OPEN_CONNECTIONS = 16;
 export const CLAUDE_PROJECT_TOOL_MOUNT = "/run/cocalc/agent-tools";
@@ -48,10 +57,6 @@ const IMAGE_SIGNATURES: {
   },
 ];
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
 // Reads one image with the same project authority as project_exec. The type
 // comes from the file's bytes, not its name.
 export async function readProjectImage(
@@ -63,13 +68,7 @@ export async function readProjectImage(
   | { error: string }
 > {
   const path = args.path;
-  if (
-    typeof path !== "string" ||
-    !path.trim() ||
-    path.length > 4096 ||
-    path.includes("\0")
-  )
-    return { error: "path must be a non-empty file path" };
+  if (!validPath(path)) return { error: "path must be a non-empty file path" };
   const limit = MAX_PROJECT_IMAGE_BYTES;
   const script = [
     `p=${shellQuote(path)}`,
@@ -78,24 +77,15 @@ export async function readProjectImage(
     `[ "$s" -le ${limit} ] || { echo "image is $s bytes; the limit is ${limit} bytes. Save a smaller or cropped copy and read that." >&2; exit 3; }`,
     `base64 -w0 -- "$p"`,
   ].join("\n");
-  let stdout = "";
-  let stderr = "";
-  const maxOutput = Math.ceil((limit * 4) / 3) + 16;
-  const result = await execute(script, undefined, signal, {
-    timeoutMs: 30_000,
-    onOutput: (stream, data) => {
-      if (stream === "stdout") {
-        if (stdout.length <= maxOutput) stdout += data;
-      } else if (stderr.length < 4096) stderr += data;
-    },
-    onCleanupConfirmed: () => {},
-  });
-  if (!stdout && result.stdout) stdout = result.stdout;
-  if (!stderr && result.stderr) stderr = result.stderr;
-  if (result.code !== 0)
-    return { error: stderr.trim() || `could not read ${path}` };
-  if (stdout.length > maxOutput)
-    return { error: `image exceeds ${limit} bytes` };
+  const out = await runCaptured(
+    execute,
+    script,
+    signal,
+    Math.ceil((limit * 4) / 3) + 64,
+  );
+  if (out.code !== 0)
+    return { error: out.stderr.trim() || `could not read ${path}` };
+  const stdout = out.stdout;
   const bytes = Buffer.from(stdout.trim(), "base64");
   const type = IMAGE_SIGNATURES.find(({ matches }) => matches(bytes));
   if (!type)
@@ -223,6 +213,12 @@ export async function createClaudeProjectToolBridge(
           else if (tool === "project_exec_list") result = jobs.list();
           else if (tool === "project_read_image")
             result = await readProjectImage(execute, args, signal);
+          else if (tool === "project_read_file")
+            result = await readProjectFile(execute, args, signal);
+          else if (tool === "project_write_file")
+            result = await writeProjectFile(execute, args, signal);
+          else if (tool === "project_edit_file")
+            result = await editProjectFile(execute, args, signal);
           else if (tool === "request_user_input_async" && asyncQuestion)
             result = await asyncQuestion(args);
           else throw Error("Unsupported project tool");

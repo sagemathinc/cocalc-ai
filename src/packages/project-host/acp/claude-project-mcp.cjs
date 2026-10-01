@@ -98,10 +98,82 @@ const tools = [
         path: {
           type: "string",
           description:
-            "Image path in the project; relative paths start in the project home directory",
+            "Image path in the project; relative paths start in the turn's project working directory",
         },
       },
       required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "project_read_file",
+    description:
+      "Read a text file in the CoCalc project. Returns lines prefixed with their line numbers and a tab (like cat -n), plus total_lines. Reads up to 2000 lines from offset by default and at most 256 KB; use offset and limit to page through larger files. Prefer this over sed/cat through project_exec. Binary files are refused; use project_read_image for images.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description:
+            "File path in the project; relative paths start in the turn's project working directory",
+        },
+        offset: {
+          type: "integer",
+          minimum: 1,
+          description: "First line to return (1-based); default 1",
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          description: "Maximum number of lines to return; default 2000",
+        },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "project_edit_file",
+    description:
+      "Edit a text file in the CoCalc project by exact string replacement. old_string must match the file exactly, including indentation, without the line-number prefixes from project_read_file, and must occur exactly once unless replace_all is true. The file is replaced atomically and the edit is refused if the file changed during it. Files up to 1 MB.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description:
+            "File path in the project; relative paths start in the turn's project working directory",
+        },
+        old_string: { type: "string", description: "Exact text to replace" },
+        new_string: { type: "string", description: "Replacement text" },
+        replace_all: {
+          type: "boolean",
+          description: "Replace every occurrence instead of requiring one",
+        },
+      },
+      required: ["path", "old_string", "new_string"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "project_write_file",
+    description:
+      "Create or overwrite a text file in the CoCalc project with the given content (up to 1 MB), atomically and keeping an existing file's permissions. Prefer project_edit_file for changes to existing files. The parent directory must exist unless create_dirs is true.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description:
+            "File path in the project; relative paths start in the turn's project working directory",
+        },
+        content: { type: "string", description: "Complete new file content" },
+        create_dirs: {
+          type: "boolean",
+          description: "Create missing parent directories",
+        },
+      },
+      required: ["path", "content"],
       additionalProperties: false,
     },
   },
@@ -211,25 +283,42 @@ async function handle(message) {
           : "code" in output && output.code !== 0);
       const image = output.image;
       result =
-        image && typeof image.data === "string"
+        message.params.name === "project_read_file" &&
+        typeof output.content === "string"
           ? {
               content: [
-                { type: "image", data: image.data, mimeType: image.mimeType },
                 {
                   type: "text",
-                  text: JSON.stringify({
-                    path: output.path,
-                    bytes: output.bytes,
-                    mimeType: image.mimeType,
-                  }),
+                  text:
+                    `${output.path}: lines ${output.start_line}-${output.end_line} of ${output.total_lines}` +
+                    (output.truncated
+                      ? " (truncated at 256 KB; continue with offset)"
+                      : "") +
+                    "\n" +
+                    output.content,
                 },
               ],
               isError: false,
             }
-          : {
-              content: [{ type: "text", text: JSON.stringify(output) }],
-              isError,
-            };
+          : image && typeof image.data === "string"
+            ? {
+                content: [
+                  { type: "image", data: image.data, mimeType: image.mimeType },
+                  {
+                    type: "text",
+                    text: JSON.stringify({
+                      path: output.path,
+                      bytes: output.bytes,
+                      mimeType: image.mimeType,
+                    }),
+                  },
+                ],
+                isError: false,
+              }
+            : {
+                content: [{ type: "text", text: JSON.stringify(output) }],
+                isError,
+              };
     } else {
       throw new Error("Unsupported project tool method");
     }
@@ -249,7 +338,7 @@ async function handle(message) {
 }
 const input = readline.createInterface({ input: process.stdin });
 input.on("line", (line) => {
-  if (line.length > 65536) return;
+  if (line.length > 2600000) return;
   try {
     void handle(JSON.parse(line));
   } catch {
