@@ -450,6 +450,10 @@ function HarnessRuntimeSummaryContent({
 }) {
   const id = useId();
   const [error, setError] = useState("");
+  const [discoveryError, setDiscoveryError] = useState<{
+    message: string;
+    reportedAtStart: string | undefined;
+  }>();
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [autoDiscovered, setAutoDiscovered] = useState(false);
@@ -490,6 +494,14 @@ function HarnessRuntimeSummaryContent({
       /* Missing, stale or invalid metadata is not a usable catalog. */
     }
   }
+  // A real turn can supply fresh controls while a separate discovery fails.
+  // Keep settings errors and failures of refreshes of the current catalog.
+  const visibleError =
+    error ||
+    (discoveryError &&
+    !(controls && JSON.stringify(reported) !== discoveryError.reportedAtStart)
+      ? discoveryError.message
+      : "");
   const change = (next: HarnessSessionSettings) => {
     try {
       onSettings?.(next);
@@ -502,6 +514,7 @@ function HarnessRuntimeSummaryContent({
     if (!onDiscover || loading) return;
     setLoading(true);
     setError("");
+    setDiscoveryError(undefined);
     const started = generation.current;
     try {
       const result = await onDiscover();
@@ -516,7 +529,11 @@ function HarnessRuntimeSummaryContent({
         );
       setDiscovered({ ...result, reportedAtLoad: JSON.stringify(reported) });
     } catch (err) {
-      if (started === generation.current) setError(harnessErrorMessage(err));
+      if (started === generation.current)
+        setDiscoveryError({
+          message: harnessErrorMessage(err),
+          reportedAtStart: JSON.stringify(reported),
+        });
     } finally {
       if (started === generation.current) setLoading(false);
     }
@@ -528,6 +545,7 @@ function HarnessRuntimeSummaryContent({
     setDiscovered(undefined);
     setAutoDiscovered(false);
     setError("");
+    setDiscoveryError(undefined);
   });
   const previousDiscoveryKey = useRef(discoveryKey);
   useEffect(() => {
@@ -810,7 +828,7 @@ function HarnessRuntimeSummaryContent({
         </Typography.Text>
       )}
       {information}
-      {error && <div role="alert">{error}</div>}
+      {visibleError && <div role="alert">{visibleError}</div>}
     </Space>
   );
   if (!compact) return form;
@@ -957,7 +975,7 @@ function HarnessRuntimeSummaryContent({
         )}
         {!summary && configureLabel && settingsButton}
       </div>
-      {error && !inlineSetup && <div role="alert">{error}</div>}
+      {visibleError && !inlineSetup && <div role="alert">{visibleError}</div>}
       <Modal
         open={open}
         title={
