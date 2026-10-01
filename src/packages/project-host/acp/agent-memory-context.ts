@@ -26,7 +26,7 @@ export function initAgentMemoryContextProvider(): void {
       client,
       host_id,
       name: "hosts.getAgentMemoryContext",
-      args: [{ project_id: projectId, account_id: accountId }],
+      args: [{ project_id: projectId, owner_account_id: accountId }],
       timeout: 5_000,
     });
   });

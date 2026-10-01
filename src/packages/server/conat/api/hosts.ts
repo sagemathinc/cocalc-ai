@@ -2946,22 +2946,23 @@ export async function upsertExternalCredential({
 export async function getAgentMemoryContext({
   host_id,
   project_id,
-  account_id,
+  owner_account_id,
 }: {
   host_id?: string;
   project_id: string;
-  account_id: string;
+  owner_account_id: string;
 }): Promise<{ notes: number; index: string } | null> {
   if (!host_id) throw new Error("host_id must be specified");
   if (!project_id) throw new Error("project_id must be specified");
-  if (!isValidUUID(account_id)) throw new Error("account_id must be a UUID");
+  if (!isValidUUID(owner_account_id))
+    throw new Error("owner_account_id must be a UUID");
   await assertHostCredentialProjectAccess({
     host_id,
     project_id,
-    owner_account_id: account_id,
+    owner_account_id,
   });
   const { agentMemory } = await import("@cocalc/server/agents/memory");
-  return (await agentMemory().turnIndex(account_id)) ?? null;
+  return (await agentMemory().turnIndex(owner_account_id)) ?? null;
 }
 
 export async function getExternalCredential({
