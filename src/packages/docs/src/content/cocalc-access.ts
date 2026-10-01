@@ -11,9 +11,9 @@ additional access to your account and other projects, so you can ask questions
 across a course, compare research projects, or ask it to carry out work elsewhere.
 You do not need to create or copy an API key for the agent.
 
-In this release, this connector is available for native Codex agents only.
-Claude Code and other ACP agents cannot use it yet. Their Agent Networks and
-Claude's provider-side connectors are separate features and remain available.
+This connector works with native Codex agents and with the Claude Code
+experimental preview. Custom ACP harnesses cannot use it; their Agent Networks
+remain available. Claude's provider-side connectors are a separate feature.
 Switching an agent's runtime does not delete its saved CoCalc access settings.
 
 For example, an instructor could ask: "Read the notebooks in my student projects
