@@ -12,6 +12,7 @@ must contain every typed word exactly once.
 Environment: as for meeting-markdown.spec.ts (COLLAB_BASE_URL, COLLAB_HOME,
 COLLAB_USERS, COLLAB_SECONDS, COLLAB_RELOADS, COLLAB_SEED, COLLAB_SETTLE_MS),
 plus
+  COLLAB_QUIESCE_SECONDS  how long to wait for the browsers to agree (120)
   COLLAB_NEW_CELLS  probability that an action inserts a cell (default 0.1)
   COLLAB_DEBUG      record the merge decisions of cell inputs to
                     <notebook>.debug.json
@@ -32,6 +33,9 @@ const SEED = Number(process.env.COLLAB_SEED ?? Date.now() % 1_000_000);
 const PROJECT_ID = "00000000-1000-4000-8000-000000000000";
 const TOKEN_RE = /tk\d+n\d+q/g;
 const DEBUG = !!process.env.COLLAB_DEBUG;
+// COLLAB_DEBUG=idle records only after the typing stops: anything changing
+// then is not caused by typing.
+const DEBUG_IDLE = process.env.COLLAB_DEBUG === "idle";
 
 function makeRng(seed: number) {
   let s = seed;
@@ -64,17 +68,45 @@ function fileUrl(path: string): string {
   return `${BASE}/projects/${PROJECT_ID}/files/%2F${encodeURI(path.slice(1))}`;
 }
 
-// The cells' inputs in order (all cell inputs are CodeMirror editors).
+// The cells' inputs in order, as "<cell id>: <input>". Cells are rendered
+// lazily: one not scrolled into view yet is a placeholder without an editor,
+// so show each first (see hydrateCells).
 async function shown(page: Page): Promise<string[]> {
+  await hydrateCells(page);
   return await page.evaluate(() =>
-    Array.from(document.querySelectorAll(".CodeMirror")).map(
-      (el: any) => el.CodeMirror?.getValue() ?? el.innerText ?? "",
+    Array.from(document.querySelectorAll("[data-jupyter-lazy-cell-id]")).map(
+      (el: any) => {
+        const cm = el.querySelector(".CodeMirror") as any;
+        const input = cm?.CodeMirror?.getValue() ?? "<not rendered>";
+        return `${el.getAttribute("data-jupyter-lazy-cell-id")}: ${input}`;
+      },
     ),
   );
 }
 
+async function hydrateCells(page: Page): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    const left = await page.evaluate(() => {
+      const placeholder = Array.from(
+        document.querySelectorAll("[data-jupyter-lazy-cell-id]"),
+      ).find((el) => el.querySelector(".CodeMirror") == null);
+      placeholder?.scrollIntoView({ block: "center" });
+      return placeholder != null;
+    });
+    if (!left) return;
+    await page.waitForTimeout(50);
+  }
+}
+
 const words = (cells: string[]) =>
   cells.map((text) => (text.match(TOKEN_RE) ?? []).join(" ")).join(" | ");
+
+function installDebugHook(): void {
+  (globalThis as any).__simpleInputMergeDebug = (
+    event: string,
+    data: unknown,
+  ) => console.log("[collab-debug]" + JSON.stringify({ event, data }));
+}
 
 async function openNotebook(page: Page, path: string): Promise<void> {
   await page.goto(fileUrl(path), { waitUntil: "domcontentloaded" });
@@ -123,29 +155,35 @@ async function typeToken(
 test("a meeting's notebook stays consistent with many people typing", async ({
   browser,
 }) => {
-  const path = join(HOME, `collab/meeting-${SEED}.ipynb`);
+  // A new file each run: the server may still have an earlier run's
+  // notebook of the same name open.
+  const path = join(HOME, `collab/meeting-${SEED}-${Date.now()}.ipynb`);
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, JSON.stringify(NOTEBOOK));
   console.log(`seed ${SEED}, ${USERS} users, ${SECONDS}s, notebook ${path}`);
 
   const pages: Page[] = [];
+  const errors: string[] = [];
   const debugEvents: { t: number; user: number; event: string; data: any }[] =
     [];
   for (let u = 0; u < USERS; u++) {
     const context = await (browser as Browser).newContext();
     const page = await context.newPage();
+    page.on("pageerror", (err) => {
+      if (errors.length < 50) errors.push(`u${u} pageerror: ${err.message}`);
+    });
+    page.on("console", (msg) => {
+      if (msg.type() === "error" && errors.length < 50) {
+        errors.push(`u${u} console: ${msg.text().slice(0, 300)}`);
+      }
+    });
     if (DEBUG) {
-      await page.addInitScript(() => {
-        (globalThis as any).__simpleInputMergeDebug = (
-          event: string,
-          data: unknown,
-        ) => console.log("[collab-debug]" + JSON.stringify({ event, data }));
-      });
+      if (!DEBUG_IDLE) await page.addInitScript(installDebugHook);
       // CoCalc prefixes console messages with a timestamp, so look inside.
       page.on("console", (msg) => {
         const text = msg.text();
         const tag = text.indexOf("[collab-debug]");
-        if (tag < 0) return;
+        if (tag < 0 || debugEvents.length >= 4000) return;
         const { event, data } = JSON.parse(
           text.slice(tag + "[collab-debug]".length),
         );
@@ -197,12 +235,28 @@ test("a meeting's notebook stays consistent with many people typing", async ({
     }),
   );
 
+  if (DEBUG_IDLE) {
+    // Installed only now: recording costs time, which would slow the typing.
+    for (const page of pages) await page.evaluate(installDebugHook);
+  }
+
   // Quiesce: wait until every browser shows the same cells for a while.
   let values: string[][] = [];
   let stableSince = 0;
-  const quiesceDeadline = Date.now() + 120_000;
+  const quiesceStart = Date.now();
+  const quiesceDeadline =
+    Date.now() + 1000 * Number(process.env.COLLAB_QUIESCE_SECONDS ?? 120);
+  let lastReport = 0;
   while (Date.now() < quiesceDeadline) {
     const next = await Promise.all(pages.map(shown));
+    if (Date.now() - lastReport > 15_000) {
+      lastReport = Date.now();
+      console.log(
+        `quiesce ${Math.round((Date.now() - quiesceStart) / 1000)}s: ${
+          new Set(next.map((cells) => JSON.stringify(cells))).size
+        } distinct, cells ${next.map((cells) => cells.length).join(",")}`,
+      );
+    }
     const same = new Set(next.map((cells) => JSON.stringify(cells))).size === 1;
     if (same && JSON.stringify(next[0]) === JSON.stringify(values[0])) {
       if (!stableSince) stableSince = Date.now();
@@ -233,14 +287,16 @@ test("a meeting's notebook stays consistent with many people typing", async ({
       distinctWords: new Set(values.map(words)).size,
       lost: lost.length,
       duplicated: duplicated.length,
+      errors: errors.length,
       lostSample: lost.slice(0, 10),
       duplicatedSample: duplicated.slice(0, 10),
     }),
   );
+  if (errors.length) console.log(errors.slice(0, 10).join("\n"));
   if (distinct > 1 || lost.length || duplicated.length) {
     await writeFile(
       `${path}.final.json`,
-      JSON.stringify({ values, typed, missed, lost, events }, null, 1),
+      JSON.stringify({ values, typed, missed, lost, events, errors }, null, 1),
     );
   }
   if (DEBUG) {
