@@ -2359,6 +2359,13 @@ export class SyncDoc extends EventEmitter {
     if (!this.patchflowReady()) {
       return;
     }
+    if ((this.patchflowSession as any).needsMoreHistory?.()) {
+      // Values may be approximations until more history is loaded (see
+      // loadHistoryIfNeeded), and a snapshot would pass an approximation on to
+      // every client that opens the document later.
+      dbg("not making a snapshot: more history is needed for exact values");
+      return;
+    }
     const time = this.patchflowSnapshotCandidate(interval, max_size);
     if (time != null) {
       dbg("yes, try to make a snapshot at time", time);
