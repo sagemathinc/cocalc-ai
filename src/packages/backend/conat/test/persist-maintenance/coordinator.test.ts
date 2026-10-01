@@ -18,6 +18,8 @@ import {
   quickCheck,
 } from "@cocalc/backend/conat/test/persist-maintenance/helpers";
 
+const os: typeof import("node:os") = jest.requireActual("node:os");
+
 describe("persist maintenance coordinator", () => {
   let root: string;
   let sourcePath: string;
@@ -29,7 +31,35 @@ describe("persist maintenance coordinator", () => {
   });
 
   afterEach(async () => {
+    jest.restoreAllMocks();
     await rm(root, { recursive: true, force: true });
+  });
+
+  it("pauses dry-run scanning under host load and resumes afterward", async () => {
+    const coordinator = new PersistMaintenanceCoordinator({
+      expectedWorkerIds: ["0"],
+      config: {
+        ...maintenanceTestConfig({
+          root,
+          catalogPath: join(root, ".maintenance", "catalog.sqlite"),
+          dryRun: true,
+        }),
+        maxLoadPerCpu: 0.75,
+      },
+    });
+    coordinator.createLocalHooks("0");
+    const scan = jest.spyOn(coordinator.scanner, "scanBatch");
+    const load = jest.spyOn(os, "loadavg").mockReturnValue([1e6, 1e6, 1e6]);
+    await coordinator.tick();
+    expect(scan).not.toHaveBeenCalled();
+    expect(coordinator.status().pauseReason).toBe("host-load");
+    load.mockReturnValue([0, 0, 0]);
+    await coordinator.tick();
+    expect(scan).toHaveBeenCalledTimes(1);
+    expect(coordinator.catalog.getDatabase(sourcePath)?.presence_state).toBe(
+      "present",
+    );
+    coordinator.close();
   });
 
   it("promotes a validated compact copy and records reclaimed bytes", async () => {

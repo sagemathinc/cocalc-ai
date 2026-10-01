@@ -139,6 +139,19 @@ describe("chat scroll anchors", () => {
     expect(resolveChatViewportAnchorIndex(anchor, ["1000", "2000"])).toBe(1);
   });
 
+  it("does not resolve anchors older than every row to the oldest message", () => {
+    const anchor: ChatViewportAnchor = {
+      atBottom: false,
+      date: "500",
+      offsetPx: 0,
+      savedAt: 1,
+    };
+
+    expect(
+      resolveChatViewportAnchorIndex(anchor, ["1000", "2000"]),
+    ).toBeUndefined();
+  });
+
   it("adjusts scrollTop to restore the saved message offset", () => {
     const scroller = makeScroller();
     const visible = document.createElement("div");

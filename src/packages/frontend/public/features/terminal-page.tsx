@@ -3,23 +3,41 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Col, Flex, Row, Typography } from "antd";
+import { Button, Col, Flex, Row, Typography } from "antd";
 
+import type { IconName } from "@cocalc/frontend/components/icon";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import {
+  getPublicFeaturePage,
+  publicFeatureHref,
+} from "@cocalc/util/public-feature-pages";
 import {
   BulletList,
   featureAppPath as appPath,
   featureSignUpPath,
-  featureAsset,
   LinkButton,
 } from "./page-components";
-import { FeatureInfo, FeatureInfoHeading, ZoomableImage } from "./feature-info";
-import { ContextList, FeatureFinalBand } from "./feature-visuals";
+import { ZoomableImage } from "./feature-info";
+import { ContextList, FeatureFinalBand, StoryCard } from "./feature-visuals";
 
 const { Paragraph, Title } = Typography;
 
 const GUIDE_BASE = "https://sagemathinc.github.io/cocalc-guides";
+// The hero, highlights, sign-up label and cards come from the feature record,
+// which the crawler fallback also renders (hub/servers/app/public-prerender.ts).
+// The record's image is also the page's link preview.
+const PAGE = getPublicFeaturePage("terminal")!;
+const HIGHLIGHT_ICONS: IconName[] = ["robot", "file", "terminal", "users"];
+const SECTION_STYLES: { accent: string; icon: IconName }[] = [
+  { accent: UI_COLORS.link, icon: "terminal" },
+  { accent: UI_COLORS.success, icon: "users" },
+  { accent: UI_COLORS.keyword, icon: "robot" },
+  { accent: UI_COLORS.warning, icon: "history" },
+];
+
 export default function TerminalFeaturePage({
   isAuthenticated,
 }: {
@@ -29,7 +47,9 @@ export default function TerminalFeaturePage({
   const primaryCtaHref = isAuthenticated
     ? appPath("projects")
     : featureSignUpPath("code");
-  const finalCtaLabel = isAuthenticated ? "Open projects" : "Create account";
+  const primaryCtaLabel = isAuthenticated
+    ? "Open projects"
+    : (PAGE.signUpLabel ?? "Start using CoCalc");
 
   return (
     <Flex vertical gap={36}>
@@ -38,168 +58,71 @@ export default function TerminalFeaturePage({
           <Col xs={24} lg={14}>
             <Flex className="cocalc-terminal-hero" vertical gap={20}>
               <Title level={2} style={{ margin: 0, maxWidth: 760 }}>
-                An online Linux terminal that lives in your project.
+                {PAGE.tagline}
               </Title>
               <Paragraph
                 style={{ fontSize: PUBLIC_TYPE.lead, margin: 0, maxWidth: 720 }}
               >
-                Work in a hosted project's Linux shell from your browser, next
-                to its files and collaborators. Reconnect to a live session
-                while the project runtime remains running.
+                {PAGE.summary}
               </Paragraph>
+              <div>
+                <Button href={primaryCtaHref} type="primary">
+                  {primaryCtaLabel}
+                </Button>
+              </div>
             </Flex>
           </Col>
           <Col xs={24} lg={10}>
             <ContextList
-              accent="#096dd9"
-              items={[
-                { icon: "file", label: ".term files reopen in their folder" },
-                { icon: "users", label: "Same stream for all collaborators" },
-                { icon: "layout", label: "Reconnect while the runtime runs" },
-                { icon: "robot", label: "Codex can inspect project context" },
-              ]}
+              accent={UI_COLORS.link}
+              items={(PAGE.highlights ?? []).map((label, index) => ({
+                icon: HIGHLIGHT_ICONS[index % HIGHLIGHT_ICONS.length],
+                label,
+              }))}
               title="Highlights"
             />
           </Col>
         </Row>
       </PublicSection>
 
-      <PublicSection>
-        <div style={{ margin: "0 auto", maxWidth: 940 }}>
-          <ZoomableImage
-            alt="A terminal in a CoCalc project running latexmk next to the LaTeX file it compiles"
-            priority
-            src={featureAsset("terminal-latexmk-20260730.png")}
-          />
-        </div>
-      </PublicSection>
+      {PAGE.image ? (
+        <PublicSection>
+          <div style={{ margin: "0 auto", maxWidth: 800 }}>
+            <ZoomableImage
+              alt="A CoCalc project terminal with the Agent button in its title bar, running a saved analysis script"
+              priority
+              src={publicFeatureHref(PAGE.image, appBasePath)}
+            />
+          </div>
+        </PublicSection>
+      ) : null}
 
-      <PublicSection>
-        <FeatureInfoHeading
-          anchor="a-overview"
-          description={
-            <>
-              There are many ways to use a Linux terminal online in CoCalc:
-              alone, with collaborators, or together with Codex.
-            </>
-          }
-        >
-          Feature overview
-        </FeatureInfoHeading>
-      </PublicSection>
-
-      <PublicSection>
-        <FeatureInfo
-          accent="#096dd9"
-          alt="A CoCalc terminal running ordinary bash commands like find, uptime, and lscpu"
-          anchor="a-real-terminal"
-          icon="terminal"
-          image="terminal-bash-commands-20260730.png"
-          title="A full Linux terminal, no setup required"
-        >
-          <Paragraph>
-            Open a <code>.term</code> file and you get{" "}
-            <strong>a real Linux shell</strong> running in your project, not an
-            emulation. Install packages, run build tools, manage Git
-            repositories, and start long-running jobs from any browser.
-          </Paragraph>
-          <Paragraph>
-            A browser disconnect does not itself terminate the backend shell.
-            You can reconnect while the{" "}
-            <strong>project runtime is still running</strong>. Project stops,
-            restarts, failures, or a configured browser-idle timeout end running
-            processes, even during a computation. Save logs and checkpoints so
-            important jobs can resume.
-          </Paragraph>
-        </FeatureInfo>
-      </PublicSection>
-
-      <PublicSection>
-        <FeatureInfo
-          accent="#389e0d"
-          alt="Two synchronized terminals collaborating on the same session"
-          anchor="a-collaboration"
-          icon="users"
-          image="cocalc-terminal-collab.gif"
-          title="Real-time collaboration in the shell"
-        >
-          <Paragraph>
-            The same terminal can be opened by{" "}
-            <strong>two or more people at once</strong>. All of them see the
-            same live session, which adaptively resizes to a common size.
-          </Paragraph>
-          <Paragraph>
-            Open a <strong>side chat</strong> next to the terminal to discuss
-            what is happening: ideal for pair debugging, getting advice from a
-            colleague, or helping a student without a screen share.
-          </Paragraph>
-        </FeatureInfo>
-      </PublicSection>
-
-      <PublicSection>
-        <FeatureInfo
-          accent="#7c3aed"
-          alt="Editing a shell script side by side with a terminal running it"
-          anchor="a-scripts"
-          caption={
-            <>
-              A <code>script.sh</code> file in the editor (left) and a terminal
-              running it (right): one frame, one folder.
-            </>
-          }
-          icon="edit"
-          image="cocalc-shell-script-run.png"
-          title="Edit and run scripts side by side"
-        >
-          <Paragraph>
-            CoCalc's frame editor lets you{" "}
-            <strong>split a script file and a terminal</strong> into adjacent
-            panes. Edit <code>.sh</code>, <code>.py</code>, <code>.r</code>, and
-            other files with syntax highlighting, run them in the terminal next
-            to the code, and keep a log view or a REPL in another pane.
-          </Paragraph>
-          <Paragraph>
-            The terminal starts in the file's folder. Run{" "}
-            <code>python3 script.py</code> or <code>bash script.sh</code> with
-            the required interpreter and packages installed. A collaborator
-            opening the same terminal can follow the live session; use output
-            files when the results need to outlast it.
-          </Paragraph>
-        </FeatureInfo>
-      </PublicSection>
-
-      <PublicSection>
-        <FeatureInfo
-          accent="#ad6800"
-          anchor="a-software"
-          icon="server"
-          title="Pick the software, install more on top"
-        >
-          <Paragraph>
-            The software in the terminal comes from your project's{" "}
-            <strong>software environment</strong>, a runtime image you pick:
-            from a lean base system to full scientific stacks with Python,
-            SageMath, R, Julia, TeX Live, and complete build toolchains. Switch
-            the image at any time in the project settings.
-          </Paragraph>
-          <Paragraph>
-            Need more? Use the package manager supported by the image, such as{" "}
-            <code>sudo apt-get install</code> for Ubuntu system packages. Use a
-            virtual environment or the selected interpreter for Python packages.
-            Installs in persistent project storage survive normal restarts;
-            temporary directories have a different lifetime. Command-line agents
-            such as Codex can run beside the same files.
-          </Paragraph>
-          <Flex wrap gap={12}>
-            <LinkButton href={appPath("features/software-environment")}>
-              Learn about software environments
-            </LinkButton>
-            <LinkButton href={`${GUIDE_BASE}/software-install/`}>
-              Read the software install guide
-            </LinkButton>
-          </Flex>
-        </FeatureInfo>
-      </PublicSection>
+      <Row gutter={[16, 16]}>
+        {(PAGE.sections ?? []).map((section, index) => (
+          <Col key={section.title} xs={24} md={12}>
+            <StoryCard
+              {...SECTION_STYLES[index % SECTION_STYLES.length]}
+              title={section.title}
+            >
+              {(section.paragraphs ?? []).map((paragraph, i) => (
+                <span
+                  key={paragraph}
+                  style={{ display: "block", marginTop: i > 0 ? 8 : 0 }}
+                >
+                  {paragraph}
+                </span>
+              ))}
+              {(section.links ?? []).map(({ href, label }) => (
+                <span key={href} style={{ display: "block", marginTop: 8 }}>
+                  <LinkButton href={publicFeatureHref(href, appBasePath)}>
+                    {label}
+                  </LinkButton>
+                </span>
+              ))}
+            </StoryCard>
+          </Col>
+        ))}
+      </Row>
 
       <PublicSection>
         <FeatureFinalBand
@@ -211,7 +134,7 @@ export default function TerminalFeaturePage({
               </>
             ),
             href: primaryCtaHref,
-            label: finalCtaLabel,
+            label: primaryCtaLabel,
             title: "Ready to use terminals in CoCalc?",
           }}
           relatedLinks={[

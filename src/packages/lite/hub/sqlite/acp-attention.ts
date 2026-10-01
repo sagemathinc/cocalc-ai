@@ -43,6 +43,7 @@ type AcpAttentionRow = {
   state: AcpAttentionState;
   response_id: string | null;
   response_json: string | null;
+  response_credential_id: string | null;
   response_declined: number;
   response_submitted_at: number | null;
   dispatch_as_async: number;
@@ -59,6 +60,7 @@ type AcpAttentionRow = {
 export type AcpAttentionStoredRecord = AcpAttentionRecord & {
   chat: AcpChatContext;
   response_id?: string;
+  response_credential_id?: string;
   response?: Record<string, string[]>;
   response_declined?: boolean;
   dispatch_as_async?: boolean;
@@ -85,6 +87,7 @@ function init(db = getAcpDatabase()): void {
       state TEXT NOT NULL,
       response_id TEXT,
       response_json TEXT,
+      response_credential_id TEXT,
       response_declined INTEGER NOT NULL DEFAULT 0,
       response_submitted_at INTEGER,
       dispatch_as_async INTEGER NOT NULL DEFAULT 0,
@@ -102,6 +105,9 @@ function init(db = getAcpDatabase()): void {
   const columns = db.prepare(`PRAGMA table_info(${TABLE})`).all() as Array<{
     name?: string;
   }>;
+  if (!columns.some(({ name }) => name === "response_credential_id")) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN response_credential_id TEXT`);
+  }
   if (!columns.some(({ name }) => name === "action_json")) {
     db.exec(`ALTER TABLE ${TABLE} ADD COLUMN action_json TEXT`);
   }
@@ -165,6 +171,7 @@ function toStoredRecord(row: AcpAttentionRow): AcpAttentionStoredRecord {
     }),
     state: row.state,
     response_id: row.response_id ?? undefined,
+    response_credential_id: row.response_credential_id ?? undefined,
     response: parseJson<Record<string, string[]> | undefined>(
       row.response_json,
       undefined,
@@ -414,6 +421,7 @@ export function submitAcpAttentionResponse(opts: {
   account_id: string;
   project_id: string;
   response_id: string;
+  codex_credential_id?: string;
   answers?: Record<string, string[]>;
   decline?: boolean;
   allow_stale_sync?: boolean;
@@ -452,6 +460,7 @@ export function submitAcpAttentionResponse(opts: {
     .prepare(
       `UPDATE ${TABLE}
        SET response_id = ?, response_json = ?, response_declined = ?,
+           response_credential_id = ?,
            response_submitted_at = ?, updated_at = ?,
            state = CASE WHEN state = 'stale' THEN 'pending' ELSE state END,
            resolved_at = NULL, resolution_reason = NULL,
@@ -464,6 +473,7 @@ export function submitAcpAttentionResponse(opts: {
       opts.response_id,
       JSON.stringify(opts.answers ?? {}),
       opts.decline ? 1 : 0,
+      opts.codex_credential_id ?? null,
       now,
       now,
       opts.attention_id,
@@ -539,6 +549,7 @@ export function listPendingAcpAttentionResponseDispatches(
 }
 
 export function claimStaleAcpAttentionContinue(opts: {
+  codex_credential_id?: string;
   attention_id: string;
   account_id: string;
   project_id: string;
@@ -549,13 +560,20 @@ export function claimStaleAcpAttentionContinue(opts: {
     .prepare(
       `UPDATE ${TABLE}
        SET state = 'pending', resolution_reason = 'continuing', dispatch_as_async = 1,
+           response_credential_id = ?,
            resolved_at = NULL, updated_at = ?
        WHERE attention_id = ? AND account_id = ? AND project_id = ?
          AND source_kind IN ('codex_sync_question', 'codex_async_question')
          AND state = 'stale'
          AND response_id IS NOT NULL`,
     )
-    .run(now, opts.attention_id, opts.account_id, opts.project_id);
+    .run(
+      opts.codex_credential_id ?? null,
+      now,
+      opts.attention_id,
+      opts.account_id,
+      opts.project_id,
+    );
   return Number(result?.changes ?? 0) === 1
     ? getAcpAttention(opts.attention_id)
     : undefined;

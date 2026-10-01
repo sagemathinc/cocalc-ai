@@ -53,8 +53,12 @@ jest.mock("./dnd/frame-dnd-provider", () => ({
 }));
 
 jest.mock("./format-error", () => () => null);
+const mockFrameTree = jest.fn();
 jest.mock("./frame-tree", () => ({
-  FrameTree: () => <div>frame tree</div>,
+  FrameTree: (props: any) => {
+    mockFrameTree(props);
+    return <div>frame tree</div>;
+  },
 }));
 jest.mock("./status-bar", () => () => null);
 
@@ -91,7 +95,10 @@ const baseState = {
   visible: true,
 };
 
-function renderEditor(state: Partial<typeof baseState>) {
+function renderEditor(
+  state: Partial<typeof baseState>,
+  { isVisible = true }: { isVisible?: boolean } = {},
+) {
   const mergedState = { ...baseState, ...state };
   mockUseRedux.mockImplementation((_name: string, key: string) => {
     return mergedState[key as keyof typeof mergedState];
@@ -108,7 +115,7 @@ function renderEditor(state: Partial<typeof baseState>) {
       name="editor"
       path="test.md"
       project_id="project-1"
-      is_visible={true}
+      is_visible={isVisible}
     />,
   );
 }
@@ -128,5 +135,29 @@ describe("FrameTreeEditor loading state", () => {
       "syncdoc failed before ready",
     );
     expect(screen.queryByText("Loading...")).not.toBeInTheDocument();
+  });
+});
+
+describe("FrameTreeEditor frame visibility", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  const loaded = { is_loaded: true, value: "" };
+  const framesVisible = () =>
+    mockFrameTree.mock.calls[mockFrameTree.mock.calls.length - 1][0].is_visible;
+
+  it("shows frames on a visible surface even after the project hid the file", () => {
+    // The project page hid its tab for this file (visible: false), but the
+    // same editor is shown elsewhere, e.g. in the Agents workspace.
+    renderEditor({ ...loaded, visible: false }, { isVisible: true });
+    expect(framesVisible()).toBe(true);
+  });
+
+  it("keeps the shared visibility for a surface that is not shown", () => {
+    renderEditor({ ...loaded, visible: false }, { isVisible: false });
+    expect(framesVisible()).toBe(false);
+    renderEditor({ ...loaded, visible: true }, { isVisible: false });
+    expect(framesVisible()).toBe(true);
   });
 });

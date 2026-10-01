@@ -25,11 +25,39 @@ import {
   PUBLIC_FEATURED_GUIDES,
   PUBLIC_GUIDE_GROUPS,
 } from "@cocalc/util/public-guides";
+import {
+  getPublicHomeHighlights,
+  PUBLIC_HOME_EYEBROW,
+  PUBLIC_HOME_HEADLINE,
+  PUBLIC_HOME_INTRO,
+  PUBLIC_HOME_SECONDARY_CTA,
+  PUBLIC_HOME_TRUST_LINE,
+} from "@cocalc/util/public-home-content";
 import { getDocsEntry } from "@cocalc/docs";
 import {
   PUBLIC_COMMUNITY_INTRO,
   PUBLIC_COMMUNITY_LINKS,
 } from "@cocalc/util/public-support-content";
+import {
+  BILLING_INTERVAL_LABELS,
+  hasPriceForBillingInterval,
+  membershipPriceDisplay,
+  membershipStoreDescription,
+  membershipStoreHighlights,
+  membershipTiersIncludeAi,
+  membershipTrialLabel,
+  PUBLIC_PRICING_CUSTOMER_OPERATED,
+  PUBLIC_PRICING_INCLUDED_AI_ALERT,
+  PUBLIC_PRICING_NO_TIERS,
+  PUBLIC_PRICING_ORGANIZATION_LICENSING,
+  PUBLIC_PRICING_PLUS_TEAMS_TITLE,
+  PUBLIC_PRICING_PRODUCT_QUOTES,
+  PUBLIC_PRICING_PROJECT_HOSTS,
+  PUBLIC_PRICING_TEAM_SEATS,
+  PUBLIC_PRICING_TEAMS_TITLE,
+  publicStoreMembershipTiers,
+  type PublicPricingTier,
+} from "@cocalc/util/public-pricing";
 import {
   getPublicRouteMetadata,
   type PublicMetadataRoute,
@@ -90,17 +118,24 @@ function publicOrExternalLink(
   )}</a>`;
 }
 
-function renderHome(basePath: string): string {
+function renderHome(
+  basePath: string,
+  config: PublicRouteMetadataConfig,
+): string {
   return `<main data-cocalc-public-prerender="home" style="${ARTICLE_STYLE}">
 <header>
-  <p>Persistent shared projects</p>
-  <h1>Keep people, AI agents, and project work together.</h1>
-  <p>Files, notebooks, terminals, services, and history stay in a shared Linux project so work can continue, be reviewed, and be handed off.</p>
-  <p>${publicLink(basePath, "auth/sign-up", "Start on CoCalc.ai")} ${publicLink(basePath, "products", "Ways to run CoCalc")}</p>
+  <p>${htmlEscape(PUBLIC_HOME_EYEBROW)}</p>
+  <h1>${htmlEscape(PUBLIC_HOME_HEADLINE)}</h1>
+  <p>${htmlEscape(PUBLIC_HOME_INTRO)}</p>
+  <p>${publicLink(basePath, "auth/sign-up", "Start on CoCalc.ai")} ${publicLink(basePath, PUBLIC_HOME_SECONDARY_CTA.href, PUBLIC_HOME_SECONDARY_CTA.label)}</p>
+  <ul>${getPublicHomeHighlights(config)
+    .map((highlight) => `<li>${htmlEscape(highlight)}</li>`)
+    .join("")}</ul>
+  <p>${htmlEscape(PUBLIC_HOME_TRUST_LINE)}</p>
 </header>
 <section>
   <h2>Agents work where your project lives.</h2>
-  <p>Use integrated Codex, or run Claude Code and other shell-based agents in project terminals, with the files, tools, and running services your collaborators already use.</p>
+  <p>Use the integrated Codex agent or Claude Code, or run other command-line agents in project terminals, all with the files, tools, and running services your collaborators already use. Claude Code is an experimental preview on sites that enable it and works with your personal Claude Pro or Max subscription.</p>
   <p>${publicLink(basePath, "features/ai", "See agent workflows")} ${publicLink(basePath, "features/compare", "Compare with agent sandboxes")}</p>
 </section>
 <section>
@@ -159,51 +194,129 @@ ${productList}
 </main>`;
 }
 
+// Data the shell loads before rendering; a route renders without it when it
+// is missing.
+export interface PublicRoutePrerenderData {
+  // Membership tiers from the tier API's source. Only store-visible tiers are
+  // rendered.
+  pricingTiers?: readonly PublicPricingTier[];
+}
+
+// One tier as the pricing page's tier card shows it, with both billing
+// intervals, since the fallback has no interval switch.
+function renderPricingTier(tier: PublicPricingTier): string {
+  const trial = membershipTrialLabel(tier);
+  const prices = (["year", "month"] as const)
+    .map((interval) => {
+      const price = hasPriceForBillingInterval(tier, interval)
+        ? membershipPriceDisplay(tier, interval)
+        : undefined;
+      if (price == null) return "";
+      const text = [`${price.amount} ${price.suffix}`, price.billingLine]
+        .filter(Boolean)
+        .join(" · ");
+      return `<p>${BILLING_INTERVAL_LABELS[interval]}: ${htmlEscape(text)}</p>`;
+    })
+    .join("");
+  const description = membershipStoreDescription(tier);
+  const highlights = membershipStoreHighlights(tier);
+  return `<li><h3>${htmlEscape(tier.label ?? tier.id)}</h3>${
+    trial ? `<p>${htmlEscape(trial)}</p>` : ""
+  }${prices}${description ? `<p>${htmlEscape(description)}</p>` : ""}${
+    highlights.length > 0
+      ? `<ul>${highlights
+          .map((highlight) => `<li>${htmlEscape(highlight)}</li>`)
+          .join("")}</ul>`
+      : ""
+  }</li>`;
+}
+
+function renderPricingOption(
+  { body, title }: { body: string; title: string },
+  action = "",
+): string {
+  return `<li><h3>${htmlEscape(title)}</h3><p>${htmlEscape(body)}</p>${
+    action ? `<p>${action}</p>` : ""
+  }</li>`;
+}
+
 function renderPricing(
   basePath: string,
   config: PublicRouteMetadataConfig,
+  pricingTiers?: readonly PublicPricingTier[],
 ): string {
   const isPlusProduct = config.cocalc_product === "plus";
-  const researchCompute =
-    getPublicFeaturePage("research-compute", config) != null
-      ? `<li><h3>${publicLink(
-          basePath,
-          "features/research-compute",
-          "Evaluate research compute",
-        )}</h3><p>Compare CPU, RAM, GPU, storage, software, and remote-kernel requirements before opening the authenticated host console. Host creation also depends on account eligibility, catalog availability, and authorization.</p></li>`
-      : "";
+  const tiers =
+    isPlusProduct || pricingTiers == null
+      ? undefined
+      : publicStoreMembershipTiers(pricingTiers);
   const introduction = isPlusProduct
     ? "CoCalc Plus is the local, one-user runtime. Use the product paths below when you need hosted collaboration, a shared VM, or a customer-operated private deployment."
     : "The membership options on this page apply to the hosted service on this site. For local, single-VM, and customer-operated paths, continue through the relevant product or contact page.";
+  const aiAlert =
+    tiers != null && membershipTiersIncludeAi(tiers)
+      ? `\n  <p>${htmlEscape(PUBLIC_PRICING_INCLUDED_AI_ALERT)}</p>`
+      : "";
   const hostedAction = isPlusProduct
     ? ""
     : publicLink(basePath, "auth/sign-up", "Create account for hosted CoCalc");
+  const tierList =
+    tiers == null
+      ? ""
+      : tiers.length > 0
+        ? `\n  <ul>${tiers.map(renderPricingTier).join("")}</ul>`
+        : `\n  <p>${htmlEscape(PUBLIC_PRICING_NO_TIERS)}</p>`;
   const hostedSection = isPlusProduct
     ? ""
     : `<section>
   <h2>Hosted memberships</h2>
-  <p>Use CoCalc.ai without operating CoCalc yourself. Current membership tiers, limits, and billing choices appear on this page when it loads.</p>
+  <p>Use CoCalc.ai without operating CoCalc yourself.${
+    tiers == null
+      ? " Current membership tiers, limits, and billing choices appear on this page when it loads."
+      : ""
+  }</p>${tierList}
 </section>`;
+  const compareProducts = publicLink(
+    basePath,
+    "products",
+    "Compare customer-operated options",
+  );
+  const options = isPlusProduct
+    ? [
+        renderPricingOption(PUBLIC_PRICING_CUSTOMER_OPERATED, compareProducts),
+        renderPricingOption(PUBLIC_PRICING_PRODUCT_QUOTES),
+      ]
+    : [
+        renderPricingOption(
+          PUBLIC_PRICING_TEAM_SEATS,
+          publicLink(basePath, "auth/sign-up", "Create account for team seats"),
+        ),
+        renderPricingOption(PUBLIC_PRICING_ORGANIZATION_LICENSING),
+        ...(getPublicFeaturePage("research-compute", config) != null
+          ? [
+              renderPricingOption(
+                PUBLIC_PRICING_PROJECT_HOSTS,
+                publicLink(
+                  basePath,
+                  "features/research-compute",
+                  "Evaluate research compute",
+                ),
+              ),
+            ]
+          : []),
+        renderPricingOption(PUBLIC_PRICING_CUSTOMER_OPERATED, compareProducts),
+      ];
   return `<main data-cocalc-public-prerender="pricing" style="${ARTICLE_STYLE}">
 <header>
   <p>CoCalc.ai pricing and licensing</p>
   <h1>Find the right fit</h1>
-  <p>${htmlEscape(introduction)}</p>
+  <p>${htmlEscape(introduction)}</p>${aiAlert}
   <p>${hostedAction} ${publicLink(basePath, "products", "Compare operating models")}</p>
 </header>
 ${hostedSection}
 <section>
-  <h2>${isPlusProduct ? "Licensing and deployment" : "For teams and organizations"}</h2>
-  ${
-    isPlusProduct
-      ? ""
-      : "<p>Choose team seats, organization licenses, dedicated project hosts, or a customer-operated product path according to your users, workload, procurement, and operating requirements. Account actions require sign-in, and host creation also depends on membership or grant eligibility.</p>"
-  }
-  <ul>${researchCompute}<li><h3>${publicLink(
-    basePath,
-    "products",
-    "Compare customer-operated options",
-  )}</h3><p>Compare local, one-VM, and private-deployment paths, including who owns infrastructure, recovery, and ongoing operations.</p></li></ul>
+  <h2>${htmlEscape(isPlusProduct ? PUBLIC_PRICING_PLUS_TEAMS_TITLE : PUBLIC_PRICING_TEAMS_TITLE)}</h2>
+  <ul>${options.join("")}</ul>
   <p>${publicLink(basePath, "support", "Pricing and licensing support options")}</p>
 </section>
 </main>`;
@@ -272,19 +385,22 @@ function renderFeatureDetail(
     .map((section) => renderSection(section, basePath, config))
     .join("");
   const title = page.metadataTitle ?? page.title;
+  const highlights = (page.highlights ?? [])
+    .map((item) => `<li>${htmlEscape(item)}</li>`)
+    .join("");
   return `<article data-cocalc-public-prerender="feature" style="${ARTICLE_STYLE}">
 <header>
   <p>CoCalc feature</p>
   <h1>${htmlEscape(title)}</h1>
   <p>${htmlEscape(page.tagline)}</p>
   <p>${htmlEscape(page.metadataSummary ?? page.summary)}</p>
-  <p>${htmlEscape(page.summary)}</p>
+  <p>${htmlEscape(page.summary)}</p>${highlights ? `<ul>${highlights}</ul>` : ""}
 </header>
 ${sections}
 ${renderFeatureNavigation(basePath, page.slug, config)}
 <p><a href="${htmlEscape(
     joinUrlPath(basePath, "auth/sign-up"),
-  )}">Start using CoCalc</a></p>
+  )}">${htmlEscape(page.signUpLabel ?? "Start using CoCalc")}</a></p>
 </article>`;
 }
 
@@ -506,16 +622,17 @@ export function renderPublicRoutePrerender(
   route: PublicMetadataRoute,
   basePath: string,
   config?: PublicRouteMetadataConfig,
+  data: PublicRoutePrerenderData = {},
 ): string {
   const resolvedConfig = config ?? {};
   if (route.section === "home") {
-    return renderHome(basePath);
+    return renderHome(basePath, resolvedConfig);
   }
   if (route.section === "products") {
     return renderProducts(route, basePath, resolvedConfig);
   }
   if (route.section === "pricing") {
-    return renderPricing(basePath, resolvedConfig);
+    return renderPricing(basePath, resolvedConfig, data.pricingTiers);
   }
   if (route.section === "guides") {
     return renderGuides(basePath, resolvedConfig);

@@ -215,9 +215,7 @@ describe("PublicHomeApp visual quality contract", () => {
 
     const h1 = container.querySelectorAll("h1");
     expect(h1).toHaveLength(1);
-    expect(h1[0]).toHaveTextContent(
-      "Keep people, AI agents, and project work together.",
-    );
+    expect(h1[0]).toHaveTextContent("Build and use software with AI.");
     expect(textLength(h1[0])).toBeLessThanOrEqual(HERO_H1_MAX);
 
     // Section identity and order are canaried by the aria-label array in

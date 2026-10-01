@@ -11394,6 +11394,7 @@ function publicAttentionRecord(
     chat: _chat,
     response: _response,
     response_id: _responseId,
+    response_credential_id: _responseCredentialId,
     response_declined: _responseDeclined,
     dispatch_as_async: _dispatchAsAsync,
     ...publicRecord
@@ -11610,6 +11611,20 @@ async function deliverAsyncAttentionAnswer(
   if (alreadyDelivered) {
     return { ok: true, state: "steered", threadId: record.thread_id };
   }
+  // Match normal sends: the subscription selector is private browser state,
+  // not shared thread configuration. Keep it durable for deferred dispatch.
+  // New-turn admission still resolves and authorizes this ID for the owner.
+  if (
+    !harnessExecution &&
+    config.paymentSource === "subscription" &&
+    record.response_credential_id
+  ) {
+    config = {
+      ...config,
+      paymentSource: "subscription-credential",
+      credentialId: record.response_credential_id,
+    };
+  }
   const fallbackConfig = config;
   const activeJob = listRunningAcpJobs().find(
     (job) =>
@@ -11804,6 +11819,7 @@ async function continueStaleAttentionAnswer(
     };
   }
   const claimed = claimStaleAcpAttentionContinue({
+    codex_credential_id: request.codex_credential_id,
     attention_id: request.attention_id,
     account_id: request.account_id,
     project_id: request.project_id,
@@ -12041,6 +12057,7 @@ async function handleAcpAttentionRequest(
         Object.entries(normalized).map(([id, value]) => [id, value.answers]),
       );
       const submitted = submitAcpAttentionResponse({
+        codex_credential_id: request.codex_credential_id,
         attention_id: request.attention_id,
         account_id: request.account_id,
         project_id: request.project_id,

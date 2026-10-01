@@ -13,6 +13,9 @@ export interface PublicFeatureSection {
 export interface PublicFeaturePage {
   aliases?: string[];
   docsUrl?: string;
+  // Short labels shown beside a feature page's hero and in its crawler
+  // fallback.
+  highlights?: string[];
   image?: string;
   index: boolean;
   metadataSummary?: string;
@@ -22,6 +25,9 @@ export interface PublicFeaturePage {
   // do not appear there. Nav order follows the order of this array.
   navLabel?: string;
   sections?: PublicFeatureSection[];
+  // Label of the sign-up link for signed-out visitors, on the page and in its
+  // crawler fallback, which otherwise says "Start using CoCalc".
+  signUpLabel?: string;
   slug: string;
   summary: string;
   tagline: string;
@@ -191,25 +197,51 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
     title: "Linux Terminal",
     navLabel: "Terminal",
     metadataTitle: "Online Linux Terminal",
-    tagline: "A collaborative shell beside your project files.",
+    tagline: "A Linux terminal for you and your agents.",
     summary:
-      "Work in a shared Linux shell with tools and files near notebooks, documents, and project history.",
+      "Agents run commands and save their work in the project. Open a terminal to check the output, rerun a command, or work directly.",
     metadataSummary:
-      "Use a hosted Linux terminal beside project files, notebooks, and collaborators. Reconnect to live shell sessions while the project runtime remains running.",
-    image: "/public/features/terminal.png",
+      "Agents can run commands in a CoCalc project. Open its Linux terminal to check or rerun them, work with collaborators, and save outputs before the project stops.",
+    image: "/public/landing/project-terminal-20260916.jpg",
+    highlights: [
+      "Agents can run project commands",
+      "Files and results stay in the project",
+      "Open a shell for direct control",
+      "Share a live terminal with a collaborator",
+    ],
     index: true,
+    signUpLabel: "Start on CoCalc.ai",
     sections: [
       {
-        title: "A real Linux terminal online",
+        title: "Run build tools, Git, and tests",
         paragraphs: [
-          "Use a hosted project shell from your browser, with commands and software provided by the selected image and your project installs.",
-          "Collaborators can share a live shell and reconnect after a browser disconnect while the project runtime remains running. Stops, restarts, failures, and configured browser-idle timeouts end running processes.",
+          "The terminal has the software in your project's image. If your project has network access, add packages with the image's package manager, such as sudo apt-get install.",
         ],
-        bullets: [
-          "Run commands and scripts in the same project as notebooks and documents",
-          "Install packages with tools supported by the selected image and interpreter, using persistent project storage",
-          "Edit a script and run it in a terminal pane right next to the editor",
-          "Save logs and checkpoints so interrupted jobs can resume",
+        links: [
+          { href: "/docs/terminal/use-terminal", label: "Use terminals" },
+          {
+            href: "/features/software-environment",
+            label: "Learn about software environments",
+          },
+        ],
+      },
+      {
+        title: "Bring a collaborator into the same shell",
+        paragraphs: [
+          "Collaborators on the project can open the same terminal and see the same output live.",
+        ],
+      },
+      {
+        title: "Let the agent work in your terminal",
+        paragraphs: [
+          "When AI is enabled for your site, account, and project, click the Agent button in a terminal's title bar, and the agent can read that session and run commands in it. Commands it runs on its own show in its chat, not in your terminal, so check the files and output, or rerun a command yourself.",
+          "With network access, you can also install and run other command-line agents as ordinary Linux tools.",
+        ],
+      },
+      {
+        title: "Keep the result after the process ends",
+        paragraphs: [
+          "A browser disconnect does not itself terminate the backend shell. You can reconnect while the project runtime is still running. Project stops, restarts, failures, or a configured browser-idle timeout end running processes, even during a computation. Save logs and checkpoints so important jobs can resume.",
         ],
       },
     ],
@@ -315,7 +347,7 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
       {
         title: "Codex in project threads",
         paragraphs: [
-          "CoCalc-AI uses AI through Codex chat threads. Human @mentions notify collaborators; they do not invoke models.",
+          "Codex works in project chat threads. Human @mentions notify collaborators; they do not invoke models.",
         ],
         bullets: [
           "Use OpenAI API keys or OpenAI subscription plans for native Codex support",
@@ -328,9 +360,13 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
       {
         title: "Integrated chat or a terminal agent",
         paragraphs: [
-          "Codex runs through project chat and can work with project files, terminals, and live notebook state. Claude Code, OpenCode, and other shell-based agents run in project terminals as normal Linux tools; their interfaces, credentials, and capabilities are separate from Codex chat.",
+          "Codex runs through project chat and can work with project files, terminals, and live notebook state. Claude Code is integrated as an experimental preview on sites that enable it and works with your personal Claude Pro or Max subscription. Other command-line agents can run in project terminals as ordinary Linux tools, with their own interfaces and credentials.",
         ],
         links: [
+          {
+            href: "/docs/ai/claude-code",
+            label: "Claude Code in CoCalc (Experimental Preview)",
+          },
           { href: "/features/terminal", label: "Use project terminals" },
           {
             href: "/features/compare",

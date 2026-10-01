@@ -72,3 +72,41 @@ it("does not change the limit in a read-only notebook", async () => {
   fireEvent.click(item);
   expect(actions.set_output_limit_bytes).not.toHaveBeenCalled();
 });
+
+it("disables the output menu after the notebook closes", () => {
+  const actions = {
+    isClosed: () => true,
+    get_output_limit_bytes: jest.fn(() => {
+      throw new Error("Store already destroyed");
+    }),
+    set_output_limit_bytes: jest.fn(),
+  };
+  const items = outputLimitMenu(actions);
+  expect(actions.get_output_limit_bytes).not.toHaveBeenCalled();
+  for (const item of items) {
+    expect(item.disabled({ readOnly: false })).toBe(true);
+    item.onClick();
+  }
+  expect(actions.set_output_limit_bytes).not.toHaveBeenCalled();
+});
+
+it("rechecks lifecycle readiness when a previously open menu is clicked", () => {
+  let closed = false;
+  const actions = {
+    isClosed: () => closed,
+    get_output_limit_bytes: () => 1024 * 1024,
+    set_output_limit_bytes: jest.fn(),
+  };
+  const item = outputLimitMenu(actions)[1];
+  expect(item.disabled({ readOnly: false })).toBe(false);
+  closed = true;
+  item.onClick();
+  expect(actions.set_output_limit_bytes).not.toHaveBeenCalled();
+});
+
+it("disables the output menu before notebook actions are attached", () => {
+  for (const item of outputLimitMenu()) {
+    expect(item.disabled({ readOnly: false })).toBe(true);
+    expect(() => item.onClick()).not.toThrow();
+  }
+});

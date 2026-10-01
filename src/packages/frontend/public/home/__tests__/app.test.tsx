@@ -4,6 +4,15 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import PublicHomeApp from "../app";
 import { PUBLIC_COLORS, publicAccent } from "../../theme";
+import {
+  getPublicHomeHighlights,
+  PUBLIC_HOME_EYEBROW,
+  PUBLIC_HOME_HEADLINE,
+  PUBLIC_HOME_HIGHLIGHTS,
+  PUBLIC_HOME_INTRO,
+  PUBLIC_HOME_SECONDARY_CTA,
+  PUBLIC_HOME_TRUST_LINE,
+} from "@cocalc/util/public-home-content";
 import { COLORS } from "@cocalc/util/theme";
 import {
   combineLeak,
@@ -90,7 +99,9 @@ describe("PublicHomeApp", () => {
     ]);
     expectHomepageSectionsLabeled(container);
     expect(
-      screen.getByText("Persistent shared projects").closest(".ant-typography"),
+      within(screen.getByRole("region", { name: "CoCalc hero" }))
+        .getByText("CoCalc")
+        .closest(".ant-typography"),
     ).toHaveStyle({ color: PUBLIC_COLORS.linkHover });
 
     // Section identity + order are canaried by the aria-label array above.
@@ -108,7 +119,7 @@ describe("PublicHomeApp", () => {
     const heroHeadings = within(hero).getAllByRole("heading", { level: 1 });
     expect(heroHeadings).toHaveLength(1);
     expect(heroHeadings[0]).toHaveTextContent(
-      "Keep people, AI agents, and project work together.",
+      "Build and use software with AI.",
     );
     expect(textLength(heroHeadings[0])).toBeLessThanOrEqual(HERO_H1_MAX);
     expect(
@@ -150,14 +161,8 @@ describe("PublicHomeApp", () => {
     const heroLead = hero.querySelector(".cocalc-public-home-hero-title + *");
     expect(heroLead).not.toBeNull();
     expect(textLength(heroLead as Element)).toBeLessThanOrEqual(210);
-    expect(hero.textContent ?? "").toMatch(/Persistent shared projects/i);
-    expect(hero.textContent ?? "").toMatch(/shared Linux project/i);
-    expect(hero.textContent ?? "").toMatch(
-      /work can continue, be reviewed, and be handed off/i,
-    );
-    expect(hero.textContent ?? "").not.toMatch(
-      /collaborative technical computing online since 2013/i,
-    );
+    expect(heroLead?.textContent ?? "").toMatch(/shared project/i);
+    expect(heroLead?.textContent ?? "").toMatch(/take over the work yourself/i);
     expect(hero.textContent ?? "").not.toMatch(/Jupyter notebooks/i);
     expect(hero.textContent ?? "").not.toMatch(/Linux terminals/i);
     expect(hero.textContent ?? "").not.toMatch(/isolated project/i);
@@ -170,24 +175,23 @@ describe("PublicHomeApp", () => {
         })
         .getAttribute("src"),
     ).toBe("/public/landing/project-notebook-20260916.jpg");
-    expect(
-      within(hero).getByText(
-        /saved Jupyter notebook in a fresh CoCalc\.ai project/i,
-      ),
-    ).not.toBeNull();
+    // The image keeps its alt text and has no caption.
+    expect(hero.querySelector("figcaption")).toBeNull();
     expect(
       within(hero)
         .getByRole("link", { name: "Start on CoCalc.ai" })
         .getAttribute("href"),
     ).toBe("/auth/sign-up");
     expect(
-      within(hero).getByRole("link", { name: "Ways to run CoCalc" }),
-    ).toHaveAttribute("href", "/products");
+      within(hero).getByRole("link", { name: "See how it works" }),
+    ).toHaveAttribute("href", "/features/ai");
     expect(within(hero).queryByRole("link", { name: "SageMath" })).toBeNull();
     expect(
       within(hero).queryByText(/keeps technical work collaborative/i),
     ).toBeNull();
-    // No chip/tag row in the hero; the only links are the two CTAs.
+    // The hero has one chip row on purpose: plain-text highlights styled as
+    // pills (list items, not antd Tags or links). The only links are the two
+    // CTAs.
     expect(hero.querySelectorAll(".ant-tag")).toHaveLength(0);
     expect(within(hero).getAllByRole("link")).toHaveLength(2);
     // The hero CTA panel must stay a light panel.
@@ -208,7 +212,7 @@ describe("PublicHomeApp", () => {
       }),
     ).not.toBeNull();
     expect(agents.textContent ?? "").toMatch(
-      /Use integrated Codex, or run Claude Code and other shell-based agents in project terminals/i,
+      /Use the integrated Codex agent or Claude Code, or run other command-line agents in project terminals/i,
     );
     expect(
       within(agents).getByRole("link", { name: "See agent workflows" }),
@@ -619,6 +623,87 @@ describe("PublicHomeApp", () => {
     ).toBeNull();
     expect(screen.queryByRole("link", { name: "Create account" })).toBeNull();
   });
+
+  // cocalc.ai's /customize reports the Launchpad product, so the cocalc.ai
+  // cases do too: a rule that left out Launchpad would fail them.
+  const cocalcAi = {
+    cocalc_product: "launchpad",
+    dns: "cocalc.ai",
+    is_launchpad: true,
+    site_name: "CoCalc",
+  };
+
+  it("renders the first screen from the shared Home content, like the crawler fallback", () => {
+    render(<PublicHomeApp config={cocalcAi} />);
+    const hero = screen.getByRole("region", { name: "CoCalc hero" });
+
+    expect(within(hero).getByText(PUBLIC_HOME_EYEBROW)).not.toBeNull();
+    expect(within(hero).getByRole("heading", { level: 1 }).textContent).toBe(
+      PUBLIC_HOME_HEADLINE,
+    );
+    expect(
+      hero.querySelector(".cocalc-public-home-hero-title + *")?.textContent,
+    ).toBe(PUBLIC_HOME_INTRO);
+    expect(
+      within(hero)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual([...PUBLIC_HOME_HIGHLIGHTS]);
+    expect(PUBLIC_HOME_HIGHLIGHTS).toHaveLength(3);
+    expect(
+      hero.querySelector(".cocalc-public-home-trust-line")?.textContent,
+    ).toBe(PUBLIC_HOME_TRUST_LINE);
+    expect(
+      within(hero).getByRole("link", { name: PUBLIC_HOME_SECONDARY_CTA.label }),
+    ).toHaveAttribute("href", `/${PUBLIC_HOME_SECONDARY_CTA.href}`);
+  });
+
+  // The same sites and expected chips as the crawler fallback test in
+  // hub/servers/app/public-prerender.test.ts, so the two renderings agree.
+  it.each([
+    [
+      "the default CoCalc brand on cocalc.ai",
+      cocalcAi,
+      [
+        "Codex and Claude Code in one project",
+        "Collaborators see edits live",
+        "Restore earlier versions",
+      ],
+    ],
+    [
+      "CoCalc Plus, the local one-user runtime",
+      { cocalc_product: "plus", dns: "localhost", site_name: "CoCalc" },
+      ["Restore earlier versions"],
+    ],
+    [
+      "CoCalc Plus on the canonical host",
+      { cocalc_product: "plus", dns: "cocalc.ai", site_name: "CoCalc" },
+      ["Restore earlier versions"],
+    ],
+    [
+      "a self-hosted Launchpad host",
+      {
+        cocalc_product: "launchpad",
+        dns: "launchpad.example.edu",
+        is_launchpad: true,
+        site_name: "CoCalc Launchpad",
+      },
+      ["Collaborators see edits live", "Restore earlier versions"],
+    ],
+  ])(
+    "shows only the highlights that hold on each site: %s",
+    (_site, config, expected) => {
+      render(<PublicHomeApp config={config} />);
+      const hero = screen.getByRole("region", { name: "CoCalc hero" });
+
+      expect(
+        within(hero)
+          .getAllByRole("listitem")
+          .map((item) => item.textContent),
+      ).toEqual(expected);
+      expect(getPublicHomeHighlights(config)).toEqual(expected);
+    },
+  );
 
   it("links to built-in trust materials on the default CoCalc site", () => {
     render(

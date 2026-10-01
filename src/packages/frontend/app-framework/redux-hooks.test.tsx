@@ -65,6 +65,41 @@ describe("useRedux", () => {
     expect(store.listenerCount("change")).toBe(0);
   });
 
+  it("waits quietly for a named store that is created after first render", async () => {
+    const storeName = `test-redux-hooks-lazy-${Date.now()}`;
+    storeNames.push(storeName);
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { unmount } = render(<Value storeName={storeName} />);
+      expect(screen.getByTestId("value")).toHaveTextContent("");
+      expect(
+        collectReduxHookSubscriptionDiagnostics().topSubscriptions.find(
+          ({ storeName: name }) => name === storeName,
+        )?.waitingForStore,
+      ).toBe(true);
+
+      let store;
+      act(() => {
+        store = redux.createStore(storeName, { value: "ready" });
+      });
+      await waitFor(() => {
+        expect(screen.getByTestId("value")).toHaveTextContent("ready");
+      });
+
+      act(() => {
+        store.setState({ value: "next" });
+      });
+      await waitFor(() => {
+        expect(screen.getByTestId("value")).toHaveTextContent("next");
+      });
+      expect(warn).not.toHaveBeenCalled();
+      unmount();
+      expect(store.listenerCount("change")).toBe(0);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("waits for a project store without invoking its creating accessor", async () => {
     const projectId = "8fdffb16-29e7-4271-a5f0-c364300b8df9";
     const storeName = project_redux_name(projectId);
@@ -90,5 +125,20 @@ describe("useRedux", () => {
     });
     expect(getProjectStore).not.toHaveBeenCalled();
     getProjectStore.mockRestore();
+  });
+
+  it("stops waiting for a named store when its last consumer unmounts", () => {
+    const storeName = `test-redux-hooks-unmounted-${Date.now()}`;
+    storeNames.push(storeName);
+    const { unmount } = render(<Value storeName={storeName} />);
+    unmount();
+
+    const store = redux.createStore(storeName, { value: "too late" });
+    expect(store.listenerCount("change")).toBe(0);
+    expect(
+      collectReduxHookSubscriptionDiagnostics().topSubscriptions.find(
+        ({ storeName: name }) => name === storeName,
+      ),
+    ).toBeUndefined();
   });
 });

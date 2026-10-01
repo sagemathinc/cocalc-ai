@@ -16,11 +16,14 @@ export function showAttentionInFooter({
   const hasResponse =
     projected || record.response_submitted_at != null || hasDraftResponse;
   if (!hasResponse) return true;
-  // The durable row is the answer's full history, not a second footer card.
-  // Stale sync answers still need their explicit continuation control.
-  const needsRecovery =
-    record.state === "stale" && record.source_kind === "codex_sync_question";
-  if (projected && !needsRecovery) return false;
+  // A transcript proves the answer was saved, not that the agent received it.
+  // Keep failed delivery visible even after the owning turn is collapsed.
+  if (
+    record.state === "stale" &&
+    ["codex_sync_question", "codex_async_question"].includes(record.source_kind)
+  )
+    return true;
+  if (projected) return false;
   if (ownerActive == null) return true;
   return ownerActive || ownerExpanded === true;
 }

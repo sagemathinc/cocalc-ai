@@ -15,6 +15,63 @@ import { lite } from "@cocalc/frontend/lite";
 
 const READ_ALOUD_DISCLOSURE_KEY = "cocalc-chat-speech-output-disclosed";
 
+// Starts read-aloud playback, first showing the one-time disclosure that the
+// text is sent to the configured AI provider.
+export function requestChatReadAloud({
+  paneId,
+  value,
+  projectId,
+  path,
+  threadId,
+  messageId,
+  title = "Final response",
+}: {
+  paneId?: symbol;
+  value: string;
+  projectId?: string;
+  path?: string;
+  threadId?: string;
+  messageId: string;
+  title?: string;
+}): void {
+  if (lite) return;
+  const start = () =>
+    startChatSpeech({
+      paneId,
+      markdown: value,
+      projectId,
+      path,
+      threadId,
+      messageId,
+      title,
+    });
+  let disclosed = false;
+  try {
+    disclosed = localStorage.getItem(READ_ALOUD_DISCLOSURE_KEY) === "yes";
+  } catch {
+    // Storage can be unavailable in private or restricted browser contexts.
+  }
+  if (disclosed) {
+    void start();
+    return;
+  }
+  Modal.confirm({
+    title: "Read this response aloud",
+    content:
+      "The response text is sent to the configured AI provider to create an artificial voice. CoCalc does not retain the generated audio.",
+    okText: "Read aloud",
+    cancelText: "Cancel",
+    onOk: () => {
+      try {
+        localStorage.setItem(READ_ALOUD_DISCLOSURE_KEY, "yes");
+      } catch {
+        // The disclosure still applies to this playback.
+      }
+      return start();
+    },
+  });
+}
+
 export function ChatReadAloudButton({
   value,
   projectId,
@@ -32,44 +89,15 @@ export function ChatReadAloudButton({
 }) {
   const paneId = useContext(SpeechPaneContext);
   if (lite) return null;
-  const start = () =>
-    startChatSpeech({
+  const requestReadAloud = () =>
+    requestChatReadAloud({
       paneId,
-      markdown: value,
+      value,
       projectId,
       path,
       threadId,
       messageId,
-      title: "Final response",
     });
-
-  const requestReadAloud = () => {
-    let disclosed = false;
-    try {
-      disclosed = localStorage.getItem(READ_ALOUD_DISCLOSURE_KEY) === "yes";
-    } catch {
-      // Storage can be unavailable in private or restricted browser contexts.
-    }
-    if (disclosed) {
-      void start();
-      return;
-    }
-    Modal.confirm({
-      title: "Read this response aloud",
-      content:
-        "The response text is sent to the configured AI provider to create an artificial voice. CoCalc does not retain the generated audio.",
-      okText: "Read aloud",
-      cancelText: "Cancel",
-      onOk: () => {
-        try {
-          localStorage.setItem(READ_ALOUD_DISCLOSURE_KEY, "yes");
-        } catch {
-          // The disclosure still applies to this playback.
-        }
-        return start();
-      },
-    });
-  };
 
   return (
     <Tooltip placement="bottom" title="Read this response aloud">

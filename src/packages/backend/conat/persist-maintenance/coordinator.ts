@@ -304,6 +304,11 @@ export class PersistMaintenanceCoordinator {
     if (this.runningTick || this.stopped || !this.config.enabled) return;
     this.runningTick = true;
     try {
+      const resourcePause = this.resourcePauseReason();
+      if (resourcePause) {
+        this.pauseReason = resourcePause;
+        return;
+      }
       await this.maybeScan();
       await this.retrySecondaryRefresh();
       await this.inspectAndMaybeCompact();
@@ -437,6 +442,18 @@ export class PersistMaintenanceCoordinator {
   private schedulerPauseReason(): string | undefined {
     if (!this.catalogHealthy) return "catalog-unhealthy";
     if (!this.trackingCoverage) return "incomplete-worker-tracking";
+    const resourcePause = this.resourcePauseReason();
+    if (resourcePause) return resourcePause;
+    const hour = this.catalog.budgetSince(Date.now() - 60 * 60 * 1000);
+    if (hour.attempts >= this.config.maxAttemptsPerHour)
+      return "hourly-attempt-budget";
+    if (hour.bytes >= this.config.maxBytesPerHour) return "hourly-byte-budget";
+    const day = this.catalog.budgetSince(Date.now() - 24 * 60 * 60 * 1000);
+    if (day.bytes >= this.config.maxBytesPerDay) return "daily-byte-budget";
+    return;
+  }
+
+  private resourcePauseReason(): string | undefined {
     if (this.config.pauseFile && existsSync(this.config.pauseFile)) {
       return "operator-pause-file";
     }
@@ -447,12 +464,6 @@ export class PersistMaintenanceCoordinator {
     if (freemem() / totalmem() < this.config.minFreeMemoryRatio) {
       return "host-memory";
     }
-    const hour = this.catalog.budgetSince(Date.now() - 60 * 60 * 1000);
-    if (hour.attempts >= this.config.maxAttemptsPerHour)
-      return "hourly-attempt-budget";
-    if (hour.bytes >= this.config.maxBytesPerHour) return "hourly-byte-budget";
-    const day = this.catalog.budgetSince(Date.now() - 24 * 60 * 60 * 1000);
-    if (day.bytes >= this.config.maxBytesPerDay) return "daily-byte-budget";
     return;
   }
 

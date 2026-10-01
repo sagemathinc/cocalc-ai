@@ -68,6 +68,42 @@ import { listVisibleRootfsImages } from "@cocalc/server/rootfs/catalog";
 
 const mockedListVisibleRootfsImages = jest.mocked(listVisibleRootfsImages);
 
+jest.mock("@cocalc/server/membership/tiers", () => ({
+  getSeedMembershipTiers: jest.fn(async () => [
+    {
+      ai_limits: { units_5h: 50, units_7d: 100 },
+      id: "free",
+      label: "Free",
+      price_monthly: "0.0000000000",
+      price_yearly: "0.0000000000",
+      priority: 0,
+      store_description: "Explore CoCalc.",
+      store_visible: true,
+    },
+    {
+      id: "basic",
+      label: "Basic",
+      price_monthly: "8.0000000000",
+      price_yearly: "72.0000000000",
+      priority: 10,
+      store_highlights: ["Network access"],
+      store_visible: true,
+    },
+    {
+      id: "course-term",
+      label: "Course Term",
+      price_monthly: "9.0000000000",
+      price_yearly: "90.0000000000",
+      priority: 5,
+      store_visible: false,
+    },
+  ]),
+}));
+
+import { getSeedMembershipTiers } from "@cocalc/server/membership/tiers";
+
+const mockedGetSeedMembershipTiers = jest.mocked(getSeedMembershipTiers);
+
 // Serve a synthetic shell instead of whatever packages/static/dist currently
 // holds, so these tests do not depend on the state of the last static build.
 // resolveStaticPath() honors COCALC_STATIC_PATH and resolves lazily on the
@@ -116,6 +152,26 @@ describe("public shell rendering", () => {
     expect(body).not.toContain(PUBLIC_BODY_PLACEHOLDER);
   });
 
+  it("uses the current terminal capture as the Terminal page's link preview", async () => {
+    const { html, status } = await renderPublicShell(
+      request("/features/terminal"),
+    );
+
+    expect(status).toBe(200);
+    for (const [value, property] of [
+      [
+        "https://cocalc.ai/public/landing/project-terminal-20260916.jpg",
+        "og:image",
+      ],
+      ["800", "og:image:width"],
+      ["400", "og:image:height"],
+    ]) {
+      expect(html).toContain(
+        `content="${value}" data-cocalc-public-route-meta="${property}"`,
+      );
+    }
+  });
+
   it("hides the crawler fallback before deferred public scripts run", async () => {
     const { html } = await renderPublicShell(request("/"));
     const guardIndex = html.indexOf('id="cocalc-public-prerender-guard"');
@@ -130,7 +186,7 @@ describe("public shell rendering", () => {
   });
 
   it.each([
-    ["/", "home", "Keep people, AI agents, and project work together."],
+    ["/", "home", "Build and use software with AI."],
     ["/products", "products", "Ways to Run CoCalc"],
     ["/pricing", "pricing", "Hosted memberships"],
   ])(
@@ -684,6 +740,156 @@ describe("research compute shell availability", () => {
         'href="https://cocalc.ai/features/research-compute" rel="canonical"',
       );
       expect(html).toContain('href="/docs/hosts/project-hosts"');
+    },
+  );
+});
+
+describe("pricing tiers in the initial HTML", () => {
+  const BASIC_PRICE =
+    "<p>Annual: $6 / month · Billed annually, saving 25%</p><p>Monthly: $8 / month · Save 25% with annual billing</p>";
+  let now = Date.now();
+  let nowSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    // Each test starts past the cache lifetime of the one before it.
+    now += 10 * 60_000;
+    nowSpy = jest.spyOn(Date, "now").mockImplementation(() => now);
+    mockedGetSeedMembershipTiers.mockClear();
+  });
+
+  afterEach(() => nowSpy.mockRestore());
+
+  it("renders the store tiers from the tier data on cocalc.ai", async () => {
+    const { html, status } = await renderPublicShell(request("/pricing"));
+
+    expect(status).toBe(200);
+    expect(mockedGetSeedMembershipTiers).toHaveBeenCalledWith({
+      includeDisabled: false,
+    });
+    expect(html).toContain("<h3>Free</h3><p>Explore CoCalc.</p>");
+    expect(html).toContain(
+      `<h3>Basic</h3>${BASIC_PRICE}<p>An affordable paid membership for individual learning and light work.</p><ul><li>Network access</li></ul>`,
+    );
+    expect(html).not.toContain("Course Term");
+    expect(html).toContain("Some memberships on this site include AI usage.");
+  });
+
+  it("reuses a successful read for a minute", async () => {
+    await renderPublicShell(request("/pricing"));
+    await renderPublicShell(request("/pricing"));
+    expect(mockedGetSeedMembershipTiers).toHaveBeenCalledTimes(1);
+
+    now += 61_000;
+    const { html } = await renderPublicShell(request("/pricing"));
+    expect(mockedGetSeedMembershipTiers).toHaveBeenCalledTimes(2);
+    expect(html).toContain(BASIC_PRICE);
+
+    for (const path of ["/", "/products", "/features/jupyter-notebook"]) {
+      await renderPublicShell(request(path));
+    }
+    expect(mockedGetSeedMembershipTiers).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to today's text when the tier data cannot be read", async () => {
+    mockedGetSeedMembershipTiers.mockRejectedValueOnce(new Error("db down"));
+    const failed = await renderPublicShell(request("/pricing"));
+
+    expect(failed.status).toBe(200);
+    expect(failed.html).toContain("appear on this page when it loads");
+    expect(failed.html).not.toContain("<h3>Basic</h3>");
+
+    // Failures are not cached: the next request reads the tiers.
+    const recovered = await renderPublicShell(request("/pricing"));
+    expect(recovered.html).toContain(BASIC_PRICE);
+  });
+
+  it("shares a slow fill and caches its result even after page waits expire", async () => {
+    let finish!: (tiers: []) => void;
+    const read = new Promise<[]>((resolve) => (finish = resolve));
+    mockedGetSeedMembershipTiers.mockImplementationOnce(() => read);
+    jest.useFakeTimers({ doNotFake: ["Date", "nextTick", "setImmediate"] });
+    try {
+      const first = renderPublicShell(request("/pricing"));
+      const second = renderPublicShell(request("/pricing"));
+      while (
+        mockedGetSeedMembershipTiers.mock.calls.length === 0 ||
+        jest.getTimerCount() < 2
+      ) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      await jest.advanceTimersByTimeAsync(2_000);
+      expect((await first).html).toContain("appear on this page when it loads");
+      expect((await second).html).toContain(
+        "appear on this page when it loads",
+      );
+      expect(mockedGetSeedMembershipTiers).toHaveBeenCalledTimes(1);
+      finish([]);
+      await read;
+      const filled = await renderPublicShell(request("/pricing"));
+      expect(filled.html).toContain(
+        "No public membership tiers are currently configured.",
+      );
+      expect(mockedGetSeedMembershipTiers).toHaveBeenCalledTimes(1);
+    } finally {
+      finish([]);
+      jest.useRealTimers();
+    }
+  });
+
+  it("does not serve expired prices after a failed refresh", async () => {
+    expect((await renderPublicShell(request("/pricing"))).html).toContain(
+      BASIC_PRICE,
+    );
+    now += 61_000;
+    mockedGetSeedMembershipTiers.mockRejectedValueOnce(new Error("db down"));
+    const failed = await renderPublicShell(request("/pricing"));
+    expect(failed.html).toContain("appear on this page when it loads");
+    expect(failed.html).not.toContain(BASIC_PRICE);
+    expect((await renderPublicShell(request("/pricing"))).html).toContain(
+      BASIC_PRICE,
+    );
+    expect(mockedGetSeedMembershipTiers).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not hold the page for a slow read", async () => {
+    let finish: (tiers: []) => void = () => undefined;
+    mockedGetSeedMembershipTiers.mockImplementationOnce(
+      () => new Promise((resolve) => (finish = resolve)),
+    );
+    jest.useFakeTimers({ doNotFake: ["Date", "nextTick", "setImmediate"] });
+    try {
+      const pending = renderPublicShell(request("/pricing"));
+      // The wait starts when the read does; the shell first reads files.
+      while (mockedGetSeedMembershipTiers.mock.calls.length === 0) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      await jest.advanceTimersByTimeAsync(2_000);
+      const { html, status } = await pending;
+
+      expect(status).toBe(200);
+      expect(html).toContain("appear on this page when it loads");
+    } finally {
+      jest.useRealTimers();
+      finish([]);
+    }
+  });
+
+  it.each([
+    ["a custom-branded host", "launchpad", "university.example.edu"],
+    ["a local host", "launchpad", "localhost:5000"],
+    ["CoCalc Plus", "plus", "cocalc.ai"],
+  ] as const)(
+    "does not read or render tiers for %s",
+    async (_label, product, host) => {
+      mockedProduct.mockReturnValue(product);
+      const { html, status } = await renderPublicShell(
+        request("/pricing", {}, host),
+      );
+
+      expect(status).toBe(200);
+      expect(mockedGetSeedMembershipTiers).not.toHaveBeenCalled();
+      expect(html).not.toContain("<h3>Basic</h3>");
+      expect(html).not.toMatch(/\$\s*\d/);
     },
   );
 });
