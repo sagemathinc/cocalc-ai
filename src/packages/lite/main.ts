@@ -25,6 +25,10 @@ import { init as initBugCounter } from "@cocalc/project/bug-counter";
 import { init as initChangefeeds } from "./hub/changefeeds";
 import { hubApi, init as initHubApi } from "./hub/api";
 import { createLiteArtifactCatalog } from "./artifacts/service";
+import { createLiteCollaborators } from "./collaborators/service";
+import { initLiteCollaboratorsRoomService } from "./collaborators/room-service";
+import { getLiteServerSettings } from "./hub/settings";
+import { initDatabase } from "./hub/sqlite/database";
 import { LitePersonalLibrary } from "./artifacts/personal-library";
 import { init as initAcp } from "./hub/acp";
 import { initWatchdog, closeWatchdog } from "./watchdog";
@@ -117,6 +121,9 @@ export async function main(opts?: {
   logger.debug("main");
   enableMemoryUseLogger();
   process.chdir(process.env.HOME ?? "");
+  // Settings readers and background producers can run before hub API startup.
+  // Pin the database before any of them can initialize its fallback location.
+  initDatabase({ filename: join(data, "hub.db") });
   initBugCounter();
 
   const AUTH_TOKEN = await getAuthToken();
@@ -233,6 +240,23 @@ export async function main(opts?: {
     account_id,
   });
   hubApi.artifactCatalog = artifactCatalog.api;
+  const collaborators = createLiteCollaborators({
+    client: conatClient,
+    directory: join(data, "collaborators"),
+    path,
+    project_id,
+    account_id,
+    isEnabled: () => getLiteServerSettings().collaborators_enabled === true,
+    sourcePage: (opts) => artifactCatalog.catalog.sourcePage(opts),
+    personalLibrary: () => personalLibrary,
+    personalLibraryFilename: join(data, "personal-library.sqlite"),
+    artifactCatalog: {
+      catalog: artifactCatalog.catalog,
+      filename: join(data, "artifact-catalog", "catalog.sqlite"),
+      journal: artifactCatalog.service.journal,
+    },
+  });
+  hubApi.collaborators = collaborators.api;
   const personalLibrary = new LitePersonalLibrary({
     filename: join(data, "personal-library.sqlite"),
     account_id,
@@ -251,13 +275,21 @@ export async function main(opts?: {
     path,
     project_id,
     unsafeMode: true,
-    wrapFilesystem: artifactCatalog.wrapFilesystem,
+    wrapFilesystem: (fs, id) =>
+      collaborators.wrapFilesystem(artifactCatalog.wrapFilesystem(fs, id), id),
     jupyter: createLiteJupyterFilesystemHandlers({
       client: conatClient,
       project_id,
     }),
   });
   artifactCatalog.start();
+  collaborators.start();
+  const collaboratorsRoomService = await initLiteCollaboratorsRoomService(
+    conatClient,
+    collaborators,
+  );
+  process.once("exit", () => void collaboratorsRoomService.close());
+  process.once("exit", collaborators.stop);
   process.once("exit", artifactCatalog.stop);
 
   logger.debug("start acp conat server");
