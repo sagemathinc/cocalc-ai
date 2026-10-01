@@ -141,6 +141,7 @@ export function PeoplePage() {
           <ConversationView
             key={selected.conversation_id}
             conversation={selected}
+            conversations={state.conversations}
             onClose={() => navigate("")}
           />
         </div>

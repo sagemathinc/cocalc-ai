@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Input, Popconfirm, Space, Typography } from "antd";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
@@ -21,14 +21,22 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { ListedConversation } from "@cocalc/util/people";
 import { peopleApi, conversationsChanged } from "./api";
 import { waitForChatReady } from "./create";
+import { ReferencePicker } from "./reference-picker";
+import type { ChatInputControl } from "@cocalc/frontend/chat/input";
+import { serializePeopleReference } from "@cocalc/util/people-references";
 
 export function ConversationView({
   conversation,
+  conversations = [],
   onClose,
 }: {
   conversation: ListedConversation;
+  // Candidates for links inserted into a message.
+  conversations?: ListedConversation[];
   onClose: () => void;
 }) {
+  const composer = useRef<ChatInputControl | null>(null);
+  const [picking, setPicking] = useState(false);
   const { project_id, path, conversation_id } = conversation;
   const [actions, setActions] = useState<ChatActions>();
   const [error, setError] = useState("");
@@ -90,7 +98,25 @@ export function ConversationView({
         minHeight: 0,
       }}
     >
-      <ConversationHeader conversation={conversation} onClose={onClose} />
+      <ConversationHeader
+        conversation={conversation}
+        onClose={onClose}
+        onInsertLink={actions ? () => setPicking(true) : undefined}
+      />
+      <ReferencePicker
+        open={picking}
+        project_id={project_id}
+        conversations={conversations.filter(
+          (c) => c.conversation_id !== conversation_id,
+        )}
+        onClose={() => setPicking(false)}
+        onPick={(reference) => {
+          composer.current?.insertText(
+            `${serializePeopleReference(reference)} `,
+          );
+          composer.current?.focus();
+        }}
+      />
       {missing ? (
         <Alert
           role="alert"
@@ -114,7 +140,14 @@ export function ConversationView({
           Opening conversation...
         </p>
       ) : (
-        <MountedChat actions={actions} project_id={project_id} path={path} />
+        <MountedChat
+          actions={actions}
+          project_id={project_id}
+          path={path}
+          onComposerReady={(control) => {
+            composer.current = control;
+          }}
+        />
       )}
     </div>
   );
@@ -124,10 +157,12 @@ function MountedChat({
   actions,
   project_id,
   path,
+  onComposerReady,
 }: {
   actions: ChatActions;
   project_id: string;
   path: string;
+  onComposerReady?: (control: ChatInputControl | null) => void;
 }) {
   const context = useProjectContextProvider({
     project_id,
@@ -149,6 +184,7 @@ function MountedChat({
             project_id={project_id}
             path={path}
             actions={actions}
+            onComposerReady={onComposerReady}
             style={{
               backgroundColor: UI_COLORS.surface,
               color: UI_COLORS.text,
@@ -164,9 +200,11 @@ function MountedChat({
 function ConversationHeader({
   conversation,
   onClose,
+  onInsertLink,
 }: {
   conversation: ListedConversation;
   onClose: () => void;
+  onInsertLink?: () => void;
 }) {
   const projectTitle = useTypedRedux("projects", "project_map")?.getIn([
     conversation.project_id,
@@ -275,6 +313,11 @@ function ConversationHeader({
             }}
           >
             Rename
+          </Button>
+        )}
+        {onInsertLink && (
+          <Button icon={<Icon name="link" />} onClick={onInsertLink}>
+            Insert link
           </Button>
         )}
         <Button onClick={openInProject}>Open in project</Button>
