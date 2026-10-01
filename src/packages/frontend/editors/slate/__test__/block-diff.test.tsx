@@ -490,6 +490,22 @@ describe("block diff signatures", () => {
     expect(editor.selection!.anchor.offset).toBe("notes a1".length);
   });
 
+  test("sentinel remap moves the caret past the rest of a word a collaborator extended", () => {
+    // Someone was still typing "tk2n12q" at the end of the line when this
+    // caret was put there; their last letter must not end up after it.
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "notes tk2n12" }] },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "notes tk2n12q tk3" }] },
+    ];
+    const editor = applyPatchAndRemapSelectionWithSentinels(prev, next, {
+      anchor: { path: [0, 0], offset: "notes tk2n12".length },
+      focus: { path: [0, 0], offset: "notes tk2n12".length },
+    });
+    expect(editor.selection!.anchor.offset).toBe("notes tk2n12q".length);
+  });
+
   test("sentinel remap never moves the caret into a similar word", () => {
     const prev: Descendant[] = [
       { type: "paragraph", children: [{ text: "tk2n4q tk2n10q tk6n14q" }] },

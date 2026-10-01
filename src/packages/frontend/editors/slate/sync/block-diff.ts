@@ -332,6 +332,27 @@ function pointFromDocOffset(doc: Descendant[], offset: number): Point {
 // CodeMirror maps a cursor), so it does not jump into what a collaborator is
 // typing there and interleave with it.
 function mapTextOffset(prev: string, next: string, offset: number): number {
+  let mapped = mapTextOffsetByWords(prev, next, offset);
+  // A caret at the end of a word that a collaborator extended (they were
+  // still typing it) goes past the rest of the word, not into it.
+  const word = /[\p{L}\p{N}_]/u;
+  if (
+    offset > 0 &&
+    word.test(prev[offset - 1]) &&
+    !word.test(prev[offset] ?? "") &&
+    word.test(next[mapped - 1] ?? "") &&
+    word.test(next[mapped] ?? "")
+  ) {
+    while (mapped < next.length && word.test(next[mapped])) mapped++;
+  }
+  return mapped;
+}
+
+function mapTextOffsetByWords(
+  prev: string,
+  next: string,
+  offset: number,
+): number {
   const tokens = (text: string) => text.match(/\s+|\S+/g) ?? [];
   const a = tokens(prev);
   const b = tokens(next);
