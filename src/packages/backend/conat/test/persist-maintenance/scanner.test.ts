@@ -61,6 +61,73 @@ describe("persist maintenance bounded scanner", () => {
     catalog.close();
   });
 
+  it("resumes template-root discovery within the entry budget after restart", async () => {
+    const { data, catalog, config, catalogPath } = makeScanner(2);
+    config.rootTemplates = [join(data, "project-[project_id]", "persist")];
+    for (const name of ["project-a", "project-b", "project-c", "unrelated"]) {
+      mkdirSync(join(data, name, "persist"), { recursive: true });
+      writeFileSync(join(data, name, "persist", "a.db"), "");
+    }
+    symlinkSync(join(data, "unrelated"), join(data, "project-link"));
+    const scanner = () =>
+      new PersistMaintenanceScanner(
+        catalog,
+        new PersistMaintenancePathSafety({
+          rootTemplates: config.rootTemplates,
+          catalogPath,
+        }),
+        config,
+      );
+    let result = await scanner().scanBatch();
+    expect(result.complete).toBe(false);
+    expect(result.entries).toBe(2);
+    expect(result.files).toBe(0);
+    const reads = jest.spyOn(fsPromises, "readdir");
+    let previous = result.entries;
+    do {
+      result = await scanner().scanBatch();
+      expect(result.entries - previous).toBeLessThanOrEqual(2);
+      previous = result.entries;
+    } while (!result.complete);
+    expect(result.files).toBe(3);
+    expect(catalog.listDatabases()).toHaveLength(3);
+    expect(reads.mock.calls.filter(([path]) => path === data)).toHaveLength(2);
+    catalog.close();
+  });
+
+  it("starts the time budget before template discovery, not after expansion", async () => {
+    const { data, catalog, config, catalogPath } = makeScanner(1000, 10);
+    config.rootTemplates = [join(data, "project-[project_id]", "persist")];
+    for (const name of ["project-a", "project-b"]) {
+      mkdirSync(join(data, name, "persist"), { recursive: true });
+      writeFileSync(join(data, name, "persist", "a.db"), "");
+    }
+    let now = Date.now();
+    jest.spyOn(Date, "now").mockImplementation(() => now);
+    const read = fsPromises.readdir;
+    const reads = jest.spyOn(fsPromises, "readdir").mockImplementation((async (
+      ...args: any[]
+    ) => {
+      const entries = await (read as any)(...args);
+      now += 20;
+      return entries;
+    }) as typeof fsPromises.readdir);
+    const scanner = new PersistMaintenanceScanner(
+      catalog,
+      new PersistMaintenancePathSafety({
+        rootTemplates: config.rootTemplates,
+        catalogPath,
+      }),
+      config,
+    );
+    const result = await scanner.scanBatch();
+    expect(result.complete).toBe(false);
+    expect(result.files).toBe(0);
+    expect(result.entries).toBe(1);
+    expect(reads).toHaveBeenCalledTimes(1);
+    catalog.close();
+  });
+
   it("resumes by name across scanner restart and directory changes", async () => {
     const { data, catalog, scanner, config, catalogPath } = makeScanner(1);
     for (const name of ["a.db", "b.db", "c.db"]) {
