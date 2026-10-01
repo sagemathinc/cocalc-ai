@@ -19,9 +19,19 @@ import {
   alpha,
   publicAccent,
   PUBLIC_COLORS,
+  PUBLIC_RADIUS,
   PUBLIC_TYPE,
+  PUBLIC_WEIGHT,
 } from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
+import {
+  getPublicHomeHighlights,
+  PUBLIC_HOME_EYEBROW,
+  PUBLIC_HOME_HEADLINE,
+  PUBLIC_HOME_INTRO,
+  PUBLIC_HOME_SECONDARY_CTA,
+  PUBLIC_HOME_TRUST_LINE,
+} from "@cocalc/util/public-home-content";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { builtinPolicyPath } from "../common";
 
@@ -533,9 +543,11 @@ function SectionIntro({
 
 function Hero({
   authenticated,
+  highlights,
   siteName,
 }: {
   authenticated: boolean;
+  highlights: readonly string[];
   siteName: string;
 }) {
   return (
@@ -551,7 +563,7 @@ function Hero({
       }}
     >
       <Flex vertical gap={20}>
-        <Eyebrow>Persistent shared projects</Eyebrow>
+        <Eyebrow>{PUBLIC_HOME_EYEBROW}</Eyebrow>
         <div>
           <Title
             className="cocalc-public-home-hero-title"
@@ -565,7 +577,7 @@ function Hero({
               maxWidth: 620,
             }}
           >
-            Keep people, AI agents, and project work together.
+            {PUBLIC_HOME_HEADLINE}
           </Title>
           <Paragraph
             style={{
@@ -576,8 +588,7 @@ function Hero({
               maxWidth: 590,
             }}
           >
-            Files, notebooks, terminals, services, and history stay in a shared
-            Linux project so work can continue, be reviewed, and be handed off.
+            {PUBLIC_HOME_INTRO}
           </Paragraph>
         </div>
         <Flex className="cocalc-public-home-actions" gap={12} wrap>
@@ -593,10 +604,49 @@ function Hero({
           >
             {authenticated ? "Open projects" : "Start on CoCalc.ai"}
           </Button>
-          <Button href={appPath("products")} size="large">
-            Ways to run CoCalc
+          <Button href={appPath(PUBLIC_HOME_SECONDARY_CTA.href)} size="large">
+            {PUBLIC_HOME_SECONDARY_CTA.label}
           </Button>
         </Flex>
+        <ul
+          className="cocalc-public-home-highlights"
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 8,
+            listStyle: "none",
+            margin: 0,
+            padding: 0,
+          }}
+        >
+          {highlights.map((highlight) => (
+            <li
+              key={highlight}
+              style={{
+                background: PUBLIC_COLORS.surface,
+                border: `1px solid ${PUBLIC_COLORS.border}`,
+                borderRadius: PUBLIC_RADIUS.pill,
+                color: PUBLIC_COLORS.heading,
+                fontSize: PUBLIC_TYPE.caption,
+                fontWeight: PUBLIC_WEIGHT.medium,
+                lineHeight: 1.4,
+                padding: "5px 12px",
+              }}
+            >
+              {highlight}
+            </li>
+          ))}
+        </ul>
+        <Paragraph
+          className="cocalc-public-home-trust-line"
+          style={{
+            color: PUBLIC_COLORS.mutedText,
+            fontSize: PUBLIC_TYPE.caption,
+            margin: 0,
+          }}
+        >
+          {PUBLIC_HOME_TRUST_LINE}
+        </Paragraph>
       </Flex>
       <figure className="cocalc-public-home-hero-visual" style={{ margin: 0 }}>
         <img
@@ -614,17 +664,6 @@ function Hero({
             width: "100%",
           }}
         />
-        <figcaption
-          style={{
-            color: PUBLIC_COLORS.mutedText,
-            fontSize: 13,
-            lineHeight: 1.45,
-            marginTop: 8,
-          }}
-        >
-          A saved Jupyter notebook in a fresh CoCalc.ai project, using only
-          synthetic data.
-        </figcaption>
       </figure>
     </section>
   );
@@ -1207,6 +1246,15 @@ function PathSection({
   );
 }
 
+// The page renders before /customize returns, when the config has no dns.
+// Resolve the host as isCocalcAiPublicSite does, falling back to the browser's
+// host, so cocalc.ai shows all three highlights from the first render and the
+// hero does not shift when the config arrives.
+function withSiteHost(config?: HomeConfig): HomeConfig | undefined {
+  if (config?.dns?.trim() || typeof window === "undefined") return config;
+  return { ...config, dns: window.location.host };
+}
+
 export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
   const marketingConfig = getPublicMarketingConfig(config) as
     | HomeConfig
@@ -1232,7 +1280,11 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
           paddingInline: PUBLIC_PAGE_GUTTER,
         }}
       >
-        <Hero authenticated={authenticated} siteName={siteName} />
+        <Hero
+          authenticated={authenticated}
+          highlights={getPublicHomeHighlights(withSiteHost(config))}
+          siteName={siteName}
+        />
         <AgentDefinitionSection />
         <AudienceRoutesSection />
         <WorkflowsSection />
