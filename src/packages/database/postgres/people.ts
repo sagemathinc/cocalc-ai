@@ -369,3 +369,42 @@ export async function markConversationRead({
     [account_id, conversation_id, project_id, new Date(read_through)],
   );
 }
+
+// Latest explicit @mention of this account per (project, path), from the
+// account's existing notification projection (home bay). Thread-follow
+// notifications are not mentions.
+export async function latestMentions({
+  account_id,
+  project_ids,
+}: {
+  account_id: string;
+  project_ids: string[];
+}): Promise<Map<string, number>> {
+  const mentions = new Map<string, number>();
+  if (project_ids.length === 0) return mentions;
+  const { rows } = await getPool().query(
+    `SELECT project_id, summary->>'path' AS path, MAX(created_at) AS at
+     FROM account_notification_index
+     WHERE account_id = $1
+       AND kind = 'mention'
+       AND project_id = ANY($2::uuid[])
+       AND COALESCE(summary->>'notification_reason', 'mention') <> 'thread_follow'
+     GROUP BY 1, 2`,
+    [account_id, project_ids],
+  );
+  for (const row of rows) {
+    if (!row.path || row.at == null) continue;
+    let path: string;
+    try {
+      path = normalizeConversationPath(row.path);
+    } catch {
+      continue;
+    }
+    mentions.set(mentionKey(row.project_id, path), new Date(row.at).valueOf());
+  }
+  return mentions;
+}
+
+export function mentionKey(project_id: string, path: string): string {
+  return `${project_id}:${path}`;
+}

@@ -68,7 +68,11 @@ export const DEFAULT_PERSONAL_STATE: PersonalState = {
   last_read: null,
 };
 
-export type ListedConversation = Conversation & PersonalState;
+export type ListedConversation = Conversation &
+  PersonalState & {
+    // Latest time someone explicitly @mentioned this account here.
+    mentioned_at?: number | null;
+  };
 
 export function assertPeopleStateKind(kind: unknown): PeopleStateKind {
   if (!PEOPLE_STATE_KINDS.includes(kind as PeopleStateKind)) {

@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Input, Tabs } from "antd";
+import { Alert, Button, Input, Select, Tabs } from "antd";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
@@ -15,7 +15,10 @@ import {
 } from "@cocalc/util/people";
 import { peopleApi } from "./api";
 import { CollaboratorList, PersonDetail, usePeople } from "./collaborators";
-import { ConversationList } from "./conversation-list";
+import { ConversationCollection } from "./conversation-collection";
+import { matchesScope, matchesSearch, SCOPES, type Scope } from "./scope";
+import { CollectionViewControl } from "@cocalc/frontend/components/collection";
+import { useCollectionPreferences } from "@cocalc/frontend/components/use-collection-preferences";
 import { ConversationView } from "./conversation-view";
 import { NewConversationModal } from "./new-conversation";
 import { useConversations } from "./use-conversations";
@@ -57,6 +60,10 @@ export function PeoplePage() {
   const [newFor, setNewFor] = useState<{ personId?: string } | null>(null);
   const people = usePeople();
   const navigation = useWorkspaceContentNavigation();
+  const account_id = useTypedRedux("account", "account_id");
+  const project_map = useTypedRedux("projects", "project_map");
+  const preferences = useCollectionPreferences("conversations");
+  const [scope, setScope] = useScope();
 
   const selected = useSelectedConversation(
     state.conversations,
@@ -64,12 +71,19 @@ export function PeoplePage() {
     route.conversation_id,
   );
 
-  const filtered = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    return q
-      ? state.conversations.filter((c) => c.title.toLowerCase().includes(q))
-      : state.conversations;
-  }, [state.conversations, filter]);
+  const filtered = useMemo(
+    () =>
+      state.conversations.filter(
+        (c) =>
+          matchesScope(c, scope, account_id) &&
+          matchesSearch(
+            c,
+            filter,
+            project_map?.getIn([c.project_id, "title"]) as string | undefined,
+          ),
+      ),
+    [state.conversations, filter, scope, account_id, project_map],
+  );
 
   const conversationsTab = (
     <div style={{ display: "flex", flex: 1, minHeight: 0, gap: 12 }}>
@@ -94,14 +108,18 @@ export function PeoplePage() {
         {state.loading && state.conversations.length === 0 ? (
           <p role="status">Loading conversations...</p>
         ) : (
-          <ConversationList
+          <ConversationCollection
             conversations={filtered}
+            preferences={preferences}
+            view={selected ? "list" : preferences.value.view}
             selected={selected?.conversation_id}
             onSelect={(c) => navigate(conversationRoute(c))}
             emptyText={
               filter
                 ? "No matching conversations."
-                : "No conversations yet. Start one with the people you work with."
+                : state.conversations.length > 0
+                  ? `No conversations in ${SCOPES[scope]}. Try All accessible.`
+                  : "No conversations yet. Start one with the people you work with."
             }
           />
         )}
@@ -192,6 +210,13 @@ export function PeoplePage() {
           >
             People
           </h1>
+          {route.tab === "conversations" && (
+            <CollectionViewControl
+              view={preferences.value.view}
+              onChange={preferences.setView}
+              label="Conversations"
+            />
+          )}
           <Input
             type="search"
             aria-label={
@@ -220,14 +245,40 @@ export function PeoplePage() {
           </Button>
         </header>
         <div
-          role="status"
-          aria-atomic="true"
-          style={{ color: UI_COLORS.secondary, fontSize: 13, marginBottom: 4 }}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: 8,
+            marginBottom: 4,
+          }}
         >
-          {count}
-          {state.loading && state.conversations.length > 0
-            ? " · Refreshing..."
-            : ""}
+          <div
+            role="status"
+            aria-atomic="true"
+            style={{
+              color: UI_COLORS.secondary,
+              fontSize: 13,
+              flex: "1 1 auto",
+            }}
+          >
+            {count}
+            {state.loading && state.conversations.length > 0
+              ? " · Refreshing..."
+              : ""}
+          </div>
+          {route.tab === "conversations" && (
+            <Select
+              aria-label="Show conversations"
+              value={scope}
+              onChange={setScope}
+              style={{ minWidth: 160 }}
+              options={Object.entries(SCOPES).map(([value, label]) => ({
+                value,
+                label,
+              }))}
+            />
+          )}
         </div>
         <Tabs
           activeKey={route.tab}
@@ -289,4 +340,26 @@ function useSelectedConversation(
     };
   }, [project_id, conversation_id, inList != null]);
   return inList ?? fetched;
+}
+
+const SCOPE_STORAGE_KEY = "cocalc-people-conversation-scope";
+
+// The chosen filter is a per-browser view preference.
+function useScope(): [Scope, (scope: Scope) => void] {
+  const [scope, setScopeState] = useState<Scope>(() => {
+    try {
+      const saved = localStorage.getItem(SCOPE_STORAGE_KEY);
+      if (saved && saved in SCOPES) return saved as Scope;
+    } catch {}
+    return "for-you";
+  });
+  return [
+    scope,
+    (value: Scope) => {
+      setScopeState(value);
+      try {
+        localStorage.setItem(SCOPE_STORAGE_KEY, value);
+      } catch {}
+    },
+  ];
 }

@@ -11,7 +11,7 @@ import { Icon } from "@cocalc/frontend/components";
 import { displayNameFromUserRecord } from "@cocalc/frontend/users/display-name";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { ListedConversation } from "@cocalc/util/people";
-import { ConversationList } from "./conversation-list";
+import { ConversationCollection } from "./conversation-collection";
 import { useCollaboratorProjects } from "./new-conversation";
 
 interface Person {
@@ -129,7 +129,8 @@ export function PersonDetail({
         </Button>
       </Space>
       <Typography.Title level={5}>Conversations</Typography.Title>
-      <ConversationList
+      <ConversationCollection
+        view="list"
         conversations={theirs}
         onSelect={onOpenConversation}
         emptyText="No conversations with this person yet."

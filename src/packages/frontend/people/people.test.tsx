@@ -3,12 +3,19 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ListedConversation } from "@cocalc/util/people";
-import { ConversationList } from "./conversation-list";
+import { ConversationCollection } from "./conversation-collection";
+import { isMentioned, isUnread, matchesScope, matchesSearch } from "./scope";
+
+const me = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const other = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const mockSetState = jest.fn(async () => ({}));
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
-  useTypedRedux: () => undefined,
+  useTypedRedux: (store: string, field: string) =>
+    store === "account" && field === "account_id" ? me : undefined,
 }));
 jest.mock("@cocalc/frontend/account/avatar/avatar-stack", () => ({
   AvatarStack: () => null,
@@ -16,77 +23,157 @@ jest.mock("@cocalc/frontend/account/avatar/avatar-stack", () => ({
 jest.mock("@cocalc/frontend/components", () => ({
   TimeAgo: () => null,
 }));
+jest.mock("./api", () => ({
+  peopleApi: () => ({ setState: mockSetState, markRead: jest.fn() }),
+  conversationsChanged: jest.fn(),
+}));
 
-const base = {
-  project_id: "11111111-1111-4111-8111-111111111111",
-  path: "/home/user/a.chat",
-  created_by: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-  created: 1000,
-  participant_ids: [],
-  alias: null,
-  following: false,
-  muted: false,
-};
-
-const conversations: ListedConversation[] = [
-  {
-    ...base,
-    conversation_id: "c1",
-    title: "Pinned and read",
-    last_activity: 2000,
-    pinned: true,
-    last_read: 2000,
-  },
-  {
-    ...base,
-    conversation_id: "c2",
-    title: "Recent and unread",
+function conversation(
+  conversation_id: string,
+  title: string,
+  extra: Partial<ListedConversation> = {},
+): ListedConversation {
+  return {
+    conversation_id,
+    title,
+    project_id: "11111111-1111-4111-8111-111111111111",
+    path: `/home/user/${conversation_id}.chat`,
+    created_by: other,
+    created: 1000,
     last_activity: 3000,
+    last_sender_id: other,
+    participant_ids: [other],
     pinned: false,
-    last_read: 1000,
-  },
-];
+    alias: null,
+    following: false,
+    muted: false,
+    last_read: 3000,
+    mentioned_at: null,
+    ...extra,
+  };
+}
 
-it("groups pinned conversations and announces unread ones", () => {
-  render(
-    <ConversationList conversations={conversations} onSelect={jest.fn()} />,
-  );
-  const pinned = screen.getByRole("region", { name: "Pinned" });
-  expect(
-    within(pinned).getByRole("button", { name: "Pinned and read" }),
-  ).toBeInTheDocument();
-  const recent = screen.getByRole("region", { name: "Recent" });
-  expect(
-    within(recent).getByRole("button", { name: "Recent and unread (unread)" }),
-  ).toBeInTheDocument();
+describe("scope rules", () => {
+  it("For you means participation, following or an unread mention, never muted", () => {
+    expect(matchesScope(conversation("a", "A"), "for-you", me)).toBe(false);
+    expect(
+      matchesScope(
+        conversation("a", "A", { participant_ids: [other, me] }),
+        "for-you",
+        me,
+      ),
+    ).toBe(true);
+    expect(
+      matchesScope(conversation("a", "A", { following: true }), "for-you", me),
+    ).toBe(true);
+    const mentioned = conversation("a", "A", { mentioned_at: 4000 });
+    expect(isMentioned(mentioned)).toBe(true);
+    expect(matchesScope(mentioned, "for-you", me)).toBe(true);
+    // a mention already read through is not "for you" by itself
+    expect(matchesScope({ ...mentioned, last_read: 5000 }, "for-you", me)).toBe(
+      false,
+    );
+    expect(
+      matchesScope(
+        { ...mentioned, following: true, muted: true },
+        "for-you",
+        me,
+      ),
+    ).toBe(false);
+    expect(
+      matchesScope(conversation("a", "A", { pinned: true }), "collection", me),
+    ).toBe(true);
+  });
+
+  it("unread ignores my own messages and muted conversations", () => {
+    expect(isUnread(conversation("a", "A", { last_read: 1000 }), me)).toBe(
+      true,
+    );
+    expect(
+      isUnread(
+        conversation("a", "A", { last_read: 1000, last_sender_id: me }),
+        me,
+      ),
+    ).toBe(false);
+    expect(
+      isUnread(conversation("a", "A", { last_read: 1000, muted: true }), me),
+    ).toBe(false);
+  });
+
+  it("search matches title, @alias or project", () => {
+    const c = conversation("a", "Team planning", { alias: "team" });
+    expect(matchesSearch(c, "plan")).toBe(true);
+    expect(matchesSearch(c, "@team")).toBe(true);
+    expect(matchesSearch(c, "lab", "Lab project")).toBe(true);
+    expect(matchesSearch(c, "zzz")).toBe(false);
+  });
 });
 
-it("opens a conversation with a native button and marks the current one", () => {
-  const onSelect = jest.fn();
-  render(
-    <ConversationList
-      conversations={conversations}
-      selected="c1"
-      onSelect={onSelect}
-    />,
-  );
-  expect(screen.getByRole("button", { current: true })).toHaveAccessibleName(
-    "Pinned and read",
-  );
-  const unread = screen.getByRole("button", { name: /Recent and unread/ });
-  unread.focus();
-  expect(unread).toHaveFocus();
-  fireEvent.click(unread);
-  expect(onSelect).toHaveBeenCalledWith(conversations[1]);
-});
+describe("ConversationCollection", () => {
+  const items = [
+    conversation("p", "Pinned one", { pinned: true, alias: "pin" }),
+    conversation("r", "Recent unread", { last_read: 1000, mentioned_at: 2000 }),
+  ];
 
-it("shows the empty text when there are no conversations", () => {
-  render(
-    <ConversationList
-      conversations={[]}
-      onSelect={jest.fn()}
-      emptyText="None"
-    />,
-  );
-  expect(screen.getByText("None")).toBeInTheDocument();
+  it("groups pins, shows alias, unread and mention by accessible name", () => {
+    render(
+      <ConversationCollection
+        conversations={items}
+        view="list"
+        onSelect={jest.fn()}
+      />,
+    );
+    const pinned = screen.getByRole("region", { name: "Pinned" });
+    expect(
+      within(pinned).getByRole("button", { name: /Pinned one\s*@pin/ }),
+    ).toBeInTheDocument();
+    const recent = screen.getByRole("region", { name: "Recent" });
+    expect(
+      within(recent).getByRole("button", {
+        name: /Recent unread.*\(unread\).*you were mentioned/,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Unpin Pinned one" }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("opens with the keyboard and pins through the people API", async () => {
+    const onSelect = jest.fn();
+    const user = userEvent.setup();
+    render(
+      <ConversationCollection
+        conversations={items}
+        view="grid"
+        selected="p"
+        onSelect={onSelect}
+      />,
+    );
+    expect(screen.getByRole("button", { current: true })).toHaveAccessibleName(
+      /Pinned one/,
+    );
+    const open = screen.getByRole("button", { name: /^Recent unread/ });
+    open.focus();
+    await user.keyboard("{Enter}");
+    expect(onSelect).toHaveBeenCalledWith(items[1]);
+    await user.click(screen.getByRole("button", { name: "Pin Recent unread" }));
+    expect(mockSetState).toHaveBeenCalledWith({
+      kind: "conversation",
+      target_id: "r",
+      project_id: items[1].project_id,
+      patch: { pinned: true },
+    });
+  });
+
+  it("shows the empty text", () => {
+    render(
+      <ConversationCollection
+        conversations={[]}
+        view="list"
+        onSelect={jest.fn()}
+        emptyText="None"
+      />,
+    );
+    expect(screen.getByText("None")).toBeInTheDocument();
+  });
 });

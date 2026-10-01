@@ -18,7 +18,9 @@ import {
   createConversationRecord,
   getConversation,
   getPersonalStates,
+  latestMentions,
   listConversationsForProjects,
+  mentionKey,
   listPersonalStates,
   markConversationRead,
   removeConversation,
@@ -206,7 +208,15 @@ export const peopleControl: InterBayPeopleApi = {
       kind: "conversation",
       target_ids: records.map((c) => c.conversation_id),
     });
-    return { conversations: mergeListed(records, states), unavailable_bays };
+    const mentions = await latestMentions({
+      account_id: account_id!,
+      project_ids: [...new Set(records.map((c) => c.project_id))],
+    });
+    const conversations = mergeListed(records, states).map((c) => ({
+      ...c,
+      mentioned_at: mentions.get(mentionKey(c.project_id, c.path)) ?? null,
+    }));
+    return { conversations, unavailable_bays };
   },
 
   async markRead(opts) {

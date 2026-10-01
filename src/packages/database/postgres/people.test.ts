@@ -9,7 +9,9 @@ import {
   createConversationRecord,
   getConversation,
   getPersonalStates,
+  latestMentions,
   listConversationsForProjects,
+  mentionKey,
   listPersonalStates,
   markConversationRead,
   removeConversation,
@@ -42,7 +44,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await getPool().query(
-    "TRUNCATE project_conversations, account_people_state, projects CASCADE",
+    "TRUNCATE project_conversations, account_people_state, account_notification_index, projects CASCADE",
   );
   await setUsers(project_id, { [alice]: "owner", [bob]: "collaborator" });
   await setUsers(other_project_id, { [alice]: "owner" });
@@ -267,4 +269,33 @@ test("paths must be .chat files", async () => {
       title: "x",
     }),
   ).rejects.toThrow(".chat");
+});
+
+test("latest explicit mentions per conversation, ignoring thread-follow", async () => {
+  const insert = (reason: string | null, path: string, at: string) =>
+    getPool().query(
+      `INSERT INTO account_notification_index
+         (account_id, notification_id, kind, project_id, summary, created_at)
+       VALUES ($1, gen_random_uuid(), 'mention', $2, $3, $4)`,
+      [
+        alice,
+        project_id,
+        JSON.stringify(
+          reason == null ? { path } : { path, notification_reason: reason },
+        ),
+        at,
+      ],
+    );
+  await insert(null, "/home/user/x.chat", "2026-01-01T00:00:00Z");
+  await insert("mention", "/home/user/x.chat", "2026-01-02T00:00:00Z");
+  await insert("thread_follow", "/home/user/x.chat", "2026-01-03T00:00:00Z");
+  await insert("thread_follow", "/home/user/y.chat", "2026-01-03T00:00:00Z");
+  const mentions = await latestMentions({
+    account_id: alice,
+    project_ids: [project_id],
+  });
+  expect(mentions.get(mentionKey(project_id, "/home/user/x.chat"))).toBe(
+    new Date("2026-01-02T00:00:00Z").valueOf(),
+  );
+  expect(mentions.has(mentionKey(project_id, "/home/user/y.chat"))).toBe(false);
 });
