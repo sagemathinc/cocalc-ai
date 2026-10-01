@@ -3,8 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useMemo, useState } from "react";
-import { Button, Input, Space, Typography } from "antd";
+import { useMemo } from "react";
+import { Button, Space, Typography } from "antd";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { Icon } from "@cocalc/frontend/components";
@@ -38,25 +38,18 @@ export function usePeople(): Person[] {
 }
 
 export function CollaboratorList({
+  search,
   onSelect,
 }: {
+  search: string;
   onSelect: (account_id: string) => void;
 }) {
   const people = usePeople();
-  const [search, setSearch] = useState("");
   const shown = people.filter((p) =>
     p.name.toLowerCase().includes(search.trim().toLowerCase()),
   );
   return (
     <div style={{ maxWidth: 720 }}>
-      <Input.Search
-        aria-label="Search collaborators"
-        placeholder="Search collaborators"
-        allowClear
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        style={{ marginBottom: 12 }}
-      />
       {shown.length === 0 ? (
         <Typography.Paragraph type="secondary">
           {people.length

@@ -19,6 +19,7 @@ import {
   useEditorRedux,
 } from "@cocalc/frontend/app-framework";
 import { Suspense, type ReactNode } from "react";
+import { WorkspaceContentNavigation } from "./workspace-content-navigation";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { CocalcErrorBoundary } from "@cocalc/frontend/app/error-boundary";
 import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
@@ -3103,7 +3104,8 @@ export function MyAgentsWorkspacePage({
   children?: ReactNode;
   // Set when the content pane (not an agent or the Library) is showing.
   contentLabel?: string;
-  contentNavigation?: ReactNode;
+  // Top bar for the content pane; null for pages with their own header.
+  contentNavigation?: ReactNode | null;
 }) {
   const contentOpen = contentLabel != null;
   const activeTopTab = useTypedRedux("page", "active_top_tab");
@@ -4444,20 +4446,28 @@ export function MyAgentsWorkspacePage({
           inert={!contentOpen}
           aria-hidden={!contentOpen}
         >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              minWidth: 0,
-              flexShrink: 0,
-            }}
-          >
-            {libraryNavigationControl()}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              {contentNavigation ?? <AgentsWorkspaceNavigation />}
+          {contentNavigation !== null && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                minWidth: 0,
+                flexShrink: 0,
+              }}
+            >
+              {libraryNavigationControl()}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {contentNavigation ?? <AgentsWorkspaceNavigation />}
+              </div>
             </div>
-          </div>
-          {children}
+          )}
+          <WorkspaceContentNavigation.Provider
+            value={
+              contentNavigation === null ? libraryNavigationControl() : null
+            }
+          >
+            {children}
+          </WorkspaceContentNavigation.Provider>
         </div>
         {accountId && (
           <AgentArtifactBrowser

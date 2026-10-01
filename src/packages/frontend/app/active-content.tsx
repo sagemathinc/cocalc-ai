@@ -454,7 +454,10 @@ export const ActiveContent: React.FC<Props> = React.memo(({ navigation }) => {
                     ? "People"
                     : "Project and account pages"
           }
-          contentNavigation={navigation}
+          contentNavigation={
+            // People draws its own header, like the Library.
+            active_top_tab === "people" ? null : navigation
+          }
         >
           {content}
         </MyAgentsWorkspacePage>

@@ -6,6 +6,7 @@ import { recordSignedInSurfaceReady } from "./bootstrap-ux-latency";
 
 let disabled: boolean | undefined;
 let mockLite = false;
+let lastContentNavigation: unknown;
 let activeTab = "agents";
 let openProjects: string[] = [];
 let mockFullscreen: string | undefined;
@@ -58,6 +59,7 @@ jest.mock("./bootstrap-ux-latency", () => ({
 }));
 jest.mock("./startup-phase", () => ({ markStartupPhaseOnce: jest.fn() }));
 jest.mock("./route-components", () => ({
+  PeoplePage: () => <section aria-label="People page" />,
   ProjectsPage: () => (
     <section aria-label="Projects">
       <input aria-label="Filter projects" />
@@ -68,7 +70,8 @@ jest.mock("./route-components", () => ({
       <input aria-label="Editor text" />
     </section>
   ),
-  MyAgentsWorkspacePage: ({ children, contentLabel }) => {
+  MyAgentsWorkspacePage: ({ children, contentLabel, contentNavigation }) => {
+    lastContentNavigation = contentNavigation;
     const { useBoundAgentAccount } = require("../agents/use-bound-account");
     const binding = useBoundAgentAccount();
     accountBindings.push(binding);
@@ -215,4 +218,15 @@ it("hides the Projects list without losing its local filter or DOM", () => {
   rerender(<ActiveContent />);
   expect(screen.getByRole("textbox", { name: "Filter projects" })).toBe(filter);
   expect(filter.value).toBe("unfinished filter");
+});
+
+it("People draws its own header instead of the project top bar", () => {
+  accountId = "viewer";
+  activeTab = "people";
+  const navigation = <nav aria-label="Top bar" />;
+  const { rerender } = render(<ActiveContent navigation={navigation} />);
+  expect(lastContentNavigation).toBeNull();
+  activeTab = "projects";
+  rerender(<ActiveContent navigation={navigation} />);
+  expect(lastContentNavigation).toBe(navigation);
 });
