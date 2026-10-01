@@ -37,6 +37,7 @@ import {
 } from "./use-chat-viewport";
 import "./mobile-chat.css";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { isHumanOnlyChatDocument } from "@cocalc/util/collaboration-human-room";
 import type { NodeDesc } from "../frame-editors/frame-tree/types";
 import { EditorComponentProps } from "../frame-editors/frame-tree/types";
 import type { ChatActions } from "./actions";
@@ -213,6 +214,20 @@ const GRID_STYLE: React.CSSProperties = {
 
 const DEFAULT_SIDEBAR_WIDTH = 260;
 const ACP_ACTIVE_STATES = new Set(["queue", "sending", "sent", "running"]);
+
+export function restoreChatToolsFocus(opts: {
+  trigger: HTMLElement | null;
+  drawer: Element | null | undefined;
+  open: boolean;
+}): void {
+  if (opts.open || !opts.trigger?.isConnected) return;
+  const { activeElement, body } = opts.trigger.ownerDocument;
+  // AntD can leave focus on its retained wrapper after a rapid reopen/close.
+  // Recover that abandoned focus, but preserve an intentional handoff elsewhere.
+  if (activeElement === body || opts.drawer?.contains(activeElement)) {
+    opts.trigger.focus({ preventScroll: true });
+  }
+}
 
 function isActiveAcpState(state: unknown): boolean {
   if (typeof state !== "string") return false;
@@ -728,6 +743,8 @@ function ChatPanelContent({
   const focusRootRef = useRef<HTMLDivElement>(null);
   useChatFocusIsolation(focusRootRef, focused && messages != null);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
+  const mobileToolsVisibleRef = useRef(narrow && mobileToolsOpen);
+  mobileToolsVisibleRef.current = narrow && mobileToolsOpen;
   const mobileChatsTriggerRef = useRef<HTMLButtonElement>(null);
   const mobileToolsTriggerRef = useRef<HTMLButtonElement>(null);
   const [mobileToolsPortal, setMobileToolsPortal] =
@@ -886,6 +903,48 @@ function ChatPanelContent({
     project_id,
     path,
   });
+
+  const reportThreadHeader = embeddingOptions.onThreadHeader;
+  useEffect(() => {
+    if (!reportThreadHeader) return;
+    if (!selectedThread) {
+      reportThreadHeader(undefined);
+      return;
+    }
+    reportThreadHeader({
+      appearance: {
+        name: selectedThread.displayLabel ?? selectedThread.label,
+        thread_color: selectedThread.threadColor,
+        thread_accent_color: selectedThread.threadAccentColor,
+        thread_icon: selectedThread.threadIcon,
+        thread_image: selectedThread.threadImage,
+      },
+      editAppearance:
+        !readOnly && modalHandlers
+          ? () =>
+              modalHandlers.openAppearanceModal(
+                selectedThread.key,
+                selectedThread.displayLabel ?? selectedThread.label,
+                selectedThread.hasCustomName,
+                selectedThread.threadColor,
+                selectedThread.threadIcon,
+              )
+          : undefined,
+    });
+    return () => reportThreadHeader(undefined);
+  }, [
+    reportThreadHeader,
+    modalHandlers,
+    readOnly,
+    selectedThread?.key,
+    selectedThread?.displayLabel,
+    selectedThread?.label,
+    selectedThread?.hasCustomName,
+    selectedThread?.threadColor,
+    selectedThread?.threadAccentColor,
+    selectedThread?.threadIcon,
+    selectedThread?.threadImage,
+  ]);
 
   useEffect(() => {
     if (
@@ -2343,7 +2402,20 @@ function ChatPanelContent({
             threadId: reply_thread_id,
           })
         : undefined;
+    if (
+      embeddingOptions.humanOnly &&
+      (!reply_thread_id ||
+        existingThreadMetadata?.agent_kind !== "none" ||
+        existingThreadMetadata.acp_config ||
+        existingThreadMetadata.agent_model)
+    ) {
+      antdMessage.error(
+        "This view only sends to an existing human conversation. Refresh to check its current state.",
+      );
+      return;
+    }
     const isCodexSubmit =
+      !isHumanOnlyChatDocument(actions.syncdb) &&
       !opts?.postOnly &&
       isCodexSubmitTarget({
         newThreadAgentMode: !reply_thread_id
@@ -2463,10 +2535,13 @@ function ChatPanelContent({
 
     const chatIdentity = actions.reserveChatSendIdentity({ reply_thread_id });
     const mentionProcessedInput =
-      submitMentionsRef?.current?.({
-        chat: `${new Date(chatIdentity.date).valueOf()}`,
-        thread: chatIdentity.thread_id,
-      }) ?? "";
+      submitMentionsRef?.current?.(
+        {
+          chat: `${new Date(chatIdentity.date).valueOf()}`,
+          thread: chatIdentity.thread_id,
+        },
+        embeddingOptions.humanOnly || isHumanOnlyChatDocument(actions.syncdb),
+      ) ?? "";
     const resolvedInput =
       mentionProcessedInput.trim().length > 0
         ? mentionProcessedInput
@@ -2578,6 +2653,7 @@ function ChatPanelContent({
       threadAppearance,
       acpConfigOverride,
       chatIdentity,
+      skipModelDispatch: embeddingOptions.humanOnly,
       skipDraftDelete: !pendingStored,
       postOnly: opts?.postOnly,
     });
@@ -3332,18 +3408,6 @@ function ChatPanelContent({
             hasActiveAcpTurn={hasRunningAcpTurn}
             threads={threads}
             selectedThread={selectedThread}
-            onEditThreadAppearance={
-              modalHandlers && selectedThread
-                ? () =>
-                    modalHandlers.openAppearanceModal(
-                      selectedThread.key,
-                      selectedThread.displayLabel ?? selectedThread.label,
-                      selectedThread.hasCustomName,
-                      selectedThread.threadColor,
-                      selectedThread.threadIcon,
-                    )
-                : undefined
-            }
             onComposerFocusChange={() => undefined}
             onComposerReady={onComposerReady}
             codexPaymentSource={codexPaymentSource}
@@ -3531,15 +3595,19 @@ function ChatPanelContent({
       )}
       <Drawer
         title="Chat tools"
+        rootClassName="cocalc-chat-tools-drawer"
         open={narrow && mobileToolsOpen}
         afterOpenChange={(open) => {
           if (!open)
             requestAnimationFrame(() => {
-              if (document.activeElement === document.body)
-                mobileToolsTriggerRef.current?.focus({ preventScroll: true });
+              restoreChatToolsFocus({
+                trigger: mobileToolsTriggerRef.current,
+                drawer: mobileToolsPortal?.closest(".cocalc-chat-tools-drawer"),
+                open: mobileToolsVisibleRef.current,
+              });
             });
         }}
-        forceRender
+        // A force-rendered closed drawer would claim AntD's top Escape slot.
         placement="right"
         size="min(360px, 100vw)"
         onClose={() => setMobileToolsOpen(false)}

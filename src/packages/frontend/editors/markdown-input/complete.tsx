@@ -22,6 +22,7 @@ import { COLORS } from "@cocalc/util/theme";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export interface Item {
+  disabled?: boolean;
   onSelect?: () => void;
   group?: string;
   label?: ReactNode;
@@ -58,26 +59,32 @@ export function Complete({
 }: Props) {
   const [selectedIndex, setSelectedIndex] = useState<number>(0);
   const selected_key_ref = useRef<string | undefined>(undefined);
+  const groups = [...new Set(items.map((item) => item.group))];
+  const selectableItems = groups.flatMap((group) =>
+    items.filter((item) => item.group === group && !item.disabled),
+  );
 
   useEffect(() => {
-    const maxIndex = Math.max(items.length - 1, 0);
+    const maxIndex = Math.max(selectableItems.length - 1, 0);
     if (selectedIndex > maxIndex) {
       setSelectedIndex(maxIndex);
     }
-  }, [items.length, selectedIndex]);
+  }, [selectableItems.length, selectedIndex]);
 
   const select = useCallback(
     (e?) => {
       const key = e?.key ?? selected_key_ref.current;
       if (typeof key === "string") {
-        const action = items.find((item) => item.value === key)?.onSelect;
+        const item = items.find((item) => item.value === key);
+        if (!item || item.disabled) return;
+        const action = item.onSelect;
         if (action) {
           action();
           return;
         }
         onSelect(key);
       } else {
-        onCancel();
+        if (!items.some((item) => item.disabled)) onCancel();
       }
     },
     [items, onSelect, onCancel],
@@ -124,18 +131,19 @@ export function Complete({
   }, [onKeyDown, onCancel]);
 
   selected_key_ref.current =
-    items.length > 0
-      ? items[strictMod(selectedIndex, items.length)]?.value
+    selectableItems.length > 0
+      ? selectableItems[strictMod(selectedIndex, selectableItems.length)]?.value
       : undefined;
 
   const style: CSS = { fontSize: "115%" } as const;
 
   const menuItems: MenuItems = [];
-  for (const group of [...new Set(items.map((item) => item.group))]) {
+  for (const group of groups) {
     const children = items
       .filter((item) => item.group === group)
-      .map(({ label, value }) => ({
+      .map(({ label, value, disabled }) => ({
         key: value,
+        disabled,
         label: label ?? value,
         style,
       }));

@@ -43,6 +43,7 @@ import {
 import { useMentionableUsers } from "./mentionable-users";
 import { parseAgentMention } from "@cocalc/util/agent-mentions";
 import { parseArtifactMention } from "@cocalc/util/artifact-mentions";
+import { parseCollaborationReference } from "@cocalc/util/collaboration-references";
 import { useAgentMentionContext } from "@cocalc/frontend/agents/mention-context";
 import { normalizeMentionSearch } from "./mention-search";
 import { submit_mentions } from "./mentions";
@@ -55,6 +56,7 @@ import { EditorFunctions, SelectionController } from "./types";
 import { resolveUndoHandler } from "./undo-policy";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { SimpleInputMerge } from "@cocalc/sync/editor/generic/simple-input-merge";
+import { autofocusEditor } from "../autofocus";
 
 type EventHandlerFunction = (cm: CodeMirror.Editor) => void;
 
@@ -272,7 +274,9 @@ export function MarkdownInput(props: Props) {
     | undefined
   >(undefined);
 
-  const mentionableUsers = useMentionableUsers();
+  const mentionableUsers = useMentionableUsers(
+    mentions != null ? mentions_search : undefined,
+  );
   const agentMentions = useAgentMentionContext();
   const onSelectionReadyRef = useRef<typeof onSelectionReady>(onSelectionReady);
   onSelectionReadyRef.current = onSelectionReady;
@@ -938,7 +942,7 @@ export function MarkdownInput(props: Props) {
       }
 
       if (autoFocus) {
-        cm.current.getInputField().focus({ preventScroll: true });
+        autofocusEditor(cm.current.getInputField(), { preventScroll: true });
       }
 
       if (selectionRef != null) {
@@ -1418,7 +1422,11 @@ export function MarkdownInput(props: Props) {
         onSelect={(account_id) => {
           if (mentions_cursor_ref.current == null) return;
           const agentReference = parseAgentMention(account_id);
-          if (agentReference || parseArtifactMention(account_id)) {
+          if (
+            agentReference ||
+            parseArtifactMention(account_id) ||
+            parseCollaborationReference(account_id)
+          ) {
             if (cm.current == null) return;
             // Store the bound markup in the draft itself, not ephemeral CodeMirror marks.
             const from = mentions_cursor_ref.current.from;

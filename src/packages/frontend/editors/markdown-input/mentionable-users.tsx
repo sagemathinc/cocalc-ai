@@ -31,25 +31,36 @@ import { useAgentMentionContext } from "@cocalc/frontend/agents/mention-context"
 import { serializeAgentMention } from "@cocalc/util/agent-mentions";
 import { serializeArtifactMention } from "@cocalc/util/artifact-mentions";
 import { useArtifactNames } from "@cocalc/frontend/agents/artifact-names";
+import { useReferenceCompletions } from "@cocalc/frontend/collaborators/reference-picker-mentions";
 
 interface Opts {
   avatarUserSize?: number;
   avatarLLMSize?: number;
 }
 
-export function useMentionableUsers(): (
-  search: string | undefined,
-  opts?: Opts,
-) => Item[] {
+export function useMentionableUsers(
+  completionSearch?: string,
+): (search: string | undefined, opts?: Opts) => Item[] {
   const { project_id } = useProjectContext();
   const user_map = useTypedRedux("users", "user_map");
   const { allowAgentMentions, states, source, postOnly } =
     useAgentMentionContext();
-  const { selectedNetworkId } = useChatEmbeddingOptions();
+  const { selectedNetworkId, humanOnly } = useChatEmbeddingOptions();
+  const collaboratorsEnabled = !!useTypedRedux(
+    "customize",
+    "collaborators_enabled",
+  );
+  const accountId = useTypedRedux("account", "account_id");
   const settings = useTypedRedux("account", "other_settings");
   const { names: artifactNames } = useArtifactNames();
   const [expanded, setExpanded] = useState(false);
-  const enabled = allowAgentMentions === true;
+  const enabled = allowAgentMentions === true && !humanOnly;
+  const references = useReferenceCompletions({
+    search: completionSearch,
+    enabled: !!humanOnly && collaboratorsEnabled,
+    accountId,
+    contextProjectId: project_id,
+  });
   const { directory } = useNamedAgents(enabled);
   const { directory: networkDirectory } = useAgentNetworks(enabled);
 
@@ -128,6 +139,10 @@ export function useMentionableUsers(): (
               }))
           : [];
       return [
+        ...(completionSearch === undefined ||
+        query === completionSearch.toLowerCase()
+          ? references
+          : []),
         ...artifacts,
         ...agents,
         ...(enabled && !query && !expanded
@@ -162,6 +177,8 @@ export function useMentionableUsers(): (
     artifactNames,
     expanded,
     postOnly,
+    completionSearch,
+    references,
   ]);
 }
 

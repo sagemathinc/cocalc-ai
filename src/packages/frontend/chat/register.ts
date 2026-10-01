@@ -13,6 +13,9 @@ import { ChatStore } from "./store";
 import { ChatMessageCache } from "@cocalc/frontend/chat/message-cache";
 import { parseChatPreviewRows } from "./preview";
 import { syncdocDiagnosticLog } from "@cocalc/frontend/syncdoc-diagnostics";
+import { closeChatSyncdb } from "./close-syncdb";
+
+const detachChatListeners = new WeakMap<ChatActions, () => void>();
 
 interface ChatInstanceOptions {
   instanceKey?: string;
@@ -165,7 +168,7 @@ export function initChat(
   const cache = new ChatMessageCache(syncdb);
   actions.set_syncdb(syncdb, store, cache);
   startOptimisticChatPreview(project_id, path, syncdb, cache);
-  syncdb.once("close", () => {
+  const onClose = () => {
     syncdocDiagnosticLog("side chat syncdb close", {
       project_id,
       path,
@@ -173,7 +176,8 @@ export function initChat(
       cache: cache.debugState?.(),
     });
     cache.dispose();
-  });
+  };
+  syncdb.once("close", onClose);
 
   syncdb.once("error", (err) => {
     const mesg = `Error using '${path}' -- ${err}`;
@@ -181,10 +185,17 @@ export function initChat(
     alert_message({ type: "error", message: mesg });
   });
 
-  syncdb.once("ready", () => {
+  const onReady = () => {
     actions.init_from_syncdb();
     syncdb.on("change", actions.syncdbChange);
     redux.getProjectActions(project_id)?.log_opened_time(path);
+  };
+  syncdb.once("ready", onReady);
+  detachChatListeners.set(actions, () => {
+    syncdb.removeListener("ready", onReady);
+    syncdb.removeListener("change", actions.syncdbChange);
+    syncdb.removeListener("close", onClose);
+    cache.dispose();
   });
 
   return actions;
@@ -220,8 +231,16 @@ function removeByName(name: string, redux): string {
   });
   // Dispose per-chat resources before tearing down redux.
   const syncdb = actions?.syncdb;
+  const detach = detachChatListeners.get(actions);
+  if (detach) {
+    detach();
+    detachChatListeners.delete(actions);
+  } else {
+    if (actions?.syncdbChange)
+      syncdb?.removeListener("change", actions.syncdbChange);
+    actions?.messageCache?.dispose?.();
+  }
   actions?.dispose?.();
-  syncdb?.close();
   const store = redux.getStore(name);
   if (store != null) {
     delete store.state;
@@ -230,5 +249,8 @@ function removeByName(name: string, redux): string {
     redux.removeStore(name);
   }
   redux.removeActions(name);
+  // Keep the captured document alive until its pending disk write finishes.
+  // A same-path reopen owns a separate ImmerDB and may share refcounted tables.
+  if (syncdb) void closeChatSyncdb(syncdb);
   return name;
 }

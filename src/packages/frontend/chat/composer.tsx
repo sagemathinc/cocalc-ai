@@ -51,6 +51,8 @@ import {
 } from "@cocalc/frontend/agents/composer-connectors";
 import { CodexConfigButton } from "./codex";
 import { useChatEmbeddingOptions } from "./embedding-options";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { ReferencePickerComposer } from "@cocalc/frontend/collaborators/reference-picker-composer";
 import { ComposerDeliverySelector } from "./composer-delivery";
 import type { ComposerDelivery } from "./composer-delivery";
 
@@ -165,6 +167,10 @@ export function ChatRoomComposer({
   const embeddingOptions = useChatEmbeddingOptions();
   const [delivery, setDelivery] = useState<ComposerDelivery>("agent");
   useEffect(() => setDelivery("agent"), [selectedThread?.key]);
+  const collaboratorsEnabled = !!useTypedRedux(
+    "customize",
+    "collaborators_enabled",
+  );
   const visualViewport = useChatVisualViewport(mobile);
 
   // Automatic sizing grows to this share of the viewport, then scrolls.
@@ -693,6 +699,34 @@ export function ChatRoomComposer({
   const showConversationSettings =
     (showComposerCodexConfig && selectedThread != null) || showIdentity;
 
+  const attachment = (
+    extraActions: { key: string; label: string; onClick: () => void }[] = [],
+  ) => (
+    <ComposerConnectors
+      agent={agentMentions.namedAgent}
+      supportsCocalcAccess={supportsCocalcConnector(threadMetadata)}
+    >
+      {(extraMenuItems) => (
+        <AgentFileAttachment
+          extraActions={extraActions}
+          extraMenuItems={extraMenuItems}
+          projectId={project_id}
+          workingDirectory={
+            actions.getCodexConfig?.(selectedThread?.key)?.workingDirectory
+          }
+          onSetGoal={
+            showGoal && selectedThread
+              ? () => setGoalOpenRequest((request) => request + 1)
+              : undefined
+          }
+          onInsert={(markdown) => {
+            chatInputControlRef.current?.insertText(markdown);
+            refocusComposerInput();
+          }}
+        />
+      )}
+    </ComposerConnectors>
+  );
   const composer = (
     <AgentMentionContext.Provider value={agentMentionContext}>
       <div
@@ -939,30 +973,22 @@ export function ChatRoomComposer({
                 minHeight: 32,
               }}
             >
-              <ComposerConnectors
-                agent={agentMentions.namedAgent}
-                supportsCocalcAccess={supportsCocalcConnector(threadMetadata)}
-              >
-                {(extraMenuItems) => (
-                  <AgentFileAttachment
-                    extraMenuItems={extraMenuItems}
-                    projectId={project_id}
-                    workingDirectory={
-                      actions.getCodexConfig?.(selectedThread?.key)
-                        ?.workingDirectory
-                    }
-                    onSetGoal={
-                      showGoal && selectedThread
-                        ? () => setGoalOpenRequest((request) => request + 1)
-                        : undefined
-                    }
-                    onInsert={(markdown) => {
-                      chatInputControlRef.current?.insertText(markdown);
-                      refocusComposerInput();
-                    }}
-                  />
-                )}
-              </ComposerConnectors>
+              {collaboratorsEnabled && isActive ? (
+                <ReferencePickerComposer
+                  key={`${project_id}:${path}:${composerSession}`}
+                  projectId={project_id}
+                  inputControlRef={chatInputControlRef}
+                  allowShareToConversation={
+                    !!embeddingOptions.humanOnly && selectedThread != null
+                  }
+                  conversationTitle={threadLabel}
+                  conversation={embeddingOptions.conversationTarget}
+                  renderActions={attachment}
+                />
+              ) : (
+                attachment()
+              )}
+
               <DictateButton
                 borderless
                 inputControlRef={chatInputControlRef}

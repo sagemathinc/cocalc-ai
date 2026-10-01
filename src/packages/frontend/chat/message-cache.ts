@@ -7,6 +7,10 @@ import { dateValue, parentMessageId } from "./access";
 import { once } from "@cocalc/util/async-utils";
 import { normalizeChatMessage } from "./normalize";
 import { syncdocDiagnosticLog } from "@cocalc/frontend/syncdoc-diagnostics";
+import {
+  CHAT_IDENTITY_EVENT,
+  projectChatIdentityRows,
+} from "@cocalc/util/collaboration-chat-identity";
 
 /**
  * ChatMessageCache
@@ -45,6 +49,8 @@ export class ChatMessageCache extends EventEmitter {
   // Keep them until the first live rebuild so an empty initial snapshot
   // cannot withdraw already-confirmed chat history.
   private initialPreviewRows?: unknown[];
+  private identityMarkers: unknown[] = [];
+  private identityError?: string;
   private version = 0;
   private disposed = false;
   private lastEvent = "constructor";
@@ -135,6 +141,7 @@ export class ChatMessageCache extends EventEmitter {
       messagesById: this.messagesById.size,
       threads: this.threadIndex.size,
       threadConfigs: this.threadConfigByThreadId.size,
+      identityError: this.identityError,
       syncdbState: this.syncdb?.get_state?.(),
       syncdbLiveConnected: this.syncdb?.is_live_connected?.(),
       syncdbDebug: this.syncdb?.debug_live_connection_state?.(),
@@ -431,7 +438,13 @@ export class ChatMessageCache extends EventEmitter {
       return { applied: false, chatRows: 0 };
     }
     this.initialPreviewRows = Array.isArray(rows) ? [...rows] : [];
-    const snapshot = this.buildSnapshotFromRows(rows);
+    let snapshot: ChatCacheSnapshot;
+    try {
+      snapshot = this.buildSnapshotFromRows(rows);
+    } catch (error) {
+      this.identityError = `${error}`;
+      return { applied: false, chatRows: 0 };
+    }
     this.applySnapshot(snapshot);
     this.noteEvent("preview");
     syncdocDiagnosticLog("chat message cache preview", {
@@ -445,7 +458,8 @@ export class ChatMessageCache extends EventEmitter {
     applied: number;
     skipped: number;
   } {
-    const list = Array.isArray(rows) ? rows : [];
+    const source = Array.isArray(rows) ? rows : [];
+    const list = projectChatIdentityRows([...this.identityMarkers, ...source]);
     if (list.length === 0) {
       return { applied: 0, skipped: 0 };
     }
@@ -457,6 +471,7 @@ export class ChatMessageCache extends EventEmitter {
           this.messageIdIndex = produce(this.messageIdIndex, (idDraft) => {
             this.dateIndex = produce(this.dateIndex, (dateIndexDraft) => {
               for (const row0 of list) {
+                if ((row0 as any)?.event === CHAT_IDENTITY_EVENT) continue;
                 const normalized = normalizeChatMessage(row0);
                 const nextMessage = normalized.message as
                   | PlainChatMessage
@@ -560,7 +575,18 @@ export class ChatMessageCache extends EventEmitter {
       string,
       Record<string, unknown>[]
     >();
-    const list = Array.isArray(rows) ? rows : [];
+    let list = projectChatIdentityRows(Array.isArray(rows) ? rows : []);
+    this.identityMarkers = list.filter(
+      (row: any) => row?.event === CHAT_IDENTITY_EVENT,
+    );
+    if (this.identityMarkers.length) {
+      list = list.map((row: any) =>
+        row?.event === "chat"
+          ? (normalizeChatMessage(row).message ?? row)
+          : row,
+      );
+    }
+    this.identityError = undefined;
     let chatRows = 0;
 
     for (const row0 of list) {
@@ -633,7 +659,18 @@ export class ChatMessageCache extends EventEmitter {
     const rows = this.syncdb.get() ?? [];
     log("rebuildFromDoc: got rows", rows);
     this.noteEvent("rebuildFromDoc");
-    let snapshot = this.buildSnapshotFromRows(rows);
+    let snapshot: ChatCacheSnapshot;
+    try {
+      snapshot = this.buildSnapshotFromRows(rows);
+    } catch (error) {
+      // Incomplete marker delivery must not replace a confirmed view with omissions.
+      this.identityError = `${error}`;
+      syncdocDiagnosticLog("chat identity reconciliation pending", {
+        error: this.identityError,
+      });
+      this.bumpVersion();
+      return;
+    }
     const previewRows = this.initialPreviewRows;
     this.initialPreviewRows = undefined;
     if (
@@ -648,7 +685,19 @@ export class ChatMessageCache extends EventEmitter {
       // not-yet-streamed doc than a genuinely emptied one -- and it runs at
       // most once, since initialPreviewRows is consumed above. Later reloads
       // stay authoritative.
-      const combined = this.buildSnapshotFromRows([...previewRows, ...rows]);
+      const liveMarkers = new Set(
+        rows
+          .filter((row: any) => row.event === CHAT_IDENTITY_EVENT)
+          .map((row: any) => row.thread_id),
+      );
+      const combined = this.buildSnapshotFromRows([
+        ...previewRows.filter(
+          (row: any) =>
+            row?.event !== CHAT_IDENTITY_EVENT ||
+            !liveMarkers.has(row.thread_id),
+        ),
+        ...rows,
+      ]);
       if (combined.chatRows > 0) {
         snapshot = combined;
         syncdocDiagnosticLog("chat message cache retained initial preview", {
@@ -671,6 +720,18 @@ export class ChatMessageCache extends EventEmitter {
     log("handleChange", changes);
     if (this.syncdb.get_state() !== "ready") return;
     const rows: Record<string, unknown>[] = Array.from(changes);
+    if (
+      rows.some(
+        (row) =>
+          row.event === CHAT_IDENTITY_EVENT ||
+          (this.identityMarkers.length &&
+            row.event === "chat" &&
+            (!row.message_id || !row.thread_id)),
+      )
+    ) {
+      void this.rebuildFromDoc();
+      return;
+    }
     const changedThreadConfigIds = new Set<string>();
     for (const row0 of rows) {
       if (row0?.event !== "chat-thread-config") continue;

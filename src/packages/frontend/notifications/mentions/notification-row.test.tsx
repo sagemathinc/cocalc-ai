@@ -12,6 +12,16 @@ const respondAccessRequest = jest.fn();
 const listAccessRequests = jest.fn();
 const mockEnsureProjectReduxRuntime = jest.fn();
 const mockOpenAgentNotification = jest.fn();
+const mockGetResource = jest.fn();
+const mockOpenCollaborators = jest.fn();
+let mockHome = false;
+jest.mock("../../collaborators/workspace-api", () => ({
+  boundCollaboratorsApi: () => ({ getResource: mockGetResource }),
+}));
+jest.mock("../../collaborators/navigation", () => ({
+  ...jest.requireActual("../../collaborators/navigation"),
+  openCollaborators: (...args) => mockOpenCollaborators(...args),
+}));
 
 jest.mock("../../agents/open-notification", () => ({
   openAgentNotification: (...args: any[]) => mockOpenAgentNotification(...args),
@@ -19,7 +29,10 @@ jest.mock("../../agents/open-notification", () => ({
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
-    getStore: () => undefined,
+    getStore: (store) =>
+      mockHome
+        ? { get: () => (store === "account" ? "acct-1" : "agents") }
+        : undefined,
     getProjectActions: () => ({ open_file }),
     getActions: () => ({ mark, markMany }),
   },
@@ -67,6 +80,9 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 
 describe("NotificationRow", () => {
   beforeEach(() => {
+    mockHome = false;
+    mockGetResource.mockReset();
+    mockOpenCollaborators.mockReset();
     open_file.mockReset();
     mark.mockReset();
     markMany.mockReset();
@@ -78,6 +94,88 @@ describe("NotificationRow", () => {
     mockEnsureProjectReduxRuntime.mockResolvedValue(undefined);
     mockOpenAgentNotification.mockReset();
     mockOpenAgentNotification.mockResolvedValue(false);
+  });
+
+  it("opens a human thread-follow notification in Home and marks it read", async () => {
+    mockHome = true;
+    mockGetResource.mockResolvedValue({
+      project_id: "project-1",
+      kind: "conversation",
+      resource_id: "human-thread",
+      thread_id: "human-thread",
+      chat_path: "x.chat",
+    });
+    render(
+      <NotificationRow
+        id="human-reply"
+        user_map={{}}
+        mention={
+          fromJS({
+            kind: "mention",
+            notification_reason: "thread_follow",
+            project_id: "project-1",
+            path: "x.chat",
+            target: "acct-1",
+            source: "bella",
+            time: new Date(),
+            fragment_id: "chat=1234&thread=human-thread",
+            users: { "acct-1": { read: false } },
+          }) as any
+        }
+      />,
+    );
+    fireEvent.click(screen.getByText("x.chat"));
+    await waitFor(() =>
+      expect(mockOpenCollaborators).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: "project-1",
+          resourceKind: "conversation",
+          resourceId: "human-thread",
+        }),
+      ),
+    );
+    expect(mark).toHaveBeenCalledWith(expect.anything(), "human-reply", "read");
+    expect(open_file).not.toHaveBeenCalled();
+  });
+
+  it("renders authored invitation context literally and only offers passive review", () => {
+    const body =
+      '<img src="https://example.com/tracker"> [Run](javascript:run())';
+    const { container } = render(
+      <NotificationRow
+        id="invitation-notice"
+        user_map={{}}
+        mention={
+          fromJS({
+            kind: "account_notice",
+            notice_type: "collaboration_invitation",
+            target: "acct-1",
+            source: "sender",
+            time: new Date(),
+            title: "Invitation to collaborate",
+            body_text: body,
+            body_markdown: "Do not interpret this as markdown",
+            action_label: "View invitation",
+            action_link: "/people/invites/?invitation_id=invite",
+            users: { "acct-1": { read: false } },
+          }) as any
+        }
+      />,
+    );
+    expect(screen.getByText(body)).toBeTruthy();
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.queryByText("Do not interpret this as markdown")).toBeNull();
+    const link = screen.getByRole("link", { name: "View invitation" });
+    expect(link.getAttribute("href")).toBe(
+      "/people/invites/?invitation_id=invite",
+    );
+    link.focus();
+    expect(document.activeElement).toBe(link);
+    fireEvent.click(link);
+    expect(open_file).not.toHaveBeenCalled();
+    expect(mockEnsureProjectReduxRuntime).not.toHaveBeenCalled();
+    expect(respondAccessRequest).not.toHaveBeenCalled();
+    expect(mark).not.toHaveBeenCalled();
   });
 
   it("includes the matching named agent in a Codex notice", () => {
@@ -182,6 +280,7 @@ describe("NotificationRow", () => {
       expect(
         screen.getByText(
           (_, element) => element?.textContent === body_markdown,
+          { selector: "span" },
         ),
       ).toBeInTheDocument();
       if (!hasNote) {

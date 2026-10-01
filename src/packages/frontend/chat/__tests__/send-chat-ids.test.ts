@@ -1,8 +1,14 @@
 /** @jest-environment jsdom */
 
 import { CHAT_THREAD_META_ROW_DATE, threadConfigRecordKey } from "@cocalc/chat";
+import { EventEmitter } from "node:events";
 import { from_str } from "@cocalc/sync/editor/immer-db/doc";
 import { ChatActions } from "../actions";
+import {
+  planChatIdentityMigration,
+  resolveChatIdentityRows,
+} from "@cocalc/util/collaboration-chat-identity";
+import { closeChatSyncdb } from "../close-syncdb";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { alert_message } from "@cocalc/frontend/alerts";
 import {
@@ -104,7 +110,128 @@ function bindRealDeleteDraft(actions: any): void {
   ).deleteDraft.bind(actions);
 }
 
+test("mapped legacy edit, feedback, reparent and delete retain original SyncDB keys", () => {
+  const root = {
+    event: "chat",
+    sender_id: "alice",
+    date: "2026-09-27T02:00:00+02:00",
+    history: [
+      { content: "root", author_id: "alice", date: "2026-09-27T00:00:00Z" },
+    ],
+  };
+  const child = {
+    event: "chat",
+    sender_id: "bob",
+    date: "2026-09-27T00:00:00.001Z",
+    reply_to: root.date,
+    history: [],
+  };
+  const markers = planChatIdentityMigration([root, child], {
+    migration_id: "11111111-1111-4111-8111-111111111111",
+    history_complete: true,
+  });
+  let doc = from_str(
+    "",
+    ["date", "sender_id", "event", "message_id", "thread_id"],
+    ["input"],
+  );
+  for (const row of [root, child, ...markers]) doc = doc.set(row);
+  const messages = new Map<string, any>();
+  const refresh = () => {
+    messages.clear();
+    for (const message of resolveChatIdentityRows(doc.get()).messages)
+      messages.set(`${Date.parse(message.projected.date)}`, {
+        ...message.projected,
+        date: new Date(message.projected.date),
+      });
+  };
+  refresh();
+  const actions = makeActions(messages);
+  actions.syncdb.get_state = () => "ready";
+  actions.syncdb.get = (where) => doc.get(where);
+  actions.syncdb.get_one = (where) => doc.get_one(where);
+  actions.syncdb.set.mockImplementation((patch) => {
+    doc = doc.set(patch);
+  });
+  actions.syncdb.delete.mockImplementation((where) => {
+    doc = doc.delete(where);
+  });
+  const message = messages.get(`${Date.parse(root.date)}`);
+  actions.setEditing(message, true);
+  actions.sendEdit(message, "edited");
+  actions.feedback(message, "positive");
+  expect(doc.get({ event: "chat" })).toHaveLength(2);
+  const saved = doc.get_one({
+    event: "chat",
+    date: root.date,
+    sender_id: "alice",
+  });
+  expect(saved.history[0].content).toBe("edited");
+  expect(saved.message_id).toBeUndefined();
+  expect(saved.thread_id).toBeUndefined();
+  refresh();
+  expect(actions.deleteMessage(messages.get(`${Date.parse(root.date)}`))).toBe(
+    true,
+  );
+  expect(doc.get({ event: "chat" })).toHaveLength(1);
+  const remaining = doc.get({ event: "chat" })[0];
+  expect(remaining.date).toBe(child.date);
+  expect(remaining.message_id).toBeUndefined();
+  expect(remaining.thread_id).toBeUndefined();
+  expect(
+    resolveChatIdentityRows(doc.get()).messages[0].parent_message_id,
+  ).toBeNull();
+});
+
 describe("sendChat identity fields", () => {
+  it("canonical human room sends never invoke agents or write legacy follower state", () => {
+    const actions = makeActions();
+    actions.syncdb.get_one = () => ({
+      event: "collaborators-room",
+      mode: "human",
+    });
+    actions.getThreadMetadata = () => ({ agent_kind: "none" });
+    const mentions = jest.fn(() => "@agent and @artifact are references");
+    const result = actions.sendChat({
+      input: "hello",
+      reply_thread_id: "discussion",
+      send_mode: "immediate",
+      submitMentionsRef: { current: mentions },
+      acpConfigOverride: { model: "codex" },
+      chatIdentity: {
+        date: "2026-09-27T00:00:00Z",
+        message_id: "human-message",
+        thread_id: "discussion",
+      },
+    });
+    expect(result).toBeTruthy();
+    expect(actions.processAI).not.toHaveBeenCalled();
+    expect(mentions).toHaveBeenCalledWith(expect.any(Object), true);
+    const row = actions.syncdb.set.mock.calls
+      .map(([value]) => value)
+      .find((value) => value.event === "chat");
+    expect(row).not.toHaveProperty("acp_send_mode");
+    expect(row).not.toHaveProperty("acp_state");
+    expect(row).not.toHaveProperty("post_only");
+    expect(
+      actions.syncdb.set.mock.calls.some(
+        ([value]) => value.notification_followers != null,
+      ),
+    ).toBe(false);
+  });
+  it("canonical human room fails closed if a selected thread became an agent", () => {
+    const actions = makeActions();
+    actions.syncdb.get_one = () => ({ event: "collaborators-room" });
+    actions.getThreadMetadata = () => ({ agent_kind: "acp", acp_config: {} });
+    expect(
+      actions.sendChat({
+        input: "do not dispatch",
+        reply_thread_id: "discussion",
+      }),
+    ).toBe("");
+    expect(actions.processAI).not.toHaveBeenCalled();
+    expect(actions.syncdb.set).not.toHaveBeenCalled();
+  });
   it("persists posts without dispatching and excludes them from agent history", () => {
     const actions = makeActions();
     actions.sendChat({
@@ -745,6 +872,29 @@ describe("sendChat identity fields", () => {
 });
 
 describe("chat autosave", () => {
+  function attachSyncdb(state = "init", unsaved: boolean | undefined = true) {
+    const actions = makeActions();
+    const db = Object.assign(new EventEmitter(), actions.syncdb, {
+      get_state: jest.fn(() => state),
+      is_read_only: jest.fn(() => false),
+      has_unsaved_changes: jest.fn(() => unsaved),
+    });
+    actions.syncdb = undefined;
+    actions.ensureChatStoreRegistered = jest.fn();
+    actions.ensureProjectReadState = jest.fn();
+    actions.set_syncdb(db, actions.store, actions.messageCache);
+    return { actions, db };
+  }
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
   it("ignores empty initial SyncDoc change payloads", () => {
     const actions = makeActions();
     actions.save_to_disk = jest.fn();
@@ -752,6 +902,7 @@ describe("chat autosave", () => {
     actions.autosave([]);
     actions.autosave(new Set());
     actions.autosave(undefined);
+    jest.advanceTimersByTime(30_000);
 
     expect(actions.save_to_disk).not.toHaveBeenCalled();
   });
@@ -765,6 +916,41 @@ describe("chat autosave", () => {
     expect(actions.save_to_disk).toHaveBeenCalledTimes(1);
   });
 
+  it("does not let the empty ready replay consume the leading save", () => {
+    const actions = makeActions();
+    actions.save_to_disk = jest.fn();
+
+    actions.autosave(new Set());
+    jest.advanceTimersByTime(1000);
+    actions.autosave(new Set([{ event: "chat", message_id: "first" }]));
+
+    expect(actions.save_to_disk).toHaveBeenCalledTimes(1);
+    actions.autosave([]);
+    jest.advanceTimersByTime(30_000);
+    expect(actions.save_to_disk).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a real trailing save across later empty change events", () => {
+    const actions = makeActions();
+    actions.save_to_disk = jest.fn();
+
+    actions.autosave(new Set());
+    actions.autosave(new Set([{ event: "chat", message_id: "first" }]));
+    jest.advanceTimersByTime(1000);
+    actions.autosave(new Set([{ event: "chat", message_id: "second" }]));
+    jest.advanceTimersByTime(14_000);
+    actions.autosave([]);
+    actions.autosave(new Set());
+    actions.autosave(undefined);
+    expect(actions.save_to_disk).toHaveBeenCalledTimes(1);
+
+    // No-op events must neither replace pending work nor extend its deadline.
+    jest.advanceTimersByTime(1000);
+    expect(actions.save_to_disk).toHaveBeenCalledTimes(2);
+    jest.advanceTimersByTime(30_000);
+    expect(actions.save_to_disk).toHaveBeenCalledTimes(2);
+  });
+
   it("contains rejected fire-and-forget disk saves", async () => {
     const actions = makeActions();
     actions.syncdb.save_to_disk.mockRejectedValue(
@@ -773,6 +959,88 @@ describe("chat autosave", () => {
 
     await expect(actions.autosaveToDisk()).resolves.toBeUndefined();
     expect(actions.syncdb.save_to_disk).toHaveBeenCalledTimes(1);
+  });
+
+  it("flushes accepted unsaved messages when a reloaded chat becomes ready", () => {
+    const { actions, db } = attachSyncdb();
+    expect(db.save_to_disk).not.toHaveBeenCalled();
+    db.get_state.mockReturnValue("ready");
+    db.emit("ready");
+    db.emit("change", []);
+    jest.advanceTimersByTime(30_000);
+    expect(db.save_to_disk).toHaveBeenCalledTimes(1);
+    actions.dispose();
+  });
+
+  it("recovers an already-ready dirty chat without requiring another edit", () => {
+    const { actions, db } = attachSyncdb("ready");
+    expect(db.save_to_disk).toHaveBeenCalledTimes(1);
+    actions.dispose();
+  });
+
+  it.each([false, undefined])(
+    "does not save clean or unknown initial state: %s",
+    (unsaved) => {
+      const { actions, db } = attachSyncdb("ready", false);
+      db.has_unsaved_changes.mockReturnValue(unsaved);
+      actions.recoverUnsavedChat();
+      db.emit("change", []);
+      jest.advanceTimersByTime(30_000);
+      expect(db.save_to_disk).not.toHaveBeenCalled();
+      actions.dispose();
+    },
+  );
+
+  it("detaches ready recovery and cancels trailing saves on disposal", () => {
+    const { actions, db } = attachSyncdb();
+    db.emit("change", [{ event: "chat" }]);
+    db.emit("change", [{ event: "chat" }]);
+    expect(db.save_to_disk).toHaveBeenCalledTimes(1);
+    actions.dispose();
+    db.get_state.mockReturnValue("ready");
+    db.emit("ready");
+    jest.advanceTimersByTime(30_000);
+    expect(db.save_to_disk).toHaveBeenCalledTimes(1);
+    expect(db.listenerCount("ready")).toBe(0);
+    expect(db.listenerCount("change")).toBe(0);
+  });
+
+  it("persists a second change on teardown before its trailing autosave fires", async () => {
+    const { actions, db } = attachSyncdb("ready", false);
+    let current = 0;
+    let disk = 0;
+    Object.assign(db, { close: jest.fn(async () => {}) });
+    db.has_unsaved_changes.mockImplementation(() => disk !== current);
+    db.save_to_disk.mockImplementation(async () => {
+      disk = current;
+    });
+    current = 1;
+    db.emit("change", new Set([{ event: "chat", message_id: "first" }]));
+    await Promise.resolve();
+    expect(disk).toBe(1);
+    jest.advanceTimersByTime(1000);
+    current = 2;
+    db.emit("change", new Set([{ event: "chat", message_id: "second" }]));
+    expect(db.save_to_disk).toHaveBeenCalledTimes(1);
+    expect(disk).toBe(1);
+
+    actions.dispose();
+    expect(actions.syncdb).toBeUndefined();
+    await closeChatSyncdb(db as any);
+    expect(disk).toBe(2);
+    expect(db.save_to_disk).toHaveBeenCalledTimes(2);
+    jest.advanceTimersByTime(30_000);
+    expect(db.save_to_disk).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not recover another writer's unsaved state from a read-only chat", () => {
+    const { actions, db } = attachSyncdb();
+    db.get_state.mockReturnValue("ready");
+    db.is_read_only.mockReturnValue(true);
+    db.emit("ready");
+    jest.advanceTimersByTime(30_000);
+    expect(db.save_to_disk).not.toHaveBeenCalled();
+    actions.dispose();
   });
 });
 

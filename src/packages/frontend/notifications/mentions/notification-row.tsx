@@ -11,9 +11,9 @@ import { getLogger } from "@cocalc/conat/logger";
 import { A } from "@cocalc/frontend/components";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { CSS, redux } from "@cocalc/frontend/app-framework";
-import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
+import { openNotificationTarget } from "../open-target";
 import { Icon, IconName, TimeAgo } from "@cocalc/frontend/components";
-import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import { NotificationMarkdown } from "../notification-markdown";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
@@ -97,6 +97,7 @@ export function NotificationRow(props: Props) {
     fragment_id,
     title,
     body_markdown,
+    body_text,
     origin_label,
     notice_type,
     request_id,
@@ -181,25 +182,16 @@ export function NotificationRow(props: Props) {
   async function clickNotificationTarget(): Promise<void> {
     if (!project_id || !path) return;
     try {
-      const { openAgentNotification } =
-        await import("../../agents/open-notification");
       if (
-        await openAgentNotification(
-          project_id,
+        await openNotificationTarget({
+          projectId: project_id,
           path,
-          thread_id ?? fragmentId?.thread,
-        )
+          threadId: thread_id,
+          fragmentId,
+        })
       ) {
         markReadState("read");
-        return;
       }
-      await ensureProjectReduxRuntime();
-      await redux.getProjectActions(project_id).open_file({
-        path,
-        chat: !!fragmentId?.chat,
-        fragmentId,
-      });
-      markReadState("read");
     } catch (err) {
       logger.warn("Unable to open notification target", err);
     }
@@ -423,7 +415,14 @@ export function NotificationRow(props: Props) {
             </Tag>
           ) : null}
           <div style={{ color: UI_COLORS.secondary }}>
-            {origin_label ?? "System"}{" "}
+            {notice_type === "collaboration_invitation" && source ? (
+              <>
+                <User account_id={source} user_map={user_map} /> invited
+                you{" "}
+              </>
+            ) : (
+              <>{origin_label ?? "System"} </>
+            )}
             <TimeAgo date={(latestTime ?? time).getTime()} />
             {count > 1 ? (
               <Tag style={{ marginLeft: 8 }}>{count} times</Tag>
@@ -435,8 +434,19 @@ export function NotificationRow(props: Props) {
               <TimeAgo date={(latestTime ?? time).getTime()} />.
             </div>
           ) : null}
-          {body_markdown ? (
-            <StaticMarkdown
+          {notice_type === "collaboration_invitation" ? (
+            <div
+              style={{
+                color: UI_COLORS.secondary,
+                whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
+                margin: "4px 0",
+              }}
+            >
+              {body_text}
+            </div>
+          ) : body_markdown ? (
+            <NotificationMarkdown
               style={{
                 ...MARKDOWN_STYLE,
                 margin: IS_MOBILE ? "4px 0" : "4px 10px",
@@ -467,7 +477,7 @@ export function NotificationRow(props: Props) {
         )}
         <ProjectTitle project_id={project_id} />.
         {description ? (
-          <StaticMarkdown
+          <NotificationMarkdown
             style={{
               ...MARKDOWN_STYLE,
               margin: IS_MOBILE ? "4px 0" : "4px 10px",

@@ -30,9 +30,11 @@ import { SubmitMentionsRef } from "@cocalc/frontend/chat/types";
 import { useMentionableUsers } from "@cocalc/frontend/editors/markdown-input/mentionable-users";
 import { parseAgentMention } from "@cocalc/util/agent-mentions";
 import { parseArtifactMention } from "@cocalc/util/artifact-mentions";
+import { parseCollaborationReference } from "@cocalc/util/collaboration-references";
 import { useAgentMentionContext } from "@cocalc/frontend/agents/mention-context";
 import { createAgentMention } from "./elements/agent-mention";
 import { createArtifactMention } from "./elements/artifact-mention";
+import { createCollaborationReference } from "./elements/collaboration-reference";
 import { submit_mentions } from "@cocalc/frontend/editors/markdown-input/mentions";
 import {
   EditorFunctions,
@@ -539,7 +541,12 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     jupyterGapCursor,
     setJupyterGapCursor,
   } = props;
-  const { project_id, path, desc, isVisible } = useFrameContext();
+  const frameContext = useFrameContext();
+  const { project_id, path, desc } = frameContext;
+  // Standalone composers have no frame; the default context's false visibility
+  // must not suppress their asynchronous mention search.
+  const isVisible =
+    !(frameContext.id || project_id || path) || frameContext.isVisible;
   const isMountedRef = useIsMountedRef();
   const id = id0 ?? "";
   const actions = actions0 ?? {};
@@ -1060,13 +1067,23 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     return estimateSize({ node, fontSize: font_size });
   }, []);
 
-  const mentionableUsers = useMentionableUsers();
+  const [mentionSearch, setMentionSearch] = useState<string | undefined>();
+  const mentionableUsers = useMentionableUsers(mentionSearch);
   const agentMentions = useAgentMentionContext();
 
   const mentions = useMentions({
     isVisible,
     editor,
+    onSearchChange: setMentionSearch,
     insertMention: (editor, account_id) => {
+      const collaborationReference = parseCollaborationReference(account_id);
+      if (collaborationReference) {
+        Transforms.insertNodes(editor, [
+          createCollaborationReference(collaborationReference),
+          { text: " " },
+        ]);
+        return;
+      }
       const artifactReference = parseArtifactMention(account_id);
       if (artifactReference) {
         Transforms.insertNodes(editor, [

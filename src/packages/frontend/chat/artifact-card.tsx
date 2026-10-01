@@ -6,6 +6,7 @@ import type { IconName } from "@cocalc/frontend/components/icon";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { blobImageUrl } from "@cocalc/frontend/components/theme-image-url";
 import { ArtifactNameControl } from "@cocalc/frontend/agents/artifact-name-control";
+import { InviteContentButton } from "@cocalc/frontend/collaborators/invite-content";
 import type {
   ArtifactPublication,
   ArtifactRecord,
@@ -83,7 +84,6 @@ export function ArtifactCard({
   compact = false,
   leading,
   trailing,
-  reorder,
 }: {
   publication: ArtifactPublication;
   current?: ArtifactRecord;
@@ -95,7 +95,6 @@ export function ArtifactCard({
   compact?: boolean;
   leading?: ReactNode;
   trailing?: ReactNode;
-  reorder?: { up?: () => void; down?: () => void };
 }) {
   const [editing, setEditing] = useState(false);
   const [naming, setNaming] = useState(false);
@@ -175,12 +174,6 @@ export function ArtifactCard({
     .filter(Boolean)
     .join("\n");
   const menuItems = [
-    ...(reorder
-      ? [
-          { key: "move-up", label: "Move up", disabled: !reorder.up },
-          { key: "move-down", label: "Move down", disabled: !reorder.down },
-        ]
-      : []),
     {
       key: "message-version",
       label: published.file
@@ -333,7 +326,23 @@ export function ArtifactCard({
             {trailing}
           </span>
         )}
-        {(open || showInConversation || reorder) && (
+        {projectId &&
+          chatPath &&
+          publication.thread_id &&
+          publication.artifact_id && (
+            <InviteContentButton
+              compact
+              title={title}
+              source={{
+                project_id: projectId,
+                chat_path: chatPath,
+                thread_id: publication.thread_id,
+                artifact_id: publication.artifact_id,
+                kind: "artifact",
+              }}
+            />
+          )}
+        {(open || showInConversation) && (
           <Dropdown
             autoFocus
             trigger={["click"]}
@@ -341,9 +350,7 @@ export function ArtifactCard({
               items: menuItems,
               onClick: ({ key, domEvent }) => {
                 domEvent.stopPropagation();
-                if (key === "move-up") reorder?.up?.();
-                else if (key === "move-down") reorder?.down?.();
-                else if (key === "appearance") setEditing(true);
+                if (key === "appearance") setEditing(true);
                 else if (key === "name") setNaming(true);
                 else if (key === "conversation") void showInConversation?.();
                 else open?.(publication.operation_id);

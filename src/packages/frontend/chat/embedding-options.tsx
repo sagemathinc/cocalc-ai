@@ -5,6 +5,20 @@
 
 import { createContext, useContext, type ReactNode } from "react";
 import { tab_to_path } from "@cocalc/util/misc";
+import type { ThreadMetadataSnapshot } from "./actions";
+import type { CollaborationTarget } from "@cocalc/util/collaborators";
+
+export interface EmbeddedThreadHeader {
+  appearance: Pick<
+    ThreadMetadataSnapshot,
+    | "name"
+    | "thread_color"
+    | "thread_accent_color"
+    | "thread_icon"
+    | "thread_image"
+  >;
+  editAppearance?: () => void;
+}
 
 export function chatIsForeground(
   path: string,
@@ -18,6 +32,8 @@ export function chatIsForeground(
 }
 
 export interface ChatEmbeddingOptions {
+  conversationTarget?: CollaborationTarget;
+  humanOnly?: boolean;
   agentWorkspace?: boolean;
   agentWorkspaceActive?: boolean;
   onSearchAll?: () => void;
@@ -28,6 +44,7 @@ export interface ChatEmbeddingOptions {
   hideTopControls?: boolean;
   hideCompactThreadHeader?: boolean;
   hideComposerIdentity?: boolean;
+  onThreadHeader?: (header: EmbeddedThreadHeader | undefined) => void;
   openFilesInWorkbench?: boolean;
   sidebarHiddenByDefault?: boolean;
   sidebarPreferenceKey?: string;

@@ -15,21 +15,21 @@ import { lite } from "@cocalc/frontend/lite";
 
 const READ_ALOUD_DISCLOSURE_KEY = "cocalc-chat-speech-output-disclosed";
 
-export function ChatReadAloudButton({
-  value,
-  projectId,
-  path,
-  threadId,
-  messageId = "codex-final-response",
-  showLabel = false,
-}: {
+interface ReadAloudOptions {
   value: string;
   projectId?: string;
   path?: string;
   threadId?: string;
   messageId?: string;
-  showLabel?: boolean;
-}) {
+}
+
+export function useChatReadAloudAction({
+  value,
+  projectId,
+  path,
+  threadId,
+  messageId = "codex-final-response",
+}: ReadAloudOptions) {
   const paneId = useContext(SpeechPaneContext);
   if (lite) return null;
   const start = () =>
@@ -71,6 +71,15 @@ export function ChatReadAloudButton({
     });
   };
 
+  return requestReadAloud;
+}
+
+export function ChatReadAloudButton({
+  showLabel = false,
+  ...options
+}: ReadAloudOptions & { showLabel?: boolean }) {
+  const requestReadAloud = useChatReadAloudAction(options);
+  if (!requestReadAloud) return null;
   return (
     <Tooltip placement="bottom" title="Read this response aloud">
       <Button

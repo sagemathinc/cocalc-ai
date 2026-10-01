@@ -12,7 +12,7 @@ import {
   writeChatComposerDraft,
 } from "../use-chat-composer-draft";
 
-const local = new Map<string, string>();
+const local = new Map<string, any>();
 const remote = new Map<string, any>();
 const save = jest.fn(async (account, key, value) => {
   remote.set(`${account}:${key}`, value);
@@ -53,6 +53,29 @@ const settle = () =>
   act(async () => {
     await Promise.resolve();
   });
+
+function localKey(opts: ReturnType<typeof options>) {
+  return `chat-composer-draft:${JSON.stringify([
+    opts.account_id,
+    `${opts.project_id}:${opts.path}:${opts.composerDraftKey}`,
+  ])}`;
+}
+
+// A browser reload loses module-local sessions and shadows, not localStorage.
+// Keep the renderer's React instance while loading a fresh draft module.
+function reloadedDraftHook(): typeof useChatComposerDraft {
+  const react = jest.requireActual("react");
+  let hook!: typeof useChatComposerDraft;
+  try {
+    jest.isolateModules(() => {
+      jest.doMock("react", () => react);
+      hook = require("../use-chat-composer-draft").useChatComposerDraft;
+    });
+  } finally {
+    jest.dontMock("react");
+  }
+  return hook;
+}
 beforeEach(() => {
   load = async (account, key) => remote.get(`${account}:${key}`);
   save.mockClear();
@@ -235,6 +258,93 @@ test("programmatic writes and clearing another draft key update mounted views", 
   await settle();
 });
 
+test("guarded append hydrates and preserves remote text including authored whitespace", async () => {
+  const opts = options();
+  const key = `${opts.account_id}:${opts.project_id}:${opts.path}:1`;
+  remote.set(key, {
+    version: 1,
+    text: "unfinished  \n",
+    updatedAt: Date.now(),
+  });
+  await expect(
+    writeChatComposerDraft({
+      ...opts,
+      text: "reference",
+      append: true,
+      isCurrent: () => true,
+    }),
+  ).resolves.toBe("unfinished  \n\n\nreference");
+  const hook = renderHook(() => useChatComposerDraft(opts));
+  await settle();
+  expect(hook.result.current.input).toBe("unfinished  \n\n\nreference");
+  hook.unmount();
+  await settle();
+});
+
+test("a canceled share waiting for hydration cannot append to the destination", async () => {
+  const opts = options();
+  let current = true;
+  let finish!: (value: any) => void;
+  load = () =>
+    new Promise((resolve) => {
+      finish = resolve;
+    });
+  const pending = writeChatComposerDraft({
+    ...opts,
+    text: "never insert",
+    append: true,
+    isCurrent: () => current,
+  });
+  current = false;
+  finish({ version: 1, text: "existing draft", updatedAt: Date.now() });
+  await expect(pending).rejects.toThrow("changed");
+  await settle();
+  expect(
+    save.mock.calls.every((call) => !call[2].text.includes("never insert")),
+  ).toBe(true);
+});
+
+test("a shared reference appends to newer edits in an already mounted destination", async () => {
+  const opts = options();
+  let finish!: (value: any) => void;
+  load = () =>
+    new Promise((resolve) => {
+      finish = resolve;
+    });
+  const hook = renderHook(() => useChatComposerDraft(opts));
+  const pending = writeChatComposerDraft({
+    ...opts,
+    text: "reference",
+    append: true,
+    isCurrent: () => true,
+  });
+  act(() => hook.result.current.setInput("new live edit"));
+  await act(async () => {
+    finish({ version: 1, text: "stale remote draft", updatedAt: Date.now() });
+    await pending;
+  });
+  expect(hook.result.current.input).toBe("new live edit\n\nreference");
+  hook.unmount();
+  await settle();
+});
+
+test("failed share hydration neither appends nor overwrites an unread draft on cleanup", async () => {
+  const opts = options();
+  load = async () => {
+    throw Error("disconnected");
+  };
+  await expect(
+    writeChatComposerDraft({
+      ...opts,
+      text: "never insert",
+      append: true,
+      isCurrent: () => true,
+    }),
+  ).rejects.toThrow("could not be loaded");
+  await settle();
+  expect(save).not.toHaveBeenCalled();
+});
+
 test("accounts, threads, and prompt suffixes are isolated", async () => {
   const opts = options();
   const first = renderHook(() => useChatComposerDraft(opts));
@@ -287,4 +397,219 @@ test("StrictMode and rapid remount reuse the live controller during cleanup", as
   second.unmount();
   await settle();
   expect(save.mock.calls.at(-1)?.[2].text).toBe("after");
+});
+
+describe("browser lifecycle recovery", () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(1_790_524_324_045);
+    // The old page can disappear with remote writes still unacknowledged.
+    save.mockImplementation(async () => undefined);
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  test.each(["pagehide", "hidden"])(
+    "%s synchronously saves the last keystroke before debounce, and a cold reload rejects older remote text",
+    async (event) => {
+      const opts = options();
+      const timestamp = Date.now();
+      remote.set(`${opts.account_id}:${opts.project_id}:${opts.path}:1`, {
+        version: 1,
+        text: "old remote",
+        updatedAt: timestamp - 1000,
+      });
+      const first = renderHook(() => useChatComposerDraft(opts));
+      await settle();
+      act(() => first.result.current.setInput("private last keystroke  \n"));
+      act(() => {
+        if (event === "pagehide") window.dispatchEvent(new Event("pagehide"));
+        else {
+          jest
+            .spyOn(document, "visibilityState", "get")
+            .mockReturnValue("hidden");
+          document.dispatchEvent(new Event("visibilitychange"));
+        }
+      });
+      // No timers or React unmount have run: navigation must be safe right now.
+      expect(local.get(localKey(opts))).toMatchObject({
+        version: 1,
+        text: "private last keystroke  \n",
+      });
+      expect(local.get(localKey(opts)).updatedAt).toBeGreaterThanOrEqual(
+        timestamp,
+      );
+      expect(save).not.toHaveBeenCalled();
+      first.unmount();
+      await settle();
+      const useReloaded = reloadedDraftHook();
+      const second = renderHook(() => useReloaded(opts));
+      await settle();
+      expect(second.result.current.input).toBe("private last keystroke  \n");
+      second.unmount();
+      await settle();
+    },
+  );
+
+  test("a cold reload preserves a synchronous clear tombstone even if the old remote save has the same clock millisecond", async () => {
+    const opts = options();
+    remote.set(`${opts.account_id}:${opts.project_id}:${opts.path}:1`, {
+      version: 1,
+      text: "already sent",
+      updatedAt: Date.now(),
+    });
+    const first = renderHook(() => useChatComposerDraft(opts));
+    await settle();
+    let cleared!: Promise<void>;
+    act(() => {
+      cleared = first.result.current.clearInput();
+    });
+    expect(local.get(localKey(opts))).toMatchObject({ version: 1, text: "" });
+    expect(local.get(localKey(opts)).updatedAt).toBeGreaterThan(Date.now());
+    await act(() => cleared);
+    first.unmount();
+    await settle();
+    const useReloaded = reloadedDraftHook();
+    const second = renderHook(() => useReloaded(opts));
+    await settle();
+    expect(second.result.current.input).toBe("");
+    second.unmount();
+    await settle();
+  });
+
+  test("listeners are shared by mounted views and removed on the last release, including account changes", async () => {
+    const add = jest.spyOn(window, "addEventListener");
+    const remove = jest.spyOn(window, "removeEventListener");
+    const addDocument = jest.spyOn(document, "addEventListener");
+    const removeDocument = jest.spyOn(document, "removeEventListener");
+    const opts = options();
+    const first = renderHook((o) => useChatComposerDraft(o), {
+      initialProps: opts,
+    });
+    const second = renderHook(() => useChatComposerDraft(opts));
+    await settle();
+    act(() => first.result.current.setInput("account A only"));
+    const handlers = add.mock.calls.filter(([event]) => event === "pagehide");
+    expect(handlers).toHaveLength(1);
+    expect(
+      addDocument.mock.calls.filter(([event]) => event === "visibilitychange"),
+    ).toHaveLength(1);
+    first.rerender({ ...opts, account_id: "other-account" });
+    await settle();
+    expect(first.result.current.input).toBe("");
+    act(() => first.result.current.setInput("account B only"));
+    second.unmount();
+    await settle();
+    expect(
+      remove.mock.calls.some(
+        ([event, fn]) => event === "pagehide" && fn === handlers[0][1],
+      ),
+    ).toBe(true);
+    act(() => window.dispatchEvent(new Event("pagehide")));
+    expect(local.get(localKey(opts)).text).toBe("account A only");
+    expect(
+      local.get(localKey({ ...opts, account_id: "other-account" })).text,
+    ).toBe("account B only");
+    first.unmount();
+    await settle();
+    expect(
+      remove.mock.calls.filter(([event]) => event === "pagehide"),
+    ).toHaveLength(2);
+    expect(
+      removeDocument.mock.calls.filter(
+        ([event]) => event === "visibilitychange",
+      ),
+    ).toHaveLength(2);
+  });
+
+  test("a newer remote edit still wins over a valid older local snapshot", async () => {
+    const opts = options();
+    local.set(localKey(opts), {
+      version: 1,
+      text: "older local",
+      updatedAt: Date.now() - 1000,
+    });
+    remote.set(`${opts.account_id}:${opts.project_id}:${opts.path}:1`, {
+      version: 1,
+      text: "newer remote",
+      updatedAt: Date.now(),
+    });
+    const hook = renderHook(() => useChatComposerDraft(opts));
+    await settle();
+    expect(hook.result.current.input).toBe("newer remote");
+    hook.unmount();
+    await settle();
+  });
+
+  test.each([
+    { version: 2, text: "unsupported", updatedAt: 1 },
+    { version: 1, text: "invalid", updatedAt: "1" },
+    { version: 1, text: "invalid", updatedAt: NaN },
+    { version: 1, text: "invalid", updatedAt: Infinity },
+    { version: 1, text: "invalid", updatedAt: -1 },
+    { version: 1, text: {}, updatedAt: 1 },
+  ])("ignores malformed local snapshot %#", async (snapshot) => {
+    const opts = options();
+    local.set(localKey(opts), snapshot);
+    const hook = renderHook(() => useChatComposerDraft(opts));
+    await settle();
+    expect(hook.result.current.input).toBe("");
+    expect(local.has(localKey(opts))).toBe(false);
+    hook.unmount();
+    await settle();
+  });
+
+  test("local snapshots retain the 200000-character bound on writes and cold reads", async () => {
+    const opts = options();
+    const first = renderHook(() => useChatComposerDraft(opts));
+    await settle();
+    const limit = "x".repeat(200_000);
+    act(() => {
+      first.result.current.setInput(limit);
+      window.dispatchEvent(new Event("pagehide"));
+    });
+    expect(local.get(localKey(opts)).text.length).toBe(200_000);
+    act(() => {
+      first.result.current.setInput(limit + "x");
+      window.dispatchEvent(new Event("pagehide"));
+    });
+    expect(local.has(localKey(opts))).toBe(false);
+    expect(first.result.current.input).toBe(limit + "x");
+    first.unmount();
+    await settle();
+    local.set(localKey(opts), {
+      version: 1,
+      text: limit + "x",
+      updatedAt: Date.now(),
+    });
+    const useReloaded = reloadedDraftHook();
+    const second = renderHook(() => useReloaded(opts));
+    await settle();
+    expect(second.result.current.input).toBe("");
+    second.unmount();
+    await settle();
+  });
+
+  test("unmount removes lifecycle listeners before pending remote hydration settles", async () => {
+    const add = jest.spyOn(window, "addEventListener");
+    const remove = jest.spyOn(window, "removeEventListener");
+    let finish!: (value: any) => void;
+    load = () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      });
+    const opts = options();
+    const hook = renderHook(() => useChatComposerDraft(opts));
+    const handler = add.mock.calls.find(([event]) => event === "pagehide")![1];
+    hook.unmount();
+    expect(
+      remove.mock.calls.some(
+        ([event, fn]) => event === "pagehide" && fn === handler,
+      ),
+    ).toBe(true);
+    await act(async () => finish(undefined));
+    await settle();
+  });
 });

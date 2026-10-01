@@ -9,6 +9,7 @@ import type { MenuProps } from "antd";
 import { Buffer } from "buffer";
 import { redux } from "@cocalc/frontend/app-framework";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import {
   joinAbsolutePath,
@@ -26,6 +27,7 @@ export function AgentFileAttachment({
   workingDirectory,
   onInsert,
   onSetGoal,
+  extraActions = [],
   extraMenuItems = [],
   disabled = false,
 }: {
@@ -33,6 +35,7 @@ export function AgentFileAttachment({
   workingDirectory?: string;
   onInsert: (markdown: string) => void;
   onSetGoal?: () => void;
+  extraActions?: { key: string; label: string; onClick: () => void }[];
   extraMenuItems?: MenuProps["items"];
   disabled?: boolean;
 }) {
@@ -163,6 +166,12 @@ export function AgentFileAttachment({
             },
           ]
         : []),
+      ...(extraActions.length
+        ? [
+            { type: "divider" as const },
+            ...extraActions.map(({ key, label }) => ({ key, label })),
+          ]
+        : []),
       ...(extraMenuItems.length
         ? [{ type: "divider" as const }, ...extraMenuItems]
         : []),
@@ -173,6 +182,7 @@ export function AgentFileAttachment({
       if (key === "upload") uploadRef.current?.click();
       if (key === "choose") setOpen(true);
       if (key === "goal") onSetGoal?.();
+      extraActions.find((action) => action.key === key)?.onClick();
     },
   };
 
@@ -181,6 +191,17 @@ export function AgentFileAttachment({
       <Tooltip title="Add files and more">
         <Dropdown
           menu={menu}
+          popupRender={(menu) => (
+            <KeyboardBoundary
+              boundary="composer-add-menu"
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === "Enter") event.preventDefault();
+              }}
+            >
+              {menu}
+            </KeyboardBoundary>
+          )}
           trigger={["click"]}
           onOpenChange={(nextOpen) => {
             if (!nextOpen) return;

@@ -46,9 +46,9 @@ export function ThreadBadge({
           ...style,
         }}
       >
-        {/* eslint-disable-next-line jsx-a11y/alt-text */}
         <img
           src={image.trim()}
+          alt=""
           style={{
             width: "100%",
             height: "100%",

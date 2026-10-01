@@ -5,7 +5,8 @@
 
 import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { isValidUUID, original_path, trunc } from "@cocalc/util/misc";
+import { isValidUUID, original_path } from "@cocalc/util/misc";
+import { notificationPreview } from "@cocalc/frontend/notifications/markdown-preview";
 import type { CreateNotificationResult } from "@cocalc/conat/hub/api/notifications";
 import type { ChatMessageTyped } from "./types";
 import { field } from "./access";
@@ -137,7 +138,7 @@ function notificationDescription(input?: string): string {
   if (!text) {
     return "New reply in a chat thread you follow.";
   }
-  return `New reply in a chat thread you follow:\n\n${trunc(text, 240)}`;
+  return `New reply in a chat thread you follow:\n\n${notificationPreview(text)}`;
 }
 
 export async function sendThreadFollowerNotifications({

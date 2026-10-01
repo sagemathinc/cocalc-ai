@@ -23,6 +23,7 @@ interface Options {
   editor: ReactEditor;
   insertMention: (Editor, string) => void;
   matchingUsers: (search: string) => Item[];
+  onSearchChange?: (search: string | undefined) => void;
   isVisible?: boolean;
 }
 
@@ -42,7 +43,7 @@ export function mentionQueryAtCursor(
     (text[offset] && !/\s/.test(text[offset]))
   )
     return;
-  const match = text.slice(0, offset).match(/(?:^|[\s([])@([\w-]*)$/);
+  const match = text.slice(0, offset).match(/(?:^|[\s([])@([\p{L}\p{N}_-]*)$/u);
   if (!match) return;
   return { start: offset - match[1].length - 1, search: match[1] };
 }
@@ -52,10 +53,17 @@ export const useMentions: (options: Options) => MentionsControl = ({
   editor,
   insertMention,
   matchingUsers,
+  onSearchChange,
 }) => {
   const [target, setTarget] = useState<Range | undefined>();
   const [search, setSearch] = useState("");
   const isMountedRef = useIsMountedRef();
+
+  useEffect(() => {
+    onSearchChange?.(
+      target && isVisible !== false ? search.toLowerCase() : undefined,
+    );
+  }, [target, search, isVisible, onSearchChange]);
 
   useEffect(() => {
     if (!isVisible && target) {

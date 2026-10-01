@@ -162,22 +162,6 @@ export function ArtifactResults({
               />
             )
           }
-          reorder={
-            organization?.canPin && pinnedIndex >= 0
-              ? {
-                  up:
-                    pinnedIndex > 0
-                      ? () =>
-                          organization.move(visiblePins, id, pinnedIndex - 1)
-                      : undefined,
-                  down:
-                    pinnedIndex < pinned.length - 1
-                      ? () =>
-                          organization.move(visiblePins, id, pinnedIndex + 1)
-                      : undefined,
-                }
-              : undefined
-          }
           publication={entry.publication}
           current={entry.current}
           syncdb={actions.syncdb}
@@ -330,7 +314,7 @@ export default function ArtifactBrowser({
                 onBrowseAllArtifacts();
               }}
             >
-              Open Library
+              Open Artifacts
             </Button>
           )}
           {organization.error && <div role="alert">{organization.error}</div>}

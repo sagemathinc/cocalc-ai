@@ -4,15 +4,31 @@
  */
 
 import { fromJS } from "immutable";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { parseArtifactMention } from "@cocalc/util/artifact-mentions";
+import { parseCollaborationReference } from "@cocalc/util/collaboration-references";
+import { parseAgentMention } from "@cocalc/util/agent-mentions";
 
 const mockGetStore = jest.fn();
 const mockUseNamedAgents = jest.fn();
 let mockAllowAgentMentions = false;
 const mockProjectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 let mockArtifactNames: any[] = [];
+let mockHumanOnly = false;
+let mockCollaboratorsEnabled = true;
+let mockAccountId = "22222222-2222-4222-8222-222222222222";
+const mockListResources = jest.fn();
+const mockResolveChatAlias = jest.fn();
+jest.mock("@cocalc/frontend/chat/embedding-options", () => ({
+  useChatEmbeddingOptions: () => ({ humanOnly: mockHumanOnly }),
+}));
+jest.mock("@cocalc/frontend/collaborators/reference-picker-api", () => ({
+  referencePickerApi: () => ({
+    listResources: (...args) => mockListResources(...args),
+    resolveChatAlias: (...args) => mockResolveChatAlias(...args),
+  }),
+}));
 
 jest.mock("@cocalc/frontend/agents/artifact-names", () => ({
   useArtifactNames: () => ({ names: mockArtifactNames }),
@@ -96,8 +112,21 @@ describe("mentionableUsers", () => {
     mockGetStore.mockReset();
     mockAllowAgentMentions = false;
     mockArtifactNames = [];
+    mockHumanOnly = false;
+    mockCollaboratorsEnabled = true;
+    mockAccountId = bob;
+    mockResolveChatAlias.mockReset().mockResolvedValue(null);
+    mockListResources
+      .mockReset()
+      .mockResolvedValue({ items: [], coverage: "complete" });
     mockUseNamedAgents.mockReset();
     jest.mocked(useTypedRedux).mockReset();
+    jest.mocked(useTypedRedux).mockImplementation(((store, key) => {
+      if (store === "account" && key === "account_id") return mockAccountId;
+      if (store === "customize" && key === "collaborators_enabled")
+        return mockCollaboratorsEnabled;
+      return undefined;
+    }) as any);
     mockUseNamedAgents.mockReturnValue({
       directory: {
         enabled: true,
@@ -234,5 +263,243 @@ describe("mentionableUsers", () => {
     const items = result.current("illustrator");
     expect(items.map(({ group }) => group)).toContain("Other agents");
     expect(mockUseNamedAgents).toHaveBeenCalledWith(true);
+  });
+
+  it("human @ completion includes people and deduplicated typed resources, not legacy agent targets", async () => {
+    mockHumanOnly = true;
+    mockAllowAgentMentions = true;
+    mockStores(jest.fn().mockReturnValue("Same Person"));
+    mockArtifactNames = [
+      { name: "same", project_id, entry_id: "a".repeat(64), active: true },
+    ];
+    const resources = ["agent", "artifact", "conversation"].map((kind) => ({
+      project_id,
+      resource_id: "same-id",
+      kind,
+      title: "Shared work",
+      personal: { alias: "same" },
+    }));
+    mockListResources.mockResolvedValue({
+      items: [...resources, resources[0]],
+      coverage: "complete",
+    });
+    const { result } = renderHook(() => useMentionableUsers("same"));
+    await waitFor(() =>
+      expect(
+        result
+          .current("same")
+          .filter((item) => parseCollaborationReference(item.value)),
+      ).toHaveLength(3),
+    );
+    const items = result.current("same");
+    expect(items.some((item) => item.group === "People")).toBe(true);
+    expect(
+      items.some(
+        (item) =>
+          parseAgentMention(item.value) || parseArtifactMention(item.value),
+      ),
+    ).toBe(false);
+    expect(
+      items
+        .filter((item) => parseCollaborationReference(item.value))
+        .map((item) => parseCollaborationReference(item.value)!.target.kind),
+    ).toEqual(["agent", "artifact", "conversation"]);
+    expect(mockUseNamedAgents).toHaveBeenCalledWith(false);
+    expect(mockListResources).toHaveBeenCalledTimes(2);
+    expect(mockListResources).toHaveBeenCalledWith({
+      search: "same",
+      scope: "all",
+      after: undefined,
+      limit: 25,
+    });
+  });
+
+  it("accepts directory display aliases and opaque IDs beyond legacy handle limits", async () => {
+    mockStores(jest.fn().mockReturnValue("Person"));
+    mockHumanOnly = true;
+    const target = {
+      project_id,
+      resource_id: "agent-thread:" + "x".repeat(200),
+      kind: "agent",
+    };
+    const alias = "Planning & \u00e9quipe " + "x".repeat(60);
+    mockListResources.mockResolvedValue({
+      items: [{ ...target, title: "Shared work", personal: { alias } }],
+      coverage: "complete",
+    });
+    const { result } = renderHook(() => useMentionableUsers("planning"));
+    await waitFor(() =>
+      expect(
+        result
+          .current("planning")
+          .map((row) => parseCollaborationReference(row.value))
+          .filter(Boolean),
+      ).toEqual([
+        { version: 1, target, display_fallback: "Shared work", alias },
+      ]),
+    );
+  });
+
+  it("shows local chat aliases while the global search is still pending", async () => {
+    mockStores(jest.fn().mockReturnValue("Person"));
+    mockHumanOnly = true;
+    mockListResources.mockImplementation(({ project_id: project }) =>
+      project
+        ? Promise.resolve({
+            items: [
+              {
+                project_id,
+                kind: "conversation",
+                resource_id: "chat-1",
+                title: "Planning",
+                personal: { alias: "chat1" },
+              },
+            ],
+            coverage: "complete",
+          })
+        : new Promise(() => {}),
+    );
+    const { result } = renderHook(() => useMentionableUsers("chat"));
+    await waitFor(() =>
+      expect(
+        result
+          .current("chat")
+          .some(
+            (item) =>
+              parseCollaborationReference(item.value)?.alias === "chat1",
+          ),
+      ).toBe(true),
+    );
+    expect(
+      result
+        .current("chat")
+        .some((item) => item.value === "collaboration-reference-loading"),
+    ).toBe(true);
+  });
+
+  it("resolves exact chat aliases independently and clears them on account changes", async () => {
+    mockStores(jest.fn().mockReturnValue("Person"));
+    mockHumanOnly = true;
+    mockListResources.mockImplementation(() => new Promise(() => {}));
+    mockResolveChatAlias.mockResolvedValue({
+      project_id,
+      kind: "conversation",
+      resource_id: "old-chat",
+      title: "Older conversation",
+      personal: { alias: "chat1" },
+    });
+    const { result, rerender } = renderHook(() => useMentionableUsers("chat1"));
+    const aliases = () =>
+      result
+        .current("chat1")
+        .map((item) => parseCollaborationReference(item.value)?.alias);
+    await waitFor(() => expect(aliases()).toContain("chat1"));
+    expect(mockResolveChatAlias).toHaveBeenCalledWith({ alias: "chat1" });
+    mockResolveChatAlias.mockResolvedValue(null);
+    mockAccountId = alice;
+    rerender();
+    expect(aliases()).not.toContain("chat1");
+    await waitFor(() => expect(mockResolveChatAlias).toHaveBeenCalledTimes(2));
+    expect(aliases()).not.toContain("chat1");
+  });
+
+  it.each(["closed", "agent", "disabled"])(
+    "does not query the directory for %s completion",
+    async (mode) => {
+      mockStores(jest.fn().mockReturnValue("Person"));
+      mockHumanOnly = mode !== "agent";
+      mockAllowAgentMentions = mode === "agent";
+      mockCollaboratorsEnabled = mode !== "disabled";
+      renderHook(() =>
+        useMentionableUsers(mode === "closed" ? undefined : "same"),
+      );
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      });
+      expect(mockListResources).not.toHaveBeenCalled();
+      expect(mockResolveChatAlias).not.toHaveBeenCalled();
+    },
+  );
+
+  it("invalidates search/account results and replaces rather than accumulates pages", async () => {
+    mockStores(jest.fn().mockReturnValue("Person"));
+    mockHumanOnly = true;
+    const item = {
+      project_id,
+      resource_id: "artifact:1",
+      kind: "artifact",
+      title: "First title",
+    };
+    mockListResources.mockImplementation(async ({ project_id, after }) =>
+      project_id
+        ? { items: [], coverage: "complete" }
+        : after
+          ? {
+              items: [
+                { ...item, resource_id: "artifact:2", title: "Second title" },
+              ],
+              coverage: "complete",
+            }
+          : { items: [item], next: "next", coverage: "complete" },
+    );
+    const { result, rerender } = renderHook(
+      ({ search }) => useMentionableUsers(search),
+      { initialProps: { search: "title" } },
+    );
+    await waitFor(() =>
+      expect(
+        result
+          .current("title")
+          .some((row) => row.value === "collaboration-reference-next"),
+      ).toBe(true),
+    );
+    act(() =>
+      result
+        .current("title")
+        .find((row) => row.value === "collaboration-reference-next")!
+        .onSelect!(),
+    );
+    await waitFor(() =>
+      expect(mockListResources).toHaveBeenLastCalledWith(
+        expect.objectContaining({ after: "next" }),
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        result
+          .current("title")
+          .filter((row) => parseCollaborationReference(row.value))
+          .map(
+            (row) => parseCollaborationReference(row.value)!.target.resource_id,
+          ),
+      ).toEqual(["artifact:2"]),
+    );
+    let resolve!: (page: unknown) => void;
+    mockListResources.mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    rerender({ search: "old" });
+    expect(
+      result
+        .current("old")
+        .some((row) => parseCollaborationReference(row.value)),
+    ).toBe(false);
+    await waitFor(() =>
+      expect(mockListResources).toHaveBeenLastCalledWith(
+        expect.objectContaining({ search: "old", after: undefined }),
+      ),
+    );
+    mockAccountId = "another-viewer";
+    mockListResources.mockResolvedValue({ items: [], coverage: "complete" });
+    rerender({ search: "new" });
+    await act(async () => resolve({ items: [item], coverage: "complete" }));
+    expect(
+      result
+        .current("new")
+        .some((row) => parseCollaborationReference(row.value)),
+    ).toBe(false);
   });
 });
