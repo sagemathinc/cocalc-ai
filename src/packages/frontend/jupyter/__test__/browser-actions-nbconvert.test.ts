@@ -184,10 +184,84 @@ describe("local HTML and PDF delivery", () => {
         getStore: jest.fn(() => undefined),
         removeActions: jest.fn(),
       } as any),
+      { isClosed: jest.fn(() => false) },
       overrides,
     );
   }
   afterEach(() => jest.restoreAllMocks());
+  it.each(["resolve", "reject"])(
+    "abandons printing after closure during HTML %s",
+    async (outcome) => {
+      let resolve!: (html: string) => void;
+      let reject!: (error: Error) => void;
+      const popup: any = { close: jest.fn(), print: jest.fn() };
+      jest.spyOn(window, "open").mockReturnValue(popup);
+      const isClosed = jest.fn(() => false);
+      const target = actions({
+        isClosed,
+        toHTML: jest.fn(
+          () =>
+            new Promise<string>((yes, no) => {
+              resolve = yes;
+              reject = no;
+            }),
+        ),
+        setState: jest.fn(),
+      });
+      const pending = target.nbconvertToHtml("cocalc-pdf");
+      isClosed.mockReturnValue(true);
+      if (outcome === "resolve") resolve("html");
+      else reject(new Error("closed during export"));
+      await pending;
+      expect(popup.close).toHaveBeenCalledTimes(1);
+      expect(popup.print).not.toHaveBeenCalled();
+      expect(target.setState).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(["resolve", "reject"])(
+    "abandons printing after closure during image %s",
+    async (outcome) => {
+      let resolve!: () => void;
+      let reject!: (error: Error) => void;
+      const popup: any = {
+        document: {
+          open: jest.fn(),
+          write: jest.fn(),
+          close: jest.fn(),
+          images: [
+            {
+              naturalWidth: 640,
+              decode: () =>
+                new Promise<void>((yes, no) => {
+                  resolve = yes;
+                  reject = no;
+                }),
+            },
+          ],
+        },
+        close: jest.fn(),
+        print: jest.fn(),
+      };
+      jest.spyOn(window, "open").mockReturnValue(popup);
+      const isClosed = jest.fn(() => false);
+      const target = actions({
+        isClosed,
+        toHTML: jest.fn(async () => "html"),
+        setState: jest.fn(),
+      });
+      await target.nbconvertToHtml("cocalc-pdf");
+      const pending = popup.onload();
+      isClosed.mockReturnValue(true);
+      if (outcome === "resolve") resolve();
+      else reject(new Error("closed during decode"));
+      await pending;
+      expect(popup.print).not.toHaveBeenCalled();
+      expect(popup.close).toHaveBeenCalledTimes(1);
+      expect(popup.onload).toBeNull();
+      expect(target.setState).toHaveBeenCalledTimes(1);
+    },
+  );
   it("routes HTML to a download, not printing or backend conversion", async () => {
     const target = actions({
       path: "/home/user/My notebook.ipynb",

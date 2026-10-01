@@ -40,6 +40,7 @@ describe("notebook Print", () => {
         getStore: jest.fn(() => undefined),
         removeActions: jest.fn(),
       } as any);
+      jest.spyOn(jupyter, "isClosed").mockReturnValue(false);
       const setState = jest
         .spyOn(jupyter, "setState")
         .mockImplementation(() => {});

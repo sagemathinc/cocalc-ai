@@ -2972,6 +2972,7 @@ export class JupyterActions extends JupyterActions0 {
   nbconvertToHtml = async (
     format: "cocalc-html" | "cocalc-pdf" = "cocalc-pdf",
   ) => {
+    if (this.isClosed()) return;
     const result = { args: ["--to", format], time: Date.now() };
     let printWindow: Window | null = null;
     try {
@@ -2982,6 +2983,10 @@ export class JupyterActions extends JupyterActions0 {
         if (printWindow == null) throw Error("failed to open popup window");
       }
       const html = await this.toHTML();
+      if (this.isClosed()) {
+        printWindow?.close();
+        return;
+      }
       if (format === "cocalc-html") {
         downloadHTML(html, `${parse(this.path).name}.html`);
         this.setState({ nbconvert: { ...result, state: "done", error: "" } });
@@ -2995,16 +3000,34 @@ export class JupyterActions extends JupyterActions0 {
       const print = () => {
         return (printing ??= (async () => {
           try {
+            if (this.isClosed()) {
+              popup.onload = null;
+              popup.close();
+              return;
+            }
             await waitForPrintImages(popup.document);
+            if (this.isClosed()) {
+              popup.onload = null;
+              popup.close();
+              return;
+            }
             if (popup.closed)
               throw Error("Print window was closed. Please retry.");
-            popup.onafterprint = () => popup.close();
+            popup.onafterprint = () => {
+              popup.onload = null;
+              popup.onafterprint = null;
+              popup.close();
+            };
             popup.print();
+            if (this.isClosed()) return;
             this.setState({
               nbconvert: { ...result, state: "done", error: "" },
             });
           } catch (err) {
+            popup.onload = null;
+            popup.onafterprint = null;
             popup.close();
+            if (this.isClosed()) return;
             this.setState({
               nbconvert: { ...result, state: "done", error: `${err}` },
             });
@@ -3017,6 +3040,7 @@ export class JupyterActions extends JupyterActions0 {
       if (popup.document.readyState === "complete") await print();
     } catch (err) {
       printWindow?.close();
+      if (this.isClosed()) return;
       this.setState({
         nbconvert: { ...result, state: "done", error: `${err}` },
       });
