@@ -134,7 +134,12 @@ describe("home first screen initial HTML", () => {
     [
       "CoCalc Plus",
       { cocalc_product: "plus", dns: "localhost", site_name: "CoCalc" },
-      withoutClaude,
+      ["Restore earlier versions"],
+    ],
+    [
+      "CoCalc Plus on the canonical host",
+      { cocalc_product: "plus", dns: "cocalc.ai", site_name: "CoCalc" },
+      ["Restore earlier versions"],
     ],
     [
       "a self-hosted Launchpad host",

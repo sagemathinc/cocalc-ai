@@ -6,6 +6,20 @@ const essential = require("../dist/essential");
 const SLUG = "documentation/cocalc-at-a-glance";
 const COCALC_AI = { siteProfile: "cocalc-ai" };
 
+test("the overview and access guide both describe the integrated Claude connector", () => {
+  assert.match(
+    getDocsEntry(SLUG, COCALC_AI).body,
+    /A Codex agent or a Claude Code agent can be given access/,
+  );
+  const { body } = getDocsEntry("ai/cocalc-access", COCALC_AI);
+  assert.match(body, /native Codex agents and integrated Claude Code/);
+  assert.match(body, /Other ACP harnesses cannot use it/);
+  assert.doesNotMatch(
+    body,
+    /native Codex agents only|Claude Code and other ACP agents cannot/,
+  );
+});
+
 test("CoCalc at a glance is shown only for the cocalc.ai site profile", () => {
   const entry = getDocsEntry(SLUG, COCALC_AI);
   assert.equal(entry?.id, "docs.cocalc-at-a-glance");

@@ -91,6 +91,13 @@ export function membershipTiersIncludeAi(
 }
 
 export function membershipPriceValue(value: unknown): number | undefined {
+  // PostgreSQL NULL means this billing interval is unavailable, not free.
+  if (
+    (typeof value !== "number" && typeof value !== "string") ||
+    (typeof value === "string" && value.trim() === "")
+  ) {
+    return undefined;
+  }
   const numberValue = Number(value);
   return Number.isFinite(numberValue) && numberValue >= 0
     ? numberValue
@@ -161,7 +168,11 @@ export function membershipPriceDisplay(
   tier: Pick<MembershipTierOrderInput, "price_monthly" | "price_yearly">,
   billingInterval: BillingInterval,
 ): MembershipPriceDisplay | undefined {
-  if (isFreeMembershipTier(tier)) return;
+  if (
+    isFreeMembershipTier(tier) ||
+    !hasPriceForBillingInterval(tier, billingInterval)
+  )
+    return;
   const savings = annualSavingsPercent(tier);
   if (billingInterval === "month") {
     return {

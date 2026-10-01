@@ -234,7 +234,7 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
       {
         title: "Let the agent work in your terminal",
         paragraphs: [
-          "Click the Agent button in a terminal's title bar, and the agent can read that session and run commands in it. Commands it runs on its own show in its chat, not in your terminal, so check the files and output, or rerun a command yourself.",
+          "When AI is enabled for your site, account, and project, click the Agent button in a terminal's title bar, and the agent can read that session and run commands in it. Commands it runs on its own show in its chat, not in your terminal, so check the files and output, or rerun a command yourself.",
           "With network access, you can also install and run other command-line agents as ordinary Linux tools.",
         ],
       },

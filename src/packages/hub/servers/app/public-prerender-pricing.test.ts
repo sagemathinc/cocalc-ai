@@ -86,6 +86,26 @@ function listItems(html: string, section: string): string[] {
 }
 
 describe("pricing initial HTML from membership tier data", () => {
+  it.each([
+    [null, "120", "Annual: $10 / month", "Monthly:"],
+    ["10", null, "Monthly: $10 / month", "Annual:"],
+  ])(
+    "does not advertise a NULL billing interval as free",
+    (monthly, yearly, available, unavailable) => {
+      const html = renderPricing([
+        {
+          id: "limited",
+          store_visible: true,
+          price_monthly: monthly,
+          price_yearly: yearly,
+        },
+      ]);
+      expect(html).toContain(available);
+      expect(html).not.toContain(unavailable);
+      expect(html).not.toContain("$0");
+    },
+  );
+
   it("lists the store-visible tiers with prices from the tier data", () => {
     const html = renderPricing(TIERS);
 

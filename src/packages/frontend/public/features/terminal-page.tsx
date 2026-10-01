@@ -9,6 +9,7 @@ import type { IconName } from "@cocalc/frontend/components/icon";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   getPublicFeaturePage,
   publicFeatureHref,
@@ -31,10 +32,10 @@ const GUIDE_BASE = "https://sagemathinc.github.io/cocalc-guides";
 const PAGE = getPublicFeaturePage("terminal")!;
 const HIGHLIGHT_ICONS: IconName[] = ["robot", "file", "terminal", "users"];
 const SECTION_STYLES: { accent: string; icon: IconName }[] = [
-  { accent: "#096dd9", icon: "terminal" },
-  { accent: "#389e0d", icon: "users" },
-  { accent: "#7c3aed", icon: "robot" },
-  { accent: "#ad6800", icon: "history" },
+  { accent: UI_COLORS.link, icon: "terminal" },
+  { accent: UI_COLORS.success, icon: "users" },
+  { accent: UI_COLORS.keyword, icon: "robot" },
+  { accent: UI_COLORS.warning, icon: "history" },
 ];
 
 export default function TerminalFeaturePage({
@@ -73,7 +74,7 @@ export default function TerminalFeaturePage({
           </Col>
           <Col xs={24} lg={10}>
             <ContextList
-              accent="#096dd9"
+              accent={UI_COLORS.link}
               items={(PAGE.highlights ?? []).map((label, index) => ({
                 icon: HIGHLIGHT_ICONS[index % HIGHLIGHT_ICONS.length],
                 label,

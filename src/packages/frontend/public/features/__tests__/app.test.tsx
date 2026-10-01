@@ -492,6 +492,11 @@ describe("PublicFeaturesApp", () => {
     expect(screenshots).toHaveLength(1);
     expect(screenshots[0].getAttribute("src")).toBe(page.image);
     expect(screenshots[0].getAttribute("alt")).toMatch(/Agent button/);
+    expect(
+      screen.getByText(
+        /When AI is enabled for your site, account, and project/,
+      ),
+    ).not.toBeNull();
   });
 
   it("uses projects as the terminal CTA for authenticated users", () => {

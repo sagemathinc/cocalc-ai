@@ -1246,12 +1246,16 @@ function PathSection({
   );
 }
 
-// The page renders before /customize returns, when the config has no dns.
-// Resolve the host as isCocalcAiPublicSite does, falling back to the browser's
-// host, so cocalc.ai shows all three highlights from the first render and the
-// hero does not shift when the config arrives.
+// Resolve a missing host only after branding has arrived. A canonical host
+// alone does not establish that a deployment uses the default CoCalc brand.
 function withSiteHost(config?: HomeConfig): HomeConfig | undefined {
-  if (config?.dns?.trim() || typeof window === "undefined") return config;
+  if (
+    !config?.site_name?.trim() ||
+    config.dns?.trim() ||
+    typeof window === "undefined"
+  ) {
+    return config;
+  }
   return { ...config, dns: window.location.host };
 }
 

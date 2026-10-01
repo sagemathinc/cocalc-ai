@@ -45,14 +45,17 @@ function usesDefaultPublicBrand(config?: PublicRouteMetadataConfig): boolean {
 }
 
 // Claude Code runs only on sites that enable it, so the highlight that names
-// it shows only under the default CoCalc brand on cocalc.ai. Every other site
-// (CoCalc Plus, a self-hosted Launchpad, a custom brand) gets the other two
-// highlights. `config.dns` is the request host on both sides: the crawler
+// it shows only under the default CoCalc brand on cocalc.ai. Other hosted sites
+// get the other two highlights; Plus does not offer collaboration.
+// `config.dns` is the request host on both sides: the crawler
 // fallback reads it from the request, and /customize sets it from the Host
 // header for the browser.
 export function getPublicHomeHighlights(
   config?: PublicRouteMetadataConfig,
 ): readonly string[] {
+  if (config?.cocalc_product === "plus") {
+    return ["Restore earlier versions"];
+  }
   if (
     usesDefaultPublicBrand(config) &&
     isCanonicalPublicSiteHost(config?.dns)

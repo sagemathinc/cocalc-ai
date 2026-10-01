@@ -4,6 +4,9 @@
  */
 
 import {
+  hasPriceForBillingInterval,
+  isFreeMembershipTier,
+  membershipPriceValue,
   membershipPriceDisplay,
   membershipStoreDescription,
   membershipStoreHighlights,
@@ -52,6 +55,25 @@ describe("store-visible membership tiers", () => {
 });
 
 describe("membership price display", () => {
+  it.each([null, undefined, "", " ", false, true, [], {}, -1, Infinity, NaN])(
+    "does not invent a price for an unavailable interval: %j",
+    (price) => {
+      expect(membershipPriceValue(price)).toBeUndefined();
+      const tier = { price_monthly: price, price_yearly: "120" };
+      expect(hasPriceForBillingInterval(tier, "month")).toBe(false);
+      expect(membershipPriceDisplay(tier, "month")).toBeUndefined();
+      expect(
+        isFreeMembershipTier({ price_monthly: price, price_yearly: price }),
+      ).toBe(false);
+      expect(
+        membershipPriceDisplay(
+          { price_monthly: 10, price_yearly: price },
+          "year",
+        ),
+      ).toBeUndefined();
+    },
+  );
+
   it("shows the monthly-equivalent price and annual savings", () => {
     // Database numeric columns arrive as strings.
     const tier = { price_monthly: "25.0000", price_yearly: "225.0000" };

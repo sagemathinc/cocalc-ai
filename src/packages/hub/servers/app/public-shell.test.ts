@@ -803,6 +803,54 @@ describe("pricing tiers in the initial HTML", () => {
     expect(recovered.html).toContain(BASIC_PRICE);
   });
 
+  it("shares a slow fill and caches its result even after page waits expire", async () => {
+    let finish!: (tiers: []) => void;
+    const read = new Promise<[]>((resolve) => (finish = resolve));
+    mockedGetSeedMembershipTiers.mockImplementationOnce(() => read);
+    jest.useFakeTimers({ doNotFake: ["Date", "nextTick", "setImmediate"] });
+    try {
+      const first = renderPublicShell(request("/pricing"));
+      const second = renderPublicShell(request("/pricing"));
+      while (
+        mockedGetSeedMembershipTiers.mock.calls.length === 0 ||
+        jest.getTimerCount() < 2
+      ) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      await jest.advanceTimersByTimeAsync(2_000);
+      expect((await first).html).toContain("appear on this page when it loads");
+      expect((await second).html).toContain(
+        "appear on this page when it loads",
+      );
+      expect(mockedGetSeedMembershipTiers).toHaveBeenCalledTimes(1);
+      finish([]);
+      await read;
+      const filled = await renderPublicShell(request("/pricing"));
+      expect(filled.html).toContain(
+        "No public membership tiers are currently configured.",
+      );
+      expect(mockedGetSeedMembershipTiers).toHaveBeenCalledTimes(1);
+    } finally {
+      finish([]);
+      jest.useRealTimers();
+    }
+  });
+
+  it("does not serve expired prices after a failed refresh", async () => {
+    expect((await renderPublicShell(request("/pricing"))).html).toContain(
+      BASIC_PRICE,
+    );
+    now += 61_000;
+    mockedGetSeedMembershipTiers.mockRejectedValueOnce(new Error("db down"));
+    const failed = await renderPublicShell(request("/pricing"));
+    expect(failed.html).toContain("appear on this page when it loads");
+    expect(failed.html).not.toContain(BASIC_PRICE);
+    expect((await renderPublicShell(request("/pricing"))).html).toContain(
+      BASIC_PRICE,
+    );
+    expect(mockedGetSeedMembershipTiers).toHaveBeenCalledTimes(3);
+  });
+
   it("does not hold the page for a slow read", async () => {
     let finish: (tiers: []) => void = () => undefined;
     mockedGetSeedMembershipTiers.mockImplementationOnce(
