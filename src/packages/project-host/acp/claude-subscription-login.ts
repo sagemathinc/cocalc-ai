@@ -3,12 +3,11 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { spawn, execFile, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { writeFileSync } from "node:fs";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
@@ -21,14 +20,16 @@ import {
   CLAUDE_LOGIN_OWNER,
   CLAUDE_LOGIN_RECOVERY,
   type ClaudeLoginRecovery,
-  killClaudeLoginProcesses,
 } from "./claude-login-cleanup";
+import { createClaudeLoginRuntime } from "./claude-login-runtime";
+import type {
+  ClaudeLoginRuntime,
+  ClaudeLoginRuntimeBinding,
+} from "./claude-login-runtime";
 
-const execFileAsync = promisify(execFile);
 const LOGIN_TIMEOUT_MS = 10 * 60_000;
 const TERMINAL_STATUS_RETENTION_MS = 15 * 60_000;
 const MAX_OUTPUT_BYTES = 16 * 1024;
-const MAX_STATUS_BYTES = 16 * 1024;
 
 export type ClaudeSubscriptionLoginStatus = {
   id: string;
@@ -50,18 +51,9 @@ type LoginSession = ClaudeSubscriptionLoginStatus & {
   completion?: Promise<void>;
   releaseOwnership?: () => Promise<void>;
   recovery?: ClaudeLoginRecovery;
+  binding: ClaudeLoginRuntimeBinding;
+  cleanup?: Promise<void>;
 };
-
-function loginEnvironment(home: string): NodeJS.ProcessEnv {
-  return {
-    HOME: home,
-    XDG_CONFIG_HOME: home,
-    CLAUDE_CONFIG_DIR: home,
-    NO_BROWSER: "1",
-    PATH: process.env.PATH ?? "/usr/bin:/bin",
-    LANG: "C.UTF-8",
-  };
-}
 
 function providerUrl(output: string): string | undefined {
   const match = output.match(/https:\/\/[^\s<>"']+(?=\s)/);
@@ -112,6 +104,7 @@ export class ClaudeSubscriptionLoginService {
   private sessions = new Map<string, LoginSession>();
   private closed = false;
   private starting = new Set<Promise<unknown>>();
+  private readonly runtime: ClaudeLoginRuntime;
 
   async close(): Promise<void> {
     this.closed = true;
@@ -122,15 +115,8 @@ export class ClaudeSubscriptionLoginService {
         if (session.state === "pending") session.state = "canceled";
         // Let an already-admitted publication finish before deleting its input.
         await session.completion;
-        await killClaudeLoginProcesses(session.home);
-        if (session.recovery?.codeSubmitted && !session.recovery.published) {
-          session.recovery.abandoned = true;
-          this.saveRecovery(session);
-          return;
-        }
-        await session.releaseOwnership?.();
-        session.releaseOwnership = undefined;
-        await rm(session.home, { recursive: true, force: true });
+        this.kill(session);
+        await this.cleanup(session);
       }),
     );
     this.sessions.clear();
@@ -141,7 +127,7 @@ export class ClaudeSubscriptionLoginService {
   constructor(
     private readonly options: {
       cliPath: string;
-      argsPrefix?: string[];
+      runtime?: ClaudeLoginRuntime;
       publish: (options: {
         projectId: string;
         accountId: string;
@@ -167,7 +153,9 @@ export class ClaudeSubscriptionLoginService {
         accountId: string;
       }) => Promise<string | undefined>;
     },
-  ) {}
+  ) {
+    this.runtime = options.runtime ?? createClaudeLoginRuntime(options.cliPath);
+  }
 
   start(
     projectId: string,
@@ -214,6 +202,12 @@ export class ClaudeSubscriptionLoginService {
     const id = randomUUID();
     let child: ChildProcess;
     let releaseOwnership: (() => Promise<void>) | undefined;
+    const binding = {
+      projectId,
+      holder: id,
+      home,
+      runtimeId: await harnessOwner(),
+    };
     const recovery: ClaudeLoginRecovery | undefined = this.options
       .reserveReconnect
       ? {
@@ -223,10 +217,12 @@ export class ClaudeSubscriptionLoginService {
           holder: id,
           codeSubmitted: false,
           published: false,
+          containment: "podman-v1",
+          nativeStarted: false,
         }
       : undefined;
     try {
-      const runtimeId = await harnessOwner();
+      const runtimeId = binding.runtimeId;
       if (recovery) recovery.runtimeId = runtimeId;
       await writeFile(join(home, CLAUDE_LOGIN_OWNER), runtimeId, {
         mode: 0o600,
@@ -244,16 +240,16 @@ export class ClaudeSubscriptionLoginService {
         holder: id,
       });
       if (this.closed) throw Error("Claude sign-in service is closed");
-      child = spawn(
-        this.options.cliPath,
-        [...(this.options.argsPrefix ?? []), "auth", "login", "--claudeai"],
-        {
-          cwd: home,
-          env: loginEnvironment(home),
-          detached: true,
-          stdio: ["pipe", "pipe", "pipe"],
-        },
-      );
+      await mkdir(join(home, "native"), { mode: 0o700 });
+      if (recovery) {
+        recovery.nativeStarted = true;
+        writeFileSync(
+          join(home, CLAUDE_LOGIN_RECOVERY),
+          JSON.stringify(recovery),
+          { mode: 0o600 },
+        );
+      }
+      child = await this.runtime.launch(binding);
     } catch (error) {
       if (recovery) {
         recovery.abandoned = true;
@@ -263,8 +259,12 @@ export class ClaudeSubscriptionLoginService {
           { mode: 0o600 },
         );
         // The reaper retires even an acquisition with an unknown acknowledgement.
-      } else await rm(home, { recursive: true, force: true });
+      }
+      // A failed launch acknowledgement does not prove the container is absent.
+      if (!recovery || recovery.nativeStarted) await this.runtime.stop(binding);
       await releaseOwnership?.();
+      if (!recovery || releaseOwnership)
+        await rm(home, { recursive: true, force: true });
       throw error;
     }
     const timer = setTimeout(() => {
@@ -284,6 +284,7 @@ export class ClaudeSubscriptionLoginService {
       codeSubmitted: false,
       releaseOwnership,
       recovery,
+      binding,
     };
     this.sessions.set(id, session);
     const append = (chunk: Buffer) => {
@@ -366,24 +367,15 @@ export class ClaudeSubscriptionLoginService {
     }
     session.state = "verifying";
     try {
-      const { stdout } = await execFileAsync(
-        this.options.cliPath,
-        [...(this.options.argsPrefix ?? []), "auth", "status", "--json"],
-        {
-          cwd: session.home,
-          env: loginEnvironment(session.home),
-          timeout: 10_000,
-          maxBuffer: MAX_STATUS_BYTES,
-        },
-      );
+      const stdout = await this.runtime.status(session.binding);
       const { plan, identity } = verifiedClaudeSubscriptionStatus(stdout);
       // Snapshot only after all login/status descendants have stopped rotating files.
-      await killClaudeLoginProcesses(session.home);
+      await this.runtime.stop(session.binding);
       if (this.closed) throw Error("Claude sign-in service is closed");
       const credentialId = await this.options.publish({
         projectId: session.projectId,
         accountId: session.accountId,
-        home: session.home,
+        home: join(session.home, "native"),
         identity,
         plan,
         credentialId: session.reconnectCredentialId,
@@ -399,6 +391,7 @@ export class ClaudeSubscriptionLoginService {
       await session.releaseOwnership?.();
       session.releaseOwnership = undefined;
       session.state = "completed";
+      await rm(session.home, { recursive: true, force: true });
       this.retire(session);
     } catch (error) {
       this.fail(
@@ -409,9 +402,6 @@ export class ClaudeSubscriptionLoginService {
           ? "Sign in with the same Claude account to reconnect. Your existing connection was not changed."
           : "Claude subscription verification failed",
       );
-    } finally {
-      if (!session.releaseOwnership)
-        await rm(session.home, { recursive: true, force: true });
     }
   }
 
@@ -426,12 +416,20 @@ export class ClaudeSubscriptionLoginService {
   }
 
   private removeHomeAfterExit(session: LoginSession): void {
-    const remove = async () => {
-      // Parent close alone is not proof that credential-bearing descendants died.
-      await killClaudeLoginProcesses(session.home);
+    void this.cleanup(session).catch(() => {});
+  }
+
+  private cleanup(session: LoginSession): Promise<void> {
+    if (session.cleanup) return session.cleanup;
+    session.cleanup = (async () => {
+      if (session.recovery && session.releaseOwnership) {
+        session.recovery.abandoned = true;
+        this.saveRecovery(session);
+      }
+      await this.runtime.stop(session.binding);
       // A failed code exchange may have issued a new credential that was not
       // published. Quarantine that owner rather than guessing token validity.
-      if (!session.codeSubmitted) {
+      if (!session.codeSubmitted || session.recovery?.published) {
         await session.releaseOwnership?.();
         session.releaseOwnership = undefined;
       }
@@ -439,18 +437,17 @@ export class ClaudeSubscriptionLoginService {
         session.recovery.abandoned = true;
         this.saveRecovery(session);
       } else await rm(session.home, { recursive: true, force: true });
-    };
-    if (session.child.exitCode !== null || session.child.signalCode !== null) {
-      void remove().catch(() => {});
-    } else {
-      session.child.once("close", () => {
-        void remove().catch(() => {});
-      });
-    }
+    })();
+    return session.cleanup;
   }
 
   private kill(session: LoginSession): void {
-    if (!session.child.pid) return;
+    if (
+      !session.child.pid ||
+      session.child.exitCode != null ||
+      session.child.signalCode != null
+    )
+      return;
     try {
       process.kill(-session.child.pid, "SIGKILL");
     } catch (error) {

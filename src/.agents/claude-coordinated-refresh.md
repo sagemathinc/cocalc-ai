@@ -61,6 +61,14 @@ unconfirmed shutdown, and conflicting revisions retain ownership for operator
 reconciliation. Recovery does not execute the user's turn again.
 
 Sign-in recovery records similarly retire reservations after a confirmed stop.
+Login and status run in separate named Podman PID namespaces, with only the
+native home writable; recovery records remain outside that mount. The private
+journal is written before launch. Separate create/start operations prevent a
+late create acknowledgement from executing native authentication after worker
+death. Removal of both namespaces, followed by a successful host process
+inventory, precedes publication or release. Mutable environment markers are not
+shutdown proof. Legacy uncontained sign-in homes require operator reconciliation;
+they are not automatically released merely because the parent or marker vanished.
 An uncertain submitted code exchange is quarantined with its host-private home:
 it may have rotated the provider credential without publishing it. Operators
 must confirm all relevant native processes are stopped, reconcile the registered
@@ -101,3 +109,8 @@ Deterministic tests use synthetic bundles and native harness fixtures. They
 retain the existing anti-clobber coverage and do not refresh real credentials.
 Live provider validation requires a separately authorized connected staging
 subscription; synthetic tests alone do not establish real provider behavior.
+
+A credential-free staging2 canary test exercised the new argument builder and
+shutdown implementation on the actual host runtime: a detached, orphaned
+grandchild with a sanitized environment was stopped by namespace removal, and
+repeat removal succeeded. This verifies containment, not live provider renewal.

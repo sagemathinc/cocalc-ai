@@ -3,12 +3,73 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { stat } from "node:fs/promises";
+import { stat, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { spawn, execFile } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { once } from "node:events";
+import { promisify } from "node:util";
 import {
-  ClaudeSubscriptionLoginService,
+  ClaudeSubscriptionLoginService as LoginService,
   verifiedClaudeSubscriptionStatus,
 } from "./claude-subscription-login";
+import type { ClaudeLoginRuntime } from "./claude-login-runtime";
+
+// Only the test double runs the network-free fixture without a container.
+class ClaudeSubscriptionLoginService extends LoginService {
+  constructor(
+    options: ConstructorParameters<typeof LoginService>[0] & {
+      argsPrefix?: string[];
+    },
+  ) {
+    const children = new Map<string, ChildProcess>();
+    const environment = (home: string) => ({
+      HOME: join(home, "native"),
+      CLAUDE_CONFIG_DIR: join(home, "native"),
+    });
+    const runtime: ClaudeLoginRuntime = {
+      async launch(binding) {
+        const child = spawn(
+          options.cliPath,
+          [...(options.argsPrefix ?? []), "auth", "login", "--claudeai"],
+          {
+            env: environment(binding.home),
+            detached: true,
+            stdio: "pipe",
+          },
+        );
+        children.set(binding.holder, child);
+        return child;
+      },
+      async status(binding) {
+        await runtime.stop(binding);
+        return (
+          await promisify(execFile)(
+            options.cliPath,
+            [...(options.argsPrefix ?? []), "auth", "status", "--json"],
+            {
+              env: environment(binding.home),
+              timeout: 2000,
+            },
+          )
+        ).stdout;
+      },
+      async stop(binding) {
+        const child = children.get(binding.holder);
+        if (!child || child.exitCode != null || child.signalCode != null)
+          return;
+        const exited = once(child, "close");
+        try {
+          process.kill(-child.pid!, "SIGKILL");
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        }
+        await exited;
+      },
+    };
+    super({ ...options, runtime: options.runtime ?? runtime });
+  }
+}
 
 const accountId = "d62ec7c2-7b5a-49b7-9662-5c280bbac40b";
 const otherAccountId = "fca177c1-b1d6-4f85-bd89-0afc61f67ed8";
@@ -370,3 +431,106 @@ test("shutdown cancels pending sign-in and rejects new login attempts", async ()
   );
   await expect(service.start(projectId, accountId)).rejects.toThrow("closed");
 });
+
+test("unknown launch and shutdown acknowledgements retain ownership and staging home", async () => {
+  let home!: string;
+  const release = jest.fn(async () => {});
+  const publish = jest.fn();
+  const runtime: ClaudeLoginRuntime = {
+    launch: async (binding) => {
+      home = binding.home;
+      throw Error("unknown launch");
+    },
+    status: jest.fn(),
+    stop: jest.fn(async () => {
+      throw Error("unconfirmed shutdown");
+    }),
+  };
+  const service = new LoginService({
+    cliPath: fixture,
+    runtime,
+    publish,
+    reserveReconnect: async () => release,
+  });
+  try {
+    await expect(service.start(projectId, accountId)).rejects.toThrow(
+      "unconfirmed shutdown",
+    );
+    expect(release).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect((await stat(home)).isDirectory()).toBe(true);
+  } finally {
+    await service.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test.each([false, true])(
+  "shutdown proof gates publication and release (unconfirmed=%s)",
+  async (stopFails) => {
+    const order: string[] = [];
+    let child!: ChildProcess;
+    let home!: string;
+    const runtime: ClaudeLoginRuntime = {
+      async launch(binding) {
+        home = binding.home;
+        child = spawn(
+          process.execPath,
+          [fixture, "auth", "login", "--claudeai"],
+          {
+            env: { HOME: join(home, "native") },
+            detached: true,
+            stdio: "pipe",
+          },
+        );
+        return child;
+      },
+      status: async () =>
+        JSON.stringify({
+          loggedIn: true,
+          apiProvider: "firstParty",
+          subscriptionType: "pro",
+          email: "fixture@example.com",
+        }),
+      stop: async () => {
+        order.push("stop");
+        if (stopFails) throw Error("unconfirmed shutdown");
+      },
+    };
+    const service = new LoginService({
+      cliPath: fixture,
+      runtime,
+      reserveReconnect: async () => async () => {
+        order.push("release");
+      },
+      publish: async (options) => {
+        expect(options.home).toBe(join(home, "native"));
+        expect(order).toEqual(["stop"]);
+        order.push("publish");
+        return credentialId;
+      },
+    });
+    try {
+      const started = await service.start(projectId, accountId);
+      for (
+        let i = 0;
+        i < 100 &&
+        !service.status(started.id, projectId, accountId).verificationUrl;
+        i++
+      )
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      service.submitCode(started.id, projectId, accountId, "fixture-code");
+      await waitFor(service, started.id, stopFails ? "failed" : "completed");
+      if (stopFails) {
+        expect(order).not.toContain("publish");
+        expect(order).not.toContain("release");
+        expect((await stat(home)).isDirectory()).toBe(true);
+      } else expect(order).toEqual(["stop", "publish", "release"]);
+    } finally {
+      if (stopFails)
+        await expect(service.close()).rejects.toThrow("cleanup failed");
+      else await service.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
