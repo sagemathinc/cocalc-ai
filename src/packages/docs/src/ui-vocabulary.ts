@@ -690,7 +690,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
         "frontend/chat/chatroom-thread-panel.tsx",
         'aria-label="Open git browser"',
       ),
-      def("frontend/chat/message.tsx", 'title="Open git browser"'),
+      def("frontend/chat/message.tsx", 'label: "Open git browser"'),
       def("frontend/chat/agent-message-status.tsx", "> Open git browser <"),
     ],
     usedIn: [conventions("chat buttons and tooltips say Open git browser")],

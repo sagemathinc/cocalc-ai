@@ -15,6 +15,7 @@ import {
   lockAccountCollaboratorProjection,
 } from "./account-collaborator-index";
 import { appendProjectOutboxEventForProject } from "./project-events-outbox";
+import { syncCollaborationDemandSchema } from "./collaborators/collaborators-demand";
 
 const LOCAL_BAY_ID = "bay-local";
 const OTHER_BAY_ID = "bay-other";
@@ -27,11 +28,12 @@ const PROJECT_ID = "55555555-5555-4555-8555-555555555555";
 describe("account_collaborator_index projector", () => {
   beforeAll(async () => {
     await initEphemeralDatabase({});
+    await syncCollaborationDemandSchema(getPool());
   }, 15000);
 
   afterEach(async () => {
     await getPool().query(
-      "TRUNCATE account_collaborator_index, project_events_outbox, projects, accounts CASCADE",
+      "TRUNCATE collaboration_demand, collaboration_demand_activation, account_collaborator_index, project_events_outbox, projects, accounts CASCADE",
     );
   });
 

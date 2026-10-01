@@ -2,7 +2,7 @@
  * This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
  * License: MS-RSL - see LICENSE.md for details
  */
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { Button } from "antd";
 import type { CollaborationReference } from "@cocalc/util/collaboration-references";
 import {
@@ -14,13 +14,21 @@ import type { CollaborationResource } from "@cocalc/util/collaborators";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { ProjectAccessDialog } from "@cocalc/frontend/project/access";
+import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
 import {
   openResolvedCollaborationReference,
   resolveCollaborationReference,
 } from "@cocalc/frontend/collaborators/reference-picker-api";
 import { register } from "./register";
 import type { RenderElementProps, SlateElement } from "./register";
+
+const ProjectAccessDialog = lazyWithRetry(
+  async () => ({
+    default: (await import("@cocalc/frontend/project/access"))
+      .ProjectAccessDialog,
+  }),
+  "project access dialog",
+);
 
 export interface CollaborationReferenceElement extends SlateElement {
   type: "collaboration-reference";
@@ -82,7 +90,9 @@ export function CollaborationReferenceLink({
   const activeKey = useRef(key);
   activeKey.current = key;
   const requestSequence = useRef(0);
-  const [accessDialogKey, setAccessDialogKey] = useState<string>();
+  // Load only after activation, then keep the modal mounted when closed so its
+  // focus restoration and exit transition still run.
+  const [accessDialogKey, setAccessDialogKey] = useState<string | null>();
   const [state, setState] = useState<{
     key: string;
     resource?: CollaborationResource | null;
@@ -190,14 +200,18 @@ export function CollaborationReferenceLink({
           This content is unavailable or you no longer have access.{" "}
         </span>
       ) : null}
-      <ProjectAccessDialog
-        projectId={reference.target.project_id}
-        open={accessDialogKey === key}
-        onClose={() => {
-          setAccessDialogKey(undefined);
-          void open(false);
-        }}
-      />
+      {accessDialogKey !== undefined && (
+        <Suspense fallback={<span role="status">Loading project access…</span>}>
+          <ProjectAccessDialog
+            projectId={reference.target.project_id}
+            open={accessDialogKey === key}
+            onClose={() => {
+              setAccessDialogKey(null);
+              void open(false);
+            }}
+          />
+        </Suspense>
+      )}
     </>
   );
 }
