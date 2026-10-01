@@ -111,6 +111,7 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
       new SimpleInputMerge(initialInput),
     );
     const getValueRef = useRef<any>(null);
+    const setValueRef = useRef<((value: string) => void) | null>(null);
 
     // Saving a cell's input updates the synced document and the store
     // synchronously, so a value that was stored is the new baseline at once
@@ -140,6 +141,7 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
         const saved = written ?? input;
         if (saved !== input) setLocalValue(saved);
         noteSaved(saved, written != null);
+        return saved;
       },
       [props.input_is_readonly, props.id, props.actions],
     );
@@ -231,6 +233,7 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
           }}
           complete={props.complete}
           getValueRef={getValueRef}
+          setValueRef={setValueRef}
           value={value}
           options={options(type)}
           id={props.cell.get("id")}
@@ -306,7 +309,12 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
       mergeHelperRef.current.handleRemote({
         remote,
         getLocal: () => getValueRef.current?.() ?? localValueRef.current,
-        applyMerged: (value) => setCellInput(value, remote),
+        // The merge is of what the editor shows now: show it now too, since
+        // (re)rendering it later would replace anything typed meanwhile.
+        applyMerged: (value) => {
+          const saved = setCellInput(value, remote);
+          setValueRef.current?.(saved ?? value);
+        },
       });
     }, [props.cell.get("input")]);
 

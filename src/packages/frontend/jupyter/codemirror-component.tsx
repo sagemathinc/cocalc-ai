@@ -40,6 +40,7 @@ interface CodeMirrorProps {
   registerEditor?;
   unregisterEditor?;
   getValueRef?;
+  setValueRef?;
   setShowAICellGen?: (show: Position) => void;
   // onSetCellInput -- called after saving input via actions, with the input
   // saved and whether the store already holds it (it does, synchronously,
@@ -77,6 +78,7 @@ export const CodeMirror: React.FC<CodeMirrorProps> = React.memo(
       registerEditor,
       unregisterEditor,
       getValueRef,
+      setValueRef,
       setShowAICellGen,
       onSetCellInput,
     } = props;
@@ -128,6 +130,7 @@ export const CodeMirror: React.FC<CodeMirrorProps> = React.memo(
           registerEditor={registerEditor}
           unregisterEditor={unregisterEditor}
           getValueRef={getValueRef}
+          setValueRef={setValueRef}
           setShowAICellGen={setShowAICellGen}
         />
       );

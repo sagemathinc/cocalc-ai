@@ -29,6 +29,14 @@ import { Complete, Actions as CompleteActions } from "./complete";
 import { Cursors } from "./cursors";
 import { Position } from "./insert-cell/types";
 import { is_whitespace } from "@cocalc/util/misc";
+import { mergeText } from "@cocalc/sync/editor/generic/string-merge3";
+
+// Debugging aid (see SimpleInputMerge): set
+// globalThis.__simpleInputMergeDebug to a function to receive decisions.
+function debug(event: string, data: Record<string, unknown>): void {
+  const hook = (globalThis as any).__simpleInputMergeDebug;
+  if (typeof hook === "function") hook(event, data);
+}
 import { initFold, saveFold } from "@cocalc/frontend/codemirror/util";
 
 // This editor predates the typed DOM wrappers used by newer frontend code.
@@ -111,6 +119,9 @@ interface CodeMirrorEditorProps {
   contenteditable?: boolean; // make true for whiteboard so works when scaled.
   refresh?: any; // if this changes, then cm.refresh() is called.
   getValueRef?: MutableRefObject<() => string>;
+  // Set to a function that shows a value merged from the editor's current
+  // text at once (synchronously), so nothing typed in between is lost.
+  setValueRef?: MutableRefObject<((value: string) => void) | null>;
   canvasScale?: number;
   setShowAICellGen?: (show: Position) => void;
   // onSetCellInput -- called after saving input via actions, with the input
@@ -143,6 +154,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   contenteditable,
   refresh,
   getValueRef,
+  setValueRef,
   canvasScale,
   setShowAICellGen,
   onSetCellInput,
@@ -254,7 +266,20 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       return;
     }
     if (cm.current != null) {
-      if (cm.current.getValue() !== value) {
+      const local = cm.current.getValue();
+      const base = cm_last_remote.current;
+      if (local !== value && base != null && local !== base) {
+        // The editor has edits not saved yet (the save is debounced): merge
+        // the new value into them rather than replacing them, which would
+        // lose what was just typed. They are saved from the new value.
+        if (value !== base) {
+          const merged = mergeText({ base, local, remote: value });
+          debug("cell:value-merge", { id, base, local, remote: value, merged });
+          if (merged !== local) cm.current.setValueNoJump(merged);
+        }
+        cm_last_remote.current = value;
+      } else if (local !== value) {
+        debug("cell:value-set", { id, base, local, value });
         cm.current.setValueNoJump(value);
         cm.current.clearHistory();
         cm_last_remote.current = value;
@@ -495,6 +520,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       // cell input shows it and takes it as what was saved.
       const written = actions.set_cell_input(id, value, true, base);
       const saved = written ?? value;
+      debug("cell:save", { id, base, value, written });
       cm_last_remote.current = saved;
       onSetCellInput?.(saved, written != null);
     }
@@ -723,6 +749,14 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
     if (getValueRef != null) {
       getValueRef.current = cm.current.getValue.bind(cm.current);
+    }
+    if (setValueRef != null) {
+      setValueRef.current = (value: string) => {
+        if (cm.current == null) return;
+        debug("cell:set-now", { id, local: cm.current.getValue(), value });
+        if (cm.current.getValue() !== value) cm.current.setValueNoJump(value);
+        cm_last_remote.current = value;
+      };
     }
 
     cm.current.save = () => {
