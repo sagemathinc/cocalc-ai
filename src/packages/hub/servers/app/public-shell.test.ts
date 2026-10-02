@@ -6,6 +6,7 @@ import {
   PUBLIC_BODY_PLACEHOLDER,
   PUBLIC_STATIC_BASE_PLACEHOLDER,
 } from "@cocalc/util/public-site-metadata";
+import { renderPublicFooterPrerender } from "./public-prerender";
 import { renderPublicShell } from "./public-shell";
 
 // Public site fixtures model Launchpad explicitly; an unset product defaults
@@ -892,4 +893,110 @@ describe("pricing tiers in the initial HTML", () => {
       expect(html).not.toMatch(/\$\s*\d/);
     },
   );
+});
+
+// The React footer (frontend/public/layout/shell.tsx) lists the same page
+// links for the same sites; its tests use this matrix too.
+describe("footer page links in the initial HTML", () => {
+  const PLATFORM = [
+    ["Features", "/features"],
+    ["Products", "/products"],
+    ["Pricing", "/pricing"],
+  ];
+  const RESOURCES = [
+    ["Documentation", "/docs"],
+    ["Guides", "/guides"],
+    ["Support", "/support"],
+  ];
+  const COMPANY = [
+    ["About", "/about"],
+    ["News", "/news"],
+  ];
+
+  function footerOf(html: string): string | undefined {
+    return html.match(
+      /<footer data-cocalc-public-prerender="footer"[\s\S]*?<\/footer>/,
+    )?.[0];
+  }
+
+  function navLinks(footer: string, name: string): string[][] {
+    const nav = footer.match(
+      new RegExp(`<nav aria-label="${name} footer links">[\\s\\S]*?</nav>`),
+    )?.[0];
+    return [...(nav ?? "").matchAll(/<a href="([^"]*)">([^<]*)<\/a>/g)].map(
+      ([, href, label]) => [label, href],
+    );
+  }
+
+  it.each([
+    ["cocalc.ai", "launchpad", "cocalc.ai"],
+    ["a self-hosted Launchpad", "launchpad", "launchpad.example.edu"],
+    ["a customer-operated deployment", "rocket", "cocalc.example.com"],
+    ["CoCalc Plus", "plus", "localhost:5000"],
+  ] as const)(
+    "links the footer's pages on %s",
+    async (_site, product, host) => {
+      mockedProduct.mockReturnValue(product);
+      for (const path of ["/", "/about", "/docs", "/features"]) {
+        const { html, status } = await renderPublicShell(
+          request(path, {}, host),
+        );
+        const footer = footerOf(html);
+
+        expect({ path, status }).toEqual({ path, status: 200 });
+        expect(footer).toBeDefined();
+        expect(
+          [...footer!.matchAll(/<nav aria-label="([^"]*)">/g)].map(
+            ([, name]) => name,
+          ),
+        ).toEqual([
+          "Platform footer links",
+          "Resources footer links",
+          "Company footer links",
+        ]);
+        expect(navLinks(footer!, "Platform")).toEqual(PLATFORM);
+        expect(navLinks(footer!, "Resources")).toEqual(RESOURCES);
+        expect(navLinks(footer!, "Company")).toEqual(COMPANY);
+      }
+    },
+  );
+
+  it("follows the page's crawler content inside the container the app replaces", async () => {
+    const { html } = await renderPublicShell(request("/about"));
+    const container = html.indexOf('<div id="cocalc-webapp-container">');
+    const content = html.indexOf('<main data-cocalc-public-prerender="about"');
+    const footer = html.indexOf(
+      '<footer data-cocalc-public-prerender="footer"',
+    );
+
+    expect(container).toBeGreaterThanOrEqual(0);
+    expect(content).toBeGreaterThan(container);
+    expect(footer).toBeGreaterThan(html.indexOf("</main>", content));
+    expect(html.indexOf("</footer>")).toBeLessThan(html.lastIndexOf("</div>"));
+    expect(html.match(/<footer/g)).toHaveLength(1);
+  });
+
+  it.each(["/news", "/auth/sign-in", "/features/no-such-page"])(
+    "adds no footer where %s has no crawler content",
+    async (path) => {
+      const { html } = await renderPublicShell(request(path));
+
+      expect(html).toContain('<div id="cocalc-webapp-container"></div>');
+      expect(footerOf(html)).toBeUndefined();
+    },
+  );
+
+  it("resolves the footer links under a base path", () => {
+    const footer = renderPublicFooterPrerender("/prefix");
+
+    expect(
+      ["Platform", "Resources", "Company"].map((name) =>
+        navLinks(footer, name).map(([, href]) => href),
+      ),
+    ).toEqual([
+      ["/prefix/features", "/prefix/products", "/prefix/pricing"],
+      ["/prefix/docs", "/prefix/guides", "/prefix/support"],
+      ["/prefix/about", "/prefix/news"],
+    ]);
+  });
 });
