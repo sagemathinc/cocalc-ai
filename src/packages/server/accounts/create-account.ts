@@ -4,6 +4,10 @@ for this type of account, etc. -- that is assumed to have been
 done before calling this.
 */
 
+import {
+  NEW_ACCOUNT_WORKSPACE_NAVIGATION,
+  WORKSPACE_NAVIGATION_SETTING,
+} from "@cocalc/util/workspace-navigation";
 import getPool from "@cocalc/database/pool";
 import passwordHash from "@cocalc/backend/auth/password-hash";
 import { getLogger } from "@cocalc/backend/logger";
@@ -95,6 +99,7 @@ export default async function createAccount({
         customize ?? null,
         `${home_bay_id ?? ""}`.trim() || getConfiguredBayId(),
         {
+          [WORKSPACE_NAVIGATION_SETTING]: NEW_ACCOUNT_WORKSPACE_NAVIGATION,
           ...other_settings,
           appearance_theme:
             parseAppearancePreference(other_settings?.appearance_theme) ??

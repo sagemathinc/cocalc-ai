@@ -39,6 +39,7 @@ import QuickNavigation from "./quick-navigation";
 import { ActiveContent } from "./active-content";
 import { usesWorkspaceShell } from "./workspace-shell";
 import { HomeWorkspaceNavigation } from "./home-workspace-navigation";
+import { useWorkspaceNavigation } from "./workspace-navigation";
 import { ConnectionIndicator } from "./connection-indicator";
 import { ConnectionInfo } from "./connection-info";
 import { NotificationsDrawer } from "../notifications/drawer";
@@ -242,6 +243,7 @@ export const Page: React.FC = () => {
   const account_id = useTypedRedux("account", "account_id");
   const is_logged_in = useTypedRedux("account", "is_logged_in");
   const examMode = useTypedRedux("customize", "exam_mode") === true;
+  const workspaceNavigation = useWorkspaceNavigation();
   const workspaceShell = usesWorkspaceShell({
     lite,
     aiDisabled,
@@ -250,6 +252,9 @@ export const Page: React.FC = () => {
     fullscreen,
     activeTab: active_top_tab,
   });
+  // In the workspace shell, sidebar navigation shows account, notification
+  // and status controls in the sidebar instead of the top bar.
+  const sidebarNavigation = workspaceShell && workspaceNavigation === "sidebar";
   const configurationLoadError = useTypedRedux(
     "customize",
     "configuration_load_error",
@@ -576,7 +581,7 @@ export const Page: React.FC = () => {
             {!workspaceShell && is_logged_in && render_agents_nav_button()}
             {!workspaceShell && is_logged_in && render_people_nav_button()}
             {is_logged_in && render_project_nav_button()}
-            {render_hosts_tab()}
+            {!sidebarNavigation && render_hosts_tab()}
             {!isNarrow ? (
               showPostSurfaceNavigation ? (
                 <PostSurfaceSlot scope="app.post-surface-project-navigation">
@@ -595,7 +600,7 @@ export const Page: React.FC = () => {
             )}
             {workspaceShell && isNarrow ? (
               <HomeWorkspaceNavigation />
-            ) : (
+            ) : sidebarNavigation ? null : (
               render_right_nav()
             )}
           </nav>

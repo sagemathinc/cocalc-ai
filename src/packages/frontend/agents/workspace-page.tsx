@@ -133,6 +133,8 @@ import "./workspace-sidebar-row.css";
 import "./new-agent-composer.css";
 import { AgentOrganizationControls } from "./organization-controls";
 import { AgentsOverview } from "./agents-overview";
+import { SidebarNotifications, SidebarStatus } from "./sidebar-status";
+import { useWorkspaceNavigation } from "@cocalc/frontend/app/workspace-navigation";
 import { AgentsSidebarResizeHandle } from "./sidebar-resize-handle";
 import {
   DragHandle,
@@ -3133,6 +3135,8 @@ export function MyAgentsWorkspacePage({
     active && !contentOpen,
     accountId,
   );
+  // Sidebar navigation moves the top bar's account and status controls here.
+  const sidebarNavigation = useWorkspaceNavigation() === "sidebar";
   const overviewOpen =
     !!useTypedRedux("page", "agents_overview_open") && !contentOpen;
   const artifactLibraryOpen =
@@ -4088,6 +4092,7 @@ export function MyAgentsWorkspacePage({
               }
             : toggleAgentSidebar
         }
+        headerActions={sidebarNavigation ? <SidebarNotifications /> : undefined}
         footer={
           <div
             style={{
@@ -4095,6 +4100,7 @@ export function MyAgentsWorkspacePage({
               paddingTop: 8,
             }}
           >
+            {sidebarNavigation && <SidebarStatus />}
             <AgentsAccountMenu />
           </div>
         }

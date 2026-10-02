@@ -122,3 +122,14 @@ test.each(["Projects", "Artifacts"])(
     expect(first).toHaveFocus();
   },
 );
+
+test("header actions sit beside the hide control", () => {
+  render(
+    <WorkspaceSidebarActions
+      firstNavigationItem={null}
+      headerActions={<button>Notifications</button>}
+      onHideSidebar={() => {}}
+    />,
+  );
+  expect(screen.getByRole("button", { name: "Notifications" })).toBeVisible();
+});

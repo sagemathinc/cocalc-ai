@@ -9,11 +9,14 @@ export function WorkspaceSidebarActions({
   firstNavigationItem,
   children,
   footer,
+  headerActions,
   onHideSidebar,
 }: {
   firstNavigationItem: ReactNode;
   children?: ReactNode;
   footer?: ReactNode;
+  // Shown beside the hide-sidebar control (e.g. notifications).
+  headerActions?: ReactNode;
   onHideSidebar?: () => void;
 }) {
   const [brandFocused, setBrandFocused] = useState(false);
@@ -51,6 +54,7 @@ export function WorkspaceSidebarActions({
           <img src={APP_ICON} alt="" width={32} height={32} />
           CoCalc
         </a>
+        {headerActions}
         {onHideSidebar && (
           <AgentsSidebarToggle hidden={false} onToggle={onHideSidebar} />
         )}

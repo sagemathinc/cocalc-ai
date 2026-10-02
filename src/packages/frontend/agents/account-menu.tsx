@@ -21,6 +21,11 @@ import { Icon } from "@cocalc/frontend/components";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { UpgradePill } from "./upgrade-pill";
+import openSupportTab from "@cocalc/frontend/support/open";
+import {
+  setWorkspaceNavigation,
+  useWorkspaceNavigation,
+} from "@cocalc/frontend/app/workspace-navigation";
 
 export function AgentsAccountMenu() {
   const accountId = useTypedRedux("account", "account_id") as
@@ -33,6 +38,8 @@ export function AgentsAccountMenu() {
     | string
     | undefined;
   const lastName = useTypedRedux("account", "last_name") as string | undefined;
+  const groups = useTypedRedux("account", "groups");
+  const navigation = useWorkspaceNavigation();
   const [membershipClass, setMembershipClass] = useState<string>();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuTriggerRef = useRef<HTMLSpanElement>(null);
@@ -82,6 +89,25 @@ export function AgentsAccountMenu() {
     { key: "appearance", icon: <Icon name="sun" />, label: "Appearance" },
     { type: "divider" },
     {
+      key: "hosts",
+      icon: <Icon name="server" />,
+      label: "Compute: project hosts and VMs",
+    },
+    ...(groups?.includes?.("admin")
+      ? [{ key: "admin", icon: <Icon name="users" />, label: "Admin" }]
+      : []),
+    { key: "docs", icon: <Icon name="book" />, label: "Documentation" },
+    { key: "support", icon: <Icon name="support" />, label: "Help" },
+    {
+      key: "navigation",
+      icon: <Icon name={navigation === "sidebar" ? "bars" : "list"} />,
+      label:
+        navigation === "sidebar"
+          ? "Use classic top bar"
+          : "Use sidebar navigation",
+    },
+    { type: "divider" },
+    {
       key: "sign-out",
       icon: <Icon name="sign-out-alt" />,
       label: "Sign out",
@@ -114,6 +140,19 @@ export function AgentsAccountMenu() {
         return;
       case "appearance":
         openAccountSettings({ page: "appearance" });
+        return;
+      case "hosts":
+      case "admin":
+      case "docs":
+        void redux.getActions("page").set_active_tab(key);
+        return;
+      case "support":
+        openSupportTab();
+        return;
+      case "navigation":
+        setWorkspaceNavigation(
+          navigation === "sidebar" ? "classic" : "sidebar",
+        );
         return;
     }
   }

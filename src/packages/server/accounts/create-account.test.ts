@@ -30,7 +30,10 @@ describe("accounts.createAccount", () => {
         account_id: "11111111-1111-4111-8111-111111111111",
         other_settings,
       });
-      expect(queryMock.mock.calls[0][1][12]).toEqual(other_settings);
+      expect(queryMock.mock.calls[0][1][12]).toEqual({
+        workspace_navigation: "sidebar",
+        ...other_settings,
+      });
     },
   );
 
@@ -42,8 +45,21 @@ describe("accounts.createAccount", () => {
       other_settings: { appearance_theme: "auto", locale: "fr" },
     });
     expect(queryMock.mock.calls[0][1][12]).toEqual({
+      workspace_navigation: "sidebar",
       appearance_theme: "system",
       locale: "fr",
+    });
+  });
+
+  it("new accounts start with sidebar navigation unless they chose otherwise", async () => {
+    const createAccount = (await import("./create-account")).default;
+    await createAccount({
+      email: "navigation@test.local",
+      account_id: "11111111-1111-4111-8111-111111111111",
+      other_settings: { workspace_navigation: "classic" },
+    });
+    expect(queryMock.mock.calls[0][1][12]).toMatchObject({
+      workspace_navigation: "classic",
     });
   });
 
@@ -73,7 +89,7 @@ describe("accounts.createAccount", () => {
         null,
         null,
         "bay-0",
-        { appearance_theme: "system" },
+        { workspace_navigation: "sidebar", appearance_theme: "system" },
         false,
         null,
         "10.1.2.3",
@@ -110,7 +126,7 @@ describe("accounts.createAccount", () => {
         null,
         null,
         "bay-7",
-        { appearance_theme: "system" },
+        { workspace_navigation: "sidebar", appearance_theme: "system" },
         false,
         null,
         null,

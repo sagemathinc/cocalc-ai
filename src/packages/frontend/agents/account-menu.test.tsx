@@ -9,6 +9,9 @@ const api = jest.fn();
 const openAccountSettings = jest.fn();
 const signOut = jest.fn();
 const confirm = jest.fn();
+const setOtherSettings = jest.fn();
+const setActiveTab = jest.fn();
+let otherSettings: any = undefined;
 let membershipClass = "admin";
 let hasName = true;
 
@@ -53,13 +56,23 @@ jest.mock("@cocalc/frontend/client/api", () => ({
   __esModule: true,
   default: (...args: any[]) => api(...args),
 }));
+jest.mock("@cocalc/frontend/support/open", () => ({
+  __esModule: true,
+  default: jest.fn(),
+}));
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: ({ name }: { name: string }) => <span data-icon={name} />,
 }));
 jest.mock("@cocalc/frontend/app-framework", () => {
   const React = require("react");
   return {
-    redux: { getActions: () => ({ sign_out: signOut }) },
+    redux: {
+      getActions: () => ({
+        sign_out: signOut,
+        set_other_settings: setOtherSettings,
+        set_active_tab: setActiveTab,
+      }),
+    },
     useAsyncEffect: (fn: any, deps: any[]) => {
       React.useEffect(() => {
         let mounted = true;
@@ -79,6 +92,7 @@ jest.mock("@cocalc/frontend/app-framework", () => {
         first_name: hasName ? "Ada" : "",
         last_name: hasName ? "Lovelace" : "",
         email_address: "ada@example.com",
+        other_settings: otherSettings,
       })[field],
   };
 });
@@ -153,5 +167,49 @@ describe("Agents account menu", () => {
 
     expect(screen.queryByRole("menu")).toBeNull();
     await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("switches between sidebar and classic navigation", async () => {
+    otherSettings = undefined; // existing accounts: classic
+    const { unmount } = render(<AgentsAccountMenu />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Account menu for Ada Lovelace" }),
+    );
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: "Use sidebar navigation" }),
+    );
+    expect(setOtherSettings).toHaveBeenCalledWith(
+      "workspace_navigation",
+      "sidebar",
+    );
+    unmount();
+    otherSettings = {
+      get: (key: string) =>
+        key === "workspace_navigation" ? "sidebar" : undefined,
+    };
+    render(<AgentsAccountMenu />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Account menu for Ada Lovelace" }),
+    );
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: "Use classic top bar" }),
+    );
+    expect(setOtherSettings).toHaveBeenLastCalledWith(
+      "workspace_navigation",
+      "classic",
+    );
+    otherSettings = undefined;
+  });
+
+  it("reaches compute and documentation, which left the top bar", () => {
+    render(<AgentsAccountMenu />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Account menu for Ada Lovelace" }),
+    );
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: "Compute: project hosts and VMs" }),
+    );
+    expect(setActiveTab).toHaveBeenCalledWith("hosts");
+    expect(screen.queryByRole("menuitem", { name: "Admin" })).toBeNull();
   });
 });

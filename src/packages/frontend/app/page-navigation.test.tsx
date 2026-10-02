@@ -11,6 +11,7 @@ let examMode = false;
 let isLite = false;
 let loggedIn = true;
 let aiDisabled = false;
+let navigationSetting: string | undefined;
 const actions = { set_active_tab: jest.fn(), clear_all_handlers: jest.fn() };
 const openProjects = { size: 0 };
 const topBarStyle = { display: "flex", height: 36 };
@@ -22,7 +23,11 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: (store, field) => {
     if (store === "page" && field === "active_top_tab") return activeTab;
     if (field === "open_projects") return openProjects;
-    if (field === "other_settings") return Map({ openai_disabled: aiDisabled });
+    if (field === "other_settings")
+      return Map({
+        openai_disabled: aiDisabled,
+        workspace_navigation: navigationSetting,
+      });
     if (field === "is_logged_in") return loggedIn;
     if (field === "fullscreen") return fullscreen;
     if (field === "exam_mode") return examMode;
@@ -162,6 +167,7 @@ beforeEach(() => {
   isLite = false;
   loggedIn = true;
   aiDisabled = false;
+  navigationSetting = undefined;
   jest.clearAllMocks();
 });
 
@@ -254,4 +260,26 @@ test("the compact folder tab returns from an opened project to the Projects list
   await userEvent.keyboard("{Enter}");
   expect(actions.set_active_tab).toHaveBeenCalledWith("projects");
   expect(projects).toHaveFocus();
+});
+
+test("sidebar navigation keeps only project navigation in the top bar", () => {
+  navigationSetting = "sidebar";
+  const mounted = render(view());
+  const nav = screen.getByRole("navigation");
+  expect(within(nav).getByRole("button", { name: "Projects" })).toBeVisible();
+  expect(
+    screen.getByRole("region", { name: "post-surface project navigation" }),
+  ).toBeVisible();
+  // Account, status and help moved to the sidebar's edges.
+  expect(within(nav).queryByRole("button", { name: "Compute" })).toBeNull();
+  expect(within(nav).queryByRole("button", { name: "Docs" })).toBeNull();
+  // Classic (the default for existing accounts) is unchanged.
+  navigationSetting = undefined;
+  mounted.rerender(view());
+  expect(
+    within(screen.getByRole("navigation")).getByRole("button", {
+      name: "Compute",
+    }),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Docs" })).toBeVisible();
 });
