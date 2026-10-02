@@ -13,9 +13,9 @@ Legend: ✅ done and verified · 🟡 partly done · ❌ not started · ⛔ depl
 | PR | What | State |
 |---|---|---|
 | patchflow #10–#15 | Snapshot-before-patch fix, value hashes, merge performance (notebook stall), same-word typing merges | ✅ merged, released as **0.10.0** |
-| patchflow #16 | Merge commits record their merged value, so changing merge3 later never changes history; histories written by 0.8 (production) keep their values | open |
+| patchflow #16 | Merge commits record their merged value, so changing merge3 later never changes history; histories written by 0.8 (production) keep their values | ✅ merged, released as **0.11.0** |
 | cocalc #751 | Markdown/Slate hardening, fuzzer, replay kit | draft; on patchflow `^0.10.0` |
-| cocalc #760 | Jupyter hardening, notebook fuzzer, browser meeting tests, ipynb import fix, stores merge commits' merged value | draft; on patchflow `^0.10.0`; the merge-commit storage commit waits for the release with #16 |
+| cocalc #760 | Jupyter hardening, notebook fuzzer, browser meeting tests, ipynb import fix, stores merge commits' merged value | draft; on patchflow `^0.11.0` |
 | cocalc #827 | Parallel dev build (bundles, ncc, tools): `dev:hub:build` 6 → 3.3 min | open |
 
 lite2b runs #751 + #760 with patchflow 0.10.0 (deployed 2026-10-02).
@@ -84,8 +84,8 @@ Known open issues, in order of importance:
 | ✅ | Exact merge from maximal common ancestors; concurrent heads merged deterministically | patchflow 0.9.x |
 | ✅ | Merge policy: no fuzzy relocation, word-level, an edit beats a concurrent delete, conflicts keep both | patchflow #2, #8 |
 | ✅ | Value hashes on every patch and snapshot | patchflow #11 |
-| 🟡 | The values of a history never depend on the merge algorithm: a merge commit records its merged value (like a git merge commit records its tree), so merge3 can still be improved after deploy | patchflow #16 + #760 |
-| 🟡 | Production histories (patchflow 0.8, no hashes) keep the values their authors saw: their merge commits are read the way 0.8 computed them. Replay of this project's real histories: 0.10.0 changed 306 of 4,342 checked chat/notebook patch values, #16 reproduces every one of them, except 32 in `lite2.chat` where 0.8 started from a snapshot taken after concurrent edits (29 of its 115 snapshots), which drops those edits; there #16 gives the value of the full history | patchflow #16 |
+| ✅ | The values of a history never depend on the merge algorithm: a merge commit records its merged value (like a Mercurial/git merge commit), so merge3 can still be improved after deploy | patchflow 0.11.0 + #760 |
+| ✅ | Production histories (patchflow 0.8, no hashes) keep the values their authors saw: their merge commits are read the way 0.8 computed them. Replay of this project's real histories: 0.10.0 changed 306 of 4,342 checked chat/notebook patch values, #16 reproduces every one of them, except 32 in `lite2.chat` where 0.8 started from a snapshot taken after concurrent edits (29 of its 115 snapshots), which drops those edits; there #16 gives the value of the full history | patchflow #16 |
 | 🟡 | Edits carry their base version; canonicalization is not a user edit (Workstream 3) | not started; addresses remaining Markdown losses |
 | 🟡 | Single authority for the notebook file on disk | see open issues |
 
@@ -94,7 +94,7 @@ Known open issues, in order of importance:
 Before deploying:
 
 1. ✅ patchflow 0.10.0 released; #751 and #760 bumped.
-2. ⛔ Merge patchflow #16, release, bump #760 (its merge-commit storage commit is ready).
+2. ✅ patchflow #16 merged and released (0.11.0); #760 bumped. (#751 stays on 0.10.0 until it merges; #760 builds on it.)
 3. ⛔ Merge #751, then #760 (rebase #760 onto main after #751).
 4. ⛔ Old and new clients during rollout: force all browser clients to reload on deploy. (With #16, a new merge commit's `patch` keeps its old meaning, so an old client still reads it as before.)
 5. ✅ `inconsistency` reports are readable with the admin CLI on day one.
@@ -103,7 +103,7 @@ Not blockers (deploy, then fix): unsent-on-reload loss, single ipynb writer,
 many-typist merge cost, Workstream 3, Workstream 4 guards, scheduled suites,
 an alert on inconsistency reports.
 
-Recommendation: deploy once 2–4 are done. The remaining issues are rarer and
+Recommendation: deploy once 3 and 4 are done. The remaining issues are rarer and
 less severe than what production has today (fuzzy merges that duplicate and
 lose text, no detection at all), and the value hashes mean anything new will
 be reported instead of silent.
