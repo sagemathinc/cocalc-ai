@@ -72,3 +72,20 @@ test("new agents reuse a unique connected subscription, not a revoked or ambiguo
       .mode,
   ).toBe("project-secret");
 });
+
+test("a long-lived token subscription is named by its label, else generically", () => {
+  const token = {
+    id: "token-1",
+    kind: "claude-subscription-home-v1",
+    revoked: null,
+    metadata: { authentication: "claude-oauth-token" },
+  };
+  expect(newAgentClaudeCredentialOptions([token] as any)[1].label).toBe(
+    "Claude subscription",
+  );
+  expect(
+    newAgentClaudeCredentialOptions([
+      { ...token, metadata: { ...token.metadata, label: "Max 20x" } },
+    ] as any)[1].label,
+  ).toBe("Max 20x");
+});

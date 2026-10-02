@@ -113,6 +113,8 @@ agents can use it at the same time without signing you out. The token only
 runs models: it cannot report your email or plan to CoCalc, and it cannot load
 claude.ai connectors. Use it with a Claude Pro or Max subscription; Team and
 Enterprise plans are not supported here, so use an Anthropic API key instead.
+Since CoCalc cannot read the plan, you can name the subscription (for example
+"Max 20x") under the credential picker in Claude settings.
 Disconnecting removes CoCalc's copy; revoke the token itself from your Claude
 account if you suspect it was exposed.
 

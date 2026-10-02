@@ -40,6 +40,7 @@ import {
   writeHarnessCredentialSelection,
 } from "./harness-credential-selection";
 import { ClaudeSubscriptionConnect } from "./claude-subscription-connect";
+import { ClaudeSubscriptionName } from "./claude-subscription-name";
 import { DocsLink } from "@cocalc/frontend/docs/link";
 import {
   ClaudePaymentStatus,
@@ -230,6 +231,22 @@ function ClaudeCredentialControl({
         }}
         style={{ width: "100%" }}
       />
+      {selectedSubscription && (
+        <ClaudeSubscriptionName
+          credential={selectedSubscription}
+          onRenamed={(label) =>
+            setCredentials((rows) =>
+              rows.map((row) => {
+                if (row.id !== selectedSubscription.id) return row;
+                const metadata = { ...row.metadata };
+                if (label) metadata.label = label;
+                else delete metadata.label;
+                return { ...row, metadata };
+              }),
+            )
+          }
+        />
+      )}
       {value === "project-secret" && (
         <Button onClick={() => setSecretsOpen(true)}>
           Manage project secret

@@ -8,7 +8,7 @@ import {
   claudeSubscriptionUsage,
 } from "@cocalc/util/ai/claude-usage";
 import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
-import { ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY } from "@cocalc/util/ai/external-credential-profiles";
+import { claudeSubscriptionName } from "@cocalc/frontend/agents/claude-credential-options";
 import {
   HARNESS_CREDENTIAL_SELECTION_EVENT,
   readHarnessCredentialSelection,
@@ -120,8 +120,10 @@ function PaymentStatus({
       active = false;
     };
   }, [open, credentialId]);
-  const identity =
-    credential?.metadata?.[ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY];
+  const name =
+    subscription && credential
+      ? claudeSubscriptionName(credential)
+      : credential?.metadata?.label;
   // Saved from the limits Claude reports with each response of a turn.
   const usage = claudeSubscriptionUsage(
     credential?.metadata?.[CLAUDE_USAGE_METADATA_KEY],
@@ -143,7 +145,7 @@ function PaymentStatus({
         >
           <div style={{ width: 290, maxWidth: "calc(100vw - 48px)" }}>
             <Typography.Text strong>{label}</Typography.Text>
-            {identity && <div>{identity}</div>}
+            {name && name !== label && <div>{name}</div>}
             {subscription ? (
               <>
                 <div role="status">

@@ -10,6 +10,27 @@ import {
   CLAUDE_SUBSCRIPTION_KIND,
 } from "@cocalc/util/ai/external-credential-profiles";
 
+/**
+ * How to refer to a Claude subscription: the owner's name for it, else the
+ * plan and email a full sign-in reported. A long-lived token reports neither.
+ */
+export function claudeSubscriptionName(
+  row: Pick<ExternalCredentialInfo, "metadata">,
+  compact = false,
+): string {
+  const label = `${row.metadata?.label ?? ""}`.trim();
+  if (label) return label;
+  const identity = row.metadata?.[ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY];
+  if (typeof identity !== "string" || !identity) return "Claude subscription";
+  const plan = String(row.metadata?.plan || "Pro/Max")
+    .replace(/^claude\s+/i, "")
+    .replace(
+      /^(pro|max)$/i,
+      (value) => value[0].toUpperCase() + value.slice(1).toLowerCase(),
+    );
+  return `Claude ${plan} - ${compact ? identity.split("@")[0] : identity}`;
+}
+
 export function newAgentClaudeCredentialValue(
   credential: AcpHarnessCredential,
 ): string {
@@ -32,25 +53,13 @@ export function newAgentClaudeCredentialOptions(
           (row.kind === "anthropic-api-key" ||
             row.kind === CLAUDE_SUBSCRIPTION_KIND),
       )
-      .map((row) => {
-        const identity = String(
-          row.metadata?.[ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY] ||
-            "unknown account",
-        );
-        const plan = String(row.metadata?.plan || "Pro/Max")
-          .replace(/^claude\s+/i, "")
-          .replace(
-            /^(pro|max)$/i,
-            (value) => value[0].toUpperCase() + value.slice(1).toLowerCase(),
-          );
-        return {
-          value: `${row.kind === CLAUDE_SUBSCRIPTION_KIND ? "account-subscription" : "account-api-key"}:${row.id}`,
-          label:
-            row.kind === CLAUDE_SUBSCRIPTION_KIND
-              ? `Claude ${plan} - ${compact ? identity.split("@")[0] : identity}`
-              : row.metadata?.label || "Anthropic API key",
-        };
-      }),
+      .map((row) => ({
+        value: `${row.kind === CLAUDE_SUBSCRIPTION_KIND ? "account-subscription" : "account-api-key"}:${row.id}`,
+        label:
+          row.kind === CLAUDE_SUBSCRIPTION_KIND
+            ? claudeSubscriptionName(row, compact)
+            : row.metadata?.label || "Anthropic API key",
+      })),
   ];
 }
 
