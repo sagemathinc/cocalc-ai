@@ -12,15 +12,13 @@ Legend: ✅ done and verified · 🟡 partly done · ❌ not started · ⛔ depl
 
 | PR | What | State |
 |---|---|---|
-| patchflow #10 | Snapshot loaded before its patch kept the patch's parents (the duplicating-snapshot cascade) | ✅ merged into `main` |
-| patchflow #11 | Value hashes | merged, but into #10's branch, not `main` |
-| patchflow #13 | Lands #11 on `main`, plus fixes for two P1s from its second review (partial backfill re-enabled commits; an unavailable value was written to the file) and a file-queue bug | open, fixes pushed (7fef149) |
-| patchflow #12 (on #13) | Merge performance: notebooks stalled after ~2,200 patches in a 10-user meeting | draft; review found no issues in its own diff; rebased on #13 (441720d) |
-| cocalc #751 | Markdown/Slate hardening, fuzzer, replay kit | draft, 121 commits |
-| cocalc #760 | Jupyter hardening, notebook fuzzer, browser meeting tests, ipynb import fix | draft, 57+ commits |
+| patchflow #10–#15 | Snapshot-before-patch fix, value hashes, merge performance (notebook stall), same-word typing merges | ✅ merged, released as **0.10.0** |
+| patchflow #16 | Merge commits record their merged value, so changing merge3 later never changes history; histories written by 0.8 (production) keep their values | open |
+| cocalc #751 | Markdown/Slate hardening, fuzzer, replay kit | draft; on patchflow `^0.10.0` |
+| cocalc #760 | Jupyter hardening, notebook fuzzer, browser meeting tests, ipynb import fix, stores merge commits' merged value | draft; on patchflow `^0.10.0`; the merge-commit storage commit waits for the release with #16 |
+| cocalc #827 | Parallel dev build (bundles, ncc, tools): `dev:hub:build` 6 → 3.3 min | open |
 
-Both cocalc PRs pin patchflow `^0.9.3`. The value hashes and merge fixes
-need a patchflow release with #10, #11 and #12, then a bump.
+lite2b runs #751 + #760 with patchflow 0.10.0 (deployed 2026-10-02).
 
 ## 1. Monitoring: will we know?
 
@@ -28,7 +26,8 @@ need a patchflow release with #10, #11 and #12, then a bump.
 |---|---|---|
 | ✅ | Value hashes: any client that computes a different document than its author reports it (log, hub client error log, `inconsistency` event, counter) | in #11 + #760 |
 | ✅ | Snapshots are only written when their value matches the hash; a bad snapshot is reported and not used | in #11 |
-| ❌ | A query/dashboard over the hub client error log for `inconsistency` reports, and an alert | **needed so the reports are actually seen** |
+| ✅ | Reading `inconsistency` reports: `cocalc admin db query` (after `cocalc auth elevate`) over `client_error_log` where `error like '%sync-inconsistency%'`; an agent can investigate them | no dashboard needed |
+| ❌ | An alert when reports appear | |
 | ❌ | Counters for: notebook file imported over a live notebook, own-save import skipped, merge time p99, words lost on reload | debug events exist (`jupyter_run_debug`), not production telemetry |
 | ❌ | Workstream 4 guards: refuse a suspicious automatic save (reverts a just-received remote patch, duplicates a large block) and resync | not built; hashes detect divergence, not every bad edit |
 
@@ -85,6 +84,8 @@ Known open issues, in order of importance:
 | ✅ | Exact merge from maximal common ancestors; concurrent heads merged deterministically | patchflow 0.9.x |
 | ✅ | Merge policy: no fuzzy relocation, word-level, an edit beats a concurrent delete, conflicts keep both | patchflow #2, #8 |
 | ✅ | Value hashes on every patch and snapshot | patchflow #11 |
+| 🟡 | The values of a history never depend on the merge algorithm: a merge commit records its merged value (like a git merge commit records its tree), so merge3 can still be improved after deploy | patchflow #16 + #760 |
+| 🟡 | Production histories (patchflow 0.8, no hashes) keep the values their authors saw: their merge commits are read the way 0.8 computed them. Replay of this project's real histories: 0.10.0 changed 306 of 4,342 checked chat/notebook patch values, #16 reproduces every one of them, except 32 in `lite2.chat` where 0.8 started from a snapshot taken after concurrent edits (29 of its 115 snapshots), which drops those edits; there #16 gives the value of the full history | patchflow #16 |
 | 🟡 | Edits carry their base version; canonicalization is not a user edit (Workstream 3) | not started; addresses remaining Markdown losses |
 | 🟡 | Single authority for the notebook file on disk | see open issues |
 
@@ -92,15 +93,17 @@ Known open issues, in order of importance:
 
 Before deploying:
 
-1. ⛔ Merge patchflow #13 (after its re-review) and #12 (retarget to `main` first), release (0.10.0), bump #751 and #760, and rerun the fuzzers on the released package.
-2. ⛔ Merge #751, then #760 (rebase #760 onto main after #751).
-3. ⛔ Decide how old and new clients coexist during rollout: old clients write patches without hashes and merge with the old algorithm. Simplest: force all browser clients to reload on deploy; verify the opt-in mixed-version test.
-4. ⛔ Have a way to see `inconsistency` reports in production (even a saved query over the client error log) on day one.
+1. ✅ patchflow 0.10.0 released; #751 and #760 bumped.
+2. ⛔ Merge patchflow #16, release, bump #760 (its merge-commit storage commit is ready).
+3. ⛔ Merge #751, then #760 (rebase #760 onto main after #751).
+4. ⛔ Old and new clients during rollout: force all browser clients to reload on deploy. (With #16, a new merge commit's `patch` keeps its old meaning, so an old client still reads it as before.)
+5. ✅ `inconsistency` reports are readable with the admin CLI on day one.
 
 Not blockers (deploy, then fix): unsent-on-reload loss, single ipynb writer,
-many-typist merge cost, Workstream 3, Workstream 4 guards, scheduled suites.
+many-typist merge cost, Workstream 3, Workstream 4 guards, scheduled suites,
+an alert on inconsistency reports.
 
-Recommendation: deploy once 1–4 are done. The remaining issues are rarer and
+Recommendation: deploy once 2–4 are done. The remaining issues are rarer and
 less severe than what production has today (fuzzy merges that duplicate and
 lose text, no detection at all), and the value hashes mean anything new will
 be reported instead of silent.
