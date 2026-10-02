@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { isCanonicalPublicSiteHost } from "./public-site-policy";
+
 export interface PublicFeatureCard {
   body: string;
   link?: { href: string; label: string };
@@ -58,6 +60,10 @@ export function publicFeatureHref(
   return `${basePath.replace(/\/+$/, "")}${catalogHref}`;
 }
 
+// Only cocalc.ai can say this; see getPublicFeaturePage.
+const RESEARCH_COMPUTE_COST_LINE =
+  "On CoCalc.ai, creating a dedicated machine on your own account needs a paid membership, and its usage is billed to your account.";
+
 export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
   {
     slug: "research-compute",
@@ -75,9 +81,7 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
     sections: [
       {
         title: "Two ways to get more compute",
-        paragraphs: [
-          "On CoCalc.ai, creating a dedicated machine on your own account needs a paid membership, and its usage is billed to your account.",
-        ],
+        paragraphs: [RESEARCH_COMPUTE_COST_LINE],
         cards: [
           {
             title: "Move the whole project to a dedicated machine.",
@@ -691,9 +695,25 @@ for (const page of PUBLIC_FEATURE_PAGES) {
   }
 }
 
+// Research Compute on a site other than cocalc.ai, such as a
+// customer-operated Launchpad or Rocket site: without the cost line, which
+// describes CoCalc.ai's memberships and billing, and with the default sign-up
+// label instead of "Start on CoCalc.ai".
+const RESEARCH_COMPUTE_PAGE = PUBLIC_FEATURE_PAGE_MAP.get("research-compute")!;
+const RESEARCH_COMPUTE_PAGE_ELSEWHERE: PublicFeaturePage = {
+  ...RESEARCH_COMPUTE_PAGE,
+  signUpLabel: undefined,
+  sections: RESEARCH_COMPUTE_PAGE.sections?.map((section) => ({
+    ...section,
+    paragraphs: section.paragraphs?.filter(
+      (paragraph) => paragraph !== RESEARCH_COMPUTE_COST_LINE,
+    ),
+  })),
+};
+
 export function getPublicFeaturePage(
   slug?: string,
-  config?: { cocalc_product?: string },
+  config?: { cocalc_product?: string; dns?: string },
 ): PublicFeaturePage | undefined {
   if (!slug) return;
   const page = PUBLIC_FEATURE_PAGE_MAP.get(slug);
@@ -706,6 +726,19 @@ export function getPublicFeaturePage(
     config.cocalc_product !== "rocket"
   ) {
     return;
+  }
+  // cocalc.ai is Launchpad on the canonical host. `config.dns` is the request
+  // host on both sides: the crawler fallback reads it from the request, and
+  // /customize sets it from the Host header for the browser.
+  if (
+    page?.slug === "research-compute" &&
+    config !== undefined &&
+    !(
+      config.cocalc_product === "launchpad" &&
+      isCanonicalPublicSiteHost(config.dns)
+    )
+  ) {
+    return RESEARCH_COMPUTE_PAGE_ELSEWHERE;
   }
   return page;
 }

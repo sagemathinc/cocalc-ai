@@ -16,7 +16,7 @@ import {
 } from "@cocalc/frontend/public/theme";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
-  getPublicFeaturePage,
+  type PublicFeaturePage,
   publicFeatureHref,
 } from "@cocalc/util/public-feature-pages";
 import {
@@ -27,15 +27,6 @@ import {
 } from "./page-components";
 
 const { Paragraph, Title } = Typography;
-
-// The hero, the two options, and the sizing section with its collapsed
-// technical details come from the feature record, which the crawler fallback
-// also renders (hub/servers/app/public-prerender.ts). Its two sections are,
-// in order, the options with the cost line and the sizing section, whose
-// link is also the hero's documentation button.
-const PAGE = getPublicFeaturePage("research-compute")!;
-const [OPTIONS, SIZING] = PAGE.sections!;
-const DOCS_LINK = SIZING.links![0];
 
 const COMPUTE_ACCENT = UI_COLORS.success;
 const COMPUTE_PAGE_CSS = `
@@ -109,10 +100,20 @@ const COMPUTE_PAGE_CSS = `
 export default function ResearchComputeFeaturePage({
   helpEmail,
   isAuthenticated,
+  page,
 }: {
   helpEmail?: string;
   isAuthenticated?: boolean;
+  // The feature record for this site (getPublicFeaturePage with the site's
+  // config), which the crawler fallback also renders
+  // (hub/servers/app/public-prerender.ts). The hero, the two options, and the
+  // sizing section with its collapsed technical details come from it. Its two
+  // sections are, in order, the options, with the cost line on cocalc.ai, and
+  // the sizing section, whose link is also the hero's documentation button.
+  page: PublicFeaturePage;
 }) {
+  const [options, sizing] = page.sections!;
+  const docsLink = sizing.links![0];
   const primaryCta = (
     <Button
       href={isAuthenticated ? appPath("hosts") : featureSignUpPath("code")}
@@ -121,7 +122,7 @@ export default function ResearchComputeFeaturePage({
     >
       {isAuthenticated
         ? "Open project hosts"
-        : (PAGE.signUpLabel ?? "Start using CoCalc")}
+        : (page.signUpLabel ?? "Start using CoCalc")}
     </Button>
   );
 
@@ -139,7 +140,7 @@ export default function ResearchComputeFeaturePage({
             id="feature-compute-hero-title"
             level={2}
           >
-            {PAGE.tagline}
+            {page.tagline}
           </Title>
           <Paragraph
             style={{
@@ -150,15 +151,15 @@ export default function ResearchComputeFeaturePage({
               maxWidth: 650,
             }}
           >
-            {PAGE.summary}
+            {page.summary}
           </Paragraph>
           <Flex gap={12} wrap>
             {primaryCta}
             <Button
-              href={publicFeatureHref(DOCS_LINK.href, appBasePath)}
+              href={publicFeatureHref(docsLink.href, appBasePath)}
               size="large"
             >
-              {DOCS_LINK.label}
+              {docsLink.label}
             </Button>
           </Flex>
         </Flex>
@@ -168,9 +169,9 @@ export default function ResearchComputeFeaturePage({
         <Flex vertical gap={24}>
           <div style={{ maxWidth: 780 }}>
             <Title level={2} style={{ margin: "0 0 10px" }}>
-              {OPTIONS.title}
+              {options.title}
             </Title>
-            {(OPTIONS.paragraphs ?? []).map((paragraph) => (
+            {(options.paragraphs ?? []).map((paragraph) => (
               <Paragraph
                 key={paragraph}
                 style={{
@@ -184,7 +185,7 @@ export default function ResearchComputeFeaturePage({
             ))}
           </div>
           <div className="feature-compute-route-grid">
-            {(OPTIONS.cards ?? []).map((card) => (
+            {(options.cards ?? []).map((card) => (
               <div className="feature-compute-route-card" key={card.title}>
                 <Flex vertical gap={14} style={{ height: "100%" }}>
                   <Title level={3} style={{ margin: 0 }}>
@@ -216,9 +217,9 @@ export default function ResearchComputeFeaturePage({
       <PublicSection>
         <Flex vertical gap={16} style={{ maxWidth: 860 }}>
           <Title level={2} style={{ margin: 0 }}>
-            {SIZING.title}
+            {sizing.title}
           </Title>
-          {(SIZING.paragraphs ?? []).map((paragraph) => (
+          {(sizing.paragraphs ?? []).map((paragraph) => (
             <Paragraph
               key={paragraph}
               style={{
@@ -231,12 +232,12 @@ export default function ResearchComputeFeaturePage({
             </Paragraph>
           ))}
           <details className="feature-compute-details">
-            <summary>{SIZING.detailsLabel}</summary>
-            <BulletList items={SIZING.bullets ?? []} />
+            <summary>{sizing.detailsLabel}</summary>
+            <BulletList items={sizing.bullets ?? []} />
           </details>
           <Flex align="center" gap={16} style={{ marginTop: 8 }} wrap>
             {primaryCta}
-            {(SIZING.links ?? []).map((link) => (
+            {(sizing.links ?? []).map((link) => (
               <LinkButton
                 href={publicFeatureHref(link.href, appBasePath)}
                 key={link.href}

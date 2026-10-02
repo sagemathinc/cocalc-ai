@@ -909,6 +909,10 @@ describe("PublicFeaturesApp", () => {
 // they are generally available.
 const MANAGED_VM_TERMS = /\bVMs?\b|virtual machines?|\bWindows\b/i;
 
+// cocalc.ai is Launchpad on the canonical host; /customize reports the
+// request host as `dns`.
+const COCALC_AI = { cocalc_product: "launchpad", dns: "cocalc.ai" };
+
 describe("research compute product visibility", () => {
   it.each(["plus", undefined, "unknown"])(
     "omits only compute from the index and subnav for product %s",
@@ -1007,11 +1011,11 @@ describe("research compute product visibility", () => {
   );
 
   it("renders the compute page from its feature record, like the crawler fallback", () => {
-    const page = getPublicFeaturePage("research-compute")!;
+    const page = getPublicFeaturePage("research-compute", COCALC_AI)!;
     const { container } = render(
       <PublicFeaturesApp
         config={{
-          cocalc_product: "launchpad",
+          ...COCALC_AI,
           help_email: "help@example.com",
           site_name: "CoCalc",
         }}
@@ -1089,6 +1093,50 @@ describe("research compute product visibility", () => {
       container.querySelector('a[href*="projects/virtual-machines"]'),
     ).toBeNull();
   });
+
+  // Other sites, such as a customer-operated Launchpad or Rocket site, show
+  // the same page without CoCalc.ai's cost line and with the default sign-up
+  // label, as their crawler fallback does.
+  it.each([
+    ["launchpad", "launchpad.example.edu"],
+    ["rocket", "compute.example.edu"],
+  ])(
+    "leaves CoCalc.ai's sign-up and billing off the compute page for %s on %s",
+    (cocalc_product, dns) => {
+      const renderMain = (config: { cocalc_product: string; dns: string }) => {
+        const { unmount } = render(
+          <PublicFeaturesApp
+            config={config}
+            initialRoute={{ view: "detail", slug: "research-compute" }}
+          />,
+        );
+        const text = screen.getByRole("main").textContent!;
+        unmount();
+        return text;
+      };
+      const cocalcAi = getPublicFeaturePage("research-compute", COCALC_AI)!;
+      const costLine = cocalcAi.sections![0].paragraphs![0];
+      const onCocalcAi = renderMain(COCALC_AI);
+      expect(onCocalcAi).toContain(costLine);
+      // The hero button and the button at the end.
+      expect(onCocalcAi.split("Start on CoCalc.ai")).toHaveLength(3);
+
+      const page = getPublicFeaturePage("research-compute", {
+        cocalc_product,
+        dns,
+      })!;
+      expect(page.signUpLabel).toBeUndefined();
+      expect(page.sections![0].paragraphs).toEqual([]);
+      const elsewhere = renderMain({ cocalc_product, dns });
+      expect(elsewhere).toBe(
+        onCocalcAi
+          .replace(costLine, "")
+          .replaceAll("Start on CoCalc.ai", "Start using CoCalc"),
+      );
+      expect(elsewhere).not.toContain("CoCalc.ai");
+      expect(elsewhere).not.toContain("membership");
+    },
+  );
 
   it("opens project hosts for signed-in visitors", () => {
     const { container } = render(

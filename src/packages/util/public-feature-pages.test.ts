@@ -179,12 +179,45 @@ describe("research compute product availability", () => {
   it.each(["launchpad", "rocket"])(
     "retains the complete catalog for %s",
     (cocalc_product) => {
-      expect(getPublicFeaturePage("research-compute", { cocalc_product })).toBe(
-        getPublicFeaturePage("research-compute"),
-      );
+      expect(
+        getPublicFeaturePage("research-compute", { cocalc_product })?.slug,
+      ).toBe("research-compute");
       expect(getPublicFeatureIndexPages({ cocalc_product })).toEqual(
         getPublicFeatureIndexPages(),
       );
     },
   );
+
+  it("names CoCalc.ai on the research compute page only on cocalc.ai", () => {
+    const catalog = getPublicFeaturePage("research-compute")!;
+    const costLine = catalog.sections![0].paragraphs![0];
+    expect(costLine).toMatch(/^On CoCalc\.ai, .*paid membership/);
+    expect(catalog.signUpLabel).toBe("Start on CoCalc.ai");
+    // cocalc.ai is Launchpad on the canonical host.
+    expect(
+      getPublicFeaturePage("research-compute", {
+        cocalc_product: "launchpad",
+        dns: "cocalc.ai",
+      }),
+    ).toBe(catalog);
+    for (const config of [
+      { cocalc_product: "rocket", dns: "compute.example.edu" },
+      { cocalc_product: "rocket", dns: "cocalc.ai" },
+      { cocalc_product: "launchpad", dns: "launchpad.example.edu" },
+      { cocalc_product: "launchpad" },
+    ]) {
+      const page = getPublicFeaturePage("research-compute", config)!;
+      expect(JSON.stringify(page)).not.toContain("CoCalc.ai");
+      // The default sign-up label, and no cost line; nothing else changes.
+      expect(page.signUpLabel).toBeUndefined();
+      expect(page.sections![0].paragraphs).toEqual([]);
+      expect({
+        ...page,
+        signUpLabel: catalog.signUpLabel,
+        sections: page.sections!.map((section, i) =>
+          i === 0 ? { ...section, paragraphs: [costLine] } : section,
+        ),
+      }).toEqual(catalog);
+    }
+  });
 });
