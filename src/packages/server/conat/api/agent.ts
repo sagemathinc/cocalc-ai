@@ -33,6 +33,20 @@ export const createAgentNetwork = createAgentNetworkImpl;
 export const updateAgentNetwork = updateAgentNetworkImpl;
 export const resolveAgentNetworkProposal = resolveAgentNetworkProposalImpl;
 export const authorizeRpcAdmission = rpc.authorizeRpcAdmission;
+
+export async function manageAgentMemory(opts: {
+  account_id?: string;
+  op: string;
+  enabled?: boolean;
+  name?: string;
+}) {
+  if (!opts.account_id) throw new Error("must be signed in");
+  const { agentMemory } = await import("@cocalc/server/agents/memory");
+  const { account_id, ...request } = opts as any;
+  delete request.session_hash;
+  delete request.browser_id;
+  return await agentMemory().owner(account_id, request);
+}
 export const authorizeRpcExecution = rpc.authorizeRpcExecution;
 export const registerIdentity = identities.registerIdentity;
 export const startFreshConversation = identities.startFreshConversation;

@@ -684,6 +684,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: TELEMETRY_ONLY,
   },
+  "hosts.recordClaudeSubscriptionUsage": {
+    decision: "fresh-auth-not-required",
+    reason: TELEMETRY_ONLY,
+  },
   "hosts.reserveSiteFundedCodexTurn": {
     decision: "fresh-auth-not-required",
     reason: "host-authenticated bounded site-funded Codex admission",
@@ -1761,6 +1765,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: ORDINARY_AUTHZ,
   },
   "system.updateCodexSubscriptionLabel": {
+    decision: "fresh-auth-not-required",
+    reason: "updates only the signed-in account's credential display label",
+  },
+  "system.updateClaudeSubscriptionLabel": {
     decision: "fresh-auth-not-required",
     reason: "updates only the signed-in account's credential display label",
   },

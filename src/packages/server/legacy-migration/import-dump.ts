@@ -6,7 +6,7 @@
 import { createReadStream, existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, dirname, join, posix } from "node:path";
-import { createInterface } from "node:readline";
+import { createJsonLineReader } from "@cocalc/util/json-lines";
 import { createGunzip } from "node:zlib";
 
 import getPool from "@cocalc/database/pool";
@@ -488,7 +488,7 @@ async function* readRows(
   limit: number | undefined,
 ): AsyncGenerator<Record<string, any>> {
   const stream = createReadStream(file).pipe(createGunzip());
-  const lines = createInterface({ input: stream, crlfDelay: Infinity });
+  const lines = createJsonLineReader(stream);
   let count = 0;
   for await (const line of lines) {
     const trimmed = line.trim();

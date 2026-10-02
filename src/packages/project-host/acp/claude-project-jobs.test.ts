@@ -410,3 +410,44 @@ test("duplicate recovery after close releases a reservation exactly once", async
     abandoned.runs[0]?.confirmCleanup();
   }
 });
+
+test("cancel reports the outcome instead of replaying old output", async () => {
+  const { jobs, runs } = fixture();
+  try {
+    const first = await jobs.start({ script: "grep", yield_time_ms: 0 });
+    runs[0].output("stdout", "x".repeat(50_000));
+    const canceled = await jobs.cancel({ job_id: first.job_id });
+    expect(canceled).toMatchObject({
+      status: "canceled",
+      stdout: "",
+      has_more: false,
+    });
+    // The output is still there for a caller that asks for it.
+    const replay = await jobs.wait({
+      job_id: first.job_id,
+      cursor: 0,
+      yield_time_ms: 0,
+    });
+    expect(replay.stdout.length).toBe(50_000);
+  } finally {
+    await jobs.close();
+  }
+});
+
+test("unconfirmed cleanup says who can recover and how", async () => {
+  const execute = jest.fn(async () => ({
+    code: 1,
+    stdout: "",
+    stderr: "",
+    cleanupConfirmed: false,
+  }));
+  const jobs = new ClaudeProjectJobs(execute as any);
+  try {
+    await jobs.start({ script: "grep", yield_time_ms: 1000 });
+    await expect(jobs.start({ script: "echo alive" })).rejects.toThrow(
+      /Only the user can recover: ask them to restart the project/,
+    );
+  } finally {
+    await jobs.close();
+  }
+});

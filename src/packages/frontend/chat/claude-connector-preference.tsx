@@ -3,6 +3,21 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { Checkbox } from "antd";
+import { CLAUDE_OAUTH_TOKEN_AUTHENTICATION } from "@cocalc/util/ai/external-credential-profiles";
+
+/**
+ * claude.ai connectors need a full sign-in. A long-lived token (the current
+ * way to connect) can only run models, so the preference does not apply.
+ */
+export function claudeConnectorsAvailable(
+  credentials: { id: string; metadata?: Record<string, unknown> }[],
+  credentialId: string | undefined,
+): boolean {
+  const credential = credentials.find(({ id }) => id === credentialId);
+  return (
+    credential?.metadata?.authentication !== CLAUDE_OAUTH_TOKEN_AUTHENTICATION
+  );
+}
 
 export function ClaudeConnectorPreference({
   enabled,
