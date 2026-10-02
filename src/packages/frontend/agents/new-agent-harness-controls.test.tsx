@@ -648,13 +648,11 @@ test("successful first-use sign-in closes its modal and focuses the surviving se
 
 test("a delayed sign-in callback does not steal focus after switching projects", async () => {
   jest.useFakeTimers();
-  jest
-    .mocked(useProjectSecrets)
-    .mockReturnValue({
-      secrets: [],
-      refresh: jest.fn(),
-      setSecrets: jest.fn(),
-    });
+  jest.mocked(useProjectSecrets).mockReturnValue({
+    secrets: [],
+    refresh: jest.fn(),
+    setSecrets: jest.fn(),
+  });
   const start = jest
     .spyOn(
       webapp_client.conat_client.hub.projects,
@@ -751,16 +749,15 @@ test("a selected subscription can be named, disconnected or reconnected from the
     await screen.findByRole("button", { name: "Configure Claude Code" }),
   );
   await screen.findByRole("dialog", { name: "Configure Claude Code" });
-  expect(
-    screen.getByRole("button", { name: /Name this subscription/ }),
-  ).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Reconnect Claude" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: /Name$/ })).toBeTruthy();
+  expect(screen.getByRole("button", { name: /Reconnect$/ })).toBeTruthy();
+  expect(screen.getByText(/Long-lived token, expires/)).toBeTruthy();
   // A long-lived token cannot load claude.ai connectors.
   expect(screen.queryByText("Use my claude.ai connectors")).toBeNull();
-  await user.click(
-    screen.getByRole("button", { name: "Disconnect Claude subscription" }),
-  );
-  await user.click(await screen.findByRole("button", { name: "Disconnect" }));
+  await user.click(screen.getByRole("button", { name: "Disconnect" }));
+  // The confirmation's own Disconnect button.
+  const confirm = await screen.findAllByRole("button", { name: "Disconnect" });
+  await user.click(confirm[confirm.length - 1]);
   await waitFor(() =>
     expect(onCredential).toHaveBeenCalledWith({
       version: 1,

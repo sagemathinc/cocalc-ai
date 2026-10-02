@@ -94,6 +94,9 @@ export function ClaudeSubscriptionConnect({
   modal = false,
   reconnectCredentialId,
   reconnectOnly = false,
+  links = false,
+  leadingActions,
+  trailingActions,
 }: {
   projectId: string;
   // Offer only "Reconnect Claude" (e.g. when a turn failed on expired sign-in).
@@ -103,6 +106,11 @@ export function ClaudeSubscriptionConnect({
   compact?: boolean;
   modal?: boolean;
   reconnectCredentialId?: string;
+  // Account actions as one row of small links (settings panels), with the
+  // caller's own actions before and after Reconnect.
+  links?: boolean;
+  leadingActions?: ReactNode;
+  trailingActions?: ReactNode;
   onConnected: (credentialId: string) => Promise<void> | void;
 }) {
   const [login, setLogin] = useState<LoginStatus>();
@@ -114,6 +122,13 @@ export function ClaudeSubscriptionConnect({
   // A code that could not be submitted stays editable for another try.
   const [codeError, setCodeError] = useState("");
   const [open, setOpen] = useState(false);
+  // Briefly confirm success after the sign-in panel closes.
+  const [justConnected, setJustConnected] = useState(false);
+  useEffect(() => {
+    if (!justConnected) return;
+    const timer = setTimeout(() => setJustConnected(false), 8000);
+    return () => clearTimeout(timer);
+  }, [justConnected]);
   const attempt = useRef(0);
   const pendingLogin = useRef<{ project_id: string; id: string } | undefined>(
     undefined,
@@ -233,7 +248,13 @@ export function ClaudeSubscriptionConnect({
           if (next.state === "completed" && next.credentialId && !completed) {
             completed = true;
             await connected(next.credentialId);
-            if (active && started === attempt.current) setOpen(false);
+            if (active && started === attempt.current) {
+              // Done: close the sign-in rather than leave it on screen.
+              setOpen(false);
+              setLogin(undefined);
+              setJustConnected(true);
+            }
+            return;
           }
           if (active && started === attempt.current) setLogin(next);
         })
@@ -261,6 +282,7 @@ export function ClaudeSubscriptionConnect({
         ...(modal
           ? {}
           : {
+              boxSizing: "border-box",
               border: `1px solid ${token.colorBorderSecondary}`,
               borderRadius: token.borderRadiusLG,
               padding: 16,
@@ -406,6 +428,56 @@ export function ClaudeSubscriptionConnect({
       </Space>
     </div>
   );
+  if (links && !reconnectOnly) {
+    const link = { type: "link" as const, size: "small" as const };
+    return (
+      <Space
+        orientation="vertical"
+        size={8}
+        style={{ width: "100%", minWidth: 0 }}
+      >
+        {!signingIn && (
+          <Space wrap size={[16, 4]}>
+            {leadingActions}
+            {reconnectCredentialId && (
+              <Button
+                {...link}
+                style={{ padding: 0 }}
+                icon={<Icon name="refresh" />}
+                disabled={disabled}
+                onClick={() => void start(reconnectCredentialId)}
+              >
+                Reconnect
+              </Button>
+            )}
+            {trailingActions}
+            {justConnected && (
+              <Typography.Text type="success" role="status">
+                <Icon name="check-circle" /> Connected
+              </Typography.Text>
+            )}
+          </Space>
+        )}
+        {!signingIn &&
+          (hasConnection ? (
+            <Button
+              {...link}
+              style={{ padding: 0 }}
+              icon={<Icon name="plus" />}
+              disabled={disabled}
+              onClick={() => void start()}
+            >
+              Connect another subscription
+            </Button>
+          ) : (
+            <Button disabled={disabled} onClick={() => void start()}>
+              Connect Claude Pro/Max
+            </Button>
+          ))}
+        {signIn}
+      </Space>
+    );
+  }
   // Compact with the sign-in in a modal sits in a row of settings: stay
   // inline and one line high there.
   const inline = compact && modal;
@@ -453,6 +525,11 @@ export function ClaudeSubscriptionConnect({
               : "Connect another Claude subscription"
             : "Connect Claude Pro/Max"}
         </Button>
+      )}
+      {justConnected && (
+        <Typography.Text type="success" role="status">
+          <Icon name="check-circle" /> Claude subscription connected.
+        </Typography.Text>
       )}
       {modal ? (
         <Modal

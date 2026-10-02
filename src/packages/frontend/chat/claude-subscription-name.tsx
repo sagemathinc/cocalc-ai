@@ -3,17 +3,13 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { Button, Input, Space, Typography } from "antd";
+import { Button, Input, Typography } from "antd";
 import { useRef, useState } from "react";
 import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
 import { Icon } from "@cocalc/frontend/components/icon";
-import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
-/**
- * Below the credential picker (which shows the name): rename the selected
- * subscription in place, and when its long-lived token expires.
- */
+/** Rename the selected subscription in place (the picker shows its name). */
 export function ClaudeSubscriptionName({
   credential,
   onRenamed,
@@ -27,7 +23,6 @@ export function ClaudeSubscriptionName({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const done = useRef(false);
-  const expiresAt = credential.metadata?.expires_at;
 
   const finish = async (save: boolean) => {
     if (done.current) return;
@@ -56,7 +51,7 @@ export function ClaudeSubscriptionName({
   };
 
   return (
-    <div>
+    <>
       {editing ? (
         <Input
           size="small"
@@ -78,32 +73,25 @@ export function ClaudeSubscriptionName({
           style={{ width: 220 }}
         />
       ) : (
-        <Space size={8} wrap>
-          <Button
-            type="link"
-            size="small"
-            icon={<Icon name="pencil" />}
-            style={{ padding: 0 }}
-            onClick={() => {
-              done.current = false;
-              setDraft(current);
-              setEditing(true);
-            }}
-          >
-            {current ? "Rename" : "Name this subscription"}
-          </Button>
-          {typeof expiresAt === "string" && (
-            <Typography.Text type="secondary">
-              Long-lived token, expires <TimeAgo date={expiresAt} />
-            </Typography.Text>
-          )}
-        </Space>
+        <Button
+          type="link"
+          size="small"
+          icon={<Icon name="pencil" />}
+          style={{ padding: 0 }}
+          onClick={() => {
+            done.current = false;
+            setDraft(current);
+            setEditing(true);
+          }}
+        >
+          {current ? "Rename" : "Name"}
+        </Button>
       )}
       {error && (
-        <div role="alert">
-          <Typography.Text type="danger">{error}</Typography.Text>
-        </div>
+        <Typography.Text type="danger" role="alert">
+          {error}
+        </Typography.Text>
       )}
-    </div>
+    </>
   );
 }

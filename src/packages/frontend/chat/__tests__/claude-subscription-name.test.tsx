@@ -27,17 +27,14 @@ const credential = {
 
 beforeEach(() => jest.clearAllMocks());
 
-test("names a subscription in place and shows when its token expires", async () => {
+test("names a subscription in place", async () => {
   rename.mockResolvedValue({ updated: true });
   const onRenamed = jest.fn();
   render(
     <ClaudeSubscriptionName credential={credential} onRenamed={onRenamed} />,
   );
-  expect(screen.getByText(/Long-lived token, expires/)).toBeTruthy();
   const user = userEvent.setup();
-  await user.click(
-    screen.getByRole("button", { name: /Name this subscription/ }),
-  );
+  await user.click(screen.getByRole("button", { name: /Name$/ }));
   await user.type(screen.getByLabelText("Subscription name"), "Max 20x{Enter}");
   await waitFor(() => expect(onRenamed).toHaveBeenCalledWith("Max 20x"));
   expect(rename).toHaveBeenCalledTimes(1);
