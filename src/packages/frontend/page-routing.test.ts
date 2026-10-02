@@ -312,3 +312,22 @@ test("projects I gave an alias have /u/<me>/projects/<alias> addresses", () => {
     setPersonalUrlIdentity({});
   }
 });
+
+test("search results have their own address, over the page of their kind", () => {
+  const parsed = parsePageTarget("search/projects/plot%20a%2Fb");
+  expect(parsed).toEqual({
+    page: "search",
+    scope: "projects",
+    query: "plot a/b",
+  });
+  expect(getPageUrlPath(parsed)).toBe("/search/projects/plot%20a%2Fb");
+  expect(getPageTopTab(parsed)).toBe("projects");
+  // Back/Forward hands over decoded paths: slashes in the query survive.
+  expect(parsePageTarget("search/people/a/b")).toEqual({
+    page: "search",
+    scope: "people",
+    query: "a/b",
+  });
+  expect(getPageTopTab(parsePageTarget("search/artifacts/x"))).toBe("agents");
+  expect(parsePageTarget("search/bogus/x")).toMatchObject({ scope: "agents" });
+});

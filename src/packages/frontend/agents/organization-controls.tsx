@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { useId, useRef, useState } from "react";
 import { Button, Segmented, Space, Switch, Typography } from "antd";
 import { Icon } from "@cocalc/frontend/components";
@@ -10,27 +9,14 @@ export function AgentOrganizationControls({
   onMode,
   onGroupByProject,
   onNewAgent,
-  filterInput,
-  open: openProp,
-  onOpenChange,
 }: {
   mode: "recent" | "custom";
   groupByProject: boolean;
   onMode: (mode: "recent" | "custom") => void;
   onGroupByProject: (value: boolean) => void;
   onNewAgent: () => void;
-  // A sticky filter, shown (and applied) only while the panel is open.
-  filterInput?: ReactNode;
-  open?: boolean;
-  onOpenChange?: (open: boolean) => void;
 }) {
-  const [openState, setOpenState] = useState(false);
-  const open = openProp ?? openState;
-  const setOpen = (next: boolean | ((value: boolean) => boolean)) => {
-    const value = typeof next === "function" ? next(open) : next;
-    setOpenState(value);
-    onOpenChange?.(value);
-  };
+  const [open, setOpen] = useState(false);
   const id = useId();
   const trigger = useRef<HTMLButtonElement>(null);
   return (
@@ -92,7 +78,6 @@ export function AgentOrganizationControls({
           />
           <span>Group by project</span>
         </Space>
-        {filterInput && <div style={{ marginTop: 8 }}>{filterInput}</div>}
       </div>
     </KeyboardBoundary>
   );

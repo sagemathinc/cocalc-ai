@@ -17,7 +17,11 @@ jest.mock("@cocalc/frontend/app-framework", () => {
   });
   return {
     redux: {
-      getActions: () => ({ open_project: (...a) => openProject(...a) }),
+      getActions: () => ({
+        open_project: (...a) => openProject(...a),
+        setState: jest.fn(),
+        set_active_tab: jest.fn(),
+      }),
       getStore: () => ({ get: () => "me" }),
       getProjectActions: () => undefined,
     },
@@ -64,8 +68,22 @@ jest.mock("@cocalc/frontend/agents/search-runner", () => ({
 jest.mock("@cocalc/frontend/people/collaborators", () => ({
   usePeople: () => [],
 }));
+const mockConversation = {
+  conversation_id: "c1",
+  project_id: "p1",
+  title: "Weekly",
+  last_activity: 1,
+};
 jest.mock("@cocalc/frontend/people/use-conversations", () => ({
-  useConversations: () => ({ conversations: [], loading: false }),
+  useConversations: () => ({
+    conversations: [mockConversation],
+    loading: false,
+  }),
+}));
+const conversationSearch = jest.fn();
+jest.mock("@cocalc/frontend/people/search-dialog", () => ({
+  SEARCH_MAX_CONVERSATIONS: 50,
+  searchConversations: (...a) => conversationSearch(...a),
 }));
 jest.mock("@cocalc/frontend/projects/project-aliases", () => ({
   useProjectAliases: () => new Map([["p1", "thesis"]]),
@@ -160,4 +178,27 @@ test("when file names and contents find nothing, the snapshots are searched", as
       name: "Open gone.tex from snapshot 2026-09-01T10:00:00Z in Thesis",
     }),
   ).toBeInTheDocument();
+});
+
+test("people searches message text in conversations", async () => {
+  conversationSearch.mockImplementation(async ({ conversations, onProgress }) =>
+    onProgress(
+      [
+        {
+          conversation: conversations[0],
+          hit: { row_id: 1, segment_id: "head", snippet: "the budget is due" },
+        },
+      ],
+      1,
+      0,
+    ),
+  );
+  act(() => openSearch("budget", "people"));
+  render(<SearchResults {...props} />);
+  const hit = await screen.findByRole("button", {
+    name: "Open message in Weekly",
+  });
+  expect(hit).toHaveTextContent("the budget is due");
+  await userEvent.setup().click(hit);
+  expect(getSearchState().open).toBe(false);
 });

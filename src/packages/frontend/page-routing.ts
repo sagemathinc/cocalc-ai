@@ -12,6 +12,11 @@ import {
 } from "./app/personal-url-identity";
 import type { AuthView } from "@cocalc/frontend/auth/types";
 import {
+  SEARCH_SCOPES,
+  searchPath,
+  type SearchScope,
+} from "@cocalc/frontend/search/search-store";
+import {
   getAccountSettingsRouteFromState,
   getAccountSettingsState,
   getSettingsTargetPath,
@@ -67,6 +72,8 @@ export type ParsedPageTarget =
   | { page: "people"; route?: string }
   // A personal URL: "u/<owner>/<kind>/<alias>", resolved on load.
   | { page: "u"; path: string }
+  // Search results: "search/<scope>/<query>", over the scope's page.
+  | { page: "search"; scope: SearchScope; query: string }
   | { page: "file-use" }
   | { page: "admin"; route: AdminRoute }
   | { page: "hosts" }
@@ -154,6 +161,19 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
         page: "people",
         route: segments.slice(1).filter(Boolean).join("/") || undefined,
       };
+    case "search": {
+      const scope = SEARCH_SCOPES.includes(segments[1] as SearchScope)
+        ? (segments[1] as SearchScope)
+        : "agents";
+      // The query may contain (decoded) slashes.
+      let query = segments.slice(2).join("/");
+      try {
+        query = decodeURIComponent(query);
+      } catch {
+        // already decoded
+      }
+      return { page: "search", scope, query };
+    }
     case "u": {
       // My own named agents and artifacts open directly; anyone else's
       // personal URL is resolved by the hub.
@@ -220,6 +240,10 @@ export function getPageTopTab(parsed: ParsedPageTarget): PageTopTab {
     case "u":
       // Shown while the personal URL resolves.
       return "people";
+    case "search":
+      return parsed.scope === "projects" || parsed.scope === "people"
+        ? parsed.scope
+        : "agents";
     default:
       return parsed.page;
   }
@@ -295,6 +319,8 @@ export function getPageTargetPath(parsed: ParsedPageTarget): string {
       return parsed.route ? `people/${parsed.route}` : "people";
     case "u":
       return parsed.path;
+    case "search":
+      return searchPath(parsed.scope, parsed.query);
     case "admin":
       return getAdminTargetPath(parsed.route);
     case "hosts":

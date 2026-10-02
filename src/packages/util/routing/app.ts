@@ -20,6 +20,7 @@ export const APP_ROUTES = new Set([
   "notifications",
   "hosts",
   "people",
+  "search",
 ]);
 
 const HOST_ROOT_ONLY_ROUTES = [

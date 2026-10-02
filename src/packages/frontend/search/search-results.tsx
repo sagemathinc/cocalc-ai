@@ -36,6 +36,11 @@ import { usePeople } from "@cocalc/frontend/people/collaborators";
 import { matchesPerson, matchesSearch } from "@cocalc/frontend/people/scope";
 import { useConversations } from "@cocalc/frontend/people/use-conversations";
 import {
+  searchConversations,
+  SEARCH_MAX_CONVERSATIONS,
+  type ConversationHit,
+} from "@cocalc/frontend/people/search-dialog";
+import {
   runAcrossProjects,
   searchProjectFiles,
   type ProjectSearchProgress,
@@ -60,6 +65,7 @@ type SectionKey =
   | "contents"
   | "people"
   | "conversations"
+  | "chatMessages"
   | "snapshots";
 
 const ORDER: Record<SearchScope, SectionKey[]> = {
@@ -72,6 +78,7 @@ const ORDER: Record<SearchScope, SectionKey[]> = {
     "contents",
     "people",
     "conversations",
+    "chatMessages",
     "snapshots",
   ],
   projects: [
@@ -83,6 +90,7 @@ const ORDER: Record<SearchScope, SectionKey[]> = {
     "artifacts",
     "people",
     "conversations",
+    "chatMessages",
     "snapshots",
   ],
   artifacts: [
@@ -94,11 +102,13 @@ const ORDER: Record<SearchScope, SectionKey[]> = {
     "contents",
     "people",
     "conversations",
+    "chatMessages",
     "snapshots",
   ],
   people: [
     "people",
     "conversations",
+    "chatMessages",
     "agents",
     "messages",
     "artifacts",
@@ -114,7 +124,7 @@ const EXPANDED: Record<SearchScope, SectionKey[]> = {
   agents: ["agents", "messages"],
   projects: ["projects", "files", "contents"],
   artifacts: ["artifacts"],
-  people: ["people", "conversations"],
+  people: ["people", "conversations", "chatMessages"],
 };
 
 const TITLES: Record<SectionKey, string> = {
@@ -126,6 +136,7 @@ const TITLES: Record<SectionKey, string> = {
   contents: "In files",
   people: "People",
   conversations: "Conversations",
+  chatMessages: "Messages in conversations",
   snapshots: "In snapshots",
 };
 
@@ -207,6 +218,12 @@ export function SearchResults(props: SearchResultsProps) {
     conversations: (
       <ConversationsSection query={query} onCount={report("conversations")} />
     ),
+    chatMessages: (
+      <ConversationMessagesSection
+        query={query}
+        onCount={report("chatMessages")}
+      />
+    ),
   };
 
   return (
@@ -241,7 +258,7 @@ export function SearchResults(props: SearchResultsProps) {
             type="text"
             aria-label="Close search"
             icon={<Icon name="arrow-left" />}
-            onClick={closeSearch}
+            onClick={() => closeSearch({ restoreUrl: true })}
           />
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 600, minWidth: 0 }}>
             Search: <span style={{ fontWeight: 400 }}>“{query}”</span>
@@ -1024,6 +1041,97 @@ function SnapshotsSection({
             />
           ))}
         </section>
+      ))}
+    </>
+  );
+}
+
+function ConversationMessagesSection({
+  query,
+  onCount,
+}: {
+  query: string;
+  onCount: (c: string) => void;
+}) {
+  const state = useConversations(true);
+  const projectTitle = useProjectTitle();
+  const [hits, setHits] = useState<ConversationHit[]>();
+  const [searched, setSearched] = useState(0);
+  const [failed, setFailed] = useState(0);
+  const [busy, setBusy] = useState(true);
+  const [started, setStarted] = useState(false);
+  const [canceled] = useState(() => ({ value: false }));
+  useEffect(
+    () => () => {
+      canceled.value = true;
+    },
+    [],
+  );
+  // Start once the conversation list is available.
+  useEffect(() => {
+    if (started || (state.loading && !state.conversations.length)) return;
+    setStarted(true);
+    void searchConversations({
+      conversations: state.conversations,
+      query,
+      concurrency: 4,
+      canceled: () => canceled.value,
+      onProgress: (next, searchedCount, failedCount) => {
+        setHits(next);
+        setSearched(searchedCount);
+        setFailed(failedCount);
+      },
+    }).finally(() => {
+      if (!canceled.value) setBusy(false);
+    });
+  }, [state.loading, state.conversations, started]);
+  const total = Math.min(state.conversations.length, SEARCH_MAX_CONVERSATIONS);
+  useReportCount(
+    onCount,
+    hits == null ? "…" : `${hits.length}${busy ? "…" : ""}`,
+  );
+  return (
+    <>
+      <Coverage
+        busy={busy}
+        searched={searched}
+        unavailable={failed}
+        pending={busy ? 0 : Math.max(0, total - searched - failed)}
+        unit={`of the ${total} most recent conversations`}
+      />
+      {!busy && hits != null && !hits.length && (
+        <Empty>No messages match in the conversations searched.</Empty>
+      )}
+      {hits?.map(({ conversation: c, hit }) => (
+        <ResultRow
+          key={`${c.conversation_id}:${hit.row_id}:${hit.segment_id}:${hit.date_ms}`}
+          label={`Open message in ${c.title}`}
+          title={c.title}
+          meta={
+            hit.date_ms ? (
+              <SearchHitTime date={Number(hit.date_ms)} />
+            ) : undefined
+          }
+          detail={
+            <>
+              <Highlight
+                text={`${hit.excerpt || hit.snippet || "(no preview)"}`.replace(
+                  /<[^>]*>/g,
+                  " ",
+                )}
+                query={query}
+              />
+              <span style={{ marginLeft: 8 }}>
+                · {projectTitle(c.project_id)}
+              </span>
+            </>
+          }
+          onOpen={() =>
+            openPeopleRoute(
+              `conversations/${c.project_id}/${c.conversation_id}`,
+            )
+          }
+        />
       ))}
     </>
   );

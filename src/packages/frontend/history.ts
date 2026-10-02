@@ -58,6 +58,7 @@ import {
 import { IS_EMBEDDED } from "@cocalc/frontend/client/handle-target";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { closeSearch, openSearch } from "@cocalc/frontend/search/search-store";
 import {
   getPageUrlPath,
   parsePageTarget,
@@ -241,7 +242,16 @@ export function load_target(
     redux.getActions("page").set_active_tab("account", false);
     return;
   }
+  // Any other address (including Back/Forward) leaves the search results.
+  if (parsed.page !== "search") closeSearch();
   switch (parsed.page) {
+    case "search": {
+      // The results cover the page of their kind.
+      const page = parsed.scope === "artifacts" ? "artifacts" : parsed.scope;
+      load_target(page, ignore_kiosk, false);
+      openSearch(parsed.query, parsed.scope, { returnPath: page });
+      break;
+    }
     case "agents":
       redux.getActions("page").setState({
         library_open: parsed.library === true,

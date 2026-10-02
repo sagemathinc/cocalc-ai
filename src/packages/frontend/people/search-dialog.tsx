@@ -67,7 +67,7 @@ export function hitsFromRipgrepJson(
 
 // Current messages: ripgrep the .chat file through the project-host
 // filesystem (no compute start). Archived messages: the chat store.
-async function searchConversationFile(
+export async function searchConversationFile(
   c: ListedConversation,
   query: string,
 ): Promise<ChatStoreSearchHit[]> {
@@ -111,10 +111,11 @@ async function searchConversationFile(
   return hits;
 }
 
-interface Hit {
+export interface ConversationHit {
   conversation: ListedConversation;
   hit: ChatStoreSearchHit;
 }
+type Hit = ConversationHit;
 
 export async function searchConversations({
   conversations,
@@ -122,6 +123,7 @@ export async function searchConversations({
   search = searchConversationFile,
   onProgress,
   canceled,
+  concurrency = 1,
 }: {
   conversations: ListedConversation[];
   query: string;
@@ -131,6 +133,8 @@ export async function searchConversations({
   ) => Promise<ChatStoreSearchHit[]>;
   onProgress: (hits: Hit[], searched: number, failed: number) => void;
   canceled: () => boolean;
+  // How many conversations to search at once.
+  concurrency?: number;
 }): Promise<void> {
   const targets = [...conversations]
     .sort((a, b) => b.last_activity - a.last_activity)
@@ -138,19 +142,24 @@ export async function searchConversations({
   const hits: Hit[] = [];
   let searched = 0;
   let failed = 0;
-  for (const conversation of targets) {
-    if (canceled()) return;
-    try {
-      for (const hit of await search(conversation, query)) {
-        hits.push({ conversation, hit });
+  async function worker() {
+    while (targets.length > 0) {
+      if (canceled()) return;
+      const conversation = targets.shift()!;
+      try {
+        for (const hit of await search(conversation, query)) {
+          hits.push({ conversation, hit });
+        }
+      } catch {
+        failed += 1;
       }
-    } catch {
-      failed += 1;
+      if (canceled()) return;
+      searched += 1;
+      hits.sort((a, b) => (b.hit.date_ms ?? 0) - (a.hit.date_ms ?? 0));
+      onProgress([...hits], searched, failed);
     }
-    searched += 1;
-    hits.sort((a, b) => (b.hit.date_ms ?? 0) - (a.hit.date_ms ?? 0));
-    onProgress([...hits], searched, failed);
   }
+  await Promise.all(Array.from({ length: Math.max(1, concurrency) }, worker));
 }
 
 export function SearchDialog({
