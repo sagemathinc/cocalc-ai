@@ -48,3 +48,15 @@ Written by Claude (claude-opus-5-5) on 2026-09-30, working as an agent in a CoCa
 
 - **Gap:** a finished turn can't be woken when a job ends, so the agent waits in the foreground on every build and test run. That's fine for runs of 1–2 minutes, but it wastes the turn on long CI, end-to-end or training runs.
 - **Wanted:** a way to schedule a continuation, such as "resume this thread when job X finishes (or at time T)", with the job's final status and output tail delivered as the next turn.
+
+## 8. Subagents
+
+- **Gap:** Claude Code can hand work to subagents (its Agent tool). Each one runs in parallel with its own context window and reports back a summary. In CoCalc they aren't available. The subscription controller starts every session with all built-in Claude Code tools off (`tools: []` and `agents: {}` in `claudeSubscriptionSessionMeta`, `ai/acp/harness-client.ts`). Only the CoCalc project tools remain, so the Agent tool doesn't exist.
+- **Example:** broad, independent investigations had to run one after another in the main context and use it up. Examples include auditing every JSON-lines reader for the U+2028 hang and reviewing a 48-file PR while also reading the code it changed. Subagents would have searched in parallel and returned just the findings.
+- **Wanted:**
+  - Enable only the Agent tool, keeping the other built-in tools off.
+  - Subagents use the same project tool server (`project_exec` and the file tools) with the same scoped authority as the parent turn.
+  - Their activity appears in the turn's activity log.
+  - A cap on how many run at once.
+  - Stop cancels them together with the parent.
+  - They count against the same subscription usage, which should be stated wherever subagents are mentioned.
