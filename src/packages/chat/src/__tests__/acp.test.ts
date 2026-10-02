@@ -1168,3 +1168,52 @@ describe("response text helpers", () => {
     );
   });
 });
+
+describe("Claude-style delta streams with guidance", () => {
+  // Claude streams text as deltas, with tool events between paragraphs.
+  const delta = (text: string, seq: number): AcpStreamMessage =>
+    ({
+      type: "event",
+      event: { type: "message", text, delta: true },
+      seq,
+      time: seq * 1_000,
+    }) as AcpStreamMessage;
+  const tool = (seq: number): AcpStreamMessage =>
+    ({
+      type: "event",
+      event: { type: "harness", kind: "update" },
+      seq,
+      time: seq * 1_000,
+    }) as unknown as AcpStreamMessage;
+  const events = [
+    delta("I'll find it carefully.", 1),
+    tool(2),
+    delta("\n\nThis file looks like it:", 3),
+    tool(4),
+    delta("\n\nFound it, an MIT-licensed implementation.", 6),
+    tool(7),
+    delta("\n\nI've got both tarballs.", 8),
+    tool(9),
+    delta("\n\nNext I'll read the README.", 10),
+  ];
+  const guidance = [
+    { date: 5_000, text: "A Rust port would be good", state: "sent" as const },
+  ];
+
+  test("text after guidance is shown once, and nothing is lost", () => {
+    const blocks = getLiveResponseBlocks(events, guidance);
+    expect(blocks.map(({ kind, text }) => [kind, text])).toEqual([
+      ["agent", "I'll find it carefully.\n\nThis file looks like it:"],
+      ["guidance", "A Rust port would be good"],
+      [
+        "agent",
+        "Found it, an MIT-licensed implementation.\n\nI've got both tarballs.\n\nNext I'll read the README.",
+      ],
+    ]);
+    expect(
+      getMountedIntermediateResponseBlocks(events, guidance).map(
+        ({ text }) => text,
+      ),
+    ).toEqual(blocks.map(({ text }) => text));
+  });
+});
