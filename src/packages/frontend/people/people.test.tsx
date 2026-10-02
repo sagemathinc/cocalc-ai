@@ -171,6 +171,27 @@ describe("ConversationCollection", () => {
     });
   });
 
+  it("compact rows beside an open conversation keep title and controls", () => {
+    render(
+      <ConversationCollection
+        conversations={items}
+        view="list"
+        compact
+        selected="r"
+        onSelect={jest.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { current: true })).toHaveAccessibleName(
+      /Recent unread/,
+    );
+    expect(
+      screen.getByRole("button", { name: /Pinned one\s*@pin/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Pin Recent unread" }),
+    ).toBeInTheDocument();
+  });
+
   it("shows the empty text", () => {
     render(
       <ConversationCollection

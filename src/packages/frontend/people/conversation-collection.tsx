@@ -55,6 +55,7 @@ export function ConversationCollection({
   view,
   selected,
   onSelect,
+  compact = false,
   emptyText = "No conversations yet.",
 }: {
   conversations: ListedConversation[];
@@ -62,6 +63,8 @@ export function ConversationCollection({
   view: CollectionView;
   selected?: string;
   onSelect: (conversation: ListedConversation) => void;
+  // A narrow column beside an open conversation: two-line rows.
+  compact?: boolean;
   emptyText?: string;
 }) {
   const account_id = useTypedRedux("account", "account_id");
@@ -196,7 +199,9 @@ export function ConversationCollection({
             project: projectTitle(c),
             onOpen: () => onSelect(c),
           };
-          return view === "grid" ? (
+          return compact ? (
+            <CompactRow {...props} actions={actions} />
+          ) : view === "grid" ? (
             <GridCard {...props} actions={actions} />
           ) : (
             <ListRow {...props} actions={actions} />
@@ -408,6 +413,81 @@ function ListRow(props: ItemProps) {
           }}
         >
           <TimeAgo date={new Date(c.last_activity)} />
+        </span>
+      </button>
+      {actions}
+    </div>
+  );
+}
+
+// Two lines for a narrow column: title and activity, then project and people.
+function CompactRow(props: ItemProps) {
+  const { c, current, project, onOpen, actions } = props;
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "6px 4px 6px 10px",
+        border: `1px solid ${UI_COLORS.border}`,
+        marginTop: -1,
+        background: current ? UI_COLORS.selected : UI_COLORS.surface,
+        boxShadow: current ? `inset 3px 0 ${UI_COLORS.link}` : undefined,
+      }}
+    >
+      <button
+        type="button"
+        aria-current={current ? "true" : undefined}
+        onClick={onOpen}
+        style={{
+          ...OPEN_BUTTON,
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          gap: 2,
+        }}
+      >
+        <span
+          style={{
+            display: "flex",
+            alignItems: "baseline",
+            gap: 8,
+            minWidth: 0,
+          }}
+        >
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <Title {...props} />
+          </span>
+          <span
+            style={{
+              color: UI_COLORS.secondary,
+              fontSize: 12,
+              flex: "0 0 auto",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <TimeAgo date={new Date(c.last_activity)} />
+          </span>
+        </span>
+        <span
+          style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}
+        >
+          <span
+            style={{
+              ...ELLIPSIS,
+              color: UI_COLORS.secondary,
+              fontSize: 12,
+              flex: 1,
+            }}
+          >
+            {project}
+          </span>
+          <AvatarStack
+            entries={c.participant_ids.map((id) => ({ account_id: id }))}
+            size={18}
+            maxAvatars={3}
+          />
         </span>
       </button>
       {actions}

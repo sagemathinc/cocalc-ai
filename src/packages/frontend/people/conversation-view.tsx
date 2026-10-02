@@ -4,7 +4,16 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Alert, Button, Input, Popconfirm, Space, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Dropdown,
+  Input,
+  Modal,
+  Popconfirm,
+  Space,
+  Typography,
+} from "antd";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { AvatarStack } from "@cocalc/frontend/account/avatar/avatar-stack";
@@ -12,7 +21,7 @@ import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import { ChatEmbeddingOptionsProvider } from "@cocalc/frontend/chat/embedding-options";
 import { initChat, removeWithInstance } from "@cocalc/frontend/chat/register";
 import SideChat from "@cocalc/frontend/chat/side-chat";
-import { Icon } from "@cocalc/frontend/components";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 import {
   ProjectContext,
   useProjectContextProvider,
@@ -42,6 +51,9 @@ export function ConversationView({
   const [error, setError] = useState("");
   const [missing, setMissing] = useState(false);
   const [retry, setRetry] = useState(0);
+  // The chat's own tools (artifacts, search, ...) live in our header row
+  // rather than in a second bar above the messages.
+  const [toolsPortal, setToolsPortal] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
     let canceled = false;
@@ -102,6 +114,7 @@ export function ConversationView({
         conversation={conversation}
         onClose={onClose}
         onInsertLink={actions ? () => setPicking(true) : undefined}
+        toolsRef={setToolsPortal}
       />
       <ReferencePicker
         open={picking}
@@ -144,6 +157,7 @@ export function ConversationView({
           actions={actions}
           project_id={project_id}
           path={path}
+          toolsPortal={toolsPortal}
           onComposerReady={(control) => {
             composer.current = control;
           }}
@@ -157,11 +171,13 @@ function MountedChat({
   actions,
   project_id,
   path,
+  toolsPortal,
   onComposerReady,
 }: {
   actions: ChatActions;
   project_id: string;
   path: string;
+  toolsPortal: HTMLElement | null;
   onComposerReady?: (control: ChatInputControl | null) => void;
 }) {
   const context = useProjectContextProvider({
@@ -175,6 +191,8 @@ function MountedChat({
       <ChatEmbeddingOptionsProvider
         value={{
           disableConversationFocus: true,
+          // The conversation title is already in our header.
+          hideCompactThreadHeader: true,
           sidebarHiddenByDefault: true,
           sidebarPreferenceKey: "people-conversation-sidebar",
         }}
@@ -185,6 +203,8 @@ function MountedChat({
             path={path}
             actions={actions}
             onComposerReady={onComposerReady}
+            threadPanelCompactTopRightControls
+            threadPanelTopRightControlsPortal={toolsPortal}
             style={{
               backgroundColor: UI_COLORS.surface,
               color: UI_COLORS.text,
@@ -201,10 +221,12 @@ function ConversationHeader({
   conversation,
   onClose,
   onInsertLink,
+  toolsRef,
 }: {
   conversation: ListedConversation;
   onClose: () => void;
   onInsertLink?: () => void;
+  toolsRef?: (element: HTMLElement | null) => void;
 }) {
   const projectTitle = useTypedRedux("projects", "project_map")?.getIn([
     conversation.project_id,
@@ -254,14 +276,37 @@ function ConversationHeader({
     })();
   }
 
+  function confirmRemove() {
+    Modal.confirm({
+      title: "Remove from the conversation list?",
+      content: "The chat file and its messages are kept in the project.",
+      okText: "Remove",
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        await removeConversation(conversation);
+        onClose();
+      },
+    });
+  }
+
+  const pinLabel = conversation.pinned ? "Unpin" : "Pin";
+
+  // One row: identity on the left, then the chat's tools and ours.
   return (
     <div
       style={{
         borderBottom: `1px solid ${UI_COLORS.border}`,
-        padding: "8px 12px",
+        padding: "6px 8px",
       }}
     >
-      <Space wrap align="center" style={{ width: "100%" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          minWidth: 0,
+        }}
+      >
         <Button
           type="text"
           aria-label="Back to conversations"
@@ -269,7 +314,7 @@ function ConversationHeader({
           onClick={onClose}
         />
         {editing ? (
-          <Space.Compact>
+          <Space.Compact style={{ flex: "1 1 auto", minWidth: 0 }}>
             <Input
               aria-label="Conversation title"
               value={title}
@@ -286,43 +331,94 @@ function ConversationHeader({
             <Button onClick={() => setEditing(false)}>Cancel</Button>
           </Space.Compact>
         ) : (
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            {conversation.title}
-          </Typography.Title>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              gap: 8,
+              minWidth: 0,
+              flex: "1 1 auto",
+            }}
+          >
+            <Typography.Title
+              level={5}
+              ellipsis
+              style={{ margin: 0, minWidth: 0, flex: "0 1 auto" }}
+            >
+              {conversation.title}
+            </Typography.Title>
+            <Typography.Text
+              type="secondary"
+              ellipsis
+              style={{ minWidth: 0, flex: "0 1 auto" }}
+            >
+              {projectTitle ?? ""}
+            </Typography.Text>
+          </div>
         )}
-        <Typography.Text type="secondary">{projectTitle ?? ""}</Typography.Text>
         <AvatarStack
           entries={conversation.participant_ids.map((account_id) => ({
             account_id,
           }))}
           size={22}
         />
-        <span style={{ flex: 1 }} />
-        <Button
-          aria-pressed={conversation.pinned}
-          icon={<Icon name="pushpin" />}
-          onClick={togglePin}
-        >
-          {conversation.pinned ? "Unpin" : "Pin"}
-        </Button>
-        {!editing && (
-          <Button
-            onClick={() => {
-              setTitle(conversation.title);
-              setEditing(true);
-            }}
-          >
-            Rename
-          </Button>
-        )}
+        <div
+          ref={toolsRef}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            flex: "0 0 auto",
+          }}
+        />
         {onInsertLink && (
-          <Button icon={<Icon name="link" />} onClick={onInsertLink}>
-            Insert link
-          </Button>
+          <Tooltip title="Insert a link to a file, conversation or person">
+            <Button
+              size="small"
+              aria-label="Insert link"
+              icon={<Icon name="link" />}
+              onClick={onInsertLink}
+            />
+          </Tooltip>
         )}
-        <Button onClick={openInProject}>Open in project</Button>
-        <RemoveButton conversation={conversation} onDone={onClose} />
-      </Space>
+        <Tooltip title={pinLabel}>
+          <Button
+            size="small"
+            aria-label={pinLabel}
+            aria-pressed={conversation.pinned}
+            type={conversation.pinned ? "primary" : "default"}
+            ghost={conversation.pinned}
+            icon={<Icon name="pushpin" />}
+            onClick={togglePin}
+          />
+        </Tooltip>
+        <Dropdown
+          trigger={["click"]}
+          menu={{
+            items: [
+              { key: "rename", label: "Rename..." },
+              { key: "open", label: "Open in project" },
+              { type: "divider" },
+              { key: "remove", label: "Remove from list...", danger: true },
+            ],
+            onClick: ({ key }) => {
+              if (key === "rename") {
+                setTitle(conversation.title);
+                setEditing(true);
+              } else if (key === "open") {
+                openInProject();
+              } else if (key === "remove") {
+                confirmRemove();
+              }
+            },
+          }}
+        >
+          <Button
+            size="small"
+            aria-label="Conversation options"
+            icon={<Icon name="ellipsis" />}
+          />
+        </Dropdown>
+      </div>
       {error && (
         <Alert
           role="alert"
@@ -333,6 +429,14 @@ function ConversationHeader({
       )}
     </div>
   );
+}
+
+async function removeConversation(conversation: ListedConversation) {
+  await peopleApi().removeConversation({
+    project_id: conversation.project_id,
+    conversation_id: conversation.conversation_id,
+  });
+  conversationsChanged();
 }
 
 function RemoveButton({
@@ -348,11 +452,7 @@ function RemoveButton({
       description="The chat file and its messages are kept in the project."
       okText="Remove"
       onConfirm={async () => {
-        await peopleApi().removeConversation({
-          project_id: conversation.project_id,
-          conversation_id: conversation.conversation_id,
-        });
-        conversationsChanged();
+        await removeConversation(conversation);
         onDone();
       }}
     >

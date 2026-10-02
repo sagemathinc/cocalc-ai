@@ -112,8 +112,8 @@ export function PeoplePage() {
     <div style={{ display: "flex", flex: 1, minHeight: 0, gap: 12 }}>
       <div
         style={{
-          width: selected ? 320 : "100%",
-          maxWidth: selected ? 320 : 820,
+          width: selected ? 340 : "100%",
+          maxWidth: selected ? 340 : 820,
           flex: "0 0 auto",
           overflowY: "auto",
           display: selected ? undefined : "block",
@@ -135,6 +135,7 @@ export function PeoplePage() {
             conversations={filtered}
             preferences={preferences}
             view={selected ? "list" : preferences.value.view}
+            compact={selected != null}
             selected={selected?.conversation_id}
             onSelect={(c) => navigate(conversationRoute(c))}
             emptyText={
@@ -215,7 +216,8 @@ export function PeoplePage() {
           width: "100%",
           maxWidth: 1440,
           margin: "0 auto",
-          padding: "24px 16px",
+          // An open conversation gets as much height as possible.
+          padding: selected ? "12px 16px" : "24px 16px",
           boxSizing: "border-box",
           display: "flex",
           flexDirection: "column",
@@ -233,16 +235,27 @@ export function PeoplePage() {
           }}
         >
           {navigation}
-          <h1
+          <div
             style={{
-              margin: 0,
-              fontSize: 24,
-              fontWeight: 600,
+              display: "flex",
+              alignItems: "baseline",
+              gap: 12,
               flex: "1 1 auto",
+              minWidth: 0,
             }}
           >
-            People
-          </h1>
+            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 600 }}>People</h1>
+            <span
+              role="status"
+              aria-atomic="true"
+              style={{ color: UI_COLORS.secondary, fontSize: 13 }}
+            >
+              {count}
+              {state.loading && state.conversations.length > 0
+                ? " · Refreshing..."
+                : ""}
+            </span>
+          </div>
           {!route.account_id && route.tab !== "invites" && (
             <CollectionViewControl
               view={tabPreferences.value.view}
@@ -289,47 +302,25 @@ export function PeoplePage() {
             New conversation
           </Button>
         </header>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            flexWrap: "wrap",
-            gap: 8,
-            marginBottom: 4,
-          }}
-        >
-          <div
-            role="status"
-            aria-atomic="true"
-            style={{
-              color: UI_COLORS.secondary,
-              fontSize: 13,
-              flex: "1 1 auto",
-            }}
-          >
-            {count}
-            {state.loading && state.conversations.length > 0
-              ? " · Refreshing..."
-              : ""}
-          </div>
-          {route.tab === "conversations" && (
-            <Select
-              aria-label="Show conversations"
-              value={scope}
-              onChange={setScope}
-              style={{ minWidth: 160 }}
-              options={Object.entries(SCOPES).map(([value, label]) => ({
-                value,
-                label,
-              }))}
-            />
-          )}
-        </div>
         <Tabs
           activeKey={route.tab}
           onChange={(key) => navigate(key === "conversations" ? "" : key)}
           className="smc-vfill"
           style={{ minHeight: 0 }}
+          tabBarExtraContent={
+            route.tab === "conversations" ? (
+              <Select
+                aria-label="Show conversations"
+                value={scope}
+                onChange={setScope}
+                style={{ minWidth: 160 }}
+                options={Object.entries(SCOPES).map(([value, label]) => ({
+                  value,
+                  label,
+                }))}
+              />
+            ) : undefined
+          }
           items={[
             {
               key: "conversations",
