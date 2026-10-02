@@ -658,7 +658,8 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
         title: "Choose CoCalc when",
         bullets: [
           "People and agents work directly in the same notebooks, files, documents, terminals, and services",
-          "Collaborators need live work, review context, history, and recovery in one place",
+          // Per site: see getPublicCompareSections in public-compare-content.
+          "Collaborators need live work and history in the same project",
           "The work must persist across sessions, collaborators, reviews, and handoffs",
           "You need a hosted service, a local or single-VM installation, or a customer-operated private deployment path",
         ],
