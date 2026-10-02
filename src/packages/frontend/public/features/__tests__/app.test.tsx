@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
 import PublicFeaturesApp from "../app";
@@ -913,6 +914,32 @@ const MANAGED_VM_TERMS = /\bVMs?\b|virtual machines?|\bWindows\b/i;
 // request host as `dns`.
 const COCALC_AI = { cocalc_product: "launchpad", dns: "cocalc.ai" };
 
+// jsdom toggles a details element when its summary is clicked, but it does
+// not click a focused summary on Enter or Space as browsers do. This presses
+// the key on the focused element and then clicks that element, as a browser
+// would, after checking that the page did not cancel the key.
+async function pressOnFocusedSummary(
+  user: ReturnType<typeof userEvent.setup>,
+  key: "{Enter}" | "[Space]",
+) {
+  const focused = document.activeElement as HTMLElement;
+  expect(focused.tagName).toBe("SUMMARY");
+  let cancelled = false;
+  const watch = (event: Event) => {
+    if (event.defaultPrevented) cancelled = true;
+  };
+  window.addEventListener("keydown", watch);
+  window.addEventListener("keyup", watch);
+  try {
+    await user.keyboard(key);
+  } finally {
+    window.removeEventListener("keydown", watch);
+    window.removeEventListener("keyup", watch);
+  }
+  expect(cancelled).toBe(false);
+  focused.click();
+}
+
 describe("research compute product visibility", () => {
   it.each(["plus", undefined, "unknown"])(
     "omits only compute from the index and subnav for product %s",
@@ -1056,13 +1083,14 @@ describe("research compute product visibility", () => {
       }
     }
     expect(sizing.detailsLabel).toBe("Technical details");
-    const disclosure = container.querySelector("details")!;
-    expect(disclosure.hasAttribute("open")).toBe(false);
-    expect(disclosure.querySelector("summary")?.textContent).toBe(
-      sizing.detailsLabel,
-    );
+    const disclosure = screen.getByText(sizing.detailsLabel!)
+      .parentElement as HTMLDetailsElement;
+    expect(disclosure.tagName).toBe("DETAILS");
+    expect(disclosure.open).toBe(false);
     expect(
-      Array.from(disclosure.querySelectorAll("li")).map((li) => li.textContent),
+      within(disclosure)
+        .getAllByRole("listitem", { hidden: true })
+        .map((li) => li.textContent),
     ).toEqual(sizing.bullets);
     expect(sizing.links).toHaveLength(1);
     for (const { href, label } of sizing.links!) {
@@ -1137,6 +1165,62 @@ describe("research compute product visibility", () => {
       expect(elsewhere).not.toContain("membership");
     },
   );
+
+  it("opens and closes the technical details from the keyboard", async () => {
+    const page = getPublicFeaturePage("research-compute", COCALC_AI)!;
+    const [options, sizing] = page.sections!;
+    render(
+      <PublicFeaturesApp
+        config={COCALC_AI}
+        initialRoute={{ view: "detail", slug: page.slug }}
+      />,
+    );
+    const user = userEvent.setup();
+
+    // A native disclosure. Testing Library has no role for <summary>, so the
+    // control is found by its label, which is its accessible name.
+    const summary = screen.getByText("Technical details");
+    expect(summary.tagName).toBe("SUMMARY");
+    const details = summary.parentElement as HTMLDetailsElement;
+    expect(details.tagName).toBe("DETAILS");
+    expect(details.firstElementChild).toBe(summary);
+    const items = within(details).getAllByRole("listitem", { hidden: true });
+    expect(items.map((item) => item.textContent)).toEqual(sizing.bullets);
+    const expectDisclosure = (open: boolean) => {
+      expect(details.open).toBe(open);
+      for (const item of items) {
+        if (open) {
+          expect(item).toBeVisible();
+        } else {
+          expect(item).not.toBeVisible();
+        }
+      }
+      expect(summary).toBeVisible();
+      expect(summary).toHaveFocus();
+    };
+
+    // Closed at first. Tab moves from the last option's link to the summary.
+    expect(details.open).toBe(false);
+    screen.getByRole("link", { name: options.cards![1].link!.label }).focus();
+    await user.tab();
+    expectDisclosure(false);
+
+    await pressOnFocusedSummary(user, "{Enter}");
+    expectDisclosure(true);
+    await pressOnFocusedSummary(user, "{Enter}");
+    expectDisclosure(false);
+    await pressOnFocusedSummary(user, "[Space]");
+    expectDisclosure(true);
+    await pressOnFocusedSummary(user, "[Space]");
+    expectDisclosure(false);
+
+    // Tab then leaves the summary for the button row after the list.
+    await user.tab();
+    expect(summary).not.toHaveFocus();
+    expect(
+      screen.getAllByRole("link", { name: "Start on CoCalc.ai" }),
+    ).toContain(document.activeElement);
+  });
 
   it("opens project hosts for signed-in visitors", () => {
     const { container } = render(

@@ -591,6 +591,42 @@ describe("feature initial HTML product availability", () => {
     },
   );
 
+  it.each([
+    ["launchpad", "cocalc.ai"],
+    ["rocket", "compute.example.edu"],
+  ])(
+    "collapses the research compute technical details, like the page, for %s on %s",
+    (cocalc_product, dns) => {
+      const config = { cocalc_product, dns };
+      const sizing = getPublicFeaturePage("research-compute", config)!
+        .sections![1];
+      const html = renderPublicRoutePrerender(
+        {
+          section: "features",
+          route: { view: "detail", slug: "research-compute" },
+        },
+        "/",
+        config,
+      );
+
+      // One details element, closed (no open attribute). Its summary comes
+      // first and is the record's label, and every bullet is inside it.
+      expect(html.match(/<details\b[^>]*>/g)).toEqual(["<details>"]);
+      expect(html.match(/<summary\b[^>]*>/g)).toEqual(["<summary>"]);
+      const details = html.slice(
+        html.indexOf("<details>"),
+        html.indexOf("</details>") + "</details>".length,
+      );
+      expect(details).toBe(
+        `<details><summary>${sizing.detailsLabel}</summary><ul>${sizing
+          .bullets!.map((bullet) => `<li>${bullet}</li>`)
+          .join("")}</ul></details>`,
+      );
+      expect(sizing.detailsLabel).toBe("Technical details");
+      expect(sizing.bullets).toHaveLength(6);
+    },
+  );
+
   it("leaves documentation rendering to its existing owner", () => {
     expect(
       renderPublicRoutePrerender(
