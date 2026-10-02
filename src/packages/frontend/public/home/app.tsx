@@ -285,9 +285,7 @@ const DIFFERENTIATORS = [
 
 function accessibleAccentTextColor(accent: string): string {
   if (accent === COLORS.RUN) return publicAccent(COLORS.ANTD_GREEN_D);
-  if (accent === COLORS.AI_ASSISTANT_FONT || accent === PUBLIC_COLORS.warning) {
-    return publicAccent(COLORS.BRWN);
-  }
+  if (accent === COLORS.AI_ASSISTANT_FONT) return publicAccent(COLORS.BRWN);
   if (accent === PUBLIC_COLORS.link) return PUBLIC_COLORS.linkHover;
   return publicAccent(accent);
 }
@@ -357,9 +355,7 @@ function SectionIntro({
   eyebrow,
   title,
   body,
-  action,
 }: {
-  action?: ReactNode;
   body?: ReactNode;
   eyebrow: ReactNode;
   title: ReactNode;
@@ -375,7 +371,6 @@ function SectionIntro({
           <Paragraph style={{ fontSize: 18, margin: 0 }}>{body}</Paragraph>
         )}
       </div>
-      {action}
     </Flex>
   );
 }
