@@ -4,7 +4,7 @@
  */
 
 // Artifacts made by hand ("New Artifact") live in a per-project Library
-// conversation: ~/.cocalc/artifacts.chat, one "Artifacts" thread. Each one is
+// conversation: ~/.local/share/cocalc/artifacts.chat, one "Artifacts" thread. Each one is
 // published like an agent's (same artifact rows), from a short message in
 // that thread, so the project's catalog indexes it and collaborators see it.
 

@@ -253,7 +253,7 @@ test("local mapping uses project/path/thread, target search, deterministic sort 
 test("artifacts in a project's Library conversation are listed as from @artifacts", () => {
   const handMade = {
     ...entry("hand-made"),
-    chat_path: "/home/user/.cocalc/artifacts.chat",
+    chat_path: "/home/user/.local/share/cocalc/artifacts.chat",
   };
   const other = { ...entry("elsewhere"), chat_path: "/home/user/random.chat" };
   const results = catalogResults([handMade, other], []);

@@ -7,7 +7,7 @@ import type { NamedAgent } from "@cocalc/conat/agents/personal";
 
 // Hand-made artifacts live in each project's Library conversation (see
 // library-create). Artifacts lists them as from "@artifacts".
-export const LIBRARY_CHAT_SUFFIX = "/.cocalc/artifacts.chat";
+export const LIBRARY_CHAT_SUFFIX = "/.local/share/cocalc/artifacts.chat";
 const LIBRARY_AGENT_PREFIX = "library:";
 
 export function isLibraryChat(path: string): boolean {

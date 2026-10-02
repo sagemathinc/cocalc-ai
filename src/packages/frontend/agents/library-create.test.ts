@@ -83,7 +83,7 @@ test("a hand-made artifact is published from a message in the project's Library 
     content: { title: "Plan", markdown: "# Plan" },
   });
   expect(first.path).toBe(libraryChatPath("/home/user"));
-  expect(first.path).toBe("/home/user/.cocalc/artifacts.chat");
+  expect(first.path).toBe("/home/user/.local/share/cocalc/artifacts.chat");
   expect(files.has(first.path)).toBe(true);
   const artifact = rows.find((row) => row.event === "chat-artifact");
   expect(artifact).toMatchObject({
