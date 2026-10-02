@@ -8,7 +8,13 @@
 // projects (same storage and order as the classic starred bar). Checkboxes
 // drive the existing bulk operations.
 
-import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { Checkbox, Select, Tag, Typography } from "antd";
 import { useIntl } from "react-intl";
 import { useActions } from "@cocalc/frontend/app-framework";
@@ -56,6 +62,59 @@ export function sortProjectRecords(
   );
 }
 
+// The order Collection shows items in: pins (in pin order), then the rest,
+// each grouped (by first appearance) when grouping is on. Shift-click
+// selection ranges follow this order.
+export function displayOrder(
+  ids: string[],
+  pins: string[],
+  groupKey?: (id: string) => string,
+): string[] {
+  const pinPosition = new Map(pins.map((id, index) => [id, index]));
+  const pinned = ids
+    .filter((id) => pinPosition.has(id))
+    .sort((a, b) => pinPosition.get(a)! - pinPosition.get(b)!);
+  const others = ids.filter((id) => !pinPosition.has(id));
+  const grouped = (section: string[]) => {
+    if (!groupKey) return section;
+    const groups = new Map<string, string[]>();
+    for (const id of section) {
+      const key = groupKey(id);
+      groups.set(key, [...(groups.get(key) ?? []), id]);
+    }
+    return [...groups.values()].flat();
+  };
+  return [...grouped(pinned), ...grouped(others)];
+}
+
+// Shift-click: set every selectable id between the anchor and `id` to `on`.
+export function rangeSelection({
+  order,
+  selected,
+  anchor,
+  id,
+  on,
+  selectable,
+}: {
+  order: string[];
+  selected: string[];
+  anchor?: string;
+  id: string;
+  on: boolean;
+  selectable: (id: string) => boolean;
+}): string[] {
+  const from = anchor == null ? -1 : order.indexOf(anchor);
+  const to = order.indexOf(id);
+  const range =
+    from < 0 || to < 0
+      ? [id]
+      : order.slice(Math.min(from, to), Math.max(from, to) + 1);
+  const targets = new Set(range.filter(selectable));
+  targets.add(id);
+  const rest = selected.filter((x) => !targets.has(x));
+  return on ? [...rest, ...order.filter((x) => targets.has(x))] : rest;
+}
+
 export function ProjectsCollection({
   visible_projects,
   rootfsImages,
@@ -97,12 +156,32 @@ export function ProjectsCollection({
     selectable.length > 0 &&
     selectable.every((r) => selected.has(r.project_id));
 
-  function toggleSelected(id: string, on: boolean) {
-    onSelectedProjectIdsChange(
-      on
-        ? [...selectedProjectIds.filter((x) => x !== id), id]
-        : selectedProjectIds.filter((x) => x !== id),
-    );
+  const anchor = useRef<string | undefined>(undefined);
+  function toggleSelected(id: string, on: boolean, shift: boolean) {
+    if (shift && anchor.current != null) {
+      const host = new Map(items.map((r) => [r.project_id, r.host ?? ""]));
+      onSelectedProjectIdsChange(
+        rangeSelection({
+          order: displayOrder(
+            items.map((r) => r.project_id),
+            bookmarkedProjects,
+            group === "host" ? (id) => host.get(id) ?? "" : undefined,
+          ),
+          selected: selectedProjectIds,
+          anchor: anchor.current,
+          id,
+          on,
+          selectable: (x) => selectable.some((r) => r.project_id === x),
+        }),
+      );
+    } else {
+      onSelectedProjectIdsChange(
+        on
+          ? [...selectedProjectIds.filter((x) => x !== id), id]
+          : selectedProjectIds.filter((x) => x !== id),
+      );
+    }
+    anchor.current = id;
   }
 
   function open(record: ProjectTableRecord, e?: React.MouseEvent) {
@@ -119,12 +198,26 @@ export function ProjectsCollection({
     controls: CollectionControls,
   ) {
     const checkbox = (
-      <Checkbox
-        aria-label={`Select project ${record.title}`}
-        checked={selected.has(record.project_id)}
-        disabled={record.deleting || record.deletionScheduled}
-        onChange={(e) => toggleSelected(record.project_id, e.target.checked)}
-      />
+      // Shift-click selects a range; keep it from also selecting page text.
+      <span
+        onMouseDown={(e) => {
+          if (e.shiftKey) e.preventDefault();
+        }}
+        style={{ display: "inline-flex" }}
+      >
+        <Checkbox
+          aria-label={`Select project ${record.title}`}
+          checked={selected.has(record.project_id)}
+          disabled={record.deleting || record.deletionScheduled}
+          onChange={(e) =>
+            toggleSelected(
+              record.project_id,
+              e.target.checked,
+              !!(e.nativeEvent as MouseEvent | undefined)?.shiftKey,
+            )
+          }
+        />
+      </span>
     );
     const actionsNode = (
       <div style={CONTROLS_STYLE}>

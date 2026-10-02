@@ -11,9 +11,9 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import { SiteName } from "@cocalc/frontend/customize";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { labels } from "@cocalc/frontend/i18n";
+import { useWorkspaceNavigation } from "@cocalc/frontend/app/workspace-navigation";
 
 import { COLORS } from "@cocalc/util/theme";
-import collabsImage from "./tour-collabs.png";
 import projectsImage from "./tour-projects.png";
 
 export default function ProjectsPageTour({
@@ -25,6 +25,8 @@ export default function ProjectsPageTour({
   style,
 }) {
   const tours = useRedux("account", "tours");
+  // Sidebar navigation shows the cards/list layout, with pins instead of stars.
+  const pins = useWorkspaceNavigation() === "sidebar";
   const [open, setOpen] = useState<boolean>(false);
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
@@ -42,7 +44,8 @@ export default function ProjectsPageTour({
           <DocsLink slug="projects/project-list">(docs)</DocsLink>
         </>
       ),
-      cover: <img alt="" src={projectsImage} />,
+      // The screenshot shows the classic table.
+      cover: pins ? undefined : <img alt="" src={projectsImage} />,
       description: (
         <div>
           Welcome to <SiteName />
@@ -89,12 +92,23 @@ export default function ProjectsPageTour({
             it was edited, and the collaborators involved. An avatar or a color
             makes it easier to recognize.
           </p>
-          <p>
-            Finally,{" "}
-            <Icon name="star-filled" style={{ color: COLORS.YELL_L }} />
-            -star a {projectLabelLower} to add it to the quick access row at the
-            top!
-          </p>
+          {pins ? (
+            <p>
+              Finally, <Icon name="pushpin" /> pin a {projectLabelLower} to keep
+              it in the Pinned section at the top, and drag pins by their handle
+              to put them in the order you like. Switch between cards and a list
+              with the buttons above the list; select {projectsLabelLower} with
+              their checkboxes (shift-click selects a range) to start, stop,
+              hide or delete several at once.
+            </p>
+          ) : (
+            <p>
+              Finally,{" "}
+              <Icon name="star-filled" style={{ color: COLORS.YELL_L }} />
+              -star a {projectLabelLower} to add it to the quick access row at
+              the top!
+            </p>
+          )}
         </div>
       ),
       target: () => projectListRef.current,
@@ -137,22 +151,6 @@ export default function ProjectsPageTour({
         </>
       ),
       target: () => filtersRef.current,
-    },
-    {
-      title: (
-        <>
-          <Icon name="users" /> Collaborators & Sharing
-        </>
-      ),
-      cover: <img alt="" src={collabsImage} />,
-      description: (
-        <div>
-          Expand a {projectLabelLower} via the <Icon name="plus-square" /> icon
-          to see and control collaborators on the {projectLabelLower}.
-          Collaborators can view, edit, and run calculations in realtime inside
-          the {projectLabelLower} – just like you!
-        </div>
-      ),
     },
     {
       title: "Filename Search",

@@ -5,7 +5,12 @@
 
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ProjectsCollection, sortProjectRecords } from "./projects-collection";
+import {
+  displayOrder,
+  ProjectsCollection,
+  rangeSelection,
+  sortProjectRecords,
+} from "./projects-collection";
 
 const openProject = jest.fn();
 const setProjectBookmarked = jest.fn();
@@ -158,4 +163,81 @@ test("sorting by title or host; last edited keeps the given order", () => {
   expect(sortProjectRecords(mockRecords as any, "last_edited")).toBe(
     mockRecords,
   );
+});
+
+it("shift-click selects the range shown between two checkboxes", async () => {
+  const user = userEvent.setup();
+  mockBookmarks = ["p3"]; // shown first: Gamma, then Beta, Alpha
+  let selected: string[] = [];
+  const onChange = jest.fn((ids) => (selected = ids));
+  const { rerender } = render(
+    <ProjectsCollection
+      visible_projects={["p1", "p2", "p3"]}
+      rootfsImages={[]}
+      selectedProjectIds={selected}
+      onSelectedProjectIdsChange={onChange}
+      view="list"
+      onViewChange={jest.fn()}
+    />,
+  );
+  await user.click(
+    screen.getByRole("checkbox", { name: "Select project Gamma" }),
+  );
+  rerender(
+    <ProjectsCollection
+      visible_projects={["p1", "p2", "p3"]}
+      rootfsImages={[]}
+      selectedProjectIds={selected}
+      onSelectedProjectIdsChange={onChange}
+      view="list"
+      onViewChange={jest.fn()}
+    />,
+  );
+  await user.keyboard("{Shift>}");
+  await user.click(
+    screen.getByRole("checkbox", { name: "Select project Alpha" }),
+  );
+  await user.keyboard("{/Shift}");
+  expect(onChange).toHaveBeenLastCalledWith(["p3", "p1", "p2"]);
+});
+
+test("display order and range helpers", () => {
+  const ids = ["a", "b", "c", "d"];
+  expect(displayOrder(ids, ["c"])).toEqual(["c", "a", "b", "d"]);
+  const host = { a: "h2", b: "h1", c: "h2", d: "h1" };
+  expect(displayOrder(ids, [], (id) => host[id])).toEqual(["a", "c", "b", "d"]);
+  const order = ["a", "b", "c", "d"];
+  const all = () => true;
+  expect(
+    rangeSelection({
+      order,
+      selected: ["a"],
+      anchor: "a",
+      id: "c",
+      on: true,
+      selectable: all,
+    }),
+  ).toEqual(["a", "b", "c"]);
+  // Unselecting a range keeps selections outside it.
+  expect(
+    rangeSelection({
+      order,
+      selected: ["a", "b", "c", "d"],
+      anchor: "b",
+      id: "c",
+      on: false,
+      selectable: all,
+    }),
+  ).toEqual(["a", "d"]);
+  // Projects being deleted are skipped.
+  expect(
+    rangeSelection({
+      order,
+      selected: [],
+      anchor: "a",
+      id: "d",
+      on: true,
+      selectable: (id) => id !== "b",
+    }),
+  ).toEqual(["a", "c", "d"]);
 });

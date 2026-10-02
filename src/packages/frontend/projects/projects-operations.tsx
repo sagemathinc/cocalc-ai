@@ -846,6 +846,9 @@ export function ProjectsOperations({
             bottom: 24,
             transform: "translateX(-50%)",
             zIndex: 1000,
+            // left: 50% alone would cap the shrink-to-fit width at half the
+            // viewport and wrap the buttons early.
+            width: "max-content",
             maxWidth: "calc(100vw - 32px)",
             background: "white",
             border: `1px solid ${COLORS.GRAY_LL}`,
