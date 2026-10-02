@@ -30,6 +30,7 @@ import { InvitesPanel } from "./invites";
 import { SearchDialog } from "./search-dialog";
 import { useConversations } from "./use-conversations";
 import { useWorkspaceContentNavigation } from "@cocalc/frontend/agents/workspace-content-navigation";
+import "./people.css";
 
 // people_route is "", "conversations/<project_id>/<conversation_id>",
 // "collaborators" or "collaborators/<account_id>".
@@ -305,8 +306,7 @@ export function PeoplePage() {
         <Tabs
           activeKey={route.tab}
           onChange={(key) => navigate(key === "conversations" ? "" : key)}
-          className="smc-vfill"
-          style={{ minHeight: 0 }}
+          className="people-tabs"
           tabBarExtraContent={
             route.tab === "conversations" ? (
               <Select

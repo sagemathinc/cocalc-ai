@@ -21,6 +21,8 @@ import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import { ChatEmbeddingOptionsProvider } from "@cocalc/frontend/chat/embedding-options";
 import { initChat, removeWithInstance } from "@cocalc/frontend/chat/register";
 import SideChat from "@cocalc/frontend/chat/side-chat";
+import { ChatFontSizeControls } from "@cocalc/frontend/chat/chat-font-size-controls";
+import { useAgentChatFontSize } from "@cocalc/frontend/project/page/agent-chat-font-size";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import {
   ProjectContext,
@@ -180,6 +182,15 @@ function MountedChat({
   toolsPortal: HTMLElement | null;
   onComposerReady?: (control: ChatInputControl | null) => void;
 }) {
+  // Same text size preference as agent chats.
+  const accountFontSize = useTypedRedux("account", "font_size") ?? 13;
+  const {
+    fontSize,
+    increaseFontSize,
+    decreaseFontSize,
+    canIncreaseFontSize,
+    canDecreaseFontSize,
+  } = useAgentChatFontSize(accountFontSize);
   const context = useProjectContextProvider({
     project_id,
     is_active: true,
@@ -203,6 +214,21 @@ function MountedChat({
             path={path}
             actions={actions}
             onComposerReady={onComposerReady}
+            fontSize={fontSize}
+            onIncreaseFontSize={increaseFontSize}
+            onDecreaseFontSize={decreaseFontSize}
+            threadPanelTopRightControlsPrefix={
+              <ChatFontSizeControls
+                fontSize={fontSize}
+                onDecreaseFontSize={decreaseFontSize}
+                onIncreaseFontSize={increaseFontSize}
+                canDecreaseFontSize={canDecreaseFontSize}
+                canIncreaseFontSize={canIncreaseFontSize}
+                embedded
+                label="Conversation text size"
+                tooltipLabel="Conversation"
+              />
+            }
             threadPanelCompactTopRightControls
             threadPanelTopRightControlsPortal={toolsPortal}
             style={{
