@@ -8191,6 +8191,24 @@ describe("hosts.recordClaudeSubscriptionUsage", () => {
     });
   });
 
+  it("changes nothing for a credential the owner does not have", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT owning_bay_id"))
+        return { rows: [{ owning_bay_id: null }], rowCount: 1 };
+      if (sql.includes("jsonb_set")) return { rows: [], rowCount: 0 };
+      throw Error(`unexpected query ${sql}`);
+    });
+    const { recordClaudeSubscriptionUsage } = await import("./hosts");
+    await expect(
+      recordClaudeSubscriptionUsage(
+        request({
+          observed_at,
+          windows: { five_hour: { utilization: 0.2, resets_at } },
+        }),
+      ),
+    ).resolves.toBe(false);
+  });
+
   it("rejects invalid usage and unauthorized hosts before writing", async () => {
     queryMock = jest.fn(async () => ({ rows: [], rowCount: 0 }));
     resolveProjectReferenceAllowRemoteMock = jest.fn(async () => ({

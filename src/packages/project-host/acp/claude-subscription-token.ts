@@ -9,19 +9,49 @@
 
 const TOKEN = /^sk-ant-oat[A-Za-z0-9_-]{20,1000}$/;
 
+/** A sign-in code from Claude never contains a token or key. */
+export function looksLikeClaudeSecret(value: string): boolean {
+  return /sk-ant-/i.test(value);
+}
+
+// What the user typed can reach the output (terminal echo, or the UI
+// redrawing its input), so never take a token the submitted code could form.
+function fromClaude(
+  matches: string[] | null | undefined,
+  submitted: string,
+): string | undefined {
+  return matches
+    ?.filter(
+      (token) =>
+        TOKEN.test(token) &&
+        !(
+          submitted &&
+          (submitted.includes(token) || token.includes(submitted))
+        ),
+    )
+    .at(-1);
+}
+
 /** Find the token in setup-token's (terminal) output; undefined if absent. */
-export function claudeOAuthTokenFromOutput(output: string): string | undefined {
-  const matches = output.match(/sk-ant-oat[A-Za-z0-9_-]{20,1000}/g);
-  const token = matches?.at(-1);
-  return token && TOKEN.test(token) ? token : undefined;
+export function claudeOAuthTokenFromOutput(
+  output: string,
+  submitted: string,
+): string | undefined {
+  return fromClaude(
+    output.match(/sk-ant-oat[A-Za-z0-9_-]{20,1000}/g),
+    submitted,
+  );
 }
 
 /** A token on a finished line of output, i.e. never a partial chunk. */
-export function claudeOAuthTokenLine(output: string): string | undefined {
-  const token = output
-    .match(/sk-ant-oat[A-Za-z0-9_-]{20,1000}(?=[ \t]*\n)/g)
-    ?.at(-1);
-  return token && TOKEN.test(token) ? token : undefined;
+export function claudeOAuthTokenLine(
+  output: string,
+  submitted: string,
+): string | undefined {
+  return fromClaude(
+    output.match(/sk-ant-oat[A-Za-z0-9_-]{20,1000}(?=[ \t]*\n)/g),
+    submitted,
+  );
 }
 
 export function packClaudeSubscriptionToken(token: string): string {

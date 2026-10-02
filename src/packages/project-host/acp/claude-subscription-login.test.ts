@@ -14,6 +14,7 @@ const otherAccountId = "fca177c1-b1d6-4f85-bd89-0afc61f67ed8";
 const projectId = "3807103b-f2f9-4ced-8885-eeb442d623b7";
 const credentialId = "02bfd0a0-50f1-4378-a7fd-bf87a12a2860";
 const fixture = join(__dirname, "fixtures", "claude-login.cjs");
+const echoFixture = join(__dirname, "fixtures", "claude-login-echo.cjs");
 const fixtureToken = `sk-ant-oat01-${"Fixture_token-0123456789".repeat(3)}`;
 
 async function verificationUrl(
@@ -184,6 +185,41 @@ test("a full-length pasted code is submitted with a separate Enter", async () =>
     expect(publish).toHaveBeenCalledWith(
       expect.objectContaining({ token: fixtureToken }),
     );
+  } finally {
+    await service.close();
+  }
+});
+
+test("a pasted token is refused, and echoed input is never saved as one", async () => {
+  const publish = jest.fn(async () => credentialId);
+  const service = new ClaudeSubscriptionLoginService({
+    cliPath: process.execPath,
+    argsPrefix: [echoFixture],
+    publish,
+    enterDelayMs: 50,
+    exchangeTimeoutMs: 1_000,
+  });
+  try {
+    const started = await service.start(projectId, accountId);
+    await verificationUrl(service, started.id);
+    expect(() =>
+      service.submitCode(started.id, projectId, accountId, fixtureToken),
+    ).toThrow("That is a Claude token, not a sign-in code.");
+    expect(service.status(started.id, projectId, accountId).state).toBe(
+      "pending",
+    );
+    // The CLI echoes and redraws this code but never returns a token.
+    service.submitCode(
+      started.id,
+      projectId,
+      accountId,
+      `fixture-code#${"s".repeat(100)}`,
+    );
+    const failed = await waitFor(service, started.id, "failed");
+    expect(failed.error).toBe(
+      "Claude did not finish signing in. Start the sign-in again.",
+    );
+    expect(publish).not.toHaveBeenCalled();
   } finally {
     await service.close();
   }
