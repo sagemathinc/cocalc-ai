@@ -43,7 +43,16 @@ export async function acceptAgentMessage(
     identity: source,
     run_id,
     protocol_version: 3,
-    capabilities: ["whoami", "memory"],
+    // What this identity can do: `cocalc agent --help` covers each one.
+    capabilities: [
+      "whoami",
+      "memory",
+      "destinations",
+      "send",
+      "broadcast",
+      "inspect",
+      "propose-network",
+    ],
   };
 }
 
