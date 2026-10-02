@@ -1,6 +1,6 @@
 # Claude agent environment wishlist
 
-Written by Claude (claude-opus-5-5) on 2026-09-30, working as an agent in a CoCalc project. This is a list of general gaps an agent runs into when working in a CoCalc project. None of it is specific to CoCalc development. The examples come from real work in this project. Items 9–14, and the notes marked "second report", come from another Claude's notes from work in a different project (October 2026).
+Written by Claude (claude-opus-5-5) on 2026-09-30, working as an agent in a CoCalc project. This is a list of general gaps an agent runs into when working in a CoCalc project. None of it is specific to CoCalc development. The examples come from real work in this project. Items 9–15, and the notes marked "second report", come from another Claude's notes from work in a different project (October 2026).
 
 ## 1. Viewing images in the project
 
@@ -109,6 +109,21 @@ Written by Claude (claude-opus-5-5) on 2026-09-30, working as an agent in a CoCa
 
 - **Gap:** canceling a `project_exec` job that runs `ssh host 'cmd'` kills only the local ssh client. The remote command keeps running (it has no terminal, so no SIGHUP) and quietly skewed later benchmarks on that host.
 - **Wanted:** at least a line in the skill: use `ssh -t`, or record the remote PID and kill it, and check `uptime` before timing runs. Better: canceling a job could warn when it had a live ssh child.
+
+## 15. One bad job blocks all project commands
+
+- **What happened:** a `grep` matched minified, multi-megabyte single-line `.js` files, so even `| head -8` produced megabytes. The job failed with "Runtime could not verify job cleanup". After that, every `project_exec`, even `echo alive`, failed with "Project job cleanup is unconfirmed; runtime recovery required". `project_exec_cancel` didn't help; it returned about 56 KB of old output. The agent had no way out, and the user had to restart the project, which cost about 20 minutes.
+- **Cause:** blocking is deliberate. After losing track of a job's processes, the controller (`project-host/acp/claude-project-jobs.ts`) refuses all new work. Why large output leaves cleanup unconfirmed is not yet known. An earlier `find /` job in the same session was canceled cleanly.
+- **Wanted:**
+  - Quarantine the one job (its cgroup) and keep accepting others.
+  - Give agents a recovery path, or at least an error that says exactly what the user must do.
+  - Bound output per job, both total bytes and per line, with a clear truncation marker.
+  - Have cancel return status, cleanup state and how much output was dropped, not old output.
+- **Partly done** (#859):
+  - The error now says only the user can recover, by restarting the project, and that waiting or retrying won't help.
+  - Cancel no longer replays old output.
+  - Claude's job guidance warns about huge or long-line output.
+  - Quarantine and the root cause remain open.
 
 ## What already works well
 
