@@ -24,6 +24,16 @@ test("resolved targets open their canonical app page", () => {
   expect(open({ kind: "artifact", project_id, entry_id: "e/1" })).toBe(
     `artifacts/${project_id}/e/1`,
   );
+  expect(open({ kind: "project", project_id })).toBe(`projects/${project_id}`);
+  expect(
+    personalUrlDestination({
+      ...base,
+      kind: "projects",
+      status: "resolved",
+      rest: "files/notes/",
+      target: { kind: "project", project_id },
+    }),
+  ).toBe(`projects/${project_id}/files/notes/`);
 });
 
 test("denied links go to the project's access request page", () => {

@@ -22,12 +22,37 @@ test("qualified paths support usernames and stable UUIDs", () => {
     kind: "artifacts",
   });
 });
+test("project links may continue into the project", () => {
+  expect(parsePersonalUrl("/u/william/projects/research")).toEqual({
+    owner: "william",
+    kind: "projects",
+    alias: "research",
+  });
+  expect(
+    parsePersonalUrl("/u/william/projects/research/files/a%20b/paper.tex"),
+  ).toEqual({
+    owner: "william",
+    kind: "projects",
+    alias: "research",
+    rest: "files/a%20b/paper.tex",
+  });
+  expect(parsePersonalUrl("/u/william/projects/research/files/notes/")).toEqual(
+    {
+      owner: "william",
+      kind: "projects",
+      alias: "research",
+      rest: "files/notes/",
+    },
+  );
+});
 test.each([
   "/artifacts/primes",
   "/u/william/unknown/name",
   "/u/william/agents/a/b",
   "/u/william/artifacts/%2fetc",
   "/u/william/chats/%00",
+  "/u/william/projects/research/files/../settings",
+  "/u/william/projects/research/files/%00",
   "//other/u/william/chats/chat1",
   "https://user:pass@example.test/u/william/chats/chat1",
   "javascript://example/u/william/chats/chat1",

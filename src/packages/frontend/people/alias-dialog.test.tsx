@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { AliasDialog } from "./alias-dialog";
 
 const getUsername = jest.fn();
@@ -50,4 +50,26 @@ it("falls back to the account id without a username", async () => {
 it("has no link until an alias is saved", () => {
   render(<AliasDialog {...props} urlKind="chats" />);
   expect(screen.queryByText("Personal link")).toBeNull();
+});
+
+it("explains that project and other aliases are public; people's are private", async () => {
+  getUsername.mockResolvedValue({ username: "alice", redirects: [] });
+  const { unmount } = render(
+    <AliasDialog {...props} alias="research" urlKind="projects" />,
+  );
+  expect(
+    await screen.findByDisplayValue(
+      `${location.origin}/u/alice/projects/research`,
+    ),
+  ).toBeInTheDocument();
+  const info = screen.getByRole("button", { name: "About public aliases" });
+  fireEvent.click(info);
+  expect(
+    await screen.findByText(/can find out which project it points to/),
+  ).toBeInTheDocument();
+  unmount();
+  render(<AliasDialog {...props} alias="ana" urlKind="people" />);
+  expect(
+    screen.queryByRole("button", { name: "About public aliases" }),
+  ).toBeNull();
 });

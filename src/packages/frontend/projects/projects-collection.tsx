@@ -44,6 +44,8 @@ import {
 import { ProjectThemeAvatar } from "./theme";
 import { COMPUTE_STATES } from "@cocalc/util/compute-states";
 import "./projects-collection.css";
+import { AliasDialog } from "@cocalc/frontend/people/alias-dialog";
+import { setProjectAlias, useProjectAliases } from "./project-aliases";
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
 import { useProjectTableRecords } from "./use-project-table-records";
 
@@ -147,6 +149,8 @@ export function ProjectsCollection({
   const [sort, setSort] = useState<ProjectsSort>("last_edited");
   const [group, setGroup] = useState<ProjectsGroup>("none");
   const [rootfsModalProjectId, setRootfsModalProjectId] = useState("");
+  const aliases = useProjectAliases();
+  const [aliasFor, setAliasFor] = useState<ProjectTableRecord>();
   const items = useMemo(
     () => sortProjectRecords(records, sort),
     [records, sort],
@@ -231,6 +235,8 @@ export function ProjectsCollection({
           onToggleDetails={() =>
             actions.toggle_expanded_project(record.project_id)
           }
+          alias={aliases.get(record.project_id)}
+          onEditAlias={() => setAliasFor(record)}
         />
       </div>
     );
@@ -356,6 +362,16 @@ export function ProjectsCollection({
         open={!!rootfsModalProjectId}
         project_id={rootfsModalProjectId}
       />
+      <AliasDialog
+        open={aliasFor != null}
+        title={aliasFor?.title || "Untitled"}
+        alias={aliasFor ? aliases.get(aliasFor.project_id) : undefined}
+        urlKind="projects"
+        onClose={() => setAliasFor(undefined)}
+        onSave={async (alias) => {
+          if (aliasFor) await setProjectAlias(aliasFor.project_id, alias);
+        }}
+      />
     </div>
   );
 }
@@ -402,6 +418,7 @@ function Title({
   lines?: number;
 }) {
   const running = record.state?.get?.("state") === "running";
+  const alias = useProjectAliases().get(record.project_id);
   return (
     <span
       title={record.title || "Untitled"}
@@ -418,6 +435,12 @@ function Title({
       }}
     >
       {record.title || "Untitled"}
+      {alias && (
+        <span style={{ color: UI_COLORS.link, fontWeight: 400 }}>
+          {" "}
+          @{alias}
+        </span>
+      )}
     </span>
   );
 }

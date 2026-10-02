@@ -6,6 +6,8 @@
 import { is_valid_uuid_string } from "@cocalc/util/misc";
 import {
   isMyPersonalUrlOwner,
+  myProjectAlias,
+  myProjectForAlias,
   personalUrlOwner,
 } from "./app/personal-url-identity";
 import type { AuthView } from "@cocalc/frontend/auth/types";
@@ -157,6 +159,20 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
       // personal URL is resolved by the hub.
       const [, owner, kind, ...rest] = segments.filter(Boolean);
       const alias = rest.join("/");
+      if (kind === "projects") {
+        // /u/<owner>/projects/<alias>/<path in project>. A trailing slash
+        // (a folder) matters, so use the unfiltered segments.
+        const project_id =
+          owner && rest[0] && isMyPersonalUrlOwner(owner)
+            ? myProjectForAlias(rest[0])
+            : undefined;
+        if (project_id)
+          return {
+            page: "project",
+            target: [project_id, ...segments.slice(4)].join("/"),
+          };
+        return { page: "u", path: cleanTarget.replace(/^\/+/, "") };
+      }
       if (owner && alias && isMyPersonalUrlOwner(owner)) {
         if (kind === "agents")
           return { page: "agents", agent_id: decodeURIComponent(alias) };
@@ -259,7 +275,7 @@ export function getPageTargetPath(parsed: ParsedPageTarget): string {
     case "projects":
       return "projects";
     case "project":
-      return `projects/${parsed.target}`;
+      return personalProjectPath(`projects/${parsed.target}`);
     case "account":
       return getSettingsTargetPath(
         getAccountSettingsRouteFromState({
@@ -296,4 +312,15 @@ export function getPageTargetPath(parsed: ParsedPageTarget): string {
 
 export function getPageUrlPath(parsed: ParsedPageTarget): string {
   return `/${getPageTargetPath(parsed)}`;
+}
+
+// projects/<id>/<rest> as /u/<me>/projects/<alias>/<rest> when I gave that
+// project an alias; otherwise unchanged. Accepts and keeps a leading slash.
+export function personalProjectPath(path: string): string {
+  const match = /^(\/?)projects\/([0-9a-f-]{36})(\/.*)?$/i.exec(path);
+  if (!match) return path;
+  const owner = personalUrlOwner();
+  const alias = myProjectAlias(match[2].toLowerCase());
+  if (!owner || !alias) return path;
+  return `${match[1]}u/${encodeURIComponent(owner)}/projects/${encodeURIComponent(alias)}${match[3] ?? ""}`;
 }

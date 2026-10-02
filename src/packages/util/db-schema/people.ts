@@ -74,7 +74,7 @@ Table({
     alias: {
       type: "string",
       pg_type: "VARCHAR(64)",
-      desc: "Private lowercase handle, unique per account and kind.",
+      desc: "Lowercase handle, unique per account and kind. Person aliases are private; conversation and project aliases are public names in personal URLs.",
     },
     following: { type: "boolean", desc: "Explicitly followed." },
     muted: { type: "boolean", desc: "Explicitly muted." },

@@ -232,3 +232,30 @@ test.each([
   ).rejects.toThrow();
   expect(lookup).not.toHaveBeenCalled();
 });
+
+test("project links carry the path inside the project", async () => {
+  lookup.mockResolvedValue({ kind: "project", project_id });
+  const result = await resolvePersonalUrl({
+    account_id: viewer,
+    url: "/u/william/projects/research/files/paper.tex",
+  });
+  expect(lookup).toHaveBeenCalledWith({
+    owner_account_id: owner,
+    kind: "projects",
+    alias: "research",
+  });
+  expect(result).toMatchObject({
+    status: "resolved",
+    canonical_path: "/u/william/projects/research",
+    rest: "files/paper.tex",
+    target: { kind: "project", project_id },
+  });
+  // Aliases are public names: a nonmember learns only the project id.
+  member.mockResolvedValue(null);
+  expect(
+    await resolvePersonalUrl({
+      account_id: viewer,
+      url: "/u/william/projects/research",
+    }),
+  ).toMatchObject({ status: "access-denied", project_id });
+});

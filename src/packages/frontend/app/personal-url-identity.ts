@@ -28,3 +28,36 @@ export function isMyPersonalUrlOwner(owner: string): boolean {
       o === identity.account_id?.toLowerCase())
   );
 }
+
+// My project aliases (project_id <-> alias). A project with an alias has the
+// address /u/<me>/projects/<alias>/... instead of /projects/<id>/...
+let projectAliases = new Map<string, string>();
+let projectsByAlias = new Map<string, string>();
+const aliasListeners = new Set<() => void>();
+
+export function setMyProjectAliases(
+  rows: { project_id: string; alias: string }[],
+): void {
+  projectAliases = new Map(rows.map((r) => [r.project_id, r.alias]));
+  projectsByAlias = new Map(rows.map((r) => [r.alias, r.project_id]));
+  for (const listener of aliasListeners) listener();
+}
+
+export function myProjectAlias(project_id: string): string | undefined {
+  return projectAliases.get(project_id);
+}
+
+export function myProjectForAlias(alias: string): string | undefined {
+  return projectsByAlias.get(decodeURIComponent(alias).toLowerCase());
+}
+
+export function myProjectAliases(): ReadonlyMap<string, string> {
+  return projectAliases;
+}
+
+export function onMyProjectAliasesChange(listener: () => void): () => void {
+  aliasListeners.add(listener);
+  return () => {
+    aliasListeners.delete(listener);
+  };
+}

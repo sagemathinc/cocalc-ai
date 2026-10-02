@@ -61,6 +61,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   getPageUrlPath,
   parsePageTarget,
+  personalProjectPath,
   type ParsedPageTarget,
 } from "@cocalc/frontend/page-routing";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
@@ -182,6 +183,8 @@ export function set_url_with_search(
   if (parsePageTarget(url.replace(/^\//, "")).page === "agents") {
     rememberProjectsView();
   }
+  // Projects I gave an alias show my personal address for them.
+  url = personalProjectPath(url);
   last_url = url;
   const current = new URL(location.href);
   current.search = params();

@@ -32,11 +32,15 @@ export function personalUrlDestination(
     if (result.target.kind === "artifact")
       return `artifacts/${encodeURIComponent(result.alias)}`;
   }
-  return targetDestination(result.target);
+  return targetDestination(result.target, result.rest);
 }
 
-function targetDestination(target: PersonalUrlTarget): string {
+function targetDestination(target: PersonalUrlTarget, rest?: string): string {
   switch (target.kind) {
+    case "project":
+      return rest
+        ? `projects/${target.project_id}/${rest}`
+        : `projects/${target.project_id}`;
     case "conversation":
       return `people/conversations/${target.project_id}/${target.conversation_id}`;
     case "person":

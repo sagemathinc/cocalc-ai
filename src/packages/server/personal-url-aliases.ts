@@ -76,6 +76,16 @@ export const personalUrlAliasHomeControl: PersonalUrlAliasesApi = {
                 }
               : null;
           }
+          case "projects": {
+            const { rows } = await db.query(
+              `SELECT target_id FROM account_people_state
+               WHERE account_id=$1 AND kind='project' AND alias=$2`,
+              [owner_account_id, name],
+            );
+            return rows.length === 1
+              ? { kind: "project", project_id: rows[0].target_id }
+              : null;
+          }
           case "people": {
             const { rows } = await db.query(
               `SELECT target_id FROM account_people_state

@@ -4,8 +4,12 @@ import {
   getPageTopTab,
   getPageUrlPath,
   parsePageTarget,
+  personalProjectPath,
 } from "./page-routing";
-import { setPersonalUrlIdentity } from "./app/personal-url-identity";
+import {
+  setMyProjectAliases,
+  setPersonalUrlIdentity,
+} from "./app/personal-url-identity";
 
 describe("page-routing", () => {
   it("maps settings routes to the account top tab", () => {
@@ -272,4 +276,39 @@ test("my named agents and artifacts have personal addresses; others' are resolve
   expect(getPageUrlPath({ page: "agents", agent_id: "agent-1" })).toBe(
     "/agents/agent-1",
   );
+});
+
+test("projects I gave an alias have /u/<me>/projects/<alias> addresses", () => {
+  const id = "22222222-2222-4222-8222-222222222222";
+  setPersonalUrlIdentity({ account_id: "acct-1", username: "wstein" });
+  setMyProjectAliases([{ project_id: id, alias: "research" }]);
+  try {
+    expect(
+      getPageUrlPath({ page: "project", target: `${id}/files/a/paper.tex` }),
+    ).toBe("/u/wstein/projects/research/files/a/paper.tex");
+    expect(personalProjectPath(`/projects/${id}/files/notes/`)).toBe(
+      "/u/wstein/projects/research/files/notes/",
+    );
+    // Mine open directly, keeping a folder's trailing slash.
+    expect(parsePageTarget("u/wstein/projects/Research/files/notes/")).toEqual({
+      page: "project",
+      target: `${id}/files/notes/`,
+    });
+    expect(parsePageTarget("u/wstein/projects/research")).toEqual({
+      page: "project",
+      target: id,
+    });
+    // Other projects and other people's aliases are unchanged / resolved.
+    const other = "33333333-3333-4333-8333-333333333333";
+    expect(getPageUrlPath({ page: "project", target: `${other}/files/` })).toBe(
+      `/projects/${other}/files/`,
+    );
+    expect(parsePageTarget("u/alice/projects/research/files/x/")).toEqual({
+      page: "u",
+      path: "u/alice/projects/research/files/x/",
+    });
+  } finally {
+    setMyProjectAliases([]);
+    setPersonalUrlIdentity({});
+  }
 });

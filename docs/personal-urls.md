@@ -6,11 +6,16 @@ cleared usernames remain reserved as redirects until an administrator releases
 them; clearing a username is not a way to transfer it to another account.
 
 Links have the form `/u/USERNAME-OR-ACCOUNT-UUID/KIND/ALIAS`, where `KIND` is
-`agents`, `artifacts`, `chats`, or `people`.
+`agents`, `artifacts`, `chats`, `people`, or `projects`. A project link may
+continue with a path inside the project, exactly as after `/projects/UUID/`,
+e.g. `/u/alice/projects/thesis/files/chapter1.tex`.
 
 The aliases are the ones you already set: `@alias` on a conversation or person
-in People (`chats`, `people`), personal agent names (`agents`), and Library
-aliases (`artifacts`). The alias dialog in People shows the link to copy. A
+in People (`chats`, `people`), personal agent names (`agents`), artifact names
+(`artifacts`), and project aliases from a project's menu on the Projects page
+(`projects`). The alias dialogs show the link to copy. Only a collaborator on a
+project can give it an alias. While you work in a project you gave an alias,
+the address bar shows your `/u/YOU/projects/ALIAS/...` address for it. A
 username is optional (Settings → Account); the account UUID always identifies
 the same namespace. Aliases remain editable shortcuts, not immutable resource
 identities. Unqualified alias URLs are not supported as shared links.
@@ -18,6 +23,23 @@ identities. Unqualified alias URLs are not supported as shared links.
 Opening a link in the browser resolves it and then shows the target at its
 normal address. If the viewer is not a collaborator on the target's project,
 the project's access page offers the usual access request.
+
+## Aliases Are Public Names
+
+Aliases other than `people` aliases are public names, not secrets. Anyone who
+knows your username (or account UUID) and an alias can find out what it points
+to, including its project UUID: a viewer who is not a collaborator gets an
+`access-denied` result with the `project_id`, so they can request access.
+
+This is deliberate. It is what lets you paste a readable link anywhere and have
+it work for everyone who has access to the target. It also means a project UUID
+must never be treated as a secret or a capability. Opening anything still
+requires access to the project, checked as the viewer at the project's owning
+bay. Don't put secrets in aliases. The alias dialogs say this in their info
+popup.
+
+`people` aliases are the exception: they are private nicknames that resolve only
+for their owner (and explicit admin inspection).
 
 ## Ownership And Deployment
 

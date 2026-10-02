@@ -62,6 +62,9 @@ const FILES_SUBMENU_LIST_STYLE: CSS = {
 export interface ProjectActionsMenuProps {
   record: ProjectTableRecord;
   onToggleDetails: () => void;
+  // My personal alias for the project (/u/<me>/projects/<alias>).
+  alias?: string;
+  onEditAlias?: () => void;
 }
 
 export interface ProjectActionsMenuContentProps extends ProjectActionsMenuProps {
@@ -72,6 +75,8 @@ export interface ProjectActionsMenuContentProps extends ProjectActionsMenuProps 
 export function ProjectActionsMenuContent({
   record,
   onToggleDetails,
+  alias,
+  onEditAlias,
   defaultOpen = false,
   restoreFocus = false,
 }: ProjectActionsMenuContentProps) {
@@ -196,6 +201,9 @@ export function ProjectActionsMenuContent({
       case "details":
         onToggleDetails();
         break;
+      case "alias":
+        onEditAlias?.();
+        break;
       case "open":
         actions.open_project({
           project_id: record.project_id,
@@ -276,6 +284,15 @@ export function ProjectActionsMenuContent({
       label: "Details",
       icon: <Icon name="info-circle" />,
     },
+    ...(onEditAlias
+      ? [
+          {
+            key: "alias",
+            label: alias ? `Alias @${alias}...` : "Personal alias...",
+            icon: <Icon name="tags-outlined" />,
+          },
+        ]
+      : []),
     {
       type: "divider",
     },

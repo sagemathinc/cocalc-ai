@@ -33,7 +33,8 @@ export interface Conversation {
 // Things an account keeps private choices about. Artifacts, agents and
 // projects keep using their existing stores (Library, named agents,
 // project bookmarks).
-// "project" rows only record when this account last scanned that project.
+// "project" rows record when this account last scanned that project, and its
+// optional project alias.
 export const PEOPLE_STATE_KINDS = [
   "conversation",
   "person",
@@ -48,7 +49,9 @@ export interface PersonalState {
   // Pinned items form this account's collection; their manual order lives in
   // the account's collection preferences, shared with Library and Projects.
   pinned: boolean;
-  // Private, stable handle (without "@"). Unique per account and kind.
+  // Stable handle (without "@"), unique per account and kind. Person aliases
+  // are private; the others are public names in personal URLs
+  // (/u/<username>/<kind>/<alias>), see @cocalc/util/personal-urls.
   alias?: string | null;
   following: boolean;
   muted: boolean;

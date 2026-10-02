@@ -31,7 +31,8 @@ beforeAll(async () => {
     `INSERT INTO account_people_state
        (account_id, kind, target_id, project_id, alias, updated)
      VALUES ($1, 'conversation', $2, $3, 'weekly', NOW()),
-            ($1, 'person', $4, NULL, 'ana', NOW())`,
+            ($1, 'person', $4, NULL, 'ana', NOW()),
+            ($1, 'project', $3, NULL, 'research', NOW())`,
     [owner, conversation_id, project_id, person],
   );
 }, 60000);
@@ -51,6 +52,14 @@ test("chats and people resolve the owner's private aliases", async () => {
   });
   expect(await lookup("chats", "ana")).toBeNull();
   expect(await lookup("people", "missing")).toBeNull();
+});
+
+test("projects resolve the owner's project alias", async () => {
+  expect(await lookup("projects", "Research")).toEqual({
+    kind: "project",
+    project_id,
+  });
+  expect(await lookup("projects", "weekly")).toBeNull();
 });
 
 test("a stale home route is rejected", async () => {

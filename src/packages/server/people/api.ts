@@ -36,6 +36,8 @@ import {
   touchConversation,
 } from "@cocalc/database/postgres/people";
 import { getLogger } from "@cocalc/backend/logger";
+import { resolveProjectReferenceForMemberAllowRemote } from "@cocalc/server/conat/project-remote-access";
+import { isProjectCollaboratorRole } from "@cocalc/util/project-access";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
@@ -504,6 +506,19 @@ export const peopleApi: PeopleApi = {
   },
 
   async setState(opts) {
+    // A project alias is a public name for that project under your username,
+    // so only its collaborators may give it one.
+    if (opts.kind === "project" && opts.patch?.alias) {
+      requireUuid(opts.target_id, "target_id");
+      const reference = await resolveProjectReferenceForMemberAllowRemote({
+        account_id: opts.account_id!,
+        project_id: opts.target_id,
+      });
+      if (
+        !isProjectCollaboratorRole(reference?.users?.[opts.account_id!]?.group)
+      )
+        throw Error("Only collaborators on a project can give it an alias");
+    }
     return await (await home(opts.account_id!)).setState(opts);
   },
 

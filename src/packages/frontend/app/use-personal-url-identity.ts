@@ -10,9 +10,11 @@ import {
   type UsernameChangedDetail,
 } from "@cocalc/frontend/account/username-events";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { loadProjectAliases } from "@cocalc/frontend/projects/project-aliases";
 import { setPersonalUrlIdentity } from "./personal-url-identity";
 
-// Keep the personal URL identity current: the account, then its username.
+// Keep the personal URL identity current: the account, then its username
+// and project aliases.
 export function usePersonalUrlIdentity(): void {
   const account_id = useTypedRedux("account", "account_id") as
     | string
@@ -21,6 +23,9 @@ export function usePersonalUrlIdentity(): void {
     setPersonalUrlIdentity({ account_id });
     if (!account_id) return;
     let canceled = false;
+    loadProjectAliases().catch(() => {
+      // projects keep their /projects/<id> addresses
+    });
     webapp_client.conat_client.hub.personalUrls
       ?.getUsername?.({})
       .then((r) => {

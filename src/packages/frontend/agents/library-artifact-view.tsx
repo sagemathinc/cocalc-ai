@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 
+import { PublicAliasInfo } from "@cocalc/frontend/components/public-alias-info";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Alert, Button, Input, Modal } from "antd";
@@ -201,7 +202,9 @@ function LibraryArtifactPage({
         modalRender={(node) => <KeyboardBoundary>{node}</KeyboardBoundary>}
       >
         <p>
-          This name is personal to your account. Renaming keeps old links valid.
+          This name is personal to your account and appears in your public link
+          to the artifact. Renaming keeps old links valid.{" "}
+          <PublicAliasInfo kind="artifacts" />
         </p>
         <label htmlFor="library-artifact-name">Artifact name</label>
         <Input

@@ -44,6 +44,7 @@ export async function resolvePersonalUrl({
       alias,
     ),
     status: "unavailable",
+    ...(parsed.rest ? { rest: parsed.rest } : {}),
   };
   // Existing person nicknames are private settings, not published directories.
   if (parsed.kind === "people" && account_id !== owner.account_id && !inspect)
@@ -110,6 +111,7 @@ async function resolveTarget(
       return conversation ? { ...target, chat_path: conversation.path } : null;
     }
     case "person":
+    case "project":
       return target;
   }
 }

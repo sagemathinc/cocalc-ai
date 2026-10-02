@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { Alert, Form, Input, Modal } from "antd";
+import { PublicAliasInfo } from "@cocalc/frontend/components/public-alias-info";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import CopyToClipBoard from "@cocalc/frontend/components/copy-to-clipboard";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
@@ -48,7 +49,7 @@ function PersonalLink({
       extra={
         kind === "people"
           ? "Only you can open this link."
-          : "Opens for anyone who already has access to the project."
+          : `Opens for anyone who already has access to the ${kind === "projects" ? "project" : "project it is in"}.`
       }
     >
       <CopyToClipBoard value={`${location.origin}${base}${path}`} />
@@ -56,7 +57,7 @@ function PersonalLink({
   );
 }
 
-// Edit a private @alias. Saving an empty value clears it.
+// Edit an @alias. Saving an empty value clears it.
 export function AliasDialog({
   open,
   title,
@@ -105,9 +106,21 @@ export function AliasDialog({
     >
       <Form layout="vertical" onFinish={save}>
         <Form.Item
-          label="Alias"
+          label={
+            urlKind && urlKind !== "people" ? (
+              <span>
+                Alias <PublicAliasInfo kind={urlKind} />
+              </span>
+            ) : (
+              "Alias"
+            )
+          }
           htmlFor="people-alias-input"
-          extra="Only you see this alias. Use it to find this quickly, e.g. @team. Leave empty to remove."
+          extra={
+            urlKind && urlKind !== "people"
+              ? "A public name in your personal link, e.g. @team. Leave empty to remove."
+              : "Only you see this alias. Use it to find this quickly, e.g. @team. Leave empty to remove."
+          }
         >
           <Input
             id="people-alias-input"
