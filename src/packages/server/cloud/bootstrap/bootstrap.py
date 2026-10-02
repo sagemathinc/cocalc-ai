@@ -4798,6 +4798,9 @@ class BackgroundWarningTracker:
 # command for a moment. They are not the command's leftovers.
 JOB_INFRASTRUCTURE = frozenset({"conmon", "podman", "catatonit", "crun", "runc"})
 
+def process_name(pid):
+    return Path(f"/proc/{pid}/comm").read_text().strip()
+
 def live_scope_processes(scope, grace=0.5):
     # Diagnostic only. Cleanup always uses atomic cgroup.kill, never this count.
     # Allow exiting processes a moment to go, so that the "remaining job
@@ -4812,7 +4815,7 @@ def live_scope_processes(scope, grace=0.5):
         for pid in pids:
             try:
                 identity(int(pid))
-                name = Path(f"/proc/{int(pid)}/comm").read_text().strip()
+                name = process_name(int(pid))
             except (OSError, ValueError):
                 continue
             if name not in JOB_INFRASTRUCTURE:

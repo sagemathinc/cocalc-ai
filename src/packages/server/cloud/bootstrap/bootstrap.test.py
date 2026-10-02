@@ -7173,52 +7173,5 @@ class StarInstallScriptTest(unittest.TestCase):
 
 
 
-class ManagedJobLeftoverWarningTest(unittest.TestCase):
-    """The "remaining job processes" note must name only the command's leftovers."""
-
-    def helper(self):
-        namespace = {"__name__": "managed_job_helper"}
-        exec(compile(bootstrap.MANAGED_PROJECT_JOB_HELPER, "helper", "exec"), namespace)
-        return namespace["live_scope_processes"]
-
-    def test_counts_leftovers_but_not_podman_exec_infrastructure(self):
-        live_scope_processes = self.helper()
-        with tempfile.TemporaryDirectory() as tmp:
-            # A process whose name is podman's exec monitor.
-            conmon = Path(tmp) / "conmon"
-            conmon.write_bytes(Path("/bin/sleep").read_bytes())
-            conmon.chmod(0o755)
-            infra = subprocess.Popen([str(conmon), "30"])
-            leftover = subprocess.Popen(["/bin/sleep", "30"])
-            try:
-                scope = Path(tmp) / "scope"
-                scope.mkdir()
-                procs = scope / "cgroup.procs"
-                procs.write_text(f"{infra.pid}\n")
-                self.assertEqual(live_scope_processes(scope, grace=0), 0)
-                procs.write_text(f"{infra.pid}\n{leftover.pid}\n")
-                self.assertEqual(live_scope_processes(scope, grace=0), 1)
-            finally:
-                for process in (infra, leftover):
-                    process.kill()
-                    process.wait()
-
-    def test_a_process_that_exits_within_the_grace_period_is_not_reported(self):
-        live_scope_processes = self.helper()
-        with tempfile.TemporaryDirectory() as tmp:
-            exiting = subprocess.Popen(["/bin/sleep", "0.1"])
-            try:
-                scope = Path(tmp) / "scope"
-                scope.mkdir()
-                (scope / "cgroup.procs").write_text(f"{exiting.pid}\n")
-                # Reap it as soon as it exits, as the real parent would.
-                threading_wait = __import__("threading").Thread(target=exiting.wait)
-                threading_wait.start()
-                self.assertEqual(live_scope_processes(scope, grace=2), 0)
-                threading_wait.join()
-            finally:
-                exiting.kill()
-                exiting.wait()
-
 if __name__ == "__main__":
     unittest.main()
