@@ -647,13 +647,11 @@ test("successful first-use sign-in closes its modal and focuses the surviving se
 
 test("a delayed sign-in callback does not steal focus after switching projects", async () => {
   jest.useFakeTimers();
-  jest
-    .mocked(useProjectSecrets)
-    .mockReturnValue({
-      secrets: [],
-      refresh: jest.fn(),
-      setSecrets: jest.fn(),
-    });
+  jest.mocked(useProjectSecrets).mockReturnValue({
+    secrets: [],
+    refresh: jest.fn(),
+    setSecrets: jest.fn(),
+  });
   const start = jest
     .spyOn(
       webapp_client.conat_client.hub.projects,

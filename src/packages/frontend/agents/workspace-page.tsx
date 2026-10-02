@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { explainHiddenSidebarOnce } from "./sidebar-hidden-hint";
 import {
   normalizeAgentName,
   type NamedAgent,
@@ -3156,17 +3157,6 @@ export function MyAgentsWorkspacePage({
   // With sidebar navigation, Projects and projects show projects in the
   // sidebar (instead of agents), replacing the project tabs.
   const projectsMode = sidebarNavigation && projectsOpen;
-  useEffect(() => {
-    if (!sidebarNavigation || !active) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!shouldOpenProjectsNavShortcut(event)) return;
-      event.preventDefault();
-      focusProjectsFilter();
-      if (!projectsMode) void openProjectsWorkspace();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [sidebarNavigation, active, projectsMode]);
   const overviewOpen =
     !!useTypedRedux("page", "agents_overview_open") && !contentOpen;
   const artifactLibraryOpen =
@@ -3269,14 +3259,30 @@ export function MyAgentsWorkspacePage({
     ) : null;
   }
 
+  const agentSidebarHiddenRef = useRef(agentSidebarHidden);
+  agentSidebarHiddenRef.current = agentSidebarHidden;
   const toggleAgentSidebar = useCallback(() => {
     sidebarFocusPending.current = true;
     setAgentSidebarHidden((hidden) => {
       const next = !hidden;
       window.localStorage.setItem(AGENT_SIDEBAR_HIDDEN_STORAGE_KEY, `${next}`);
+      if (next) explainHiddenSidebarOnce();
       return next;
     });
   }, []);
+  useEffect(() => {
+    if (!sidebarNavigation || !active) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!shouldOpenProjectsNavShortcut(event)) return;
+      event.preventDefault();
+      // Also the keyboard way back to a hidden sidebar.
+      if (agentSidebarHiddenRef.current) toggleAgentSidebar();
+      focusProjectsFilter();
+      if (!projectsMode) void openProjectsWorkspace();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [sidebarNavigation, active, projectsMode, toggleAgentSidebar]);
 
   useEffect(() => {
     if (active || !rootRef.current?.contains(document.activeElement)) return;
@@ -3289,11 +3295,11 @@ export function MyAgentsWorkspacePage({
     sidebarFocusPending.current = false;
     const label = isNarrow
       ? mobileList
-        ? "Hide Agents sidebar"
+        ? "Hide sidebar"
         : "Show agents"
       : agentSidebarHidden
-        ? "Show Agents sidebar"
-        : "Hide Agents sidebar";
+        ? "Show sidebar"
+        : "Hide sidebar";
     Array.from(
       rootRef.current?.querySelectorAll<HTMLButtonElement>(
         `button[aria-label="${label}"]`,
@@ -4136,7 +4142,7 @@ export function MyAgentsWorkspacePage({
         boxSizing: "border-box",
         overflow: "hidden",
         minWidth: 0,
-        padding: "12px 0 0 12px",
+        padding: "0 0 0 12px",
         ...(isNarrow && !mobileList ? { display: "none" } : {}),
       }}
     >

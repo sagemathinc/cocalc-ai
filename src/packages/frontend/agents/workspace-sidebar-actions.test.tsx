@@ -103,7 +103,7 @@ test.each(["Projects", "Artifacts"])(
       name: "Agent navigation and list",
     });
     const first = screen.getByRole("button", { name });
-    const hide = screen.getByRole("button", { name: "Hide Agents sidebar" });
+    const hide = screen.getByRole("button", { name: "Hide sidebar" });
     const home = screen.getByRole("link", { name: "CoCalc home" });
     expect(home.parentElement).toBe(hide.parentElement);
     expect(scroll).not.toContainElement(hide);
