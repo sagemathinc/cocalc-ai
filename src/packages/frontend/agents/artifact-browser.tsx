@@ -28,7 +28,7 @@ import {
   type CollectionControls,
 } from "@cocalc/frontend/components/collection";
 import {
-  ArtifactCatalogStore,
+  sharedArtifactCatalog,
   artifactIdentity as identity,
   catalogResults,
   CATALOG_LIMITS,
@@ -110,11 +110,10 @@ function AccountArtifactBrowser({
     () => librarySearchRequest.on(() => searchRef.current?.focus()),
     [],
   );
-  const [catalog] = useState(
-    () =>
-      new ArtifactCatalogStore(accountId, (opts) =>
-        webapp_client.conat_client.hub.artifactCatalog.listProject(opts),
-      ),
+  const [catalog] = useState(() =>
+    sharedArtifactCatalog(accountId, (opts) =>
+      webapp_client.conat_client.hub.artifactCatalog.listProject(opts),
+    ),
   );
   const metadata = useSyncExternalStore(catalog.subscribe, catalog.get);
   const [openError, setOpenError] = useState("");

@@ -10,15 +10,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { InputRef } from "antd";
-import { Button, Input, Typography } from "antd";
+
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
-import { Icon } from "@cocalc/frontend/components";
 import { moveVisibleCollectionPin } from "@cocalc/frontend/components/collection-order";
 import {
-  DragHandle,
-  SortableItem,
-  SortableList,
-} from "@cocalc/frontend/components/sortable-list";
+  SidebarDot,
+  SidebarList,
+  type SidebarListItem,
+} from "@cocalc/frontend/components/sidebar-list";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { ProjectThemeAvatar } from "./theme";
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
@@ -136,193 +135,48 @@ export function ProjectsSidebar({ onNavigate }: { onNavigate?: () => void }) {
     onNavigate?.();
   }
 
-  function row(project: SidebarProject, isPinned: boolean) {
-    const active = project.project_id === current;
-    return (
-      <div
-        role="listitem"
-        className="cocalc-agent-sidebar-row"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          borderRadius: 6,
-          background: active ? UI_COLORS.selected : "transparent",
-        }}
-      >
-        {isPinned && !search ? (
-          <span className="cocalc-agent-sidebar-row-reveal">
-            <DragHandle
-              id={project.project_id}
-              ariaLabel={`Drag ${project.title} to reorder`}
-              title="Drag to reorder"
-              style={{ display: "flex", padding: "10px 6px", cursor: "grab" }}
-            />
-          </span>
-        ) : (
-          <span aria-hidden style={{ flex: "0 0 26px" }} />
-        )}
-        <button
-          type="button"
-          aria-current={active ? "page" : undefined}
-          aria-label={`Open project ${project.title}`}
-          title={project.title}
-          onClick={(e) => open(project.project_id, e)}
-          onAuxClick={(e) => open(project.project_id, e)}
-          style={{
-            flex: 1,
-            minWidth: 0,
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "6px 0",
-            border: 0,
-            background: "transparent",
-            color: UI_COLORS.text,
-            cursor: "pointer",
-            textAlign: "left",
-            font: "inherit",
-          }}
-        >
-          <ProjectThemeAvatar
-            project={project_map?.get(project.project_id)}
-            size={26}
-          />
-          <Typography.Text
-            ellipsis
-            strong={active}
-            style={{ flex: 1, minWidth: 0 }}
-          >
-            {project.title}
-          </Typography.Text>
-          {project.running && (
-            <span
-              title="Running"
-              aria-label="Running"
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: 4,
-                flex: "0 0 auto",
-                background: UI_COLORS.success,
-              }}
-            />
-          )}
-        </button>
-        <Button
-          className={isPinned ? undefined : "cocalc-agent-sidebar-row-reveal"}
-          type="text"
-          size="small"
-          aria-label={`${isPinned ? "Unpin" : "Pin"} ${project.title}`}
-          aria-pressed={isPinned}
-          title={isPinned ? "Unpin" : "Pin"}
-          icon={
-            <Icon
-              name={isPinned ? "pushpin-filled" : "pushpin"}
-              style={{ color: isPinned ? UI_COLORS.link : UI_COLORS.secondary }}
-            />
-          }
-          onClick={() => setProjectBookmarked(project.project_id, !isPinned)}
-        />
-      </div>
-    );
-  }
-
-  const heading = (text: string) => (
-    <Typography.Text type="secondary" style={{ display: "block", padding: 6 }}>
-      {text}
-    </Typography.Text>
-  );
-  const pinnedIds = pinned.map((p) => p.project_id);
+  const item = (project: SidebarProject): SidebarListItem => ({
+    id: project.project_id,
+    title: project.title,
+    current: project.project_id === current,
+    avatar: (
+      <ProjectThemeAvatar
+        project={project_map?.get(project.project_id)}
+        size={26}
+      />
+    ),
+    extra: project.running ? (
+      <SidebarDot color={UI_COLORS.success} label="Running" />
+    ) : undefined,
+  });
 
   return (
-    <section aria-label="Projects" style={{ paddingRight: 8 }}>
-      <Typography.Text
-        type="secondary"
-        style={{ display: "block", padding: "6px 0 2px" }}
-      >
-        Projects
-      </Typography.Text>
-      <Button
-        block
-        type="text"
-        icon={<Icon name="plus" />}
-        style={{ justifyContent: "flex-start", marginBottom: 6 }}
-        onClick={() => {
-          requestNewProject();
-          void actions.redux.getActions("page").set_active_tab("projects");
-          onNavigate?.();
-        }}
-      >
-        New Project
-      </Button>
-      <Input
-        ref={filterRef}
-        type="search"
-        allowClear
-        aria-label="Filter projects"
-        placeholder="Filter projects"
-        prefix={<Icon name="search" />}
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        style={{ marginBottom: 6 }}
-      />
-      {pinned.length > 0 && (
-        <>
-          {heading("Pinned")}
-          <div role="list" aria-label="Pinned projects">
-            <SortableList
-              items={pinnedIds}
-              disabled={!!search}
-              onDragStop={(_from, to, id) => {
-                if (typeof id === "string")
-                  setBookmarkedProjectsOrder(
-                    moveVisibleCollectionPin(
-                      bookmarkedProjects,
-                      pinnedIds,
-                      id,
-                      to,
-                    ),
-                  );
-              }}
-            >
-              {pinned.map((project) => (
-                <SortableItem
-                  key={project.project_id}
-                  id={project.project_id}
-                  hideActive={false}
-                >
-                  {row(project, true)}
-                </SortableItem>
-              ))}
-            </SortableList>
-          </div>
-        </>
-      )}
-      {recent.length > 0 && (
-        <>
-          {heading(search ? "Matches" : "Recent")}
-          <div role="list" aria-label="Recent projects">
-            {recent.map((project) => (
-              <div key={project.project_id}>{row(project, false)}</div>
-            ))}
-          </div>
-        </>
-      )}
-      {pinned.length === 0 && recent.length === 0 && (
-        <Typography.Paragraph type="secondary" style={{ padding: 6 }}>
-          {search ? "No matching projects." : "No projects yet."}
-        </Typography.Paragraph>
-      )}
-      <Button
-        type="link"
-        size="small"
-        onClick={() => {
-          void actions.redux.getActions("page").set_active_tab("projects");
-          onNavigate?.();
-        }}
-      >
-        All projects{more > 0 ? ` (${more} more)` : ""}…
-      </Button>
-    </section>
+    <SidebarList
+      ref={filterRef}
+      label="Projects"
+      itemLabel="project"
+      newLabel="New Project"
+      onNew={() => {
+        requestNewProject();
+        void actions.redux.getActions("page").set_active_tab("projects");
+        onNavigate?.();
+      }}
+      search={search}
+      onSearch={setSearch}
+      pinned={pinned.map(item)}
+      recent={recent.map(item)}
+      more={more}
+      onOpen={open}
+      onPin={(id, pin) => setProjectBookmarked(id, pin)}
+      onMovePin={(visible, id, index) =>
+        setBookmarkedProjectsOrder(
+          moveVisibleCollectionPin(bookmarkedProjects, visible, id, index),
+        )
+      }
+      onAll={() => {
+        void actions.redux.getActions("page").set_active_tab("projects");
+        onNavigate?.();
+      }}
+    />
   );
 }

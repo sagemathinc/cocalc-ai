@@ -9,3 +9,5 @@ import { pendingRequest } from "./pending-request";
 // searches (artifact metadata; conversation messages).
 export const librarySearchRequest = pendingRequest("library-search");
 export const peopleSearchRequest = pendingRequest("people-search");
+// "+ New Conversation" in the People sidebar.
+export const newConversationRequest = pendingRequest("new-conversation");

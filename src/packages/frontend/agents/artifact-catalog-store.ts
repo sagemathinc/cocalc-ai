@@ -346,3 +346,18 @@ export function catalogResults(
     return order || compare(artifactIdentity(a), artifactIdentity(b));
   });
 }
+
+// One catalog per account, shared by the Library page (which starts and
+// refreshes it while the workspace is mounted) and the sidebar's list.
+const shared = new Map<string, ArtifactCatalogStore>();
+export function sharedArtifactCatalog(
+  accountId: string,
+  listProject: ListProject,
+): ArtifactCatalogStore {
+  let store = shared.get(accountId);
+  if (!store) {
+    store = new ArtifactCatalogStore(accountId, listProject);
+    shared.set(accountId, store);
+  }
+  return store;
+}

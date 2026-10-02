@@ -135,6 +135,8 @@ import { AgentOrganizationControls } from "./organization-controls";
 import { AgentsOverview } from "./agents-overview";
 import { SidebarNotifications, SidebarStatus } from "./sidebar-status";
 import { ProjectsSearchDrawer } from "@cocalc/frontend/projects/projects-search-drawer";
+import { LibrarySidebar } from "./library-sidebar";
+import { PeopleSidebar } from "@cocalc/frontend/people/people-sidebar";
 import {
   librarySearchRequest,
   peopleSearchRequest,
@@ -3179,6 +3181,12 @@ export function MyAgentsWorkspacePage({
           ? "people"
           : "agents";
   const [projectSearchOpen, setProjectSearchOpen] = useState(false);
+  // With sidebar navigation, Projects, the Library and People list their own
+  // things in the sidebar (instead of agents), like Agents does.
+  const listMode: "projects" | "library" | "people" | undefined =
+    !sidebarNavigation || searchContext === "agents"
+      ? undefined
+      : searchContext;
   const libraryProjectId = useTypedRedux("page", "library_project_id");
   const libraryEntryId = useTypedRedux("page", "library_entry_id");
   const { names: artifactNames } = useArtifactNames();
@@ -4306,10 +4314,24 @@ export function MyAgentsWorkspacePage({
                       />
                     </>
                   )}
-                  {projectsMode && (
+                  {listMode === "projects" && (
                     <ProjectsSidebar onNavigate={() => setMobileList(false)} />
                   )}
-                  {!projectsMode && (
+                  {listMode === "library" && accountId && (
+                    <LibrarySidebar
+                      accountId={accountId}
+                      agents={agents}
+                      onOpen={(hit) => {
+                        setMobileList(false);
+                        void openLibraryHit(hit);
+                      }}
+                      onAll={showLibrary}
+                    />
+                  )}
+                  {listMode === "people" && (
+                    <PeopleSidebar onNavigate={() => setMobileList(false)} />
+                  )}
+                  {!listMode && (
                     <AgentOrganizationControls
                       mode={agentOrganization.organization.mode}
                       groupByProject={
@@ -4320,7 +4342,7 @@ export function MyAgentsWorkspacePage({
                       onNewAgent={startNewAgent}
                     />
                   )}
-                  {!projectsMode && input}
+                  {!listMode && input}
                   {networkError && (
                     <Alert
                       role="alert"
@@ -4335,7 +4357,7 @@ export function MyAgentsWorkspacePage({
                     onRetry={agentOrganization.retrySave}
                   />
                 </Space>
-                {!projectsMode && (
+                {!listMode && (
                   <>
                     <div>
                       {agentOrganization.organization.groupByProject &&
