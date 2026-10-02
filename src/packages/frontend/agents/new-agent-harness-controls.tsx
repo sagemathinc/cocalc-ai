@@ -31,6 +31,7 @@ import { discoverNewAgentHarness } from "./discover-new-agent-harness";
 import {
   newAgentClaudeCredentialOptions,
   newAgentClaudeCredentialValue,
+  preferredClaudeCredential,
 } from "./claude-credential-options";
 
 export function NewAgentClaudeControls({
@@ -177,12 +178,12 @@ export function NewAgentClaudeControls({
             )
           }
           onDisconnected={(id) => {
+            const remaining = credentials.filter((row) => row.id !== id);
             onCredentials((rows) => rows.filter((row) => row.id !== id));
-            onCredential({
-              version: 1,
-              provider: "anthropic",
-              mode: "project-secret",
-            });
+            // Fall back to another subscription, never to the project secret:
+            // with none left, the user chooses (connect or pick a key).
+            const next = preferredClaudeCredential(undefined, remaining);
+            if (next.mode !== "project-secret") onCredential(next);
           }}
           onConnected={onConnected}
         >

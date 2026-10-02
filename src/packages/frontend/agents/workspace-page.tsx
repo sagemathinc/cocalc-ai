@@ -79,7 +79,7 @@ import {
   NewAgentRuntimeSelect,
   type NewAgentRuntimeKind,
 } from "./new-agent-runtime-select";
-import { newAgentClaudeCredentialDefault } from "./claude-credential-options";
+import { preferredClaudeCredential } from "./claude-credential-options";
 import {
   NewAgentClaudeControls,
   NewAgentAcpControls,
@@ -664,9 +664,9 @@ function NewAgentPanel({
       forNewAgent: true,
     }),
   );
-  const claudeCredentialChosen = useRef(
-    initialClaudeCredential.current != null,
-  );
+  // Only a choice made in this form wins over the preferred credential; a
+  // remembered one is kept while it still exists.
+  const claudeCredentialChosen = useRef(false);
   const [claudeCredential, setClaudeCredential] =
     useState<AcpHarnessCredential>(
       () =>
@@ -815,7 +815,9 @@ function NewAgentPanel({
             ),
           );
           if (!claudeCredentialChosen.current)
-            setClaudeCredential(newAgentClaudeCredentialDefault(rows));
+            setClaudeCredential(
+              preferredClaudeCredential(initialClaudeCredential.current, rows),
+            );
           setClaudeCredentialsLoaded(true);
         }
       })

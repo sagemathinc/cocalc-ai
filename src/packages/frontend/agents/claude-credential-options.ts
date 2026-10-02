@@ -40,42 +40,87 @@ export function newAgentClaudeCredentialValue(
     : "project-secret";
 }
 
+// Most recently used (or connected) first.
+function byRecency(a: ExternalCredentialInfo, b: ExternalCredentialInfo) {
+  const time = (row: ExternalCredentialInfo) =>
+    new Date(row.last_used ?? row.updated ?? row.created ?? 0).valueOf() || 0;
+  return time(b) - time(a);
+}
+
+function activeClaudeCredentials(credentials: ExternalCredentialInfo[]) {
+  const active = credentials.filter((row) => !row.revoked);
+  return {
+    subscriptions: active
+      .filter((row) => row.kind === CLAUDE_SUBSCRIPTION_KIND)
+      .sort(byRecency),
+    apiKeys: active
+      .filter((row) => row.kind === "anthropic-api-key")
+      .sort(byRecency),
+  };
+}
+
+/** Subscriptions first, then account API keys; the project secret last. */
 export function newAgentClaudeCredentialOptions(
   credentials: ExternalCredentialInfo[],
   compact = false,
 ): { value: string; label: string }[] {
+  const { subscriptions, apiKeys } = activeClaudeCredentials(credentials);
   return [
-    { value: "project-secret", label: "Project secret" },
-    ...credentials
-      .filter(
-        (row) =>
-          !row.revoked &&
-          (row.kind === "anthropic-api-key" ||
-            row.kind === CLAUDE_SUBSCRIPTION_KIND),
-      )
-      .map((row) => ({
-        value: `${row.kind === CLAUDE_SUBSCRIPTION_KIND ? "account-subscription" : "account-api-key"}:${row.id}`,
-        label:
-          row.kind === CLAUDE_SUBSCRIPTION_KIND
-            ? claudeSubscriptionName(row, compact)
-            : row.metadata?.label || "Anthropic API key",
-      })),
+    ...subscriptions.map((row) => ({
+      value: `account-subscription:${row.id}`,
+      label: claudeSubscriptionName(row, compact),
+    })),
+    ...apiKeys.map((row) => ({
+      value: `account-api-key:${row.id}`,
+      label: row.metadata?.label || "Anthropic API key",
+    })),
+    { value: "project-secret", label: "Project secret (ANTHROPIC_API_KEY)" },
   ];
 }
 
-/** Reuse an unambiguous existing subscription; never guess between accounts. */
+/**
+ * The Claude credential to use: the remembered one while it exists, else the
+ * most recent subscription, else an account API key. The project secret is
+ * used only when chosen, and only kept if no account credential exists.
+ */
+export function preferredClaudeCredential(
+  remembered: AcpHarnessCredential | undefined,
+  credentials: ExternalCredentialInfo[],
+): AcpHarnessCredential {
+  const { subscriptions, apiKeys } = activeClaudeCredentials(credentials);
+  if (
+    remembered &&
+    (remembered.mode === "account-subscription" ||
+      remembered.mode === "account-api-key") &&
+    [...subscriptions, ...apiKeys].some(
+      (row) => row.id === remembered.credentialId,
+    )
+  )
+    return remembered;
+  if (subscriptions.length)
+    return {
+      version: 1,
+      provider: "anthropic",
+      mode: "account-subscription",
+      credentialId: subscriptions[0].id,
+      ...(remembered?.mode === "account-subscription" &&
+      remembered.claudeAiConnectors === false
+        ? { claudeAiConnectors: false }
+        : {}),
+    };
+  if (apiKeys.length)
+    return {
+      version: 1,
+      provider: "anthropic",
+      mode: "account-api-key",
+      credentialId: apiKeys[0].id,
+    };
+  return { version: 1, provider: "anthropic", mode: "project-secret" };
+}
+
+/** Default for a new agent with nothing remembered. */
 export function newAgentClaudeCredentialDefault(
   credentials: ExternalCredentialInfo[],
 ): AcpHarnessCredential {
-  const subscriptions = credentials.filter(
-    (row) => !row.revoked && row.kind === CLAUDE_SUBSCRIPTION_KIND,
-  );
-  return subscriptions.length === 1
-    ? {
-        version: 1,
-        provider: "anthropic",
-        mode: "account-subscription",
-        credentialId: subscriptions[0].id,
-      }
-    : { version: 1, provider: "anthropic", mode: "project-secret" };
+  return preferredClaudeCredential(undefined, credentials);
 }

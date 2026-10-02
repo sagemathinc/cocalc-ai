@@ -758,14 +758,10 @@ test("a selected subscription can be named, disconnected or reconnected from the
   // The confirmation's own Disconnect button.
   const confirm = await screen.findAllByRole("button", { name: "Disconnect" });
   await user.click(confirm[confirm.length - 1]);
-  await waitFor(() =>
-    expect(onCredential).toHaveBeenCalledWith({
-      version: 1,
-      provider: "anthropic",
-      mode: "project-secret",
-    }),
-  );
+  await waitFor(() => expect(onCredentials).toHaveBeenCalled());
   expect(revoke).toHaveBeenCalledWith(expect.objectContaining({ id }));
+  // No other credential left: never silently switch to the project secret.
+  expect(onCredential).not.toHaveBeenCalled();
   const update = onCredentials.mock.calls[0][0];
   expect(update([{ id }, { id: "other" }])).toEqual([{ id: "other" }]);
   revoke.mockRestore();

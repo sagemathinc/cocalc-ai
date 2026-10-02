@@ -38,7 +38,11 @@ import {
 } from "./claude-connector-preference";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { AgentSpeedControl } from "./agent-speed-control";
-import { newAgentClaudeCredentialOptions } from "@cocalc/frontend/agents/claude-credential-options";
+import {
+  newAgentClaudeCredentialOptions,
+  newAgentClaudeCredentialValue,
+  preferredClaudeCredential,
+} from "@cocalc/frontend/agents/claude-credential-options";
 
 const HARNESS_LIMITATIONS =
   "Text and image prompts. Live guidance works when the harness advertises it; otherwise messages queue. Automations are not supported yet.";
@@ -152,6 +156,25 @@ function ClaudeCredentialControl({
             ),
           );
           setCredentialsLoaded(true);
+          // A disconnected account credential: use the preferred current one.
+          const current = readHarnessCredentialSelection({
+            accountId,
+            projectId,
+            threadKey,
+          });
+          if (
+            current?.mode === "account-subscription" ||
+            current?.mode === "account-api-key"
+          ) {
+            const next = preferredClaudeCredential(current, rows);
+            if (next !== current && next.mode !== "project-secret")
+              writeHarnessCredentialSelection({
+                accountId,
+                projectId,
+                threadKey,
+                credential: next,
+              });
+          }
         }
       })
       .catch((err) => {
@@ -240,18 +263,19 @@ function ClaudeCredentialControl({
           )
         }
         onDisconnected={(id) => {
-          setCredentials((rows) => rows.filter((row) => row.id !== id));
+          const remaining = credentials.filter((row) => row.id !== id);
+          setCredentials(remaining);
+          // Fall back to another subscription, never to the project secret:
+          // with none left, the user chooses (connect or pick a key).
+          const next = preferredClaudeCredential(undefined, remaining);
+          if (next.mode === "project-secret") return;
           writeHarnessCredentialSelection({
             accountId,
             projectId,
             threadKey,
-            credential: {
-              version: 1,
-              provider: "anthropic",
-              mode: "project-secret",
-            },
+            credential: next,
           });
-          setValue("project-secret");
+          setValue(newAgentClaudeCredentialValue(next));
         }}
         onConnected={async (credentialId) => {
           writeHarnessCredentialSelection({
