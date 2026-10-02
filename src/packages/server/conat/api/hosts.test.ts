@@ -8144,3 +8144,72 @@ describe("hosts.drainHostInternal", () => {
     ]);
   });
 });
+
+describe("hosts.recordClaudeSubscriptionUsage", () => {
+  const HOST_UUID = "00000000-0000-4000-8000-000000000301";
+  const ACCOUNT_UUID = "00000000-0000-4000-8000-000000000302";
+  const PROJECT_UUID = "00000000-0000-4000-8000-000000000303";
+  const CREDENTIAL_UUID = "00000000-0000-4000-8000-000000000304";
+  const resets_at = Math.floor(Date.now() / 1000) + 3600;
+  const observed_at = new Date(Date.now() - 60_000).toISOString();
+  const request = (usage: unknown) => ({
+    host_id: HOST_UUID,
+    project_id: PROJECT_UUID,
+    owner_account_id: ACCOUNT_UUID,
+    credential_id: CREDENTIAL_UUID,
+    usage,
+  });
+
+  it("saves only the revalidated snapshot on the owner's credential", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT owning_bay_id"))
+        return { rows: [{ owning_bay_id: null }], rowCount: 1 };
+      if (sql.includes("jsonb_set")) return { rows: [], rowCount: 1 };
+      throw Error(`unexpected query ${sql}`);
+    });
+    const { recordClaudeSubscriptionUsage } = await import("./hosts");
+    await expect(
+      recordClaudeSubscriptionUsage(
+        request({
+          observed_at,
+          windows: { five_hour: { utilization: 0.2, resets_at } },
+          provider_response: "private",
+        }),
+      ),
+    ).resolves.toBe(true);
+    const [, params] = queryMock.mock.calls.find(([sql]) =>
+      sql.includes("jsonb_set"),
+    )!;
+    expect(params[0]).toBe(CREDENTIAL_UUID);
+    expect(params).toEqual(
+      expect.arrayContaining(["anthropic", "account", ACCOUNT_UUID]),
+    );
+    expect(params.at(-2)).toBe("claude_usage");
+    expect(JSON.parse(params.at(-1))).toEqual({
+      observed_at,
+      windows: { five_hour: { utilization: 0.2, resets_at } },
+    });
+  });
+
+  it("rejects invalid usage and unauthorized hosts before writing", async () => {
+    queryMock = jest.fn(async () => ({ rows: [], rowCount: 0 }));
+    resolveProjectReferenceAllowRemoteMock = jest.fn(async () => ({
+      host_id: "another-host",
+    }));
+    const { recordClaudeSubscriptionUsage } = await import("./hosts");
+    await expect(
+      recordClaudeSubscriptionUsage(request({ windows: {} })),
+    ).rejects.toThrow("invalid Claude usage");
+    await expect(
+      recordClaudeSubscriptionUsage(
+        request({
+          observed_at,
+          windows: { five_hour: { utilization: 0.2, resets_at } },
+        }),
+      ),
+    ).rejects.toThrow("host is not authorized");
+    expect(
+      queryMock.mock.calls.some(([sql]) => `${sql}`.includes("jsonb_set")),
+    ).toBe(false);
+  });
+});

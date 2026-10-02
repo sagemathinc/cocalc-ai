@@ -679,6 +679,38 @@ WHERE id=$1 AND ${ownershipClause(2)} AND revoked IS NULL
   return !!rowCount;
 }
 
+/**
+ * Set one metadata value (e.g. last reported usage) without bumping
+ * `updated`, which orders credentials for default selection.
+ */
+export async function setExternalCredentialMetadataValueById({
+  id,
+  selector,
+  key,
+  value,
+}: {
+  id: string;
+  selector: ExternalCredentialSelector;
+  key: string;
+  value: unknown;
+}): Promise<boolean> {
+  if (!/^[a-z][a-z0-9_]{0,63}$/.test(key))
+    throw new Error("invalid credential metadata key");
+  const json = JSON.stringify(value ?? null);
+  if (json.length > 16 * 1024)
+    throw new Error("credential metadata value is too large");
+  const normalized = normalizeSelector(selector);
+  const { rowCount } = await pool().query(
+    `
+UPDATE external_credentials
+SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), ARRAY[$8::text], $9::jsonb, true)
+WHERE id=$1 AND ${ownershipClause(2)} AND revoked IS NULL
+    `,
+    [id, ...selectorValues(normalized), key, json],
+  );
+  return !!rowCount;
+}
+
 export async function ensureDefaultExternalCredential({
   selector,
   metadataKey,

@@ -261,7 +261,6 @@ test("subscription controller receives the admitted conversation for agent ident
   await launch(subscription, conversation);
   expect(launchClaudeSubscriptionController).toHaveBeenCalledWith(
     subscription,
-    "agent",
     conversation,
   );
   expect(mockLease).not.toHaveBeenCalled();

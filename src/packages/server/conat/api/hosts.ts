@@ -169,8 +169,17 @@ import {
   touchExternalCredentialByIdRouted,
   touchExternalCredentialRouted,
   updateExternalCredentialByIdRouted,
+  setExternalCredentialMetadataValueByIdRouted,
   upsertExternalCredentialRouted,
 } from "@cocalc/server/external-credentials/routing";
+import {
+  ANTHROPIC_API_PROVIDER,
+  CLAUDE_SUBSCRIPTION_KIND,
+} from "@cocalc/util/ai/external-credential-profiles";
+import {
+  CLAUDE_USAGE_METADATA_KEY,
+  parseClaudeRateLimitSnapshot,
+} from "@cocalc/util/ai/claude-usage";
 import { type ExternalCredentialScope } from "@cocalc/server/external-credentials/store";
 import {
   ensureSelfHostReverseTunnel,
@@ -3203,6 +3212,46 @@ export async function hasExternalCredential({
     return designated?.revoked == null && designated != null;
   }
   return await hasExternalCredentialRouted({ selector: routedSelector });
+}
+
+export async function recordClaudeSubscriptionUsage({
+  host_id,
+  project_id,
+  owner_account_id,
+  credential_id,
+  usage,
+}: {
+  host_id?: string;
+  project_id: string;
+  owner_account_id: string;
+  credential_id: string;
+  usage: unknown;
+}): Promise<boolean> {
+  if (!host_id) throw new Error("host_id must be specified");
+  if (!project_id) throw new Error("project_id must be specified");
+  if (!isValidUUID(owner_account_id))
+    throw new Error("owner_account_id must be a UUID");
+  assertExternalCredentialId(credential_id);
+  if (!credential_id) throw new Error("credential_id must be specified");
+  // Store only revalidated numbers, never what the host sent.
+  const snapshot = parseClaudeRateLimitSnapshot(usage);
+  if (!snapshot) throw new Error("invalid Claude usage");
+  await assertHostCredentialProjectAccess({
+    host_id,
+    project_id,
+    owner_account_id,
+  });
+  return await setExternalCredentialMetadataValueByIdRouted({
+    id: credential_id,
+    selector: {
+      provider: ANTHROPIC_API_PROVIDER,
+      kind: CLAUDE_SUBSCRIPTION_KIND,
+      scope: "account",
+      owner_account_id,
+    },
+    key: CLAUDE_USAGE_METADATA_KEY,
+    value: snapshot,
+  });
 }
 
 export async function touchExternalCredential({

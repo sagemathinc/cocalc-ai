@@ -361,6 +361,7 @@ import {
   touchExternalCredential,
   updateExternalCredentialById,
   updateExternalCredentialLabelById,
+  setExternalCredentialMetadataValueById,
   upsertExternalCredential,
 } from "@cocalc/server/external-credentials/store";
 import { refreshCodexSubscriptionAuth } from "@cocalc/server/external-credentials/codex-subscription-refresh";
@@ -2619,6 +2620,13 @@ async function startExternalCredentialsService(): Promise<void> {
       }),
     updateLabelById: async ({ id, selector, label }) =>
       await updateExternalCredentialLabelById({ id, selector, label }),
+    setMetadataValueById: async ({ id, selector, key, value }) =>
+      await setExternalCredentialMetadataValueById({
+        id,
+        selector,
+        key,
+        value,
+      }),
     get: async ({ selector, touch_last_used }) =>
       await getExternalCredential({
         selector,
