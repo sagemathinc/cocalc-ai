@@ -51,15 +51,7 @@ describe("PublicHomeApp visual quality contract", () => {
   it("keeps the card systems balanced across the landing page", () => {
     const { container } = renderHome();
 
-    const workflowGrid = within(
-      screen.getByRole("region", { name: "Core workflows" }),
-    ).getByRole("group", { name: "CoCalc workflow feature cards" });
-    const audienceGrid = getGrid(
-      container,
-      ".cocalc-public-home-audience-grid",
-    );
     const codexGrid = getGrid(container, ".cocalc-public-home-codex-grid");
-    const productGrid = getGrid(container, ".cocalc-public-home-product-grid");
     const differenceGrid = getGrid(
       container,
       ".cocalc-public-home-difference-grid",
@@ -67,21 +59,6 @@ describe("PublicHomeApp visual quality contract", () => {
     const finalActions = getGrid(
       container,
       ".cocalc-public-home-final-actions",
-    );
-
-    expect(getDirectCards(workflowGrid)).toHaveLength(6);
-    expectGridTemplate(workflowGrid, "repeat(3, minmax(0, 1fr))");
-    expect(getCardTitles(workflowGrid, "h3")).toEqual([
-      "Jupyter Notebooks",
-      "LaTeX Editor",
-      "Linux Terminal",
-      "AI Agents",
-      "Teaching a Course",
-      "Whiteboard",
-    ]);
-    expect(workflowGrid.querySelectorAll(".ant-tag")).toHaveLength(0);
-    expect(workflowGrid.querySelectorAll(".anticon-arrow-right")).toHaveLength(
-      0,
     );
 
     expect(getDirectCards(codexGrid)).toHaveLength(3);
@@ -92,42 +69,15 @@ describe("PublicHomeApp visual quality contract", () => {
       "Integrated chat or terminal",
     ]);
 
-    expect(getDirectCards(audienceGrid)).toHaveLength(3);
-    expectGridTemplate(audienceGrid, "repeat(3, minmax(0, 1fr))");
-    expect(getCardTitles(audienceGrid, "h3")).toEqual([
-      "Researchers, analysts, and builders",
-      "Organizations and platform teams",
-      "Educators and learners",
-    ]);
-    for (const card of getDirectCards(audienceGrid)) {
-      expect(card.tagName).toBe("A");
-      expect(card.className).toContain("cocalc-public-home-audience-card");
-      expect(card.getAttribute("style") ?? "").toContain("display: grid");
-      expect(card.getAttribute("style") ?? "").toContain(
-        "grid-template-rows: 44px minmax(96px, 1fr) auto",
-      );
-      expect(card.querySelector(".ant-btn")).toBeNull();
-      expect(
-        card.querySelector(".cocalc-public-home-audience-action"),
-      ).not.toBeNull();
+    // The tool catalogue, the audience cards and the product list are not on
+    // Home any more.
+    for (const removedGrid of [
+      ".cocalc-public-home-feature-grid",
+      ".cocalc-public-home-audience-grid",
+      ".cocalc-public-home-product-grid",
+    ]) {
+      expect(container.querySelector(removedGrid)).toBeNull();
     }
-
-    expect(getDirectCards(productGrid)).toHaveLength(5);
-    expectGridTemplate(productGrid, "repeat(5, minmax(0, 1fr))");
-    expect(productGrid.querySelectorAll(".anticon-arrow-right")).toHaveLength(
-      0,
-    );
-    for (const card of getDirectCards(productGrid)) {
-      expect(card.tagName).toBe("A");
-      expect(card.className).toContain("cocalc-public-home-card-link");
-    }
-    expect(getCardTitles(productGrid, "h3")).toEqual([
-      "CoCalc.ai",
-      "CoCalc Plus",
-      "CoCalc Star",
-      "CoCalc Launchpad",
-      "CoCalc Rocket",
-    ]);
 
     expect(getDirectCards(differenceGrid)).toHaveLength(4);
     expectGridTemplate(differenceGrid, "repeat(2, minmax(0, 1fr))");
@@ -156,20 +106,23 @@ describe("PublicHomeApp visual quality contract", () => {
 
     expect(css).toContain("@media (max-width: 920px)");
     expect(css).toContain("@media (max-width: 1120px)");
-    expect(css).toContain(".cocalc-public-home-workflow-layout");
     expect(css).toContain(".cocalc-public-home-final-layout");
-    expect(css).toContain(".cocalc-public-home-audience-grid");
-    expect(css).toContain(".cocalc-public-home-product-grid");
     expect(css).not.toContain(".cocalc-public-home-path-grid");
-    expect(css).toContain(
-      "grid-template-columns: repeat(2, minmax(0, 1fr)) !important;",
-    );
+    // No rules are left for the sections Home no longer renders.
+    for (const removedClass of [
+      ".cocalc-public-home-workflow-",
+      ".cocalc-public-home-feature-grid",
+      ".cocalc-public-home-audience-grid",
+      ".cocalc-public-home-product-grid",
+      ".cocalc-public-home-products",
+    ]) {
+      expect(css).not.toContain(removedClass);
+    }
 
     expect(css).toContain("@media (max-width: 620px)");
     expect(css).toContain(".cocalc-public-home-final-actions .ant-btn");
 
     expect(css).toContain("@media (max-width: 560px)");
-    expect(css).toContain(".cocalc-public-home-feature-grid");
     expect(css).toContain(".cocalc-public-home-codex-grid");
     expect(css).toContain(".cocalc-public-home-difference-grid");
     expect(css).toContain(".cocalc-public-home-modal-grid");
@@ -181,23 +134,8 @@ describe("PublicHomeApp visual quality contract", () => {
     const { container } = renderHome();
 
     expectHomeCardsStayCompact(
-      within(screen.getByRole("region", { name: "Core workflows" })).getByRole(
-        "group",
-        { name: "CoCalc workflow feature cards" },
-      ),
-      { maxCardText: 230, maxTitleText: 28 },
-    );
-    expectHomeCardsStayCompact(
       getGrid(container, ".cocalc-public-home-codex-grid"),
       { maxCardText: 250, maxTitleText: 28 },
-    );
-    expectHomeCardsStayCompact(
-      getGrid(container, ".cocalc-public-home-audience-grid"),
-      { maxCardText: 285, maxTitleText: 36 },
-    );
-    expectHomeCardsStayCompact(
-      getGrid(container, ".cocalc-public-home-product-grid"),
-      { maxCardText: 175, maxTitleText: 24 },
     );
     expectHomeCardsStayCompact(
       getGrid(container, ".cocalc-public-home-difference-grid"),
@@ -222,7 +160,7 @@ describe("PublicHomeApp visual quality contract", () => {
     // app.test.tsx; here we only hold the count and an anti-sprawl length
     // bound, so headline wording can change without a test edit.
     const sectionHeadings = Array.from(container.querySelectorAll("h2"));
-    expect(sectionHeadings).toHaveLength(6);
+    expect(sectionHeadings).toHaveLength(3);
     for (const heading of sectionHeadings) {
       expect(textLength(heading)).toBeLessThanOrEqual(SECTION_H2_MAX);
     }
@@ -240,7 +178,7 @@ describe("PublicHomeApp visual quality contract", () => {
   });
 
   it("keeps the landing page anchored by concrete visual assets", () => {
-    renderHome();
+    const { container } = renderHome();
 
     const heroImage = within(
       screen.getByRole("region", { name: "CoCalc hero" }),
@@ -257,19 +195,12 @@ describe("PublicHomeApp visual quality contract", () => {
       "object-fit: contain;",
     );
 
-    const workflowImage = within(
-      screen.getByRole("region", { name: "Core workflows" }),
-    ).getByRole("img", {
-      name: "A CoCalc project terminal listing synthetic files and reproducing an 18.3-second average",
-    });
-    expect(workflowImage.getAttribute("src")).toBe(
-      "/public/landing/project-terminal-20260916.jpg",
-    );
-    expect(workflowImage.getAttribute("style") ?? "").toContain(
-      "aspect-ratio: 2 / 1;",
-    );
-    expect(workflowImage.getAttribute("style") ?? "").toContain(
-      "object-fit: contain;",
-    );
+    // The terminal capture went with the tool catalogue, so the hero image is
+    // the only image in the page body.
+    expect(
+      within(
+        container.querySelector(".cocalc-public-home") as HTMLElement,
+      ).getAllByRole("img"),
+    ).toEqual([heroImage]);
   });
 });
