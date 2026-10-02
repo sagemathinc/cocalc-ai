@@ -39,7 +39,7 @@ import {
   searchConversations,
   SEARCH_MAX_CONVERSATIONS,
   type ConversationHit,
-} from "@cocalc/frontend/people/search-dialog";
+} from "@cocalc/frontend/people/conversation-search";
 import {
   runAcrossProjects,
   searchProjectFiles,

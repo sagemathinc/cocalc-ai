@@ -141,13 +141,15 @@ import { SearchResults } from "@cocalc/frontend/search/search-results";
 import {
   closeSearch,
   getSearchState,
-  openSearch,
   searchPath,
   setSearchOrigin,
   useSearchState,
-  type SearchScope,
 } from "@cocalc/frontend/search/search-store";
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import {
+  setListQuery,
+  submitSearch,
+  useListQuery,
+} from "@cocalc/frontend/search/list-query";
 import { LibrarySidebar } from "./library-sidebar";
 import { isLibraryChatAgent } from "./library-chat";
 import { NewArtifactDialog } from "./new-artifact-dialog";
@@ -3179,8 +3181,8 @@ export function MyAgentsWorkspacePage({
           : "agents";
   // The sidebar search box: its text narrows the list below it; Enter opens
   // the search results page. Each page starts with an empty box.
-  const [sidebarQuery, setSidebarQuery] = useState("");
-  useEffect(() => setSidebarQuery(""), [searchContext]);
+  const sidebarQuery = useListQuery();
+  useEffect(() => setListQuery(""), [searchContext]);
   const searchState = useSearchState();
   const [newArtifactOpen, setNewArtifactOpen] = useState(false);
   // Projects, Artifacts and People list their own things in the sidebar
@@ -4379,30 +4381,18 @@ export function MyAgentsWorkspacePage({
                                 : "Search agents"
                       }
                       value={sidebarQuery}
-                      onChange={setSidebarQuery}
-                      onSubmit={(query) => {
-                        const scope: SearchScope =
+                      onChange={setListQuery}
+                      onSubmit={(query) =>
+                        submitSearch(
+                          query,
                           searchContext === "library"
                             ? "artifacts"
                             : searchContext === "agents" && aiDisabled
                               ? "projects"
-                              : searchContext;
-                        // A new search from the results keeps where they
-                        // return to.
-                        const base = appBasePath === "/" ? "" : appBasePath;
-                        openSearch(
-                          query,
-                          scope,
-                          searchState.open
-                            ? { origin: searchState.origin }
-                            : {
-                                origin: searchOrigin,
-                                returnPath: location.pathname
-                                  .slice(base.length)
-                                  .replace(/^\/+/, ""),
-                              },
-                        );
-                      }}
+                              : searchContext,
+                          searchState.open ? searchState.origin : searchOrigin,
+                        )
+                      }
                       onEscape={() => closeSearch({ restoreUrl: true })}
                     />
                   </>

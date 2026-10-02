@@ -44,6 +44,8 @@ import ProjectsPageTour from "./tour";
 import { recordSignedInSurfaceReady } from "@cocalc/frontend/app/bootstrap-ux-latency";
 import { getVisibleProjects } from "./util";
 import { FilenameSearch } from "./filename-search";
+import { PageSearchBox } from "@cocalc/frontend/search/page-search-box";
+import { useListQuery } from "@cocalc/frontend/search/list-query";
 import { MobileProjectsList } from "./mobile-projects-list";
 import { RecentDocumentActivityButton } from "@cocalc/frontend/file-use/button";
 import {
@@ -220,6 +222,17 @@ export const ProjectsPage: React.FC = () => {
     return `${!!hidden}`;
   }, [hidden]);
   const search: string = useTypedRedux("projects", "search");
+  // On wide screens the search box (shared with the sidebar) filters the
+  // list, debounced like the old filter input.
+  const listQuery = useListQuery();
+  useEffect(() => {
+    if (narrow || (search ?? "") === listQuery) return;
+    const timeout = setTimeout(
+      () => redux.getActions("projects").setState({ search: listQuery }),
+      250,
+    );
+    return () => clearTimeout(timeout);
+  }, [listQuery, narrow]);
   const inviteState = useInviteInboxState({
     includeOutgoing: false,
     includeBlocks: false,
@@ -743,13 +756,12 @@ export const ProjectsPage: React.FC = () => {
                           gap: "8px",
                         }}
                       >
-                        <FilenameSearch
-                          style={{
-                            width: IS_MOBILE ? "100px" : "200px",
-                            display: "inline-block",
-                          }}
+                        {/* The same box as the sidebar's: it narrows the
+                            list below; Enter searches everything. */}
+                        <PageSearchBox
+                          scope="projects"
+                          style={{ flex: "0 1 320px" }}
                         />
-                        <RecentDocumentActivityButton />
                       </div>
                     )}
                   </div>
@@ -796,6 +808,7 @@ export const ProjectsPage: React.FC = () => {
                       projectListChanged={backendWindowDirty}
                       projectListChangedCount={backendWindowDirtyCount}
                       onRefreshProjectList={refreshBackendWindow}
+                      showSearch={narrow}
                       tour={
                         <ProjectsPageTour
                           searchRef={searchRef}

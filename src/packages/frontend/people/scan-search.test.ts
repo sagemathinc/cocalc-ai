@@ -5,7 +5,7 @@
 
 import type { ListedConversation } from "@cocalc/util/people";
 import { fdOptions, parseFdOutput, titleFromPath } from "./scan";
-import { SEARCH_MAX_CONVERSATIONS, searchConversations } from "./search-dialog";
+import { SEARCH_MAX_CONVERSATIONS, searchConversations } from "./conversation-search";
 
 jest.mock("@cocalc/frontend/app-framework", () => ({ redux: {} }));
 jest.mock("@cocalc/frontend/app-framework/project-runtime", () => ({}));
@@ -108,7 +108,7 @@ describe("message search", () => {
 
 describe("ripgrep hits", () => {
   it("parses chat records from ripgrep --json and quotes around the match", () => {
-    const { hitsFromRipgrepJson, globLiteral } = require("./search-dialog");
+    const { hitsFromRipgrepJson, globLiteral } = require("./conversation-search");
     const record = JSON.stringify({
       event: "chat",
       date: "2026-09-30T05:53:12.000Z",

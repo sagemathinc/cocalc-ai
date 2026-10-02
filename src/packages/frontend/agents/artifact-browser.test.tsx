@@ -1,3 +1,4 @@
+import { setListQuery } from "@cocalc/frontend/search/list-query";
 import {
   act,
   render,
@@ -865,3 +866,5 @@ test("failed artifact opens remain visible in the Library", async () => {
     screen.getByRole("button", { name: "Open Result one from one" }),
   ).toBeEnabled();
 });
+
+afterEach(() => setListQuery(""));

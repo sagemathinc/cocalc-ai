@@ -167,6 +167,10 @@ jest.mock("./quick-project-creator", () => ({
   ),
 }));
 
+jest.mock("@cocalc/frontend/search/page-search-box", () => ({
+  PageSearchBox: () => <input aria-label="Search projects" />,
+}));
+
 jest.mock("./mobile-projects-list", () => ({
   MobileProjectsList: () => <div data-testid="mobile-projects-list" />,
 }));

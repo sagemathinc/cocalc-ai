@@ -30,15 +30,22 @@ export function SidebarSearchBox({
   onChange,
   onSubmit,
   onEscape,
+  shortcutHint = true,
+  inputRef,
 }: {
   label: string; // "Search agents"
   value: string;
   onChange: (value: string) => void;
   onSubmit: (value: string) => void;
   onEscape?: () => void;
+  // Show the Ctrl/Cmd+Shift+P hint (the shortcut focuses the sidebar's box).
+  shortcutHint?: boolean;
+  // For pages that focus their search box.
+  inputRef?: React.RefObject<InputRef | null>;
 }) {
   const ref = useRef<InputRef>(null);
   useEffect(() => {
+    if (!shortcutHint) return;
     const focus = () => {
       if (!focusRequested) return;
       focusRequested = false;
@@ -50,7 +57,10 @@ export function SidebarSearchBox({
   }, []);
   return (
     <Input
-      ref={ref}
+      ref={(input) => {
+        ref.current = input;
+        if (inputRef) inputRef.current = input;
+      }}
       type="search"
       allowClear
       aria-label={label}
@@ -58,7 +68,7 @@ export function SidebarSearchBox({
       placeholder={`${label}…`}
       prefix={<Icon name="search" style={{ color: UI_COLORS.secondary }} />}
       suffix={
-        value ? undefined : (
+        value || !shortcutHint ? undefined : (
           <span
             aria-hidden
             style={{ color: UI_COLORS.secondary, fontSize: 12 }}

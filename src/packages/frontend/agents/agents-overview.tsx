@@ -8,8 +8,10 @@
 // are the sidebar's pins; "Shared with me" lists agents other people
 // registered in projects you collaborate on.
 
+import { PageSearchBox } from "@cocalc/frontend/search/page-search-box";
+import { useListQuery } from "@cocalc/frontend/search/list-query";
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
-import { Alert, Input, Select, Tabs, Typography } from "antd";
+import { Alert, Select, Tabs, Typography } from "antd";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, TimeAgo } from "@cocalc/frontend/components";
@@ -142,7 +144,8 @@ export function AgentsOverview(props: Props) {
   const preferences = useCollectionPreferences("agents");
   const view = preferences.value.view;
   const [tab, setTab] = useState<Tab>("mine");
-  const [search, setSearch] = useState("");
+  // The search box (shared with the sidebar's) narrows the agents.
+  const search = useListQuery();
   const [sort, setSort] = useState<Sort>("recent");
   const [group, setGroup] = useState<Group>("none");
   const shared = useSharedAgents(active);
@@ -351,17 +354,7 @@ export function AgentsOverview(props: Props) {
             onChange={(next: CollectionView) => preferences.setView(next)}
             label="Agents"
           />
-          <Input
-            type="search"
-            aria-label="Search agents"
-            placeholder="Search agents"
-            prefix={<Icon name="search" />}
-            allowClear
-            style={{ flex: "0 1 320px", minWidth: 0 }}
-            maxLength={256}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+          <PageSearchBox scope="agents" />
         </header>
         <div
           style={{

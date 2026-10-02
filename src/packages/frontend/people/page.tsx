@@ -3,9 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { PageSearchBox } from "@cocalc/frontend/search/page-search-box";
+import { useListQuery } from "@cocalc/frontend/search/list-query";
 import { newConversationRequest } from "@cocalc/frontend/app/sidebar-search-requests";
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Input, Select, Tabs } from "antd";
+import { Alert, Button, Select, Tabs } from "antd";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
@@ -24,7 +26,6 @@ import { ConversationView } from "./conversation-view";
 import { NewConversationModal } from "./new-conversation";
 import { ScanDialog } from "./scan-dialog";
 import { InvitesPanel } from "./invites";
-import { SearchDialog } from "./search-dialog";
 import { useConversations } from "./use-conversations";
 import { useWorkspaceContentNavigation } from "@cocalc/frontend/agents/workspace-content-navigation";
 import "./people.css";
@@ -62,9 +63,10 @@ export function PeoplePage() {
   const active = useTypedRedux("page", "active_top_tab") === "people";
   const route = parsePeopleRoute(useTypedRedux("page", "people_route"));
   const state = useConversations(active);
-  const [filter, setFilter] = useState("");
+  // The search box (shared with the sidebar's) narrows each tab's list.
+  const filter = useListQuery();
   const [newFor, setNewFor] = useState<{ personId?: string } | null>(null);
-  const [dialog, setDialog] = useState<"scan" | "search">();
+  const [dialog, setDialog] = useState<"scan">();
   // "+ New Conversation" in the sidebar.
   useEffect(() => newConversationRequest.on(() => setNewFor({})), []);
   const people = usePeople();
@@ -182,11 +184,6 @@ export function PeoplePage() {
       : route.tab === "collaborators"
         ? `${people.length} ${people.length === 1 ? "collaborator" : "collaborators"}`
         : "Invitations you sent or received";
-  const searchLabel = {
-    conversations: "Search conversations",
-    collaborators: "Search collaborators",
-    invites: "Search invitations",
-  }[route.tab];
 
   return (
     <div
@@ -256,32 +253,14 @@ export function PeoplePage() {
               }
             />
           )}
-          <Input
-            type="search"
-            aria-label={searchLabel}
-            placeholder={searchLabel}
-            prefix={<Icon name="search" />}
-            allowClear
-            style={{ flex: "0 1 320px", minWidth: 0 }}
-            maxLength={256}
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-          />
+          <PageSearchBox scope="people" />
           {route.tab === "conversations" && (
-            <>
-              <Button
-                icon={<Icon name="comment" />}
-                onClick={() => setDialog("search")}
-              >
-                Search messages
-              </Button>
-              <Button
-                icon={<Icon name="sync" />}
-                onClick={() => setDialog("scan")}
-              >
-                Scan
-              </Button>
-            </>
+            <Button
+              icon={<Icon name="sync" />}
+              onClick={() => setDialog("scan")}
+            >
+              Scan
+            </Button>
           )}
           <Button
             type="primary"
@@ -331,12 +310,6 @@ export function PeoplePage() {
       <ScanDialog
         open={dialog === "scan"}
         conversations={state.conversations}
-        onClose={() => setDialog(undefined)}
-      />
-      <SearchDialog
-        open={dialog === "search"}
-        conversations={filtered}
-        onOpen={(c) => navigate(conversationRoute(c))}
         onClose={() => setDialog(undefined)}
       />
       <NewConversationModal

@@ -100,22 +100,14 @@ export default function ProjectsPageTour({
     {
       title: (
         <>
-          <Icon name="search" /> Search and Filter
+          <Icon name="tags-outlined" /> Filter by hashtags
         </>
       ),
       description: (
         <div>
-          <p>
-            When you're working on multiple {projectsLabelLower}, the search
-            functionality helps in locating {projectsLabelLower} on your list
-            quickly. By utilizing hashtags in {projectLabelLower} titles or
-            descriptions, you can quickly locate and filter through{" "}
-            {projectsLabelLower}. The search box above allows you to use regular
-            expressions and negation to further narrow down your search results.
-            This allows you to easily identify and remove unnecessary{" "}
-            {projectsLabelLower}, as well as start and stop matching{" "}
-            {projectsLabelLower} with ease.
-          </p>
+          Put hashtags like #thesis in {projectLabelLower} titles or
+          descriptions, then pick them here to show only those{" "}
+          {projectsLabelLower}.
         </div>
       ),
       target: () => searchRef.current,
@@ -136,12 +128,18 @@ export default function ProjectsPageTour({
       target: () => filtersRef.current,
     },
     {
-      title: "Filename Search",
+      title: (
+        <>
+          <Icon name="search" /> Search
+        </>
+      ),
       target: () => filenameSearchRef.current,
       description: (
         <div>
-          This search box helps you to find a file you've worked on in the past.
-          It searches through filenames across {projectsLabelLower}.
+          Type to narrow the list (the same box as in the sidebar). Press Enter
+          to search everything: {projectsLabelLower} by name, file names and
+          file contents in your {projectsLabelLower}, agents, artifacts and
+          conversations.
         </div>
       ),
     },

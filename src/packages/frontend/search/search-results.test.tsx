@@ -81,7 +81,7 @@ jest.mock("@cocalc/frontend/people/use-conversations", () => ({
   }),
 }));
 const conversationSearch = jest.fn();
-jest.mock("@cocalc/frontend/people/search-dialog", () => ({
+jest.mock("@cocalc/frontend/people/conversation-search", () => ({
   SEARCH_MAX_CONVERSATIONS: 50,
   searchConversations: (...a) => conversationSearch(...a),
 }));

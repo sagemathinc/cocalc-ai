@@ -1,3 +1,5 @@
+import { PageSearchBox } from "@cocalc/frontend/search/page-search-box";
+import { setListQuery, useListQuery } from "@cocalc/frontend/search/list-query";
 import {
   lazy,
   Suspense,
@@ -9,7 +11,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { ComponentRef, ReactNode } from "react";
-import { Alert, Button, Checkbox, Empty, Input, Select } from "antd";
+import { Alert, Button, Checkbox, Empty, Select } from "antd";
 import type { InputRef } from "antd";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { Icon, isIconName } from "@cocalc/frontend/components";
@@ -82,13 +84,16 @@ function AccountArtifactBrowser({
   onNewArtifact,
   selectedArtifactIdentity,
 }: Props) {
-  const [query, setQuery] = useState("");
-  // Another page asked to open the Library on a search (e.g. an agent's name).
+  // The search box (shared with the sidebar's) narrows the artifacts.
+  const query = useListQuery();
+  // Another page asked to open Artifacts on a search (e.g. an agent's name).
   const requestedQuery = useTypedRedux("page", "library_query");
   useEffect(() => {
     if (requestedQuery == null) return;
-    setQuery(requestedQuery);
+    // After the workspace clears the box for the newly shown page.
+    const timer = setTimeout(() => setListQuery(requestedQuery), 0);
     redux.getActions("page").setState({ library_query: undefined });
+    return () => clearTimeout(timer);
   }, [requestedQuery]);
   const [project, setProject] = useState<string>();
   const [sort, setSort] = useState("recent");
@@ -468,17 +473,7 @@ function AccountArtifactBrowser({
               onClick={() => setView("list")}
             />
           </div>
-          <Input
-            ref={searchRef}
-            type="search"
-            aria-label="Search artifacts"
-            placeholder="Search artifacts"
-            prefix={<Icon name="search" />}
-            style={{ flex: "0 1 320px", minWidth: 0 }}
-            maxLength={256}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
+          <PageSearchBox scope="artifacts" inputRef={searchRef} />
         </header>
         <div
           style={{

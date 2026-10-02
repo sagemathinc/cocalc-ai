@@ -3,18 +3,14 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useRef, useState } from "react";
-import { Alert, Button, Input, Modal, Typography } from "antd";
-import { TimeAgo } from "@cocalc/frontend/components";
 import { redux } from "@cocalc/frontend/app-framework";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { ChatStoreSearchHit } from "@cocalc/conat/hub/api/projects";
-import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { ListedConversation } from "@cocalc/util/people";
 
-// Message search runs the existing per-file chat-store search over the most
-// recently active conversations, one at a time.
+// Message search in People conversations (for the search results page):
+// the existing per-file search over the most recently active conversations.
 export const SEARCH_MAX_CONVERSATIONS = 50;
 const HITS_PER_CONVERSATION = 5;
 
@@ -160,124 +156,4 @@ export async function searchConversations({
     }
   }
   await Promise.all(Array.from({ length: Math.max(1, concurrency) }, worker));
-}
-
-export function SearchDialog({
-  open,
-  conversations,
-  onOpen,
-  onClose,
-}: {
-  open: boolean;
-  conversations: ListedConversation[];
-  onOpen: (conversation: ListedConversation) => void;
-  onClose: () => void;
-}) {
-  const [query, setQuery] = useState("");
-  const [hits, setHits] = useState<Hit[]>([]);
-  const [searched, setSearched] = useState(0);
-  const [failed, setFailed] = useState(0);
-  const [running, setRunning] = useState(false);
-  const generation = useRef(0);
-  const total = Math.min(conversations.length, SEARCH_MAX_CONVERSATIONS);
-
-  async function run() {
-    const q = query.trim();
-    if (!q) return;
-    const current = ++generation.current;
-    setRunning(true);
-    setHits([]);
-    setSearched(0);
-    setFailed(0);
-    await searchConversations({
-      conversations,
-      query: q,
-      canceled: () => current !== generation.current,
-      onProgress: (hits, searched, failed) => {
-        if (current !== generation.current) return;
-        setHits(hits);
-        setSearched(searched);
-        setFailed(failed);
-      },
-    });
-    if (current === generation.current) setRunning(false);
-  }
-
-  return (
-    <Modal
-      open={open}
-      title="Search messages"
-      width={760}
-      footer={null}
-      onCancel={() => {
-        generation.current++;
-        onClose();
-      }}
-      destroyOnHidden
-    >
-      <Input.Search
-        aria-label="Search messages"
-        placeholder="Words in messages"
-        autoFocus
-        enterButton="Search"
-        loading={running}
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        onSearch={() => void run()}
-      />
-      <div
-        role="status"
-        style={{ color: UI_COLORS.secondary, fontSize: 13, margin: "8px 0" }}
-      >
-        {searched > 0 &&
-          `Searched ${searched} of ${total} conversations · ${hits.length} ${hits.length === 1 ? "match" : "matches"}`}
-        {conversations.length > SEARCH_MAX_CONVERSATIONS &&
-          searched > 0 &&
-          ` (the ${SEARCH_MAX_CONVERSATIONS} most recent)`}
-      </div>
-      {failed > 0 && (
-        <Alert
-          type="warning"
-          role="alert"
-          title={`${failed} ${failed === 1 ? "conversation" : "conversations"} could not be searched.`}
-        />
-      )}
-      <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-        {hits.map(({ conversation, hit }, i) => (
-          <li key={`${conversation.conversation_id}:${hit.row_id}:${i}`}>
-            <Button
-              type="text"
-              block
-              style={{
-                height: "auto",
-                textAlign: "left",
-                display: "block",
-                padding: "6px 8px",
-                whiteSpace: "normal",
-              }}
-              onClick={() => {
-                generation.current++;
-                onOpen(conversation);
-                onClose();
-              }}
-            >
-              <div style={{ display: "flex", gap: 8 }}>
-                <Typography.Text strong ellipsis style={{ flex: 1 }}>
-                  {conversation.title}
-                </Typography.Text>
-                {hit.date_ms != null && (
-                  <span style={{ color: UI_COLORS.secondary, fontSize: 12 }}>
-                    <TimeAgo date={new Date(hit.date_ms)} />
-                  </span>
-                )}
-              </div>
-              <div style={{ color: UI_COLORS.secondary, fontSize: 13 }}>
-                {hit.snippet ?? hit.excerpt ?? ""}
-              </div>
-            </Button>
-          </li>
-        ))}
-      </ul>
-    </Modal>
-  );
 }
