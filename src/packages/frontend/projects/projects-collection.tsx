@@ -39,10 +39,11 @@ import { ProjectActionsMenu } from "./projects-actions-menu";
 import {
   getStateIcon,
   projectDescriptionText,
-  projectRoleTag,
   type ProjectTableRecord,
 } from "./projects-table-columns";
 import { ProjectThemeAvatar } from "./theme";
+import { COMPUTE_STATES } from "@cocalc/util/compute-states";
+import "./projects-collection.css";
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
 import { useProjectTableRecords } from "./use-project-table-records";
 
@@ -235,6 +236,7 @@ export function ProjectsCollection({
     );
     const props = {
       record,
+      selecting: selectedProjectIds.length > 0,
       checkbox,
       actions: actionsNode,
       onOpen: (e?: React.MouseEvent) => open(record, e),
@@ -385,45 +387,96 @@ const OPEN_BUTTON: CSSProperties = {
 
 interface ItemProps {
   record: ProjectTableRecord;
+  selecting?: boolean;
   checkbox: ReactNode;
   actions: ReactNode;
   rootfs: ReactNode;
   onOpen: (e?: React.MouseEvent) => void;
 }
 
-function Title({ record }: { record: ProjectTableRecord }) {
-  const stateIcon = getStateIcon(record.state);
+function Title({
+  record,
+  lines = 1,
+}: {
+  record: ProjectTableRecord;
+  lines?: number;
+}) {
+  const running = record.state?.get?.("state") === "running";
+  return (
+    <span
+      title={record.title || "Untitled"}
+      style={{
+        display: "-webkit-box",
+        WebkitBoxOrient: "vertical",
+        WebkitLineClamp: lines,
+        overflow: "hidden",
+        overflowWrap: "anywhere",
+        lineHeight: 1.3,
+        fontSize: 15,
+        fontWeight: running ? 600 : 500,
+        opacity: record.deleting || record.deletionScheduled ? 0.6 : undefined,
+      }}
+    >
+      {record.title || "Untitled"}
+    </span>
+  );
+}
+
+// Run state, and role only when it is not Owner (the common case), plus
+// deletion and archive markers.
+function StatusLine({ record }: { record: ProjectTableRecord }) {
+  const intl = useIntl();
   const state = record.state?.get?.("state");
+  const stateIcon = getStateIcon(record.state);
+  const display = state ? COMPUTE_STATES[state]?.display : undefined;
+  const label = display ? intl.formatMessage(display) : "";
   const deleteFailed = record.deleteFailed && !record.deletionScheduled;
   return (
     <span
-      style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: 6,
+        minWidth: 0,
+        fontSize: 12,
+        color: UI_COLORS.secondary,
+      }}
     >
-      {stateIcon && (
-        <Icon
-          name={stateIcon}
-          style={{ fontSize: 13, color: UI_COLORS.secondary, flexShrink: 0 }}
-        />
+      {label && (
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            color: state === "running" ? UI_COLORS.success : undefined,
+          }}
+        >
+          {stateIcon && <Icon name={stateIcon} />}
+          {label}
+        </span>
       )}
-      <span
-        style={{
-          ...ELLIPSIS,
-          fontWeight: state === "running" ? 600 : 500,
-          opacity:
-            record.deleting || record.deletionScheduled ? 0.6 : undefined,
-        }}
-      >
-        {record.title || "Untitled"}
-      </span>
-      <span style={{ flexShrink: 0, display: "inline-flex" }}>
-        {projectRoleTag(record.currentRole)}
-        {record.deletionScheduled && (
-          <Tag color="orange">Scheduled for deletion</Tag>
-        )}
-        {state === "archived" && <Tag color="purple">Archived</Tag>}
-        {record.deleting && <Tag color="orange">Deleting...</Tag>}
-        {deleteFailed && <Tag color="red">Deletion failed</Tag>}
-      </span>
+      {record.currentRole && record.currentRole !== "owner" && (
+        <span>
+          {label ? "· " : ""}
+          {record.currentRole === "viewer" ? "Viewer" : "Collaborator"}
+        </span>
+      )}
+      {record.deletionScheduled && (
+        <Tag color="orange" style={{ margin: 0 }}>
+          Scheduled for deletion
+        </Tag>
+      )}
+      {record.deleting && (
+        <Tag color="orange" style={{ margin: 0 }}>
+          Deleting...
+        </Tag>
+      )}
+      {deleteFailed && (
+        <Tag color="red" style={{ margin: 0 }}>
+          Deletion failed
+        </Tag>
+      )}
     </span>
   );
 }
@@ -482,96 +535,102 @@ function ProjectMetadata({
   );
 }
 
-// Avatar and title open the project (keyboard focusable); the image badge
-// beside them has its own action, so it is not nested inside that button.
-function Heading({
-  record,
-  rootfs,
-  onOpen,
-  avatarSize,
-}: Pick<ItemProps, "record" | "rootfs" | "onOpen"> & { avatarSize: number }) {
-  return (
-    <span
-      style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}
-    >
-      <ProjectThemeAvatar theme={record.theme} size={avatarSize} border />
-      <span
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          minWidth: 0,
-          gap: 2,
-        }}
-      >
-        <button
-          type="button"
-          aria-label={`Open project ${record.title || "Untitled"}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpen(e);
-          }}
-          onAuxClick={(e) => {
-            e.stopPropagation();
-            onOpen(e);
-          }}
-          style={OPEN_BUTTON}
-        >
-          <Title record={record} />
-        </button>
-        {rootfs}
-      </span>
-    </span>
-  );
-}
-
-// Clicking anywhere else on a card or row also opens the project.
+// Clicking anywhere on a card or row (outside its controls) opens the
+// project; the title is the keyboard-focusable open button.
 function rowClick(onOpen: ItemProps["onOpen"]) {
   return {
     onClick: (e: React.MouseEvent) => onOpen(e),
     onAuxClick: (e: React.MouseEvent) => onOpen(e),
-    style: { cursor: "pointer" } as CSSProperties,
   };
 }
 
+function OpenTitle({
+  record,
+  onOpen,
+  lines,
+}: Pick<ItemProps, "record" | "onOpen"> & { lines?: number }) {
+  return (
+    <button
+      type="button"
+      aria-label={`Open project ${record.title || "Untitled"}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen(e);
+      }}
+      onAuxClick={(e) => {
+        e.stopPropagation();
+        onOpen(e);
+      }}
+      style={{ ...OPEN_BUTTON, display: "block", width: "100%" }}
+    >
+      <Title record={record} lines={lines} />
+    </button>
+  );
+}
+
 // Fixed height so cards in a row line up, as in People and Agents.
-function GridCard({ record, checkbox, actions, rootfs, onOpen }: ItemProps) {
-  const click = rowClick(onOpen);
+function GridCard({
+  record,
+  selecting,
+  checkbox,
+  actions,
+  rootfs,
+  onOpen,
+}: ItemProps) {
   return (
     <div
+      className={`cocalc-project-card${selecting ? " cocalc-project-card-selecting" : ""}`}
+      {...rowClick(onOpen)}
       style={{
-        height: 136,
+        height: 156,
         boxSizing: "border-box",
         display: "flex",
         flexDirection: "column",
-        padding: "10px 12px 8px",
+        gap: 6,
+        padding: "12px 12px 8px 14px",
         border: `1px solid ${UI_COLORS.border}`,
-        borderTop: `4px solid ${record.color ?? UI_COLORS.border}`,
-        borderRadius: 8,
+        borderRadius: 10,
         background: UI_COLORS.surface,
+        // The project's color, when it has one, as an accent stripe.
+        boxShadow: record.color ? `inset 4px 0 ${record.color}` : undefined,
+        cursor: "pointer",
         opacity: record.deletionBlocked ? 0.72 : undefined,
       }}
     >
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-        {checkbox}
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+        <ProjectThemeAvatar theme={record.theme} size={40} border />
         <div
-          onClick={click.onClick}
-          onAuxClick={click.onAuxClick}
-          style={{ ...click.style, flex: 1, minWidth: 0 }}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: 3,
+          }}
         >
-          <Heading
-            record={record}
-            rootfs={rootfs}
-            onOpen={onOpen}
-            avatarSize={32}
-          />
+          <OpenTitle record={record} onOpen={onOpen} lines={2} />
+          <StatusLine record={record} />
         </div>
+        <span
+          className="cocalc-project-card-select"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {checkbox}
+        </span>
       </div>
+      <div style={{ minWidth: 0, paddingLeft: 50 }}>{rootfs}</div>
+      <span style={{ flex: 1 }} />
       <div
-        onClick={click.onClick}
-        onAuxClick={click.onAuxClick}
-        style={{ ...click.style, flex: 1 }}
-      />
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          borderTop: `1px solid ${UI_COLORS.border}`,
+          paddingTop: 6,
+          cursor: "default",
+        }}
+      >
         <CollaboratorsAvatars
           collaboratorIds={record.collaborators}
           size={20}
@@ -583,9 +642,10 @@ function GridCard({ record, checkbox, actions, rootfs, onOpen }: ItemProps) {
             fontSize: 12,
             flex: 1,
           }}
+          title={record.host}
         >
-          {record.host ? `${record.host} · ` : ""}
           {record.last_edited && <TimeAgo date={record.last_edited} />}
+          {record.host ? ` · ${record.host}` : ""}
         </span>
         {actions}
       </div>
@@ -595,7 +655,6 @@ function GridCard({ record, checkbox, actions, rootfs, onOpen }: ItemProps) {
 
 // One-line row with fixed columns: project, host, collaborators, edited.
 function ListRow({ record, checkbox, actions, rootfs, onOpen }: ItemProps) {
-  const click = rowClick(onOpen);
   return (
     <div
       style={{
@@ -603,9 +662,9 @@ function ListRow({ record, checkbox, actions, rootfs, onOpen }: ItemProps) {
         alignItems: "center",
         gap: 8,
         minHeight: 56,
-        padding: "0 8px 0 10px",
+        padding: "0 8px 0 12px",
         border: `1px solid ${UI_COLORS.border}`,
-        borderLeft: `4px solid ${record.color ?? UI_COLORS.border}`,
+        boxShadow: record.color ? `inset 4px 0 ${record.color}` : undefined,
         marginTop: -1,
         background: UI_COLORS.surface,
         opacity: record.deletionBlocked ? 0.72 : undefined,
@@ -613,10 +672,9 @@ function ListRow({ record, checkbox, actions, rootfs, onOpen }: ItemProps) {
     >
       {checkbox}
       <div
-        onClick={click.onClick}
-        onAuxClick={click.onAuxClick}
+        {...rowClick(onOpen)}
         style={{
-          ...click.style,
+          cursor: "pointer",
           flex: 1,
           alignSelf: "stretch",
           display: "grid",
@@ -626,12 +684,41 @@ function ListRow({ record, checkbox, actions, rootfs, onOpen }: ItemProps) {
           gap: 12,
         }}
       >
-        <Heading
-          record={record}
-          rootfs={rootfs}
-          onOpen={onOpen}
-          avatarSize={32}
-        />
+        <span
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            minWidth: 0,
+          }}
+        >
+          <ProjectThemeAvatar theme={record.theme} size={32} border />
+          <span
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              minWidth: 0,
+              gap: 2,
+            }}
+          >
+            <span
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                minWidth: 0,
+              }}
+            >
+              <span style={{ minWidth: 0 }}>
+                <OpenTitle record={record} onOpen={onOpen} />
+              </span>
+              <span style={{ flexShrink: 0 }}>
+                <StatusLine record={record} />
+              </span>
+            </span>
+            {rootfs}
+          </span>
+        </span>
         <span style={{ ...ELLIPSIS, color: UI_COLORS.secondary, fontSize: 13 }}>
           {record.host ?? ""}
         </span>

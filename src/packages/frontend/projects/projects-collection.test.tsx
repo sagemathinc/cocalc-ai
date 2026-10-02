@@ -29,7 +29,7 @@ const record = (project_id: string, title: string, host = "host-1") => ({
 });
 const mockRecords = [
   record("p1", "Beta"),
-  record("p2", "Alpha", "host-2"),
+  { ...record("p2", "Alpha", "host-2"), currentRole: "collaborator" as const },
   record("p3", "Gamma"),
 ];
 
@@ -240,4 +240,22 @@ test("display order and range helpers", () => {
       selectable: (id) => id !== "b",
     }),
   ).toEqual(["a", "c", "d"]);
+});
+
+it("grid cards: role only when not Owner; card opens, checkbox does not", async () => {
+  const user = userEvent.setup();
+  view({ view: "grid" });
+  const alpha = screen.getByRole("button", { name: "Open project Alpha" });
+  const card = alpha.closest(".cocalc-project-card") as HTMLElement;
+  expect(card).toHaveTextContent("Collaborator");
+  const beta = screen
+    .getByRole("button", { name: "Open project Beta" })
+    .closest(".cocalc-project-card") as HTMLElement;
+  expect(beta).not.toHaveTextContent("Owner");
+  await user.click(within(card).getByRole("checkbox"));
+  expect(openProject).not.toHaveBeenCalled();
+  await user.click(card);
+  expect(openProject).toHaveBeenCalledWith(
+    expect.objectContaining({ project_id: "p2" }),
+  );
 });
