@@ -418,6 +418,10 @@ test("trusted MCP helper executes only through the scoped project socket", async
       "project_exec_wait",
       "project_exec_cancel",
       "project_exec_list",
+      "project_read_image",
+      "project_read_file",
+      "project_edit_file",
+      "project_write_file",
       "request_user_input_async",
     ]);
     const called = await request(3, "tools/call", {
@@ -436,6 +440,47 @@ test("trusted MCP helper executes only through the scoped project socket", async
         onOutput: expect.any(Function),
       }),
     );
+    const png = Buffer.from("89504e470d0a1a0a0000000d49484452", "hex");
+    execute.mockImplementationOnce(async () => ({
+      code: 0,
+      cleanupConfirmed: true,
+      stdout: png.toString("base64"),
+      stderr: "",
+    }));
+    const viewed = await request(5, "tools/call", {
+      name: "project_read_image",
+      arguments: { path: "/home/user/plot.png" },
+    });
+    expect(viewed.result.isError).toBe(false);
+    expect(viewed.result.content[0]).toEqual({
+      type: "image",
+      data: png.toString("base64"),
+      mimeType: "image/png",
+    });
+    expect(JSON.parse(viewed.result.content[1].text)).toEqual({
+      path: "/home/user/plot.png",
+      bytes: png.length,
+      mimeType: "image/png",
+    });
+    execute.mockImplementationOnce(async () => ({
+      code: 0,
+      cleanupConfirmed: true,
+      stdout: `2\n${Buffer.from("alpha\nbeta\n").toString("base64")}`,
+      stderr: "",
+    }));
+    const read = await request(6, "tools/call", {
+      name: "project_read_file",
+      arguments: { path: "notes.txt" },
+    });
+    expect(read.result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: "notes.txt: lines 1-2 of 2\n     1\talpha\n     2\tbeta",
+        },
+      ],
+      isError: false,
+    });
     const question = {
       request_id: "target",
       questions: [{ title: "Which target?" }],
@@ -484,9 +529,32 @@ test("trusted MCP helper executes only through the scoped project socket", async
       socket.on("end", () => resolve(response));
     });
     expect(unauthorized).toContain("Invalid project tool request");
-    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledTimes(3);
   } finally {
     child.kill("SIGKILL");
+    await bridge.close();
+  }
+});
+
+test("an oversized request gets an error naming the limit, not a dropped connection", async () => {
+  const execute = jest.fn();
+  const bridge = await createClaudeProjectToolBridge(
+    PROJECT_ID,
+    execute,
+    async () => {},
+  );
+  try {
+    const result = await callTool(bridge.directory, "project_exec", {
+      script: "x".repeat(2_600_000),
+    });
+    expect(result.error).toMatch(
+      /^Project tool request too large: over 2500000 bytes\. Split it/,
+    );
+    expect(execute).not.toHaveBeenCalled();
+    // The bridge still serves the next call.
+    execute.mockResolvedValue({ code: 0, stdout: "ok", stderr: "" });
+    expect((await callTool(bridge.directory)).stdout).toBe("ok");
+  } finally {
     await bridge.close();
   }
 });

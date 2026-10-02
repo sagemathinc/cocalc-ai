@@ -88,6 +88,95 @@ const tools = [
     },
   },
   {
+    name: "project_read_image",
+    description:
+      "View an image file saved in the CoCalc project (PNG, JPEG, GIF or WebP, up to 800 KB), such as a screenshot, plot or rendered page, returned as an image you can see. Use it to check visual results instead of describing or measuring them indirectly. For SVG or PDF, render a PNG first; for large images, save a smaller or cropped copy.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description:
+            "Image path in the project; relative paths start in the turn's project working directory",
+        },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "project_read_file",
+    description:
+      "Read a text file in the CoCalc project. Returns lines prefixed with their line numbers and a tab (like cat -n), plus total_lines. Reads up to 2000 lines from offset by default and at most 256 KB; use offset and limit to page through larger files. Prefer this over sed/cat through project_exec. Binary files are refused; use project_read_image for images.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description:
+            "File path in the project; relative paths start in the turn's project working directory",
+        },
+        offset: {
+          type: "integer",
+          minimum: 1,
+          description: "First line to return (1-based); default 1",
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          description: "Maximum number of lines to return; default 2000",
+        },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "project_edit_file",
+    description:
+      "Edit a text file in the CoCalc project by exact string replacement. old_string must match the file exactly, including indentation, without the line-number prefixes from project_read_file, and must occur exactly once unless replace_all is true. The file is replaced atomically and the edit is refused if the file changed during it. Files up to 1 MB.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description:
+            "File path in the project; relative paths start in the turn's project working directory",
+        },
+        old_string: { type: "string", description: "Exact text to replace" },
+        new_string: { type: "string", description: "Replacement text" },
+        replace_all: {
+          type: "boolean",
+          description: "Replace every occurrence instead of requiring one",
+        },
+      },
+      required: ["path", "old_string", "new_string"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "project_write_file",
+    description:
+      "Create or overwrite a text file in the CoCalc project with the given content (up to 1 MB), atomically and keeping an existing file's permissions. Prefer project_edit_file for changes to existing files. The parent directory must exist unless create_dirs is true.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description:
+            "File path in the project; relative paths start in the turn's project working directory",
+        },
+        content: { type: "string", description: "Complete new file content" },
+        create_dirs: {
+          type: "boolean",
+          description: "Create missing parent directories",
+        },
+      },
+      required: ["path", "content"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "request_user_input_async",
     description:
       "Ask the user one to three short questions while continuing useful work. Returns immediately after saving a question card; the reply arrives as a user message during this turn, or a continuation if the turn has finished. Do not poll or stop unrelated work waiting for a reply. Use only for missing information, preferences, or clarification, never authentication, secrets, or permission escalation. Use a unique request_id and reuse it only when retrying the identical request.",
@@ -199,10 +288,44 @@ async function handle(message) {
           ? !canceledSuccessfully &&
             ["failed", "canceled", "timed_out"].includes(output.status)
           : "code" in output && output.code !== 0);
-      result = {
-        content: [{ type: "text", text: JSON.stringify(output) }],
-        isError,
-      };
+      const image = output.image;
+      result =
+        message.params.name === "project_read_file" &&
+        typeof output.content === "string"
+          ? {
+              content: [
+                {
+                  type: "text",
+                  text:
+                    `${output.path}: lines ${output.start_line}-${output.end_line} of ${output.total_lines}` +
+                    (output.truncated
+                      ? " (truncated at 256 KB; continue with offset)"
+                      : "") +
+                    "\n" +
+                    output.content,
+                },
+              ],
+              isError: false,
+            }
+          : image && typeof image.data === "string"
+            ? {
+                content: [
+                  { type: "image", data: image.data, mimeType: image.mimeType },
+                  {
+                    type: "text",
+                    text: JSON.stringify({
+                      path: output.path,
+                      bytes: output.bytes,
+                      mimeType: image.mimeType,
+                    }),
+                  },
+                ],
+                isError: false,
+              }
+            : {
+                content: [{ type: "text", text: JSON.stringify(output) }],
+                isError,
+              };
     } else {
       throw new Error("Unsupported project tool method");
     }
@@ -221,7 +344,8 @@ async function handle(message) {
 // Requests are newline-delimited JSON. Split only on "\n": readline would also
 // split on U+2028/U+2029, which JSON.stringify leaves raw inside strings, and
 // the resulting fragments used to be dropped silently, hanging the tool call.
-const MAX_REQUEST_LENGTH = 65536;
+// Large enough for a 1 MB project_write_file request (JSON-escaped).
+const MAX_REQUEST_LENGTH = 2600000;
 function requestId(line) {
   const match = line.match(/"id"\s*:\s*("(?:[^"\\]|\\.)*"|-?\d+)/);
   if (!match) return undefined;
