@@ -4137,7 +4137,13 @@ export function MyAgentsWorkspacePage({
               onClick={() => {
                 searchNavigation.current++;
                 setMobileList(false);
-                void openProjectsWorkspace();
+                // Already in projects: show all of them, as Agents shows
+                // all agents. Elsewhere, return to the last project view.
+                if (projectsOpen && activeTopTab !== "projects") {
+                  void redux.getActions("page").set_active_tab("projects");
+                } else {
+                  void openProjectsWorkspace();
+                }
               }}
             >
               Projects
@@ -4200,7 +4206,7 @@ export function MyAgentsWorkspacePage({
                     aria-current={overviewOpen ? "page" : undefined}
                     onClick={showAgentsOverview}
                   >
-                    All agents
+                    Agents
                   </Button>
                   <Button
                     ref={libraryButton}
