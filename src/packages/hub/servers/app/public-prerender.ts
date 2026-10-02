@@ -63,6 +63,11 @@ import {
   type PublicMetadataRoute,
   type PublicRouteMetadataConfig,
 } from "@cocalc/util/public-site-metadata";
+import {
+  COCALC_AI_SIGN_UP_LABEL,
+  isCocalcAiLaunchpad,
+  PUBLIC_SIGN_UP_LABEL,
+} from "@cocalc/util/public-site-policy";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 const ARTICLE_STYLE = [
@@ -122,12 +127,15 @@ function renderHome(
   basePath: string,
   config: PublicRouteMetadataConfig,
 ): string {
+  const signUpLabel = isCocalcAiLaunchpad(config)
+    ? COCALC_AI_SIGN_UP_LABEL
+    : PUBLIC_SIGN_UP_LABEL;
   return `<main data-cocalc-public-prerender="home" style="${ARTICLE_STYLE}">
 <header>
   <p>${htmlEscape(PUBLIC_HOME_EYEBROW)}</p>
   <h1>${htmlEscape(PUBLIC_HOME_HEADLINE)}</h1>
   <p>${htmlEscape(PUBLIC_HOME_INTRO)}</p>
-  <p>${publicLink(basePath, "auth/sign-up", "Start on CoCalc.ai")} ${publicLink(basePath, PUBLIC_HOME_SECONDARY_CTA.href, PUBLIC_HOME_SECONDARY_CTA.label)}</p>
+  <p>${publicLink(basePath, "auth/sign-up", signUpLabel)} ${publicLink(basePath, PUBLIC_HOME_SECONDARY_CTA.href, PUBLIC_HOME_SECONDARY_CTA.label)}</p>
   <ul>${getPublicHomeHighlights(config)
     .map((highlight) => `<li>${htmlEscape(highlight)}</li>`)
     .join("")}</ul>
@@ -398,9 +406,9 @@ function renderFeatureDetail(
 </header>
 ${sections}
 ${renderFeatureNavigation(basePath, page.slug, config)}
-<p><a href="${htmlEscape(
-    joinUrlPath(basePath, "auth/sign-up"),
-  )}">${htmlEscape(page.signUpLabel ?? "Start using CoCalc")}</a></p>
+<p><a href="${htmlEscape(joinUrlPath(basePath, "auth/sign-up"))}">${htmlEscape(
+    (isCocalcAiLaunchpad(config) && page.signUpLabel) || PUBLIC_SIGN_UP_LABEL,
+  )}</a></p>
 </article>`;
 }
 

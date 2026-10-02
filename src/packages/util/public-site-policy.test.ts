@@ -1,5 +1,6 @@
 import {
   isCanonicalPublicSiteHost,
+  isCocalcAiLaunchpad,
   isCocalcAiOnlyPublicPath,
   isCocalcAiOnlyPublicSection,
   isLockedDownPublicSiteHost,
@@ -28,4 +29,28 @@ test("identifies marketing routes reserved for cocalc.ai", () => {
   expect(isCocalcAiOnlyPublicPath("/about-face")).toBe(false);
   expect(isCocalcAiOnlyPublicSection("products")).toBe(true);
   expect(isCocalcAiOnlyPublicSection("docs")).toBe(false);
+});
+
+test("treats only Launchpad on the canonical host as cocalc.ai", () => {
+  // cocalc.ai's /customize reports the Launchpad product.
+  expect(
+    isCocalcAiLaunchpad({ cocalc_product: "launchpad", dns: "cocalc.ai" }),
+  ).toBe(true);
+  expect(
+    isCocalcAiLaunchpad({ cocalc_product: "launchpad", dns: "CoCalc.AI:443" }),
+  ).toBe(true);
+  for (const config of [
+    { cocalc_product: "launchpad", dns: "compute.example.edu" },
+    { cocalc_product: "launchpad", dns: "dev123.cocalc.ai" },
+    { cocalc_product: "launchpad" },
+    { cocalc_product: "rocket", dns: "cocalc.example.com" },
+    { cocalc_product: "rocket", dns: "cocalc.ai" },
+    { cocalc_product: "plus", dns: "localhost:5000" },
+    { cocalc_product: "plus", dns: "cocalc.ai" },
+    { dns: "cocalc.ai" },
+    {},
+    undefined,
+  ]) {
+    expect(isCocalcAiLaunchpad(config)).toBe(false);
+  }
 });

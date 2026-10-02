@@ -37,10 +37,11 @@ describe("public feature initial HTML", () => {
     "renders the terminal record that the React page renders, on %s",
     (basePath) => {
       const page = getPublicFeaturePage("terminal")!;
+      // On cocalc.ai, which shows the record's sign-up label.
       const html = renderPublicRoutePrerender(
         { section: "features", route: { view: "detail", slug: page.slug } },
         basePath,
-        {},
+        { cocalc_product: "launchpad", dns: "cocalc.ai" },
       );
 
       expect(page.highlights).toHaveLength(4);

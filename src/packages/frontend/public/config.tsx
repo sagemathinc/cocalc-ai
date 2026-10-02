@@ -13,7 +13,12 @@ import { SITE_NAME } from "@cocalc/util/theme";
 import type { SignupEmailDomainPublicPolicy } from "@cocalc/util/accounts/signup-email-domain-policy";
 import type { PassportStrategyFrontend } from "@cocalc/util/types/passport-types";
 import { joinUrlPath } from "@cocalc/util/url-path";
-import { isCanonicalPublicSiteHost } from "@cocalc/util/public-site-policy";
+import {
+  COCALC_AI_SIGN_UP_LABEL,
+  isCanonicalPublicSiteHost,
+  isCocalcAiLaunchpad,
+  PUBLIC_SIGN_UP_LABEL,
+} from "@cocalc/util/public-site-policy";
 import {
   getExternalPoliciesUrl,
   getPublicPolicyPages,
@@ -153,6 +158,23 @@ export function isCocalcAiPublicSite(config?: PublicConfig): boolean {
   if (config?.dns?.trim()) return isCanonicalPublicSiteHost(config.dns);
   if (typeof window === "undefined") return false;
   return isCanonicalPublicSiteHost(window.location.hostname);
+}
+
+// isCocalcAiLaunchpad, the crawler fallback's rule, for the browser. Until
+// /customize returns the product, the host alone decides, so copy that names
+// CoCalc.ai does not change on cocalc.ai when the configuration arrives.
+export function isCocalcAiLaunchpadSite(config?: PublicConfig): boolean {
+  return config?.cocalc_product
+    ? isCocalcAiLaunchpad(config)
+    : isCocalcAiPublicSite(config);
+}
+
+// The sign-up link for signed-out visitors, where a page has no label of its
+// own: "Start on CoCalc.ai" on cocalc.ai, and the default label elsewhere.
+export function getPublicSignUpLabel(config?: PublicConfig): string {
+  return isCocalcAiLaunchpadSite(config)
+    ? COCALC_AI_SIGN_UP_LABEL
+    : PUBLIC_SIGN_UP_LABEL;
 }
 
 export function getPublicDocsAccess(config?: PublicConfig): DocsAccess {
