@@ -45,6 +45,9 @@ const DEFAULT_WAIT = 10_000;
 const MAX_TIMEOUT = 86_400_000;
 const RETENTION = 600_000;
 const OUTPUT_BYTES = 1024 * 1024;
+// Says who can recover and how: an agent cannot, and retrying does not help.
+const CLEANUP_UNCONFIRMED =
+  "Project job cleanup is unconfirmed, so this agent session cannot start more project commands. Only the user can recover: ask them to restart the project (project Settings, Restart). Waiting or retrying will not help.";
 const PAGE_BYTES = 64 * 1024;
 let activeJobs = 0;
 
@@ -131,10 +134,7 @@ export class ClaudeProjectJobs {
     this.wake(job);
   }
   async start(args: Record<string, unknown>) {
-    if (this.cleanupBlocked)
-      throw Error(
-        "Project job cleanup is unconfirmed; runtime recovery required",
-      );
+    if (this.cleanupBlocked) throw Error(CLEANUP_UNCONFIRMED);
     if (this.closed || this.paused) throw Error("Project tool is closed");
     const { script, cwd, request_id: requestId } = args;
     if (
@@ -240,11 +240,7 @@ export class ClaudeProjectJobs {
       .catch(() => {
         if (executionStarted) {
           this.blockCleanup(job);
-          this.append(
-            job,
-            "stderr",
-            "Project job cleanup is unconfirmed; runtime recovery required",
-          );
+          this.append(job, "stderr", CLEANUP_UNCONFIRMED);
         }
         if (job.status === "running") {
           job.status = "failed";
@@ -329,7 +325,12 @@ export class ClaudeProjectJobs {
     const job = this.get(args.job_id);
     this.stop(job, "canceled");
     await job.done;
-    return this.wait({ ...args, yield_time_ms: 0 });
+    // Report the outcome, not old output: pass a cursor to read output.
+    return this.wait({
+      ...args,
+      cursor: args.cursor ?? job.next,
+      yield_time_ms: 0,
+    });
   }
   list() {
     this.prune();
