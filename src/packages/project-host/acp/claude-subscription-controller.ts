@@ -263,7 +263,7 @@ This is an isolated subscription controller. Run ALL project filesystem and CLI 
 Current project tool server: ${CLAUDE_PROJECT_MCP_NAME}.
 ${CLAUDE_PROJECT_JOB_GUIDANCE}
 Use the exact installed CLI command: "/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js".
-The project_exec environment contains the runtime-issued CoCalc agent identity for registered agents. Run agent whoami, destinations, and messaging there, not in this isolated controller. Never substitute account credentials if agent identity or network access is unavailable.
+The project_exec environment contains the runtime-issued CoCalc agent identity for registered agents. Message other agents there, not in this isolated controller: \`"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js" agent destinations\` lists who you can message and \`... agent send NAME --stdin\` sends one message (see the skill's Agent Messaging section and \`agent --help\`). Never substitute account credentials if agent identity or network access is unavailable.
 
 <cocalc-skill>
 ${skill}

@@ -123,9 +123,10 @@ when authorized work runs.
 Inside a registered agent runtime, use the installed CLI's help and discovery:
 
 ~~~sh
-cocalc project chat agent whoami
-cocalc project chat agent destinations --json
-printf '%s' 'Please summarize your current result.' | cocalc project chat send --to PEER_NAME --stdin --json
+cocalc agent whoami
+cocalc agent destinations --json
+printf '%s' 'Please summarize your current result.' | cocalc agent send PEER_NAME --stdin --json
+cocalc agent send PEER_NAME --attach results.md "Results attached"
 ~~~
 
 Use the exact CLI executable supplied by that runtime if it differs from

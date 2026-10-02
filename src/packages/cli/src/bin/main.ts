@@ -214,6 +214,7 @@ import {
   registerProjectCommand,
   type ProjectCommandDeps,
 } from "./commands/project";
+import { registerAgentCommand } from "./commands/agent";
 import { registerShareCommand, type ShareCommandDeps } from "./commands/share";
 import { registerAuthCommand, type AuthCommandDeps } from "./commands/auth";
 import {
@@ -3316,6 +3317,7 @@ const projectCommandDeps = {
 } satisfies ProjectCommandDeps;
 
 registerProjectCommand(program, projectCommandDeps);
+registerAgentCommand(program, projectCommandDeps);
 const shareCommandDeps = {
   withContext,
   hubCallByName,
