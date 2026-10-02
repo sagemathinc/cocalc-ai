@@ -143,7 +143,9 @@ import { sharedArtifactCatalog } from "./artifact-catalog-store";
 import { PeopleSidebar } from "@cocalc/frontend/people/people-sidebar";
 import {
   librarySearchRequest,
+  newArtifactRequest,
   peopleSearchRequest,
+  toggleSidebarRequest,
 } from "@cocalc/frontend/app/sidebar-search-requests";
 import {
   focusProjectsFilter,
@@ -237,6 +239,7 @@ import { useWorkspaceSelectedThread } from "./use-workspace-selected-thread";
 import {
   AGENT_SIDEBAR_ID,
   AgentsSidebarToggle,
+  AGENT_SIDEBAR_HIDDEN_STORAGE_KEY,
 } from "./workspace-sidebar-toggle";
 import {
   readAgentThreadAppearance,
@@ -316,7 +319,6 @@ const DEFAULT_AGENT_SIDEBAR_WIDTH = 280;
 const MIN_AGENT_SIDEBAR_WIDTH = 220;
 const MAX_AGENT_SIDEBAR_WIDTH = 600;
 const AGENT_SIDEBAR_WIDTH_STORAGE_KEY = "cocalc-agents-sidebar-width-v1";
-const AGENT_SIDEBAR_HIDDEN_STORAGE_KEY = "cocalc-agents-sidebar-hidden-v1";
 const AGENT_DOCS_DRAWER_OPEN_STORAGE_KEY = "cocalc-agents-docs-drawer-open-v1";
 const AGENT_DOCS_DRAWER_WIDTH_STORAGE_KEY =
   "cocalc-agents-docs-drawer-width-v1";
@@ -3270,6 +3272,12 @@ export function MyAgentsWorkspacePage({
       return next;
     });
   }, []);
+  // Quick Navigation: "Show/Hide sidebar" and "New artifact".
+  useEffect(
+    () => toggleSidebarRequest.on(toggleAgentSidebar),
+    [toggleAgentSidebar],
+  );
+  useEffect(() => newArtifactRequest.on(() => setNewArtifactOpen(true)), []);
   useEffect(() => {
     if (!sidebarNavigation || !active) return;
     const onKeyDown = (event: KeyboardEvent) => {

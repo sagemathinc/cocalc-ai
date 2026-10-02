@@ -91,7 +91,7 @@ function setup() {
   return {
     closed,
     input: screen.getByRole("combobox", {
-      name: "Search projects, files, frames, and settings",
+      name: "Search agents, projects, files, artifacts, people, and settings",
     }),
   };
 }

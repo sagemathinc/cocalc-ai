@@ -8,6 +8,7 @@ import { APP_ICON } from "@cocalc/frontend/art";
 import { Button } from "antd";
 
 export const AGENT_SIDEBAR_ID = "agents-workspace-sidebar";
+export { AGENT_SIDEBAR_HIDDEN_STORAGE_KEY } from "./sidebar-storage";
 
 export function AgentsSidebarToggle({
   hidden,
@@ -30,16 +31,30 @@ export function AgentsSidebarToggle({
         // recognize (a bare chevron is easy to miss).
         icon={
           hidden ? (
-            <span style={{ display: "inline-flex", alignItems: "center" }}>
-              <img src={APP_ICON} alt="" width={18} height={18} />
-              <Icon name="chevron-right" style={{ fontSize: 10 }} />
+            <span
+              style={{ display: "inline-flex", alignItems: "center", gap: 2 }}
+            >
+              <img src={APP_ICON} alt="" width={26} height={26} />
+              <Icon name="chevron-right" style={{ fontSize: 14 }} />
             </span>
           ) : (
             <Icon name="chevron-left" />
           )
         }
         onClick={onToggle}
-        style={{ color, ...(hidden ? { marginTop: 3, paddingInline: 4 } : {}) }}
+        style={{
+          color,
+          // Sized like the top bar's icons, centered in its 36px row.
+          ...(hidden
+            ? {
+                height: 36,
+                paddingInline: 6,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }
+            : {}),
+        }}
       />
     </Tooltip>
   );

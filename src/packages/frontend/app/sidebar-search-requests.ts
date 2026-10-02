@@ -11,3 +11,7 @@ export const librarySearchRequest = pendingRequest("library-search");
 export const peopleSearchRequest = pendingRequest("people-search");
 // "+ New Conversation" in the People sidebar.
 export const newConversationRequest = pendingRequest("new-conversation");
+// From Quick Navigation: open the New Artifact dialog; show or hide the
+// workspace sidebar.
+export const newArtifactRequest = pendingRequest("new-artifact");
+export const toggleSidebarRequest = pendingRequest("toggle-sidebar");
