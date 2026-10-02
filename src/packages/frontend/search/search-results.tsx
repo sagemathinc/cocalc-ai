@@ -143,6 +143,8 @@ export interface SearchResultsProps {
   onOpenMessage: (hit: AgentSearchHit) => Promise<void> | void;
   onOpenArtifact: (hit: AgentSearchHit) => Promise<void> | void;
   navigation?: ReactNode;
+  // No agents: their sections are left out.
+  aiDisabled?: boolean;
 }
 
 export function SearchResults(props: SearchResultsProps) {
@@ -251,20 +253,25 @@ export function SearchResults(props: SearchResultsProps) {
           onChange={(keys) =>
             setExpanded((Array.isArray(keys) ? keys : [keys]) as SectionKey[])
           }
-          items={ORDER[scope].map((key) => ({
-            key,
-            label: (
-              <span>
-                <strong>{TITLES[key]}</strong>
-                {counts[key] != null && (
-                  <Typography.Text type="secondary" style={{ marginLeft: 8 }}>
-                    {counts[key]}
-                  </Typography.Text>
-                )}
-              </span>
-            ),
-            children: sections[key],
-          }))}
+          items={ORDER[scope]
+            .filter(
+              (key) =>
+                !props.aiDisabled || (key !== "agents" && key !== "messages"),
+            )
+            .map((key) => ({
+              key,
+              label: (
+                <span>
+                  <strong>{TITLES[key]}</strong>
+                  {counts[key] != null && (
+                    <Typography.Text type="secondary" style={{ marginLeft: 8 }}>
+                      {counts[key]}
+                    </Typography.Text>
+                  )}
+                </span>
+              ),
+              children: sections[key],
+            }))}
         />
       </div>
     </div>

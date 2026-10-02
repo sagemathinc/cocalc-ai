@@ -2,17 +2,15 @@
  * This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
  * License: MS-RSL - see LICENSE.md for details
  */
-/** Embedded/exam surfaces and the AI opt-out keep their existing navigation. */
+/** Everything signed in except embedded, exam and Lite surfaces. */
 export function usesWorkspaceShell({
   lite,
-  aiDisabled,
   signedIn,
   examMode,
   fullscreen,
   activeTab,
 }: {
   lite: boolean;
-  aiDisabled: boolean;
   signedIn: boolean;
   examMode: boolean;
   fullscreen?: string;
@@ -20,7 +18,6 @@ export function usesWorkspaceShell({
 }) {
   return (
     !lite &&
-    !aiDisabled &&
     signedIn &&
     !examMode &&
     fullscreen !== "kiosk" &&

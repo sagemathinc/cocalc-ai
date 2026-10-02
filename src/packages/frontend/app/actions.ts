@@ -173,13 +173,10 @@ export class PageActions extends Actions<PageState> {
     disconnect_from_project(project_id);
   }
 
-  // The sidebar has no project tabs: keep the recently visited projects open
-  // and release older ones as if their tabs were closed. Accounts with AI
-  // disabled still use the top bar's project tabs.
+  // There are no project tabs: keep the recently visited projects open and
+  // release older ones as if their tabs were closed.
   private retainRecentProjects(current: string): void {
     noteProjectVisit(current);
-    if (redux.getStore("account")?.getIn(["other_settings", "openai_disabled"]))
-      return;
     const open = redux.getStore("projects")?.get("open_projects");
     const ids: string[] = open?.toArray?.() ?? [];
     for (const project_id of projectsToRelease(ids, current)) {

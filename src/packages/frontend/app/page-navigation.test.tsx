@@ -131,9 +131,6 @@ jest.mock("./bootstrap-ux-latency", () => ({
 jest.mock("@cocalc/frontend/monitoring/ux-latency", () => ({
   configureUxLatency: jest.fn(),
 }));
-jest.mock("@cocalc/frontend/projects/projects-nav-mode", () => ({
-  getStoredProjectsNavMode: () => "tabs",
-}));
 jest.mock("./lazy-with-retry", () => ({
   lazyWithRetry: (_load, label) => () => (
     <div role="region" aria-label={label} />
@@ -200,20 +197,18 @@ test.each(["lite", "exam", "fullscreen", "auth"])(
   },
 );
 
-test("retained tabs preserve login and AI visibility", () => {
+test("signed out: the logo and no app navigation; AI-disabled accounts use the sidebar", () => {
   activeTab = "projects";
   loggedIn = false;
   const mounted = render(view());
   expect(screen.getByRole("link", { name: "CoCalc home" })).toBeVisible();
   expect(screen.queryByRole("button", { name: "Agents" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Projects" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Compute" })).toBeNull();
   loggedIn = true;
   aiDisabled = true;
   mounted.rerender(view());
-  expect(screen.queryByRole("button", { name: "Agents" })).toBeNull();
-  expect(screen.getByRole("button", { name: "Projects" })).toBeVisible();
-  expect(screen.getByRole("button", { name: "Compute" })).toBeVisible();
+  // Same as everyone else: no top bar on wide screens.
+  expect(screen.queryByRole("navigation")).toBeNull();
 });
 
 test("wide screens have no top bar; projects are in the sidebar", () => {

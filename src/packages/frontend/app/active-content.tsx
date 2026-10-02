@@ -156,7 +156,6 @@ export const ActiveContent: React.FC<Props> = React.memo(({ navigation }) => {
   const examMode = useTypedRedux("customize", "exam_mode") === true;
   const workspaceShell = usesWorkspaceShell({
     lite,
-    aiDisabled,
     signedIn: !!is_logged_in,
     examMode,
     fullscreen,

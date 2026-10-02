@@ -104,20 +104,18 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
-it("never mounts Agents when AI is disabled", () => {
+it("AI-disabled accounts use the same workspace, redirected from Agents", () => {
   disabled = true;
   render(<ActiveContent />);
-  expect(screen.queryByRole("region", { name: "Agents workspace" })).toBeNull();
+  expect(screen.getByRole("region", { name: "Agents workspace" })).toBeTruthy();
   expect(actions.set_active_tab).toHaveBeenCalledWith("projects");
 });
 
-it("unmounts and redirects when the opt-out arrives or changes", () => {
+it("redirects when the opt-out arrives", () => {
   const { rerender } = render(<ActiveContent />);
-  expect(screen.getByRole("region", { name: "Agents workspace" })).toBeTruthy();
   expect(actions.set_active_tab).not.toHaveBeenCalled();
   disabled = true;
   rerender(<ActiveContent />);
-  expect(screen.queryByRole("region", { name: "Agents workspace" })).toBeNull();
   expect(actions.set_active_tab).toHaveBeenCalledWith("projects");
 });
 
@@ -186,7 +184,7 @@ it("keeps one shell and the same project editor DOM across Projects and agent na
   expect(editor.closest("[inert]")).toBeNull();
 });
 
-it.each(["AI-disabled", "Lite", "exam", "kiosk", "project"])(
+it.each(["Lite", "exam", "kiosk", "project"])(
   "retains standalone Projects navigation in %s mode",
   (mode) => {
     activeTab = "projects";

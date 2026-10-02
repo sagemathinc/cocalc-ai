@@ -3180,9 +3180,17 @@ export function MyAgentsWorkspacePage({
   const searchState = useSearchState();
   const [newArtifactOpen, setNewArtifactOpen] = useState(false);
   // Projects, Artifacts and People list their own things in the sidebar
-  // (instead of agents), like Agents does.
+  // (instead of agents), like Agents does. With AI disabled there are no
+  // agents: other pages (settings, ...) list projects.
+  const aiDisabled = !!useTypedRedux("account", "other_settings")?.get(
+    "openai_disabled",
+  );
   const listMode: "projects" | "library" | "people" | undefined =
-    searchContext === "agents" ? undefined : searchContext;
+    searchContext !== "agents"
+      ? searchContext
+      : aiDisabled
+        ? "projects"
+        : undefined;
   const libraryProjectId = useTypedRedux("page", "library_project_id");
   const libraryEntryId = useTypedRedux("page", "library_entry_id");
   const { names: artifactNames } = useArtifactNames();
@@ -4203,19 +4211,21 @@ export function MyAgentsWorkspacePage({
         }
         firstNavigationItem={
           <>
-            <Button
-              block
-              type="text"
-              style={{
-                justifyContent: "flex-start",
-                background: overviewOpen ? UI_COLORS.selected : undefined,
-              }}
-              icon={<Icon name="robot" />}
-              aria-current={overviewOpen ? "page" : undefined}
-              onClick={showAgentsOverview}
-            >
-              Agents
-            </Button>
+            {!aiDisabled && (
+              <Button
+                block
+                type="text"
+                style={{
+                  justifyContent: "flex-start",
+                  background: overviewOpen ? UI_COLORS.selected : undefined,
+                }}
+                icon={<Icon name="robot" />}
+                aria-current={overviewOpen ? "page" : undefined}
+                onClick={showAgentsOverview}
+              >
+                Agents
+              </Button>
+            )}
             {!lite && (
               <Button
                 block
@@ -4326,7 +4336,9 @@ export function MyAgentsWorkspacePage({
                               ? "Search artifacts"
                               : searchContext === "people"
                                 ? "Search people"
-                                : "Search agents"
+                                : aiDisabled
+                                  ? "Search projects"
+                                  : "Search agents"
                         }
                         value={sidebarQuery}
                         onChange={setSidebarQuery}
@@ -4335,7 +4347,9 @@ export function MyAgentsWorkspacePage({
                             query,
                             searchContext === "library"
                               ? "artifacts"
-                              : searchContext,
+                              : searchContext === "agents" && aiDisabled
+                                ? "projects"
+                                : searchContext,
                           )
                         }
                         onEscape={closeSearch}
@@ -4759,6 +4773,7 @@ export function MyAgentsWorkspacePage({
               onOpenAgent={(agent) => selectAgent(agent)}
               onOpenMessage={openSearchHit}
               onOpenArtifact={openLibraryHit}
+              aiDisabled={aiDisabled}
               navigation={
                 isNarrow ? (
                   libraryNavigationControl()

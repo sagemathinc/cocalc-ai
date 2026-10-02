@@ -429,13 +429,4 @@ describe("only recent projects stay open", () => {
     expect(projects().get("open_projects").toJS()).toEqual([B, C]);
     expect(page().get("active_top_tab")).toBe(C);
   });
-
-  it("accounts with AI disabled (top bar project tabs) keep every tab", async () => {
-    redux.getActions("account").setState({
-      other_settings: { openai_disabled: true },
-    });
-    redux.getActions("projects").setState({ open_projects: [A, B, C] });
-    await actions.set_active_tab(C);
-    expect(projects().get("open_projects").toJS()).toEqual([A, B, C]);
-  });
 });
