@@ -8,6 +8,7 @@ jest.mock("../widgets/manager", () => ({
   WidgetManager: class WidgetManager {},
 }));
 
+import { sha1 } from "@cocalc/util/misc";
 import { JupyterActions } from "../browser-actions";
 
 function deferred<T>() {
@@ -259,5 +260,97 @@ describe("Jupyter browser disk-save reconciliation", () => {
       "has-unsaved-changes",
       false,
     );
+  });
+
+  describe("files saved by a client of the notebook", () => {
+    const savedText = '{"cells": ["saved"]}';
+
+    function openingActions({ diskMtimeMs }: { diskMtimeMs: number }) {
+      const actions = createActions();
+      actions.runtimeStateSettled = true;
+      actions.loadFromDisk = jest.fn(async () => {});
+      actions.saveIpynb = jest.fn(async () => {});
+      actions.syncdb = {
+        fs: { stat: jest.fn(async () => ({ mtimeMs: diskMtimeMs })) },
+        get_one: () => ({ type: "cell", id: "a" }),
+        has_uncommitted_changes: () => false,
+        newestVersion: () => "v1",
+      };
+      return actions;
+    }
+
+    it("records each save, with the sha1 and mtime of the file", async () => {
+      const actions = createActions();
+      const ipynb = { cells: [] };
+      actions.syncdb = {
+        fs: {
+          jupyterSaveIpynb: jest.fn(async () => ({
+            bytes: 10,
+            converted: false,
+            ipynb,
+            sha1: "abc",
+            mtimeMs: 1000,
+          })),
+        },
+        get_state: () => "ready",
+        has_uncommitted_changes: () => false,
+        newestVersion: () => "v1",
+      };
+      actions.toIpynb = jest.fn(async () => ipynb);
+      await actions.saveIpynb();
+      expect(actions.getIpynbSaves()).toEqual([
+        expect.objectContaining({ sha1: "abc", mtimeMs: 1000 }),
+      ]);
+    });
+
+    it("does not import a saved file whose mtime is newer than the live notebook", async () => {
+      // The save finished writing after a newer edit reached the notebook.
+      const actions = openingActions({ diskMtimeMs: 5000 });
+      actions.recordIpynbSave({ sha1: sha1(savedText), mtimeMs: 5000 });
+      await actions.watchLoadFromDisk({
+        initial: true,
+        diskRead: { bytes: savedText.length, text: savedText, ipynb: {} },
+      });
+      expect(actions.loadFromDisk).not.toHaveBeenCalled();
+      expect(actions.saveIpynb).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not import a file not modified after the newest save", async () => {
+      const actions = openingActions({ diskMtimeMs: 4000 });
+      actions.recordIpynbSave({ sha1: "other", mtimeMs: 5000 });
+      await actions.watchLoadFromDisk({
+        initial: true,
+        diskRead: { bytes: savedText.length, text: savedText, ipynb: {} },
+      });
+      expect(actions.loadFromDisk).not.toHaveBeenCalled();
+    });
+
+    it("does not import a save recorded just after the file is read", async () => {
+      // Another client wrote the file and records the save a moment later;
+      // this client reads the file in between.
+      const actions = openingActions({ diskMtimeMs: 6000 });
+      actions.recordIpynbSave({ sha1: "older", mtimeMs: 5000 });
+      setTimeout(
+        () => actions.recordIpynbSave({ sha1: sha1(savedText), mtimeMs: 6000 }),
+        300,
+      );
+      await actions.watchLoadFromDisk({
+        initial: true,
+        diskRead: { bytes: savedText.length, text: savedText, ipynb: {} },
+      });
+      expect(actions.loadFromDisk).not.toHaveBeenCalled();
+    });
+
+    it("imports an external edit of the file", async () => {
+      const actions = openingActions({ diskMtimeMs: 6000 });
+      actions.recordIpynbSave({ sha1: sha1(savedText), mtimeMs: 5000 });
+      const edited = '{"cells": ["edited elsewhere"]}';
+      await actions.watchLoadFromDisk({
+        initial: true,
+        diskRead: { bytes: edited.length, text: edited, ipynb: {} },
+      });
+      expect(actions.loadFromDisk).toHaveBeenCalledTimes(1);
+      expect(actions.saveIpynb).not.toHaveBeenCalled();
+    });
   });
 });
