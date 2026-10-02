@@ -297,6 +297,22 @@ describe("Jupyter browser disk-save reconciliation", () => {
       expect(actions.loadFromDisk).not.toHaveBeenCalled();
     });
 
+    it("does not import a save recorded just after the file is read", async () => {
+      // Another client wrote the file and records the save a moment later;
+      // this client reads the file in between.
+      const actions = openingActions({ diskMtimeMs: 6000 });
+      actions.recordIpynbSave({ sha1: "older", mtimeMs: 5000 });
+      setTimeout(
+        () => actions.recordIpynbSave({ sha1: sha1(savedText), mtimeMs: 6000 }),
+        300,
+      );
+      await actions.watchLoadFromDisk({
+        initial: true,
+        diskRead: { bytes: savedText.length, text: savedText, ipynb: {} },
+      });
+      expect(actions.loadFromDisk).not.toHaveBeenCalled();
+    });
+
     it("imports an external edit of the file", async () => {
       const actions = openingActions({ diskMtimeMs: 6000 });
       actions.recordIpynbSave({ sha1: sha1(savedText), mtimeMs: 5000 });

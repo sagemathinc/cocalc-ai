@@ -136,6 +136,10 @@ function getCellMetadataLastRuntimeMs(cell: immutable.Map<string, any>): any {
   return undefined;
 }
 
+// How long a client that finds the .ipynb file changed waits for a save of
+// it to be recorded before taking it for an external edit (see isIpynbSave).
+const IPYNB_SAVE_RECORD_WAIT_MS = 3000;
+
 export class JupyterActions extends Actions<JupyterStoreState> {
   public is_project: boolean;
   readonly path: string;
@@ -341,6 +345,10 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   // client of this notebook rather than an external edit: it is one of the
   // recorded saves, or not modified after the newest one. Waits briefly for
   // the runtime state to open; without it nothing is known to be a save.
+  // A save is recorded just after the file is written, so a client that reads
+  // the file in between sees a save that is not recorded yet; such a file is
+  // taken for an external edit only if no save of it is recorded within
+  // IPYNB_SAVE_RECORD_WAIT_MS.
   protected isIpynbSave = async ({
     text,
     mtimeMs,
@@ -350,24 +358,41 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   }): Promise<boolean> => {
     if (!this.runtimeStateSettled) {
       this.initRuntimeState();
-      await until(() => this.runtimeStateSettled || this.is_closed(), {
-        start: 50,
-        max: 250,
-        timeout: 5000,
-      });
+      try {
+        await until(() => this.runtimeStateSettled || this.is_closed(), {
+          start: 50,
+          max: 250,
+          timeout: 5000,
+        });
+      } catch {
+        // timeout: decide with what is known
+      }
     }
-    const saves = this.getIpynbSaves();
-    if (saves.length == 0) return false;
     const hash = sha1(text);
-    if (saves.some((save) => save.sha1 === hash)) return true;
-    const newest = Math.max(
-      ...saves.map((save) => save.mtimeMs ?? Number.NEGATIVE_INFINITY),
-    );
-    return (
-      typeof mtimeMs === "number" &&
-      Number.isFinite(newest) &&
-      mtimeMs <= newest
-    );
+    const recorded = (): boolean => {
+      const saves = this.getIpynbSaves();
+      if (saves.length == 0) return false;
+      if (saves.some((save) => save.sha1 === hash)) return true;
+      const newest = Math.max(
+        ...saves.map((save) => save.mtimeMs ?? Number.NEGATIVE_INFINITY),
+      );
+      return (
+        typeof mtimeMs === "number" &&
+        Number.isFinite(newest) &&
+        mtimeMs <= newest
+      );
+    };
+    if (recorded()) return true;
+    try {
+      await until(() => recorded() || this.is_closed(), {
+        start: 100,
+        max: 250,
+        timeout: IPYNB_SAVE_RECORD_WAIT_MS,
+      });
+    } catch {
+      // timeout: not a recorded save
+    }
+    return recorded();
   };
 
   private runtimeStateChange = (change?: { key?: string }): void => {
