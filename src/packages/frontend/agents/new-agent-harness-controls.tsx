@@ -18,6 +18,7 @@ import {
 } from "@cocalc/frontend/chat/harness-profile";
 import type { HarnessProfileDraft } from "@cocalc/frontend/chat/harness-profile";
 import { ClaudeSubscriptionConnect } from "@cocalc/frontend/chat/claude-subscription-connect";
+import { ClaudeSubscriptionManage } from "@cocalc/frontend/chat/claude-subscription-manage";
 import { ClaudeProjectSecretModal } from "@cocalc/frontend/chat/claude-project-secret-modal";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { DocsLink } from "@cocalc/frontend/docs/link";
@@ -43,6 +44,7 @@ export function NewAgentClaudeControls({
   credentials,
   credentialsLoaded,
   onCredential,
+  onCredentials,
   onConnected,
   disabled,
   assertCurrent,
@@ -57,6 +59,10 @@ export function NewAgentClaudeControls({
   credentials: ExternalCredentialInfo[];
   credentialsLoaded: boolean;
   onCredential: (credential: AcpHarnessCredential) => void;
+  // Local update after a subscription is renamed or disconnected.
+  onCredentials: (
+    update: (rows: ExternalCredentialInfo[]) => ExternalCredentialInfo[],
+  ) => void;
   onConnected: (credentialId: string) => Promise<void>;
   disabled?: boolean;
   assertCurrent: () => void;
@@ -149,30 +155,54 @@ export function NewAgentClaudeControls({
         </div>
       )}
       {projectId ? (
-        <ClaudeSubscriptionConnect
-          compact
+        <ClaudeSubscriptionManage
           key={`${accountId}:${projectId}`}
           projectId={projectId}
+          credentials={credentials}
+          selectedId={
+            credential.mode === "account-subscription"
+              ? credential.credentialId
+              : undefined
+          }
           disabled={disabled}
-          hasConnection={hasSubscription}
+          onRenamed={(id, label) =>
+            onCredentials((rows) =>
+              rows.map((row) => {
+                if (row.id !== id) return row;
+                const metadata = { ...row.metadata };
+                if (label) metadata.label = label;
+                else delete metadata.label;
+                return { ...row, metadata };
+              }),
+            )
+          }
+          onDisconnected={(id) => {
+            onCredentials((rows) => rows.filter((row) => row.id !== id));
+            onCredential({
+              version: 1,
+              provider: "anthropic",
+              mode: "project-secret",
+            });
+          }}
           onConnected={onConnected}
-        />
+        >
+          {credential.mode === "account-subscription" &&
+            claudeConnectorsAvailable(credentials, credential.credentialId) && (
+              <ClaudeConnectorPreference
+                enabled={credential.claudeAiConnectors !== false}
+                disabled={disabled}
+                onChange={(enabled) =>
+                  onCredential({ ...credential, claudeAiConnectors: enabled })
+                }
+              />
+            )}
+        </ClaudeSubscriptionManage>
       ) : (
         <Typography.Text>
           Select a project before connecting Claude Code or loading model
           options.
         </Typography.Text>
       )}
-      {credential.mode === "account-subscription" &&
-        claudeConnectorsAvailable(credentials, credential.credentialId) && (
-          <ClaudeConnectorPreference
-            enabled={credential.claudeAiConnectors !== false}
-            disabled={disabled}
-            onChange={(enabled) =>
-              onCredential({ ...credential, claudeAiConnectors: enabled })
-            }
-          />
-        )}
       {projectId && credential.mode === "project-secret" && (
         <Button
           disabled={disabled}

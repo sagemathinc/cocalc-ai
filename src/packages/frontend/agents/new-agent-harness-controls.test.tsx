@@ -78,6 +78,7 @@ const props = {
   credentials: [],
   credentialsLoaded: true,
   onCredential: jest.fn(),
+  onCredentials: jest.fn(),
   onConnected: jest.fn(),
   assertCurrent: jest.fn(),
 };
@@ -712,4 +713,63 @@ test("a delayed sign-in callback does not steal focus after switching projects",
     status.mockRestore();
     jest.useRealTimers();
   }
+});
+
+test("a selected subscription can be named, disconnected or reconnected from the new-agent dialog", async () => {
+  const id = "00000000-0000-4000-8000-000000000009";
+  const revoke = jest
+    .spyOn(webapp_client.conat_client.hub.system, "revokeExternalCredential")
+    .mockResolvedValue({ revoked: true } as any);
+  const onCredential = jest.fn();
+  const onCredentials = jest.fn();
+  render(
+    <NewAgentClaudeControls
+      {...props}
+      credential={{
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId: id,
+      }}
+      credentials={[
+        {
+          id,
+          kind: "claude-subscription-home-v1",
+          revoked: null,
+          metadata: {
+            authentication: "claude-oauth-token",
+            expires_at: "2027-10-02T00:00:00.000Z",
+          },
+        } as any,
+      ]}
+      onCredential={onCredential}
+      onCredentials={onCredentials}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: "Configure Claude Code" }),
+  );
+  await screen.findByRole("dialog", { name: "Configure Claude Code" });
+  expect(
+    screen.getByRole("button", { name: /Name this subscription/ }),
+  ).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Reconnect Claude" })).toBeTruthy();
+  // A long-lived token cannot load claude.ai connectors.
+  expect(screen.queryByText("Use my claude.ai connectors")).toBeNull();
+  await user.click(
+    screen.getByRole("button", { name: "Disconnect Claude subscription" }),
+  );
+  await user.click(await screen.findByRole("button", { name: "Disconnect" }));
+  await waitFor(() =>
+    expect(onCredential).toHaveBeenCalledWith({
+      version: 1,
+      provider: "anthropic",
+      mode: "project-secret",
+    }),
+  );
+  expect(revoke).toHaveBeenCalledWith(expect.objectContaining({ id }));
+  const update = onCredentials.mock.calls[0][0];
+  expect(update([{ id }, { id: "other" }])).toEqual([{ id: "other" }]);
+  revoke.mockRestore();
 });

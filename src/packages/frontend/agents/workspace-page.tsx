@@ -1923,6 +1923,7 @@ function NewAgentPanel({
                   claudeCredentialChosen.current = true;
                   setClaudeCredential(credential);
                 }}
+                onCredentials={setAnthropicCredentials}
                 onConnected={async (credentialId) => {
                   boundAccount.assertCurrent();
                   claudeCredentialChosen.current = true;
