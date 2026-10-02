@@ -23,6 +23,7 @@ import {
   validPath,
   writeProjectFile,
 } from "./claude-project-file-tools";
+import { validateMemoryName } from "@cocalc/conat/agents/memory";
 
 // Room for project_write_file content (1 MB, JSON-escaped).
 const MAX_REQUEST_BYTES = 2_500_000;
@@ -97,6 +98,39 @@ export async function readProjectImage(
     bytes: bytes.length,
     image: { data: bytes.toString("base64"), mimeType: type.mimeType },
   };
+}
+
+const COCALC_CLI = '"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"';
+
+// Claude's memory tools run the same CLI command as Codex and other agents, in
+// the project with this turn's runtime identity; the hub resolves the account
+// from that identity and enforces opt-in, limits and validation.
+export async function runAgentMemoryTool(
+  execute: ProjectJobExecutor,
+  tool: string,
+  args: Record<string, unknown>,
+  signal: AbortSignal,
+): Promise<unknown> {
+  const b64 = (value: unknown) =>
+    Buffer.from(String(value ?? ""), "utf8").toString("base64");
+  let script: string;
+  if (tool === "memory_list") script = `${COCALC_CLI} project chat memory list`;
+  else if (tool === "memory_read")
+    script = `${COCALC_CLI} project chat memory read ${shellQuote(validateMemoryName(args.name))}`;
+  else if (tool === "memory_delete")
+    script = `${COCALC_CLI} project chat memory delete ${shellQuote(validateMemoryName(args.name))}`;
+  else if (tool === "memory_write")
+    script = `printf %s '${b64(args.body)}' | base64 -d | ${COCALC_CLI} project chat memory write ${shellQuote(validateMemoryName(args.name))} --description "$(printf %s '${b64(args.description)}' | base64 -d)" --stdin`;
+  else throw Error("Unsupported project tool");
+  const out = await runCaptured(execute, script, signal, 1_000_000);
+  let parsed: any;
+  try {
+    parsed = JSON.parse(out.stdout);
+  } catch {
+    return { error: out.stderr.trim() || "agent memory command failed" };
+  }
+  if (parsed?.ok) return parsed.data;
+  return { error: parsed?.error?.message ?? "agent memory command failed" };
 }
 
 export interface ClaudeProjectToolBridge {
@@ -229,6 +263,8 @@ export async function createClaudeProjectToolBridge(
             result = await writeProjectFile(execute, args, signal);
           else if (tool === "project_edit_file")
             result = await editProjectFile(execute, args, signal);
+          else if (tool.startsWith("memory_"))
+            result = await runAgentMemoryTool(execute, tool, args, signal);
           else if (tool === "request_user_input_async" && asyncQuestion)
             result = await asyncQuestion(args);
           else throw Error("Unsupported project tool");

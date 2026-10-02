@@ -177,6 +177,70 @@ const tools = [
     },
   },
   {
+    name: "memory_list",
+    description:
+      "List your persistent memory notes (name, one-line description, last update). Memory belongs to the account this turn runs as and follows it across projects and sessions. It works only after that account's owner turns it on in Settings > AI; otherwise these tools return an error.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "memory_read",
+    description: "Read the full text of one memory note.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          pattern: "^[a-z0-9][a-z0-9-]{0,63}$",
+          description: "Short kebab-case note name, such as deploy-lite4b",
+        },
+      },
+      required: ["name"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "memory_write",
+    description:
+      "Create or replace one memory note: a single fact worth knowing in future sessions (user preferences and corrections, project conventions, how to build/test/deploy, lessons from mistakes). Reuse an existing name to update a note rather than adding a near-duplicate. Never store secrets or credentials. Body up to 8000 characters.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          pattern: "^[a-z0-9][a-z0-9-]{0,63}$",
+          description: "Short kebab-case note name, such as deploy-lite4b",
+        },
+        description: {
+          type: "string",
+          description: "One line (at most 200 characters) used in the index",
+        },
+        body: { type: "string", description: "The note itself" },
+      },
+      required: ["name", "description", "body"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "memory_delete",
+    description: "Delete a memory note that is wrong or no longer useful.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          pattern: "^[a-z0-9][a-z0-9-]{0,63}$",
+          description: "Short kebab-case note name, such as deploy-lite4b",
+        },
+      },
+      required: ["name"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "request_user_input_async",
     description:
       "Ask the user one to three short questions while continuing useful work. Returns immediately after saving a question card; the reply arrives as a user message during this turn, or a continuation if the turn has finished. Do not poll or stop unrelated work waiting for a reply. Use only for missing information, preferences, or clarification, never authentication, secrets, or permission escalation. Use a unique request_id and reuse it only when retrying the identical request.",

@@ -1838,6 +1838,7 @@ export const hosts = {
   updateCopyStatus: authFirstRequireHost,
   hasExternalCredential: authFirstRequireHost,
   getExternalCredential: authFirstRequireHost,
+  getAgentMemoryContext: authFirstRequireHost,
   touchExternalCredential: authFirstRequireHost,
   upsertExternalCredential: authFirstRequireHost,
   releaseCodexDeviceAuthLease: authFirstRequireHost,
@@ -2288,6 +2289,14 @@ export interface Hosts {
     selector: ExternalCredentialSelector;
     credential_id?: string;
   }) => Promise<ExternalCredentialRecord | undefined>;
+  // Saved-note index for a turn the account runs in this project; null when
+  // the account has not enabled agent memory. The account is passed as
+  // owner_account_id because host auth reserves account_id for the caller.
+  getAgentMemoryContext: (opts: {
+    host_id?: string;
+    project_id: string;
+    owner_account_id: string;
+  }) => Promise<{ notes: number; index: string } | null>;
   touchExternalCredential: (opts: {
     host_id?: string;
     project_id: string;

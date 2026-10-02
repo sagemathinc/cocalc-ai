@@ -2742,6 +2742,10 @@ function normalizeExternalCredentialSelector({
     .toLowerCase() as ExternalCredentialScope;
   if (!normalizedProvider) throw new Error("provider must be specified");
   if (!normalizedKind) throw new Error("kind must be specified");
+  // Agent memory is reachable only through its dedicated APIs, which enforce
+  // the account's opt-in and validation.
+  if (normalizedProvider === "cocalc" && normalizedKind === "agent-memory")
+    throw new Error("agent memory is not available through this API");
   if (
     normalizedScope !== "account" &&
     normalizedScope !== "project" &&
@@ -2937,6 +2941,28 @@ export async function upsertExternalCredential({
     metadata: safeMetadata,
   });
   return result;
+}
+
+export async function getAgentMemoryContext({
+  host_id,
+  project_id,
+  owner_account_id,
+}: {
+  host_id?: string;
+  project_id: string;
+  owner_account_id: string;
+}): Promise<{ notes: number; index: string } | null> {
+  if (!host_id) throw new Error("host_id must be specified");
+  if (!project_id) throw new Error("project_id must be specified");
+  if (!isValidUUID(owner_account_id))
+    throw new Error("owner_account_id must be a UUID");
+  await assertHostCredentialProjectAccess({
+    host_id,
+    project_id,
+    owner_account_id,
+  });
+  const { agentMemory } = await import("@cocalc/server/agents/memory");
+  return (await agentMemory().turnIndex(owner_account_id)) ?? null;
 }
 
 export async function getExternalCredential({

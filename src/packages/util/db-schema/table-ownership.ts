@@ -412,6 +412,19 @@ export const TABLE_OWNERSHIP = {
     rebuild: "No rebuild: callers must start a new explicit send attempt.",
   }),
 
+  ...entries(["agent_memory_usage"], {
+    ownership: "ephemeral",
+    authority: "local",
+    portability: "rebuildable",
+    secondary_reference_fields: {
+      account_id:
+        "Account whose agent memory usage is limited; rows live where that account's memory record is stored (its home bay).",
+    },
+    notes:
+      "Fixed-window agent memory rate counters shared by load-balanced hubs in the home bay. Losing rows only resets the current window.",
+    rebuild: "No rebuild: counters restart empty.",
+  }),
+
   ...entries(["external_credentials"], {
     ownership: "row-scoped",
     authority: "mixed",

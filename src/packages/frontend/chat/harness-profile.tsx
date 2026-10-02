@@ -8,6 +8,7 @@ import {
   Tag,
   Typography,
 } from "antd";
+import { AgentMemoryButton } from "@cocalc/frontend/account/agent-memory-settings";
 import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import type { ReactNode, Ref } from "react";
 import {
@@ -995,6 +996,11 @@ function HarnessRuntimeSummaryContent({
           },
         }}
       >
+        {claude && (
+          <div style={{ marginBottom: 12 }}>
+            <AgentMemoryButton />
+          </div>
+        )}
         {form}
       </Modal>
     </>

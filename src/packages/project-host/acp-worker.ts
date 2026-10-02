@@ -1,3 +1,4 @@
+import { initAgentMemoryContextProvider } from "./acp/agent-memory-context";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "@cocalc/conat/core/client";
 import { inboxPrefix } from "@cocalc/conat/names";
@@ -147,6 +148,7 @@ function configureProjectHostAcpRuntime(): void {
   initCodexSiteKeyGovernor();
   initCodexAttachmentBlobReader();
   initCodexGeneratedImageBlobWriter();
+  initAgentMemoryContextProvider();
 }
 
 function configureProjectHostAcpSessionPublisher(): void {

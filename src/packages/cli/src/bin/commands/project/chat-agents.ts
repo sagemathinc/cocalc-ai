@@ -207,6 +207,74 @@ export function registerChatAgentCommands(
           : await sendIdentityMessage(request, globals.api),
       );
     });
+  const memory = chat
+    .command("memory")
+    .description(
+      "account-scoped agent memory for this turn's account (the owner must enable it in Settings > AI); uses the runtime agent identity, never account credentials",
+    );
+  const stdinText = async () => {
+    let value = "";
+    for await (const chunk of process.stdin) value += chunk;
+    return value;
+  };
+  const memoryRequest = async (cmd: Command, request: any, label: string) => {
+    const globals = globalsFrom(cmd);
+    emitSuccess(
+      { globals },
+      label,
+      await sendIdentityMessage(request, globals.api),
+    );
+  };
+  memory
+    .command("list")
+    .description("list saved notes (name, description, last update)")
+    .action(async (_opts, cmd) =>
+      memoryRequest(
+        cmd,
+        { action: "memory", op: "list" },
+        "project chat memory list",
+      ),
+    );
+  memory
+    .command("read <name>")
+    .description("read one note")
+    .action(async (name: string, _opts, cmd) =>
+      memoryRequest(
+        cmd,
+        { action: "memory", op: "read", name },
+        "project chat memory read",
+      ),
+    );
+  memory
+    .command("write <name> [body...]")
+    .description(
+      "create or replace a note: one durable fact, never secrets (use --stdin for multiline bodies)",
+    )
+    .requiredOption("--description <text>", "one line used in the index")
+    .option("--stdin", "read the body from standard input")
+    .action(async (name: string, body: string[], opts, cmd) =>
+      memoryRequest(
+        cmd,
+        {
+          action: "memory",
+          op: "write",
+          name,
+          description: opts.description,
+          body: opts.stdin ? await stdinText() : body.join(" "),
+        },
+        "project chat memory write",
+      ),
+    );
+  memory
+    .command("delete <name>")
+    .description("delete a note that is wrong or no longer useful")
+    .action(async (name: string, _opts, cmd) =>
+      memoryRequest(
+        cmd,
+        { action: "memory", op: "delete", name },
+        "project chat memory delete",
+      ),
+    );
   agent
     .command("whoami")
     .description("inspect this runtime identity without credential fallback")
