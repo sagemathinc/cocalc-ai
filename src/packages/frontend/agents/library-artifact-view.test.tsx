@@ -295,7 +295,9 @@ test("parent navigation remains keyboard accessible while loading, updating, and
   expect(screen.getByRole("heading", { name: "Latest title" })).toBeVisible();
   expect(navigation).toHaveFocus();
   await user.tab();
-  expect(screen.getByRole("button", { name: "Back to Artifacts" })).toHaveFocus();
+  expect(
+    screen.getByRole("button", { name: "Back to Artifacts" }),
+  ).toHaveFocus();
   await user.tab({ shift: true });
   act(() => {
     record = undefined;

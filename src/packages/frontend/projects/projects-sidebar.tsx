@@ -8,9 +8,6 @@
 // replaces the project tabs; recently visited projects stay open in the
 // background (see app/project-retention).
 
-import { useEffect, useRef, useState } from "react";
-import type { InputRef } from "antd";
-
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { moveVisibleCollectionPin } from "@cocalc/frontend/components/collection-order";
 import {
@@ -22,15 +19,6 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { ProjectThemeAvatar } from "./theme";
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
 import { requestNewProject } from "./new-project-request";
-
-// Ctrl/Cmd+Shift+P (the project switcher shortcut in classic navigation)
-// focuses the filter; it may be requested before the sidebar shows projects.
-let focusRequested = false;
-const FOCUS_EVENT = "cocalc:focus-projects-filter";
-export function focusProjectsFilter(): void {
-  focusRequested = true;
-  window.dispatchEvent(new Event(FOCUS_EVENT));
-}
 
 const RECENT = 15;
 const MATCHES = 50;
@@ -98,7 +86,14 @@ export function sidebarProjects({
   };
 }
 
-export function ProjectsSidebar({ onNavigate }: { onNavigate?: () => void }) {
+export function ProjectsSidebar({
+  search,
+  onNavigate,
+}: {
+  // From the sidebar's search box.
+  search: string;
+  onNavigate?: () => void;
+}) {
   const actions = useActions("projects");
   const project_map = useTypedRedux("projects", "project_map");
   const account_id = useTypedRedux("account", "account_id");
@@ -108,18 +103,6 @@ export function ProjectsSidebar({ onNavigate }: { onNavigate?: () => void }) {
     setProjectBookmarked,
     setBookmarkedProjectsOrder,
   } = useBookmarkedProjects();
-  const [search, setSearch] = useState("");
-  const filterRef = useRef<InputRef>(null);
-  useEffect(() => {
-    const focus = () => {
-      if (!focusRequested) return;
-      focusRequested = false;
-      filterRef.current?.focus();
-    };
-    focus();
-    window.addEventListener(FOCUS_EVENT, focus);
-    return () => window.removeEventListener(FOCUS_EVENT, focus);
-  }, []);
   const { pinned, recent, more } = sidebarProjects({
     project_map,
     account_id,
@@ -152,7 +135,6 @@ export function ProjectsSidebar({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <SidebarList
-      ref={filterRef}
       label="Projects"
       itemLabel="project"
       newLabel="New Project"
@@ -162,7 +144,6 @@ export function ProjectsSidebar({ onNavigate }: { onNavigate?: () => void }) {
         onNavigate?.();
       }}
       search={search}
-      onSearch={setSearch}
       pinned={pinned.map(item)}
       recent={recent.map(item)}
       more={more}

@@ -6,7 +6,6 @@
 // The workspace sidebar on People (sidebar navigation): pinned and recent
 // conversations, with the same pins and order as the People page.
 
-import { useState } from "react";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { moveVisibleCollectionPin } from "@cocalc/frontend/components/collection-order";
@@ -63,13 +62,19 @@ export function sidebarConversations(
   };
 }
 
-export function PeopleSidebar({ onNavigate }: { onNavigate?: () => void }) {
+export function PeopleSidebar({
+  search,
+  onNavigate,
+}: {
+  // From the sidebar's search box.
+  search: string;
+  onNavigate?: () => void;
+}) {
   const state = useConversations(true);
   const preferences = useCollectionPreferences("conversations");
   const account_id = useTypedRedux("account", "account_id");
   const project_map = useTypedRedux("projects", "project_map");
   const route = `${useTypedRedux("page", "people_route") ?? ""}`;
-  const [search, setSearch] = useState("");
   const projectTitle = (c: ListedConversation) =>
     (project_map?.getIn([c.project_id, "title"]) as string | undefined) ?? "";
   const { fullOrder, pinned, recent, more } = sidebarConversations(
@@ -116,7 +121,6 @@ export function PeopleSidebar({ onNavigate }: { onNavigate?: () => void }) {
         onNavigate?.();
       }}
       search={search}
-      onSearch={setSearch}
       pinned={pinned.map(item)}
       recent={recent.map(item)}
       more={more}

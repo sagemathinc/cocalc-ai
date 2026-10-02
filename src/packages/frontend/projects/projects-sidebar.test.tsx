@@ -6,11 +6,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { fromJS } from "immutable";
-import {
-  focusProjectsFilter,
-  ProjectsSidebar,
-  sidebarProjects,
-} from "./projects-sidebar";
+import { ProjectsSidebar, sidebarProjects } from "./projects-sidebar";
 
 const me = "11111111-1111-4111-8111-111111111111";
 const openProject = jest.fn();
@@ -83,7 +79,7 @@ it("opens projects, marks the current one, and pins", async () => {
   mockPins = ["p1"];
   const user = userEvent.setup();
   const onNavigate = jest.fn();
-  render(<ProjectsSidebar onNavigate={onNavigate} />);
+  render(<ProjectsSidebar search="" onNavigate={onNavigate} />);
   const pinned = screen.getByRole("list", { name: "Pinned projects" });
   expect(
     within(pinned).getByRole("button", { name: "Open project Alpha" }),
@@ -103,13 +99,9 @@ it("opens projects, marks the current one, and pins", async () => {
   expect(setProjectBookmarked).toHaveBeenCalledWith("p1", false);
 });
 
-it("filters, and links to the full Projects page", async () => {
+it("narrows to the sidebar search, and links to the full Projects page", async () => {
   const user = userEvent.setup();
-  render(<ProjectsSidebar />);
-  await user.type(
-    screen.getByRole("searchbox", { name: "Filter projects" }),
-    "gam",
-  );
+  render(<ProjectsSidebar search="gam" />);
   expect(screen.getByText("Matches")).toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: "Open project Beta" }),
@@ -118,20 +110,12 @@ it("filters, and links to the full Projects page", async () => {
   expect(setActiveTab).toHaveBeenCalledWith("projects");
 });
 
-it("the project switcher shortcut focuses the filter, even before it mounts", () => {
-  focusProjectsFilter();
-  render(<ProjectsSidebar />);
-  expect(
-    screen.getByRole("searchbox", { name: "Filter projects" }),
-  ).toHaveFocus();
-});
-
 it("New Project goes to the Projects page and asks it to open the create dialog", async () => {
   const user = userEvent.setup();
   const opened = jest.fn();
   const { onNewProjectRequest } = jest.requireActual("./new-project-request");
   const stop = onNewProjectRequest(opened);
-  render(<ProjectsSidebar />);
+  render(<ProjectsSidebar search="" />);
   await user.click(screen.getByRole("button", { name: "New Project" }));
   expect(setActiveTab).toHaveBeenCalledWith("projects");
   expect(opened).toHaveBeenCalledTimes(1);

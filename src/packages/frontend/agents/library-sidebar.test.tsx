@@ -51,6 +51,7 @@ it("pinned and recent artifacts; the open one is current", async () => {
   const user = userEvent.setup();
   render(
     <LibrarySidebar
+      search=""
       accountId="acct"
       agents={[]}
       onOpen={onOpen}

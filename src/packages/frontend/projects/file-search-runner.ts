@@ -33,15 +33,7 @@ export interface FileHit {
   path: string;
 }
 
-export interface FileSearchProgress {
-  hits: FileHit[];
-  searched: string[];
-  unavailable: string[];
-  // Not reached within the budget; "Search more" continues with these.
-  pending: string[];
-  // Some project had more matches than shown.
-  truncated: boolean;
-}
+export type FileSearchProgress = ProjectSearchProgress<FileHit>;
 
 export type ProjectFileSearch = (
   project_id: string,
@@ -103,29 +95,41 @@ export const searchProjectFiles: ProjectFileSearch = async (
   };
 };
 
-export async function runProjectFileSearch({
+export interface ProjectSearchProgress<T> {
+  hits: T[];
+  searched: string[];
+  unavailable: string[];
+  // Not reached within the budget; "Search more" continues with these.
+  pending: string[];
+  // Some project had more matches than shown.
+  truncated: boolean;
+}
+
+// Run `search` in several projects at once, most recently used first, a few
+// at a time, within a time budget. A project whose host does not answer in
+// time counts as unavailable, not as having no matches.
+export async function runAcrossProjects<T>({
   project_ids,
-  query,
-  options,
+  search,
   canceled = () => false,
   report,
-  search = searchProjectFiles,
   budgetMs = SEARCH_BUDGET_MS,
   now = () => Date.now(),
 }: {
   // Most recently used first.
   project_ids: string[];
-  query: string;
-  options: FileSearchOptions;
+  search: (
+    project_id: string,
+    timeout: number,
+  ) => Promise<{ items: T[]; truncated: boolean }>;
   canceled?: () => boolean;
-  report: (progress: FileSearchProgress) => void;
-  search?: ProjectFileSearch;
+  report: (progress: ProjectSearchProgress<T>) => void;
   budgetMs?: number;
   now?: () => number;
-}): Promise<FileSearchProgress> {
+}): Promise<ProjectSearchProgress<T>> {
   const deadline = now() + budgetMs;
   const queue = [...project_ids];
-  const progress: FileSearchProgress = {
+  const progress: ProjectSearchProgress<T> = {
     hits: [],
     searched: [],
     unavailable: [],
@@ -153,18 +157,18 @@ export async function runProjectFileSearch({
       try {
         // A host that never answers must not hold a worker past its time.
         const result = await withTimeout(
-          search(project_id, query, options, timeout),
+          search(project_id, timeout),
           timeout + 2000,
         );
         if (canceled()) return;
         progress.searched.push(project_id);
         progress.truncated ||= result.truncated;
-        for (const path of result.paths) {
+        for (const item of result.items) {
           if (progress.hits.length >= MAX_HITS) {
             progress.truncated = true;
             break;
           }
-          progress.hits.push({ project_id, path });
+          progress.hits.push(item);
         }
       } catch {
         if (canceled()) return;
@@ -178,4 +182,45 @@ export async function runProjectFileSearch({
   );
   progress.pending = [...queue];
   return { ...progress, hits: [...progress.hits] };
+}
+
+export async function runProjectFileSearch({
+  project_ids,
+  query,
+  options,
+  canceled,
+  report,
+  search = searchProjectFiles,
+  budgetMs,
+  now,
+}: {
+  // Most recently used first.
+  project_ids: string[];
+  query: string;
+  options: FileSearchOptions;
+  canceled?: () => boolean;
+  report: (progress: FileSearchProgress) => void;
+  search?: ProjectFileSearch;
+  budgetMs?: number;
+  now?: () => number;
+}): Promise<FileSearchProgress> {
+  return await runAcrossProjects<FileHit>({
+    project_ids,
+    canceled,
+    report,
+    budgetMs,
+    now,
+    search: async (project_id, timeout) => {
+      const { paths, truncated } = await search(
+        project_id,
+        query,
+        options,
+        timeout,
+      );
+      return {
+        items: paths.map((path) => ({ project_id, path })),
+        truncated,
+      };
+    },
+  });
 }

@@ -42,7 +42,6 @@ import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import { agentWorkingDirectory } from "@cocalc/frontend/chat/agent-working-directory";
 import { initChat } from "@cocalc/frontend/chat/register";
 import { requestThreadSearch } from "@cocalc/frontend/chat/thread-search-request";
-import { AgentSearch } from "./search";
 import {
   retryablePreparation,
   readPreparedFirstAgent,
@@ -68,7 +67,6 @@ import {
 } from "./library-navigation";
 import { useArtifactNames } from "./artifact-names";
 import type { ForeignArtifactTarget } from "@cocalc/frontend/frame-editors/chat-editor/foreign-artifact-source";
-import { agentSearchStore } from "./search-state";
 import { agentMessageFragment } from "./message-fragment";
 import type { AgentSearchHit } from "./search-runner";
 import {
@@ -135,22 +133,26 @@ import "./new-agent-composer.css";
 import { AgentOrganizationControls } from "./organization-controls";
 import { AgentsOverview } from "./agents-overview";
 import { SidebarNotifications, SidebarStatus } from "./sidebar-status";
-import { ProjectsSearchDrawer } from "@cocalc/frontend/projects/projects-search-drawer";
+import {
+  focusSidebarSearch,
+  SidebarSearchBox,
+} from "@cocalc/frontend/search/sidebar-search-box";
+import { SearchResults } from "@cocalc/frontend/search/search-results";
+import {
+  closeSearch,
+  openSearch,
+  useSearchState,
+} from "@cocalc/frontend/search/search-store";
 import { LibrarySidebar } from "./library-sidebar";
 import { isLibraryChatAgent } from "./library-chat";
 import { NewArtifactDialog } from "./new-artifact-dialog";
 import { sharedArtifactCatalog } from "./artifact-catalog-store";
 import { PeopleSidebar } from "@cocalc/frontend/people/people-sidebar";
 import {
-  librarySearchRequest,
   newArtifactRequest,
-  peopleSearchRequest,
   toggleSidebarRequest,
 } from "@cocalc/frontend/app/sidebar-search-requests";
-import {
-  focusProjectsFilter,
-  ProjectsSidebar,
-} from "@cocalc/frontend/projects/projects-sidebar";
+import { ProjectsSidebar } from "@cocalc/frontend/projects/projects-sidebar";
 import { shouldOpenProjectsNavShortcut } from "@cocalc/frontend/projects/projects-nav-shortcut";
 import { AgentsSidebarResizeHandle } from "./sidebar-resize-handle";
 import {
@@ -2392,7 +2394,7 @@ function AgentProjectContext({
           agentWorkspace: true,
           agentWorkspaceActive: active,
           onSearchAll: () => {
-            if (accountId) agentSearchStore(accountId).set({ open: true });
+            focusSidebarSearch();
           },
           onBrowseAllArtifacts: () => {
             if (accountId) openLibrary();
@@ -3171,7 +3173,11 @@ export function MyAgentsWorkspacePage({
         : peopleOpen
           ? "people"
           : "agents";
-  const [projectSearchOpen, setProjectSearchOpen] = useState(false);
+  // The sidebar search box: its text narrows the list below it; Enter opens
+  // the search results page. Each page starts with an empty box.
+  const [sidebarQuery, setSidebarQuery] = useState("");
+  useEffect(() => setSidebarQuery(""), [searchContext]);
+  const searchState = useSearchState();
   const [newArtifactOpen, setNewArtifactOpen] = useState(false);
   // Projects, Artifacts and People list their own things in the sidebar
   // (instead of agents), like Agents does.
@@ -3285,7 +3291,7 @@ export function MyAgentsWorkspacePage({
       event.preventDefault();
       // Also the keyboard way back to a hidden sidebar.
       if (agentSidebarHiddenRef.current) toggleAgentSidebar();
-      focusProjectsFilter();
+      focusSidebarSearch();
       if (!projectsMode) void openProjectsWorkspace();
     };
     window.addEventListener("keydown", onKeyDown);
@@ -3342,6 +3348,21 @@ export function MyAgentsWorkspacePage({
     () => indexAgentNetworks(networks),
     [networks],
   );
+  // Name, @name, appearance name or tag:network, for the sidebar list and
+  // the search results.
+  const matchAgent = (agent: NamedAgent, query: string) =>
+    matchesAgentSidebarSearch({
+      agent,
+      appearanceName: agentAppearances.get(agent.endpoint.agent_id)?.name,
+      networks:
+        networksByAgent.get(
+          agentNetworkLookupKey(
+            agent.endpoint.project_id,
+            agent.endpoint.agent_id,
+          ),
+        ) ?? [],
+      query,
+    });
   const agentOrganization = useAgentWorkspaceOrganization(agents);
   const selected =
     activeAgentId && activeAgentId !== "new"
@@ -3352,6 +3373,11 @@ export function MyAgentsWorkspacePage({
         )
       : (agentOrganization.groups.pinned[0] ??
         agentOrganization.groups.unpinned[0]);
+  // Going anywhere else (another page, agent or artifact) leaves search.
+  useEffect(
+    () => closeSearch(),
+    [activeTopTab, activeAgentId, artifactLibraryOpen, overviewOpen],
+  );
   // Agents with a running turn stay mounted: they are likely to be revisited.
   const isRunningWorkspace = useCallback(
     (workspace: string) => {
@@ -4221,21 +4247,11 @@ export function MyAgentsWorkspacePage({
         }
       >
         <AgentSidebarFilter
-          render={(search, input) => {
+          query={searchContext === "agents" ? sidebarQuery : ""}
+          render={({ queries, input, panelOpen, setPanelOpen }) => {
+            const search = queries.join(" ");
             const filter = (agent: NamedAgent) =>
-              matchesAgentSidebarSearch({
-                agent,
-                appearanceName: agentAppearances.get(agent.endpoint.agent_id)
-                  ?.name,
-                networks:
-                  networksByAgent.get(
-                    agentNetworkLookupKey(
-                      agent.endpoint.project_id,
-                      agent.endpoint.agent_id,
-                    ),
-                  ) ?? [],
-                query: search,
-              });
+              queries.every((query) => matchAgent(agent, query));
             const visibleGroups = {
               pinned: agentOrganization.groups.pinned.filter(filter),
               unpinned: agentOrganization.groups.unpinned.filter(filter),
@@ -4302,49 +4318,39 @@ export function MyAgentsWorkspacePage({
                   )}
                   {accountId && (
                     <>
-                      {searchContext === "agents" ? (
-                        <AgentSearch
-                          label="Search agents"
-                          accountId={accountId}
-                          agents={agents}
-                          activity={agentOrganization.organization.lastOpened}
-                          active={active}
-                          onSelect={openSearchHit}
-                          available={(agent) => agent.available}
-                        />
-                      ) : (
-                        // Each page searches its own things.
-                        <Button
-                          block
-                          type="text"
-                          style={{ justifyContent: "flex-start" }}
-                          icon={<Icon name="search" />}
-                          onClick={() => {
-                            if (searchContext === "projects")
-                              setProjectSearchOpen(true);
-                            else if (searchContext === "library")
-                              librarySearchRequest.request();
-                            else peopleSearchRequest.request();
-                          }}
-                        >
-                          {searchContext === "projects"
+                      <SidebarSearchBox
+                        label={
+                          searchContext === "projects"
                             ? "Search projects"
                             : searchContext === "library"
                               ? "Search artifacts"
-                              : "Search conversations"}
-                        </Button>
-                      )}
-                      <ProjectsSearchDrawer
-                        open={projectSearchOpen}
-                        onClose={() => setProjectSearchOpen(false)}
+                              : searchContext === "people"
+                                ? "Search people"
+                                : "Search agents"
+                        }
+                        value={sidebarQuery}
+                        onChange={setSidebarQuery}
+                        onSubmit={(query) =>
+                          openSearch(
+                            query,
+                            searchContext === "library"
+                              ? "artifacts"
+                              : searchContext,
+                          )
+                        }
+                        onEscape={closeSearch}
                       />
                     </>
                   )}
                   {listMode === "projects" && (
-                    <ProjectsSidebar onNavigate={() => setMobileList(false)} />
+                    <ProjectsSidebar
+                      search={sidebarQuery}
+                      onNavigate={() => setMobileList(false)}
+                    />
                   )}
                   {listMode === "library" && accountId && (
                     <LibrarySidebar
+                      search={sidebarQuery}
                       accountId={accountId}
                       agents={agents}
                       onOpen={(hit) => {
@@ -4356,7 +4362,10 @@ export function MyAgentsWorkspacePage({
                     />
                   )}
                   {listMode === "people" && (
-                    <PeopleSidebar onNavigate={() => setMobileList(false)} />
+                    <PeopleSidebar
+                      search={sidebarQuery}
+                      onNavigate={() => setMobileList(false)}
+                    />
                   )}
                   {!listMode && (
                     <AgentOrganizationControls
@@ -4367,9 +4376,11 @@ export function MyAgentsWorkspacePage({
                       onMode={agentOrganization.setMode}
                       onGroupByProject={agentOrganization.setGroupByProject}
                       onNewAgent={startNewAgent}
+                      filterInput={input}
+                      open={panelOpen}
+                      onOpenChange={setPanelOpen}
                     />
                   )}
-                  {!listMode && input}
                   {networkError && (
                     <Alert
                       role="alert"
@@ -4727,6 +4738,35 @@ export function MyAgentsWorkspacePage({
         {floatingSidebarToggle && (
           <div style={{ position: "absolute", top: 2, left: 4, zIndex: 5 }}>
             <AgentsSidebarToggle hidden onToggle={toggleAgentSidebar} />
+          </div>
+        )}
+        {active && searchState.open && accountId && (
+          // Search results cover whatever page the search started from;
+          // closing them returns to it unchanged.
+          <div style={{ position: "absolute", inset: 0, zIndex: 6 }}>
+            <SearchResults
+              accountId={accountId}
+              agents={agents}
+              activity={agentOrganization.organization.lastOpened}
+              available={(agent) => agent.available}
+              matchAgent={matchAgent}
+              agentTitle={(agent) =>
+                resolveNamedAgentTheme(
+                  agent,
+                  agentAppearances.get(agent.endpoint.agent_id),
+                ).title
+              }
+              onOpenAgent={(agent) => selectAgent(agent)}
+              onOpenMessage={openSearchHit}
+              onOpenArtifact={openLibraryHit}
+              navigation={
+                isNarrow ? (
+                  libraryNavigationControl()
+                ) : agentSidebarHidden ? (
+                  <AgentsSidebarToggle hidden onToggle={toggleAgentSidebar} />
+                ) : null
+              }
+            />
           </div>
         )}
         <div

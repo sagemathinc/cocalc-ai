@@ -74,7 +74,7 @@ test("pins in saved order (newly pinned last), the rest by activity", () => {
 
 it("opens conversations, marks the current one and unread ones, pins", async () => {
   const user = userEvent.setup();
-  render(<PeopleSidebar />);
+  render(<PeopleSidebar search="" />);
   const pinned = screen.getByRole("list", { name: "Pinned people" });
   expect(
     within(pinned).getAllByRole("button", { name: /^Open conversation/ })
@@ -106,7 +106,7 @@ it("New Conversation asks People to open its dialog", async () => {
   );
   const opened = jest.fn();
   const stop = newConversationRequest.on(opened);
-  render(<PeopleSidebar />);
+  render(<PeopleSidebar search="" />);
   await userEvent
     .setup()
     .click(screen.getByRole("button", { name: "New Conversation" }));

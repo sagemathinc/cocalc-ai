@@ -3,12 +3,13 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// The workspace sidebar's list for a page (projects, library, people):
-// a heading with "+ New", a filter, Pinned (drag to reorder) and Recent,
-// and a link to the full page. Rows are one line: avatar, title, extras.
+// The workspace sidebar's list for a page (projects, artifacts, people):
+// a heading with "+ New", Pinned (drag to reorder) and Recent, and a link to
+// the full page. Rows are one line: avatar, title, extras. The sidebar's
+// search box above it supplies `search`, the text narrowing the list.
 
-import { forwardRef, type ReactNode } from "react";
-import { Button, Input, Typography, type InputRef } from "antd";
+import { type ReactNode } from "react";
+import { Button, Typography } from "antd";
 import { Icon } from "@cocalc/frontend/components";
 import { DragHandle, SortableItem, SortableList } from "./sortable-list";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
@@ -30,7 +31,6 @@ interface Props {
   newLabel?: string;
   onNew?: () => void;
   search: string;
-  onSearch: (search: string) => void;
   pinned: SidebarListItem[];
   recent: SidebarListItem[];
   more?: number;
@@ -41,25 +41,21 @@ interface Props {
   emptyText?: string;
 }
 
-export const SidebarList = forwardRef<InputRef, Props>(function SidebarList(
-  {
-    label,
-    itemLabel,
-    newLabel,
-    onNew,
-    search,
-    onSearch,
-    pinned,
-    recent,
-    more = 0,
-    onOpen,
-    onPin,
-    onMovePin,
-    onAll,
-    emptyText,
-  },
-  filterRef,
-) {
+export function SidebarList({
+  label,
+  itemLabel,
+  newLabel,
+  onNew,
+  search,
+  pinned,
+  recent,
+  more = 0,
+  onOpen,
+  onPin,
+  onMovePin,
+  onAll,
+  emptyText,
+}: Props) {
   function row(item: SidebarListItem, isPinned: boolean) {
     return (
       <div
@@ -165,17 +161,6 @@ export const SidebarList = forwardRef<InputRef, Props>(function SidebarList(
           {newLabel}
         </Button>
       )}
-      <Input
-        ref={filterRef}
-        type="search"
-        allowClear
-        aria-label={`Filter ${label.toLowerCase()}`}
-        placeholder={`Filter ${label.toLowerCase()}`}
-        prefix={<Icon name="search" />}
-        value={search}
-        onChange={(e) => onSearch(e.target.value)}
-        style={{ marginBottom: 6 }}
-      />
       {pinned.length > 0 && (
         <>
           {heading("Pinned")}
@@ -219,7 +204,7 @@ export const SidebarList = forwardRef<InputRef, Props>(function SidebarList(
       </Button>
     </section>
   );
-});
+}
 
 // A small colored dot after a row's title (running, unread).
 export function SidebarDot({ color, label }: { color: string; label: string }) {

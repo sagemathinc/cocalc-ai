@@ -7,7 +7,7 @@
 // artifacts (the Library's pins, drag to reorder) and recent ones, from the
 // same catalog the Library page keeps refreshed.
 
-import { useState, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, isIconName } from "@cocalc/frontend/components";
@@ -31,12 +31,15 @@ const RECENT = 15;
 const MATCHES = 50;
 
 export function LibrarySidebar({
+  search,
   accountId,
   agents,
   onOpen,
   onAll,
   onNew,
 }: {
+  // From the sidebar's search box.
+  search: string;
   accountId: string;
   agents: NamedAgent[];
   onOpen: (hit: AgentSearchHit) => void;
@@ -51,7 +54,6 @@ export function LibrarySidebar({
   const { names } = useArtifactNames();
   const openProject = useTypedRedux("page", "library_project_id");
   const openEntry = useTypedRedux("page", "library_entry_id");
-  const [search, setSearch] = useState("");
   const results = catalogResults(metadata.entries, agents, {
     query: search,
     sort: "recent",
@@ -110,7 +112,6 @@ export function LibrarySidebar({
       newLabel="New Artifact"
       onNew={onNew}
       search={search}
-      onSearch={setSearch}
       pinned={pinned.map(item)}
       recent={others.slice(0, limit).map(item)}
       more={Math.max(0, others.length - limit)}

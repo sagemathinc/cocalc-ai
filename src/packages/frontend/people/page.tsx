@@ -3,10 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import {
-  newConversationRequest,
-  peopleSearchRequest,
-} from "@cocalc/frontend/app/sidebar-search-requests";
+import { newConversationRequest } from "@cocalc/frontend/app/sidebar-search-requests";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Button, Input, Select, Tabs } from "antd";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -70,15 +67,6 @@ export function PeoplePage() {
   const [dialog, setDialog] = useState<"scan" | "search">();
   // "+ New Conversation" in the sidebar.
   useEffect(() => newConversationRequest.on(() => setNewFor({})), []);
-  // "Search People" in the sidebar: the message search, on Conversations.
-  useEffect(
-    () =>
-      peopleSearchRequest.on(() => {
-        navigate("");
-        setDialog("search");
-      }),
-    [],
-  );
   const people = usePeople();
   const navigation = useWorkspaceContentNavigation();
   const account_id = useTypedRedux("account", "account_id");

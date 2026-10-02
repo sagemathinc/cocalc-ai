@@ -2,31 +2,32 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AgentSidebarFilter } from "./sidebar-filter";
 
-it("updates the sidebar filter without rerendering its parent", async () => {
-  const parentRender = jest.fn();
-  function Parent() {
-    parentRender();
-    return (
-      <AgentSidebarFilter
-        render={(search, input) => (
-          <>
-            {input}
-            <div role="status">{search}</div>
-          </>
-        )}
-      />
-    );
-  }
+function View({ query = "" }: { query?: string }) {
+  return (
+    <AgentSidebarFilter
+      query={query}
+      render={({ queries, input, panelOpen, setPanelOpen }) => (
+        <>
+          <button onClick={() => setPanelOpen(!panelOpen)}>panel</button>
+          {input}
+          <div role="status">{queries.join("|")}</div>
+        </>
+      )}
+    />
+  );
+}
 
-  render(<Parent />);
+it("the sticky filter applies only while the organize panel is open", async () => {
+  const user = userEvent.setup();
+  render(<View query="john" />);
   const input = screen.getByRole("textbox", {
     name: "Filter agents or network tags",
   });
   input.focus();
-  await userEvent.setup().keyboard("tag:sagejs");
-
+  await user.keyboard("tag:sagejs");
   expect(input).toHaveValue("tag:sagejs");
-  expect(screen.getByRole("status")).toHaveTextContent("tag:sagejs");
-  expect(input).toHaveFocus();
-  expect(parentRender).toHaveBeenCalledTimes(1);
+  // Closed panel: only the search box's text.
+  expect(screen.getByRole("status")).toHaveTextContent(/^john$/);
+  await user.click(screen.getByRole("button", { name: "panel" }));
+  expect(screen.getByRole("status")).toHaveTextContent("john|tag:sagejs");
 });

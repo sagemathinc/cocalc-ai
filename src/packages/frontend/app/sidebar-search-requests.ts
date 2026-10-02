@@ -5,10 +5,6 @@
 
 import { pendingRequest } from "./pending-request";
 
-// The sidebar's "Search Library" / "Search People" open those pages' own
-// searches (artifact metadata; conversation messages).
-export const librarySearchRequest = pendingRequest("library-search");
-export const peopleSearchRequest = pendingRequest("people-search");
 // "+ New Conversation" in the People sidebar.
 export const newConversationRequest = pendingRequest("new-conversation");
 // From Quick Navigation: open the New Artifact dialog; show or hide the

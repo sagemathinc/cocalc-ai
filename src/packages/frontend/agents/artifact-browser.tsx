@@ -22,7 +22,6 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { AgentSearchHit } from "./search-runner";
 import { useArtifactPins } from "@cocalc/frontend/chat/use-artifact-pins";
 import { useArtifactNames } from "./artifact-names";
-import { librarySearchRequest } from "@cocalc/frontend/app/sidebar-search-requests";
 import {
   Collection,
   type CollectionControls,
@@ -107,11 +106,6 @@ function AccountArtifactBrowser({
   const wasActive = useRef(false);
   const restorePending = useRef(false);
   const searchRef = useRef<InputRef>(null);
-  // "Search Library" in the sidebar.
-  useEffect(
-    () => librarySearchRequest.on(() => searchRef.current?.focus()),
-    [],
-  );
   const [catalog] = useState(() =>
     sharedArtifactCatalog(accountId, (opts) =>
       webapp_client.conat_client.hub.artifactCatalog.listProject(opts),
