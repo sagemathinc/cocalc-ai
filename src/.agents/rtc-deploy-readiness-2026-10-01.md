@@ -30,6 +30,11 @@ lite2b runs #751 + #760 with patchflow 0.11.0 and the import fix (deployed 2026-
 | Markdown, same seed, 7 min, with both fixes (instrumented) | 0 inexact patches (180 before), 0 inconsistencies, 1,818 patches all hashed but the file load, 442 merge commits all recorded, **0 sent words lost**; 14 lost words were never sent. |
 | Real-history replay (14 chats/notebooks, 4,342 values) on 0.11.0 | 0 differences except 32 snapshot cases where 0.8 itself lost edits. |
 
+| **Final, release candidate** (patchflow 0.12.0, #760 at 58d1cf272c, no instrumentation): Markdown, 10 users mixed, 15 min, 39 reloads | 3,172 patches all hashed but the file load, 0 inexact, 1,381 merge commits all recorded, 0 mismatches, 0 inconsistencies, 0 duplicated, **0 sent words lost** (21 lost words were never sent: typed just before a reload). |
+| **Final, release candidate**: notebook, 3 typing + 7 watching, 30 min, 174 reloads | 3,021 patches all hashed, 0 inexact, 517 merge commits all recorded, 0 imports over the live notebook (13 saves recognized), 0 inconsistencies, 0 duplicated; the 4 lost words were never sent. |
+
+lite2b runs the release candidate (patchflow 0.12.0, deployed 2026-10-02 18:28 UTC).
+
 Open from these runs: one 5,538-character patch in the 15-minute Markdown run deleted 10 words typed by others (an editor that committed stale content, in a session that had been without exact values); not seen with the fixes, watch for it.
 
 ## 1. Monitoring: will we know?
