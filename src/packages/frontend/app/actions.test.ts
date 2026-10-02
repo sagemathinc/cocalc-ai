@@ -71,6 +71,10 @@ jest.mock("@cocalc/frontend/project/reduced-runtime", () => ({
   getReducedProjectState: () => undefined,
 }));
 
+jest.mock("@cocalc/frontend/agents/use-retained-workspaces", () => ({
+  defaultRetainedWorkspaceLimit: () => 2,
+}));
+
 const A = "00000000-0000-4000-8000-000000000001";
 const B = "00000000-0000-4000-8000-000000000002";
 const C = "00000000-0000-4000-8000-000000000003";
@@ -414,4 +418,24 @@ test("captures the Projects workspace before switching to the Library", async ()
   await actions.set_active_tab("agents");
   expect(capturedTab).toBe(A);
   expect(redux.getStore("page").get("active_top_tab")).toBe("agents");
+});
+
+describe("sidebar navigation keeps only recent projects open", () => {
+  it("releases the least recently visited project like a closed tab", async () => {
+    redux.getActions("account").setState({
+      other_settings: { workspace_navigation: "sidebar" },
+    });
+    await actions.set_active_tab(A);
+    await actions.set_active_tab(B);
+    redux.getActions("projects").setState({ open_projects: [A, B, C] });
+    await actions.set_active_tab(C);
+    expect(projects().get("open_projects").toJS()).toEqual([B, C]);
+    expect(page().get("active_top_tab")).toBe(C);
+  });
+
+  it("classic navigation keeps every open tab", async () => {
+    redux.getActions("projects").setState({ open_projects: [A, B, C] });
+    await actions.set_active_tab(C);
+    expect(projects().get("open_projects").toJS()).toEqual([A, B, C]);
+  });
 });

@@ -134,6 +134,11 @@ import "./new-agent-composer.css";
 import { AgentOrganizationControls } from "./organization-controls";
 import { AgentsOverview } from "./agents-overview";
 import { SidebarNotifications, SidebarStatus } from "./sidebar-status";
+import {
+  focusProjectsFilter,
+  ProjectsSidebar,
+} from "@cocalc/frontend/projects/projects-sidebar";
+import { shouldOpenProjectsNavShortcut } from "@cocalc/frontend/projects/projects-nav-shortcut";
 import { useWorkspaceNavigation } from "@cocalc/frontend/app/workspace-navigation";
 import { AgentsSidebarResizeHandle } from "./sidebar-resize-handle";
 import {
@@ -3137,6 +3142,20 @@ export function MyAgentsWorkspacePage({
   );
   // Sidebar navigation moves the top bar's account and status controls here.
   const sidebarNavigation = useWorkspaceNavigation() === "sidebar";
+  // With sidebar navigation, Projects and projects show projects in the
+  // sidebar (instead of agents), replacing the project tabs.
+  const projectsMode = sidebarNavigation && projectsOpen;
+  useEffect(() => {
+    if (!sidebarNavigation || !active) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!shouldOpenProjectsNavShortcut(event)) return;
+      event.preventDefault();
+      focusProjectsFilter();
+      if (!projectsMode) void openProjectsWorkspace();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [sidebarNavigation, active, projectsMode]);
   const overviewOpen =
     !!useTypedRedux("page", "agents_overview_open") && !contentOpen;
   const artifactLibraryOpen =
@@ -4229,16 +4248,21 @@ export function MyAgentsWorkspacePage({
                       available={(agent) => agent.available}
                     />
                   )}
-                  <AgentOrganizationControls
-                    mode={agentOrganization.organization.mode}
-                    groupByProject={
-                      agentOrganization.organization.groupByProject
-                    }
-                    onMode={agentOrganization.setMode}
-                    onGroupByProject={agentOrganization.setGroupByProject}
-                    onNewAgent={startNewAgent}
-                  />
-                  {input}
+                  {projectsMode && (
+                    <ProjectsSidebar onNavigate={() => setMobileList(false)} />
+                  )}
+                  {!projectsMode && (
+                    <AgentOrganizationControls
+                      mode={agentOrganization.organization.mode}
+                      groupByProject={
+                        agentOrganization.organization.groupByProject
+                      }
+                      onMode={agentOrganization.setMode}
+                      onGroupByProject={agentOrganization.setGroupByProject}
+                      onNewAgent={startNewAgent}
+                    />
+                  )}
+                  {!projectsMode && input}
                   {networkError && (
                     <Alert
                       role="alert"
@@ -4253,234 +4277,243 @@ export function MyAgentsWorkspacePage({
                     onRetry={agentOrganization.retrySave}
                   />
                 </Space>
-                <div>
-                  {agentOrganization.organization.groupByProject &&
-                    pinnedProjectGroups.length > 0 && (
-                      <section aria-label="Pinned agents">
-                        <Text
-                          type="secondary"
-                          style={{ display: "block", padding: 6 }}
-                        >
-                          Pinned
-                        </Text>
-                        {pinnedProjectGroups.map((group) => {
-                          const title = agentProjectTitle(
-                            group[0],
-                            liveProjects?.getIn([
-                              group[0].endpoint.project_id,
-                              "title",
-                            ]) as string | undefined,
-                          );
-                          return (
-                            <div
-                              key={group[0].endpoint.project_id}
-                              role="list"
-                              aria-label={`Pinned agents in ${title}`}
-                              style={{ marginBottom: 8 }}
-                            >
-                              <Text
-                                strong
-                                ellipsis
-                                title={title}
-                                style={{
-                                  display: "block",
-                                  padding: "2px 8px",
-                                }}
-                              >
-                                {title}
-                              </Text>
-                              {renderSortableAgentGroup(
-                                group,
-                                true,
-                                true,
-                                {
-                                  projectAgentIds: group.map(
-                                    ({ endpoint }) => endpoint.agent_id,
-                                  ),
-                                  showProjectTitle: false,
-                                },
-                                search,
-                              )}
-                            </div>
-                          );
-                        })}
-                      </section>
-                    )}
-                  {agentOrganization.organization.groupByProject &&
-                    pinnedProjectGroups.length > 0 &&
-                    projectGroups.length > 0 && (
-                      <Text
-                        type="secondary"
-                        style={{ display: "block", padding: 6 }}
-                      >
-                        Agents
-                      </Text>
-                    )}
-                  {agentOrganization.organization.groupByProject ? (
-                    projectGroups.map((group) => {
-                      const count = group.unpinned.length;
-                      const collapsed =
-                        !search.trim() &&
-                        agentOrganization.organization.collapsedProjects.includes(
-                          group.projectId,
-                        );
-                      return (
-                        <section
-                          key={group.projectId}
-                          aria-label={`${group.projectTitle} agents`}
-                          style={{ marginBottom: 8 }}
-                        >
-                          <Button
-                            type="text"
-                            block
-                            aria-expanded={!collapsed}
-                            onClick={() =>
-                              agentOrganization.setProjectCollapsed(
-                                group.projectId,
-                                !collapsed,
-                              )
-                            }
-                            style={{
-                              alignItems: "center",
-                              background: UI_COLORS.surface,
-                              border: `1px solid ${UI_COLORS.border}`,
-                              display: "flex",
-                              fontWeight: 600,
-                              justifyContent: "flex-start",
-                              paddingInline: 8,
-                              textAlign: "left",
-                            }}
-                            icon={
-                              <Icon
-                                name={collapsed ? "caret-right" : "caret-down"}
-                              />
-                            }
-                          >
-                            <span
-                              title={group.projectTitle}
-                              style={{
-                                flex: 1,
-                                minWidth: 0,
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                              }}
-                            >
-                              {group.projectTitle}
-                            </span>
-                            <Text type="secondary" style={{ marginLeft: 6 }}>
-                              {count}
-                            </Text>
-                          </Button>
-                          {!collapsed && (
-                            <div
-                              role="list"
-                              aria-label={`Agents in ${group.projectTitle}`}
-                            >
-                              {renderSortableAgentGroup(
-                                group.unpinned,
-                                false,
-                                agentOrganization.organization.mode ===
-                                  "custom",
-                                {
-                                  projectAgentIds: group.unpinned.map(
-                                    ({ endpoint }) => endpoint.agent_id,
-                                  ),
-                                  showProjectTitle: false,
-                                },
-                                search,
-                              )}
-                            </div>
-                          )}
-                        </section>
-                      );
-                    })
-                  ) : (
-                    <div role="list" aria-label="Visible agents">
-                      {visibleGroups.pinned.length > 0 && (
-                        <Text
-                          type="secondary"
-                          style={{ display: "block", padding: 6 }}
-                        >
-                          Pinned
-                        </Text>
-                      )}
-                      {renderSortableAgentGroup(
-                        visibleGroups.pinned,
-                        true,
-                        true,
-                        {},
-                        search,
-                      )}
-                      {agentOrganization.organization.mode === "custom" ? (
-                        <>
-                          {visibleGroups.unpinned.length > 0 && (
+                {!projectsMode && (
+                  <>
+                    <div>
+                      {agentOrganization.organization.groupByProject &&
+                        pinnedProjectGroups.length > 0 && (
+                          <section aria-label="Pinned agents">
                             <Text
                               type="secondary"
                               style={{ display: "block", padding: 6 }}
                             >
-                              Custom order
+                              Pinned
+                            </Text>
+                            {pinnedProjectGroups.map((group) => {
+                              const title = agentProjectTitle(
+                                group[0],
+                                liveProjects?.getIn([
+                                  group[0].endpoint.project_id,
+                                  "title",
+                                ]) as string | undefined,
+                              );
+                              return (
+                                <div
+                                  key={group[0].endpoint.project_id}
+                                  role="list"
+                                  aria-label={`Pinned agents in ${title}`}
+                                  style={{ marginBottom: 8 }}
+                                >
+                                  <Text
+                                    strong
+                                    ellipsis
+                                    title={title}
+                                    style={{
+                                      display: "block",
+                                      padding: "2px 8px",
+                                    }}
+                                  >
+                                    {title}
+                                  </Text>
+                                  {renderSortableAgentGroup(
+                                    group,
+                                    true,
+                                    true,
+                                    {
+                                      projectAgentIds: group.map(
+                                        ({ endpoint }) => endpoint.agent_id,
+                                      ),
+                                      showProjectTitle: false,
+                                    },
+                                    search,
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </section>
+                        )}
+                      {agentOrganization.organization.groupByProject &&
+                        pinnedProjectGroups.length > 0 &&
+                        projectGroups.length > 0 && (
+                          <Text
+                            type="secondary"
+                            style={{ display: "block", padding: 6 }}
+                          >
+                            Agents
+                          </Text>
+                        )}
+                      {agentOrganization.organization.groupByProject ? (
+                        projectGroups.map((group) => {
+                          const count = group.unpinned.length;
+                          const collapsed =
+                            !search.trim() &&
+                            agentOrganization.organization.collapsedProjects.includes(
+                              group.projectId,
+                            );
+                          return (
+                            <section
+                              key={group.projectId}
+                              aria-label={`${group.projectTitle} agents`}
+                              style={{ marginBottom: 8 }}
+                            >
+                              <Button
+                                type="text"
+                                block
+                                aria-expanded={!collapsed}
+                                onClick={() =>
+                                  agentOrganization.setProjectCollapsed(
+                                    group.projectId,
+                                    !collapsed,
+                                  )
+                                }
+                                style={{
+                                  alignItems: "center",
+                                  background: UI_COLORS.surface,
+                                  border: `1px solid ${UI_COLORS.border}`,
+                                  display: "flex",
+                                  fontWeight: 600,
+                                  justifyContent: "flex-start",
+                                  paddingInline: 8,
+                                  textAlign: "left",
+                                }}
+                                icon={
+                                  <Icon
+                                    name={
+                                      collapsed ? "caret-right" : "caret-down"
+                                    }
+                                  />
+                                }
+                              >
+                                <span
+                                  title={group.projectTitle}
+                                  style={{
+                                    flex: 1,
+                                    minWidth: 0,
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  {group.projectTitle}
+                                </span>
+                                <Text
+                                  type="secondary"
+                                  style={{ marginLeft: 6 }}
+                                >
+                                  {count}
+                                </Text>
+                              </Button>
+                              {!collapsed && (
+                                <div
+                                  role="list"
+                                  aria-label={`Agents in ${group.projectTitle}`}
+                                >
+                                  {renderSortableAgentGroup(
+                                    group.unpinned,
+                                    false,
+                                    agentOrganization.organization.mode ===
+                                      "custom",
+                                    {
+                                      projectAgentIds: group.unpinned.map(
+                                        ({ endpoint }) => endpoint.agent_id,
+                                      ),
+                                      showProjectTitle: false,
+                                    },
+                                    search,
+                                  )}
+                                </div>
+                              )}
+                            </section>
+                          );
+                        })
+                      ) : (
+                        <div role="list" aria-label="Visible agents">
+                          {visibleGroups.pinned.length > 0 && (
+                            <Text
+                              type="secondary"
+                              style={{ display: "block", padding: 6 }}
+                            >
+                              Pinned
                             </Text>
                           )}
                           {renderSortableAgentGroup(
-                            visibleGroups.unpinned,
-                            false,
+                            visibleGroups.pinned,
+                            true,
                             true,
                             {},
                             search,
                           )}
-                        </>
-                      ) : (
-                        recencySections.map((section) => (
-                          <div key={section.key}>
-                            <Text
-                              type="secondary"
-                              style={{ display: "block", padding: 6 }}
-                            >
-                              {section.title}
-                            </Text>
-                            {renderSortableAgentGroup(
-                              section.agents,
-                              false,
-                              false,
-                              {},
-                              search,
-                            )}
-                          </div>
-                        ))
+                          {agentOrganization.organization.mode === "custom" ? (
+                            <>
+                              {visibleGroups.unpinned.length > 0 && (
+                                <Text
+                                  type="secondary"
+                                  style={{ display: "block", padding: 6 }}
+                                >
+                                  Custom order
+                                </Text>
+                              )}
+                              {renderSortableAgentGroup(
+                                visibleGroups.unpinned,
+                                false,
+                                true,
+                                {},
+                                search,
+                              )}
+                            </>
+                          ) : (
+                            recencySections.map((section) => (
+                              <div key={section.key}>
+                                <Text
+                                  type="secondary"
+                                  style={{ display: "block", padding: 6 }}
+                                >
+                                  {section.title}
+                                </Text>
+                                {renderSortableAgentGroup(
+                                  section.agents,
+                                  false,
+                                  false,
+                                  {},
+                                  search,
+                                )}
+                              </div>
+                            ))
+                          )}
+                        </div>
                       )}
-                    </div>
-                  )}
-                  {visibleGroups.hidden.length > 0 && (
-                    <div style={{ marginTop: 8 }}>
-                      <Button
-                        type="text"
-                        block
-                        style={{ textAlign: "left" }}
-                        icon={
-                          <Icon
-                            name={showHidden ? "caret-down" : "caret-right"}
-                          />
-                        }
-                        aria-expanded={showHidden}
-                        onClick={() => setShowHidden((value) => !value)}
-                      >
-                        Hidden ({visibleGroups.hidden.length})
-                      </Button>
-                      {showHidden && (
-                        <div role="list" aria-label="Hidden agents">
-                          {visibleGroups.hidden.map((agent) => (
-                            <div
-                              key={`${agent.endpoint.project_id}:${agent.endpoint.agent_id}`}
-                            >
-                              {renderAgentRow(agent, false, false, true)}
+                      {visibleGroups.hidden.length > 0 && (
+                        <div style={{ marginTop: 8 }}>
+                          <Button
+                            type="text"
+                            block
+                            style={{ textAlign: "left" }}
+                            icon={
+                              <Icon
+                                name={showHidden ? "caret-down" : "caret-right"}
+                              />
+                            }
+                            aria-expanded={showHidden}
+                            onClick={() => setShowHidden((value) => !value)}
+                          >
+                            Hidden ({visibleGroups.hidden.length})
+                          </Button>
+                          {showHidden && (
+                            <div role="list" aria-label="Hidden agents">
+                              {visibleGroups.hidden.map((agent) => (
+                                <div
+                                  key={`${agent.endpoint.project_id}:${agent.endpoint.agent_id}`}
+                                >
+                                  {renderAgentRow(agent, false, false, true)}
+                                </div>
+                              ))}
                             </div>
-                          ))}
+                          )}
                         </div>
                       )}
                     </div>
-                  )}
-                </div>
+                  </>
+                )}
               </>
             );
           }}

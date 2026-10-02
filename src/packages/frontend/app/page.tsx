@@ -626,6 +626,7 @@ export const Page: React.FC = () => {
         )}
     </>
   );
+  const sidebarOnlyNavigation = <></>;
   const body = (
     <div
       style={
@@ -664,7 +665,15 @@ export const Page: React.FC = () => {
         resetKeys={[active_top_tab]}
       >
         <ActiveContent
-          navigation={workspaceShell ? legacyNavigation : undefined}
+          navigation={
+            !workspaceShell
+              ? undefined
+              : sidebarNavigation && !isNarrow
+                ? // Projects are in the sidebar: no top bar, just the
+                  // pane's own show-sidebar control.
+                  sidebarOnlyNavigation
+                : legacyNavigation
+          }
         />
       </CocalcErrorBoundary>
       {/* Embedded surfaces (kiosk and project embed) and the auth view hide

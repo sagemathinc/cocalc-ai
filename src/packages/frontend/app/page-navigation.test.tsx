@@ -262,18 +262,20 @@ test("the compact folder tab returns from an opened project to the Projects list
   expect(projects).toHaveFocus();
 });
 
-test("sidebar navigation keeps only project navigation in the top bar", () => {
+test("sidebar navigation drops the top bar; projects are in the sidebar", () => {
   navigationSetting = "sidebar";
   const mounted = render(view());
-  const nav = screen.getByRole("navigation");
-  expect(within(nav).getByRole("button", { name: "Projects" })).toBeVisible();
+  expect(screen.queryByRole("navigation")).toBeNull();
   expect(
-    screen.getByRole("region", { name: "post-surface project navigation" }),
-  ).toBeVisible();
-  // Account, status and help moved to the sidebar's edges.
-  expect(within(nav).queryByRole("button", { name: "Compute" })).toBeNull();
-  expect(within(nav).queryByRole("button", { name: "Docs" })).toBeNull();
+    screen.queryByRole("region", { name: "post-surface project navigation" }),
+  ).toBeNull();
+  expect(screen.queryByRole("button", { name: "Compute" })).toBeNull();
+  // Narrow screens keep their compact bar.
+  narrow = true;
+  mounted.rerender(view());
+  expect(screen.getByRole("navigation")).toBeVisible();
   // Classic (the default for existing accounts) is unchanged.
+  narrow = false;
   navigationSetting = undefined;
   mounted.rerender(view());
   expect(

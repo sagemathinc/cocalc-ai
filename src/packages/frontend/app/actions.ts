@@ -3,6 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { noteProjectVisit, projectsToRelease } from "./project-retention";
+import {
+  normalizeWorkspaceNavigation,
+  WORKSPACE_NAVIGATION_SETTING,
+} from "@cocalc/util/workspace-navigation";
 import {
   Actions,
   project_redux_name,
@@ -172,6 +177,21 @@ export class PageActions extends Actions<PageState> {
     disconnect_from_project(project_id);
   }
 
+  // Sidebar navigation has no project tabs: keep the recently visited
+  // projects open and release older ones as if their tabs were closed.
+  private retainRecentProjects(current: string): void {
+    noteProjectVisit(current);
+    const navigation = redux
+      .getStore("account")
+      ?.getIn(["other_settings", WORKSPACE_NAVIGATION_SETTING]);
+    if (normalizeWorkspaceNavigation(navigation) !== "sidebar") return;
+    const open = redux.getStore("projects")?.get("open_projects");
+    const ids: string[] = open?.toArray?.() ?? [];
+    for (const project_id of projectsToRelease(ids, current)) {
+      this.close_project_tab(project_id);
+    }
+  }
+
   public forget_project_context(project_id: string): void {
     if (redux.getStore("page").get("last_project_tab") !== project_id) return;
     this.setState({
@@ -230,6 +250,7 @@ export class PageActions extends Actions<PageState> {
       active_top_tab: key,
       ...(is_valid_uuid_string(key) ? { last_project_tab: key } : {}),
     });
+    if (is_valid_uuid_string(key)) this.retainRecentProjects(key);
 
     if (
       prev_key !== key &&
