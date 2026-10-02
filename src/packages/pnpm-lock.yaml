@@ -402,8 +402,8 @@ importers:
         specifier: ^1.2.2
         version: 1.2.2
       patchflow:
-        specifier: ^0.11.0
-        version: 0.11.0
+        specifier: ^0.12.0
+        version: 0.12.0
       pkg-dir:
         specifier: ^5.0.0
         version: 5.0.0
@@ -1579,8 +1579,8 @@ importers:
         specifier: ^2.1.2
         version: 2.1.5
       patchflow:
-        specifier: ^0.11.0
-        version: 0.11.0
+        specifier: ^0.12.0
+        version: 0.12.0
 
   launchpad:
     dependencies:
@@ -2477,8 +2477,8 @@ importers:
         specifier: ^4.18.1
         version: 4.18.1
       patchflow:
-        specifier: ^0.11.0
-        version: 0.11.0
+        specifier: ^0.12.0
+        version: 0.12.0
     devDependencies:
       '@types/jest':
         specifier: ^30.0.0
@@ -10134,8 +10134,8 @@ packages:
     engines: {node: '>= 0.4.0'}
     hasBin: true
 
-  patchflow@0.11.0:
-    resolution: {integrity: sha512-vryRrIq3L/eLe1hyuN4NYCBdrNc4JZTnbz0I8iEMTDeuV92mMc/QuJXk5dhBjfBlp+O3Eawp4PTDoqxEuSrgXg==}
+  patchflow@0.12.0:
+    resolution: {integrity: sha512-1FBaqK0zpARPM+FTaXMFsaVuY+ItrBpR8C2gGNtkFfVOMq1aVDUD82o3GM0CZtyf1vviDYPKjdULM3l3HKGlcg==}
 
   path-browserify@1.0.1:
     resolution: {integrity: sha512-b7uo2UCUOYZcnF/3ID0lulOJi/bafxa1xPe7ZPsammBSpjSWQkjNxlt635YGS2MiR9GjvuXCtz2emr3jbsz98g==}
@@ -21130,7 +21130,7 @@ snapshots:
 
   password-hash@1.2.2: {}
 
-  patchflow@0.11.0:
+  patchflow@0.12.0:
     dependencies:
       '@cocalc/diff-match-patch': 1.0.1
       events: 3.3.0

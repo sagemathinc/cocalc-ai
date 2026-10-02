@@ -14,9 +14,9 @@ Legend: ✅ done and verified · 🟡 partly done · ❌ not started · ⛔ depl
 |---|---|---|
 | patchflow #10–#15 | Snapshot-before-patch fix, value hashes, merge performance (notebook stall), same-word typing merges | ✅ merged, released as **0.10.0** |
 | patchflow #16 | Merge commits record their merged value, so changing merge3 later never changes history; histories written by 0.8 (production) keep their values | ✅ merged, released as **0.11.0** |
-| patchflow #19 | Patches committed without exact values are marked `inexact`; only unmarked merges are read as 0.8 history | open; release **0.12.0** is #20 |
+| patchflow #19 | Patches committed without exact values are marked `inexact`; only unmarked merges are read as 0.8 history | ✅ merged, released as **0.12.0** |
 | cocalc #751 | Markdown/Slate hardening, fuzzer, replay kit | draft; on patchflow `^0.10.0` |
-| cocalc #760 | Jupyter hardening, notebook fuzzer, browser meeting tests, ipynb import fix, stores merge commits' merged value | draft; on patchflow `^0.11.0` |
+| cocalc #760 | Jupyter hardening, notebook fuzzer, browser meeting tests, ipynb import fix, stores merge commits' merged value | draft; on patchflow `^0.12.0` |
 | cocalc #827 | Parallel dev build (bundles, ncc, tools): `dev:hub:build` 6 → 3.3 min | open |
 
 lite2b runs #751 + #760 with patchflow 0.11.0 and the import fix (deployed 2026-10-02 06:24 UTC).
@@ -106,7 +106,7 @@ Known open issues, in order of importance:
 Before deploying:
 
 1. ✅ patchflow 0.10.0 released; #751 and #760 bumped.
-2. ⛔ Merge patchflow #19 and release 0.12.0 (#20); bump #760 and push its three waiting commits (inexact storage, first-snapshot history fix, this checklist).
+2. ✅ patchflow 0.12.0 released (#19, #20); #760 on `^0.12.0` with the inexact storage and the first-snapshot history fix.
 3. ⛔ Merge #751, then #760 (rebase #760 onto main after #751).
 4. ⛔ Old and new clients during rollout: force all browser clients to reload on deploy. (With #16, a new merge commit's `patch` keeps its old meaning, so an old client still reads it as before.)
 5. ✅ `inconsistency` reports are readable with the admin CLI on day one.
