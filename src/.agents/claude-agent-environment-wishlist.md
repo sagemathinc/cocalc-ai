@@ -1,6 +1,6 @@
 # Claude agent environment wishlist
 
-Written by Claude (claude-opus-5-5) on 2026-09-30, working as an agent in a CoCalc project. This is a list of general gaps an agent runs into when working in a CoCalc project. None of it is specific to CoCalc development. The examples come from real work in this project. Items 9–12, and the notes marked "second report", come from another Claude's notes from work in a different project (October 2026).
+Written by Claude (claude-opus-5-5) on 2026-09-30, working as an agent in a CoCalc project. This is a list of general gaps an agent runs into when working in a CoCalc project. None of it is specific to CoCalc development. The examples come from real work in this project. Items 9–14, and the notes marked "second report", come from another Claude's notes from work in a different project (October 2026).
 
 ## 1. Viewing images in the project
 
@@ -37,6 +37,9 @@ Written by Claude (claude-opus-5-5) on 2026-09-30, working as an agent in a CoCa
 - **Wanted:** shortcuts like `artifact publish --github-pr <number>` that fill in the fields themselves, and error messages that name the invalid field.
 - **Confusing date:** published artifact and publication records show `"date": "1970-01-01T00:00:00.000Z"`, while the real time is in `published_at`. Several Claude instances have reported this as a bug, then found in the code that it is intentional. In the chat document, `date` is part of each row's primary key, and artifact rows use a fixed sentinel date (`chat/src/artifacts.ts`) so that each artifact stays one row that is updated in place. The CLI then returns that storage row unchanged.
 - **Wanted:** don't expose the storage key in what the CLI and API return. Omit `date` from artifact and publication results, or replace it with the real `published_at`/`updated_at` times, so the output never shows a fake timestamp.
+- **Implemented** (#845): artifact results no longer include the sentinel `date`.
+- **Second report: publishing after a context compaction fails.** The per-turn publication context (project, path, thread id, message date) appears only in the turn's prompt. After a session was compacted and continued, the continuation didn't include it. The environment has `COCALC_CODEX_CHAT_PATH` and `COCALC_CODEX_THREAD_ID` but no message date, so `artifact publish` failed with "explicit thread and valid message date are required". The agent correctly didn't guess the producing message and fell back to a file link. In the next turn, with explicit values, the same command worked at once.
+- **Wanted:** let `publish` find the producing message from the runtime identity (`agent whoami` already returns the run and thread, and the run maps to its turn's message), or keep the current turn's message date in the agent's environment. Either way, the error should say which value is missing and where to get it.
 
 ## 6. Your pasted images as project files
 
@@ -76,6 +79,7 @@ Written by Claude (claude-opus-5-5) on 2026-09-30, working as an agent in a CoCa
 - **Gap:** nearly every job, even `ls`, ends with "Remaining job processes were terminated when the command exited; use cocalc project terminal spawn for persistent services." It reads like a warning about something the agent did. It appears in almost every result, both reports saw it, and it costs tokens.
 - **Cause:** the project's job runner prints it whenever processes remain in the job's scope after the command exits (`server/cloud/bootstrap/bootstrap.py`). Since it appears for commands that start nothing in the background, something the wrapper or shell startup itself runs is probably being counted.
 - **Wanted:** print it only when processes the command itself started were killed, and name them, for example "terminated 2 leftover processes: sleep, node".
+- **Implemented** (#844): the note is printed only when the command left processes behind. Podman's own exec helpers are no longer counted, and processes that are just exiting get a moment to finish.
 
 ## 11. Job progress for long-running commands
 
@@ -87,6 +91,23 @@ Written by Claude (claude-opus-5-5) on 2026-09-30, working as an agent in a CoCa
 - **Gap:** `/usr/bin/time` is not installed (the bash `time` keyword works). Benchmark scripts commonly use `/usr/bin/time -v`.
 - **Wanted:** include GNU `time` in the default image.
 
+## 13. Messaging other agents
+
+- **Gap:** sending one message to another agent took the other Claude 7 commands and 2 failed sends; it took me about 8, including reading the CLI source. A one-command send by name already existed (`project chat send --to NAME`), but neither of us found it:
+  - The Claude prompt only said to "run agent whoami, destinations, and messaging", with no command names, and there was no top-level `cocalc agent` command. The commands lived under `project chat agent`.
+  - There was no `send`; the obvious command was `broadcast`.
+  - `broadcast --targets` was undocumented, didn't accept the objects that discovery prints, and its errors didn't name the bad field.
+  - The two discovery commands had different shapes, and `whoami` listed only `whoami` as a capability, which suggested sending wasn't allowed.
+  - The outcome ("accepted", "saved") didn't say whether the recipient's turn started, or where a reply would arrive.
+  - `project chat send --help` didn't say which options are for agent sends and which for Codex threads.
+- **Wanted:** `cocalc agent send NAME [message] [--file F] [--attach F]` that just works, with a one-line summary of what happened, and prompt and skill text that name the exact commands.
+- **Status:** in progress for the 2026-10-02 release (`feat/agent-cli`).
+
+## 14. Remote commands outlive a canceled job
+
+- **Gap:** canceling a `project_exec` job that runs `ssh host 'cmd'` kills only the local ssh client. The remote command keeps running (it has no terminal, so no SIGHUP) and quietly skewed later benchmarks on that host.
+- **Wanted:** at least a line in the skill: use `ssh -t`, or record the remote PID and kill it, and check `uptime` before timing runs. Better: canceling a job could warn when it had a live ssh child.
+
 ## What already works well
 
 The second report also noted what worked smoothly:
@@ -96,3 +117,4 @@ The second report also noted what worked smoothly:
 - `ssh` to other hosts with BatchMode worked.
 - The npm registry and pnpm store were reachable.
 - Artifact publishing worked for file and commit cards.
+- Once found, `project chat send --to NAME` sent a message in one command, no IDs needed.
