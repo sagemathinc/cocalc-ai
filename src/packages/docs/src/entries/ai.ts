@@ -72,7 +72,7 @@ export const AI_ENTRIES: DocsEntry[] = [
     id: "ai.my-agents",
     lastReviewed: "2026-09-24",
     noActionReason:
-      "Open the agents workspace from the main navigation; creating an agent requires account and project context.",
+      "Select an agent, or choose New Agent, in the agents sidebar; creating an agent requires account and project context.",
     slug: "ai/my-agents",
     status: "ready",
     summary:

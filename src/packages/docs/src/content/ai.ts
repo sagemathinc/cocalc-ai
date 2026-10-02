@@ -59,9 +59,9 @@ export const MY_AGENTS_BODY = String.raw`
 
 After signing in, CoCalc opens your projects list, or the page your link named.
 If you have no projects, or your new account has not used one, CoCalc may open
-the agents workspace instead. Otherwise, open the agents workspace from the main
-navigation. The new-agent request box appears when you have no named agents;
-otherwise choose **New Agent** in the sidebar. Describe a result you can
+the agents workspace instead. Otherwise, select an agent, or choose
+**New Agent**, in the agents sidebar. With no named agents, the agents
+workspace opens on the new-agent request box. Describe a result you can
 inspect, such as a comparison, document, application, or visualization. Include
 the relevant files and the checks that would make the result useful.
 
@@ -96,9 +96,12 @@ box. They start from the agent you had selected, if any.
    **Create agent without a task**; it creates the agent without sending a
    request.
 
-If the agents workspace is missing from the main navigation, check that
-**Disable all AI integrations** is off in account **AI** settings. If it is
-off, ask the site administrator whether agent access is enabled.
+If the agents sidebar is hidden, click the **Show Agents sidebar** button (a
+right-pointing chevron). At phone width, use the **Show agents** button (three
+horizontal lines), or the back arrow in an agent's conversation. If you cannot
+find the agents workspace at all, check that **Disable all AI integrations** is
+off in account **AI** settings. If it is off, ask the site administrator whether
+agent access is enabled.
 
 ## Review and continue
 

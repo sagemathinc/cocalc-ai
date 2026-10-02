@@ -205,8 +205,9 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     ],
     usedIn: [conventions("the Agents rail tab")],
   },
-  // The agents workspace guide. It describes the top navigation entry in words
-  // and binds only the labels of the workspace itself.
+  // The agents workspace guide. It reaches the workspace through the agents
+  // sidebar, named in words rather than by a top navigation label, and binds
+  // the labels it cites.
   {
     id: "agents.sidebar.heading",
     label: "Agents",
@@ -217,7 +218,37 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       ),
       ren(AGENTS_WORKSPACE, "<AgentOrganizationControls"),
     ],
-    usedIn: [{ file: doc("ai"), text: "the sidebar's **Agents** list" }],
+    usedIn: [
+      { file: doc("ai"), text: "the sidebar's **Agents** list" },
+      bold("cocalc-at-a-glance", "Agents"),
+    ],
+  },
+  {
+    id: "agents.sidebar.library",
+    label: "Library",
+    anchors: [def(AGENTS_WORKSPACE, "> Library </Button>")],
+    usedIn: [
+      bold("ai", "Library"),
+      { file: doc("agent-features"), text: "find them in Library" },
+    ],
+  },
+  {
+    id: "agents.sidebar.show",
+    label: "Show Agents sidebar",
+    anchors: [
+      def(
+        "frontend/agents/workspace-sidebar-toggle.tsx",
+        '"Show Agents sidebar"',
+      ),
+      ren(AGENTS_WORKSPACE, "<AgentsSidebarToggle"),
+    ],
+    usedIn: [bold("ai", "Show Agents sidebar")],
+  },
+  {
+    id: "agents.sidebar.show-narrow",
+    label: "Show agents",
+    anchors: [def(AGENTS_WORKSPACE, 'aria-label="Show agents"')],
+    usedIn: [bold("ai", "Show agents")],
   },
   {
     id: "agents.sidebar.more-actions",
@@ -536,16 +567,6 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       def(APP_PAGE, 'tooltip="Manage project hosts and virtual machines"'),
     ],
     usedIn: [conventions("tooltip Manage project hosts and virtual machines")],
-  },
-  {
-    id: "nav.agents",
-    label: "Agents",
-    anchors: [
-      def(APP_PAGE, 'label="Agents"'),
-      def(APP_PAGE, 'ariaLabel="Agents"'),
-      ren(QUICK_NAV_DATA, 'page: "agents", title: "Agents",'),
-    ],
-    usedIn: [bold("cocalc-at-a-glance", "Agents")],
   },
   {
     id: "hosts.page-tabs",
