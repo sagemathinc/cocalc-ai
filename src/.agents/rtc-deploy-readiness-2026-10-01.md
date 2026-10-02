@@ -14,11 +14,23 @@ Legend: ✅ done and verified · 🟡 partly done · ❌ not started · ⛔ depl
 |---|---|---|
 | patchflow #10–#15 | Snapshot-before-patch fix, value hashes, merge performance (notebook stall), same-word typing merges | ✅ merged, released as **0.10.0** |
 | patchflow #16 | Merge commits record their merged value, so changing merge3 later never changes history; histories written by 0.8 (production) keep their values | ✅ merged, released as **0.11.0** |
+| patchflow #19 | Patches committed without exact values are marked `inexact`; only unmarked merges are read as 0.8 history | open; release **0.12.0** is #20 |
 | cocalc #751 | Markdown/Slate hardening, fuzzer, replay kit | draft; on patchflow `^0.10.0` |
 | cocalc #760 | Jupyter hardening, notebook fuzzer, browser meeting tests, ipynb import fix, stores merge commits' merged value | draft; on patchflow `^0.11.0` |
 | cocalc #827 | Parallel dev build (bundles, ncc, tools): `dev:hub:build` 6 → 3.3 min | open |
 
-lite2b runs #751 + #760 with patchflow 0.10.0 (deployed 2026-10-02).
+lite2b runs #751 + #760 with patchflow 0.11.0 and the import fix (deployed 2026-10-02 06:24 UTC).
+
+### Final browser runs on bench-1 (2026-10-02), and what they found
+
+| Run | Result |
+|---|---|
+| Notebook, 3 typing + 7 watching, 30 min, 183 reloads (0.11.0) | 1 word duplicated: a reloading watcher imported the `.ipynb` over the live notebook (a save written 0.4 s earlier, not yet recorded), and the importer matched cells by position, so every input after an inserted cell moved to the next cell. **Fixed** (18b390103a): cells keep their ids on import; a just-written save is waited for. Rerun: 0 imports, 0 duplicated, 0 inconsistencies; the 6 lost words were never sent (typed just before a reload). |
+| Markdown, 10 users mixed, 15 min (0.11.0) | 40 inconsistencies, 10 sent words lost by merging. Two bugs: (A) a client that opened a document whose latest snapshot was its first decided it had the whole history (the first snapshot has no prev_seq) and never loaded older patches, so for minutes it showed an approximation and committed without exact values (predates this work; silent with 0.8); (B) patchflow 0.11 read those clients' merge commits as 0.8 history, which depends on the loaded history, so clients disagreed and a recorded merge spread a wrong value. **Fixed**: (A) 66a4a6dc9f, (B) patchflow #19 (`inexact` marker) + 90990b9986. |
+| Markdown, same seed, 7 min, with both fixes (instrumented) | 0 inexact patches (180 before), 0 inconsistencies, 1,818 patches all hashed but the file load, 442 merge commits all recorded, **0 sent words lost**; 14 lost words were never sent. |
+| Real-history replay (14 chats/notebooks, 4,342 values) on 0.11.0 | 0 differences except 32 snapshot cases where 0.8 itself lost edits. |
+
+Open from these runs: one 5,538-character patch in the 15-minute Markdown run deleted 10 words typed by others (an editor that committed stale content, in a session that had been without exact values); not seen with the fixes, watch for it.
 
 ## 1. Monitoring: will we know?
 
@@ -94,7 +106,7 @@ Known open issues, in order of importance:
 Before deploying:
 
 1. ✅ patchflow 0.10.0 released; #751 and #760 bumped.
-2. ✅ patchflow #16 merged and released (0.11.0); #760 bumped. (#751 stays on 0.10.0 until it merges; #760 builds on it.)
+2. ⛔ Merge patchflow #19 and release 0.12.0 (#20); bump #760 and push its three waiting commits (inexact storage, first-snapshot history fix, this checklist).
 3. ⛔ Merge #751, then #760 (rebase #760 onto main after #751).
 4. ⛔ Old and new clients during rollout: force all browser clients to reload on deploy. (With #16, a new merge commit's `patch` keeps its old meaning, so an old client still reads it as before.)
 5. ✅ `inconsistency` reports are readable with the admin CLI on day one.
