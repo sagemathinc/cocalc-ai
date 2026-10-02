@@ -359,6 +359,7 @@ Prefer `project chat artifact publish`:
 cocalc project chat artifact publish --source /home/user/plan.md
 cocalc project chat artifact publish --source /home/user/plot.png --title "Spectrum"
 cocalc project chat artifact publish --commit HEAD --repo /home/user/worktree
+cocalc project chat artifact publish --github-pr 123 --repo /home/user/worktree
 cocalc project chat artifact publish --file proposal.json
 ```
 
@@ -369,6 +370,13 @@ use the explicit current-turn values in the prompt if a reused shell is stale.
 The command resolves the producing message, generates stable retry IDs, saves
 through the live collaborative document, and returns the publication/current
 record. Retry the same input unchanged after an ambiguous response.
+
+For a GitHub PR card, use `--github-pr` with a number (resolved against the
+GitHub remote of `--repo`), `owner/name#123`, or the PR URL. It reads the PR
+through `gh` and fills in state, draft, base/head SHAs, retrieval time, a
+check-run summary and, when `--repo` is a clone of that repository, the local
+review link. Do not assemble `github_pr` JSON by hand. To refresh an existing
+card, publish again with `--github-pr`, `--update <artifact-id>` and `--base`.
 
 For revisions, read the artifact, then publish with `--update <artifact-id>` and
 `--base <read.base>` (or include base in JSON). Keep the same ID; do not remove

@@ -66,3 +66,24 @@ test.each([
 ])("rejects malformed or ambiguous PR metadata %j", (patch) => {
   expect(() => validateArtifactGitHubPR({ ...pr, ...patch })).toThrow();
 });
+test.each([
+  [{ repository: "cocalc-ai" }, /github_pr\.repository must be "owner\/name"/],
+  [
+    { number: "509" },
+    /github_pr\.number must be a positive integer; got "509"/,
+  ],
+  [{ state: "draft" }, /github_pr\.state must be "open", "closed" or "merged"/],
+  [{ draft: "no" }, /github_pr\.draft must be true or false/],
+  [{ checks: undefined }, /github_pr\.checks .*; missing/],
+  [{ fetched_at: "now" }, /github_pr\.fetched_at must be an ISO timestamp/],
+  [{ head_sha: "abc" }, /github_pr\.head_sha must be a full 40-character/],
+  [
+    { local: { path: "repo", common_directory: "/r/.git" } },
+    /github_pr\.local\.path must be an absolute path/,
+  ],
+])("names the invalid field and the shortcut %j", (patch, message) => {
+  expect(() => validateArtifactGitHubPR({ ...pr, ...patch })).toThrow(message);
+  expect(() => validateArtifactGitHubPR({ ...pr, ...patch })).toThrow(
+    /--github-pr <number>/,
+  );
+});
