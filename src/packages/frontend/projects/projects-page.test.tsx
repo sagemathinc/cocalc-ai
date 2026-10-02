@@ -172,6 +172,12 @@ jest.mock("@cocalc/frontend/components/use-collection-preferences", () => ({
   }),
 }));
 
+jest.mock("./quick-project-creator", () => ({
+  QuickProjectCreator: ({ open }: any) => (
+    <div data-testid="quick-project-creator" data-open={String(open)} />
+  ),
+}));
+
 jest.mock("./mobile-projects-list", () => ({
   MobileProjectsList: () => <div data-testid="mobile-projects-list" />,
 }));
@@ -767,4 +773,21 @@ test("a New Project request made before the page mounts opens the create dialog"
     "data-open",
     "true",
   );
+});
+
+test("with sidebar navigation, New project opens the minimal creator", async () => {
+  mockOtherSettings = mockCompletedOnboardingSettings.set(
+    "workspace_navigation",
+    "sidebar",
+  );
+  const { requestNewProject } = jest.requireActual("./new-project-request");
+  requestNewProject();
+  render(<ProjectsPage />);
+  expect(await screen.findByTestId("quick-project-creator")).toHaveAttribute(
+    "data-open",
+    "true",
+  );
+  expect(
+    screen.getByRole("button", { name: /New project/ }),
+  ).toBeInTheDocument();
 });

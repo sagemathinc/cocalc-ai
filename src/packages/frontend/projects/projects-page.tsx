@@ -35,6 +35,7 @@ import { StarredProjectsBar } from "./projects-starred";
 import { ProjectsTable } from "./projects-table";
 import { ProjectsCollection } from "./projects-collection";
 import { onNewProjectRequest } from "./new-project-request";
+import { QuickProjectCreator } from "./quick-project-creator";
 import { useWorkspaceNavigation } from "@cocalc/frontend/app/workspace-navigation";
 import { useCollectionPreferences } from "@cocalc/frontend/components/use-collection-preferences";
 import { ProjectsTableControls } from "./projects-table-controls";
@@ -224,6 +225,8 @@ export const ProjectsPage: React.FC = () => {
   const collectionLayout =
     useWorkspaceNavigation() === "sidebar" && !mobileProjectsList;
   const collectionPreferences = useCollectionPreferences("projects");
+  const collectionLayoutRef = useRef(collectionLayout);
+  collectionLayoutRef.current = collectionLayout;
 
   // Tour
   const searchRef = useRef<any>(null);
@@ -242,6 +245,9 @@ export const ProjectsPage: React.FC = () => {
   const filenameSearchRef = useRef<any>(null);
 
   const [createPanelOpen, setCreatePanelOpen] = useState(false);
+  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
+  // Title typed in the minimal creator, carried into "More options".
+  const [createTitle, setCreateTitle] = useState<string>();
   const createPanelMounted = useRef(false);
   if (createPanelOpen) createPanelMounted.current = true;
 
@@ -273,7 +279,9 @@ export const ProjectsPage: React.FC = () => {
   useEffect(
     () =>
       onNewProjectRequest(() => {
-        if (!createProjectDisabled) setCreatePanelOpen(true);
+        if (createProjectDisabled) return;
+        if (collectionLayoutRef.current) setQuickCreateOpen(true);
+        else setCreatePanelOpen(true);
       }),
     [createProjectDisabled],
   );
@@ -574,7 +582,10 @@ export const ProjectsPage: React.FC = () => {
 
   function handleCreateProject() {
     if (createProjectDisabled) return;
-    setCreatePanelOpen(true);
+    // The new layout starts with the minimal creator; "More options" opens
+    // the full one.
+    if (collectionLayout) setQuickCreateOpen(true);
+    else setCreatePanelOpen(true);
   }
 
   function handleClearCollaboratorFilter() {
@@ -621,12 +632,27 @@ export const ProjectsPage: React.FC = () => {
           >
             <Suspense fallback={null}>
               <NewProjectCreator
-                default_value={search}
+                default_value={createTitle ?? search}
                 open={createPanelOpen}
-                onClose={() => setCreatePanelOpen(false)}
+                onClose={() => {
+                  setCreatePanelOpen(false);
+                  setCreateTitle(undefined);
+                }}
               />
             </Suspense>
           </CocalcErrorBoundary>
+        )}
+        {collectionLayout && !createProjectDisabled && (
+          <QuickProjectCreator
+            open={quickCreateOpen}
+            defaultTitle={search}
+            onClose={() => setQuickCreateOpen(false)}
+            onMoreOptions={(title) => {
+              setQuickCreateOpen(false);
+              setCreateTitle(title);
+              setCreatePanelOpen(true);
+            }}
+          />
         )}
         <Layout.Content
           style={{
@@ -713,7 +739,7 @@ export const ProjectsPage: React.FC = () => {
                     </Title>
                     <Button
                       ref={createNewRef}
-                      type="primary"
+                      type={collectionLayout ? "default" : "primary"}
                       disabled={createProjectDisabled}
                       title={
                         createProjectDisabled
@@ -721,9 +747,15 @@ export const ProjectsPage: React.FC = () => {
                           : undefined
                       }
                       onClick={handleCreateProject}
-                      icon={<Icon name="plus-circle" />}
+                      icon={
+                        <Icon
+                          name={collectionLayout ? "plus" : "plus-circle"}
+                        />
+                      }
                     >
-                      {capitalize(intl.formatMessage(labels.create))}
+                      {collectionLayout
+                        ? "New project"
+                        : capitalize(intl.formatMessage(labels.create))}
                     </Button>
                     {showLegacyProjectsButton ? (
                       <Button
