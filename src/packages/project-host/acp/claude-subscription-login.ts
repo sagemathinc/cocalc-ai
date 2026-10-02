@@ -10,7 +10,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isValidUUID } from "@cocalc/util/misc";
 import { harnessOwner } from "./harness-reaper";
-import { claudeOAuthTokenFromOutput } from "./claude-subscription-token";
+import {
+  claudeOAuthTokenFromOutput,
+  claudeOAuthTokenLine,
+} from "./claude-subscription-token";
 import {
   CLAUDE_LOGIN_PREFIX,
   CLAUDE_LOGIN_OWNER,
@@ -18,6 +21,11 @@ import {
 } from "./claude-login-cleanup";
 
 const LOGIN_TIMEOUT_MS = 10 * 60_000;
+// Claude Code treats a long burst of input as a paste, in which Enter is
+// text rather than submit: send Enter on its own after the code.
+const ENTER_DELAY_MS = 750;
+// Exchanging the code takes seconds; never leave the user waiting forever.
+const CODE_EXCHANGE_TIMEOUT_MS = 90_000;
 const TERMINAL_STATUS_RETENTION_MS = 15 * 60_000;
 // The terminal UI redraws, so keep enough for the token after the art.
 const MAX_OUTPUT_BYTES = 64 * 1024;
@@ -117,6 +125,8 @@ export class ClaudeSubscriptionLoginService {
       argsPrefix?: string[];
       // Runs the CLI in a pseudo-terminal: setup-token is a terminal UI.
       scriptPath?: string;
+      enterDelayMs?: number;
+      exchangeTimeoutMs?: number;
       publish: (options: {
         projectId: string;
         accountId: string;
@@ -230,15 +240,22 @@ export class ClaudeSubscriptionLoginService {
       );
       const text = terminalText(session.output);
       session.verificationUrl ??= providerUrl(text);
+      if (!session.codeSubmitted) return;
+      const token = claudeOAuthTokenLine(text);
+      if (token) {
+        // Only telemetry and exit remain for the CLI: save the token now.
+        session.completion = this.publish(session, token);
+        void session.completion.catch(() =>
+          this.fail(session, "Claude sign-in cleanup failed"),
+        );
+        this.kill(session);
+        return;
+      }
       // The terminal UI waits for a retry instead of exiting on a bad code.
-      if (
-        session.codeSubmitted &&
-        !claudeOAuthTokenFromOutput(text) &&
-        /OAuth\s*error|Invalid\s*code/i.test(text)
-      )
+      if (/OAuth\s*error|Invalid\s*code/i.test(text))
         this.fail(
           session,
-          "Claude did not accept the code. Start the sign-in again.",
+          "Claude did not accept the code. Copy the whole code and try again.",
         );
     };
     child.stdout?.on("data", append);
@@ -247,6 +264,7 @@ export class ClaudeSubscriptionLoginService {
       this.fail(session, "Claude sign-in could not start"),
     );
     child.once("close", (code) => {
+      if (session.state !== "pending") return;
       session.completion = this.complete(session, code);
       void session.completion.catch(() =>
         this.fail(session, "Claude sign-in cleanup failed"),
@@ -276,18 +294,31 @@ export class ClaudeSubscriptionLoginService {
       !session.verificationUrl
     )
       throw Error("Claude sign-in is not awaiting a code");
+    const value = typeof code === "string" ? code.trim() : "";
     if (
-      typeof code !== "string" ||
-      code.length < 4 ||
-      code.length > 2048 ||
-      /[\r\n\x00-\x1f\x7f]/.test(code)
+      value.length < 4 ||
+      value.length > 2048 ||
+      /[\s\x00-\x1f\x7f]/.test(value)
     )
       throw Error("Invalid Claude sign-in code");
     session.codeSubmitted = true;
     // Forget the pre-code output so a later match comes from the result.
     session.output = "";
-    // Enter in the terminal UI; keep stdin open while it exchanges the code.
-    session.child.stdin?.write(`${code}\r`);
+    // Keep stdin open while the terminal UI exchanges the code.
+    session.child.stdin?.write(value);
+    const enter = setTimeout(() => {
+      if (session.state === "pending") session.child.stdin?.write("\r");
+    }, this.options.enterDelayMs ?? ENTER_DELAY_MS);
+    enter.unref();
+    clearTimeout(session.timer);
+    session.timer = setTimeout(() => {
+      if (session.state === "pending")
+        this.fail(
+          session,
+          "Claude did not finish signing in. Start the sign-in again.",
+        );
+    }, this.options.exchangeTimeoutMs ?? CODE_EXCHANGE_TIMEOUT_MS);
+    session.timer.unref();
   }
 
   cancel(id: string, projectId: string, accountId: string): void {
@@ -304,17 +335,21 @@ export class ClaudeSubscriptionLoginService {
     this.kill(session);
   }
 
-  private async complete(session: LoginSession, code: number | null) {
-    if (session.state !== "pending") return;
-    clearTimeout(session.timer);
-    // Read the token only from the complete output, never a partial chunk.
+  private complete(session: LoginSession, code: number | null) {
+    if (session.state !== "pending") return Promise.resolve();
+    // The CLI exited: its output is complete, so a token cannot be partial.
     const token = session.codeSubmitted
       ? claudeOAuthTokenFromOutput(terminalText(session.output))
       : undefined;
     if (code !== 0 || !token) {
       this.fail(session, "Claude sign-in did not complete");
-      return;
+      return Promise.resolve();
     }
+    return this.publish(session, token);
+  }
+
+  private async publish(session: LoginSession, token: string) {
+    clearTimeout(session.timer);
     session.state = "verifying";
     try {
       if (this.closed) throw Error("Claude sign-in service is closed");

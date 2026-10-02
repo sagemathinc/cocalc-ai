@@ -1,5 +1,6 @@
 import {
   claudeOAuthTokenFromOutput,
+  claudeOAuthTokenLine,
   claudeSubscriptionToken,
   packClaudeSubscriptionToken,
 } from "./claude-subscription-token";
@@ -26,4 +27,10 @@ test("token payloads round trip; home snapshots are not tokens", () => {
     claudeSubscriptionToken(JSON.stringify({ version: 2, oauth_token: "x" })),
   ).toThrow("Invalid Claude auth bundle");
   expect(() => claudeSubscriptionToken("not json")).toThrow();
+});
+
+test("a token counts as complete only once its line has ended", () => {
+  expect(claudeOAuthTokenLine(`token:\n${token}`)).toBeUndefined();
+  expect(claudeOAuthTokenLine(`token:\n${token.slice(0, 40)}`)).toBeUndefined();
+  expect(claudeOAuthTokenLine(`token:\n${token}  \nStore it.`)).toBe(token);
 });

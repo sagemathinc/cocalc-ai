@@ -154,7 +154,57 @@ test("a rejected code fails promptly instead of waiting for a retry", async () =
     service.submitCode(started.id, projectId, accountId, "wrong-code");
     const failed = await waitFor(service, started.id, "failed");
     expect(failed.error).toBe(
-      "Claude did not accept the code. Start the sign-in again.",
+      "Claude did not accept the code. Copy the whole code and try again.",
+    );
+    expect(publish).not.toHaveBeenCalled();
+  } finally {
+    await service.close();
+  }
+});
+
+test("a full-length pasted code is submitted with a separate Enter", async () => {
+  const publish = jest.fn(async () => credentialId);
+  const service = new ClaudeSubscriptionLoginService({
+    cliPath: process.execPath,
+    argsPrefix: [fixture],
+    publish,
+    enterDelayMs: 100,
+  });
+  try {
+    const started = await service.start(projectId, accountId);
+    await verificationUrl(service, started.id);
+    // Real codes are about 100 characters: the CLI sees them as a paste.
+    service.submitCode(
+      started.id,
+      projectId,
+      accountId,
+      ` fixture-code#${"s".repeat(100)}\n`.trim(),
+    );
+    await waitFor(service, started.id, "completed");
+    expect(publish).toHaveBeenCalledWith(
+      expect.objectContaining({ token: fixtureToken }),
+    );
+  } finally {
+    await service.close();
+  }
+});
+
+test("a code exchange that never finishes fails instead of spinning forever", async () => {
+  const publish = jest.fn();
+  const service = new ClaudeSubscriptionLoginService({
+    cliPath: process.execPath,
+    argsPrefix: [fixture],
+    publish,
+    enterDelayMs: 50,
+    exchangeTimeoutMs: 500,
+  });
+  try {
+    const started = await service.start(projectId, accountId);
+    await verificationUrl(service, started.id);
+    service.submitCode(started.id, projectId, accountId, "fixture-hang");
+    const failed = await waitFor(service, started.id, "failed");
+    expect(failed.error).toBe(
+      "Claude did not finish signing in. Start the sign-in again.",
     );
     expect(publish).not.toHaveBeenCalled();
   } finally {

@@ -3,8 +3,19 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { Button, Input, Modal, Space, Spin, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Input,
+  Modal,
+  Space,
+  Spin,
+  Typography,
+  theme,
+} from "antd";
+import { Icon } from "@cocalc/frontend/components/icon";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 
@@ -28,6 +39,50 @@ export function claudeSignInErrorMessage(error: string): string {
   return isProjectHostUnavailable(error)
     ? "This project's server is not available. Select a different project, or create a new one, and try again."
     : `Claude sign-in error: ${error}`;
+}
+
+// Claude's authentication code is "<code>#<state>"; the CLI rejects anything
+// else, so say so before submitting.
+export function looksLikeClaudeCode(value: string): boolean {
+  return /^[A-Za-z0-9_-]{8,}#[A-Za-z0-9_-]{8,}$/.test(value.trim());
+}
+
+function Step({
+  number,
+  title,
+  children,
+}: {
+  number: number;
+  title: string;
+  children: ReactNode;
+}) {
+  const { token } = theme.useToken();
+  return (
+    <div style={{ display: "flex", gap: 12, minWidth: 0 }}>
+      <div
+        aria-hidden
+        style={{
+          flex: "none",
+          width: 24,
+          height: 24,
+          borderRadius: 12,
+          background: token.colorPrimary,
+          color: token.colorWhite,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 13,
+          fontWeight: 600,
+        }}
+      >
+        {number}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <Typography.Text strong>{title}</Typography.Text>
+        <div style={{ marginTop: 8 }}>{children}</div>
+      </div>
+    </div>
+  );
 }
 
 export function ClaudeSubscriptionConnect({
@@ -56,6 +111,8 @@ export function ClaudeSubscriptionConnect({
   const [submitting, setSubmitting] = useState(false);
   const [codeSubmitted, setCodeSubmitted] = useState(false);
   const [error, setError] = useState("");
+  // A code that could not be submitted stays editable for another try.
+  const [codeError, setCodeError] = useState("");
   const [open, setOpen] = useState(false);
   const attempt = useRef(0);
   const pendingLogin = useRef<{ project_id: string; id: string } | undefined>(
@@ -82,6 +139,7 @@ export function ClaudeSubscriptionConnect({
     setLogin(undefined);
     setSubmitting(false);
     setError("");
+    setCodeError("");
     setCode("");
     setCodeSubmitted(false);
     try {
@@ -137,6 +195,26 @@ export function ClaudeSubscriptionConnect({
   };
   const signingIn =
     busy || login?.state === "pending" || login?.state === "verifying";
+  const { token } = theme.useToken();
+  const submitCode = async (value: string) => {
+    if (!login || submitting || codeSubmitted) return;
+    const started = attempt.current;
+    setSubmitting(true);
+    setCodeError("");
+    try {
+      await webapp_client.conat_client.hub.projects.claudeSubscriptionLoginSubmitCode(
+        { project_id: projectId, id: login.id, code: value.trim() },
+      );
+      if (started !== attempt.current) return;
+      setCode("");
+      setCodeSubmitted(true);
+    } catch (err) {
+      if (started === attempt.current)
+        setCodeError(`${err}`.replace(/^(?:Error:\s*)+/, ""));
+    } finally {
+      if (started === attempt.current) setSubmitting(false);
+    }
+  };
 
   useEffect(() => {
     if (!login || (login.state !== "pending" && login.state !== "verifying"))
@@ -169,98 +247,164 @@ export function ClaudeSubscriptionConnect({
     };
   }, [login?.id, login?.state, projectId]);
 
-  const signIn = (
-    <Space
-      orientation="vertical"
-      size={12}
-      style={{ width: "100%", minWidth: 0 }}
+  const active = busy || !!login || !!error;
+  const connecting =
+    submitting || codeSubmitted || login?.state === "verifying";
+  // Terminal: the sign-in itself failed or never started.
+  const failed = login?.state === "failed" || (!!error && !login);
+  const codeReady = looksLikeClaudeCode(code);
+  const signIn = active && (
+    <div
+      style={{
+        width: "100%",
+        minWidth: 0,
+        ...(modal
+          ? {}
+          : {
+              border: `1px solid ${token.colorBorderSecondary}`,
+              borderRadius: token.borderRadiusLG,
+              padding: 16,
+              background: token.colorBgContainer,
+            }),
+      }}
     >
-      {busy && <span role="status">Opening Claude sign-in...</span>}
-      {modal && login?.verificationUrl && (
-        <Typography.Text>
-          Sign in with your Claude Pro or Max subscription, then paste the code
-          from Claude below. CoCalc keeps a long-lived Claude token (valid for a
-          year), so your agents can run at the same time without signing you
-          out.
-        </Typography.Text>
-      )}
-      {login && (login.state === "pending" || login.state === "verifying") && (
-        <Space orientation="vertical" style={{ width: "100%", minWidth: 0 }}>
-          {(submitting || codeSubmitted || login.state === "verifying") && (
-            <Space role="status" aria-live="polite">
-              <Spin size="small" />
-              {submitting
-                ? "Submitting sign-in code..."
-                : "Verifying Claude sign-in..."}
-            </Space>
-          )}
-          {login.verificationUrl && (
-            <a
-              href={login.verificationUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Open Claude sign-in
-            </a>
-          )}
-          {login.state === "pending" && login.verificationUrl && (
-            <Space wrap style={{ width: "100%" }}>
-              <Input
-                aria-label="Claude sign-in code"
-                placeholder="Paste the code from Claude"
-                autoComplete="off"
-                value={code}
-                disabled={submitting || codeSubmitted}
-                onChange={(event) => setCode(event.target.value)}
-              />
-              <Button
-                aria-label="Submit code"
-                aria-busy={submitting || codeSubmitted}
-                loading={submitting || codeSubmitted}
-                disabled={submitting || codeSubmitted || !code.trim()}
-                onClick={async () => {
-                  const started = attempt.current;
-                  setSubmitting(true);
-                  setError("");
-                  try {
-                    await webapp_client.conat_client.hub.projects.claudeSubscriptionLoginSubmitCode(
-                      { project_id: projectId, id: login.id, code },
-                    );
-                    if (started !== attempt.current) return;
-                    setCode("");
-                    setCodeSubmitted(true);
-                  } catch (err) {
-                    if (started === attempt.current) setError(`${err}`);
-                  } finally {
-                    if (started === attempt.current) setSubmitting(false);
-                  }
-                }}
-              >
-                Submit code
-              </Button>
-            </Space>
-          )}
-          {login.state === "pending" && (
-            <Button onClick={() => void cancel()}>Cancel sign-in</Button>
-          )}
-        </Space>
-      )}
-      {login?.state === "completed" && (
-        <Typography.Text role="status">
-          Claude subscription connected.
-        </Typography.Text>
-      )}
-      {login?.state === "failed" && (
-        <div role="alert">{login.error || "Claude sign-in failed"}</div>
-      )}
-      {error && <div role="alert">{claudeSignInErrorMessage(error)}</div>}
-      {modal &&
-        !signingIn &&
-        (error || login?.state === "failed") &&
-        !isProjectHostUnavailable(error) && (
-          <Button onClick={() => void start()}>Retry sign-in</Button>
+      <Space orientation="vertical" size={16} style={{ width: "100%" }}>
+        {!modal && (
+          <Typography.Text strong style={{ fontSize: token.fontSizeLG }}>
+            Connect your Claude subscription
+          </Typography.Text>
         )}
-    </Space>
+        <Typography.Text type="secondary">
+          CoCalc keeps a long-lived Claude token (valid for a year), so your
+          agents can run at the same time without signing you out.
+        </Typography.Text>
+        {login?.state === "completed" ? (
+          <Typography.Text role="status">
+            <Icon name="check-circle" style={{ color: token.colorSuccess }} />{" "}
+            Claude subscription connected.
+          </Typography.Text>
+        ) : failed ? (
+          <Alert
+            type="error"
+            showIcon
+            title={
+              error
+                ? claudeSignInErrorMessage(error)
+                : login?.error || "Claude sign-in failed"
+            }
+            action={
+              !isProjectHostUnavailable(error) && (
+                <Button size="small" onClick={() => void start()}>
+                  Try again
+                </Button>
+              )
+            }
+          />
+        ) : (
+          <>
+            <Step number={1} title="Sign in to Claude">
+              <Button
+                type={codeSubmitted ? "default" : "primary"}
+                href={login?.verificationUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                loading={!login?.verificationUrl}
+                disabled={connecting}
+                icon={<Icon name="external-link" />}
+                aria-label={
+                  login?.verificationUrl
+                    ? "Open Claude sign-in"
+                    : "Preparing sign-in..."
+                }
+              >
+                {login?.verificationUrl
+                  ? "Open Claude sign-in"
+                  : "Preparing sign-in..."}
+              </Button>
+            </Step>
+            <Step number={2} title="Paste the authentication code">
+              {!login?.verificationUrl ? (
+                <Typography.Text type="secondary">
+                  Claude shows the code after you sign in.
+                </Typography.Text>
+              ) : connecting ? (
+                <Space role="status" aria-live="polite">
+                  <Spin size="small" />
+                  Connecting to Claude... usually a few seconds.
+                </Space>
+              ) : (
+                <Space
+                  orientation="vertical"
+                  size={8}
+                  style={{ width: "100%" }}
+                >
+                  <Input.TextArea
+                    aria-label="Claude sign-in code"
+                    placeholder="Paste the code Claude shows after you sign in"
+                    autoComplete="off"
+                    spellCheck={false}
+                    autoSize={{ minRows: 2, maxRows: 4 }}
+                    value={code}
+                    onChange={(event) => setCode(event.target.value)}
+                    onPaste={(event) => {
+                      const pasted = event.clipboardData.getData("text");
+                      // A complete code needs no extra click.
+                      if (looksLikeClaudeCode(pasted) && !code.trim()) {
+                        event.preventDefault();
+                        setCode(pasted.trim());
+                        void submitCode(pasted);
+                      }
+                    }}
+                    onPressEnter={(event) => {
+                      event.preventDefault();
+                      if (codeReady) void submitCode(code);
+                    }}
+                    style={{
+                      fontFamily: "monospace",
+                      background: token.colorFillTertiary,
+                    }}
+                  />
+                  {codeError && (
+                    <Alert type="error" showIcon title={codeError} />
+                  )}
+                  {code.trim() && !codeReady && (
+                    <Typography.Text type="warning">
+                      That does not look like the whole code. Use Copy code on
+                      Claude's page and paste it here.
+                    </Typography.Text>
+                  )}
+                  <Button
+                    type="primary"
+                    disabled={!codeReady}
+                    onClick={() => void submitCode(code)}
+                  >
+                    Connect
+                  </Button>
+                </Space>
+              )}
+            </Step>
+          </>
+        )}
+        {error && !failed && (
+          <Alert
+            type="warning"
+            showIcon
+            title={claudeSignInErrorMessage(error)}
+          />
+        )}
+        {signingIn && (
+          <Button
+            type="link"
+            size="small"
+            style={{ padding: 0 }}
+            onClick={() => void cancel()}
+            disabled={login?.state === "verifying"}
+          >
+            Cancel
+          </Button>
+        )}
+      </Space>
+    </div>
   );
   // Compact with the sign-in in a modal sits in a row of settings: stay
   // inline and one line high there.
@@ -277,7 +421,7 @@ export function ClaudeSubscriptionConnect({
           credential selector; you do not need to sign in for each agent.
         </Typography.Text>
       )}
-      {reconnectCredentialId && (
+      {reconnectCredentialId && !(signingIn && !modal) && (
         <Button
           type={reconnectOnly ? "primary" : undefined}
           disabled={disabled || signingIn}
@@ -287,7 +431,7 @@ export function ClaudeSubscriptionConnect({
           Reconnect Claude
         </Button>
       )}
-      {!reconnectOnly && (
+      {!reconnectOnly && !(signingIn && !modal) && (
         <Button
           size={inline ? "small" : undefined}
           style={

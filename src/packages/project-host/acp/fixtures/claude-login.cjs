@@ -17,12 +17,22 @@ process.stdout.write(
   "https://claude.com/cai/oauth/authorize?code=true&scope=user%3Ainference&state=fixture\r\n",
 );
 process.stdout.write("Paste code here if prompted > ");
+// Raw input like the real terminal UI, which reads keys, not lines.
+if (process.stdin.isTTY) process.stdin.setRawMode(true);
 process.stdin.setEncoding("utf8");
 let input = "";
 process.stdin.on("data", (chunk) => {
+  // Like Claude Code: a long burst is a paste, and Enter inside it is text.
+  if (chunk.length > 32) {
+    input += chunk.replace(/[\r\n]/g, "");
+    return;
+  }
   input += chunk;
   if (!/[\r\n]/.test(input)) return;
-  if (input.trim() === "fixture-code") {
+  const code = input.trim();
+  input = "";
+  if (code.startsWith("fixture-hang")) return;
+  if (code.startsWith("fixture-code")) {
     say("Long-lived authentication token created successfully!");
     say("Your OAuth token (valid for 365 days):");
     process.stdout.write(
@@ -33,6 +43,5 @@ process.stdin.on("data", (chunk) => {
     // The real UI waits for Enter to retry rather than exiting.
     say("OAuth error: Request failed with status code 400");
     say("Press Enter to retry.");
-    input = "";
   }
 });

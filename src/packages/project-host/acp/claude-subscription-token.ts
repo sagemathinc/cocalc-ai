@@ -16,6 +16,14 @@ export function claudeOAuthTokenFromOutput(output: string): string | undefined {
   return token && TOKEN.test(token) ? token : undefined;
 }
 
+/** A token on a finished line of output, i.e. never a partial chunk. */
+export function claudeOAuthTokenLine(output: string): string | undefined {
+  const token = output
+    .match(/sk-ant-oat[A-Za-z0-9_-]{20,1000}(?=[ \t]*\n)/g)
+    ?.at(-1);
+  return token && TOKEN.test(token) ? token : undefined;
+}
+
 export function packClaudeSubscriptionToken(token: string): string {
   if (!TOKEN.test(token)) throw Error("Invalid Claude token");
   return JSON.stringify({ version: 2, oauth_token: token });
