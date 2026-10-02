@@ -33,6 +33,7 @@ jest.mock("./acp/harness-launcher", () => ({
 jest.mock("@cocalc/lite/hub/acp/harness-runtime", () => ({
   setHarnessLauncher: jest.fn(),
   setHarnessAuthorityValidator: jest.fn(),
+  setHarnessRateLimitRecorder: jest.fn(),
 }));
 const initCodexAttachmentBlobReaderMock = jest.fn();
 const initCodexGeneratedImageBlobWriterMock = jest.fn();
