@@ -94,10 +94,16 @@ jest.mock("./quick-navigation", () => ({
 jest.mock("./home-workspace-navigation", () => ({
   HomeWorkspaceNavigation: () => <button>More navigation</button>,
 }));
+const mockActiveContent = jest.fn();
 jest.mock("./active-content", () => ({
-  ActiveContent: ({ navigation }) => (
-    <section aria-label="Workspace content">{navigation}Active content</section>
-  ),
+  ActiveContent: (props) => {
+    mockActiveContent(props);
+    return (
+      <section aria-label="Workspace content">
+        {props.navigation}Active content
+      </section>
+    );
+  },
 }));
 jest.mock("./connection-indicator", () => ({
   ConnectionIndicator: () => null,
@@ -284,4 +290,23 @@ test("sidebar navigation drops the top bar; projects are in the sidebar", () => 
     }),
   ).toBeVisible();
   expect(screen.getByRole("button", { name: "Docs" })).toBeVisible();
+});
+
+test("with sidebar navigation, project pages show the show-sidebar control in their own top row", () => {
+  navigationSetting = "sidebar";
+  activeTab = "1ce4fe78-19c7-40a8-a598-947975744cd9";
+  const mounted = render(view());
+  // null: the workspace hands its show-sidebar control to the page's header.
+  expect(mockActiveContent).toHaveBeenLastCalledWith(
+    expect.objectContaining({ navigation: null }),
+  );
+  activeTab = "projects";
+  mounted.rerender(view());
+  expect(mockActiveContent).toHaveBeenLastCalledWith(
+    expect.objectContaining({ navigation: null }),
+  );
+  // Other pages keep a minimal row for it.
+  activeTab = "settings";
+  mounted.rerender(view());
+  expect(mockActiveContent.mock.lastCall[0].navigation).not.toBeNull();
 });

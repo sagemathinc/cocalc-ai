@@ -10,6 +10,7 @@ everything on *desktop*, once the user has signed in.
 
 declare var DEBUG: boolean;
 
+import { is_valid_uuid_string } from "@cocalc/util/misc";
 import type { IconName } from "@cocalc/frontend/components/icon";
 
 import { Alert, Spin } from "antd";
@@ -669,9 +670,13 @@ export const Page: React.FC = () => {
             !workspaceShell
               ? undefined
               : sidebarNavigation && !isNarrow
-                ? // Projects are in the sidebar: no top bar, just the
-                  // pane's own show-sidebar control.
-                  sidebarOnlyNavigation
+                ? // Projects are in the sidebar: no top bar. The Projects page
+                  // and project pages put the show-sidebar control in their
+                  // own top row (null); other pages get a minimal row.
+                  active_top_tab === "projects" ||
+                  is_valid_uuid_string(active_top_tab)
+                  ? null
+                  : sidebarOnlyNavigation
                 : legacyNavigation
           }
         />

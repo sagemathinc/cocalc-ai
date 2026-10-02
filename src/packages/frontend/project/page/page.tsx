@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { useWorkspaceContentNavigation } from "@cocalc/frontend/agents/workspace-content-navigation";
 import { DndContext, useDraggable } from "@dnd-kit/core";
 import {
   Alert,
@@ -256,6 +257,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     hardDeleteState === "deleting" || hardDeleteState === "delete_failed";
   const hardDeleteOpId = `${project?.getIn(["state", "hard_delete_op_id"]) ?? ""}`;
   const hardDeleteError = `${project?.getIn(["state", "hard_delete_error"]) ?? ""}`;
+  const workspaceNavigation = useWorkspaceContentNavigation();
   const projectCtx = useProjectContextProvider({
     project_id,
     is_active,
@@ -1004,6 +1006,11 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     if (workspaceBlocked || hardDeleteBlocked) {
       return (
         <div style={{ display: "flex", height: "36px" }}>
+          {
+            // The workspace's show-sidebar control, when the sidebar is
+            // hidden and there is no top bar (sidebar navigation).
+            workspaceNavigation
+          }
           {hideActionButtons ? <HiddenActivityBarLauncher /> : null}
           <HomePageButton
             project_id={project_id}
@@ -1025,6 +1032,11 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     // this was part of the container-content div, which makes little sense for e.g. the banner bars
     return (
       <div style={{ display: "flex", height: "36px" }}>
+        {
+          // The workspace's show-sidebar control, when the sidebar is
+          // hidden and there is no top bar (sidebar navigation).
+          workspaceNavigation
+        }
         {hideActionButtons ? <HiddenActivityBarLauncher /> : null}
         <HomePageButton
           project_id={project_id}

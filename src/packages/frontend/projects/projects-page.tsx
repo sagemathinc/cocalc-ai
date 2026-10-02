@@ -38,6 +38,7 @@ import { onNewProjectRequest } from "./new-project-request";
 import { QuickProjectCreator } from "./quick-project-creator";
 import { useWorkspaceNavigation } from "@cocalc/frontend/app/workspace-navigation";
 import { useCollectionPreferences } from "@cocalc/frontend/components/use-collection-preferences";
+import { useWorkspaceContentNavigation } from "@cocalc/frontend/agents/workspace-content-navigation";
 import { ProjectsTableControls } from "./projects-table-controls";
 import { CocalcErrorBoundary } from "@cocalc/frontend/app/error-boundary";
 import { ProjectDrawer } from "./project-drawer";
@@ -217,6 +218,7 @@ export const ProjectsPage: React.FC = () => {
     [project_map?.size],
   );
 
+  const workspaceNavigation = useWorkspaceContentNavigation();
   const screens = Grid.useBreakpoint();
   const mobileProjectsList = IS_MOBILE && !screens.lg;
   const narrow = mobileProjectsList;
@@ -726,6 +728,7 @@ export const ProjectsPage: React.FC = () => {
                       flex: "0 0 auto",
                     }}
                   >
+                    {workspaceNavigation}
                     <Title
                       level={3}
                       style={{
