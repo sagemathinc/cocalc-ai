@@ -535,3 +535,26 @@ test("trusted MCP helper executes only through the scoped project socket", async
     await bridge.close();
   }
 });
+
+test("an oversized request gets an error naming the limit, not a dropped connection", async () => {
+  const execute = jest.fn();
+  const bridge = await createClaudeProjectToolBridge(
+    PROJECT_ID,
+    execute,
+    async () => {},
+  );
+  try {
+    const result = await callTool(bridge.directory, "project_exec", {
+      script: "x".repeat(2_600_000),
+    });
+    expect(result.error).toMatch(
+      /^Project tool request too large: over 2500000 bytes\. Split it/,
+    );
+    expect(execute).not.toHaveBeenCalled();
+    // The bridge still serves the next call.
+    execute.mockResolvedValue({ code: 0, stdout: "ok", stderr: "" });
+    expect((await callTool(bridge.directory)).stdout).toBe("ok");
+  } finally {
+    await bridge.close();
+  }
+});

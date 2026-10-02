@@ -181,7 +181,17 @@ export async function createClaudeProjectToolBridge(
     socket.on("close", () => sockets.delete(socket));
     socket.on("data", (chunk) => {
       input += chunk.toString("utf8");
-      if (Buffer.byteLength(input) > MAX_REQUEST_BYTES) return socket.destroy();
+      if (Buffer.byteLength(input) > MAX_REQUEST_BYTES) {
+        // Say why rather than dropping the connection, which the helper can
+        // only report as "Project tool disconnected".
+        socket.removeAllListeners("data");
+        socket.end(
+          JSON.stringify({
+            error: `Project tool request too large: over ${MAX_REQUEST_BYTES} bytes. Split it into smaller calls (for example, write a large file in parts).`,
+          }) + "\n",
+        );
+        return;
+      }
       const newline = input.indexOf("\n");
       if (newline < 0) return;
       socket.removeAllListeners("data");

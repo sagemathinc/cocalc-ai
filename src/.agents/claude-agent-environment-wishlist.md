@@ -35,7 +35,8 @@ Written by Claude (claude-opus-5-5) on 2026-09-30, working as an agent in a CoCa
 
 - **Gap:** a GitHub PR card needs `repository`, `state`, `draft`, `fetched_at`, `base_sha`, `head_sha` and `checks` assembled by hand. A wrong payload only fails with "invalid GitHub PR identity". The per-turn message date now supplied in the turn context fixed the earlier "message date required" failure.
 - **Wanted:** shortcuts like `artifact publish --github-pr <number>` that fill in the fields themselves, and error messages that name the invalid field.
-- **Second report:** published artifact and publication records show `"date": "1970-01-01T00:00:00.000Z"`, while the real time is in `published_at`. Either the date should be set or the field omitted.
+- **Confusing date:** published artifact and publication records show `"date": "1970-01-01T00:00:00.000Z"`, while the real time is in `published_at`. Several Claude instances have reported this as a bug, then found in the code that it is intentional. In the chat document, `date` is part of each row's primary key, and artifact rows use a fixed sentinel date (`chat/src/artifacts.ts`) so that each artifact stays one row that is updated in place. The CLI then returns that storage row unchanged.
+- **Wanted:** don't expose the storage key in what the CLI and API return. Omit `date` from artifact and publication results, or replace it with the real `published_at`/`updated_at` times, so the output never shows a fake timestamp.
 
 ## 6. Your pasted images as project files
 
@@ -61,13 +62,14 @@ Written by Claude (claude-opus-5-5) on 2026-09-30, working as an agent in a CoCa
   - A cap on how many run at once.
   - Stop cancels them together with the parent.
   - They count against the same subscription usage, which should be stated wherever subagents are mentioned.
-- **Second report:** the other Claude also found no subagent or parallel-agent tool; its only parallelism was running several jobs at once. `/opt/cocalc/bin2/codex` exists in the project, but it isn't clear which account or credentials it would use, so it wasn't tried. If running another agent from the project is meant to be possible, the credentials it uses should be documented.
+- **Second report:** the other Claude also found no subagent or parallel-agent tool; its only parallelism was running several jobs at once. `/opt/cocalc/bin2/codex` exists in the project, but it has no credentials unless someone signs in manually inside the project, which saves a credential to `~/.codex/auth.json`. Normal CoCalc Codex turns don't use that file and don't store any credential in the project. So it is not a way for an agent to start helpers.
 
 ## 9. Large tool calls
 
 - **Gap:** a `project_exec` call whose script was a ~40 KB heredoc failed with "Project tool disconnected" and wrote nothing. Sending the same content as two ~25 KB calls worked.
 - **Cause:** on `main`, the project tool bridge accepts at most 40 KB per request (`MAX_REQUEST_BYTES` in `project-host/acp/claude-project-tool-bridge.ts`). Anything larger makes it close the connection without a reply, and the MCP helper reports that as "Project tool disconnected". This PR raises the limit to 2.5 MB for the file tools, but an oversized request is still dropped silently.
-- **Wanted:** an explicit error that names the limit, for example "project tool request too large: 52,431 > 40,960 bytes; split it into smaller calls". #816 does this for the MCP helper's own line limit; the bridge should do the same.
+- **Wanted:** an explicit error that names the limit and says to split the call. #816 does this for the MCP helper's own line limit.
+- **Implemented:** the bridge now answers an oversized request with "Project tool request too large: over 2500000 bytes. Split it into smaller calls (for example, write a large file in parts)." The connection is no longer dropped, and the next call works normally.
 
 ## 10. A stray stderr line on every command
 
