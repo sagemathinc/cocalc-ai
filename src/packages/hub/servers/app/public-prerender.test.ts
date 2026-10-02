@@ -10,6 +10,11 @@ import {
   PUBLIC_HOME_SECONDARY_CTA,
   PUBLIC_HOME_TRUST_LINE,
 } from "@cocalc/util/public-home-content";
+import {
+  getPublicFeaturesTasks,
+  PUBLIC_FEATURES_EYEBROW,
+  PUBLIC_FEATURES_HEADLINE,
+} from "@cocalc/util/public-features-index";
 
 describe("public feature initial HTML", () => {
   it.each(["/prefix", "/docs"])(
@@ -178,6 +183,89 @@ describe("home first screen initial HTML", () => {
       expect(
         [...header.matchAll(/<li>([^<]+)<\/li>/g)].map(([, text]) => text),
       ).toEqual(expected);
+    },
+  );
+});
+
+describe("features index first screen initial HTML", () => {
+  // The React index renders the same records
+  // (frontend/public/features/__tests__/app.test.tsx).
+  const tools = "and tools such as Jupyter, LaTeX, R, Julia, and SageMath.";
+  const hosted = `Codex agents, the CoCalc CLI, installed software, compute options, ${tools}`;
+  const cocalcAi = {
+    cocalc_product: "launchpad",
+    dns: "cocalc.ai",
+    is_launchpad: true,
+    site_name: "CoCalc",
+  };
+  it.each([
+    ["cocalc.ai", cocalcAi, "/", hosted, "Start on CoCalc.ai", 4],
+    [
+      "a Rocket site",
+      { cocalc_product: "rocket", dns: "cocalc.example.edu" },
+      "/prefix",
+      hosted,
+      "Create account",
+      4,
+    ],
+    [
+      "a customer-operated Launchpad site",
+      {
+        cocalc_product: "launchpad",
+        dns: "lp.example.org",
+        site_name: "CoCalc Launchpad",
+      },
+      "/",
+      hosted,
+      "Create account",
+      4,
+    ],
+    [
+      "CoCalc Plus",
+      { cocalc_product: "plus", dns: "localhost" },
+      "/",
+      "Codex agents and the software installed on your computer.",
+      undefined,
+      1,
+    ],
+    [
+      "no site configuration",
+      undefined,
+      "/",
+      `Codex agents, the CoCalc CLI, installed software, ${tools}`,
+      undefined,
+      3,
+    ],
+  ])(
+    "renders the shared first screen on %s",
+    (site, config, basePath, items, signUp, taskCount) => {
+      const prefix = basePath === "/" ? "" : basePath;
+      const html = renderPublicRoutePrerender(
+        { section: "features", route: { view: "index" } },
+        basePath,
+        config,
+      );
+      const firstScreen = html.slice(0, html.indexOf("</ul>") + 5);
+      const signUpLink = signUp
+        ? `<a href="${prefix}/auth/sign-up">${signUp}</a> `
+        : "";
+      expect(firstScreen).toContain(`<header>
+  <p>${PUBLIC_FEATURES_EYEBROW}</p>
+  <h1>${PUBLIC_FEATURES_HEADLINE}</h1>
+  <p>See what you can use in a CoCalc project: ${items}</p>
+  <p>${signUpLink}<a href="${prefix}/features/ai">Explore AI agents</a></p>
+</header>`);
+      const tasks = getPublicFeaturesTasks(config);
+      expect(tasks).toHaveLength(taskCount);
+      expect(firstScreen).toContain(
+        `<ul>${tasks
+          .map(
+            ({ body, href, title }) =>
+              `<li><h2><a href="${prefix}${href}">${title}</a></h2><p>${body.replace(/`([^`]+)`/g, "<code>$1</code>")}</p></li>`,
+          )
+          .join("")}</ul>`,
+      );
+      expect(firstScreen.includes("Claude Code")).toBe(site === "cocalc.ai");
     },
   );
 });

@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Fragment, type CSSProperties, useEffect } from "react";
+import { Fragment, type CSSProperties, type ReactNode, useEffect } from "react";
 
 import { Button, Col, Empty, Flex, Row, Typography } from "antd";
 
@@ -26,6 +26,14 @@ import {
   PUBLIC_FEATURE_NAV_ITEMS as FEATURE_NAV_ITEMS,
   publicFeatureHref,
 } from "@cocalc/util/public-feature-pages";
+import {
+  getPublicFeaturesIntro,
+  getPublicFeaturesSignUp,
+  getPublicFeaturesTasks,
+  PUBLIC_FEATURES_EYEBROW,
+  PUBLIC_FEATURES_HEADLINE,
+  PUBLIC_FEATURES_SECONDARY_CTA,
+} from "@cocalc/util/public-features-index";
 import { COLORS, SITE_NAME } from "@cocalc/util/theme";
 import AIFeaturePage from "./ai-page";
 import ApiFeaturePage from "./api-page";
@@ -60,6 +68,7 @@ const { Paragraph, Text, Title } = Typography;
 
 interface FeaturesConfig {
   cocalc_product?: string;
+  dns?: string;
   help_email?: string;
   is_authenticated?: boolean;
   logo_square?: string;
@@ -235,8 +244,10 @@ type FeatureIndexCard = {
     href: string;
     label: string;
   };
+  // Cards directly under the H1 are h2; cards inside a group are h3.
+  level?: 2 | 3;
   slug: string;
-  summary: string;
+  summary: ReactNode;
   title: string;
 };
 
@@ -266,7 +277,7 @@ function FeatureLinkCardContent({ card }: { card: FeatureIndexCard }) {
       <div>
         <Title
           className="cocalc-feature-link-card-title"
-          level={3}
+          level={card.level ?? 3}
           style={{
             fontSize: PUBLIC_TYPE.subhead,
             lineHeight: 1.22,
@@ -599,8 +610,27 @@ function TeachingWorkflowCallout() {
   );
 }
 
+// Icons come from these feature pages; none uses the icon font.
+const TASK_ICON_SLUGS = {
+  agents: "ai",
+  cli: "terminal",
+  compute: "software-environment",
+  software: "x11",
+} as const;
+
+// Text between backticks is a command name.
+function withCode(text: string): ReactNode {
+  return text
+    .split("`")
+    .map((part, index) => (index % 2 ? <code key={index}>{part}</code> : part));
+}
+
 function FeaturesIndex({ config }: { config?: FeaturesConfig }) {
   const pages = getOrderedFeatureIndexPages(config);
+  // Signed-in visitors already have Projects in the top navigation.
+  const signUp = config?.is_authenticated
+    ? undefined
+    : getPublicFeaturesSignUp(config);
   return (
     <>
       <style>{FEATURE_INDEX_CSS}</style>
@@ -618,7 +648,7 @@ function FeaturesIndex({ config }: { config?: FeaturesConfig }) {
               textTransform: "uppercase",
             }}
           >
-            Persistent project workflows
+            {PUBLIC_FEATURES_EYEBROW}
           </Text>
           <div>
             <Title
@@ -629,7 +659,7 @@ function FeaturesIndex({ config }: { config?: FeaturesConfig }) {
                 margin: 0,
               }}
             >
-              One persistent project for people, tools, and agents.
+              {PUBLIC_FEATURES_HEADLINE}
             </Title>
             <Paragraph
               style={{
@@ -637,15 +667,56 @@ function FeaturesIndex({ config }: { config?: FeaturesConfig }) {
                 fontSize: PUBLIC_TYPE.lead,
                 lineHeight: 1.5,
                 margin: "20px 0 0",
-                maxWidth: 600,
+                maxWidth: 680,
               }}
             >
-              Work together in a shared Linux project with notebooks, code,
-              terminals, documents, services, and history.
+              {getPublicFeaturesIntro(config)}
             </Paragraph>
           </div>
+          <Flex gap={12} wrap>
+            {signUp ? (
+              <Button
+                href={publicFeatureHref(signUp.href, appBasePath)}
+                size="large"
+                type="primary"
+              >
+                {signUp.label}
+              </Button>
+            ) : null}
+            <Button
+              href={publicFeatureHref(
+                PUBLIC_FEATURES_SECONDARY_CTA.href,
+                appBasePath,
+              )}
+              size="large"
+            >
+              {PUBLIC_FEATURES_SECONDARY_CTA.label}
+            </Button>
+          </Flex>
         </Flex>
       </section>
+
+      <div
+        className="cocalc-feature-card-grid"
+        style={{
+          display: "grid",
+          gap: 16,
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+        }}
+      >
+        {getPublicFeaturesTasks(config).map((task) => (
+          <FeatureLinkCard
+            card={{
+              href: publicFeatureHref(task.href, appBasePath),
+              level: 2,
+              slug: TASK_ICON_SLUGS[task.id],
+              summary: withCode(task.body),
+              title: task.title,
+            }}
+            key={task.id}
+          />
+        ))}
+      </div>
 
       {FEATURE_GROUPS.map((group) => (
         <Fragment key={group.title}>

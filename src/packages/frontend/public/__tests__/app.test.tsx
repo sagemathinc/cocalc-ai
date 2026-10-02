@@ -14,6 +14,7 @@ import {
 
 import { setStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import * as authApi from "@cocalc/frontend/auth/api";
+import { PUBLIC_FEATURES_HEADLINE } from "@cocalc/util/public-features-index";
 import {
   membershipPriceDisplay,
   PUBLIC_PRICING_CUSTOMER_OPERATED,
@@ -2459,10 +2460,7 @@ describe("feature configuration loading", () => {
   });
 
   it.each([
-    [
-      { view: "index" as const },
-      "One persistent project for people, tools, and agents.",
-    ],
+    [{ view: "index" as const }, PUBLIC_FEATURES_HEADLINE],
     [{ view: "detail" as const, slug: "terminal" }, "Linux Terminal"],
   ])(
     "keeps independent feature route %j usable while customize is pending",
@@ -2476,6 +2474,35 @@ describe("feature configuration loading", () => {
       expectNoCompute();
     },
   );
+
+  it("shows the features index sign-up button only once customize returns", async () => {
+    const customize = deferred<Response>();
+    global.fetch = jest.fn(() => customize.promise) as typeof fetch;
+    authBootstrap.mockResolvedValue({ signed_in: false } as Awaited<
+      ReturnType<typeof authApi.getControlPlaneAuthBootstrap>
+    >);
+    render(
+      <PublicApp
+        initialRoute={{ section: "features", route: { view: "index" } }}
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(authBootstrap).toHaveBeenCalled();
+    expect(
+      screen.getByRole("heading", { name: PUBLIC_FEATURES_HEADLINE, level: 1 }),
+    ).not.toBeNull();
+    for (const name of ["Create account", "Start on CoCalc.ai"]) {
+      expect(screen.queryByRole("link", { name })).toBeNull();
+    }
+    await act(async () => {
+      customize.resolve(customizeResponse("rocket"));
+    });
+    expect(
+      await screen.findByRole("link", { name: "Create account" }),
+    ).toHaveAttribute("href", "/auth/sign-up");
+  });
 
   it("still renders other public sections while customize is pending", async () => {
     const customize = deferred<Response>();
