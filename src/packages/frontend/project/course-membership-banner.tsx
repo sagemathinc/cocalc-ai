@@ -268,11 +268,12 @@ export function CourseMembershipBanner({ project_id }: { project_id: string }) {
             <span>
               {paymentAccess.status === "grace" ? (
                 <>
-                  You have full access until{" "}
+                  The course membership requirement is postponed until{" "}
                   <Text strong>
                     <TimeAgo date={paymentAccess.deadline} />
                   </Text>
-                  .
+                  . Your current membership&apos;s runtime and network limits
+                  still apply during this period.
                 </>
               ) : (
                 <>
