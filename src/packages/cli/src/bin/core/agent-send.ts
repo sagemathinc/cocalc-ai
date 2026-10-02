@@ -48,6 +48,8 @@ export interface AgentSendOptions {
 
 export interface AgentSendResult {
   outcome: AgentRpcOutcome;
+  /** The enrolled external-agent profile the message was sent as, if any. */
+  external_agent?: string;
   target_name?: string;
   project_title?: string;
   agent_network_title: string;
@@ -125,6 +127,7 @@ export async function sendAgentMessage(
   );
   const result = (outcome: AgentRpcOutcome): AgentSendResult => ({
     outcome,
+    ...(opts.externalAgent ? { external_agent: opts.externalAgent } : {}),
     ...(targetName ? { target_name: targetName } : {}),
     ...(projectTitle ? { project_title: projectTitle } : {}),
     agent_network_title,
@@ -221,6 +224,8 @@ export function agentSendSummary(result: AgentSendResult): string {
     result.project_title ? ` (${result.project_title})` : ""
   }`;
   const network = `Agent Network "${result.agent_network_title}"`;
+  if (outcome.outcome === "accepted" && isExternalAgentSource(outcome.target))
+    return `Delivered to ${who} via ${network}: saved in their external inbox. No turn starts; they see it when they next read their inbox, and any reply arrives as a new message in your thread.`;
   if (outcome.outcome === "accepted") {
     const turn =
       outcome.operation?.disposition === "steered"
@@ -240,8 +245,11 @@ export function agentSendSummary(result: AgentSendResult): string {
         : " Nothing was saved."
     }`;
   const target = outcome.target;
+  const profile = result.external_agent
+    ? ` --external-agent ${JSON.stringify(result.external_agent)}`
+    : "";
   const inspect = isExternalAgentSource(target)
     ? ""
-    : ` Check without resending: agent rpc inspect ${outcome.attempt_id} --agent-network ${outcome.agent_network_id} --to-agent ${target.agent_id} --target-project ${target.project_id}.`;
+    : ` Check without resending: agent rpc inspect ${outcome.attempt_id} --agent-network ${outcome.agent_network_id} --to-agent ${target.agent_id} --target-project ${target.project_id}${profile}.`;
   return `Delivery to ${who} via ${network} is unconfirmed: ${why}. It may still run, so do not resend automatically.${inspect} A deliberate retry needs a new --attempt-id.`;
 }

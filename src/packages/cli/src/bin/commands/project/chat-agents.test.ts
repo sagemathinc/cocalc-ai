@@ -2,9 +2,15 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test, { mock } from "node:test";
 import { Command } from "commander";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  ftruncateSync,
+  mkdtempSync,
+  openSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   friendlyAgentDestinations,
   registerAgentCommands,
@@ -262,7 +268,25 @@ test("the message comes from exactly one of arguments, --stdin and --file", asyn
       topLevel([]).parseAsync(["agent", "send", "reviewer", "--file", file], {
         from: "user",
       }),
-      /40000 bytes; the limit is 32768/,
+      /over 32768 bytes/,
+    );
+    // A huge sparse file is rejected after reading at most 32 KiB + 1.
+    const sparse = join(mkdtempSync(join(tmpdir(), "agent-send-")), "sparse");
+    const handle = openSync(sparse, "w");
+    ftruncateSync(handle, 1024 ** 4);
+    closeSync(handle);
+    await assert.rejects(
+      topLevel([]).parseAsync(["agent", "send", "reviewer", "--file", sparse], {
+        from: "user",
+      }),
+      /over 32768 bytes/,
+    );
+    await assert.rejects(
+      topLevel([]).parseAsync(
+        ["agent", "send", "reviewer", "--file", dirname(sparse)],
+        { from: "user" },
+      ),
+      /not a regular file|EISDIR/,
     );
   } finally {
     stderr.mock.restore();
@@ -291,6 +315,37 @@ test("broadcast --to resolves names and the shared network", async () => {
     assert.equal(broadcast.body, "Release tonight");
     assert.match(broadcast.broadcast_id, /^[0-9a-f-]{36}$/);
   } finally {
+    transport.mock.restore();
+  }
+});
+
+test("stdin stops at the message limit instead of buffering everything", async () => {
+  const { directory } = peers();
+  const requests: any[] = [];
+  const transport = fakeHub(directory, requests);
+  const { PassThrough } = require("node:stream");
+  const input = new PassThrough();
+  const stdin = Object.getOwnPropertyDescriptor(process, "stdin")!;
+  Object.defineProperty(process, "stdin", { value: input, configurable: true });
+  let written = 0;
+  // An endless producer: chunks keep coming until the reader stops.
+  const pump = setInterval(() => {
+    if (input.destroyed) return clearInterval(pump);
+    input.write(Buffer.alloc(8192, 120));
+    written += 8192;
+  }, 1);
+  try {
+    await assert.rejects(
+      topLevel([]).parseAsync(["agent", "send", "reviewer", "--stdin"], {
+        from: "user",
+      }),
+      /over 32768 bytes/,
+    );
+    assert.ok(written < 1024 * 1024);
+    assert.equal(requests.length, 0);
+  } finally {
+    clearInterval(pump);
+    Object.defineProperty(process, "stdin", stdin);
     transport.mock.restore();
   }
 });

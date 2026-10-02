@@ -5,7 +5,8 @@ import type {
   AgentNetworkMemberLocator,
 } from "@cocalc/conat/agents/personal";
 import type { ProjectCommandDeps } from "../project";
-import { readFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open } from "node:fs/promises";
 import { sendIdentityMessage } from "../../core/agent-message";
 import { sendExternalAgentMessage } from "../../core/external-agent-message";
 import { resolveBroadcastTargets } from "../../core/agent-destination";
@@ -371,10 +372,51 @@ function needsDiscovery(entries: unknown, network?: string): boolean {
   );
 }
 
-async function readStdin(): Promise<string> {
-  let value = "";
-  for await (const chunk of process.stdin) value += chunk;
-  return value;
+const tooLong = () =>
+  new Error(
+    `message is over ${MAX_MESSAGE_BYTES} bytes, the limit; send longer text with --attach`,
+  );
+
+/** Standard input, stopping as soon as it passes the message limit. */
+async function readStdin(): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of process.stdin) {
+    const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += data.length;
+    if (total > MAX_MESSAGE_BYTES) {
+      process.stdin.destroy();
+      throw tooLong();
+    }
+    chunks.push(data);
+  }
+  return Buffer.concat(chunks);
+}
+
+/** A regular file, reading at most one byte past the message limit. */
+async function readMessageFile(path: string): Promise<Buffer> {
+  // Non-blocking, so a FIFO or device can't hang the open.
+  const handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    if (!(await handle.stat()).isFile())
+      throw new Error(`--file ${path} is not a regular file`);
+    const data = Buffer.alloc(MAX_MESSAGE_BYTES + 1);
+    let offset = 0;
+    while (offset < data.length) {
+      const { bytesRead } = await handle.read(
+        data,
+        offset,
+        data.length - offset,
+        offset,
+      );
+      if (!bytesRead) break;
+      offset += bytesRead;
+    }
+    if (offset > MAX_MESSAGE_BYTES) throw tooLong();
+    return data.subarray(0, offset);
+  } finally {
+    await handle.close();
+  }
 }
 
 /** The message from arguments, --stdin or --file: exactly one of them. */
@@ -389,17 +431,14 @@ async function messageBody(
     throw new Error(
       "Give the message as arguments, --stdin, or --file (exactly one)",
     );
-  const body = opts.file
-    ? await readFile(opts.file, "utf8")
+  const data = opts.file
+    ? await readMessageFile(opts.file)
     : opts.stdin
       ? await readStdin()
-      : message.join(" ");
+      : Buffer.from(message.join(" "), "utf8");
+  if (data.length > MAX_MESSAGE_BYTES) throw tooLong();
+  const body = data.toString("utf8");
   if (!body.trim()) throw new Error("message must not be empty");
-  const bytes = Buffer.byteLength(body, "utf8");
-  if (bytes > MAX_MESSAGE_BYTES)
-    throw new Error(
-      `message is ${bytes} bytes; the limit is ${MAX_MESSAGE_BYTES}. Send longer text with --attach.`,
-    );
   return body;
 }
 
