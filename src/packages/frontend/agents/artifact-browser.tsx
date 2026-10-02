@@ -62,6 +62,7 @@ interface Props {
   onShowConversation?: (hit: AgentSearchHit) => Promise<void>;
   onClose?: () => void;
   navigation?: ReactNode;
+  onNewArtifact?: () => void;
   /** artifactIdentity(hit); applied on return, without changing filters. */
   selectedArtifactIdentity?: string;
 }
@@ -79,6 +80,7 @@ function AccountArtifactBrowser({
   onShowConversation,
   onClose,
   navigation,
+  onNewArtifact,
   selectedArtifactIdentity,
 }: Props) {
   const [query, setQuery] = useState("");
@@ -447,6 +449,11 @@ function AccountArtifactBrowser({
           >
             Library
           </h1>
+          {onNewArtifact && (
+            <Button icon={<Icon name="plus" />} onClick={onNewArtifact}>
+              New artifact
+            </Button>
+          )}
           <div
             role="group"
             aria-label="Library view"

@@ -1,4 +1,5 @@
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
+import { isLibraryChat, libraryChatAgent } from "./library-chat";
 import type { PersonalLibraryAlias } from "@cocalc/util/personal-library";
 import type { ArtifactCatalogItem } from "@cocalc/util/artifact-catalog";
 import type { AgentSearchHit } from "./search-runner";
@@ -255,7 +256,8 @@ export const artifactIdentity = ({ agent, hit }: AgentSearchHit) =>
     hit.artifact_id,
   ]);
 
-/** Only current, known agents can be opened by the existing Workbench handler. */
+/** Only current, known agents can be opened by the existing Workbench handler,
+ * plus each project's Library conversation (hand-made artifacts). */
 export function catalogResults(
   entries: CatalogEntry[],
   agents: NamedAgent[],
@@ -293,9 +295,11 @@ export function catalogResults(
   const results: AgentSearchHit[] = [];
   for (const entry of entries) {
     const item = entry.item;
-    const agent = known.get(
-      sourceKey(entry.project_id, entry.chat_path, item.thread_id),
-    );
+    const agent =
+      known.get(sourceKey(entry.project_id, entry.chat_path, item.thread_id)) ??
+      (isLibraryChat(entry.chat_path)
+        ? libraryChatAgent(entry.project_id, entry.chat_path, item.thread_id)
+        : undefined);
     if (!agent || (project && project !== entry.project_id)) continue;
     if (
       needle &&

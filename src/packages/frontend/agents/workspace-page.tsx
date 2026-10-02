@@ -136,6 +136,9 @@ import { AgentsOverview } from "./agents-overview";
 import { SidebarNotifications, SidebarStatus } from "./sidebar-status";
 import { ProjectsSearchDrawer } from "@cocalc/frontend/projects/projects-search-drawer";
 import { LibrarySidebar } from "./library-sidebar";
+import { isLibraryChatAgent } from "./library-chat";
+import { NewArtifactDialog } from "./new-artifact-dialog";
+import { sharedArtifactCatalog } from "./artifact-catalog-store";
 import { PeopleSidebar } from "@cocalc/frontend/people/people-sidebar";
 import {
   librarySearchRequest,
@@ -3181,6 +3184,7 @@ export function MyAgentsWorkspacePage({
           ? "people"
           : "agents";
   const [projectSearchOpen, setProjectSearchOpen] = useState(false);
+  const [newArtifactOpen, setNewArtifactOpen] = useState(false);
   // With sidebar navigation, Projects, the Library and People list their own
   // things in the sidebar (instead of agents), like Agents does.
   const listMode: "projects" | "library" | "people" | undefined =
@@ -3606,6 +3610,14 @@ export function MyAgentsWorkspacePage({
   }
 
   async function openLibraryHit(result: AgentSearchHit, conversation = false) {
+    // A hand-made artifact's conversation is the project's Library chat.
+    if (conversation && isLibraryChatAgent(result.agent))
+      return showLibraryConversation({
+        projectId: result.agent.endpoint.project_id,
+        path: result.agent.path,
+        threadId: result.threadId,
+        artifactId: result.hit.artifact_id ?? "",
+      });
     if (conversation) return openSearchHit(result, true);
     if (!result.catalogEntryId)
       throw Error("Artifact catalog identity missing");
@@ -4326,6 +4338,7 @@ export function MyAgentsWorkspacePage({
                         void openLibraryHit(hit);
                       }}
                       onAll={showLibrary}
+                      onNew={() => setNewArtifactOpen(true)}
                     />
                   )}
                   {listMode === "people" && (
@@ -4752,10 +4765,26 @@ export function MyAgentsWorkspacePage({
               (!isNarrow || !mobileList)
             }
             navigation={libraryNavigationControl()}
+            onNewArtifact={() => setNewArtifactOpen(true)}
             onSelect={openLibraryHit}
             onShowConversation={(result) => openLibraryHit(result, true)}
           />
         )}
+        <NewArtifactDialog
+          open={newArtifactOpen}
+          onClose={() => setNewArtifactOpen(false)}
+          onCreated={() => {
+            void antdMessage.success(
+              "Added to the Library; it appears there in a few seconds.",
+            );
+            if (accountId)
+              void sharedArtifactCatalog(accountId, (opts) =>
+                webapp_client.conat_client.hub.artifactCatalog.listProject(
+                  opts,
+                ),
+              ).refresh();
+          }}
+        />
         {accountId && (
           <AgentsOverview
             active={active && overviewOpen && (!isNarrow || !mobileList)}
