@@ -330,7 +330,11 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       def(SECTIONS, 'label: "People",'),
       def(SECTIONS, 'id: "people",'),
     ],
-    usedIn: [conventions("the People section of project settings")],
+    usedIn: [
+      conventions("the People section of project settings"),
+      { file: doc("collaboration"), text: "**Settings -> People**" },
+      { file: doc("research"), text: "project's **People** settings" },
+    ],
   },
   {
     id: "quick-navigation",

@@ -107,7 +107,7 @@ needs that conversation, retaining its path and thread query parameters. Use
 ## Give the recipient the right access
 
 1. From Essential, choose **More**, **Settings**, then **Full project settings**.
-   Open **People** in the full interface.
+   Open the project's **People** settings.
 2. Follow [Add project collaborators](/docs/projects/collaborators). Choose
    **Collaborator** when the person must edit or rerun the analysis, or
    **Viewer** when they only need to read the saved results. For a viewer,
