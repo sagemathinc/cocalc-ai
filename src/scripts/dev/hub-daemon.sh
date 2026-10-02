@@ -1308,10 +1308,45 @@ build_daemon() {
   (
     cd "$SRC_DIR"
     pnpm build
-    pnpm --dir "$SRC_DIR/packages/project-host" build:bundle
-    pnpm --dir "$SRC_DIR/packages/project" build:bundle
-    pnpm --dir "$SRC_DIR/packages/project" build:tools
+    # The three bundles only read what `pnpm build` produced and write to
+    # their own output directories, so they are built in parallel.
+    run_parallel_logged \
+      "project-host bundle" pnpm --dir "$SRC_DIR/packages/project-host" build:bundle -- \
+      "project bundle" pnpm --dir "$SRC_DIR/packages/project" build:bundle -- \
+      "tools" pnpm --dir "$SRC_DIR/packages/project" build:tools
   )
+}
+
+# run_parallel_logged NAME CMD... -- NAME CMD... -- ...
+# Runs the commands concurrently, streaming their output with each line
+# prefixed by its name. Fails (after all finish) if any command failed.
+run_parallel_logged() {
+  local names=() pids=() status=0
+  while [ $# -gt 0 ]; do
+    local name="$1" cmd=()
+    shift
+    while [ $# -gt 0 ] && [ "$1" != "--" ]; do
+      cmd+=("$1")
+      shift
+    done
+    [ $# -gt 0 ] && shift
+    names+=("$name")
+    (
+      set -o pipefail
+      "${cmd[@]}" 2>&1 | sed -u "s/^/[$name] /"
+    ) &
+    pids+=("$!")
+  done
+  local i
+  for i in "${!pids[@]}"; do
+    if wait "${pids[$i]}"; then
+      echo "=== ${names[$i]}: ok"
+    else
+      echo "=== ${names[$i]}: FAILED"
+      status=1
+    fi
+  done
+  return "$status"
 }
 
 refresh_hub_env() {
