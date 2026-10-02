@@ -38,3 +38,22 @@ test("ignores reports without limits and invalid bindings", async () => {
   await jest.advanceTimersByTimeAsync(60_000);
   expect(write).not.toHaveBeenCalled();
 });
+
+test("forgets credentials that have been quiet for an interval", async () => {
+  const write = jest.fn(async () => {});
+  const record = createClaudeUsageRecorder({ write, minIntervalMs: 30_000 });
+  for (let i = 0; i < 100; i++) {
+    record({
+      projectId,
+      accountId,
+      credentialId: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      info: info(0.1),
+    });
+  }
+  await jest.advanceTimersByTimeAsync(0);
+  expect(write).toHaveBeenCalledTimes(100);
+  expect(record.size()).toBe(100);
+  await jest.advanceTimersByTimeAsync(30_000);
+  expect(record.size()).toBe(0);
+  expect(write).toHaveBeenCalledTimes(100);
+});

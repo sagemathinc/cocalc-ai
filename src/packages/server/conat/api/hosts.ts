@@ -3210,6 +3210,10 @@ export async function recordClaudeSubscriptionUsage({
   // Store only revalidated numbers, never what the host sent.
   const snapshot = parseClaudeRateLimitSnapshot(usage);
   if (!snapshot) throw new Error("invalid Claude usage");
+  // Trusted-host attribution, as for fetching the credential: a host running
+  // one of the owner's projects may report usage for any of the owner's Claude
+  // subscriptions. It is not tied to the controller that used the credential,
+  // so a host can at worst misstate the displayed usage numbers.
   await assertHostCredentialProjectAccess({
     host_id,
     project_id,

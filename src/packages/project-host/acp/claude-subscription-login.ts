@@ -13,6 +13,7 @@ import { harnessOwner } from "./harness-reaper";
 import {
   claudeOAuthTokenFromOutput,
   claudeOAuthTokenLine,
+  looksLikeClaudeSecret,
 } from "./claude-subscription-token";
 import {
   CLAUDE_LOGIN_PREFIX,
@@ -49,6 +50,8 @@ type LoginSession = ClaudeSubscriptionLoginStatus & {
   timer: ReturnType<typeof setTimeout>;
   output: string;
   codeSubmitted: boolean;
+  // The submitted code, so that its echo is never mistaken for a token.
+  code: string;
   completion?: Promise<void>;
 };
 
@@ -187,7 +190,8 @@ export class ClaudeSubscriptionLoginService {
         mode: 0o600,
       });
       if (this.closed) throw Error("Claude sign-in service is closed");
-      // A wide terminal keeps the URL and token on single lines.
+      // A wide terminal keeps the URL and token on single lines; no echo, so
+      // the code the user pastes is not printed back.
       const command = [
         this.options.cliPath,
         ...(this.options.argsPrefix ?? []),
@@ -202,7 +206,7 @@ export class ClaudeSubscriptionLoginService {
           "-e",
           "-f",
           "-c",
-          `stty cols 4000 rows 40 2>/dev/null; exec ${command}`,
+          `stty cols 4000 rows 40 -echo 2>/dev/null; exec ${command}`,
           "/dev/null",
         ],
         {
@@ -231,6 +235,7 @@ export class ClaudeSubscriptionLoginService {
       state: "pending",
       output: "",
       codeSubmitted: false,
+      code: "",
     };
     this.sessions.set(id, session);
     const append = (chunk: Buffer) => {
@@ -241,7 +246,7 @@ export class ClaudeSubscriptionLoginService {
       const text = terminalText(session.output);
       session.verificationUrl ??= providerUrl(text);
       if (!session.codeSubmitted) return;
-      const token = claudeOAuthTokenLine(text);
+      const token = claudeOAuthTokenLine(text, session.code);
       if (token) {
         // Only telemetry and exit remain for the CLI: save the token now.
         session.completion = this.publish(session, token);
@@ -301,7 +306,13 @@ export class ClaudeSubscriptionLoginService {
       /[\s\x00-\x1f\x7f]/.test(value)
     )
       throw Error("Invalid Claude sign-in code");
+    // Only a token Claude prints after the exchange is saved, never one pasted.
+    if (looksLikeClaudeSecret(value))
+      throw Error(
+        "That is a Claude token, not a sign-in code. Paste the code Claude shows after you approve.",
+      );
     session.codeSubmitted = true;
+    session.code = value;
     // Forget the pre-code output so a later match comes from the result.
     session.output = "";
     // Keep stdin open while the terminal UI exchanges the code.
@@ -339,7 +350,7 @@ export class ClaudeSubscriptionLoginService {
     if (session.state !== "pending") return Promise.resolve();
     // The CLI exited: its output is complete, so a token cannot be partial.
     const token = session.codeSubmitted
-      ? claudeOAuthTokenFromOutput(terminalText(session.output))
+      ? claudeOAuthTokenFromOutput(terminalText(session.output), session.code)
       : undefined;
     if (code !== 0 || !token) {
       this.fail(session, "Claude sign-in did not complete");
@@ -371,6 +382,7 @@ export class ClaudeSubscriptionLoginService {
       this.fail(session, "Claude subscription could not be saved");
     } finally {
       session.output = "";
+      session.code = "";
       await rm(session.home, { recursive: true, force: true });
     }
   }
@@ -380,6 +392,7 @@ export class ClaudeSubscriptionLoginService {
     clearTimeout(session.timer);
     session.state = "failed";
     session.error = error;
+    session.code = "";
     this.retire(session);
     this.removeHomeAfterExit(session);
     this.kill(session);

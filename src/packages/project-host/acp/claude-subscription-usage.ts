@@ -67,6 +67,8 @@ export function createClaudeUsageRecorder({
   write = writeToHomeBay,
   minIntervalMs = MIN_INTERVAL_MS,
 }: { write?: Write; minIntervalMs?: number } = {}) {
+  // An entry outlives its last save by one interval, which spaces out saves,
+  // and is then dropped: a long-lived host serves any number of accounts.
   const entries = new Map<string, Entry>();
   const flush = (key: string) => {
     const entry = entries.get(key);
@@ -74,13 +76,18 @@ export function createClaudeUsageRecorder({
     entry.timer = undefined;
     const usage = entry.latest;
     entry.latest = undefined;
-    if (!usage) return;
+    if (!usage) {
+      entries.delete(key);
+      return;
+    }
     entry.lastWrite = Date.now();
     void write({ ...entry, usage }).catch((error) =>
       logger.debug("Claude usage was not saved", { error: `${error}` }),
     );
+    entry.timer = setTimeout(() => flush(key), minIntervalMs);
+    entry.timer.unref?.();
   };
-  return (options: {
+  const recordUsage = (options: {
     projectId: string;
     accountId: string;
     credentialId: string;
@@ -111,6 +118,7 @@ export function createClaudeUsageRecorder({
     timer.unref?.();
     entries.get(key)!.timer = timer;
   };
+  return Object.assign(recordUsage, { size: () => entries.size });
 }
 
 const record = createClaudeUsageRecorder();
