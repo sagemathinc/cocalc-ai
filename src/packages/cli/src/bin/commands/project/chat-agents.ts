@@ -65,6 +65,108 @@ export function registerAgentCommands(
     globalsFrom,
   } = deps;
   agent.addHelpText("after", AGENT_HELP);
+  agent
+    .command("send <name> [message...]")
+    .description(
+      "send one message to a network peer by name; a reply arrives as a new message in your thread",
+    )
+    .option("--stdin", "read the message from standard input")
+    .option("--file <path>", "read the message from a UTF-8 file")
+    .option(
+      "--attach <path>",
+      "attach a file (repeatable; at most 16 files, 32 MiB total)",
+      collect,
+      [],
+    )
+    .option(
+      "--network <title>",
+      "Agent Network title, when the peer is in several",
+    )
+    .option(
+      "--attempt-id <uuid>",
+      "attempt id (default: new); a deliberate retry needs a NEW id",
+    )
+    .option("--external-agent <profile>", "use an enrolled external agent")
+    .action(async (name: string, message: string[], opts, cmd) => {
+      const body = await messageBody(message, opts);
+      const globals = globalsFrom(cmd);
+      const sent = await sendAgentMessage({
+        body,
+        to: name,
+        agentNetwork: opts.network,
+        attach: opts.attach,
+        attemptId: opts.attemptId,
+        externalAgent: opts.externalAgent,
+        api: globals.api,
+      });
+      emitSuccess({ globals }, `${prefix} send`, {
+        summary: agentSendSummary(sent),
+        ...sent.outcome,
+      });
+      process.exitCode = agentSendExitCode(sent.outcome.outcome);
+    });
+  agent
+    .command("broadcast [message...]")
+    .option("--to <names>", "comma-separated peer names, such as a,b")
+    .option(
+      "--targets <json>",
+      `JSON array of peer names or targets, such as '["reviewer"]' or '[{"project_id":"...","agent_id":"..."}]' (objects printed by rpc destinations also work)`,
+    )
+    .option(
+      "--agent-network <title-or-uuid>",
+      "Agent Network; default: the one all targets share",
+    )
+    .option(
+      "--broadcast-id <uuid>",
+      "retry id (default: new, returned as broadcast_id); reuse it only to retry this same broadcast",
+    )
+    .option("--stdin", "read the message from standard input")
+    .option("--file <path>", "read the message from a UTF-8 file")
+    .option("--external-agent <profile>", "use an enrolled external agent")
+    .description("send one message to several network members")
+    .action(async (message: string[], opts, cmd) => {
+      const body = await messageBody(message, opts);
+      if (!!opts.to === !!opts.targets)
+        throw new Error("Name the recipients with either --to or --targets");
+      let entries: unknown[];
+      if (opts.to) {
+        entries = `${opts.to}`
+          .split(",")
+          .map((name) => name.trim())
+          .filter(Boolean);
+      } else {
+        try {
+          entries = JSON.parse(opts.targets);
+        } catch {
+          throw new Error("--targets must be a JSON array");
+        }
+      }
+      const globals = globalsFrom(cmd);
+      const send = (request) =>
+        opts.externalAgent
+          ? sendExternalAgentMessage(opts.externalAgent, request)
+          : sendIdentityMessage(request, globals.api);
+      // Explicit targets in an explicit network need no discovery.
+      const resolved = needsDiscovery(entries, opts.agentNetwork)
+        ? resolveBroadcastTargets(
+            entries,
+            (await send({
+              version: 3,
+              action: "destinations",
+            })) as AgentNetworkDiscovery,
+            opts.agentNetwork,
+          )
+        : resolveBroadcastTargets(entries, undefined, opts.agentNetwork);
+      const request = {
+        version: 3 as const,
+        action: "broadcast" as const,
+        broadcast_id: opts.broadcastId ?? randomUUID(),
+        agent_network_id: resolved.agent_network_id,
+        targets: resolved.targets,
+        body,
+      };
+      emitSuccess({ globals }, `${prefix} broadcast`, await send(request));
+    });
   const rpc = agent
     .command("rpc")
     .description("network-authorized agent messaging protocol v3");
@@ -182,108 +284,6 @@ export function registerAgentCommands(
           ? await sendExternalAgentMessage(opts.externalAgent, request)
           : await sendIdentityMessage(request, globals.api),
       );
-    });
-  agent
-    .command("send <name> [message...]")
-    .description(
-      "send one message to a network peer by name; a reply arrives as a new message in your thread",
-    )
-    .option("--stdin", "read the message from standard input")
-    .option("--file <path>", "read the message from a UTF-8 file")
-    .option(
-      "--attach <path>",
-      "attach a file (repeatable; at most 16 files, 32 MiB total)",
-      collect,
-      [],
-    )
-    .option(
-      "--network <title>",
-      "Agent Network title, when the peer is in several",
-    )
-    .option(
-      "--attempt-id <uuid>",
-      "attempt id (default: new); a deliberate retry needs a NEW id",
-    )
-    .option("--external-agent <profile>", "use an enrolled external agent")
-    .action(async (name: string, message: string[], opts, cmd) => {
-      const body = await messageBody(message, opts);
-      const globals = globalsFrom(cmd);
-      const sent = await sendAgentMessage({
-        body,
-        to: name,
-        agentNetwork: opts.network,
-        attach: opts.attach,
-        attemptId: opts.attemptId,
-        externalAgent: opts.externalAgent,
-        api: globals.api,
-      });
-      emitSuccess({ globals }, `${prefix} send`, {
-        summary: agentSendSummary(sent),
-        ...sent.outcome,
-      });
-      process.exitCode = agentSendExitCode(sent.outcome.outcome);
-    });
-  agent
-    .command("broadcast [message...]")
-    .option("--to <names>", "comma-separated peer names, such as a,b")
-    .option(
-      "--targets <json>",
-      `JSON array of peer names or targets, such as '["reviewer"]' or '[{"project_id":"...","agent_id":"..."}]' (objects printed by rpc destinations also work)`,
-    )
-    .option(
-      "--agent-network <title-or-uuid>",
-      "Agent Network; default: the one all targets share",
-    )
-    .option(
-      "--broadcast-id <uuid>",
-      "retry id (default: new, returned as broadcast_id); reuse it only to retry this same broadcast",
-    )
-    .option("--stdin", "read the message from standard input")
-    .option("--file <path>", "read the message from a UTF-8 file")
-    .option("--external-agent <profile>", "use an enrolled external agent")
-    .description("send one message to several network members")
-    .action(async (message: string[], opts, cmd) => {
-      const body = await messageBody(message, opts);
-      if (!!opts.to === !!opts.targets)
-        throw new Error("Name the recipients with either --to or --targets");
-      let entries: unknown[];
-      if (opts.to) {
-        entries = `${opts.to}`
-          .split(",")
-          .map((name) => name.trim())
-          .filter(Boolean);
-      } else {
-        try {
-          entries = JSON.parse(opts.targets);
-        } catch {
-          throw new Error("--targets must be a JSON array");
-        }
-      }
-      const globals = globalsFrom(cmd);
-      const send = (request) =>
-        opts.externalAgent
-          ? sendExternalAgentMessage(opts.externalAgent, request)
-          : sendIdentityMessage(request, globals.api);
-      // Explicit targets in an explicit network need no discovery.
-      const resolved = needsDiscovery(entries, opts.agentNetwork)
-        ? resolveBroadcastTargets(
-            entries,
-            (await send({
-              version: 3,
-              action: "destinations",
-            })) as AgentNetworkDiscovery,
-            opts.agentNetwork,
-          )
-        : resolveBroadcastTargets(entries, undefined, opts.agentNetwork);
-      const request = {
-        version: 3 as const,
-        action: "broadcast" as const,
-        broadcast_id: opts.broadcastId ?? randomUUID(),
-        agent_network_id: resolved.agent_network_id,
-        targets: resolved.targets,
-        body,
-      };
-      emitSuccess({ globals }, `${prefix} broadcast`, await send(request));
     });
   rpc
     .command("inspect <attempt-id>")
