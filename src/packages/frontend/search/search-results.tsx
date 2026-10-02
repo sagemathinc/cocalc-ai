@@ -42,7 +42,12 @@ import {
 } from "@cocalc/frontend/projects/file-search-runner";
 import { useProjectAliases } from "@cocalc/frontend/projects/project-aliases";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
-import { searchProjectContents, type ContentHit } from "./content-search";
+import {
+  searchProjectContents,
+  searchProjectSnapshots,
+  type ContentHit,
+  type SnapshotHit,
+} from "./content-search";
 import { searchableProjects } from "./searchable-projects";
 import { closeSearch, useSearchState, type SearchScope } from "./search-store";
 
@@ -54,7 +59,8 @@ type SectionKey =
   | "files"
   | "contents"
   | "people"
-  | "conversations";
+  | "conversations"
+  | "snapshots";
 
 const ORDER: Record<SearchScope, SectionKey[]> = {
   agents: [
@@ -66,6 +72,7 @@ const ORDER: Record<SearchScope, SectionKey[]> = {
     "contents",
     "people",
     "conversations",
+    "snapshots",
   ],
   projects: [
     "projects",
@@ -76,6 +83,7 @@ const ORDER: Record<SearchScope, SectionKey[]> = {
     "artifacts",
     "people",
     "conversations",
+    "snapshots",
   ],
   artifacts: [
     "artifacts",
@@ -86,6 +94,7 @@ const ORDER: Record<SearchScope, SectionKey[]> = {
     "contents",
     "people",
     "conversations",
+    "snapshots",
   ],
   people: [
     "people",
@@ -96,6 +105,7 @@ const ORDER: Record<SearchScope, SectionKey[]> = {
     "projects",
     "files",
     "contents",
+    "snapshots",
   ],
 };
 
@@ -116,6 +126,7 @@ const TITLES: Record<SectionKey, string> = {
   contents: "In files",
   people: "People",
   conversations: "Conversations",
+  snapshots: "In snapshots",
 };
 
 const INSTANT_LIMIT = 50;
@@ -138,10 +149,25 @@ export function SearchResults(props: SearchResultsProps) {
   const { query, scope, run } = useSearchState();
   const [counts, setCounts] = useState<Partial<Record<SectionKey, string>>>({});
   const [expanded, setExpanded] = useState<SectionKey[]>(EXPANDED[scope]);
+  // File names and contents that found nothing (in the projects searched)
+  // bring in the snapshots, e.g. to find something deleted.
+  const [, setEmptyNow] = useState<SectionKey[]>([]);
   useEffect(() => {
     setExpanded(EXPANDED[scope]);
     setCounts({});
+    setEmptyNow([]);
   }, [run, scope]);
+  const done = (key: SectionKey) => (hits: number) => {
+    if (hits > 0) return;
+    setEmptyNow((keys) => {
+      const next = keys.includes(key) ? keys : [...keys, key];
+      if (next.includes("files") && next.includes("contents"))
+        setExpanded((open) =>
+          open.includes("snapshots") ? open : [...open, "snapshots"],
+        );
+      return next;
+    });
+  };
   const report = (key: SectionKey) => (count: string) =>
     setCounts((c) => (c[key] === count ? c : { ...c, [key]: count }));
 
@@ -160,8 +186,21 @@ export function SearchResults(props: SearchResultsProps) {
       />
     ),
     projects: <ProjectsSection query={query} onCount={report("projects")} />,
-    files: <FilesSection query={query} onCount={report("files")} />,
-    contents: <ContentsSection query={query} onCount={report("contents")} />,
+    files: (
+      <FilesSection
+        query={query}
+        onCount={report("files")}
+        onDone={done("files")}
+      />
+    ),
+    contents: (
+      <ContentsSection
+        query={query}
+        onCount={report("contents")}
+        onDone={done("contents")}
+      />
+    ),
+    snapshots: <SnapshotsSection query={query} onCount={report("snapshots")} />,
     people: <PeopleSection query={query} onCount={report("people")} />,
     conversations: (
       <ConversationsSection query={query} onCount={report("conversations")} />
@@ -630,6 +669,8 @@ function useProjectSearch<T>(
     items: T[];
     truncated: boolean;
   }>,
+  // Called once the first pass finishes, with how many hits it found.
+  onDone?: (hits: number) => void,
 ) {
   const project_map = useTypedRedux("projects", "project_map");
   const account_id = useTypedRedux("account", "account_id");
@@ -669,7 +710,10 @@ function useProjectSearch<T>(
           if (!canceled.value) setProgress(merge(next));
         },
       });
-      if (!canceled.value) setProgress(merge(result));
+      if (!canceled.value) {
+        setProgress(merge(result));
+        if (!more) onDone?.(result.hits.length);
+      }
     } catch (err) {
       if (!canceled.value) setError(`${err}`);
     } finally {
@@ -700,9 +744,11 @@ function groupByProject<T extends { project_id: string }>(hits: T[]) {
 function FilesSection({
   query,
   onCount,
+  onDone,
 }: {
   query: string;
   onCount: (c: string) => void;
+  onDone?: (hits: number) => void;
 }) {
   const projectTitle = useProjectTitle();
   const { progress, busy, error, more } = useProjectSearch(
@@ -718,6 +764,7 @@ function FilesSection({
         truncated,
       };
     },
+    onDone,
   );
   useReportCount(onCount, countLabel(progress, busy));
   return (
@@ -760,13 +807,16 @@ function FilesSection({
 function ContentsSection({
   query,
   onCount,
+  onDone,
 }: {
   query: string;
   onCount: (c: string) => void;
+  onDone?: (hits: number) => void;
 }) {
   const projectTitle = useProjectTitle();
   const { progress, busy, error, more } = useProjectSearch<ContentHit>(
     (project_id, timeout) => searchProjectContents(project_id, query, timeout),
+    onDone,
   );
   useReportCount(onCount, countLabel(progress, busy));
   return (
@@ -896,6 +946,77 @@ function MessagesSection({
             closeSearch();
           }}
         />
+      ))}
+    </>
+  );
+}
+
+function SnapshotsSection({
+  query,
+  onCount,
+}: {
+  query: string;
+  onCount: (c: string) => void;
+}) {
+  const projectTitle = useProjectTitle();
+  const { progress, busy, error, more } = useProjectSearch<SnapshotHit>(
+    (project_id, timeout) => searchProjectSnapshots(project_id, query, timeout),
+  );
+  useReportCount(onCount, countLabel(progress, busy));
+  return (
+    <>
+      <Typography.Paragraph type="secondary" style={{ marginBottom: 6 }}>
+        File names and contents in your projects' snapshots, the newest copy of
+        each.
+      </Typography.Paragraph>
+      <Coverage
+        busy={busy}
+        searched={progress?.searched.length ?? 0}
+        unavailable={progress?.unavailable.length ?? 0}
+        pending={busy ? 0 : (progress?.pending.length ?? 0)}
+        unit="projects"
+        onMore={more}
+      />
+      {error && <Alert role="alert" type="error" title={error} />}
+      {progress && !busy && !progress.hits.length && (
+        <Empty>Nothing matches in the snapshots searched.</Empty>
+      )}
+      {groupByProject(progress?.hits ?? []).map(([project_id, hits]) => (
+        <section key={project_id} aria-label={projectTitle(project_id)}>
+          <Typography.Text strong style={{ display: "block", marginTop: 8 }}>
+            {projectTitle(project_id)}
+          </Typography.Text>
+          {hits.map((hit) => (
+            <ResultRow
+              key={`${hit.snapshot}/${hit.path}:${hit.line ?? ""}`}
+              label={`Open ${hit.path}${hit.line ? ` line ${hit.line}` : ""} from snapshot ${hit.snapshot} in ${projectTitle(project_id)}`}
+              title={
+                <span style={{ fontFamily: "monospace", fontSize: 13 }}>
+                  {hit.line ? (
+                    `${hit.path}:${hit.line}`
+                  ) : (
+                    <Highlight text={hit.path} query={query} />
+                  )}
+                </span>
+              }
+              meta={`snapshot ${hit.snapshot.slice(0, 16).replace("T", " ")}`}
+              detail={
+                hit.text ? (
+                  <span style={{ fontFamily: "monospace", fontSize: 12 }}>
+                    <Highlight text={hit.text} query={query} />
+                  </span>
+                ) : undefined
+              }
+              onOpen={() =>
+                void openProjectFile(
+                  project_id,
+                  `.snapshots/${hit.snapshot}/${hit.path}`,
+                  hit.line,
+                )
+              }
+            />
+          ))}
+        </section>
       ))}
     </>
   );

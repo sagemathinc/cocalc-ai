@@ -7,6 +7,7 @@ import { closeSearch, getSearchState, openSearch } from "./search-store";
 const openProject = jest.fn();
 const fileSearch = jest.fn();
 const contentSearch = jest.fn();
+const snapshotSearch = jest.fn();
 
 jest.mock("@cocalc/frontend/app-framework", () => {
   const { fromJS } = require("immutable");
@@ -75,6 +76,7 @@ jest.mock("@cocalc/frontend/projects/file-search-runner", () => ({
 }));
 jest.mock("./content-search", () => ({
   searchProjectContents: (...a) => contentSearch(...a),
+  searchProjectSnapshots: (...a) => snapshotSearch(...a),
 }));
 
 const props = {
@@ -138,5 +140,24 @@ test("project aliases match", () => {
   const region = screen.getByRole("region", { name: "Search results" });
   expect(
     within(region).getByRole("button", { name: "Open project Thesis" }),
+  ).toBeInTheDocument();
+});
+
+test("when file names and contents find nothing, the snapshots are searched", async () => {
+  fileSearch.mockResolvedValue({ paths: [], truncated: false });
+  contentSearch.mockResolvedValue({ items: [], truncated: false });
+  snapshotSearch.mockImplementation(async (project_id) => ({
+    items:
+      project_id === "p1"
+        ? [{ project_id, snapshot: "2026-09-01T10:00:00Z", path: "gone.tex" }]
+        : [],
+    truncated: false,
+  }));
+  act(() => openSearch("gone", "projects"));
+  render(<SearchResults {...props} />);
+  expect(
+    await screen.findByRole("button", {
+      name: "Open gone.tex from snapshot 2026-09-01T10:00:00Z in Thesis",
+    }),
   ).toBeInTheDocument();
 });
