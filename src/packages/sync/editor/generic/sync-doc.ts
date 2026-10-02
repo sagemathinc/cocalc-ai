@@ -217,40 +217,48 @@ function syncDebug(event: string, data: () => Record<string, unknown>): void {
 }
 logger.debug("init");
 
+// Where to load older history from: the stream position of the snapshot
+// before the oldest loaded one (see conatSnapshotSeqInfo), or the start of the
+// stream if the oldest loaded snapshot is the first one or none is loaded.
 export function prevSeqForMoreHistoryFromHistory(
   history: {
     time: PatchId;
     isSnapshot?: boolean;
-    seqInfo?: { prevSeq?: number };
+    seqInfo?: { prevSeq?: number; prev_seq?: number };
   }[],
 ): number | undefined {
-  let prevSeq: number | undefined;
+  if (history.length == 0) return undefined;
+  let oldest: { prevSeq?: number } | undefined;
   let oldestTimeMs: number | undefined;
   for (const p of history) {
-    if (p.isSnapshot && p.seqInfo?.prevSeq != null) {
-      const timeMs = decodePatchId(p.time).timeMs;
-      if (oldestTimeMs == null || timeMs < oldestTimeMs) {
-        oldestTimeMs = timeMs;
-        prevSeq = p.seqInfo.prevSeq;
-      }
+    if (!p.isSnapshot) continue;
+    const timeMs = decodePatchId(p.time).timeMs;
+    if (oldestTimeMs == null || timeMs < oldestTimeMs) {
+      oldestTimeMs = timeMs;
+      // SyncDoc passes its seq_info (snake case) through to patchflow.
+      oldest = { prevSeq: p.seqInfo?.prevSeq ?? p.seqInfo?.prev_seq };
     }
   }
-  if (prevSeq != null) {
-    return prevSeq;
-  }
-  return history.length > 0 ? 0 : undefined;
+  return oldest?.prevSeq ?? 0;
 }
 
+// Whether the loaded patches are the whole history. Loading starts at the
+// latest snapshot: at the stream position of the patch it is of
+// (seq_info.seq), so there is older history unless that is the start of the
+// stream. (Not whether there is an earlier snapshot: the first snapshot of a
+// document has no prev_seq, but the patches before it exist.)
 export function patchesHaveFullHistoryFromPatches(
   patches: {
     is_snapshot?: boolean;
     parents?: PatchId[];
-    seq_info?: { prev_seq?: number };
+    seq_info?: { seq?: number; prev_seq?: number };
   }[],
 ): boolean {
   const first = patches[0];
   if (first == null) return true;
   if (first.is_snapshot) {
+    const seq = first.seq_info?.seq;
+    if (seq != null) return seq <= 1;
     const prevSeq = first.seq_info?.prev_seq;
     return prevSeq == null || prevSeq <= 1;
   }

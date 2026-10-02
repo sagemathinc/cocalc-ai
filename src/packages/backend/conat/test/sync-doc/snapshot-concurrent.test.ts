@@ -94,5 +94,15 @@ describe("opening a document after a snapshot at a concurrent patch", () => {
     log("s3", JSON.stringify(s3.to_str()), JSON.stringify(expected));
     // Right away: the document loads the history it needs before it is ready.
     expect(s3.to_str()).toBe(expected);
+    // With exact values, not an approximation: its own patches have hashes.
+    // (This is the document's first snapshot, which has no prev_seq; that
+    // does not mean that the history before it is loaded.)
+    const session3 = (s3 as any).patchflowSession;
+    expect(session3.needsMoreHistory()).toBe(false);
+    s3.from_str(s3.to_str() + "from s3\n");
+    s3.commit();
+    const mine = session3.getPatch(session3.versions().at(-1));
+    expect(mine.hash).toMatch(/^s1:/);
+    expect(mine.inexact).toBeUndefined();
   }, 60_000);
 });
