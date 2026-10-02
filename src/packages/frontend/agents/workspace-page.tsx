@@ -105,6 +105,10 @@ import {
 import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
 import { stableDraftKeyFromThreadKey } from "@cocalc/frontend/chat/utils";
 import { set_url, openProjectsWorkspace } from "@cocalc/frontend/history";
+import {
+  removeShellPlaceholder,
+  saveShellPlaceholder,
+} from "@cocalc/frontend/app/shell-placeholder";
 import { set_window_title } from "@cocalc/frontend/browser";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { useWorkspaceRoute } from "./use-workspace-route";
@@ -3283,6 +3287,21 @@ export function MyAgentsWorkspacePage({
     ) : null;
   }
 
+  // Once the sidebar is up, drop app.html's stand-in for it, and remember
+  // how it looks for the next start (see app/shell-placeholder).
+  const sidebarShown =
+    active &&
+    !isNarrow &&
+    !(loading && !directory && !libraryOpen && !contentOpen);
+  useEffect(() => {
+    if (!sidebarShown) return;
+    const sidebar = () => document.getElementById(AGENT_SIDEBAR_ID);
+    if (sidebar() != null || agentSidebarHidden) removeShellPlaceholder();
+    const save = () => saveShellPlaceholder(sidebar(), agentSidebarHidden);
+    save();
+    window.addEventListener("pagehide", save);
+    return () => window.removeEventListener("pagehide", save);
+  }, [sidebarShown, agentSidebarHidden]);
   const agentSidebarHiddenRef = useRef(agentSidebarHidden);
   agentSidebarHiddenRef.current = agentSidebarHidden;
   const toggleAgentSidebar = useCallback(() => {

@@ -194,7 +194,7 @@ export function SidebarList({
       {pinned.length === 0 && recent.length === 0 && (
         <Typography.Paragraph type="secondary" style={{ padding: 6 }}>
           {search
-            ? `No matching ${label.toLowerCase()}.`
+            ? `No matching ${label.toLowerCase()}. Press Enter to search everything.`
             : (emptyText ?? `No ${label.toLowerCase()} yet.`)}
         </Typography.Paragraph>
       )}

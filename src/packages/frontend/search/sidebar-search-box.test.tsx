@@ -47,3 +47,18 @@ it("the shortcut focuses the box, even before it mounts", () => {
     screen.getByRole("searchbox", { name: "Search agents" }),
   ).toHaveFocus();
 });
+
+it("with text, offers the full search visibly", async () => {
+  const user = userEvent.setup();
+  const onSubmit = jest.fn();
+  render(<Box onSubmit={onSubmit} />);
+  expect(
+    screen.queryByRole("button", { name: /Search everything/ }),
+  ).toBeNull();
+  await user.type(
+    screen.getByRole("searchbox", { name: "Search agents" }),
+    "readme",
+  );
+  await user.click(screen.getByRole("button", { name: /Search everything/ }));
+  expect(onSubmit).toHaveBeenCalledWith("readme");
+});

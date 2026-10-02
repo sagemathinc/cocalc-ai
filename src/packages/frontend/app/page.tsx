@@ -37,6 +37,7 @@ import { ActiveContent } from "./active-content";
 import { usesWorkspaceShell } from "./workspace-shell";
 import { HomeWorkspaceNavigation } from "./home-workspace-navigation";
 import { usePersonalUrlIdentity } from "./use-personal-url-identity";
+import { removeShellPlaceholder } from "./shell-placeholder";
 import { ConnectionIndicator } from "./connection-indicator";
 import { ConnectionInfo } from "./connection-info";
 import { NotificationsDrawer } from "../notifications/drawer";
@@ -218,6 +219,11 @@ export const Page: React.FC = () => {
     fullscreen,
     activeTab: active_top_tab,
   });
+  // Pages outside the workspace (sign-in, exam, kiosk, ...) have no sidebar:
+  // drop app.html's stand-in for it right away.
+  useEffect(() => {
+    if (accountIsReady && !workspaceShell) removeShellPlaceholder();
+  }, [accountIsReady, workspaceShell]);
   const configurationLoadError = useTypedRedux(
     "customize",
     "configuration_load_error",

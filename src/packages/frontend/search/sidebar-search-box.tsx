@@ -68,7 +68,28 @@ export function SidebarSearchBox({
       placeholder={`${label}…`}
       prefix={<Icon name="search" style={{ color: UI_COLORS.secondary }} />}
       suffix={
-        value || !shortcutHint ? undefined : (
+        value.trim() ? (
+          // Typing only narrows the list; make the full search visible.
+          <button
+            type="button"
+            title="Search everything: names, messages, file names and contents (Enter)"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => onSubmit(value.trim())}
+            style={{
+              border: `1px solid ${UI_COLORS.border}`,
+              borderRadius: 4,
+              background: UI_COLORS.surface,
+              color: UI_COLORS.link,
+              cursor: "pointer",
+              fontSize: 12,
+              padding: "0 6px",
+              lineHeight: "18px",
+              whiteSpace: "nowrap",
+            }}
+          >
+            ↵ Search everything
+          </button>
+        ) : !shortcutHint ? undefined : (
           <span
             aria-hidden
             style={{ color: UI_COLORS.secondary, fontSize: 12 }}

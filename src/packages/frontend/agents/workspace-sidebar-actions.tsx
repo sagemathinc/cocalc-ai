@@ -51,7 +51,14 @@ export function WorkspaceSidebarActions({
             outlineOffset: 2,
           }}
         >
-          <img src={APP_ICON} alt="" width={32} height={32} />
+          {/* Shares its page-transition name with the landing page's logo. */}
+          <img
+            className="cocalc-vt-logo"
+            src={APP_ICON}
+            alt=""
+            width={32}
+            height={32}
+          />
           CoCalc
         </a>
         {headerActions}

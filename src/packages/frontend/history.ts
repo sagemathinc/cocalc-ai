@@ -77,6 +77,7 @@ import {
 } from "./git/review-route";
 
 import { RetainedWorkspaceNavigation } from "./app/retained-workspace-navigation";
+import { rememberAppPath } from "./app/last-app-path";
 
 const retainedWorkspaceNavigation = new RetainedWorkspaceNavigation();
 function retainedWorkspaceRuntime(tab: string): object | undefined {
@@ -187,6 +188,7 @@ export function set_url_with_search(
   // Projects I gave an alias show my personal address for them.
   url = personalProjectPath(url);
   last_url = url;
+  rememberAppPath(url);
   const current = new URL(location.href);
   current.search = params();
   const query_params =
