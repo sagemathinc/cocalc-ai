@@ -83,7 +83,7 @@ test("a hand-made artifact is published from a message in the project's Library 
     content: { title: "Plan", markdown: "# Plan" },
   });
   expect(first.path).toBe(libraryChatPath("/home/user"));
-  expect(first.path).toBe("/home/user/.cocalc/library.chat");
+  expect(first.path).toBe("/home/user/.cocalc/artifacts.chat");
   expect(files.has(first.path)).toBe(true);
   const artifact = rows.find((row) => row.event === "chat-artifact");
   expect(artifact).toMatchObject({
@@ -97,7 +97,7 @@ test("a hand-made artifact is published from a message in the project's Library 
   );
   const message = rows.find((row) => row.event === "chat");
   expect(publication.message_id).toBe(message.message_id);
-  expect(message.history[0].content).toBe("Added **Plan** to the library.");
+  expect(message.history[0].content).toBe("Added **Plan** to Artifacts.");
   // The second one reuses the Library thread.
   const second = await createLibraryArtifact({
     project_id: "p",

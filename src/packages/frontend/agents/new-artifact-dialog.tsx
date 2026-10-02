@@ -34,7 +34,7 @@ const KINDS: {
     kind: "file",
     icon: "file",
     name: "File or image",
-    description: "A file in the project, previewed in the Library.",
+    description: "A file in the project, previewed in Artifacts.",
   },
   {
     kind: "github-pr",
@@ -167,7 +167,7 @@ export function NewArtifactDialog({
               disabled={!project_id}
               onClick={() => void create()}
             >
-              Add to Library
+              Add artifact
             </Button>
           </div>
         ) : null
@@ -218,7 +218,7 @@ export function NewArtifactDialog({
             style={{ gridColumn: "1 / -1", margin: "6px 0 0", fontSize: 13 }}
           >
             Agents publish these too, along with commits and more. Artifacts you
-            add here go to the project's Library conversation, so its
+            add here go to the project's Artifacts conversation, so its
             collaborators see them.
           </Typography.Paragraph>
         </div>

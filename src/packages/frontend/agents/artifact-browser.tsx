@@ -395,7 +395,7 @@ function AccountArtifactBrowser({
       ref={viewportRef}
       hidden={!active}
       role="region"
-      aria-label="Library"
+      aria-label="Artifacts page"
       onFocusCapture={(event) => {
         lastFocus.current = event.target;
       }}
@@ -447,7 +447,7 @@ function AccountArtifactBrowser({
               flex: "1 1 auto",
             }}
           >
-            Library
+            Artifacts
           </h1>
           {onNewArtifact && (
             <Button icon={<Icon name="plus" />} onClick={onNewArtifact}>
@@ -456,7 +456,7 @@ function AccountArtifactBrowser({
           )}
           <div
             role="group"
-            aria-label="Library view"
+            aria-label="Artifacts view"
             style={{ display: "flex", gap: 4 }}
           >
             <Button
@@ -477,8 +477,8 @@ function AccountArtifactBrowser({
           <Input
             ref={searchRef}
             type="search"
-            aria-label="Search library"
-            placeholder="Search library"
+            aria-label="Search artifacts"
+            placeholder="Search artifacts"
             prefix={<Icon name="search" />}
             style={{ flex: "0 1 320px", minWidth: 0 }}
             maxLength={256}
@@ -511,7 +511,7 @@ function AccountArtifactBrowser({
               {metadata.loading
                 ? ordered.length
                   ? " · Refreshing..."
-                  : " · Loading library..."
+                  : " · Loading artifacts..."
                 : ""}
               {metadata.limited && " · Preview limit reached"}
             </span>
@@ -638,7 +638,7 @@ function AccountArtifactBrowser({
         {metadata.error && (
           <Alert
             type="warning"
-            title="Library metadata unavailable"
+            title="Artifact metadata unavailable"
             description={metadata.error}
           />
         )}

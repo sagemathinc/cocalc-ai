@@ -144,8 +144,8 @@ function LibraryArtifactPage({
             minWidth: 0,
           }}
         >
-          <Button type="text" onClick={onBack} aria-label="Back to Library">
-            Library
+          <Button type="text" onClick={onBack} aria-label="Back to Artifacts">
+            Artifacts
           </Button>
           <span aria-hidden="true">/</span>
           <h1

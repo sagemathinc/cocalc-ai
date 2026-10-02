@@ -4,7 +4,7 @@
  */
 
 // Artifacts made by hand ("New Artifact") live in a per-project Library
-// conversation: ~/.cocalc/library.chat, one "Library" thread. Each one is
+// conversation: ~/.cocalc/artifacts.chat, one "Artifacts" thread. Each one is
 // published like an agent's (same artifact rows), from a short message in
 // that thread, so the project's catalog indexes it and collaborators see it.
 
@@ -24,7 +24,7 @@ import { resolveProjectHomeDirectory } from "@cocalc/frontend/project/home-direc
 import { uuid } from "@cocalc/util/misc";
 import { LIBRARY_CHAT_SUFFIX } from "./library-chat";
 
-export const LIBRARY_THREAD_NAME = "Library";
+export const LIBRARY_THREAD_NAME = "Artifacts";
 
 export function libraryChatPath(home: string): string {
   return `${home.replace(/\/+$/, "")}${LIBRARY_CHAT_SUFFIX}`;
@@ -44,7 +44,7 @@ export function libraryThread(chat: any): string {
     threadAgent: { mode: "human" },
     preserveSelectedThread: true,
   });
-  if (!thread_id) throw Error("Could not create the Library conversation");
+  if (!thread_id) throw Error("Could not create the Artifacts conversation");
   return thread_id;
 }
 
@@ -83,7 +83,7 @@ export async function createLibraryArtifact({
   try {
     await waitForChatReady(chat);
     const thread_id = libraryThread(chat);
-    const input = `Added **${content.title}** to the library.`;
+    const input = `Added **${content.title}** to Artifacts.`;
     chat.sendChat({
       input,
       reply_thread_id: thread_id,

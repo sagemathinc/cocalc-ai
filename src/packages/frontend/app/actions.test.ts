@@ -235,7 +235,7 @@ describe("project context across global navigation", () => {
     expect(page().get("active_agent_id")).toBe("agent-123");
     expect(page().get("active_agent_name")).toBe("reviewer");
     expect(projectActions[B].hide).toHaveBeenCalledTimes(1);
-    expect(set_url).toHaveBeenLastCalledWith(`/library/${A}/entry`, "");
+    expect(set_url).toHaveBeenLastCalledWith(`/artifacts/${A}/entry`, "");
   });
 
   it.each([false, true])(
@@ -251,7 +251,7 @@ describe("project context across global navigation", () => {
       await actions.set_active_tab("account");
       await actions.set_active_tab("agents");
       expect(set_url).toHaveBeenLastCalledWith(
-        detail ? `/library/${A}/${B}` : "/library",
+        detail ? `/artifacts/${A}/${B}` : "/artifacts",
         "",
       );
       expect(page().get("active_agent_id")).toBe("agent-123");
@@ -262,14 +262,14 @@ describe("project context across global navigation", () => {
     },
   );
 
-  it.each(["library", `library/${A}/${B}`, "agents/reviewer"])(
+  it.each(["artifacts", `artifacts/${A}/${B}`, "agents/reviewer"])(
     "initializes scalar route state on reload of %s",
     (target) => {
       jest.requireMock("@cocalc/frontend/client/handle-target").default =
         target;
       redux.removeStore("page");
       init_store();
-      const library = target.startsWith("library");
+      const library = target.startsWith("artifacts");
       expect(page().get("active_top_tab")).toBe("agents");
       expect(page().get("library_open")).toBe(library);
       expect(page().get("library_project_id")).toBe(

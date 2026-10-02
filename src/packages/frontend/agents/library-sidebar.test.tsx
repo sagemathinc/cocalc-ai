@@ -58,7 +58,7 @@ it("pinned and recent artifacts; the open one is current", async () => {
     />,
   );
   expect(
-    within(screen.getByRole("list", { name: "Pinned library" })).getByRole(
+    within(screen.getByRole("list", { name: "Pinned artifacts" })).getByRole(
       "button",
       { name: "Open artifact Notes" },
     ),

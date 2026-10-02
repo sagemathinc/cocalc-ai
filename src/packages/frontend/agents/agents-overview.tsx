@@ -313,7 +313,7 @@ export function AgentsOverview(props: Props) {
     <div
       hidden={!active}
       role="region"
-      aria-label="Agents"
+      aria-label="Agents page"
       style={{
         height: "100%",
         minHeight: 0,

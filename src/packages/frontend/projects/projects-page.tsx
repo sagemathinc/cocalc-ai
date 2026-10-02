@@ -719,7 +719,12 @@ export const ProjectsPage: React.FC = () => {
                 >
                   <div
                     style={{
-                      marginTop: mobileProjectsList ? "8px" : "20px",
+                      // The new layout has no top bar above this header.
+                      marginTop: mobileProjectsList
+                        ? "8px"
+                        : collectionLayout
+                          ? "8px"
+                          : "20px",
                       display: "flex",
                       width: "100%",
                       gap: 10,

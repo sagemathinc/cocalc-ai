@@ -22,40 +22,46 @@ export function AgentsSidebarToggle({
   const label = hidden ? "Show sidebar" : "Hide sidebar";
   return (
     <Tooltip title={hidden ? "Show sidebar (Ctrl/Cmd+Shift+P)" : label}>
-      <Button
-        type="text"
-        aria-controls={AGENT_SIDEBAR_ID}
-        aria-expanded={!hidden}
-        aria-label={label}
-        // Hidden, the CoCalc mark makes the way back to the sidebar easy to
-        // recognize (a bare chevron is easy to miss).
-        icon={
-          hidden ? (
-            <span
-              style={{ display: "inline-flex", alignItems: "center", gap: 2 }}
-            >
-              <img src={APP_ICON} alt="" width={26} height={26} />
-              <Icon name="chevron-right" style={{ fontSize: 14 }} />
-            </span>
-          ) : (
-            <Icon name="chevron-left" />
-          )
-        }
-        onClick={onToggle}
-        style={{
-          color,
-          // Sized like the top bar's icons, centered in its 36px row.
-          ...(hidden
-            ? {
-                height: 36,
-                paddingInline: 6,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }
-            : {}),
-        }}
-      />
+      {hidden ? (
+        // Content as children, not `icon`: an icon-only button gets a fixed
+        // square width that clipped the mark and chevron.
+        <Button
+          type="text"
+          aria-controls={AGENT_SIDEBAR_ID}
+          aria-expanded={false}
+          aria-label={label}
+          onClick={onToggle}
+          style={{
+            color,
+            height: 36,
+            padding: "0 6px",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 2,
+            flex: "0 0 auto",
+          }}
+        >
+          <img
+            src={APP_ICON}
+            alt=""
+            width={26}
+            height={26}
+            style={{ display: "block" }}
+          />
+          <Icon name="chevron-right" style={{ fontSize: 14 }} />
+        </Button>
+      ) : (
+        <Button
+          type="text"
+          aria-controls={AGENT_SIDEBAR_ID}
+          aria-expanded
+          aria-label={label}
+          icon={<Icon name="chevron-left" />}
+          onClick={onToggle}
+          style={{ color }}
+        />
+      )}
     </Tooltip>
   );
 }

@@ -105,7 +105,7 @@ export function LibrarySidebar({
 
   return (
     <SidebarList
-      label="Library"
+      label="Artifacts"
       itemLabel="artifact"
       newLabel="New Artifact"
       onNew={onNew}

@@ -108,12 +108,12 @@ test("active alone shows all agents and reuses the warm cache and search", async
   );
   await waitFor(() => expect(listProject).toHaveBeenCalledTimes(2));
   expect(
-    screen.queryByRole("region", { name: "Library" }),
+    screen.queryByRole("region", { name: "Artifacts page" }),
   ).not.toBeInTheDocument();
   view.rerender(
     <AgentArtifactBrowser {...props} active activeAgent={agents[0]} />,
   );
-  expect(screen.getByRole("heading", { name: "Library" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Artifacts" })).toBeVisible();
   expect(screen.getByRole("searchbox")).toHaveFocus();
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(
@@ -130,7 +130,7 @@ test("active alone shows all agents and reuses the warm cache and search", async
   ).toBeVisible();
   const user = userEvent.setup();
   await user.type(
-    screen.getByRole("searchbox", { name: "Search library" }),
+    screen.getByRole("searchbox", { name: "Search artifacts" }),
     "description two{Enter}",
   );
   expect(
@@ -171,7 +171,7 @@ test("active alone shows all agents and reuses the warm cache and search", async
       }),
     }),
   );
-  expect(screen.getByRole("heading", { name: "Library" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Artifacts" })).toBeVisible();
   expect(listProject).toHaveBeenCalledTimes(2);
 });
 
@@ -215,7 +215,7 @@ test("navigation shares the heading and participates in keyboard order", async (
   await screen.findByRole("button", { name: "Open Result two from two" });
   const navigation = screen.getByRole("button", { name: "Toggle sidebar" });
   expect(
-    screen.getByRole("heading", { name: "Library" }).parentElement,
+    screen.getByRole("heading", { name: "Artifacts" }).parentElement,
   ).toContainElement(navigation);
   const user = userEvent.setup();
   await user.tab({ shift: true });
@@ -230,7 +230,7 @@ test("navigation shares the heading and participates in keyboard order", async (
   await user.tab();
   await user.tab();
   expect(
-    screen.getByRole("searchbox", { name: "Search library" }),
+    screen.getByRole("searchbox", { name: "Search artifacts" }),
   ).toHaveFocus();
   expect(
     screen.queryByRole("button", { name: /Return to agent|Back to agent/ }),
@@ -312,7 +312,7 @@ test("a personal artifact name is visible and searchable in grid view", async ()
   await user.click(screen.getByRole("button", { name: "Grid view" }));
   expect(screen.getByText("@my-notebook")).toBeVisible();
   await user.type(
-    screen.getByRole("searchbox", { name: "Search library" }),
+    screen.getByRole("searchbox", { name: "Search artifacts" }),
     "my-notebook",
   );
   expect(
@@ -409,14 +409,14 @@ test("returning retains result DOM, search, organization, scroll and opening-row
     name: "Open Result two from two",
   });
   await user.type(
-    screen.getByRole("searchbox", { name: "Search library" }),
+    screen.getByRole("searchbox", { name: "Search artifacts" }),
     "description",
   );
   await user.click(
     screen.getByRole("button", { name: "Filters & organization" }),
   );
   await user.click(screen.getByRole("checkbox", { name: "Group by project" }));
-  const viewport = screen.getByRole("region", { name: "Library" });
+  const viewport = screen.getByRole("region", { name: "Artifacts page" });
   fireEvent.scroll(viewport, { target: { scrollTop: 480 } });
   const groupedRow = screen.getByRole("button", {
     name: "Open Result two from two",
@@ -573,10 +573,10 @@ test("loading and metadata failures are announced, with retry in organization", 
       onSelect={async () => {}}
     />,
   );
-  expect(screen.getByRole("status")).toHaveTextContent("Loading library...");
+  expect(screen.getByRole("status")).toHaveTextContent("Loading artifacts...");
   await act(async () => reject(Error("unavailable")));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Library metadata unavailable",
+    "Artifact metadata unavailable",
   );
   expect(screen.getByRole("alert")).toHaveTextContent("retrying periodically");
   expect(screen.queryByText(/No artifacts yet/)).not.toBeInTheDocument();
@@ -881,6 +881,6 @@ test("Search library in the sidebar focuses the Library's search", async () => {
   await screen.findByRole("button", { name: "Open Result two from two" });
   act(() => librarySearchRequest.request());
   expect(
-    screen.getByRole("searchbox", { name: "Search library" }),
+    screen.getByRole("searchbox", { name: "Search artifacts" }),
   ).toHaveFocus();
 });

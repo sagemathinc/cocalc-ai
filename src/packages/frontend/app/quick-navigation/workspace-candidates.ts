@@ -58,7 +58,7 @@ export function workspaceCandidates({
     ],
     [
       "app:library",
-      "Library",
+      "Artifacts",
       "artifacts documents files pull requests",
       "library",
     ],
@@ -103,7 +103,7 @@ export function workspaceCandidates({
     items.push({
       id: `artifact:${hit.agent.endpoint.project_id}/${hit.catalogEntryId}`,
       title: hit.hit.artifact_title || "Untitled artifact",
-      detail: `Library › @${hit.agent.name} · ${hit.hit.artifact_kind ?? "artifact"}${pinned ? " · Pinned" : ""}`,
+      detail: `Artifacts › @${hit.agent.name} · ${hit.hit.artifact_kind ?? "artifact"}${pinned ? " · Pinned" : ""}`,
       keywords: projectTitle(hit.agent.endpoint.project_id),
       priority: pinned ? 9 : 18,
       destination: {

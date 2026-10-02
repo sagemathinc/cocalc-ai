@@ -43,7 +43,7 @@ it("pick a kind, fill the form, add it to the most recent project's Library", as
     screen.getByRole("textbox", { name: "Items" }),
     "Ship it{Enter}Docs",
   );
-  await user.click(screen.getByRole("button", { name: "Add to Library" }));
+  await user.click(screen.getByRole("button", { name: "Add artifact" }));
   await waitFor(() => expect(onClose).toHaveBeenCalled());
   expect(createLibraryArtifact).toHaveBeenCalledWith({
     project_id: "p2",
@@ -63,7 +63,7 @@ it("explains what is missing instead of creating", async () => {
   const user = userEvent.setup();
   render(<NewArtifactDialog open onClose={jest.fn()} />);
   await user.click(screen.getByRole("listitem", { name: "Document" }));
-  await user.click(screen.getByRole("button", { name: "Add to Library" }));
+  await user.click(screen.getByRole("button", { name: "Add artifact" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("title");
   expect(createLibraryArtifact).not.toHaveBeenCalled();
 });

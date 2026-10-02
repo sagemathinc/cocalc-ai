@@ -293,7 +293,7 @@ export class PageActions extends Actions<PageState> {
               : undefined,
           );
         }
-        set_window_title(page.get("library_open") ? "Library" : "Agents");
+        set_window_title(page.get("library_open") ? "Artifacts" : "Agents");
         return;
       }
       case "projects":

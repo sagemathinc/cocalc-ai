@@ -3220,6 +3220,12 @@ export function MyAgentsWorkspacePage({
   const [agentSidebarHidden, setAgentSidebarHidden] = useState(
     initialAgentSidebarHidden,
   );
+  // Pages with their own header (Projects, Artifacts, People, the Agents
+  // page) show a hidden sidebar's toggle in the very top-left corner.
+  const floatingSidebarToggle =
+    !isNarrow &&
+    agentSidebarHidden &&
+    (libraryOpen || peopleOpen || projectsListOpen);
   const [workspaceAgentIds, setWorkspaceAgentIds] = useState<
     Map<string, string>
   >(() => new Map());
@@ -3253,7 +3259,7 @@ export function MyAgentsWorkspacePage({
           setMobileList(true);
         }}
       />
-    ) : agentSidebarHidden ? (
+    ) : agentSidebarHidden && !floatingSidebarToggle ? (
       <AgentsSidebarToggle
         hidden={agentSidebarHidden}
         onToggle={toggleAgentSidebar}
@@ -3381,7 +3387,7 @@ export function MyAgentsWorkspacePage({
       overviewOpen
         ? "Agents"
         : libraryOpen
-          ? "Library"
+          ? "Artifacts"
           : creating
             ? "New Agent"
             : selected
@@ -4279,7 +4285,7 @@ export function MyAgentsWorkspacePage({
                     aria-current={artifactLibraryOpen ? "page" : undefined}
                     onClick={showLibrary}
                   >
-                    Library
+                    Artifacts
                   </Button>
                   {!lite && (
                     <Button
@@ -4330,7 +4336,7 @@ export function MyAgentsWorkspacePage({
                           {searchContext === "projects"
                             ? "Search projects"
                             : searchContext === "library"
-                              ? "Search library"
+                              ? "Search artifacts"
                               : "Search conversations"}
                         </Button>
                       )}
@@ -4703,12 +4709,13 @@ export function MyAgentsWorkspacePage({
       <section
         ref={workspaceContent}
         tabIndex={-1}
+        data-floating-sidebar-toggle={floatingSidebarToggle || undefined}
         aria-label={
           contentLabel ??
           (overviewOpen
             ? "All agents"
             : libraryOpen
-              ? "Artifact Library"
+              ? "Artifacts"
               : selected
                 ? `Agent @${selected.name}`
                 : "Agent workspace")
@@ -4723,6 +4730,11 @@ export function MyAgentsWorkspacePage({
           ...(isNarrow && mobileList ? { display: "none" } : {}),
         }}
       >
+        {floatingSidebarToggle && (
+          <div style={{ position: "absolute", top: 2, left: 4, zIndex: 5 }}>
+            <AgentsSidebarToggle hidden onToggle={toggleAgentSidebar} />
+          </div>
+        )}
         <div
           style={{
             display: "flex",
@@ -4789,7 +4801,7 @@ export function MyAgentsWorkspacePage({
           onClose={() => setNewArtifactOpen(false)}
           onCreated={() => {
             void antdMessage.success(
-              "Added to the Library; it appears there in a few seconds.",
+              "Added to Artifacts; it appears there in a few seconds.",
             );
             if (accountId)
               void sharedArtifactCatalog(accountId, (opts) =>

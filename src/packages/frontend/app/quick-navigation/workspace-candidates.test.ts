@@ -51,7 +51,7 @@ test("workspace pages, actions, artifacts, conversations and people", () => {
   );
   expect(byId.get("artifact:p/e1")).toMatchObject({
     title: "Report",
-    detail: "Library › @helper · file",
+    detail: "Artifacts › @helper · file",
     keywords: "Thesis",
     destination: { kind: "artifact", projectId: "p", entryId: "e1" },
   });
