@@ -1,30 +1,10 @@
 import { Command } from "commander";
-import { randomUUID } from "node:crypto";
-import { sendIdentityMessage } from "../../core/agent-message";
 import {
-  sendExternalAgentMessage,
-  resolveExternalAgentName,
-} from "../../core/external-agent-message";
-import {
-  readAgentFileReferences,
-  readAgentAttachmentSnapshots,
-} from "../../core/agent-attachments";
-import type { AgentSelf } from "@cocalc/conat/agents/protocol";
-import { resolveRuntimeAgentName } from "../../core/agent-destination";
+  agentSendExitCode,
+  agentSendSummary,
+  sendAgentMessage,
+} from "../../core/agent-send";
 import { registerChatAgentCommands } from "./chat-agents";
-import { requireUuid } from "@cocalc/conat/agents/protocol";
-import type {
-  AgentRpcOutcome,
-  AgentRpcPreparation,
-  AgentRpcSend,
-  AgentRpcTarget,
-} from "@cocalc/conat/agents/rpc";
-import type { AgentNetworkDiscovery } from "@cocalc/conat/agents/personal";
-import { encodeAgentMessageRuntimeEvent } from "@cocalc/conat/agents/runtime-events";
-import {
-  isExternalAgentSource,
-  validateAgentRpcPreparation,
-} from "@cocalc/conat/agents/rpc";
 import { readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { execFile } from "node:child_process";
@@ -292,7 +272,19 @@ export function registerProjectChatCommands(
   chat
     .command("send")
     .description(
-      "send to an existing Codex thread; start a turn or queue behind active work",
+      "send to an existing Codex thread, or (with --to) to another agent; for agents prefer `cocalc agent send`",
+    )
+    .addHelpText(
+      "after",
+      `
+Two kinds of send share this command:
+  To another agent in your Agent Networks (uses this runtime's agent identity):
+    --to NAME, or --rpc --to-agent ID --agent-network TITLE;
+    also --attach, --attempt-id, --agent-network, --external-agent.
+    The same as: cocalc agent send NAME [message] (see cocalc agent --help).
+  To a Codex thread as a human user (not available inside an agent runtime):
+    --path and --thread-id (with -w/--project), plus --guidance.
+--stdin and the message arguments work for both.`,
     )
     .argument(
       "[message...]",
@@ -380,165 +372,22 @@ export function registerProjectChatCommands(
             throw new Error(
               "Use --to name or --rpc --to-agent ID, not both; cannot use legacy --request-id or project/path/thread options",
             );
-          if (opts.toAgent) requireUuid(opts.toAgent, "to-agent");
-          const attempt_id = opts.attemptId || randomUUID();
-          requireUuid(attempt_id, "attempt-id");
           const globals = deps.globalsFrom(command);
-          const send = (
-            request: import("@cocalc/conat/agents/rpc").AgentRpcRequest,
-          ) =>
-            opts.externalAgent
-              ? sendExternalAgentMessage(opts.externalAgent, request)
-              : sendIdentityMessage(request, globals.api);
-          let target: AgentRpcTarget;
-          let targetName: string | undefined;
-          let agent_network_id: string;
-          let agent_network_title: string;
-          if (opts.to) {
-            const resolved = opts.externalAgent
-              ? await resolveExternalAgentName(
-                  opts.externalAgent,
-                  opts.to,
-                  opts.agentNetwork,
-                )
-              : await resolveRuntimeAgentName(
-                  opts.to,
-                  globals.api,
-                  opts.agentNetwork,
-                );
-            target = resolved.target;
-            targetName = opts.to.trim().replace(/^@/, "");
-            agent_network_id = resolved.agent_network_id;
-            agent_network_title = resolved.agent_network_title;
-          } else {
-            if (!opts.agentNetwork)
-              throw new Error(
-                "--to-agent requires --agent-network with the exact network title",
-              );
-            const destinations = (await send({
-              version: 3,
-              action: "destinations",
-            })) as AgentNetworkDiscovery;
-            const destination = destinations.peers.find(
-              ({ member }) =>
-                member.kind === "registered" &&
-                member.endpoint.agent_id === opts.toAgent,
-            );
-            if (!destination || destination.member.kind !== "registered")
-              throw new Error(
-                "Target is not a registered network member; no submission attempted",
-              );
-            const networks = destination.networks.filter(
-              (network) =>
-                network.agent_network_id === opts.agentNetwork ||
-                network.title === opts.agentNetwork,
-            );
-            if (networks.length !== 1)
-              throw new Error(
-                "--agent-network must identify one exact network title; no submission attempted",
-              );
-            target = destination.member.endpoint;
-            targetName = destination.member.name;
-            agent_network_id = networks[0].agent_network_id;
-            agent_network_title = networks[0].title;
-          }
-          process.stderr.write(
-            `Agent RPC attempt ${attempt_id}; target ${JSON.stringify(target)}\n`,
-          );
-          let file_references;
-          let snapshots:
-            | Awaited<ReturnType<typeof readAgentAttachmentSnapshots>>
-            | undefined;
-          if (opts.attach?.length) {
-            if (isExternalAgentSource(target))
-              throw new Error(
-                "Attachments to external network members are not supported",
-              );
-            const self = opts.externalAgent
-              ? undefined
-              : ((await sendIdentityMessage(
-                  { action: "whoami" },
-                  globals.api,
-                )) as AgentSelf);
-            if (self?.identity?.project_id !== target.project_id) {
-              snapshots = await readAgentAttachmentSnapshots(opts.attach);
-            } else {
-              const metadata = await readAgentFileReferences(opts.attach);
-              if (metadata.kind !== "project-files")
-                throw new Error("invalid file references");
-              file_references = metadata.files;
-            }
-          }
-          const request: AgentRpcSend = {
-            version: 3,
-            attempt_id,
-            agent_network_id,
-            target,
+          const sent = await sendAgentMessage({
             body: prompt,
-            ...(file_references ? { file_references } : {}),
-          };
-          if (snapshots) {
-            if (snapshots.metadata.kind !== "snapshots")
-              throw new Error("invalid snapshot metadata");
-            request.snapshot_manifest = snapshots.metadata.files;
-            const ready = (await send({
-              ...request,
-              action: "prepare-attachments",
-            })) as AgentRpcPreparation;
-            validateAgentRpcPreparation(ready, request);
-            if (ready.outcome !== "prepared") {
-              deps.emitSuccess({ globals }, "project chat send", ready);
-              process.exitCode =
-                ready.outcome === "accepted"
-                  ? 0
-                  : ready.outcome === "rejected"
-                    ? 2
-                    : 3;
-              return;
-            }
-            request.attachment_reservation = ready.reservation_id;
-            if (ready.expires_at <= Date.now())
-              throw new Error(
-                "Attachment preparation expired before transfer; no message was sent",
-              );
-          }
-          const result = (await send({
-            ...request,
-            action: "send",
-            ...(snapshots ? { snapshot_payload: snapshots.files } : {}),
-          })) as AgentRpcOutcome;
-          deps.emitSuccess({ globals }, "project chat send", result);
-          if (
-            process.env.COCALC_CLI_AGENT_MODE === "1" &&
-            process.env.COCALC_CODEX_CHAT_PATH &&
-            process.env.COCALC_CODEX_THREAD_ID
-          ) {
-            process.stderr.write(
-              encodeAgentMessageRuntimeEvent({
-                version: 1,
-                type: "agent-message",
-                direction: "outgoing",
-                target,
-                ...(targetName ? { target_name: targetName } : {}),
-                body: prompt,
-                agent_network_id,
-                agent_network_title,
-                attempt_id,
-                outcome: result.outcome,
-                observed_at: result.observed_at,
-                ...(result.reason ? { reason: result.reason } : {}),
-                ...(result.chat_effect
-                  ? { chat_effect: result.chat_effect }
-                  : {}),
-              }),
-            );
-          }
-          process.exitCode =
-            result.outcome === "accepted"
-              ? 0
-              : result.outcome === "rejected"
-                ? 2
-                : 3;
+            to: opts.to,
+            toAgent: opts.toAgent,
+            agentNetwork: opts.agentNetwork,
+            attach: opts.attach,
+            attemptId: opts.attemptId,
+            externalAgent: opts.externalAgent,
+            api: globals.api,
+          });
+          deps.emitSuccess({ globals }, "project chat send", {
+            summary: agentSendSummary(sent),
+            ...sent.outcome,
+          });
+          process.exitCode = agentSendExitCode(sent.outcome.outcome);
           return;
         }
         if (opts.attemptId) throw new Error("--attempt-id requires --rpc");

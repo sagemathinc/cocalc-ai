@@ -137,10 +137,13 @@ export type AgentRpcRequest =
 export function validateAgentEndpoint(value: AgentEndpoint): void {
   requireUuid(value?.project_id, "project_id");
   requireUuid(value?.agent_id, "agent_id");
-  if (
-    Object.keys(value).some((key) => !["project_id", "agent_id"].includes(key))
-  )
-    throw new Error("unexpected endpoint field");
+  const extra = Object.keys(value).find(
+    (key) => !["project_id", "agent_id"].includes(key),
+  );
+  if (extra !== undefined)
+    throw new Error(
+      `unexpected endpoint field ${JSON.stringify(extra)}; an endpoint has only project_id and agent_id`,
+    );
 }
 
 export function validateAgentRpcRequest(
