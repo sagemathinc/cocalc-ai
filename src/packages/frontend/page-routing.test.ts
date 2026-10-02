@@ -5,6 +5,7 @@ import {
   getPageUrlPath,
   parsePageTarget,
 } from "./page-routing";
+import { setPersonalUrlIdentity } from "./app/personal-url-identity";
 
 describe("page-routing", () => {
   it("maps settings routes to the account top tab", () => {
@@ -226,4 +227,49 @@ test("the Agents page has its own address and keeps the agents tab", () => {
   expect(parsed).toEqual({ page: "agents", overview: true });
   expect(getPageUrlPath(parsed)).toBe("/all-agents");
   expect(getPageTopTab(parsed)).toBe("agents");
+});
+
+test("my named agents and artifacts have personal addresses; others' are resolved", () => {
+  setPersonalUrlIdentity({ account_id: "acct-1", username: "wstein" });
+  try {
+    expect(getPageUrlPath({ page: "agents", agent_id: "agent-1" })).toBe(
+      "/u/wstein/agents/agent-1",
+    );
+    expect(
+      getPageUrlPath({
+        page: "agents",
+        library: true,
+        artifact_project_id: "plan",
+      }),
+    ).toBe("/u/wstein/artifacts/plan");
+    // Ids and new agents keep their own paths.
+    expect(getPageUrlPath({ page: "agents", agent_id: "new" })).toBe(
+      "/agents/new",
+    );
+    const id = "11111111-1111-4111-8111-111111111111";
+    expect(getPageUrlPath({ page: "agents", agent_id: id })).toBe(
+      `/agents/${id}`,
+    );
+    // Mine (by username or account id, any case) open directly.
+    expect(parsePageTarget("u/wstein/agents/agent-1")).toEqual({
+      page: "agents",
+      agent_id: "agent-1",
+    });
+    expect(parsePageTarget("u/ACCT-1/artifacts/plan")).toEqual({
+      page: "agents",
+      library: true,
+      artifact_project_id: "plan",
+    });
+    // Someone else's goes to the resolver.
+    expect(parsePageTarget("u/alice/agents/helper")).toEqual({
+      page: "u",
+      path: "u/alice/agents/helper",
+    });
+  } finally {
+    setPersonalUrlIdentity({});
+  }
+  // Without an identity the plain paths remain.
+  expect(getPageUrlPath({ page: "agents", agent_id: "agent-1" })).toBe(
+    "/agents/agent-1",
+  );
 });

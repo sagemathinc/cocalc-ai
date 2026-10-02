@@ -22,7 +22,7 @@ test("resolved targets open their canonical app page", () => {
   );
   expect(open({ kind: "agent", project_id, agent_id: "g1" })).toBe("agents/g1");
   expect(open({ kind: "artifact", project_id, entry_id: "e/1" })).toBe(
-    `library/${project_id}/e/1`,
+    `artifacts/${project_id}/e/1`,
   );
 });
 
@@ -31,4 +31,34 @@ test("denied links go to the project's access request page", () => {
     personalUrlDestination({ ...base, status: "access-denied", project_id }),
   ).toBe(`projects/${project_id}`);
   expect(personalUrlDestination({ ...base, status: "unavailable" })).toBe(null);
+});
+
+test("my own named agent or artifact keeps its name in the address", () => {
+  const mine = { ...owner, account_id: "me" };
+  expect(
+    personalUrlDestination(
+      {
+        ...base,
+        owner: mine,
+        kind: "agents",
+        alias: "agent-1",
+        status: "resolved",
+        target: { kind: "agent", project_id, agent_id: "g1" },
+      },
+      "me",
+    ),
+  ).toBe("agents/agent-1");
+  expect(
+    personalUrlDestination(
+      {
+        ...base,
+        owner: mine,
+        kind: "artifacts",
+        alias: "plan",
+        status: "resolved",
+        target: { kind: "artifact", project_id, entry_id: "e1" },
+      },
+      "me",
+    ),
+  ).toBe("artifacts/plan");
 });

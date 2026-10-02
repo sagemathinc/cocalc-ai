@@ -41,6 +41,7 @@ import { ActiveContent } from "./active-content";
 import { usesWorkspaceShell } from "./workspace-shell";
 import { HomeWorkspaceNavigation } from "./home-workspace-navigation";
 import { useWorkspaceNavigation } from "./workspace-navigation";
+import { usePersonalUrlIdentity } from "./use-personal-url-identity";
 import { ConnectionIndicator } from "./connection-indicator";
 import { ConnectionInfo } from "./connection-info";
 import { NotificationsDrawer } from "../notifications/drawer";
@@ -245,6 +246,7 @@ export const Page: React.FC = () => {
   const is_logged_in = useTypedRedux("account", "is_logged_in");
   const examMode = useTypedRedux("customize", "exam_mode") === true;
   const workspaceNavigation = useWorkspaceNavigation();
+  usePersonalUrlIdentity();
   const workspaceShell = usesWorkspaceShell({
     lite,
     aiDisabled,

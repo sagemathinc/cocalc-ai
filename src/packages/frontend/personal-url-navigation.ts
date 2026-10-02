@@ -17,12 +17,21 @@ import { load_target } from "./history";
 
 export function personalUrlDestination(
   result: ResolvedPersonalUrl,
+  myAccountId?: string,
 ): string | null {
   if (result.status === "access-denied") {
     // The project page offers the normal access request.
     return result.project_id ? `projects/${result.project_id}` : null;
   }
   if (result.status !== "resolved" || result.target == null) return null;
+  // My own named agent or artifact opens by name, so its address keeps the
+  // readable /u/<me>/... form instead of becoming an id.
+  if (myAccountId && result.owner.account_id === myAccountId) {
+    if (result.target.kind === "agent")
+      return `agents/${encodeURIComponent(result.alias)}`;
+    if (result.target.kind === "artifact")
+      return `artifacts/${encodeURIComponent(result.alias)}`;
+  }
   return targetDestination(result.target);
 }
 
@@ -35,7 +44,7 @@ function targetDestination(target: PersonalUrlTarget): string {
     case "agent":
       return `agents/${encodeURIComponent(target.agent_id)}`;
     case "artifact":
-      return `library/${encodeURIComponent(target.project_id)}/${target.entry_id
+      return `artifacts/${encodeURIComponent(target.project_id)}/${target.entry_id
         .split("/")
         .map(encodeURIComponent)
         .join("/")}`;
@@ -49,7 +58,10 @@ export async function openPersonalUrl(path: string): Promise<void> {
     const result = await webapp_client.conat_client.hub.personalUrls.resolveUrl(
       { url },
     );
-    destination = personalUrlDestination(result);
+    destination = personalUrlDestination(
+      result,
+      redux.getStore("account")?.get("account_id"),
+    );
   } catch (err) {
     alert_message({ type: "error", message: `${url}: ${err}` });
   }

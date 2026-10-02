@@ -3,6 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { is_valid_uuid_string } from "@cocalc/util/misc";
+import {
+  isMyPersonalUrlOwner,
+  personalUrlOwner,
+} from "./app/personal-url-identity";
 import type { AuthView } from "@cocalc/frontend/auth/types";
 import {
   getAccountSettingsRouteFromState,
@@ -147,8 +152,23 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
         page: "people",
         route: segments.slice(1).filter(Boolean).join("/") || undefined,
       };
-    case "u":
+    case "u": {
+      // My own named agents and artifacts open directly; anyone else's
+      // personal URL is resolved by the hub.
+      const [, owner, kind, ...rest] = segments.filter(Boolean);
+      const alias = rest.join("/");
+      if (owner && alias && isMyPersonalUrlOwner(owner)) {
+        if (kind === "agents")
+          return { page: "agents", agent_id: decodeURIComponent(alias) };
+        if (kind === "artifacts")
+          return {
+            page: "agents",
+            library: true,
+            artifact_project_id: decodeURIComponent(alias),
+          };
+      }
       return { page: "u", path: segments.filter(Boolean).join("/") };
+    }
     case "admin":
       return {
         page: "admin",
@@ -208,6 +228,14 @@ export function getPageTargetPath(parsed: ParsedPageTarget): string {
       if (parsed.overview) return "all-agents";
       if (parsed.library) {
         if (parsed.artifact_project_id == null) return "artifacts";
+        // A named artifact (personal alias, not a project id) is mine:
+        // its address says whose name it is.
+        if (
+          parsed.artifact_entry_id == null &&
+          !is_valid_uuid_string(parsed.artifact_project_id) &&
+          personalUrlOwner()
+        )
+          return `u/${encodeURIComponent(personalUrlOwner()!)}/artifacts/${encodeURIComponent(parsed.artifact_project_id)}`;
         const suffix =
           parsed.artifact_entry_id == null
             ? [parsed.artifact_project_id]
@@ -217,6 +245,14 @@ export function getPageTargetPath(parsed: ParsedPageTarget): string {
               ];
         return `artifacts/${suffix.map(encodeURIComponent).join("/")}`;
       }
+      // A named agent (not an id) is mine: its address says whose name it is.
+      if (
+        parsed.agent_id &&
+        parsed.agent_id !== "new" &&
+        !is_valid_uuid_string(parsed.agent_id) &&
+        personalUrlOwner()
+      )
+        return `u/${encodeURIComponent(personalUrlOwner()!)}/agents/${encodeURIComponent(parsed.agent_id)}`;
       return parsed.agent_id
         ? `agents/${encodeURIComponent(parsed.agent_id)}`
         : "agents";
