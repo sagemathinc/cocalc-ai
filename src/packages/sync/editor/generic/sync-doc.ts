@@ -1866,6 +1866,8 @@ export class SyncDoc extends EventEmitter {
       version: null,
       meta: null,
       hash: null,
+      merge_parent: null,
+      merge_patch: null,
     };
     if (this.doctype.patch_format != null) {
       (query as any).format = this.doctype.patch_format;
@@ -2476,6 +2478,13 @@ export class SyncDoc extends EventEmitter {
     if (typeof hash === "string") {
       obj.hash = hash;
     }
+    const mergeParent = x.get("merge_parent");
+    const mergePatch = x.get("merge_patch");
+    if (mergeParent != null && typeof mergePatch === "string") {
+      // A JSON string, like patch (see above).
+      obj.merge_parent = normalizePatchId(mergeParent);
+      obj.merge_patch = JSON.parse(mergePatch);
+    }
     if (is_snapshot) {
       obj.snapshot = x.get("snapshot"); // this is a string
       obj.seq_info = x.get("seq_info")?.toJS();
@@ -2509,6 +2518,8 @@ export class SyncDoc extends EventEmitter {
       file: p.file,
       meta: p.meta,
       hash: p.hash,
+      mergeParent: p.merge_parent,
+      mergePatch: p.merge_patch,
     };
   };
 
@@ -2527,6 +2538,8 @@ export class SyncDoc extends EventEmitter {
       file: env.file,
       meta: env.meta,
       hash: env.hash,
+      merge_parent: env.mergeParent,
+      merge_patch: env.mergePatch as CompressedPatch | undefined,
     };
   };
 
@@ -2715,6 +2728,10 @@ export class SyncDoc extends EventEmitter {
           }
           if (patch.hash != null) {
             obj.hash = patch.hash;
+          }
+          if (patch.merge_parent != null && patch.merge_patch != null) {
+            obj.merge_parent = patch.merge_parent;
+            obj.merge_patch = JSON.stringify(patch.merge_patch);
           }
           if (this.doctype.patch_format != null) {
             obj.format = this.doctype.patch_format;

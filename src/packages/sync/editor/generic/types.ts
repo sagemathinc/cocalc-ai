@@ -41,6 +41,14 @@ export interface Patch {
   // against it. A snapshot carries the hash of the patch it is of.
   hash?: string;
 
+  // A merge commit (several parents) records the merged value of its parents,
+  // as its author computed it: merge_patch applied to the value of
+  // merge_parent, one of the parents (patchflow's Patch.mergeParent and
+  // Patch.mergePatch). Then its value never depends on how a later version
+  // merges.
+  merge_parent?: PatchId;
+  merge_patch?: CompressedPatch;
+
   is_snapshot?: boolean;
   snapshot?: string; // to_str() applied to the document at this point in time
   seq_info?: {

@@ -341,6 +341,14 @@ Table({
       type: "string",
       desc: "Hash of the document right after this patch, as its author computed it (patchflow's value-hash format, e.g. 's1:...'); every client checks its own value against it, so an inconsistency is detected and reported. A snapshot carries the hash of the patch it is a snapshot of.",
     },
+    merge_parent: {
+      type: "string",
+      desc: "Set on a patch with several parents (a merge commit): one of its parents. The merged value of the parents, as the author computed it, is merge_patch applied to the value of merge_parent, so the value of the patch never depends on how a later version merges (patchflow's Patch.mergeParent).",
+    },
+    merge_patch: {
+      type: "string",
+      desc: "JSON encoded patch from the value of merge_parent to the merged value of all parents (patchflow's Patch.mergePatch); see merge_parent.",
+    },
   },
   rules: {
     primary_key: ["string_id", "time", "is_snapshot"], // compound primary key
@@ -365,6 +373,8 @@ Table({
           parents: null,
           meta: null,
           hash: null,
+          merge_parent: null,
+          merge_patch: null,
         },
         check_hook(db, obj, account_id, project_id, cb) {
           // this verifies that user has read access to these patches
@@ -393,6 +403,8 @@ Table({
           format: true,
           meta: true,
           hash: true,
+          merge_parent: true,
+          merge_patch: true,
         },
         required_fields: {
           string_id: true,
