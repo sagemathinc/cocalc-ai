@@ -15,7 +15,7 @@ import { TableOfContents } from "./table-of-contents";
 import { set } from "@cocalc/util/misc";
 import { CodemirrorEditor } from "../code-editor/codemirror-editor";
 import { SETTINGS_SPEC } from "../settings/editor";
-import { terminal } from "../terminal-editor/editor";
+import { terminal } from "../terminal-editor/terminal-spec";
 import { time_travel } from "../time-travel-editor/editor";
 import { editor } from "@cocalc/frontend/i18n";
 

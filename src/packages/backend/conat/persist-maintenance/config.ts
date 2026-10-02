@@ -47,6 +47,7 @@ export interface PersistMaintenanceConfig {
   scanIntervalMs: number;
   scanEntryLimit: number;
   scanByteLimit: number;
+  scanTimeLimitMs: number;
   minFreeBytes: number;
   freeSpaceMultiplier: number;
   maxLoadPerCpu: number;
@@ -135,6 +136,11 @@ export function loadPersistMaintenanceConfig(): PersistMaintenanceConfig {
     scanByteLimit: number(
       "COCALC_PERSIST_MAINTENANCE_SCAN_BYTE_LIMIT",
       4 * 1024 * 1024 * 1024,
+      1,
+    ),
+    scanTimeLimitMs: number(
+      "COCALC_PERSIST_MAINTENANCE_SCAN_TIME_LIMIT_MS",
+      250,
       1,
     ),
     minFreeBytes:

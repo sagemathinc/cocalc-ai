@@ -50,16 +50,19 @@ it("hides a saved pending card with completed activity and restores legacy cards
   ).toBe(true);
 });
 
-it("keeps failed delivery recovery while active and hides/reopens it with the completed turn", () => {
-  const record = { ...saved, state: "stale" as const };
-  expect(display({ record })).toBe(true);
-  expect(display({ record, ownerActive: false, ownerExpanded: false })).toBe(
-    false,
-  );
-  expect(display({ record, ownerActive: false, ownerExpanded: true })).toBe(
-    true,
-  );
-});
+it.each(["codex_sync_question", "codex_async_question"] as const)(
+  "keeps %s delivery failures visible after reload with completed activity collapsed",
+  (source_kind) => {
+    const record = { ...saved, source_kind, state: "stale" as const };
+    expect(display({ record })).toBe(true);
+    expect(display({ record, ownerActive: false, ownerExpanded: false })).toBe(
+      true,
+    );
+    expect(display({ record, ownerActive: false, ownerExpanded: true })).toBe(
+      true,
+    );
+  },
+);
 
 it("fails open for recovery when the owning turn cannot be found", () => {
   expect(

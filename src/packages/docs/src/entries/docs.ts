@@ -5,6 +5,7 @@
 
 import type { DocsEntry } from "../types";
 import { docsIcon } from "../helpers";
+import { COCALC_AT_A_GLANCE_BODY } from "../content/cocalc-at-a-glance";
 import {
   BROWSER_AUTOMATION_BODY,
   DOCS_ACTIONS_BODY,
@@ -13,6 +14,23 @@ import {
 } from "../content/docs";
 
 export const DOCUMENTATION_ENTRIES: DocsEntry[] = [
+  {
+    audiences: ["agents", "researchers", "teams"],
+    body: COCALC_AT_A_GLANCE_BODY.trim(),
+    category: "Docs",
+    id: "docs.cocalc-at-a-glance",
+    lastReviewed: "2026-09-30",
+    noActionReason:
+      "An orientation page; each section links to the guide that covers the task.",
+    searchKeywords:
+      "what is cocalc overview evaluate fit compare pricing plans cocalc.com codex claude code agents cli ai assistants",
+    siteProfiles: ["cocalc-ai"],
+    slug: "documentation/cocalc-at-a-glance",
+    status: "ready",
+    summary:
+      "Facts for people evaluating CoCalc and the AI assistants they use: what CoCalc is, when it fits, and how agents use it.",
+    title: "CoCalc at a glance",
+  },
   {
     audiences: ["agents", "instructors", "researchers", "students", "teams"],
     body: QUICK_NAVIGATION_BODY.trim(),

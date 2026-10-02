@@ -509,8 +509,12 @@ describe("ACP attention storage", () => {
       account_id: ACCOUNT_ID,
       project_id: PROJECT_ID,
       response_id: "response-retry",
+      codex_credential_id: "initial-selection",
       answers: { choice: ["Yes"] },
     });
+    expect(getAcpAttention(record.attention_id)?.response_credential_id).toBe(
+      "initial-selection",
+    );
     resolveAcpAttention({
       attention_id: record.attention_id,
       state: "stale",
@@ -519,6 +523,7 @@ describe("ACP attention storage", () => {
 
     expect(
       claimStaleAcpAttentionContinue({
+        codex_credential_id: "retry-selection",
         attention_id: record.attention_id,
         account_id: ACCOUNT_ID,
         project_id: PROJECT_ID,
@@ -528,6 +533,7 @@ describe("ACP attention storage", () => {
       state: "pending",
       response_id: "response-retry",
       resolution_reason: "continuing",
+      response_credential_id: "retry-selection",
     });
     expect(
       claimStaleAcpAttentionContinue({

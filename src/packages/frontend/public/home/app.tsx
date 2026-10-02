@@ -19,9 +19,19 @@ import {
   alpha,
   publicAccent,
   PUBLIC_COLORS,
+  PUBLIC_RADIUS,
   PUBLIC_TYPE,
+  PUBLIC_WEIGHT,
 } from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
+import {
+  getPublicHomeHighlights,
+  PUBLIC_HOME_EYEBROW,
+  PUBLIC_HOME_HEADLINE,
+  PUBLIC_HOME_INTRO,
+  PUBLIC_HOME_SECONDARY_CTA,
+  PUBLIC_HOME_TRUST_LINE,
+} from "@cocalc/util/public-home-content";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { builtinPolicyPath } from "../common";
 
@@ -307,13 +317,13 @@ const AGENT_DEFINITION_CARDS = [
   },
   {
     accent: COLORS.RUN,
-    body: "Patches, notes, and run output stay visible in the project, so your team can inspect the work before keeping it.",
+    body: "Patches, notes, and run output stay visible in the project, so your team can inspect the work.",
     icon: "search",
     title: "Review agent changes",
   },
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
-    body: "Use the integrated Codex experience, Claude Code in a terminal, or other shell-capable agents without moving the project somewhere else.",
+    body: "Use the integrated Codex agent or Claude Code (experimental preview, where enabled), or run other command-line agents in a terminal, without moving the project somewhere else.",
     icon: "terminal",
     title: "Integrated chat or terminal",
   },
@@ -533,9 +543,11 @@ function SectionIntro({
 
 function Hero({
   authenticated,
+  highlights,
   siteName,
 }: {
   authenticated: boolean;
+  highlights: readonly string[];
   siteName: string;
 }) {
   return (
@@ -551,7 +563,7 @@ function Hero({
       }}
     >
       <Flex vertical gap={20}>
-        <Eyebrow>Persistent shared projects</Eyebrow>
+        <Eyebrow>{PUBLIC_HOME_EYEBROW}</Eyebrow>
         <div>
           <Title
             className="cocalc-public-home-hero-title"
@@ -565,7 +577,7 @@ function Hero({
               maxWidth: 620,
             }}
           >
-            Keep people, AI agents, and project work together.
+            {PUBLIC_HOME_HEADLINE}
           </Title>
           <Paragraph
             style={{
@@ -576,8 +588,7 @@ function Hero({
               maxWidth: 590,
             }}
           >
-            Files, notebooks, terminals, services, and history stay in a shared
-            Linux project so work can continue, be reviewed, and be handed off.
+            {PUBLIC_HOME_INTRO}
           </Paragraph>
         </div>
         <Flex className="cocalc-public-home-actions" gap={12} wrap>
@@ -593,10 +604,49 @@ function Hero({
           >
             {authenticated ? "Open projects" : "Start on CoCalc.ai"}
           </Button>
-          <Button href={appPath("products")} size="large">
-            Ways to run CoCalc
+          <Button href={appPath(PUBLIC_HOME_SECONDARY_CTA.href)} size="large">
+            {PUBLIC_HOME_SECONDARY_CTA.label}
           </Button>
         </Flex>
+        <ul
+          className="cocalc-public-home-highlights"
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 8,
+            listStyle: "none",
+            margin: 0,
+            padding: 0,
+          }}
+        >
+          {highlights.map((highlight) => (
+            <li
+              key={highlight}
+              style={{
+                background: PUBLIC_COLORS.surface,
+                border: `1px solid ${PUBLIC_COLORS.border}`,
+                borderRadius: PUBLIC_RADIUS.pill,
+                color: PUBLIC_COLORS.heading,
+                fontSize: PUBLIC_TYPE.caption,
+                fontWeight: PUBLIC_WEIGHT.medium,
+                lineHeight: 1.4,
+                padding: "5px 12px",
+              }}
+            >
+              {highlight}
+            </li>
+          ))}
+        </ul>
+        <Paragraph
+          className="cocalc-public-home-trust-line"
+          style={{
+            color: PUBLIC_COLORS.mutedText,
+            fontSize: PUBLIC_TYPE.caption,
+            margin: 0,
+          }}
+        >
+          {PUBLIC_HOME_TRUST_LINE}
+        </Paragraph>
       </Flex>
       <figure className="cocalc-public-home-hero-visual" style={{ margin: 0 }}>
         <img
@@ -614,17 +664,6 @@ function Hero({
             width: "100%",
           }}
         />
-        <figcaption
-          style={{
-            color: PUBLIC_COLORS.mutedText,
-            fontSize: 13,
-            lineHeight: 1.45,
-            marginTop: 8,
-          }}
-        >
-          A saved Jupyter notebook in a fresh CoCalc.ai project, using only
-          synthetic data.
-        </figcaption>
       </figure>
     </section>
   );
@@ -637,7 +676,7 @@ function AgentDefinitionSection() {
       style={{ padding: "22px 0 24px" }}
     >
       <SectionIntro
-        body="Use integrated Codex, or run Claude Code and other shell-based agents in project terminals, with the files, tools, and running services your collaborators already use."
+        body="Use the integrated Codex agent or Claude Code, or run other command-line agents in project terminals, all with the files, tools, and running services your collaborators already use. Claude Code is an experimental preview on sites that enable it and works with your personal Claude Pro or Max subscription."
         eyebrow="Agent-ready by design"
         title="Give AI agents the files and tools they need."
       />
@@ -1207,6 +1246,19 @@ function PathSection({
   );
 }
 
+// Resolve a missing host only after branding has arrived. A canonical host
+// alone does not establish that a deployment uses the default CoCalc brand.
+function withSiteHost(config?: HomeConfig): HomeConfig | undefined {
+  if (
+    !config?.site_name?.trim() ||
+    config.dns?.trim() ||
+    typeof window === "undefined"
+  ) {
+    return config;
+  }
+  return { ...config, dns: window.location.host };
+}
+
 export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
   const marketingConfig = getPublicMarketingConfig(config) as
     | HomeConfig
@@ -1232,7 +1284,11 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
           paddingInline: PUBLIC_PAGE_GUTTER,
         }}
       >
-        <Hero authenticated={authenticated} siteName={siteName} />
+        <Hero
+          authenticated={authenticated}
+          highlights={getPublicHomeHighlights(withSiteHost(config))}
+          siteName={siteName}
+        />
         <AgentDefinitionSection />
         <AudienceRoutesSection />
         <WorkflowsSection />

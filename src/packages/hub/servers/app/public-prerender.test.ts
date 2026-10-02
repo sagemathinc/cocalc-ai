@@ -1,5 +1,15 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
 import { renderPublicRoutePrerender } from "./public-prerender";
+import {
+  PUBLIC_HOME_EYEBROW,
+  PUBLIC_HOME_HEADLINE,
+  PUBLIC_HOME_HIGHLIGHTS,
+  PUBLIC_HOME_INTRO,
+  PUBLIC_HOME_SECONDARY_CTA,
+  PUBLIC_HOME_TRUST_LINE,
+} from "@cocalc/util/public-home-content";
 
 describe("public feature initial HTML", () => {
   it.each(["/prefix", "/docs"])(
@@ -22,6 +32,154 @@ describe("public feature initial HTML", () => {
       expect(html).toContain(`href="${basePath}/auth/sign-up"`);
     },
   );
+
+  it.each(["/", "/prefix"])(
+    "renders the terminal record that the React page renders, on %s",
+    (basePath) => {
+      const page = getPublicFeaturePage("terminal")!;
+      const html = renderPublicRoutePrerender(
+        { section: "features", route: { view: "detail", slug: page.slug } },
+        basePath,
+        {},
+      );
+
+      expect(page.highlights).toHaveLength(4);
+      expect(page.sections).toHaveLength(4);
+      for (const text of [
+        page.tagline,
+        page.summary,
+        ...page.highlights!.map((highlight) => `<li>${highlight}</li>`),
+        ...page.sections!.flatMap(({ paragraphs, title }) => [
+          `<h2>${title}</h2>`,
+          ...paragraphs!,
+        ]),
+      ]) {
+        expect(html).toContain(text);
+      }
+      const prefix = basePath === "/" ? "" : basePath;
+      const links = page.sections!.flatMap(({ links }) => links ?? []);
+      expect(links.map(({ href }) => href)).toEqual([
+        "/docs/terminal/use-terminal",
+        "/features/software-environment",
+      ]);
+      for (const { href, label } of links) {
+        expect(html).toContain(`href="${prefix}${href}">${label}</a>`);
+      }
+      // The React page's sign-up label, not the generic one.
+      expect(page.signUpLabel).toBe("Start on CoCalc.ai");
+      expect(html).toContain(
+        `href="${prefix}/auth/sign-up">${page.signUpLabel}</a>`,
+      );
+      expect(html).not.toContain("Start using CoCalc");
+      expect(html).not.toContain("terminal.png");
+    },
+  );
+});
+
+describe("home first screen initial HTML", () => {
+  // cocalc.ai's /customize reports the Launchpad product, so the cocalc.ai
+  // cases do too: a rule that left out Launchpad would fail them.
+  const cocalcAi = {
+    cocalc_product: "launchpad",
+    dns: "cocalc.ai",
+    is_launchpad: true,
+    site_name: "CoCalc",
+  };
+
+  // The React page renders the same constants (frontend/public/home tests),
+  // so crawlers read the first screen word for word.
+  it.each(["/", "/prefix"])(
+    "renders the first screen from the shared Home content on %s",
+    (basePath) => {
+      const prefix = basePath === "/" ? "" : basePath;
+      const html = renderPublicRoutePrerender(
+        { section: "home" },
+        basePath,
+        cocalcAi,
+      );
+      const header = html.slice(
+        html.indexOf("<header>"),
+        html.indexOf("</header>"),
+      );
+      const texts = [...header.matchAll(/<(p|h1|li)>([^<]+)<\/\1>/g)].map(
+        ([, tag, text]) => `${tag}: ${text}`,
+      );
+
+      expect(texts).toEqual([
+        `p: ${PUBLIC_HOME_EYEBROW}`,
+        `h1: ${PUBLIC_HOME_HEADLINE}`,
+        `p: ${PUBLIC_HOME_INTRO}`,
+        ...PUBLIC_HOME_HIGHLIGHTS.map((highlight) => `li: ${highlight}`),
+        `p: ${PUBLIC_HOME_TRUST_LINE}`,
+      ]);
+      expect(header).toContain(
+        `<a href="${prefix}/auth/sign-up">Start on CoCalc.ai</a> <a href="${prefix}/${PUBLIC_HOME_SECONDARY_CTA.href}">${PUBLIC_HOME_SECONDARY_CTA.label}</a>`,
+      );
+    },
+  );
+
+  // The first three sites and their chips match the React test in
+  // frontend/public/home/__tests__/app.test.tsx, so the two renderings agree.
+  const withClaude = [
+    "Codex and Claude Code in one project",
+    "Collaborators see edits live",
+    "Restore earlier versions",
+  ];
+  const withoutClaude = [
+    "Collaborators see edits live",
+    "Restore earlier versions",
+  ];
+  it.each([
+    ["the default CoCalc brand on cocalc.ai", cocalcAi, withClaude],
+    [
+      "CoCalc Plus, the local one-user runtime",
+      { cocalc_product: "plus", dns: "localhost", site_name: "CoCalc" },
+      ["Restore earlier versions"],
+    ],
+    [
+      "CoCalc Plus on the canonical host",
+      { cocalc_product: "plus", dns: "cocalc.ai", site_name: "CoCalc" },
+      ["Restore earlier versions"],
+    ],
+    [
+      "a self-hosted Launchpad host",
+      {
+        cocalc_product: "launchpad",
+        dns: "launchpad.example.edu",
+        is_launchpad: true,
+        site_name: "CoCalc Launchpad",
+      },
+      withoutClaude,
+    ],
+    [
+      "a custom logo on cocalc.ai",
+      { ...cocalcAi, logo_square: "https://example.edu/logo.png" },
+      withoutClaude,
+    ],
+    [
+      "a custom site name on cocalc.ai",
+      { ...cocalcAi, site_name: "University CoCalc" },
+      withoutClaude,
+    ],
+    [
+      "a cocalc.ai subdomain",
+      { ...cocalcAi, dns: "dev.cocalc.ai" },
+      withoutClaude,
+    ],
+    ["no site configuration", undefined, withoutClaude],
+  ])(
+    "shows only the highlights that hold on each site: %s",
+    (_site, config, expected) => {
+      const html = renderPublicRoutePrerender({ section: "home" }, "/", config);
+      const header = html.slice(
+        html.indexOf("<header>"),
+        html.indexOf("</header>"),
+      );
+      expect(
+        [...header.matchAll(/<li>([^<]+)<\/li>/g)].map(([, text]) => text),
+      ).toEqual(expected);
+    },
+  );
 });
 
 describe("core landing page initial HTML", () => {
@@ -31,8 +189,9 @@ describe("core landing page initial HTML", () => {
       const prefix = basePath === "/" ? "" : basePath;
       const home = renderPublicRoutePrerender({ section: "home" }, basePath);
       expect(home).toContain('data-cocalc-public-prerender="home"');
+      expect(home).toContain("Build and use software with AI.");
       expect(home).toContain(
-        "Keep people, AI agents, and project work together.",
+        "Use the integrated Codex agent or Claude Code, or run other command-line agents in project terminals",
       );
       expect(home).toContain(
         `href="${basePath === "/" ? "" : basePath}/features/compare"`,
@@ -59,7 +218,7 @@ describe("core landing page initial HTML", () => {
       );
       expect(pricing).toContain('data-cocalc-public-prerender="pricing"');
       expect(pricing).toContain("Hosted memberships");
-      expect(pricing).toContain("For teams and organizations");
+      expect(pricing).toContain("For Teams and Organizations");
       expect(pricing).toContain(
         "membership options on this page apply to the hosted service",
       );
@@ -68,7 +227,7 @@ describe("core landing page initial HTML", () => {
       );
       expect(pricing).toContain("Compare customer-operated options");
       expect(pricing).toContain(
-        "Account actions require sign-in, and host creation also depends on membership or grant eligibility.",
+        "The purchaser must sign in before buying or managing seats.",
       );
       expect(pricing).not.toContain("then choose a plan");
     },
@@ -86,7 +245,9 @@ describe("core landing page initial HTML", () => {
       expect(launchpad).toContain(
         `href="${prefix}/features/research-compute">Evaluate research compute`,
       );
-      expect(launchpad).toContain("catalog availability, and authorization");
+      expect(launchpad).toContain(
+        "available models, capacity, and authorization vary by site and account",
+      );
 
       const plus = renderPublicRoutePrerender(
         { section: "pricing" },
@@ -239,6 +400,41 @@ describe("core landing page initial HTML", () => {
       expect(html).not.toContain('href="/prefix/docs/');
     },
   );
+
+  it("links the Claude Code guide from the AI page initial HTML", () => {
+    const html = renderPublicRoutePrerender(
+      { section: "features", route: { view: "detail", slug: "ai" } },
+      "/prefix",
+      { cocalc_product: "launchpad" },
+    );
+
+    expect(html).toContain(
+      '<a href="/prefix/docs/ai/claude-code">Claude Code in CoCalc (Experimental Preview)</a>',
+    );
+  });
+
+  it("keeps the Home agent section text identical in React and the crawler fallback", () => {
+    const expected = [
+      "Use the integrated Codex agent or Claude Code, or run other command-line agents in project terminals, all with the files, tools, and running services your collaborators already use.",
+      "Claude Code is an experimental preview on sites that enable it and works with your personal Claude Pro or Max subscription.",
+    ].join(" ");
+    const source = readFileSync(
+      join(__dirname, "../../../frontend/public/home/app.tsx"),
+      "utf8",
+    );
+    const reactBody =
+      /function AgentDefinitionSection\(\)[\s\S]*?<SectionIntro\s+body="([^"]*)"/.exec(
+        source,
+      )?.[1];
+    const html = renderPublicRoutePrerender({ section: "home" }, "/");
+    const fallback =
+      /<h2>Agents work where your project lives\.<\/h2>\s*<p>([^<]*)<\/p>/.exec(
+        html,
+      )?.[1];
+
+    expect(reactBody).toBe(expected);
+    expect(fallback).toBe(expected);
+  });
 });
 
 describe("feature initial HTML product availability", () => {

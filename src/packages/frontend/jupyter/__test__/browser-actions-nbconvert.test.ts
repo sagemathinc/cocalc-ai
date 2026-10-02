@@ -184,10 +184,84 @@ describe("local HTML and PDF delivery", () => {
         getStore: jest.fn(() => undefined),
         removeActions: jest.fn(),
       } as any),
+      { isClosed: jest.fn(() => false) },
       overrides,
     );
   }
   afterEach(() => jest.restoreAllMocks());
+  it.each(["resolve", "reject"])(
+    "abandons printing after closure during HTML %s",
+    async (outcome) => {
+      let resolve!: (html: string) => void;
+      let reject!: (error: Error) => void;
+      const popup: any = { close: jest.fn(), print: jest.fn() };
+      jest.spyOn(window, "open").mockReturnValue(popup);
+      const isClosed = jest.fn(() => false);
+      const target = actions({
+        isClosed,
+        toHTML: jest.fn(
+          () =>
+            new Promise<string>((yes, no) => {
+              resolve = yes;
+              reject = no;
+            }),
+        ),
+        setState: jest.fn(),
+      });
+      const pending = target.nbconvertToHtml("cocalc-pdf");
+      isClosed.mockReturnValue(true);
+      if (outcome === "resolve") resolve("html");
+      else reject(new Error("closed during export"));
+      await pending;
+      expect(popup.close).toHaveBeenCalledTimes(1);
+      expect(popup.print).not.toHaveBeenCalled();
+      expect(target.setState).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(["resolve", "reject"])(
+    "abandons printing after closure during image %s",
+    async (outcome) => {
+      let resolve!: () => void;
+      let reject!: (error: Error) => void;
+      const popup: any = {
+        document: {
+          open: jest.fn(),
+          write: jest.fn(),
+          close: jest.fn(),
+          images: [
+            {
+              naturalWidth: 640,
+              decode: () =>
+                new Promise<void>((yes, no) => {
+                  resolve = yes;
+                  reject = no;
+                }),
+            },
+          ],
+        },
+        close: jest.fn(),
+        print: jest.fn(),
+      };
+      jest.spyOn(window, "open").mockReturnValue(popup);
+      const isClosed = jest.fn(() => false);
+      const target = actions({
+        isClosed,
+        toHTML: jest.fn(async () => "html"),
+        setState: jest.fn(),
+      });
+      await target.nbconvertToHtml("cocalc-pdf");
+      const pending = popup.onload();
+      isClosed.mockReturnValue(true);
+      if (outcome === "resolve") resolve();
+      else reject(new Error("closed during decode"));
+      await pending;
+      expect(popup.print).not.toHaveBeenCalled();
+      expect(popup.close).toHaveBeenCalledTimes(1);
+      expect(popup.onload).toBeNull();
+      expect(target.setState).toHaveBeenCalledTimes(1);
+    },
+  );
   it("routes HTML to a download, not printing or backend conversion", async () => {
     const target = actions({
       path: "/home/user/My notebook.ipynb",
@@ -211,7 +285,12 @@ describe("local HTML and PDF delivery", () => {
   });
   it("retains the PDF print-window flow", async () => {
     const popup: any = {
-      document: { open: jest.fn(), write: jest.fn(), close: jest.fn() },
+      document: {
+        open: jest.fn(),
+        write: jest.fn(),
+        close: jest.fn(),
+        images: [],
+      },
       print: jest.fn(),
       close: jest.fn(),
     };
@@ -222,10 +301,47 @@ describe("local HTML and PDF delivery", () => {
     });
     await target.nbconvertToHtml("cocalc-pdf");
     expect(popup.document.write).toHaveBeenCalledWith("<html>print</html>");
-    popup.onload();
+    await popup.onload();
     expect(popup.print).toHaveBeenCalledTimes(1);
     popup.onafterprint();
     expect(popup.close).toHaveBeenCalledTimes(1);
+  });
+  it("waits for embedded plot decoding before printing", async () => {
+    let decoded!: () => void;
+    const image = {
+      complete: true,
+      naturalWidth: 640,
+      decode: jest.fn(
+        () =>
+          new Promise<void>((r) => {
+            decoded = r;
+          }),
+      ),
+    };
+    const popup: any = {
+      document: {
+        open: jest.fn(),
+        write: jest.fn(),
+        close: jest.fn(),
+        images: [image],
+      },
+      print: jest.fn(),
+      close: jest.fn(),
+    };
+    jest.spyOn(window, "open").mockReturnValue(popup);
+    const target = actions({
+      toHTML: jest.fn(
+        async () => '<html><img src="data:image/png;base64,plot"></html>',
+      ),
+      setState: jest.fn(),
+    });
+    await target.nbconvertToHtml("cocalc-pdf");
+    const ready = popup.onload();
+    expect(image.decode).toHaveBeenCalledTimes(1);
+    expect(popup.print).not.toHaveBeenCalled();
+    decoded();
+    await ready;
+    expect(popup.print).toHaveBeenCalledTimes(1);
   });
   it("handles a popup that loads and finishes printing synchronously", async () => {
     const popup: any = {
@@ -233,6 +349,7 @@ describe("local HTML and PDF delivery", () => {
         open: jest.fn(),
         write: jest.fn(),
         close: jest.fn(() => popup.onload?.()),
+        images: [],
       },
       print: jest.fn(() => popup.onafterprint?.()),
       close: jest.fn(),
@@ -243,6 +360,7 @@ describe("local HTML and PDF delivery", () => {
       setState: jest.fn(),
     });
     await target.nbconvertToHtml("cocalc-pdf");
+    await popup.onload();
     expect(popup.print).toHaveBeenCalledTimes(1);
     expect(popup.close).toHaveBeenCalledTimes(1);
   });
@@ -253,6 +371,7 @@ describe("local HTML and PDF delivery", () => {
         write: jest.fn(),
         close: jest.fn(),
         readyState: "complete",
+        images: [],
       },
       print: jest.fn(),
       close: jest.fn(),
@@ -264,7 +383,7 @@ describe("local HTML and PDF delivery", () => {
     });
     await target.nbconvertToHtml("cocalc-pdf");
     expect(popup.print).toHaveBeenCalledTimes(1);
-    popup.onload();
+    await popup.onload();
     expect(popup.print).toHaveBeenCalledTimes(1);
   });
   it("surfaces HTML delivery failure in the conversion state", async () => {
@@ -281,6 +400,79 @@ describe("local HTML and PDF delivery", () => {
       nbconvert: expect.objectContaining({
         state: "done",
         error: "Error: delivery failed",
+      }),
+    });
+  });
+  it("opens the print window before asynchronous HTML generation", async () => {
+    let resolve!: (html: string) => void;
+    const popup: any = {
+      document: {
+        open: jest.fn(),
+        write: jest.fn(),
+        close: jest.fn(),
+        images: [],
+      },
+      close: jest.fn(),
+      print: jest.fn(),
+    };
+    const open = jest.spyOn(window, "open").mockReturnValue(popup);
+    const target = actions({
+      toHTML: jest.fn(
+        () =>
+          new Promise<string>((r) => {
+            resolve = r;
+          }),
+      ),
+      setState: jest.fn(),
+    });
+    const pending = target.nbconvertToHtml("cocalc-pdf");
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(popup.document.write).not.toHaveBeenCalled();
+    resolve("<html>print</html>");
+    await pending;
+    await popup.onload();
+    expect(popup.print).toHaveBeenCalledTimes(1);
+  });
+  it("closes the reserved popup when HTML generation fails", async () => {
+    const popup: any = { close: jest.fn() };
+    jest.spyOn(window, "open").mockReturnValue(popup);
+    const target = actions({
+      toHTML: jest.fn().mockRejectedValue(new Error("export failed")),
+      setState: jest.fn(),
+    });
+    await target.nbconvertToHtml("cocalc-pdf");
+    expect(popup.close).toHaveBeenCalledTimes(1);
+    expect(target.setState).toHaveBeenLastCalledWith({
+      nbconvert: expect.objectContaining({
+        error: "Error: export failed",
+        state: "done",
+      }),
+    });
+  });
+  it("reports decoding failures instead of printing without the image", async () => {
+    const popup: any = {
+      document: {
+        open: jest.fn(),
+        write: jest.fn(),
+        close: jest.fn(),
+        images: [{ decode: () => Promise.reject(Error("bad image")) }],
+      },
+      close: jest.fn(),
+      print: jest.fn(),
+    };
+    jest.spyOn(window, "open").mockReturnValue(popup);
+    const target = actions({
+      toHTML: jest.fn(async () => "html"),
+      setState: jest.fn(),
+    });
+    await target.nbconvertToHtml("cocalc-pdf");
+    await popup.onload();
+    expect(popup.print).not.toHaveBeenCalled();
+    expect(popup.close).toHaveBeenCalledTimes(1);
+    expect(target.setState).toHaveBeenLastCalledWith({
+      nbconvert: expect.objectContaining({
+        error: "Error: bad image",
+        state: "done",
       }),
     });
   });

@@ -12,7 +12,7 @@ import { TaskEditor } from "@cocalc/frontend/editors/task-editor/editor";
 import { set } from "@cocalc/util/misc";
 import { createEditor } from "../frame-tree/editor";
 import { EditorDescription } from "../frame-tree/types";
-import { terminal } from "../terminal-editor/editor";
+import { terminal } from "../terminal-editor/terminal-spec";
 import { time_travel } from "../time-travel-editor/editor";
 import { search } from "./search";
 

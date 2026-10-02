@@ -17,6 +17,8 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { open_new_tab } from "@cocalc/frontend/misc/open-browser-tab";
 import { CodexAttentionCard, codexFreshAuthUrl } from "../codex-attention-card";
 
+import { writeCodexSubscriptionSelection } from "../codex-subscription-selection";
+
 const mockMarkdownInput = jest.fn();
 jest.mock("@cocalc/frontend/editors/markdown-input/multimode", () => ({
   __esModule: true,
@@ -82,6 +84,7 @@ describe("Codex fresh-auth attention", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     sessionStorage.clear();
+    localStorage.clear();
     jest
       .mocked(webapp_client.conat_client.attentionAcp)
       .mockImplementation(async (request: any) => ({
@@ -152,6 +155,7 @@ describe("Codex question attention", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     sessionStorage.clear();
+    localStorage.clear();
     jest
       .mocked(webapp_client.conat_client.attentionAcp)
       .mockImplementation(async (request: any) => ({
@@ -160,6 +164,34 @@ describe("Codex question attention", () => {
           ? { records: [questionRecord] }
           : { state: "pending", record: questionRecord }),
       }));
+  });
+
+  it("submits the same private subscription selection as the composer", async () => {
+    const credentialId = "77777777-7777-4777-8777-777777777777";
+    writeCodexSubscriptionSelection({
+      accountId: record.account_id,
+      projectId: record.project_id,
+      threadKey: record.thread_id,
+      credentialId,
+    });
+    const view = render(
+      <CodexAttentionCard
+        initialRecord={{
+          ...questionRecord,
+          source_kind: "codex_async_question",
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Decline" }));
+    await waitFor(() =>
+      expect(webapp_client.conat_client.attentionAcp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "respond",
+          codex_credential_id: credentialId,
+        }),
+      ),
+    );
+    view.unmount();
   });
 
   it("names the agent, not Codex, while an async question waits", () => {
@@ -563,43 +595,59 @@ describe("Codex question attention", () => {
     view.unmount();
   });
 
-  it("keeps keyboard recovery without duplicating an answer already in activity", async () => {
-    const user = userEvent.setup();
-    const record = {
-      ...questionRecord,
-      source_kind: "codex_sync_question" as const,
-      state: "stale" as const,
-      response_submitted_at: Date.now(),
-    };
-    jest.mocked(webapp_client.conat_client.attentionAcp).mockResolvedValue({
-      ok: true,
-      record: { ...record, state: "answered" },
-    });
-    const view = render(
-      <CodexAttentionCard initialRecord={record} responseInActivity />,
-    );
-    expect(
-      screen.queryByRole("region", { name: "Response for Region" }),
-    ).toBeNull();
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "could not be delivered",
-    );
-    const retry = screen.getByRole("button", {
-      name: "Continue with this answer",
-    });
-    retry.focus();
-    await user.keyboard("{Enter}");
-    await waitFor(() =>
-      expect(webapp_client.conat_client.attentionAcp).toHaveBeenCalledWith(
-        expect.objectContaining({
-          action: "continue",
-          attention_id: record.attention_id,
-        }),
-      ),
-    );
-    expect(screen.queryByText("Received by Codex")).toBeNull();
-    view.unmount();
-  });
+  it.each(["codex_sync_question", "codex_async_question"] as const)(
+    "keeps keyboard recovery and selected subscription for a saved %s",
+    async (source_kind) => {
+      const user = userEvent.setup();
+      const record = {
+        ...questionRecord,
+        source_kind,
+        state: "stale" as const,
+        resolution_reason:
+          "The selected Codex payment source (subscription) is not configured.",
+        response_submitted_at: Date.now(),
+      };
+      jest.mocked(webapp_client.conat_client.attentionAcp).mockResolvedValue({
+        ok: true,
+        record: { ...record, state: "answered" },
+      });
+      const credentialId = "77777777-7777-4777-8777-777777777777";
+      writeCodexSubscriptionSelection({
+        accountId: record.account_id,
+        projectId: record.project_id,
+        threadKey: record.thread_id,
+        credentialId,
+      });
+      const view = render(
+        <CodexAttentionCard initialRecord={record} responseInActivity />,
+      );
+      expect(
+        screen.queryByRole("region", { name: "Response for Region" }),
+      ).toBeNull();
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "could not be delivered",
+      );
+      expect(screen.getByRole("status")).toHaveTextContent(
+        record.resolution_reason,
+      );
+      const retry = screen.getByRole("button", {
+        name: "Continue with this answer",
+      });
+      retry.focus();
+      await user.keyboard("{Enter}");
+      await waitFor(() =>
+        expect(webapp_client.conat_client.attentionAcp).toHaveBeenCalledWith(
+          expect.objectContaining({
+            action: "continue",
+            codex_credential_id: credentialId,
+            attention_id: record.attention_id,
+          }),
+        ),
+      );
+      expect(screen.queryByText("Received by Codex")).toBeNull();
+      view.unmount();
+    },
+  );
 
   it("keeps oversized drafts visible and enables submission after shortening", async () => {
     const user = userEvent.setup();

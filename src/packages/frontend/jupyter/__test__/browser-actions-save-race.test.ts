@@ -36,6 +36,34 @@ function createActions() {
 }
 
 describe("Jupyter browser disk-save reconciliation", () => {
+  it("does not write a partial notebook when export is canceled by teardown", async () => {
+    const actions = createActions();
+    const blob = deferred<Uint8Array>();
+    const jupyterSaveIpynb = jest.fn();
+    actions.isClosed.mockImplementation(() => actions._state === "closed");
+    actions.store = {
+      get_ipynb: jest.fn((refs) => {
+        refs.getBase64("image");
+        return { cells: [] };
+      }),
+    };
+    actions.asyncBlobStore = { get: () => blob.promise };
+    actions.syncdb = {
+      get_state: () => "ready",
+      fs: { jupyterSaveIpynb },
+    };
+
+    const saving = actions.saveIpynb();
+    actions._state = "closed";
+    actions.store = undefined;
+    actions.asyncBlobStore = undefined;
+    blob.resolve(new Uint8Array([65]));
+
+    await expect(saving).resolves.toBeUndefined();
+    expect(jupyterSaveIpynb).not.toHaveBeenCalled();
+    expect(actions.setState).not.toHaveBeenCalled();
+  });
+
   it("retries when kernel output advances while an older snapshot saves", async () => {
     const actions = createActions();
     const firstSave = deferred<{

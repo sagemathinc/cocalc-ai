@@ -405,20 +405,51 @@ class SharedReduxSubscription {
     if ((redux as any).getStore == null) return;
     const [name, ...subpath] = this.resolved.path;
     if (!name) return;
-    const store = redux.getStore(name);
-    if (store == null) {
-      console.warn(`store "${name}" must exist; path=`, this.resolved.path);
+    let store = redux.getStore(name);
+    let handleChange: (() => void) | undefined;
+
+    const attachStore = (nextStore) => {
+      store = nextStore;
+      handleChange = () => {
+        if (!this.active) return;
+        this.emit(nextStore.getIn(subpath as any));
+      };
+      this.waitingForStore = false;
+      this.storeAttached = true;
+      nextStore.on("change", handleChange);
+      handleChange();
+    };
+
+    if (store != null) {
+      attachStore(store);
+      this.unsubscribeFromStore = () => {
+        if (handleChange != null) {
+          store?.removeListener("change", handleChange);
+        }
+      };
       return;
     }
-    const handleChange = () => {
-      this.emit(store.getIn(subpath as any));
-    };
-    store.on("change", handleChange);
-    this.storeAttached = true;
+
+    // Some stores (e.g. mentions, news) are created lazily after first render.
+    this.waitingForStore = true;
+    if (redux.reduxStore?.subscribe == null) return;
+    const unsubscribe = redux.reduxStore.subscribe(() => {
+      if (!this.active) {
+        unsubscribe();
+        return;
+      }
+      const nextStore = redux.getStore(name);
+      if (nextStore != null) {
+        unsubscribe();
+        attachStore(nextStore);
+      }
+    });
     this.unsubscribeFromStore = () => {
-      store.removeListener("change", handleChange);
+      unsubscribe();
+      if (handleChange != null) {
+        store?.removeListener("change", handleChange);
+      }
     };
-    handleChange();
   }
 
   private startProject(): void {

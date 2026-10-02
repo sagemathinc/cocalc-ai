@@ -61,6 +61,23 @@ cleanup() {
   fi
 }
 
+ncc_build() {
+  local ncc_bin="$ROOT/packages/rocket/node_modules/.bin/ncc"
+  if [[ ! -x "$ncc_bin" ]]; then
+    ncc_bin="$ROOT/packages/node_modules/.pnpm/node_modules/.bin/ncc"
+  fi
+  if [[ ! -x "$ncc_bin" ]]; then
+    echo "ERROR: ncc binary not found" >&2
+    return 1
+  fi
+  (
+    # Stay outside src so ncc does not load the monorepo tsconfig and resolve
+    # workspace imports to TypeScript sources instead of the built JS.
+    cd "$(dirname "$ROOT")"
+    "$ROOT/scripts/ncc.sh" "$ncc_bin" build --no-cache "$@"
+  )
+}
+
 copy_native_pkg() {
   local pkg="$1"
   local dest_root="$2"
@@ -107,7 +124,7 @@ echo "- Build compact control-plane bundle"
   --no-static
 
 echo "- Bundle schema migration helper with @vercel/ncc"
-pnpm --filter @cocalc/project-host exec "$ROOT/scripts/ncc.sh" build "$ROOT/packages/rocket/bin/bay-migrate-schema.js" \
+ncc_build "$ROOT/packages/rocket/bin/bay-migrate-schema.js" \
   -o "$OUT/runtime/migrate-schema" \
   --external bufferutil \
   --external utf-8-validate \
@@ -117,7 +134,7 @@ copy_native_pkg "bufferutil" "$OUT/runtime/migrate-schema"
 copy_native_pkg "utf-8-validate" "$OUT/runtime/migrate-schema"
 
 echo "- Bundle changed-only SQLite mirror helper with @vercel/ncc"
-pnpm --filter @cocalc/project-host exec "$ROOT/scripts/ncc.sh" build "$ROOT/packages/rocket/bin/bay-sqlite-mirror.js" \
+ncc_build "$ROOT/packages/rocket/bin/bay-sqlite-mirror.js" \
   -o "$OUT/runtime/sqlite-mirror" \
   --license licenses.txt
 

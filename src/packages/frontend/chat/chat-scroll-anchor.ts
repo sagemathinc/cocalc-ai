@@ -158,6 +158,11 @@ export function resolveChatViewportAnchorIndex(
   // the first row at or after the anchor's message.
   const target = parseFloat(anchor.date);
   if (!Number.isFinite(target)) return undefined;
+  // Older than every row: the message is not in this thread's rows (archived,
+  // or a foreign anchor). Resolving it to row 0 would jump to the oldest
+  // messages; let the caller open at the newest instead.
+  const first = parseFloat(sortedDates[0]);
+  if (Number.isFinite(first) && target < first) return undefined;
   for (let i = 0; i < sortedDates.length; i += 1) {
     const value = parseFloat(sortedDates[i]);
     if (Number.isFinite(value) && value >= target) {

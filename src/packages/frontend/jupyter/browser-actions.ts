@@ -60,6 +60,7 @@ import type { Kernels, Kernel } from "@cocalc/jupyter/util/misc";
 import { get_kernels_by_name_or_language } from "@cocalc/jupyter/util/misc";
 import { show_kernel_selector_reasons } from "@cocalc/jupyter/redux/store";
 import exportToHTML from "./nbviewer/export";
+import { waitForPrintImages } from "./print-images";
 import { initializeExport } from "./export-startup";
 import { downloadHTML } from "./download-html";
 import { JUPYTER_MIMETYPES } from "@cocalc/jupyter/util/misc";
@@ -2971,36 +2972,75 @@ export class JupyterActions extends JupyterActions0 {
   nbconvertToHtml = async (
     format: "cocalc-html" | "cocalc-pdf" = "cocalc-pdf",
   ) => {
+    if (this.isClosed()) return;
     const result = { args: ["--to", format], time: Date.now() };
+    let printWindow: Window | null = null;
     try {
       this.setState({ nbconvert: { ...result, state: "run", error: "" } });
+      // Reserve the popup while the export click still has user activation.
+      if (format === "cocalc-pdf") {
+        printWindow = window.open("", "_blank");
+        if (printWindow == null) throw Error("failed to open popup window");
+      }
       const html = await this.toHTML();
+      if (this.isClosed()) {
+        printWindow?.close();
+        return;
+      }
       if (format === "cocalc-html") {
         downloadHTML(html, `${parse(this.path).name}.html`);
         this.setState({ nbconvert: { ...result, state: "done", error: "" } });
         return;
       }
-      const printWindow = window.open("", "_blank");
-      if (printWindow == null) {
-        throw Error("failed to open popup window");
-      }
-      printWindow.document.open();
-      printWindow.document.write(html);
-      let printRequested = false;
+      const popup = printWindow!;
+      if (popup.closed) throw Error("Print window was closed. Please retry.");
+      popup.document.open();
+      popup.document.write(html);
+      let printing: Promise<void> | undefined;
       const print = () => {
-        if (printRequested) return;
-        printRequested = true;
-        printWindow.onafterprint = function () {
-          printWindow.close();
-        };
-        printWindow.print();
+        return (printing ??= (async () => {
+          try {
+            if (this.isClosed()) {
+              popup.onload = null;
+              popup.close();
+              return;
+            }
+            await waitForPrintImages(popup.document);
+            if (this.isClosed()) {
+              popup.onload = null;
+              popup.close();
+              return;
+            }
+            if (popup.closed)
+              throw Error("Print window was closed. Please retry.");
+            popup.onafterprint = () => {
+              popup.onload = null;
+              popup.onafterprint = null;
+              popup.close();
+            };
+            popup.print();
+            if (this.isClosed()) return;
+            this.setState({
+              nbconvert: { ...result, state: "done", error: "" },
+            });
+          } catch (err) {
+            popup.onload = null;
+            popup.onafterprint = null;
+            popup.close();
+            if (this.isClosed()) return;
+            this.setState({
+              nbconvert: { ...result, state: "done", error: `${err}` },
+            });
+          }
+        })());
       };
-      printWindow.onload = print;
-      printWindow.document.close();
+      popup.onload = print;
+      popup.document.close();
       // A fully local document can already be loaded before the handler runs.
-      if (printWindow.document.readyState === "complete") print();
-      this.setState({ nbconvert: { ...result, state: "done", error: "" } });
+      if (popup.document.readyState === "complete") await print();
     } catch (err) {
+      printWindow?.close();
+      if (this.isClosed()) return;
       this.setState({
         nbconvert: { ...result, state: "done", error: `${err}` },
       });
