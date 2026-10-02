@@ -171,6 +171,10 @@ const PUBLIC_IMAGE_DIMENSIONS: Record<string, PublicImageDimensions> = {
     height: 650,
     width: 1050,
   },
+  "/public/landing/project-terminal-20260916.jpg": {
+    height: 400,
+    width: 800,
+  },
 };
 
 export const PUBLIC_SITE_DESCRIPTION =

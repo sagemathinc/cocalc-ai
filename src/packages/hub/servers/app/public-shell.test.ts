@@ -2,6 +2,7 @@ import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
+import { PUBLIC_FEATURE_PAGES } from "@cocalc/util/public-feature-pages";
 import {
   PUBLIC_BODY_PLACEHOLDER,
   PUBLIC_STATIC_BASE_PLACEHOLDER,
@@ -243,6 +244,25 @@ describe("public shell rendering", () => {
       );
       expect(html).toContain(
         `content="${height}" data-cocalc-public-route-meta="og:image:height"`,
+      );
+    },
+  );
+
+  // A preview image missing from the dimensions table loses its
+  // og:image:width and og:image:height tags without any other sign.
+  it.each(PUBLIC_FEATURE_PAGES.map((page) => page.slug))(
+    "emits link preview dimensions for /features/%s",
+    async (slug) => {
+      const { html, status } = await renderPublicShell(
+        request(`/features/${slug}`),
+      );
+
+      expect(status).toBe(200);
+      expect(html).toMatch(
+        /content="\d+" data-cocalc-public-route-meta="og:image:width"/,
+      );
+      expect(html).toMatch(
+        /content="\d+" data-cocalc-public-route-meta="og:image:height"/,
       );
     },
   );
