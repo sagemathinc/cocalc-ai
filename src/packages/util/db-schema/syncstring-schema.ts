@@ -349,6 +349,10 @@ Table({
       type: "string",
       desc: "JSON encoded patch from the value of merge_parent to the merged value of all parents (patchflow's Patch.mergePatch); see merge_parent.",
     },
+    inexact: {
+      type: "boolean",
+      desc: "True if the patch was committed without the exact value of its parents (patchflow's Patch.inexact), e.g. before the history needed for it was loaded; such a patch has no hash, and a merge commit marked this way is read with merge3 rather than as a history written before exact merges.",
+    },
   },
   rules: {
     primary_key: ["string_id", "time", "is_snapshot"], // compound primary key
@@ -375,6 +379,7 @@ Table({
           hash: null,
           merge_parent: null,
           merge_patch: null,
+          inexact: null,
         },
         check_hook(db, obj, account_id, project_id, cb) {
           // this verifies that user has read access to these patches
@@ -405,6 +410,7 @@ Table({
           hash: true,
           merge_parent: true,
           merge_patch: true,
+          inexact: true,
         },
         required_fields: {
           string_id: true,

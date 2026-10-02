@@ -49,6 +49,11 @@ export interface Patch {
   merge_parent?: PatchId;
   merge_patch?: CompressedPatch;
 
+  // Committed without the exact value of its parents (patchflow's
+  // Patch.inexact): such a patch has no hash, and a merge commit marked this
+  // way is read with merge3 rather than as a history written by patchflow 0.8.
+  inexact?: boolean;
+
   is_snapshot?: boolean;
   snapshot?: string; // to_str() applied to the document at this point in time
   seq_info?: {

@@ -993,7 +993,8 @@ export class SyncDoc extends EventEmitter {
           ? (rawMetadata as PatchDocMetadataV1)
           : undefined;
       const checkpoint = dstream.getCheckpoint(LATEST_SNAPSHOT_CHECKPOINT) as
-        { seq: number; data?: { patchId?: string } } | undefined;
+        | { seq: number; data?: { patchId?: string } }
+        | undefined;
       this.setSyncMetadataState({ metadata, checkpoint });
     }
     return this.syncMetadata ?? Map();
@@ -1108,7 +1109,8 @@ export class SyncDoc extends EventEmitter {
         ? (rawMetadata as PatchDocMetadataV1)
         : undefined;
     const checkpoint = dstream.getCheckpoint?.(LATEST_SNAPSHOT_CHECKPOINT) as
-      { seq: number; data?: { patchId?: string } } | undefined;
+      | { seq: number; data?: { patchId?: string } }
+      | undefined;
 
     this.setLastSnapshot(
       typeof checkpoint?.data?.patchId === "string"
@@ -1171,7 +1173,8 @@ export class SyncDoc extends EventEmitter {
     let checkpoint;
     try {
       checkpoint = dstream.getCheckpoint?.(LATEST_SNAPSHOT_CHECKPOINT) as
-        { seq: number; data?: { patchId?: string } } | undefined;
+        | { seq: number; data?: { patchId?: string } }
+        | undefined;
     } catch (err) {
       const message = `${err ?? ""}`.toLowerCase();
       if (
@@ -1868,6 +1871,7 @@ export class SyncDoc extends EventEmitter {
       hash: null,
       merge_parent: null,
       merge_patch: null,
+      inexact: null,
     };
     if (this.doctype.patch_format != null) {
       (query as any).format = this.doctype.patch_format;
@@ -2485,6 +2489,9 @@ export class SyncDoc extends EventEmitter {
       obj.merge_parent = normalizePatchId(mergeParent);
       obj.merge_patch = JSON.parse(mergePatch);
     }
+    if (x.get("inexact") === true) {
+      obj.inexact = true;
+    }
     if (is_snapshot) {
       obj.snapshot = x.get("snapshot"); // this is a string
       obj.seq_info = x.get("seq_info")?.toJS();
@@ -2520,6 +2527,7 @@ export class SyncDoc extends EventEmitter {
       hash: p.hash,
       mergeParent: p.merge_parent,
       mergePatch: p.merge_patch,
+      ...(p.inexact ? { inexact: true } : {}),
     };
   };
 
@@ -2540,6 +2548,7 @@ export class SyncDoc extends EventEmitter {
       hash: env.hash,
       merge_parent: env.mergeParent,
       merge_patch: env.mergePatch as CompressedPatch | undefined,
+      ...(env.inexact ? { inexact: true } : {}),
     };
   };
 
@@ -2732,6 +2741,9 @@ export class SyncDoc extends EventEmitter {
           if (patch.merge_parent != null && patch.merge_patch != null) {
             obj.merge_parent = patch.merge_parent;
             obj.merge_patch = JSON.stringify(patch.merge_patch);
+          }
+          if (patch.inexact) {
+            obj.inexact = true;
           }
           if (this.doctype.patch_format != null) {
             obj.format = this.doctype.patch_format;
@@ -3611,7 +3623,8 @@ export class SyncDoc extends EventEmitter {
         return;
       }
       const current = this.patchflowSession?.getDocument() as
-        Document | undefined;
+        | Document
+        | undefined;
       const diskDoc = this._from_str(diskValue);
       if (current != null && this.documentsEqual(current, diskDoc)) {
         this.last = this.doc = current;
