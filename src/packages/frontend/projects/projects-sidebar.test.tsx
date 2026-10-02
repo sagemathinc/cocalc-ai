@@ -125,3 +125,15 @@ it("the project switcher shortcut focuses the filter, even before it mounts", ()
     screen.getByRole("searchbox", { name: "Filter projects" }),
   ).toHaveFocus();
 });
+
+it("New Project goes to the Projects page and asks it to open the create dialog", async () => {
+  const user = userEvent.setup();
+  const opened = jest.fn();
+  const { onNewProjectRequest } = jest.requireActual("./new-project-request");
+  const stop = onNewProjectRequest(opened);
+  render(<ProjectsSidebar />);
+  await user.click(screen.getByRole("button", { name: "New Project" }));
+  expect(setActiveTab).toHaveBeenCalledWith("projects");
+  expect(opened).toHaveBeenCalledTimes(1);
+  stop();
+});

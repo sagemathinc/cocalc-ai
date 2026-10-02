@@ -22,6 +22,7 @@ import {
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { ProjectThemeAvatar } from "./theme";
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
+import { requestNewProject } from "./new-project-request";
 
 // Ctrl/Cmd+Shift+P (the project switcher shortcut in classic navigation)
 // focuses the filter; it may be requested before the sidebar shows projects.
@@ -235,6 +236,25 @@ export function ProjectsSidebar({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <section aria-label="Projects" style={{ paddingRight: 8 }}>
+      <Typography.Text
+        type="secondary"
+        style={{ display: "block", padding: "6px 0 2px" }}
+      >
+        Projects
+      </Typography.Text>
+      <Button
+        block
+        type="text"
+        icon={<Icon name="plus" />}
+        style={{ justifyContent: "flex-start", marginBottom: 6 }}
+        onClick={() => {
+          requestNewProject();
+          void actions.redux.getActions("page").set_active_tab("projects");
+          onNavigate?.();
+        }}
+      >
+        New Project
+      </Button>
       <Input
         ref={filterRef}
         type="search"

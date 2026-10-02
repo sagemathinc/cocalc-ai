@@ -758,3 +758,13 @@ test("sidebar navigation shows the cards/list layout with pins instead of the ta
   expect(screen.getByTestId("starred-projects")).toBeInTheDocument();
   expect(screen.queryByTestId("projects-collection")).toBeNull();
 });
+
+test("a New Project request made before the page mounts opens the create dialog", async () => {
+  const { requestNewProject } = jest.requireActual("./new-project-request");
+  requestNewProject();
+  render(<ProjectsPage />);
+  expect(await screen.findByTestId("new-project-creator")).toHaveAttribute(
+    "data-open",
+    "true",
+  );
+});

@@ -34,6 +34,7 @@ import { ProjectsOperations } from "./projects-operations";
 import { StarredProjectsBar } from "./projects-starred";
 import { ProjectsTable } from "./projects-table";
 import { ProjectsCollection } from "./projects-collection";
+import { onNewProjectRequest } from "./new-project-request";
 import { useWorkspaceNavigation } from "@cocalc/frontend/app/workspace-navigation";
 import { useCollectionPreferences } from "@cocalc/frontend/components/use-collection-preferences";
 import { ProjectsTableControls } from "./projects-table-controls";
@@ -268,6 +269,14 @@ export const ProjectsPage: React.FC = () => {
   });
   const emailVerificationRequired = useEmailVerificationRequired();
   const createProjectDisabled = emailVerificationRequired;
+  // "+ New Project" in the sidebar.
+  useEffect(
+    () =>
+      onNewProjectRequest(() => {
+        if (!createProjectDisabled) setCreatePanelOpen(true);
+      }),
+    [createProjectDisabled],
+  );
   const onboardingProjects = useMemo(() => {
     const projects: FirstRunProject[] = [];
     project_map?.forEach((project, project_id) => {

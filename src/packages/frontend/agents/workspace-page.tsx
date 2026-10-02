@@ -3127,6 +3127,7 @@ export function MyAgentsWorkspacePage({
     contentOpen &&
     (activeTopTab === "projects" || is_valid_uuid_string(activeTopTab));
   const peopleOpen = contentOpen && activeTopTab === "people";
+  const projectsListOpen = contentOpen && activeTopTab === "projects";
   const { pageStyle } = useAppContext();
   const isNarrow = pageStyle.isNarrow;
   const { directory, error, loading } = useNamedAgents();
@@ -3824,7 +3825,7 @@ export function MyAgentsWorkspacePage({
     }));
   }
 
-  function renderAgentBadge(agent: NamedAgent) {
+  function renderAgentBadge(agent: NamedAgent, size = 30) {
     const appearance = agentAppearances.get(agent.endpoint.agent_id);
     const theme = resolveNamedAgentTheme(agent, appearance);
     return (
@@ -3839,7 +3840,7 @@ export function MyAgentsWorkspacePage({
               ? undefined
               : "robot"
           }
-          size={30}
+          size={size}
         />
       </AgentRunningIndicator>
     );
@@ -3896,12 +3897,12 @@ export function MyAgentsWorkspacePage({
         ) : (
           <span aria-hidden style={{ flex: "0 0 26px" }} />
         )}
-        <div style={{ flex: 1, minWidth: 0, padding: "5px 4px" }}>
+        <div style={{ flex: 1, minWidth: 0, padding: "0 4px" }}>
           <button
             type="button"
             aria-current={active ? "page" : undefined}
             aria-label={`${theme.title}, @${agent.name}, ${projectTitle}`}
-            title={`@${agent.name} · ${projectTitle}`}
+            title={`${theme.title} · @${agent.name}${showProjectTitle ? ` · ${projectTitle}` : ""}`}
             onClick={() => selectAgent(agent)}
             style={{
               alignItems: "center",
@@ -3912,21 +3913,23 @@ export function MyAgentsWorkspacePage({
               display: "flex",
               gap: 8,
               minWidth: 0,
-              padding: "4px 0",
+              padding: "6px 0",
               textAlign: "left",
               width: "100%",
             }}
           >
-            {renderAgentBadge(agent)}
-            <span style={{ minWidth: 0, flex: 1 }}>
-              <Text strong ellipsis style={{ display: "block" }}>
-                {theme.title}
-              </Text>
-              <Text type="secondary" ellipsis style={{ display: "block" }}>
-                @{agent.name}
-                {showProjectTitle && ` · ${projectTitle}`}
-              </Text>
-            </span>
+            {renderAgentBadge(agent, 26)}
+            {/* One line, like project rows: the title, then @name when it
+                differs (the project is in the tooltip). */}
+            <Text ellipsis strong={active} style={{ flex: 1, minWidth: 0 }}>
+              {theme.title}
+              {theme.title !== `@${agent.name}` && (
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {" "}
+                  @{agent.name}
+                </Text>
+              )}
+            </Text>
           </button>
         </div>
         {!hidden && (
@@ -4124,31 +4127,48 @@ export function MyAgentsWorkspacePage({
           </div>
         }
         firstNavigationItem={
-          lite ? null : (
+          <>
             <Button
               block
               type="text"
-              icon={<Icon name="folder-open" />}
               style={{
                 justifyContent: "flex-start",
-                background: projectsOpen ? UI_COLORS.selected : undefined,
+                background: overviewOpen ? UI_COLORS.selected : undefined,
               }}
-              aria-current={projectsOpen ? "page" : undefined}
-              onClick={() => {
-                searchNavigation.current++;
-                setMobileList(false);
-                // Already in projects: show all of them, as Agents shows
-                // all agents. Elsewhere, return to the last project view.
-                if (projectsOpen && activeTopTab !== "projects") {
-                  void redux.getActions("page").set_active_tab("projects");
-                } else {
-                  void openProjectsWorkspace();
-                }
-              }}
+              icon={<Icon name="robot" />}
+              aria-current={overviewOpen ? "page" : undefined}
+              onClick={showAgentsOverview}
             >
-              Projects
+              Agents
             </Button>
-          )
+            {!lite && (
+              <Button
+                block
+                type="text"
+                icon={<Icon name="folder-open" />}
+                style={{
+                  justifyContent: "flex-start",
+                  // Only the Projects list itself; inside a project the
+                  // sidebar marks that project instead.
+                  background: projectsListOpen ? UI_COLORS.selected : undefined,
+                }}
+                aria-current={projectsListOpen ? "page" : undefined}
+                onClick={() => {
+                  searchNavigation.current++;
+                  setMobileList(false);
+                  // Already in projects: show all of them, as Agents shows
+                  // all agents. Elsewhere, return to the last project view.
+                  if (projectsOpen && activeTopTab !== "projects") {
+                    void redux.getActions("page").set_active_tab("projects");
+                  } else {
+                    void openProjectsWorkspace();
+                  }
+                }}
+              >
+                Projects
+              </Button>
+            )}
+          </>
         }
       >
         <AgentSidebarFilter
@@ -4195,19 +4215,6 @@ export function MyAgentsWorkspacePage({
             return (
               <>
                 <Space direction="vertical" size={10} style={{ width: "100%" }}>
-                  <Button
-                    block
-                    type="text"
-                    style={{
-                      justifyContent: "flex-start",
-                      background: overviewOpen ? UI_COLORS.selected : undefined,
-                    }}
-                    icon={<Icon name="robot" />}
-                    aria-current={overviewOpen ? "page" : undefined}
-                    onClick={showAgentsOverview}
-                  >
-                    Agents
-                  </Button>
                   <Button
                     ref={libraryButton}
                     block
