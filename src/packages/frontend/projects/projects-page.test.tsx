@@ -154,6 +154,24 @@ jest.mock("./projects-table", () => ({
   ),
 }));
 
+jest.mock("./projects-collection", () => ({
+  ProjectsCollection: ({ visible_projects, view }: any) => (
+    <div
+      data-testid="projects-collection"
+      data-view={view}
+      data-visible-projects={JSON.stringify(visible_projects)}
+    />
+  ),
+}));
+
+jest.mock("@cocalc/frontend/components/use-collection-preferences", () => ({
+  useCollectionPreferences: () => ({
+    value: { view: "grid", order: [] },
+    setView: jest.fn(),
+    setOrder: jest.fn(),
+  }),
+}));
+
 jest.mock("./mobile-projects-list", () => ({
   MobileProjectsList: () => <div data-testid="mobile-projects-list" />,
 }));
@@ -719,4 +737,24 @@ test("projects page does not repeatedly refresh a dirty backend window while act
   rerender(<ProjectsPage />);
 
   expect(mockLoadProjectListWindow).not.toHaveBeenCalled();
+});
+
+test("sidebar navigation shows the cards/list layout with pins instead of the table and starred bar", () => {
+  mockOtherSettings = mockCompletedOnboardingSettings.set(
+    "workspace_navigation",
+    "sidebar",
+  );
+  const mounted = render(<ProjectsPage />);
+  expect(screen.getByTestId("projects-collection")).toHaveAttribute(
+    "data-view",
+    "grid",
+  );
+  expect(screen.queryByTestId("projects-table")).toBeNull();
+  expect(screen.queryByTestId("starred-projects")).toBeNull();
+  // Classic (existing accounts) keeps the table and starred bar.
+  mockOtherSettings = mockCompletedOnboardingSettings;
+  mounted.rerender(<ProjectsPage />);
+  expect(screen.getByTestId("projects-table")).toBeInTheDocument();
+  expect(screen.getByTestId("starred-projects")).toBeInTheDocument();
+  expect(screen.queryByTestId("projects-collection")).toBeNull();
 });

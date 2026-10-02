@@ -33,6 +33,9 @@ import { capitalize } from "@cocalc/util/misc";
 import { ProjectsOperations } from "./projects-operations";
 import { StarredProjectsBar } from "./projects-starred";
 import { ProjectsTable } from "./projects-table";
+import { ProjectsCollection } from "./projects-collection";
+import { useWorkspaceNavigation } from "@cocalc/frontend/app/workspace-navigation";
+import { useCollectionPreferences } from "@cocalc/frontend/components/use-collection-preferences";
 import { ProjectsTableControls } from "./projects-table-controls";
 import { CocalcErrorBoundary } from "@cocalc/frontend/app/error-boundary";
 import { ProjectDrawer } from "./project-drawer";
@@ -215,6 +218,11 @@ export const ProjectsPage: React.FC = () => {
   const screens = Grid.useBreakpoint();
   const mobileProjectsList = IS_MOBILE && !screens.lg;
   const narrow = mobileProjectsList;
+  // With sidebar navigation the list uses the shared cards/list layout, with
+  // starred projects as pins; classic keeps the table and starred bar.
+  const collectionLayout =
+    useWorkspaceNavigation() === "sidebar" && !mobileProjectsList;
+  const collectionPreferences = useCollectionPreferences("projects");
 
   // Tour
   const searchRef = useRef<any>(null);
@@ -725,7 +733,7 @@ export const ProjectsPage: React.FC = () => {
                         minWidth: 0,
                       }}
                     >
-                      <StarredProjectsBar />
+                      {!collectionLayout && <StarredProjectsBar />}
                     </div>
                     {!narrow && (
                       <div
@@ -821,11 +829,26 @@ export const ProjectsPage: React.FC = () => {
                       flex: mobileProjectsList ? "0 0 auto" : "1 1 0",
                       height: mobileProjectsList ? undefined : "100%",
                       minHeight: 0,
-                      overflow: mobileProjectsList ? undefined : "hidden",
+                      overflow: mobileProjectsList
+                        ? undefined
+                        : collectionLayout
+                          ? "auto"
+                          : "hidden",
                     }}
                   >
                     <CocalcErrorBoundary scope="projects.list">
-                      {mobileProjectsList ? (
+                      {collectionLayout ? (
+                        <ProjectsCollection
+                          visible_projects={visible_projects}
+                          rootfsImages={rootfsImages}
+                          rootfsImagesLoading={rootfsImagesLoading}
+                          selectedProjectIds={selectedProjectIds}
+                          onSelectedProjectIdsChange={setSelectedProjectIds}
+                          view={collectionPreferences.value.view}
+                          onViewChange={collectionPreferences.setView}
+                          scrollParent={projectListElement}
+                        />
+                      ) : mobileProjectsList ? (
                         <MobileProjectsList
                           visible_projects={visible_projects}
                           rootfsImages={rootfsImages}
