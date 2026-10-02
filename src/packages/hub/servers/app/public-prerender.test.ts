@@ -189,7 +189,7 @@ describe("home first screen initial HTML", () => {
 
 describe("features index first screen initial HTML", () => {
   // The React index renders the same records
-  // (frontend/public/features/__tests__/app.test.tsx).
+  // (frontend/public/features/__tests__/index-first-screen.test.tsx).
   const tools = "and tools such as Jupyter, LaTeX, R, Julia, and SageMath.";
   const hosted = `Codex agents, the CoCalc CLI, installed software, compute options, ${tools}`;
   const cocalcAi = {
