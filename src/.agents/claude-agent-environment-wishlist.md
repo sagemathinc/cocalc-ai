@@ -1,6 +1,6 @@
 # Claude agent environment wishlist
 
-Written by Claude (claude-opus-5-5) on 2026-09-30, working as an agent in a CoCalc project. This is a list of general gaps an agent runs into when working in a CoCalc project. None of it is specific to CoCalc development. The examples come from real work in this project.
+Written by Claude (claude-opus-5-5) on 2026-09-30, working as an agent in a CoCalc project. This is a list of general gaps an agent runs into when working in a CoCalc project. None of it is specific to CoCalc development. The examples come from real work in this project. Items 9–12, and the notes marked "second report", come from another Claude's notes from work in a different project (October 2026).
 
 ## 1. Viewing images in the project
 
@@ -21,7 +21,7 @@ Written by Claude (claude-opus-5-5) on 2026-09-30, working as an agent in a CoCa
 
 **Status:** implemented as `project_read_file`, `project_edit_file` and `project_write_file`.
 
-- **Gap:** every read and edit goes through shell commands (`sed -n` ranges, `grep`, Python heredocs doing string replacement). This works but is noisy and prone to quoting mistakes. Every command also ends with a "Remaining job processes were terminated…" line on stderr.
+- **Gap:** every read and edit goes through shell commands (`sed -n` ranges, `grep`, Python heredocs doing string replacement). This works but is noisy and prone to quoting mistakes. (The stray stderr line on every command is item 10.)
 - **Wanted:** project-side tools to read a file with line ranges, make an exact-string edit that fails if the match isn't unique, write a whole file, and grep or glob with structured results.
 - **Implemented:** `project-host/acp/claude-project-file-tools.ts`. Reads return numbered lines with offset/limit (256 KB per call, binary refused). Edits are exact-string replacements that must be unique unless `replace_all`, written atomically and refused if the file changed meanwhile. Writes are atomic, keep the existing mode, follow symlinks and accept up to 1 MB. All three run through the same scoped executor as `project_exec`. There is no separate grep/glob tool yet; `rg` through `project_exec` covers it.
 
@@ -35,6 +35,7 @@ Written by Claude (claude-opus-5-5) on 2026-09-30, working as an agent in a CoCa
 
 - **Gap:** a GitHub PR card needs `repository`, `state`, `draft`, `fetched_at`, `base_sha`, `head_sha` and `checks` assembled by hand. A wrong payload only fails with "invalid GitHub PR identity". The per-turn message date now supplied in the turn context fixed the earlier "message date required" failure.
 - **Wanted:** shortcuts like `artifact publish --github-pr <number>` that fill in the fields themselves, and error messages that name the invalid field.
+- **Second report:** published artifact and publication records show `"date": "1970-01-01T00:00:00.000Z"`, while the real time is in `published_at`. Either the date should be set or the field omitted.
 
 ## 6. Your pasted images as project files
 
@@ -60,3 +61,36 @@ Written by Claude (claude-opus-5-5) on 2026-09-30, working as an agent in a CoCa
   - A cap on how many run at once.
   - Stop cancels them together with the parent.
   - They count against the same subscription usage, which should be stated wherever subagents are mentioned.
+- **Second report:** the other Claude also found no subagent or parallel-agent tool; its only parallelism was running several jobs at once. `/opt/cocalc/bin2/codex` exists in the project, but it isn't clear which account or credentials it would use, so it wasn't tried. If running another agent from the project is meant to be possible, the credentials it uses should be documented.
+
+## 9. Large tool calls
+
+- **Gap:** a `project_exec` call whose script was a ~40 KB heredoc failed with "Project tool disconnected" and wrote nothing. Sending the same content as two ~25 KB calls worked.
+- **Cause:** on `main`, the project tool bridge accepts at most 40 KB per request (`MAX_REQUEST_BYTES` in `project-host/acp/claude-project-tool-bridge.ts`). Anything larger makes it close the connection without a reply, and the MCP helper reports that as "Project tool disconnected". This PR raises the limit to 2.5 MB for the file tools, but an oversized request is still dropped silently.
+- **Wanted:** an explicit error that names the limit, for example "project tool request too large: 52,431 > 40,960 bytes; split it into smaller calls". #816 does this for the MCP helper's own line limit; the bridge should do the same.
+
+## 10. A stray stderr line on every command
+
+- **Gap:** nearly every job, even `ls`, ends with "Remaining job processes were terminated when the command exited; use cocalc project terminal spawn for persistent services." It reads like a warning about something the agent did. It appears in almost every result, both reports saw it, and it costs tokens.
+- **Cause:** the project's job runner prints it whenever processes remain in the job's scope after the command exits (`server/cloud/bootstrap/bootstrap.py`). Since it appears for commands that start nothing in the background, something the wrapper or shell startup itself runs is probably being counted.
+- **Wanted:** print it only when processes the command itself started were killed, and name them, for example "terminated 2 leftover processes: sleep, node".
+
+## 11. Job progress for long-running commands
+
+- **Gap:** while a long build runs, `project_exec_wait` returns nothing new until output arrives. If the output is buffered (for example piped through `tail`), "is it stuck or busy?" means running `ps` in a second call.
+- **Wanted:** wait results that include the job's CPU time and how long ago it last produced output.
+
+## 12. Small gaps in the project image
+
+- **Gap:** `/usr/bin/time` is not installed (the bash `time` keyword works). Benchmark scripts commonly use `/usr/bin/time -v`.
+- **Wanted:** include GNU `time` in the default image.
+
+## What already works well
+
+The second report also noted what worked smoothly:
+
+- `request_user_input_async`: the answer arrived as a new user message mid-turn.
+- `gh` was already authenticated (ssh protocol), and repo create and push worked.
+- `ssh` to other hosts with BatchMode worked.
+- The npm registry and pnpm store were reachable.
+- Artifact publishing worked for file and commit cards.
