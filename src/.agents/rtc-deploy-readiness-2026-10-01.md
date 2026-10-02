@@ -113,7 +113,7 @@ Before deploying:
 1. ✅ patchflow 0.10.0 released; #751 and #760 bumped.
 2. ✅ patchflow 0.12.0 released (#19, #20); #760 on `^0.12.0` with the inexact storage and the first-snapshot history fix.
 3. ⛔ Merge #751, then #760 (rebase #760 onto main after #751).
-4. ⛔ Old and new clients during rollout: force all browser clients to reload on deploy. (With #16, a new merge commit's `patch` keeps its old meaning, so an old client still reads it as before.)
+4. ⛔ Old and new clients during rollout: force all browser clients to reload on deploy. The frontend version (`src/packages/util/smc-version.js`) is bumped in #751 (1790969193) and #760 (1790969197; keep the newer one when rebasing); production browsers have 1786551348. After the deploy, in Admin → Site Settings → Versions set **both** "Recommended version" and "Required browser version" to 1790969197: the required version is capped at the recommended one (`Math.min` in site-settings-public.ts), so setting only the required version does nothing. Older browsers are then disconnected and told to reload. (With #16, a new merge commit's `patch` keeps its old meaning, so an old client still reads it as before.)
 5. ✅ `inconsistency` reports are readable with the admin CLI on day one.
 
 Not blockers (deploy, then fix): unsent-on-reload loss, single ipynb writer,
