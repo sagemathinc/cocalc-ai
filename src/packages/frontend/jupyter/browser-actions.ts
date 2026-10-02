@@ -60,6 +60,7 @@ import type { Kernels, Kernel } from "@cocalc/jupyter/util/misc";
 import { get_kernels_by_name_or_language } from "@cocalc/jupyter/util/misc";
 import { show_kernel_selector_reasons } from "@cocalc/jupyter/redux/store";
 import exportToHTML from "./nbviewer/export";
+import { getExportKernelSpec } from "./export-kernelspec";
 import { waitForPrintImages } from "./print-images";
 import { initializeExport } from "./export-startup";
 import { downloadHTML } from "./download-html";
@@ -2953,16 +2954,19 @@ export class JupyterActions extends JupyterActions0 {
     if (store?.get("cells") == null || store?.get("cell_list") == null) {
       throw Error("not loaded");
     }
-    const kernelspec = store.get_kernel_info(store.get("kernel"));
-    if (kernelspec == null) {
-      throw Error("unable to get kernelspec");
-    }
+    const kernel = store.get("kernel");
+    const metadata = store.get("metadata")?.toJS();
+    const kernelspec = getExportKernelSpec(
+      kernel,
+      store.get_kernel_info(kernel),
+      metadata,
+    );
     const cells = store.get("cells").toJS();
     await this.getBase64Blobs(cells);
     const cocalcJupyter = {
       cells,
       cellList: store.get("cell_list").toJS(),
-      metadata: store.get("metadata")?.toJS(),
+      metadata,
       kernelspec,
     };
     const { base: title } = parse(this.path);
