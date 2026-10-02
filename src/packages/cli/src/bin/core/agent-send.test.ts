@@ -61,3 +61,28 @@ test("exit codes distinguish accepted, rejected and unknown", () => {
   assert.equal(agentSendExitCode("rejected"), 2);
   assert.equal(agentSendExitCode("unknown"), 3);
 });
+
+test("external inboxes and external senders get accurate summaries", () => {
+  const external = {
+    kind: "external" as const,
+    account_id: randomUUID(),
+    agent_id: randomUUID(),
+    installation_id: randomUUID(),
+  };
+  const inbox = agentSendSummary({
+    ...sent({ outcome: "accepted", chat_effect: "saved" }),
+    outcome: {
+      ...base,
+      target: external,
+      outcome: "accepted",
+      chat_effect: "saved",
+    },
+  } as any);
+  assert.match(inbox, /saved in their external inbox\. No turn starts/);
+  assert.doesNotMatch(inbox, /turn was started/);
+  const unknown = agentSendSummary({
+    ...sent({ outcome: "unknown", reason: "timeout" }),
+    external_agent: "laptop",
+  });
+  assert.ok(unknown.includes('--external-agent "laptop".'));
+});
