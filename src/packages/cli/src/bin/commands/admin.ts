@@ -3157,6 +3157,40 @@ Merge comments are private unless their corresponding --*-comment-public flag is
     );
   });
 
+  adminDb
+    .command("repair-scheduled-collection-expiry")
+    .description(
+      "preview or repair a future queued course collection expiry (fresh admin auth)",
+    )
+    .requiredOption("--project-id <uuid>", "authoritative course project")
+    .requiredOption("--op-id <uuid>", "scheduled collection operation")
+    .requiredOption(
+      "--expected-updated-at <iso>",
+      "reviewed operation updated_at",
+    )
+    .requiredOption("--expected-expires-at <iso>", "reviewed operation expiry")
+    .requiredOption("--expected-run-at <iso>", "reviewed scheduled run time")
+    .requiredOption("--idempotency-key <key>", "stable logical repair key")
+    .requiredOption("--reason <text>", "human-readable audit reason")
+    .option("--commit", "commit the reviewed expiry repair", false)
+    .action(async (opts: any, command: Command) => {
+      await withContext(
+        command,
+        "admin db repair-scheduled-collection-expiry",
+        async (ctx) =>
+          await ctx.hub.adminDb.repairScheduledCollectionExpiry({
+            project_id: opts.projectId,
+            op_id: opts.opId,
+            expected_updated_at: opts.expectedUpdatedAt,
+            expected_expires_at: opts.expectedExpiresAt,
+            expected_run_at: opts.expectedRunAt,
+            idempotency_key: opts.idempotencyKey,
+            reason: opts.reason,
+            commit: opts.commit === true,
+          }),
+      );
+    });
+
   adminDbCommonOptions(
     adminDb
       .command("migration-health")

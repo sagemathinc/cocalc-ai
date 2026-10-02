@@ -60,6 +60,10 @@ import type {
 import type { ManagedProjectEgressOverride } from "@cocalc/conat/files/file-server";
 import type { LroEvent, LroSummary } from "@cocalc/conat/hub/api/lro";
 import type {
+  ScheduledCollectionExpiryRepairRequest,
+  ScheduledCollectionExpiryRepairResponse,
+} from "@cocalc/conat/hub/api/admin-db";
+import type {
   ChatSpeechCapabilities,
   ChatSpeechSynthesisResult,
   ChatSpeechTranscriptionResult,
@@ -2968,7 +2972,7 @@ export type HostControlMethod =
   | "build-rootfs-image-manifest"
   | "build-project-rootfs-manifest";
 export type ProjectHostAuthTokenMethod = "issue" | "issue-api-key";
-export type ProjectLroMethod = "publish-progress";
+export type ProjectLroMethod = "publish-progress" | "repair-collection-expiry";
 export type AccountDirectoryMethod =
   | "get"
   | "get-by-email"
@@ -4442,6 +4446,9 @@ export interface InterBayProjectHostAuthTokenApi {
 
 export interface InterBayProjectLroApi {
   publishProgress: (opts: ForwardProjectLroProgressRequest) => Promise<void>;
+  repairScheduledCollectionExpiry: (
+    opts: ScheduledCollectionExpiryRepairRequest & { actor_id: string },
+  ) => Promise<ScheduledCollectionExpiryRepairResponse>;
 }
 
 export interface InterBayAccountDirectoryApi {
@@ -6719,8 +6726,19 @@ export function createInterBayProjectLroClient({
       method: "publish-progress",
     }),
   });
+  const repairClient = createServiceClient<
+    Pick<InterBayProjectLroApi, "repairScheduledCollectionExpiry">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectLroSubject({
+      dest_bay,
+      method: "repair-collection-expiry",
+    }),
+  });
   return {
     publishProgress: async (opts) => await progressClient.publishProgress(opts),
+    repairScheduledCollectionExpiry: async (opts) =>
+      await repairClient.repairScheduledCollectionExpiry(opts),
   };
 }
 
@@ -13602,6 +13620,27 @@ export function createInterBayProjectLroHandler({
     impl: {
       publishProgress: async (opts) => await impl.publishProgress(opts),
     },
+  });
+}
+
+export function createInterBayScheduledCollectionExpiryRepairHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: Pick<InterBayProjectLroApi, "repairScheduledCollectionExpiry">;
+}): ConatService {
+  return createServiceHandler<
+    Pick<InterBayProjectLroApi, "repairScheduledCollectionExpiry">
+  >({
+    ...options,
+    service: "inter-bay-scheduled-collection-expiry-repair",
+    subject: projectLroSubject({
+      dest_bay: bay_id,
+      method: "repair-collection-expiry",
+    }),
+    impl,
   });
 }
 

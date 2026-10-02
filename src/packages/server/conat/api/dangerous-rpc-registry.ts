@@ -297,6 +297,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "writes an immutable operator hash attestation for a remote-only restore drill",
   },
+  "adminDb.repairScheduledCollectionExpiry": {
+    decision: "fresh-auth-required",
+    reason:
+      "audited compare-and-swap expiry repair for a never-started scheduled collection",
+  },
   "adminDb.exec": {
     decision: "fresh-auth-required",
     reason: "audited operator SQL write mode against operational data",

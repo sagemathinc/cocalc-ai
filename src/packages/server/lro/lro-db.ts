@@ -137,6 +137,17 @@ async function ensureLroSchemaInternal(): Promise<void> {
     await client.query(
       "CREATE INDEX IF NOT EXISTS lro_parent_idx ON long_running_operations(parent_id)",
     );
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS scheduled_collection_expiry_repairs (
+        actor_id UUID NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        request_sha256 TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        receipt JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (actor_id, idempotency_key)
+      )
+    `);
   } finally {
     if (locked) {
       try {
