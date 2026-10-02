@@ -41,7 +41,7 @@ export function registerUrlCommand(
     )
     .addHelpText(
       "after",
-      "\nUses the configured API/profile, never the input URL's host. Resolution does not start a project or grant content access.\n",
+      '\nUses the configured API/profile, never the input URL\'s host. Resolution does not start a project or grant content access.\n\nProject links (/u/<owner>/projects/<alias>/...) return target.project_id plus `location`, the decoded thing the link opens, e.g. /u/alice/projects/thesis/files/home/user/a.md gives { kind: "file", path: "/home/user/a.md" }. Use those with the project file commands.\n',
     )
     .action(
       async (value: string, opts: { inspect?: boolean }, command: Command) => {

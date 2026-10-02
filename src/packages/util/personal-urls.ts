@@ -64,6 +64,33 @@ export interface ResolvedPersonalUrl {
   project_id?: string;
   /** Projects: the path inside the project after the alias, e.g. files/a.md. */
   rest?: string;
+  /** Projects: what `rest` opens, decoded (see projectLocation). */
+  location?: ProjectLocation;
+}
+
+/**
+ * What a project URL's path opens. `files/home/user/a.md` is the file
+ * /home/user/a.md (paths after files/ are absolute in the project, without
+ * the leading slash); a trailing slash is a directory. Anything else names a
+ * project page, e.g. `settings` or `log`.
+ */
+export type ProjectLocation =
+  | { kind: "file" | "directory"; path: string }
+  | { kind: "page"; page: string; path?: string };
+
+export function projectLocation(rest?: string): ProjectLocation | undefined {
+  if (!rest) return undefined;
+  const [head, ...tail] = rest.split("/");
+  const decoded = tail.map(decodeURIComponent).join("/");
+  if (head === "files") {
+    if (!decoded) return { kind: "directory", path: "/" };
+    return decoded.endsWith("/")
+      ? { kind: "directory", path: `/${decoded.replace(/\/+$/, "")}` }
+      : { kind: "file", path: `/${decoded}` };
+  }
+  return decoded
+    ? { kind: "page", page: head, path: `/${decoded.replace(/\/+$/, "")}` }
+    : { kind: "page", page: head };
 }
 
 export function normalizePersonalUrlOwner(owner: string): string {

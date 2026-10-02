@@ -85,6 +85,12 @@ Results include `owner` (`account_id`, current `username`, and `redirect`), `kin
 `alias`, `canonical_path`, and `status`. A `resolved` result includes a typed
 `target`: agent/project IDs, artifact entry/project IDs, conversation resource/
 project IDs, or a person ID, with authorized chat path/thread IDs when available.
+Project links also return `rest` (the path after the alias, as in the URL) and
+`location`, what it opens, decoded: `files/home/user/a.md` is
+`{ "kind": "file", "path": "/home/user/a.md" }` (paths after `files/` are
+absolute in the project), a trailing slash is a `directory`, and anything else
+is a project `page` such as `settings`. Agents should use `target.project_id`
+and `location.path` with the normal project file commands.
 `unavailable` and `access-denied` results have no content locator; a denied link
 may include `project_id` for the existing access-request flow. These are successful
 resolution responses, so scripts must check `data.status`, not just `ok`.

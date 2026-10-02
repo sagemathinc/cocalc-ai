@@ -3,7 +3,11 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { requireUuid } from "@cocalc/conat/agents/protocol";
-import { parsePersonalUrl, personalUrlPath } from "@cocalc/util/personal-urls";
+import {
+  parsePersonalUrl,
+  personalUrlPath,
+  projectLocation,
+} from "@cocalc/util/personal-urls";
 import type {
   ResolvedPersonalUrl,
   PersonalUrlTarget,
@@ -44,7 +48,9 @@ export async function resolvePersonalUrl({
       alias,
     ),
     status: "unavailable",
-    ...(parsed.rest ? { rest: parsed.rest } : {}),
+    ...(parsed.rest
+      ? { rest: parsed.rest, location: projectLocation(parsed.rest) }
+      : {}),
   };
   // Existing person nicknames are private settings, not published directories.
   if (parsed.kind === "people" && account_id !== owner.account_id && !inspect)

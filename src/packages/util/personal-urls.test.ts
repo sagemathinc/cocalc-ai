@@ -1,5 +1,6 @@
 import {
   normalizePersonalUrlOwner,
+  projectLocation,
   parsePersonalUrl,
   personalUrlPath,
 } from "./personal-urls";
@@ -65,3 +66,20 @@ test.each(["../person", "person/slash", "a--b", " admin ", "", "a".repeat(40)])(
     expect(() => normalizePersonalUrlOwner(owner)).toThrow();
   },
 );
+
+test("project locations decode what a project URL opens", () => {
+  expect(projectLocation("files/home/user/a.md")).toEqual({
+    kind: "file",
+    path: "/home/user/a.md",
+  });
+  expect(projectLocation("files/home/user/my%20notes/")).toEqual({
+    kind: "directory",
+    path: "/home/user/my notes",
+  });
+  expect(projectLocation("files/")).toEqual({ kind: "directory", path: "/" });
+  expect(projectLocation("settings")).toEqual({
+    kind: "page",
+    page: "settings",
+  });
+  expect(projectLocation(undefined)).toBeUndefined();
+});

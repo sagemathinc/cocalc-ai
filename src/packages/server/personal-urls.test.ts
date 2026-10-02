@@ -248,6 +248,7 @@ test("project links carry the path inside the project", async () => {
     status: "resolved",
     canonical_path: "/u/william/projects/research",
     rest: "files/paper.tex",
+    location: { kind: "file", path: "/paper.tex" },
     target: { kind: "project", project_id },
   });
   // Aliases are public names: a nonmember learns only the project id.
