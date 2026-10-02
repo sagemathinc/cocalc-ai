@@ -143,17 +143,6 @@ jest.mock("./projects-starred", () => ({
   StarredProjectsBar: () => <div data-testid="starred-projects" />,
 }));
 
-jest.mock("./projects-table", () => ({
-  ProjectsTable: ({ freezeOrder, height, visible_projects }: any) => (
-    <div
-      data-testid="projects-table"
-      data-freeze-order={String(!!freezeOrder)}
-      data-height={String(height)}
-      data-visible-projects={JSON.stringify(visible_projects)}
-    />
-  ),
-}));
-
 jest.mock("./projects-collection", () => ({
   ProjectsCollection: ({ visible_projects, view }: any) => (
     <div
@@ -405,8 +394,8 @@ test("projects page allows existing project access when email verification is re
       "You can accept project invites and open projects you already have access to. Please verify your email address before creating new projects or starting project runtimes.",
     ),
   ).toBeTruthy();
-  expect(screen.getByRole("button", { name: /create/i })).toBeDisabled();
-  expect(screen.getByTestId("projects-table")).toHaveAttribute(
+  expect(screen.getByRole("button", { name: /New project/ })).toBeDisabled();
+  expect(screen.getByTestId("projects-collection")).toHaveAttribute(
     "data-visible-projects",
     JSON.stringify(["invited-project"]),
   );
@@ -419,15 +408,21 @@ test("project creation modal does not auto-open for an empty project list", () =
   render(<ProjectsPage />);
 
   expect(screen.queryByTestId("new-project-creator")).toBeNull();
-  expect(screen.getByRole("button", { name: /create/i })).toBeInTheDocument();
+  expect(screen.getByTestId("quick-project-creator")).toHaveAttribute(
+    "data-open",
+    "false",
+  );
+  expect(
+    screen.getByRole("button", { name: /New project/ }),
+  ).toBeInTheDocument();
 });
 
 test("project creation modal opens from the explicit create button", async () => {
   render(<ProjectsPage />);
 
-  fireEvent.click(screen.getByRole("button", { name: /create/i }));
+  fireEvent.click(screen.getByRole("button", { name: /New project/ }));
 
-  expect(await screen.findByTestId("new-project-creator")).toHaveAttribute(
+  expect(await screen.findByTestId("quick-project-creator")).toHaveAttribute(
     "data-open",
     "true",
   );
@@ -438,7 +433,7 @@ test("projects page falls back to locally visible projects without a matching ba
 
   render(<ProjectsPage />);
 
-  expect(screen.getByTestId("projects-table")).toHaveAttribute(
+  expect(screen.getByTestId("projects-collection")).toHaveAttribute(
     "data-visible-projects",
     JSON.stringify(["local-project"]),
   );
@@ -479,65 +474,6 @@ test("host-info prefetch stops after a failed lookup", async () => {
   expect(mockEnsureHostInfo).toHaveBeenCalledWith("host-1");
 });
 
-test("projects page sizes the table from the flex list slot", () => {
-  const rectSpy = jest
-    .spyOn(HTMLElement.prototype, "getBoundingClientRect")
-    .mockReturnValue({
-      bottom: 720,
-      height: 720,
-      left: 0,
-      right: 0,
-      top: 0,
-      width: 0,
-      x: 0,
-      y: 0,
-      toJSON: () => ({}),
-    } as DOMRect);
-
-  try {
-    render(<ProjectsPage />);
-
-    expect(screen.getByTestId("projects-table")).toHaveAttribute(
-      "data-height",
-      "672",
-    );
-  } finally {
-    rectSpy.mockRestore();
-  }
-});
-
-test("projects page observes the flex list when it mounts after project data", () => {
-  mockProjectMap = undefined;
-  const rectSpy = jest
-    .spyOn(HTMLElement.prototype, "getBoundingClientRect")
-    .mockReturnValue({
-      bottom: 720,
-      height: 720,
-      left: 0,
-      right: 0,
-      top: 0,
-      width: 0,
-      x: 0,
-      y: 0,
-      toJSON: () => ({}),
-    } as DOMRect);
-
-  try {
-    const { rerender } = render(<ProjectsPage />);
-    expect(screen.queryByTestId("projects-table")).toBeNull();
-
-    mockProjectMap = mockEmptyMap;
-    rerender(<ProjectsPage />);
-
-    expect(screen.getByTestId("projects-table")).toHaveAttribute(
-      "data-height",
-      "672",
-    );
-  } finally {
-    rectSpy.mockRestore();
-  }
-});
-
 test("projects page renders matching backend project window ids", () => {
   mockVisibleProjects.push("local-project");
   mockProjectListWindow = ImmutableMap({
@@ -554,7 +490,7 @@ test("projects page renders matching backend project window ids", () => {
 
   render(<ProjectsPage />);
 
-  expect(screen.getByTestId("projects-table")).toHaveAttribute(
+  expect(screen.getByTestId("projects-collection")).toHaveAttribute(
     "data-visible-projects",
     JSON.stringify(["backend-project-1", "backend-project-2"]),
   );
@@ -579,7 +515,7 @@ test("projects page ignores backend project window while hashtag filters are act
 
   render(<ProjectsPage />);
 
-  expect(screen.getByTestId("projects-table")).toHaveAttribute(
+  expect(screen.getByTestId("projects-collection")).toHaveAttribute(
     "data-visible-projects",
     JSON.stringify(["local-hashtag-project"]),
   );
@@ -606,13 +542,9 @@ test("projects page shows explicit refresh for dirty backend window", () => {
   expect(
     screen.getByRole("button", { name: "Refresh project list (3)" }),
   ).toBeVisible();
-  expect(screen.getByTestId("projects-table")).toHaveAttribute(
+  expect(screen.getByTestId("projects-collection")).toHaveAttribute(
     "data-visible-projects",
     JSON.stringify(["backend-project-1", "backend-project-2"]),
-  );
-  expect(screen.getByTestId("projects-table")).toHaveAttribute(
-    "data-freeze-order",
-    "true",
   );
   fireEvent.click(
     screen.getByRole("button", { name: "Refresh project list (3)" }),
@@ -645,13 +577,9 @@ test("projects page keeps dirty backend window ids while the window is reloading
 
   render(<ProjectsPage />);
 
-  expect(screen.getByTestId("projects-table")).toHaveAttribute(
+  expect(screen.getByTestId("projects-collection")).toHaveAttribute(
     "data-visible-projects",
     JSON.stringify(["stable-backend-project"]),
-  );
-  expect(screen.getByTestId("projects-table")).toHaveAttribute(
-    "data-freeze-order",
-    "true",
   );
 });
 
@@ -745,41 +673,16 @@ test("projects page does not repeatedly refresh a dirty backend window while act
   expect(mockLoadProjectListWindow).not.toHaveBeenCalled();
 });
 
-test("sidebar navigation shows the cards/list layout with pins instead of the table and starred bar", () => {
-  mockOtherSettings = mockCompletedOnboardingSettings.set(
-    "workspace_navigation",
-    "sidebar",
-  );
-  const mounted = render(<ProjectsPage />);
+test("projects show as cards or a list with pins, without the starred bar", () => {
+  render(<ProjectsPage />);
   expect(screen.getByTestId("projects-collection")).toHaveAttribute(
     "data-view",
     "grid",
   );
-  expect(screen.queryByTestId("projects-table")).toBeNull();
   expect(screen.queryByTestId("starred-projects")).toBeNull();
-  // Classic (existing accounts) keeps the table and starred bar.
-  mockOtherSettings = mockCompletedOnboardingSettings;
-  mounted.rerender(<ProjectsPage />);
-  expect(screen.getByTestId("projects-table")).toBeInTheDocument();
-  expect(screen.getByTestId("starred-projects")).toBeInTheDocument();
-  expect(screen.queryByTestId("projects-collection")).toBeNull();
 });
 
-test("a New Project request made before the page mounts opens the create dialog", async () => {
-  const { requestNewProject } = jest.requireActual("./new-project-request");
-  requestNewProject();
-  render(<ProjectsPage />);
-  expect(await screen.findByTestId("new-project-creator")).toHaveAttribute(
-    "data-open",
-    "true",
-  );
-});
-
-test("with sidebar navigation, New project opens the minimal creator", async () => {
-  mockOtherSettings = mockCompletedOnboardingSettings.set(
-    "workspace_navigation",
-    "sidebar",
-  );
+test("a New Project request made before the page mounts opens the minimal creator", async () => {
   const { requestNewProject } = jest.requireActual("./new-project-request");
   requestNewProject();
   render(<ProjectsPage />);

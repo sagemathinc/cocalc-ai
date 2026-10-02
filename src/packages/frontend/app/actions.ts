@@ -5,10 +5,6 @@
 
 import { noteProjectVisit, projectsToRelease } from "./project-retention";
 import {
-  normalizeWorkspaceNavigation,
-  WORKSPACE_NAVIGATION_SETTING,
-} from "@cocalc/util/workspace-navigation";
-import {
   Actions,
   project_redux_name,
   redux,
@@ -177,14 +173,13 @@ export class PageActions extends Actions<PageState> {
     disconnect_from_project(project_id);
   }
 
-  // Sidebar navigation has no project tabs: keep the recently visited
-  // projects open and release older ones as if their tabs were closed.
+  // The sidebar has no project tabs: keep the recently visited projects open
+  // and release older ones as if their tabs were closed. Accounts with AI
+  // disabled still use the top bar's project tabs.
   private retainRecentProjects(current: string): void {
     noteProjectVisit(current);
-    const navigation = redux
-      .getStore("account")
-      ?.getIn(["other_settings", WORKSPACE_NAVIGATION_SETTING]);
-    if (normalizeWorkspaceNavigation(navigation) !== "sidebar") return;
+    if (redux.getStore("account")?.getIn(["other_settings", "openai_disabled"]))
+      return;
     const open = redux.getStore("projects")?.get("open_projects");
     const ids: string[] = open?.toArray?.() ?? [];
     for (const project_id of projectsToRelease(ids, current)) {

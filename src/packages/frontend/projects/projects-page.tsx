@@ -5,7 +5,7 @@
 
 import { Button, Grid, Layout } from "antd";
 import { Map, Set as ImmutableSet } from "immutable";
-import { Suspense, useLayoutEffect, useRef } from "react";
+import { Suspense, useRef } from "react";
 import { useIntl } from "react-intl";
 
 // ensure redux stuff (actions and store) are initialized:
@@ -32,11 +32,9 @@ import { capitalize } from "@cocalc/util/misc";
 
 import { ProjectsOperations } from "./projects-operations";
 import { StarredProjectsBar } from "./projects-starred";
-import { ProjectsTable } from "./projects-table";
 import { ProjectsCollection } from "./projects-collection";
 import { onNewProjectRequest } from "./new-project-request";
 import { QuickProjectCreator } from "./quick-project-creator";
-import { useWorkspaceNavigation } from "@cocalc/frontend/app/workspace-navigation";
 import { useCollectionPreferences } from "@cocalc/frontend/components/use-collection-preferences";
 import { useWorkspaceContentNavigation } from "@cocalc/frontend/agents/workspace-content-navigation";
 import { ProjectsTableControls } from "./projects-table-controls";
@@ -98,52 +96,8 @@ const LOADING_STYLE: CSS = {
   color: UI_COLORS.secondary,
 } as const;
 
-const PROJECTS_TABLE_INITIAL_BODY_HEIGHT = 400;
-const PROJECTS_TABLE_MIN_BODY_HEIGHT = 160;
-const PROJECTS_TABLE_HEADER_RESERVED_PX = 48;
-
 const VISIBLE_WINDOW_REPAIR_LIMIT = 200;
 const VISIBLE_WINDOW_REPAIR_DELAY_MS = 500;
-
-function useProjectTableBodyHeight(
-  element: HTMLDivElement | null,
-  enabled: boolean,
-): number {
-  const [height, setHeight] = useState(PROJECTS_TABLE_INITIAL_BODY_HEIGHT);
-
-  useLayoutEffect(() => {
-    if (!enabled) {
-      return;
-    }
-    if (element == null) {
-      return;
-    }
-
-    const updateHeight = () => {
-      const next = Math.max(
-        Math.floor(
-          element.getBoundingClientRect().height -
-            PROJECTS_TABLE_HEADER_RESERVED_PX,
-        ),
-        PROJECTS_TABLE_MIN_BODY_HEIGHT,
-      );
-      setHeight((cur) => (cur === next ? cur : next));
-    };
-
-    updateHeight();
-
-    if (globalThis.ResizeObserver == null) {
-      window.addEventListener("resize", updateHeight);
-      return () => window.removeEventListener("resize", updateHeight);
-    }
-
-    const resizeObserver = new ResizeObserver(updateHeight);
-    resizeObserver.observe(element);
-    return () => resizeObserver.disconnect();
-  }, [enabled, element]);
-
-  return height;
-}
 
 function readMaybeImmutable(value: any, key: string): any {
   return value?.get?.(key) ?? value?.[key];
@@ -222,10 +176,9 @@ export const ProjectsPage: React.FC = () => {
   const screens = Grid.useBreakpoint();
   const mobileProjectsList = IS_MOBILE && !screens.lg;
   const narrow = mobileProjectsList;
-  // With sidebar navigation the list uses the shared cards/list layout, with
-  // starred projects as pins; classic keeps the table and starred bar.
-  const collectionLayout =
-    useWorkspaceNavigation() === "sidebar" && !mobileProjectsList;
+  // The shared cards/list layout, with starred projects as pins; the phone
+  // layout keeps the compact table and starred bar.
+  const collectionLayout = !mobileProjectsList;
   const collectionPreferences = useCollectionPreferences("projects");
   const collectionLayoutRef = useRef(collectionLayout);
   collectionLayoutRef.current = collectionLayout;
@@ -253,10 +206,6 @@ export const ProjectsPage: React.FC = () => {
   const createPanelMounted = useRef(false);
   if (createPanelOpen) createPanelMounted.current = true;
 
-  const tableHeight = useProjectTableBodyHeight(
-    projectListElement,
-    !mobileProjectsList,
-  );
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
   const { scheduledDeleteProjectIds } = useProjectDeleteQueue();
 
@@ -897,28 +846,13 @@ export const ProjectsPage: React.FC = () => {
                           onViewChange={collectionPreferences.setView}
                           scrollParent={projectListElement}
                         />
-                      ) : mobileProjectsList ? (
+                      ) : (
                         <MobileProjectsList
                           visible_projects={visible_projects}
                           rootfsImages={rootfsImages}
                           rootfsImagesLoading={rootfsImagesLoading}
                           selectedProjectIds={selectedProjectIds}
                           onSelectedProjectIdsChange={setSelectedProjectIds}
-                        />
-                      ) : (
-                        <ProjectsTable
-                          visible_projects={visible_projects}
-                          rootfsImages={rootfsImages}
-                          rootfsImagesLoading={rootfsImagesLoading}
-                          height={tableHeight}
-                          narrow={narrow}
-                          filteredCollaborators={filteredCollaborators}
-                          onFilteredCollaboratorsChange={
-                            setFilteredCollaborators
-                          }
-                          selectedProjectIds={selectedProjectIds}
-                          onSelectedProjectIdsChange={setSelectedProjectIds}
-                          freezeOrder={backendWindowDirty}
                         />
                       )}
                     </CocalcErrorBoundary>

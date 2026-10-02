@@ -169,36 +169,14 @@ describe("Agents account menu", () => {
     await waitFor(() => expect(trigger).toHaveFocus());
   });
 
-  it("switches between sidebar and classic navigation", async () => {
-    otherSettings = undefined; // existing accounts: classic
-    const { unmount } = render(<AgentsAccountMenu />);
-    fireEvent.click(
-      screen.getByRole("button", { name: "Account menu for Ada Lovelace" }),
-    );
-    fireEvent.click(
-      screen.getByRole("menuitem", { name: "Use sidebar navigation" }),
-    );
-    expect(setOtherSettings).toHaveBeenCalledWith(
-      "workspace_navigation",
-      "sidebar",
-    );
-    unmount();
-    otherSettings = {
-      get: (key: string) =>
-        key === "workspace_navigation" ? "sidebar" : undefined,
-    };
+  it("has no navigation-mode switch", () => {
     render(<AgentsAccountMenu />);
     fireEvent.click(
       screen.getByRole("button", { name: "Account menu for Ada Lovelace" }),
     );
-    fireEvent.click(
-      screen.getByRole("menuitem", { name: "Use classic top bar" }),
-    );
-    expect(setOtherSettings).toHaveBeenLastCalledWith(
-      "workspace_navigation",
-      "classic",
-    );
-    otherSettings = undefined;
+    expect(
+      screen.queryByRole("menuitem", { name: /classic|sidebar/i }),
+    ).toBeNull();
   });
 
   it("reaches compute and documentation, which left the top bar", () => {

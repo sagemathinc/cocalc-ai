@@ -22,10 +22,6 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { UpgradePill } from "./upgrade-pill";
 import openSupportTab from "@cocalc/frontend/support/open";
-import {
-  setWorkspaceNavigation,
-  useWorkspaceNavigation,
-} from "@cocalc/frontend/app/workspace-navigation";
 
 export function AgentsAccountMenu() {
   const accountId = useTypedRedux("account", "account_id") as
@@ -39,7 +35,6 @@ export function AgentsAccountMenu() {
     | undefined;
   const lastName = useTypedRedux("account", "last_name") as string | undefined;
   const groups = useTypedRedux("account", "groups");
-  const navigation = useWorkspaceNavigation();
   const [membershipClass, setMembershipClass] = useState<string>();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuTriggerRef = useRef<HTMLSpanElement>(null);
@@ -98,14 +93,6 @@ export function AgentsAccountMenu() {
       : []),
     { key: "docs", icon: <Icon name="book" />, label: "Documentation" },
     { key: "support", icon: <Icon name="support" />, label: "Help" },
-    {
-      key: "navigation",
-      icon: <Icon name={navigation === "sidebar" ? "bars" : "list"} />,
-      label:
-        navigation === "sidebar"
-          ? "Use classic top bar"
-          : "Use sidebar navigation",
-    },
     { type: "divider" },
     {
       key: "sign-out",
@@ -148,11 +135,6 @@ export function AgentsAccountMenu() {
         return;
       case "support":
         openSupportTab();
-        return;
-      case "navigation":
-        setWorkspaceNavigation(
-          navigation === "sidebar" ? "classic" : "sidebar",
-        );
         return;
     }
   }

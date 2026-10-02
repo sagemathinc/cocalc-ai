@@ -152,7 +152,6 @@ import {
   ProjectsSidebar,
 } from "@cocalc/frontend/projects/projects-sidebar";
 import { shouldOpenProjectsNavShortcut } from "@cocalc/frontend/projects/projects-nav-shortcut";
-import { useWorkspaceNavigation } from "@cocalc/frontend/app/workspace-navigation";
 import { AgentsSidebarResizeHandle } from "./sidebar-resize-handle";
 import {
   DragHandle,
@@ -3154,11 +3153,8 @@ export function MyAgentsWorkspacePage({
     active && !contentOpen,
     accountId,
   );
-  // Sidebar navigation moves the top bar's account and status controls here.
-  const sidebarNavigation = useWorkspaceNavigation() === "sidebar";
-  // With sidebar navigation, Projects and projects show projects in the
-  // sidebar (instead of agents), replacing the project tabs.
-  const projectsMode = sidebarNavigation && projectsOpen;
+  // Projects and projects show projects in the sidebar (instead of agents).
+  const projectsMode = projectsOpen;
   const overviewOpen =
     !!useTypedRedux("page", "agents_overview_open") && !contentOpen;
   const artifactLibraryOpen =
@@ -3177,12 +3173,10 @@ export function MyAgentsWorkspacePage({
           : "agents";
   const [projectSearchOpen, setProjectSearchOpen] = useState(false);
   const [newArtifactOpen, setNewArtifactOpen] = useState(false);
-  // With sidebar navigation, Projects, the Library and People list their own
-  // things in the sidebar (instead of agents), like Agents does.
+  // Projects, Artifacts and People list their own things in the sidebar
+  // (instead of agents), like Agents does.
   const listMode: "projects" | "library" | "people" | undefined =
-    !sidebarNavigation || searchContext === "agents"
-      ? undefined
-      : searchContext;
+    searchContext === "agents" ? undefined : searchContext;
   const libraryProjectId = useTypedRedux("page", "library_project_id");
   const libraryEntryId = useTypedRedux("page", "library_entry_id");
   const { names: artifactNames } = useArtifactNames();
@@ -3285,7 +3279,7 @@ export function MyAgentsWorkspacePage({
   );
   useEffect(() => newArtifactRequest.on(() => setNewArtifactOpen(true)), []);
   useEffect(() => {
-    if (!sidebarNavigation || !active) return;
+    if (!active) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (!shouldOpenProjectsNavShortcut(event)) return;
       event.preventDefault();
@@ -3296,7 +3290,7 @@ export function MyAgentsWorkspacePage({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [sidebarNavigation, active, projectsMode, toggleAgentSidebar]);
+  }, [active, projectsMode, toggleAgentSidebar]);
 
   useEffect(() => {
     if (active || !rootRef.current?.contains(document.activeElement)) return;
@@ -4169,7 +4163,7 @@ export function MyAgentsWorkspacePage({
               }
             : toggleAgentSidebar
         }
-        headerActions={sidebarNavigation ? <SidebarNotifications /> : undefined}
+        headerActions={<SidebarNotifications />}
         footer={
           <div
             style={{
@@ -4177,7 +4171,7 @@ export function MyAgentsWorkspacePage({
               paddingTop: 8,
             }}
           >
-            {sidebarNavigation && <SidebarStatus />}
+            <SidebarStatus />
             <AgentsAccountMenu />
           </div>
         }

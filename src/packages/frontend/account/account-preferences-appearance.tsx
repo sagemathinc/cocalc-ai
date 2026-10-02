@@ -3,10 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import {
-  normalizeWorkspaceNavigation,
-  WORKSPACE_NAVIGATION_SETTING,
-} from "@cocalc/util/workspace-navigation";
 import { Select } from "antd";
 import type { ReactElement } from "react";
 import {
@@ -211,27 +207,6 @@ export function AccountPreferencesAppearance() {
           <FormattedMessage {...APPEARANCE_SETTINGS_LABELS.balance} />
         </Switch>
         <NavbarMembershipSetting />
-        <LabeledRow label="Navigation">
-          <Select
-            aria-label="Navigation"
-            size="small"
-            style={{ minWidth: 260 }}
-            value={normalizeWorkspaceNavigation(
-              other_settings.get(WORKSPACE_NAVIGATION_SETTING),
-            )}
-            onChange={(value) => on_change(WORKSPACE_NAVIGATION_SETTING, value)}
-            options={[
-              {
-                value: "sidebar",
-                label: "Sidebar: account and status in the left sidebar",
-              },
-              {
-                value: "classic",
-                label: "Classic: account and status in the top bar",
-              },
-            ]}
-          />
-        </LabeledRow>
         <LabeledRow
           label={<FormattedMessage {...APPEARANCE_SETTINGS_LABELS.tabColors} />}
         >

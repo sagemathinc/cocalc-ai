@@ -11,7 +11,6 @@ let examMode = false;
 let isLite = false;
 let loggedIn = true;
 let aiDisabled = false;
-let navigationSetting: string | undefined;
 const actions = { set_active_tab: jest.fn(), clear_all_handlers: jest.fn() };
 const openProjects = { size: 0 };
 const topBarStyle = { display: "flex", height: 36 };
@@ -23,11 +22,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: (store, field) => {
     if (store === "page" && field === "active_top_tab") return activeTab;
     if (field === "open_projects") return openProjects;
-    if (field === "other_settings")
-      return Map({
-        openai_disabled: aiDisabled,
-        workspace_navigation: navigationSetting,
-      });
+    if (field === "other_settings") return Map({ openai_disabled: aiDisabled });
     if (field === "is_logged_in") return loggedIn;
     if (field === "fullscreen") return fullscreen;
     if (field === "exam_mode") return examMode;
@@ -173,55 +168,25 @@ beforeEach(() => {
   isLite = false;
   loggedIn = true;
   aiDisabled = false;
-  navigationSetting = undefined;
   jest.clearAllMocks();
 });
 
-test.each([false, true])(
-  "Projects keeps project navigation inside the shared workspace (narrow=%s)",
-  async (isNarrow) => {
-    narrow = isNarrow;
-    const mounted = render(view());
-    const nav = screen.getByRole("navigation");
-    expect(
-      screen.getByRole("region", { name: "Workspace content" }),
-    ).toContainElement(nav);
-    // The sidebar owns the logo and Agents entry in the shell.
-    expect(within(nav).queryByRole("link", { name: "CoCalc home" })).toBeNull();
-    expect(within(nav).queryByRole("button", { name: "Agents" })).toBeNull();
-    // An icon-only Projects tab returns to the Projects list from any page.
-    expect(within(nav).getByRole("button", { name: "Projects" })).toBeVisible();
-    const hosts = within(nav).getByRole("button", { name: "Compute" });
-    expect(
-      screen.getByRole("region", { name: "post-surface project navigation" }),
-    ).toBeVisible();
-    expect(
-      screen.getByRole("button", {
-        name: isNarrow ? "More navigation" : "Docs",
-      }),
-    ).toBeVisible();
-    const user = userEvent.setup();
-    hosts.focus();
-    expect(hosts).toHaveFocus();
-    await user.keyboard("{Enter}");
-    expect(actions.set_active_tab).toHaveBeenCalledWith("hosts");
-    activeTab = "agents";
-    mounted.rerender(view());
-    expect(screen.queryByRole("navigation")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Docs" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Appearance" })).toBeNull();
-    expect(
-      screen.queryByRole("region", { name: "post-surface project navigation" }),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("region", { name: "post-surface navigation" }),
-    ).toBeNull();
-    activeTab = "projects";
-    mounted.rerender(view());
-    expect(screen.getByRole("navigation")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Compute" })).toBeVisible();
-  },
-);
+test("narrow screens keep a compact bar inside the shared workspace", async () => {
+  narrow = true;
+  const mounted = render(view());
+  const nav = screen.getByRole("navigation");
+  expect(
+    screen.getByRole("region", { name: "Workspace content" }),
+  ).toContainElement(nav);
+  // The sidebar owns the logo and Agents entry in the shell.
+  expect(within(nav).queryByRole("link", { name: "CoCalc home" })).toBeNull();
+  expect(within(nav).queryByRole("button", { name: "Agents" })).toBeNull();
+  expect(within(nav).getByRole("button", { name: "Projects" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "More navigation" })).toBeVisible();
+  activeTab = "agents";
+  mounted.rerender(view());
+  expect(screen.queryByRole("navigation")).toBeNull();
+});
 
 test.each(["lite", "exam", "fullscreen", "auth"])(
   "retained navigation respects %s visibility",
@@ -251,49 +216,16 @@ test("retained tabs preserve login and AI visibility", () => {
   expect(screen.getByRole("button", { name: "Compute" })).toBeVisible();
 });
 
-test("the compact folder tab returns from an opened project to the Projects list", async () => {
-  activeTab = "1ce4fe78-19c7-40a8-a598-947975744cd9";
+test("wide screens have no top bar; projects are in the sidebar", () => {
   render(view());
-  const nav = screen.getByRole("navigation");
-  const projects = within(nav).getByRole("button", { name: "Projects" });
-  const compute = within(nav).getByRole("button", { name: "Compute" });
-  expect(projects.textContent).toBe("");
-  expect(
-    projects.compareDocumentPosition(compute) &
-      Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBeTruthy();
-  projects.focus();
-  await userEvent.keyboard("{Enter}");
-  expect(actions.set_active_tab).toHaveBeenCalledWith("projects");
-  expect(projects).toHaveFocus();
-});
-
-test("sidebar navigation drops the top bar; projects are in the sidebar", () => {
-  navigationSetting = "sidebar";
-  const mounted = render(view());
   expect(screen.queryByRole("navigation")).toBeNull();
   expect(
     screen.queryByRole("region", { name: "post-surface project navigation" }),
   ).toBeNull();
   expect(screen.queryByRole("button", { name: "Compute" })).toBeNull();
-  // Narrow screens keep their compact bar.
-  narrow = true;
-  mounted.rerender(view());
-  expect(screen.getByRole("navigation")).toBeVisible();
-  // Classic (the default for existing accounts) is unchanged.
-  narrow = false;
-  navigationSetting = undefined;
-  mounted.rerender(view());
-  expect(
-    within(screen.getByRole("navigation")).getByRole("button", {
-      name: "Compute",
-    }),
-  ).toBeVisible();
-  expect(screen.getByRole("button", { name: "Docs" })).toBeVisible();
 });
 
-test("with sidebar navigation, project pages show the show-sidebar control in their own top row", () => {
-  navigationSetting = "sidebar";
+test("project pages show the show-sidebar control in their own top row", () => {
   activeTab = "1ce4fe78-19c7-40a8-a598-947975744cd9";
   const mounted = render(view());
   // null: the workspace hands its show-sidebar control to the page's header.
