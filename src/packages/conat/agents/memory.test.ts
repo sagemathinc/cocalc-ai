@@ -28,7 +28,7 @@ test("validates writes with byte-counted limits and no control characters", () =
     validateMemoryWrite({ name: "ok", description: "d", body: "a\u0007b" }),
   ).toThrow(/control/);
   expect(() =>
-    validateMemoryWrite({ name: "ok", description: "d", body: "x‮y" }),
+    validateMemoryWrite({ name: "ok", description: "d", body: "x\u202ey" }),
   ).toThrow(/control/);
   // 4-byte characters count as bytes, not JavaScript characters.
   expect(() =>
