@@ -248,7 +248,9 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "agents.sidebar.show-narrow",
     label: "Show agents",
     anchors: [def(AGENTS_WORKSPACE, 'aria-label="Show agents"')],
-    usedIn: [bold("ai", "Show agents")],
+    // An accessible name only, with no visible text or tooltip, so the guide
+    // describes the button and gives the name unbolded.
+    usedIn: [{ file: doc("ai"), text: "named Show agents" }],
   },
   {
     id: "agents.sidebar.more-actions",

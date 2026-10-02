@@ -61,17 +61,18 @@ After signing in, CoCalc opens your projects list, or the page your link named.
 If you have no projects, or your new account has not used one, CoCalc may open
 the agents workspace instead. Otherwise, select an agent, or choose
 **New Agent**, in the agents sidebar. With no named agents, the agents
-workspace opens on the new-agent request box. Describe a result you can
+workspace shows the new-agent request box; at phone width, if it shows the
+agents sidebar instead, choose **New Agent** there. Describe a result you can
 inspect, such as a comparison, document, application, or visualization. Include
 the relevant files and the checks that would make the result useful.
 
-When CoCalc opens the agents workspace for you, it asks **What would you like
-to work on?** There is no name, project, runtime, model, or payment source to
-choose; this first agent uses Codex. If CoCalc asks you to verify your email,
-do that first. When you start typing, CoCalc prepares a project, a chat, and a
-named agent. This can start project compute and uses a named-agent slot even
-before you send. Choose the up-arrow **Start agent** button, or press
-**Shift+Enter**, to send your request.
+When CoCalc opens the agents workspace for you, the request box asks **What
+would you like to work on?** There is no name, project, runtime, model, or
+payment source to choose; this first agent uses Codex. If CoCalc asks you to
+verify your email, do that first. When you start typing, CoCalc prepares a
+project, a chat, and a named agent. This can start project compute and uses a
+named-agent slot even before you send. Choose the up-arrow **Start agent**
+button, or press **Shift+Enter**, to send your request.
 
 In the new-agent form, type your request, then check the settings below the
 box. They start from the agent you had selected, if any.
@@ -97,11 +98,11 @@ box. They start from the agent you had selected, if any.
    request.
 
 If the agents sidebar is hidden, click the **Show Agents sidebar** button (a
-right-pointing chevron). At phone width, use the **Show agents** button (three
-horizontal lines), or the back arrow in an agent's conversation. If you cannot
-find the agents workspace at all, check that **Disable all AI integrations** is
-off in account **AI** settings. If it is off, ask the site administrator whether
-agent access is enabled.
+right-pointing chevron). At phone width, use the menu button (three horizontal
+lines, named Show agents for screen readers), or the back arrow in an agent's
+conversation. If you cannot find the agents workspace at all, check that
+**Disable all AI integrations** is off in account **AI** settings. If it is
+off, ask the site administrator whether agent access is enabled.
 
 ## Review and continue
 
