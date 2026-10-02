@@ -18,7 +18,7 @@ import {
   getPublicFeaturePage,
   publicFeatureHref,
 } from "@cocalc/util/public-feature-pages";
-import { PUBLIC_SIGN_UP_LABEL } from "@cocalc/util/public-site-policy";
+import { getPublicFeatureSignUpLabel } from "@cocalc/util/public-site-policy";
 import {
   BulletList,
   featureAppPath as appPath,
@@ -49,14 +49,13 @@ export default function TerminalFeaturePage({
   helpEmail?: string;
   isAuthenticated?: boolean;
 }) {
-  // The record's sign-up label names CoCalc.ai, so it shows on cocalc.ai only.
   const onCocalcAi = isCocalcAiLaunchpadSite(usePublicConfig());
   const primaryCtaHref = isAuthenticated
     ? appPath("projects")
     : featureSignUpPath("code");
   const primaryCtaLabel = isAuthenticated
     ? "Open projects"
-    : (onCocalcAi && PAGE.signUpLabel) || PUBLIC_SIGN_UP_LABEL;
+    : getPublicFeatureSignUpLabel(PAGE, onCocalcAi);
 
   return (
     <Flex vertical gap={36}>

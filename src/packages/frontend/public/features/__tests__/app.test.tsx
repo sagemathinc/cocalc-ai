@@ -506,9 +506,12 @@ describe("PublicFeaturesApp", () => {
   });
 
   it("uses projects as the terminal CTA for authenticated users", () => {
+    // On cocalc.ai, where signed-out visitors see the record's sign-up label.
     render(
       <PublicFeaturesApp
         config={{
+          cocalc_product: "launchpad",
+          dns: "cocalc.ai",
           help_email: "help@example.com",
           is_authenticated: true,
           site_name: "Launchpad",

@@ -60,6 +60,17 @@ export function isCocalcAiLaunchpad(config?: {
 export const COCALC_AI_SIGN_UP_LABEL = "Start on CoCalc.ai";
 export const PUBLIC_SIGN_UP_LABEL = "Start using CoCalc";
 
+// The sign-up label of a feature page for signed-out visitors, on the page and
+// in its crawler fallback. A page's own `signUpLabel` names CoCalc.ai, so it
+// shows on cocalc.ai only; other sites, and pages without one, get
+// PUBLIC_SIGN_UP_LABEL. Renderers read the label here, not from the record.
+export function getPublicFeatureSignUpLabel(
+  page: { signUpLabel?: string },
+  onCocalcAi: boolean,
+): string {
+  return (onCocalcAi && page.signUpLabel) || PUBLIC_SIGN_UP_LABEL;
+}
+
 export function isLockedDownPublicSiteHost(host?: string): boolean {
   const normalized = normalizePublicSiteHost(host);
   return (

@@ -26,9 +26,9 @@ export interface PublicFeaturePage {
   navLabel?: string;
   sections?: PublicFeatureSection[];
   // Label of the sign-up link for signed-out visitors, on the page and in its
-  // crawler fallback, on cocalc.ai only (isCocalcAiLaunchpad in
-  // public-site-policy). Other sites, and pages without one, say
-  // PUBLIC_SIGN_UP_LABEL.
+  // crawler fallback. It names CoCalc.ai and shows on cocalc.ai only: read it
+  // through getPublicFeatureSignUpLabel in public-site-policy, which gives
+  // other sites, and pages without one, PUBLIC_SIGN_UP_LABEL.
   signUpLabel?: string;
   slug: string;
   summary: string;

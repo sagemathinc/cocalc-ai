@@ -65,6 +65,7 @@ import {
 } from "@cocalc/util/public-site-metadata";
 import {
   COCALC_AI_SIGN_UP_LABEL,
+  getPublicFeatureSignUpLabel,
   isCocalcAiLaunchpad,
   PUBLIC_SIGN_UP_LABEL,
 } from "@cocalc/util/public-site-policy";
@@ -407,7 +408,7 @@ function renderFeatureDetail(
 ${sections}
 ${renderFeatureNavigation(basePath, page.slug, config)}
 <p><a href="${htmlEscape(joinUrlPath(basePath, "auth/sign-up"))}">${htmlEscape(
-    (isCocalcAiLaunchpad(config) && page.signUpLabel) || PUBLIC_SIGN_UP_LABEL,
+    getPublicFeatureSignUpLabel(page, isCocalcAiLaunchpad(config)),
   )}</a></p>
 </article>`;
 }
