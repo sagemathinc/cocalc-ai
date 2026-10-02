@@ -1,4 +1,5 @@
 import { isValidUUID } from "@cocalc/util/misc";
+import { validateAgentMemoryRequest, type AgentMemoryRequest } from "./memory";
 
 export const AGENT_IDENTITY_TOKEN_PREFIX = "cocalc_agent_identity_";
 export const AGENT_MESSAGE_MAX_BYTES = 32 * 1024;
@@ -23,7 +24,7 @@ export interface AgentCredential {
   api_url?: string;
 }
 
-export type AgentInspectionRequest = { action: "whoami" };
+export type AgentInspectionRequest = { action: "whoami" } | AgentMemoryRequest;
 
 export interface AgentSelf {
   identity: AgentIdentity;
@@ -32,9 +33,13 @@ export interface AgentSelf {
   capabilities: string[];
 }
 
-export type AgentInspectionResult = AgentSelf;
+export type AgentInspectionResult = AgentSelf | Record<string, unknown>;
 
 export function validateAgentInspection(request: AgentInspectionRequest): void {
+  if (request?.action === "memory") {
+    validateAgentMemoryRequest(request);
+    return;
+  }
   if (!request || request.action !== "whoami")
     throw new Error("unsupported agent inspection operation");
   if (Object.keys(request).some((key) => key !== "action"))

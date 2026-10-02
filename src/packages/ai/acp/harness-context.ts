@@ -9,7 +9,12 @@ const COCALC_CLI = '"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"';
 export function harnessPrompt(
   request: Pick<
     AcpEvaluateRequest,
-    "prompt" | "project_id" | "chat" | "harness_credential" | "runtime"
+    | "prompt"
+    | "project_id"
+    | "chat"
+    | "harness_credential"
+    | "runtime"
+    | "agent_memory_context"
   >,
 ): string {
   // Leave native harness commands intact, as on the Codex path.
@@ -45,7 +50,7 @@ Use the scoped runtime identity and credentials already provided in the environm
 Current turn publication context (non-secret metadata, not an authorization grant):
 ${JSON.stringify(context)}
 Use these exact values as explicit --project, --path, --thread-id, and --message-date arguments when publishing an artifact; never infer the producing message from history or reuse a prior turn's timestamp.
-${publication}
+${publication}${request.agent_memory_context ? `\n${request.agent_memory_context}` : ""}
 [/CoCalc project context]
 
 ${request.prompt}`;

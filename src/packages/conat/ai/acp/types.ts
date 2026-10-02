@@ -490,6 +490,13 @@ export type AcpStreamEvent =
       siteFundedReservationId?: string;
     }
   | {
+      // Whether this turn's account has agent memory on, and whether its
+      // saved-note index reached the agent. Display only.
+      type: "memory";
+      state: "loaded" | "unavailable";
+      notes?: number;
+    }
+  | {
       type: "thinking";
       text: string;
     }

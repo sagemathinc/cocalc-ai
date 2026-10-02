@@ -78,6 +78,7 @@ isolated login controller. Both agents remain subject to CLI authorization.
 | --- | --- | --- | --- |
 | [Inspect/edit files and run project commands](/docs/files/project-files) | Supported | Preview | Both can change the shared project and run tests/builds. Review results rather than relying only on the final answer. |
 | [Honor project instructions and use CoCalc skills](/docs/cli/use-cocalc-cli) | Supported | Preview | Claude receives the CoCalc skill as instructions and reads project CLAUDE.md through project tools; it is not a separate native Skill tool. |
+| [Remember notes across sessions and projects](/docs/ai/agent-memory) | Supported | Preview | Off by default; the account owner turns it on in Settings -> AI. Codex and Claude share one account-wide set of notes. |
 | [Edit live collaborative text](/docs/cli/collaborative-text) | Supported | Conditional | Use the live text API so unsaved collaborative state is respected; a raw filesystem edit is not equivalent. |
 | [Read/edit/run live notebooks and inspect outputs](/docs/cli/notebook-workflows) | Supported | Conditional | Shared project CLI capability. Use live notebook APIs rather than rewriting an open .ipynb file. |
 | [Build LaTeX, documents, and other supported formats](/docs/cli/builds-and-versions) | Supported | Conditional | Requires the format's installed toolchain. Use the document build pipeline rather than assuming a shell command reproduces editor behavior. |

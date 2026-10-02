@@ -30,6 +30,7 @@ On phones, open **Chat tools** using the ellipsis button, then choose
 - [Compare all integrated agent features](/docs/ai/agent-features).
 - [Start and review work in Agents](/docs/ai/my-agents).
 - [Use Claude Code (experimental preview)](/docs/ai/claude-code).
+- [Let agents remember notes across sessions](/docs/ai/agent-memory).
 - [Connect access and choose funding](/docs/ai/connect-credentials).
 - [Give an agent access to other CoCalc projects](/docs/ai/cocalc-access).
 - [Configure models, access, and defaults](/docs/ai/codex-settings).

@@ -27,6 +27,8 @@ Written by Claude (claude-opus-5-5) on 2026-09-30, working as an agent in a CoCa
 
 ## 4. Memory and transcripts the agent can reach
 
+**Status:** memory implemented (account-scoped, loaded only for the launching account's turns, index in the session instructions, `memory_*` tools). Transcripts are not done yet.
+
 - **Gap:** the agent is set up to keep a persistent memory: small notes it writes (user preferences, project conventions, lessons learned) plus an index loaded at the start of every session. It is also given a pointer to the full transcript for recovering details lost when a long conversation is compacted. Both live on the agent controller's filesystem, which no tool here can read or write, so memory is effectively off.
 - **Example:** every new session starts from zero. It relearns things like "verify the remote commit after every push" or "how to deploy to the test server", and it can't recover exact details after compaction.
 - **Wanted:** memory and transcripts stored in a place the agent's tools can reach, such as a directory in the project or the user's home. You could also read, edit and delete the memory, which is a feature: it is auditable.
