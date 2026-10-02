@@ -484,8 +484,12 @@ function HarnessRuntimeSummaryContent({
         controls: unknown;
       };
       if (
+        // A catalog from a superseded harness pin describes other models,
+        // even though its profile now parses as the current one.
+        (snapshot.profile as { revision?: unknown })?.revision ===
+          profile.revision &&
         JSON.stringify(parseAcpHarnessProfile(snapshot.profile)) ===
-        JSON.stringify(profile)
+          JSON.stringify(profile)
       ) {
         controls = parseHarnessSessionControls(snapshot.controls);
         break;

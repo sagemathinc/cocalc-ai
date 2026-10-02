@@ -133,7 +133,7 @@ describe("container-runtime software proxy", () => {
   it.each(["amd64", "arm64"])(
     "redirects pinned managed harnesses for %s",
     async (arch) => {
-      const path = `/software/harnesses/claude-code/0.81.1/${"a".repeat(64)}/harnesses-linux-${arch}.tar.xz`;
+      const path = `/software/harnesses/claude-code/0.84.0/${"a".repeat(64)}/harnesses-linux-${arch}.tar.xz`;
       const response = await request(path);
       expect(response.status).toBe(302);
       expect(response.headers.get("location")).toBe(
@@ -149,7 +149,7 @@ describe("container-runtime software proxy", () => {
     "rejects invalid managed harness selectors (%s, %s)",
     async (hash, arch) => {
       const response = await request(
-        `/software/harnesses/claude-code/0.81.1/${hash}/harnesses-linux-${arch}.tar.xz`,
+        `/software/harnesses/claude-code/0.84.0/${hash}/harnesses-linux-${arch}.tar.xz`,
       );
       expect(response.status).toBe(404);
     },
@@ -173,12 +173,12 @@ describe("container-runtime software proxy", () => {
         body,
       );
       const response = await request(
-        `/software/harnesses/claude-code/0.81.1/${sha}/harnesses-linux-amd64.tar.xz`,
+        `/software/harnesses/claude-code/0.84.0/${sha}/harnesses-linux-amd64.tar.xz`,
       );
       expect(response.status).toBe(200);
       expect(await response.text()).toBe(body);
       const missing = await request(
-        `/software/harnesses/claude-code/0.81.1/${"0".repeat(64)}/harnesses-linux-amd64.tar.xz`,
+        `/software/harnesses/claude-code/0.84.0/${"0".repeat(64)}/harnesses-linux-amd64.tar.xz`,
       );
       expect(missing.status).toBe(404);
       expect(missing.headers.get("location")).toBeNull();

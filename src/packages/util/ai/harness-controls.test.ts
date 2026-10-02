@@ -193,3 +193,35 @@ test("settings reject unknown fields and duplicate choices and copy caller data"
     parseAcpHarnessRuntime({ version: 1, kind: "acp", profile: {}, settings }),
   ).toThrow();
 });
+
+test("saved Claude models follow the 1M-context suffix the adapter now uses", () => {
+  const model = {
+    id: "model",
+    name: "Model",
+    currentValue: "opus",
+    options: [
+      { value: "opus", name: "Opus 5.5" },
+      { value: "claude-fable-5-1[1m]", name: "Fable 5.1" },
+      { value: "sonnet", name: "Sonnet 5.5" },
+    ],
+  };
+  // Claude adapter 0.81 offered `opus[1m]`; 0.84 offers `opus`.
+  expect(resolveClaudeConfigValue(model, "opus[1m]")).toBe("opus");
+  expect(resolveClaudeConfigValue(model, "claude-fable-5-1")).toBe(
+    "claude-fable-5-1[1m]",
+  );
+  expect(resolveClaudeConfigValue(model, "sonnet")).toBe("sonnet");
+  // Unknown values stay as saved, so the caller reports them honestly.
+  expect(resolveClaudeConfigValue(model, "haiku[1m]")).toBe("haiku[1m]");
+  // Only the model control is migrated this way.
+  expect(
+    resolveClaudeConfigValue(
+      {
+        ...model,
+        id: "effort",
+        options: [{ value: "high", name: "High" }],
+      },
+      "high[1m]",
+    ),
+  ).toBe("high[1m]");
+});
