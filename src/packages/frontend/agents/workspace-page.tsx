@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { explainHiddenSidebarOnce } from "./sidebar-hidden-hint";
 import {
   normalizeAgentName,
   type NamedAgent,
@@ -18,7 +19,9 @@ import {
   useTypedRedux,
   useEditorRedux,
 } from "@cocalc/frontend/app-framework";
-import { Suspense } from "react";
+import { Suspense, type ReactNode } from "react";
+import { WorkspaceContentNavigation } from "./workspace-content-navigation";
+import { AgentAccessDialog } from "@cocalc/frontend/people/agent-access-dialog";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { CocalcErrorBoundary } from "@cocalc/frontend/app/error-boundary";
 import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
@@ -39,7 +42,6 @@ import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import { agentWorkingDirectory } from "@cocalc/frontend/chat/agent-working-directory";
 import { initChat } from "@cocalc/frontend/chat/register";
 import { requestThreadSearch } from "@cocalc/frontend/chat/thread-search-request";
-import { AgentSearch } from "./search";
 import {
   retryablePreparation,
   readPreparedFirstAgent,
@@ -48,6 +50,10 @@ import {
 import { PreparationStatus } from "./preparation-status";
 import { AvailableConversation } from "./available-conversation";
 import { agentProjectTitle } from "./project-title";
+import {
+  appearanceWrites,
+  mergeAgentAppearances,
+} from "./agent-appearance-sync";
 import { claimOnboardingName } from "./claim-onboarding-name";
 import { OnboardingAttempt } from "@cocalc/frontend/monitoring/onboarding";
 import type { OnboardingPhase } from "@cocalc/util/onboarding-metrics";
@@ -55,12 +61,12 @@ import { AgentArtifactBrowser } from "./artifact-browser";
 import { LibraryEntry } from "./library-entry";
 import {
   closedLibraryState,
+  openAgentsOverview,
   libraryConversationHit,
   openLibrary,
 } from "./library-navigation";
 import { useArtifactNames } from "./artifact-names";
 import type { ForeignArtifactTarget } from "@cocalc/frontend/frame-editors/chat-editor/foreign-artifact-source";
-import { agentSearchStore } from "./search-state";
 import { agentMessageFragment } from "./message-fragment";
 import type { AgentSearchHit } from "./search-runner";
 import {
@@ -98,7 +104,11 @@ import {
 } from "@cocalc/frontend/chat/composer-codex-controls";
 import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
 import { stableDraftKeyFromThreadKey } from "@cocalc/frontend/chat/utils";
-import { set_url } from "@cocalc/frontend/history";
+import { set_url, openProjectsWorkspace } from "@cocalc/frontend/history";
+import {
+  removeShellPlaceholder,
+  saveShellPlaceholder,
+} from "@cocalc/frontend/app/shell-placeholder";
 import { set_window_title } from "@cocalc/frontend/browser";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { useWorkspaceRoute } from "./use-workspace-route";
@@ -125,6 +135,36 @@ import { WorkspaceSidebarActions } from "./workspace-sidebar-actions";
 import "./workspace-sidebar-row.css";
 import "./new-agent-composer.css";
 import { AgentOrganizationControls } from "./organization-controls";
+import { AgentsOverview } from "./agents-overview";
+import { SidebarNotifications, SidebarStatus } from "./sidebar-status";
+import {
+  focusSidebarSearch,
+  SidebarSearchBox,
+} from "@cocalc/frontend/search/sidebar-search-box";
+import { SearchResults } from "@cocalc/frontend/search/search-results";
+import {
+  closeSearch,
+  getSearchState,
+  searchPath,
+  setSearchOrigin,
+  useSearchState,
+} from "@cocalc/frontend/search/search-store";
+import {
+  setListQuery,
+  submitSearch,
+  useListQuery,
+} from "@cocalc/frontend/search/list-query";
+import { LibrarySidebar } from "./library-sidebar";
+import { isLibraryChatAgent } from "./library-chat";
+import { NewArtifactDialog } from "./new-artifact-dialog";
+import { sharedArtifactCatalog } from "./artifact-catalog-store";
+import { PeopleSidebar } from "@cocalc/frontend/people/people-sidebar";
+import {
+  newArtifactRequest,
+  toggleSidebarRequest,
+} from "@cocalc/frontend/app/sidebar-search-requests";
+import { ProjectsSidebar } from "@cocalc/frontend/projects/projects-sidebar";
+import { shouldOpenProjectsNavShortcut } from "@cocalc/frontend/projects/projects-nav-shortcut";
 import { AgentsSidebarResizeHandle } from "./sidebar-resize-handle";
 import {
   DragHandle,
@@ -152,7 +192,7 @@ import {
   completeFirstRunWithAgent,
 } from "@cocalc/frontend/projects/onboarding/agent-completion";
 import { joinAbsolutePath } from "@cocalc/util/path-model";
-import { uuid } from "@cocalc/util/misc";
+import { uuid, is_valid_uuid_string } from "@cocalc/util/misc";
 import type { ThemeEditorDraft } from "@cocalc/frontend/theme/types";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { Resizable } from "re-resizable";
@@ -186,7 +226,6 @@ import { useRetainedWorkspaces } from "./use-retained-workspaces";
 import { useBoundAgentAccount } from "./use-bound-account";
 import { useAgentWorkspaceOrganization } from "./use-workspace-organization";
 import { OrganizationSaveAlert } from "./organization-save-alert";
-import { AgentSidebarFilter } from "./sidebar-filter";
 import {
   agentNetworkLookupKey,
   indexAgentNetworks,
@@ -211,6 +250,7 @@ import { useWorkspaceSelectedThread } from "./use-workspace-selected-thread";
 import {
   AGENT_SIDEBAR_ID,
   AgentsSidebarToggle,
+  AGENT_SIDEBAR_HIDDEN_STORAGE_KEY,
 } from "./workspace-sidebar-toggle";
 import {
   readAgentThreadAppearance,
@@ -290,7 +330,6 @@ const DEFAULT_AGENT_SIDEBAR_WIDTH = 280;
 const MIN_AGENT_SIDEBAR_WIDTH = 220;
 const MAX_AGENT_SIDEBAR_WIDTH = 600;
 const AGENT_SIDEBAR_WIDTH_STORAGE_KEY = "cocalc-agents-sidebar-width-v1";
-const AGENT_SIDEBAR_HIDDEN_STORAGE_KEY = "cocalc-agents-sidebar-hidden-v1";
 const AGENT_DOCS_DRAWER_OPEN_STORAGE_KEY = "cocalc-agents-docs-drawer-open-v1";
 const AGENT_DOCS_DRAWER_WIDTH_STORAGE_KEY =
   "cocalc-agents-docs-drawer-width-v1";
@@ -2368,7 +2407,7 @@ function AgentProjectContext({
           agentWorkspace: true,
           agentWorkspaceActive: active,
           onSearchAll: () => {
-            if (accountId) agentSearchStore(accountId).set({ open: true });
+            focusSidebarSearch();
           },
           onBrowseAllArtifacts: () => {
             if (accountId) openLibrary();
@@ -3095,7 +3134,27 @@ function AgentWorkspace({
   );
 }
 
-export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
+export function MyAgentsWorkspacePage({
+  active = true,
+  children,
+  contentLabel,
+  contentNavigation,
+}: {
+  active?: boolean;
+  // Project and account pages shown in the content pane beside the sidebar.
+  children?: ReactNode;
+  // Set when the content pane (not an agent or the Library) is showing.
+  contentLabel?: string;
+  // Top bar for the content pane; null for pages with their own header.
+  contentNavigation?: ReactNode | null;
+}) {
+  const contentOpen = contentLabel != null;
+  const activeTopTab = useTypedRedux("page", "active_top_tab");
+  const projectsOpen =
+    contentOpen &&
+    (activeTopTab === "projects" || is_valid_uuid_string(activeTopTab));
+  const peopleOpen = contentOpen && activeTopTab === "people";
+  const projectsListOpen = contentOpen && activeTopTab === "projects";
   const { pageStyle } = useAppContext();
   const isNarrow = pageStyle.isNarrow;
   const { directory, error, loading } = useNamedAgents();
@@ -3105,18 +3164,63 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const accountId = useTypedRedux("account", "account_id") as
     | string
     | undefined;
-  const searchNavigation = useNavigationIntent(active, accountId);
-  const libraryOpen = !!useTypedRedux("page", "library_open");
+  const searchNavigation = useNavigationIntent(
+    active && !contentOpen,
+    accountId,
+  );
+  // Projects and projects show projects in the sidebar (instead of agents).
+  const projectsMode = projectsOpen;
+  const overviewOpen =
+    !!useTypedRedux("page", "agents_overview_open") && !contentOpen;
+  const artifactLibraryOpen =
+    !!useTypedRedux("page", "library_open") && !contentOpen && !overviewOpen;
+  // A full-pane page (the Library or the Agents page) covers the agent
+  // workspace; both keep the selected agent for when you return.
+  const libraryOpen = artifactLibraryOpen || overviewOpen;
+  // The sidebar's search follows the page being shown.
+  const searchContext: "agents" | "projects" | "library" | "people" =
+    projectsOpen
+      ? "projects"
+      : artifactLibraryOpen
+        ? "library"
+        : peopleOpen
+          ? "people"
+          : "agents";
+  // The sidebar search box: its text narrows the list below it; Enter opens
+  // the search results page. Each page starts with an empty box.
+  const sidebarQuery = useListQuery();
+  useEffect(() => setListQuery(""), [searchContext]);
+  const searchState = useSearchState();
+  const [newArtifactOpen, setNewArtifactOpen] = useState(false);
+  // Projects, Artifacts and People list their own things in the sidebar
+  // (instead of agents), like Agents does. With AI disabled there are no
+  // agents: other pages (settings, ...) list projects.
+  const aiDisabled = !!useTypedRedux("account", "other_settings")?.get(
+    "openai_disabled",
+  );
+  const listMode: "projects" | "library" | "people" | undefined =
+    searchContext !== "agents"
+      ? searchContext
+      : aiDisabled
+        ? "projects"
+        : undefined;
   const libraryProjectId = useTypedRedux("page", "library_project_id");
   const libraryEntryId = useTypedRedux("page", "library_entry_id");
   const { names: artifactNames } = useArtifactNames();
   const artifactOpen =
-    libraryOpen && (libraryProjectId != null || libraryEntryId != null);
+    artifactLibraryOpen && (libraryProjectId != null || libraryEntryId != null);
   const libraryButton = useRef<HTMLButtonElement>(null);
   const workspaceContent = useRef<HTMLElement>(null);
   function showLibrary() {
     searchNavigation.current++;
+    closeSearch();
     openLibrary();
+    setMobileList(false);
+  }
+  function showAgentsOverview() {
+    searchNavigation.current++;
+    closeSearch();
+    openAgentsOverview();
     setMobileList(false);
   }
   const activeAgentId = useTypedRedux("page", "active_agent_id") as
@@ -3126,6 +3230,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const [creatingSourceAgentId, setCreatingSourceAgentId] = useState<string>();
   const [copyingAgent, setCopyingAgent] = useState<NamedAgent>();
   const [freshAgent, startFresh] = useState<NamedAgent>();
+  const [accessAgent, setAccessAgent] = useState<NamedAgent>();
   const [initialCopyName, setInitialCopyName] = useState("");
   const [copyBusy, setCopyBusy] = useState(false);
   const [copyError, setCopyError] = useState("");
@@ -3138,18 +3243,33 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const [agentSidebarHidden, setAgentSidebarHidden] = useState(
     initialAgentSidebarHidden,
   );
+  // Pages with their own header (Projects, Artifacts, People, the Agents
+  // page) show a hidden sidebar's toggle in the very top-left corner.
+  const floatingSidebarToggle =
+    !isNarrow &&
+    agentSidebarHidden &&
+    (libraryOpen || peopleOpen || projectsListOpen);
   const [workspaceAgentIds, setWorkspaceAgentIds] = useState<
     Map<string, string>
   >(() => new Map());
-  const [agentAppearances, setAgentAppearances] = useState<
+  // Themes read from loaded chats (the source of truth).
+  const [loadedAppearances, setLoadedAppearances] = useState<
     Map<string, AgentHeaderAppearance>
   >(() => new Map());
+  const writtenAppearances = useRef(new Map<string, string>());
   const rootRef = useRef<HTMLElement>(null);
+  const sidebarFocusPending = useRef(false);
   const boundAccount = useBoundAgentAccount();
 
   useEffect(() => {
-    if (libraryOpen) setMobileList(false);
-  }, [libraryOpen, libraryProjectId, libraryEntryId]);
+    if (libraryOpen || contentOpen) setMobileList(false);
+  }, [
+    libraryOpen,
+    contentOpen,
+    activeTopTab,
+    libraryProjectId,
+    libraryEntryId,
+  ]);
 
   function libraryNavigationControl() {
     return isNarrow ? (
@@ -3157,9 +3277,12 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         type="text"
         aria-label="Show agents"
         icon={<Icon name="bars" />}
-        onClick={() => setMobileList(true)}
+        onClick={() => {
+          sidebarFocusPending.current = true;
+          setMobileList(true);
+        }}
       />
-    ) : agentSidebarHidden ? (
+    ) : agentSidebarHidden && !floatingSidebarToggle ? (
       <AgentsSidebarToggle
         hidden={agentSidebarHidden}
         onToggle={toggleAgentSidebar}
@@ -3167,24 +3290,117 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     ) : null;
   }
 
+  // Once the sidebar is up, drop app.html's stand-in for it, and remember
+  // how it looks for the next start (see app/shell-placeholder).
+  const sidebarShown =
+    active &&
+    !isNarrow &&
+    !(loading && !directory && !libraryOpen && !contentOpen);
+  useEffect(() => {
+    if (!sidebarShown) return;
+    const sidebar = () => document.getElementById(AGENT_SIDEBAR_ID);
+    if (sidebar() != null || agentSidebarHidden) removeShellPlaceholder();
+    const save = () => saveShellPlaceholder(sidebar(), agentSidebarHidden);
+    save();
+    window.addEventListener("pagehide", save);
+    return () => window.removeEventListener("pagehide", save);
+  }, [sidebarShown, agentSidebarHidden]);
+  const agentSidebarHiddenRef = useRef(agentSidebarHidden);
+  agentSidebarHiddenRef.current = agentSidebarHidden;
   const toggleAgentSidebar = useCallback(() => {
+    sidebarFocusPending.current = true;
     setAgentSidebarHidden((hidden) => {
       const next = !hidden;
       window.localStorage.setItem(AGENT_SIDEBAR_HIDDEN_STORAGE_KEY, `${next}`);
+      if (next) explainHiddenSidebarOnce();
       return next;
     });
   }, []);
+  // Quick Navigation: "Show/Hide sidebar" and "New artifact".
+  useEffect(
+    () => toggleSidebarRequest.on(toggleAgentSidebar),
+    [toggleAgentSidebar],
+  );
+  useEffect(() => newArtifactRequest.on(() => setNewArtifactOpen(true)), []);
+  useEffect(() => {
+    if (!active) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!shouldOpenProjectsNavShortcut(event)) return;
+      event.preventDefault();
+      // Also the keyboard way back to a hidden sidebar.
+      if (agentSidebarHiddenRef.current) toggleAgentSidebar();
+      focusSidebarSearch();
+      if (!projectsMode) void openProjectsWorkspace();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [active, projectsMode, toggleAgentSidebar]);
 
   useEffect(() => {
     if (active || !rootRef.current?.contains(document.activeElement)) return;
     (document.activeElement as HTMLElement | null)?.blur?.();
   }, [active]);
+  // After collapsing or restoring the sidebar, move focus to the visible
+  // toggle so keyboard users are not left on a hidden control.
+  useEffect(() => {
+    if (!sidebarFocusPending.current) return;
+    sidebarFocusPending.current = false;
+    const label = isNarrow
+      ? mobileList
+        ? "Hide sidebar"
+        : "Show agents"
+      : agentSidebarHidden
+        ? "Show sidebar"
+        : "Hide sidebar";
+    Array.from(
+      rootRef.current?.querySelectorAll<HTMLButtonElement>(
+        `button[aria-label="${label}"]`,
+      ) ?? [],
+    )
+      .find((button) => button.getClientRects().length > 0)
+      ?.focus();
+  }, [agentSidebarHidden, mobileList, isNarrow]);
   const agents = directory?.agents ?? [];
+  // Each agent's identity record keeps a copy of its theme, so badges and
+  // titles are right before its chat loads; a loaded chat's theme wins.
+  const agentAppearances = useMemo(
+    () => mergeAgentAppearances(agents, loadedAppearances),
+    [agents, loadedAppearances],
+  );
+  // Keep that copy current: record a loaded theme that differs from it.
+  useEffect(() => {
+    const sent = writtenAppearances.current;
+    for (const write of appearanceWrites(agents, loadedAppearances, sent)) {
+      sent.set(write.agent_id, write.key);
+      webapp_client.conat_client.hub.people
+        .setAgentAppearance({
+          project_id: write.project_id,
+          agent_id: write.agent_id,
+          appearance: write.appearance,
+        })
+        .catch(() => sent.delete(write.agent_id));
+    }
+  }, [agents, loadedAppearances]);
   const networks = networkDirectory?.networks ?? [];
   const networksByAgent = useMemo(
     () => indexAgentNetworks(networks),
     [networks],
   );
+  // Name, @name, appearance name or tag:network, for the sidebar list and
+  // the search results.
+  const matchAgent = (agent: NamedAgent, query: string) =>
+    matchesAgentSidebarSearch({
+      agent,
+      appearanceName: agentAppearances.get(agent.endpoint.agent_id)?.name,
+      networks:
+        networksByAgent.get(
+          agentNetworkLookupKey(
+            agent.endpoint.project_id,
+            agent.endpoint.agent_id,
+          ),
+        ) ?? [],
+      query,
+    });
   const agentOrganization = useAgentWorkspaceOrganization(agents);
   const selected =
     activeAgentId && activeAgentId !== "new"
@@ -3195,6 +3411,38 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         )
       : (agentOrganization.groups.pinned[0] ??
         agentOrganization.groups.unpinned[0]);
+  // The page under the search results; going anywhere else (another page,
+  // agent or artifact) leaves search.
+  const searchOrigin = `${activeTopTab}|${activeAgentId ?? ""}|${artifactLibraryOpen}|${overviewOpen}`;
+  useEffect(() => {
+    const search = getSearchState();
+    if (!search.open) return;
+    if (search.origin == null) {
+      // Loaded from a /search/... address: the page of its kind is opening.
+      const tab =
+        search.scope === "projects" || search.scope === "people"
+          ? search.scope
+          : "agents";
+      if (activeTopTab === tab) setSearchOrigin(searchOrigin);
+    } else if (search.origin !== searchOrigin) {
+      closeSearch();
+    }
+  }, [searchOrigin, searchState.run, searchState.open]);
+  // The results have their own address; Back or Escape restores the page's.
+  const searchWasOpen = useRef(false);
+  useEffect(() => {
+    if (!active) return;
+    if (searchState.open) {
+      set_url(`/${searchPath(searchState.scope, searchState.query)}`);
+    } else if (
+      searchWasOpen.current &&
+      searchState.restoreUrl &&
+      searchState.returnPath != null
+    ) {
+      set_url(`/${searchState.returnPath}`);
+    }
+    searchWasOpen.current = searchState.open;
+  }, [searchState.open, searchState.run]);
   // Agents with a running turn stay mounted: they are likely to be revisited.
   const isRunningWorkspace = useCallback(
     (workspace: string) => {
@@ -3213,23 +3461,25 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   );
   const { mountedWorkspaces, mountWorkspace, unmountWorkspace } =
     useRetainedWorkspaces(
-      active && !libraryOpen && !creating && selected
+      active && !contentOpen && !libraryOpen && !creating && selected
         ? agentWorkspaceKey(selected)
         : undefined,
       { isProtected: isRunningWorkspace },
     );
   useEffect(() => {
-    if (!active) return;
+    if (!active || contentOpen) return;
     set_window_title(
-      libraryOpen
-        ? "Library"
-        : creating
-          ? "New Agent"
-          : selected
-            ? `@${selected.name} - Agents`
-            : "Agents",
+      overviewOpen
+        ? "Agents"
+        : libraryOpen
+          ? "Artifacts"
+          : creating
+            ? "New Agent"
+            : selected
+              ? `@${selected.name} - Agents`
+              : "Agents",
     );
-  }, [active, libraryOpen, creating, selected?.name]);
+  }, [active, contentOpen, libraryOpen, creating, selected?.name]);
   const creatingSourceAgent = agentFirstRunStarted(accountId)
     ? undefined
     : (agents.find(
@@ -3248,7 +3498,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
 
   const handleAgentAppearance = useCallback(
     (agentId: string, appearance: AgentHeaderAppearance) => {
-      setAgentAppearances((current) => {
+      setLoadedAppearances((current) => {
         if (sameAgentHeaderAppearance(current.get(agentId), appearance)) {
           return current;
         }
@@ -3315,6 +3565,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
 
   function selectAgentId(agentId: string, keepNavigation = false) {
     if (!keepNavigation) searchNavigation.current++;
+    closeSearch();
     const routeName = agents.find(
       ({ endpoint }) => endpoint.agent_id === agentId,
     )?.name;
@@ -3330,6 +3581,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       }),
       "",
     );
+    // Push the destination before route effects canonicalize the current entry.
+    void redux.getActions("page").set_active_tab("agents", false);
   }
 
   function openCopyAgent(agent: NamedAgent) {
@@ -3463,10 +3716,19 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   }
 
   async function openLibraryHit(result: AgentSearchHit, conversation = false) {
+    // A hand-made artifact's conversation is the project's Library chat.
+    if (conversation && isLibraryChatAgent(result.agent))
+      return showLibraryConversation({
+        projectId: result.agent.endpoint.project_id,
+        path: result.agent.path,
+        threadId: result.threadId,
+        artifactId: result.hit.artifact_id ?? "",
+      });
     if (conversation) return openSearchHit(result, true);
     if (!result.catalogEntryId)
       throw Error("Artifact catalog identity missing");
     searchNavigation.current++;
+    closeSearch();
     const artifactName = artifactNames.find(
       (item) =>
         item.active &&
@@ -3674,6 +3936,58 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     });
   }
 
+  // The sidebar's per-agent menu, shared with the Agents page.
+  function runAgentAction(agent: NamedAgent, key: string) {
+    const id = agent.endpoint.agent_id;
+    if (key === "copy") openCopyAgent(agent);
+    else if (key === "fresh") startFresh(agent);
+    else if (key === "access") setAccessAgent(agent);
+    else if (key === "remove") confirmRetireAgent(agent);
+    else if (key === "artifacts")
+      void openLibrary(undefined, undefined, agent.name);
+    else if (key === "hide" || key === "show")
+      agentOrganization.setHidden(id, key === "hide");
+  }
+
+  function overviewActions(agent: NamedAgent) {
+    const hidden = agentOrganization.groups.hidden.includes(agent);
+    return [
+      { key: "artifacts", label: "Show artifacts" },
+      { key: "copy", label: "Copy agent…" },
+      { key: "fresh", label: "Start fresh conversation…" },
+      { key: "access", label: "Collaborator access…" },
+      hidden
+        ? { key: "show", label: "Show in sidebar" }
+        : { key: "hide", label: "Hide from sidebar" },
+      { key: "remove", label: "Remove from Agents…" },
+    ].map(({ key, label }) => ({
+      key,
+      label,
+      onClick: () => runAgentAction(agent, key),
+    }));
+  }
+
+  function renderAgentBadge(agent: NamedAgent, size = 30) {
+    const appearance = agentAppearances.get(agent.endpoint.agent_id);
+    const theme = resolveNamedAgentTheme(agent, appearance);
+    return (
+      <AgentRunningIndicator agent={agent}>
+        <ThreadBadge
+          icon={appearance?.thread_icon}
+          color={theme.primaryColor}
+          accentColor={theme.accentColor}
+          image={appearance?.thread_image}
+          fallbackIcon={
+            theme.primaryColor || theme.accentColor || appearance?.thread_image
+              ? undefined
+              : "robot"
+          }
+          size={size}
+        />
+      </AgentRunningIndicator>
+    );
+  }
+
   function renderAgentRow(
     agent: NamedAgent,
     pinned: boolean,
@@ -3687,8 +4001,11 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         | string
         | undefined,
     );
+    // Only one sidebar entry is current: Projects, the Library or an agent.
     const active =
-      !libraryOpen && agent.endpoint.agent_id === selected?.endpoint.agent_id;
+      !libraryOpen &&
+      !contentOpen &&
+      agent.endpoint.agent_id === selected?.endpoint.agent_id;
     const id = agent.endpoint.agent_id;
     const appearance = agentAppearances.get(id);
     const theme = resolveNamedAgentTheme(agent, appearance);
@@ -3722,12 +4039,12 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         ) : (
           <span aria-hidden style={{ flex: "0 0 26px" }} />
         )}
-        <div style={{ flex: 1, minWidth: 0, padding: "5px 4px" }}>
+        <div style={{ flex: 1, minWidth: 0, padding: "0 4px" }}>
           <button
             type="button"
             aria-current={active ? "page" : undefined}
             aria-label={`${theme.title}, @${agent.name}, ${projectTitle}`}
-            title={`@${agent.name} · ${projectTitle}`}
+            title={`${theme.title} · @${agent.name}${showProjectTitle ? ` · ${projectTitle}` : ""}`}
             onClick={() => selectAgent(agent)}
             style={{
               alignItems: "center",
@@ -3738,36 +4055,23 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
               display: "flex",
               gap: 8,
               minWidth: 0,
-              padding: "4px 0",
+              padding: "6px 0",
               textAlign: "left",
               width: "100%",
             }}
           >
-            <AgentRunningIndicator agent={agent}>
-              <ThreadBadge
-                icon={appearance?.thread_icon}
-                color={theme.primaryColor}
-                accentColor={theme.accentColor}
-                image={appearance?.thread_image}
-                fallbackIcon={
-                  theme.primaryColor ||
-                  theme.accentColor ||
-                  appearance?.thread_image
-                    ? undefined
-                    : "robot"
-                }
-                size={30}
-              />
-            </AgentRunningIndicator>
-            <span style={{ minWidth: 0, flex: 1 }}>
-              <Text strong ellipsis style={{ display: "block" }}>
-                {theme.title}
-              </Text>
-              <Text type="secondary" ellipsis style={{ display: "block" }}>
-                @{agent.name}
-                {showProjectTitle && ` · ${projectTitle}`}
-              </Text>
-            </span>
+            {renderAgentBadge(agent, 26)}
+            {/* One line, like project rows: the title, then @name when it
+                differs (the project is in the tooltip). */}
+            <Text ellipsis strong={active} style={{ flex: 1, minWidth: 0 }}>
+              {theme.title}
+              {theme.title !== `@${agent.name}` && (
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {" "}
+                  @{agent.name}
+                </Text>
+              )}
+            </Text>
           </button>
         </div>
         {!hidden && (
@@ -3803,6 +4107,11 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                 icon: <Icon name="plus-circle" />,
               },
               {
+                key: "access",
+                label: "Collaborator access…",
+                icon: <Icon name="users" />,
+              },
+              {
                 key: hidden ? "show" : "hide",
                 icon: <Icon name={hidden ? "eye" : "eye-slash"} />,
                 label: hidden ? "Show in Agents" : "Hide from Agents",
@@ -3821,19 +4130,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             ],
             onClick: ({ key, domEvent }) => {
               domEvent.stopPropagation();
-              if (key === "copy") {
-                openCopyAgent(agent);
-                return;
-              }
-              if (key === "fresh") {
-                startFresh(agent);
-                return;
-              }
-              if (key === "remove") {
-                confirmRetireAgent(agent);
-                return;
-              }
-              agentOrganization.setHidden(id, !hidden);
+              runAgentAction(agent, key);
             },
           }}
         >
@@ -3910,7 +4207,29 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     );
   }
 
-  if (loading && !directory && !libraryOpen) return <Loading theme="medium" />;
+  function startNewAgent() {
+    searchNavigation.current++;
+    closeSearch();
+    setCreatingSourceAgentId(selected?.endpoint.agent_id);
+    setCreating(true);
+    redux.getActions("page").setState({
+      ...closedLibraryState,
+      active_agent_id: "new",
+      active_agent_name: undefined,
+    });
+    set_url(
+      getPageUrlPath({
+        page: "agents",
+        agent_id: "new",
+      }),
+    );
+    setMobileList(false);
+    // Push the destination before route effects canonicalize the current entry.
+    void redux.getActions("page").set_active_tab("agents", false);
+  }
+
+  if (loading && !directory && !libraryOpen && !contentOpen)
+    return <Loading theme="medium" />;
   const sidebar = (
     <aside
       id={AGENT_SIDEBAR_ID}
@@ -3925,12 +4244,20 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         boxSizing: "border-box",
         overflow: "hidden",
         minWidth: 0,
-        padding: "12px 0 0 12px",
+        padding: "0 0 0 12px",
         ...(isNarrow && !mobileList ? { display: "none" } : {}),
       }}
     >
       <WorkspaceSidebarActions
-        onHideSidebar={isNarrow ? undefined : toggleAgentSidebar}
+        onHideSidebar={
+          isNarrow
+            ? () => {
+                sidebarFocusPending.current = true;
+                setMobileList(false);
+              }
+            : toggleAgentSidebar
+        }
+        headerActions={<SidebarNotifications />}
         footer={
           <div
             style={{
@@ -3938,92 +4265,186 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
               paddingTop: 8,
             }}
           >
+            <SidebarStatus />
             <AgentsAccountMenu />
           </div>
         }
-        onProjects={
-          lite
-            ? undefined
-            : () => {
-                void redux.getActions("page").set_active_tab("projects");
-              }
+        firstNavigationItem={
+          <>
+            {!aiDisabled && (
+              <Button
+                block
+                type="text"
+                style={{
+                  justifyContent: "flex-start",
+                  background: overviewOpen ? UI_COLORS.selected : undefined,
+                }}
+                icon={<Icon name="robot" />}
+                aria-current={overviewOpen ? "page" : undefined}
+                onClick={showAgentsOverview}
+              >
+                Agents
+              </Button>
+            )}
+            {!lite && (
+              <Button
+                block
+                type="text"
+                icon={<Icon name="folder-open" />}
+                style={{
+                  justifyContent: "flex-start",
+                  // Only the Projects list itself; inside a project the
+                  // sidebar marks that project instead.
+                  background: projectsListOpen ? UI_COLORS.selected : undefined,
+                }}
+                aria-current={projectsListOpen ? "page" : undefined}
+                onClick={() => {
+                  searchNavigation.current++;
+                  closeSearch();
+                  setMobileList(false);
+                  // Already in projects: show all of them, as Agents shows
+                  // all agents. Elsewhere, return to the last project view.
+                  if (projectsOpen && activeTopTab !== "projects") {
+                    void redux.getActions("page").set_active_tab("projects");
+                  } else {
+                    void openProjectsWorkspace();
+                  }
+                }}
+              >
+                Projects
+              </Button>
+            )}
+          </>
         }
-        onNewAgent={() => {
-          searchNavigation.current++;
-          setCreatingSourceAgentId(selected?.endpoint.agent_id);
-          setCreating(true);
-          redux.getActions("page").setState({
-            ...closedLibraryState,
-            active_agent_id: "new",
-            active_agent_name: undefined,
-          });
-          set_url(
-            getPageUrlPath({
-              page: "agents",
-              agent_id: "new",
-            }),
-          );
-          setMobileList(false);
-        }}
       >
-        <AgentSidebarFilter
-          render={(search, input) => {
-            const filter = (agent: NamedAgent) =>
-              matchesAgentSidebarSearch({
-                agent,
-                appearanceName: agentAppearances.get(agent.endpoint.agent_id)
-                  ?.name,
-                networks:
-                  networksByAgent.get(
-                    agentNetworkLookupKey(
-                      agent.endpoint.project_id,
-                      agent.endpoint.agent_id,
-                    ),
-                  ) ?? [],
-                query: search,
-              });
-            const visibleGroups = {
-              pinned: agentOrganization.groups.pinned.filter(filter),
-              unpinned: agentOrganization.groups.unpinned.filter(filter),
-              hidden: agentOrganization.groups.hidden.filter(filter),
-            };
-            const recencySections = groupAgentsByRecency(
-              visibleGroups.unpinned,
-              agentOrganization.organization.lastOpened,
+        {(() => {
+          // The sidebar search box's text narrows the agents list.
+          const search = searchContext === "agents" ? sidebarQuery.trim() : "";
+          const queries = search ? [search] : [];
+          const filter = (agent: NamedAgent) =>
+            queries.every((query) => matchAgent(agent, query));
+          const visibleGroups = {
+            pinned: agentOrganization.groups.pinned.filter(filter),
+            unpinned: agentOrganization.groups.unpinned.filter(filter),
+            hidden: agentOrganization.groups.hidden.filter(filter),
+          };
+          const recencySections = groupAgentsByRecency(
+            visibleGroups.unpinned,
+            agentOrganization.organization.lastOpened,
+          );
+          // Grouped by project, pins still form one section at the top
+          // (grouped by project, in pin order), as on the Agents page.
+          const pinnedProjectGroups: NamedAgent[][] = [];
+          for (const agent of visibleGroups.pinned) {
+            const group = pinnedProjectGroups.find(
+              ([first]) =>
+                first.endpoint.project_id === agent.endpoint.project_id,
             );
-            const projectGroups = groupAgentsByProject(
-              visibleGroups.pinned,
-              visibleGroups.unpinned,
-              agentOrganization.organization.lastOpened,
-            );
-            return (
-              <>
-                <Space direction="vertical" size={10} style={{ width: "100%" }}>
+            if (group) group.push(agent);
+            else pinnedProjectGroups.push([agent]);
+          }
+          const projectGroups = groupAgentsByProject(
+            [],
+            visibleGroups.unpinned,
+            agentOrganization.organization.lastOpened,
+          );
+          return (
+            <>
+              <Space direction="vertical" size={10} style={{ width: "100%" }}>
+                <Button
+                  ref={libraryButton}
+                  block
+                  type="text"
+                  style={{
+                    justifyContent: "flex-start",
+                    background: artifactLibraryOpen
+                      ? UI_COLORS.selected
+                      : undefined,
+                  }}
+                  icon={<Icon name="files" />}
+                  aria-pressed={artifactLibraryOpen}
+                  aria-current={artifactLibraryOpen ? "page" : undefined}
+                  onClick={showLibrary}
+                >
+                  Artifacts
+                </Button>
+                {!lite && (
                   <Button
-                    ref={libraryButton}
                     block
                     type="text"
                     style={{
                       justifyContent: "flex-start",
-                      background: libraryOpen ? UI_COLORS.selected : undefined,
+                      background: peopleOpen ? UI_COLORS.selected : undefined,
                     }}
-                    icon={<Icon name="files" />}
-                    aria-pressed={libraryOpen}
-                    aria-current={libraryOpen ? "page" : undefined}
-                    onClick={showLibrary}
+                    icon={<Icon name="users" />}
+                    aria-current={peopleOpen ? "page" : undefined}
+                    onClick={() => {
+                      searchNavigation.current++;
+                      closeSearch();
+                      setMobileList(false);
+                      void redux.getActions("page").set_active_tab("people");
+                    }}
                   >
-                    Library
+                    People
                   </Button>
-                  {accountId && (
-                    <AgentSearch
-                      accountId={accountId}
-                      agents={agents}
-                      activity={agentOrganization.organization.lastOpened}
-                      active={active}
-                      onSelect={openSearchHit}
-                      available={(agent) => agent.available}
+                )}
+                {accountId && (
+                  <>
+                    <SidebarSearchBox
+                      label={
+                        searchContext === "projects"
+                          ? "Search projects"
+                          : searchContext === "library"
+                            ? "Search artifacts"
+                            : searchContext === "people"
+                              ? "Search people"
+                              : aiDisabled
+                                ? "Search projects"
+                                : "Search agents"
+                      }
+                      value={sidebarQuery}
+                      onChange={setListQuery}
+                      onSubmit={(query) =>
+                        submitSearch(
+                          query,
+                          searchContext === "library"
+                            ? "artifacts"
+                            : searchContext === "agents" && aiDisabled
+                              ? "projects"
+                              : searchContext,
+                          searchState.open ? searchState.origin : searchOrigin,
+                        )
+                      }
+                      onEscape={() => closeSearch({ restoreUrl: true })}
                     />
-                  )}
+                  </>
+                )}
+                {listMode === "projects" && (
+                  <ProjectsSidebar
+                    search={sidebarQuery}
+                    onNavigate={() => setMobileList(false)}
+                  />
+                )}
+                {listMode === "library" && accountId && (
+                  <LibrarySidebar
+                    search={sidebarQuery}
+                    accountId={accountId}
+                    agents={agents}
+                    onOpen={(hit) => {
+                      setMobileList(false);
+                      void openLibraryHit(hit);
+                    }}
+                    onAll={showLibrary}
+                    onNew={() => setNewArtifactOpen(true)}
+                  />
+                )}
+                {listMode === "people" && (
+                  <PeopleSidebar
+                    search={sidebarQuery}
+                    onNavigate={() => setMobileList(false)}
+                  />
+                )}
+                {!listMode && (
                   <AgentOrganizationControls
                     mode={agentOrganization.organization.mode}
                     groupByProject={
@@ -4031,204 +4452,260 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                     }
                     onMode={agentOrganization.setMode}
                     onGroupByProject={agentOrganization.setGroupByProject}
+                    onNewAgent={startNewAgent}
                   />
-                  {input}
-                  {networkError && (
-                    <Alert
-                      role="alert"
-                      type="warning"
-                      showIcon
-                      title="Unable to load Agent Networks"
-                      description={networkError}
-                    />
-                  )}
-                  <OrganizationSaveAlert
-                    error={agentOrganization.saveError}
-                    onRetry={agentOrganization.retrySave}
+                )}
+                {networkError && (
+                  <Alert
+                    role="alert"
+                    type="warning"
+                    showIcon
+                    title="Unable to load Agent Networks"
+                    description={networkError}
                   />
-                </Space>
-                <div>
-                  {agentOrganization.organization.groupByProject ? (
-                    projectGroups.map((group) => {
-                      const count = group.pinned.length + group.unpinned.length;
-                      const collapsed =
-                        !search.trim() &&
-                        agentOrganization.organization.collapsedProjects.includes(
-                          group.projectId,
-                        );
-                      return (
-                        <section
-                          key={group.projectId}
-                          aria-label={`${group.projectTitle} agents`}
-                          style={{ marginBottom: 8 }}
-                        >
-                          <Button
-                            type="text"
-                            block
-                            aria-expanded={!collapsed}
-                            onClick={() =>
-                              agentOrganization.setProjectCollapsed(
-                                group.projectId,
-                                !collapsed,
-                              )
-                            }
-                            style={{
-                              alignItems: "center",
-                              background: UI_COLORS.surface,
-                              border: `1px solid ${UI_COLORS.border}`,
-                              display: "flex",
-                              fontWeight: 600,
-                              justifyContent: "flex-start",
-                              paddingInline: 8,
-                              textAlign: "left",
-                            }}
-                            icon={
-                              <Icon
-                                name={collapsed ? "caret-right" : "caret-down"}
-                              />
-                            }
+                )}
+                <OrganizationSaveAlert
+                  error={agentOrganization.saveError}
+                  onRetry={agentOrganization.retrySave}
+                />
+              </Space>
+              {!listMode && (
+                <>
+                  <div>
+                    {agentOrganization.organization.groupByProject &&
+                      pinnedProjectGroups.length > 0 && (
+                        <section aria-label="Pinned agents">
+                          <Text
+                            type="secondary"
+                            style={{ display: "block", padding: 6 }}
                           >
-                            <span
-                              title={group.projectTitle}
-                              style={{
-                                flex: 1,
-                                minWidth: 0,
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                              }}
-                            >
-                              {group.projectTitle}
-                            </span>
-                            <Text type="secondary" style={{ marginLeft: 6 }}>
-                              {count}
-                            </Text>
-                          </Button>
-                          {!collapsed && (
-                            <div
-                              role="list"
-                              aria-label={`Agents in ${group.projectTitle}`}
-                            >
-                              {renderSortableAgentGroup(
-                                group.pinned,
-                                true,
-                                true,
-                                {
-                                  projectAgentIds: group.pinned.map(
-                                    ({ endpoint }) => endpoint.agent_id,
-                                  ),
-                                  showProjectTitle: false,
-                                },
-                                search,
-                              )}
-                              {renderSortableAgentGroup(
-                                group.unpinned,
-                                false,
-                                agentOrganization.organization.mode ===
-                                  "custom",
-                                {
-                                  projectAgentIds: group.unpinned.map(
-                                    ({ endpoint }) => endpoint.agent_id,
-                                  ),
-                                  showProjectTitle: false,
-                                },
-                                search,
-                              )}
-                            </div>
-                          )}
+                            Pinned
+                          </Text>
+                          {pinnedProjectGroups.map((group) => {
+                            const title = agentProjectTitle(
+                              group[0],
+                              liveProjects?.getIn([
+                                group[0].endpoint.project_id,
+                                "title",
+                              ]) as string | undefined,
+                            );
+                            return (
+                              <div
+                                key={group[0].endpoint.project_id}
+                                role="list"
+                                aria-label={`Pinned agents in ${title}`}
+                                style={{ marginBottom: 8 }}
+                              >
+                                <Text
+                                  strong
+                                  ellipsis
+                                  title={title}
+                                  style={{
+                                    display: "block",
+                                    padding: "2px 8px",
+                                  }}
+                                >
+                                  {title}
+                                </Text>
+                                {renderSortableAgentGroup(
+                                  group,
+                                  true,
+                                  true,
+                                  {
+                                    projectAgentIds: group.map(
+                                      ({ endpoint }) => endpoint.agent_id,
+                                    ),
+                                    showProjectTitle: false,
+                                  },
+                                  search,
+                                )}
+                              </div>
+                            );
+                          })}
                         </section>
-                      );
-                    })
-                  ) : (
-                    <div role="list" aria-label="Visible agents">
-                      {visibleGroups.pinned.length > 0 && (
+                      )}
+                    {agentOrganization.organization.groupByProject &&
+                      pinnedProjectGroups.length > 0 &&
+                      projectGroups.length > 0 && (
                         <Text
                           type="secondary"
                           style={{ display: "block", padding: 6 }}
                         >
-                          Pinned
+                          Agents
                         </Text>
                       )}
-                      {renderSortableAgentGroup(
-                        visibleGroups.pinned,
-                        true,
-                        true,
-                        {},
-                        search,
-                      )}
-                      {agentOrganization.organization.mode === "custom" ? (
-                        <>
-                          {visibleGroups.unpinned.length > 0 && (
-                            <Text
-                              type="secondary"
-                              style={{ display: "block", padding: 6 }}
+                    {agentOrganization.organization.groupByProject ? (
+                      projectGroups.map((group) => {
+                        const count = group.unpinned.length;
+                        const collapsed =
+                          !search.trim() &&
+                          agentOrganization.organization.collapsedProjects.includes(
+                            group.projectId,
+                          );
+                        return (
+                          <section
+                            key={group.projectId}
+                            aria-label={`${group.projectTitle} agents`}
+                            style={{ marginBottom: 8 }}
+                          >
+                            <Button
+                              type="text"
+                              block
+                              aria-expanded={!collapsed}
+                              onClick={() =>
+                                agentOrganization.setProjectCollapsed(
+                                  group.projectId,
+                                  !collapsed,
+                                )
+                              }
+                              style={{
+                                alignItems: "center",
+                                background: UI_COLORS.surface,
+                                border: `1px solid ${UI_COLORS.border}`,
+                                display: "flex",
+                                fontWeight: 600,
+                                justifyContent: "flex-start",
+                                paddingInline: 8,
+                                textAlign: "left",
+                              }}
+                              icon={
+                                <Icon
+                                  name={
+                                    collapsed ? "caret-right" : "caret-down"
+                                  }
+                                />
+                              }
                             >
-                              Custom order
-                            </Text>
-                          )}
-                          {renderSortableAgentGroup(
-                            visibleGroups.unpinned,
-                            false,
-                            true,
-                            {},
-                            search,
-                          )}
-                        </>
-                      ) : (
-                        recencySections.map((section) => (
-                          <div key={section.key}>
-                            <Text
-                              type="secondary"
-                              style={{ display: "block", padding: 6 }}
-                            >
-                              {section.title}
-                            </Text>
+                              <span
+                                title={group.projectTitle}
+                                style={{
+                                  flex: 1,
+                                  minWidth: 0,
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {group.projectTitle}
+                              </span>
+                              <Text type="secondary" style={{ marginLeft: 6 }}>
+                                {count}
+                              </Text>
+                            </Button>
+                            {!collapsed && (
+                              <div
+                                role="list"
+                                aria-label={`Agents in ${group.projectTitle}`}
+                              >
+                                {renderSortableAgentGroup(
+                                  group.unpinned,
+                                  false,
+                                  agentOrganization.organization.mode ===
+                                    "custom",
+                                  {
+                                    projectAgentIds: group.unpinned.map(
+                                      ({ endpoint }) => endpoint.agent_id,
+                                    ),
+                                    showProjectTitle: false,
+                                  },
+                                  search,
+                                )}
+                              </div>
+                            )}
+                          </section>
+                        );
+                      })
+                    ) : (
+                      <div role="list" aria-label="Visible agents">
+                        {visibleGroups.pinned.length > 0 && (
+                          <Text
+                            type="secondary"
+                            style={{ display: "block", padding: 6 }}
+                          >
+                            Pinned
+                          </Text>
+                        )}
+                        {renderSortableAgentGroup(
+                          visibleGroups.pinned,
+                          true,
+                          true,
+                          {},
+                          search,
+                        )}
+                        {agentOrganization.organization.mode === "custom" ? (
+                          <>
+                            {visibleGroups.unpinned.length > 0 && (
+                              <Text
+                                type="secondary"
+                                style={{ display: "block", padding: 6 }}
+                              >
+                                Custom order
+                              </Text>
+                            )}
                             {renderSortableAgentGroup(
-                              section.agents,
+                              visibleGroups.unpinned,
                               false,
-                              false,
+                              true,
                               {},
                               search,
                             )}
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  )}
-                  {visibleGroups.hidden.length > 0 && (
-                    <div style={{ marginTop: 8 }}>
-                      <Button
-                        type="text"
-                        block
-                        style={{ textAlign: "left" }}
-                        icon={
-                          <Icon
-                            name={showHidden ? "caret-down" : "caret-right"}
-                          />
-                        }
-                        aria-expanded={showHidden}
-                        onClick={() => setShowHidden((value) => !value)}
-                      >
-                        Hidden ({visibleGroups.hidden.length})
-                      </Button>
-                      {showHidden && (
-                        <div role="list" aria-label="Hidden agents">
-                          {visibleGroups.hidden.map((agent) => (
-                            <div
-                              key={`${agent.endpoint.project_id}:${agent.endpoint.agent_id}`}
-                            >
-                              {renderAgentRow(agent, false, false, true)}
+                          </>
+                        ) : (
+                          recencySections.map((section) => (
+                            <div key={section.key}>
+                              <Text
+                                type="secondary"
+                                style={{ display: "block", padding: 6 }}
+                              >
+                                {section.title}
+                              </Text>
+                              {renderSortableAgentGroup(
+                                section.agents,
+                                false,
+                                false,
+                                {},
+                                search,
+                              )}
                             </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </>
-            );
-          }}
-        />
+                          ))
+                        )}
+                      </div>
+                    )}
+                    {visibleGroups.hidden.length > 0 && (
+                      <div style={{ marginTop: 8 }}>
+                        <Button
+                          type="text"
+                          block
+                          style={{ textAlign: "left" }}
+                          icon={
+                            <Icon
+                              name={showHidden ? "caret-down" : "caret-right"}
+                            />
+                          }
+                          aria-expanded={showHidden}
+                          onClick={() => setShowHidden((value) => !value)}
+                        >
+                          Hidden ({visibleGroups.hidden.length})
+                        </Button>
+                        {showHidden && (
+                          <div role="list" aria-label="Hidden agents">
+                            {visibleGroups.hidden.map((agent) => (
+                              <div
+                                key={`${agent.endpoint.project_id}:${agent.endpoint.agent_id}`}
+                              >
+                                {renderAgentRow(agent, false, false, true)}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </>
+          );
+        })()}
       </WorkspaceSidebarActions>
     </aside>
   );
@@ -4307,12 +4784,16 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       <section
         ref={workspaceContent}
         tabIndex={-1}
+        data-floating-sidebar-toggle={floatingSidebarToggle || undefined}
         aria-label={
-          libraryOpen
-            ? "Artifact Library"
-            : selected
-              ? `Agent @${selected.name}`
-              : "Agent workspace"
+          contentLabel ??
+          (overviewOpen
+            ? "All agents"
+            : libraryOpen
+              ? "Artifacts"
+              : selected
+                ? `Agent @${selected.name}`
+                : "Agent workspace")
         }
         style={{
           flex: 1,
@@ -4324,6 +4805,84 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           ...(isNarrow && mobileList ? { display: "none" } : {}),
         }}
       >
+        {floatingSidebarToggle && (
+          <div style={{ position: "absolute", top: 2, left: 4, zIndex: 5 }}>
+            <AgentsSidebarToggle hidden onToggle={toggleAgentSidebar} />
+          </div>
+        )}
+        {active && searchState.open && accountId && (
+          // Search results cover whatever page the search started from;
+          // closing them returns to it unchanged.
+          <div style={{ position: "absolute", inset: 0, zIndex: 6 }}>
+            <SearchResults
+              accountId={accountId}
+              agents={agents}
+              activity={agentOrganization.organization.lastOpened}
+              available={(agent) => agent.available}
+              matchAgent={matchAgent}
+              agentTitle={(agent) =>
+                resolveNamedAgentTheme(
+                  agent,
+                  agentAppearances.get(agent.endpoint.agent_id),
+                ).title
+              }
+              onOpenAgent={(agent) => selectAgent(agent)}
+              onOpenMessage={openSearchHit}
+              onOpenArtifact={openLibraryHit}
+              aiDisabled={aiDisabled}
+              navigation={
+                isNarrow ? (
+                  libraryNavigationControl()
+                ) : agentSidebarHidden ? (
+                  <AgentsSidebarToggle hidden onToggle={toggleAgentSidebar} />
+                ) : null
+              }
+            />
+          </div>
+        )}
+        <div
+          style={{
+            display: "flex",
+            flex: 1,
+            minHeight: 0,
+            flexDirection: "column",
+            // Keep editor measurements stable while an agent is shown.
+            // display:none makes responsive editors rebuild at zero width.
+            ...(!contentOpen
+              ? {
+                  position: "absolute" as const,
+                  inset: 0,
+                  visibility: "hidden" as const,
+                  pointerEvents: "none" as const,
+                }
+              : {}),
+          }}
+          inert={!contentOpen}
+          aria-hidden={!contentOpen}
+        >
+          {contentNavigation !== null && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                minWidth: 0,
+                flexShrink: 0,
+              }}
+            >
+              {libraryNavigationControl()}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {contentNavigation ?? <AgentsWorkspaceNavigation />}
+              </div>
+            </div>
+          )}
+          <WorkspaceContentNavigation.Provider
+            value={
+              contentNavigation === null ? libraryNavigationControl() : null
+            }
+          >
+            {children}
+          </WorkspaceContentNavigation.Provider>
+        </div>
         {accountId && (
           <AgentArtifactBrowser
             key={accountId}
@@ -4332,13 +4891,58 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             activeAgent={selected}
             active={
               active &&
-              libraryOpen &&
+              artifactLibraryOpen &&
               !artifactOpen &&
               (!isNarrow || !mobileList)
             }
             navigation={libraryNavigationControl()}
+            onNewArtifact={() => setNewArtifactOpen(true)}
             onSelect={openLibraryHit}
             onShowConversation={(result) => openLibraryHit(result, true)}
+          />
+        )}
+        <NewArtifactDialog
+          open={newArtifactOpen}
+          onClose={() => setNewArtifactOpen(false)}
+          onCreated={() => {
+            void antdMessage.success(
+              "Added to Artifacts; it appears there in a few seconds.",
+            );
+            if (accountId)
+              void sharedArtifactCatalog(accountId, (opts) =>
+                webapp_client.conat_client.hub.artifactCatalog.listProject(
+                  opts,
+                ),
+              ).refresh();
+          }}
+        />
+        {accountId && (
+          <AgentsOverview
+            active={active && overviewOpen && (!isNarrow || !mobileList)}
+            navigation={libraryNavigationControl()}
+            mine={[
+              ...agentOrganization.groups.pinned,
+              ...agentOrganization.groups.unpinned,
+              ...agentOrganization.groups.hidden,
+            ]}
+            hiddenIds={agentOrganization.groups.hidden.map(
+              ({ endpoint }) => endpoint.agent_id,
+            )}
+            minePins={agentOrganization.groups.pinned.map(
+              ({ endpoint }) => endpoint.agent_id,
+            )}
+            lastOpened={agentOrganization.organization.lastOpened}
+            agentTitle={(agent) =>
+              resolveNamedAgentTheme(
+                agent,
+                agentAppearances.get(agent.endpoint.agent_id),
+              ).title
+            }
+            renderBadge={renderAgentBadge}
+            mineActions={overviewActions}
+            onPinMine={agentOrganization.setPinned}
+            onMoveMine={agentOrganization.moveToIndex}
+            onOpenMine={(agent) => selectAgent(agent)}
           />
         )}
         {active && artifactOpen && accountId && (!isNarrow || !mobileList) && (
@@ -4357,7 +4961,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             flex: 1,
             minHeight: 0,
             position: "relative",
-            display: libraryOpen ? "none" : undefined,
+            display: libraryOpen || contentOpen ? "none" : undefined,
           }}
         >
           {active &&
@@ -4461,6 +5065,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                       accountId={accountId}
                       active={
                         active &&
+                        !contentOpen &&
                         !libraryOpen &&
                         (!isNarrow || !mobileList) &&
                         !!selected &&
@@ -4515,6 +5120,15 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             setCopyingAgent(undefined);
             setCopyError("");
           }}
+        />
+      )}
+      {accessAgent && (
+        <AgentAccessDialog
+          open
+          project_id={accessAgent.endpoint.project_id}
+          agent_id={accessAgent.endpoint.agent_id}
+          name={accessAgent.name}
+          onClose={() => setAccessAgent(undefined)}
         />
       )}
       {freshAgent && (

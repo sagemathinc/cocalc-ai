@@ -5,6 +5,17 @@ import { ActiveContent } from "./active-content";
 import { recordSignedInSurfaceReady } from "./bootstrap-ux-latency";
 
 let disabled: boolean | undefined;
+let mockLite = false;
+let lastContentNavigation: unknown;
+let activeTab = "agents";
+let openProjects: string[] = [];
+let mockFullscreen: string | undefined;
+let mockExam = false;
+jest.mock("@cocalc/frontend/lite", () => ({
+  get lite() {
+    return mockLite;
+  },
+}));
 let accountId: string | undefined;
 const accountBindings: Array<{ assertCurrent: () => void }> = [];
 const copied = jest.fn();
@@ -14,14 +25,16 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   useActions: () => actions,
   redux: { getStore: () => ({ get: () => accountId }) },
   useTypedRedux: (store, field) => {
-    if (store === "page" && field === "active_top_tab") return "agents";
+    if (store === "page" && field === "active_top_tab") return activeTab;
+    if (store === "page" && field === "fullscreen") return mockFullscreen;
+    if (store === "customize" && field === "exam_mode") return mockExam;
     if (store === "account" && field === "other_settings")
       return disabled === undefined
         ? undefined
         : Map({ openai_disabled: disabled });
     if (field === "is_logged_in") return true;
     if (store === "account" && field === "account_id") return accountId;
-    if (field === "open_projects") return [];
+    if (field === "open_projects") return openProjects;
   },
 }));
 jest.mock("@cocalc/frontend/antd-bootstrap", () => ({ Alert: () => null }));
@@ -46,7 +59,19 @@ jest.mock("./bootstrap-ux-latency", () => ({
 }));
 jest.mock("./startup-phase", () => ({ markStartupPhaseOnce: jest.fn() }));
 jest.mock("./route-components", () => ({
-  MyAgentsWorkspacePage: () => {
+  PeoplePage: () => <section aria-label="People page" />,
+  ProjectsPage: () => (
+    <section aria-label="Projects">
+      <input aria-label="Filter projects" />
+    </section>
+  ),
+  ProjectPage: ({ project_id }) => (
+    <section aria-label={`Editor ${project_id}`}>
+      <input aria-label="Editor text" />
+    </section>
+  ),
+  MyAgentsWorkspacePage: ({ children, contentLabel, contentNavigation }) => {
+    lastContentNavigation = contentNavigation;
     const { useBoundAgentAccount } = require("../agents/use-bound-account");
     const binding = useBoundAgentAccount();
     accountBindings.push(binding);
@@ -60,32 +85,37 @@ jest.mock("./route-components", () => ({
         >
           Copy agent
         </button>
+        {contentLabel && <span>{contentLabel}</span>}
+        {children}
       </div>
     );
   },
 }));
 
 beforeEach(() => {
+  mockLite = false;
+  activeTab = "agents";
+  openProjects = [];
+  mockFullscreen = undefined;
+  mockExam = false;
   disabled = undefined;
   accountId = undefined;
   accountBindings.length = 0;
   jest.clearAllMocks();
 });
 
-it("never mounts Agents when AI is disabled", () => {
+it("AI-disabled accounts use the same workspace, redirected from Agents", () => {
   disabled = true;
   render(<ActiveContent />);
-  expect(screen.queryByRole("region", { name: "Agents workspace" })).toBeNull();
+  expect(screen.getByRole("region", { name: "Agents workspace" })).toBeTruthy();
   expect(actions.set_active_tab).toHaveBeenCalledWith("projects");
 });
 
-it("unmounts and redirects when the opt-out arrives or changes", () => {
+it("redirects when the opt-out arrives", () => {
   const { rerender } = render(<ActiveContent />);
-  expect(screen.getByRole("region", { name: "Agents workspace" })).toBeTruthy();
   expect(actions.set_active_tab).not.toHaveBeenCalled();
   disabled = true;
   rerender(<ActiveContent />);
-  expect(screen.queryByRole("region", { name: "Agents workspace" })).toBeNull();
   expect(actions.set_active_tab).toHaveBeenCalledWith("projects");
 });
 
@@ -125,4 +155,76 @@ it("rebinds workspace actions after account loading without reviving old actions
   expect(() => current.assertCurrent()).not.toThrow();
   unmount();
   expect(() => current.assertCurrent()).toThrow("The account changed");
+});
+
+it("keeps one shell and the same project editor DOM across Projects and agent navigation", async () => {
+  const project = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  accountId = "viewer";
+  openProjects = [project];
+  activeTab = "projects";
+  const { rerender } = render(<ActiveContent />);
+  const shell = screen.getByRole("region", { name: "Agents workspace" });
+  expect(shell).toContainElement(
+    screen.getByRole("region", { name: "Projects" }),
+  );
+  expect(screen.queryByRole("textbox", { name: "Editor text" })).toBeNull();
+  activeTab = project;
+  rerender(<ActiveContent />);
+  const editor = screen.getByRole("textbox", { name: "Editor text" });
+  await userEvent.setup().type(editor, "Unsaved work");
+  activeTab = "agents";
+  rerender(<ActiveContent />);
+  expect(screen.getByRole("region", { name: "Agents workspace" })).toBe(shell);
+  expect(editor).toBeInTheDocument();
+  expect(editor.closest("[inert]")).not.toBeNull();
+  activeTab = project;
+  rerender(<ActiveContent />);
+  expect(screen.getByRole("textbox", { name: "Editor text" })).toBe(editor);
+  expect(editor).toHaveValue("Unsaved work");
+  expect(editor.closest("[inert]")).toBeNull();
+});
+
+it.each(["Lite", "exam", "kiosk", "project"])(
+  "retains standalone Projects navigation in %s mode",
+  (mode) => {
+    activeTab = "projects";
+    accountId = "viewer";
+    disabled = mode === "AI-disabled";
+    mockLite = mode === "Lite";
+    mockExam = mode === "exam";
+    mockFullscreen = ["kiosk", "project"].includes(mode) ? mode : undefined;
+    render(<ActiveContent />);
+    expect(
+      screen.queryByRole("region", { name: "Agents workspace" }),
+    ).toBeNull();
+  },
+);
+
+it("hides the Projects list without losing its local filter or DOM", () => {
+  accountId = "viewer";
+  activeTab = "projects";
+  const { rerender } = render(<ActiveContent />);
+  const filter = screen.getByRole("textbox", {
+    name: "Filter projects",
+  }) as HTMLInputElement;
+  filter.value = "unfinished filter";
+  activeTab = "agents";
+  rerender(<ActiveContent />);
+  expect(filter.isConnected).toBe(true);
+  expect(filter.closest("[inert]")).not.toBeNull();
+  activeTab = "projects";
+  rerender(<ActiveContent />);
+  expect(screen.getByRole("textbox", { name: "Filter projects" })).toBe(filter);
+  expect(filter.value).toBe("unfinished filter");
+});
+
+it("People draws its own header instead of the project top bar", () => {
+  accountId = "viewer";
+  activeTab = "people";
+  const navigation = <nav aria-label="Top bar" />;
+  const { rerender } = render(<ActiveContent navigation={navigation} />);
+  expect(lastContentNavigation).toBeNull();
+  activeTab = "projects";
+  rerender(<ActiveContent navigation={navigation} />);
+  expect(lastContentNavigation).toBe(navigation);
 });

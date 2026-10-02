@@ -133,6 +133,16 @@ Table({
       type: "uuid",
       desc: "Replacement identity created by explicit owner recovery.",
     },
+    collaborator_access: {
+      type: "string",
+      pg_type: "VARCHAR(16)",
+      desc: "Creator's stated preference for other collaborators: 'view' asks them to only view; null means they may message. A convention, not enforced.",
+    },
+    appearance: {
+      type: "map",
+      pg_type: "JSONB",
+      desc: "Copy of the thread's theme (title, colors, icon, image) so agent lists show it without loading the chat. The .chat thread metadata is the source.",
+    },
   },
 });
 

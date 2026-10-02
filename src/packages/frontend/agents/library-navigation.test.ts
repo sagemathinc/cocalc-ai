@@ -19,8 +19,10 @@ test("Library navigation activates its tab without selecting an agent", async ()
   await openLibrary();
   expect(setState).toHaveBeenLastCalledWith({
     library_open: true,
+    agents_overview_open: false,
     library_project_id: undefined,
     library_entry_id: undefined,
+    library_query: undefined,
   });
   expect(setActiveTab).toHaveBeenLastCalledWith("agents");
   expect(setState.mock.invocationCallOrder[0]).toBeLessThan(
@@ -29,8 +31,10 @@ test("Library navigation activates its tab without selecting an agent", async ()
   await openLibrary("11111111-1111-4111-8111-111111111111", "a".repeat(64));
   expect(setState).toHaveBeenLastCalledWith({
     library_open: true,
+    agents_overview_open: false,
     library_project_id: "11111111-1111-4111-8111-111111111111",
     library_entry_id: "a".repeat(64),
+    library_query: undefined,
   });
   expect(setActiveTab).toHaveBeenCalledTimes(2);
   expect(

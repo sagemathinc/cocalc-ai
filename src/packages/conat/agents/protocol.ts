@@ -1,3 +1,4 @@
+import type { AgentAppearance } from "@cocalc/util/agent-appearance";
 import { isValidUUID } from "@cocalc/util/misc";
 import { validateAgentMemoryRequest, type AgentMemoryRequest } from "./memory";
 
@@ -14,6 +15,7 @@ export interface AgentIdentity {
   created_by: string;
   conversation_history?: { thread_id: string; ended_at: string }[];
   disabled_at: Date | string | null;
+  appearance?: AgentAppearance | null;
 }
 
 export interface AgentCredential {

@@ -4,13 +4,26 @@ import type { ForeignArtifactTarget } from "@cocalc/frontend/frame-editors/chat-
 import type { AgentSearchHit } from "./search-runner";
 
 /** Library navigation never selects or starts an agent. */
-export function openLibrary(projectId?: string, entryId?: string) {
+export function openLibrary(
+  projectId?: string,
+  entryId?: string,
+  query?: string,
+) {
   const page = redux.getActions("page");
   page.setState({
     library_open: true,
+    agents_overview_open: false,
     library_project_id: projectId,
     library_entry_id: entryId,
+    library_query: query,
   });
+  return page.set_active_tab("agents");
+}
+
+/** The Agents page; like the Library, it keeps the selected agent. */
+export function openAgentsOverview() {
+  const page = redux.getActions("page");
+  page.setState({ ...closedLibraryState, agents_overview_open: true });
   return page.set_active_tab("agents");
 }
 
@@ -35,6 +48,7 @@ export function libraryConversationHit(
 
 export const closedLibraryState = {
   library_open: false,
+  agents_overview_open: false,
   library_project_id: undefined,
   library_entry_id: undefined,
 };

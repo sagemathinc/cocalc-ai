@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { lastAppPath } from "@cocalc/frontend/app/last-app-path";
 import { useEffect, useState } from "react";
 
 import { DownOutlined, MenuOutlined } from "@ant-design/icons";
@@ -161,6 +162,7 @@ function HomeLogoLink({
       <img
         alt=""
         aria-hidden="true"
+        className="cocalc-vt-logo"
         src={logoSquare}
         style={{
           display: "block",
@@ -203,6 +205,15 @@ export default function PublicTopNav({
   const isCompact = useCompactNav();
   const hoverCapable = useHoverCapable();
   const logoSquare = getLogoSquare(config);
+  // Read after mounting (localStorage is not available when rendering on
+  // the server, and the first render must match it).
+  const [openPath, setOpenPath] = useState(
+    config?.openai_disabled ? "projects" : "agents",
+  );
+  useEffect(() => {
+    const last = lastAppPath();
+    if (last) setOpenPath(last);
+  }, []);
   const showPolicies = arePublicPoliciesVisible(config);
   const siteName = getSiteName(config);
   const publicInfoItems: Array<{
@@ -334,23 +345,13 @@ export default function PublicTopNav({
           </Text>
         </span>
       ) : null}
-      {!config?.openai_disabled && (
-        <Button
-          href={appPath("agents")}
-          icon={<Icon name="robot" />}
-          size={isCompact ? "small" : "middle"}
-          type="primary"
-        >
-          Agents
-        </Button>
-      )}
+      {/* One way in: back to where you last were in the app. */}
       <Button
-        href={appPath("projects")}
-        type={config?.openai_disabled ? "primary" : "default"}
-        icon={<Icon name="edit" />}
+        href={appPath(openPath)}
         size={isCompact ? "small" : "middle"}
+        type="primary"
       >
-        Projects
+        Open {siteName} <Icon name="arrow-right" />
       </Button>
     </>
   ) : null;
