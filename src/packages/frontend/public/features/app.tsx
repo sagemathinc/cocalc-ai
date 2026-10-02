@@ -60,6 +60,7 @@ const { Paragraph, Text, Title } = Typography;
 
 interface FeaturesConfig {
   cocalc_product?: string;
+  dns?: string;
   help_email?: string;
   is_authenticated?: boolean;
   logo_square?: string;
@@ -702,9 +703,9 @@ function FeatureDetail({
   if (slug === "ai") {
     return (
       <AIFeaturePage
+        config={config}
         helpEmail={helpEmail}
         isAuthenticated={isAuthenticated}
-        product={config?.cocalc_product}
       />
     );
   }

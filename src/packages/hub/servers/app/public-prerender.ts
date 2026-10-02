@@ -4,6 +4,11 @@
  */
 
 import {
+  getPublicAiCards,
+  getPublicAiHeadline,
+  PUBLIC_AI_INTRO,
+} from "@cocalc/util/public-ai-page-content";
+import {
   getPublicFeatureIndexPages,
   getPublicFeaturePage,
   PUBLIC_FEATURE_NAV_ITEMS,
@@ -381,20 +386,26 @@ function renderFeatureDetail(
   basePath: string,
   config: PublicRouteMetadataConfig,
 ): string {
-  const sections = (page.sections ?? [])
+  // The AI page's hero shows its headline for this site and its intro, and
+  // its sections are the page's agent cards, as on the React page.
+  const isAiPage = page.slug === "ai";
+  const sections = ((isAiPage ? getPublicAiCards(config) : page.sections) ?? [])
     .map((section) => renderSection(section, basePath, config))
     .join("");
   const title = page.metadataTitle ?? page.title;
   const highlights = (page.highlights ?? [])
     .map((item) => `<li>${htmlEscape(item)}</li>`)
     .join("");
+  const lead = isAiPage
+    ? [getPublicAiHeadline(config), PUBLIC_AI_INTRO]
+    : [page.tagline, page.metadataSummary ?? page.summary, page.summary];
   return `<article data-cocalc-public-prerender="feature" style="${ARTICLE_STYLE}">
 <header>
   <p>CoCalc feature</p>
   <h1>${htmlEscape(title)}</h1>
-  <p>${htmlEscape(page.tagline)}</p>
-  <p>${htmlEscape(page.metadataSummary ?? page.summary)}</p>
-  <p>${htmlEscape(page.summary)}</p>${highlights ? `<ul>${highlights}</ul>` : ""}
+${lead.map((line) => `  <p>${htmlEscape(line)}</p>`).join("\n")}${
+    highlights ? `<ul>${highlights}</ul>` : ""
+  }
 </header>
 ${sections}
 ${renderFeatureNavigation(basePath, page.slug, config)}
