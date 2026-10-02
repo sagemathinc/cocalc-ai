@@ -402,8 +402,8 @@ importers:
         specifier: ^1.2.2
         version: 1.2.2
       patchflow:
-        specifier: ^0.9.3
-        version: 0.9.3
+        specifier: ^0.10.0
+        version: 0.10.0
       pkg-dir:
         specifier: ^5.0.0
         version: 5.0.0
@@ -2474,8 +2474,8 @@ importers:
         specifier: ^4.18.1
         version: 4.18.1
       patchflow:
-        specifier: ^0.9.3
-        version: 0.9.3
+        specifier: ^0.10.0
+        version: 0.10.0
     devDependencies:
       '@types/jest':
         specifier: ^30.0.0
@@ -10131,8 +10131,8 @@ packages:
     engines: {node: '>= 0.4.0'}
     hasBin: true
 
-  patchflow@0.9.3:
-    resolution: {integrity: sha512-PXAT4CDw7QRAIIn13AIKpEKsJOOJaphY3LQN+2HTgS5XMiEF0BIT/03WLPuO3c4icN2xR+8uQoCbPaOXn8Pwkg==}
+  patchflow@0.10.0:
+    resolution: {integrity: sha512-Y1gafX6jTAYNJJf9SsP0wZOe+S4B1ZBufObNe7F6r/MxV+4pDqm4mvDQYrgdGfVYm7gWXZSwrCDTVhO0/yheDw==}
 
   path-browserify@1.0.1:
     resolution: {integrity: sha512-b7uo2UCUOYZcnF/3ID0lulOJi/bafxa1xPe7ZPsammBSpjSWQkjNxlt635YGS2MiR9GjvuXCtz2emr3jbsz98g==}
@@ -21127,7 +21127,7 @@ snapshots:
 
   password-hash@1.2.2: {}
 
-  patchflow@0.9.3:
+  patchflow@0.10.0:
     dependencies:
       '@cocalc/diff-match-patch': 1.0.1
       events: 3.3.0
