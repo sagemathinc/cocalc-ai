@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { peopleSearchRequest } from "@cocalc/frontend/app/sidebar-search-requests";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Button, Input, Select, Tabs } from "antd";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -63,6 +64,15 @@ export function PeoplePage() {
   const [filter, setFilter] = useState("");
   const [newFor, setNewFor] = useState<{ personId?: string } | null>(null);
   const [dialog, setDialog] = useState<"scan" | "search">();
+  // "Search People" in the sidebar: the message search, on Conversations.
+  useEffect(
+    () =>
+      peopleSearchRequest.on(() => {
+        navigate("");
+        setDialog("search");
+      }),
+    [],
+  );
   const people = usePeople();
   const navigation = useWorkspaceContentNavigation();
   const account_id = useTypedRedux("account", "account_id");

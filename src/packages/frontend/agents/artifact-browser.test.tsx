@@ -865,3 +865,22 @@ test("failed artifact opens remain visible in the Library", async () => {
     screen.getByRole("button", { name: "Open Result one from one" }),
   ).toBeEnabled();
 });
+
+test("Search library in the sidebar focuses the Library's search", async () => {
+  const { librarySearchRequest } = jest.requireActual(
+    "@cocalc/frontend/app/sidebar-search-requests",
+  );
+  render(
+    <AgentArtifactBrowser
+      accountId="library-search-request"
+      agents={agents}
+      active
+      onSelect={async () => {}}
+    />,
+  );
+  await screen.findByRole("button", { name: "Open Result two from two" });
+  act(() => librarySearchRequest.request());
+  expect(
+    screen.getByRole("searchbox", { name: "Search library" }),
+  ).toHaveFocus();
+});

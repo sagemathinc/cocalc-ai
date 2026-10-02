@@ -134,6 +134,11 @@ import "./new-agent-composer.css";
 import { AgentOrganizationControls } from "./organization-controls";
 import { AgentsOverview } from "./agents-overview";
 import { SidebarNotifications, SidebarStatus } from "./sidebar-status";
+import { ProjectsSearchDrawer } from "@cocalc/frontend/projects/projects-search-drawer";
+import {
+  librarySearchRequest,
+  peopleSearchRequest,
+} from "@cocalc/frontend/app/sidebar-search-requests";
 import {
   focusProjectsFilter,
   ProjectsSidebar,
@@ -3164,6 +3169,16 @@ export function MyAgentsWorkspacePage({
   // A full-pane page (the Library or the Agents page) covers the agent
   // workspace; both keep the selected agent for when you return.
   const libraryOpen = artifactLibraryOpen || overviewOpen;
+  // The sidebar's search follows the page being shown.
+  const searchContext: "agents" | "projects" | "library" | "people" =
+    projectsOpen
+      ? "projects"
+      : artifactLibraryOpen
+        ? "library"
+        : peopleOpen
+          ? "people"
+          : "agents";
+  const [projectSearchOpen, setProjectSearchOpen] = useState(false);
   const libraryProjectId = useTypedRedux("page", "library_project_id");
   const libraryEntryId = useTypedRedux("page", "library_entry_id");
   const { names: artifactNames } = useArtifactNames();
@@ -4252,14 +4267,44 @@ export function MyAgentsWorkspacePage({
                     </Button>
                   )}
                   {accountId && (
-                    <AgentSearch
-                      accountId={accountId}
-                      agents={agents}
-                      activity={agentOrganization.organization.lastOpened}
-                      active={active}
-                      onSelect={openSearchHit}
-                      available={(agent) => agent.available}
-                    />
+                    <>
+                      {searchContext === "agents" ? (
+                        <AgentSearch
+                          label="Search agents"
+                          accountId={accountId}
+                          agents={agents}
+                          activity={agentOrganization.organization.lastOpened}
+                          active={active}
+                          onSelect={openSearchHit}
+                          available={(agent) => agent.available}
+                        />
+                      ) : (
+                        // Each page searches its own things.
+                        <Button
+                          block
+                          type="text"
+                          style={{ justifyContent: "flex-start" }}
+                          icon={<Icon name="search" />}
+                          onClick={() => {
+                            if (searchContext === "projects")
+                              setProjectSearchOpen(true);
+                            else if (searchContext === "library")
+                              librarySearchRequest.request();
+                            else peopleSearchRequest.request();
+                          }}
+                        >
+                          {searchContext === "projects"
+                            ? "Search projects"
+                            : searchContext === "library"
+                              ? "Search library"
+                              : "Search conversations"}
+                        </Button>
+                      )}
+                      <ProjectsSearchDrawer
+                        open={projectSearchOpen}
+                        onClose={() => setProjectSearchOpen(false)}
+                      />
+                    </>
                   )}
                   {projectsMode && (
                     <ProjectsSidebar onNavigate={() => setMobileList(false)} />

@@ -134,7 +134,9 @@ export function AgentSearch({
   available,
   onSelect,
   active,
+  label = "Search conversations",
 }: {
+  label?: string;
   accountId: string;
   agents: NamedAgent[];
   activity: Record<string, number>;
@@ -245,7 +247,7 @@ export function AgentSearch({
         icon={<Icon name="search" />}
         onClick={() => store.set({ open: true })}
       >
-        Search conversations
+        {label}
       </Button>
       <Drawer
         title="Search all agents"
