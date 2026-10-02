@@ -33,7 +33,8 @@ type Config = PublicRouteMetadataConfig | undefined;
 // What each site offers. CoCalc Plus runs one local project with the software
 // installed on the computer, without accounts or runtime images, and hides
 // the CLI guides. Research Compute exists only where its feature page does.
-// Claude Code and "Start on CoCalc.ai" appear only on cocalc.ai.
+// On this first screen, Claude Code and "Start on CoCalc.ai" appear only on
+// cocalc.ai.
 function site(config: Config) {
   return {
     cocalcAi: isPublicCocalcAiSite(config),
