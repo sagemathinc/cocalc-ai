@@ -21,22 +21,6 @@ const ROCKET = {
 };
 const PLUS = { cocalc_product: "plus", site_name: "CoCalc Plus" };
 
-beforeAll(() => {
-  Object.defineProperty(window, "matchMedia", {
-    writable: true,
-    value: (query: string) => ({
-      addEventListener: () => {},
-      addListener: () => {},
-      dispatchEvent: () => false,
-      matches: false,
-      media: query,
-      onchange: null,
-      removeEventListener: () => {},
-      removeListener: () => {},
-    }),
-  });
-});
-
 function renderCompare(config: Record<string, string>) {
   return render(
     <PublicFeaturesApp
