@@ -45,7 +45,10 @@ import {
   ClaudePaymentStatus,
   useClaudePaymentLabel,
 } from "./claude-payment-status";
-import { ClaudeConnectorPreference } from "./claude-connector-preference";
+import {
+  ClaudeConnectorPreference,
+  claudeConnectorsAvailable,
+} from "./claude-connector-preference";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { AgentSpeedControl } from "./agent-speed-control";
 import { newAgentClaudeCredentialOptions } from "@cocalc/frontend/agents/claude-credential-options";
@@ -232,26 +235,30 @@ function ClaudeCredentialControl({
           Manage project secret
         </Button>
       )}
-      {value.startsWith("account-subscription:") && (
-        <ClaudeConnectorPreference
-          enabled={connectorsEnabled}
-          onChange={(enabled) => {
-            writeHarnessCredentialSelection({
-              accountId,
-              projectId,
-              threadKey,
-              credential: {
-                version: 1,
-                provider: "anthropic",
-                mode: "account-subscription",
-                credentialId: value.slice("account-subscription:".length),
-                ...(enabled ? {} : { claudeAiConnectors: false }),
-              },
-            });
-            setConnectorsEnabled(enabled);
-          }}
-        />
-      )}
+      {value.startsWith("account-subscription:") &&
+        claudeConnectorsAvailable(
+          credentials,
+          value.slice("account-subscription:".length),
+        ) && (
+          <ClaudeConnectorPreference
+            enabled={connectorsEnabled}
+            onChange={(enabled) => {
+              writeHarnessCredentialSelection({
+                accountId,
+                projectId,
+                threadKey,
+                credential: {
+                  version: 1,
+                  provider: "anthropic",
+                  mode: "account-subscription",
+                  credentialId: value.slice("account-subscription:".length),
+                  ...(enabled ? {} : { claudeAiConnectors: false }),
+                },
+              });
+              setConnectorsEnabled(enabled);
+            }}
+          />
+        )}
       {value.startsWith("account-subscription:") && (
         <Popconfirm
           title="Disconnect Claude subscription?"

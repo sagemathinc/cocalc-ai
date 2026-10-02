@@ -3,11 +3,10 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import {
   ClaudeSubscriptionLoginService,
-  verifiedClaudeSubscriptionStatus,
+  terminalText,
 } from "./claude-subscription-login";
 
 const accountId = "d62ec7c2-7b5a-49b7-9662-5c280bbac40b";
@@ -15,13 +14,26 @@ const otherAccountId = "fca177c1-b1d6-4f85-bd89-0afc61f67ed8";
 const projectId = "3807103b-f2f9-4ced-8885-eeb442d623b7";
 const credentialId = "02bfd0a0-50f1-4378-a7fd-bf87a12a2860";
 const fixture = join(__dirname, "fixtures", "claude-login.cjs");
+const fixtureToken = `sk-ant-oat01-${"Fixture_token-0123456789".repeat(3)}`;
+
+async function verificationUrl(
+  service: ClaudeSubscriptionLoginService,
+  id: string,
+): Promise<string> {
+  for (let attempt = 0; attempt < 250; attempt++) {
+    const url = service.status(id, projectId, accountId).verificationUrl;
+    if (url) return url;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw Error("provider URL was not reported");
+}
 
 async function waitFor(
   service: ClaudeSubscriptionLoginService,
   id: string,
   state: string,
 ): Promise<ReturnType<typeof service.status>> {
-  for (let attempt = 0; attempt < 100; attempt++) {
+  for (let attempt = 0; attempt < 250; attempt++) {
     const current = service.status(id, projectId, accountId);
     if (current.state === state) return current;
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -29,55 +41,33 @@ async function waitFor(
   throw Error(`Claude login did not reach ${state}`);
 }
 
-test.each([false, true])(
-  "reconnect retains the credential ID and does not replace a different Claude account (mismatch=%s)",
-  async (mismatch) => {
-    const publish = jest.fn(async () => {
-      if (mismatch) throw Error("Reconnect must use the same Claude account");
-      return credentialId;
+test("reconnect validates the credential and replaces its token in place", async () => {
+  const publish = jest.fn(async () => credentialId);
+  const validateReconnect = jest.fn(async () => ({}));
+  const service = new ClaudeSubscriptionLoginService({
+    cliPath: process.execPath,
+    argsPrefix: [fixture],
+    publish,
+    validateReconnect,
+  });
+  try {
+    const started = await service.start(projectId, accountId, credentialId);
+    expect(validateReconnect).toHaveBeenCalledWith({
+      projectId,
+      accountId,
+      credentialId,
     });
-    const validateReconnect = jest.fn(async () => ({}));
-    const service = new ClaudeSubscriptionLoginService({
-      cliPath: process.execPath,
-      argsPrefix: [fixture],
-      publish,
-      validateReconnect,
-    });
-    try {
-      const started = await service.start(projectId, accountId, credentialId);
-      expect(validateReconnect).toHaveBeenCalledWith({
-        projectId,
-        accountId,
-        credentialId,
-      });
-      for (
-        let i = 0;
-        i < 100 &&
-        !service.status(started.id, projectId, accountId).verificationUrl;
-        i++
-      )
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      service.submitCode(started.id, projectId, accountId, "fixture-code");
-      const status = await waitFor(
-        service,
-        started.id,
-        mismatch ? "failed" : "completed",
-      );
-      expect(publish).toHaveBeenCalledWith(
-        expect.objectContaining({
-          credentialId,
-          identity: "subscriber@example.com",
-        }),
-      );
-      if (mismatch) {
-        expect(status.error).toContain("same Claude account");
-        expect(status.credentialId).toBeUndefined();
-      } else expect(status.credentialId).toBe(credentialId);
-    } finally {
-      await service.close();
-    }
-  },
-);
+    await verificationUrl(service, started.id);
+    service.submitCode(started.id, projectId, accountId, "fixture-code");
+    const status = await waitFor(service, started.id, "completed");
+    expect(status.credentialId).toBe(credentialId);
+    expect(publish).toHaveBeenCalledWith(
+      expect.objectContaining({ credentialId, token: fixtureToken }),
+    );
+  } finally {
+    await service.close();
+  }
+});
 
 test("reconnect rejects unavailable credentials before starting sign-in", async () => {
   const publish = jest.fn();
@@ -99,42 +89,27 @@ test("reconnect rejects unavailable credentials before starting sign-in", async 
   }
 });
 
-test("login stages outside projects, accepts one code, verifies and cleans up", async () => {
-  let publishedHome: string | undefined;
+test("sign-in runs setup-token in a terminal, accepts one code and saves only the token", async () => {
+  const publish = jest.fn(
+    async (_options: {
+      projectId: string;
+      accountId: string;
+      token: string;
+      expiresAt: string;
+    }) => credentialId,
+  );
   const service = new ClaudeSubscriptionLoginService({
     cliPath: process.execPath,
     argsPrefix: [fixture],
-    publish: async ({
-      projectId: target,
-      accountId: owner,
-      home,
-      identity,
-      plan,
-    }) => {
-      expect(target).toBe(projectId);
-      expect(owner).toBe(accountId);
-      expect(identity).toBe("subscriber@example.com");
-      expect(plan).toBe("max");
-      expect((await stat(home)).isDirectory()).toBe(true);
-      publishedHome = home;
-      return credentialId;
-    },
+    publish,
   });
   const previousKey = process.env.ANTHROPIC_API_KEY;
   process.env.ANTHROPIC_API_KEY = "must-not-inherit";
   try {
     const started = await service.start(projectId, accountId);
     expect(started.state).toBe("pending");
-    const waiting = await (async () => {
-      for (let attempt = 0; attempt < 100; attempt++) {
-        const current = service.status(started.id, projectId, accountId);
-        if (current.verificationUrl) return current;
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
-      throw Error("provider URL was not reported");
-    })();
-    expect(waiting.verificationUrl).toBe(
-      "https://claude.com/cai/oauth/authorize?state=fixture",
+    expect(await verificationUrl(service, started.id)).toBe(
+      "https://claude.com/cai/oauth/authorize?code=true&scope=user%3Ainference&state=fixture",
     );
     expect(() => service.status(started.id, projectId, otherAccountId)).toThrow(
       "Unknown Claude sign-in session",
@@ -145,69 +120,56 @@ test("login stages outside projects, accepts one code, verifies and cleans up", 
     ).toThrow();
     const completed = await waitFor(service, started.id, "completed");
     expect(completed.credentialId).toBe(credentialId);
+    expect(publish).toHaveBeenCalledTimes(1);
+    const published = publish.mock.calls[0][0];
+    expect(published).toMatchObject({
+      projectId,
+      accountId,
+      token: fixtureToken,
+    });
+    // About a year from now.
+    expect(Date.parse(published.expiresAt) - Date.now()).toBeGreaterThan(
+      360 * 24 * 3600 * 1000,
+    );
     expect(() => service.cancel(started.id, projectId, accountId)).toThrow(
       "already completed",
     );
-    for (let attempt = 0; attempt < 100; attempt++) {
-      if (
-        await stat(publishedHome!).then(
-          () => false,
-          () => true,
-        )
-      )
-        break;
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    await expect(stat(publishedHome!)).rejects.toMatchObject({
-      code: "ENOENT",
-    });
   } finally {
     if (previousKey == null) delete process.env.ANTHROPIC_API_KEY;
     else process.env.ANTHROPIC_API_KEY = previousKey;
+    await service.close();
   }
 });
 
-test("status rejects API billing, no plan, and absent identity", () => {
-  const valid = {
-    loggedIn: true,
-    apiProvider: "firstParty",
-    subscriptionType: "pro",
-    email: "subscriber@example.com",
-  };
-  expect(verifiedClaudeSubscriptionStatus(JSON.stringify(valid)).plan).toBe(
-    "pro",
-  );
-  for (const override of [
-    { apiKeySource: "ANTHROPIC_API_KEY" },
-    { subscriptionType: "free" },
-    { email: "" },
-    { apiProvider: "bedrock" },
-    { loggedIn: false },
-  ])
-    expect(() =>
-      verifiedClaudeSubscriptionStatus(
-        JSON.stringify({ ...valid, ...override }),
-      ),
-    ).toThrow();
+test("a rejected code fails promptly instead of waiting for a retry", async () => {
+  const publish = jest.fn();
+  const service = new ClaudeSubscriptionLoginService({
+    cliPath: process.execPath,
+    argsPrefix: [fixture],
+    publish,
+  });
+  try {
+    const started = await service.start(projectId, accountId);
+    await verificationUrl(service, started.id);
+    service.submitCode(started.id, projectId, accountId, "wrong-code");
+    const failed = await waitFor(service, started.id, "failed");
+    expect(failed.error).toBe(
+      "Claude did not accept the code. Start the sign-in again.",
+    );
+    expect(publish).not.toHaveBeenCalled();
+  } finally {
+    await service.close();
+  }
 });
 
-test.each(["team", "enterprise", "future-plan", "professional", "maximum", ""])(
-  "unsupported plan %s gives an actionable explanation",
-  (subscriptionType) => {
-    expect(() =>
-      verifiedClaudeSubscriptionStatus(
-        JSON.stringify({
-          loggedIn: true,
-          apiProvider: "firstParty",
-          subscriptionType,
-          email: "fixture@example.com",
-        }),
-      ),
-    ).toThrow(
-      "Team, Enterprise, and unrecognized plans are not supported. Use an Anthropic API key instead.",
-    );
-  },
-);
+test("terminal output becomes plain text with spaces for cursor moves", () => {
+  const ESC = String.fromCharCode(27);
+  expect(
+    terminalText(
+      `${ESC}[2mOAuth${ESC}[1Cerror${ESC}[22m\r\n${ESC}]0;title\u0007x`,
+    ),
+  ).toBe("OAuth error\nx");
+});
 
 test("verification cannot report cancellation after publication starts", async () => {
   let releasePublish!: () => void;
@@ -222,26 +184,27 @@ test("verification cannot report cancellation after publication starts", async (
       return credentialId;
     },
   });
-  const started = await service.start(projectId, accountId);
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (service.status(started.id, projectId, accountId).verificationUrl) break;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  service.submitCode(started.id, projectId, accountId, "fixture-code");
   try {
-    await entered;
-    expect(service.status(started.id, projectId, accountId).state).toBe(
-      "verifying",
-    );
-    expect(() => service.cancel(started.id, projectId, accountId)).toThrow(
-      "verification is already in progress",
+    const started = await service.start(projectId, accountId);
+    await verificationUrl(service, started.id);
+    service.submitCode(started.id, projectId, accountId, "fixture-code");
+    try {
+      await entered;
+      expect(service.status(started.id, projectId, accountId).state).toBe(
+        "verifying",
+      );
+      expect(() => service.cancel(started.id, projectId, accountId)).toThrow(
+        "verification is already in progress",
+      );
+    } finally {
+      releasePublish?.();
+    }
+    expect((await waitFor(service, started.id, "completed")).credentialId).toBe(
+      credentialId,
     );
   } finally {
-    releasePublish?.();
+    await service.close();
   }
-  expect((await waitFor(service, started.id, "completed")).credentialId).toBe(
-    credentialId,
-  );
 });
 
 test("shutdown cancels pending sign-in and rejects new login attempts", async () => {

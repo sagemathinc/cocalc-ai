@@ -1839,6 +1839,7 @@ export const hosts = {
   hasExternalCredential: authFirstRequireHost,
   getExternalCredential: authFirstRequireHost,
   touchExternalCredential: authFirstRequireHost,
+  recordClaudeSubscriptionUsage: authFirstRequireHost,
   upsertExternalCredential: authFirstRequireHost,
   releaseCodexDeviceAuthLease: authFirstRequireHost,
   refreshCodexSubscriptionAuth: authFirstRequireHost,
@@ -2288,6 +2289,15 @@ export interface Hosts {
     selector: ExternalCredentialSelector;
     credential_id?: string;
   }) => Promise<ExternalCredentialRecord | undefined>;
+  // Claude subscription limits reported during a turn, saved on the
+  // credential. The owner is owner_account_id: host auth strips account_id.
+  recordClaudeSubscriptionUsage: (opts: {
+    host_id?: string;
+    project_id: string;
+    owner_account_id: string;
+    credential_id: string;
+    usage: unknown;
+  }) => Promise<boolean>;
   touchExternalCredential: (opts: {
     host_id?: string;
     project_id: string;

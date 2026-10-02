@@ -21,7 +21,10 @@ import { ClaudeSubscriptionConnect } from "@cocalc/frontend/chat/claude-subscrip
 import { ClaudeProjectSecretModal } from "@cocalc/frontend/chat/claude-project-secret-modal";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { DocsLink } from "@cocalc/frontend/docs/link";
-import { ClaudeConnectorPreference } from "@cocalc/frontend/chat/claude-connector-preference";
+import {
+  ClaudeConnectorPreference,
+  claudeConnectorsAvailable,
+} from "@cocalc/frontend/chat/claude-connector-preference";
 import { useProjectSecrets } from "@cocalc/frontend/project/use-project-secrets";
 import { discoverNewAgentHarness } from "./discover-new-agent-harness";
 import {
@@ -160,15 +163,16 @@ export function NewAgentClaudeControls({
           options.
         </Typography.Text>
       )}
-      {credential.mode === "account-subscription" && (
-        <ClaudeConnectorPreference
-          enabled={credential.claudeAiConnectors !== false}
-          disabled={disabled}
-          onChange={(enabled) =>
-            onCredential({ ...credential, claudeAiConnectors: enabled })
-          }
-        />
-      )}
+      {credential.mode === "account-subscription" &&
+        claudeConnectorsAvailable(credentials, credential.credentialId) && (
+          <ClaudeConnectorPreference
+            enabled={credential.claudeAiConnectors !== false}
+            disabled={disabled}
+            onChange={(enabled) =>
+              onCredential({ ...credential, claudeAiConnectors: enabled })
+            }
+          />
+        )}
       {projectId && credential.mode === "project-secret" && (
         <Button
           disabled={disabled}

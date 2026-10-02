@@ -47,7 +47,7 @@ general availability or close its release gates.
 | [Save account defaults and refresh available models](/docs/ai/codex-settings) | Supported | Limited | Claude offers model refresh and remembers payment choices, but does not share all Codex account-default controls. Changes do not rewrite admitted work. |
 | [Inspect subscription usage and reconnect](/docs/ai/connect-credentials) | Supported | Preview | Provider-reported usage, not a per-agent hard spending limit. Claude offers Reconnect Claude in settings. |
 | [Restrict command execution modes](/docs/ai/codex-settings) | Conditional | Not supported | Hosted UI defaults to full project access; Codex Lite offers sandbox choices. Integrated Claude currently has full project access. |
-| [Use provider account connectors](/docs/ai/claude-code) | Conditional | Preview | Claude's Use my claude.ai connectors controls automatic connector inclusion for subsequent turns. This is not a common connector catalog across providers. |
+| [Use provider account connectors](/docs/ai/claude-code) | Conditional | Limited | Subscriptions connected now use a long-lived token that cannot load claude.ai connectors; earlier full sign-ins still can, controlled by Use my claude.ai connectors. This is not a common connector catalog across providers. |
 
 ## Conversations and control
 

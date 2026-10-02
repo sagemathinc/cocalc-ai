@@ -9,7 +9,7 @@ import { CLAUDE_CODE_QUALIFICATION } from "@cocalc/util/ai/qualified-harnesses";
 import { ClaudeSubscriptionLoginService } from "./claude-subscription-login";
 import {
   getClaudeSubscriptionCredential,
-  publishClaudeSubscriptionCredential,
+  publishClaudeSubscriptionToken,
 } from "./claude-subscription-registry";
 import { reapAbandonedClaudeLogins } from "./claude-login-cleanup";
 import getLogger from "@cocalc/backend/logger";
@@ -61,7 +61,7 @@ export async function getClaudeSubscriptionLoginService(): Promise<ClaudeSubscri
   if (closing) throw Error("Claude sign-in service is closing");
   return (service ??= new ClaudeSubscriptionLoginService({
     cliPath,
-    publish: publishClaudeSubscriptionCredential,
+    publish: publishClaudeSubscriptionToken,
     validateReconnect: getClaudeSubscriptionCredential,
   }));
 }

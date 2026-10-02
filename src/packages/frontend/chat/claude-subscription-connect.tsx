@@ -179,7 +179,9 @@ export function ClaudeSubscriptionConnect({
       {modal && login?.verificationUrl && (
         <Typography.Text>
           Sign in with your Claude Pro or Max subscription, then paste the code
-          from Claude below.
+          from Claude below. CoCalc keeps a long-lived Claude token (valid for a
+          year), so your agents can run at the same time without signing you
+          out.
         </Typography.Text>
       )}
       {login && (login.state === "pending" || login.state === "verifying") && (

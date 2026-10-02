@@ -3,29 +3,26 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { spawn, execFile, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { isValidUUID } from "@cocalc/util/misc";
-import {
-  isSupportedClaudeSubscriptionPlan,
-  CLAUDE_SUBSCRIPTION_PLAN_ERROR,
-} from "@cocalc/util/ai/claude-subscription-plan";
 import { harnessOwner } from "./harness-reaper";
+import { claudeOAuthTokenFromOutput } from "./claude-subscription-token";
 import {
   CLAUDE_LOGIN_PREFIX,
   CLAUDE_LOGIN_OWNER,
   killClaudeLoginProcesses,
 } from "./claude-login-cleanup";
 
-const execFileAsync = promisify(execFile);
 const LOGIN_TIMEOUT_MS = 10 * 60_000;
 const TERMINAL_STATUS_RETENTION_MS = 15 * 60_000;
-const MAX_OUTPUT_BYTES = 16 * 1024;
-const MAX_STATUS_BYTES = 16 * 1024;
+// The terminal UI redraws, so keep enough for the token after the art.
+const MAX_OUTPUT_BYTES = 64 * 1024;
+// setup-token requests a one-year token.
+const TOKEN_LIFETIME_MS = 365 * 24 * 3600 * 1000;
 
 export type ClaudeSubscriptionLoginStatus = {
   id: string;
@@ -55,7 +52,24 @@ function loginEnvironment(home: string): NodeJS.ProcessEnv {
     NO_BROWSER: "1",
     PATH: process.env.PATH ?? "/usr/bin:/bin",
     LANG: "C.UTF-8",
+    TERM: "xterm-256color",
   };
+}
+
+// Plain text of terminal output: drop escape sequences and control bytes.
+export function terminalText(output: string): string {
+  return output
+    .replace(/\x1b\[(\d*)C/g, (_, n) =>
+      " ".repeat(Math.min(Number(n) || 1, 200)),
+    )
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b[@-_]/g, "")
+    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
+}
+
+function quote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function providerUrl(output: string): string | undefined {
@@ -71,35 +85,6 @@ function providerUrl(output: string): string | undefined {
   } catch {
     // Incomplete output is normal while the CLI is still writing.
   }
-}
-
-export function verifiedClaudeSubscriptionStatus(output: string): {
-  plan: string;
-  identity: string;
-} {
-  let value: Record<string, unknown>;
-  try {
-    value = JSON.parse(output);
-  } catch {
-    throw Error("Claude subscription status could not be verified");
-  }
-  const plan = value?.subscriptionType;
-  if (
-    value?.loggedIn !== true ||
-    value?.apiProvider !== "firstParty" ||
-    value?.apiKeySource
-  )
-    throw Error("Claude Pro/Max subscription was not verified");
-  if (!isSupportedClaudeSubscriptionPlan(plan))
-    throw Error(CLAUDE_SUBSCRIPTION_PLAN_ERROR);
-  const identity = value.email;
-  if (
-    typeof identity !== "string" ||
-    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identity) ||
-    identity.length > 320
-  )
-    throw Error("Claude account identity was not verified");
-  return { plan, identity };
 }
 
 /** Auth is staged on the host, never in a project mount or model process. */
@@ -130,12 +115,13 @@ export class ClaudeSubscriptionLoginService {
     private readonly options: {
       cliPath: string;
       argsPrefix?: string[];
+      // Runs the CLI in a pseudo-terminal: setup-token is a terminal UI.
+      scriptPath?: string;
       publish: (options: {
         projectId: string;
         accountId: string;
-        home: string;
-        identity: string;
-        plan: string;
+        token: string;
+        expiresAt: string;
         credentialId?: string;
       }) => Promise<string>;
       validateReconnect?: (options: {
@@ -191,9 +177,24 @@ export class ClaudeSubscriptionLoginService {
         mode: 0o600,
       });
       if (this.closed) throw Error("Claude sign-in service is closed");
-      child = spawn(
+      // A wide terminal keeps the URL and token on single lines.
+      const command = [
         this.options.cliPath,
-        [...(this.options.argsPrefix ?? []), "auth", "login", "--claudeai"],
+        ...(this.options.argsPrefix ?? []),
+        "setup-token",
+      ]
+        .map(quote)
+        .join(" ");
+      child = spawn(
+        this.options.scriptPath ?? "script",
+        [
+          "-q",
+          "-e",
+          "-f",
+          "-c",
+          `stty cols 4000 rows 40 2>/dev/null; exec ${command}`,
+          "/dev/null",
+        ],
         {
           cwd: home,
           env: loginEnvironment(home),
@@ -227,7 +228,18 @@ export class ClaudeSubscriptionLoginService {
       session.output = (session.output + chunk.toString("utf8")).slice(
         -MAX_OUTPUT_BYTES,
       );
-      session.verificationUrl ??= providerUrl(session.output);
+      const text = terminalText(session.output);
+      session.verificationUrl ??= providerUrl(text);
+      // The terminal UI waits for a retry instead of exiting on a bad code.
+      if (
+        session.codeSubmitted &&
+        !claudeOAuthTokenFromOutput(text) &&
+        /OAuth\s*error|Invalid\s*code/i.test(text)
+      )
+        this.fail(
+          session,
+          "Claude did not accept the code. Start the sign-in again.",
+        );
     };
     child.stdout?.on("data", append);
     child.stderr?.on("data", append);
@@ -272,7 +284,10 @@ export class ClaudeSubscriptionLoginService {
     )
       throw Error("Invalid Claude sign-in code");
     session.codeSubmitted = true;
-    session.child.stdin?.end(`${code}\n`);
+    // Forget the pre-code output so a later match comes from the result.
+    session.output = "";
+    // Enter in the terminal UI; keep stdin open while it exchanges the code.
+    session.child.stdin?.write(`${code}\r`);
   }
 
   cancel(id: string, projectId: string, accountId: string): void {
@@ -292,30 +307,22 @@ export class ClaudeSubscriptionLoginService {
   private async complete(session: LoginSession, code: number | null) {
     if (session.state !== "pending") return;
     clearTimeout(session.timer);
-    if (code !== 0) {
+    // Read the token only from the complete output, never a partial chunk.
+    const token = session.codeSubmitted
+      ? claudeOAuthTokenFromOutput(terminalText(session.output))
+      : undefined;
+    if (code !== 0 || !token) {
       this.fail(session, "Claude sign-in did not complete");
       return;
     }
     session.state = "verifying";
     try {
-      const { stdout } = await execFileAsync(
-        this.options.cliPath,
-        [...(this.options.argsPrefix ?? []), "auth", "status", "--json"],
-        {
-          cwd: session.home,
-          env: loginEnvironment(session.home),
-          timeout: 10_000,
-          maxBuffer: MAX_STATUS_BYTES,
-        },
-      );
-      const { plan, identity } = verifiedClaudeSubscriptionStatus(stdout);
       if (this.closed) throw Error("Claude sign-in service is closed");
       const credentialId = await this.options.publish({
         projectId: session.projectId,
         accountId: session.accountId,
-        home: session.home,
-        identity,
-        plan,
+        token,
+        expiresAt: new Date(Date.now() + TOKEN_LIFETIME_MS).toISOString(),
         ...(session.reconnectCredentialId
           ? { credentialId: session.reconnectCredentialId }
           : {}),
@@ -325,16 +332,10 @@ export class ClaudeSubscriptionLoginService {
       session.credentialId = credentialId;
       session.state = "completed";
       this.retire(session);
-    } catch (error) {
-      this.fail(
-        session,
-        session.reconnectCredentialId &&
-          error instanceof Error &&
-          error.message === "Reconnect must use the same Claude account"
-          ? "Sign in with the same Claude account to reconnect. Your existing connection was not changed."
-          : "Claude subscription verification failed",
-      );
+    } catch {
+      this.fail(session, "Claude subscription could not be saved");
     } finally {
+      session.output = "";
       await rm(session.home, { recursive: true, force: true });
     }
   }
