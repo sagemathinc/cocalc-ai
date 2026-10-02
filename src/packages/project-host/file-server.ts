@@ -240,6 +240,7 @@ import {
   projectRusticRestore,
 } from "./project-rustic";
 import { isMissingRusticRepositoryError } from "./backup-index-errors";
+import { listRestoreBackups } from "./restore-backup-inventory";
 import {
   checkManagedBackupAllowedBestEffort,
   recordManagedBackupEgressBestEffort,
@@ -4805,9 +4806,11 @@ export async function runScheduledBackupMaintenance({
 export async function getBackups({
   project_id,
   indexed_only,
+  for_restore,
 }: {
   project_id: string;
   indexed_only?: boolean;
+  for_restore?: boolean;
 }): Promise<
   {
     id: string;
@@ -4817,6 +4820,9 @@ export async function getBackups({
 > {
   void indexed_only;
   const profilePath = await resolveRusticRepo(project_id);
+  if (for_restore) {
+    return await listRestoreBackups({ profilePath, projectId: project_id });
+  }
   try {
     return await rusticBackupBrowser.listBackups({
       profilePath,
