@@ -5,7 +5,7 @@
 
 import { Spin } from "antd";
 import ShowError from "@cocalc/frontend/components/error";
-import useBlob from "./use-blob";
+import useBlob, { useBlobSource } from "./use-blob";
 import { useState } from "react";
 
 interface ImageProps {
@@ -58,6 +58,7 @@ function renderImage({
 
 export function Image(props: ImageProps) {
   const { type, value, width, height } = props;
+  const blobSource = useBlobSource(props.actions);
 
   function extension(): string {
     return type.split("/")[1].split("+")[0];
@@ -79,14 +80,14 @@ export function Image(props: ImageProps) {
     const prefix = `data:${type};${encoding()}`;
     const src = `${prefix},${encodeURIComponent(value)}`;
     return renderImage({ src, width, height });
-  } else if (props.sha1 && props.actions) {
-    const { sha1, actions } = props;
+  } else if (props.sha1 && blobSource) {
+    const { sha1 } = props;
     return (
       <RenderBlobImage
         sha1={sha1}
         width={width}
         height={height}
-        actions={actions}
+        actions={blobSource}
         type={type}
       />
     );
