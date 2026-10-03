@@ -25,10 +25,6 @@ import {
 } from "@cocalc/conat/agents/rpc";
 import { prepareChatSend, admitPreparedChatSend } from "@cocalc/chat/send";
 import {
-  applyAgentTurnFunding,
-  type AgentTurnFunding,
-} from "@cocalc/util/ai/agent-turn-funding";
-import {
   acquireChatSyncDB,
   releaseChatSyncDB,
   type ImmerDB,
@@ -58,10 +54,7 @@ function launchFailureSummary(error: unknown): string {
 }
 
 export interface AgentRpcExecutionAdapter {
-  /** Also returns how the envelope's account pays for the recipient's turn. */
-  authorize(
-    e: AgentRpcEnvelope,
-  ): Promise<{ next_turn_funding?: AgentTurnFunding } | void>;
+  authorize(e: AgentRpcEnvelope): Promise<void>;
   ensureRunning(e: AgentRpcEnvelope): Promise<void>;
   validateFileReferences?(e: AgentRpcEnvelope): Promise<void>;
   stageAttachments?(
@@ -146,9 +139,7 @@ export function createAgentRpcService(
 ) {
   const reservations = new AgentAttachmentReservations(
     capacity,
-    async (e) => {
-      await deps.authorize(e);
-    },
+    (e) => deps.authorize(e),
     async (e) => {
       await deps.withChat(e, async (db) => {
         const value = db.get();
@@ -234,11 +225,10 @@ export function createAgentRpcService(
         let chatEffect: "none" | "saved" | "unknown" = "none";
         let starting = false;
         let validatingFiles = false;
-        let funding: AgentTurnFunding | undefined;
         const guard = async () => {
           if (!Number.isFinite(e.deadline) || Date.now() >= e.deadline)
             throw new Error("submission deadline expired");
-          funding = (await deps.authorize(e))?.next_turn_funding;
+          await deps.authorize(e);
           if (Date.now() >= e.deadline)
             throw new Error("submission deadline expired");
         };
@@ -362,8 +352,6 @@ export function createAgentRpcService(
             chatEffect = "saved";
             savedMessage = prepared.message;
             await guard();
-            // Pay exactly as this account's last human send to the recipient.
-            prepared.request = applyAgentTurnFunding(prepared.request, funding);
             admissionStarted = true;
             await deps.admit(prepared);
             // A receipt records admission, not completion of the agent's work.
@@ -601,11 +589,12 @@ export function createLocalAgentRpcService(
         (async () => {
           throw new Error("project startup adapter unavailable");
         }),
-      authorize: async (envelope) =>
+      authorize: async (envelope) => {
         await api.authorizeRpcAdmission({
           account_id: envelope.account_id,
           envelope,
-        }),
+        });
+      },
       validateFileReferences: async (e) => {
         const fs = client.fs({
           project_id: e.target.project_id,

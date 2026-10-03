@@ -9,6 +9,10 @@ import { withAgentChat } from "./chat";
 import { withAgentIdentityOwner } from "./identity-routing";
 import { controlAcp } from "@cocalc/conat/ai/acp/client";
 import { conatWithProjectRoutingForAccount } from "@cocalc/server/conat/route-client";
+import { copyPaymentSelection } from "./payment-selections";
+import getLogger from "@cocalc/backend/logger";
+
+const logger = getLogger("server:agents:api");
 
 export const startFreshConversation: AgentApi["startFreshConversation"] =
   async (opts) => {
@@ -19,11 +23,34 @@ export const startFreshConversation: AgentApi["startFreshConversation"] =
       agent_id: opts.agent_id,
       expected_thread_id: opts.expected_thread_id,
     };
-    return withAgentIdentityOwner({
+    const identity = await withAgentIdentityOwner({
       project_id: opts.project_id,
       local: () => startFreshConversationLocal(request),
       remote: (api, route) => api.startFreshConversation({ ...request, route }),
     });
+    // The new conversation keeps how this account pays for the agent.
+    if (identity.thread_id !== opts.expected_thread_id) {
+      try {
+        await copyPaymentSelection({
+          account_id: opts.account_id,
+          from: {
+            project_id: opts.project_id,
+            thread_id: opts.expected_thread_id,
+          },
+          to: {
+            project_id: opts.project_id,
+            thread_id: identity.thread_id,
+            path: identity.path,
+          },
+        });
+      } catch (err) {
+        logger.warn("could not copy agent payment selection", {
+          agent_id: opts.agent_id,
+          err: `${err}`,
+        });
+      }
+    }
+    return identity;
   };
 
 export const startFreshConversationLocal: AgentApi["startFreshConversation"] =

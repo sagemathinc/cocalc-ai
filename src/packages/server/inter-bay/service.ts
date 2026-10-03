@@ -6,6 +6,8 @@ import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
 
 import { createInterBayAgentIdentityHandler } from "@cocalc/conat/inter-bay/agent-identities";
 import { agentIdentityControl } from "@cocalc/server/agents/identity-control";
+import { createAgentPaymentSelectionsHandler } from "@cocalc/conat/inter-bay/agent-payment-selections";
+import { paymentSelectionsHome } from "@cocalc/server/agents/payment-selections";
 import { createInterBayArtifactCatalogHandler } from "@cocalc/conat/inter-bay/artifact-catalog";
 import { catalogOwnerControl } from "@cocalc/server/artifacts/catalog-api";
 import { createInterBayPeopleHandler } from "@cocalc/conat/inter-bay/people";
@@ -713,6 +715,12 @@ export async function initInterBayServices(): Promise<void> {
         bay_id: getConfiguredBayId(),
         parallel: true,
         impl: agentIdentityControl,
+      }),
+      createAgentPaymentSelectionsHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bay_id: getConfiguredBayId(),
+        parallel: true,
+        impl: paymentSelectionsHome,
       }),
       createInterBayArtifactCatalogHandler({
         client: getInterBayFabricClient({ noCache: true }),

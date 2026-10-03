@@ -4,9 +4,16 @@
  */
 
 import { randomUUID } from "node:crypto";
+
+// Launch preparation is covered by harness-runtime tests; here only the
+// credential chosen at admission matters.
+jest.mock("../harness-runtime", () => ({
+  prepareHarnessRequest: (request: unknown) => request,
+}));
 import {
   pinCodexCredentialAtAdmission,
   setCodexCredentialAdmissionResolver,
+  setPaymentSelectionResolver,
 } from "../codex-credential-admission";
 import { closeAcpDatabase, initAcpDatabase } from "../../sqlite/acp-database";
 import { decodeAcpJobRequest, enqueueAcpJob } from "../../sqlite/acp-jobs";
@@ -134,4 +141,105 @@ test("an agent-message turn without a recorded subscription says how to fix it",
   await expect(pinCodexCredentialAtAdmission(request())).rejects.toThrow(
     "The selected ChatGPT subscription is unavailable.",
   );
+});
+
+describe("the account's stored payment selection", () => {
+  const credentialId = "00000000-0000-4000-8000-0000000000aa";
+  afterEach(() => setPaymentSelectionResolver());
+
+  test("a Codex turn with no pinned subscription uses the stored one", async () => {
+    const lookup = jest.fn(async () => ({
+      selection: {
+        version: 1,
+        provider: "codex",
+        mode: "credential",
+        credential_id: credentialId,
+      },
+    }));
+    setPaymentSelectionResolver(lookup);
+    setCodexCredentialAdmissionResolver(async (opts) => ({
+      source: "subscription",
+      credentialId: opts.credential_id,
+    }));
+    const admitted = await pinCodexCredentialAtAdmission(request());
+    expect(lookup).toHaveBeenCalledWith({
+      account_id: accountId,
+      project_id: projectId,
+      thread_id: "thread-1",
+      provider: "codex",
+    });
+    expect(admitted.config).toMatchObject({
+      paymentSource: "subscription-credential",
+      credentialId,
+    });
+  });
+
+  test("an explicit choice in the request wins and skips the lookup", async () => {
+    const lookup = jest.fn();
+    setPaymentSelectionResolver(lookup);
+    const explicit = randomUUID();
+    setCodexCredentialAdmissionResolver(async (opts) => ({
+      source: "subscription",
+      credentialId: opts.credential_id,
+    }));
+    const admitted = await pinCodexCredentialAtAdmission({
+      ...request(),
+      config: {
+        paymentSource: "subscription" as const,
+        credentialId: explicit,
+      },
+    });
+    expect(lookup).not.toHaveBeenCalled();
+    expect(admitted.config?.credentialId).toBe(explicit);
+  });
+
+  test("an unreachable hub keeps the previous behavior", async () => {
+    setPaymentSelectionResolver(async () => {
+      throw new Error("no such method");
+    });
+    const designated = randomUUID();
+    setCodexCredentialAdmissionResolver(async () => ({
+      source: "subscription",
+      credentialId: designated,
+    }));
+    const admitted = await pinCodexCredentialAtAdmission(request());
+    expect(admitted.config?.credentialId).toBe(designated);
+  });
+
+  test("a Claude Code agent message is paid by the stored selection or the account default", async () => {
+    const runtime = {
+      version: 1 as const,
+      kind: "acp" as const,
+      profile: {
+        version: 2 as const,
+        kind: "acp" as const,
+        id: "claude-code",
+        revision: "0.81.1",
+        cwd: "/home/user",
+        executionPolicy: "full-access" as const,
+        credentialMode: "project-managed" as const,
+      },
+    };
+    const agentTurn = {
+      ...request(),
+      config: undefined,
+      runtime,
+      chat: { ...request().chat, agent_rpc_execution: { version: 3 } },
+    } as any;
+    setPaymentSelectionResolver(async () => ({
+      default: {
+        version: 1,
+        provider: "claude-code",
+        mode: "account-api-key",
+        credential_id: credentialId,
+      },
+    }));
+    const admitted = await pinCodexCredentialAtAdmission(agentTurn);
+    expect(admitted.harness_credential).toEqual({
+      version: 1,
+      provider: "anthropic",
+      mode: "account-api-key",
+      credentialId,
+    });
+  });
 });

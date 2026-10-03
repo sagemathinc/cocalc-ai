@@ -393,16 +393,16 @@ export const TABLE_OWNERSHIP = {
       "Native agent identity and restart-fence state belongs to the project owning bay. Project moves require explicit migration or reconstruction rules before these tables can be portable.",
   }),
 
-  ...entries(["agent_turn_funding"], {
-    ownership: "project-owning",
-    authority: "project_id",
+  ...entries(["agent_payment_selections"], {
+    ownership: "account-home",
+    authority: "account_id",
     portability: "unsupported",
     secondary_reference_fields: {
-      account_id:
-        "Account whose own agent-message turns this record funds, not placement authority.",
+      project_id:
+        "Agent locator for an account-home preference, not project placement authority.",
     },
     notes:
-      "Per-account payment choice for a project-owned agent identity; lives with the identity in the project owning bay and is re-recorded by the next human send.",
+      "Per-account payment choice for agents (credential references only), authoritative on the account home bay. Like account credentials it does not move on account rehome; a missing row means the account default.",
   }),
 
   ...entries(["agent_identity_runs"], {

@@ -11,6 +11,7 @@ import {
   readHarnessCredentialSelection,
   writeHarnessCredentialSelection,
 } from "./harness-credential-selection";
+import { fetchPaymentSelectionForSend } from "./payment-selection-store";
 
 const CACHE_MS = 60_000;
 let cache: { at: number; rows: ExternalCredentialInfo[] } | undefined;
@@ -38,6 +39,8 @@ export async function healedHarnessCredential(options: {
   threadKey?: string;
 }): Promise<AcpHarnessCredential | undefined> {
   const { accountId, projectId, threadKey } = options;
+  // Use the latest choice, which may have been made on another device.
+  await fetchPaymentSelectionForSend(options);
   const selection = readHarnessCredentialSelection(options);
   if (
     !projectId ||

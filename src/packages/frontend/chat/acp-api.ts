@@ -47,11 +47,8 @@ import {
   resolveCodexCompletionNotificationEnabled,
 } from "@cocalc/util/notification-preferences";
 import { readCodexSubscriptionSelection } from "./codex-subscription-selection";
+import { fetchPaymentSelectionForSend } from "./payment-selection-store";
 import { healedHarnessCredential } from "./harness-credential-heal";
-import {
-  nextTurnFundingForSend,
-  recordNextTurnFunding,
-} from "./next-turn-funding";
 
 let lastGeneratedAcpMessageMs = 0;
 const ACP_ACK_TIMEOUT_MS = 2 * 60 * 1000;
@@ -378,6 +375,13 @@ export async function processAcpLLM({
           ...(actions.getCodexConfig?.(thread_id) ?? {}),
           ...(acpConfigOverride ?? {}),
         });
+  // Use the latest choice, which may have been made on another device.
+  if (!isHarnessThread)
+    await fetchPaymentSelectionForSend({
+      accountId: redux.getStore("account")?.get("account_id"),
+      projectId: project_id,
+      threadKey: thread_id,
+    });
   const selectedCredentialId = readCodexSubscriptionSelection({
     accountId: redux.getStore("account")?.get("account_id"),
     projectId: project_id,
@@ -528,21 +532,6 @@ export async function processAcpLLM({
   })?.name;
   chatMetadata.workbench = actions.workbenchEnabled === true;
   let acknowledged = false;
-  let fundingRecorded = false;
-  const recordFunding = () => {
-    if (fundingRecorded || !project_id || !path) return;
-    fundingRecorded = true;
-    void recordNextTurnFunding({
-      project_id,
-      path,
-      thread_id,
-      funding: nextTurnFundingForSend({
-        runtime,
-        harnessCredential,
-        credentialId: config.credentialId,
-      }),
-    });
-  };
   // Persist the pre-acknowledgement state before waiting for the chat file or
   // backend. This keeps the truthful "submitting" status visible when a newly
   // created Agent switches from its bootstrap actions to the mounted editor.
@@ -577,7 +566,6 @@ export async function processAcpLLM({
       if (!acknowledged) {
         throw Error("ACP steer submission failed");
       }
-      recordFunding();
       if (response.state === "queued") {
         setState("queue");
       } else if (response.state === "running" || response.state === "steered") {
@@ -607,7 +595,6 @@ export async function processAcpLLM({
               continue;
             }
             acknowledged = true;
-            recordFunding();
             recordCodexBackendAcknowledged({
               message_id: user_message_id,
               state: response.state ?? "unknown",

@@ -15,7 +15,15 @@ import {
   authFirstRequireHostWithAccountTarget,
 } from "./util";
 import type { ApiKeyScope } from "@cocalc/util/db-schema/api-keys";
-import type { AgentTurnFunding } from "@cocalc/util/ai/agent-turn-funding";
+import type {
+  AgentPaymentProvider,
+  AgentPaymentTarget,
+} from "@cocalc/util/ai/agent-payment-selection";
+import type {
+  AgentPaymentSelectionsResult,
+  ResolvedAgentPaymentSelection,
+  SetAgentPaymentSelectionsRequest,
+} from "@cocalc/conat/inter-bay/agent-payment-selections";
 import type {
   AgentIdentity,
   AgentCredential,
@@ -60,7 +68,11 @@ export const agent = {
   listIdentities: authFirstRequireAccount,
   getIdentity: authFirstRequireAccount,
   resolveIdentity: authFirstRequireAccount,
-  setNextTurnFunding: authFirstRequireAccount,
+  getPaymentSelections: authFirstRequireAccount,
+  listPaymentSelections: authFirstRequireAccount,
+  setPaymentSelections: authFirstRequireAccount,
+  copyPaymentSelection: authFirstRequireAccount,
+  resolvePaymentSelection: authFirstRequireHostWithAccountTarget,
   disableIdentity: authFirstRequireAccountWithBoundSession,
   recoverIdentity: authFirstRequireAccountWithBoundSession,
   issueIdentity: authFirstRequireHostWithAccountTarget,
@@ -323,18 +335,9 @@ export interface AgentApi {
   setPersonalMessagingState(
     opts: AgentHumanAuth & SetPersonalMessagingStateOptions,
   ): Promise<PersonalMessagingControls>;
-  /** Returns how the envelope's account pays for the recipient's turn. */
   authorizeRpcAdmission(
     opts: AgentHostAuth & { envelope: AgentRpcEnvelope },
-  ): Promise<{ next_turn_funding?: AgentTurnFunding } | void>;
-  /** Record the caller's own payment choice for the agent bound to a thread. */
-  setNextTurnFunding(opts: {
-    account_id?: string;
-    project_id: string;
-    path: string;
-    thread_id: string;
-    funding: AgentTurnFunding;
-  }): Promise<{ recorded: boolean }>;
+  ): Promise<void>;
   authorizeRpcExecution(
     opts: AgentHostAuth & {
       authorization: NonNullable<
@@ -342,6 +345,37 @@ export interface AgentApi {
       >;
     },
   ): Promise<void>;
+  /** This account's payment selections for some agents, plus its defaults. */
+  getPaymentSelections(opts: {
+    account_id?: string;
+    targets: AgentPaymentTarget[];
+    /** Record that a turn is being sent with these selections. */
+    touch?: boolean;
+  }): Promise<AgentPaymentSelectionsResult>;
+  /** All of this account's payment selections, for the Agents page. */
+  listPaymentSelections(opts: {
+    account_id?: string;
+    provider?: AgentPaymentProvider;
+    limit?: number;
+  }): Promise<AgentPaymentSelectionsResult>;
+  /** Set (or clear, with null) how this account pays for agents or defaults. */
+  setPaymentSelections(
+    opts: { account_id?: string } & SetAgentPaymentSelectionsRequest,
+  ): Promise<{ updated: number }>;
+  /** Keep a selection when a conversation is forked or started fresh. */
+  copyPaymentSelection(opts: {
+    account_id?: string;
+    from: AgentPaymentTarget;
+    to: AgentPaymentTarget;
+  }): Promise<{ copied: boolean }>;
+  /** Host admitting a turn for an account: how that account pays. */
+  resolvePaymentSelection(
+    opts: AgentHostAuth & {
+      project_id: string;
+      thread_id: string;
+      provider: AgentPaymentProvider;
+    },
+  ): Promise<ResolvedAgentPaymentSelection>;
   resolveIdentity(opts: {
     account_id?: string;
     project_id: string;

@@ -307,6 +307,7 @@ import {
   readAgentSubscriptionSelection,
   writeAgentSubscriptionSelection,
 } from "./agent-subscription-selection";
+import { copyPaymentSelection } from "@cocalc/frontend/chat/payment-selection-store";
 import {
   assertAgentWorkingDirectory,
   AgentProjectHomeNotReadyError,
@@ -3711,15 +3712,18 @@ export function MyAgentsWorkspacePage({
       agent_id: agent.endpoint.agent_id,
       expected_thread_id: agent.thread_id,
     });
-    writeAgentSubscriptionSelection({
+    // The server keeps the payment choice; refresh the cached copy.
+    await copyPaymentSelection({
       accountId,
-      projectId: agent.endpoint.project_id,
-      threadId: next.thread_id,
-      credentialId: readAgentSubscriptionSelection({
-        accountId,
-        projectId: agent.endpoint.project_id,
-        threadId: agent.thread_id,
-      }),
+      from: {
+        project_id: agent.endpoint.project_id,
+        thread_id: agent.thread_id,
+      },
+      to: {
+        project_id: agent.endpoint.project_id,
+        thread_id: next.thread_id,
+        path: agent.path,
+      },
     });
     refreshNamedAgents();
     selectAgentId(agent.endpoint.agent_id);
@@ -3947,15 +3951,17 @@ export function MyAgentsWorkspacePage({
       });
       await actions.syncdb?.save();
       await actions.save_to_disk();
-      writeAgentSubscriptionSelection({
+      await copyPaymentSelection({
         accountId,
-        projectId: copyingAgent.endpoint.project_id,
-        threadId,
-        credentialId: readAgentSubscriptionSelection({
-          accountId,
-          projectId: copyingAgent.endpoint.project_id,
-          threadId: copyingAgent.thread_id,
-        }),
+        from: {
+          project_id: copyingAgent.endpoint.project_id,
+          thread_id: copyingAgent.thread_id,
+        },
+        to: {
+          project_id: copyingAgent.endpoint.project_id,
+          thread_id: threadId,
+          path: copyingAgent.path,
+        },
       });
       const locator = {
         project_id: copyingAgent.endpoint.project_id,

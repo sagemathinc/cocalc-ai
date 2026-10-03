@@ -111,10 +111,7 @@ import type { AcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import { parseHarnessSessionSettings } from "@cocalc/util/ai/harness-controls";
 import type { HarnessSessionSettings } from "@cocalc/util/ai/harness-controls";
 import { getDefaultCodexSessionMode } from "./codex-defaults";
-import {
-  readCodexSubscriptionSelection,
-  writeCodexSubscriptionSelection,
-} from "./codex-subscription-selection";
+import { copyPaymentSelection } from "./payment-selection-store";
 import {
   buildThreadNotificationPlan,
   sendThreadFollowerNotifications,
@@ -3281,25 +3278,16 @@ export class ChatActions extends Actions<ChatState> {
       });
     } else if (!sourceRuntime && shouldForkAcp) {
       const projectId = this.store.get("project_id");
-      const credentialId =
-        readCodexSubscriptionSelection({
+      if (projectId) {
+        // The fork keeps this account's ChatGPT subscription choice.
+        void copyPaymentSelection({
           accountId: sender_id,
-          projectId,
-          threadKey: sourceThreadId,
-        }) ??
-        (threadKey !== sourceThreadId
-          ? readCodexSubscriptionSelection({
-              accountId: sender_id,
-              projectId,
-              threadKey,
-            })
-          : undefined);
-      if (credentialId && projectId) {
-        writeCodexSubscriptionSelection({
-          accountId: sender_id,
-          projectId,
-          threadKey: newThreadId,
-          credentialId,
+          from: { project_id: projectId, thread_id: sourceThreadId },
+          to: {
+            project_id: projectId,
+            thread_id: newThreadId,
+            path: this.store.get("path"),
+          },
         });
       }
     }

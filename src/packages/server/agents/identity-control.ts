@@ -14,7 +14,6 @@ import {
   startFreshConversationLocal,
 } from "./api";
 import { agentStore } from "./store";
-import { setNextTurnFundingLocal } from "./turn-funding";
 
 async function assertOwner(opts: AgentIdentityReadRequest) {
   requireUuid(opts.account_id, "account_id");
@@ -80,16 +79,6 @@ export const agentIdentityControl: InterBayAgentIdentityApi = {
       project_id: opts.project_id,
       path: opts.path,
       thread_id: opts.thread_id,
-    });
-  },
-  setNextTurnFunding: async (opts) => {
-    await assertOwner(opts);
-    return await setNextTurnFundingLocal({
-      account_id: opts.account_id,
-      project_id: opts.project_id,
-      path: opts.path,
-      thread_id: opts.thread_id,
-      funding: opts.funding,
     });
   },
   recover: async (opts) => {

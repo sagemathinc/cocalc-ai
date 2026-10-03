@@ -4,7 +4,6 @@
  */
 
 export const PROJECT_HARD_DELETE_PROJECT_ID_TABLES = [
-  "agent_turn_funding",
   "agent_identities",
   "agent_message_project_fences",
   "agent_rpc_admission_state",
