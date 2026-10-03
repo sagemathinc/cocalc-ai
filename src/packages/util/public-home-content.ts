@@ -48,11 +48,11 @@ function usesDefaultPublicBrand(config?: PublicRouteMetadataConfig): boolean {
 }
 
 // cocalc.ai itself: the default CoCalc brand on the canonical host, never
-// CoCalc Plus. Claude Code runs only on sites that enable it, so public copy
-// that names it without "on sites that enable it" or "where enabled" appears
-// only where this is true. `config.dns` is the request host on both sides:
-// the crawler fallback reads it from the request, and /customize sets it from
-// the Host header for the browser.
+// CoCalc Plus. Copy that uses this test names Claude Code, or CoCalc.ai as
+// the sign-up destination, only where this is true.
+// `config.dns` is the request host on both sides: the crawler
+// fallback reads it from the request, and /customize sets it from the Host
+// header for the browser.
 export function isPublicCocalcAiSite(
   config?: PublicRouteMetadataConfig,
 ): boolean {
