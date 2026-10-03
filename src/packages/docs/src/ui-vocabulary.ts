@@ -216,6 +216,18 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     usedIn: [bold("ai", "New Agent")],
   },
   {
+    id: "agents.sidebar.expand",
+    label: "Expand Agents",
+    anchors: [
+      def(
+        WORKSPACE_PAGE,
+        'title={`${expanded ? "Collapse" : "Expand"} ${label}`}',
+      ),
+      ren(WORKSPACE_PAGE, '<SidebarSection label="Agents"'),
+    ],
+    usedIn: [bold("ai", "Expand Agents")],
+  },
+  {
     id: "agents.page.title",
     label: "Agents",
     anchors: [
@@ -572,6 +584,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     usedIn: [
       bold("cocalc-at-a-glance", "Agents"),
       { file: doc("ai"), text: "under **Agents** in the sidebar" },
+      { file: doc("ai"), text: "If the **Agents** section is collapsed" },
       { file: doc("ai"), text: "listed under **Agents**" },
       { file: doc("ai"), text: "the sidebar's **Agents** entry" },
       { file: doc("ai"), text: "the sidebar has no **Agents** section" },
