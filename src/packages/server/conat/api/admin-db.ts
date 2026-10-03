@@ -26,6 +26,16 @@ import type {
   AdminDbRestoreDrillAttestationResponse,
 } from "@cocalc/conat/hub/api/admin-db";
 import { requireDangerousSessionAuth } from "./dangerous-session-auth";
+import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
+import {
+  normalizeExpiryRepairRequest,
+  repairScheduledCollectionExpiryLocal,
+} from "@cocalc/server/lro/scheduled-collection-expiry-repair";
+import type {
+  ScheduledCollectionExpiryRepairRequest,
+  ScheduledCollectionExpiryRepairResponse,
+} from "@cocalc/conat/hub/api/admin-db";
 
 type AdminAuthOpts = {
   account_id?: string;
@@ -782,6 +792,56 @@ export async function query({
     account_id: accountId,
     mode: "query",
   });
+}
+
+export async function repairScheduledCollectionExpiry({
+  account_id,
+  session_hash,
+  browser_id,
+  ...opts
+}: AdminAuthOpts &
+  ScheduledCollectionExpiryRepairRequest): Promise<ScheduledCollectionExpiryRepairResponse> {
+  const actor_id = await requireFreshAdmin({
+    account_id,
+    session_hash,
+    browser_id,
+  });
+  normalizeExpiryRepairRequest({ ...opts, actor_id });
+  const ownership = await resolveProjectBay(opts.project_id);
+  if (!ownership) throw new Error("project ownership could not be resolved");
+  const started = Date.now();
+  const audit = {
+    account_id: actor_id,
+    mode: "write" as const,
+    bay_id: ownership.bay_id,
+    reason: opts.reason,
+    sql: "typed scheduled collection expiry repair",
+  };
+  try {
+    const result =
+      ownership.bay_id !== getConfiguredBayId()
+        ? await getInterBayBridge()
+            .projectLro(ownership.bay_id)
+            .repairScheduledCollectionExpiry({ ...opts, actor_id })
+        : await repairScheduledCollectionExpiryLocal({ ...opts, actor_id });
+    await recordAudit({
+      ...audit,
+      audit_id: result.audit_id,
+      committed: result.committed,
+      row_count: result.committed && !result.replayed ? 1 : 0,
+      duration_ms: Date.now() - started,
+    });
+    return result;
+  } catch (error) {
+    await recordAudit({
+      ...audit,
+      audit_id: uuid(),
+      committed: false,
+      error,
+      duration_ms: Date.now() - started,
+    });
+    throw error;
+  }
 }
 
 export async function queryHost({

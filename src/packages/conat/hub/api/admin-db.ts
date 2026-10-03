@@ -76,6 +76,7 @@ export interface AdminDbRestoreDrillAttestationResponse {
 }
 
 export const adminDb = {
+  repairScheduledCollectionExpiry: authFirstRequireAccount,
   attestProjectRestoreDrill: authFirstRequireAccount,
   query: authFirstRequireAccount,
   diagnostic: authFirstRequireAccount,
@@ -84,6 +85,9 @@ export const adminDb = {
 };
 
 export interface AdminDbApi {
+  repairScheduledCollectionExpiry: (
+    opts: ScheduledCollectionExpiryRepairRequest,
+  ) => Promise<ScheduledCollectionExpiryRepairResponse>;
   attestProjectRestoreDrill: (
     opts: AdminDbRestoreDrillAttestationRequest,
   ) => Promise<AdminDbRestoreDrillAttestationResponse>;
@@ -91,4 +95,32 @@ export interface AdminDbApi {
   diagnostic: (opts: AdminDbExecuteRequest) => Promise<AdminDbExecuteResponse>;
   exec: (opts: AdminDbExecuteRequest) => Promise<AdminDbExecuteResponse>;
   queryHost: (opts: AdminDbExecuteRequest) => Promise<AdminDbExecuteResponse>;
+}
+
+export interface ScheduledCollectionExpiryRepairRequest {
+  project_id: string;
+  op_id: string;
+  expected_updated_at: string;
+  expected_expires_at: string;
+  expected_run_at: string;
+  idempotency_key: string;
+  reason: string;
+  commit?: boolean;
+}
+
+export interface ScheduledCollectionExpirySnapshot {
+  updated_at: string;
+  expires_at: string;
+  run_at: string;
+}
+
+export interface ScheduledCollectionExpiryRepairResponse {
+  audit_id: string;
+  bay_id: string;
+  project_id: string;
+  op_id: string;
+  committed: boolean;
+  replayed: boolean;
+  before: ScheduledCollectionExpirySnapshot;
+  after: ScheduledCollectionExpirySnapshot;
 }

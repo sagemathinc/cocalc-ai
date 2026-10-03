@@ -21,6 +21,7 @@ import { createInterBayAgentConnectorHandler } from "@cocalc/conat/inter-bay/age
 import { agentConnectorControl } from "@cocalc/server/agents/cocalc-connector-routing";
 import { agentRpcControl } from "@cocalc/server/agents/rpc";
 import { list as listOperations } from "@cocalc/server/conat/api/lro";
+import { repairScheduledCollectionExpiryLocal } from "@cocalc/server/lro/scheduled-collection-expiry-repair";
 import {
   createProjectOnOwningBay,
   getProjectCreationStatus,
@@ -71,6 +72,7 @@ import {
   createInterBayProjectControlSetRootfsImageHandler,
   createInterBayProjectControlStateHandler,
   createInterBayProjectLroHandler,
+  createInterBayScheduledCollectionExpiryRepairHandler,
   createInterBayProjectReferenceHandler,
   createInterBayProjectControlStopHandler,
   type InterBayAuthTokenApi,
@@ -2713,9 +2715,17 @@ async function startProjectLroService(): Promise<void> {
   const impl: InterBayProjectLroApi = {
     publishProgress: async (opts) =>
       await handleProjectLroPublishProgress(opts),
+    repairScheduledCollectionExpiry: async (opts) =>
+      await repairScheduledCollectionExpiryLocal(opts),
   };
   services.push(
     createInterBayProjectLroHandler({
+      client,
+      bay_id: getConfiguredBayId(),
+      parallel: true,
+      impl,
+    }),
+    createInterBayScheduledCollectionExpiryRepairHandler({
       client,
       bay_id: getConfiguredBayId(),
       parallel: true,
