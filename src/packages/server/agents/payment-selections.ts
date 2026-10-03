@@ -156,8 +156,7 @@ export const paymentSelectionsHome: AgentPaymentSelectionsApi = {
       1,
       Math.min(MAX_AGENT_PAYMENT_SELECTIONS, Math.floor(opts.limit ?? 1000)),
     );
-    const filter =
-      opts.provider === undefined ? undefined : provider(opts.provider);
+    const filter = opts.provider == null ? undefined : provider(opts.provider);
     const { rows } = await db().query(
       `SELECT * FROM agent_payment_selections
         WHERE account_id=$1 AND ($2::text IS NULL OR provider=$2)
@@ -189,6 +188,7 @@ export const paymentSelectionsHome: AgentPaymentSelectionsApi = {
       throw new Error("an account default cannot follow itself");
     let updated = 0;
     if (selection === null) {
+      const only = opts.provider === undefined ? null : provider(opts.provider);
       const keys = [
         ...list.map(agentPaymentTargetKey),
         ...defaults.map(agentPaymentDefaultKey),
@@ -196,8 +196,9 @@ export const paymentSelectionsHome: AgentPaymentSelectionsApi = {
       if (keys.length > 0) {
         const { rows } = await db().query(
           `DELETE FROM agent_payment_selections
-            WHERE account_id=$1 AND target_key=ANY($2::text[]) RETURNING target_key`,
-          [opts.account_id, keys],
+            WHERE account_id=$1 AND target_key=ANY($2::text[])
+              AND ($3::text IS NULL OR provider=$3) RETURNING target_key`,
+          [opts.account_id, keys, only],
         );
         updated = rows.length;
       }
@@ -213,7 +214,7 @@ export const paymentSelectionsHome: AgentPaymentSelectionsApi = {
       throw new Error("agent payment selection capacity reached");
     const conflict = opts.only_if_absent
       ? "DO NOTHING"
-      : "DO UPDATE SET selection=EXCLUDED.selection, provider=EXCLUDED.provider, path=COALESCE(EXCLUDED.path, agent_payment_selections.path), title=COALESCE(EXCLUDED.title, agent_payment_selections.title), updated_at=now()";
+      : "DO UPDATE SET selection=EXCLUDED.selection, path=COALESCE(EXCLUDED.path, agent_payment_selections.path), title=COALESCE(EXCLUDED.title, agent_payment_selections.title), updated_at=now()";
     const value = JSON.stringify(selection);
     for (let i = 0; i < list.length; i++) {
       const target = list[i];
@@ -221,7 +222,7 @@ export const paymentSelectionsHome: AgentPaymentSelectionsApi = {
         `INSERT INTO agent_payment_selections
            (account_id,target_key,provider,project_id,path,thread_id,selection,title,updated_at)
          VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,now())
-         ON CONFLICT(account_id,target_key) ${conflict} RETURNING target_key`,
+         ON CONFLICT(account_id,target_key,provider) ${conflict} RETURNING target_key`,
         [
           opts.account_id,
           agentPaymentTargetKey(target),
@@ -240,7 +241,7 @@ export const paymentSelectionsHome: AgentPaymentSelectionsApi = {
         `INSERT INTO agent_payment_selections
            (account_id,target_key,provider,selection,updated_at)
          VALUES($1,$2,$3,$4::jsonb,now())
-         ON CONFLICT(account_id,target_key) ${conflict} RETURNING target_key`,
+         ON CONFLICT(account_id,target_key,provider) ${conflict} RETURNING target_key`,
         [opts.account_id, agentPaymentDefaultKey(p), p, value],
       );
       updated += rows.length;
@@ -262,7 +263,7 @@ export const paymentSelectionsHome: AgentPaymentSelectionsApi = {
          (account_id,target_key,provider,project_id,path,thread_id,selection,title,updated_at)
        SELECT account_id,$3,provider,$4,COALESCE($5,path),$6,selection,title,now()
          FROM agent_payment_selections WHERE account_id=$1 AND target_key=$2
-       ON CONFLICT(account_id,target_key) DO NOTHING RETURNING target_key`,
+       ON CONFLICT(account_id,target_key,provider) DO NOTHING RETURNING target_key`,
       [
         opts.account_id,
         agentPaymentTargetKey(from),
@@ -363,6 +364,7 @@ export const setPaymentSelections: AgentApi["setPaymentSelections"] = async (
       targets: opts.targets,
       defaults: opts.defaults,
       selection: opts.selection,
+      provider: opts.provider,
       only_if_absent: opts.only_if_absent,
     }),
   );

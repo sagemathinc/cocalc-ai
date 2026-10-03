@@ -38,6 +38,8 @@ export interface SetAgentPaymentSelectionsRequest {
   defaults?: AgentPaymentProvider[];
   /** null clears, so the agent follows the account default. */
   selection: AgentPaymentSelection | null;
+  /** With a null selection: clear only this provider's choice. */
+  provider?: AgentPaymentProvider;
   /** Migration: only fill agents that have no record yet. */
   only_if_absent?: boolean;
 }

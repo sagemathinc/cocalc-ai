@@ -152,7 +152,11 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
       request,
       "codex",
     );
-    storedCredentialId = codexCredentialFromSelection(stored?.selection);
+    // This agent's subscription, else the account's chosen default; with
+    // neither, the hub uses the designated default subscription.
+    storedCredentialId =
+      codexCredentialFromSelection(stored?.selection) ??
+      codexCredentialFromSelection(stored?.default);
   }
   const requestedCredentialId = `${
     request.config?.credentialId ?? storedCredentialId ?? ""

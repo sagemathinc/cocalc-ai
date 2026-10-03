@@ -45,6 +45,7 @@ type Api = {
     targets?: Array<AgentPaymentTarget & { title?: string }>;
     defaults?: AgentPaymentProvider[];
     selection: AgentPaymentSelection | null;
+    provider?: AgentPaymentProvider;
     only_if_absent?: boolean;
   }): Promise<{ updated: number }>;
   copyPaymentSelection(opts: {
@@ -104,6 +105,7 @@ export function createMemoryPaymentApiForTests(): Api & {
       targets = [],
       defaults = [],
       selection,
+      provider,
       only_if_absent,
     }) {
       let updated = 0;
@@ -116,6 +118,7 @@ export function createMemoryPaymentApiForTests(): Api & {
           const k = make(p);
           if (!k) continue;
           if (selection === null) {
+            if (provider && provider !== p) continue;
             if (rows.delete(k)) updated++;
           } else if (selection.provider === p) {
             if (only_if_absent && rows.has(k)) continue;
@@ -148,7 +151,7 @@ export function seedPaymentSelectionForTests(opts: {
   selection?: AgentPaymentSelection;
   defaults?: AgentPaymentDefaults;
 }) {
-  useAccount(opts.accountId);
+  forAccount(opts.accountId);
   const k = key(opts.projectId, opts.threadKey);
   const entry = { ...(entries.get(k) ?? {}) };
   if (opts.selection) (entry as any)[opts.selection.provider] = opts.selection;
@@ -187,7 +190,7 @@ function emit() {
 }
 
 // Selections belong to one account; a different signed-in account starts empty.
-function useAccount(accountId?: string): boolean {
+function forAccount(accountId?: string): boolean {
   if (!accountId) return false;
   if (account !== accountId) {
     account = accountId;
@@ -384,7 +387,7 @@ function entryFor(
   projectId: string | undefined,
   threadKey: string | undefined,
 ): Entry | undefined {
-  if (!useAccount(accountId) || !projectId) return;
+  if (!forAccount(accountId) || !projectId) return;
   if (isDraft(threadKey)) return drafts.get(projectId);
   const k = key(projectId, threadKey!);
   if (!loaded.has(k))
@@ -407,7 +410,7 @@ export function readPaymentDefault(opts: {
   accountId?: string;
   provider: AgentPaymentProvider;
 }): AgentPaymentSelection | undefined {
-  if (!useAccount(opts.accountId)) return;
+  if (!forAccount(opts.accountId)) return;
   if (!defaultsLoaded && queue.size === 0) {
     // Any lookup returns the defaults; ask with no targets via an empty batch.
     void (async () => {
@@ -432,7 +435,7 @@ export function isPaymentSelectionLoaded(opts: {
   projectId?: string;
   threadKey?: string;
 }): boolean {
-  if (!useAccount(opts.accountId) || !opts.projectId) return false;
+  if (!forAccount(opts.accountId) || !opts.projectId) return false;
   return (
     isDraft(opts.threadKey) || loaded.has(key(opts.projectId, opts.threadKey!))
   );
@@ -448,7 +451,7 @@ export function writePaymentSelection(opts: {
   path?: string;
   title?: string;
 }): Promise<void> {
-  if (!useAccount(opts.accountId)) return Promise.resolve();
+  if (!forAccount(opts.accountId)) return Promise.resolve();
   const draft = isDraft(opts.threadKey);
   const map = draft ? drafts : entries;
   const k = draft ? opts.projectId : key(opts.projectId, opts.threadKey!);
@@ -475,6 +478,7 @@ export function writePaymentSelection(opts: {
         },
       ],
       selection: opts.selection,
+      provider: opts.provider,
     })
     .then(
       () => {},
@@ -494,7 +498,7 @@ export async function setPaymentDefault(opts: {
   /** Only set it if the account has no default yet. */
   onlyIfAbsent?: boolean;
 }): Promise<void> {
-  if (!useAccount(opts.accountId)) return;
+  if (!forAccount(opts.accountId)) return;
   if (opts.onlyIfAbsent && defaults[opts.provider]) return;
   writes.set("defaults", ++writeSeq);
   if (opts.selection) (defaults as any)[opts.provider] = opts.selection;
@@ -504,6 +508,7 @@ export async function setPaymentDefault(opts: {
     await api()?.setPaymentSelections({
       defaults: [opts.provider],
       selection: opts.selection,
+      provider: opts.provider,
       only_if_absent: opts.onlyIfAbsent,
     });
   } catch (err) {
@@ -521,7 +526,7 @@ export async function copyPaymentSelection(opts: {
   from: AgentPaymentTarget;
   to: AgentPaymentTarget;
 }): Promise<void> {
-  if (!useAccount(opts.accountId)) return;
+  if (!forAccount(opts.accountId)) return;
   const source = entries.get(key(opts.from.project_id, opts.from.thread_id));
   const k = key(opts.to.project_id, opts.to.thread_id);
   if (source) {
@@ -543,7 +548,7 @@ export async function fetchPaymentSelectionForSend(opts: {
   projectId?: string;
   threadKey?: string;
 }): Promise<void> {
-  if (!useAccount(opts.accountId) || !opts.projectId || isDraft(opts.threadKey))
+  if (!forAccount(opts.accountId) || !opts.projectId || isDraft(opts.threadKey))
     return;
   const client = api();
   if (!client) return;

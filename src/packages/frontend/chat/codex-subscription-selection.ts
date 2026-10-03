@@ -10,6 +10,7 @@
 import { isValidUUID } from "@cocalc/util/misc";
 import {
   PAYMENT_SELECTION_EVENT,
+  readPaymentDefault,
   readPaymentSelection,
   writePaymentSelection,
 } from "./payment-selection-store";
@@ -31,7 +32,11 @@ export function readCodexSubscriptionSelection({
     threadKey,
     provider: "codex",
   });
-  return selection?.mode === "credential" ? selection.credential_id : undefined;
+  if (selection?.mode === "credential") return selection.credential_id;
+  // Following the default: the account's chosen default, if any (else the
+  // designated default subscription applies on the server).
+  const fallback = readPaymentDefault({ accountId, provider: "codex" });
+  return fallback?.mode === "credential" ? fallback.credential_id : undefined;
 }
 
 export function writeCodexSubscriptionSelection({
@@ -45,13 +50,17 @@ export function writeCodexSubscriptionSelection({
   threadKey?: string;
   credentialId?: string;
 }): void {
+  const fallback = readPaymentDefault({ accountId, provider: "codex" });
+  // Choosing the account default keeps following it.
+  const followsDefault =
+    fallback?.mode === "credential" && fallback.credential_id === credentialId;
   void writePaymentSelection({
     accountId,
     projectId,
     threadKey,
     provider: "codex",
     selection:
-      credentialId && isValidUUID(credentialId)
+      !followsDefault && credentialId && isValidUUID(credentialId)
         ? {
             version: 1,
             provider: "codex",

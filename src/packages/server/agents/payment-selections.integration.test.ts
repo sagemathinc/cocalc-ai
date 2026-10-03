@@ -145,6 +145,45 @@ describeDb("agent payment selections (account home bay)", () => {
     ]);
   });
 
+  test("each runtime keeps its own choice; clearing one leaves the other", async () => {
+    const account_id = randomUUID();
+    const target = { project_id: randomUUID(), thread_id: "t" };
+    await setPaymentSelections({
+      account_id,
+      targets: [target],
+      selection: claude(A),
+    });
+    await setPaymentSelections({
+      account_id,
+      targets: [target],
+      selection: codex(B),
+    });
+    let { selections } = await getPaymentSelections({
+      account_id,
+      targets: [target],
+    });
+    expect(selections.map((r) => r.provider).sort()).toEqual([
+      "claude-code",
+      "codex",
+    ]);
+    await setPaymentSelections({
+      account_id,
+      targets: [target],
+      selection: null,
+      provider: "codex",
+    });
+    ({ selections } = await getPaymentSelections({
+      account_id,
+      targets: [target],
+    }));
+    expect(selections).toEqual([
+      expect.objectContaining({
+        provider: "claude-code",
+        selection: claude(A),
+      }),
+    ]);
+  });
+
   test("migration never overwrites an existing choice", async () => {
     const account_id = randomUUID();
     const target = { project_id: randomUUID(), thread_id: "t" };

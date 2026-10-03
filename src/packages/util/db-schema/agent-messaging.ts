@@ -153,7 +153,7 @@ Table({
 Table({
   name: "agent_payment_selections",
   rules: {
-    primary_key: ["account_id", "target_key"],
+    primary_key: ["account_id", "target_key", "provider"],
     pg_custom_indexes: [
       {
         name: "agent_payment_selections_provider",

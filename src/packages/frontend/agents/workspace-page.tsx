@@ -3998,6 +3998,46 @@ export function MyAgentsWorkspacePage({
     }
   }
 
+  // After named agents are retired: drop their workspaces and move the
+  // selection to a remaining agent (or the new-agent form).
+  function afterRetire(removed: Set<string>) {
+    const remaining = agents.filter(
+      ({ endpoint }) => !removed.has(endpoint.agent_id),
+    );
+    for (const agent of agents) {
+      if (!removed.has(agent.endpoint.agent_id)) continue;
+      const workspace = agentWorkspaceKey(agent);
+      if (
+        !remaining.some(
+          (candidate) => agentWorkspaceKey(candidate) === workspace,
+        )
+      )
+        unmountWorkspace(workspace);
+    }
+    if (selected && removed.has(selected.endpoint.agent_id)) {
+      const nextAgent = remaining[0];
+      if (nextAgent) {
+        mountAgent(nextAgent);
+        selectAgentId(nextAgent.endpoint.agent_id);
+      } else {
+        setCreatingSourceAgentId(undefined);
+        setCreating(true);
+        redux.getActions("page").setState({
+          ...closedLibraryState,
+          active_agent_id: "new",
+          active_agent_name: undefined,
+        });
+        set_url(
+          getPageUrlPath({
+            page: "agents",
+            agent_id: "new",
+          }),
+        );
+      }
+    }
+    refreshNamedAgents();
+  }
+
   function confirmRetireAgent(agent: NamedAgent) {
     Modal.confirm({
       title: `Remove @${agent.name} from Agents?`,
@@ -4011,40 +4051,7 @@ export function MyAgentsWorkspacePage({
           await personalAgentApi().retireNamedAgent({
             endpoint: agent.endpoint,
           });
-          const workspace = agentWorkspaceKey(agent);
-          const nextAgent = agents.find(
-            ({ endpoint }) => endpoint.agent_id !== agent.endpoint.agent_id,
-          );
-          if (
-            !agents.some(
-              (candidate) =>
-                candidate.endpoint.agent_id !== agent.endpoint.agent_id &&
-                agentWorkspaceKey(candidate) === workspace,
-            )
-          ) {
-            unmountWorkspace(workspace);
-          }
-          if (selected?.endpoint.agent_id === agent.endpoint.agent_id) {
-            if (nextAgent) {
-              mountAgent(nextAgent);
-              selectAgentId(nextAgent.endpoint.agent_id);
-            } else {
-              setCreatingSourceAgentId(undefined);
-              setCreating(true);
-              redux.getActions("page").setState({
-                ...closedLibraryState,
-                active_agent_id: "new",
-                active_agent_name: undefined,
-              });
-              set_url(
-                getPageUrlPath({
-                  page: "agents",
-                  agent_id: "new",
-                }),
-              );
-            }
-          }
-          refreshNamedAgents();
+          afterRetire(new Set([agent.endpoint.agent_id]));
           antdMessage.success(`Removed @${agent.name} from Agents.`);
         } catch (err) {
           antdMessage.error(`Unable to remove @${agent.name}: ${err}`);
@@ -4052,6 +4059,38 @@ export function MyAgentsWorkspacePage({
         } finally {
           setRetiringAgentId(undefined);
         }
+      },
+    });
+  }
+
+  function confirmRetireAgents(list: NamedAgent[]) {
+    if (list.length === 1) return confirmRetireAgent(list[0]);
+    Modal.confirm({
+      title: `Remove ${list.length} agents from Agents?`,
+      content:
+        "This frees their named-agent slots. Conversations and artifacts are preserved, and historical Agent Networks keep their records, but these agents become unavailable to those networks.",
+      okText: `Remove ${list.length} agents`,
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        const removed = new Set<string>();
+        const failed: string[] = [];
+        for (const agent of list) {
+          try {
+            await personalAgentApi().retireNamedAgent({
+              endpoint: agent.endpoint,
+            });
+            removed.add(agent.endpoint.agent_id);
+          } catch (err) {
+            failed.push(`@${agent.name}: ${err}`);
+          }
+        }
+        if (removed.size > 0) afterRetire(removed);
+        if (failed.length === 0)
+          antdMessage.success(`Removed ${removed.size} agents from Agents.`);
+        else
+          antdMessage.error(
+            `Removed ${removed.size} of ${list.length} agents. ${failed.join("; ")}`,
+          );
       },
     });
   }
@@ -5166,6 +5205,10 @@ export function MyAgentsWorkspacePage({
             onPinMine={agentOrganization.setPinned}
             onMoveMine={agentOrganization.moveToIndex}
             onOpenMine={(agent) => selectAgent(agent)}
+            onSetHidden={(ids, hidden) => {
+              for (const id of ids) agentOrganization.setHidden(id, hidden);
+            }}
+            onRemove={confirmRetireAgents}
           />
         )}
         {active && artifactOpen && accountId && (!isNarrow || !mobileList) && (
