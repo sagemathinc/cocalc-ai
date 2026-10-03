@@ -12,6 +12,8 @@ import type {
   NamedAgent,
 } from "@cocalc/conat/agents/personal";
 import {
+  agentNetworksSummary,
+  cocalcAccessSummary,
   ComposerConnectors,
   supportsCocalcConnector,
 } from "./composer-connectors";
@@ -104,6 +106,23 @@ function Controls({
   );
 }
 
+const chipName = /^Connectors for @builder/;
+
+// Opens a connector's editor from the connectors chip, as a keyboard user.
+async function openFromChip(
+  user: ReturnType<typeof userEvent.setup>,
+  item: RegExp,
+) {
+  const chip = await screen.findByRole("button", { name: chipName });
+  chip.focus();
+  await user.keyboard("{Enter}");
+  const menuItem = await screen.findByRole("menuitem", { name: item });
+  menuItem.focus();
+  // rc-menu uses KeyboardEvent.which; user-event does not populate it.
+  fireEvent.keyDown(menuItem, { key: "Enter", keyCode: 13, which: 13 });
+  return chip;
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockError = undefined;
@@ -122,7 +141,7 @@ beforeEach(() => {
   mockApi.removeCocalcConnectorConfig.mockResolvedValue(undefined);
 });
 
-test.each(["CoCalc", "Agent Networks"])(
+test.each(["CoCalc access", "Agent Networks"])(
   "+ menu opens %s with keyboard and restores focus on Escape",
   async (label) => {
     const user = userEvent.setup();
@@ -139,7 +158,12 @@ test.each(["CoCalc", "Agent Networks"])(
       screen.getByRole("menuitem", { name: "Choose project files" }),
     ).toBeVisible();
     expect(screen.getByRole("menuitem", { name: "Set goal" })).toBeVisible();
-    const item = screen.getByRole("menuitem", { name: label });
+    // What affects this message is labeled apart from the agent's access.
+    expect(screen.getByText("Attach")).toBeVisible();
+    expect(screen.getByText("Connectors for @builder")).toBeVisible();
+    const item = screen.getByRole("menuitem", {
+      name: new RegExp(`^${label}`),
+    });
     const menu = screen.getByRole("menu");
     item.focus();
     // rc-menu uses KeyboardEvent.which; user-event does not populate it.
@@ -151,7 +175,7 @@ test.each(["CoCalc", "Agent Networks"])(
     });
     const dialog = await screen.findByRole("dialog", {
       name:
-        label === "CoCalc"
+        label === "CoCalc access"
           ? "CoCalc access for @builder"
           : "Network tags for @builder",
     });
@@ -169,13 +193,16 @@ test.each(["CoCalc", "Agent Networks"])(
   },
 );
 
-test("configured CoCalc icon opens its editor and reflects saved disable", async () => {
+test("the connectors chip opens CoCalc access and reflects saved disable", async () => {
   mockApi.getCocalcConnectorConfig.mockResolvedValue(config);
   const user = userEvent.setup();
   render(<Controls />);
-  const icon = await screen.findByRole("button", { name: "CoCalc connector" });
-  icon.focus();
-  await user.keyboard("{Enter}");
+  expect(
+    await screen.findByRole("button", {
+      name: "Connectors for @builder: CoCalc access On",
+    }),
+  ).toHaveTextContent("1");
+  const chip = await openFromChip(user, /^CoCalc access/);
   const dialog = await screen.findByRole("dialog", {
     name: "CoCalc access for @builder",
   });
@@ -188,9 +215,11 @@ test("configured CoCalc icon opens its editor and reflects saved disable", async
   await user.click(within(dialog).getByRole("switch"));
   await user.click(within(dialog).getByRole("button", { name: "Save access" }));
   expect(
-    await screen.findByRole("button", { name: "CoCalc connector (disabled)" }),
+    await screen.findByRole("button", {
+      name: "Connectors for @builder: CoCalc access Off",
+    }),
   ).toBeVisible();
-  await waitFor(() => expect(icon).toHaveFocus());
+  await waitFor(() => expect(chip).toHaveFocus());
   expect(mockApi.saveCocalcConnectorConfig).toHaveBeenCalledWith(
     expect.objectContaining({
       enabled: false,
@@ -224,12 +253,13 @@ test("network icon tracks assigned tags, preserves details, and disappears after
   ];
   const user = userEvent.setup();
   const view = render(<Controls />);
-  const icon = screen.getByRole("button", {
-    name: "Agent Networks connector (1 tag)",
-  });
-  icon.focus();
-  await user.keyboard("{Enter}");
-  const dialog = screen.getByRole("dialog", {
+  expect(
+    screen.getByRole("button", {
+      name: "Connectors for @builder: Agent Networks Team",
+    }),
+  ).toBeVisible();
+  await openFromChip(user, /^Agent Networks/);
+  const dialog = await screen.findByRole("dialog", {
     name: "Network tags (1) for @builder",
   });
   await waitFor(() =>
@@ -251,7 +281,7 @@ test("network icon tracks assigned tags, preserves details, and disappears after
   mockDirectory!.networks[0].members[0].removed_at = agent.updated_at;
   render(<Controls />);
   expect(
-    screen.queryByRole("button", { name: /Agent Networks connector/ }),
+    screen.queryByRole("button", { name: chipName }),
   ).not.toBeInTheDocument();
 });
 
@@ -261,20 +291,18 @@ test.each([true, false])(
     mockApi.getCocalcConnectorConfig.mockResolvedValue({ ...config, enabled });
     const user = userEvent.setup();
     render(<Controls />);
-    const icon = await screen.findByRole("button", {
-      name: /^CoCalc connector/,
-    });
-    icon.focus();
-    await user.keyboard("{Enter}");
+    await openFromChip(user, /^CoCalc access/);
     const remove = await screen.findByRole("button", {
       name: "Remove connector",
     });
     await waitFor(() => expect(remove).toBeEnabled());
     remove.focus();
     await user.keyboard("{Enter}");
-    expect(
-      screen.getByRole("dialog", { name: "Remove CoCalc connector?" }),
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("dialog", { name: "Remove CoCalc connector?" }),
+      ).toBeVisible(),
+    );
     expect(mockApi.removeCocalcConnectorConfig).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(
@@ -286,7 +314,7 @@ test.each([true, false])(
     await user.keyboard("{Enter}");
     await waitFor(() =>
       expect(
-        screen.queryByRole("button", { name: /^CoCalc connector/ }),
+        screen.queryByRole("button", { name: chipName }),
       ).not.toBeInTheDocument(),
     );
     const plus = screen.getByRole("button", { name: "Add files and more" });
@@ -300,7 +328,9 @@ test.each([true, false])(
     });
     expect(mockApi.saveCocalcConnectorConfig).not.toHaveBeenCalled();
     await user.click(plus);
-    await user.click(screen.getByRole("menuitem", { name: "CoCalc" }));
+    await user.click(
+      screen.getByRole("menuitem", { name: "CoCalc access Off" }),
+    );
     await waitFor(() =>
       expect(
         screen.getByRole("switch", { name: "Enable CoCalc access" }),
@@ -319,9 +349,7 @@ test("failed removal retains the connector and exposes the error", async () => {
   );
   const user = userEvent.setup();
   render(<Controls />);
-  await user.click(
-    await screen.findByRole("button", { name: "CoCalc connector" }),
-  );
+  const chip = await openFromChip(user, /^CoCalc access/);
   const remove = await screen.findByRole("button", {
     name: "Remove connector",
   });
@@ -332,30 +360,27 @@ test("failed removal retains the connector and exposes the error", async () => {
     "revocation unavailable",
   );
   await user.keyboard("{Escape}");
-  await waitFor(() =>
-    expect(
-      screen.getByRole("button", { name: "CoCalc connector" }),
-    ).toHaveFocus(),
-  );
+  await waitFor(() => expect(chip).toHaveFocus());
 });
 
-test("no config means no connector icon, and unregistered chats keep only the original menu", async () => {
+test("no config means no connectors chip, and unregistered chats keep only the original menu", async () => {
   const user = userEvent.setup();
   const view = render(<Controls />);
   await waitFor(() =>
     expect(mockApi.getCocalcConnectorConfig).toHaveBeenCalled(),
   );
   expect(
-    screen.queryByRole("button", { name: /connector/ }),
+    screen.queryByRole("button", { name: chipName }),
   ).not.toBeInTheDocument();
   view.rerender(<Controls value={null} />);
   await user.click(screen.getByRole("button", { name: "Add files and more" }));
   expect(
-    screen.queryByRole("menuitem", { name: "Agent Networks" }),
+    screen.queryByRole("menuitem", { name: /^Agent Networks/ }),
   ).not.toBeInTheDocument();
   expect(
-    screen.queryByRole("menuitem", { name: "CoCalc" }),
+    screen.queryByRole("menuitem", { name: /^CoCalc access/ }),
   ).not.toBeInTheDocument();
+  expect(screen.queryByText("Attach")).not.toBeInTheDocument();
   await waitFor(() =>
     expect(
       screen.getByRole("menuitem", { name: "Upload files" }),
@@ -369,7 +394,9 @@ test("network loading failures remain reachable from + with retry", async () => 
   const user = userEvent.setup();
   render(<Controls />);
   await user.click(screen.getByRole("button", { name: "Add files and more" }));
-  await user.click(screen.getByRole("menuitem", { name: "Agent Networks" }));
+  await user.click(
+    screen.getByRole("menuitem", { name: "Agent Networks Unable to load" }),
+  );
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Service unavailable",
   );
@@ -385,15 +412,13 @@ test("unsupported harness keeps networks usable without offering CoCalc access",
   plus.focus();
   await user.keyboard("{Enter}");
   const unavailable = await screen.findByRole("menuitem", {
-    name: "CoCalc (Codex and Claude only)",
+    name: "CoCalc access Codex and Claude only",
   });
   expect(unavailable).toHaveAttribute("aria-disabled", "true");
   expect(mockApi.getCocalcConnectorConfig).not.toHaveBeenCalled();
-  expect(
-    screen.queryByRole("button", { name: /^CoCalc connector/ }),
-  ).toBeNull();
+  expect(screen.queryByRole("button", { name: chipName })).toBeNull();
 
-  const networks = screen.getByRole("menuitem", { name: "Agent Networks" });
+  const networks = screen.getByRole("menuitem", { name: /^Agent Networks/ });
   networks.focus();
   fireEvent.keyDown(networks, { key: "Enter", keyCode: 13, which: 13 });
   const dialog = await screen.findByRole("dialog", {
@@ -411,12 +436,12 @@ test("unsupported harness keeps networks usable without offering CoCalc access",
   // A runtime switch must neither rewrite nor remove existing saved grants.
   view.rerender(<Controls supportsCocalcAccess />);
   expect(
-    await screen.findByRole("button", { name: "CoCalc connector" }),
+    await screen.findByRole("button", {
+      name: "Connectors for @builder: CoCalc access On",
+    }),
   ).toBeVisible();
   view.rerender(<Controls supportsCocalcAccess={false} />);
-  expect(
-    screen.queryByRole("button", { name: /^CoCalc connector/ }),
-  ).toBeNull();
+  expect(screen.queryByRole("button", { name: chipName })).toBeNull();
   expect(mockApi.saveCocalcConnectorConfig).not.toHaveBeenCalled();
   expect(mockApi.removeCocalcConnectorConfig).not.toHaveBeenCalled();
 });
@@ -437,4 +462,36 @@ test("the CoCalc connector is offered for Codex and Claude Code threads only", (
       agent_runtime: { kind: "acp", profile: { version: 1, id: "custom" } },
     }),
   ).toBe(false);
+});
+
+test("status summaries say what each connector reaches", () => {
+  const scope = (over = {}) => ({
+    ...config,
+    scope: { version: 1 as const, account: [], projects: [], ...over },
+  });
+  expect(cocalcAccessSummary(null, "project")).toBe("Off");
+  expect(cocalcAccessSummary({ ...config, enabled: false }, "project")).toBe(
+    "Off",
+  );
+  expect(cocalcAccessSummary(scope(), "project")).toBe("On");
+  // The agent's own project is always reachable and not counted.
+  expect(
+    cocalcAccessSummary(
+      scope({
+        projects: [{ project_id: "project" }, { project_id: "a" }],
+      }) as any,
+      "project",
+    ),
+  ).toBe("1 project");
+  expect(
+    cocalcAccessSummary(
+      scope({ all_projects: {}, account: ["x"] }) as any,
+      "project",
+    ),
+  ).toBe("all projects, account");
+  expect(agentNetworksSummary([], false)).toBe("None");
+  expect(agentNetworksSummary(["Team"], false)).toBe("Team");
+  expect(agentNetworksSummary(["A", "B", "C", "D"], true)).toBe(
+    "Paused: A, B +2",
+  );
 });
