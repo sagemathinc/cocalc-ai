@@ -46,6 +46,25 @@ test("parses current and previous safe content-addressed assets", () => {
   ).toThrow("unsafe path");
 });
 
+test("counts shared retained assets once while preserving the unique limit", () => {
+  const assets = Array.from(
+    { length: 6000 },
+    (_, i) => `chunk-${i}-0123456789abcdef.js`,
+  );
+  expect(
+    parseFrontendAssetHistory({
+      schema: 1,
+      builds: [{ assets }, { assets: [...assets] }],
+    }),
+  ).toEqual({ builds: 2, assets });
+  expect(() =>
+    parseFrontendAssetHistory({
+      schema: 1,
+      builds: [{ assets }, { assets: assets.map((asset) => `other-${asset}`) }],
+    }),
+  ).toThrow("frontend asset history exceeds 10000 files");
+});
+
 test("retries and reports unavailable retained assets", async () => {
   const requests: { method: string; url: string }[] = [];
   const fetchImpl = jest.fn(async (input, init) => {

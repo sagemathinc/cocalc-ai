@@ -40,7 +40,7 @@ export function parseFrontendAssetHistory(value: unknown): {
   if (history.builds.length < 1 || history.builds.length > 2) {
     throw new Error("frontend asset history must contain one or two builds");
   }
-  const assets: string[] = [];
+  const assets = new Set<string>();
   for (const build of history.builds) {
     if (!Array.isArray(build?.assets) || build.assets.length === 0) {
       throw new Error("frontend asset history contains an empty build");
@@ -58,13 +58,13 @@ export function parseFrontendAssetHistory(value: unknown): {
           `frontend asset history contains unsafe path: ${asset}`,
         );
       }
-      assets.push(asset);
-      if (assets.length > MAX_ASSETS) {
+      assets.add(asset);
+      if (assets.size > MAX_ASSETS) {
         throw new Error(`frontend asset history exceeds ${MAX_ASSETS} files`);
       }
     }
   }
-  return { builds: history.builds.length, assets: [...new Set(assets)] };
+  return { builds: history.builds.length, assets: [...assets] };
 }
 
 async function fetchWithTimeout({
