@@ -64,6 +64,17 @@ export const FileUsePage = lazyWithRetry(
   "file-use route",
 );
 
+export const PeoplePage = lazyWithRetry(
+  async () =>
+    loadRoute("people", async () => {
+      await ensureProjectReduxRuntime();
+      return {
+        default: (await import("@cocalc/frontend/people/page")).PeoplePage,
+      };
+    }),
+  "people route",
+);
+
 export const HostsPage = lazyWithRetry(
   async () =>
     loadRoute("hosts", async () => ({

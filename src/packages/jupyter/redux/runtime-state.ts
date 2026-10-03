@@ -14,6 +14,19 @@ export const JUPYTER_RUNTIME_NBCONVERT_KEY = "nbconvert";
 export const JUPYTER_RUNTIME_LIMITS_KEY = "limits";
 export const JUPYTER_RUNTIME_USER_KEY = "user";
 export const JUPYTER_RUNTIME_CELL_KEY_PREFIX = "cell:";
+// One record per save of the .ipynb file, keyed by the sha1 of the file.
+export const JUPYTER_RUNTIME_IPYNB_SAVE_KEY_PREFIX = "ipynb-save:";
+// How many recent saves to keep.
+export const JUPYTER_RUNTIME_IPYNB_SAVES_KEPT = 16;
+
+// A save of the .ipynb file by a client of the live notebook. A file on disk
+// that is one of these is not an external edit, so it is never imported over
+// the live notebook (which may already have newer edits than the file).
+export interface JupyterRuntimeIpynbSave {
+  sha1: string;
+  mtimeMs?: number;
+  savedAt: number;
+}
 
 export interface JupyterRuntimeSettings {
   backend_state?: BackendState;

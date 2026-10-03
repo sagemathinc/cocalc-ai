@@ -40,11 +40,27 @@ export default function DescriptionEditor({
   const { MarkdownEditor } = defaultTasksMarkdownSurface;
   const [localValue, setLocalValue] = useState(desc);
   const mergeHelperRef = useRef<SimpleInputMerge>(new SimpleInputMerge(desc));
+  // The description the editor's contents derive from: what it last loaded,
+  // saved, or merged a remote change from. Saves pass it, so a
+  // collaborator's change that is synced but not yet shown here is merged
+  // instead of reverted.
+  const baseRef = useRef<string>(desc);
+  // Save the editor's value; show and record what was saved (it can include
+  // a collaborator's change merged in). The synced document holds it at once,
+  // so it is the new baseline for merging remote changes.
+  const save = useCallback(
+    (value: string) => {
+      const saved =
+        actions.set_desc(task_id, value, true, baseRef.current) ?? value;
+      baseRef.current = saved;
+      mergeHelperRef.current.noteLocalEcho(saved);
+      if (saved !== value) setLocalValue(saved);
+    },
+    [actions, task_id],
+  );
   const commit0 = useCallback(() => {
-    const desc = getValueRef.current();
-    actions.set_desc(task_id, desc, true);
-    mergeHelperRef.current.noteSaved(desc);
-  }, [task_id]);
+    save(getValueRef.current());
+  }, [save]);
   const commit = useDebouncedCallback(commit0, SAVE_DEBOUNCE_MS);
 
   const saveAndClose = useCallback(
@@ -52,12 +68,11 @@ export default function DescriptionEditor({
       const nextValue = value ?? getValueRef.current();
       commit.cancel();
       setLocalValue(nextValue);
-      actions.set_desc(task_id, nextValue, true);
-      mergeHelperRef.current.noteSaved(nextValue);
+      save(nextValue);
       host.enableKeyHandler();
       actions.stop_editing_desc(task_id);
     },
-    [commit, host, actions, task_id],
+    [commit, host, actions, task_id, save],
   );
 
   const getValueRef = useRef<() => string>(() => "");
@@ -65,18 +80,32 @@ export default function DescriptionEditor({
   // Reset merge helper when switching tasks.
   useEffect(() => {
     mergeHelperRef.current.reset(desc);
+    baseRef.current = desc;
     setLocalValue(desc);
   }, [task_id]);
 
   // When a new desc value arrives (e.g., from remote), merge with the live buffer
   // to preserve uncommitted local edits.
   useEffect(() => {
+    const remote = desc ?? "";
     mergeHelperRef.current.handleRemote({
-      remote: desc ?? "",
+      remote,
       getLocal: getValueRef.current,
-      applyMerged: (v) => setLocalValue(v),
+      applyMerged: (v) => {
+        baseRef.current = remote;
+        setLocalValue(v);
+      },
     });
   }, [desc]);
+
+  // Once the editor shows a merged value requested above, settle the request,
+  // so later edits are known to start from it (otherwise a later merge may
+  // guess an older baseline and apply changes twice).
+  useEffect(() => {
+    if (getValueRef.current() === localValue) {
+      mergeHelperRef.current.noteRendered();
+    }
+  }, [localValue]);
 
   return (
     <div>

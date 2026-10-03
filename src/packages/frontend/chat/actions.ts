@@ -119,6 +119,7 @@ import {
   buildThreadNotificationPlan,
   sendThreadFollowerNotifications,
 } from "./thread-notifications";
+import { touchConversation } from "@cocalc/frontend/people/api";
 import { isAnyChatOverlayOpen } from "./drawer-overlay-state";
 import type {
   ChatArchiveExportOptions,
@@ -1184,6 +1185,10 @@ export class ChatActions extends Actions<ChatState> {
       action,
       ttl: 10000,
     });
+    if (action === "chat" && notificationProjectId != null) {
+      // Keeps the People conversation list current; a no-op for other files.
+      touchConversation(notificationProjectId, path);
+    }
 
     if (
       notificationProjectId != null &&

@@ -587,8 +587,11 @@ export function startManagedRawNetworkEgressLoop({
               bandwidth_relay_evidence: bandwidthRelayEvidence,
             },
           });
+          // The hub decided: this project stops, and the egress policy is
+          // not consulted for it, even if a stop is already in progress (a
+          // late sample can carry several residuals for the same project).
+          if (result?.stop_project) stoppedForRelay = true;
           if (result?.stop_project && !stopping.has(residual.project_id)) {
-            stoppedForRelay = true;
             stopping.add(residual.project_id);
             logger.warn("stopping project after bandwidth relay detection", {
               project_id: residual.project_id,

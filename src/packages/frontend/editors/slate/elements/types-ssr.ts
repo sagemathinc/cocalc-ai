@@ -23,6 +23,7 @@ import "./math";
 import "./mention";
 import "./agent-mention";
 import "./artifact-mention";
+import "./people-reference";
 import "./meta";
 import "./references";
 import "./paragraph";

@@ -35,7 +35,7 @@ import { Path } from "../frame-tree/path";
 import { EditorState } from "../frame-tree/types";
 import type { Actions } from "./actions";
 import { GutterMarkers } from "./codemirror-gutter-markers";
-import { SAVE_DEBOUNCE_MS } from "./const";
+import { SAVE_DEBOUNCE_MS, SAVE_MAX_WAIT_MS } from "./const";
 import { connect_editor_doc } from "./doc";
 import { AccountState } from "../../account/types";
 import { attachSyncListeners } from "./cm-adapter";
@@ -346,7 +346,7 @@ export const CodemirrorEditor: React.FC<Props> = React.memo((props: Props) => {
     const save_syncstring_debounce = debounce(
       save_syncstring,
       SAVE_DEBOUNCE_MS,
-      { leading: false, trailing: true },
+      { leading: false, trailing: true, maxWait: SAVE_MAX_WAIT_MS },
     );
 
     cm.on("beforeChange", (_, changeObj) => {
@@ -356,8 +356,9 @@ export const CodemirrorEditor: React.FC<Props> = React.memo((props: Props) => {
       }
     });
 
-    cm.on("change", save_syncstring_debounce);
-
+    // attachSyncListeners saves on the user's changes only: a collaborator's
+    // change merged into the buffer must not postpone saving the user's edits
+    // (with several people typing, the save could otherwise wait for minutes).
     detachSyncListenersRef.current = attachSyncListeners(cm, {
       onChangeDebounced: save_syncstring_debounce,
       onExitUndo: () => editor_actions()?.exit_undo_mode(),

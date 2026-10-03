@@ -99,6 +99,9 @@ import { noteActivity, resetRecentActivityForTests } from "./recent-activity";
 jest.mock("@cocalc/frontend/logger", () => ({
   getLogger: () => ({ debug: jest.fn() }),
 }));
+jest.mock("./workspace-candidates", () => ({
+  useWorkspaceCandidates: () => [],
+}));
 jest.mock("@cocalc/frontend/agents/api", () => ({
   useNamedAgents: (enabled) => ({
     directory: enabled ? { agents: namedAgents, enabled: true } : undefined,

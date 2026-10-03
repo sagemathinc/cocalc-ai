@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { AgentMemoryPanel } from "./agent-memory-settings";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Alert, Button, Modal, Typography } from "antd";
 import { useState } from "react";
@@ -39,6 +40,7 @@ export const ACCOUNT_PREFERENCES_AI_PAGE = {
     CODEX_SUBAGENTS_LABEL,
     ...Object.values(CODEX_DEFAULTS_LABELS),
     ...Object.values(CODEX_CREDENTIALS_LABELS),
+    "Agent memory",
     "Agent messaging",
     "Pause all messaging",
     "Revoke all networks",
@@ -123,6 +125,9 @@ export function AccountPreferencesAI() {
       <CodexCredentialsPanel />
       <CodexSubagentConcurrencyField />
       <CodexDefaultsPanel other_settings={other_settings} />
+      <Panel header="Agent memory">
+        <AgentMemoryPanel />
+      </Panel>
       <Panel header="Agent messaging">
         <AgentMessagingSettings />
       </Panel>

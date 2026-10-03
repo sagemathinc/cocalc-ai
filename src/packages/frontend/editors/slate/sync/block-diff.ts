@@ -14,7 +14,8 @@ import {
   Text,
   Transforms,
 } from "slate";
-import { apply_patch, diff_main, make_patch } from "@cocalc/util/dmp";
+import { diff_main } from "@cocalc/util/dmp";
+import { mapTextOffset } from "@cocalc/frontend/misc/map-text-offset";
 import { hash_string } from "@cocalc/util/misc";
 import { slate_to_markdown } from "../slate-to-markdown";
 
@@ -324,20 +325,6 @@ function pointFromDocOffset(doc: Descendant[], offset: number): Point {
   return Editor.start({ children: doc } as any, [0]);
 }
 
-function insertAt(text: string, index: number, marker: string): string {
-  return text.slice(0, index) + marker + text.slice(index);
-}
-
-function pickSentinel(text: string, start: number): string {
-  let code = start;
-  let marker = String.fromCharCode(code);
-  while (text.includes(marker)) {
-    code += 1;
-    marker = String.fromCharCode(code);
-  }
-  return marker;
-}
-
 export function remapSelectionAfterBlockPatch(
   editor: Editor,
   prevSelection: Range,
@@ -409,54 +396,19 @@ export function remapSelectionAfterBlockPatchWithSentinels(
     prevSelection.focus.offset,
   );
 
-  let anchorMarker = pickSentinel(prevText, 0xe000);
-  let focusMarker = pickSentinel(prevText + anchorMarker, 0xe001);
-  let textWithMarkers = prevText;
-  if (anchorOffset === focusOffset) {
-    focusMarker = anchorMarker;
-  }
-
-  if (anchorOffset <= focusOffset) {
-    textWithMarkers = insertAt(textWithMarkers, anchorOffset, anchorMarker);
-    if (anchorOffset !== focusOffset) {
-      textWithMarkers = insertAt(
-        textWithMarkers,
-        focusOffset + anchorMarker.length,
-        focusMarker,
-      );
-    }
-  } else {
-    textWithMarkers = insertAt(textWithMarkers, focusOffset, focusMarker);
-    textWithMarkers = insertAt(
-      textWithMarkers,
-      anchorOffset + focusMarker.length,
-      anchorMarker,
-    );
-  }
-
-  const patch = make_patch(prevText, nextText);
-  const [patchedText] = apply_patch(patch, textWithMarkers);
-
-  const anchorIdx = patchedText.indexOf(anchorMarker);
-  const focusIdx = patchedText.indexOf(focusMarker);
-  if (anchorIdx < 0 || focusIdx < 0) {
-    return base;
-  }
-
-  const markerIndices =
-    anchorMarker === focusMarker ? [anchorIdx] : [anchorIdx, focusIdx];
-  const adjustIndex = (idx: number) =>
-    idx - markerIndices.filter((marker) => marker < idx).length;
-
   const anchorPoint = pointFromBlockOffset(
     nextBlock,
     mappedIndex,
-    adjustIndex(anchorIdx),
+    mapTextOffset(prevText, nextText, anchorOffset),
   );
   const focusPoint =
-    anchorMarker === focusMarker
+    anchorOffset === focusOffset
       ? anchorPoint
-      : pointFromBlockOffset(nextBlock, mappedIndex, adjustIndex(focusIdx));
+      : pointFromBlockOffset(
+          nextBlock,
+          mappedIndex,
+          mapTextOffset(prevText, nextText, focusOffset),
+        );
 
   return { anchor: anchorPoint, focus: focusPoint };
 }
@@ -481,48 +433,17 @@ export function remapSelectionInDocWithSentinels(
     prevSelection.focus.offset,
   );
 
-  let anchorMarker = pickSentinel(prevText, 0xe000);
-  let focusMarker = pickSentinel(prevText + anchorMarker, 0xe001);
-  let textWithMarkers = prevText;
-  if (anchorOffset === focusOffset) {
-    focusMarker = anchorMarker;
-  }
-
-  if (anchorOffset <= focusOffset) {
-    textWithMarkers = insertAt(textWithMarkers, anchorOffset, anchorMarker);
-    if (anchorOffset !== focusOffset) {
-      textWithMarkers = insertAt(
-        textWithMarkers,
-        focusOffset + anchorMarker.length,
-        focusMarker,
-      );
-    }
-  } else {
-    textWithMarkers = insertAt(textWithMarkers, focusOffset, focusMarker);
-    textWithMarkers = insertAt(
-      textWithMarkers,
-      anchorOffset + focusMarker.length,
-      anchorMarker,
-    );
-  }
-
-  const patch = make_patch(prevText, nextText);
-  const [patchedText] = apply_patch(patch, textWithMarkers);
-
-  const anchorIdx = patchedText.indexOf(anchorMarker);
-  const focusIdx = patchedText.indexOf(focusMarker);
-  if (anchorIdx < 0 || focusIdx < 0) return null;
-
-  const markerIndices =
-    anchorMarker === focusMarker ? [anchorIdx] : [anchorIdx, focusIdx];
-  const adjustIndex = (idx: number) =>
-    idx - markerIndices.filter((marker) => marker < idx).length;
-
-  const anchorPoint = pointFromDocOffset(nextDoc, adjustIndex(anchorIdx));
+  const anchorPoint = pointFromDocOffset(
+    nextDoc,
+    mapTextOffset(prevText, nextText, anchorOffset),
+  );
   const focusPoint =
-    anchorMarker === focusMarker
+    anchorOffset === focusOffset
       ? anchorPoint
-      : pointFromDocOffset(nextDoc, adjustIndex(focusIdx));
+      : pointFromDocOffset(
+          nextDoc,
+          mapTextOffset(prevText, nextText, focusOffset),
+        );
 
   return { anchor: anchorPoint, focus: focusPoint };
 }

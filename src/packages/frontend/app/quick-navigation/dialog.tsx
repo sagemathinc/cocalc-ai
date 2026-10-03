@@ -391,7 +391,7 @@ export function NavigationDialog({
             <label htmlFor={`${id}-search`}>
               <FormattedMessage
                 id="quick-nav.search-label"
-                defaultMessage="Search projects, files, frames, and settings"
+                defaultMessage="Search agents, projects, files, artifacts, people, and settings"
               />
             </label>
             <Input

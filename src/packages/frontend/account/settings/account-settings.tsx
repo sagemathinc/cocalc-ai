@@ -49,6 +49,7 @@ import { EmailAddressSetting } from "./email-address-setting";
 import { EmailVerification } from "./email-verification";
 import { TextSetting } from "./text-setting";
 import { lite } from "@cocalc/frontend/lite";
+import { UsernameSetting } from "./username-setting";
 import { SettingsCard } from "../settings-card";
 
 type ImmutablePassportStrategy = TypedMap<PassportStrategyFrontend>;
@@ -522,6 +523,9 @@ export function AccountSettings(props: Readonly<Props>) {
       <Space vertical>
         {render_account_id()}
         {render_name()}
+        {props.account_id && !lite && (
+          <UsernameSetting key={props.account_id} />
+        )}
         {render_email_address()}
         {render_unlisted()}
         {render_email_verification()}

@@ -51,6 +51,12 @@ if (pkg.version !== expectedVersion || entry?.integrity !== expectedIntegrity) {
 }
 NODE
 
+  # CoCalc's patch to the pinned adapter (managed-harnesses/patch-claude-agent-acp.cjs):
+  # forward subscription rate limits even before the first assistant message.
+  ACP_AGENT="$INSTALL/app/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js"
+  node "$SOURCE/patch-claude-agent-acp.cjs" "$ACP_AGENT"
+  node --check "$ACP_AGENT"
+
   cat >"$INSTALL/bin/claude-agent-acp" <<'EOF'
 #!/usr/bin/env sh
 set -eu
