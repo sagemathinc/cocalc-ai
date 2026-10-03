@@ -11,9 +11,11 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   getPublicDocsAccess,
   getPublicMarketingSiteName,
+  getPublicSignUpLabel,
   getSiteName,
   publicPoliciesUseBuiltin,
   type PublicConfig,
+  usePublicConfig,
 } from "@cocalc/frontend/public/config";
 import {
   PublicPage,
@@ -159,6 +161,7 @@ export function PublicNextStep({
   authenticated?: boolean;
   heading?: ReactNode;
 }) {
+  const signUpLabel = getPublicSignUpLabel(usePublicConfig());
   return (
     <PublicSection ariaLabel="Next step" title={heading}>
       <Flex gap={12} wrap>
@@ -166,7 +169,7 @@ export function PublicNextStep({
           href={appPath(authenticated ? "projects" : "auth/sign-up")}
           type="primary"
         >
-          {authenticated ? "Open projects" : "Start on CoCalc.ai"}
+          {authenticated ? "Open projects" : signUpLabel}
         </Button>
         <Button href={appPath("products")}>Compare operating models</Button>
         <Button href={appPath("support")}>Review support and sales</Button>

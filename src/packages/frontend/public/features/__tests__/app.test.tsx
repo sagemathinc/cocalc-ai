@@ -446,9 +446,15 @@ describe("PublicFeaturesApp", () => {
 
   it("renders the terminal page from its feature record, like the crawler fallback", () => {
     const page = getPublicFeaturePage("terminal")!;
+    // On cocalc.ai, which shows the record's sign-up label.
     const { container } = render(
       <PublicFeaturesApp
-        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        config={{
+          cocalc_product: "launchpad",
+          dns: "cocalc.ai",
+          help_email: "help@example.com",
+          site_name: "CoCalc",
+        }}
         initialRoute={{ slug: "terminal", view: "detail" }}
       />,
     );
@@ -501,9 +507,12 @@ describe("PublicFeaturesApp", () => {
   });
 
   it("uses projects as the terminal CTA for authenticated users", () => {
+    // On cocalc.ai, where signed-out visitors see the record's sign-up label.
     render(
       <PublicFeaturesApp
         config={{
+          cocalc_product: "launchpad",
+          dns: "cocalc.ai",
           help_email: "help@example.com",
           is_authenticated: true,
           site_name: "Launchpad",

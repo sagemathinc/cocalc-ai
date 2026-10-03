@@ -5,6 +5,10 @@
 
 import { Button, Col, Flex, Row, Typography } from "antd";
 
+import {
+  isCocalcAiLaunchpadSite,
+  usePublicConfig,
+} from "@cocalc/frontend/public/config";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { CodeBlock } from "@cocalc/frontend/public/common";
 import { PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
@@ -36,6 +40,11 @@ export default function JupyterNotebookFeaturePage({
   const finalCtaLabel = isAuthenticated
     ? "Open projects"
     : "Start using Jupyter in CoCalc";
+  // The final band's button signs visitors up on this site, so the text
+  // beside it names CoCalc.ai only on cocalc.ai.
+  const finalCtaBody = isCocalcAiLaunchpadSite(usePublicConfig())
+    ? "Open a hosted notebook on CoCalc.ai and bring your team into the same workspace."
+    : "Open a notebook and bring your team into the same workspace.";
 
   return (
     <Flex vertical gap={36}>
@@ -383,7 +392,7 @@ cocalc project jupyter exec --path analysis.ipynb --stdin`}
       <PublicSection>
         <FeatureFinalBand
           action={{
-            body: "Open a hosted notebook on CoCalc.ai and bring your team into the same workspace.",
+            body: finalCtaBody,
             href: primaryCtaHref,
             label: finalCtaLabel,
             title: "Ready to use Jupyter in CoCalc?",
