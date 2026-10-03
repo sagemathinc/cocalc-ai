@@ -376,7 +376,8 @@ export class AcpHarnessClient {
 
   /** Clone persisted native context without loading it or starting inference. */
   async fork(sessionId: string): Promise<{ sessionId: string }> {
-    if (this.session || this.active || this.opening || this.disposed)
+    this.assertRuntimeOpen();
+    if (this.session || this.active || this.opening)
       throw new HarnessError("unavailable", "ACP fork requires a fresh client");
     if (!this.info.agentCapabilities?.sessionCapabilities?.fork)
       throw new HarnessError(
@@ -411,13 +412,8 @@ export class AcpHarnessClient {
 
   /** Apply the admitted choices while idle; never mutate an in-flight turn. */
   async configure(settings: HarnessSessionSettings): Promise<void> {
-    if (
-      !this.session ||
-      this.active ||
-      this.opening ||
-      this.configuring ||
-      this.disposed
-    )
+    this.assertRuntimeOpen();
+    if (!this.session || this.active || this.opening || this.configuring)
       throw new HarnessError(
         "unavailable",
         "ACP session must be idle and open",
@@ -533,6 +529,14 @@ export class AcpHarnessClient {
     return this.diagnosticId ? ` [Diagnostic ID: ${this.diagnosticId}]` : "";
   }
 
+  private assertRuntimeOpen(): void {
+    if (this.disposed || this.failure)
+      throw new HarnessError(
+        "unavailable",
+        "ACP runtime is closed" + this.diagnosticSuffix(),
+      );
+  }
+
   private async request<T>(
     operation: Promise<T>,
     method: RequestMethod,
@@ -640,13 +644,9 @@ export class AcpHarnessClient {
   }
 
   async open(sessionId?: string): Promise<NewSessionResponse> {
+    this.assertRuntimeOpen();
     if (this.session || this.active || this.opening)
       throw Error("ACP session is already open or opening");
-    if (this.disposed)
-      throw new HarnessError(
-        "unavailable",
-        "ACP runtime is closed" + this.diagnosticSuffix(),
-      );
     this.opening = true;
     try {
       const params = {
@@ -719,11 +719,7 @@ export class AcpHarnessClient {
     images: readonly AcpImageAttachment[] = [],
     beforeSend?: () => Promise<void>,
   ): Promise<{ stopReason: StopReason }> {
-    if (this.disposed || this.failure)
-      throw new HarnessError(
-        "unavailable",
-        "ACP runtime is closed" + this.diagnosticSuffix(),
-      );
+    this.assertRuntimeOpen();
     if (!this.session || this.active || this.configuring)
       throw Error("ACP session must be idle and open");
     if (

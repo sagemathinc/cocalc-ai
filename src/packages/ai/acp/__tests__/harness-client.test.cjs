@@ -925,6 +925,41 @@ test("explicit context reset retires the warm harness before opening a fresh ses
   assert.equal(launches(), 2);
 });
 
+test(
+  "adapter next turn preserves idle-exit diagnostic through configure",
+  { timeout: 5000 },
+  async (t) => {
+    const logger = require("@cocalc/backend/logger").default(
+      "ai:acp:harness-diagnostics",
+    );
+    const records = [];
+    let recorded;
+    const diagnostic = new Promise((resolve) => {
+      recorded = resolve;
+    });
+    t.mock.method(logger, "warn", (_label, json) => {
+      const record = JSON.parse(json);
+      records.push(record);
+      recorded(record);
+    });
+    const { agent, request, events, launches } = adapter(t, ["--idle-exit"]);
+    await agent.evaluate(request);
+    assert.equal(events.at(-1).finalResponse, "Hello world 1");
+    const record = await diagnostic;
+    assert.equal(record.method, "runtime/failure");
+    await assert.rejects(
+      agent.evaluate({ ...request, session_id: "fixture-session" }),
+      (error) => {
+        assert.equal(error.code, "unavailable");
+        assert.ok(error.message.includes(record.diagnostic_id));
+        return true;
+      },
+    );
+    assert.equal(records.length, 1);
+    assert.equal(launches(), 1);
+  },
+);
+
 test("context reset cannot launch a replacement after unconfirmed cleanup", async (t) => {
   const { agent, request, launches } = adapter(t, [], undefined, true);
   await agent.evaluate(request);
@@ -2698,6 +2733,17 @@ test(
     await client.dispose();
     assert.equal(records.length, 1);
     assert.doesNotMatch(JSON.stringify(records), /private-idle-detail/);
+    for (const action of [
+      () => client.configure({}),
+      () => client.open(),
+      () => client.fork("source-session"),
+    ]) {
+      await assert.rejects(action(), (error) => {
+        assert.equal(error.code, "unavailable");
+        assert.ok(error.message.includes(record.diagnostic_id));
+        return true;
+      });
+    }
   },
 );
 
