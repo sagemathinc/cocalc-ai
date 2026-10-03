@@ -58,7 +58,7 @@ export async function recordNextTurnFunding({
   path,
   thread_id,
   funding,
-  api = webapp_client.conat_client.hub.agent,
+  api,
 }: {
   project_id: string;
   path: string;
@@ -70,7 +70,12 @@ export async function recordNextTurnFunding({
   // Not cached: the same account may change the choice in another browser,
   // and the latest human send must win.
   try {
-    await api.setNextTurnFunding({ project_id, path, thread_id, funding });
+    // Resolved here, not as a default parameter: this runs fire-and-forget,
+    // so nothing may throw outside the try.
+    const target: FundingApi | undefined =
+      api ?? webapp_client.conat_client?.hub?.agent;
+    if (!target?.setNextTurnFunding) return;
+    await target.setNextTurnFunding({ project_id, path, thread_id, funding });
   } catch (err) {
     // The turn itself already succeeded; an older hub may lack this API.
     console.warn("could not record agent next-turn funding", err);

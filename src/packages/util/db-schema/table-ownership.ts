@@ -397,6 +397,10 @@ export const TABLE_OWNERSHIP = {
     ownership: "project-owning",
     authority: "project_id",
     portability: "unsupported",
+    secondary_reference_fields: {
+      account_id:
+        "Account whose own agent-message turns this record funds, not placement authority.",
+    },
     notes:
       "Per-account payment choice for a project-owned agent identity; lives with the identity in the project owning bay and is re-recorded by the next human send.",
   }),

@@ -93,3 +93,14 @@ test("recording never throws into the send path and skips non-chat paths", async
   });
   warn.mockRestore();
 });
+
+test("an unavailable hub client is ignored rather than crashing the send", async () => {
+  await expect(
+    recordNextTurnFunding({
+      project_id: "p",
+      path: "a.chat",
+      thread_id: "t",
+      funding: { version: 1, kind: "codex" },
+    }),
+  ).resolves.toBeUndefined();
+});
