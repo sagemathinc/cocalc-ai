@@ -345,8 +345,9 @@ describe("PublicApp", () => {
       />,
     );
 
-    expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
-    expect(screen.getByRole("link", { name: "Agents" })).not.toBeNull();
+    expect(
+      screen.getAllByRole("link", { name: /^Open / }).length,
+    ).toBeGreaterThan(0);
   });
 
   it("hides Agents on the landing page after loading the signed-in AI preference", async () => {
@@ -364,7 +365,9 @@ describe("PublicApp", () => {
         expect(bootstrap).toHaveBeenCalled();
         expect(screen.queryByRole("link", { name: "Agents" })).toBeNull();
       });
-      expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
+      expect(
+        screen.getAllByRole("link", { name: /^Open / }).length,
+      ).toBeGreaterThan(0);
     } finally {
       bootstrap.mockRestore();
     }
@@ -2300,11 +2303,13 @@ describe("feature configuration loading", () => {
       });
       expect(screen.queryByRole("status")).toBeNull();
       if (signedIn) {
-        expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
+        expect(
+          screen.getAllByRole("link", { name: /^Open / }).length,
+        ).toBeGreaterThan(0);
         expect(screen.queryByRole("link", { name: "Sign in" })).toBeNull();
       } else {
         expect(screen.getByRole("link", { name: "Sign in" })).not.toBeNull();
-        expect(screen.queryByRole("link", { name: "Projects" })).toBeNull();
+        expect(screen.queryByRole("link", { name: /^Open / })).toBeNull();
       }
     },
   );

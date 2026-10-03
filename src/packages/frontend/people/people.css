@@ -1,0 +1,29 @@
+/* The People tabs fill the page height, so an open conversation does too. */
+.people-tabs {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.people-tabs > .ant-tabs-content-holder {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.people-tabs > .ant-tabs-content-holder > .ant-tabs-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.people-tabs
+  > .ant-tabs-content-holder
+  > .ant-tabs-content
+  > .ant-tabs-tabpane:not(.ant-tabs-tabpane-hidden) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* Long collaborator or invite lists scroll here. */
+  overflow-y: auto;
+}

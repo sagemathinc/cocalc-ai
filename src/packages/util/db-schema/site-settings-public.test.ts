@@ -1,6 +1,47 @@
 import { buildPublicSiteSettings } from "./site-settings-public";
 
 describe("buildPublicSiteSettings", () => {
+  describe("browser versions", () => {
+    const frontend = 1_700_000_000; // the version of the frontend this build serves
+
+    it("never requires or recommends a newer frontend than the one served", () => {
+      const { configuration, version } = buildPublicSiteSettings(
+        {
+          version_min_browser: `${frontend + 100}`,
+          version_recommended_browser: `${frontend + 100}`,
+        },
+        frontend,
+      );
+      expect(version.version_min_browser).toBe(frontend);
+      expect(version.version_recommended_browser).toBe(frontend);
+      expect(configuration.version_min_browser).toBe(frontend);
+      expect(configuration.version_recommended_browser).toBe(frontend);
+    });
+
+    it("keeps lower versions, and the required version capped at the recommended one", () => {
+      const { version } = buildPublicSiteSettings(
+        {
+          version_min_browser: `${frontend - 10}`,
+          version_recommended_browser: `${frontend - 20}`,
+        },
+        frontend,
+      );
+      expect(version.version_recommended_browser).toBe(frontend - 20);
+      expect(version.version_min_browser).toBe(frontend - 20);
+    });
+
+    it("requires exactly the served version when both are set to it", () => {
+      const { version } = buildPublicSiteSettings(
+        {
+          version_min_browser: `${frontend}`,
+          version_recommended_browser: `${frontend}`,
+        },
+        frontend,
+      );
+      expect(version.version_min_browser).toBe(frontend);
+    });
+  });
+
   it("exposes the configured public status page URL", () => {
     expect(
       buildPublicSiteSettings({

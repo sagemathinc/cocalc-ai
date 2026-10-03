@@ -746,7 +746,9 @@ export function getLiveResponseBlocks(
           strength: item.strength,
         };
       }
-      activeSegmentBaseText = undefined;
+      // Keep the current segment's base: raw deltas continue the same message
+      // across tool events, and forgetting the base would make the next delta
+      // repeat the whole turn in the block after a guidance split.
       continue;
     }
 
@@ -761,6 +763,7 @@ export function getLiveResponseBlocks(
         latestFullHasDelta !== true
       ) {
         pendingGuidanceSplitBaseText = pendingAgentBoundary.baseText;
+        activeSegmentBaseText = undefined;
       }
       pendingAgentBoundary = undefined;
     }

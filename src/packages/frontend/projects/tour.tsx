@@ -12,10 +12,6 @@ import { SiteName } from "@cocalc/frontend/customize";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { labels } from "@cocalc/frontend/i18n";
 
-import { COLORS } from "@cocalc/util/theme";
-import collabsImage from "./tour-collabs.png";
-import projectsImage from "./tour-projects.png";
-
 export default function ProjectsPageTour({
   searchRef,
   filtersRef,
@@ -38,11 +34,10 @@ export default function ProjectsPageTour({
     {
       title: (
         <>
-          <Icon name="edit" /> The {projectsLabel} Page{" "}
+          <Icon name="folder-open" /> The {projectsLabel} Page{" "}
           <DocsLink slug="projects/project-list">(docs)</DocsLink>
         </>
       ),
-      cover: <img alt="" src={projectsImage} />,
       description: (
         <div>
           Welcome to <SiteName />
@@ -69,7 +64,7 @@ export default function ProjectsPageTour({
     {
       title: (
         <>
-          <Icon name="edit" /> {projectLabel} List
+          <Icon name="folder-open" /> {projectLabel} List
         </>
       ),
       description: (
@@ -90,10 +85,12 @@ export default function ProjectsPageTour({
             makes it easier to recognize.
           </p>
           <p>
-            Finally,{" "}
-            <Icon name="star-filled" style={{ color: COLORS.YELL_L }} />
-            -star a {projectLabelLower} to add it to the quick access row at the
-            top!
+            Finally, <Icon name="pushpin" /> pin a {projectLabelLower} to keep
+            it in the Pinned section at the top, and drag pins by their handle
+            to put them in the order you like. Switch between cards and a list
+            with the buttons above the list; select {projectsLabelLower} with
+            their checkboxes (shift-click selects a range) to start, stop, hide
+            or delete several at once.
           </p>
         </div>
       ),
@@ -103,22 +100,14 @@ export default function ProjectsPageTour({
     {
       title: (
         <>
-          <Icon name="search" /> Search and Filter
+          <Icon name="tags-outlined" /> Filter by hashtags
         </>
       ),
       description: (
         <div>
-          <p>
-            When you're working on multiple {projectsLabelLower}, the search
-            functionality helps in locating {projectsLabelLower} on your list
-            quickly. By utilizing hashtags in {projectLabelLower} titles or
-            descriptions, you can quickly locate and filter through{" "}
-            {projectsLabelLower}. The search box above allows you to use regular
-            expressions and negation to further narrow down your search results.
-            This allows you to easily identify and remove unnecessary{" "}
-            {projectsLabelLower}, as well as start and stop matching{" "}
-            {projectsLabelLower} with ease.
-          </p>
+          Put hashtags like #thesis in {projectLabelLower} titles or
+          descriptions, then pick them here to show only those{" "}
+          {projectsLabelLower}.
         </div>
       ),
       target: () => searchRef.current,
@@ -141,26 +130,16 @@ export default function ProjectsPageTour({
     {
       title: (
         <>
-          <Icon name="users" /> Collaborators & Sharing
+          <Icon name="search" /> Search
         </>
       ),
-      cover: <img alt="" src={collabsImage} />,
-      description: (
-        <div>
-          Expand a {projectLabelLower} via the <Icon name="plus-square" /> icon
-          to see and control collaborators on the {projectLabelLower}.
-          Collaborators can view, edit, and run calculations in realtime inside
-          the {projectLabelLower} – just like you!
-        </div>
-      ),
-    },
-    {
-      title: "Filename Search",
       target: () => filenameSearchRef.current,
       description: (
         <div>
-          This search box helps you to find a file you've worked on in the past.
-          It searches through filenames across {projectsLabelLower}.
+          Type to narrow the list (the same box as in the sidebar). Press Enter
+          to search everything: {projectsLabelLower} by name, file names and
+          file contents in your {projectsLabelLower}, agents, artifacts and
+          conversations.
         </div>
       ),
     },

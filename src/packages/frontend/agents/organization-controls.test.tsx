@@ -18,6 +18,7 @@ test("organization options are quiet until opened and Escape restores focus", as
       groupByProject={false}
       onMode={onMode}
       onGroupByProject={onGroupByProject}
+      onNewAgent={jest.fn()}
     />,
   );
   const trigger = screen.getByRole("button", { name: "Organize agents" });
@@ -36,4 +37,39 @@ test("organization options are quiet until opened and Escape restores focus", as
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("switch")).toBeNull();
   expect(document.activeElement).toBe(trigger);
+});
+
+test("New Agent appears below the Agents heading and before the filter in keyboard order", async () => {
+  const user = userEvent.setup();
+  const onNewAgent = jest.fn();
+  render(
+    <>
+      <AgentOrganizationControls
+        mode="recent"
+        groupByProject={false}
+        onMode={jest.fn()}
+        onGroupByProject={jest.fn()}
+        onNewAgent={onNewAgent}
+      />
+      <input aria-label="Filter agents" />
+    </>,
+  );
+  const heading = screen.getByText("Agents");
+  const create = screen.getByRole("button", { name: "New Agent" });
+  const filter = screen.getByRole("textbox", { name: "Filter agents" });
+  expect(heading.compareDocumentPosition(create)).toBe(
+    Node.DOCUMENT_POSITION_FOLLOWING,
+  );
+  expect(create.compareDocumentPosition(filter)).toBe(
+    Node.DOCUMENT_POSITION_FOLLOWING,
+  );
+  await user.tab();
+  expect(screen.getByRole("button", { name: "Organize agents" })).toHaveFocus();
+  await user.tab();
+  expect(create).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(onNewAgent).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("switch")).toBeNull();
+  await user.tab();
+  expect(filter).toHaveFocus();
 });

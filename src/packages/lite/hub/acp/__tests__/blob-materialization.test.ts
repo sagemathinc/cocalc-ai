@@ -1,7 +1,13 @@
+import { mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   acpImageAttachment,
+  CHAT_ATTACHMENT_MAX_AGE_MS,
   extractBlobReferences,
+  harnessAttachmentNote,
   projectBlobMaterializationRoots,
+  pruneChatAttachments,
   rewriteBlobReferencesInPrompt,
 } from "../blob-materialization";
 import { ACP_MAX_IMAGE_BYTES } from "@cocalc/util/ai/harness-limits";
@@ -41,7 +47,59 @@ describe("projectBlobMaterializationRoots", () => {
     ).toEqual({
       host: "/mnt/projects/project-1/.local/share/cocalc/tmp",
       runtime: "/home/user/.local/share/cocalc/tmp",
+      attachments: {
+        host: "/mnt/projects/project-1/.local/share/cocalc/chat-attachments",
+        runtime: "/home/user/.local/share/cocalc/chat-attachments",
+      },
     });
+  });
+});
+
+describe("harnessAttachmentNote", () => {
+  it("lists saved project paths under the same labels as the prompt", () => {
+    const ref = (uuid: string) => ({ url: `/blobs/x?uuid=${uuid}`, uuid });
+    const attachments = [
+      {
+        ref: ref("a"),
+        path: "/home/user/.local/share/cocalc/chat-attachments/a-x.png",
+      },
+      {
+        ref: ref("b"),
+        path: "/home/user/.local/share/cocalc/chat-attachments/b-y.png",
+      },
+    ];
+    const prompt = rewriteBlobReferencesInPrompt(
+      "see ![](/blobs/x?uuid=a) and ![](/blobs/x?uuid=b)",
+      attachments,
+    );
+    const note = harnessAttachmentNote(attachments);
+    expect(prompt).toBe("see [Attached image 1] and [Attached image 2]");
+    expect(note).toContain(
+      "[Attached image 1]: /home/user/.local/share/cocalc/chat-attachments/a-x.png",
+    );
+    expect(note).toContain(
+      "[Attached image 2]: /home/user/.local/share/cocalc/chat-attachments/b-y.png",
+    );
+    expect(note).toContain("kept for 14 days");
+    expect(harnessAttachmentNote([])).toBe("");
+  });
+});
+
+describe("pruneChatAttachments", () => {
+  it("removes only saved attachments older than the retention period", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "chat-attachments-"));
+    try {
+      const now = Date.now();
+      await writeFile(join(dir, "old.png"), "x");
+      await writeFile(join(dir, "new.png"), "x");
+      const old = (now - CHAT_ATTACHMENT_MAX_AGE_MS - 60_000) / 1000;
+      await utimes(join(dir, "old.png"), old, old);
+      expect(await pruneChatAttachments(dir, now)).toBe(1);
+      expect(await readdir(dir)).toEqual(["new.png"]);
+      expect(await pruneChatAttachments(join(dir, "missing"), now)).toBe(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 
