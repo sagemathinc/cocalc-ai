@@ -3,7 +3,13 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QuickProjectCreator } from "./quick-project-creator";
 
@@ -106,4 +112,48 @@ it("shows a creation error and stays open", async () => {
     "Project limit reached",
   );
   expect(onClose).not.toHaveBeenCalled();
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  expect(createProject).toHaveBeenCalledTimes(2);
 });
+
+it.each(["Enter", "click"])(
+  "shares a synchronous in-flight guard for %s followed by repeated Enter and click",
+  async (first) => {
+    let resolve!: (id: string) => void;
+    createProject.mockReturnValueOnce(
+      new Promise<string>((done) => {
+        resolve = done;
+      }),
+    );
+    const user = userEvent.setup();
+    const onClose = jest.fn();
+    render(
+      <QuickProjectCreator
+        open
+        defaultTitle="Thesis"
+        onClose={onClose}
+        onMoreOptions={jest.fn()}
+      />,
+    );
+    const input = screen.getByRole("textbox", { name: "Project name" });
+    const button = screen.getByRole("button", { name: /Create and open/ });
+    await waitFor(() => expect(input).toHaveFocus());
+    // Both events run before React can paint the loading/disabled button.
+    act(() => {
+      if (first === "Enter")
+        fireEvent.keyDown(input, { key: "Enter", code: "Enter", keyCode: 13 });
+      else fireEvent.click(button);
+      fireEvent.keyDown(input, { key: "Enter", code: "Enter", keyCode: 13 });
+    });
+    input.focus();
+    await user.keyboard("{Enter}{Enter}");
+    expect(input).toHaveFocus();
+    await user.click(button);
+    expect(createProject).toHaveBeenCalledTimes(1);
+    expect(button).toBeDisabled();
+    await act(async () => resolve("new-project-id"));
+    expect(openProject).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  },
+);

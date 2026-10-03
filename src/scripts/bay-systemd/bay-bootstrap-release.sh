@@ -533,10 +533,10 @@ function normalizeBuild(manifest, root, allowScan) {
   if (!rawAssets?.length) {
     throw new Error(`frontend manifest in ${root} has no asset inventory`);
   }
-  if (rawAssets.length > MAX_ASSETS) {
+  const assets = [...new Set(rawAssets.map(safeAsset))].sort();
+  if (assets.length > MAX_ASSETS) {
     throw new Error(`frontend asset manifest exceeds ${MAX_ASSETS} files`);
   }
-  const assets = [...new Set(rawAssets.map(safeAsset))].sort();
   for (const asset of assets) {
     const filename = path.resolve(targetRoot, asset);
     if (!filename.startsWith(`${path.resolve(targetRoot)}${path.sep}`)) {

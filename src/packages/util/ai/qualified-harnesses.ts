@@ -31,6 +31,11 @@ export type QualifiedHarnessCandidate = {
   releaseGates: readonly string[];
 };
 
+// Installation identity is separate from the upstream npm version. Bump this
+// revision whenever either pinned archive changes; never replace an active tree.
+export const CLAUDE_CODE_INSTALL_REVISION = "0.81.1-r1";
+export const CLAUDE_CODE_INSTALL_ROOT = `/opt/cocalc/harnesses/claude-code/${CLAUDE_CODE_INSTALL_REVISION}`;
+
 /**
  * Pinned qualification input, not yet a user-visible catalog entry.
  *
@@ -52,7 +57,7 @@ export const CLAUDE_CODE_QUALIFICATION: QualifiedHarnessCandidate = {
   },
   launch: {
     binary: "claude-agent-acp",
-    executable: "/opt/cocalc/harnesses/claude-code/0.81.1/bin/claude-agent-acp",
+    executable: `${CLAUDE_CODE_INSTALL_ROOT}/bin/claude-agent-acp`,
     requiredArgs: ["--hide-claude-auth"],
     projectSecret: {
       name: "ANTHROPIC_API_KEY",

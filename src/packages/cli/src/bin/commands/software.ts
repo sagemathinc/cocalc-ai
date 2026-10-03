@@ -1696,7 +1696,7 @@ function frontendAssetsFromHistory(value: unknown): string[] {
   if (history.builds.length < 1 || history.builds.length > 2) {
     throw new Error("frontend asset history must contain one or two builds");
   }
-  const assets: string[] = [];
+  const assets = new Set<string>();
   for (const build of history.builds) {
     if (!Array.isArray(build?.assets) || build.assets.length === 0) {
       throw new Error("frontend asset history contains an empty build");
@@ -1715,13 +1715,13 @@ function frontendAssetsFromHistory(value: unknown): string[] {
           `frontend asset history contains unsafe path: ${asset}`,
         );
       }
-      assets.push(asset);
-      if (assets.length > 10_000) {
+      assets.add(asset);
+      if (assets.size > 10_000) {
         throw new Error("frontend asset history exceeds 10000 files");
       }
     }
   }
-  return [...new Set(assets)];
+  return [...assets];
 }
 
 async function smokeFrontendAssetHistory({

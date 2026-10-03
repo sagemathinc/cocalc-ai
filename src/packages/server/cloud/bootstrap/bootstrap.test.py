@@ -1743,6 +1743,9 @@ class ManagedHarnessTest(unittest.TestCase):
             {"name": "other"}, {"version": "../0.81.1"}, {"version": "0.81.2"},
             {"os": "darwin"}, {"arch": "arm64"}, {"arch": "other"},
             {"url": "relative.tar.xz"}, {"url": "https://example.org/path\n"},
+            {"install_revision": "../outside"}, {"install_revision": ""},
+            {"install_revision": "0.81.1-r0"}, {"install_revision": "0.81.2-r1"},
+            {"install_revision": 1}, {"install_revision": "0.81.1-r1/child"},
         ):
             with self.subTest(change=change), self.assertRaises(RuntimeError):
                 bootstrap.parse_managed_harness({**state["managed_harness"], **change}, "linux", "amd64")
@@ -1790,6 +1793,48 @@ class ManagedHarnessTest(unittest.TestCase):
         with mock.patch.object(bootstrap.os, "uname", return_value=type("Uname", (), {"sysname": "Linux", "machine": "aarch64"})()):
             bootstrap.install_managed_harness(cfg)
             self.assertTrue(bootstrap.verify_managed_harness(cfg))
+
+    def test_patched_revision_preserves_legacy_tree_and_can_roll_back(self) -> None:
+        old = self.archive_config()
+        bootstrap.install_managed_harness(old)
+        marker = self.destination / bootstrap.MANAGED_HARNESS_MARKER
+        old_marker = marker.read_bytes()
+        self.assertNotIn("install_revision", json.loads(old_marker)["artifact"])
+        old_tree = bootstrap._managed_harness_tree_sha256(self.destination)
+        new = self.archive_config([self.entry(f"{self.prefix}/patch", b"rate-limit patch")])
+        self.assertNotEqual(old.managed_harness.sha256, new.managed_harness.sha256)
+        # Republished bytes still fail closed if the installation identity is reused.
+        with self.assertRaisesRegex(RuntimeError, "Unverified managed harness collision"):
+            bootstrap.install_managed_harness(new)
+        new = replace(new, managed_harness=replace(new.managed_harness, install_revision="0.81.1-r1"))
+        self.assertEqual(
+            bootstrap.parse_managed_harness(bootstrap.build_desired_state(new)["managed_harness"], "linux", "amd64"),
+            new.managed_harness,
+        )
+        bootstrap.install_managed_harness(new)
+        revision = self.root / "claude-code/0.81.1-r1"
+        self.assertEqual((revision / "patch").read_bytes(), b"rate-limit patch")
+        self.assertTrue(bootstrap.verify_managed_harness(new))
+        self.assertEqual(marker.read_bytes(), old_marker)
+        self.assertEqual(bootstrap._managed_harness_tree_sha256(self.destination), old_tree)
+        with mock.patch.object(bootstrap, "download_file", side_effect=AssertionError("downloaded again")):
+            bootstrap.install_managed_harness(new)
+            bootstrap.install_managed_harness(old)
+        self.assertTrue(bootstrap.verify_managed_harness(old))
+        # A new revision is not an exemption from integrity checks.
+        (revision / "patch").write_bytes(b"tampered")
+        with self.assertRaisesRegex(RuntimeError, "Unverified managed harness collision"):
+            bootstrap.install_managed_harness(new)
+
+    def test_unverified_revision_is_not_adopted(self) -> None:
+        cfg = self.archive_config()
+        cfg = replace(cfg, managed_harness=replace(cfg.managed_harness, install_revision="0.81.1-r1"))
+        destination = self.root / "claude-code/0.81.1-r1"
+        destination.mkdir(parents=True)
+        (destination / "keep").write_text("operator evidence")
+        with self.assertRaisesRegex(RuntimeError, "Unverified managed harness collision"):
+            bootstrap.install_managed_harness(cfg)
+        self.assertEqual((destination / "keep").read_text(), "operator evidence")
 
     def test_legacy_install_does_nothing(self) -> None:
         with mock.patch.object(bootstrap, "download_file") as download:

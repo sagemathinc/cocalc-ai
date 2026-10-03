@@ -163,7 +163,9 @@ export function normalizeConversationTitle(title: unknown): string {
 // the client spelled it (relative to HOME, "~/", duplicate slashes, ...).
 export function normalizeConversationPath(path: unknown): string {
   let value = `${path ?? ""}`.trim();
-  if (value === "~" || value.startsWith("~/")) value = value.slice(1);
+  if (value === "~" || value.startsWith("~/")) {
+    value = `${DEFAULT_PROJECT_RUNTIME_HOME}/${value.slice(2)}`;
+  }
   if (!value) throw Error("conversation path is required");
   const normalized = normalizeAbsolutePath(
     value.startsWith("/") ? value : value.replace(/^\/+/, ""),

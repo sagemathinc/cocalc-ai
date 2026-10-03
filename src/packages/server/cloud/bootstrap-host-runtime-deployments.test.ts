@@ -288,6 +288,7 @@ describe("bootstrap-host promoted artifact defaults", () => {
     expect(scripts.managedHarness).toEqual({
       name: "claude-code",
       version: "0.81.1",
+      install_revision: "0.81.1-r1",
       os: "linux",
       arch: "amd64",
       sha256:
@@ -309,6 +310,7 @@ describe("bootstrap-host promoted artifact defaults", () => {
     expect(arm64).toMatchObject({
       name: "claude-code",
       version: "0.81.1",
+      install_revision: "0.81.1-r1",
       os: "linux",
       arch: "arm64",
       sha256:

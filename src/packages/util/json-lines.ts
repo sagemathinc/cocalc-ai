@@ -43,10 +43,30 @@ export class JsonLineReader extends EventEmitter {
   private decoder = new StringDecoder("utf8");
   private closed = false;
   private queue: string[] = [];
-  private waiting: ((result: IteratorResult<string>) => void) | undefined;
+  private waiting: {
+    resolve: (result: IteratorResult<string>) => void;
+    reject: (error: Error) => void;
+  }[] = [];
+  private error?: Error;
   private iterating = false;
   private readonly onData = (chunk: Buffer | string) => this.push(chunk);
   private readonly onEnd = () => this.finish();
+  private readonly onError = (error: Error) => {
+    if (this.closed) return;
+    this.error = error;
+    this.queue = [];
+    this.buffer = "";
+    for (const { reject } of this.waiting.splice(0)) reject(error);
+    try {
+      // Async consumers receive the error through next(), not an unhandled
+      // EventEmitter error. Event-based consumers retain the usual contract.
+      if (!this.iterating || this.listenerCount("error") > 0) {
+        this.emit("error", error);
+      }
+    } finally {
+      this.close();
+    }
+  };
 
   constructor(
     private readonly input: NodeJS.ReadableStream,
@@ -67,10 +87,7 @@ export class JsonLineReader extends EventEmitter {
     this.input.on("data", this.onData);
     this.input.on("end", this.onEnd);
     this.input.on("close", this.onEnd);
-    this.input.on("error", (error) => {
-      this.emit("error", error);
-      this.finish();
-    });
+    this.input.on("error", this.onError);
   }
 
   private push(chunk: Buffer | string) {
@@ -99,9 +116,9 @@ export class JsonLineReader extends EventEmitter {
       return;
     }
     if (this.iterating) {
-      if (this.waiting) {
-        const resolve = this.waiting;
-        this.waiting = undefined;
+      const waiting = this.waiting.shift();
+      if (waiting) {
+        const { resolve } = waiting;
         resolve({ value: line, done: false });
       } else {
         this.queue.push(line);
@@ -126,9 +143,9 @@ export class JsonLineReader extends EventEmitter {
     this.input.removeListener("data", this.onData);
     this.input.removeListener("end", this.onEnd);
     this.input.removeListener("close", this.onEnd);
-    if (this.waiting) {
-      const resolve = this.waiting;
-      this.waiting = undefined;
+    this.input.removeListener("error", this.onError);
+    this.buffer = "";
+    for (const { resolve } of this.waiting.splice(0)) {
       resolve({ value: undefined, done: true });
     }
     this.emit("close");
@@ -139,6 +156,7 @@ export class JsonLineReader extends EventEmitter {
     this.start();
     return {
       next: () => {
+        if (this.error) return Promise.reject(this.error);
         const line = this.queue.shift();
         if (line !== undefined) {
           if (this.queue.length < 100) this.input.resume?.();
@@ -146,7 +164,9 @@ export class JsonLineReader extends EventEmitter {
         }
         if (this.closed)
           return Promise.resolve({ value: undefined, done: true });
-        return new Promise((resolve) => (this.waiting = resolve));
+        return new Promise((resolve, reject) =>
+          this.waiting.push({ resolve, reject }),
+        );
       },
       return: () => {
         this.close();

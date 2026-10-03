@@ -34,6 +34,7 @@ export function QuickProjectCreator({
   const [title, setTitle] = useState(defaultTitle);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const creating = useRef(false);
   const inputRef = useRef<InputRef>(null);
   useEffect(() => {
     if (!open) return;
@@ -58,6 +59,7 @@ export function QuickProjectCreator({
   ].filter(Boolean);
 
   async function create() {
+    if (creating.current) return;
     const name = title.trim();
     if (!name) {
       setError("Please name your project.");
@@ -67,19 +69,20 @@ export function QuickProjectCreator({
       setError("No image is available yet; try More options.");
       return;
     }
+    creating.current = true;
     setBusy(true);
     setError("");
-    const opts = projectDraftToCreateOptions({
-      ...draft,
-      title: name,
-      start: true,
-    });
-    if (!runtime.rootfs) {
-      delete opts.rootfs_image;
-      delete opts.rootfs_image_id;
-    }
-    if (!runtime.host_placement) delete opts.host_id;
     try {
+      const opts = projectDraftToCreateOptions({
+        ...draft,
+        title: name,
+        start: true,
+      });
+      if (!runtime.rootfs) {
+        delete opts.rootfs_image;
+        delete opts.rootfs_image_id;
+      }
+      if (!runtime.host_placement) delete opts.host_id;
       const actions = redux.getActions("projects");
       const project_id = await actions.create_project(opts);
       actions.open_project({ project_id, target: "files/", switch_to: true });
@@ -87,6 +90,7 @@ export function QuickProjectCreator({
     } catch (err) {
       setError(`${err}`.replace(/^Error: /, ""));
     } finally {
+      creating.current = false;
       setBusy(false);
     }
   }
@@ -111,7 +115,7 @@ export function QuickProjectCreator({
           <Button
             type="primary"
             loading={busy}
-            disabled={!title.trim()}
+            disabled={busy || !title.trim()}
             icon={<Icon name="arrow-right" />}
             onClick={() => void create()}
           >

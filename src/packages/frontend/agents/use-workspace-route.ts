@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { redux } from "@cocalc/frontend/app-framework";
-import { set_url } from "@cocalc/frontend/history";
+import { replace_url } from "@cocalc/frontend/history";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 
 export function useWorkspaceRoute({
@@ -26,7 +26,7 @@ export function useWorkspaceRoute({
       });
     }
     if (activeAgentId !== selected.name) {
-      set_url(getPageUrlPath({ page: "agents", agent_id: selected.name }));
+      replace_url(getPageUrlPath({ page: "agents", agent_id: selected.name }));
     }
   }, [active, activeAgentId, selected?.endpoint.agent_id, selected?.name]);
 }

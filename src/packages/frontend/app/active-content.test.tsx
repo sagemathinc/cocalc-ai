@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { Map } from "immutable";
 import { ActiveContent } from "./active-content";
 import { recordSignedInSurfaceReady } from "./bootstrap-ux-latency";
+import { replace_url } from "@cocalc/frontend/history";
 
 let disabled: boolean | undefined;
 let mockLite = false;
@@ -11,6 +12,8 @@ let activeTab = "agents";
 let openProjects: string[] = [];
 let mockFullscreen: string | undefined;
 let mockExam = false;
+let overviewOpen = false;
+jest.mock("@cocalc/frontend/history", () => ({ replace_url: jest.fn() }));
 jest.mock("@cocalc/frontend/lite", () => ({
   get lite() {
     return mockLite;
@@ -19,11 +22,14 @@ jest.mock("@cocalc/frontend/lite", () => ({
 let accountId: string | undefined;
 const accountBindings: Array<{ assertCurrent: () => void }> = [];
 const copied = jest.fn();
-const actions = { set_active_tab: jest.fn() };
+const actions = { set_active_tab: jest.fn(), setState: jest.fn() };
 jest.mock("@cocalc/frontend/app-framework", () => ({
   React: { ...require("react"), memo: (component) => component },
   useActions: () => actions,
-  redux: { getStore: () => ({ get: () => accountId }) },
+  redux: {
+    getStore: () => ({ get: () => accountId }),
+    getActions: () => actions,
+  },
   useTypedRedux: (store, field) => {
     if (store === "page" && field === "active_top_tab") return activeTab;
     if (store === "page" && field === "fullscreen") return mockFullscreen;
@@ -60,6 +66,7 @@ jest.mock("./bootstrap-ux-latency", () => ({
 jest.mock("./startup-phase", () => ({ markStartupPhaseOnce: jest.fn() }));
 jest.mock("./route-components", () => ({
   PeoplePage: () => <section aria-label="People page" />,
+  AccountPage: () => <section aria-label="Account settings" />,
   ProjectsPage: () => (
     <section aria-label="Projects">
       <input aria-label="Filter projects" />
@@ -70,8 +77,20 @@ jest.mock("./route-components", () => ({
       <input aria-label="Editor text" />
     </section>
   ),
-  MyAgentsWorkspacePage: ({ children, contentLabel, contentNavigation }) => {
+  MyAgentsWorkspacePage: ({
+    children,
+    contentLabel,
+    contentNavigation,
+    active,
+    agentRouteActive = active,
+  }) => {
     lastContentNavigation = contentNavigation;
+    const { useWorkspaceRoute } = require("../agents/use-workspace-route");
+    useWorkspaceRoute({
+      active: agentRouteActive && !(overviewOpen && contentLabel == null),
+      activeAgentId: "id",
+      selected: { name: "reviewer", endpoint: { agent_id: "id" } },
+    });
     const { useBoundAgentAccount } = require("../agents/use-bound-account");
     const binding = useBoundAgentAccount();
     accountBindings.push(binding);
@@ -98,11 +117,35 @@ beforeEach(() => {
   openProjects = [];
   mockFullscreen = undefined;
   mockExam = false;
+  overviewOpen = false;
   disabled = undefined;
   accountId = undefined;
   accountBindings.length = 0;
   jest.clearAllMocks();
 });
+
+it.each(["projects", "account"])(
+  "keeps the shell mounted without agent routing over %s after the overview",
+  (tab) => {
+    const { rerender } = render(<ActiveContent />);
+    const shell = screen.getByRole("region", { name: "Agents workspace" });
+    expect(replace_url).toHaveBeenCalled();
+    overviewOpen = true;
+    rerender(<ActiveContent />);
+    jest.mocked(replace_url).mockClear();
+    activeTab = tab;
+    rerender(<ActiveContent />);
+    expect(screen.getByRole("region", { name: "Agents workspace" })).toBe(
+      shell,
+    );
+    expect(replace_url).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("region", {
+        name: tab === "projects" ? "Projects" : "Account settings",
+      }),
+    ).toBeVisible();
+  },
+);
 
 it("AI-disabled accounts use the same workspace, redirected from Agents", () => {
   disabled = true;

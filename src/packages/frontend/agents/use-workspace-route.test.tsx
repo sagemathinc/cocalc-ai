@@ -1,10 +1,10 @@
 import { renderHook } from "@testing-library/react";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { useWorkspaceRoute } from "./use-workspace-route";
-import { set_url } from "@cocalc/frontend/history";
+import { replace_url } from "@cocalc/frontend/history";
 
 const setState = jest.fn();
-jest.mock("@cocalc/frontend/history", () => ({ set_url: jest.fn() }));
+jest.mock("@cocalc/frontend/history", () => ({ replace_url: jest.fn() }));
 jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
     getActions: () => ({ setState }),
@@ -26,8 +26,8 @@ test("inactive directory refresh cannot overwrite a project URL; reactivation sy
     },
   );
   view.rerender({ active: false, selected: { ...agent, name: "new-name" } });
-  expect(set_url).not.toHaveBeenCalled();
+  expect(replace_url).not.toHaveBeenCalled();
   expect(setState).not.toHaveBeenCalled();
   view.rerender({ active: true, selected: { ...agent, name: "new-name" } });
-  expect(set_url).toHaveBeenCalledWith(expect.stringContaining("new-name"));
+  expect(replace_url).toHaveBeenCalledWith(expect.stringContaining("new-name"));
 });
