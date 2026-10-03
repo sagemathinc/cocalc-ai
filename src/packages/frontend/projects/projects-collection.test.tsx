@@ -259,3 +259,37 @@ it("grid cards: role only when not Owner; card opens, checkbox does not", async 
     expect.objectContaining({ project_id: "p2" }),
   );
 });
+
+// An instructor of a large course can have thousands of projects.
+describe("many projects", () => {
+  const original = [...mockRecords];
+  beforeEach(() => {
+    mockRecords.splice(
+      0,
+      mockRecords.length,
+      ...Array.from({ length: 1000 }, (_, i) =>
+        record(`p${i}`, `Project ${i}`),
+      ),
+    );
+  });
+  afterEach(() => {
+    mockRecords.splice(0, mockRecords.length, ...original);
+  });
+
+  it("renders nothing until the scroll container mounts", () => {
+    view({ scrollParent: null });
+    expect(screen.queryAllByRole("button", { name: /^Open project/ })).toEqual(
+      [],
+    );
+  });
+
+  it("renders only a window of the cards in the scroll container", () => {
+    const scrollParent = document.createElement("div");
+    document.body.appendChild(scrollParent);
+    view({ scrollParent });
+    expect(
+      screen.queryAllByRole("button", { name: /^Open project/ }).length,
+    ).toBeLessThan(100);
+    scrollParent.remove();
+  });
+});
