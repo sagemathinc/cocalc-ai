@@ -1623,6 +1623,7 @@ class ManagedHarnessSpec:
     arch: str
     url: str
     sha256: str
+    install_revision: str | None = None
 
 
 MANAGED_HARNESSES_ROOT = Path("/opt/cocalc/harnesses")
@@ -1640,10 +1641,16 @@ def parse_managed_harness(
     spec = ManagedHarnessSpec(**{
         field: _ensure_str(value.get(field), f"managed_harness.{field}")
         for field in fields
-    })
+    }, install_revision=value.get("install_revision"))
     _require(
         spec.name == "claude-code" and spec.version == "0.81.1",
         "unsupported managed harness name/version",
+    )
+    _require(
+        spec.install_revision is None
+        or (isinstance(spec.install_revision, str)
+            and re.fullmatch(re.escape(spec.version) + r"-r[1-9][0-9]*", spec.install_revision) is not None),
+        "invalid managed harness installation revision",
     )
     _require(
         spec.os == expected_os == "linux"
@@ -11101,7 +11108,8 @@ def _managed_harness_directory(path: Path, *, create: bool = False) -> None:
 
 
 def _managed_harness_identity(spec: ManagedHarnessSpec) -> dict[str, str]:
-    return {key: value for key, value in asdict(spec).items() if key != "url"}
+    # Preserve verification of pre-revision markers and rollback configurations.
+    return {key: value for key, value in asdict(spec).items() if key != "url" and value is not None}
 
 
 def _managed_harness_file_sha256(path: Path) -> str:
@@ -11190,7 +11198,7 @@ def verify_managed_harness(cfg: BootstrapConfig) -> bool:
     parse_managed_harness(asdict(spec), cfg.expected_os, cfg.expected_arch)
     ensure_platform(cfg)
     root = MANAGED_HARNESSES_ROOT
-    destination = root / spec.name / spec.version
+    destination = root / spec.name / (spec.install_revision or spec.version)
     # Inspect ancestors even if the final version is absent; never follow a
     # runtime-writable or redirected installation root.
     for path in (root.parent, root, root / spec.name, destination):
@@ -11302,7 +11310,9 @@ def install_managed_harness(cfg: BootstrapConfig) -> None:
     root = MANAGED_HARNESSES_ROOT
     for path in (root.parent, root, root / spec.name):
         _managed_harness_directory(path, create=True)
-    destination = root / spec.name / spec.version
+    # Patched payloads may retain their npm version. Install them alongside the
+    # old revision so running controllers and rollback targets keep their bytes.
+    destination = root / spec.name / (spec.install_revision or spec.version)
     # The private staging directory is on the destination filesystem; only a
     # complete verified tree and its marker become visible in the final rename.
     with tempfile.TemporaryDirectory(prefix=".install-", dir=root) as temporary:
