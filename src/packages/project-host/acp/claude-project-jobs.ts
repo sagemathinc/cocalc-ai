@@ -196,7 +196,7 @@ export class ClaudeProjectJobs {
     return this.wait({ job_id: job.id, cursor: 0, yield_time_ms: waitMs });
   }
 
-  /** Every file/image/memory step shares command admission and cleanup accounting. */
+  /** File/image/memory steps share host admission and command cleanup fencing. */
   readonly executeTool: ProjectJobExecutor = async (
     script,
     cwd,
@@ -205,8 +205,7 @@ export class ClaudeProjectJobs {
   ) => {
     this.assertOpen();
     signal.throwIfAborted();
-    const job = this.createJob(options.timeoutMs, "");
-    job.transient = true;
+    const job = this.createJob(options.timeoutMs, "", undefined, true);
     const abort = () => this.stop(job, "canceled");
     signal.addEventListener("abort", abort, { once: true });
     const result = this.run(job, script, cwd, options)
@@ -227,12 +226,15 @@ export class ClaudeProjectJobs {
     timeoutMs: number,
     fingerprint: string,
     requestId?: string,
+    transient = false,
   ): Job {
     this.assertOpen();
     this.prune();
     if (
-      [...this.jobs.values()].filter((job) => job.finished === undefined)
-        .length >= 4
+      !transient &&
+      [...this.jobs.values()].filter(
+        (job) => !job.transient && job.finished === undefined,
+      ).length >= 4
     )
       throw Error(
         "Four project jobs are already running; wait or cancel before starting another",
@@ -241,15 +243,20 @@ export class ClaudeProjectJobs {
       throw Error(
         "Project host command capacity reached; wait before starting another job",
       );
-    if (this.jobs.size >= 32) {
+    // File/image/memory steps use host capacity, not command slots or history.
+    if (
+      !transient &&
+      [...this.jobs.values()].filter((job) => !job.transient).length >= 32
+    ) {
       const oldest = [...this.jobs.values()].find(
-        (job) => job.finished !== undefined,
+        (job) => !job.transient && job.finished !== undefined,
       );
       if (!oldest) throw Error("Project job limit reached");
       this.jobs.delete(oldest.id);
     }
     const job: Job = {
       id: randomUUID(),
+      transient,
       requestId,
       fingerprint,
       abort: new AbortController(),

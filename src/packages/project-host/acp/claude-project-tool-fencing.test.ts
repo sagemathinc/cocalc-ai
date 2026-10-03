@@ -188,7 +188,7 @@ function fixture() {
 }
 
 test.each([0, 1])(
-  "commands and synchronous tools share capacity and cancel siblings when execution %i fails cleanup",
+  "commands and synchronous tools cancel siblings when execution %i fails cleanup",
   async (failed) => {
     const { jobs, runs, execute, tool, close } = fixture();
     const results: Promise<unknown>[] = [];
@@ -198,8 +198,6 @@ test.each([0, 1])(
       await Promise.resolve();
       expect(jobs.running).toBe(true);
       expect(jobs.list().jobs).toHaveLength(1);
-      await expect(tool()).rejects.toThrow("Four");
-      await expect(jobs.start({ script: "extra" })).rejects.toThrow("Four");
       expect(execute).toHaveBeenCalledTimes(4);
       runs[failed].finish({ ...ok, cleanupConfirmed: false });
       await new Promise<void>((resolve) => setImmediate(resolve));
@@ -224,6 +222,79 @@ test.each([0, 1])(
     }
   },
 );
+
+test("tool steps neither consume nor require the four background command slots", async () => {
+  const { jobs, runs, tool, close } = fixture();
+  const results: Promise<unknown>[] = [];
+  try {
+    for (let i = 0; i < 3; i++)
+      await jobs.start({ script: `command ${i}`, yield_time_ms: 0 });
+    for (let i = 0; i < 5; i++) results.push(tool().catch((error) => error));
+    await jobs.start({ script: "fourth command", yield_time_ms: 0 });
+    await expect(
+      jobs.start({ script: "fifth command", yield_time_ms: 0 }),
+    ).rejects.toThrow("Four");
+    const atCapacity = tool();
+    results.push(atCapacity);
+    await Promise.resolve();
+    expect(jobs.list().jobs).toHaveLength(4);
+    expect(runs).toHaveLength(10);
+    runs[9].finish(ok);
+    await expect(atCapacity).resolves.toEqual(ok);
+  } finally {
+    await close();
+    await Promise.all(results);
+  }
+});
+
+test("tool steps in one session retain the 64-execution host limit", async () => {
+  const { runs, tool, close } = fixture();
+  const results: Promise<unknown>[] = [];
+  try {
+    for (let i = 0; i < 64; i++) results.push(tool().catch((error) => error));
+    await expect(tool()).rejects.toThrow("host command capacity");
+    await Promise.resolve();
+    expect(runs).toHaveLength(64);
+    runs[0].finish(ok);
+    await results[0];
+    const next = tool();
+    results.push(next);
+    await Promise.resolve();
+    expect(runs).toHaveLength(65);
+    runs[64].finish(ok);
+    await expect(next).resolves.toEqual(ok);
+  } finally {
+    await close();
+    await Promise.all(results);
+  }
+});
+
+test("transient tools do not exhaust or evict retained command history", async () => {
+  const { jobs, runs, tool, close } = fixture();
+  const results: Promise<unknown>[] = [];
+  try {
+    for (let i = 0; i < 32; i++) {
+      const command = await jobs.start({
+        script: `command ${i}`,
+        yield_time_ms: 0,
+      });
+      runs[i].finish(ok);
+      await jobs.wait({ job_id: command.job_id, yield_time_ms: 1000 });
+    }
+    const history = jobs.list().jobs;
+    expect(history).toHaveLength(32);
+    for (let i = 0; i < 32; i++) results.push(tool().catch((error) => error));
+    await Promise.resolve();
+    expect(runs).toHaveLength(64);
+    expect(jobs.list().jobs).toEqual(history);
+    await jobs.start({ script: "new command", yield_time_ms: 0 });
+    expect(runs).toHaveLength(65);
+    expect(jobs.list().jobs).toHaveLength(32);
+  } finally {
+    await close();
+    await Promise.all(results);
+  }
+});
 
 test.each(["cancel", "close", "signal", "deadline"])(
   "%s aborts synchronous tools and retains their reservation until settlement",
@@ -355,19 +426,19 @@ test("successful tool steps release capacity, preserve output, and do not fill c
 test("early cleanup proofs and caller abort do not free capacity before executor settlement", async () => {
   const { jobs, runs, tool, close } = fixture();
   const controller = new AbortController();
-  const results = Array.from({ length: 4 }, () =>
+  const results = Array.from({ length: 64 }, () =>
     tool(controller.signal).catch((error) => error),
   );
   try {
     await Promise.resolve();
     for (const run of runs) run.options.onCleanupConfirmed();
     controller.abort();
-    await expect(tool()).rejects.toThrow("Four");
+    await expect(tool()).rejects.toThrow("host command capacity");
     runs[0].finish(ok);
     expect(await results[0]).toMatchObject({ name: "AbortError" });
     const next = tool();
     await Promise.resolve();
-    runs[4].finish(ok);
+    runs[64].finish(ok);
     expect(await next).toEqual(ok);
     expect(jobs.running).toBe(false);
   } finally {
