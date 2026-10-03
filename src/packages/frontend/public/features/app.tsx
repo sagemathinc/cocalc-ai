@@ -60,6 +60,7 @@ const { Paragraph, Text, Title } = Typography;
 
 interface FeaturesConfig {
   cocalc_product?: string;
+  dns?: string;
   help_email?: string;
   is_authenticated?: boolean;
   logo_square?: string;
@@ -721,6 +722,7 @@ function FeatureDetail({
       <ResearchComputeFeaturePage
         helpEmail={helpEmail}
         isAuthenticated={isAuthenticated}
+        page={page}
       />
     );
   }

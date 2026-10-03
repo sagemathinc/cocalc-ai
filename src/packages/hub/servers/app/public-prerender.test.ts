@@ -495,6 +495,138 @@ describe("feature initial HTML product availability", () => {
     },
   );
 
+  it.each(["/", "/prefix"])(
+    "renders the research compute record that the React page renders, on %s",
+    (basePath) => {
+      // cocalc.ai is Launchpad on the canonical host.
+      const config = { cocalc_product: "launchpad", dns: "cocalc.ai" };
+      const page = getPublicFeaturePage("research-compute", config)!;
+      const html = renderPublicRoutePrerender(
+        { section: "features", route: { view: "detail", slug: page.slug } },
+        basePath,
+        config,
+      );
+      const prefix = basePath === "/" ? "" : basePath;
+
+      expect(html).toContain(`<h1>${page.metadataTitle}</h1>`);
+      expect(page.sections).toHaveLength(2);
+      const [options, sizing] = page.sections!;
+      for (const text of [
+        `<p>${page.tagline}</p>`,
+        `<p>${page.summary}</p>`,
+        ...page.sections!.flatMap(({ paragraphs, title }) => [
+          `<h2>${title}</h2>`,
+          ...paragraphs!.map((paragraph) => `<p>${paragraph}</p>`),
+        ]),
+        ...options.cards!.map(
+          ({ body, title }) => `<h3>${title}</h3><p>${body}</p>`,
+        ),
+        `<details><summary>${sizing.detailsLabel}</summary><ul>${sizing
+          .bullets!.map((bullet) => `<li>${bullet}</li>`)
+          .join("")}</ul></details>`,
+      ]) {
+        expect(html).toContain(text);
+      }
+      const links = [
+        ...options.cards!.flatMap(({ link }) => (link ? [link] : [])),
+        ...sizing.links!,
+      ];
+      expect(links.map(({ href }) => href)).toEqual([
+        "/docs/hosts/project-hosts",
+        "/docs/jupyter/remote-kernels",
+        "/docs/hosts/choose-compute",
+      ]);
+      for (const { href, label } of links) {
+        expect(html).toContain(`href="${prefix}${href}">${label}</a>`);
+      }
+      expect(page.signUpLabel).toBe("Start on CoCalc.ai");
+      expect(html).toContain(
+        `href="${prefix}/auth/sign-up">${page.signUpLabel}</a>`,
+      );
+      expect(html).not.toContain("Start using CoCalc");
+      // Managed VMs stay off the page, as an option, a detail or a guide
+      // link, until they are generally available.
+      expect(html).not.toMatch(/\bVMs?\b|virtual machines?|\bWindows\b/i);
+      expect(html).not.toContain("projects/virtual-machines");
+    },
+  );
+
+  // Other sites, such as a customer-operated Launchpad or Rocket site, get
+  // the same page without CoCalc.ai's cost line and with the default sign-up
+  // label, as the React page does.
+  it.each([
+    ["launchpad", "launchpad.example.edu", "/"],
+    ["rocket", "compute.example.edu", "/"],
+    ["rocket", "compute.example.edu", "/prefix"],
+  ])(
+    "leaves CoCalc.ai's sign-up and billing off research compute for %s on %s%s",
+    (cocalc_product, dns, basePath) => {
+      const route = {
+        section: "features" as const,
+        route: { view: "detail" as const, slug: "research-compute" },
+      };
+      const cocalcAiConfig = { cocalc_product: "launchpad", dns: "cocalc.ai" };
+      const costLine = getPublicFeaturePage("research-compute", cocalcAiConfig)!
+        .sections![0].paragraphs![0];
+      const onCocalcAi = renderPublicRoutePrerender(
+        route,
+        basePath,
+        cocalcAiConfig,
+      );
+      expect(onCocalcAi).toContain(`<p>${costLine}</p>`);
+      expect(onCocalcAi).toContain(">Start on CoCalc.ai</a>");
+
+      const config = { cocalc_product, dns };
+      const page = getPublicFeaturePage("research-compute", config)!;
+      expect(page.signUpLabel).toBeUndefined();
+      expect(page.sections![0].paragraphs).toEqual([]);
+      const html = renderPublicRoutePrerender(route, basePath, config);
+      expect(html).toBe(
+        onCocalcAi
+          .replace(`<p>${costLine}</p>`, "")
+          .replace(">Start on CoCalc.ai</a>", ">Start using CoCalc</a>"),
+      );
+      expect(html).not.toContain("CoCalc.ai");
+      expect(html).not.toContain("membership");
+    },
+  );
+
+  it.each([
+    ["launchpad", "cocalc.ai"],
+    ["rocket", "compute.example.edu"],
+  ])(
+    "collapses the research compute technical details, like the page, for %s on %s",
+    (cocalc_product, dns) => {
+      const config = { cocalc_product, dns };
+      const sizing = getPublicFeaturePage("research-compute", config)!
+        .sections![1];
+      const html = renderPublicRoutePrerender(
+        {
+          section: "features",
+          route: { view: "detail", slug: "research-compute" },
+        },
+        "/",
+        config,
+      );
+
+      // One details element, closed (no open attribute). Its summary comes
+      // first and is the record's label, and every bullet is inside it.
+      expect(html.match(/<details\b[^>]*>/g)).toEqual(["<details>"]);
+      expect(html.match(/<summary\b[^>]*>/g)).toEqual(["<summary>"]);
+      const details = html.slice(
+        html.indexOf("<details>"),
+        html.indexOf("</details>") + "</details>".length,
+      );
+      expect(details).toBe(
+        `<details><summary>${sizing.detailsLabel}</summary><ul>${sizing
+          .bullets!.map((bullet) => `<li>${bullet}</li>`)
+          .join("")}</ul></details>`,
+      );
+      expect(sizing.detailsLabel).toBe("Technical details");
+      expect(sizing.bullets).toHaveLength(6);
+    },
+  );
+
   it("leaves documentation rendering to its existing owner", () => {
     expect(
       renderPublicRoutePrerender(

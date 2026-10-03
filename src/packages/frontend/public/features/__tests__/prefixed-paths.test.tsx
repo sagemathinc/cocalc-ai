@@ -64,14 +64,18 @@ it.each(["/prefix", "/docs"])(
       />,
     );
 
+    const docsLinks = screen.getAllByRole("link", {
+      name: "Choose compute for research",
+    });
+    expect(docsLinks).toHaveLength(2);
+    for (const link of docsLinks) {
+      expect(link).toHaveAttribute("href", `${basePath}${page.docsUrl}`);
+    }
     expect(
-      screen.getByRole("link", { name: "Choose a compute path" }),
-    ).toHaveAttribute("href", `${basePath}${page.docsUrl}`);
-    expect(
-      screen.getByRole("link", { name: "Understand project hosts" }),
+      screen.getByRole("link", { name: "Use project hosts" }),
     ).toHaveAttribute("href", `${basePath}/docs/hosts/project-hosts`);
     expect(
-      screen.getByRole("link", { name: "Connect a remote Jupyter kernel" }),
+      screen.getByRole("link", { name: "Remote Jupyter kernels" }),
     ).toHaveAttribute("href", `${basePath}/docs/jupyter/remote-kernels`);
     expect(container.querySelector('a[href^="/docs/hosts/"]')).toBeNull();
   },

@@ -101,6 +101,15 @@
       "settleMs": 1000
     },
     {
+      "id": "feature-research-compute",
+      "title": "Research Compute feature",
+      "path": "/features/research-compute",
+      "authentication": "none",
+      "minimumScore": 1,
+      "readySelector": "main",
+      "settleMs": 1000
+    },
+    {
       "id": "docs",
       "title": "Documentation",
       "path": "/docs",

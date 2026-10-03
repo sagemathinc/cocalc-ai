@@ -3,8 +3,21 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { isCanonicalPublicSiteHost } from "./public-site-policy";
+
+export interface PublicFeatureCard {
+  body: string;
+  link?: { href: string; label: string };
+  title: string;
+}
+
 export interface PublicFeatureSection {
   bullets?: string[];
+  // Titled cards after the paragraphs, such as one card per option.
+  cards?: PublicFeatureCard[];
+  // When set, the bullets are collapsed under this label: a <details>
+  // element on the page and in its crawler fallback.
+  detailsLabel?: string;
   links?: Array<{ href: string; label: string }>;
   paragraphs?: string[];
   title: string;
@@ -47,89 +60,65 @@ export function publicFeatureHref(
   return `${basePath.replace(/\/+$/, "")}${catalogHref}`;
 }
 
+// Only cocalc.ai can say this; see getPublicFeaturePage.
+const RESEARCH_COMPUTE_COST_LINE =
+  "On CoCalc.ai, creating a dedicated machine on your own account needs a paid membership, and its usage is billed to your account.";
+
 export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
   {
     slug: "research-compute",
     title: "Research Compute",
     navLabel: "Compute",
     metadataTitle: "CPU, RAM, and GPU Compute for Research",
-    tagline: "Keep research code, computation, and collaboration connected.",
+    tagline: "Compute for demanding analysis and simulation.",
     summary:
-      "Run larger research workloads in CoCalc, or connect a remote Jupyter kernel to an existing machine and its datasets.",
+      "Run the whole project on a dedicated machine or send notebook computation to a machine you already have.",
     metadataSummary:
-      "Explore research compute in CoCalc: CPU and RAM requirements, GPU workloads, remote Jupyter kernels, storage, and CLI inspection. Follow the documented setup and operating limits.",
+      "Run a project on a dedicated machine or connect a notebook to a remote Jupyter kernel.",
     docsUrl: "/docs/hosts/choose-compute",
     index: true,
+    signUpLabel: "Start on CoCalc.ai",
     sections: [
       {
-        title: "Run the project on suitable compute",
-        paragraphs: [
-          "A project host runs your CoCalc project's files, notebooks, terminals, and services. Choose resources for the workload and check host access before placing a project there. Options depend on your deployment and account.",
-          "Compare the project's RAM policy with the host's physical memory and the number of concurrent jobs. More CPU cores help only when your program can use them. A GPU workload also needs compatible software and enough GPU memory.",
-        ],
-        links: [
+        title: "Two ways to get more compute",
+        paragraphs: [RESEARCH_COMPUTE_COST_LINE],
+        cards: [
           {
-            href: "/docs/hosts/project-hosts",
-            label: "Understand project hosts",
+            title: "Move the whole project to a dedicated machine.",
+            body: "Its files, applications, and processes run on the machine you choose, including GPU machines.",
+            link: {
+              href: "/docs/hosts/project-hosts",
+              label: "Use project hosts",
+            },
           },
           {
-            href: "/docs/hosts/access-and-ram",
-            label: "Check host access and RAM policy",
-          },
-          {
-            href: "/docs/troubleshooting/memory",
-            label: "Investigate memory pressure",
-          },
-        ],
-      },
-      {
-        title: "Use an existing server or GPU machine",
-        paragraphs: [
-          "Remote Jupyter kernels let you edit a notebook in CoCalc while its code runs on another machine over SSH. This can keep computation near software or datasets already on that machine. You need suitable access to the remote account and a configured kernel.",
-          "The notebook remains in the CoCalc project. Input and output files used by the remote code live on the remote machine; they are not automatically synchronized with project files.",
-        ],
-        links: [
-          {
-            href: "/docs/jupyter/remote-kernels",
-            label: "Connect a remote Jupyter kernel",
+            title: "Connect a notebook to a machine you already have.",
+            body: "Keep the notebook in CoCalc while its kernel runs on your machine over SSH. Files are not synchronized.",
+            link: {
+              href: "/docs/jupyter/remote-kernels",
+              label: "Remote Jupyter kernels",
+            },
           },
         ],
       },
       {
-        title: "Plan for results, interruptions, and larger workloads",
+        title: "Size the job from a representative run.",
         paragraphs: [
-          "Save important results and checkpoints to files before moving or stopping compute. Review the differences between project files, temporary scratch space, host-local snapshots, and backups before a long run.",
-          "Moving a project transfers data through backup and restore; it does not transfer running process memory. Check destination compatibility and restart the computation from saved state when appropriate.",
+          "Record a smaller run's memory, CPU, GPU, and storage use, then choose a machine that fits. A listed machine may still be unavailable; check the live machine catalog before you plan around it.",
+        ],
+        detailsLabel: "Technical details",
+        bullets: [
+          "Parallel workers can share cores with other projects, so more visible cores do not always mean faster runs.",
+          "GPU-enabled projects on a host can use all of the host's GPUs, and projects on the same host can use the same devices.",
+          "Moving a project goes through backup and restore: saved files move to the new machine, but running processes and files in /tmp do not.",
+          "A remote Jupyter kernel runs over SSH from a CoCalc project; files are not synchronized. Check that your project has the network access the connection needs.",
+          "Save checkpoints and logs to files so a stopped or interrupted run can resume.",
+          "Signed in to your account, the CoCalc CLI shows the hosts visible to you (cocalc host list) and the project-host catalog (cocalc host catalog).",
         ],
         links: [
           {
-            href: "/docs/hosts/storage",
-            label: "Understand storage and recovery",
-          },
-          { href: "/docs/hosts/move-projects", label: "Plan a project move" },
-          {
-            href: "/docs/hosts/lifecycle",
-            label: "Review host lifecycle actions",
-          },
-        ],
-      },
-      {
-        title: "Inspect and automate with the CoCalc CLI",
-        paragraphs: [
-          "Researchers and agents can use the CLI to inspect resources, discover documentation, and work with project files and notebooks. Start by choosing the correct site and authentication profile, then follow the command's prerequisites and result checks.",
-        ],
-        links: [
-          {
-            href: "/docs/cli/getting-started",
-            label: "Get started with the CoCalc CLI",
-          },
-          {
-            href: "/docs/cli/authentication-and-targets",
-            label: "Choose authentication and targets",
-          },
-          {
-            href: "/docs/cli/notebook-workflows",
-            label: "Run and save notebooks with the CLI",
+            href: "/docs/hosts/choose-compute",
+            label: "Choose compute for research",
           },
         ],
       },
@@ -706,9 +695,25 @@ for (const page of PUBLIC_FEATURE_PAGES) {
   }
 }
 
+// Research Compute on a site other than cocalc.ai, such as a
+// customer-operated Launchpad or Rocket site: without the cost line, which
+// describes CoCalc.ai's memberships and billing, and with the default sign-up
+// label instead of "Start on CoCalc.ai".
+const RESEARCH_COMPUTE_PAGE = PUBLIC_FEATURE_PAGE_MAP.get("research-compute")!;
+const RESEARCH_COMPUTE_PAGE_ELSEWHERE: PublicFeaturePage = {
+  ...RESEARCH_COMPUTE_PAGE,
+  signUpLabel: undefined,
+  sections: RESEARCH_COMPUTE_PAGE.sections?.map((section) => ({
+    ...section,
+    paragraphs: section.paragraphs?.filter(
+      (paragraph) => paragraph !== RESEARCH_COMPUTE_COST_LINE,
+    ),
+  })),
+};
+
 export function getPublicFeaturePage(
   slug?: string,
-  config?: { cocalc_product?: string },
+  config?: { cocalc_product?: string; dns?: string },
 ): PublicFeaturePage | undefined {
   if (!slug) return;
   const page = PUBLIC_FEATURE_PAGE_MAP.get(slug);
@@ -721,6 +726,19 @@ export function getPublicFeaturePage(
     config.cocalc_product !== "rocket"
   ) {
     return;
+  }
+  // cocalc.ai is Launchpad on the canonical host. `config.dns` is the request
+  // host on both sides: the crawler fallback reads it from the request, and
+  // /customize sets it from the Host header for the browser.
+  if (
+    page?.slug === "research-compute" &&
+    config !== undefined &&
+    !(
+      config.cocalc_product === "launchpad" &&
+      isCanonicalPublicSiteHost(config.dns)
+    )
+  ) {
+    return RESEARCH_COMPUTE_PAGE_ELSEWHERE;
   }
   return page;
 }
