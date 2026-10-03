@@ -278,6 +278,7 @@ import {
 } from "@cocalc/frontend/chat/codex-defaults";
 import {
   fetchCodexPaymentSourceForSubmit,
+  getCodexModelPayer,
   getCodexPaymentSourceOptions,
   useCodexPaymentSource,
 } from "@cocalc/frontend/chat/use-codex-payment-source";
@@ -286,7 +287,10 @@ import {
   cachedAccountCodexModels,
   discoverAccountCodexModels,
 } from "@cocalc/frontend/chat/codex-model-discovery";
-import { codexModelOptionsForCatalog } from "@cocalc/frontend/chat/codex";
+import {
+  CodexPaymentCredentialsModal,
+  codexModelOptionsForCatalog,
+} from "@cocalc/frontend/chat/codex";
 import {
   createAgentProjectOnce,
   createDefaultAgentProject,
@@ -759,6 +763,7 @@ function NewAgentPanel({
     paymentSource,
     loading: paymentSourceLoading,
     error: paymentSourceError,
+    refresh: refreshPaymentSource,
   } = useCodexPaymentSource({
     projectId,
     preference: paymentPreference,
@@ -768,6 +773,7 @@ function NewAgentPanel({
   } as Parameters<typeof useCodexPaymentSource>[0] & {
     credentialId?: string;
   });
+  const [signInOpen, setSignInOpen] = useState(false);
   const modelOptions = useMemo(
     () => defaultModelOptions(modelCatalog, config.model),
     [config.model, modelCatalog],
@@ -1517,6 +1523,7 @@ function NewAgentPanel({
     paymentSource.siteFundedCodex?.enabled
       ? paymentSource.siteFundedCodex.policy
       : undefined;
+  const displayedModel = siteFundedPolicy?.model ?? config.model ?? "";
   const advancedSettings = (
     <div style={{ width: 360, maxWidth: "calc(100vw - 48px)" }}>
       <Space orientation="vertical" size={10} style={{ width: "100%" }}>
@@ -1828,17 +1835,32 @@ function NewAgentPanel({
               >
                 <Dropdown
                   menu={{
-                    items: modelOptions.map(({ value, label, disabled }) => ({
-                      key: value,
-                      label,
-                      disabled,
-                    })),
-                    selectedKeys: config.model ? [config.model] : [],
+                    items: modelOptions.map(({ value, label, disabled }) => {
+                      const payer = getCodexModelPayer(value, paymentSource);
+                      return {
+                        key: value,
+                        label: payer ? `${label} · ${payer.label}` : label,
+                        disabled,
+                      };
+                    }),
+                    selectedKeys: [displayedModel],
                     onClick: ({ key }) => {
+                      const payer = getCodexModelPayer(key, paymentSource);
+                      if (payer?.needsConnection) {
+                        setSignInOpen(true);
+                        return;
+                      }
                       modelCustomized.current = true;
                       setConfig((current) =>
                         reconcileAgentConfig(
-                          { ...current, model: key },
+                          payer?.switchTo
+                            ? {
+                                ...current,
+                                model: key,
+                                paymentSource: payer.switchTo,
+                                credentialId: undefined,
+                              }
+                            : { ...current, model: key },
                           modelOptions,
                         ),
                       );
@@ -1847,15 +1869,15 @@ function NewAgentPanel({
                   trigger={["click"]}
                 >
                   <ComposerPillButton
-                    aria-label={`Change model. Current model: ${config.model}`}
-                    disabled={busy || !!pending || !!siteFundedPolicy}
+                    aria-label={`Change model. Current model: ${displayedModel}`}
+                    disabled={busy || !!pending}
                     style={{
                       maxWidth: 150,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                     }}
                   >
-                    {config.model}
+                    {displayedModel}
                   </ComposerPillButton>
                 </Dropdown>
                 <Text type="secondary">·</Text>
@@ -2100,6 +2122,14 @@ function NewAgentPanel({
         open={membershipDetailsOpen}
         onClose={() => setMembershipDetailsOpen(false)}
       />
+      {signInOpen && (
+        <CodexPaymentCredentialsModal
+          open
+          projectId={projectId}
+          refreshPaymentSource={() => refreshPaymentSource?.()}
+          onClose={() => setSignInOpen(false)}
+        />
+      )}
     </div>
   );
 }

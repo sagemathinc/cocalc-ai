@@ -19,6 +19,7 @@ import {
   Table,
   Tag,
   Typography,
+  Spin,
 } from "antd";
 import { Panel } from "@cocalc/frontend/antd-bootstrap";
 import { useAsyncEffect, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -401,6 +402,9 @@ function CodexCredentialsPanelBody({
     "" | "account" | "project"
   >("");
   const [deviceAuth, setDeviceAuth] = useState<DeviceAuthStatus | null>(null);
+  // Set once the user opened OpenAI's page from here: then say what CoCalc
+  // is waiting for, instead of leaving them unsure which step they're on.
+  const [deviceAuthOpened, setDeviceAuthOpened] = useState(false);
   const [deviceAuthError, setDeviceAuthError] = useState<string>("");
   const [deviceAuthActionPending, setDeviceAuthActionPending] =
     useState<boolean>(false);
@@ -1012,6 +1016,31 @@ function CodexCredentialsPanelBody({
             description="The one-time code and link will appear here as soon as Codex returns them."
           />
         ) : null}
+        {userCode && verificationUrl && deviceAuth?.state === "pending" ? (
+          <Button
+            type="primary"
+            size="large"
+            block
+            onClick={() => {
+              // Open synchronously in the click, so it is not blocked as a
+              // popup; copying finishes in the background.
+              window.open(verificationUrl, "_blank", "noopener");
+              void copyText(userCode, "Device code");
+              setDeviceAuthOpened(true);
+            }}
+          >
+            Copy code and open ChatGPT sign-in
+          </Button>
+        ) : null}
+        {deviceAuthOpened && deviceAuth?.state === "pending" ? (
+          <Alert
+            type="info"
+            showIcon
+            icon={<Spin size="small" />}
+            title="Waiting for you to approve on OpenAI…"
+            description="On the OpenAI page, paste the code (it's on your clipboard) and approve. This dialog updates by itself when you're done."
+          />
+        ) : null}
         {userCode && deviceAuth?.state === "pending" ? (
           <div
             style={{
@@ -1079,10 +1108,10 @@ function CodexCredentialsPanelBody({
             <div style={{ marginTop: 8 }}>
               <Space wrap>
                 <Button
-                  type="primary"
                   href={verificationUrl}
                   target="_blank"
                   rel="noreferrer"
+                  onClick={() => setDeviceAuthOpened(true)}
                 >
                   Open
                 </Button>

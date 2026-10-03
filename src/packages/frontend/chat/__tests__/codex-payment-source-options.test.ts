@@ -3,6 +3,7 @@
 jest.mock("@cocalc/frontend/lite", () => ({ lite: false }));
 
 import {
+  getCodexModelPayer,
   getCodexPaymentSourceOptions,
   getCodexPaymentSourceShortLabel,
   getCodexPaymentSourceTooltip,
@@ -103,5 +104,73 @@ describe("Codex payment source choices", () => {
     expect(tooltip).toContain(
       "Connect a personal ChatGPT plan or API key to choose other settings.",
     );
+  });
+});
+
+describe("who pays for each model", () => {
+  const membership = {
+    source: "site-api-key" as const,
+    preference: "auto" as const,
+    hasSubscription: false,
+    hasProjectApiKey: false,
+    hasAccountApiKey: false,
+    hasSiteApiKey: true,
+    siteAiUsageLimitPositive: true,
+    siteFundedCodex: {
+      enabled: true,
+      policy: { model: "gpt-6-luna", reasoning: "medium" as const },
+    },
+    sharedHomeMode: "disabled" as const,
+  };
+
+  it("marks the membership model as included and asks to connect for others", () => {
+    expect(getCodexModelPayer("gpt-6-luna", membership)).toEqual({
+      label: "included",
+      needsConnection: false,
+    });
+    expect(getCodexModelPayer("gpt-6-astra", membership)).toEqual({
+      label: "your ChatGPT plan or API key",
+      needsConnection: true,
+      switchTo: undefined,
+    });
+  });
+
+  it("names the connected credential and switches to it", () => {
+    expect(
+      getCodexModelPayer("gpt-6-astra", {
+        ...membership,
+        hasSubscription: true,
+      }),
+    ).toEqual({
+      label: "your ChatGPT plan",
+      needsConnection: false,
+      switchTo: "subscription",
+    });
+    expect(
+      getCodexModelPayer("gpt-6-astra", {
+        ...membership,
+        hasAccountApiKey: true,
+      }),
+    ).toEqual({
+      label: "your API key",
+      needsConnection: false,
+      switchTo: "account-api-key",
+    });
+  });
+
+  it("adds nothing when the membership allowance is not in effect", () => {
+    expect(
+      getCodexModelPayer("gpt-6-astra", {
+        ...membership,
+        source: "subscription",
+        hasSubscription: true,
+      }),
+    ).toBeUndefined();
+    expect(
+      getCodexModelPayer("gpt-6-luna", {
+        ...membership,
+        siteFundedCodex: { enabled: false },
+      }),
+    ).toBeUndefined();
   });
 });
