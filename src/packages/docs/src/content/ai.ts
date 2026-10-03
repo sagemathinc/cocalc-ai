@@ -60,20 +60,20 @@ export const MY_AGENTS_BODY = String.raw`
 
 After signing in, CoCalc opens your projects list, or the page your link named.
 If you have no projects, or your new account has not used one, CoCalc may open
-the agents workspace instead. Otherwise, select an agent, or choose
-**New Agent**, in the agents sidebar. With no named agents, the agents
-workspace shows the new-agent request box; at phone width, if it shows the
-agents sidebar instead, choose **New Agent** there. Describe a result you can
-inspect, such as a comparison, document, application, or visualization. Include
-the relevant files and the checks that would make the result useful.
+the new-agent request box instead. Otherwise, choose **New Agent** under
+**Agents** in the sidebar, or select one of your agents there. At phone width,
+if CoCalc shows the sidebar instead of the request box, choose **New Agent**
+there. Describe a result you can inspect, such as a comparison, document,
+application, or visualization. Include the relevant files and the checks that
+would make the result useful.
 
-When CoCalc opens the agents workspace for you, the request box asks **What
-would you like to work on?** There is no name, project, runtime, model, or
-payment source to choose; this first agent uses Codex. If CoCalc asks you to
-verify your email, do that first. When you start typing, CoCalc prepares a
-project, a chat, and a named agent. This can start project compute and uses a
-named-agent slot even before you send. Choose the up-arrow **Start agent**
-button, or press **Shift+Enter**, to send your request.
+When CoCalc opens the request box for you, it asks **What would you like to work
+on?** There is no name, project, runtime, model, or payment source to choose;
+this first agent uses Codex. If CoCalc asks you to verify your email, do that
+first. When you start typing, CoCalc prepares a project, a chat, and a named
+agent. This can start project compute and uses a named-agent slot even before
+you send. Choose the up-arrow **Start agent** button, or press **Shift+Enter**,
+to send your request.
 
 In the new-agent form, type your request, then check the settings below the
 box. They start from the agent you had selected, if any.
@@ -98,20 +98,21 @@ box. They start from the agent you had selected, if any.
    **Create agent without a task**; it creates the agent without sending a
    request.
 
-If the agents sidebar is hidden, click the **Show Agents sidebar** button (a
-right-pointing chevron). At phone width, use the menu button (three horizontal
-lines, named Show agents for screen readers), or the back arrow in an agent's
-conversation. If you cannot find the agents workspace at all, check that
-**Disable all AI integrations** is off in account **AI** settings. If it is
-off, ask the site administrator whether agent access is enabled.
+If the sidebar is hidden, click the **Show sidebar** button at the top left
+(the CoCalc logo with a right-pointing chevron). At phone width, use the menu
+button (three horizontal lines, named Show agents for screen readers), or the
+back arrow in an agent's conversation. If the sidebar has no **Agents**
+section, check that **Disable all AI integrations** is off in account **AI**
+settings. If it is off, ask the site administrator whether agent access is
+enabled.
 
 ## Review and continue
 
 Select a named agent to return to its conversation. Open a saved result from
 the chat to inspect it beside your request, then ask the same agent for a
-specific correction or another version. **Library** helps you find artifacts
-from named agents. Use **Open in project** when you need the underlying files,
-software, or complete project view.
+specific correction or another version. **Artifacts** in the sidebar helps you
+find artifacts from named agents. Use **Open in project** when you need the
+underlying files, software, or complete project view.
 
 ![A saved dispatch review image open beside its agent conversation in a fresh CoCalc project with fictional data](/public/docs/agents-workspace-dispatch-review-20260924.jpg)
 
@@ -120,19 +121,22 @@ underlying file remains in the project.
 
 ## Bring existing work into Agents
 
-Only registered named agents appear in the sidebar's **Agents** list; existing
-project chats are not imported automatically. In a project chat, choose
-**Name agent** to register that thread. Naming it does not start work, grant
-communication with another agent, or change who can read the shared chat.
+Only registered named agents are listed under **Agents**; existing project chats
+are not imported automatically. In a project chat, choose **Name agent** to
+register that thread. Naming it does not start work, grant communication with
+another agent, or change who can read the shared chat.
 
 Pin an agent to keep it near the top. You can use recent or custom ordering and
 group the list by project. These list preferences are personal to your account.
-To take an agent out of the list without removing it, point at it, click its
-**More actions** button (a vertical ellipsis), and choose **Hide from Agents**.
-To remove it, choose **Remove from Agents…** in the same menu and confirm with
-**Remove from Agents**; the conversation and artifacts remain, but that agent
-becomes unavailable to its Agent Networks. Removing frees its named-agent slot,
-and its name can be used again. Hiding does not free a slot.
+To take an agent out of the sidebar without removing it, point at it there,
+click its **More actions** button (a vertical ellipsis), and choose
+**Hide from Agents**. To remove it, choose **Remove from Agents…** in the same
+menu and confirm with **Remove from Agents**; the conversation and artifacts
+remain, but that agent becomes unavailable to its Agent Networks. Removing
+frees its named-agent slot, and its name can be used again. Hiding does not
+free a slot. The **Agents** page, which the sidebar's **Agents** entry opens,
+lists all of your agents, including hidden ones, and its actions menu for each
+agent also has **Remove from Agents…**.
 
 For project-chat controls and access setup, see [Open Codex chat](/docs/ai/codex-chat)
 and [Connect AI access](/docs/ai/connect-credentials). For the complete workflow

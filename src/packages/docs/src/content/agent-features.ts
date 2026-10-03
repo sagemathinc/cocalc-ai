@@ -175,7 +175,7 @@ that recipient execution completed.
 | Git commit and GitHub pull-request cards | Conditional | Conditional | Commits pin a revision; PR metadata can require refresh and repository credentials. |
 | Proposed-action review cards | Conditional | Conditional | Recording approval does not execute an action or replace service authorization. |
 | Revise an existing artifact and preserve review history | Conditional | Conditional | Update the same artifact with its current revision check instead of creating duplicates. |
-| Open results beside the chat and find them in Library | Conditional | Conditional | Shared Agents UI; availability follows the deployed workbench feature. |
+| Open results beside the chat and find them in Artifacts | Conditional | Conditional | Shared Agents UI; availability follows the deployed workbench feature. |
 
 ### Reviewable results
 

@@ -112,9 +112,6 @@ const bold = (name: string, label: string): UiVocabularyUse => ({
   text: `**${label}**`,
 });
 
-// The agents workspace and the form that starts a new agent.
-const AGENTS_WORKSPACE = "frontend/agents/workspace-page.tsx";
-
 export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
   // Project rail, flyouts and full pages
   {
@@ -207,49 +204,51 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     ],
     usedIn: [conventions("the Agents rail tab")],
   },
-  // The agents workspace guide. It reaches the workspace through the agents
-  // sidebar, named in words rather than by a top navigation label, and binds
-  // the labels it cites.
+  // The agents workspace guide (ai/my-agents) and the labels it cites. The
+  // sidebar's Agents entry is nav.agents.
   {
-    id: "agents.sidebar.heading",
-    label: "Agents",
+    id: "agents.sidebar.new-agent",
+    label: "New Agent",
     anchors: [
-      def(
-        "frontend/agents/organization-controls.tsx",
-        '<Typography.Text type="secondary">Agents</Typography.Text>',
-      ),
-      ren(AGENTS_WORKSPACE, "<AgentOrganizationControls"),
+      def("frontend/agents/organization-controls.tsx", "> New Agent </Button>"),
+      ren(WORKSPACE_PAGE, "<AgentOrganizationControls"),
     ],
-    usedIn: [
-      { file: doc("ai"), text: "the sidebar's **Agents** list" },
-      bold("cocalc-at-a-glance", "Agents"),
-    ],
+    usedIn: [bold("ai", "New Agent")],
   },
   {
-    id: "agents.sidebar.library",
-    label: "Library",
-    anchors: [def(AGENTS_WORKSPACE, "> Library </Button>")],
+    id: "agents.page.title",
+    label: "Agents",
+    anchors: [
+      def("frontend/agents/agents-overview.tsx", "> Agents </h1>"),
+      ren(WORKSPACE_PAGE, "<AgentsOverview"),
+    ],
+    usedIn: [{ file: doc("ai"), text: "The **Agents** page" }],
+  },
+  {
+    id: "agents.sidebar.artifacts",
+    label: "Artifacts",
+    anchors: [def(WORKSPACE_PAGE, "> Artifacts </Button>")],
     usedIn: [
-      bold("ai", "Library"),
-      { file: doc("agent-features"), text: "find them in Library" },
+      { file: doc("ai"), text: "**Artifacts** in the sidebar" },
+      { file: doc("agent-features"), text: "find them in Artifacts" },
     ],
   },
   {
     id: "agents.sidebar.show",
-    label: "Show Agents sidebar",
+    label: "Show sidebar",
     anchors: [
       def(
         "frontend/agents/workspace-sidebar-toggle.tsx",
-        '"Show Agents sidebar"',
+        'hidden ? "Show sidebar" : "Hide sidebar"',
       ),
-      ren(AGENTS_WORKSPACE, "<AgentsSidebarToggle"),
+      ren(WORKSPACE_PAGE, "<AgentsSidebarToggle"),
     ],
-    usedIn: [bold("ai", "Show Agents sidebar")],
+    usedIn: [bold("ai", "Show sidebar")],
   },
   {
     id: "agents.sidebar.show-narrow",
     label: "Show agents",
-    anchors: [def(AGENTS_WORKSPACE, 'aria-label="Show agents"')],
+    anchors: [def(WORKSPACE_PAGE, 'aria-label="Show agents"')],
     // An accessible name only, with no visible text or tooltip, so the guide
     // describes the button and gives the name unbolded.
     usedIn: [{ file: doc("ai"), text: "named Show agents" }],
@@ -257,7 +256,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
   {
     id: "agents.sidebar.more-actions",
     label: "More actions",
-    anchors: [def(AGENTS_WORKSPACE, "title={`More actions for @")],
+    anchors: [def(WORKSPACE_PAGE, "title={`More actions for @")],
     usedIn: [bold("ai", "More actions")],
   },
   ...(
@@ -270,23 +269,23 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     ([key, label, text]): UiVocabularyEntry => ({
       id: `agents.sidebar.${key}`,
       label,
-      anchors: [def(AGENTS_WORKSPACE, text)],
+      anchors: [def(WORKSPACE_PAGE, text)],
       usedIn: [bold("ai", label)],
     }),
   ),
   {
     id: "agents.new.first-run",
     label: "What would you like to work on?",
-    anchors: [def(AGENTS_WORKSPACE, '? "What would you like to work on?"')],
+    anchors: [def(WORKSPACE_PAGE, '? "What would you like to work on?"')],
     usedIn: [bold("ai", "What would you like to work on?")],
   },
   {
     id: "agents.new.start",
     label: "Start agent",
     anchors: [
-      def(AGENTS_WORKSPACE, ': "Start agent (Shift+Enter)"'),
+      def(WORKSPACE_PAGE, ': "Start agent (Shift+Enter)"'),
       ren(
-        AGENTS_WORKSPACE,
+        WORKSPACE_PAGE,
         'emptyRequest ? "Create agent without a task" : "Start agent"',
       ),
     ],
@@ -296,7 +295,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "agents.new.create-without-task",
     label: "Create agent without a task",
     anchors: [
-      def(AGENTS_WORKSPACE, '? "Create agent without a task (Shift+Enter)"'),
+      def(WORKSPACE_PAGE, '? "Create agent without a task (Shift+Enter)"'),
     ],
     usedIn: [bold("ai", "Create agent without a task")],
   },
@@ -305,7 +304,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     label: "Name",
     anchors: [
       def("frontend/agents/new-agent-name-pill.tsx", 'label="Name"'),
-      ren(AGENTS_WORKSPACE, "<NewAgentNamePill"),
+      ren(WORKSPACE_PAGE, "<NewAgentNamePill"),
     ],
     usedIn: [{ file: doc("ai"), text: "the agent's **Name**" }],
   },
@@ -314,7 +313,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     label: "Project",
     anchors: [
       def("frontend/agents/agent-project-selector.tsx", "<span>Project</span>"),
-      ren(AGENTS_WORKSPACE, "<AgentProjectSelector"),
+      ren(WORKSPACE_PAGE, "<AgentProjectSelector"),
     ],
     usedIn: [bold("ai", "Project")],
   },
@@ -328,7 +327,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       id: `agents.new.${key}`,
       label,
       anchors: [
-        def(AGENTS_WORKSPACE, `<label htmlFor="new-agent-${key}">${label}`),
+        def(WORKSPACE_PAGE, `<label htmlFor="new-agent-${key}">${label}`),
       ],
       usedIn: [bold("ai", label)],
     }),
@@ -338,7 +337,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     label: "Your first project will be created automatically",
     anchors: [
       def(
-        AGENTS_WORKSPACE,
+        WORKSPACE_PAGE,
         'title="Your first project will be created automatically"',
       ),
     ],
@@ -363,7 +362,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
         "frontend/agents/new-agent-runtime-select.tsx",
         '{ value: "claude-code", label: "Claude" }',
       ),
-      ren(AGENTS_WORKSPACE, "<NewAgentRuntimeSelect"),
+      ren(WORKSPACE_PAGE, "<NewAgentRuntimeSelect"),
     ],
     usedIn: [bold("ai", "Claude"), bold("claude-code", "Claude")],
   },
@@ -375,7 +374,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
         "frontend/chat/use-codex-payment-source.ts",
         'label: "CoCalc Membership"',
       ),
-      ren(AGENTS_WORKSPACE, "getCodexPaymentSourceOptions(paymentSource)"),
+      ren(WORKSPACE_PAGE, "getCodexPaymentSourceOptions(paymentSource)"),
     ],
     usedIn: [bold("ai", "CoCalc Membership")],
   },
@@ -570,7 +569,13 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       def(WORKSPACE_PAGE, "onClick={showAgentsOverview}"),
       ren(QUICK_NAV_DATA, 'page: "agents", title: "Agents",'),
     ],
-    usedIn: [bold("cocalc-at-a-glance", "Agents")],
+    usedIn: [
+      bold("cocalc-at-a-glance", "Agents"),
+      { file: doc("ai"), text: "under **Agents** in the sidebar" },
+      { file: doc("ai"), text: "listed under **Agents**" },
+      { file: doc("ai"), text: "the sidebar's **Agents** entry" },
+      { file: doc("ai"), text: "the sidebar has no **Agents** section" },
+    ],
   },
   {
     id: "hosts.page-tabs",
