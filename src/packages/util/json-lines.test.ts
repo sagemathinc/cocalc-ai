@@ -1,5 +1,6 @@
 import { PassThrough, Readable } from "stream";
 import * as readline from "readline";
+import { createGunzip } from "zlib";
 import { createJsonLineReader, stringifyJsonLine } from "./json-lines";
 
 const LS = String.fromCharCode(0x2028);
@@ -43,6 +44,115 @@ test("supports async iteration and close()", async () => {
   const seen: string[] = [];
   for await (const line of reader) seen.push(line);
   expect(seen).toEqual(["one", "two", "three"]);
+  expectReaderDetached(input);
+});
+
+function expectReaderDetached(input: NodeJS.ReadableStream) {
+  for (const event of ["data", "end", "close", "error"]) {
+    expect(input.listenerCount(event)).toBe(0);
+  }
+}
+
+test("input errors reject all pending and subsequent iterator reads", async () => {
+  const input = new PassThrough();
+  const reader = createJsonLineReader(input);
+  const iterator = reader[Symbol.asyncIterator]();
+  const error = new Error("read failed");
+  const pending = [
+    expect(iterator.next()).rejects.toBe(error),
+    expect(iterator.next()).rejects.toBe(error),
+  ];
+  const onClose = jest.fn();
+  reader.on("close", onClose);
+  input.write('{"incomplete":');
+  input.destroy(error);
+
+  await Promise.all(pending);
+  await expect(iterator.next()).rejects.toBe(error);
+  expect(onClose).toHaveBeenCalledTimes(1);
+  expectReaderDetached(input);
+  reader.close();
+  expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+test("for-await rejects errors arriving between reads instead of draining buffered lines", async () => {
+  const error = new Error("read failed after a line");
+  const input = new PassThrough();
+  const reader = createJsonLineReader(input);
+  const seen: string[] = [];
+  const reading = (async () => {
+    for await (const line of reader) {
+      seen.push(line);
+      input.emit("error", error);
+    }
+  })();
+  input.write("first\nqueued\npartial");
+  await expect(reading).rejects.toBe(error);
+  expect(seen).toEqual(["first"]);
+  expectReaderDetached(input);
+  input.destroy();
+});
+
+test("decompression errors reject async iteration", async () => {
+  const input = createGunzip();
+  const reader = createJsonLineReader(input);
+  const reading = (async () => {
+    for await (const _line of reader) {
+      throw new Error("unexpected line");
+    }
+  })();
+  const rejected = expect(reading).rejects.toMatchObject({
+    code: "Z_DATA_ERROR",
+  });
+  input.end("not gzip data");
+  await rejected;
+  expectReaderDetached(input);
+});
+
+test("event consumers receive errors without flushing a partial line", () => {
+  const input = new PassThrough();
+  const reader = createJsonLineReader(input);
+  const onLine = jest.fn();
+  const onError = jest.fn();
+  const onClose = jest.fn();
+  reader.on("line", onLine);
+  reader.on("error", onError);
+  reader.on("close", onClose);
+  input.write("partial");
+  const error = new Error("read failed");
+  input.emit("error", error);
+  expect(onError).toHaveBeenCalledWith(error);
+  expect(onLine).not.toHaveBeenCalled();
+  expect(onClose).toHaveBeenCalledTimes(1);
+  expectReaderDetached(input);
+  input.destroy();
+});
+
+test("close settles pending reads and preserves caller-owned listeners", async () => {
+  const input = new PassThrough();
+  const onError = jest.fn();
+  input.on("error", onError);
+  const reader = createJsonLineReader(input);
+  const iterator = reader[Symbol.asyncIterator]();
+  const pending = iterator.next();
+  reader.close();
+  await expect(pending).resolves.toEqual({ done: true });
+  expect(input.listeners("error")).toEqual([onError]);
+  input.removeListener("error", onError);
+  expectReaderDetached(input);
+  input.destroy();
+});
+
+test("breaking async iteration detaches the reader", async () => {
+  const input = new PassThrough();
+  input.write("first\nsecond\n");
+  const reader = createJsonLineReader(input);
+  for await (const line of reader) {
+    expect(line).toBe("first");
+    break;
+  }
+  expectReaderDetached(input);
+  input.destroy();
 });
 
 test("drops oversize lines instead of buffering without bound", async () => {

@@ -110,6 +110,7 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
   switch (segments[0]) {
     case "all-agents":
       return { page: "agents", overview: true };
+    case "library":
     case "artifacts":
       return {
         page: "agents",
@@ -117,7 +118,7 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
         // Keep malformed suffixes intact for the Library's not-found UI.
         // In particular, never truncate extra segments to a valid entry.
         artifact_project_id:
-          cleanTarget === "artifacts/" ? undefined : segments[1],
+          segments.length === 2 && segments[1] === "" ? undefined : segments[1],
         artifact_entry_id:
           segments.length > 2 ? segments.slice(2).join("/") : undefined,
       };

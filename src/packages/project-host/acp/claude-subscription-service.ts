@@ -5,7 +5,7 @@
 
 import { access } from "node:fs/promises";
 import { constants } from "node:fs";
-import { CLAUDE_CODE_QUALIFICATION } from "@cocalc/util/ai/qualified-harnesses";
+import { CLAUDE_CODE_INSTALL_REVISION } from "@cocalc/util/ai/qualified-harnesses";
 import { ClaudeSubscriptionLoginService } from "./claude-subscription-login";
 import {
   getClaudeSubscriptionCredential,
@@ -50,7 +50,7 @@ function managedClaudeCliPath(): string {
     | undefined;
   const variant = report?.header?.glibcVersionRuntime ? "" : "-musl";
   const root = process.env.COCALC_MANAGED_HARNESSES ?? "/opt/cocalc/harnesses";
-  return `${root}/claude-code/${CLAUDE_CODE_QUALIFICATION.package.version}/app/node_modules/@anthropic-ai/claude-agent-sdk-linux-${process.arch}${variant}/claude`;
+  return `${root}/claude-code/${CLAUDE_CODE_INSTALL_REVISION}/app/node_modules/@anthropic-ai/claude-agent-sdk-linux-${process.arch}${variant}/claude`;
 }
 
 export async function getClaudeSubscriptionLoginService(): Promise<ClaudeSubscriptionLoginService> {

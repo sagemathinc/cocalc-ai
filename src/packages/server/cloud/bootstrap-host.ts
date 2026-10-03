@@ -42,6 +42,7 @@
 import http from "node:http";
 import https from "node:https";
 import { URL } from "node:url";
+import { CLAUDE_CODE_INSTALL_REVISION } from "@cocalc/util/ai/qualified-harnesses";
 import { buildHostSpec } from "./host-util";
 import { gcpInternalHostname, normalizeProviderId } from "@cocalc/cloud";
 import { ONPREM_MASTER_CONAT_TUNNEL_LOCAL_PORT } from "@cocalc/conat/project-host/api";
@@ -494,6 +495,7 @@ function buildExamHostname({
 type ManagedHarness = {
   name: "claude-code";
   version: string;
+  install_revision: string;
   os: "linux";
   arch: "amd64" | "arm64";
   url: string;
@@ -518,6 +520,7 @@ export function resolveManagedHarness(
   return {
     name: "claude-code",
     version,
+    install_revision: CLAUDE_CODE_INSTALL_REVISION,
     os,
     arch,
     url: `${softwareBaseUrl.replace(/\/$/, "")}/harnesses/claude-code/${version}/${sha256}/harnesses-linux-${arch}.tar.xz`,

@@ -149,6 +149,37 @@ if (history.builds.some(({ assets }) => assets.some((asset) => asset.startsWith(
 }
 NODE
 
+# A previous manifest overlaps the on-disk scan; count each retained file once.
+node - "${ASSET_PREVIOUS}/runtime/control-plane/static" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const root = process.argv[2];
+const assets = Array.from({ length: 6000 }, (_, i) => `chunk-${i}-0123456789abcdef.js`);
+for (const asset of assets) fs.writeFileSync(path.join(root, asset), "fixture");
+fs.writeFileSync(path.join(root, "frontend-build.json"), JSON.stringify({ assets }));
+NODE
+preserve_previous_static_assets
+prepare_frontend_asset_history >/dev/null
+node - "${ASSET_TARGET}/runtime/control-plane/static/frontend-build-history.json" <<'NODE'
+const fs = require("node:fs");
+const history = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+if (history.builds[1].assets.length !== 6002) {
+  throw new Error("overlapping manifest/scan assets were not deduplicated");
+}
+NODE
+
+# A genuinely oversized unique inventory must still fail before activation.
+node - "${ASSET_PREVIOUS}/runtime/control-plane/static/frontend-build.json" <<'NODE'
+const fs = require("node:fs");
+const assets = Array.from({ length: 10001 }, (_, i) => `chunk-${i}-0123456789abcdef.js`);
+fs.writeFileSync(process.argv[2], JSON.stringify({ assets }));
+NODE
+if prepare_frontend_asset_history >"${TMP_ROOT}/oversized-assets.log" 2>&1; then
+  echo "oversized unique frontend inventory unexpectedly passed" >&2
+  exit 1
+fi
+grep -q 'frontend asset manifest exceeds 10000 files' "${TMP_ROOT}/oversized-assets.log"
+
 VALIDATION_RELEASE="${TMP_ROOT}/validation-release"
 TARGET_RELEASE="$VALIDATION_RELEASE"
 OVERLAY_MODE="rocket-bundle"

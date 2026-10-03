@@ -15,7 +15,7 @@ import getLogger from "@cocalc/backend/logger";
 import { podmanEnv } from "@cocalc/backend/podman/env";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { normalizeRootfsImageName } from "@cocalc/util/rootfs-images";
-import { CLAUDE_CODE_QUALIFICATION } from "@cocalc/util/ai/qualified-harnesses";
+import { CLAUDE_CODE_INSTALL_ROOT } from "@cocalc/util/ai/qualified-harnesses";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getNodeRuntimeMounts } from "@cocalc/project-runner/run/mounts";
 import { localPath } from "@cocalc/project-runner/run/filesystem";
@@ -150,7 +150,7 @@ export function claudeSubscriptionContainerArgs(options: {
     gid,
     runtimeArgs = [],
   } = options;
-  const entry = `${MANAGED_HARNESSES}/claude-code/${CLAUDE_CODE_QUALIFICATION.package.version}/app/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js`;
+  const entry = `${CLAUDE_CODE_INSTALL_ROOT}/app/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js`;
   return [
     "create",
     ...runtimeArgs,

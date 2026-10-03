@@ -112,6 +112,22 @@ describe("CoCalc connector configuration", () => {
     );
   });
 
+  it("lists only the account's own settings, and only at its home", async () => {
+    const { listCocalcConnectorConfigs } =
+      await import("./cocalc-connector-config");
+    await expect(listCocalcConnectorConfigs(locator)).resolves.toEqual([saved]);
+    const [sql, params] = queryMock.mock.calls.at(-1)!;
+    expect(`${sql}`).toContain("WHERE account_id=$1");
+    expect(params).toEqual([accountId]);
+    await expect(listCocalcConnectorConfigs({})).rejects.toThrow(
+      "invalid account_id",
+    );
+    homeMock.mockResolvedValueOnce({ home_bay_id: "bay-9" });
+    await expect(listCocalcConnectorConfigs(locator)).rejects.toThrow(
+      "not on account home",
+    );
+  });
+
   it("rejects source-project access loss on read and save", async () => {
     const { getCocalcConnectorConfig, saveCocalcConnectorConfig } =
       await import("./cocalc-connector-config");

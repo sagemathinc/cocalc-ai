@@ -1,6 +1,23 @@
-import { APP_BASE_PATH_ROUTE_MARKERS, hasHostAbsoluteRoutePrefix } from "./app";
+import {
+  APP_ROUTES,
+  APP_BASE_PATH_ROUTE_MARKERS,
+  hasHostAbsoluteRoutePrefix,
+} from "./app";
 
 describe("routing/app", () => {
+  it("keeps legacy Library URLs as app entry points and base-path markers", () => {
+    expect(APP_ROUTES.has("library")).toBe(true);
+    expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/library");
+    for (const path of [
+      "/library",
+      "/library/",
+      "/library/project/entry",
+      "/library?view=grid",
+    ]) {
+      expect(hasHostAbsoluteRoutePrefix(path)).toBe(true);
+    }
+    expect(hasHostAbsoluteRoutePrefix("/library-other")).toBe(false);
+  });
   it("recognizes host absolute web routes", () => {
     expect(hasHostAbsoluteRoutePrefix("/projects")).toBe(true);
     expect(hasHostAbsoluteRoutePrefix("/projects/123/files")).toBe(true);

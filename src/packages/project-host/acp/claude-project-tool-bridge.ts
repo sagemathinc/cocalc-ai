@@ -256,15 +256,20 @@ export async function createClaudeProjectToolBridge(
             result = await jobs.cancel(args);
           else if (tool === "project_exec_list") result = jobs.list();
           else if (tool === "project_read_image")
-            result = await readProjectImage(execute, args, signal);
+            result = await readProjectImage(jobs.executeTool, args, signal);
           else if (tool === "project_read_file")
-            result = await readProjectFile(execute, args, signal);
+            result = await readProjectFile(jobs.executeTool, args, signal);
           else if (tool === "project_write_file")
-            result = await writeProjectFile(execute, args, signal);
+            result = await writeProjectFile(jobs.executeTool, args, signal);
           else if (tool === "project_edit_file")
-            result = await editProjectFile(execute, args, signal);
+            result = await editProjectFile(jobs.executeTool, args, signal);
           else if (tool.startsWith("memory_"))
-            result = await runAgentMemoryTool(execute, tool, args, signal);
+            result = await runAgentMemoryTool(
+              jobs.executeTool,
+              tool,
+              args,
+              signal,
+            );
           else if (tool === "request_user_input_async" && asyncQuestion)
             result = await asyncQuestion(args);
           else throw Error("Unsupported project tool");
