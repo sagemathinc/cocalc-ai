@@ -3134,6 +3134,109 @@ function AgentWorkspace({
   );
 }
 
+const SIDEBAR_SECTIONS_STORAGE_KEY = "cocalc-sidebar-sections-v1";
+
+interface SidebarSections {
+  agents: boolean;
+  projects: boolean;
+  library: boolean;
+  people: boolean;
+}
+
+function loadSidebarSections(aiDisabled: boolean): SidebarSections {
+  const defaults = {
+    agents: !aiDisabled,
+    projects: aiDisabled,
+    library: false,
+    people: false,
+  };
+  try {
+    const saved = JSON.parse(
+      window.localStorage.getItem(SIDEBAR_SECTIONS_STORAGE_KEY) ?? "null",
+    );
+    if (saved && typeof saved === "object") {
+      for (const key of Object.keys(defaults)) {
+        if (typeof saved[key] === "boolean") defaults[key] = saved[key];
+      }
+    }
+  } catch {}
+  return defaults;
+}
+
+function saveSidebarSections(sections: SidebarSections): SidebarSections {
+  try {
+    window.localStorage.setItem(
+      SIDEBAR_SECTIONS_STORAGE_KEY,
+      JSON.stringify(sections),
+    );
+  } catch {}
+  return sections;
+}
+
+// One collapsible sidebar section. Its header (the page's navigation button)
+// never moves; expanded sections share the height and scroll on their own.
+function SidebarSection({
+  label,
+  header,
+  expanded,
+  onToggle,
+  children,
+}: {
+  label: string;
+  header: React.ReactNode;
+  expanded: boolean;
+  onToggle: () => void;
+  children?: React.ReactNode;
+}) {
+  return (
+    <section
+      aria-label={label}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        flex: expanded ? "1 1 0" : "0 0 auto",
+        minHeight: expanded ? 120 : undefined,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 2,
+          flex: "0 0 auto",
+          paddingRight: 4,
+        }}
+      >
+        <Button
+          type="text"
+          size="small"
+          aria-expanded={expanded}
+          aria-label={`${expanded ? "Collapse" : "Expand"} ${label}`}
+          title={`${expanded ? "Collapse" : "Expand"} ${label}`}
+          icon={<Icon name={expanded ? "caret-down" : "caret-right"} />}
+          onClick={onToggle}
+          style={{ color: UI_COLORS.secondary, flex: "0 0 auto" }}
+        />
+        <div style={{ flex: 1, minWidth: 0 }}>{header}</div>
+      </div>
+      {expanded && (
+        <div
+          style={{
+            flex: "1 1 0",
+            minHeight: 0,
+            overflowY: "auto",
+            overflowX: "hidden",
+            paddingRight: 4,
+            borderBottom: `1px solid ${UI_COLORS.border}`,
+          }}
+        >
+          {children}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function MyAgentsWorkspacePage({
   active = true,
   children,
@@ -3198,12 +3301,22 @@ export function MyAgentsWorkspacePage({
   const aiDisabled = !!useTypedRedux("account", "other_settings")?.get(
     "openai_disabled",
   );
-  const listMode: "projects" | "library" | "people" | undefined =
-    searchContext !== "agents"
-      ? searchContext
-      : aiDisabled
-        ? "projects"
-        : undefined;
+  // The sidebar's sections (Agents, Projects, Artifacts, People) stay where
+  // they are: navigating never hides one. Opening a page expands its section.
+  const [sidebarSections, setSidebarSections] = useState<SidebarSections>(() =>
+    loadSidebarSections(aiDisabled),
+  );
+  const toggleSidebarSection = (id: keyof SidebarSections) =>
+    setSidebarSections((prev) =>
+      saveSidebarSections({ ...prev, [id]: !prev[id] }),
+    );
+  useEffect(() => {
+    const id =
+      searchContext === "agents" && aiDisabled ? "projects" : searchContext;
+    setSidebarSections((prev) =>
+      prev[id] ? prev : saveSidebarSections({ ...prev, [id]: true }),
+    );
+  }, [searchContext, aiDisabled]);
   const libraryProjectId = useTypedRedux("page", "library_project_id");
   const libraryEntryId = useTypedRedux("page", "library_entry_id");
   const { names: artifactNames } = useArtifactNames();
@@ -4249,6 +4362,7 @@ export function MyAgentsWorkspacePage({
       }}
     >
       <WorkspaceSidebarActions
+        fillHeight
         onHideSidebar={
           isNarrow
             ? () => {
@@ -4271,55 +4385,33 @@ export function MyAgentsWorkspacePage({
         }
         firstNavigationItem={
           <>
-            {!aiDisabled && (
-              <Button
-                block
-                type="text"
-                style={{
-                  justifyContent: "flex-start",
-                  background: overviewOpen ? UI_COLORS.selected : undefined,
-                }}
-                icon={<Icon name="robot" />}
-                aria-current={overviewOpen ? "page" : undefined}
-                onClick={showAgentsOverview}
-              >
-                Agents
-              </Button>
-            )}
-            {!lite && (
-              <Button
-                block
-                type="text"
-                icon={<Icon name="folder-open" />}
-                style={{
-                  justifyContent: "flex-start",
-                  // Only the Projects list itself; inside a project the
-                  // sidebar marks that project instead.
-                  background: projectsListOpen ? UI_COLORS.selected : undefined,
-                }}
-                aria-current={projectsListOpen ? "page" : undefined}
-                onClick={() => {
-                  searchNavigation.current++;
-                  closeSearch();
-                  setMobileList(false);
-                  // Already in projects: show all of them, as Agents shows
-                  // all agents. Elsewhere, return to the last project view.
-                  if (projectsOpen && activeTopTab !== "projects") {
-                    void redux.getActions("page").set_active_tab("projects");
-                  } else {
-                    void openProjectsWorkspace();
+            {accountId && (
+              <>
+                <SidebarSearchBox
+                  label="Search"
+                  value={sidebarQuery}
+                  onChange={setListQuery}
+                  onSubmit={(query) =>
+                    submitSearch(
+                      query,
+                      searchContext === "library"
+                        ? "artifacts"
+                        : searchContext === "agents" && aiDisabled
+                          ? "projects"
+                          : searchContext,
+                      searchState.open ? searchState.origin : searchOrigin,
+                    )
                   }
-                }}
-              >
-                Projects
-              </Button>
+                  onEscape={() => closeSearch({ restoreUrl: true })}
+                />
+              </>
             )}
           </>
         }
       >
         {(() => {
-          // The sidebar search box's text narrows the agents list.
-          const search = searchContext === "agents" ? sidebarQuery.trim() : "";
+          // The sidebar search box's text narrows every section's list.
+          const search = sidebarQuery.trim();
           const queries = search ? [search] : [];
           const filter = (agent: NamedAgent) =>
             queries.every((query) => matchAgent(agent, query));
@@ -4350,127 +4442,59 @@ export function MyAgentsWorkspacePage({
           );
           return (
             <>
-              <Space direction="vertical" size={10} style={{ width: "100%" }}>
-                <Button
-                  ref={libraryButton}
-                  block
-                  type="text"
-                  style={{
-                    justifyContent: "flex-start",
-                    background: artifactLibraryOpen
-                      ? UI_COLORS.selected
-                      : undefined,
-                  }}
-                  icon={<Icon name="files" />}
-                  aria-pressed={artifactLibraryOpen}
-                  aria-current={artifactLibraryOpen ? "page" : undefined}
-                  onClick={showLibrary}
+              {!aiDisabled && (
+                <SidebarSection
+                  label="Agents"
+                  expanded={sidebarSections.agents}
+                  onToggle={() => toggleSidebarSection("agents")}
+                  header={
+                    <Button
+                      block
+                      type="text"
+                      style={{
+                        justifyContent: "flex-start",
+                        background: overviewOpen
+                          ? UI_COLORS.selected
+                          : undefined,
+                      }}
+                      icon={<Icon name="robot" />}
+                      aria-current={overviewOpen ? "page" : undefined}
+                      onClick={showAgentsOverview}
+                    >
+                      Agents
+                    </Button>
+                  }
                 >
-                  Artifacts
-                </Button>
-                {!lite && (
-                  <Button
-                    block
-                    type="text"
-                    style={{
-                      justifyContent: "flex-start",
-                      background: peopleOpen ? UI_COLORS.selected : undefined,
-                    }}
-                    icon={<Icon name="users" />}
-                    aria-current={peopleOpen ? "page" : undefined}
-                    onClick={() => {
-                      searchNavigation.current++;
-                      closeSearch();
-                      setMobileList(false);
-                      void redux.getActions("page").set_active_tab("people");
-                    }}
+                  <Space
+                    direction="vertical"
+                    size={10}
+                    style={{ width: "100%" }}
                   >
-                    People
-                  </Button>
-                )}
-                {accountId && (
-                  <>
-                    <SidebarSearchBox
-                      label={
-                        searchContext === "projects"
-                          ? "Search projects"
-                          : searchContext === "library"
-                            ? "Search artifacts"
-                            : searchContext === "people"
-                              ? "Search people"
-                              : aiDisabled
-                                ? "Search projects"
-                                : "Search agents"
-                      }
-                      value={sidebarQuery}
-                      onChange={setListQuery}
-                      onSubmit={(query) =>
-                        submitSearch(
-                          query,
-                          searchContext === "library"
-                            ? "artifacts"
-                            : searchContext === "agents" && aiDisabled
-                              ? "projects"
-                              : searchContext,
-                          searchState.open ? searchState.origin : searchOrigin,
-                        )
-                      }
-                      onEscape={() => closeSearch({ restoreUrl: true })}
-                    />
-                  </>
-                )}
-                {listMode === "projects" && (
-                  <ProjectsSidebar
-                    search={sidebarQuery}
-                    onNavigate={() => setMobileList(false)}
-                  />
-                )}
-                {listMode === "library" && accountId && (
-                  <LibrarySidebar
-                    search={sidebarQuery}
-                    accountId={accountId}
-                    agents={agents}
-                    onOpen={(hit) => {
-                      setMobileList(false);
-                      void openLibraryHit(hit);
-                    }}
-                    onAll={showLibrary}
-                    onNew={() => setNewArtifactOpen(true)}
-                  />
-                )}
-                {listMode === "people" && (
-                  <PeopleSidebar
-                    search={sidebarQuery}
-                    onNavigate={() => setMobileList(false)}
-                  />
-                )}
-                {!listMode && (
-                  <AgentOrganizationControls
-                    mode={agentOrganization.organization.mode}
-                    groupByProject={
-                      agentOrganization.organization.groupByProject
+                    {
+                      <AgentOrganizationControls
+                        mode={agentOrganization.organization.mode}
+                        groupByProject={
+                          agentOrganization.organization.groupByProject
+                        }
+                        onMode={agentOrganization.setMode}
+                        onGroupByProject={agentOrganization.setGroupByProject}
+                        onNewAgent={startNewAgent}
+                      />
                     }
-                    onMode={agentOrganization.setMode}
-                    onGroupByProject={agentOrganization.setGroupByProject}
-                    onNewAgent={startNewAgent}
-                  />
-                )}
-                {networkError && (
-                  <Alert
-                    role="alert"
-                    type="warning"
-                    showIcon
-                    title="Unable to load Agent Networks"
-                    description={networkError}
-                  />
-                )}
-                <OrganizationSaveAlert
-                  error={agentOrganization.saveError}
-                  onRetry={agentOrganization.retrySave}
-                />
-              </Space>
-              {!listMode && (
-                <>
+                    {networkError && (
+                      <Alert
+                        role="alert"
+                        type="warning"
+                        showIcon
+                        title="Unable to load Agent Networks"
+                        description={networkError}
+                      />
+                    )}
+                    <OrganizationSaveAlert
+                      error={agentOrganization.saveError}
+                      onRetry={agentOrganization.retrySave}
+                    />
+                  </Space>
                   <div>
                     {agentOrganization.organization.groupByProject &&
                       pinnedProjectGroups.length > 0 && (
@@ -4701,7 +4725,121 @@ export function MyAgentsWorkspacePage({
                       </div>
                     )}
                   </div>
-                </>
+                </SidebarSection>
+              )}
+              {!lite && (
+                <SidebarSection
+                  label="Projects"
+                  expanded={sidebarSections.projects}
+                  onToggle={() => toggleSidebarSection("projects")}
+                  header={
+                    <Button
+                      block
+                      type="text"
+                      icon={<Icon name="folder-open" />}
+                      style={{
+                        justifyContent: "flex-start",
+                        // Only the Projects list itself; inside a project the
+                        // sidebar marks that project instead.
+                        background: projectsListOpen
+                          ? UI_COLORS.selected
+                          : undefined,
+                      }}
+                      aria-current={projectsListOpen ? "page" : undefined}
+                      onClick={() => {
+                        searchNavigation.current++;
+                        closeSearch();
+                        setMobileList(false);
+                        // Already in projects: show all of them, as Agents shows
+                        // all agents. Elsewhere, return to the last project view.
+                        if (projectsOpen && activeTopTab !== "projects") {
+                          void redux
+                            .getActions("page")
+                            .set_active_tab("projects");
+                        } else {
+                          void openProjectsWorkspace();
+                        }
+                      }}
+                    >
+                      Projects
+                    </Button>
+                  }
+                >
+                  <ProjectsSidebar
+                    search={sidebarQuery}
+                    onNavigate={() => setMobileList(false)}
+                  />
+                </SidebarSection>
+              )}
+              <SidebarSection
+                label="Artifacts"
+                expanded={sidebarSections.library}
+                onToggle={() => toggleSidebarSection("library")}
+                header={
+                  <Button
+                    ref={libraryButton}
+                    block
+                    type="text"
+                    style={{
+                      justifyContent: "flex-start",
+                      background: artifactLibraryOpen
+                        ? UI_COLORS.selected
+                        : undefined,
+                    }}
+                    icon={<Icon name="files" />}
+                    aria-pressed={artifactLibraryOpen}
+                    aria-current={artifactLibraryOpen ? "page" : undefined}
+                    onClick={showLibrary}
+                  >
+                    Artifacts
+                  </Button>
+                }
+              >
+                {accountId && (
+                  <LibrarySidebar
+                    search={sidebarQuery}
+                    accountId={accountId}
+                    agents={agents}
+                    onOpen={(hit) => {
+                      setMobileList(false);
+                      void openLibraryHit(hit);
+                    }}
+                    onAll={showLibrary}
+                    onNew={() => setNewArtifactOpen(true)}
+                  />
+                )}
+              </SidebarSection>
+              {!lite && (
+                <SidebarSection
+                  label="People"
+                  expanded={sidebarSections.people}
+                  onToggle={() => toggleSidebarSection("people")}
+                  header={
+                    <Button
+                      block
+                      type="text"
+                      style={{
+                        justifyContent: "flex-start",
+                        background: peopleOpen ? UI_COLORS.selected : undefined,
+                      }}
+                      icon={<Icon name="users" />}
+                      aria-current={peopleOpen ? "page" : undefined}
+                      onClick={() => {
+                        searchNavigation.current++;
+                        closeSearch();
+                        setMobileList(false);
+                        void redux.getActions("page").set_active_tab("people");
+                      }}
+                    >
+                      People
+                    </Button>
+                  }
+                >
+                  <PeopleSidebar
+                    search={sidebarQuery}
+                    onNavigate={() => setMobileList(false)}
+                  />
+                </SidebarSection>
               )}
             </>
           );

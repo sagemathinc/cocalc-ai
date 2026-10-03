@@ -11,8 +11,12 @@ export function WorkspaceSidebarActions({
   footer,
   headerActions,
   onHideSidebar,
+  fillHeight = false,
 }: {
   firstNavigationItem: ReactNode;
+  // The children divide the height between themselves and scroll on their
+  // own (collapsible sidebar sections) instead of scrolling as one list.
+  fillHeight?: boolean;
   children?: ReactNode;
   footer?: ReactNode;
   // Shown beside the hide-sidebar control (e.g. notifications).
@@ -74,8 +78,9 @@ export function WorkspaceSidebarActions({
           flex: "1 1 0",
           minHeight: 0,
           minWidth: 0,
-          overflowY: "auto",
+          overflowY: fillHeight ? "hidden" : "auto",
           overflowX: "hidden",
+          ...(fillHeight ? { display: "flex", flexDirection: "column" } : {}),
         }}
       >
         <div
@@ -83,6 +88,7 @@ export function WorkspaceSidebarActions({
             display: "flex",
             flexDirection: "column",
             gap: 10,
+            ...(fillHeight ? { flex: "1 1 0", minHeight: 0 } : {}),
           }}
         >
           {firstNavigationItem}
