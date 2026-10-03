@@ -116,7 +116,7 @@ export class HarnessAgent implements AcpAgent {
         const client = await AcpHarnessClient.start(
           this.binding,
           async (binding) => {
-            const process = await this.launch(binding);
+            const process = await this.launch(binding, request.session_id);
             process.setAsyncQuestionHandler?.(async (input) => {
               const context = this.attentionContext;
               if (
