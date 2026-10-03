@@ -38,6 +38,9 @@ import type {
 
 export const agent = {
   listNamedAgents: authFirstRequireAccount,
+  // Owner-only: enabling memory and viewing or deleting notes need a human
+  // session, never an agent's credential.
+  manageAgentMemory: authFirstRequireAccountWithBoundSession,
   nameAgent: authFirstRequireAccountWithBoundSession,
   retireNamedAgent: authFirstRequireAccountWithBoundSession,
   listAgentNetworks: authFirstRequireAccount,
@@ -273,6 +276,16 @@ export interface AgentApi {
     },
   ): Promise<void>;
   listNamedAgents(opts: { account_id?: string }): Promise<NamedAgentDirectory>;
+  manageAgentMemory(
+    opts: AgentHumanAuth &
+      (
+        | { op: "status" }
+        | { op: "list" }
+        | { op: "set-enabled"; enabled: boolean }
+        | { op: "delete"; name: string }
+        | { op: "delete-all" }
+      ),
+  ): Promise<any>;
   nameAgent(opts: AgentHumanAuth & NameAgentOptions): Promise<NamedAgent>;
   retireNamedAgent(
     opts: AgentHumanAuth & RetireNamedAgentOptions,

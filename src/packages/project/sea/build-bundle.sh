@@ -267,7 +267,7 @@ OUT="$FINAL_OUT"
 if [ -n "$FINAL_TARBALL" ]; then
   mkdir -p "$(dirname "$FINAL_TARBALL")"
   TMP_TARBALL="$FINAL_TARBALL.tmp.$$"
-  tar -C "$(dirname "$OUT")" -Jcf "$TMP_TARBALL" "$(basename "$OUT")"
+  XZ_OPT="${XZ_OPT:--T0}" tar -C "$(dirname "$OUT")" -Jcf "$TMP_TARBALL" "$(basename "$OUT")"
   tar -tJf "$TMP_TARBALL" >/dev/null
   mv "$TMP_TARBALL" "$FINAL_TARBALL"
   TMP_TARBALL=""

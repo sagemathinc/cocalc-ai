@@ -29,6 +29,7 @@ test("opens the named agent without navigating to its project file", async () =>
   expect(await openAgentNotification("p", "a.chat", "t")).toBe(true);
   expect(setState).toHaveBeenCalledWith({
     library_open: false,
+    agents_overview_open: false,
     library_project_id: undefined,
     library_entry_id: undefined,
     active_agent_id: "a",

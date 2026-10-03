@@ -58,9 +58,11 @@ import {
 import { IS_EMBEDDED } from "@cocalc/frontend/client/handle-target";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { closeSearch, openSearch } from "@cocalc/frontend/search/search-store";
 import {
   getPageUrlPath,
   parsePageTarget,
+  personalProjectPath,
   type ParsedPageTarget,
 } from "@cocalc/frontend/page-routing";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
@@ -73,6 +75,58 @@ import {
   createGitReviewNavigationSearch,
   consumeGitReviewOnlyNavigation,
 } from "./git/review-route";
+
+import { RetainedWorkspaceNavigation } from "./app/retained-workspace-navigation";
+import { rememberAppPath } from "./app/last-app-path";
+
+const retainedWorkspaceNavigation = new RetainedWorkspaceNavigation();
+function retainedWorkspaceRuntime(tab: string): object | undefined {
+  if (tab === "projects") return redux.getStore("projects");
+  if (is_valid_uuid_string(tab) && redux.hasProjectStore(tab))
+    return redux.getProjectStore(tab);
+}
+
+/** Capture before the top tab changes, including departures through Library. */
+export function rememberProjectsView() {
+  const activeTab = redux.getStore("page")?.get?.("active_top_tab");
+  const runtime = retainedWorkspaceRuntime(activeTab);
+  const account = redux.getStore("account")?.get("account_id");
+  const currentRoute = parsePageTarget(
+    location.pathname.slice(appBasePath.length).replace(/^\//, ""),
+  );
+  const currentViewMatches =
+    activeTab === "projects"
+      ? currentRoute.page === "projects"
+      : currentRoute.page === "project" &&
+        currentRoute.target.split("/")[0] === activeTab;
+  if (runtime && account && currentViewMatches) {
+    retainedWorkspaceNavigation.remember(
+      activeTab,
+      location.href,
+      account,
+      runtime,
+    );
+  }
+}
+
+/** Sidebar Projects means resume the Projects workspace, not reset to its list. */
+export function openProjectsWorkspace() {
+  const page = redux.getActions("page");
+  const activeTab = redux.getStore("page")?.get("active_top_tab");
+  if (activeTab === "projects" || is_valid_uuid_string(activeTab)) return;
+  const view = retainedWorkspaceNavigation.latest(
+    redux.getStore("account")?.get("account_id"),
+    retainedWorkspaceRuntime,
+  );
+  if (!view) return page.set_active_tab("projects");
+  const url = new URL(view.url);
+  set_url_with_search(
+    url.pathname.slice(appBasePath.length),
+    url.search,
+    url.hash,
+  );
+  return page.set_active_tab(view.tab, false);
+}
 
 const reviewSearchForNavigation = createGitReviewNavigationSearch(
   new URL(location.href),
@@ -128,14 +182,20 @@ export function set_url_with_search(
     // no need to mess with url in embedded mode.
     return;
   }
+  if (parsePageTarget(url.replace(/^\//, "")).page === "agents") {
+    rememberProjectsView();
+  }
+  // Projects I gave an alias show my personal address for them.
+  url = personalProjectPath(url);
   last_url = url;
+  rememberAppPath(url);
   const current = new URL(location.href);
   current.search = params();
   const query_params =
     search ?? reviewSearchForNavigation(current, join(appBasePath, url));
   // Empty Library segments are invalid selections, not redundant separators.
-  // path.join would turn /library//project/entry into a different, valid route.
-  const full_url = /^\/?library(?:\/|$)/.test(url)
+  // path.join would turn /artifacts//project/entry into a different, valid route.
+  const full_url = /^\/?artifacts(?:\/|$)/.test(url)
     ? `${join(appBasePath, "/")}${url.replace(/^\//, "")}${query_params}${hash ?? location.hash}`
     : join(appBasePath, url + query_params + (hash ?? location.hash));
   if (full_url === location.pathname + location.search + location.hash) {
@@ -184,14 +244,24 @@ export function load_target(
     redux.getActions("page").set_active_tab("account", false);
     return;
   }
+  // Any other address (including Back/Forward) leaves the search results.
+  if (parsed.page !== "search") closeSearch();
   switch (parsed.page) {
+    case "search": {
+      // The results cover the page of their kind.
+      const page = parsed.scope === "artifacts" ? "artifacts" : parsed.scope;
+      load_target(page, ignore_kiosk, false);
+      openSearch(parsed.query, parsed.scope, { returnPath: page });
+      break;
+    }
     case "agents":
       redux.getActions("page").setState({
         library_open: parsed.library === true,
+        agents_overview_open: parsed.overview === true,
         library_project_id: parsed.artifact_project_id,
         library_entry_id: parsed.artifact_entry_id,
         // Library overlays the workspace; keep its selected conversation.
-        ...(!parsed.library
+        ...(!parsed.library && !parsed.overview
           ? {
               active_agent_id: parsed.agent_id,
               active_agent_name:
@@ -284,6 +354,17 @@ export function load_target(
       redux.getActions("page").set_active_tab("hosts", change_history);
       break;
 
+    case "u":
+      void import("./personal-url-navigation").then(({ openPersonalUrl }) =>
+        openPersonalUrl(parsed.path),
+      );
+      break;
+
+    case "people":
+      redux.getActions("page").setState({ people_route: parsed.route });
+      redux.getActions("page").set_active_tab("people", change_history);
+      break;
+
     case "share":
       redux.getActions("page").setState({ share_slug: parsed.slug });
       redux.getActions("page").set_active_tab("share", change_history);
@@ -325,6 +406,17 @@ window.onpopstate = (_) => {
   // The owning chat listens to popstate. Reopening the same file for a drawer
   // selection can create an extra history entry and discard the Forward stack.
   if (consumeGitReviewOnlyNavigation(new URL(location.href))) return;
+  // A suspended workspace is already at this exact address. Do not reopen its
+  // file, directory, search, settings, or other view just to make it visible.
+  const retained = retainedWorkspaceNavigation.find(
+    location.href,
+    redux.getStore("account")?.get("account_id"),
+    retainedWorkspaceRuntime,
+  );
+  if (retained && redux.getStore("page")?.get("active_top_tab") === "agents") {
+    void redux.getActions("page").set_active_tab(retained, false);
+    return;
+  }
   load_target(
     decodeURIComponent(
       document.location.pathname.slice(

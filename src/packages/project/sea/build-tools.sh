@@ -76,31 +76,51 @@ EOF
   install -m 0644 "$REFLECT_BUILD/LICENSE.txt" "$work_dir/share/licenses/reflect/LICENSE.txt"
 }
 
-for ARCH in "${ARCHES[@]}"; do
+# Each architecture is built in its own work directory, so both are built in
+# parallel; compression uses all cores (xz -T0).
+build_arch() {
+  local ARCH="$1"
+  local ARCH_WORK_DIR="$WORK_DIR/$ARCH"
   echo "- Building tools for ${OS}/${ARCH}"
-  rm -rf "$WORK_DIR/bin" "$WORK_DIR/share"
-  mkdir -p "$WORK_DIR/bin" "$WORK_DIR/share"
+  rm -rf "$ARCH_WORK_DIR"
+  mkdir -p "$ARCH_WORK_DIR/bin" "$ARCH_WORK_DIR/share"
+  local CACHE_KEY CACHE_DIR
   CACHE_KEY="$(cocalc_tools_cache_key "$ROOT" "tools" "$OS" "$ARCH" "all")"
   CACHE_DIR="$CACHE_ROOT/$CACHE_KEY"
-  CACHE_DIRS_USED+=("$CACHE_DIR")
-  if cocalc_tools_restore_cache "$CACHE_DIR" "$WORK_DIR"; then
+  if cocalc_tools_restore_cache "$CACHE_DIR" "$ARCH_WORK_DIR"; then
     echo "  - Restored downloaded tools from cache: $CACHE_DIR"
   else
     (
       cd "$BACKEND_PKG_DIR"
-      COCALC_BIN_PATH="$WORK_DIR/bin" \
+      COCALC_BIN_PATH="$ARCH_WORK_DIR/bin" \
       COCALC_TOOL_PLATFORM="$OS" \
       COCALC_TOOL_ARCH="$ARCH" \
         node -e 'require("./dist/sandbox/install").install()'
     )
-    cocalc_tools_save_cache "$CACHE_DIR" "$WORK_DIR"
+    cocalc_tools_save_cache "$CACHE_DIR" "$ARCH_WORK_DIR"
     echo "  - Saved downloaded tools cache: $CACHE_DIR"
   fi
-  install_cocalc_cli_runtime "$WORK_DIR"
-  TARGET="$OUT_DIR/tools-${OS}-${ARCH}.tar.xz"
+  install_cocalc_cli_runtime "$ARCH_WORK_DIR"
+  local TARGET="$OUT_DIR/tools-${OS}-${ARCH}.tar.xz"
   rm -f "$TARGET"
-  tar -C "$WORK_DIR" -Jcf "$TARGET" bin share
+  tar -C "$ARCH_WORK_DIR" -cf - bin share | xz -T0 >"$TARGET.tmp"
+  mv "$TARGET.tmp" "$TARGET"
   echo "  - Tools bundle created at $TARGET"
+}
+
+PIDS=()
+for ARCH in "${ARCHES[@]}"; do
+  CACHE_DIRS_USED+=("$CACHE_ROOT/$(cocalc_tools_cache_key "$ROOT" "tools" "$OS" "$ARCH" "all")")
+  build_arch "$ARCH" &
+  PIDS+=("$!")
 done
+FAILED=0
+for pid in "${PIDS[@]}"; do
+  wait "$pid" || FAILED=1
+done
+if [ "$FAILED" = "1" ]; then
+  echo "Building tools failed" >&2
+  exit 1
+fi
 
 cocalc_tools_prune_cache "$CACHE_ROOT" "${CACHE_DIRS_USED[@]}"

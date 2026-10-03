@@ -142,3 +142,56 @@ describe("ipynb format version defaults", () => {
     expect(imported.metadata()).toBeUndefined();
   });
 });
+
+describe("importing a notebook over existing cells", () => {
+  const ipynb = (cells: { id?: string; source: string }[]) => ({
+    ...DEFAULT_IPYNB,
+    cells: cells.map(({ id, source }) => ({
+      ...(id != null ? { id } : {}),
+      cell_type: "code",
+      source,
+      metadata: {},
+      outputs: [],
+      execution_count: null,
+    })),
+  });
+  const imported = (file, existing_ids: string[]) => {
+    const importer = new IPynbImporter();
+    let n = 0;
+    importer.import({ ipynb: file, existing_ids, new_id: () => `new${n++}` });
+    const cells = Object.values(importer.cells()) as any[];
+    return cells
+      .sort((a, b) => a.pos - b.pos)
+      .map((cell) => `${cell.id}:${cell.input}`);
+  };
+
+  it("keeps each cell's input with its own id when a cell was inserted", () => {
+    // The file has a cell inserted before b; matching by position would give
+    // x's input to b, b's to c, and so on.
+    const file = ipynb([
+      { id: "a", source: "A" },
+      { id: "x", source: "X" },
+      { id: "b", source: "B" },
+      { id: "c", source: "C" },
+    ]);
+    expect(imported(file, ["a", "b", "c"])).toEqual([
+      "a:A",
+      "x:X",
+      "b:B",
+      "c:C",
+    ]);
+  });
+
+  it("keeps ids when cells were deleted or moved", () => {
+    const file = ipynb([
+      { id: "c", source: "C" },
+      { id: "a", source: "A" },
+    ]);
+    expect(imported(file, ["a", "b", "c"])).toEqual(["c:C", "a:A"]);
+  });
+
+  it("reuses existing ids by position for cells without ids", () => {
+    const file = ipynb([{ source: "A" }, { source: "B" }, { source: "C" }]);
+    expect(imported(file, ["a", "b"])).toEqual(["a:A", "b:B", "new0:C"]);
+  });
+});

@@ -16,7 +16,33 @@ import type { ProposedAction, ActionDecision } from "./artifact-actions";
 export * from "./artifact-actions";
 export const ARTIFACT_TEXT_LIMIT = 32 * 1024;
 export const ARTIFACT_SNAPSHOT_LIMIT = 128 * 1024;
+// Artifact rows are keyed by (date, sender_id, event, message_id, thread_id);
+// a fixed date keeps each artifact one row that is updated in place.
 const DATE = "1970-01-01T00:00:00.000Z";
+
+/**
+ * Drop the fixed storage-key date from artifact rows before returning them to
+ * callers, where it reads as a real (and wrong) timestamp. The real time is
+ * published_at.
+ */
+export function withoutArtifactStorageDate<T>(value: T): T {
+  if (Array.isArray(value))
+    return value.map((item) => withoutArtifactStorageDate(item)) as T;
+  if (!value || typeof value !== "object") return value;
+  const row = value as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(row)) {
+    if (
+      key === "date" &&
+      item === DATE &&
+      typeof row.event === "string" &&
+      row.event.startsWith("chat-artifact")
+    )
+      continue;
+    result[key] = withoutArtifactStorageDate(item);
+  }
+  return result as T;
+}
 
 /** A locator, not a snapshot of the file contents. Relative to the chat project. */
 export interface ArtifactFile {

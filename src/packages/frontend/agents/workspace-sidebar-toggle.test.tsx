@@ -7,6 +7,7 @@ import "@testing-library/jest-dom";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { AgentsSidebarToggle } from "./workspace-sidebar-toggle";
 
+jest.mock("@cocalc/frontend/art", () => ({ APP_ICON: "/logo.svg" }));
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: ({ name }: { name: string }) => <span aria-hidden>{name}</span>,
   Tooltip: ({ children }: { children: React.ReactNode }) => children,
@@ -18,7 +19,7 @@ describe("AgentsSidebarToggle", () => {
     render(<AgentsSidebarToggle hidden={false} onToggle={onToggle} />);
 
     const button = screen.getByRole("button", {
-      name: "Hide Agents sidebar",
+      name: "Hide sidebar",
     });
     expect(button).toHaveAttribute("aria-expanded", "true");
     expect(button).toHaveAttribute("aria-controls", "agents-workspace-sidebar");
@@ -31,7 +32,14 @@ describe("AgentsSidebarToggle", () => {
     render(<AgentsSidebarToggle hidden onToggle={jest.fn()} />);
 
     expect(
-      screen.getByRole("button", { name: "Show Agents sidebar" }),
+      screen.getByRole("button", { name: "Show sidebar" }),
     ).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("hidden, shows the CoCalc mark so the way back is easy to spot", () => {
+    const { container } = render(
+      <AgentsSidebarToggle hidden onToggle={jest.fn()} />,
+    );
+    expect(container.querySelector('img[src="/logo.svg"]')).not.toBeNull();
   });
 });
