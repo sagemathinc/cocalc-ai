@@ -48,9 +48,8 @@ function usesDefaultPublicBrand(config?: PublicRouteMetadataConfig): boolean {
 }
 
 // cocalc.ai itself: the default CoCalc brand on the canonical host, never
-// CoCalc Plus. Copy that uses this test (Home's agents highlight and the
-// Features index first screen) names Claude Code, or CoCalc.ai as the sign-up
-// destination, only where this is true.
+// CoCalc Plus. Copy that uses this test names Claude Code, or CoCalc.ai as
+// the sign-up destination, only where this is true.
 // `config.dns` is the request host on both sides: the crawler
 // fallback reads it from the request, and /customize sets it from the Host
 // header for the browser.
