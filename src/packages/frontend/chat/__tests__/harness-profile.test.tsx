@@ -40,10 +40,20 @@ const accountStore = {
 };
 
 jest.mock("../claude-subscription-connect", () => ({
-  ClaudeSubscriptionConnect: ({ onConnected }) => (
-    <button onClick={() => onConnected("00000000-0000-4000-8000-000000000002")}>
-      Complete subscription sign-in
-    </button>
+  ClaudeSubscriptionConnect: ({
+    onConnected,
+    leadingActions,
+    trailingActions,
+  }) => (
+    <>
+      {leadingActions}
+      {trailingActions}
+      <button
+        onClick={() => onConnected("00000000-0000-4000-8000-000000000002")}
+      >
+        Complete subscription sign-in
+      </button>
+    </>
   ),
 }));
 
@@ -231,9 +241,7 @@ test("Claude subscription selection exposes an explicit disconnect action", () =
         threadKey="thread-a"
       />,
     );
-    expect(
-      screen.getByRole("button", { name: "Disconnect Claude subscription" }),
-    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Disconnect" })).toBeTruthy();
     expect(
       screen.getByRole("link", {
         name: /Claude Code preview: setup, security model, and billing/,
@@ -600,6 +608,75 @@ test("discovery errors remove nested Error prefixes and leave retry available", 
     await screen.findByRole("combobox", { name: "Claude Code Model" }),
   ).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+test.each([false, true])(
+  "live controls supersede discovery errors, including late rejections (%s)",
+  async (late) => {
+    const runtime = qualifiedHarnessRuntime("claude-code", "/home/user");
+    let reject!: (error: Error) => void;
+    const onDiscover = jest.fn(
+      () => new Promise<never>((_resolve, fail) => (reject = fail)),
+    );
+    const props = { compact: true, runtime, onDiscover, onSettings: jest.fn() };
+    const { rerender } = render(<HarnessRuntimeControl {...props} />);
+    await waitFor(() => expect(onDiscover).toHaveBeenCalledTimes(1));
+    const fail = async () => {
+      await act(async () => {
+        reject(Error("ACP discovery is busy; try again after it finishes"));
+      });
+    };
+    if (!late) {
+      await fail();
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "ACP discovery is busy",
+      );
+      rerender(
+        <HarnessRuntimeControl
+          {...props}
+          reported={{
+            profile: { ...runtime.profile, revision: "old" },
+            controls: claudeControls,
+          }}
+        />,
+      );
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "ACP discovery is busy",
+      );
+    }
+    rerender(
+      <HarnessRuntimeControl
+        {...props}
+        reported={{ profile: runtime.profile, controls: claudeControls }}
+      />,
+    );
+    if (late) await fail();
+    expect(
+      await screen.findByRole("combobox", { name: "Claude Code Model" }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(onDiscover).toHaveBeenCalledTimes(1);
+    const model = screen.getByRole("combobox", { name: "Claude Code Model" });
+    model.focus();
+    expect(document.activeElement).toBe(model);
+  },
+);
+
+test("failed refresh of current controls remains visible", async () => {
+  const runtime = qualifiedHarnessRuntime("claude-code", "/home/user");
+  render(
+    <HarnessRuntimeControl
+      runtime={runtime}
+      reported={{ profile: runtime.profile, controls: claudeControls }}
+      onDiscover={jest.fn().mockRejectedValue(Error("Discovery unavailable"))}
+      onSettings={jest.fn()}
+    />,
+  );
+  screen.getByRole("button", { name: "Refresh" }).focus();
+  await userEvent.setup().keyboard("{Enter}");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Discovery unavailable",
+  );
 });
 
 test("Claude composer automatically discovers model and effort without selecting a default", async () => {

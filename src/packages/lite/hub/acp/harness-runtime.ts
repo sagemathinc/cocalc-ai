@@ -49,6 +49,17 @@ export function setHarnessLauncher(next?: Factory): void {
   launcher = next;
 }
 
+let rateLimitRecorder:
+  | ((binding: HarnessBinding, rateLimit: unknown) => void)
+  | undefined;
+
+/** Where a turn's reported subscription limits go (the project host). */
+export function setHarnessRateLimitRecorder(
+  next?: (binding: HarnessBinding, rateLimit: unknown) => void,
+): void {
+  rateLimitRecorder = next;
+}
+
 export function setHarnessAuthorityValidator(
   next?: (binding: HarnessBinding) => Promise<void>,
 ): void {
@@ -317,5 +328,6 @@ export async function createHarnessAgent(
     (binding) => factory(binding, conversation),
     attention,
     authorityValidator,
+    rateLimitRecorder,
   );
 }

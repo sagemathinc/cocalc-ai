@@ -511,8 +511,8 @@ export function resolveManagedHarness(
     return undefined;
   }
   const sha256 = {
-    amd64: "e19b876ca7a56b39f5f6fa24537df57319908fa44c5a99280948f62a8138f7d3",
-    arm64: "d39ceeceb2501c65502f49c24662c15076361a59c717f8ccfa6d7a99e26c1dac",
+    amd64: "aa275272bf79e32ad333790679535d4d45ea2cd32d08a271865e64ed0b6361d1",
+    arm64: "e5a52385ff5e95a9c9eeeac8f9875e773a66622af64ccb3fb00a8f5b1708ff88",
   }[arch];
   const version = "0.81.1";
   return {

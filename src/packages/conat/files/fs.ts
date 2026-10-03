@@ -161,6 +161,10 @@ export interface JupyterImportIpynbResult {
 export interface JupyterSaveIpynbResult extends JupyterImportIpynbResult {
   bytes: number;
   converted: boolean;
+  // The file as written: its sha1 and modification time, so that whoever
+  // saved can record the save and no client mistakes it for an external edit.
+  sha1?: string;
+  mtimeMs?: number;
 }
 
 export interface FilesystemJupyterHandlers {

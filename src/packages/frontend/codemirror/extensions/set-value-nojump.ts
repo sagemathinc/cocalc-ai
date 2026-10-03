@@ -5,6 +5,7 @@
 
 import * as CodeMirror from "codemirror";
 import { diff_main } from "@cocalc/util/patch";
+import { mapTextOffset } from "@cocalc/frontend/misc/map-text-offset";
 
 /*
 Try to set the value of the buffer to something new by replacing just the ranges
@@ -51,6 +52,17 @@ CodeMirror.defineExtension(
       const b = cm.setBookmark({ line: cm.lineAtHeight(t, "local") });
       const before = cm.heightAtLine(cm.lineAtHeight(t, "local"));
 
+      // Where the cursors (selections) are, so they can be mapped to the new
+      // value: CodeMirror moves a cursor past text inserted exactly at it,
+      // so a collaborator's text merged in where the user is typing would
+      // put the user's next keystrokes after it, splitting their words.
+      const selections = scroll_last
+        ? undefined
+        : cm.listSelections().map(({ anchor, head }) => ({
+            anchor: cm.indexFromPos(anchor),
+            head: cm.indexFromPos(head),
+          }));
+
       // Compute patch that transforms current_value to new value:
       const diff = diff_main(current_value, value);
       let last_pos: CodeMirror.Position | undefined = undefined;
@@ -92,6 +104,19 @@ CodeMirror.defineExtension(
       if (value !== cm.getValue()) {
         console.warn("setValueNoJump failed -- setting value directly");
         cm.setValue(value);
+      }
+
+      if (selections != null) {
+        cm.setSelections(
+          selections.map(({ anchor, head }) => ({
+            anchor: cm.posFromIndex(
+              mapTextOffset(current_value, value, anchor),
+            ),
+            head: cm.posFromIndex(mapTextOffset(current_value, value, head)),
+          })),
+          undefined,
+          { scroll: false },
+        );
       }
 
       if (scroll_last && last_pos != null) {

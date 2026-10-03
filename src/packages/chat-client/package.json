@@ -35,7 +35,7 @@
     "@cocalc/chat": "workspace:*",
     "@cocalc/conat": "workspace:*",
     "@cocalc/util": "workspace:*",
-    "markdown-it": "^14.2.0"
+    "markdown-it": "^14.3.1"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

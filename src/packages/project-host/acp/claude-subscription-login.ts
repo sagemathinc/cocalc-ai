@@ -3,29 +3,35 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { spawn, execFile, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { isValidUUID } from "@cocalc/util/misc";
-import {
-  isSupportedClaudeSubscriptionPlan,
-  CLAUDE_SUBSCRIPTION_PLAN_ERROR,
-} from "@cocalc/util/ai/claude-subscription-plan";
 import { harnessOwner } from "./harness-reaper";
+import {
+  claudeOAuthTokenFromOutput,
+  claudeOAuthTokenLine,
+  looksLikeClaudeSecret,
+} from "./claude-subscription-token";
 import {
   CLAUDE_LOGIN_PREFIX,
   CLAUDE_LOGIN_OWNER,
   killClaudeLoginProcesses,
 } from "./claude-login-cleanup";
 
-const execFileAsync = promisify(execFile);
 const LOGIN_TIMEOUT_MS = 10 * 60_000;
+// Claude Code treats a long burst of input as a paste, in which Enter is
+// text rather than submit: send Enter on its own after the code.
+const ENTER_DELAY_MS = 750;
+// Exchanging the code takes seconds; never leave the user waiting forever.
+const CODE_EXCHANGE_TIMEOUT_MS = 90_000;
 const TERMINAL_STATUS_RETENTION_MS = 15 * 60_000;
-const MAX_OUTPUT_BYTES = 16 * 1024;
-const MAX_STATUS_BYTES = 16 * 1024;
+// The terminal UI redraws, so keep enough for the token after the art.
+const MAX_OUTPUT_BYTES = 64 * 1024;
+// setup-token requests a one-year token.
+const TOKEN_LIFETIME_MS = 365 * 24 * 3600 * 1000;
 
 export type ClaudeSubscriptionLoginStatus = {
   id: string;
@@ -44,6 +50,8 @@ type LoginSession = ClaudeSubscriptionLoginStatus & {
   timer: ReturnType<typeof setTimeout>;
   output: string;
   codeSubmitted: boolean;
+  // The submitted code, so that its echo is never mistaken for a token.
+  code: string;
   completion?: Promise<void>;
 };
 
@@ -55,7 +63,24 @@ function loginEnvironment(home: string): NodeJS.ProcessEnv {
     NO_BROWSER: "1",
     PATH: process.env.PATH ?? "/usr/bin:/bin",
     LANG: "C.UTF-8",
+    TERM: "xterm-256color",
   };
+}
+
+// Plain text of terminal output: drop escape sequences and control bytes.
+export function terminalText(output: string): string {
+  return output
+    .replace(/\x1b\[(\d*)C/g, (_, n) =>
+      " ".repeat(Math.min(Number(n) || 1, 200)),
+    )
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b[@-_]/g, "")
+    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
+}
+
+function quote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function providerUrl(output: string): string | undefined {
@@ -71,35 +96,6 @@ function providerUrl(output: string): string | undefined {
   } catch {
     // Incomplete output is normal while the CLI is still writing.
   }
-}
-
-export function verifiedClaudeSubscriptionStatus(output: string): {
-  plan: string;
-  identity: string;
-} {
-  let value: Record<string, unknown>;
-  try {
-    value = JSON.parse(output);
-  } catch {
-    throw Error("Claude subscription status could not be verified");
-  }
-  const plan = value?.subscriptionType;
-  if (
-    value?.loggedIn !== true ||
-    value?.apiProvider !== "firstParty" ||
-    value?.apiKeySource
-  )
-    throw Error("Claude Pro/Max subscription was not verified");
-  if (!isSupportedClaudeSubscriptionPlan(plan))
-    throw Error(CLAUDE_SUBSCRIPTION_PLAN_ERROR);
-  const identity = value.email;
-  if (
-    typeof identity !== "string" ||
-    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identity) ||
-    identity.length > 320
-  )
-    throw Error("Claude account identity was not verified");
-  return { plan, identity };
 }
 
 /** Auth is staged on the host, never in a project mount or model process. */
@@ -130,12 +126,15 @@ export class ClaudeSubscriptionLoginService {
     private readonly options: {
       cliPath: string;
       argsPrefix?: string[];
+      // Runs the CLI in a pseudo-terminal: setup-token is a terminal UI.
+      scriptPath?: string;
+      enterDelayMs?: number;
+      exchangeTimeoutMs?: number;
       publish: (options: {
         projectId: string;
         accountId: string;
-        home: string;
-        identity: string;
-        plan: string;
+        token: string;
+        expiresAt: string;
         credentialId?: string;
       }) => Promise<string>;
       validateReconnect?: (options: {
@@ -191,9 +190,25 @@ export class ClaudeSubscriptionLoginService {
         mode: 0o600,
       });
       if (this.closed) throw Error("Claude sign-in service is closed");
-      child = spawn(
+      // A wide terminal keeps the URL and token on single lines; no echo, so
+      // the code the user pastes is not printed back.
+      const command = [
         this.options.cliPath,
-        [...(this.options.argsPrefix ?? []), "auth", "login", "--claudeai"],
+        ...(this.options.argsPrefix ?? []),
+        "setup-token",
+      ]
+        .map(quote)
+        .join(" ");
+      child = spawn(
+        this.options.scriptPath ?? "script",
+        [
+          "-q",
+          "-e",
+          "-f",
+          "-c",
+          `stty cols 4000 rows 40 -echo 2>/dev/null; exec ${command}`,
+          "/dev/null",
+        ],
         {
           cwd: home,
           env: loginEnvironment(home),
@@ -220,6 +235,7 @@ export class ClaudeSubscriptionLoginService {
       state: "pending",
       output: "",
       codeSubmitted: false,
+      code: "",
     };
     this.sessions.set(id, session);
     const append = (chunk: Buffer) => {
@@ -227,7 +243,25 @@ export class ClaudeSubscriptionLoginService {
       session.output = (session.output + chunk.toString("utf8")).slice(
         -MAX_OUTPUT_BYTES,
       );
-      session.verificationUrl ??= providerUrl(session.output);
+      const text = terminalText(session.output);
+      session.verificationUrl ??= providerUrl(text);
+      if (!session.codeSubmitted) return;
+      const token = claudeOAuthTokenLine(text, session.code);
+      if (token) {
+        // Only telemetry and exit remain for the CLI: save the token now.
+        session.completion = this.publish(session, token);
+        void session.completion.catch(() =>
+          this.fail(session, "Claude sign-in cleanup failed"),
+        );
+        this.kill(session);
+        return;
+      }
+      // The terminal UI waits for a retry instead of exiting on a bad code.
+      if (/OAuth\s*error|Invalid\s*code/i.test(text))
+        this.fail(
+          session,
+          "Claude did not accept the code. Copy the whole code and try again.",
+        );
     };
     child.stdout?.on("data", append);
     child.stderr?.on("data", append);
@@ -235,6 +269,7 @@ export class ClaudeSubscriptionLoginService {
       this.fail(session, "Claude sign-in could not start"),
     );
     child.once("close", (code) => {
+      if (session.state !== "pending") return;
       session.completion = this.complete(session, code);
       void session.completion.catch(() =>
         this.fail(session, "Claude sign-in cleanup failed"),
@@ -264,15 +299,37 @@ export class ClaudeSubscriptionLoginService {
       !session.verificationUrl
     )
       throw Error("Claude sign-in is not awaiting a code");
+    const value = typeof code === "string" ? code.trim() : "";
     if (
-      typeof code !== "string" ||
-      code.length < 4 ||
-      code.length > 2048 ||
-      /[\r\n\x00-\x1f\x7f]/.test(code)
+      value.length < 4 ||
+      value.length > 2048 ||
+      /[\s\x00-\x1f\x7f]/.test(value)
     )
       throw Error("Invalid Claude sign-in code");
+    // Only a token Claude prints after the exchange is saved, never one pasted.
+    if (looksLikeClaudeSecret(value))
+      throw Error(
+        "That is a Claude token, not a sign-in code. Paste the code Claude shows after you approve.",
+      );
     session.codeSubmitted = true;
-    session.child.stdin?.end(`${code}\n`);
+    session.code = value;
+    // Forget the pre-code output so a later match comes from the result.
+    session.output = "";
+    // Keep stdin open while the terminal UI exchanges the code.
+    session.child.stdin?.write(value);
+    const enter = setTimeout(() => {
+      if (session.state === "pending") session.child.stdin?.write("\r");
+    }, this.options.enterDelayMs ?? ENTER_DELAY_MS);
+    enter.unref();
+    clearTimeout(session.timer);
+    session.timer = setTimeout(() => {
+      if (session.state === "pending")
+        this.fail(
+          session,
+          "Claude did not finish signing in. Start the sign-in again.",
+        );
+    }, this.options.exchangeTimeoutMs ?? CODE_EXCHANGE_TIMEOUT_MS);
+    session.timer.unref();
   }
 
   cancel(id: string, projectId: string, accountId: string): void {
@@ -289,33 +346,29 @@ export class ClaudeSubscriptionLoginService {
     this.kill(session);
   }
 
-  private async complete(session: LoginSession, code: number | null) {
-    if (session.state !== "pending") return;
-    clearTimeout(session.timer);
-    if (code !== 0) {
+  private complete(session: LoginSession, code: number | null) {
+    if (session.state !== "pending") return Promise.resolve();
+    // The CLI exited: its output is complete, so a token cannot be partial.
+    const token = session.codeSubmitted
+      ? claudeOAuthTokenFromOutput(terminalText(session.output), session.code)
+      : undefined;
+    if (code !== 0 || !token) {
       this.fail(session, "Claude sign-in did not complete");
-      return;
+      return Promise.resolve();
     }
+    return this.publish(session, token);
+  }
+
+  private async publish(session: LoginSession, token: string) {
+    clearTimeout(session.timer);
     session.state = "verifying";
     try {
-      const { stdout } = await execFileAsync(
-        this.options.cliPath,
-        [...(this.options.argsPrefix ?? []), "auth", "status", "--json"],
-        {
-          cwd: session.home,
-          env: loginEnvironment(session.home),
-          timeout: 10_000,
-          maxBuffer: MAX_STATUS_BYTES,
-        },
-      );
-      const { plan, identity } = verifiedClaudeSubscriptionStatus(stdout);
       if (this.closed) throw Error("Claude sign-in service is closed");
       const credentialId = await this.options.publish({
         projectId: session.projectId,
         accountId: session.accountId,
-        home: session.home,
-        identity,
-        plan,
+        token,
+        expiresAt: new Date(Date.now() + TOKEN_LIFETIME_MS).toISOString(),
         ...(session.reconnectCredentialId
           ? { credentialId: session.reconnectCredentialId }
           : {}),
@@ -325,16 +378,11 @@ export class ClaudeSubscriptionLoginService {
       session.credentialId = credentialId;
       session.state = "completed";
       this.retire(session);
-    } catch (error) {
-      this.fail(
-        session,
-        session.reconnectCredentialId &&
-          error instanceof Error &&
-          error.message === "Reconnect must use the same Claude account"
-          ? "Sign in with the same Claude account to reconnect. Your existing connection was not changed."
-          : "Claude subscription verification failed",
-      );
+    } catch {
+      this.fail(session, "Claude subscription could not be saved");
     } finally {
+      session.output = "";
+      session.code = "";
       await rm(session.home, { recursive: true, force: true });
     }
   }
@@ -344,6 +392,7 @@ export class ClaudeSubscriptionLoginService {
     clearTimeout(session.timer);
     session.state = "failed";
     session.error = error;
+    session.code = "";
     this.retire(session);
     this.removeHomeAfterExit(session);
     this.kill(session);
