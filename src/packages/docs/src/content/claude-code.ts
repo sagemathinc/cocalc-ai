@@ -42,26 +42,27 @@ Model options load automatically when needed; **Refresh** in settings retries
 discovery. If the host cannot report the model, CoCalc says it is unavailable
 rather than guessing. Settings do not change a turn already running or queued.
 
-Hover over or keyboard-focus **Claude subscription** to see the provider's
-reported five-hour and weekly usage percentages and reset times. These are
-account-wide subscription windows, not a per-agent token budget. Lookups are
-cached briefly and display their update time. The usage read runs in an isolated
-controller without project tools or project filesystem mounts; it submits no
-model prompt. If the experimental Claude SDK usage API is unavailable, the
-popover links to Claude's usage page instead of estimating a percentage.
-API-key modes do not have subscription usage bars.
+Hover over or keyboard-focus **Claude subscription** to see your five-hour and
+weekly usage percentages and reset times. These are account-wide subscription
+windows, not a per-agent token budget. Claude reports them with each response
+during a turn, and CoCalc saves the latest report with your subscription, so
+the popover opens instantly. It shows when the numbers were updated: they are
+as of your most recent Claude turn in CoCalc, and do not include use elsewhere
+(claude.ai or other apps) since then. A window that has reset since that turn
+says so. **View usage on Claude** opens Claude's own, always-current usage
+page. API-key modes do not have subscription usage bars.
 
 In settings, expand the help sections for access, billing, and runtime details.
 
 ### Claude account connectors
 
-Automatically fetched claude.ai connectors are enabled by default for
-subscription sessions. Claude can use these connected services, including
-sending task content to them. In Claude settings, turn off **Use my claude.ai
-connectors** to exclude them from your next turn. This account-local choice
-does not affect a running or already queued turn, disconnect services on
-claude.ai, or disable CoCalc's project tools. Controller outbound networking
-is unchanged.
+claude.ai connectors are not available with subscriptions connected now: the
+long-lived token CoCalc stores (see below) can run models but cannot load your
+claude.ai connectors. Subscriptions connected earlier, with a full sign-in,
+still load them by default; for those, turn off **Use my claude.ai
+connectors** in Claude settings to exclude them from your next turn. That
+choice does not affect a running or already queued turn, disconnect services
+on claude.ai, or disable CoCalc's project tools.
 
 ## Security model
 
@@ -104,11 +105,20 @@ when you no longer authorize its use.
 
 ### Claude Pro/Max subscription
 
-Only verified Claude Pro/Max plans are supported here. Team, Enterprise, and
-unrecognized plan names are rejected with an explanation; use an Anthropic API
-key instead. CoCalc does not infer entitlement from unfamiliar plan names.
+Connecting runs Claude's own long-lived token sign-in (the same as
+\`claude setup-token\`): you sign in on Claude's site and paste the code back,
+and CoCalc stores the resulting token, valid for one year, encrypted with your
+account. Unlike a normal sign-in it has no refresh token, so any number of
+agents can use it at the same time without signing you out. The token only
+runs models: it cannot report your email or plan to CoCalc, and it cannot load
+claude.ai connectors. Use it with a Claude Pro or Max subscription; Team and
+Enterprise plans are not supported here, so use an Anthropic API key instead.
+Since CoCalc cannot read the plan, you can name the subscription (for example
+"Max 20x") under the credential picker in Claude settings.
+Disconnecting removes CoCalc's copy; revoke the token itself from your Claude
+account if you suspect it was exposed.
 
-Subscription login state is account-owned and kept in a separate controller,
+Subscription credentials are account-owned and used in a separate controller,
 outside the project filesystem. Claude's project commands execute through a
 scoped tool bridge into the project. Ordinary project commands should not be
 able to read or export that login state. This boundary does not prevent Claude
@@ -131,7 +141,7 @@ is also appropriate if you suspect credential compromise.
 
 ### Billing and cancellation
 
-Check the displayed credential and account identity before starting work.
+Check the displayed credential before starting work.
 Provider plan limits and any enabled extra-usage billing apply; CoCalc does
 not promise a hard spending cap. Configure limits at the provider and monitor
 usage there. Subscription access and API-key billing are distinct choices.
@@ -182,6 +192,13 @@ and returns immediately. Claude should use it when other useful work can
 continue, rather than waiting or polling for an answer. Questions are for
 clarification, not passwords, login codes, authentication, or permission
 escalation. See [goals and questions](/docs/ai/codex-goals) for the shared cards.
+
+The subscription tool \`project_read_image\` lets Claude look at an image
+saved in the project, such as a screenshot, plot, or rendered page, instead of
+only reading text output. It accepts PNG, JPEG, GIF, and WebP files up to
+800 KB and uses the same project access as \`project_exec\`. For SVG or PDF,
+Claude renders a PNG first; for larger images, it saves a smaller or cropped
+copy.
 
 ## Troubleshooting and agent-readable help
 

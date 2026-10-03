@@ -1,3 +1,4 @@
+import { PublicAliasInfo } from "@cocalc/frontend/components/public-alias-info";
 import { useState } from "react";
 import { InfoCircleOutlined } from "@ant-design/icons";
 import { Button, Input } from "antd";
@@ -92,7 +93,10 @@ export function AgentNameInput({
             justifyContent: "space-between",
           }}
         >
-          <label htmlFor={id}>{label}</label>
+          <span style={{ display: "inline-flex", gap: 6 }}>
+            <label htmlFor={id}>{label}</label>
+            <PublicAliasInfo kind="agents" />
+          </span>
           <Button
             type="link"
             size="small"

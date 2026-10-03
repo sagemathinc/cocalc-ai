@@ -168,7 +168,7 @@ test("read-only PR cards display cached metadata and a canonical external link",
       <ArtifactCards threadId="thread" messageId="message" />
     </ReadonlyArtifactRows.Provider>,
   );
-  expect(screen.getByText(/Cached metadata retrieved/)).toBeTruthy();
+  expect(screen.getByRole("note")).toHaveTextContent(/Updated/);
   // Expand the native details element before querying its accessible link.
   screen
     .getByText("Version from this message")

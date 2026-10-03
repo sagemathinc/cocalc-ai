@@ -10,6 +10,7 @@
 
 // cSpell:ignore undoable
 
+import { setListQuery, submitSearch } from "@cocalc/frontend/search/list-query";
 import { Alert, Button, Modal, Progress, Space, Table, Typography } from "antd";
 import { Map, Set as ImmutableSet } from "immutable";
 import { useMemo, useState } from "react";
@@ -198,8 +199,9 @@ export function ProjectsOperations({
 
   // Handle Clear All Filters
   function handleClearFilters() {
-    // Clear search
+    // Clear search (and the search box it comes from)
     actions.setState({ search: "" });
+    setListQuery("");
 
     // Clear filter switches
     actions.display_hidden_projects(false);
@@ -819,17 +821,35 @@ export function ProjectsOperations({
                   }}
                 />
               </div>
-              <Button
-                size="small"
-                type={visible_projects.length === 0 ? "primary" : undefined}
-                icon={<Icon name="user-times" />}
-                onClick={handleClearFilters}
-              >
-                <FormattedMessage
-                  id="projects.operations.clear-filter"
-                  defaultMessage="Clear Filter"
-                />
-              </Button>
+              <span style={{ display: "inline-flex", gap: 8 }}>
+                {search?.trim() && (
+                  // The list only matches names; Enter (or this) searches
+                  // file names and contents, conversations, artifacts, ...
+                  <Button
+                    size="small"
+                    type={visible_projects.length === 0 ? "primary" : undefined}
+                    icon={<Icon name="search" />}
+                    onClick={() => submitSearch(search.trim(), "projects")}
+                  >
+                    Search everything for “{search.trim()}”
+                  </Button>
+                )}
+                <Button
+                  size="small"
+                  type={
+                    visible_projects.length === 0 && !search?.trim()
+                      ? "primary"
+                      : undefined
+                  }
+                  icon={<Icon name="user-times" />}
+                  onClick={handleClearFilters}
+                >
+                  <FormattedMessage
+                    id="projects.operations.clear-filter"
+                    defaultMessage="Clear Filter"
+                  />
+                </Button>
+              </span>
             </div>
           }
         />
@@ -846,6 +866,9 @@ export function ProjectsOperations({
             bottom: 24,
             transform: "translateX(-50%)",
             zIndex: 1000,
+            // left: 50% alone would cap the shrink-to-fit width at half the
+            // viewport and wrap the buttons early.
+            width: "max-content",
             maxWidth: "calc(100vw - 32px)",
             background: "white",
             border: `1px solid ${COLORS.GRAY_LL}`,

@@ -184,9 +184,9 @@ Check every item. If one is missing, fix it before exam day.
 
 Do this once per host. CoCalc keeps these settings for every later exam.
 
-1. Open the project hosts page. In the top navigation, select the server icon
-   whose tooltip is **Manage project hosts and virtual machines**, then select
-   the **Project Hosts** tab.
+1. Open the project hosts page. Open the account menu at the bottom of the
+   sidebar, select **Compute: project hosts and VMs**, then select the
+   **Project Hosts** tab.
 2. Select your host's name. The host's details open, with tabs such as
    **Overview**, **Access**, and **Exams**.
 3. Select the **Exams** tab.

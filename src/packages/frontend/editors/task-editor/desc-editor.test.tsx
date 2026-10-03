@@ -68,7 +68,12 @@ describe("DescriptionEditor", () => {
       latestMarkdownEditorProps.onBlur("after");
     });
 
-    expect(actions.set_desc).toHaveBeenCalledWith("task-1", "after", true);
+    expect(actions.set_desc).toHaveBeenCalledWith(
+      "task-1",
+      "after",
+      true,
+      "before",
+    );
     expect(actions.stop_editing_desc).toHaveBeenCalledWith("task-1");
     expect(actions.enable_key_handler).toHaveBeenCalledTimes(1);
   });

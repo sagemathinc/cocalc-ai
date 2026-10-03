@@ -7,7 +7,9 @@
 export const APP_ROUTES = new Set([
   "admin",
   "agents",
-  "library",
+  "artifacts",
+  "all-agents",
+  "u",
   "app-docs",
   "file-use",
   "help",
@@ -17,6 +19,8 @@ export const APP_ROUTES = new Set([
   "share",
   "notifications",
   "hosts",
+  "people",
+  "search",
 ]);
 
 const HOST_ROOT_ONLY_ROUTES = [
