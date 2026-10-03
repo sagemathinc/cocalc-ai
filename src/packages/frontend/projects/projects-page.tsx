@@ -28,7 +28,6 @@ import {
   IncomingInviteBanner,
   useInviteInboxState,
 } from "@cocalc/frontend/collaborators";
-import { capitalize } from "@cocalc/util/misc";
 
 import { ProjectsOperations } from "./projects-operations";
 import { StarredProjectsBar } from "./projects-starred";
@@ -182,8 +181,6 @@ export const ProjectsPage: React.FC = () => {
   // layout keeps the compact table and starred bar.
   const collectionLayout = !mobileProjectsList;
   const collectionPreferences = useCollectionPreferences("projects");
-  const collectionLayoutRef = useRef(collectionLayout);
-  collectionLayoutRef.current = collectionLayout;
 
   // Tour
   const searchRef = useRef<any>(null);
@@ -244,8 +241,7 @@ export const ProjectsPage: React.FC = () => {
     () =>
       onNewProjectRequest(() => {
         if (createProjectDisabled) return;
-        if (collectionLayoutRef.current) setQuickCreateOpen(true);
-        else setCreatePanelOpen(true);
+        setQuickCreateOpen(true);
       }),
     [createProjectDisabled],
   );
@@ -546,10 +542,9 @@ export const ProjectsPage: React.FC = () => {
 
   function handleCreateProject() {
     if (createProjectDisabled) return;
-    // The new layout starts with the minimal creator; "More options" opens
-    // the full one.
-    if (collectionLayout) setQuickCreateOpen(true);
-    else setCreatePanelOpen(true);
+    // Every layout (phones too) starts with the minimal creator; "More
+    // options" opens the full one.
+    setQuickCreateOpen(true);
   }
 
   function handleClearCollaboratorFilter() {
@@ -606,7 +601,7 @@ export const ProjectsPage: React.FC = () => {
             </Suspense>
           </CocalcErrorBoundary>
         )}
-        {collectionLayout && !createProjectDisabled && (
+        {!createProjectDisabled && (
           <QuickProjectCreator
             open={quickCreateOpen}
             defaultTitle={search}
@@ -723,9 +718,7 @@ export const ProjectsPage: React.FC = () => {
                         />
                       }
                     >
-                      {collectionLayout
-                        ? "New project"
-                        : capitalize(intl.formatMessage(labels.create))}
+                      New project
                     </Button>
                     {showLegacyProjectsButton ? (
                       <Button
