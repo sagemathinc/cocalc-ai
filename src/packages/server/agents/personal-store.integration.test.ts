@@ -102,6 +102,13 @@ describeDb("account-home Agent Networks", () => {
       await store.name(account, { endpoint, name });
   });
 
+  test("hasName reports whether this account has the agent (for its participants)", async () => {
+    expect(await store.hasName(account, source)).toBe(true);
+    expect(await store.hasName(randomUUID(), source)).toBe(false);
+    await store.retire(account, { endpoint: source });
+    expect(await store.hasName(account, source)).toBe(false);
+  });
+
   test("names carry the identity's stored theme, so lists show it without the chat", async () => {
     identity.mockImplementation(async (owner, endpoint) => ({
       ...(await identityResult(owner, endpoint)),

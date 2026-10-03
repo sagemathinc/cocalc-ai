@@ -82,10 +82,14 @@ export type PersonalControlRequest =
         outcome: import("@cocalc/conat/agents/rpc").AgentRpcBroadcastOutcome;
       };
     }
-  | { action: "observeNetworkActivity"; options: AgentNetworkActivity };
+  | { action: "observeNetworkActivity"; options: AgentNetworkActivity }
+  // Read-only, asked of a collaborator's home bay by listAgentParticipants
+  // after the requester's own access to the project was checked.
+  | { action: "hasNamedAgent"; options: { endpoint: AgentEndpoint } };
 export type PersonalControlResult =
   | PersonalAgentDenial
   | void
+  | { named: boolean }
   | Awaited<ReturnType<AgentApi[PersonalHumanMethod]>>
   | AgentNetworkAuthorization
   | AgentNetworkDiscovery

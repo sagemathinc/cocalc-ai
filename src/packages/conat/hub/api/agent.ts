@@ -38,6 +38,7 @@ import type {
 
 export const agent = {
   listNamedAgents: authFirstRequireAccount,
+  listAgentParticipants: authFirstRequireAccount,
   // Owner-only: enabling memory and viewing or deleting notes need a human
   // session, never an agent's credential.
   manageAgentMemory: authFirstRequireAccountWithBoundSession,
@@ -276,6 +277,15 @@ export interface AgentApi {
     },
   ): Promise<void>;
   listNamedAgents(opts: { account_id?: string }): Promise<NamedAgentDirectory>;
+  /**
+   * The other people who have this agent in their own agents (named it): its
+   * participants. Only for owners and collaborators of the agent's project;
+   * returns account ids, never the names they chose.
+   */
+  listAgentParticipants(opts: {
+    account_id?: string;
+    endpoint: AgentEndpoint;
+  }): Promise<{ account_ids: string[]; unavailable: number }>;
   manageAgentMemory(
     opts: AgentHumanAuth &
       (

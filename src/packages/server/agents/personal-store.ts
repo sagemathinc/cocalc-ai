@@ -355,6 +355,15 @@ export class PersonalAgentStore {
     await this.assertRegisteredName(this.db, account, member.endpoint);
   }
 
+  /** Whether this account has the agent in its agents (an active name). */
+  async hasName(account: string, endpoint: AgentEndpoint): Promise<boolean> {
+    const { rows } = await this.db.query(
+      "SELECT 1 FROM agent_personal_names WHERE account_id=$1 AND project_id=$2 AND agent_id=$3 AND retired_at IS NULL",
+      [account, endpoint.project_id, endpoint.agent_id],
+    );
+    return rows.length > 0;
+  }
+
   private async assertRegisteredName(
     db: Query,
     account: string,

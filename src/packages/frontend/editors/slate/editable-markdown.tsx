@@ -432,6 +432,11 @@ function debugSyncLog(type: string, data?: Record<string, unknown>): void {
 }
 
 interface Props {
+  // Override the frame context, for editors embedded outside a frame (e.g.
+  // a chat composer on the People page), so mentions and uploads know where
+  // the document lives.
+  project_id?: string;
+  path?: string;
   value?: string;
   value_slate?: Descendant[];
   placeholder?: string;
@@ -561,7 +566,10 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     jupyterGapCursor,
     setJupyterGapCursor,
   } = props;
-  const { project_id, path, desc, isVisible } = useFrameContext();
+  const frame = useFrameContext();
+  const { desc, isVisible } = frame;
+  const project_id = props.project_id || frame.project_id;
+  const path = props.path || frame.path;
   const isMountedRef = useIsMountedRef();
   const id = id0 ?? "";
   const actions = actions0 ?? {};
