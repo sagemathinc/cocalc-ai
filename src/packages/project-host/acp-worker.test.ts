@@ -9,6 +9,7 @@ const setConatClientMock = jest.fn();
 const disposeAcpAgentsMock = jest.fn(async () => {});
 const runDetachedAcpQueueWorkerMock = jest.fn(async () => {});
 const setAcpAdmissionLimitsProviderMock = jest.fn();
+const setAgentMemoryContextProviderMock = jest.fn();
 const setAcpSessionPublisherOverrideMock = jest.fn();
 const publishActiveAcpSessionsMock = jest.fn(() => 0);
 const acpAdmissionLimitsFromEffectiveLimitsMock = jest.fn((limits) => ({
@@ -32,6 +33,7 @@ jest.mock("./acp/harness-launcher", () => ({
 jest.mock("@cocalc/lite/hub/acp/harness-runtime", () => ({
   setHarnessLauncher: jest.fn(),
   setHarnessAuthorityValidator: jest.fn(),
+  setHarnessRateLimitRecorder: jest.fn(),
 }));
 const initCodexAttachmentBlobReaderMock = jest.fn();
 const initCodexGeneratedImageBlobWriterMock = jest.fn();
@@ -111,6 +113,8 @@ jest.mock("@cocalc/lite/hub/acp", () => ({
     setAcpSessionPublisherOverrideMock(...args),
   publishActiveAcpSessions: (...args: any[]) =>
     publishActiveAcpSessionsMock(...args),
+  setAgentMemoryContextProvider: (...args: any[]) =>
+    setAgentMemoryContextProviderMock(...args),
 }));
 
 jest.mock("@cocalc/lite/hub/acp/executor/container", () => ({
@@ -244,6 +248,9 @@ describe("project-host ACP worker runtime wiring", () => {
     expect(wireNotificationsApiMock).toHaveBeenCalledTimes(1);
     expect(initCodexAttachmentBlobReaderMock).toHaveBeenCalledTimes(1);
     expect(initCodexGeneratedImageBlobWriterMock).toHaveBeenCalledTimes(1);
+    expect(setAgentMemoryContextProviderMock).toHaveBeenCalledWith(
+      expect.any(Function),
+    );
     expect(setAcpAdmissionLimitsProviderMock).toHaveBeenCalledTimes(1);
     expect(setCodexCredentialAdmissionResolverMock).toHaveBeenCalledTimes(1);
     expect(setAcpAdmissionDenialRecorderMock).toHaveBeenCalledTimes(1);

@@ -376,6 +376,10 @@ import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/eff
 import resolveManagedProjectSshKeyAccountForHost from "@cocalc/server/projects/resolve-managed-ssh-key-account";
 import { getAppFeedData as listAppNews0 } from "@cocalc/database/postgres/news";
 import type { NewsItemWebapp } from "@cocalc/util/types/news";
+import {
+  ANTHROPIC_API_PROVIDER,
+  CLAUDE_SUBSCRIPTION_KIND,
+} from "@cocalc/util/ai/external-credential-profiles";
 import type {
   BayBackupRunResult,
   BayRestoreRunResult,
@@ -6854,6 +6858,34 @@ export async function updateCodexSubscriptionLabel({
     selector: {
       provider: "openai",
       kind: CODEX_SUBSCRIPTION_KIND,
+      scope: "account",
+      owner_account_id: account_id,
+    },
+    label: normalizedLabel || undefined,
+  });
+  return { updated };
+}
+
+export async function updateClaudeSubscriptionLabel({
+  account_id,
+  id,
+  label,
+}: {
+  account_id?: string;
+  id: string;
+  label?: string;
+}) {
+  if (!account_id) throw Error("must be signed in");
+  if (!id) throw Error("id must be specified");
+  const normalizedLabel = `${label ?? ""}`.trim();
+  if (normalizedLabel.length > 60) {
+    throw Error("label must be at most 60 characters");
+  }
+  const updated = await updateExternalCredentialLabelByIdRouted({
+    id,
+    selector: {
+      provider: ANTHROPIC_API_PROVIDER,
+      kind: CLAUDE_SUBSCRIPTION_KIND,
       scope: "account",
       owner_account_id: account_id,
     },

@@ -36,6 +36,24 @@ export interface Patch {
                      syncstring table has id-->account_id map) */;
   size: number; // size of the patch (by defn length of string representation)
 
+  // Hash of the document value right after this patch, as its author
+  // computed it (patchflow's Patch.hash); every client checks its own value
+  // against it. A snapshot carries the hash of the patch it is of.
+  hash?: string;
+
+  // A merge commit (several parents) records the merged value of its parents,
+  // as its author computed it: merge_patch applied to the value of
+  // merge_parent, one of the parents (patchflow's Patch.mergeParent and
+  // Patch.mergePatch). Then its value never depends on how a later version
+  // merges.
+  merge_parent?: PatchId;
+  merge_patch?: CompressedPatch;
+
+  // Committed without the exact value of its parents (patchflow's
+  // Patch.inexact): such a patch has no hash, and a merge commit marked this
+  // way is read with merge3 rather than as a history written by patchflow 0.8.
+  inexact?: boolean;
+
   is_snapshot?: boolean;
   snapshot?: string; // to_str() applied to the document at this point in time
   seq_info?: {

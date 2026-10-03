@@ -57,6 +57,7 @@ import type {
 } from "@cocalc/conat/hub/api/system";
 import { registerReceivablesCommand } from "./admin/receivables";
 import { registerCrmCommand } from "./admin/crm";
+import { registerAdminUsernameCommand } from "./personal-urls";
 
 const ADMIN_HOST_INTRUSION_SNAPSHOT_TIMEOUT_MS = 130_000;
 
@@ -1090,6 +1091,7 @@ export function registerAdminCommand(
     deps;
 
   const admin = program.command("admin").description("site admin operations");
+  registerAdminUsernameCommand(admin, { withContext });
   const adminUser = admin.command("user").description("admin user management");
   const adminMessage = admin
     .command("message")

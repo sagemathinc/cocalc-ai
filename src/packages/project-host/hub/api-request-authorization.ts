@@ -21,7 +21,6 @@ export const ACCOUNT_PROJECT_HOST_HUB_METHODS = new Set([
   "projects.codexDeviceAuthCancel",
   "projects.claudeSubscriptionLoginStart",
   "projects.claudeSubscriptionLoginStatus",
-  "projects.getClaudeSubscriptionUsage",
   "projects.claudeSubscriptionLoginSubmitCode",
   "projects.claudeSubscriptionLoginCancel",
   "projects.codexUploadAuthFile",

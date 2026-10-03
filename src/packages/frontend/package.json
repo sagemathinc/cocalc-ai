@@ -133,7 +133,7 @@
     "linkify-it": "^5.0.2",
     "lodash": "^4.18.1",
     "lru-cache": "^7.18.3",
-    "markdown-it": "^14.2.0",
+    "markdown-it": "^14.3.1",
     "markdown-it-emoji": "^2.0.2",
     "markdown-it-front-matter": "^0.2.3",
     "md5": "^2",

@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { noteProjectVisit, projectsToRelease } from "./project-retention";
 import {
   Actions,
   project_redux_name,
@@ -10,7 +11,11 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { set_window_title } from "@cocalc/frontend/browser";
-import { set_url, update_params } from "@cocalc/frontend/history";
+import {
+  set_url,
+  update_params,
+  rememberProjectsView,
+} from "@cocalc/frontend/history";
 import { labels } from "@cocalc/frontend/i18n";
 import { getIntl } from "@cocalc/frontend/i18n/get-intl";
 import {
@@ -168,6 +173,17 @@ export class PageActions extends Actions<PageState> {
     disconnect_from_project(project_id);
   }
 
+  // There are no project tabs: keep the recently visited projects open and
+  // release older ones as if their tabs were closed.
+  private retainRecentProjects(current: string): void {
+    noteProjectVisit(current);
+    const open = redux.getStore("projects")?.get("open_projects");
+    const ids: string[] = open?.toArray?.() ?? [];
+    for (const project_id of projectsToRelease(ids, current)) {
+      this.close_project_tab(project_id);
+    }
+  }
+
   public forget_project_context(project_id: string): void {
     if (redux.getStore("page").get("last_project_tab") !== project_id) return;
     this.setState({
@@ -214,6 +230,7 @@ export class PageActions extends Actions<PageState> {
       return;
     }
     const prev_key = this.redux.getStore("page").get("active_top_tab");
+    if (prev_key !== key) rememberProjectsView();
     const previousProjectNeedsRuntime =
       prev_key?.length === 36 && !hasReducedProjectState(prev_key);
     const nextProjectNeedsRuntime =
@@ -225,6 +242,7 @@ export class PageActions extends Actions<PageState> {
       active_top_tab: key,
       ...(is_valid_uuid_string(key) ? { last_project_tab: key } : {}),
     });
+    if (is_valid_uuid_string(key)) this.retainRecentProjects(key);
 
     if (
       prev_key !== key &&
@@ -258,13 +276,16 @@ export class PageActions extends Actions<PageState> {
               page: "agents",
               agent_id: agent_name ?? agent_id,
               library: page.get("library_open"),
+              overview: page.get("agents_overview_open"),
               artifact_project_id: page.get("library_project_id"),
               artifact_entry_id: page.get("library_entry_id"),
             }),
-            page.get("library_open") ? "" : undefined,
+            page.get("library_open") || page.get("agents_overview_open")
+              ? ""
+              : undefined,
           );
         }
-        set_window_title(page.get("library_open") ? "Library" : "Agents");
+        set_window_title(page.get("library_open") ? "Artifacts" : "Agents");
         return;
       }
       case "projects":
@@ -301,6 +322,13 @@ export class PageActions extends Actions<PageState> {
           set_url(getPageUrlPath({ page: "docs", slug: docs_slug }));
         }
         set_window_title("CoCalc Docs");
+        return;
+      case "people":
+        if (change_history) {
+          const route = this.redux.getStore("page").get("people_route");
+          set_url(getPageUrlPath({ page: "people", route }));
+        }
+        set_window_title("People");
         return;
       case "hosts":
         if (change_history) {

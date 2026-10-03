@@ -79,6 +79,8 @@ const CLI_AUTH = "frontend/public/auth/cli-auth-views.tsx";
 const APP_PAGE = "frontend/app/page.tsx";
 const ADMIN_PAGE = "frontend/admin/page.tsx";
 const QUICK_NAV_DATA = "frontend/app/quick-navigation/use-data.ts";
+const ACCOUNT_MENU = "frontend/agents/account-menu.tsx";
+const WORKSPACE_PAGE = "frontend/agents/workspace-page.tsx";
 const SECTIONS = "frontend/project/settings/sections.tsx";
 const API_KEY_SCOPE = "frontend/components/api-key-scope-editor.tsx";
 const AGENT_ATTACHMENT = "frontend/chat/agent-file-attachment.tsx";
@@ -550,25 +552,25 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "nav.compute",
     label: "Compute",
     anchors: [
-      def(APP_PAGE, 'label="Compute"'),
-      def(APP_PAGE, 'ariaLabel="Compute"'),
-      def(APP_PAGE, "hide_label"),
+      def(ACCOUNT_MENU, 'label: "Compute: project hosts and VMs"'),
       ren(QUICK_NAV_DATA, 'title: "Compute",'),
     ],
     usedIn: [
-      conventions("its accessible name is Compute"),
+      conventions("the item Compute: project hosts and VMs"),
       conventions("Quick Navigation lists the same page as Compute"),
-      { file: doc("docs"), text: "(Projects, Compute," },
+      { file: doc("docs"), text: "Projects, Artifacts, People, Compute," },
     ],
     aliases: ["Compute hosts"],
   },
   {
-    id: "nav.compute-tooltip",
-    label: "Manage project hosts and virtual machines",
+    id: "nav.agents",
+    label: "Agents",
     anchors: [
-      def(APP_PAGE, 'tooltip="Manage project hosts and virtual machines"'),
+      // The first entry of the workspace sidebar.
+      def(WORKSPACE_PAGE, "onClick={showAgentsOverview}"),
+      ren(QUICK_NAV_DATA, 'page: "agents", title: "Agents",'),
     ],
-    usedIn: [conventions("tooltip Manage project hosts and virtual machines")],
+    usedIn: [bold("cocalc-at-a-glance", "Agents")],
   },
   {
     id: "hosts.page-tabs",
