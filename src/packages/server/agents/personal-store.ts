@@ -69,6 +69,10 @@ export class PersonalAgentStore {
     private readonly projectWasDeleted: (
       project_id: string,
     ) => Promise<boolean> = async () => false,
+    private readonly executionPrincipal: (
+      source: AgentEndpoint,
+      run_id: string,
+    ) => Promise<string> = principal,
   ) {}
 
   async assertHome(account_id: string) {
@@ -148,6 +152,7 @@ export class PersonalAgentStore {
         const identity = await this.endpoint(account, named.endpoint);
         named.path = identity.path;
         named.thread_id = identity.thread_id;
+        if (identity.appearance) named.appearance = identity.appearance;
       } catch {
         const projectId = named.endpoint.project_id;
         if (!deletedProjects.has(projectId))
@@ -1198,6 +1203,7 @@ export class PersonalAgentStore {
     account: string,
     source: AgentRpcSource,
     run_id?: string,
+    forExecution = false,
   ) {
     validateAgentRpcSource(source, run_id);
     if (isExternalAgentSource(source)) {
@@ -1218,7 +1224,8 @@ export class PersonalAgentStore {
       return;
     }
     requireUuid(run_id, "run_id");
-    if ((await this.principal(source, run_id!)) !== account)
+    const principal = forExecution ? this.executionPrincipal : this.principal;
+    if ((await principal(source, run_id!)) !== account)
       throw new PersonalAgentAuthorizationError("principal_mismatch");
     await this.endpoint(account, source);
   }
@@ -1344,9 +1351,10 @@ export class PersonalAgentStore {
     source: AgentRpcSource,
     run_id: string | undefined,
     target: AgentRpcSource,
+    forExecution = false,
   ): Promise<AgentNetworkAuthorization> {
     requireUuid(agent_network_id, "agent_network_id");
-    await this.authenticateSource(account, source, run_id);
+    await this.authenticateSource(account, source, run_id, forExecution);
     if (!isExternalAgentSource(target)) await this.endpoint(account, target);
     return this.locked(account, async (db, controls) => {
       return (

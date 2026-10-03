@@ -17,8 +17,20 @@ import {
   type MembershipPricingTier,
 } from "@cocalc/frontend/account/membership-pricing-chooser";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
 import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
+import {
+  membershipTiersIncludeAi,
+  PUBLIC_PRICING_CUSTOMER_OPERATED,
+  PUBLIC_PRICING_INCLUDED_AI_ALERT,
+  PUBLIC_PRICING_NO_TIERS,
+  PUBLIC_PRICING_ORGANIZATION_LICENSING,
+  PUBLIC_PRICING_PLUS_TEAMS_TITLE,
+  PUBLIC_PRICING_PRODUCT_QUOTES,
+  PUBLIC_PRICING_PROJECT_HOSTS,
+  PUBLIC_PRICING_TEAM_SEATS,
+  PUBLIC_PRICING_TEAMS_TITLE,
+  publicStoreMembershipTiers,
+} from "@cocalc/util/public-pricing";
 import { HELP_EMAIL } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
@@ -32,10 +44,6 @@ type PublicMembershipTier = MembershipPricingTier;
 
 function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
-}
-
-function isPositiveNumber(value: unknown): boolean {
-  return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
 function supportPurchasePath(subject: string, body: string): string {
@@ -109,14 +117,8 @@ export default function PricingPage({
     };
   }, []);
 
-  const publicTiers = sortMembershipTiersByDisplayOrder(
-    (tiers ?? []).filter((tier) => tier.store_visible && !tier.disabled),
-  );
-  const hasIncludedAi = publicTiers.some(
-    (tier) =>
-      isPositiveNumber(tier.ai_limits?.units_5h) ||
-      isPositiveNumber(tier.ai_limits?.units_7d),
-  );
+  const publicTiers = publicStoreMembershipTiers(tiers ?? []);
+  const hasIncludedAi = membershipTiersIncludeAi(publicTiers);
   const visibleTiers = filterMembershipTiersForBillingInterval(
     publicTiers,
     billingInterval,
@@ -151,7 +153,7 @@ export default function PricingPage({
           <Alert
             showIcon
             style={{ maxWidth: 720 }}
-            title="Some memberships on this site include AI usage. Compare the current tier limits below; availability and models depend on this site's configuration."
+            title={PUBLIC_PRICING_INCLUDED_AI_ALERT}
             type="info"
           />
         ) : null}
@@ -223,32 +225,25 @@ export default function PricingPage({
         </Flex>
       ) : !isPlusProduct && loaded ? (
         <PublicSection>
-          <Alert
-            title="No public membership tiers are currently configured."
-            showIcon
-            type="info"
-          />
+          <Alert title={PUBLIC_PRICING_NO_TIERS} showIcon type="info" />
         </PublicSection>
       ) : null}
 
       <PublicSection>
         <Title level={2} style={{ margin: 0 }}>
           {isPlusProduct
-            ? "Licensing and Deployment"
-            : "For Teams and Organizations"}
+            ? PUBLIC_PRICING_PLUS_TEAMS_TITLE
+            : PUBLIC_PRICING_TEAMS_TITLE}
         </Title>
         <PublicGrid columns={2}>
           {!isPlusProduct ? (
             <PublicSection>
               <Space orientation="vertical" size="middle">
                 <Title level={3} style={{ margin: 0 }}>
-                  Team seats
+                  {PUBLIC_PRICING_TEAM_SEATS.title}
                 </Title>
                 <Paragraph style={{ margin: 0 }}>
-                  Buy membership seats for a group, then assign them to the
-                  people who need access. One account manages payment while each
-                  person works from their own CoCalc account. The purchaser must
-                  sign in before buying or managing seats.
+                  {PUBLIC_PRICING_TEAM_SEATS.body}
                 </Paragraph>
                 <Button
                   href={
@@ -269,13 +264,10 @@ export default function PricingPage({
             <PublicSection>
               <Space orientation="vertical" size="middle">
                 <Title level={3} style={{ margin: 0 }}>
-                  Organization licensing and billing
+                  {PUBLIC_PRICING_ORGANIZATION_LICENSING.title}
                 </Title>
                 <Paragraph style={{ margin: 0 }}>
-                  Departments, universities, labs, companies, and research
-                  groups can arrange access for many people under one license.
-                  Contact CoCalc when you need a quote, customized invoice, or
-                  purchasing workflow that does not fit self-service checkout.
+                  {PUBLIC_PRICING_ORGANIZATION_LICENSING.body}
                 </Paragraph>
                 <Button
                   href={purchaseContactHref({
@@ -297,13 +289,10 @@ export default function PricingPage({
             <PublicSection>
               <Space orientation="vertical" size="middle">
                 <Title level={3} style={{ margin: 0 }}>
-                  Dedicated project hosts
+                  {PUBLIC_PRICING_PROJECT_HOSTS.title}
                 </Title>
                 <Paragraph style={{ margin: 0 }}>
-                  First compare CPU, RAM, GPU, storage, and software needs.
-                  Creating a host then requires a signed-in account with an
-                  eligible membership or grant; available models, capacity, and
-                  authorization vary by site and account.
+                  {PUBLIC_PRICING_PROJECT_HOSTS.body}
                 </Paragraph>
                 <Flex gap={8} wrap>
                   {canEvaluateResearchCompute ? (
@@ -322,12 +311,10 @@ export default function PricingPage({
           <PublicSection>
             <Space orientation="vertical" size="middle">
               <Title level={3} style={{ margin: 0 }}>
-                Customer-operated deployments
+                {PUBLIC_PRICING_CUSTOMER_OPERATED.title}
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                Compare local CoCalc Plus, one-VM CoCalc Star, and the Launchpad
-                and Rocket private-deployment paths. You or your organization
-                operate the infrastructure, recovery, and ongoing service.
+                {PUBLIC_PRICING_CUSTOMER_OPERATED.body}
               </Paragraph>
               <Button href={publicPath("products")}>
                 Compare customer-operated options
@@ -339,12 +326,10 @@ export default function PricingPage({
             <PublicSection>
               <Space orientation="vertical" size="middle">
                 <Title level={3} style={{ margin: 0 }}>
-                  Quotes and customized invoices
+                  {PUBLIC_PRICING_PRODUCT_QUOTES.title}
                 </Title>
                 <Paragraph style={{ margin: 0 }}>
-                  For a customer-operated product purchase or billing workflow
-                  that does not fit self-service, contact CoCalc with the
-                  product, operating environment, and timeline.
+                  {PUBLIC_PRICING_PRODUCT_QUOTES.body}
                 </Paragraph>
                 <Button
                   href={purchaseContactHref({

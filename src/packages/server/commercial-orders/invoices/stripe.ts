@@ -669,19 +669,14 @@ function assertCustomerMatchesOrder(
   order: CommercialOrder,
   site: string,
 ): void {
-  if (!customer || customer.deleted) {
-    throw Error("the selected Stripe customer was deleted");
-  }
+  assertCommercialStripeCustomerIdentity(customer, order, site);
   const billing = order.contacts.find(({ role }) => role === "billing");
   if (!billing) throw Error("a billing contact is required");
-  if (normalizeText(customer.name) !== normalizeText(order.organization_name)) {
-    throw Error(
-      "Stripe customer name does not match the approved organization",
-    );
-  }
+  const hint = `; preview 'admin receivables billing sync-stripe ${order.id}' to synchronize approved billing details`;
   if (normalizeText(customer.email) !== normalizeText(billing.email_snapshot)) {
     throw Error(
-      "Stripe customer email does not match the approved billing contact",
+      "Stripe customer email does not match the approved billing contact" +
+        hint,
     );
   }
   const expectedAddress = approvedInvoiceTerms(order).billing_address;
@@ -691,10 +686,27 @@ function assertCustomerMatchesOrder(
         normalizeText(customer.address?.[field]) !== normalizeText(expected)
       ) {
         throw Error(
-          `Stripe customer billing address field ${field} does not match the approved order`,
+          `Stripe customer billing address field ${field} does not match the approved order` +
+            hint,
         );
       }
     }
+  }
+}
+
+// Billing correction may change email/address, never customer identity or site.
+export function assertCommercialStripeCustomerIdentity(
+  customer: any,
+  order: CommercialOrder,
+  site: string,
+): void {
+  if (!customer || customer.deleted) {
+    throw Error("the selected Stripe customer was deleted");
+  }
+  if (normalizeText(customer.name) !== normalizeText(order.organization_name)) {
+    throw Error(
+      "Stripe customer name does not match the approved organization",
+    );
   }
   const metadata = customer.metadata ?? {};
   if (

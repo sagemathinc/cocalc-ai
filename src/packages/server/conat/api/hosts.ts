@@ -169,8 +169,17 @@ import {
   touchExternalCredentialByIdRouted,
   touchExternalCredentialRouted,
   updateExternalCredentialByIdRouted,
+  setExternalCredentialMetadataValueByIdRouted,
   upsertExternalCredentialRouted,
 } from "@cocalc/server/external-credentials/routing";
+import {
+  ANTHROPIC_API_PROVIDER,
+  CLAUDE_SUBSCRIPTION_KIND,
+} from "@cocalc/util/ai/external-credential-profiles";
+import {
+  CLAUDE_USAGE_METADATA_KEY,
+  parseClaudeRateLimitSnapshot,
+} from "@cocalc/util/ai/claude-usage";
 import { type ExternalCredentialScope } from "@cocalc/server/external-credentials/store";
 import {
   ensureSelfHostReverseTunnel,
@@ -2742,6 +2751,10 @@ function normalizeExternalCredentialSelector({
     .toLowerCase() as ExternalCredentialScope;
   if (!normalizedProvider) throw new Error("provider must be specified");
   if (!normalizedKind) throw new Error("kind must be specified");
+  // Agent memory is reachable only through its dedicated APIs, which enforce
+  // the account's opt-in and validation.
+  if (normalizedProvider === "cocalc" && normalizedKind === "agent-memory")
+    throw new Error("agent memory is not available through this API");
   if (
     normalizedScope !== "account" &&
     normalizedScope !== "project" &&
@@ -2779,6 +2792,7 @@ export async function upsertExternalCredential({
   create,
   max_active,
   deduplicate_metadata,
+  expected_payload_sha256,
 }: {
   host_id?: string;
   project_id: string;
@@ -2796,6 +2810,7 @@ export async function upsertExternalCredential({
   create?: boolean;
   max_active?: number;
   deduplicate_metadata?: { key: string; value: string };
+  expected_payload_sha256?: string;
 }): Promise<{ id: string; created: boolean }> {
   assertExternalCredentialId(credential_id);
   if (!host_id) {
@@ -2872,6 +2887,7 @@ export async function upsertExternalCredential({
       selector: routedSelector,
       payload,
       metadata: safeMetadata,
+      expected_payload_sha256,
     });
     if (!updated) throw new Error("credential is unavailable");
     return { id: credential_id, created: false };
@@ -2934,6 +2950,28 @@ export async function upsertExternalCredential({
     metadata: safeMetadata,
   });
   return result;
+}
+
+export async function getAgentMemoryContext({
+  host_id,
+  project_id,
+  owner_account_id,
+}: {
+  host_id?: string;
+  project_id: string;
+  owner_account_id: string;
+}): Promise<{ notes: number; index: string } | null> {
+  if (!host_id) throw new Error("host_id must be specified");
+  if (!project_id) throw new Error("project_id must be specified");
+  if (!isValidUUID(owner_account_id))
+    throw new Error("owner_account_id must be a UUID");
+  await assertHostCredentialProjectAccess({
+    host_id,
+    project_id,
+    owner_account_id,
+  });
+  const { agentMemory } = await import("@cocalc/server/agents/memory");
+  return (await agentMemory().turnIndex(owner_account_id)) ?? null;
 }
 
 export async function getExternalCredential({
@@ -3174,6 +3212,50 @@ export async function hasExternalCredential({
     return designated?.revoked == null && designated != null;
   }
   return await hasExternalCredentialRouted({ selector: routedSelector });
+}
+
+export async function recordClaudeSubscriptionUsage({
+  host_id,
+  project_id,
+  owner_account_id,
+  credential_id,
+  usage,
+}: {
+  host_id?: string;
+  project_id: string;
+  owner_account_id: string;
+  credential_id: string;
+  usage: unknown;
+}): Promise<boolean> {
+  if (!host_id) throw new Error("host_id must be specified");
+  if (!project_id) throw new Error("project_id must be specified");
+  if (!isValidUUID(owner_account_id))
+    throw new Error("owner_account_id must be a UUID");
+  assertExternalCredentialId(credential_id);
+  if (!credential_id) throw new Error("credential_id must be specified");
+  // Store only revalidated numbers, never what the host sent.
+  const snapshot = parseClaudeRateLimitSnapshot(usage);
+  if (!snapshot) throw new Error("invalid Claude usage");
+  // Trusted-host attribution, as for fetching the credential: a host running
+  // one of the owner's projects may report usage for any of the owner's Claude
+  // subscriptions. It is not tied to the controller that used the credential,
+  // so a host can at worst misstate the displayed usage numbers.
+  await assertHostCredentialProjectAccess({
+    host_id,
+    project_id,
+    owner_account_id,
+  });
+  return await setExternalCredentialMetadataValueByIdRouted({
+    id: credential_id,
+    selector: {
+      provider: ANTHROPIC_API_PROVIDER,
+      kind: CLAUDE_SUBSCRIPTION_KIND,
+      scope: "account",
+      owner_account_id,
+    },
+    key: CLAUDE_USAGE_METADATA_KEY,
+    value: snapshot,
+  });
 }
 
 export async function touchExternalCredential({

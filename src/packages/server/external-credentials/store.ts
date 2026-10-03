@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { EXTERNAL_CREDENTIAL_CONFLICT } from "@cocalc/util/external-credential-conflict";
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import {
   decryptSecretStorageValue,
@@ -13,6 +14,12 @@ export {
   CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY,
   CODEX_SUBSCRIPTION_KIND,
 } from "./provider-policy";
+
+import {
+  chargeAgentMemoryUsage,
+  isAgentActor,
+  isAgentMemorySelector,
+} from "@cocalc/server/agents/memory-limits";
 
 const MAX_PAYLOAD_BYTES = 2_000_000;
 
@@ -386,6 +393,13 @@ export async function createExternalCredential({
 }): Promise<{ id: string; created: boolean }> {
   const normalized = normalizeSelector(selector);
   validatePayload(payload);
+  // Agent memory: charge agent writes (not the owner's) on the home bay.
+  if (isAgentMemorySelector(normalized) && isAgentActor(metadata))
+    await chargeAgentMemoryUsage(
+      `${normalized.owner_account_id}`,
+      "write",
+      Buffer.byteLength(payload, "utf8"),
+    );
   const encryptedPayload = await encryptPayload(normalized, payload);
   const id = randomUUID();
   const client = await pool().connect();
@@ -548,15 +562,31 @@ export async function updateExternalCredentialById({
   payload,
   metadata,
   revive = false,
+  expectedPayloadSha256,
 }: {
   id: string;
   selector: ExternalCredentialSelector;
   payload: string;
   metadata: Record<string, any>;
   revive?: boolean;
+  // Compare-and-swap: update only if the stored payload still has this
+  // SHA-256 (hex); otherwise throw EXTERNAL_CREDENTIAL_CONFLICT.
+  expectedPayloadSha256?: string;
 }): Promise<boolean> {
   const normalized = normalizeSelector(selector);
+  if (
+    expectedPayloadSha256 != null &&
+    !/^[0-9a-f]{64}$/.test(expectedPayloadSha256)
+  )
+    throw new Error("invalid expected payload hash");
   validatePayload(payload);
+  // Agent memory: charge agent writes (not the owner's) on the home bay.
+  if (isAgentMemorySelector(normalized) && isAgentActor(metadata))
+    await chargeAgentMemoryUsage(
+      `${normalized.owner_account_id}`,
+      "write",
+      Buffer.byteLength(payload, "utf8"),
+    );
   const encryptedPayload = await encryptPayload(normalized, payload);
   const client = await pool().connect();
   try {
@@ -572,6 +602,33 @@ export async function updateExternalCredentialById({
         selector: normalized,
         metadataKey: defaultMetadataKey,
       });
+    }
+    if (expectedPayloadSha256 != null) {
+      // Under the selector lock: compare what is stored now.
+      const { rows } = await client.query(
+        `
+SELECT encrypted_payload FROM external_credentials
+WHERE id=$1 AND ${ownershipClause(2)}
+  AND ($8::boolean OR revoked IS NULL)
+FOR UPDATE
+        `,
+        [id, ...selectorValues(normalized), revive],
+      );
+      if (rows.length === 0) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+      const stored = await decryptPayload(
+        normalized,
+        rows[0].encrypted_payload,
+      );
+      if (
+        createHash("sha256").update(stored, "utf8").digest("hex") !==
+        expectedPayloadSha256
+      ) {
+        await client.query("ROLLBACK");
+        throw new Error(EXTERNAL_CREDENTIAL_CONFLICT);
+      }
     }
     const { rowCount } = await client.query(
       `
@@ -622,6 +679,38 @@ WHERE id=$1 AND ${ownershipClause(2)} AND revoked IS NULL
   return !!rowCount;
 }
 
+/**
+ * Set one metadata value (e.g. last reported usage) without bumping
+ * `updated`, which orders credentials for default selection.
+ */
+export async function setExternalCredentialMetadataValueById({
+  id,
+  selector,
+  key,
+  value,
+}: {
+  id: string;
+  selector: ExternalCredentialSelector;
+  key: string;
+  value: unknown;
+}): Promise<boolean> {
+  if (!/^[a-z][a-z0-9_]{0,63}$/.test(key))
+    throw new Error("invalid credential metadata key");
+  const json = JSON.stringify(value ?? null);
+  if (json.length > 16 * 1024)
+    throw new Error("credential metadata value is too large");
+  const normalized = normalizeSelector(selector);
+  const { rowCount } = await pool().query(
+    `
+UPDATE external_credentials
+SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), ARRAY[$8::text], $9::jsonb, true)
+WHERE id=$1 AND ${ownershipClause(2)} AND revoked IS NULL
+    `,
+    [id, ...selectorValues(normalized), key, json],
+  );
+  return !!rowCount;
+}
+
 export async function ensureDefaultExternalCredential({
   selector,
   metadataKey,
@@ -665,6 +754,10 @@ export async function getExternalCredential({
   touchLastUsed?: boolean;
 }): Promise<ExternalCredentialRecord | undefined> {
   const normalized = normalizeSelector(selector);
+  // Agent memory: agent reads touch last_used; owner reads do not and are
+  // never charged.
+  if (isAgentMemorySelector(normalized) && touchLastUsed)
+    await chargeAgentMemoryUsage(`${normalized.owner_account_id}`, "read");
   const defaultMetadataKey =
     defaultMetadataKeyForCredentialSelector(normalized);
   if (defaultMetadataKey) {

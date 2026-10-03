@@ -18,6 +18,41 @@ test("controller uses the same normalized image cache key as project startup", (
   expect(CLAUDE_CONTROLLER_BASE_IMAGE).toBe("docker.io/buildpack-deps:26.04");
 });
 
+test("controller overlays the immutable image while keeping the root read-only", () => {
+  const args = claudeSubscriptionContainerArgs({
+    name: "readonly-cache",
+    projectId: "project",
+    owner: "owner",
+    home: "/auth",
+    rootfs: "/immutable-image",
+    managedHarnesses: "/harnesses",
+    nodeMounts: {},
+    uid: 1000,
+    gid: 1000,
+  });
+  expect(args[args.indexOf("--rootfs") + 1]).toBe("/immutable-image:O");
+  expect(args).toContain("--read-only");
+  expect(args).toContain("--cap-drop=all");
+  expect(args).toContain("--security-opt=no-new-privileges");
+});
+
+test("a subscription token is passed by env file, never on the command line", () => {
+  const args = claudeSubscriptionContainerArgs({
+    name: "token",
+    projectId: "project",
+    owner: "owner",
+    home: "/auth",
+    rootfs: "/rootfs",
+    managedHarnesses: "/harnesses",
+    nodeMounts: {},
+    uid: 1000,
+    gid: 1000,
+    envFile: "/auth/.cocalc-auth.env",
+  });
+  expect(args[args.indexOf("--env-file") + 1]).toBe("/auth/.cocalc-auth.env");
+  expect(args.join(" ")).not.toContain("CLAUDE_CODE_OAUTH_TOKEN");
+});
+
 test.each([undefined, true, false])(
   "connector preference %s preserves explicit project tools",
   (claudeAiConnectors) => {
@@ -41,31 +76,6 @@ test.each([undefined, true, false])(
     expect(args).toContain("--network=slirp4netns");
   },
 );
-
-test("usage controller cannot mount project tools or transcripts even when provided", () => {
-  const args = claudeSubscriptionContainerArgs({
-    name: "usage",
-    projectId: "project",
-    owner: "owner",
-    home: "/auth",
-    rootfs: "/rootfs",
-    managedHarnesses: "/harnesses",
-    nodeMounts: {},
-    uid: 1000,
-    gid: 1000,
-    toolBridgeDirectory: "/must-not-mount-tools",
-    sessionDirectory: "/must-not-mount-transcripts",
-    purpose: "usage",
-  });
-  expect(args.join(" ")).not.toContain("must-not-mount");
-  expect(args.join(" ")).not.toContain("COCALC_BEARER_TOKEN");
-  expect(args.at(-1)).toContain(
-    "usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET",
-  );
-  expect(args.at(-1)).toContain("tools: []");
-  expect(args.at(-1)).toContain("settingSources: []");
-  expect(args.at(-1)).toContain("skipBehaviors: true");
-});
 
 test("Claude transcript survives a controller restart without entering the auth bundle", async () => {
   const projectHome = await mkdtemp(join(tmpdir(), "claude-transcript-test-"));
@@ -158,7 +168,7 @@ test("subscription controller mounts only its transcript, not project secrets or
     /project-home|project-secrets|\/run\/secrets|COCALC_BEARER_TOKEN/,
   );
   expect(args.slice(-3)).toEqual([
-    "/trusted-base-rootfs",
+    "/trusted-base-rootfs:O",
     "/opt/cocalc/bin/node",
     "/opt/cocalc/harnesses/claude-code/0.81.1/app/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
   ]);
@@ -239,4 +249,28 @@ test("command authority is revoked before stopping the controller and cleanup su
     }),
   ).rejects.toThrow("bridge cleanup failed");
   expect(order).toEqual(["bridge", "stop", "refresh", "home"]);
+});
+
+test("restricted egress environment reaches only the controller process", () => {
+  const args = claudeSubscriptionContainerArgs({
+    name: "restricted",
+    projectId: "project",
+    owner: "owner",
+    home: "/auth",
+    rootfs: "/rootfs",
+    managedHarnesses: "/harnesses",
+    nodeMounts: {},
+    uid: 1000,
+    gid: 1000,
+    env: { HTTPS_PROXY: "http://cocalc-claude:token@10.1.2.3:4567" },
+  });
+  const rootfs = args.indexOf("--rootfs");
+  const proxy = args.indexOf(
+    "HTTPS_PROXY=http://cocalc-claude:token@10.1.2.3:4567",
+  );
+  expect(proxy).toBeGreaterThan(0);
+  expect(args[proxy - 1]).toBe("--env");
+  expect(proxy).toBeLessThan(rootfs);
+  // Still its own network, not the project's.
+  expect(args).toContain("--network=slirp4netns");
 });

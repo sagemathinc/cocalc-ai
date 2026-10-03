@@ -3273,6 +3273,7 @@ export type ExternalCredentialMethod =
   | "create"
   | "update-by-id"
   | "update-label-by-id"
+  | "set-metadata-value-by-id"
   | "get"
   | "get-by-id"
   | "ensure-default"
@@ -3648,11 +3649,20 @@ export interface InterBayExternalCredentialsApi {
     payload: string;
     metadata?: Record<string, any>;
     revive?: boolean;
+    // Compare-and-swap: fail with a conflict unless the stored payload has
+    // this SHA-256 (hex).
+    expected_payload_sha256?: string;
   }) => Promise<boolean>;
   updateLabelById: (opts: {
     id: string;
     selector: ExternalCredentialSelector;
     label?: string;
+  }) => Promise<boolean>;
+  setMetadataValueById: (opts: {
+    id: string;
+    selector: ExternalCredentialSelector;
+    key: string;
+    value: unknown;
   }) => Promise<boolean>;
   get: (opts: {
     selector: ExternalCredentialSelector;
@@ -5709,6 +5719,7 @@ const EXTERNAL_CREDENTIAL_METHOD_SPECS = [
   { name: "create", method: "create" },
   { name: "updateById", method: "update-by-id" },
   { name: "updateLabelById", method: "update-label-by-id" },
+  { name: "setMetadataValueById", method: "set-metadata-value-by-id" },
   { name: "get", method: "get" },
   { name: "getById", method: "get-by-id" },
   { name: "ensureDefault", method: "ensure-default" },

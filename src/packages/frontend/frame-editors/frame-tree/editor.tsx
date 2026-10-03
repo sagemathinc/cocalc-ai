@@ -237,7 +237,11 @@ const FrameTreeEditor: React.FC<FrameTreeEditorProps> = React.memo(
               derived_file_types={derived_file_types}
               available_features={available_features}
               local_view_state={local_view_state}
-              is_visible={visible ?? true}
+              // `visible` is shared by every surface showing this file and is
+              // set false when the project hides its tab; a surface that is
+              // itself shown (e.g. the same chat in the Agents workspace)
+              // must not render its frames, such as terminals, as hidden.
+              is_visible={tab_is_visible || (visible ?? true)}
               tab_is_visible={tab_is_visible}
             />
           </FrameDndProvider>

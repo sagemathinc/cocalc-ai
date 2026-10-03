@@ -34,7 +34,13 @@ let connectedTerminalPromise:
 async function getTerminalCtor<
   T extends CodeEditorState = CodeEditorState,
 >(): Promise<TerminalCtor<T>> {
-  const mod = (connectedTerminalPromise ??= import("./connected-terminal"));
+  // A failed chunk load must not be cached: that would break every terminal in
+  // this browser tab until reload, including ones opened later.
+  const mod = (connectedTerminalPromise ??=
+    import("./connected-terminal").catch((err) => {
+      connectedTerminalPromise = undefined;
+      throw err;
+    }));
   return (await mod).Terminal as TerminalCtor<T>;
 }
 

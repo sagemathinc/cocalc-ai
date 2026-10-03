@@ -11,7 +11,10 @@ import type {
   AgentNetworkDirectory,
   NamedAgent,
 } from "@cocalc/conat/agents/personal";
-import { ComposerConnectors } from "./composer-connectors";
+import {
+  ComposerConnectors,
+  supportsCocalcConnector,
+} from "./composer-connectors";
 import { AgentFileAttachment } from "../chat/agent-file-attachment";
 
 // rc-util's constant test ID aliases dropdown and modal Escape registrations.
@@ -382,7 +385,7 @@ test("unsupported harness keeps networks usable without offering CoCalc access",
   plus.focus();
   await user.keyboard("{Enter}");
   const unavailable = await screen.findByRole("menuitem", {
-    name: "CoCalc (Codex only)",
+    name: "CoCalc (Codex and Claude only)",
   });
   expect(unavailable).toHaveAttribute("aria-disabled", "true");
   expect(mockApi.getCocalcConnectorConfig).not.toHaveBeenCalled();
@@ -416,4 +419,22 @@ test("unsupported harness keeps networks usable without offering CoCalc access",
   ).toBeNull();
   expect(mockApi.saveCocalcConnectorConfig).not.toHaveBeenCalled();
   expect(mockApi.removeCocalcConnectorConfig).not.toHaveBeenCalled();
+});
+
+test("the CoCalc connector is offered for Codex and Claude Code threads only", () => {
+  expect(supportsCocalcConnector(undefined)).toBe(false);
+  expect(supportsCocalcConnector({})).toBe(true);
+  expect(
+    supportsCocalcConnector({
+      agent_runtime: {
+        kind: "acp",
+        profile: { version: 2, id: "claude-code" },
+      },
+    }),
+  ).toBe(true);
+  expect(
+    supportsCocalcConnector({
+      agent_runtime: { kind: "acp", profile: { version: 1, id: "custom" } },
+    }),
+  ).toBe(false);
 });

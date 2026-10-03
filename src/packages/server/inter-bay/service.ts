@@ -8,8 +8,14 @@ import { createInterBayAgentIdentityHandler } from "@cocalc/conat/inter-bay/agen
 import { agentIdentityControl } from "@cocalc/server/agents/identity-control";
 import { createInterBayArtifactCatalogHandler } from "@cocalc/conat/inter-bay/artifact-catalog";
 import { catalogOwnerControl } from "@cocalc/server/artifacts/catalog-api";
+import { createInterBayPeopleHandler } from "@cocalc/conat/inter-bay/people";
+import { peopleControl } from "@cocalc/server/people/api";
 import { createInterBayPersonalLibraryHandler } from "@cocalc/conat/inter-bay/personal-library";
 import { personalLibraryHomeControl } from "@cocalc/server/artifacts/personal-library-api";
+import { createInterBayUsernamesHandler } from "@cocalc/conat/inter-bay/usernames";
+import { usernameSeedControl } from "@cocalc/server/accounts/usernames";
+import { createInterBayPersonalUrlAliasesHandler } from "@cocalc/conat/inter-bay/personal-url-aliases";
+import { personalUrlAliasHomeControl } from "@cocalc/server/personal-url-aliases";
 import { createAgentRpcControlHandler } from "@cocalc/conat/inter-bay/agent-rpc";
 import { createInterBayAgentConnectorHandler } from "@cocalc/conat/inter-bay/agent-connector";
 import { agentConnectorControl } from "@cocalc/server/agents/cocalc-connector-routing";
@@ -361,6 +367,7 @@ import {
   touchExternalCredential,
   updateExternalCredentialById,
   updateExternalCredentialLabelById,
+  setExternalCredentialMetadataValueById,
   upsertExternalCredential,
 } from "@cocalc/server/external-credentials/store";
 import { refreshCodexSubscriptionAuth } from "@cocalc/server/external-credentials/codex-subscription-refresh";
@@ -713,11 +720,29 @@ export async function initInterBayServices(): Promise<void> {
         parallel: true,
         impl: catalogOwnerControl,
       }),
+      createInterBayPeopleHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bay_id: getConfiguredBayId(),
+        parallel: true,
+        impl: peopleControl,
+      }),
       createInterBayPersonalLibraryHandler({
         client: getInterBayFabricClient({ noCache: true }),
         bayId: getConfiguredBayId(),
         parallel: true,
         impl: personalLibraryHomeControl,
+      }),
+      createInterBayUsernamesHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bayId: getConfiguredBayId(),
+        parallel: true,
+        impl: usernameSeedControl,
+      }),
+      createInterBayPersonalUrlAliasesHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bayId: getConfiguredBayId(),
+        parallel: true,
+        impl: personalUrlAliasHomeControl,
       }),
     );
     await startProjectSecretsService();
@@ -2601,16 +2626,31 @@ async function startExternalCredentialsService(): Promise<void> {
         deduplicateMetadata: deduplicate_metadata,
         defaultMetadataKey: default_metadata_key,
       }),
-    updateById: async ({ id, selector, payload, metadata, revive }) =>
+    updateById: async ({
+      id,
+      selector,
+      payload,
+      metadata,
+      revive,
+      expected_payload_sha256,
+    }) =>
       await updateExternalCredentialById({
         id,
         selector,
         payload,
         metadata: metadata ?? {},
         revive,
+        expectedPayloadSha256: expected_payload_sha256,
       }),
     updateLabelById: async ({ id, selector, label }) =>
       await updateExternalCredentialLabelById({ id, selector, label }),
+    setMetadataValueById: async ({ id, selector, key, value }) =>
+      await setExternalCredentialMetadataValueById({
+        id,
+        selector,
+        key,
+        value,
+      }),
     get: async ({ selector, touch_last_used }) =>
       await getExternalCredential({
         selector,

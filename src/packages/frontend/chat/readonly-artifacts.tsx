@@ -1,9 +1,6 @@
 import { createContext, lazy, Suspense, useContext, useState } from "react";
-import {
-  artifactGitHubPRUrl,
-  validateArtifact,
-  validateArtifactPublication,
-} from "@cocalc/chat";
+import { GitHubPRStatus } from "./github-pr-status";
+import { validateArtifact, validateArtifactPublication } from "@cocalc/chat";
 import type { ArtifactPublication } from "@cocalc/chat";
 import { ArtifactCard } from "./artifact-card";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
@@ -78,24 +75,7 @@ function PublishedObject({
         </div>
       )}
       {snapshot.github_pr && (
-        <div>
-          <a
-            href={artifactGitHubPRUrl(snapshot.github_pr)}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {snapshot.github_pr.repository} #{snapshot.github_pr.number}
-          </a>
-          <div>
-            {snapshot.github_pr.draft ? "Draft · " : ""}
-            {snapshot.github_pr.state} · Checks: {snapshot.github_pr.checks}
-          </div>
-          <div>Cached metadata retrieved {snapshot.github_pr.fetched_at}</div>
-          <div style={{ overflowWrap: "anywhere" }}>
-            Base <code>{snapshot.github_pr.base_sha}</code> → Head{" "}
-            <code>{snapshot.github_pr.head_sha}</code>
-          </div>
-        </div>
+        <GitHubPRStatus pr={snapshot.github_pr} linkRepository />
       )}
       {snapshot.actions?.map((proposal) => (
         <section

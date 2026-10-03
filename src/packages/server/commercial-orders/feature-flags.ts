@@ -45,6 +45,8 @@ export const COMMERCIAL_ACTION_CAPABILITIES = {
   cancel: "mutate",
   backfill: "mutate",
   updateBillingDetails: "mutate",
+  stripeBillingPreview: "visible",
+  syncStripeBilling: "stripeDraft",
   updateCollectionMode: "mutate",
   issueQuote: "mutate",
   voidQuote: "mutate",

@@ -17,7 +17,9 @@ import {
   getAcpDatabase,
   initAcpDatabase,
 } from "../../sqlite/acp-database";
-import { listQueuedAcpJobs } from "../../sqlite/acp-jobs";
+import { decodeAcpJobRequest, listQueuedAcpJobs } from "../../sqlite/acp-jobs";
+
+import { setCodexCredentialAdmissionResolver } from "../codex-credential-admission";
 
 const mockSteer = jest.fn();
 jest.mock("@cocalc/ai/acp", () => ({
@@ -294,7 +296,7 @@ it("promotes a saved sync answer to a dispatchable queued continuation without r
   }
 });
 
-it.each(["Codex", "ACP"])(
+it.each(["Codex", "ACP", "Claude", "Agent"])(
   "projects an explicitly accepted %s sync response as received",
   async (runtime) => {
     await respond();
@@ -379,3 +381,77 @@ it("does not project another account's response", async () => {
   ).toMatchObject({ ok: false, state: "missing" });
   expect(save).not.toHaveBeenCalled();
 });
+
+it.each([false, true])(
+  "queues a completed turn's async answer with the browser subscription (retry=%s)",
+  async (retry) => {
+    const originalDetached = process.env.COCALC_LITE_ACP_DETACHED_WORKER;
+    process.env.COCALC_LITE_ACP_DETACHED_WORKER = "1";
+    configureAcpDetachedWorkerRunning(jest.fn(async () => undefined) as any);
+    mockSteer.mockResolvedValue({ state: "missing" });
+    const credentialId = "33333333-3333-4333-8333-333333333333";
+    const resolve = jest.fn(async ({ credential_id }) => {
+      if (credential_id !== credentialId)
+        throw Error(
+          "The selected Codex payment source (subscription) is not configured.",
+        );
+      return { source: "subscription", credentialId };
+    });
+    setCodexCredentialAdmissionResolver(resolve);
+    rows.unshift({
+      event: "chat-thread-config",
+      thread_id: record.thread_id,
+      agent_model: "gpt-6-astra",
+      acp_config: { paymentSource: "subscription" },
+    });
+    record = upsertAcpAttention({
+      ...record,
+      source_id: "async-1",
+      source_kind: "codex_async_question",
+      is_blocking: false,
+    });
+    try {
+      let result = await acpTestInternals.handleAcpAttentionRequest({
+        action: "respond",
+        project_id: projectId,
+        account_id: accountId,
+        attention_id: record.attention_id,
+        response_id: "response-async",
+        answers: { region: ["EU"] },
+        codex_credential_id: retry ? undefined : credentialId,
+      });
+      if (retry) {
+        expect(result).toMatchObject({
+          ok: false,
+          record: { state: "stale", response_submitted_at: expect.any(Number) },
+        });
+        expect(listQueuedAcpJobs()).toHaveLength(0);
+        result = await acpTestInternals.handleAcpAttentionRequest({
+          action: "continue",
+          project_id: projectId,
+          account_id: accountId,
+          attention_id: record.attention_id,
+          codex_credential_id: credentialId,
+        });
+      }
+      expect(result).toMatchObject({ ok: true, record: { state: "answered" } });
+      expect(result.record).not.toHaveProperty("response_credential_id");
+      expect(getAcpAttention(record.attention_id)?.response_credential_id).toBe(
+        credentialId,
+      );
+      expect(listQueuedAcpJobs()).toHaveLength(1);
+      expect(decodeAcpJobRequest(listQueuedAcpJobs()[0]).config).toMatchObject({
+        paymentSource: "subscription-credential",
+        credentialId,
+      });
+      expect(saved.filter((row) => row.acp_attention_response)).toHaveLength(1);
+      expect(JSON.stringify(saved)).not.toContain(credentialId);
+    } finally {
+      setCodexCredentialAdmissionResolver(undefined);
+      configureAcpDetachedWorkerRunning(undefined);
+      if (originalDetached === undefined)
+        delete process.env.COCALC_LITE_ACP_DETACHED_WORKER;
+      else process.env.COCALC_LITE_ACP_DETACHED_WORKER = originalDetached;
+    }
+  },
+);

@@ -92,8 +92,10 @@ import { setContainerExec } from "@cocalc/lite/hub/acp/executor/container";
 import { initCodexProjectRunner } from "./codex/codex-project";
 import {
   setHarnessAuthorityValidator,
+  setHarnessRateLimitRecorder,
   setHarnessLauncher,
 } from "@cocalc/lite/hub/acp/harness-runtime";
+import { recordHarnessRateLimit } from "./acp/claude-subscription-usage";
 import { launchHarnessInProject } from "./acp/harness-launcher";
 import { validateHarnessAuthority } from "./acp/harness-authority";
 import { initCodexSiteKeyGovernor } from "./codex/codex-site-metering";
@@ -132,6 +134,7 @@ import { startRuntimePostureMonitor } from "./runtime-posture";
 import { startProjectSnapshotBackupMaintenance } from "./snapshot-backup-maintenance";
 import { rusticBackupBrowser } from "./rustic-backup-browser";
 import { startRusticCacheMaintenance } from "./rustic-cache-maintenance";
+import { startRuntimeArtifactMaintenance } from "./upgrade";
 import { startStorageAdmissionController } from "./storage-admission";
 import {
   startBrowserIdleStopMaintenance,
@@ -540,6 +543,7 @@ export async function main(
   initCodexProjectRunner();
   setHarnessLauncher(launchHarnessInProject);
   setHarnessAuthorityValidator(validateHarnessAuthority);
+  setHarnessRateLimitRecorder(recordHarnessRateLimit);
   initCodexSiteKeyGovernor();
   setAcpAdmissionLimitsProvider(async ({ account_id, project_id }) => {
     const accountId = `${account_id ?? ""}`.trim();
@@ -1507,6 +1511,7 @@ export async function main(
   let stopRuntimePostureMonitor: () => void = () => {};
   let stopSnapshotBackupMaintenance: () => void = () => {};
   let stopRusticCacheMaintenance: () => void = () => {};
+  let stopRuntimeArtifactMaintenance: () => void = () => {};
   let stopStorageAdmissionController: () => void = () => {};
   try {
     await initFileServer({ client: conatClient });
@@ -1521,6 +1526,7 @@ export async function main(
       hostId,
     });
     stopRusticCacheMaintenance = startRusticCacheMaintenance();
+    stopRuntimeArtifactMaintenance = startRuntimeArtifactMaintenance();
   } catch (err) {
     reportFatalStartupError("FATAL: Failed to init file server", err);
     process.exit(1);
@@ -1590,6 +1596,7 @@ export async function main(
     stopRuntimePostureMonitor?.();
     stopSnapshotBackupMaintenance?.();
     stopRusticCacheMaintenance?.();
+    stopRuntimeArtifactMaintenance?.();
     rusticBackupBrowser.close();
     stopStorageAdmissionController?.();
     stopRawNetworkEgressLoop?.();

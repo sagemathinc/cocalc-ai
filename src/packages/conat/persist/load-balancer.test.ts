@@ -1,8 +1,16 @@
 import { EventEmitter } from "events";
-import { getPersistServerInfo, getPersistServerId } from "./load-balancer";
+import {
+  getPersistServerDiscoveryResponse,
+  getPersistServerInfo,
+  getPersistServerId,
+} from "./load-balancer";
 import type { Client } from "../core/client";
 
 describe("persist discovery compatibility", () => {
+  it("keeps feature-requesting clients on legacy project-scoped socket returns", () => {
+    expect(getPersistServerDiscoveryResponse("persist-0")).toBe("persist-0");
+  });
+
   it("accepts legacy IDs without claiming inbox-return support and shares the cache", async () => {
     const client = Object.assign(new EventEmitter(), {
       request: jest.fn().mockResolvedValue({ data: "legacy-server" }),

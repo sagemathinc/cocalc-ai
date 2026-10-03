@@ -15,6 +15,7 @@ const slatePlaywrightDir = path.join(
 );
 const distDir = path.join(os.tmpdir(), "cocalc-chat-playwright-dist");
 const bundlePath = path.join(distDir, "bundle.js");
+const switchBundlePath = path.join(distDir, "switch-bundle.js");
 const indexPath = path.join(rootDir, "index.html");
 
 const appFrameworkShim = path.join(rootDir, "app-framework-shim.ts");
@@ -213,12 +214,133 @@ const shimPlugin = {
   },
 };
 
+// Real list/scroll code for the chat switch harness; message chrome that needs
+// app services is stubbed.
+const chatSwitchPlugin = {
+  name: "chat-switch",
+  setup(build) {
+    build.onResolve(
+      { filter: /^@cocalc\/frontend\/editors\/slate\/static-markdown$/ },
+      () => ({ path: path.join(rootDir, "static-markdown-shim.tsx") }),
+    );
+    build.onResolve({ filter: /^\.\/git-commit-drawer$/ }, (args) =>
+      args.importer.endsWith(`${path.sep}chat${path.sep}message.tsx`)
+        ? { path: path.join(rootDir, "message-parts-shim.tsx") }
+        : undefined,
+    );
+    build.onResolve(
+      {
+        filter:
+          /^@cocalc\/frontend\/(components\/stateful-virtuoso|jupyter\/div-temp-height)$/,
+      },
+      (args) => ({
+        path: path.join(
+          repoFrontendDir,
+          args.path.replace("@cocalc/frontend/", "") + ".tsx",
+        ),
+      }),
+    );
+  },
+};
+
+// Shims model only what the composer harness needs. The full ChatLog pulls in
+// many more frontend modules; missing named exports become inert stubs (after
+// a failed build pass reports them) so real list/scroll behavior can be
+// exercised in a browser.
+const lenientStubs = new Map(); // shim path -> Set of missing export names
+
+function lenientWrapperSource(shimPath, names) {
+  const lines = [
+    `import * as React from "react";`,
+    `export * from ${JSON.stringify(shimPath)};`,
+    `const stub = (name) => React[name] ?? function () { return undefined; };`,
+  ];
+  for (const name of names) {
+    lines.push(
+      name === "default"
+        ? `export default stub("default");`
+        : `export const ${name} = stub(${JSON.stringify(name)});`,
+    );
+  }
+  return lines.join("\n");
+}
+
+const lenientPlugin = {
+  name: "chat-lenient-stubs",
+  setup(build) {
+    build.onResolve({ filter: /.*/ }, async (args) => {
+      if (args.namespace === "lenient" || args.pluginData?.lenient) return;
+      if (lenientStubs.size === 0) return;
+      const result = await build.resolve(args.path, {
+        importer: args.importer,
+        kind: args.kind,
+        resolveDir: args.resolveDir,
+        pluginData: { lenient: true },
+      });
+      if (result.errors.length > 0) return;
+      if (!lenientStubs.has(result.path)) return;
+      return { path: result.path, namespace: "lenient" };
+    });
+    build.onLoad({ filter: /.*/, namespace: "lenient" }, (args) => ({
+      contents: lenientWrapperSource(args.path, lenientStubs.get(args.path)),
+      loader: "js",
+      resolveDir: path.dirname(args.path),
+    }));
+  },
+};
+
 async function buildHarness() {
+  await buildBundle({ entry: "harness.tsx", outfile: bundlePath }, [
+    shimPlugin,
+  ]);
+  await buildSwitchHarness();
+}
+
+async function buildSwitchHarness() {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      return await buildBundle(
+        {
+          entry: "chat-switch-harness.tsx",
+          outfile: switchBundlePath,
+          logLevel: "silent",
+          banner: {
+            js: "globalThis.process ??= { env: {}, platform: 'browser', cwd: () => '/' };",
+          },
+        },
+        [lenientPlugin, chatSwitchPlugin, shimPlugin],
+      );
+    } catch (err) {
+      let added = 0;
+      for (const { text } of err.errors ?? []) {
+        const match =
+          /No matching export in "([^"]+)" for import "([^"]+)"/.exec(text);
+        if (!match) continue;
+        const file = path.resolve(
+          process.cwd(),
+          match[1].replace(/^lenient:/, ""),
+        );
+        const names = lenientStubs.get(file) ?? new Set();
+        if (!names.has(match[2])) {
+          names.add(match[2]);
+          added += 1;
+        }
+        lenientStubs.set(file, names);
+      }
+      if (added === 0) throw err;
+    }
+  }
+  throw new Error("chat switch harness build did not converge");
+}
+
+async function buildBundle({ entry, outfile, logLevel, banner }, plugins) {
   await fs.mkdir(distDir, { recursive: true });
   await esbuild.build({
-    entryPoints: [path.join(rootDir, "harness.tsx")],
+    logLevel,
+    banner,
+    entryPoints: [path.join(rootDir, entry)],
     bundle: true,
-    outfile: bundlePath,
+    outfile,
     format: "esm",
     platform: "browser",
     sourcemap: "inline",
@@ -229,7 +351,7 @@ async function buildHarness() {
       // normal ID lifecycle for popup/dialog labels and focus management.
       "process.env.NODE_ENV": '"development"',
     },
-    plugins: [shimPlugin],
+    plugins,
   });
 }
 
@@ -244,15 +366,18 @@ function send(res, status, body, contentType) {
 async function handleRequest(req, res) {
   const url = new URL(req.url || "/", `http://127.0.0.1:${port}`);
   if (url.pathname === "/" || url.pathname === "/index.html") {
-    const html = await fs.readFile(indexPath);
+    let html = await fs.readFile(indexPath, "utf8");
+    if (url.searchParams.get("mode") === "chat-switch") {
+      html = html.replace(/\/bundle\.(js|css)/g, "/switch-bundle.$1");
+    }
     return send(res, 200, html, "text/html; charset=utf-8");
   }
-  if (url.pathname === "/bundle.js") {
-    const js = await fs.readFile(bundlePath);
+  if (url.pathname === "/bundle.js" || url.pathname === "/switch-bundle.js") {
+    const js = await fs.readFile(path.join(distDir, url.pathname));
     return send(res, 200, js, "text/javascript; charset=utf-8");
   }
-  if (url.pathname === "/bundle.css") {
-    const css = await fs.readFile(path.join(distDir, "bundle.css"));
+  if (url.pathname === "/bundle.css" || url.pathname === "/switch-bundle.css") {
+    const css = await fs.readFile(path.join(distDir, url.pathname));
     return send(res, 200, css, "text/css; charset=utf-8");
   }
   return send(res, 404, "Not Found", "text/plain; charset=utf-8");

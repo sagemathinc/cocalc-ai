@@ -270,7 +270,7 @@ class BuildOutputsTest(unittest.TestCase):
 
     def test_reuses_referenced_outputs_and_removes_obsolete_emits(self):
         tsc = Path(__file__).resolve(
-        ).parents[1] / 'packages/node_modules/typescript/bin/tsc'
+        ).parents[1] / 'packages/node_modules/@typescript/native/bin/tsc'
         with tempfile.TemporaryDirectory() as root:
             paths = ['packages/consumer', 'packages/producer']
             consumer, producer = [Path(root) / path for path in paths]

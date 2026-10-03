@@ -214,8 +214,10 @@ import {
   registerProjectCommand,
   type ProjectCommandDeps,
 } from "./commands/project";
+import { registerAgentCommand } from "./commands/agent";
 import { registerShareCommand, type ShareCommandDeps } from "./commands/share";
 import { registerAuthCommand, type AuthCommandDeps } from "./commands/auth";
+import { registerUrlCommand } from "./commands/personal-urls";
 import {
   registerDaemonCommand,
   type DaemonCommandDeps,
@@ -3316,6 +3318,7 @@ const projectCommandDeps = {
 } satisfies ProjectCommandDeps;
 
 registerProjectCommand(program, projectCommandDeps);
+registerAgentCommand(program, projectCommandDeps);
 const shareCommandDeps = {
   withContext,
   hubCallByName,
@@ -3327,6 +3330,7 @@ const shareCommandDeps = {
 } satisfies ShareCommandDeps;
 
 registerShareCommand(program, shareCommandDeps);
+registerUrlCommand(program, { withContext });
 const rootfsCommandDeps = {
   withContext,
   resolveProjectFromArgOrContext,

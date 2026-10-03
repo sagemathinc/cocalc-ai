@@ -7,6 +7,9 @@ import type {
   CommercialBackfillRequest,
   CommercialBackfillResponse,
   CommercialBillingDetailsUpdateRequest,
+  CommercialStripeBillingPreviewRequest,
+  CommercialStripeBillingPreview,
+  CommercialStripeBillingSyncRequest,
   CommercialCollectionModeUpdateRequest,
   CommercialDiagnosticsRequest,
   CommercialAssigneeListRequest,
@@ -265,6 +268,21 @@ export async function updateCollectionMode(
   return await invoke("updateCollectionMode", opts, {
     fresh: true,
     capability: "mutate",
+  });
+}
+
+export async function stripeBillingPreview(
+  opts: CommercialStripeBillingPreviewRequest,
+): Promise<CommercialStripeBillingPreview> {
+  return await invoke("stripeBillingPreview", opts);
+}
+
+export async function syncStripeBilling(
+  opts: CommercialStripeBillingSyncRequest,
+): Promise<CommercialOrder> {
+  return await invoke("syncStripeBilling", opts, {
+    fresh: true,
+    capability: "stripeDraft",
   });
 }
 

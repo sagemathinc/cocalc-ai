@@ -4,6 +4,7 @@
  */
 
 import { lstat, readdir } from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
 import type { PersistMaintenanceConfig } from "./config";
@@ -15,7 +16,12 @@ interface ScanCursor {
   roots: string[];
   rootIndex: number;
   stack: string[];
-  current?: { path: string; index: number };
+  current?: {
+    path: string;
+    index: number;
+    after?: string;
+    template?: { namePrefix: string; nameSuffix: string; pathSuffix: string };
+  };
   files: number;
   entries: number;
   bytes: number;
@@ -33,10 +39,10 @@ export interface PersistMaintenanceScanResult {
 
 const PLACEHOLDER = /\[[a-zA-Z0-9_]+\]/;
 
-async function expandTemplate(template: string): Promise<string[]> {
+function rootCursor(template: string): NonNullable<ScanCursor["current"]> {
   const absolute = resolve(template);
   const match = absolute.match(PLACEHOLDER);
-  if (!match || match.index == null) return [absolute];
+  if (!match || match.index == null) return { path: absolute, index: 0 };
   const before = absolute.slice(0, match.index);
   const after = absolute.slice(match.index + match[0].length);
   const parent = dirname(before);
@@ -44,28 +50,11 @@ async function expandTemplate(template: string): Promise<string[]> {
   const slash = after.indexOf("/");
   const nameSuffix = slash < 0 ? after : after.slice(0, slash);
   const pathSuffix = slash < 0 ? "" : after.slice(slash + 1);
-  try {
-    const entries = await readdir(parent, { withFileTypes: true });
-    return entries
-      .filter(
-        (entry) =>
-          entry.isDirectory() &&
-          !entry.isSymbolicLink() &&
-          entry.name.startsWith(namePrefix) &&
-          entry.name.endsWith(nameSuffix) &&
-          entry.name.length > namePrefix.length + nameSuffix.length,
-      )
-      .map((entry) => join(parent, entry.name, pathSuffix));
-  } catch {
-    return [];
-  }
-}
-
-async function expandRoots(templates: string[]): Promise<string[]> {
-  const roots = (
-    await Promise.all(templates.map((template) => expandTemplate(template)))
-  ).flat();
-  return [...new Set(roots)].sort();
+  return {
+    path: parent,
+    index: 0,
+    template: { namePrefix, nameSuffix, pathSuffix },
+  };
 }
 
 export class PersistMaintenanceScanner {
@@ -90,11 +79,12 @@ export class PersistMaintenanceScanner {
   }
 
   async scanBatch(): Promise<PersistMaintenanceScanResult> {
+    const deadline = Date.now() + this.config.scanTimeLimitMs;
     let cursor = this.loadCursor();
     if (!cursor) {
       cursor = {
         startedAt: Date.now(),
-        roots: await expandRoots(this.config.rootTemplates),
+        roots: [...new Set(this.config.rootTemplates)],
         rootIndex: 0,
         stack: [],
         files: 0,
@@ -106,34 +96,69 @@ export class PersistMaintenanceScanner {
     const startEntries = cursor.entries;
     const startBytes = cursor.bytes;
     const errors: string[] = [];
+    let entries: Dirent[] | undefined;
 
     while (
       cursor.entries - startEntries < this.config.scanEntryLimit &&
-      cursor.bytes - startBytes < this.config.scanByteLimit
+      cursor.bytes - startBytes < this.config.scanByteLimit &&
+      Date.now() < deadline
     ) {
       if (!cursor.current) {
-        const next = cursor.stack.pop() ?? cursor.roots[cursor.rootIndex++];
-        if (!next) break;
-        cursor.current = { path: next, index: 0 };
-      }
-      let entries;
-      try {
-        entries = await readdir(cursor.current.path, { withFileTypes: true });
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-          errors.push(`${cursor.current.path}: ${err}`);
+        const next = cursor.stack.pop();
+        if (next) cursor.current = { path: next, index: 0 };
+        else {
+          const root = cursor.roots[cursor.rootIndex++];
+          if (!root) break;
+          cursor.current = rootCursor(root);
         }
-        cursor.current = undefined;
-        continue;
+      }
+      if (!entries) {
+        try {
+          entries = await readdir(cursor.current.path, { withFileTypes: true });
+          entries.sort((a, b) =>
+            a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+          );
+          // Names survive directory insertions/deletions between batches. Old
+          // positional cursors restart this directory rather than skip entries.
+          cursor.current.index =
+            cursor.current.after == null
+              ? 0
+              : entries.findIndex(
+                  (entry) => entry.name > cursor.current!.after!,
+                );
+          if (cursor.current.index < 0) cursor.current.index = entries.length;
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+            errors.push(`${cursor.current.path}: ${err}`);
+          }
+          cursor.current = undefined;
+          continue;
+        }
       }
       if (cursor.current.index >= entries.length) {
         cursor.current = undefined;
+        entries = undefined;
         continue;
       }
       const entry = entries[cursor.current.index++];
+      cursor.current.after = entry.name;
       cursor.entries += 1;
       const path = join(cursor.current.path, entry.name);
       if (entry.isSymbolicLink()) continue;
+      // Template discovery shares the persisted cursor and budgets with file
+      // discovery, instead of expanding every host project before the deadline.
+      if (cursor.current.template) {
+        const { namePrefix, nameSuffix, pathSuffix } = cursor.current.template;
+        if (
+          entry.isDirectory() &&
+          entry.name.startsWith(namePrefix) &&
+          entry.name.endsWith(nameSuffix) &&
+          entry.name.length > namePrefix.length + nameSuffix.length
+        ) {
+          cursor.stack.push(join(path, pathSuffix));
+        }
+        continue;
+      }
       if (entry.isDirectory()) {
         cursor.stack.push(path);
         continue;

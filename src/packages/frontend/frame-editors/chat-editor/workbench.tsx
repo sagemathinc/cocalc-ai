@@ -172,7 +172,17 @@ function ResolvedWorkbenchSurface(props: WorkbenchProps) {
         >
           <div style={{ flex: 1, minWidth: 0 }}>
             {record ? (
-              <ArtifactIdentity title={record.title} theme={theme} />
+              <ArtifactIdentity
+                title={record.title}
+                theme={theme}
+                icon={
+                  record.kind === "github-pr" || record.kind === "commit"
+                    ? "git"
+                    : record.kind === "actions"
+                      ? "tasks"
+                      : "file"
+                }
+              />
             ) : (
               <strong>{title}</strong>
             )}

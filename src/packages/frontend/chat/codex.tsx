@@ -14,6 +14,7 @@ import {
   Tag,
   Typography,
 } from "antd";
+import { AgentMemoryButton } from "@cocalc/frontend/account/agent-memory-settings";
 import type { MenuProps } from "antd";
 import { HarnessRuntimeControl } from "./harness-profile";
 import { AgentSpeedControl } from "./agent-speed-control";
@@ -1905,6 +1906,9 @@ function NativeCodexConfigButton({
       >
         <Form form={form} layout="vertical">
           <Space orientation="vertical" style={{ width: "100%" }} size={10}>
+            <div>
+              <AgentMemoryButton />
+            </div>
             {configChangedForNextTurn ? (
               <Alert
                 type="info"

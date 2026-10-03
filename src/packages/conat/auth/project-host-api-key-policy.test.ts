@@ -71,7 +71,22 @@ describe("project-host API key subject confinement", () => {
     expect(allowed(full, `persist.project-${projectId}-other.id`)).toBe(false);
     expect(allowed(full, `persist.account-${base.account_id}.id`)).toBe(false);
     expect(
-      allowed(full, `persist.project-${projectId}.client.other`, "sub"),
+      allowed(full, `persist.project-${projectId}.client.socket-1`, "sub"),
+    ).toBe(true);
+    expect(
+      allowed(full, `persist.project-${otherProjectId}.client.socket-1`, "sub"),
+    ).toBe(false);
+    expect(allowed(full, `persist.project-${projectId}.client.*`, "sub")).toBe(
+      false,
+    );
+    expect(allowed(full, `persist.project-${projectId}.client.>`, "sub")).toBe(
+      false,
+    );
+    expect(allowed(full, `persist.project-${projectId}.client.`, "sub")).toBe(
+      false,
+    );
+    expect(
+      allowed(base, `persist.project-${projectId}.client.socket-1`, "sub"),
     ).toBe(false);
     expect(allowed(base, `persist.project-${projectId}.id`)).toBe(false);
     expect(allowed(full, `project.${otherProjectId}.run`)).toBe(false);

@@ -1838,7 +1838,9 @@ export const hosts = {
   updateCopyStatus: authFirstRequireHost,
   hasExternalCredential: authFirstRequireHost,
   getExternalCredential: authFirstRequireHost,
+  getAgentMemoryContext: authFirstRequireHost,
   touchExternalCredential: authFirstRequireHost,
+  recordClaudeSubscriptionUsage: authFirstRequireHost,
   upsertExternalCredential: authFirstRequireHost,
   releaseCodexDeviceAuthLease: authFirstRequireHost,
   refreshCodexSubscriptionAuth: authFirstRequireHost,
@@ -2288,6 +2290,23 @@ export interface Hosts {
     selector: ExternalCredentialSelector;
     credential_id?: string;
   }) => Promise<ExternalCredentialRecord | undefined>;
+  // Saved-note index for a turn the account runs in this project; null when
+  // the account has not enabled agent memory. The account is passed as
+  // owner_account_id because host auth reserves account_id for the caller.
+  getAgentMemoryContext: (opts: {
+    host_id?: string;
+    project_id: string;
+    owner_account_id: string;
+  }) => Promise<{ notes: number; index: string } | null>;
+  // Claude subscription limits reported during a turn, saved on the
+  // credential. The owner is owner_account_id: host auth strips account_id.
+  recordClaudeSubscriptionUsage: (opts: {
+    host_id?: string;
+    project_id: string;
+    owner_account_id: string;
+    credential_id: string;
+    usage: unknown;
+  }) => Promise<boolean>;
   touchExternalCredential: (opts: {
     host_id?: string;
     project_id: string;
@@ -2304,6 +2323,9 @@ export interface Hosts {
     create?: boolean;
     max_active?: number;
     deduplicate_metadata?: { key: string; value: string };
+    // With credential_id: update only if the stored payload still has this
+    // SHA-256 (hex); otherwise fail with EXTERNAL_CREDENTIAL_CONFLICT.
+    expected_payload_sha256?: string;
   }) => Promise<{ id: string; created: boolean }>;
   releaseCodexDeviceAuthLease: (opts: {
     host_id?: string;

@@ -5,11 +5,11 @@
 
 /* Row actions appear on hover and stay reachable by keyboard focus. */
 .cocalc-turn-row-actions {
-  position: absolute;
-  top: -4px;
-  right: 0;
-  z-index: 1;
+  width: fit-content;
+  margin: 0 0 4px auto;
   display: flex;
+  flex-wrap: wrap;
+  max-width: 100%;
   gap: 2px;
   border-radius: 6px;
   background: var(--cocalc-ui-elevated);

@@ -7,7 +7,6 @@
     "sourceMap": true,
     "allowJs": true,
     "allowSyntheticDefaultImports": true,
-    "moduleResolution": "node",
     "lib": ["es2022", "dom"]
   }
 }

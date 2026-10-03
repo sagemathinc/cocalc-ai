@@ -6,11 +6,14 @@
 import { executeCode } from "@cocalc/backend/execute-code";
 import { isValidUUID } from "@cocalc/util/misc";
 
-import { normalizeRunQuota } from "./run-quota";
-
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 
-export type ProjectNetworkPolicy = "disabled" | "normal";
+import type { ProjectNetworkPolicy } from "./network-policy-quota";
+
+export {
+  projectNetworkPolicyFromRunQuota,
+  type ProjectNetworkPolicy,
+} from "./network-policy-quota";
 
 async function runPolicyCommand(args: string[]): Promise<void> {
   const { stdout, stderr, exit_code } = await executeCode({
@@ -32,15 +35,6 @@ function validateProjectId(project_id: string): void {
   if (!isValidUUID(project_id)) {
     throw new Error("invalid project id");
   }
-}
-
-export function projectNetworkPolicyFromRunQuota(
-  rawRunQuota: unknown,
-): ProjectNetworkPolicy {
-  const runQuota = normalizeRunQuota(rawRunQuota);
-  return runQuota?.network === true || runQuota?.network === 1
-    ? "normal"
-    : "disabled";
 }
 
 // Persist the policy before the startup cgroup exists. The privileged startup

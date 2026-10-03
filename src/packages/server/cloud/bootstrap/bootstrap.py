@@ -2763,6 +2763,8 @@ def write_bootstrap_lifecycle_export(cfg: BootstrapConfig) -> None:
         if key == "project_host_bundle":
             fields.append("root")
         public_desired[key] = _selected_fields(desired.get(key) or {}, fields)
+    public_desired["tools_bundle"]["root"] = cfg.tools_bundle.root
+    public_desired["tools_bundle"]["retention_lock_protocol"] = 1
     public_desired["cloudflared"] = _selected_fields(
         desired.get("cloudflared") or {}, ["enabled"]
     )
@@ -4088,6 +4090,10 @@ def prune_bundle_versions(
         # that an old runtime is unused. Still repair runtime-root ownership.
         log_line(cfg, f"bootstrap: skipping bundle pruning for {root}: {err}")
         live_versions = None
+    if root.resolve() == Path(cfg.tools_bundle.root).resolve():
+        # The project-host collector also knows stopped-container and SQLite
+        # references. Bootstrap must not apply a weaker tools deletion policy.
+        live_versions = None
     for version in sorted(live_versions or ()):
         live_dir = root / version
         if live_dir.exists() and live_dir.is_dir():
@@ -4788,20 +4794,35 @@ class BackgroundWarningTracker:
         self.seen = self.note in text
         self.tail = b"" if self.seen else text[-(len(self.note) - 1):]
 
-def live_scope_processes(scope):
+# Podman's own processes for the exec session (e.g. conmon) can outlive the
+# command for a moment. They are not the command's leftovers.
+JOB_INFRASTRUCTURE = frozenset({"conmon", "podman", "catatonit", "crun", "runc"})
+
+def process_name(pid):
+    return Path(f"/proc/{pid}/comm").read_text().strip()
+
+def live_scope_processes(scope, grace=0.5):
     # Diagnostic only. Cleanup always uses atomic cgroup.kill, never this count.
-    try:
-        pids = (scope / "cgroup.procs").read_text().split()
-    except OSError:
-        return 0
-    count = 0
-    for pid in pids:
+    # Allow exiting processes a moment to go, so that the "remaining job
+    # processes" note is printed only for processes the command left behind.
+    until = time.monotonic() + grace
+    while True:
         try:
-            identity(int(pid))
-            count += 1
-        except (OSError, ValueError):
-            pass
-    return count
+            pids = (scope / "cgroup.procs").read_text().split()
+        except OSError:
+            return 0
+        count = 0
+        for pid in pids:
+            try:
+                identity(int(pid))
+                name = process_name(int(pid))
+            except (OSError, ValueError):
+                continue
+            if name not in JOB_INFRASTRUCTURE:
+                count += 1
+        if count == 0 or time.monotonic() >= until:
+            return count
+        time.sleep(0.05)
 
 def kill_scope(scope, timeout=10):
     # cgroup.kill covers fork/setsid/reparenting races, unlike PID enumeration.
@@ -11306,6 +11327,36 @@ def install_managed_harness(cfg: BootstrapConfig) -> None:
 
 
 def extract_bundle(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleSpec:
+    if Path(bundle.root).resolve() == Path(cfg.tools_bundle.root).resolve():
+        with tools_artifact_lock(bundle.root):
+            return extract_bundle_unlocked(cfg, bundle)
+    return extract_bundle_unlocked(cfg, bundle)
+
+
+@contextmanager
+def tools_artifact_lock(root: str):
+    """Coordinate tools extraction/activation with the project-host collector."""
+    Path(root).mkdir(parents=True, exist_ok=True)
+    lock_path = Path(root) / ".artifact.lock"
+    # Keep the inode permanently: unlinking it would split the lock domain.
+    with lock_path.open("a+") as handle:
+        os.chmod(lock_path, 0o644)
+        deadline = time.monotonic() + bootstrap_lock_timeout_seconds()
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("timed out waiting for tools artifact lock")
+                time.sleep(0.1)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def extract_bundle_unlocked(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleSpec:
     bundle = resolve_bundle_spec(cfg, bundle)
     Path(cfg.bootstrap_tmp).mkdir(parents=True, exist_ok=True)
     if cfg.bootstrap_user and cfg.bootstrap_user != "root":
@@ -14008,11 +14059,15 @@ def main(argv: list[str]) -> int:
                 write_bootstrap_state_files(cfg)
                 return 0
         if args.mode == "status":
-            write_bootstrap_state_files(cfg)
-            sys.stdout.write(
-                json.dumps(json_load(bootstrap_state_path(cfg)), indent=2, sort_keys=True)
-                + "\n"
-            )
+            # Status republishes cleanup capability, so it must wait for any
+            # older bootstrap invocation to finish before enabling deletion.
+            with bootstrap_operation_lock(cfg):
+                cfg = load_config(bootstrap_dir)
+                write_bootstrap_state_files(cfg)
+                sys.stdout.write(
+                    json.dumps(json_load(bootstrap_state_path(cfg)), indent=2, sort_keys=True)
+                    + "\n"
+                )
             return 0
         if args.mode == "provision":
             with bootstrap_operation_lock(cfg):

@@ -15,13 +15,18 @@ import {
   parseAcpHarnessProfile,
 } from "@cocalc/util/ai/runtime";
 import { randomUUID } from "node:crypto";
+import getLogger from "@cocalc/backend/logger";
+import { isQualifiedClaudeCodeProfile } from "@cocalc/util/ai/qualified-harnesses";
 import { harnessPrompt } from "./harness-context";
+import { takeRateLimit } from "./harness-rate-limit";
 import { assertSameTurnPrincipal } from "./turn-principal";
 import { normalizeCodexAsyncQuestions } from "./codex-attention";
 import type {
   CodexAttentionContext,
   CodexAttentionHandler,
 } from "./codex-project";
+
+const logger = getLogger("ai:acp:harness-agent");
 
 /** One admitted conversation binding. The service must authorize each evaluation. */
 export class HarnessAgent implements AcpAgent {
@@ -41,6 +46,10 @@ export class HarnessAgent implements AcpAgent {
     private readonly validateAuthority?: (
       binding: HarnessBinding,
     ) => Promise<void>,
+    private readonly recordRateLimit?: (
+      binding: HarnessBinding,
+      rateLimit: unknown,
+    ) => void,
   ) {
     this.binding = {
       ...binding,
@@ -91,6 +100,8 @@ export class HarnessAgent implements AcpAgent {
 
     this.busy = true;
     this.interrupted = false;
+    // The client whose CoCalc connector credential this turn issued.
+    let connectorClient: AcpHarnessClient | undefined;
     try {
       await this.validateAuthority?.(this.binding);
       // The service preserves the authoritative empty reset marker. Missing
@@ -230,6 +241,13 @@ export class HarnessAgent implements AcpAgent {
           "rejected",
           "ACP prompt interrupted before submission",
         );
+      if (request.chat && isQualifiedClaudeCodeProfile(this.binding.profile)) {
+        // The agent's scoped CoCalc connector credential lives only as long
+        // as this turn (as for Codex); it is revoked in finally. Only the
+        // qualified Claude Code harness is trusted with it.
+        connectorClient = client;
+        await client.beginConnectorTurn(request.chat);
+      }
       const result = await client.prompt(
         harnessPrompt(request),
         async (event) => {
@@ -278,14 +296,27 @@ export class HarnessAgent implements AcpAgent {
                   event.update.sessionUpdate === "tool_call_update"))
             )
               toolBoundary = true;
+            let data: object = { ...event };
+            if (event.type === "update") {
+              const { update, rateLimit } = takeRateLimit(event.update);
+              data = { ...update };
+              if (rateLimit !== undefined) {
+                try {
+                  this.recordRateLimit?.(this.binding, rateLimit);
+                } catch (error) {
+                  logger.debug("rate limit not recorded", {
+                    error: `${error}`,
+                  });
+                }
+              }
+            }
             await request.stream({
               type: "event",
               event: {
                 type: "harness",
                 source: "acp",
                 kind: event.type,
-                data:
-                  event.type === "update" ? { ...event.update } : { ...event },
+                data: data as Record<string, unknown>,
               },
             });
           }
@@ -339,6 +370,11 @@ export class HarnessAgent implements AcpAgent {
       // Never silently start a fresh native session after an ambiguous failure.
       return await disposeFailedHarness(error, () => this.dispose());
     } finally {
+      await connectorClient?.endConnectorTurn().catch((error) => {
+        logger.warn("managed CoCalc connector revocation unconfirmed", {
+          error: `${error}`,
+        });
+      });
       this.attentionContext = undefined;
       this.busy = false;
     }

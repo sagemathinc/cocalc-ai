@@ -84,7 +84,7 @@ export function ProjectDrawer() {
       placement="right"
       title={
         <Space>
-          <Icon name="edit" /> {title}
+          <Icon name="folder-open" /> {title}
         </Space>
       }
       onClose={() => actions.set_expanded_project(undefined)}

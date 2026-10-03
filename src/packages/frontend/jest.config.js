@@ -37,7 +37,6 @@ module.exports = {
     "^@xterm/xterm$": "<rootDir>/test/mocks/xterm.js",
     "^@xterm/addon-fit$": "<rootDir>/test/mocks/xterm-addon.js",
     "^@xterm/addon-web-links$": "<rootDir>/test/mocks/xterm-addon.js",
-    "^@xterm/addon-webgl$": "<rootDir>/test/mocks/xterm-addon.js",
     "^\\.\\./time-travel-editor/actions$":
       "<rootDir>/test/mocks/time-travel-actions.js",
     "^pdfjs-dist$": "<rootDir>/test/mocks/pdfjs.js",

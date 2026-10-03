@@ -322,10 +322,10 @@ function processOutputN(
           delete output_n.data[k];
           continue;
         } else {
-          output_n[k] = value;
+          output_n.data[k] = value;
           if (k == "iframe") {
-            output_n["text/html"] = value;
-            delete output_n["iframe"];
+            output_n.data["text/html"] = diff_friendly(value);
+            delete output_n.data["iframe"];
           }
         }
       }

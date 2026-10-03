@@ -133,6 +133,16 @@ Table({
       type: "uuid",
       desc: "Replacement identity created by explicit owner recovery.",
     },
+    collaborator_access: {
+      type: "string",
+      pg_type: "VARCHAR(16)",
+      desc: "Creator's stated preference for other collaborators: 'view' asks them to only view; null means they may message. A convention, not enforced.",
+    },
+    appearance: {
+      type: "map",
+      pg_type: "JSONB",
+      desc: "Copy of the thread's theme (title, colors, icon, image) so agent lists show it without loading the chat. The .chat thread metadata is the source.",
+    },
   },
 });
 
@@ -153,6 +163,10 @@ Table({
     agent_id: required("uuid", "Registered agent."),
     run_id: required("uuid", "App-server runtime incarnation, not a turn id."),
     account_id: required("uuid", "Account executing the runtime."),
+    thread_id: {
+      type: "string",
+      desc: "Conversation at run issuance; absent on legacy runs.",
+    },
     token_hash: required(
       "string",
       "SHA-256 of the opaque credential; never plaintext.",
@@ -257,5 +271,34 @@ Table({
     ended_at: timestamp("Explicit lifecycle revocation time."),
     created_at: created("Turn credential issuance time."),
     renewed_at: created("Last successful renewal time."),
+  },
+});
+
+// Per-account agent memory usage counters in the account's home bay. One row
+// per account; updated atomically by every hub process in the bay.
+Table({
+  name: "agent_memory_usage",
+  rules: {
+    primary_key: "account_id",
+  },
+  fields: {
+    account_id: required("uuid", "Account whose agent memory is used."),
+    minute_start: {
+      ...created("Start of the current one-minute window."),
+    },
+    minute_reads: {
+      ...required("integer", "Agent reads this minute."),
+      pg_default: "0",
+    },
+    minute_writes: {
+      ...required("integer", "Agent writes this minute."),
+      pg_default: "0",
+    },
+    hour_start: { ...created("Start of the current one-hour window.") },
+    hour_bytes: {
+      ...required("number", "Bytes written by agents this hour."),
+      pg_type: "BIGINT",
+      pg_default: "0",
+    },
   },
 });

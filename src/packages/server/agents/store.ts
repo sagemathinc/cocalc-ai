@@ -40,6 +40,7 @@ export type AgentRun = {
   run_id: string;
   account_id: string;
   project_id: string;
+  thread_id?: string | null;
   token_hash: string;
   issued_at: Date;
   expires_at: Date;
@@ -131,7 +132,8 @@ export class AgentStore {
         // permanently wedging the worker on an unknown outcome.
         const retried = await db.query(
           `UPDATE agent_identity_runs replacement
-           SET token_hash=$4,expires_at=$5
+           SET token_hash=$4,expires_at=$5,
+             thread_id=COALESCE(replacement.thread_id,$7)
            WHERE replacement.agent_id=$1 AND replacement.run_id=$2
              AND replacement.account_id=$3 AND replacement.ended_at IS NULL
              AND EXISTS (
@@ -140,7 +142,7 @@ export class AgentStore {
                  AND expired.account_id=$3 AND expired.ended_at IS NOT NULL
              )
            RETURNING replacement.run_id`,
-          [...values, recoverExpiredRunId],
+          [...values, recoverExpiredRunId, agent.thread_id],
         );
         if (retried.rows[0]) return 1;
         const count = (
@@ -161,8 +163,8 @@ export class AgentStore {
         if (!recovered.rowCount)
           throw new Error("expired identity run is not recoverable");
         const inserted = await db.query(
-          `INSERT INTO agent_identity_runs(agent_id,run_id,account_id,token_hash,expires_at)
-           SELECT agent_id,$2,$3,$4,$5 FROM agent_identities
+          `INSERT INTO agent_identity_runs(agent_id,run_id,account_id,token_hash,expires_at,thread_id)
+           SELECT agent_id,$2,$3,$4,$5,thread_id FROM agent_identities
            WHERE agent_id=$1 AND disabled_at IS NULL
            RETURNING run_id`,
           values,
@@ -199,10 +201,11 @@ export class AgentStore {
         return (
           await db.query(
             `
-      INSERT INTO agent_identity_runs(agent_id,run_id,account_id,token_hash,expires_at)
-      SELECT agent_id,$2,$3,$4,$5 FROM agent_identities WHERE agent_id=$1 AND disabled_at IS NULL
+      INSERT INTO agent_identity_runs(agent_id,run_id,account_id,token_hash,expires_at,thread_id)
+      SELECT agent_id,$2,$3,$4,$5,thread_id FROM agent_identities WHERE agent_id=$1 AND disabled_at IS NULL
       ON CONFLICT(agent_id,run_id) DO UPDATE SET token_hash=EXCLUDED.token_hash,
-        expires_at=EXCLUDED.expires_at
+        expires_at=EXCLUDED.expires_at,
+        thread_id=COALESCE(agent_identity_runs.thread_id,EXCLUDED.thread_id)
       WHERE agent_identity_runs.ended_at IS NULL AND agent_identity_runs.expires_at>now()
         AND agent_identity_runs.account_id=EXCLUDED.account_id`,
             values,
@@ -244,6 +247,24 @@ export class AgentStore {
     );
     if (!rows[0])
       throw new Error("agent credential is expired, revoked, or invalid");
+    return rows[0];
+  }
+
+  // Provenance for work already admitted to the trusted host queue, NOT token
+  // authentication. Normal sender shutdown/expiry must not retract accepted
+  // work, but a conversation reset does. A legacy unbound run is safe only
+  // before the identity's first reset. Callers must still check current authority.
+  async executionRun(agentId: string, runId: string): Promise<AgentRun> {
+    const { rows } = await this.query<AgentRun>(
+      `SELECT r.*,a.project_id FROM agent_identity_runs r
+       JOIN agent_identities a USING(agent_id)
+       WHERE r.agent_id=$1 AND r.run_id=$2 AND a.disabled_at IS NULL
+         AND (r.thread_id=a.thread_id OR
+           (r.thread_id IS NULL AND
+             COALESCE(jsonb_array_length(a.conversation_history),0)=0))`,
+      [agentId, runId],
+    );
+    if (!rows[0]) throw new Error("accepted agent run is unavailable");
     return rows[0];
   }
 

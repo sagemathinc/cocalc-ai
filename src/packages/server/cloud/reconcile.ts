@@ -501,7 +501,7 @@ export async function ensureHostReadyVerificationWork({
   return !!workId;
 }
 
-async function dataDiskStatus(
+export async function dataDiskStatus(
   provider: Provider,
   row: HostRow,
   creds: any,
@@ -569,7 +569,7 @@ async function dataDiskStatus(
       for (;;) {
         const res = await client.disks.list({
           parentId,
-          pageSize: 1000,
+          pageSize: 999,
           pageToken,
         } as any);
         const match = (res.items ?? []).find(

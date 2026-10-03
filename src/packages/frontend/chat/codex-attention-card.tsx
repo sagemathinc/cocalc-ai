@@ -18,13 +18,20 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
-import { CODEX_ATTENTION_ANSWER_MAX_LENGTH } from "@cocalc/util/ai/codex-attention";
+import {
+  CODEX_ATTENTION_ANSWER_MAX_LENGTH,
+  codexAttentionAcceptingRuntime,
+} from "@cocalc/util/ai/codex-attention";
 import { isValidUUID } from "@cocalc/util/misc";
 import { appendUrlPath } from "@cocalc/util/url-path";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { getControlPlaneAppUrl } from "@cocalc/frontend/control-plane-origin";
 import { open_new_tab } from "@cocalc/frontend/misc/open-browser-tab";
 import { lite } from "@cocalc/frontend/lite";
+import { useNamedAgents } from "@cocalc/frontend/agents/api";
+import { findWorkspaceAgentForThread } from "@cocalc/frontend/agents/workspace-model";
+
+import { readCodexSubscriptionSelection } from "./codex-subscription-selection";
 
 const { Paragraph, Text, Title } = Typography;
 const POLL_MS = 2_000;
@@ -144,6 +151,16 @@ function RuntimeCodexAttentionCard({
   onDraftChange?: (update: CodexAttentionDraftUpdater) => void;
 }) {
   const [record, setRecord] = useState(initialRecord);
+  // Questions come from any agent runtime (Codex, Claude, ...): name the agent
+  // by the @alias the user gave it, not by one runtime.
+  const { directory } = useNamedAgents(!lite);
+  const namedAgent = findWorkspaceAgentForThread(
+    directory?.agents ?? [],
+    record.project_id,
+    record.path,
+    record.thread_id,
+  );
+  const agentName = namedAgent ? `@${namedAgent.name}` : undefined;
   const [localDraft, setLocalDraft] = useState<CodexAttentionDraft>({
     selected: {},
     other: {},
@@ -273,6 +290,13 @@ function RuntimeCodexAttentionCard({
       ),
   );
 
+  const selectedCredentialId = () =>
+    readCodexSubscriptionSelection({
+      accountId: record.account_id,
+      projectId: record.project_id,
+      threadKey: record.thread_id,
+    });
+
   const respond = async (decline = false) => {
     setSubmitting(true);
     setError(undefined);
@@ -280,6 +304,7 @@ function RuntimeCodexAttentionCard({
     try {
       const result = await webapp_client.conat_client.attentionAcp({
         action: "respond",
+        codex_credential_id: selectedCredentialId(),
         project_id: record.project_id,
         attention_id: record.attention_id,
         response_id: responseIdRef.current,
@@ -343,6 +368,7 @@ function RuntimeCodexAttentionCard({
     try {
       const result = await webapp_client.conat_client.attentionAcp({
         action: "continue",
+        codex_credential_id: selectedCredentialId(),
         project_id: record.project_id,
         attention_id: record.attention_id,
       });
@@ -401,24 +427,24 @@ function RuntimeCodexAttentionCard({
     record.action?.kind === "fresh_auth";
   const staleWithAnswer = record.state === "stale" && hasResponse;
   // An async "answered" record can mean merely queued, not model receipt.
-  const received =
-    record.source_kind === "codex_sync_question" &&
-    record.state === "answered" &&
-    (record.resolution_reason === "Codex accepted the response" ||
-      record.resolution_reason === "ACP accepted the response");
+  const acceptingRuntime =
+    record.source_kind === "codex_sync_question" && record.state === "answered"
+      ? codexAttentionAcceptingRuntime(record.resolution_reason)
+      : undefined;
+  const received = acceptingRuntime != null;
   const responseAgent =
-    record.resolution_reason === "ACP accepted the response"
-      ? "agent"
-      : "Codex";
+    acceptingRuntime === "Codex"
+      ? "Codex"
+      : (agentName ?? (acceptingRuntime === "Claude" ? "Claude" : "The agent"));
   const responseLabel = received
-    ? `Received by ${responseAgent}`
+    ? `Received by ${responseAgent === "The agent" ? "agent" : responseAgent}`
     : staleWithAnswer
       ? "Response saved; delivery failed"
       : "Response submitted";
   const responseDescription = received
-    ? `${responseAgent === "agent" ? "The agent" : "Codex"} accepted your response.`
+    ? `${responseAgent} accepted your response.`
     : staleWithAnswer
-      ? "Your response is saved, but could not be delivered. You can retry with this answer."
+      ? `Your response is saved, but could not be delivered. You can retry with this answer.${record.resolution_reason ? ` ${record.resolution_reason}` : ""}`
       : "Your response is saved. Receipt by the agent is not confirmed.";
   const setDismissed = (value: boolean) => {
     setCollapsed(value);
@@ -432,7 +458,7 @@ function RuntimeCodexAttentionCard({
   };
   return (
     <section
-      aria-label="Codex needs attention"
+      aria-label={`${agentName ?? "The agent"} needs attention`}
       data-codex-attention-id={record.attention_id}
       tabIndex={-1}
       style={{
@@ -494,7 +520,7 @@ function RuntimeCodexAttentionCard({
                         ? (record.summary ??
                           "The current turn is paused until you respond.")
                         : record.source_kind === "codex_async_question"
-                          ? "Codex can keep working while you answer. Your response will be saved with this question and submitted to Codex."
+                          ? `${agentName ?? "The agent"} can keep working while you answer. Your response will be saved with this question and submitted to ${agentName ?? "the agent"}.`
                           : record.summary}
               </Text>
             )}

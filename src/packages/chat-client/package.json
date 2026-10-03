@@ -35,13 +35,13 @@
     "@cocalc/chat": "workspace:*",
     "@cocalc/conat": "workspace:*",
     "@cocalc/util": "workspace:*",
-    "markdown-it": "^14.2.0"
+    "markdown-it": "^14.3.1"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "@types/markdown-it": "12.2.3",
     "@types/node": "^22.10.10",
-    "ts-jest": "29.4.9"
+    "ts-jest": "29.4.14"
   },
   "license": "SEE LICENSE.md"
 }

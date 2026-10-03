@@ -17,6 +17,19 @@ import { AgentNetworkDetailsModal } from "./agent-network-details-modal";
 import { activeNetworkMembers } from "./agent-network-utils";
 import { refreshAgentNetworks, sameEndpoint, useAgentNetworks } from "./api";
 
+/**
+ * The managed CoCalc connector works with native Codex and the qualified
+ * Claude Code harness, not with arbitrary ACP harnesses.
+ */
+export function supportsCocalcConnector(
+  threadMetadata: { agent_runtime?: any } | null | undefined,
+): boolean {
+  if (threadMetadata == null) return false;
+  const runtime = threadMetadata.agent_runtime;
+  if (runtime?.kind !== "acp") return true;
+  return runtime.profile?.version === 2 && runtime.profile.id === "claude-code";
+}
+
 interface Props {
   agent?: NamedAgent;
   supportsCocalcAccess: boolean;
@@ -100,7 +113,9 @@ function NamedAgentConnectors({
       {children([
         {
           key: "cocalc-connector",
-          label: supportsCocalcAccess ? "CoCalc" : "CoCalc (Codex only)",
+          label: supportsCocalcAccess
+            ? "CoCalc"
+            : "CoCalc (Codex and Claude only)",
           disabled: !supportsCocalcAccess,
           icon: (
             <span aria-hidden>

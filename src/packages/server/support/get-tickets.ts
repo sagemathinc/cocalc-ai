@@ -1,4 +1,4 @@
-import { Ticket } from "node-zendesk/dist/types/clients/core/tickets";
+import type { Ticket } from "node-zendesk/clients/core/tickets";
 
 import { isValidUUID } from "@cocalc/util/misc";
 import { urlToUserURL } from "./util";

@@ -313,6 +313,42 @@ describe("public/docs", () => {
     expect(screen.queryByText(/SECURITY_DENY/)).toBeNull();
   });
 
+  it("renders CoCalc at a glance only on cocalc.ai", () => {
+    const initialRoute = {
+      slug: "documentation/cocalc-at-a-glance",
+      view: "docs-detail",
+    } as const;
+    const { unmount } = render(
+      <PublicDocsApp
+        config={{ dns: "cocalc.ai", site_name: "CoCalc" }}
+        initialRoute={initialRoute}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "CoCalc at a glance" }),
+    ).not.toBeNull();
+    const body = screen.getByTestId("docs-markdown");
+    expect(body.textContent).toMatch(
+      /Claude Code is an experimental preview on sites that enable it/,
+    );
+    expect(within(body).getByRole("link", { name: "Pricing" })).toHaveAttribute(
+      "href",
+      "/pricing",
+    );
+    unmount();
+
+    render(
+      <PublicDocsApp
+        config={{ dns: "example.com", site_name: "CoCalc" }}
+        initialRoute={initialRoute}
+      />,
+    );
+    expect(
+      screen.getByText("That documentation page does not exist yet."),
+    ).not.toBeNull();
+  });
+
   it("renders public docs as a print-friendly single page", () => {
     render(
       <PublicDocsApp

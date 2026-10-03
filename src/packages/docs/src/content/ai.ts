@@ -17,7 +17,8 @@ files, run commands, work with notebooks, and make changes.
 3. Start a Codex thread.
 4. Ask a concrete task, including relevant files and constraints.
 
-For terminal-native agents such as Claude Code or opencode, install and run them
+Claude Code is also integrated, as an experimental preview on sites that enable
+it. For other terminal-native agents such as opencode, install and run them
 inside a normal project terminal with compatible software and permissions.
 Hosted project images and local CoCalc Plus can provide different operating
 systems and installed tools; terminal-native agents provide their own interface.
@@ -30,6 +31,7 @@ On phones, open **Chat tools** using the ellipsis button, then choose
 - [Compare all integrated agent features](/docs/ai/agent-features).
 - [Start and review work in Agents](/docs/ai/my-agents).
 - [Use Claude Code (experimental preview)](/docs/ai/claude-code).
+- [Let agents remember notes across sessions](/docs/ai/agent-memory).
 - [Connect access and choose funding](/docs/ai/connect-credentials).
 - [Give an agent access to other CoCalc projects](/docs/ai/cocalc-access).
 - [Configure models, access, and defaults](/docs/ai/codex-settings).

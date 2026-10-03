@@ -11,6 +11,63 @@ import {
 } from "./admission";
 
 describe("hub api admission", () => {
+  it("isolates resolver saturation from payments and collaborator invitations", () => {
+    const counts = {
+      active: 32,
+      maximum: 3000,
+      accountActive: 32,
+      accountMaximum: 256,
+      resolverActive: 32,
+      accountResolverActive: 32,
+    };
+    expect(
+      getHubApiAdmissionDecision({
+        ...counts,
+        key: "hosts.resolveHostConnection",
+      }),
+    ).toMatchObject({
+      allowed: false,
+      source: "hub-api-account-resolver",
+      maximum: 32,
+    });
+    for (const key of [
+      "projects.getCodexPaymentSource",
+      "projects.respondCollabInvite",
+      "hosts.listHosts",
+    ]) {
+      expect(getHubApiAdmissionDecision({ ...counts, key })).toMatchObject({
+        allowed: true,
+      });
+    }
+    expect(
+      getHubApiAdmissionDecision({
+        ...counts,
+        accountResolverActive: 31,
+        key: "hosts.resolveHostConnection",
+      }),
+    ).toMatchObject({ allowed: true });
+  });
+
+  it("also bounds aggregate resolver work while leaving global capacity", () => {
+    const counts = { active: 750, maximum: 3000, resolverActive: 750 };
+    expect(
+      getHubApiAdmissionDecision({
+        ...counts,
+        key: "hosts.resolveHostConnection",
+      }),
+    ).toMatchObject({
+      allowed: false,
+      source: "hub-api-resolver",
+      maximum: 750,
+    });
+    expect(
+      getHubApiAdmissionDecision({
+        ...counts,
+        key: "projects.respondCollabInvite",
+      }),
+    ).toMatchObject({ allowed: true });
+  });
+
   it("classifies account usage polling as low priority", () => {
     expect(isLowPriorityHubApiMethod("compute.getCatalog")).toBe(true);
     expect(isLowPriorityHubApiMethod("compute.listAgentGrants")).toBe(true);

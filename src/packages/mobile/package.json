@@ -14,7 +14,7 @@
     "test": "tsx --test 'src/**/*.test.ts'",
     "build": "echo 0",
     "typecheck": "tsc --noEmit",
-    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores=@types/jest,@types/node,@types/react,abort-controller,buffer,expo-dev-client,react-native-worklets",
+    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores=@types/jest,@types/node,@types/react,abort-controller,buffer,expo-dev-client,react-native-worklets,typescript",
     "doctor": "pnpm dlx expo-doctor@latest",
     "test:ui": "jest --config jest.config.cjs --runInBand",
     "start:preview": "EXPO_PUBLIC_MOBILE_PREVIEW=1 expo start --dev-client --port 8082",
@@ -59,7 +59,7 @@
     "expo-web-browser": "57.0.2",
     "fast-text-encoding": "1.0.6",
     "htmlparser2": "^8.0.2",
-    "markdown-it": "^14.2.0",
+    "markdown-it": "^14.3.1",
     "path-browserify": "^1.0.1",
     "prismjs": "^1.30.0",
     "ratex-react-native": "0.1.14",
@@ -82,8 +82,9 @@
     "@types/path-browserify": "^1.0.3",
     "@types/prismjs": "^1.26.2",
     "@types/react": "^19.2.7",
+    "@typescript/native": "npm:typescript@^7.0.2",
     "react-test-renderer": "19.2.3",
     "tsx": "4.23.12",
-    "typescript": "^6.0.3"
+    "typescript": "npm:@typescript/typescript6@^6.0.2"
   }
 }

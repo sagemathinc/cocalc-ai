@@ -3,8 +3,8 @@
   "compilerOptions": {
     "rootDir": "./src",
     "outDir": "dist",
-    "baseUrl": ".",
     "paths": {
+      "@cocalc/*": ["../node_modules/@cocalc/*"],
       "@cocalc/app-document-build": ["../apps/document-build/src"],
       "@cocalc/app-document-build/*": ["../apps/document-build/src/*"],
       "@cocalc/app-notebook": ["../apps/notebook/src"],

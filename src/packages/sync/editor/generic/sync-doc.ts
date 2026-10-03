@@ -57,11 +57,14 @@ import {
   decodePatchId,
   legacyPatchId,
   type PatchEnvelope,
+  type Inconsistency,
   type PatchStore as PatchflowPatchStore,
   type PresenceAdapter as PatchflowPresenceAdapter,
   MemoryPresenceAdapter as PatchflowMemoryPresenceAdapter,
 } from "patchflow";
 import type { RecoveryState } from "@cocalc/conat/sync/core-stream";
+import { stringMerge3 } from "./string-merge3";
+import { dbMerge3 } from "../db/merge3";
 import type {
   Client,
   CompressedPatch,
@@ -204,42 +207,58 @@ export interface SyncOpts extends SyncOpts0 {
 // not on the frontend.
 
 const logger = getLogger("sync-doc");
+
+// Debugging aid (see SimpleInputMerge): set
+// globalThis.__simpleInputMergeDebug to a function to receive events; the
+// data is only computed when it is set.
+function syncDebug(event: string, data: () => Record<string, unknown>): void {
+  const hook = (globalThis as any).__simpleInputMergeDebug;
+  if (typeof hook === "function") hook(event, data());
+}
 logger.debug("init");
 
+// Where to load older history from: the stream position of the snapshot
+// before the oldest loaded one (see conatSnapshotSeqInfo), or the start of the
+// stream if the oldest loaded snapshot is the first one or none is loaded.
 export function prevSeqForMoreHistoryFromHistory(
   history: {
     time: PatchId;
     isSnapshot?: boolean;
-    seqInfo?: { prevSeq?: number };
+    seqInfo?: { prevSeq?: number; prev_seq?: number };
   }[],
 ): number | undefined {
-  let prevSeq: number | undefined;
+  if (history.length == 0) return undefined;
+  let oldest: { prevSeq?: number } | undefined;
   let oldestTimeMs: number | undefined;
   for (const p of history) {
-    if (p.isSnapshot && p.seqInfo?.prevSeq != null) {
-      const timeMs = decodePatchId(p.time).timeMs;
-      if (oldestTimeMs == null || timeMs < oldestTimeMs) {
-        oldestTimeMs = timeMs;
-        prevSeq = p.seqInfo.prevSeq;
-      }
+    if (!p.isSnapshot) continue;
+    const timeMs = decodePatchId(p.time).timeMs;
+    if (oldestTimeMs == null || timeMs < oldestTimeMs) {
+      oldestTimeMs = timeMs;
+      // SyncDoc passes its seq_info (snake case) through to patchflow.
+      oldest = { prevSeq: p.seqInfo?.prevSeq ?? p.seqInfo?.prev_seq };
     }
   }
-  if (prevSeq != null) {
-    return prevSeq;
-  }
-  return history.length > 0 ? 0 : undefined;
+  return oldest?.prevSeq ?? 0;
 }
 
+// Whether the loaded patches are the whole history. Loading starts at the
+// latest snapshot: at the stream position of the patch it is of
+// (seq_info.seq), so there is older history unless that is the start of the
+// stream. (Not whether there is an earlier snapshot: the first snapshot of a
+// document has no prev_seq, but the patches before it exist.)
 export function patchesHaveFullHistoryFromPatches(
   patches: {
     is_snapshot?: boolean;
     parents?: PatchId[];
-    seq_info?: { prev_seq?: number };
+    seq_info?: { seq?: number; prev_seq?: number };
   }[],
 ): boolean {
   const first = patches[0];
   if (first == null) return true;
   if (first.is_snapshot) {
+    const seq = first.seq_info?.seq;
+    if (seq != null) return seq <= 1;
     const prevSeq = first.seq_info?.prev_seq;
     return prevSeq == null || prevSeq <= 1;
   }
@@ -313,6 +332,12 @@ export class SyncDoc extends EventEmitter {
   private last: Document;
   private doc: Document;
   private before_change?: Document;
+  // The value a local draft set with from_str(value, { base }) was derived
+  // from, e.g. what an editor showed when its user typed. The draft's changes
+  // are relative to it rather than to this.last, which can be newer: a remote
+  // change can reach this document before the editor shows it, and diffing
+  // the editor's value against this.last would delete that change.
+  private draftBase?: Document;
   private cursorSnapshots: any[] = [];
 
   private last_user_change: Date = minutes_ago(60);
@@ -533,6 +558,9 @@ export class SyncDoc extends EventEmitter {
       },
       { start: 3000, max: 15000, decay: 1.3 },
     );
+    if (this.isClosed()) return;
+    // Before showing the document, so it never shows an incomplete value.
+    await this.loadHistoryForExactValue();
     if (this.isClosed()) return;
     this.set_state("ready");
     this.emitOpenPhase("sync_ready");
@@ -770,11 +798,42 @@ export class SyncDoc extends EventEmitter {
     return this.doc;
   };
 
-  // Set this doc from its string representation.
-  from_str = (value: string): void => {
+  // Set the document to the given string. If it is an editor's value, pass
+  // the value it was derived from as base (see draftBase), so that only the
+  // editor's own changes are applied: text that reached this document but not
+  // the editor is then kept rather than deleted.
+  from_str = (value: string, opts?: { base?: string }): void => {
     // console.log(`sync-doc.from_str("${value}")`);
     this.markLocalUnsavedChange();
     this.doc = this._from_str(value);
+    this.draftBase = opts?.base != null ? this._from_str(opts.base) : undefined;
+  };
+
+  // The local draft rebased onto the committed document.
+  private rebaseDraftOnto = (
+    draft: Document,
+    committed: Document,
+  ): Document => {
+    const draftBase = this.draftBase;
+    if (draftBase == null) {
+      return rebaseLocalDocument({ base: this.last, draft, committed });
+    }
+    if (draftBase.is_equal(draft)) return committed;
+    const merge3 = this.patchflowCodec?.merge3;
+    if (merge3 != null) {
+      // Exact three-way merge from the draft's base: the draft's changes are
+      // applied once, never relocated onto similar text.
+      const result = merge3(draftBase as any, draft as any, committed as any);
+      syncDebug("syncdoc:rebase", () => ({
+        path: this.path,
+        base: draftBase.to_str(),
+        draft: draft.to_str(),
+        committed: committed.to_str(),
+        merged: (result as any).to_str(),
+      }));
+      return result as any;
+    }
+    return rebaseLocalDocument({ base: draftBase, draft, committed });
   };
 
   // Return string representation of this doc,
@@ -1817,6 +1876,10 @@ export class SyncDoc extends EventEmitter {
       parents: null,
       version: null,
       meta: null,
+      hash: null,
+      merge_parent: null,
+      merge_patch: null,
+      inexact: null,
     };
     if (this.doctype.patch_format != null) {
       (query as any).format = this.doctype.patch_format;
@@ -1905,6 +1968,7 @@ export class SyncDoc extends EventEmitter {
     }
     this.patchflowSession.on("patch", this.handlePatchflowPatch);
     this.patchflowSession.on("change", this.handlePatchflowChange);
+    this.patchflowSession.on("inconsistency", this.handleInconsistency);
     try {
       await this.patchflowSession.init();
     } catch (err) {
@@ -2253,6 +2317,14 @@ export class SyncDoc extends EventEmitter {
       return;
     }
     user_id = p.userId ?? user_id;
+    // Never pass on a value that differs from what the patch's author
+    // recorded: every client opening the document later would start from it.
+    // ("unknown": a patch from before hashes, or no exact value.)
+    if ((this.patchflowSession as any).verifyValue?.(time) === "mismatch") {
+      throw Error(
+        `not making a snapshot at ${time}: value differs from its hash`,
+      );
+    }
     const doc = this.patchflowSession.value({ time }) as any;
     snapshot = (doc?.to_str?.() ?? doc?.toString?.() ?? `${doc}`) as string;
     if (snapshot == null) {
@@ -2269,6 +2341,9 @@ export class SyncDoc extends EventEmitter {
       snapshot,
       user_id,
       seq_info,
+      // The hash its author recorded, so a client that starts from this
+      // snapshot can check it (see Patch.hash).
+      ...(p.hash != null ? { hash: p.hash } : {}),
       __checkpoint: {
         name: LATEST_SNAPSHOT_CHECKPOINT,
         seq: seq_info.seq,
@@ -2307,6 +2382,13 @@ export class SyncDoc extends EventEmitter {
     const interval = this.snapshot_interval;
     dbg("check if we need to make a snapshot:", { interval, max_size });
     if (!this.patchflowReady()) {
+      return;
+    }
+    if ((this.patchflowSession as any).needsMoreHistory?.()) {
+      // Values may be approximations until more history is loaded (see
+      // loadHistoryIfNeeded), and a snapshot would pass an approximation on to
+      // every client that opens the document later.
+      dbg("not making a snapshot: more history is needed for exact values");
       return;
     }
     const time = this.patchflowSnapshotCandidate(interval, max_size);
@@ -2404,6 +2486,20 @@ export class SyncDoc extends EventEmitter {
       const m = x.get("meta");
       obj.meta = Map.isMap(m) ? m.toJS() : m;
     }
+    const hash = x.get("hash");
+    if (typeof hash === "string") {
+      obj.hash = hash;
+    }
+    const mergeParent = x.get("merge_parent");
+    const mergePatch = x.get("merge_patch");
+    if (mergeParent != null && typeof mergePatch === "string") {
+      // A JSON string, like patch (see above).
+      obj.merge_parent = normalizePatchId(mergeParent);
+      obj.merge_patch = JSON.parse(mergePatch);
+    }
+    if (x.get("inexact") === true) {
+      obj.inexact = true;
+    }
     if (is_snapshot) {
       obj.snapshot = x.get("snapshot"); // this is a string
       obj.seq_info = x.get("seq_info")?.toJS();
@@ -2436,6 +2532,10 @@ export class SyncDoc extends EventEmitter {
       seqInfo: p.seq_info,
       file: p.file,
       meta: p.meta,
+      hash: p.hash,
+      mergeParent: p.merge_parent,
+      mergePatch: p.merge_patch,
+      ...(p.inexact ? { inexact: true } : {}),
     };
   };
 
@@ -2453,6 +2553,10 @@ export class SyncDoc extends EventEmitter {
       seq_info: env.seqInfo,
       file: env.file,
       meta: env.meta,
+      hash: env.hash,
+      merge_parent: env.mergeParent,
+      merge_patch: env.mergePatch as CompressedPatch | undefined,
+      ...(env.inexact ? { inexact: true } : {}),
     };
   };
 
@@ -2482,6 +2586,29 @@ export class SyncDoc extends EventEmitter {
       },
       makePatch: (a: Document, b: Document) =>
         ((a as any).make_patch ?? a.makePatch).call(a, b),
+      // Exact values for text: every patch applies to the value of its own
+      // parents and concurrent heads merge three-way from their common
+      // ancestor, instead of fuzzy-applying concurrent patches to each other's
+      // text (which could delete or duplicate the wrong text).
+      ...(this.doctype.type === "string"
+        ? {
+            merge3: stringMerge3<Document>(this._from_str, (doc) =>
+              doc.to_str(),
+            ),
+          }
+        : this.doctype.type === "db" &&
+            this.doctype.opts?.primary_keys?.length > 0
+          ? {
+              merge3: dbMerge3<Document>(
+                this._from_str,
+                (doc) => doc.to_str(),
+                {
+                  primaryKeys: this.doctype.opts?.primary_keys,
+                  stringCols: this.doctype.opts?.string_cols ?? [],
+                },
+              ),
+            }
+          : {}),
     };
   };
 
@@ -2616,6 +2743,16 @@ export class SyncDoc extends EventEmitter {
           if (patch.meta != null) {
             obj.meta = patch.meta;
           }
+          if (patch.hash != null) {
+            obj.hash = patch.hash;
+          }
+          if (patch.merge_parent != null && patch.merge_patch != null) {
+            obj.merge_parent = patch.merge_parent;
+            obj.merge_patch = JSON.stringify(patch.merge_patch);
+          }
+          if (patch.inexact) {
+            obj.inexact = true;
+          }
           if (this.doctype.patch_format != null) {
             obj.format = this.doctype.patch_format;
           }
@@ -2706,12 +2843,53 @@ export class SyncDoc extends EventEmitter {
       return;
     }
     if (envs.length > 1 && this.applyPatchflowRemoteBatch(envs)) {
+      this.loadHistoryIfNeeded();
       return;
     }
     for (const env of envs) {
       onEnvelope(env);
     }
+    this.loadHistoryIfNeeded();
   };
+
+  // A document is loaded from its latest snapshot and the patches after the
+  // snapshotted patch. Patches made concurrently with the snapshotted patch but
+  // appended before it are in neither, and later patches can build on them
+  // (e.g. a merge, or a client that was offline); then the exact value needs
+  // older history, and without it this client would show something different
+  // from everyone else. Load more history until it does not.
+  private loadHistoryIfNeeded = (): void => {
+    if (
+      this.isClosed() ||
+      this.patchflowSession == null ||
+      !this.patchflowReady() ||
+      this.get_state() !== "ready" ||
+      this.hasFullHistory()
+    ) {
+      return;
+    }
+    if (!(this.patchflowSession as any).needsMoreHistory?.()) return;
+    void this.loadHistoryForExactValue();
+  };
+
+  private loadHistoryForExactValue = reuseInFlight(async (): Promise<void> => {
+    const needsMore = () =>
+      !this.isClosed() &&
+      this.patchflowSession != null &&
+      !this.hasFullHistory() &&
+      !!(this.patchflowSession as any).needsMoreHistory?.();
+    try {
+      // Normally one step back (to the previous snapshot) is enough.
+      for (let i = 0; i < 3 && needsMore(); i++) {
+        if (!(await this.loadMoreHistory())) break;
+      }
+      if (needsMore()) {
+        await this.loadMoreHistory({ all: true });
+      }
+    } catch (err) {
+      this.dbg("loadHistoryForExactValue")(`failed: ${err}`);
+    }
+  });
 
   private applyPatchflowRemoteBatch = (envs: PatchEnvelope[]): boolean => {
     if (this.patchflowSession == null) {
@@ -3201,6 +3379,10 @@ export class SyncDoc extends EventEmitter {
      written to disk; however, it does mean that it safe for
      the user to close their browser.
   */
+  // Whether the live document has changes not committed as a patch yet.
+  hasDraft = (): boolean =>
+    this.doc != null && this.last != null && !this.doc.is_equal(this.last);
+
   has_uncommitted_changes = (): boolean => {
     if (!this.isReady()) {
       return false;
@@ -3241,6 +3423,46 @@ export class SyncDoc extends EventEmitter {
     }
   };
 
+  // This client computed a value that differs from the one the patch's author
+  // recorded (patchflow checks values against Patch.hash): the document is
+  // not what everyone else sees. Never silent: log it, report it to the
+  // server's client error log, and emit "inconsistency" (for tests, tools and
+  // agents working on the document).
+  private inconsistencyCount = 0;
+  private handleInconsistency = (e: Inconsistency): void => {
+    this.inconsistencyCount += 1;
+    const info = {
+      ...e,
+      path: this.path,
+      project_id: this.project_id,
+      string_id: this.string_id,
+      count: this.inconsistencyCount,
+      hasFullHistory: this.hasFullHistory(),
+    };
+    syncDebug("syncdoc:inconsistency", () => info);
+    if (this.inconsistencyCount <= 10) {
+      console.warn("sync: document value differs from its recorded hash", info);
+    }
+    this.dbg("inconsistency")(JSON.stringify(info));
+    this.emit("inconsistency", info);
+    if (this.inconsistencyCount <= 3) {
+      try {
+        this.client?.log_error?.({
+          project_id: this.project_id,
+          path: this.path,
+          string_id: this.string_id,
+          error: { type: "sync-inconsistency", ...info },
+        });
+      } catch {
+        // reporting must never break editing
+      }
+    }
+  };
+
+  // Number of inconsistencies detected in this session (see
+  // handleInconsistency).
+  getInconsistencyCount = (): number => this.inconsistencyCount;
+
   private handlePatchflowPatch = (env: PatchEnvelope): void => {
     if (env.meta?.deleted) {
       this.emitDeleted();
@@ -3256,15 +3478,18 @@ export class SyncDoc extends EventEmitter {
     const committed = doc as Document;
     const previous = this.doc;
     const next =
-      previous == null
-        ? committed
-        : rebaseLocalDocument({
-            base: this.last,
-            draft: previous,
-            committed,
-          });
+      previous == null ? committed : this.rebaseDraftOnto(previous, committed);
+    syncDebug("syncdoc:remote", () => ({
+      path: this.path,
+      hadDraft:
+        previous != null && this.last != null && !previous.is_equal(this.last),
+      hadDraftBase: this.draftBase != null,
+      rebasedDiffers: previous != null && !next.is_equal(committed),
+    }));
     this.last = committed;
     this.doc = next;
+    // The draft is now relative to the committed document.
+    this.draftBase = undefined;
     if (previous != null && previous.is_equal(next) && this.state === "ready") {
       return;
     }
@@ -3296,10 +3521,34 @@ export class SyncDoc extends EventEmitter {
         : true,
     );
     if (window.length === 0) return;
+    // Prefer a patch that every other loaded patch is an ancestor or a
+    // descendant of (a clean cut), near the chosen one: a client that loads
+    // from a snapshot there needs no older history. Patches concurrent with
+    // the snapshotted patch but appended before it are in neither the snapshot
+    // nor the patches after it (see loadHistoryIfNeeded). If there is no clean
+    // cut (constant concurrent editing), snapshot anyway once the window is
+    // large, rather than never.
+    const nearestCut = (idx: number): PatchId | undefined => {
+      const session = this.patchflowSession as any;
+      if (typeof session?.isCut !== "function") return window[idx].time;
+      // Each check walks the loaded history, so only look nearby.
+      for (let d = 0; d < Math.min(window.length, 200); d++) {
+        for (const i of [idx - d, idx + d]) {
+          if (
+            i >= 1 &&
+            i < window.length - 1 &&
+            session.isCut(window[i].time)
+          ) {
+            return window[i].time;
+          }
+        }
+      }
+      return window.length >= 4 * interval ? window[idx].time : undefined;
+    };
     // Rule 1: interval count
     if (window.length >= 2 * interval) {
       const idx = Math.min(interval, window.length - 1);
-      return window[idx].time;
+      return nearestCut(idx);
     }
     // Rule 2: size threshold
     let totalSize = 0;
@@ -3310,10 +3559,10 @@ export class SyncDoc extends EventEmitter {
     }
     if (totalSize > max_size) {
       let running = 0;
-      for (const p of window) {
-        running += p.size ?? 0;
+      for (let i = 0; i < window.length; i++) {
+        running += window[i].size ?? 0;
         if (running > max_size) {
-          return p.time;
+          return nearestCut(i) ?? window[i].time;
         }
       }
     }
@@ -3457,13 +3706,20 @@ export class SyncDoc extends EventEmitter {
     }
     // A remote patch can advance the committed graph while this.doc still
     // contains a local draft. Replay only the local delta onto that graph.
-    const next = rebaseLocalDocument({
-      base: this.last,
-      draft,
-      committed: current,
-    });
+    const draftBase = this.draftBase;
+    const next = this.rebaseDraftOnto(draft, current);
+    this.draftBase = undefined;
     this.doc = next;
     const compareAgainst = current;
+    syncDebug("syncdoc:commit", () => ({
+      path: this.path,
+      heads: this.patchflowSession?.getHeads().length,
+      forceMerge,
+      changed: !this.documentsEqual(current as Document, next),
+      hadDraftBase: draftBase != null,
+      draftIsLast: this.last != null && draft.is_equal(this.last),
+      stack: new Error().stack?.split("\n").slice(2, 8).join("\n"),
+    }));
     if (
       !allowDuplicate &&
       !forceMerge &&

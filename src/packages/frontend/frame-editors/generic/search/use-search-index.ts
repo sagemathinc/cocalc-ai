@@ -1,6 +1,7 @@
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { useEffect, useRef, useState } from "react";
 import { create, search, insertMultiple } from "@orama/orama";
+import type { AnyDocument, Results } from "@orama/orama";
 import useCounter from "@cocalc/frontend/app-framework/counter-hook";
 
 export default function useSearchIndex() {
@@ -102,7 +103,7 @@ export class SearchIndex {
     delete this.fragmentKey;
   }
 
-  search = async (query) => {
+  search = async (query): Promise<Results<AnyDocument>> => {
     if (this.state != "ready" || this.db == null) {
       throw Error("index not ready");
     }

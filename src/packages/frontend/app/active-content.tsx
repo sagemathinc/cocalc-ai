@@ -32,6 +32,7 @@ import {
   DocsPage,
   FileUsePage,
   HostsPage,
+  PeoplePage,
   MyAgentsWorkspacePage,
   NotificationPage,
   ProjectPage,
@@ -41,6 +42,8 @@ import {
   SshPage,
 } from "./route-components";
 import { markStartupPhaseOnce } from "./startup-phase";
+import { usesWorkspaceShell } from "./workspace-shell";
+import { lite } from "@cocalc/frontend/lite";
 
 const CONNECTIVITY_DOCS_SLUG = "troubleshooting/connectivity";
 
@@ -117,7 +120,12 @@ function RouteChunk({
   );
 }
 
-export const ActiveContent: React.FC = React.memo(() => {
+interface Props {
+  // Top navigation shown inside the workspace shell's content pane.
+  navigation?: React.ReactNode;
+}
+
+export const ActiveContent: React.FC<Props> = React.memo(({ navigation }) => {
   const page_actions = useActions("page");
 
   const active_top_tab = useTypedRedux("page", "active_top_tab");
@@ -145,6 +153,14 @@ export const ActiveContent: React.FC = React.memo(() => {
   const [notSignedIn, setNotSignedIn] = React.useState<boolean>(false);
   const is_logged_in = useTypedRedux("account", "is_logged_in");
   const accountId = useTypedRedux("account", "account_id");
+  const examMode = useTypedRedux("customize", "exam_mode") === true;
+  const workspaceShell = usesWorkspaceShell({
+    lite,
+    signedIn: !!is_logged_in,
+    examMode,
+    fullscreen,
+    activeTab: active_top_tab,
+  });
   const managed_egress_blocked_error = useTypedRedux(
     "account",
     "managed_egress_blocked_error",
@@ -214,6 +230,10 @@ export const ActiveContent: React.FC = React.memo(() => {
   // every project page into the signed-in startup dependency path.
   const mountedProjectIds = React.useRef(new Set<string>());
   const agentsMounted = React.useRef(false);
+  // In the workspace shell, keep the Projects list mounted once visited so
+  // its filters and scroll position survive visits to agents.
+  const projectsMounted = React.useRef(false);
+  if (active_top_tab === "projects") projectsMounted.current = true;
   if (aiDisabled) {
     agentsMounted.current = false;
   } else if (active_top_tab === "agents") {
@@ -226,8 +246,9 @@ export const ActiveContent: React.FC = React.memo(() => {
   );
 
   const project_layers: React.JSX.Element[] = [];
-  open_projects?.forEach((project_id: string) => {
-    if (!mountedProjectIds.current.has(project_id)) return;
+  // Mount order, not project tab order: moving a retained project page in the
+  // DOM resets the scroll positions of everything inside it.
+  mountedProjectIds.current.forEach((project_id: string) => {
     const is_active = project_id === active_top_tab;
     const x = (
       <RouteChunk route="project">
@@ -289,7 +310,7 @@ export const ActiveContent: React.FC = React.memo(() => {
     active_top_tab === "agents" &&
     managedEgressBlocked == null &&
     fullscreen !== "kiosk";
-  if (agentsMounted.current) {
+  if (agentsMounted.current && !workspaceShell) {
     layers.push(
       renderLayer(
         "agents",
@@ -343,6 +364,9 @@ export const ActiveContent: React.FC = React.memo(() => {
       case "hosts":
         overlay = renderSurfaceLayer("hosts", <HostsPage />);
         break;
+      case "people":
+        overlay = renderSurfaceLayer("people", <PeoplePage />);
+        break;
       case "share":
         overlay = renderSurfaceLayer(
           "share",
@@ -385,13 +409,59 @@ export const ActiveContent: React.FC = React.memo(() => {
     overlay = renderLayer("project-loading", true, renderProjectLoading());
   }
 
+  if (
+    workspaceShell &&
+    projectsMounted.current &&
+    active_top_tab !== "projects"
+  ) {
+    layers.push(
+      renderLayer(
+        "projects",
+        false,
+        <RouteChunk route="projects">
+          <ProjectsPage />
+        </RouteChunk>,
+      ),
+    );
+  }
   if (overlay != null) {
     layers.push(overlay);
   }
 
-  return (
+  const content = (
     <div className="smc-vfill" style={STACK_CONTAINER_STYLE}>
       {layers}
     </div>
   );
+  if (workspaceShell) {
+    // The agent workspace is the persistent shell; project and account pages
+    // render in its content pane beside the agent sidebar.
+    return (
+      <RouteChunk route="workspace">
+        {agentsActive && <SurfaceReady segment="agents" />}
+        <MyAgentsWorkspacePage
+          key={accountId ?? "signed-out"}
+          active={managedEgressBlocked == null}
+          contentLabel={
+            managedEgressBlocked != null
+              ? "Account unavailable"
+              : active_top_tab === "agents"
+                ? undefined
+                : active_top_tab === "projects"
+                  ? "Projects"
+                  : active_top_tab === "people"
+                    ? "People"
+                    : "Project and account pages"
+          }
+          contentNavigation={
+            // People draws its own header, like the Library.
+            active_top_tab === "people" ? null : navigation
+          }
+        >
+          {content}
+        </MyAgentsWorkspacePage>
+      </RouteChunk>
+    );
+  }
+  return content;
 });

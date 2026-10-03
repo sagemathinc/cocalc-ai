@@ -625,6 +625,7 @@ function adapter(
   cleanupFails = false,
   validateAuthority,
   subscription = false,
+  connector,
 ) {
   let launches = 0;
   let stops = 0;
@@ -684,6 +685,12 @@ function adapter(
         setAsyncQuestionHandler: (handler) => {
           askAsync = handler;
         },
+        ...(connector
+          ? {
+              beginConnectorTurn: connector.begin,
+              endConnectorTurn: connector.end,
+            }
+          : {}),
       };
     },
     attention,
@@ -2835,4 +2842,103 @@ test("canceling while a permission event is pending never grants permission", as
   release();
   await turn;
   assert.match(events.at(-1).text, /cancelled/);
+});
+
+test("each Claude Code turn holds the CoCalc connector credential only while it runs", async (t) => {
+  const calls = [];
+  const connector = {
+    begin: async (chat) => calls.push(["begin", chat.thread_id]),
+    end: async () => calls.push(["end"]),
+  };
+  const { agent, request, events } = adapter(
+    t,
+    ["--claude-adapter", "--delayed-status"],
+    undefined,
+    false,
+    undefined,
+    true,
+    connector,
+  );
+  await agent.evaluate(request);
+  assert.deepEqual(calls, [["begin", "conversation-a"], ["end"]]);
+  assert.equal(events.at(-1).type, "summary");
+  await agent.evaluate({ ...request, session_id: "fixture-session" });
+  assert.deepEqual(calls.slice(2), [["begin", "conversation-a"], ["end"]]);
+});
+
+test("a Claude connector credential that cannot be issued fails the turn and is still revoked", async (t) => {
+  let ended = 0;
+  const connector = {
+    begin: async () => {
+      throw Error("connector unavailable");
+    },
+    end: async () => {
+      ended++;
+    },
+  };
+  const { agent, request } = adapter(
+    t,
+    ["--claude-adapter"],
+    undefined,
+    false,
+    undefined,
+    true,
+    connector,
+  );
+  await assert.rejects(() => agent.evaluate(request), /connector unavailable/);
+  assert.equal(ended, 1);
+});
+
+test("an arbitrary ACP harness never begins a CoCalc connector turn", async (t) => {
+  const calls = [];
+  const connector = {
+    begin: async () => calls.push("begin"),
+    end: async () => calls.push("end"),
+  };
+  const { agent, request } = adapter(
+    t,
+    [],
+    undefined,
+    false,
+    undefined,
+    false,
+    connector,
+  );
+  await agent.evaluate(request);
+  assert.deepEqual(calls, []);
+});
+
+test("a token-authenticated controller is admitted without a reported plan", async (t) => {
+  const client = await start(
+    t,
+    ["--claude-adapter", "--none-status"],
+    undefined,
+    [],
+    undefined,
+    undefined,
+    { subscriptionAuth: "oauth-token" },
+    "claude-subscription-controller",
+  );
+  await client.open();
+  const events = [];
+  await client.prompt("hello", async (event) => events.push(event));
+  assert.ok(events.some((event) => event.type === "message"));
+});
+
+test("a token-authenticated controller still refuses API-key billing", async (t) => {
+  const client = await start(
+    t,
+    ["--claude-adapter", "--api-key-status"],
+    undefined,
+    [],
+    undefined,
+    undefined,
+    { subscriptionAuth: "oauth-token" },
+    "claude-subscription-controller",
+  );
+  await client.open();
+  await assert.rejects(
+    client.prompt("hello", async () => {}),
+    /different billing method/,
+  );
 });

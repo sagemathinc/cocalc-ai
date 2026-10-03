@@ -60,7 +60,9 @@ import type { Kernels, Kernel } from "@cocalc/jupyter/util/misc";
 import { get_kernels_by_name_or_language } from "@cocalc/jupyter/util/misc";
 import { show_kernel_selector_reasons } from "@cocalc/jupyter/redux/store";
 import exportToHTML from "./nbviewer/export";
+import { waitForPrintImages } from "./print-images";
 import { initializeExport } from "./export-startup";
+import { downloadHTML } from "./download-html";
 import { JUPYTER_MIMETYPES } from "@cocalc/jupyter/util/misc";
 import { parse } from "path";
 import { syncdbPath } from "@cocalc/util/jupyter/names";
@@ -2209,7 +2211,7 @@ export class JupyterActions extends JupyterActions0 {
     }
 
     if (args[1] == "cocalc-html" || args[1] == "cocalc-pdf") {
-      this.nbconvertToHtml();
+      this.nbconvertToHtml(args[1]);
       return;
     }
 
@@ -2967,26 +2969,81 @@ export class JupyterActions extends JupyterActions0 {
     return exportToHTML({ cocalcJupyter, title });
   };
 
-  nbconvertToHtml = async () => {
+  nbconvertToHtml = async (
+    format: "cocalc-html" | "cocalc-pdf" = "cocalc-pdf",
+  ) => {
+    if (this.isClosed()) return;
+    const result = { args: ["--to", format], time: Date.now() };
+    let printWindow: Window | null = null;
     try {
-      this.setState({ nbconvert: { state: "run", error: "" } });
-      const html = await this.toHTML();
-      const printWindow = window.open("", "_blank");
-      if (printWindow == null) {
-        throw Error("failed to open popup window");
+      this.setState({ nbconvert: { ...result, state: "run", error: "" } });
+      // Reserve the popup while the export click still has user activation.
+      if (format === "cocalc-pdf") {
+        printWindow = window.open("", "_blank");
+        if (printWindow == null) throw Error("failed to open popup window");
       }
-      printWindow.document.open();
-      printWindow.document.write(html);
-      printWindow.document.close();
-      printWindow.onload = function () {
-        printWindow.print();
-        printWindow.onafterprint = function () {
-          printWindow.close();
-        };
+      const html = await this.toHTML();
+      if (this.isClosed()) {
+        printWindow?.close();
+        return;
+      }
+      if (format === "cocalc-html") {
+        downloadHTML(html, `${parse(this.path).name}.html`);
+        this.setState({ nbconvert: { ...result, state: "done", error: "" } });
+        return;
+      }
+      const popup = printWindow!;
+      if (popup.closed) throw Error("Print window was closed. Please retry.");
+      popup.document.open();
+      popup.document.write(html);
+      let printing: Promise<void> | undefined;
+      const print = () => {
+        return (printing ??= (async () => {
+          try {
+            if (this.isClosed()) {
+              popup.onload = null;
+              popup.close();
+              return;
+            }
+            await waitForPrintImages(popup.document);
+            if (this.isClosed()) {
+              popup.onload = null;
+              popup.close();
+              return;
+            }
+            if (popup.closed)
+              throw Error("Print window was closed. Please retry.");
+            popup.onafterprint = () => {
+              popup.onload = null;
+              popup.onafterprint = null;
+              popup.close();
+            };
+            popup.print();
+            if (this.isClosed()) return;
+            this.setState({
+              nbconvert: { ...result, state: "done", error: "" },
+            });
+          } catch (err) {
+            popup.onload = null;
+            popup.onafterprint = null;
+            popup.close();
+            if (this.isClosed()) return;
+            this.setState({
+              nbconvert: { ...result, state: "done", error: `${err}` },
+            });
+          }
+        })());
       };
-      this.setState({ nbconvert: { state: "done", error: "" } });
+      popup.onload = print;
+      popup.document.close();
+      // A fully local document can already be loaded before the handler runs.
+      if (popup.document.readyState === "complete") await print();
     } catch (err) {
-      this.setState({ nbconvert: { state: "done", error: `${err}` } });
+      printWindow?.close();
+      if (this.isClosed()) return;
+      this.setState({
+        nbconvert: { ...result, state: "done", error: `${err}` },
+      });
     }
     return;
   };
@@ -4430,6 +4487,9 @@ export class JupyterActions extends JupyterActions0 {
     }
     const result = await this.syncdb.fs.jupyterSaveIpynb!(this.path, ipynb);
     if (this.isClosed()) return;
+    // Recorded even if the notebook changed meanwhile: the file is then older
+    // than the live notebook, which must never import it.
+    this.recordIpynbSave(result);
     const versionAfterSave = this.getRtcVersion();
     if (versionAfterSave !== snapshotVersion) {
       // The file now contains an older snapshot. Keep the notebook dirty and
@@ -4479,6 +4539,42 @@ export class JupyterActions extends JupyterActions0 {
     await this.setToIpynb(imported.ipynb);
   };
 
+  // A file on disk that a client of this notebook saved is never imported:
+  // its mtime can be newer than the last live change although its content is
+  // older (a save that finished writing after a newer edit arrived), and
+  // importing it would erase that edit. The live notebook is saved instead.
+  // Only external edits of the file are imported.
+  private diskIsIpynbSave = async (
+    read: DiskIpynbRead,
+    patchSeq?: number,
+  ): Promise<boolean> => {
+    if (read.bytes == 0 || this.syncdb.get_one?.({ type: "cell" }) == null) {
+      // Nothing live to lose.
+      return false;
+    }
+    const mtimeMs = await this.getDiskMtimeMs();
+    if (!(await this.isIpynbSave({ text: read.text, mtimeMs }))) {
+      this.runDebug("watch.load.not_own_save", () => {
+        const saves = this.getIpynbSaves();
+        return {
+          patchSeq,
+          mtimeMs,
+          saves: saves.length,
+          newestSaveMtimeMs: saves[0]?.mtimeMs,
+          newestSavedAt: saves[0]?.savedAt,
+        };
+      });
+      return false;
+    }
+    this.runDebug("watch.load.skipped.own_save", { patchSeq, mtimeMs });
+    if (this.saveIpynbInFlight == null) {
+      void this.saveIpynb().catch((err) => {
+        this.runDebug("ipynb.save.failed", { err: `${err}` });
+      });
+    }
+    return true;
+  };
+
   private isIpynbDeleted = false;
   private watchLoadFromDisk = async ({
     patch,
@@ -4526,13 +4622,16 @@ export class JupyterActions extends JupyterActions0 {
           this.runDebug("watch.load.skipped.matches_rtc", { patchSeq });
           return;
         }
+        if (await this.diskIsIpynbSave(read, patchSeq)) return;
         await this.loadFromDisk({
           diskRead: read,
           expectedRtcVersion,
         });
       } else {
         // Initial source selection has already compared disk and RTC mtimes.
-        await this.loadFromDisk({ diskRead });
+        const read = diskRead ?? (await this.readIpynbFromDisk());
+        if (await this.diskIsIpynbSave(read, patchSeq)) return;
+        await this.loadFromDisk({ diskRead: read });
       }
       // Disk notebooks contain native attachment bytes, whereas the live
       // syncdoc contains global blob URLs. Authoritative reload must therefore

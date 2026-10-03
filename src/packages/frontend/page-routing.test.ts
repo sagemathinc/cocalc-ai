@@ -4,7 +4,12 @@ import {
   getPageTopTab,
   getPageUrlPath,
   parsePageTarget,
+  personalProjectPath,
 } from "./page-routing";
+import {
+  setMyProjectAliases,
+  setPersonalUrlIdentity,
+} from "./app/personal-url-identity";
 
 describe("page-routing", () => {
   it("maps settings routes to the account top tab", () => {
@@ -55,7 +60,7 @@ describe("page-routing", () => {
     expect(parsePageTarget("ssh")).toEqual({ page: "ssh" });
   });
 
-  it.each(["library", "library/nb1", "library/project-123/entry-456"])(
+  it.each(["artifacts", "artifacts/nb1", "artifacts/project-123/entry-456"])(
     "roundtrips %s through the agents top tab",
     (target) => {
       const parsed = parsePageTarget(target);
@@ -73,23 +78,23 @@ describe("page-routing", () => {
   );
 
   it("normalizes the Library root trailing slash without selecting an agent", () => {
-    expect(parsePageTarget("library/")).toEqual(parsePageTarget("library"));
+    expect(parsePageTarget("artifacts/")).toEqual(parsePageTarget("artifacts"));
     expect(
       getPageUrlPath({ page: "agents", library: true, agent_id: "prior" }),
-    ).toBe("/library");
+    ).toBe("/artifacts");
   });
 
   it.each([
-    "library//entry",
-    "library/project/",
-    "library/project/entry/extra",
-    "library/project/entry/",
-    "library///",
+    "artifacts//entry",
+    "artifacts/project/",
+    "artifacts/project/entry/extra",
+    "artifacts/project/entry/",
+    "artifacts///",
   ])("retains malformed suffixes for not-found handling: %s", (target) => {
     const parsed = parsePageTarget(target);
     expect(parsed.page).toBe("agents");
     expect(getPageTargetPath(parsed)).toBe(target);
-    expect(parsed).not.toEqual(parsePageTarget("library/project/entry"));
+    expect(parsed).not.toEqual(parsePageTarget("artifacts/project/entry"));
   });
 
   it("parses site-license claim routes explicitly", () => {
@@ -201,4 +206,128 @@ describe("page-routing", () => {
       "/projects/abc/files",
     );
   });
+
+  it("round-trips People routes", () => {
+    expect(parsePageTarget("people")).toEqual({ page: "people" });
+    const route = "conversations/p1/c1";
+    expect(parsePageTarget(`people/${route}`)).toEqual({
+      page: "people",
+      route,
+    });
+    expect(getPageUrlPath({ page: "people", route })).toBe(`/people/${route}`);
+    expect(getPageUrlPath({ page: "people" })).toBe("/people");
+  });
+});
+
+test("personal URLs round-trip and show People while resolving", () => {
+  const parsed = parsePageTarget("u/alice/chats/weekly");
+  expect(parsed).toEqual({ page: "u", path: "u/alice/chats/weekly" });
+  expect(getPageUrlPath(parsed)).toBe("/u/alice/chats/weekly");
+  expect(getPageTopTab(parsed)).toBe("people");
+});
+
+test("the Agents page has its own address and keeps the agents tab", () => {
+  const parsed = parsePageTarget("all-agents");
+  expect(parsed).toEqual({ page: "agents", overview: true });
+  expect(getPageUrlPath(parsed)).toBe("/all-agents");
+  expect(getPageTopTab(parsed)).toBe("agents");
+});
+
+test("my named agents and artifacts have personal addresses; others' are resolved", () => {
+  setPersonalUrlIdentity({ account_id: "acct-1", username: "wstein" });
+  try {
+    expect(getPageUrlPath({ page: "agents", agent_id: "agent-1" })).toBe(
+      "/u/wstein/agents/agent-1",
+    );
+    expect(
+      getPageUrlPath({
+        page: "agents",
+        library: true,
+        artifact_project_id: "plan",
+      }),
+    ).toBe("/u/wstein/artifacts/plan");
+    // Ids and new agents keep their own paths.
+    expect(getPageUrlPath({ page: "agents", agent_id: "new" })).toBe(
+      "/agents/new",
+    );
+    const id = "11111111-1111-4111-8111-111111111111";
+    expect(getPageUrlPath({ page: "agents", agent_id: id })).toBe(
+      `/agents/${id}`,
+    );
+    // Mine (by username or account id, any case) open directly.
+    expect(parsePageTarget("u/wstein/agents/agent-1")).toEqual({
+      page: "agents",
+      agent_id: "agent-1",
+    });
+    expect(parsePageTarget("u/ACCT-1/artifacts/plan")).toEqual({
+      page: "agents",
+      library: true,
+      artifact_project_id: "plan",
+    });
+    // Someone else's goes to the resolver.
+    expect(parsePageTarget("u/alice/agents/helper")).toEqual({
+      page: "u",
+      path: "u/alice/agents/helper",
+    });
+  } finally {
+    setPersonalUrlIdentity({});
+  }
+  // Without an identity the plain paths remain.
+  expect(getPageUrlPath({ page: "agents", agent_id: "agent-1" })).toBe(
+    "/agents/agent-1",
+  );
+});
+
+test("projects I gave an alias have /u/<me>/projects/<alias> addresses", () => {
+  const id = "22222222-2222-4222-8222-222222222222";
+  setPersonalUrlIdentity({ account_id: "acct-1", username: "wstein" });
+  setMyProjectAliases([{ project_id: id, alias: "research" }]);
+  try {
+    expect(
+      getPageUrlPath({ page: "project", target: `${id}/files/a/paper.tex` }),
+    ).toBe("/u/wstein/projects/research/files/a/paper.tex");
+    expect(personalProjectPath(`/projects/${id}/files/notes/`)).toBe(
+      "/u/wstein/projects/research/files/notes/",
+    );
+    // Mine open directly, keeping a folder's trailing slash.
+    expect(parsePageTarget("u/wstein/projects/Research/files/notes/")).toEqual({
+      page: "project",
+      target: `${id}/files/notes/`,
+    });
+    expect(parsePageTarget("u/wstein/projects/research")).toEqual({
+      page: "project",
+      target: id,
+    });
+    // Other projects and other people's aliases are unchanged / resolved.
+    const other = "33333333-3333-4333-8333-333333333333";
+    expect(getPageUrlPath({ page: "project", target: `${other}/files/` })).toBe(
+      `/projects/${other}/files/`,
+    );
+    expect(parsePageTarget("u/alice/projects/research/files/x/")).toEqual({
+      page: "u",
+      path: "u/alice/projects/research/files/x/",
+    });
+  } finally {
+    setMyProjectAliases([]);
+    setPersonalUrlIdentity({});
+  }
+});
+
+test("search results have their own address, over the page of their kind", () => {
+  const parsed = parsePageTarget("search/projects/plot%20a%2Fb");
+  expect(parsed).toEqual({
+    page: "search",
+    scope: "projects",
+    query: "plot a/b",
+  });
+  expect(getPageUrlPath(parsed)).toBe("/search/projects/plot%20a%2Fb");
+  expect(getPageTopTab(parsed)).toBe("projects");
+  // Back/Forward hands over decoded paths: slashes in the query survive.
+  expect(parsePageTarget("search/people/a/b")).toEqual({
+    page: "search",
+    scope: "people",
+    query: "a/b",
+  });
+  expect(getPageTopTab(parsePageTarget("search/artifacts/x"))).toBe("agents");
+  expect(parsePageTarget("search/bogus/x")).toMatchObject({ scope: "agents" });
 });

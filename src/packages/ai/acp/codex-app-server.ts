@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { artifactPublicationGuidance } from "./publication-guidance";
+import { cocalcAccessGuidance } from "./cocalc-access-guidance";
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { createInterface } from "node:readline";
+import { createJsonLineReader } from "@cocalc/util/json-lines";
 import { DatabaseSync } from "node:sqlite";
 import { CodexGoalSync } from "./codex-goal";
 import { assertSameTurnPrincipal } from "./turn-principal";
@@ -358,14 +360,14 @@ function getCoCalcProjectRuntimeGuidance(cliCommand: string): string[] {
     "- COCALC_PROJECT_ID",
     "- COCALC_API_URL",
     "- COCALC_BEARER_TOKEN",
-    `When CoCalc access is enabled for this turn, use ordinary \`${cliCommand}\` commands. The CLI keeps the own-project credential for this project and automatically selects the temporary scoped credential for permitted account or other-project operations. Inspect \`${cliCommand} project list --help\` or the relevant command's help when needed. Do not read, print, or copy the connector credential file, and do not fall back to a broader login if a grant is absent.`,
+    cocalcAccessGuidance(cliCommand),
     "Project secret changes apply immediately to running projects; do not restart a project merely to apply a secret update. Programs that cache credentials may need their own reload.",
     "Use Codex's synchronous or asynchronous question tools when human input is required. Use asynchronous questions only when useful authorized work can continue while waiting.",
     "Do not use question tools for permission or authentication escalation. Use typed first-party CoCalc actions for supported fresh-auth, login, and approval flows.",
     "Never ask the user to paste a password, access token, one-time code, cookie, or other secret into a question response.",
     "Prefer high-signal commands over raw browser scripts when available.",
-    `If COCALC_AGENT_IDENTITY_FILE is present, use \`${cliCommand} project chat agent whoami\` to inspect your registered identity. Its protocol_version describes identity authentication, not which messaging links exist. Older tools may not support discovery; never substitute account credentials if identity messaging fails.`,
-    `For agent messaging, inspect \`${cliCommand} project chat agent destinations --json\`. Every result is a peer in at least one explicit two-way Agent Network. Use \`${cliCommand} project chat send --to NAME --stdin --json\`. Named sends automatically use an active shared network, preferring live delivery when available; never fall back to legacy grants. COCALC_AGENT_MENTION_REFERENCES_FILE contains only this turn's selected references and confers no authority.`,
+    `If COCALC_AGENT_IDENTITY_FILE is present, use \`${cliCommand} agent whoami\` to inspect your registered identity. Its protocol_version describes identity authentication, not which messaging links exist. Older tools may not support discovery; never substitute account credentials if identity messaging fails.`,
+    `For agent messaging, inspect \`${cliCommand} agent destinations --json\`. Every result is a peer in at least one explicit two-way Agent Network. Use \`${cliCommand} agent send NAME --stdin --json\` (attach files with --attach PATH; \`${cliCommand} agent --help\` has the rest; older CLIs: \`${cliCommand} project chat send --to NAME --stdin --json\`). Named sends automatically use an active shared network, preferring live delivery when available; never fall back to legacy grants. COCALC_AGENT_MENTION_REFERENCES_FILE contains only this turn's selected references and confers no authority.`,
     `Humans create and manage complete-graph Agent Networks in the Agents page. Agents may propose coordination there, but cannot create authority themselves. If no network includes the intended peer, report that clearly; do not request a directional connection or substitute account credentials.`,
     "Codex-native subagents remain internal to this named agent. They do not become discoverable network members or independent CoCalc principals; any network message they initiate is attributed to the parent named agent.",
     `For an approved registered destination, the lower-level form is \`${cliCommand} project chat send --rpc --to-agent ID --agent-network "NETWORK TITLE" --stdin --json\`. External network members use their enrolled profile and authenticated inbox.`,
@@ -719,10 +721,8 @@ export class AppServerClient {
     private readonly requestHandler?: CodexAppServerRequestHandler,
     private readonly attentionHandler?: CodexAttentionHandler,
   ) {
-    const rl = createInterface({
-      input: proc.stdout as Readable,
-      crlfDelay: Infinity,
-    });
+    // Not readline: it splits JSON lines on U+2028/U+2029 inside strings.
+    const rl = createJsonLineReader(proc.stdout as Readable);
     rl.on("line", (line) => {
       if (!line.trim()) return;
       try {
@@ -1742,17 +1742,18 @@ function getCoCalcCliCommand(runtimeEnv?: Record<string, string>): string {
 
 function decoratePrompt(
   prompt: string,
-  opts?: { runtimeEnv?: Record<string, string> },
+  opts?: { runtimeEnv?: Record<string, string>; memoryContext?: string },
 ): string {
   if (/^\s*\/\w+/.test(prompt)) {
     return prompt;
   }
-  return addRuntimeGuidance(prompt, opts?.runtimeEnv);
+  return addRuntimeGuidance(prompt, opts?.runtimeEnv, opts?.memoryContext);
 }
 
 function addRuntimeGuidance(
   prompt: string,
   runtimeEnv?: Record<string, string>,
+  memoryContext?: string,
 ): string {
   const hasProject = `${runtimeEnv?.COCALC_PROJECT_ID ?? ""}`.trim();
   const hasBrowser = `${runtimeEnv?.COCALC_BROWSER_ID ?? ""}`.trim();
@@ -1771,20 +1772,22 @@ function addRuntimeGuidance(
   const attribution = context.COCALC_CODEX_MESSAGE_DATE
     ? `\n\nCurrent turn publication context (use these exact values as explicit CLI arguments or command-scoped environment overrides, even if a reused shell has older values; never infer the producing message from history):\n${JSON.stringify(context)}`
     : "";
-  const workbench =
-    runtimeEnv?.COCALC_WORKBENCH === "1"
-      ? `\n\nWorkbench is enabled for this turn. Publishing durable reviewable results is part of task completion: publish requested programs/scripts and other deliverable files as file-preview cards, written plans/documents as file references, generated images as file references, completed commits and PRs as their respective cards, and support drafts requiring approval as proposed actions. If the user explicitly asks to create, make, or publish an artifact, artifact publication is required: a normal response, file creation, image generation, or file link alone does not satisfy the request. Use ${getCoCalcCliCommand(runtimeEnv)} project chat artifact publish --help. A program or script created to satisfy the user's request is a deliverable even on the first onboarding turn: publish its saved file without waiting for the user to ask for a card. Do not publish incidental implementation files, temporary files, or every file touched during a task. Keep ordinary explanations and scratch work in chat. Read and update an existing artifact when revising the same object; do not duplicate it. Respect a user's request not to publish. Verify the returned publication before claiming success. Publishing proposals does not approve or execute them. If the installed command is unavailable or publication fails, report that exact failure and provide an ordinary link as a fallback; never claim an artifact was created and never write .chat files directly.`
-      : `\n\nThis turn has no workbench-enabled surface. Do not publish artifacts by default; use ordinary text and file links for ordinary requests. However, if the user explicitly asks to create, make, or publish an artifact, artifact publication is required. Use ${getCoCalcCliCommand(runtimeEnv)} project chat artifact publish --help and publish with its explicit outside-workbench opt-in (currently --experimental). A normal response, file creation, image generation, or file link alone does not satisfy an explicit artifact request. Verify the returned publication before claiming success. If the installed command is unavailable or publication fails, report that exact failure and provide an ordinary link as a fallback; never claim an artifact was created and never write .chat files directly.`;
+  const workbench = `\n\n${artifactPublicationGuidance(
+    getCoCalcCliCommand(runtimeEnv),
+    runtimeEnv?.COCALC_WORKBENCH === "1",
+  )}`;
   return `${getCoCalcRuntimeGuidanceHeader(getCoCalcCliCommand(runtimeEnv), {
     hasBrowser: !!hasBrowser,
-  })}${attribution}${workbench}\n\n${prompt}`;
+  })}${attribution}${workbench}${memoryContext ? `\n\n${memoryContext}` : ""}\n\n${prompt}`;
 }
 
 function buildTurnInput({
   local_images,
   prompt,
   runtimeEnv,
+  memoryContext,
 }: {
+  memoryContext?: string;
   local_images?: string[];
   prompt: string;
   runtimeEnv?: Record<string, string>;
@@ -1803,7 +1806,7 @@ function buildTurnInput({
   }
   input.push({
     type: "text",
-    text: decoratePrompt(prompt, { runtimeEnv }),
+    text: decoratePrompt(prompt, { runtimeEnv, memoryContext }),
     textElements: [],
   });
   return input;
@@ -3201,6 +3204,7 @@ export class CodexAppServerAgent implements AcpAgent {
           local_images: request.local_images,
           prompt,
           runtimeEnv: turnEnv,
+          memoryContext: request.agent_memory_context,
         }),
       });
 

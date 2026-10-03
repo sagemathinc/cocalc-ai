@@ -1,28 +1,47 @@
-// Fake Claude CLI for first-party login lifecycle tests. No network or credentials.
+// Fake Claude CLI `setup-token` for sign-in lifecycle tests, run in a
+// pseudo-terminal like the real terminal UI. No network or credentials.
 const args = process.argv.slice(2);
 if (process.env.ANTHROPIC_API_KEY || process.env.COCALC_BEARER_TOKEN)
   process.exit(3);
+if (args.join(" ") !== "setup-token") process.exit(2);
 
-if (args.join(" ") === "auth login --claudeai") {
+const ESC = String.fromCharCode(27);
+// The real UI colors text and draws some spaces as cursor moves.
+const say = (text) =>
   process.stdout.write(
-    "If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?state=fixture\nPaste code here if prompted > ",
+    `${ESC}[2m${text.split(" ").join(`${ESC}[1C`)}${ESC}[22m\r\n`,
   );
-  process.stdin.setEncoding("utf8");
-  let input = "";
-  process.stdin.on("data", (chunk) => {
-    input += chunk;
-    if (input.includes("\n"))
-      process.exit(input.trim() === "fixture-code" ? 0 : 1);
-  });
-} else if (args.join(" ") === "auth status --json") {
-  process.stdout.write(
-    JSON.stringify({
-      loggedIn: true,
-      apiProvider: "firstParty",
-      subscriptionType: "max",
-      email: "subscriber@example.com",
-    }),
-  );
-} else {
-  process.exit(2);
-}
+say("Welcome to Claude Code");
+say("Browser didn't open? Use the url below to sign in");
+process.stdout.write(
+  "https://claude.com/cai/oauth/authorize?code=true&scope=user%3Ainference&state=fixture\r\n",
+);
+process.stdout.write("Paste code here if prompted > ");
+// Raw input like the real terminal UI, which reads keys, not lines.
+if (process.stdin.isTTY) process.stdin.setRawMode(true);
+process.stdin.setEncoding("utf8");
+let input = "";
+process.stdin.on("data", (chunk) => {
+  // Like Claude Code: a long burst is a paste, and Enter inside it is text.
+  if (chunk.length > 32) {
+    input += chunk.replace(/[\r\n]/g, "");
+    return;
+  }
+  input += chunk;
+  if (!/[\r\n]/.test(input)) return;
+  const code = input.trim();
+  input = "";
+  if (code.startsWith("fixture-hang")) return;
+  if (code.startsWith("fixture-code")) {
+    say("Long-lived authentication token created successfully!");
+    say("Your OAuth token (valid for 365 days):");
+    process.stdout.write(
+      `${ESC}[33msk-ant-oat01-${"Fixture_token-0123456789".repeat(3)}${ESC}[39m\r\n`,
+    );
+    setTimeout(() => process.exit(0), 50);
+  } else {
+    // The real UI waits for Enter to retry rather than exiting.
+    say("OAuth error: Request failed with status code 400");
+    say("Press Enter to retry.");
+  }
+});

@@ -47,6 +47,9 @@ export type AcpStreamHandler = (
 
 export interface AcpEvaluateRequest {
   runtime?: AcpHarnessRuntime;
+  // Internal: rendered saved-note index for this turn's account when it has
+  // enabled agent memory. Supplied by the host, never by the wire.
+  agent_memory_context?: string;
   harness_credential?: AcpHarnessCredential;
   // Internal, validated by the execution service for this human's current input.
   mentionReferences?: AgentMentionReference[];

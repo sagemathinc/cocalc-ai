@@ -14,6 +14,15 @@ import {
 
 import { setStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import * as authApi from "@cocalc/frontend/auth/api";
+import {
+  membershipPriceDisplay,
+  PUBLIC_PRICING_CUSTOMER_OPERATED,
+  PUBLIC_PRICING_INCLUDED_AI_ALERT,
+  PUBLIC_PRICING_ORGANIZATION_LICENSING,
+  PUBLIC_PRICING_PROJECT_HOSTS,
+  PUBLIC_PRICING_TEAM_SEATS,
+  PUBLIC_PRICING_TEAMS_TITLE,
+} from "@cocalc/util/public-pricing";
 import type { NewsItem } from "@cocalc/util/types/news";
 import PublicApp from "../app";
 import type { PublicAboutRoute } from "../about/routes";
@@ -335,8 +344,9 @@ describe("PublicApp", () => {
       />,
     );
 
-    expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
-    expect(screen.getByRole("link", { name: "Agents" })).not.toBeNull();
+    expect(
+      screen.getAllByRole("link", { name: /^Open / }).length,
+    ).toBeGreaterThan(0);
   });
 
   it("hides Agents on the landing page after loading the signed-in AI preference", async () => {
@@ -354,7 +364,9 @@ describe("PublicApp", () => {
         expect(bootstrap).toHaveBeenCalled();
         expect(screen.queryByRole("link", { name: "Agents" })).toBeNull();
       });
-      expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
+      expect(
+        screen.getAllByRole("link", { name: /^Open / }).length,
+      ).toBeGreaterThan(0);
     } finally {
       bootstrap.mockRestore();
     }
@@ -739,6 +751,68 @@ describe("PublicApp", () => {
     ).toHaveAttribute("href", "/products");
     expect(screen.getByText(/purchaser must sign in/i)).not.toBeNull();
     expect(screen.queryByText(/purchases above \$100/i)).toBeNull();
+  });
+
+  it("renders the shared pricing text and store tiers, like the crawler fallback", async () => {
+    const basic = {
+      id: "basic",
+      label: "Basic",
+      price_monthly: "8.0000000000",
+      price_yearly: "72.0000000000",
+      priority: 10,
+      store_description: "For regular work.",
+      store_visible: true,
+    };
+    global.fetch = jest.fn().mockResolvedValue({
+      json: async () => ({
+        tiers: [
+          basic,
+          {
+            ai_limits: { units_5h: 100, units_7d: 150 },
+            id: "course-term",
+            label: "Course Term",
+            price_monthly: "9.0000000000",
+            price_yearly: "90.0000000000",
+            priority: 5,
+            store_visible: false,
+          },
+        ],
+      }),
+    }) as typeof fetch;
+
+    await renderPublicApp(
+      <PublicApp
+        config={{
+          cocalc_product: "launchpad",
+          is_authenticated: false,
+          site_name: "Launchpad",
+        }}
+        initialRoute={pricingRoute}
+      />,
+    );
+
+    expect(screen.getByText("For regular work.")).not.toBeNull();
+    const annual = membershipPriceDisplay(basic, "year")!;
+    expect(screen.getByText(annual.amount)).not.toBeNull();
+    expect(screen.getByText(annual.billingLine!)).not.toBeNull();
+    // The hidden course tier is not listed, and its AI allowance does not
+    // count toward the alert.
+    expect(screen.queryByText("Course Term")).toBeNull();
+    expect(screen.queryByText(PUBLIC_PRICING_INCLUDED_AI_ALERT)).toBeNull();
+    expect(
+      screen.getByRole("heading", { name: PUBLIC_PRICING_TEAMS_TITLE }),
+    ).not.toBeNull();
+    for (const option of [
+      PUBLIC_PRICING_TEAM_SEATS,
+      PUBLIC_PRICING_ORGANIZATION_LICENSING,
+      PUBLIC_PRICING_PROJECT_HOSTS,
+      PUBLIC_PRICING_CUSTOMER_OPERATED,
+    ]) {
+      expect(
+        screen.getByRole("heading", { name: option.title }),
+      ).not.toBeNull();
+      expect(screen.getByText(option.body)).not.toBeNull();
+    }
   });
 
   it("does not expose hosted research-compute evaluation on CoCalc Plus pricing", async () => {
@@ -2228,11 +2302,13 @@ describe("feature configuration loading", () => {
       });
       expect(screen.queryByRole("status")).toBeNull();
       if (signedIn) {
-        expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
+        expect(
+          screen.getAllByRole("link", { name: /^Open / }).length,
+        ).toBeGreaterThan(0);
         expect(screen.queryByRole("link", { name: "Sign in" })).toBeNull();
       } else {
         expect(screen.getByRole("link", { name: "Sign in" })).not.toBeNull();
-        expect(screen.queryByRole("link", { name: "Projects" })).toBeNull();
+        expect(screen.queryByRole("link", { name: /^Open / })).toBeNull();
       }
     },
   );

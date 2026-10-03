@@ -16,7 +16,13 @@ import {
   Tag,
   message as antdMessage,
 } from "antd";
-import { CSSProperties, ReactNode, useEffect, useLayoutEffect } from "react";
+import {
+  CSSProperties,
+  ReactNode,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+} from "react";
 import { useIntl } from "react-intl";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { showParticipantAvatar } from "./message-avatar";
@@ -124,6 +130,11 @@ import {
   codexModelRecoveryConfig,
 } from "@cocalc/util/ai/codex-model-recovery";
 import { CodexModelRecovery } from "./codex-model-recovery";
+import {
+  ClaudeSignInRecovery,
+  isClaudeSignInExpired,
+  useClaudeSubscriptionCredentialId,
+} from "./claude-sign-in-recovery";
 import { AcpPromptModal } from "./acp-prompt-modal";
 import {
   linkifyCommitHashes,
@@ -152,7 +163,9 @@ import {
 import {
   ChatReadAloudButton,
   CodexFinalResponseCopy,
+  requestChatReadAloud,
 } from "./codex-final-response-copy";
+import { SpeechPaneContext } from "./audio/speech-pane-context";
 import {
   agentMessageFence,
   stripAgentRpcPrompt,
@@ -322,6 +335,19 @@ export const MESSAGE_ACTIONS_STYLE: CSS = {
   flexWrap: "wrap",
   justifyContent: "flex-start",
   marginTop: 4,
+};
+
+// Agent reply footer: a row of always-visible icon buttons, like the
+// copy/read-aloud/more rows under replies in other chat apps.
+const CODEX_FOOTER_ACTIONS_STYLE: CSS = {
+  ...MESSAGE_ACTIONS_STYLE,
+  gap: 2,
+  marginLeft: -8,
+};
+
+const CODEX_FOOTER_BUTTON_STYLE: CSS = {
+  color: UI_COLORS.secondary,
+  fontSize: 17,
 };
 
 const VIEWER_MESSAGE_LEFT_MARGIN = "clamp(12px, 15%, 150px)";
@@ -535,6 +561,10 @@ export default function Message({
   );
   // Thread identity/model now comes from thread_config metadata.
   const isCodexThread = typeof isLLMThread === "string";
+  // A message from another agent is a prompt to this thread's agent, so it
+  // sits where prompts sit. Its "From @agent" card keeps the source visible.
+  const usePromptLayout =
+    is_viewers_message || (!!rpcAttribution && isCodexThread);
   const senderId = field<string>(message, "sender_id");
   const hasLanguageModelServiceAuthor = useMemo(() => {
     const author_id = firstHistoryEntry?.author_id;
@@ -725,6 +755,7 @@ export default function Message({
     generating: effectiveGenerating,
     isAgentMessage: isCodexAgentMessage,
   });
+  const speechPaneId = useContext(SpeechPaneContext);
 
   useEffect(() => {
     if (isEditing) return;
@@ -913,45 +944,45 @@ export default function Message({
     codexPreviewLog.loadError,
     codexPreviewLog.loadState,
   ]);
-  const codexBodyValue = useMemo(() => {
-    if (
-      !Array.isArray(codexPreviewLog.events) ||
-      codexPreviewLog.events.length === 0
-    ) {
-      return undefined;
-    }
-    if (effectiveGenerating) {
-      return getLiveResponseMarkdown(codexPreviewLog.events as any);
-    }
-    if (acpInterrupted) {
-      return getInterruptedResponseMarkdown(
-        codexPreviewLog.events as any,
-        acpInterruptedText,
-      );
-    }
-    return getBestResponseText(codexPreviewLog.events as any);
-  }, [
-    acpInterrupted,
-    acpInterruptedText,
-    codexPreviewLog.events,
-    effectiveGenerating,
-  ]);
+  const renderedMessageValue = useMemo(
+    () =>
+      resolveRenderedMessageValue({
+        rowValue: rowMessageValue,
+        logValue: () => {
+          if (
+            !Array.isArray(codexPreviewLog.events) ||
+            codexPreviewLog.events.length === 0
+          ) {
+            return undefined;
+          }
+          if (effectiveGenerating) {
+            return getLiveResponseMarkdown(codexPreviewLog.events as any);
+          }
+          if (acpInterrupted) {
+            return getInterruptedResponseMarkdown(
+              codexPreviewLog.events as any,
+              acpInterruptedText,
+            );
+          }
+          return getBestResponseText(codexPreviewLog.events as any);
+        },
+        generating: effectiveGenerating,
+        interrupted: acpInterrupted,
+      }),
+    [
+      acpInterrupted,
+      acpInterruptedText,
+      codexPreviewLog.events,
+      effectiveGenerating,
+      rowMessageValue,
+    ],
+  );
   const completedCodexActivityBlocks = turnActivity.completedBlocks;
   const timelineRows = turnActivity.rows;
   const showsActivityTimeline = timelineRows.length > 0;
   const lastCodexActivityAtMs = useMemo(
     () => getLatestCodexActivityAtMs(codexPreviewLog.events),
     [codexPreviewLog.events],
-  );
-  const renderedMessageValue = useMemo(
-    () =>
-      resolveRenderedMessageValue({
-        rowValue: rowMessageValue,
-        logValue: codexBodyValue,
-        generating: effectiveGenerating,
-        interrupted: acpInterrupted,
-      }),
-    [acpInterrupted, codexBodyValue, effectiveGenerating, rowMessageValue],
   );
   const responseParentMessageId = parentMessageId(message);
   useEffect(() => {
@@ -1082,8 +1113,10 @@ export default function Message({
     }
   }
 
-  async function handleResubmitToAgent() {
-    if (!actions || !acpResubmitParentMessage) return;
+  async function resubmitToAgent() {
+    if (!actions || !acpResubmitParentMessage) {
+      throw Error("Request is no longer retryable");
+    }
     setResubmittingAgentParentId(acpResubmitParentMessageId);
     try {
       const ok = await resendCanceledAcpTurn({
@@ -1092,10 +1125,8 @@ export default function Message({
         useCurrentPayment: true,
       });
       if (!ok) {
-        antdMessage.error("Unable to resubmit this request to Agent.");
+        throw Error("Unable to resubmit this request to Agent.");
       }
-    } catch (err) {
-      antdMessage.error(`Unable to resubmit this request to Agent: ${err}`);
     } finally {
       setResubmittingAgentParentId((current) =>
         current === acpResubmitParentMessageId ? undefined : current,
@@ -1103,8 +1134,16 @@ export default function Message({
     }
   }
 
+  async function handleResubmitToAgent() {
+    try {
+      await resubmitToAgent();
+    } catch (err) {
+      antdMessage.error(`Unable to resubmit this request to Agent: ${err}`);
+    }
+  }
+
   function renderResubmitToAgentButton() {
-    if (unavailableModel) return null;
+    if (unavailableModel || claudeSignInExpired) return null;
     if (!acpResubmitParentMessage) return null;
     return (
       <div style={{ marginTop: "8px" }}>
@@ -1145,6 +1184,18 @@ export default function Message({
     });
   }, [actions, threadLookup]);
   const threadCodexConfig = threadMetadata?.acp_config;
+  // A Claude subscription turn that failed on expired sign-in offers
+  // "Reconnect Claude" instead of the raw error.
+  const claudeSubscriptionCredentialId = useClaudeSubscriptionCredentialId(
+    threadMetadata?.agent_runtime?.profile?.id === "claude-code"
+      ? project_id
+      : undefined,
+    threadLookup.threadLookupKey,
+  );
+  const claudeSignInExpired =
+    showCodexErrorHelp &&
+    !!claudeSubscriptionCredentialId &&
+    isClaudeSignInExpired(renderedMessageValue);
   const acpDisplayName =
     threadMetadata?.agent_runtime?.profile?.id === "claude-code"
       ? "Claude Code"
@@ -1599,12 +1650,27 @@ export default function Message({
     );
   }
 
+  function canReadAloud() {
+    return (
+      msgWrittenByLLM &&
+      !effectiveGenerating &&
+      !!renderedMessageMarkdown.trim()
+    );
+  }
+
+  function readMessageAloud() {
+    requestChatReadAloud({
+      paneId: speechPaneId,
+      value: renderedMessageMarkdown,
+      projectId: project_id,
+      path,
+      threadId: messageThreadId,
+      messageId: field<string>(message, "message_id") ?? `${date}`,
+    });
+  }
+
   function renderReadAloudButton() {
-    if (
-      !msgWrittenByLLM ||
-      effectiveGenerating ||
-      !renderedMessageMarkdown.trim()
-    ) {
+    if (!canReadAloud()) {
       return null;
     }
     return (
@@ -1845,7 +1911,10 @@ export default function Message({
     };
   }
 
-  function getCodexOverflowItems(): MenuItems {
+  // Actions shown as footer icons are left out of the overflow menu.
+  function getCodexOverflowItems({
+    footer = false,
+  }: { footer?: boolean } = {}): MenuItems {
     const overflowItems: MenuItems = [
       {
         key: "info",
@@ -1888,13 +1957,17 @@ export default function Message({
           });
         },
       },
-      {
-        key: "copy-whole",
-        label: "Copy whole message",
-        onClick: () => {
-          void copyMessageMarkdown();
-        },
-      },
+      ...(footer
+        ? []
+        : [
+            {
+              key: "copy-whole",
+              label: "Copy whole message",
+              onClick: () => {
+                void copyMessageMarkdown();
+              },
+            },
+          ]),
       {
         key: "copy-link",
         label: "Link to message",
@@ -1975,33 +2048,59 @@ export default function Message({
     return overflowItems;
   }
 
-  function renderCodexOverflowMenu() {
-    const overflowItems = getCodexOverflowItems();
+  function renderCodexOverflowMenu({ footer = false } = {}) {
+    const overflowItems = getCodexOverflowItems({ footer });
     if (overflowItems.length === 0) return null;
     return (
       <DropdownMenu
         items={overflowItems}
         title={<Icon name="ellipsis-vertical" />}
-        size="small"
-        style={{ color: UI_COLORS.muted }}
+        size={footer ? undefined : "small"}
+        style={
+          footer
+            ? { ...CODEX_FOOTER_BUTTON_STYLE, width: 32, paddingInline: 0 }
+            : { color: UI_COLORS.muted }
+        }
         ariaLabel="More message actions"
       />
     );
   }
 
   function renderCodexMessageActions() {
-    const buttons: ReactNode[] = [];
-    const readAloud = renderReadAloudButton();
-    if (readAloud) buttons.push(readAloud);
-
-    if (codexOverflowMenuLocation === "footer") {
-      buttons.push(<span key="more">{renderCodexOverflowMenu()}</span>);
+    if (codexOverflowMenuLocation !== "footer") return null;
+    const buttons: ReactNode[] = [
+      <Tooltip key="copy" placement="bottom" title="Copy message">
+        <Button
+          aria-label="Copy message"
+          icon={<Icon name="copy" />}
+          onClick={() => void copyMessageMarkdown()}
+          style={CODEX_FOOTER_BUTTON_STYLE}
+          type="text"
+        />
+      </Tooltip>,
+    ];
+    if (!lite && canReadAloud()) {
+      buttons.push(
+        <Tooltip key="read-aloud" placement="bottom" title="Read aloud">
+          <Button
+            aria-label="Read aloud"
+            icon={<Icon name="sound-outlined" />}
+            onClick={readMessageAloud}
+            style={CODEX_FOOTER_BUTTON_STYLE}
+            type="text"
+          />
+        </Tooltip>,
+      );
     }
-
-    if (buttons.length === 0) return null;
+    buttons.push(
+      <span key="more">{renderCodexOverflowMenu({ footer: true })}</span>,
+    );
 
     return (
-      <div data-testid="chat-message-actions" style={MESSAGE_ACTIONS_STYLE}>
+      <div
+        data-testid="chat-message-actions"
+        style={CODEX_FOOTER_ACTIONS_STYLE}
+      >
         {buttons}
       </div>
     );
@@ -2138,6 +2237,26 @@ export default function Message({
   }
 
   function renderMessageBody({ message_class }) {
+    if (
+      claudeSignInExpired &&
+      project_id &&
+      threadLookup.threadLookupKey &&
+      claudeSubscriptionCredentialId
+    ) {
+      const canRetry =
+        !!acpResubmitParentMessage &&
+        sender_is_viewer(account_id, acpResubmitParentMessage);
+      return (
+        <ClaudeSignInRecovery
+          key={`${account_id}:${project_id}:${acpResubmitParentMessageId}`}
+          projectId={project_id}
+          threadKey={threadLookup.threadLookupKey}
+          credentialId={claudeSubscriptionCredentialId}
+          details={renderedMessageValue}
+          onRetry={canRetry ? resubmitToAgent : undefined}
+        />
+      );
+    }
     if (
       unavailableModel &&
       project_id &&
@@ -2557,13 +2676,12 @@ export default function Message({
           ? undefined
           : 22;
 
-    const { background, color, lighten, message_class } = message_colors(
-      rpcAttribution ? "" : account_id,
-      message,
-    );
+    const colors = message_colors(rpcAttribution ? "" : account_id, message);
+    const { color, lighten, message_class } = colors;
+    const background = usePromptLayout ? UI_COLORS.inset : colors.background;
 
     const marginTop =
-      !is_prev_sender && is_viewers_message ? MARGIN_TOP_VIEWER : "5px";
+      !is_prev_sender && usePromptLayout ? MARGIN_TOP_VIEWER : "5px";
 
     const padding = { paddingTop: 9, paddingLeft: 9, paddingRight: 9 };
     const messageStyle: CSSProperties = {
@@ -2575,7 +2693,7 @@ export default function Message({
       fontSize: `${font_size}px`,
       paddingBottom: 9,
       ...padding,
-      ...(is_viewers_message && mode === "standalone" && !narrow
+      ...(usePromptLayout && mode === "standalone" && !narrow
         ? { marginLeft: VIEWER_MESSAGE_LEFT_MARGIN }
         : undefined),
       ...(mode === "sidechat"

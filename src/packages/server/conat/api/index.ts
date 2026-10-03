@@ -46,6 +46,8 @@ import * as lro from "./lro";
 import * as agent from "./agent";
 import * as artifactCatalog from "./artifact-catalog";
 import * as personalLibrary from "./personal-library";
+import * as people from "./people";
+import * as personalUrls from "./personal-urls";
 import * as notifications from "./notifications";
 import * as adminData from "./admin-data-explorer";
 import * as adminDb from "./admin-db";
@@ -73,7 +75,7 @@ import {
 import { hubApiErrorAttrs } from "@cocalc/conat/hub/api/error-attrs";
 import { conat } from "@cocalc/backend/conat";
 import { delay } from "awaiting";
-import { recordServiceAdmissionDenialLocal } from "./service-admission-denials";
+import { hubAdmissionDenials } from "./service-admission-denials";
 import {
   getServiceAdmissionLimit,
   serviceAdmissionLimitEnvName,
@@ -112,6 +114,8 @@ export const hubApi: HubApi = {
   agent,
   artifactCatalog,
   personalLibrary,
+  people,
+  personalUrls,
   notifications,
   adminData,
   adminDb,
@@ -261,6 +265,10 @@ async function handleMessage({ mesg }) {
     maximum: maxActiveApiRequests,
     accountActive: activeAccountApiRequests,
     accountMaximum: account_id ? maxActiveApiRequestsPerAccount : undefined,
+    resolverActive: activeResolverRequests,
+    accountResolverActive: account_id
+      ? (activeResolverRequestsByAccount.get(account_id) ?? 0)
+      : 0,
     key: request?.name,
   });
   if (!admission.allowed) {
@@ -269,27 +277,23 @@ async function handleMessage({ mesg }) {
     const recordedReason = activeSummary.active_methods
       ? `${admission.reason}; active=${activeSummary.active_methods}; oldest_ms=${activeSummary.oldest_ms}`
       : admission.reason;
-    void recordServiceAdmissionDenialLocal({
+    const resolverLimited = admission.source.endsWith("resolver");
+    hubAdmissionDenials.record({
       surface: "hub-conat-api",
       source: admission.source,
       limit: accountLimited ? accountLimitName : limitName,
-      current: accountLimited
-        ? (activeAccountApiRequests ?? 0)
-        : activeApiRequests,
+      current: resolverLimited
+        ? accountLimited
+          ? (activeResolverRequestsByAccount.get(account_id!) ?? 0)
+          : activeResolverRequests
+        : accountLimited
+          ? (activeAccountApiRequests ?? 0)
+          : activeApiRequests,
       maximum: admission.maximum,
       reason: recordedReason,
       subject: mesg.subject,
       account_id,
       key: request?.name,
-    });
-    logger.warn("rejecting hub.api request; active request cap reached", {
-      active: activeApiRequests,
-      account_active: activeAccountApiRequests,
-      account_id,
-      max: admission.maximum,
-      name: request?.name,
-      source: admission.source,
-      ...activeSummary,
     });
     mesg.respond(null, {
       noThrow: true,
@@ -311,6 +315,15 @@ async function handleMessage({ mesg }) {
     key: request?.name,
   });
   activeApiRequests += 1;
+  const resolverRequest = request?.name === "hosts.resolveHostConnection";
+  if (resolverRequest) {
+    activeResolverRequests += 1;
+    if (account_id)
+      activeResolverRequestsByAccount.set(
+        account_id,
+        (activeResolverRequestsByAccount.get(account_id) ?? 0) + 1,
+      );
+  }
   const activeRequest: ActiveAccountApiRequest | undefined = account_id
     ? {
         name: `${request?.name ?? "unknown"}`,
@@ -328,6 +341,14 @@ async function handleMessage({ mesg }) {
   }
   void handleApiRequest({ request, mesg }).finally(() => {
     activeApiRequests -= 1;
+    if (resolverRequest) {
+      activeResolverRequests -= 1;
+      if (account_id) {
+        const next = (activeResolverRequestsByAccount.get(account_id) ?? 1) - 1;
+        if (next <= 0) activeResolverRequestsByAccount.delete(account_id);
+        else activeResolverRequestsByAccount.set(account_id, next);
+      }
+    }
     if (account_id) {
       const next = (activeApiRequestsByAccount.get(account_id) ?? 1) - 1;
       if (next <= 0) {
@@ -341,6 +362,9 @@ async function handleMessage({ mesg }) {
     }
   });
 }
+
+let activeResolverRequests = 0;
+const activeResolverRequestsByAccount = new Map<string, number>();
 
 export async function handleApiRequest({ request, mesg }) {
   let resp, headers;

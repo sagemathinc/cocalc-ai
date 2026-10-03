@@ -422,6 +422,8 @@ export type AcpAttentionRequest =
       account_id: string;
       attention_id: string;
       response_id: string;
+      // Private browser selection; authorize again if this starts a new turn.
+      codex_credential_id?: string;
       answers?: Record<string, string[]>;
       decline?: boolean;
     }
@@ -446,6 +448,7 @@ export type AcpAttentionRequest =
     }
   | {
       action: "continue";
+      codex_credential_id?: string;
       project_id: string;
       account_id: string;
       attention_id: string;
@@ -488,6 +491,13 @@ export type AcpStreamEvent =
       workingDirectory?: string;
       authSource?: string;
       siteFundedReservationId?: string;
+    }
+  | {
+      // Whether this turn's account has agent memory on, and whether its
+      // saved-note index reached the agent. Display only.
+      type: "memory";
+      state: "loaded" | "unavailable";
+      notes?: number;
     }
   | {
       type: "thinking";

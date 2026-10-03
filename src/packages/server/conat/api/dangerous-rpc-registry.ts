@@ -354,6 +354,15 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "changes the future customer-facing invoice recipient and billing address",
   },
+  "commercialOrders.stripeBillingPreview": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "previews approved billing details against the institutional Stripe customer",
+  },
+  "commercialOrders.syncStripeBilling": {
+    decision: "fresh-auth-required",
+    reason: "updates institutional Stripe customer billing email and address",
+  },
   "commercialOrders.updateCollectionMode": {
     decision: "fresh-auth-required",
     reason: "changes how an approved institutional order will collect payment",
@@ -672,6 +681,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: TELEMETRY_ONLY,
   },
   "hosts.recordCodexSiteUsage": {
+    decision: "fresh-auth-not-required",
+    reason: TELEMETRY_ONLY,
+  },
+  "hosts.recordClaudeSubscriptionUsage": {
     decision: "fresh-auth-not-required",
     reason: TELEMETRY_ONLY,
   },
@@ -1752,6 +1765,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: ORDINARY_AUTHZ,
   },
   "system.updateCodexSubscriptionLabel": {
+    decision: "fresh-auth-not-required",
+    reason: "updates only the signed-in account's credential display label",
+  },
+  "system.updateClaudeSubscriptionLabel": {
     decision: "fresh-auth-not-required",
     reason: "updates only the signed-in account's credential display label",
   },

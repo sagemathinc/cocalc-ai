@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { useWorkspaceContentNavigation } from "@cocalc/frontend/agents/workspace-content-navigation";
 import { DndContext, useDraggable } from "@dnd-kit/core";
 import {
   Alert,
@@ -122,6 +123,7 @@ import { recordSignedInSurfaceReady } from "@cocalc/frontend/app/bootstrap-ux-la
 import { markStartupPhaseOnce } from "@cocalc/frontend/app/startup-phase";
 import { HostRecoveryBanner } from "./host-recovery-banner";
 import { useProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
+import { useStableRenderOrder } from "@cocalc/frontend/components/stable-render-order";
 import {
   browserIdleTimeoutFromRunQuota,
   BrowserRuntimeLimitBanner,
@@ -255,6 +257,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     hardDeleteState === "deleting" || hardDeleteState === "delete_failed";
   const hardDeleteOpId = `${project?.getIn(["state", "hard_delete_op_id"]) ?? ""}`;
   const hardDeleteError = `${project?.getIn(["state", "hard_delete_error"]) ?? ""}`;
+  const workspaceNavigation = useWorkspaceContentNavigation();
   const projectCtx = useProjectContextProvider({
     project_id,
     is_active,
@@ -509,6 +512,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
   const workspaceChrome = workspaceStrongThemeChrome(
     projectCtx.workspaces.current,
   );
+  const lastProjectTab = useTypedRedux("page", "last_project_tab");
   const projectPageIsForeground =
     props.forceForeground || props.publicDirectoryShare
       ? true
@@ -588,6 +592,11 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     projectCtx.workspaces,
     workspaceStartupGuard,
   ]);
+  // Tab order is not render order: moving a retained editor in the DOM resets
+  // its scroll positions.
+  const editorRenderPaths = useStableRenderOrder(
+    initialWorkspaceRender.renderPaths,
+  );
 
   const displayProjectTab = useMemo(() => {
     return initialWorkspaceRender.displayActiveTab;
@@ -806,7 +815,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
         ? tab_to_path(initialWorkspaceRender.displayActiveTab)
         : undefined;
 
-    initialWorkspaceRender.renderPaths.map((path) => {
+    editorRenderPaths.map((path) => {
       if (!path) {
         return;
       }
@@ -868,12 +877,12 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     if (hardDeleteBlocked) {
       return;
     }
-    if (!is_active) {
+    if (!is_active && lastProjectTab !== project_id) {
       // see https://github.com/sagemathinc/cocalc/issues/3799
       // Some fixed project tabs are expensive and hooked into broad redux
-      // state. We retain hidden fixed tabs only while this project is active,
-      // so switching within the project is smooth without making background
-      // projects do hidden panel work.
+      // state. We retain hidden fixed tabs only for the active project and the
+      // most recently active one (still shown when you return from an agent),
+      // so background projects do not do hidden panel work.
       return;
     }
     if (initialWorkspaceRender.pending) {
@@ -887,7 +896,10 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
         ? retainedFixedTabs
         : [...retainedFixedTabs, activeFixedTab];
       return fixedTabsToRender.map((tab) =>
-        renderFixedFullPageContent(tab, displayProjectTab === tab),
+        renderFixedFullPageContent(
+          tab,
+          projectPageIsForeground && displayProjectTab === tab,
+        ),
       );
     }
     const retainedFixedContent = retainedFixedTabs.map((tab) =>
@@ -900,7 +912,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
       ...retainedFixedContent,
       <Content
         key={displayProjectTab}
-        is_visible={true}
+        is_visible={projectPageIsForeground}
         tab_name={displayProjectTab}
       />,
     ];
@@ -994,6 +1006,11 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     if (workspaceBlocked || hardDeleteBlocked) {
       return (
         <div style={{ display: "flex", height: "36px" }}>
+          {
+            // The workspace's show-sidebar control, when the sidebar is
+            // hidden and there is no top bar (sidebar navigation).
+            workspaceNavigation
+          }
           {hideActionButtons ? <HiddenActivityBarLauncher /> : null}
           <HomePageButton
             project_id={project_id}
@@ -1015,6 +1032,11 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     // this was part of the container-content div, which makes little sense for e.g. the banner bars
     return (
       <div style={{ display: "flex", height: "36px" }}>
+        {
+          // The workspace's show-sidebar control, when the sidebar is
+          // hidden and there is no top bar (sidebar navigation).
+          workspaceNavigation
+        }
         {hideActionButtons ? <HiddenActivityBarLauncher /> : null}
         <HomePageButton
           project_id={project_id}

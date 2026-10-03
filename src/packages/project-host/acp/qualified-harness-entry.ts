@@ -4,7 +4,7 @@
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { createInterface } from "node:readline";
+import { createJsonLineReader } from "@cocalc/util/json-lines";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getQualifiedHarnessCandidate } from "@cocalc/util/ai/qualified-harnesses";
@@ -77,7 +77,7 @@ export async function pinClaudeProvider(
   baseUrl: string,
   output: NodeJS.WritableStream,
 ): Promise<void> {
-  const lines = createInterface({ input: child.stdout });
+  const lines = createJsonLineReader(child.stdout);
   const pending = new Map<
     string,
     { resolve: (value: any) => void; reject: (error: Error) => void }

@@ -20,6 +20,7 @@ import {
   hasExternalCredential,
   listExternalCredentials,
   revokeExternalCredential,
+  setExternalCredentialMetadataValueById,
   touchExternalCredential,
   updateExternalCredentialById,
   updateExternalCredentialLabelById,
@@ -161,12 +162,15 @@ export async function updateExternalCredentialByIdRouted({
   payload,
   metadata,
   revive,
+  expected_payload_sha256,
 }: {
   id: string;
   selector: ExternalCredentialSelector;
   payload: string;
   metadata?: Record<string, any>;
   revive?: boolean;
+  // Compare-and-swap against the stored payload (see the store).
+  expected_payload_sha256?: string;
 }): Promise<boolean> {
   return await withExternalCredentialAuthority({
     selector,
@@ -177,6 +181,7 @@ export async function updateExternalCredentialByIdRouted({
         payload,
         metadata: metadata ?? {},
         revive,
+        expectedPayloadSha256: expected_payload_sha256,
       }),
     remote: async (dest_bay) =>
       await remoteCredentialsClient(dest_bay).updateById({
@@ -185,6 +190,7 @@ export async function updateExternalCredentialByIdRouted({
         payload,
         metadata,
         revive,
+        expected_payload_sha256,
       }),
   });
 }
@@ -207,6 +213,36 @@ export async function updateExternalCredentialLabelByIdRouted({
         id,
         selector,
         label,
+      }),
+  });
+}
+
+export async function setExternalCredentialMetadataValueByIdRouted({
+  id,
+  selector,
+  key,
+  value,
+}: {
+  id: string;
+  selector: ExternalCredentialSelector;
+  key: string;
+  value: unknown;
+}): Promise<boolean> {
+  return await withExternalCredentialAuthority({
+    selector,
+    local: async () =>
+      await setExternalCredentialMetadataValueById({
+        id,
+        selector,
+        key,
+        value,
+      }),
+    remote: async (dest_bay) =>
+      await remoteCredentialsClient(dest_bay).setMetadataValueById({
+        id,
+        selector,
+        key,
+        value,
       }),
   });
 }

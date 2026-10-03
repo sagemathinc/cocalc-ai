@@ -27,12 +27,15 @@ jest.mock("../codex/codex-project", () => ({
   resolveProjectRuntimeApiUrl: () => "http://project-hub",
 }));
 jest.mock("./claude-subscription-registry", () => ({
-  getClaudeSubscriptionCredential: async () => ({ payload: {}, identity: {} }),
-  publishClaudeSubscriptionCredential: jest.fn(),
+  getClaudeSubscriptionCredential: async () => ({
+    payload: JSON.stringify({ version: 1, files: [] }),
+  }),
+  syncClaudeSubscriptionCredential: jest.fn(async ({ baseline }) => baseline),
 }));
 jest.mock("./claude-subscription-home", () => ({
   restoreClaudeSubscriptionHome: jest.fn(),
-  claudeSubscriptionBundlePaths: () => [],
+  claudeSubscriptionBundleFiles: () => new Map(),
+  readClaudeSubscriptionHomeFiles: async () => new Map(),
 }));
 jest.mock("./claude-subscription-paths", () => ({
   claudeControllerHomePrefix: () => join(tmpdir(), "claude-identity-test-"),
@@ -89,6 +92,8 @@ const binding = {
 };
 const conversation = { path: "/home/user/agent.chat", threadId: "thread-a" };
 const closeLease = jest.fn();
+const beginConnectorTurn = jest.fn(async () => {});
+const endConnectorTurn = jest.fn(async () => {});
 let home: string;
 
 beforeEach(async () => {
@@ -100,10 +105,13 @@ beforeEach(async () => {
   jest.mocked(createProjectCliTokenLease).mockResolvedValue({
     containerPath: "/tmp/scoped/token",
     identityContainerPath: "/tmp/scoped/identity.json",
+    connectorContainerPath: "/tmp/scoped/connector-key",
     hostPath: "/host/token",
     setAgentSessionKey: jest.fn(),
+    beginConnectorTurn: beginConnectorTurn,
+    endConnectorTurn: endConnectorTurn,
     close: closeLease,
-  });
+  } as any);
   jest.mocked(createClaudeProjectToolBridge).mockResolvedValue({
     directory: "/tools",
     close: jest.fn(),
@@ -127,7 +135,7 @@ beforeEach(async () => {
 afterEach(async () => rm(home, { recursive: true, force: true }));
 
 test("registered subscription agent gets its identity only in project tools", async () => {
-  const handle = await launch(binding, "agent", conversation);
+  const handle = await launch(binding, conversation);
   try {
     expect(createProjectCliTokenLease).toHaveBeenCalledWith({
       projectId: binding.projectId,
@@ -161,15 +169,22 @@ test("registered subscription agent gets its identity only in project tools", as
           COCALC_CODEX_CHAT_PATH: conversation.path,
           COCALC_CODEX_THREAD_ID: conversation.threadId,
           COCALC_AGENT_IDENTITY_FILE: "/tmp/scoped/identity.json",
+          COCALC_CONNECTOR_API_KEY_FILE: "/tmp/scoped/connector-key",
           COCALC_BEARER_TOKEN: "",
           COCALC_AGENT_TOKEN: "",
         }),
       }),
     );
+    // The credential-bearing controller itself never sees project authority.
     const controllerArgs = (execFile as unknown as jest.Mock).mock.calls[0][1];
     expect(controllerArgs.join(" ")).not.toMatch(
-      /scoped\/identity|scoped\/token/,
+      /scoped\/identity|scoped\/token|scoped\/connector-key/,
     );
+    const chat = { project_id: binding.projectId, path: "a.chat" } as any;
+    await handle.beginConnectorTurn!(chat);
+    expect(beginConnectorTurn).toHaveBeenCalledWith(chat);
+    await handle.endConnectorTurn!();
+    expect(endConnectorTurn).toHaveBeenCalledTimes(1);
   } finally {
     await handle.stop();
   }
@@ -181,18 +196,11 @@ test.each([
   { path: "", threadId: "thread" },
   { path: "a.chat", threadId: "" },
 ])("agent launch rejects missing conversation context: %s", async (context) => {
-  await expect(launch(binding, "agent", context)).rejects.toThrow(
+  await expect(launch(binding, context as any)).rejects.toThrow(
     "admitted conversation",
   );
   expect(createProjectCliTokenLease).not.toHaveBeenCalled();
   expect(spawn).not.toHaveBeenCalled();
-});
-
-test("usage lookup does not acquire project or agent authority", async () => {
-  const handle = await launch(binding, "usage");
-  await handle.stop();
-  expect(createProjectCliTokenLease).not.toHaveBeenCalled();
-  expect(createClaudeProjectToolBridge).not.toHaveBeenCalled();
 });
 
 test("unregistered chat does not inherit another agent identity", async () => {
@@ -202,7 +210,7 @@ test("unregistered chat does not inherit another agent identity", async () => {
     setAgentSessionKey: jest.fn(),
     close: closeLease,
   });
-  const handle = await launch(binding, "agent", conversation);
+  const handle = await launch(binding, conversation);
   try {
     const execute = jest.mocked(createClaudeProjectToolBridge).mock.calls[0][1];
     await execute(
