@@ -24,6 +24,8 @@ import { useConversations } from "./use-conversations";
 
 const RECENT = 15;
 const MATCHES = 50;
+// In a sidebar section, which shows a few and links to the full page.
+const SECTION_RECENT = 3;
 
 function open(route?: string) {
   const page = redux.getActions("page");
@@ -64,10 +66,16 @@ export function sidebarConversations(
 
 export function PeopleSidebar({
   search,
+  inSection = false,
+  onlyCurrent = false,
   onNavigate,
 }: {
   // From the sidebar's search box.
   search: string;
+  // Shown as a sidebar section: fewer recent items and no list heading.
+  inSection?: boolean;
+  // Only the open item, for a collapsed sidebar section.
+  onlyCurrent?: boolean;
   onNavigate?: () => void;
 }) {
   const state = useConversations(true);
@@ -81,7 +89,13 @@ export function PeopleSidebar({
     state.conversations,
     preferences.value.order,
     (c) => matchesSearch(c, search, projectTitle(c)),
-    search.trim() ? MATCHES : RECENT,
+    onlyCurrent
+      ? Infinity
+      : search.trim()
+        ? MATCHES
+        : inSection
+          ? SECTION_RECENT
+          : RECENT,
   );
   const byId = new Map(state.conversations.map((c) => [c.conversation_id, c]));
 
@@ -112,6 +126,8 @@ export function PeopleSidebar({
 
   return (
     <SidebarList
+      showLabel={!inSection}
+      onlyCurrent={onlyCurrent}
       label="People"
       itemLabel="conversation"
       newLabel="New Conversation"

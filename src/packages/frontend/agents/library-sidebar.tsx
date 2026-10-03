@@ -29,9 +29,13 @@ import type { AgentSearchHit } from "./search-runner";
 
 const RECENT = 15;
 const MATCHES = 50;
+// In a sidebar section, which shows a few and links to the full page.
+const SECTION_RECENT = 3;
 
 export function LibrarySidebar({
   search,
+  inSection = false,
+  onlyCurrent = false,
   accountId,
   agents,
   onOpen,
@@ -40,6 +44,10 @@ export function LibrarySidebar({
 }: {
   // From the sidebar's search box.
   search: string;
+  // Shown as a sidebar section: fewer recent items and no list heading.
+  inSection?: boolean;
+  // Only the open item, for a collapsed sidebar section.
+  onlyCurrent?: boolean;
   accountId: string;
   agents: NamedAgent[];
   onOpen: (hit: AgentSearchHit) => void;
@@ -71,7 +79,13 @@ export function LibrarySidebar({
     .map((id) => byId.get(id))
     .filter((hit): hit is AgentSearchHit => hit != null);
   const others = results.filter((hit) => !pins.pins.includes(identity(hit)));
-  const limit = search.trim() ? MATCHES : RECENT;
+  const limit = onlyCurrent
+    ? Infinity
+    : search.trim()
+      ? MATCHES
+      : inSection
+        ? SECTION_RECENT
+        : RECENT;
 
   const item = (hit: AgentSearchHit): SidebarListItem => {
     const appearance = entries.get(
@@ -107,6 +121,8 @@ export function LibrarySidebar({
 
   return (
     <SidebarList
+      showLabel={!inSection}
+      onlyCurrent={onlyCurrent}
       label="Artifacts"
       itemLabel="artifact"
       newLabel="New Artifact"

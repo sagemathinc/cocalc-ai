@@ -4,6 +4,7 @@ import { Icon } from "@cocalc/frontend/components";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 
 export function AgentOrganizationControls({
+  showLabel = true,
   mode,
   groupByProject,
   onMode,
@@ -15,6 +16,8 @@ export function AgentOrganizationControls({
   onMode: (mode: "recent" | "custom") => void;
   onGroupByProject: (value: boolean) => void;
   onNewAgent: () => void;
+  // Hidden when a sidebar section header already says "Agents".
+  showLabel?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const id = useId();
@@ -37,7 +40,11 @@ export function AgentOrganizationControls({
           marginTop: 8,
         }}
       >
-        <Typography.Text type="secondary">Agents</Typography.Text>
+        {showLabel ? (
+          <Typography.Text type="secondary">Agents</Typography.Text>
+        ) : (
+          <span />
+        )}
         <Button
           ref={trigger}
           type="text"

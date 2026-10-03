@@ -27,6 +27,11 @@ export interface SidebarListItem {
 
 interface Props {
   label: string; // "Projects"
+  // Hide the label heading when a section header already names the list.
+  showLabel?: boolean;
+  // Just the current item (a collapsed sidebar section still shows what is
+  // open, like Slack); nothing when no item is current.
+  onlyCurrent?: boolean;
   itemLabel: string; // "project"
   newLabel?: string;
   onNew?: () => void;
@@ -43,6 +48,8 @@ interface Props {
 
 export function SidebarList({
   label,
+  showLabel = true,
+  onlyCurrent = false,
   itemLabel,
   newLabel,
   onNew,
@@ -141,15 +148,32 @@ export function SidebarList({
     </Typography.Text>
   );
   const pinnedIds = pinned.map((item) => item.id);
+  if (onlyCurrent) {
+    const open = [...pinned, ...recent].filter((item) => item.current);
+    if (open.length === 0) return null;
+    return (
+      <div
+        role="list"
+        aria-label={`Open ${itemLabel}`}
+        style={{ paddingRight: 8 }}
+      >
+        {open.map((item) => (
+          <div key={item.id}>{row(item, pinnedIds.includes(item.id))}</div>
+        ))}
+      </div>
+    );
+  }
 
   return (
     <section aria-label={label} style={{ paddingRight: 8 }}>
-      <Typography.Text
-        type="secondary"
-        style={{ display: "block", padding: "6px 0 2px" }}
-      >
-        {label}
-      </Typography.Text>
+      {showLabel && (
+        <Typography.Text
+          type="secondary"
+          style={{ display: "block", padding: "6px 0 2px" }}
+        >
+          {label}
+        </Typography.Text>
+      )}
       {onNew && (
         <Button
           block

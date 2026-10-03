@@ -3135,6 +3135,7 @@ function AgentWorkspace({
 }
 
 const SIDEBAR_SECTIONS_STORAGE_KEY = "cocalc-sidebar-sections-v1";
+const SIDEBAR_RECENT_AGENTS = 3;
 
 interface SidebarSections {
   agents: boolean;
@@ -3173,38 +3174,37 @@ function saveSidebarSections(sections: SidebarSections): SidebarSections {
   return sections;
 }
 
-// One collapsible sidebar section. Its header (the page's navigation button)
-// never moves; expanded sections share the height and scroll on their own.
+// One collapsible sidebar section, headed by its page's navigation button.
+// Sections are sized to their (short) lists and the sidebar scrolls as one,
+// like Slack's; the header band sets each section apart.
 function SidebarSection({
   label,
   header,
   expanded,
   onToggle,
   children,
+  collapsedContent,
 }: {
   label: string;
   header: React.ReactNode;
   expanded: boolean;
   onToggle: () => void;
   children?: React.ReactNode;
+  // Shown when collapsed: the open item, if any.
+  collapsedContent?: React.ReactNode;
 }) {
   return (
-    <section
-      aria-label={label}
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        flex: expanded ? "1 1 0" : "0 0 auto",
-        minHeight: expanded ? 120 : undefined,
-      }}
-    >
+    <section aria-label={label} style={{ flex: "0 0 auto" }}>
       <div
         style={{
           display: "flex",
           alignItems: "center",
           gap: 2,
-          flex: "0 0 auto",
-          paddingRight: 4,
+          marginRight: 8,
+          background: UI_COLORS.surface,
+          border: `1px solid ${UI_COLORS.border}`,
+          borderRadius: 8,
+          fontWeight: 600,
         }}
       >
         <Button
@@ -3219,19 +3219,12 @@ function SidebarSection({
         />
         <div style={{ flex: 1, minWidth: 0 }}>{header}</div>
       </div>
-      {expanded && (
-        <div
-          style={{
-            flex: "1 1 0",
-            minHeight: 0,
-            overflowY: "auto",
-            overflowX: "hidden",
-            paddingRight: 4,
-            borderBottom: `1px solid ${UI_COLORS.border}`,
-          }}
-        >
-          {children}
-        </div>
+      {expanded ? (
+        <div style={{ padding: "4px 0 6px 8px" }}>{children}</div>
+      ) : (
+        collapsedContent && (
+          <div style={{ padding: "4px 0 0 8px" }}>{collapsedContent}</div>
+        )
       )}
     </section>
   );
@@ -3302,7 +3295,8 @@ export function MyAgentsWorkspacePage({
     "openai_disabled",
   );
   // The sidebar's sections (Agents, Projects, Artifacts, People) stay where
-  // they are: navigating never hides one. Opening a page expands its section.
+  // they are: navigating never expands, collapses or swaps one. A collapsed
+  // section still shows the item that is open.
   const [sidebarSections, setSidebarSections] = useState<SidebarSections>(() =>
     loadSidebarSections(aiDisabled),
   );
@@ -3310,13 +3304,6 @@ export function MyAgentsWorkspacePage({
     setSidebarSections((prev) =>
       saveSidebarSections({ ...prev, [id]: !prev[id] }),
     );
-  useEffect(() => {
-    const id =
-      searchContext === "agents" && aiDisabled ? "projects" : searchContext;
-    setSidebarSections((prev) =>
-      prev[id] ? prev : saveSidebarSections({ ...prev, [id]: true }),
-    );
-  }, [searchContext, aiDisabled]);
   const libraryProjectId = useTypedRedux("page", "library_project_id");
   const libraryEntryId = useTypedRedux("page", "library_entry_id");
   const { names: artifactNames } = useArtifactNames();
@@ -4362,7 +4349,6 @@ export function MyAgentsWorkspacePage({
       }}
     >
       <WorkspaceSidebarActions
-        fillHeight
         onHideSidebar={
           isNarrow
             ? () => {
@@ -4420,10 +4406,38 @@ export function MyAgentsWorkspacePage({
             unpinned: agentOrganization.groups.unpinned.filter(filter),
             hidden: agentOrganization.groups.hidden.filter(filter),
           };
-          const recencySections = groupAgentsByRecency(
-            visibleGroups.unpinned,
-            agentOrganization.organization.lastOpened,
-          );
+          // Without a search the section lists pinned agents, the most
+          // recent few and the open agent; "All agents" shows the rest.
+          const unpinnedAgents = visibleGroups.unpinned;
+          if (!search) {
+            const shown = unpinnedAgents.slice(0, SIDEBAR_RECENT_AGENTS);
+            if (
+              selected &&
+              unpinnedAgents.includes(selected) &&
+              !shown.includes(selected)
+            )
+              shown.push(selected);
+            visibleGroups.unpinned = shown;
+            // Hidden agents are on the Agents page (and found by a search).
+            visibleGroups.hidden = [];
+          }
+          const moreAgents =
+            unpinnedAgents.length - visibleGroups.unpinned.length;
+          // A few recent agents need no Today/Last 7 days/Older headings.
+          const recencySections = search
+            ? groupAgentsByRecency(
+                visibleGroups.unpinned,
+                agentOrganization.organization.lastOpened,
+              )
+            : visibleGroups.unpinned.length > 0
+              ? [
+                  {
+                    key: "today" as const,
+                    title: "Recent" as const,
+                    agents: visibleGroups.unpinned,
+                  },
+                ]
+              : [];
           // Grouped by project, pins still form one section at the top
           // (grouped by project, in pin order), as on the Agents page.
           const pinnedProjectGroups: NamedAgent[][] = [];
@@ -4445,6 +4459,17 @@ export function MyAgentsWorkspacePage({
               {!aiDisabled && (
                 <SidebarSection
                   label="Agents"
+                  collapsedContent={
+                    selected ? (
+                      <div role="list" aria-label="Open agent">
+                        {renderAgentRow(
+                          selected,
+                          agentOrganization.groups.pinned.includes(selected),
+                          false,
+                        )}
+                      </div>
+                    ) : null
+                  }
                   expanded={sidebarSections.agents}
                   onToggle={() => toggleSidebarSection("agents")}
                   header={
@@ -4479,6 +4504,7 @@ export function MyAgentsWorkspacePage({
                         onMode={agentOrganization.setMode}
                         onGroupByProject={agentOrganization.setGroupByProject}
                         onNewAgent={startNewAgent}
+                        showLabel={false}
                       />
                     }
                     {networkError && (
@@ -4725,11 +4751,22 @@ export function MyAgentsWorkspacePage({
                       </div>
                     )}
                   </div>
+                  <Button type="link" size="small" onClick={showAgentsOverview}>
+                    All agents{moreAgents > 0 ? ` (${moreAgents} more)` : ""}…
+                  </Button>
                 </SidebarSection>
               )}
               {!lite && (
                 <SidebarSection
                   label="Projects"
+                  collapsedContent={
+                    <ProjectsSidebar
+                      inSection
+                      onlyCurrent
+                      search=""
+                      onNavigate={() => setMobileList(false)}
+                    />
+                  }
                   expanded={sidebarSections.projects}
                   onToggle={() => toggleSidebarSection("projects")}
                   header={
@@ -4766,6 +4803,7 @@ export function MyAgentsWorkspacePage({
                   }
                 >
                   <ProjectsSidebar
+                    inSection
                     search={sidebarQuery}
                     onNavigate={() => setMobileList(false)}
                   />
@@ -4773,6 +4811,23 @@ export function MyAgentsWorkspacePage({
               )}
               <SidebarSection
                 label="Artifacts"
+                collapsedContent={
+                  accountId ? (
+                    <LibrarySidebar
+                      inSection
+                      onlyCurrent
+                      search=""
+                      accountId={accountId}
+                      agents={agents}
+                      onOpen={(hit) => {
+                        setMobileList(false);
+                        void openLibraryHit(hit);
+                      }}
+                      onAll={showLibrary}
+                      onNew={() => setNewArtifactOpen(true)}
+                    />
+                  ) : null
+                }
                 expanded={sidebarSections.library}
                 onToggle={() => toggleSidebarSection("library")}
                 header={
@@ -4797,6 +4852,7 @@ export function MyAgentsWorkspacePage({
               >
                 {accountId && (
                   <LibrarySidebar
+                    inSection
                     search={sidebarQuery}
                     accountId={accountId}
                     agents={agents}
@@ -4812,6 +4868,14 @@ export function MyAgentsWorkspacePage({
               {!lite && (
                 <SidebarSection
                   label="People"
+                  collapsedContent={
+                    <PeopleSidebar
+                      inSection
+                      onlyCurrent
+                      search=""
+                      onNavigate={() => setMobileList(false)}
+                    />
+                  }
                   expanded={sidebarSections.people}
                   onToggle={() => toggleSidebarSection("people")}
                   header={
@@ -4836,6 +4900,7 @@ export function MyAgentsWorkspacePage({
                   }
                 >
                   <PeopleSidebar
+                    inSection
                     search={sidebarQuery}
                     onNavigate={() => setMobileList(false)}
                   />

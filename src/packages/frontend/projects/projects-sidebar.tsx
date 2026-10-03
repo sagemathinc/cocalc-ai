@@ -22,6 +22,8 @@ import { requestNewProject } from "./new-project-request";
 
 const RECENT = 15;
 const MATCHES = 50;
+// In a sidebar section, which shows a few and links to the full page.
+const SECTION_RECENT = 3;
 
 export interface SidebarProject {
   project_id: string;
@@ -42,11 +44,16 @@ export function sidebarProjects({
   account_id,
   pins,
   search = "",
+  recentLimit = RECENT,
+  current,
 }: {
   project_map: any;
   account_id?: string;
   pins: string[];
   search?: string;
+  recentLimit?: number;
+  // The open project: always listed, even when it is not recent.
+  current?: string;
 }): { pinned: SidebarProject[]; recent: SidebarProject[]; more: number } {
   const needle = search.trim().toLowerCase();
   const matches = (project) =>
@@ -78,20 +85,29 @@ export function sidebarProjects({
     });
   });
   others.sort((a, b) => b.used - a.used || b.edited - a.edited);
-  const limit = needle ? MATCHES : RECENT;
+  const limit = needle ? MATCHES : recentLimit;
+  const recent = others.slice(0, limit).map(({ item }) => item);
+  const open = others.find(({ item }) => item.project_id === current);
+  if (open && !recent.includes(open.item)) recent.push(open.item);
   return {
     pinned,
-    recent: others.slice(0, limit).map(({ item }) => item),
-    more: Math.max(0, others.length - limit),
+    recent,
+    more: Math.max(0, others.length - recent.length),
   };
 }
 
 export function ProjectsSidebar({
   search,
+  inSection = false,
+  onlyCurrent = false,
   onNavigate,
 }: {
   // From the sidebar's search box.
   search: string;
+  // Shown as a sidebar section: fewer recent items and no list heading.
+  inSection?: boolean;
+  // Only the open item, for a collapsed sidebar section.
+  onlyCurrent?: boolean;
   onNavigate?: () => void;
 }) {
   const actions = useActions("projects");
@@ -108,6 +124,8 @@ export function ProjectsSidebar({
     account_id,
     pins: bookmarkedProjects,
     search,
+    recentLimit: onlyCurrent ? 0 : inSection ? SECTION_RECENT : RECENT,
+    current,
   });
 
   function open(project_id: string, e?: React.MouseEvent) {
@@ -135,6 +153,8 @@ export function ProjectsSidebar({
 
   return (
     <SidebarList
+      showLabel={!inSection}
+      onlyCurrent={onlyCurrent}
       label="Projects"
       itemLabel="project"
       newLabel="New Project"
