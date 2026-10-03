@@ -5,7 +5,7 @@
 
 import { Button, Grid, Layout } from "antd";
 import { Map, Set as ImmutableSet } from "immutable";
-import { Suspense, useLayoutEffect, useRef } from "react";
+import { Suspense, useRef } from "react";
 import { useIntl } from "react-intl";
 
 // ensure redux stuff (actions and store) are initialized:
@@ -32,7 +32,11 @@ import { capitalize } from "@cocalc/util/misc";
 
 import { ProjectsOperations } from "./projects-operations";
 import { StarredProjectsBar } from "./projects-starred";
-import { ProjectsTable } from "./projects-table";
+import { ProjectsCollection } from "./projects-collection";
+import { onNewProjectRequest } from "./new-project-request";
+import { QuickProjectCreator } from "./quick-project-creator";
+import { useCollectionPreferences } from "@cocalc/frontend/components/use-collection-preferences";
+import { useWorkspaceContentNavigation } from "@cocalc/frontend/agents/workspace-content-navigation";
 import { ProjectsTableControls } from "./projects-table-controls";
 import { CocalcErrorBoundary } from "@cocalc/frontend/app/error-boundary";
 import { ProjectDrawer } from "./project-drawer";
@@ -40,6 +44,8 @@ import ProjectsPageTour from "./tour";
 import { recordSignedInSurfaceReady } from "@cocalc/frontend/app/bootstrap-ux-latency";
 import { getVisibleProjects } from "./util";
 import { FilenameSearch } from "./filename-search";
+import { PageSearchBox } from "@cocalc/frontend/search/page-search-box";
+import { useListQuery } from "@cocalc/frontend/search/list-query";
 import { MobileProjectsList } from "./mobile-projects-list";
 import { RecentDocumentActivityButton } from "@cocalc/frontend/file-use/button";
 import {
@@ -92,52 +98,8 @@ const LOADING_STYLE: CSS = {
   color: UI_COLORS.secondary,
 } as const;
 
-const PROJECTS_TABLE_INITIAL_BODY_HEIGHT = 400;
-const PROJECTS_TABLE_MIN_BODY_HEIGHT = 160;
-const PROJECTS_TABLE_HEADER_RESERVED_PX = 48;
-
 const VISIBLE_WINDOW_REPAIR_LIMIT = 200;
 const VISIBLE_WINDOW_REPAIR_DELAY_MS = 500;
-
-function useProjectTableBodyHeight(
-  element: HTMLDivElement | null,
-  enabled: boolean,
-): number {
-  const [height, setHeight] = useState(PROJECTS_TABLE_INITIAL_BODY_HEIGHT);
-
-  useLayoutEffect(() => {
-    if (!enabled) {
-      return;
-    }
-    if (element == null) {
-      return;
-    }
-
-    const updateHeight = () => {
-      const next = Math.max(
-        Math.floor(
-          element.getBoundingClientRect().height -
-            PROJECTS_TABLE_HEADER_RESERVED_PX,
-        ),
-        PROJECTS_TABLE_MIN_BODY_HEIGHT,
-      );
-      setHeight((cur) => (cur === next ? cur : next));
-    };
-
-    updateHeight();
-
-    if (globalThis.ResizeObserver == null) {
-      window.addEventListener("resize", updateHeight);
-      return () => window.removeEventListener("resize", updateHeight);
-    }
-
-    const resizeObserver = new ResizeObserver(updateHeight);
-    resizeObserver.observe(element);
-    return () => resizeObserver.disconnect();
-  }, [enabled, element]);
-
-  return height;
-}
 
 function readMaybeImmutable(value: any, key: string): any {
   return value?.get?.(key) ?? value?.[key];
@@ -212,9 +174,16 @@ export const ProjectsPage: React.FC = () => {
     [project_map?.size],
   );
 
+  const workspaceNavigation = useWorkspaceContentNavigation();
   const screens = Grid.useBreakpoint();
   const mobileProjectsList = IS_MOBILE && !screens.lg;
   const narrow = mobileProjectsList;
+  // The shared cards/list layout, with starred projects as pins; the phone
+  // layout keeps the compact table and starred bar.
+  const collectionLayout = !mobileProjectsList;
+  const collectionPreferences = useCollectionPreferences("projects");
+  const collectionLayoutRef = useRef(collectionLayout);
+  collectionLayoutRef.current = collectionLayout;
 
   // Tour
   const searchRef = useRef<any>(null);
@@ -233,13 +202,12 @@ export const ProjectsPage: React.FC = () => {
   const filenameSearchRef = useRef<any>(null);
 
   const [createPanelOpen, setCreatePanelOpen] = useState(false);
+  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
+  // Title typed in the minimal creator, carried into "More options".
+  const [createTitle, setCreateTitle] = useState<string>();
   const createPanelMounted = useRef(false);
   if (createPanelOpen) createPanelMounted.current = true;
 
-  const tableHeight = useProjectTableBodyHeight(
-    projectListElement,
-    !mobileProjectsList,
-  );
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
   const { scheduledDeleteProjectIds } = useProjectDeleteQueue();
 
@@ -254,12 +222,33 @@ export const ProjectsPage: React.FC = () => {
     return `${!!hidden}`;
   }, [hidden]);
   const search: string = useTypedRedux("projects", "search");
+  // On wide screens the search box (shared with the sidebar) filters the
+  // list, debounced like the old filter input.
+  const listQuery = useListQuery();
+  useEffect(() => {
+    if (narrow || (search ?? "") === listQuery) return;
+    const timeout = setTimeout(
+      () => redux.getActions("projects").setState({ search: listQuery }),
+      250,
+    );
+    return () => clearTimeout(timeout);
+  }, [listQuery, narrow]);
   const inviteState = useInviteInboxState({
     includeOutgoing: false,
     includeBlocks: false,
   });
   const emailVerificationRequired = useEmailVerificationRequired();
   const createProjectDisabled = emailVerificationRequired;
+  // "+ New Project" in the sidebar.
+  useEffect(
+    () =>
+      onNewProjectRequest(() => {
+        if (createProjectDisabled) return;
+        if (collectionLayoutRef.current) setQuickCreateOpen(true);
+        else setCreatePanelOpen(true);
+      }),
+    [createProjectDisabled],
+  );
   const onboardingProjects = useMemo(() => {
     const projects: FirstRunProject[] = [];
     project_map?.forEach((project, project_id) => {
@@ -557,7 +546,10 @@ export const ProjectsPage: React.FC = () => {
 
   function handleCreateProject() {
     if (createProjectDisabled) return;
-    setCreatePanelOpen(true);
+    // The new layout starts with the minimal creator; "More options" opens
+    // the full one.
+    if (collectionLayout) setQuickCreateOpen(true);
+    else setCreatePanelOpen(true);
   }
 
   function handleClearCollaboratorFilter() {
@@ -604,12 +596,27 @@ export const ProjectsPage: React.FC = () => {
           >
             <Suspense fallback={null}>
               <NewProjectCreator
-                default_value={search}
+                default_value={createTitle ?? search}
                 open={createPanelOpen}
-                onClose={() => setCreatePanelOpen(false)}
+                onClose={() => {
+                  setCreatePanelOpen(false);
+                  setCreateTitle(undefined);
+                }}
               />
             </Suspense>
           </CocalcErrorBoundary>
+        )}
+        {collectionLayout && !createProjectDisabled && (
+          <QuickProjectCreator
+            open={quickCreateOpen}
+            defaultTitle={search}
+            onClose={() => setQuickCreateOpen(false)}
+            onMoreOptions={(title) => {
+              setQuickCreateOpen(false);
+              setCreateTitle(title);
+              setCreatePanelOpen(true);
+            }}
+          />
         )}
         <Layout.Content
           style={{
@@ -674,7 +681,12 @@ export const ProjectsPage: React.FC = () => {
                 >
                   <div
                     style={{
-                      marginTop: mobileProjectsList ? "8px" : "20px",
+                      // The new layout has no top bar above this header.
+                      marginTop: mobileProjectsList
+                        ? "8px"
+                        : collectionLayout
+                          ? "8px"
+                          : "20px",
                       display: "flex",
                       width: "100%",
                       gap: 10,
@@ -683,6 +695,7 @@ export const ProjectsPage: React.FC = () => {
                       flex: "0 0 auto",
                     }}
                   >
+                    {workspaceNavigation}
                     <Title
                       level={3}
                       style={{
@@ -691,11 +704,12 @@ export const ProjectsPage: React.FC = () => {
                         whiteSpace: "nowrap",
                       }}
                     >
-                      <Icon name="edit" /> {intl.formatMessage(labels.projects)}
+                      <Icon name="folder-open" />{" "}
+                      {intl.formatMessage(labels.projects)}
                     </Title>
                     <Button
                       ref={createNewRef}
-                      type="primary"
+                      type={collectionLayout ? "default" : "primary"}
                       disabled={createProjectDisabled}
                       title={
                         createProjectDisabled
@@ -703,9 +717,15 @@ export const ProjectsPage: React.FC = () => {
                           : undefined
                       }
                       onClick={handleCreateProject}
-                      icon={<Icon name="plus-circle" />}
+                      icon={
+                        <Icon
+                          name={collectionLayout ? "plus" : "plus-circle"}
+                        />
+                      }
                     >
-                      {capitalize(intl.formatMessage(labels.create))}
+                      {collectionLayout
+                        ? "New project"
+                        : capitalize(intl.formatMessage(labels.create))}
                     </Button>
                     {showLegacyProjectsButton ? (
                       <Button
@@ -724,7 +744,7 @@ export const ProjectsPage: React.FC = () => {
                         minWidth: 0,
                       }}
                     >
-                      <StarredProjectsBar />
+                      {!collectionLayout && <StarredProjectsBar />}
                     </div>
                     {!narrow && (
                       <div
@@ -736,13 +756,12 @@ export const ProjectsPage: React.FC = () => {
                           gap: "8px",
                         }}
                       >
-                        <FilenameSearch
-                          style={{
-                            width: IS_MOBILE ? "100px" : "200px",
-                            display: "inline-block",
-                          }}
+                        {/* The same box as the sidebar's: it narrows the
+                            list below; Enter searches everything. */}
+                        <PageSearchBox
+                          scope="projects"
+                          style={{ flex: "0 1 320px" }}
                         />
-                        <RecentDocumentActivityButton />
                       </div>
                     )}
                   </div>
@@ -789,6 +808,7 @@ export const ProjectsPage: React.FC = () => {
                       projectListChanged={backendWindowDirty}
                       projectListChangedCount={backendWindowDirtyCount}
                       onRefreshProjectList={refreshBackendWindow}
+                      showSearch={narrow}
                       tour={
                         <ProjectsPageTour
                           searchRef={searchRef}
@@ -820,32 +840,32 @@ export const ProjectsPage: React.FC = () => {
                       flex: mobileProjectsList ? "0 0 auto" : "1 1 0",
                       height: mobileProjectsList ? undefined : "100%",
                       minHeight: 0,
-                      overflow: mobileProjectsList ? undefined : "hidden",
+                      overflow: mobileProjectsList
+                        ? undefined
+                        : collectionLayout
+                          ? "auto"
+                          : "hidden",
                     }}
                   >
                     <CocalcErrorBoundary scope="projects.list">
-                      {mobileProjectsList ? (
+                      {collectionLayout ? (
+                        <ProjectsCollection
+                          visible_projects={visible_projects}
+                          rootfsImages={rootfsImages}
+                          rootfsImagesLoading={rootfsImagesLoading}
+                          selectedProjectIds={selectedProjectIds}
+                          onSelectedProjectIdsChange={setSelectedProjectIds}
+                          view={collectionPreferences.value.view}
+                          onViewChange={collectionPreferences.setView}
+                          scrollParent={projectListElement}
+                        />
+                      ) : (
                         <MobileProjectsList
                           visible_projects={visible_projects}
                           rootfsImages={rootfsImages}
                           rootfsImagesLoading={rootfsImagesLoading}
                           selectedProjectIds={selectedProjectIds}
                           onSelectedProjectIdsChange={setSelectedProjectIds}
-                        />
-                      ) : (
-                        <ProjectsTable
-                          visible_projects={visible_projects}
-                          rootfsImages={rootfsImages}
-                          rootfsImagesLoading={rootfsImagesLoading}
-                          height={tableHeight}
-                          narrow={narrow}
-                          filteredCollaborators={filteredCollaborators}
-                          onFilteredCollaboratorsChange={
-                            setFilteredCollaborators
-                          }
-                          selectedProjectIds={selectedProjectIds}
-                          onSelectedProjectIdsChange={setSelectedProjectIds}
-                          freezeOrder={backendWindowDirty}
                         />
                       )}
                     </CocalcErrorBoundary>

@@ -10,12 +10,10 @@ everything on *desktop*, once the user has signed in.
 
 declare var DEBUG: boolean;
 
-import type { IconName } from "@cocalc/frontend/components/icon";
+import { is_valid_uuid_string } from "@cocalc/util/misc";
 
-import { Alert, Spin } from "antd";
+import { Alert } from "antd";
 import { useIntl } from "react-intl";
-import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
-import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import { AppearanceControl } from "@cocalc/frontend/appearance/control";
 import { alert_message } from "@cocalc/frontend/alerts";
 import {
@@ -31,12 +29,15 @@ import { ClientContext } from "@cocalc/frontend/client/context";
 import { Icon } from "@cocalc/frontend/components/icon";
 import Next from "@cocalc/frontend/components/next";
 import { labels } from "@cocalc/frontend/i18n";
-import openSupportTab from "@cocalc/frontend/support/open";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { IS_IPAD, IS_MOBILE, IS_SAFARI } from "../feature";
 import QuickNavigation from "./quick-navigation";
 import { ActiveContent } from "./active-content";
+import { usesWorkspaceShell } from "./workspace-shell";
+import { HomeWorkspaceNavigation } from "./home-workspace-navigation";
+import { usePersonalUrlIdentity } from "./use-personal-url-identity";
+import { removeShellPlaceholder } from "./shell-placeholder";
 import { ConnectionIndicator } from "./connection-indicator";
 import { ConnectionInfo } from "./connection-info";
 import { NotificationsDrawer } from "../notifications/drawer";
@@ -46,11 +47,6 @@ import { CocalcErrorBoundary } from "./error-boundary";
 import { FullscreenButton } from "./fullscreen-button";
 import { AppLogo } from "./logo";
 import { NavTab } from "./nav-tab";
-import {
-  HIDE_LABEL_THRESHOLD,
-  NAV_CLASS,
-  shouldHideProjectsLabel,
-} from "./top-nav-consts";
 import VersionWarning from "./version-warning";
 import { lite } from "@cocalc/frontend/lite";
 import { ImpersonationBanner } from "./impersonation-banner";
@@ -59,10 +55,6 @@ import { ScratchpadSessionControls } from "./scratchpad-session-controls";
 import { recordSignedInAppBootstrapReady } from "./bootstrap-ux-latency";
 import { configureUxLatency } from "@cocalc/frontend/monitoring/ux-latency";
 import { configureOnboardingMonitoring } from "@cocalc/frontend/monitoring/onboarding";
-import {
-  getStoredProjectsNavMode,
-  type ProjectsNavMode,
-} from "@cocalc/frontend/projects/projects-nav-mode";
 import { lazyWithRetry } from "./lazy-with-retry";
 import usePostSurfaceWork from "./use-post-surface-work";
 import useSignedInSurfaceReady from "./use-signed-in-surface-ready";
@@ -76,13 +68,6 @@ const PostSurfaceRightNav = lazyWithRetry(async () => {
   await ensureNotificationsInitialized();
   return { default: postSurface.PostSurfaceRightNav };
 }, "post-surface navigation");
-const PostSurfaceProjectsNav = lazyWithRetry(
-  async () => ({
-    default: (await import("@cocalc/frontend/projects/projects-nav"))
-      .ProjectsNav,
-  }),
-  "post-surface project navigation",
-);
 const PostSurfaceBanners = lazyWithRetry(
   async () => ({
     default: (await import("./post-surface-banners")).PostSurfaceBanners,
@@ -189,21 +174,9 @@ export const Page: React.FC = () => {
   });
 
   const { pageStyle } = useAppContext();
-  const { isNarrow, topBarStyle, projectsNavStyle } = pageStyle;
+  const { isNarrow, topBarStyle } = pageStyle;
 
   const intl = useIntl();
-
-  const open_projects = useTypedRedux("projects", "open_projects");
-  const [projectsNavMode, setProjectsNavMode] = useState<ProjectsNavMode>(
-    getStoredProjectsNavMode,
-  );
-  const [show_label, set_show_label] = useState<boolean>(true);
-  useEffect(() => {
-    const next = open_projects.size <= HIDE_LABEL_THRESHOLD;
-    if (next != show_label) {
-      set_show_label(next);
-    }
-  }, [open_projects]);
 
   useEffect(() => {
     return () => {
@@ -218,8 +191,6 @@ export const Page: React.FC = () => {
   }, []);
 
   const active_top_tab = useTypedRedux("page", "active_top_tab");
-  const otherSettings = useTypedRedux("account", "other_settings");
-  const aiDisabled = !!otherSettings?.get("openai_disabled");
   const compactAgentsNavigation = active_top_tab === "agents";
   const isAuthView = active_top_tab === "auth";
   const show_mentions = active_top_tab === "notifications";
@@ -240,6 +211,19 @@ export const Page: React.FC = () => {
   const account_id = useTypedRedux("account", "account_id");
   const is_logged_in = useTypedRedux("account", "is_logged_in");
   const examMode = useTypedRedux("customize", "exam_mode") === true;
+  usePersonalUrlIdentity();
+  const workspaceShell = usesWorkspaceShell({
+    lite,
+    signedIn: !!is_logged_in,
+    examMode,
+    fullscreen,
+    activeTab: active_top_tab,
+  });
+  // Pages outside the workspace (sign-in, exam, kiosk, ...) have no sidebar:
+  // drop app.html's stand-in for it right away.
+  useEffect(() => {
+    if (accountIsReady && !workspaceShell) removeShellPlaceholder();
+  }, [accountIsReady, workspaceShell]);
   const configurationLoadError = useTypedRedux(
     "customize",
     "configuration_load_error",
@@ -251,8 +235,6 @@ export const Page: React.FC = () => {
   ) as string | undefined;
   const clientSignedIn = useClientSignedIn();
   const effectivelySignedIn = is_logged_in || clientSignedIn;
-  const groups = useTypedRedux("account", "groups");
-  const zendesk = !!useTypedRedux("customize", "zendesk");
 
   useEffect(() => {
     configureOnboardingMonitoring(
@@ -290,91 +272,6 @@ export const Page: React.FC = () => {
     });
   }, [active_top_tab, examMode, examProjectId]);
 
-  function account_tab_icon(): IconName | React.JSX.Element {
-    if (account_id) {
-      return (
-        <Avatar
-          size={20}
-          account_id={account_id}
-          no_tooltip={true}
-          no_loading={true}
-        />
-      );
-    } else {
-      return "cog";
-    }
-  }
-
-  function render_account_tab(): React.JSX.Element {
-    if (!accountIsReady) {
-      return (
-        <div>
-          <Spin delay={1000} />
-        </div>
-      );
-    }
-    const icon = account_tab_icon();
-    return (
-      <NavTab
-        name="account"
-        label_class={NAV_CLASS}
-        icon={icon}
-        active_top_tab={active_top_tab}
-        hide_label={!show_label}
-        on_click={() => {
-          openAccountSettings({ page: "index" }, { changeHistory: false });
-        }}
-        tooltip={intl.formatMessage(labels.account)}
-      />
-    );
-  }
-
-  function render_admin_tab(): React.JSX.Element | undefined {
-    if (is_logged_in && groups?.includes("admin")) {
-      return (
-        <NavTab
-          name="admin"
-          label_class={NAV_CLASS}
-          icon={"users"}
-          active_top_tab={active_top_tab}
-          hide_label={!show_label}
-        />
-      );
-    }
-  }
-
-  function render_docs_tab(): React.JSX.Element | undefined {
-    if (!is_logged_in) return;
-    return (
-      <NavTab
-        name="docs"
-        label="Docs"
-        label_class={NAV_CLASS}
-        icon={"book"}
-        active_top_tab={active_top_tab}
-        hide_label={true}
-        ariaLabel="Docs"
-        tooltip="Search CoCalc documentation"
-      />
-    );
-  }
-
-  function render_hosts_tab(): React.JSX.Element | null {
-    if (!is_logged_in) return null;
-    return (
-      <NavTab
-        name="hosts"
-        label="Compute"
-        label_class={NAV_CLASS}
-        icon={"server"}
-        active_top_tab={active_top_tab}
-        hide_label
-        ariaLabel="Compute"
-        tooltip="Manage project hosts and virtual machines"
-      />
-    );
-  }
-
   function render_sign_in_tab(): React.JSX.Element | null {
     if (lite || effectivelySignedIn || !showSignInTab) {
       return null;
@@ -400,26 +297,6 @@ export const Page: React.FC = () => {
     );
   }
 
-  function render_support(): React.JSX.Element | undefined {
-    if (!zendesk || !is_logged_in) {
-      return;
-    }
-    return (
-      <NavTab
-        name={undefined} // does not open a tab, just a popup
-        active_top_tab={active_top_tab} // it's never supposed to be active!
-        label_class={NAV_CLASS}
-        icon={"support"}
-        on_click={openSupportTab}
-        hide_label={true}
-        tooltip={intl.formatMessage({
-          id: "page.help.label",
-          defaultMessage: "Help",
-        })}
-      />
-    );
-  }
-
   function render_fullscreen(): React.JSX.Element | undefined {
     if (isNarrow) return;
 
@@ -439,9 +316,7 @@ export const Page: React.FC = () => {
           alignItems: "center",
         }}
       >
-        {render_admin_tab()}
         {render_sign_in_tab()}
-        {is_logged_in ? render_account_tab() : undefined}
         {showPostSurfaceNavigation ? (
           <PostSurfaceSlot scope="app.post-surface-right-nav">
             <PostSurfaceRightNav
@@ -451,8 +326,6 @@ export const Page: React.FC = () => {
             />
           </PostSurfaceSlot>
         ) : undefined}
-        {render_docs_tab()}
-        {render_support()}
         <AppearanceControl compact />
         <ConnectionIndicator height={pageStyle.height} pageStyle={pageStyle} />
         {render_fullscreen()}
@@ -474,34 +347,10 @@ export const Page: React.FC = () => {
           id: "page.project_nav.tooltip",
           defaultMessage: "Show all the projects on which you collaborate.",
         })}
-        icon="edit"
+        icon="folder-open"
         label={intl.formatMessage(labels.projects)}
-        hide_label={shouldHideProjectsLabel(
-          open_projects.size,
-          isNarrow,
-          projectsNavMode === "tabs",
-        )}
+        hide_label
         ariaLabel={intl.formatMessage(labels.projects)}
-      />
-    );
-  }
-
-  function render_agents_nav_button(): React.JSX.Element | null {
-    if (aiDisabled) return null;
-    return (
-      <NavTab
-        style={{
-          height: `${pageStyle.height}px`,
-          margin: "0",
-          overflow: "hidden",
-        }}
-        name="agents"
-        active_top_tab={active_top_tab}
-        tooltip="Work with registered agents, chats, artifacts, and terminals"
-        icon="robot"
-        label="Agents"
-        hide_label={isNarrow}
-        ariaLabel="Agents"
       />
     );
   }
@@ -527,8 +376,23 @@ export const Page: React.FC = () => {
     }
   }
 
-  // Children must define their own padding from navbar and screen borders
-  // Note that the parent is a flex container
+  // The top bar exists only when signed out (logo, sign in, appearance) and,
+  // in the workspace shell, on narrow screens (a compact bar with the menu).
+  // Projects are in the sidebar; there are no project tabs.
+  const topBar =
+    !lite &&
+    !examMode &&
+    !fullscreen &&
+    !isAuthView &&
+    !compactAgentsNavigation ? (
+      <nav className="smc-top-bar" style={topBarStyle}>
+        {!workspaceShell && <AppLogo size={pageStyle.height} />}
+        {is_logged_in && render_project_nav_button()}
+        <div style={{ flex: "1 1 auto" }} />
+        {workspaceShell ? <HomeWorkspaceNavigation /> : render_right_nav()}
+      </nav>
+    ) : null;
+  const sidebarOnlyNavigation = <></>;
   const body = (
     <div
       style={
@@ -556,55 +420,8 @@ export const Page: React.FC = () => {
         <Alert banner showIcon type="error" title={configurationLoadError} />
       )}
       <ImpersonationBanner />
-      {!lite &&
-        !examMode &&
-        !fullscreen &&
-        !isAuthView &&
-        !compactAgentsNavigation && (
-          <nav className="smc-top-bar" style={topBarStyle}>
-            <AppLogo size={pageStyle.height} />
-            {is_logged_in && render_agents_nav_button()}
-            {is_logged_in && render_project_nav_button()}
-            {render_hosts_tab()}
-            {!isNarrow ? (
-              showPostSurfaceNavigation ? (
-                <PostSurfaceSlot scope="app.post-surface-project-navigation">
-                  <PostSurfaceProjectsNav
-                    height={pageStyle.height}
-                    onModeChange={setProjectsNavMode}
-                    style={projectsNavStyle}
-                  />
-                </PostSurfaceSlot>
-              ) : (
-                <div style={{ ...projectsNavStyle, flex: "1 1 auto" }} />
-              )
-            ) : (
-              // we need an expandable placeholder, otherwise the right-nav-buttons won't align to the right
-              <div style={{ flex: "1 1 auto" }} />
-            )}
-            {render_right_nav()}
-          </nav>
-        )}
+      {!workspaceShell && topBar}
       {fullscreen && !isAuthView && render_fullscreen()}
-      {!lite &&
-        !examMode &&
-        isNarrow &&
-        !isAuthView &&
-        !compactAgentsNavigation && (
-          <>
-            {showPostSurfaceNavigation ? (
-              <PostSurfaceSlot scope="app.post-surface-project-navigation-narrow">
-                <PostSurfaceProjectsNav
-                  height={pageStyle.height}
-                  onModeChange={setProjectsNavMode}
-                  style={projectsNavStyle}
-                />
-              </PostSurfaceSlot>
-            ) : (
-              <div style={{ ...projectsNavStyle, height: pageStyle.height }} />
-            )}
-          </>
-        )}
       {examMode && !isAuthView && (
         <ScratchpadSessionControls deleteAt={scratchpadDeleteAt} />
       )}
@@ -613,7 +430,21 @@ export const Page: React.FC = () => {
         scope="app.active-content"
         resetKeys={[active_top_tab]}
       >
-        <ActiveContent />
+        <ActiveContent
+          navigation={
+            !workspaceShell
+              ? undefined
+              : !isNarrow
+                ? // Projects are in the sidebar: no top bar. The Projects page
+                  // and project pages put the show-sidebar control in their
+                  // own top row (null); other pages get a minimal row.
+                  active_top_tab === "projects" ||
+                  is_valid_uuid_string(active_top_tab)
+                  ? null
+                  : sidebarOnlyNavigation
+                : topBar
+          }
+        />
       </CocalcErrorBoundary>
       {/* Embedded surfaces (kiosk and project embed) and the auth view hide
           the top navigation and confine what may be shown; keep the global

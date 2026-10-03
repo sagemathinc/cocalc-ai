@@ -815,6 +815,16 @@ export class NotebookFrameActions {
     this.call_input_editor_method(id, "save");
   }
 
+  // Save every open input editor. Commands that split, merge, copy or delete
+  // cells work on the cells' stored input, which lags the editors by the save
+  // debounce: without this, text typed just before the command is duplicated
+  // (split), dropped (merge, copy) or brings a deleted cell back (delete).
+  public save_all_input_editors(): void {
+    for (const id in this.input_editors) {
+      this.save_input_editor(id);
+    }
+  }
+
   // Used for implementing actions and Codex integration.
   get_cell_input(id: string): string {
     if (this.input_editors[id] != null) {
@@ -895,6 +905,7 @@ export class NotebookFrameActions {
   }
 
   public delete_selected_cells(sync: boolean = true): void {
+    this.save_all_input_editors();
     const selected: string[] = this.store.get_selected_cell_ids_list();
     if (selected.length === 0) {
       return;
@@ -1000,6 +1011,7 @@ export class NotebookFrameActions {
   }
 
   public split_current_cell(): void {
+    this.save_all_input_editors();
     const cur_id = this.store.get("cur_id");
     const cursor = this.input_editors[cur_id]?.get_cursor?.();
     if (cursor == null) return; // no cursor, no split.
@@ -1028,12 +1040,14 @@ export class NotebookFrameActions {
 
   // Cut currently selected cells, putting them in internal clipboard
   public cut_selected_cells(): void {
+    this.save_all_input_editors();
     this.copy_selected_cells();
     this.delete_selected_cells();
   }
 
   // Copy all currently selected cells into our internal clipboard
   public copy_selected_cells(): void {
+    this.save_all_input_editors();
     this.jupyter_actions.copy_cells(this.store.get_selected_cell_ids_list());
   }
 
@@ -1081,16 +1095,19 @@ export class NotebookFrameActions {
   }
 
   public merge_cell_above(save: boolean = true): void {
+    this.save_all_input_editors();
     this.move_cursor(-1);
     this.merge_cell_below(save);
   }
 
   public merge_cell_below(save: boolean = true): void {
+    this.save_all_input_editors();
     this.jupyter_actions.merge_cell_below_cell(this.store.get("cur_id"), save);
   }
 
   // Merge all selected cells into one cell.
   public merge_selected_cells(): void {
+    this.save_all_input_editors();
     const cell_ids = this.store.get_selected_cell_ids_list();
     this.jupyter_actions.merge_cells(cell_ids);
     this.set_cur_id(cell_ids[0]);

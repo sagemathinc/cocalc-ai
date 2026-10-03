@@ -12,6 +12,7 @@ import {
   ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY,
   ACCOUNT_CREDENTIAL_PROFILE_METADATA_KEY,
   ANTHROPIC_API_PROVIDER,
+  CLAUDE_OAUTH_TOKEN_AUTHENTICATION,
   CLAUDE_SUBSCRIPTION_KIND,
   CLAUDE_SUBSCRIPTION_PROFILE_ID,
 } from "@cocalc/util/ai/external-credential-profiles";
@@ -21,8 +22,8 @@ import {
   changedClaudeSubscriptionFiles,
   claudeSubscriptionBundleFiles,
   packClaudeSubscriptionBundle,
-  packClaudeSubscriptionHome,
 } from "./claude-subscription-home";
+import { packClaudeSubscriptionToken } from "./claude-subscription-token";
 
 const logger = getLogger("project-host:acp:claude-subscription-registry");
 // Compare-and-swap conflicts are retried against the newly stored bundle.
@@ -52,7 +53,7 @@ export async function getClaudeSubscriptionCredential(options: {
   projectId: string;
   accountId: string;
   credentialId: string;
-}): Promise<{ payload: string; identity: string; plan: string }> {
+}): Promise<{ payload: string; identity?: string; plan?: string }> {
   const { projectId, accountId, credentialId } = options;
   if (!isValidUUID(projectId) || !isValidUUID(credentialId))
     throw Error("Invalid Claude credential binding");
@@ -72,59 +73,70 @@ export async function getClaudeSubscriptionCredential(options: {
     credential?.id !== credentialId ||
     credential.metadata?.[ACCOUNT_CREDENTIAL_PROFILE_METADATA_KEY] !==
       CLAUDE_SUBSCRIPTION_PROFILE_ID ||
-    typeof credential.metadata?.[ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY] !==
-      "string" ||
-    typeof credential.metadata?.plan !== "string" ||
     typeof credential.payload !== "string"
   )
     throw Error("Claude subscription credential is unavailable or revoked");
+  // A long-lived token cannot read its account's email or plan.
+  const identity =
+    credential.metadata[ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY];
+  const plan = credential.metadata.plan;
   return {
     payload: credential.payload,
-    identity: credential.metadata[ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY],
-    plan: credential.metadata.plan,
+    ...(typeof identity === "string" ? { identity } : {}),
+    ...(typeof plan === "string" ? { plan } : {}),
   };
 }
 
-export async function publishClaudeSubscriptionCredential(options: {
+/**
+ * Store a long-lived inference token. Reconnecting replaces the credential's
+ * payload in place, converting a home snapshot to a token. The token cannot
+ * reveal its Claude account, so reconnect cannot check that it is the same.
+ */
+export async function publishClaudeSubscriptionToken(options: {
   projectId: string;
   accountId: string;
-  home: string;
-  identity: string;
-  plan: string;
+  token: string;
+  expiresAt?: string;
   credentialId?: string;
-  allowedPaths?: ReadonlySet<string>;
 }): Promise<string> {
-  const {
-    projectId,
-    accountId,
-    home,
-    identity,
-    plan,
-    credentialId,
-    allowedPaths,
-  } = options;
+  const { projectId, accountId, token, expiresAt, credentialId } = options;
   if (!isValidUUID(projectId) || (credentialId && !isValidUUID(credentialId)))
     throw Error("Invalid Claude credential binding");
-  if (!/^(?:claude\s+)?(?:pro|max)(?:\s|$)/i.test(plan))
-    throw Error("Invalid Claude subscription plan");
-  if (credentialId) {
-    const current = await getClaudeSubscriptionCredential({
+  if (credentialId)
+    await getClaudeSubscriptionCredential({
       projectId,
       accountId,
       credentialId,
     });
-    if (current.identity !== identity)
-      throw Error("Reconnect must use the same Claude account");
-  }
-  const payload = await packClaudeSubscriptionHome(home, allowedPaths);
-  return await upsertClaudeSubscriptionPayload({
-    projectId,
-    accountId,
-    payload,
-    identity,
-    plan,
-    credentialId,
+  const result = await callHub({
+    ...caller(),
+    name: "hosts.upsertExternalCredential",
+    args: [
+      {
+        project_id: projectId,
+        selector: selector(accountId),
+        payload: packClaudeSubscriptionToken(token),
+        metadata: {
+          [ACCOUNT_CREDENTIAL_PROFILE_METADATA_KEY]:
+            CLAUDE_SUBSCRIPTION_PROFILE_ID,
+          // Updates merge metadata: clear a replaced snapshot's identity.
+          [ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY]: null,
+          plan: null,
+          authentication: CLAUDE_OAUTH_TOKEN_AUTHENTICATION,
+          billing: "claude-plan",
+          ...(expiresAt ? { expires_at: expiresAt } : {}),
+          verified_at: new Date().toISOString(),
+        },
+        credential_id: credentialId,
+        create: !credentialId,
+        max_active: credentialId ? undefined : 3,
+      },
+    ],
+    timeout: 15_000,
   });
+  if (!result?.id || !isValidUUID(result.id))
+    throw Error("Claude subscription credential was not published");
+  return result.id;
 }
 
 async function upsertClaudeSubscriptionPayload(options: {
@@ -247,8 +259,8 @@ export async function syncClaudeSubscriptionCredential(options: {
         accountId,
         credentialId,
         payload: packClaudeSubscriptionBundle(merged),
-        identity: stored.identity,
-        plan: stored.plan,
+        identity: stored.identity!,
+        plan: stored.plan!,
         expectedPayloadSha256: createHash("sha256")
           .update(stored.payload, "utf8")
           .digest("hex"),

@@ -270,13 +270,21 @@ class Actions implements EditorActions {
     return this.jupyter_actions;
   }
 
-  set_cell_input(_id: string, input: string, commit?: boolean) {
+  // Returns the input saved (see JupyterActions.set_cell_input); a
+  // whiteboard code cell saves it as given.
+  set_cell_input(
+    _id: string,
+    input: string,
+    commit?: boolean,
+    _base?: string,
+  ): string {
     this.setLocalValue(input);
     this.frame.actions.setElement({
       obj: { id: this.id, str: input },
       commit,
     });
     this.mergeHelperRef.current.noteSaved(input);
+    return input;
   }
 
   undo() {

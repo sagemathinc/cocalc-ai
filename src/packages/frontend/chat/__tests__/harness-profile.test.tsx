@@ -40,10 +40,20 @@ const accountStore = {
 };
 
 jest.mock("../claude-subscription-connect", () => ({
-  ClaudeSubscriptionConnect: ({ onConnected }) => (
-    <button onClick={() => onConnected("00000000-0000-4000-8000-000000000002")}>
-      Complete subscription sign-in
-    </button>
+  ClaudeSubscriptionConnect: ({
+    onConnected,
+    leadingActions,
+    trailingActions,
+  }) => (
+    <>
+      {leadingActions}
+      {trailingActions}
+      <button
+        onClick={() => onConnected("00000000-0000-4000-8000-000000000002")}
+      >
+        Complete subscription sign-in
+      </button>
+    </>
   ),
 }));
 
@@ -231,9 +241,7 @@ test("Claude subscription selection exposes an explicit disconnect action", () =
         threadKey="thread-a"
       />,
     );
-    expect(
-      screen.getByRole("button", { name: "Disconnect Claude subscription" }),
-    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Disconnect" })).toBeTruthy();
     expect(
       screen.getByRole("link", {
         name: /Claude Code preview: setup, security model, and billing/,

@@ -157,7 +157,6 @@ const PROJECT_HOST_ROUTED_HUB_METHODS = new Set<string>([
   "projects.codexDeviceAuthCancel",
   "projects.claudeSubscriptionLoginStart",
   "projects.claudeSubscriptionLoginStatus",
-  "projects.getClaudeSubscriptionUsage",
   "projects.claudeSubscriptionLoginSubmitCode",
   "projects.claudeSubscriptionLoginCancel",
   "projects.codexUploadAuthFile",

@@ -65,7 +65,7 @@ describe("PublicTopNav", () => {
         </PublicConfigProvider>,
       );
       expect(screen.queryByRole("link", { name: "Agents" })).toBeNull();
-      const projects = screen.getByRole("link", { name: "Projects" });
+      const projects = screen.getByRole("link", { name: /^Open / });
       expect(projects).toHaveAttribute("href", "/projects");
       projects.focus();
       expect(projects).toHaveFocus();
@@ -111,12 +111,10 @@ describe("PublicTopNav", () => {
 
     expect(screen.getByText("Alice Example")).not.toBeNull();
     expect(screen.queryByText("alice@example.com")).toBeNull();
-    const agents = screen.getByRole("link", { name: "Agents" });
-    const projects = screen.getByRole("link", { name: "Projects" });
-    expect(agents).toHaveAttribute("href", "/agents");
-    expect(agents.querySelector('svg[data-icon="robot"]')).not.toBeNull();
-    expect(projects).toHaveAttribute("href", "/projects");
-    expect(projects.querySelector('svg[data-icon="edit"]')).not.toBeNull();
+    // One way into the app: back to where you last were (else Agents).
+    const open = screen.getByRole("link", { name: /^Open Launchpad/ });
+    expect(open).toHaveAttribute("href", "/agents");
+    expect(screen.queryByRole("link", { name: "Agents" })).toBeNull();
     expect(screen.queryByRole("link", { name: "Settings" })).toBeNull();
     expect(screen.getByRole("link", { name: "Launchpad home" })).not.toBeNull();
     expect(
@@ -150,7 +148,7 @@ describe("PublicTopNav", () => {
       "href",
       "/auth/sign-up",
     );
-    expect(screen.queryByRole("link", { name: "Projects" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /^Open / })).toBeNull();
   });
 
   it("renders logo and public page navigation with Support at the end", async () => {
@@ -639,4 +637,21 @@ describe("PublicTopNav", () => {
       }
     },
   );
+});
+
+it("Open returns to the last place in the app", async () => {
+  localStorage.setItem("cocalc-last-app-path-v1", "projects/abc/files/a.md");
+  try {
+    render(
+      <PublicConfigProvider config={{ is_authenticated: true }}>
+        <PublicTopNav />
+      </PublicConfigProvider>,
+    );
+    expect(await screen.findByRole("link", { name: /^Open / })).toHaveAttribute(
+      "href",
+      "/projects/abc/files/a.md",
+    );
+  } finally {
+    localStorage.removeItem("cocalc-last-app-path-v1");
+  }
 });

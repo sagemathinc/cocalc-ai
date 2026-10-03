@@ -236,6 +236,34 @@ describe("fast-open optimistic state machine", () => {
     expect(actions.getState("status")).toBe("");
   });
 
+  it("differing-content handoff shows the live value in an open editor buffer", async () => {
+    // A live CodeMirror buffer is not updated from the store, so the handoff
+    // must put the synced value into it, and make that the merge base:
+    // otherwise the stale disk text is taken for the user's edits and the
+    // first save reverts everyone's recent changes.
+    const actions = new FastOpenHarness();
+    actions.setFastOpenEnabled(true);
+    actions.setReadFileResult("disk");
+    actions.setSyncString({
+      get_state: jest.fn().mockReturnValue("loading"),
+      to_str: jest.fn().mockReturnValue("live"),
+      versions: jest.fn().mockReturnValue([]),
+    } as any);
+    let buffer = "disk";
+    const cm = {
+      getValue: () => buffer,
+      setValueNoJump: (value: string) => (buffer = value),
+      operation: (f: () => void) => f(),
+    };
+    (actions as any)._get_cm = () => cm;
+
+    await actions.startOptimistic();
+    actions.completeOptimistic();
+
+    expect(buffer).toBe("live");
+    expect((actions as any).getMergeCoordinator().getBaseValue()).toBe("live");
+  });
+
   it("jumps as soon as the disk preview loads without repeating an equal handoff", async () => {
     const actions = new FastOpenHarness();
     actions.setFastOpenEnabled(true);

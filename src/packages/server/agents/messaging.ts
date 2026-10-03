@@ -16,6 +16,7 @@ import { agentStore } from "./store";
 import { assertAgent, assertRun } from "./access";
 import { startAgentMessagingMaintenance } from "./maintenance";
 import { retireLegacyAgentMessagingAuthority } from "./session-cutover";
+import { agentMemory } from "./memory";
 
 const logger = getLogger("agents:messaging");
 export function acceptAgentMessage(
@@ -33,11 +34,25 @@ export async function acceptAgentMessage(
   await assertRun(run);
   const source = await db.get(agent_id);
   await assertAgent(source);
+  if (request.action === "memory") {
+    // Memory always belongs to the account this turn runs as, from the
+    // authenticated run, never from the request.
+    return await agentMemory().agent(run.account_id, request);
+  }
   return {
     identity: source,
     run_id,
     protocol_version: 3,
-    capabilities: ["whoami"],
+    // What this identity can do: `cocalc agent --help` covers each one.
+    capabilities: [
+      "whoami",
+      "memory",
+      "destinations",
+      "send",
+      "broadcast",
+      "inspect",
+      "propose-network",
+    ],
   };
 }
 

@@ -15,14 +15,14 @@ describe("MergeCoordinator", () => {
       },
     });
 
-    coordinator.seedBase("abc", "1");
+    coordinator.seedBase("a b c", "1");
     // Local user inserts X before 'c'.
-    localBuffer = "abXc";
+    localBuffer = "a b X c";
     // Remote appends Y.
-    coordinator.mergeRemote("abcY", "2");
+    coordinator.mergeRemote("a b c Y", "2");
 
-    expect(applied).toBe("abXcY");
-    expect(localBuffer).toBe("abXcY");
+    expect(applied).toBe("a b X c Y");
+    expect(localBuffer).toBe("a b X c Y");
   });
 
   test("preserves uncommitted local across successive remotes", () => {
@@ -37,16 +37,16 @@ describe("MergeCoordinator", () => {
       },
     });
 
-    coordinator.seedBase("abc", "1");
+    coordinator.seedBase("a b c", "1");
     // Local edit: insert X.
-    localBuffer = "abXc";
+    localBuffer = "a b X c";
     // First remote: append Y.
-    coordinator.mergeRemote("abcY", "2");
-    expect(applied).toBe("abXcY");
+    coordinator.mergeRemote("a b c Y", "2");
+    expect(applied).toBe("a b X c Y");
     // Second remote: append Z (doesn't have X).
-    coordinator.mergeRemote("abcYZ", "3");
-    expect(applied).toBe("abXcYZ");
-    expect(localBuffer).toBe("abXcYZ");
+    coordinator.mergeRemote("a b c Y Z", "3");
+    expect(applied).toBe("a b X c Y Z");
+    expect(localBuffer).toBe("a b X c Y Z");
   });
 
   test("non-overlapping edits merge (base/local/remote example)", () => {

@@ -352,6 +352,7 @@ it("selects a registered agent before opening My Agents", async () => {
   );
   expect(setState).toHaveBeenCalledWith({
     library_open: false,
+    agents_overview_open: false,
     library_project_id: undefined,
     library_entry_id: undefined,
     active_agent_id: "agent-id",
