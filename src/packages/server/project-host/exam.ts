@@ -27,6 +27,7 @@ import {
 } from "@cocalc/server/cloud/dns";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import adminAlert from "@cocalc/server/messages/admin-alert";
+import { examHostnameFromPublicHostname } from "@cocalc/util/project-host-exam-hostname";
 import type { RootfsImageManifest } from "@cocalc/util/rootfs-images";
 
 const logger = getLogger("server:project-host:exam");
@@ -498,13 +499,7 @@ function publicHostname(host: ExamHostRow): string {
 }
 
 function examHostnameForHost(host: ExamHostRow): string {
-  const target = publicHostname(host);
-  const labels = target.split(".");
-  const first = labels[0] ?? "";
-  labels[0] = first.startsWith("host-")
-    ? `exam-${first.slice("host-".length)}`
-    : `exam-${host.id}`;
-  return labels.join(".");
+  return examHostnameFromPublicHostname(publicHostname(host), host.id);
 }
 
 function publicIp(host: ExamHostRow): string {

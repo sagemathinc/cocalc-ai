@@ -252,6 +252,25 @@ describe("project-host conat router helpers", () => {
     ).toBe(false);
   });
 
+  it("keeps the hub's exam hostname off the app ingress for any public URL", () => {
+    // Without a host- label, the hub names the exam hostname after the host id.
+    process.env.PROJECT_HOST_PUBLIC_URL = "https://compute.example.com";
+    process.env.PROJECT_HOST_ID = "00000000-1000-4000-8000-000000000123";
+    const request = (host: string) => ({ headers: { host } });
+
+    expect(
+      shouldRouteProjectHostIngressToApp(
+        request("exam-00000000-1000-4000-8000-000000000123.example.com"),
+      ),
+    ).toBe(false);
+    expect(
+      shouldRouteProjectHostIngressToApp(request("compute.example.com")),
+    ).toBe(false);
+    expect(
+      shouldRouteProjectHostIngressToApp(request("exam-other.example.com")),
+    ).toBe(true);
+  });
+
   it("derives the paired exam hostname from the public host URL", () => {
     expect(
       examHostnameFromProjectHostPublicUrl(
@@ -261,6 +280,19 @@ describe("project-host conat router helpers", () => {
     expect(
       examHostnameFromProjectHostPublicUrl("https://custom.example.com"),
     ).toBeUndefined();
+    // Like the hub, a first label without host- becomes exam-<host id>.
+    expect(
+      examHostnameFromProjectHostPublicUrl(
+        "https://custom.example.com",
+        "00000000-1000-4000-8000-000000000123",
+      ),
+    ).toBe("exam-00000000-1000-4000-8000-000000000123.example.com");
+    expect(
+      examHostnameFromProjectHostPublicUrl(
+        "https://host-123.example.com",
+        "00000000-1000-4000-8000-000000000123",
+      ),
+    ).toBe("exam-123.example.com");
   });
 
   it("gives a custom hostname its root Conat HTTP namespace", async () => {

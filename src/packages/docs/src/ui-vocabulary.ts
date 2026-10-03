@@ -562,7 +562,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
         "This scratchpad is not available right now. Ask your instructor.",
         "This scratchpad is not available right now. Ask your instructor.",
       ],
-      ["student-not-found", "Not Found", 'error: "Not Found"'],
+      ["student-no-exam", "No exam is open", ">No exam is open<"],
       [
         "join-same-origin",
         "exam admission requires a same-origin request",
