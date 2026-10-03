@@ -92,8 +92,8 @@ box. They start from the agent you had selected, if any.
    preview, where the site enables it; see [Use Claude Code](/docs/ai/claude-code).
    For Codex, click the model, thinking level, or payment source button to
    change it. When **CoCalc Membership** pays, whether chosen directly or
-   automatically, the model and thinking level are fixed. Access, funding,
-   project permissions, and resource limits still apply.
+   automatically, the thinking level is fixed. Access, funding, project
+   permissions, and resource limits still apply.
 4. Choose **Start agent**, or press **Shift+Enter**. This creates the named
    agent and sends your request. It can start project compute and use model
    allowance. If CoCalc warns that the agent was created but the first request
