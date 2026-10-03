@@ -255,6 +255,7 @@ import {
 } from "./agent-running-indicator";
 import { AgentProjectSelector } from "./agent-project-selector";
 import { AgentProjectStatus } from "./project-status";
+import { AgentParticipants } from "./agent-participants-avatars";
 import { AgentHostRecovery } from "./host-recovery";
 import { useWorkspaceSelectedThread } from "./use-workspace-selected-thread";
 import {
@@ -2941,6 +2942,7 @@ function AgentWorkspace({
             )}
             <span aria-hidden="true">·</span>
             <AgentProjectStatus agent={agent} active={active} />
+            <AgentParticipants endpoint={agent.endpoint} />
             {workingDirectoryLabel && (
               <Button
                 type="text"

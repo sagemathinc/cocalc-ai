@@ -8,6 +8,7 @@ import type {
 } from "@cocalc/conat/inter-bay/agent-rpc";
 import { createAgentRpcControlClient } from "@cocalc/conat/inter-bay/agent-rpc";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
+import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
@@ -269,6 +270,8 @@ export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
       );
     case "observeNetworkActivity":
       return store.observeActivity(account, request.options);
+    case "hasNamedAgent":
+      return { named: await store.hasName(account, request.options.endpoint) };
     default:
       throw new Error("unsupported personal agent operation");
   }
@@ -326,6 +329,57 @@ async function human<K extends PersonalHumanMethod>(
 
 export const listNamedAgents: AgentApi["listNamedAgents"] = (opts) =>
   human("listNamedAgents", opts);
+
+const MAX_PARTICIPANT_CANDIDATES = 100;
+
+/**
+ * The agent's participants: the project's other owners and collaborators who
+ * have named it. The project users come from the server's own project
+ * reference (never from the caller), and each answer from that person's
+ * home bay, so a viewer learns only who among their own collaborators uses
+ * the agent -- not what they call it.
+ */
+export const listAgentParticipants: AgentApi["listAgentParticipants"] = async ({
+  account_id,
+  endpoint,
+}) => {
+  requireUuid(account_id, "account_id");
+  requireUuid(endpoint?.project_id, "project_id");
+  requireUuid(endpoint?.agent_id, "agent_id");
+  const reference = await assertProjectCollaboratorAccessAllowRemote({
+    account_id,
+    project_id: endpoint.project_id,
+    warmRoute: false,
+  });
+  const candidates = Object.entries(reference.users ?? {})
+    .filter(
+      ([id, user]) =>
+        id !== account_id &&
+        (user?.group === "owner" || user?.group === "collaborator"),
+    )
+    .map(([id]) => id)
+    .slice(0, MAX_PARTICIPANT_CANDIDATES);
+  const target = {
+    project_id: endpoint.project_id,
+    agent_id: endpoint.agent_id,
+  };
+  const results = await Promise.allSettled(
+    candidates.map(async (candidate) => {
+      const result = (await withPersonalHome(candidate, {
+        action: "hasNamedAgent",
+        options: { endpoint: target },
+      })) as { named?: boolean } | undefined;
+      return result?.named === true ? candidate : undefined;
+    }),
+  );
+  const account_ids: string[] = [];
+  let unavailable = 0;
+  for (const result of results) {
+    if (result.status === "rejected") unavailable += 1;
+    else if (result.value) account_ids.push(result.value);
+  }
+  return { account_ids, unavailable };
+};
 export const nameAgent: AgentApi["nameAgent"] = (opts) =>
   human("nameAgent", opts);
 export const retireNamedAgent: AgentApi["retireNamedAgent"] = (opts) =>
