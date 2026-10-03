@@ -133,7 +133,7 @@ another agent, or change who can read the shared chat.
 Pin an agent to keep it near the top. You can use recent or custom ordering and
 group the list by project. These list preferences are personal to your account.
 To take an agent out of the sidebar without removing it, point at it there,
-click its **More actions** button (a vertical ellipsis), and choose
+click its **More actions for @*name*** button (a vertical ellipsis), and choose
 **Hide from Agents**. To remove it, choose **Remove from Agents…** in the same
 menu and confirm with **Remove from Agents**; the conversation and artifacts
 remain, but that agent becomes unavailable to its Agent Networks. Removing

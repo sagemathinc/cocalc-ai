@@ -295,9 +295,11 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
   },
   {
     id: "agents.sidebar.more-actions",
-    label: "More actions",
-    anchors: [def(WORKSPACE_PAGE, "title={`More actions for @")],
-    usedIn: [bold("ai", "More actions")],
+    // The tooltip and accessible name of an icon-only button, composed with
+    // the agent's name, so the guide gives the pattern with *name* in italics.
+    label: "More actions for @{name}",
+    anchors: [def(WORKSPACE_PAGE, "title={`More actions for @${agent.name}`}")],
+    usedIn: [bold("ai", "More actions for @*name*")],
   },
   ...(
     [
