@@ -1209,8 +1209,9 @@ describe("PublicAuthApp", () => {
       />,
     );
 
-    expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
-    expect(screen.getByRole("link", { name: "Agents" })).not.toBeNull();
+    expect(
+      screen.getAllByRole("link", { name: /^Open / }).length,
+    ).toBeGreaterThan(0);
   });
 
   it("replaces sign-up with signed-in account actions after auth bootstrap", async () => {

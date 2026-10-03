@@ -249,3 +249,15 @@ test("local mapping uses project/path/thread, target search, deterministic sort 
   a.item.created_at = 2;
   expect(catalogResults([b, a], [agent])[0].hit.artifact_id).toBe("a");
 });
+
+test("artifacts in a project's Library conversation are listed as from @artifacts", () => {
+  const handMade = {
+    ...entry("hand-made"),
+    chat_path: "/home/user/.local/share/cocalc/artifacts.chat",
+  };
+  const other = { ...entry("elsewhere"), chat_path: "/home/user/random.chat" };
+  const results = catalogResults([handMade, other], []);
+  expect(results.map((r) => r.hit.artifact_title)).toEqual(["hand-made"]);
+  expect(results[0].agent.name).toBe("artifacts");
+  expect(results[0].agent.endpoint.agent_id).toBe("library:p");
+});

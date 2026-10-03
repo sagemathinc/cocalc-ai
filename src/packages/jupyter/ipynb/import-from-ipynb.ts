@@ -39,6 +39,7 @@ export class IPynbImporter {
     done?: () => void;
   };
   private _existing_ids: string[];
+  private _file_ids?: Set<string>;
   private _cells: any;
   private _kernel: any;
   private _metadata: any;
@@ -64,6 +65,7 @@ export class IPynbImporter {
     this._new_id = new_id;
     this._cellOutputHandler = cellOutputHandler;
     this._existing_ids = existing_ids; // option to re-use existing ids
+    this._file_ids = undefined;
 
     // must come before sanity checks, as old versions are "insane". -- see https://github.com/sagemathinc/cocalc/issues/1937
     this._handle_old_versions();
@@ -337,8 +339,36 @@ export class IPynbImporter {
     }
   }
 
+  // The id of the n-th cell of the file: its own id if that is an existing
+  // cell (the same cell), otherwise the n-th existing id, if no cell of the
+  // file has it (reusing ids keeps the patch that applies the file small),
+  // otherwise a new id. Matching by position alone would give a cell the id
+  // of another cell whenever the file has cells inserted, deleted or moved,
+  // moving every input after it to the wrong cell.
+  _cell_id = (cell: any, n: number): string => {
+    if (this._file_ids == null) {
+      this._file_ids = new Set();
+      for (const c of this._ipynb?.cells ?? []) {
+        if (c?.id != null) this._file_ids.add(c.id);
+      }
+    }
+    const used = (id: string) => this._cells?.[id] != null;
+    if (
+      cell?.id != null &&
+      this._existing_ids.includes(cell.id) &&
+      !used(cell.id)
+    ) {
+      return cell.id;
+    }
+    const existing = this._existing_ids[n];
+    if (existing != null && !this._file_ids.has(existing) && !used(existing)) {
+      return existing;
+    }
+    return this._get_new_id(cell);
+  };
+
   _import_cell = (cell: any, n: any) => {
-    const id = this._existing_ids[n] ?? this._get_new_id(cell);
+    const id = this._cell_id(cell, n);
     const obj: any = {
       type: "cell",
       id,

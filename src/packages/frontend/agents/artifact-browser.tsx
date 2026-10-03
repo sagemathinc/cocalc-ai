@@ -1,3 +1,5 @@
+import { PageSearchBox } from "@cocalc/frontend/search/page-search-box";
+import { setListQuery, useListQuery } from "@cocalc/frontend/search/list-query";
 import {
   lazy,
   Suspense,
@@ -9,25 +11,25 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { ComponentRef, ReactNode } from "react";
-import { Alert, Button, Checkbox, Dropdown, Empty, Input, Select } from "antd";
+import { Alert, Button, Checkbox, Empty, Select } from "antd";
 import type { InputRef } from "antd";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { Icon, isIconName } from "@cocalc/frontend/components";
 import { blobImageUrl } from "@cocalc/frontend/components/theme-image-url";
 import type { ForeignArtifactTarget } from "@cocalc/frontend/frame-editors/chat-editor/foreign-artifact-source";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { AgentSearchHit } from "./search-runner";
 import { useArtifactPins } from "@cocalc/frontend/chat/use-artifact-pins";
 import { useArtifactNames } from "./artifact-names";
 import {
-  DragHandle,
-  SortableItem,
-  SortableList,
-} from "@cocalc/frontend/components/sortable-list";
+  Collection,
+  type CollectionControls,
+} from "@cocalc/frontend/components/collection";
 import {
-  ArtifactCatalogStore,
+  sharedArtifactCatalog,
   artifactIdentity as identity,
   catalogResults,
   CATALOG_LIMITS,
@@ -61,6 +63,7 @@ interface Props {
   onShowConversation?: (hit: AgentSearchHit) => Promise<void>;
   onClose?: () => void;
   navigation?: ReactNode;
+  onNewArtifact?: () => void;
   /** artifactIdentity(hit); applied on return, without changing filters. */
   selectedArtifactIdentity?: string;
 }
@@ -78,9 +81,20 @@ function AccountArtifactBrowser({
   onShowConversation,
   onClose,
   navigation,
+  onNewArtifact,
   selectedArtifactIdentity,
 }: Props) {
-  const [query, setQuery] = useState("");
+  // The search box (shared with the sidebar's) narrows the artifacts.
+  const query = useListQuery();
+  // Another page asked to open Artifacts on a search (e.g. an agent's name).
+  const requestedQuery = useTypedRedux("page", "library_query");
+  useEffect(() => {
+    if (requestedQuery == null) return;
+    // After the workspace clears the box for the newly shown page.
+    const timer = setTimeout(() => setListQuery(requestedQuery), 0);
+    redux.getActions("page").setState({ library_query: undefined });
+    return () => clearTimeout(timer);
+  }, [requestedQuery]);
   const [project, setProject] = useState<string>();
   const [sort, setSort] = useState("recent");
   const [view, setView] = useState<"list" | "grid">(() =>
@@ -97,11 +111,10 @@ function AccountArtifactBrowser({
   const wasActive = useRef(false);
   const restorePending = useRef(false);
   const searchRef = useRef<InputRef>(null);
-  const [catalog] = useState(
-    () =>
-      new ArtifactCatalogStore(accountId, (opts) =>
-        webapp_client.conat_client.hub.artifactCatalog.listProject(opts),
-      ),
+  const [catalog] = useState(() =>
+    sharedArtifactCatalog(accountId, (opts) =>
+      webapp_client.conat_client.hub.artifactCatalog.listProject(opts),
+    ),
   );
   const metadata = useSyncExternalStore(catalog.subscribe, catalog.get);
   const [openError, setOpenError] = useState("");
@@ -165,7 +178,8 @@ function AccountArtifactBrowser({
     query,
     project,
     sort,
-    pins: sort === "custom" ? pins.pins : [],
+    // Pins have their own section; the sort orders everything else.
+    pins: [],
     aliases: artifactNames,
   });
   const catalogById = new Map(
@@ -178,13 +192,7 @@ function AccountArtifactBrowser({
     agents.find((agent) => agent.endpoint.project_id === id)?.project_title ||
     id;
   // Bound the total rendered rows, not each project independently.
-  const groups = new Map<string, AgentSearchHit[]>();
-  for (const result of ordered.slice(0, 200)) {
-    const key = groupByProject ? result.agent.endpoint.project_id : "";
-    const rows = groups.get(key) ?? [];
-    rows.push(result);
-    groups.set(key, rows);
-  }
+  const shown = ordered.slice(0, 200);
   async function openResult(result: AgentSearchHit, conversation = false) {
     lastArtifact.current = identity(result);
     setOpening(true);
@@ -198,13 +206,195 @@ function AccountArtifactBrowser({
       setOpening(false);
     }
   }
+  function renderRow(result: AgentSearchHit, controls: CollectionControls) {
+    const id = identity(result);
+    const alias = artifactNames.find(
+      (item) =>
+        item.active &&
+        item.project_id === result.agent.endpoint.project_id &&
+        item.entry_id === result.catalogEntryId,
+    )?.name;
+    const appearance = catalogById.get(
+      `${result.agent.endpoint.project_id}/${result.catalogEntryId}`,
+    )?.item.appearance;
+    const menu = controls.menu(
+      [
+        {
+          key: "appearance",
+          label: "Edit appearance",
+          onClick: () => {
+            if (!result.hit.artifact_id || !result.catalogEntryId) return;
+            setAppearanceTarget({
+              projectId: result.agent.endpoint.project_id,
+              path: result.agent.path,
+              threadId: result.threadId,
+              artifactId: result.hit.artifact_id,
+              entryId: result.catalogEntryId,
+            });
+          },
+        },
+      ],
+      `More options for ${result.hit.artifact_title}`,
+    );
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: view === "grid" ? 4 : 8,
+          flexDirection: view === "grid" ? "column" : "row",
+          // Fixed card height so the grid lines up, as in People.
+          height: view === "grid" ? 150 : undefined,
+          boxSizing: "border-box",
+          overflow: "hidden",
+          padding: 8,
+          border:
+            view === "grid"
+              ? `1px solid ${appearance?.color ?? UI_COLORS.border}`
+              : undefined,
+          borderBottom:
+            view === "grid" ? undefined : `1px solid ${UI_COLORS.border}`,
+          borderLeft:
+            view === "list" && appearance?.color
+              ? `3px solid ${appearance.color}`
+              : undefined,
+          borderRadius: view === "grid" ? 12 : undefined,
+          background: appearance?.accent_color
+            ? `linear-gradient(130deg, color-mix(in srgb, ${appearance.accent_color} ${view === "grid" ? 12 : 6}%, ${UI_COLORS.surface}), ${UI_COLORS.surface})`
+            : view === "grid"
+              ? UI_COLORS.surface
+              : undefined,
+        }}
+      >
+        <Button
+          type="text"
+          disabled={opening}
+          aria-label={`Open ${result.hit.artifact_title} from ${result.agent.name}`}
+          data-artifact-identity={id}
+          style={{
+            flex: view === "grid" ? "1 1 auto" : "1 1 180px",
+            minWidth: 0,
+            width: view === "grid" ? "100%" : undefined,
+            height: "auto",
+            whiteSpace: "normal",
+            justifyContent: view === "grid" ? "center" : "flex-start",
+            textAlign: view === "grid" ? "center" : "left",
+          }}
+          onClick={() => void openResult(result)}
+        >
+          <span
+            style={{
+              minWidth: 0,
+              width: view === "grid" ? "100%" : undefined,
+              overflow: "hidden",
+              overflowWrap: view === "grid" ? "normal" : "anywhere",
+              display: view === "list" ? "flex" : undefined,
+              alignItems: "center",
+              gap: 12,
+            }}
+          >
+            {appearance?.image_blob ? (
+              <img
+                src={blobImageUrl(appearance.image_blob)}
+                alt=""
+                style={{
+                  display: "block",
+                  width: view === "grid" ? 24 : 36,
+                  height: view === "grid" ? 24 : 36,
+                  objectFit: "cover",
+                  borderRadius: 6,
+                  margin: view === "grid" ? "0 auto 4px" : undefined,
+                  flexShrink: 0,
+                }}
+              />
+            ) : (
+              <Icon
+                name={isIconName(appearance?.icon) ? appearance.icon : "file"}
+                style={{
+                  display: "block",
+                  fontSize: view === "grid" ? 24 : 28,
+                  marginBottom: view === "grid" ? 4 : undefined,
+                  color: appearance?.color ?? UI_COLORS.text,
+                  flexShrink: 0,
+                }}
+              />
+            )}
+            <span style={{ minWidth: 0 }}>
+              <strong
+                style={{
+                  display: view === "grid" ? "-webkit-box" : "block",
+                  WebkitBoxOrient: view === "grid" ? "vertical" : undefined,
+                  WebkitLineClamp: view === "grid" ? 2 : undefined,
+                  overflow: view === "grid" ? "hidden" : undefined,
+                  lineHeight: 1.3,
+                }}
+                title={result.hit.artifact_title}
+              >
+                {result.hit.artifact_title}
+              </strong>
+              {alias && (
+                <span
+                  style={{
+                    display: "block",
+                    color: UI_COLORS.link,
+                    fontSize: 12,
+                  }}
+                >
+                  @{alias}
+                </span>
+              )}
+              <span
+                style={{
+                  color: UI_COLORS.secondary,
+                  fontSize: 12,
+                  display: "block",
+                  overflow: view === "grid" ? "hidden" : undefined,
+                  textOverflow: view === "grid" ? "ellipsis" : undefined,
+                  whiteSpace: view === "grid" ? "nowrap" : undefined,
+                }}
+                title={`${projectTitle(result.agent.endpoint.project_id)} · @${result.agent.name} · ${result.hit.artifact_kind}`}
+              >
+                {projectTitle(result.agent.endpoint.project_id)} · @
+                {result.agent.name} · {result.hit.artifact_kind}
+              </span>
+            </span>
+          </span>
+        </Button>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            alignSelf: view === "grid" ? "stretch" : undefined,
+            justifyContent: view === "grid" ? "flex-end" : undefined,
+          }}
+        >
+          {/* Same width with or without a handle, so columns line up. */}
+          <span style={{ width: 28, display: "inline-flex" }}>
+            {controls.dragHandle}
+          </span>
+          {onShowConversation && (
+            <Button
+              type="text"
+              disabled={opening}
+              aria-label={`Show conversation for ${result.hit.artifact_title} from ${result.agent.name}`}
+              onClick={() => void openResult(result, true)}
+              icon={<Icon name="comment" />}
+            />
+          )}
+          {controls.pinButton}
+          {menu}
+        </div>
+      </div>
+    );
+  }
   // Retain the DOM as well as the catalog, including disclosure and row state.
   return (
     <div
       ref={viewportRef}
       hidden={!active}
       role="region"
-      aria-label="Library"
+      aria-label="Artifacts page"
       onFocusCapture={(event) => {
         lastFocus.current = event.target;
       }}
@@ -256,11 +446,16 @@ function AccountArtifactBrowser({
               flex: "1 1 auto",
             }}
           >
-            Library
+            Artifacts
           </h1>
+          {onNewArtifact && (
+            <Button icon={<Icon name="plus" />} onClick={onNewArtifact}>
+              New artifact
+            </Button>
+          )}
           <div
             role="group"
-            aria-label="Library view"
+            aria-label="Artifacts view"
             style={{ display: "flex", gap: 4 }}
           >
             <Button
@@ -278,17 +473,7 @@ function AccountArtifactBrowser({
               onClick={() => setView("list")}
             />
           </div>
-          <Input
-            ref={searchRef}
-            type="search"
-            aria-label="Search library"
-            placeholder="Search library"
-            prefix={<Icon name="search" />}
-            style={{ flex: "0 1 320px", minWidth: 0 }}
-            maxLength={256}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
+          <PageSearchBox scope="artifacts" inputRef={searchRef} />
         </header>
         <div
           style={{
@@ -315,7 +500,7 @@ function AccountArtifactBrowser({
               {metadata.loading
                 ? ordered.length
                   ? " · Refreshing..."
-                  : " · Loading library..."
+                  : " · Loading artifacts..."
                 : ""}
               {metadata.limited && " · Preview limit reached"}
             </span>
@@ -397,7 +582,6 @@ function AccountArtifactBrowser({
                 options={[
                   { value: "recent", label: "Recent" },
                   { value: "title", label: "Title" },
-                  { value: "custom", label: "Custom" },
                 ]}
               />
             </div>
@@ -425,9 +609,8 @@ function AccountArtifactBrowser({
               may still be indexing.
             </p>
             <p>
-              Pinned artifacts appear first in Custom order. Drag pins or use
-              their Move up/down menu to reorder within the current group and
-              filters.
+              Pinned artifacts have their own section at the top. Drag them, or
+              focus a handle and use Space and the arrow keys, to reorder.
             </p>
             <p>
               {metadata.indexedSources} indexed sources reported; this is not a
@@ -444,7 +627,7 @@ function AccountArtifactBrowser({
         {metadata.error && (
           <Alert
             type="warning"
-            title="Library metadata unavailable"
+            title="Artifact metadata unavailable"
             description={metadata.error}
           />
         )}
@@ -460,309 +643,23 @@ function AccountArtifactBrowser({
               }
             />
           )}
-          {[...groups].map(([projectId, results]) => {
-            const visiblePins = results
-              .map(identity)
-              .filter((id) => pins.pins.includes(id));
-            return (
-              <section
-                key={projectId}
-                aria-label={
-                  groupByProject ? projectTitle(projectId) : "Artifacts"
-                }
-              >
-                {groupByProject && (
-                  <h2 style={{ fontSize: 16, margin: "16px 0 4px" }}>
-                    {projectTitle(projectId)}
-                  </h2>
-                )}
-                <div
-                  role="list"
-                  style={
-                    view === "grid"
-                      ? {
-                          display: "grid",
-                          gridTemplateColumns:
-                            "repeat(auto-fill, minmax(min(100%, 190px), 1fr))",
-                          gap: 8,
-                        }
-                      : undefined
-                  }
-                >
-                  <SortableList
-                    items={visiblePins}
-                    disabled={sort !== "custom" || view === "grid"}
-                    onDragStop={(_from, to, id) => {
-                      if (typeof id === "string")
-                        pins.move(visiblePins, id, to);
-                    }}
-                  >
-                    {results.map((result) => {
-                      const id = identity(result);
-                      const alias = artifactNames.find(
-                        (item) =>
-                          item.active &&
-                          item.project_id ===
-                            result.agent.endpoint.project_id &&
-                          item.entry_id === result.catalogEntryId,
-                      )?.name;
-                      const appearance = catalogById.get(
-                        `${result.agent.endpoint.project_id}/${result.catalogEntryId}`,
-                      )?.item.appearance;
-                      const pinnedIndex = visiblePins.indexOf(id);
-                      const reorder = sort === "custom" && pinnedIndex >= 0;
-                      const row = (
-                        <div
-                          role="listitem"
-                          key={identity(result)}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: view === "grid" ? 4 : 8,
-                            flexWrap: view === "grid" ? "nowrap" : "wrap",
-                            flexDirection: view === "grid" ? "column" : "row",
-                            minHeight: view === "grid" ? 116 : undefined,
-                            padding: view === "grid" ? 8 : "12px 8px",
-                            border:
-                              view === "grid"
-                                ? `1px solid ${appearance?.color ?? UI_COLORS.border}`
-                                : undefined,
-                            borderBottom:
-                              view === "grid"
-                                ? undefined
-                                : `1px solid ${UI_COLORS.border}`,
-                            borderLeft:
-                              view === "list" && appearance?.color
-                                ? `3px solid ${appearance.color}`
-                                : undefined,
-                            borderRadius: view === "grid" ? 12 : undefined,
-                            background: appearance?.accent_color
-                              ? `linear-gradient(130deg, color-mix(in srgb, ${appearance.accent_color} ${view === "grid" ? 12 : 6}%, ${UI_COLORS.surface}), ${UI_COLORS.surface})`
-                              : view === "grid"
-                                ? UI_COLORS.surface
-                                : undefined,
-                          }}
-                        >
-                          {reorder && view === "list" && (
-                            <DragHandle
-                              id={id}
-                              ariaLabel={`Drag ${result.hit.artifact_title} to reorder`}
-                              style={{ padding: 4 }}
-                            />
-                          )}
-                          <Button
-                            type="text"
-                            disabled={opening}
-                            aria-label={`Open ${result.hit.artifact_title} from ${result.agent.name}`}
-                            data-artifact-identity={id}
-                            style={{
-                              flex: view === "grid" ? "1 1 auto" : "1 1 180px",
-                              minWidth: 0,
-                              width: view === "grid" ? "100%" : undefined,
-                              height: "auto",
-                              whiteSpace: "normal",
-                              justifyContent:
-                                view === "grid" ? "center" : "flex-start",
-                              textAlign: view === "grid" ? "center" : "left",
-                            }}
-                            onClick={() => void openResult(result)}
-                          >
-                            <span
-                              style={{
-                                minWidth: 0,
-                                width: view === "grid" ? "100%" : undefined,
-                                overflow: "hidden",
-                                overflowWrap:
-                                  view === "grid" ? "normal" : "anywhere",
-                                display: view === "list" ? "flex" : undefined,
-                                alignItems: "center",
-                                gap: 12,
-                              }}
-                            >
-                              {appearance?.image_blob ? (
-                                <img
-                                  src={blobImageUrl(appearance.image_blob)}
-                                  alt=""
-                                  style={{
-                                    display: "block",
-                                    width: view === "grid" ? 24 : 36,
-                                    height: view === "grid" ? 24 : 36,
-                                    objectFit: "cover",
-                                    borderRadius: 6,
-                                    margin:
-                                      view === "grid"
-                                        ? "0 auto 4px"
-                                        : undefined,
-                                    flexShrink: 0,
-                                  }}
-                                />
-                              ) : (
-                                <Icon
-                                  name={
-                                    isIconName(appearance?.icon)
-                                      ? appearance.icon
-                                      : "file"
-                                  }
-                                  style={{
-                                    display: "block",
-                                    fontSize: view === "grid" ? 24 : 28,
-                                    marginBottom:
-                                      view === "grid" ? 4 : undefined,
-                                    color: appearance?.color ?? UI_COLORS.text,
-                                    flexShrink: 0,
-                                  }}
-                                />
-                              )}
-                              <span style={{ minWidth: 0 }}>
-                                <strong
-                                  style={{
-                                    display:
-                                      view === "grid" ? "-webkit-box" : "block",
-                                    WebkitBoxOrient:
-                                      view === "grid" ? "vertical" : undefined,
-                                    WebkitLineClamp:
-                                      view === "grid" ? 2 : undefined,
-                                    overflow:
-                                      view === "grid" ? "hidden" : undefined,
-                                    lineHeight: 1.3,
-                                  }}
-                                  title={result.hit.artifact_title}
-                                >
-                                  {result.hit.artifact_title}
-                                </strong>
-                                {alias && (
-                                  <span
-                                    style={{
-                                      display: "block",
-                                      color: UI_COLORS.link,
-                                      fontSize: 12,
-                                    }}
-                                  >
-                                    @{alias}
-                                  </span>
-                                )}
-                                <span
-                                  style={{
-                                    color: UI_COLORS.secondary,
-                                    fontSize: 12,
-                                    display: "block",
-                                    overflow:
-                                      view === "grid" ? "hidden" : undefined,
-                                    textOverflow:
-                                      view === "grid" ? "ellipsis" : undefined,
-                                    whiteSpace:
-                                      view === "grid" ? "nowrap" : undefined,
-                                  }}
-                                  title={`${projectTitle(result.agent.endpoint.project_id)} · @${result.agent.name} · ${result.hit.artifact_kind}`}
-                                >
-                                  {projectTitle(
-                                    result.agent.endpoint.project_id,
-                                  )}{" "}
-                                  · @{result.agent.name} ·{" "}
-                                  {result.hit.artifact_kind}
-                                </span>
-                              </span>
-                            </span>
-                          </Button>
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 4,
-                              alignSelf:
-                                view === "grid" ? "stretch" : undefined,
-                              justifyContent:
-                                view === "grid" ? "flex-end" : undefined,
-                            }}
-                          >
-                            {onShowConversation && (
-                              <Button
-                                type="text"
-                                disabled={opening}
-                                aria-label={`Show conversation for ${result.hit.artifact_title} from ${result.agent.name}`}
-                                onClick={() => void openResult(result, true)}
-                                icon={<Icon name="comment" />}
-                              />
-                            )}
-                            <Button
-                              type="text"
-                              aria-label={`${pins.pins.includes(identity(result)) ? "Unpin" : "Pin"} ${result.hit.artifact_title}`}
-                              aria-pressed={pins.pins.includes(
-                                identity(result),
-                              )}
-                              onClick={() =>
-                                pins.setPinned(
-                                  identity(result),
-                                  !pins.pins.includes(identity(result)),
-                                )
-                              }
-                              icon={
-                                <Icon
-                                  name={
-                                    pins.pins.includes(identity(result))
-                                      ? "pushpin-filled"
-                                      : "pushpin"
-                                  }
-                                />
-                              }
-                            />
-                            {reorder && (
-                              <PinOrderMenu
-                                title={result.hit.artifact_title ?? "artifact"}
-                                index={pinnedIndex}
-                                count={visiblePins.length}
-                                onMove={(index) =>
-                                  pins.move(visiblePins, id, index)
-                                }
-                              />
-                            )}
-                            <Dropdown
-                              trigger={["click"]}
-                              menu={{
-                                items: [
-                                  {
-                                    key: "appearance",
-                                    label: "Edit appearance",
-                                  },
-                                ],
-                                onClick: () => {
-                                  if (
-                                    !result.hit.artifact_id ||
-                                    !result.catalogEntryId
-                                  )
-                                    return;
-                                  setAppearanceTarget({
-                                    projectId: result.agent.endpoint.project_id,
-                                    path: result.agent.path,
-                                    threadId: result.threadId,
-                                    artifactId: result.hit.artifact_id,
-                                    entryId: result.catalogEntryId,
-                                  });
-                                },
-                              }}
-                            >
-                              <Button
-                                type="text"
-                                aria-label={`More options for ${result.hit.artifact_title}`}
-                                icon={<Icon name="ellipsis" />}
-                              />
-                            </Dropdown>
-                          </div>
-                        </div>
-                      );
-                      return reorder && view === "list" ? (
-                        <SortableItem key={id} id={id} hideActive={false}>
-                          {row}
-                        </SortableItem>
-                      ) : (
-                        row
-                      );
-                    })}
-                  </SortableList>
-                </div>
-              </section>
-            );
-          })}
+          <Collection<AgentSearchHit>
+            items={shown}
+            itemId={identity}
+            itemTitle={(result) => result.hit.artifact_title ?? "artifact"}
+            pins={pins.pins}
+            view={view}
+            otherTitle="Artifacts"
+            group={
+              groupByProject
+                ? (result) => result.agent.endpoint.project_id
+                : undefined
+            }
+            groupTitle={projectTitle}
+            onPin={(result, pinned) => pins.setPinned(identity(result), pinned)}
+            onMove={pins.move}
+            renderItem={renderRow}
+          />
         </div>
         {ordered.length > 200 && (
           <p role="status">
@@ -802,46 +699,5 @@ function AccountArtifactBrowser({
         )}
       </KeyboardBoundary>
     </div>
-  );
-}
-
-function PinOrderMenu({
-  title,
-  index,
-  count,
-  onMove,
-}: {
-  title: string;
-  index: number;
-  count: number;
-  onMove: (index: number) => void;
-}) {
-  const button = useRef<ComponentRef<typeof Button>>(null);
-  return (
-    <Dropdown
-      trigger={["click"]}
-      getPopupContainer={(trigger) => trigger.parentElement!}
-      autoFocus
-      onOpenChange={(open) => {
-        if (!open) button.current?.focus();
-      }}
-      menu={{
-        items: [
-          { key: "up", label: "Move up", disabled: index === 0 },
-          { key: "down", label: "Move down", disabled: index === count - 1 },
-        ],
-        onClick: ({ key }) => {
-          onMove(index + (key === "up" ? -1 : 1));
-          button.current?.focus();
-        },
-      }}
-    >
-      <Button
-        ref={button}
-        type="text"
-        aria-label={`Reorder ${title}`}
-        icon={<Icon name="ellipsis" />}
-      />
-    </Dropdown>
   );
 }

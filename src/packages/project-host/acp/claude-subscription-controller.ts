@@ -4,11 +4,10 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { claudeUsageScript } from "./claude-usage-script";
 import { CLAUDE_PROJECT_MCP_NAME } from "./claude-project-tool-source";
 import { CLAUDE_PROJECT_JOB_GUIDANCE } from "@cocalc/util/ai/claude-project-tools";
 import { execFile, spawn } from "node:child_process";
-import { lstat, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { HarnessBinding, HarnessProcess } from "@cocalc/ai/acp/harness";
 import { mountArg } from "@cocalc/backend/podman";
@@ -29,6 +28,7 @@ import {
 import { extractBaseImage } from "@cocalc/project-runner/run/rootfs-base";
 import { getClaudeSubscriptionCredential } from "./claude-subscription-registry";
 import { restoreClaudeSubscriptionHome } from "./claude-subscription-home";
+import { claudeSubscriptionToken } from "./claude-subscription-token";
 import { createClaudeCredentialSync } from "./claude-credential-sync";
 import {
   CLAUDE_PROJECT_TOOL_MOUNT,
@@ -129,10 +129,12 @@ export function claudeSubscriptionContainerArgs(options: {
   uid: number;
   gid: number;
   runtimeArgs?: string[];
-  purpose?: "agent" | "usage";
   claudeAiConnectors?: boolean;
   // Extra environment, e.g. the restricted egress proxy.
   env?: Record<string, string>;
+  // Private host file with secret environment (the subscription token), so
+  // the secret never appears in podman's command line.
+  envFile?: string;
 }): string[] {
   const {
     name,
@@ -147,7 +149,6 @@ export function claudeSubscriptionContainerArgs(options: {
     uid,
     gid,
     runtimeArgs = [],
-    purpose = "agent",
   } = options;
   const entry = `${MANAGED_HARNESSES}/claude-code/${CLAUDE_CODE_QUALIFICATION.package.version}/app/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js`;
   return [
@@ -179,7 +180,7 @@ export function claudeSubscriptionContainerArgs(options: {
     "--tmpfs",
     "/tmp:mode=1777",
     mountArg({ source: home, target: CONTROLLER_HOME }),
-    ...(sessionDirectory && purpose === "agent"
+    ...(sessionDirectory
       ? [
           mountArg({
             source: sessionDirectory,
@@ -192,7 +193,7 @@ export function claudeSubscriptionContainerArgs(options: {
       target: MANAGED_HARNESSES,
       readOnly: true,
     }),
-    ...(toolBridgeDirectory && purpose === "agent"
+    ...(toolBridgeDirectory
       ? [
           mountArg({
             source: toolBridgeDirectory,
@@ -225,28 +226,20 @@ export function claudeSubscriptionContainerArgs(options: {
       "--env",
       `${key}=${value}`,
     ]),
+    ...(options.envFile ? ["--env-file", options.envFile] : []),
     "--rootfs",
     // The shared image cache is immutable. Give OCI setup its own mount-point
     // layer; --read-only still prevents the controller from writing the rootfs.
     `${rootfs}:O`,
     "/opt/cocalc/bin/node",
-    ...(purpose === "usage"
-      ? [
-          "--input-type=module",
-          "-e",
-          claudeUsageScript(
-            `${MANAGED_HARNESSES}/claude-code/${CLAUDE_CODE_QUALIFICATION.package.version}/app/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs`,
-          ),
-        ]
-      : [entry]),
+    entry,
   ];
 }
 
 /** Credential-bearing controller: no project home, secrets, identity token or project network. */
 export async function launchClaudeSubscriptionController(
   binding: HarnessBinding,
-  purpose: "agent" | "usage" = "agent",
-  conversation?: { path: string; threadId: string },
+  conversation: { path: string; threadId: string },
 ): Promise<HarnessProcess> {
   const { projectId, accountId, credential } = binding;
   if (
@@ -257,21 +250,20 @@ export async function launchClaudeSubscriptionController(
   )
     throw Error("Invalid Claude subscription controller binding");
   if (
-    purpose === "agent" &&
-    (typeof conversation?.path !== "string" ||
-      !conversation.path ||
-      typeof conversation.threadId !== "string" ||
-      !conversation.threadId)
+    typeof conversation?.path !== "string" ||
+    !conversation.path ||
+    typeof conversation.threadId !== "string" ||
+    !conversation.threadId
   )
     throw Error("ACP launch requires an admitted conversation");
   const credentialId = credential.credentialId;
-  const skill = purpose === "agent" ? await getBuiltinClaudeSkillText() : "";
+  const skill = await getBuiltinClaudeSkillText();
   const systemPromptAppend = `The CoCalc skill is preloaded below as session instructions, not as a separate Skill tool. Follow it for CoCalc workflows.
 This is an isolated subscription controller. Run ALL project filesystem and CLI operations through the project_exec tool on ${CLAUDE_PROJECT_MCP_NAME}, not in the controller. Read applicable project CLAUDE.md instructions through that tool before editing. Skill reference files are available in the project at /home/user/.claude/skills/cocalc/.
 Current project tool server: ${CLAUDE_PROJECT_MCP_NAME}.
 ${CLAUDE_PROJECT_JOB_GUIDANCE}
 Use the exact installed CLI command: "/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js".
-The project_exec environment contains the runtime-issued CoCalc agent identity for registered agents. Run agent whoami, destinations, and messaging there, not in this isolated controller. Never substitute account credentials if agent identity or network access is unavailable.
+The project_exec environment contains the runtime-issued CoCalc agent identity for registered agents. Message other agents there, not in this isolated controller: \`"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js" agent destinations\` lists who you can message and \`... agent send NAME --stdin\` sends one message (see the skill's Agent Messaging section and \`agent --help\`). Never substitute account credentials if agent identity or network access is unavailable.
 
 <cocalc-skill>
 ${skill}
@@ -281,10 +273,16 @@ ${skill}
     accountId,
     credentialId,
   });
-  if (purpose === "agent")
-    await ensureProjectContainerRunning({ projectId, accountId });
+  // A long-lived token needs no home snapshot and is never written back.
+  const token = claudeSubscriptionToken(registered.payload);
+  // claude.ai connectors need a scope the inference-only token lacks.
+  const claudeAiConnectors = token ? false : credential.claudeAiConnectors;
+  await ensureProjectContainerRunning({ projectId, accountId });
   const rootfs = await extractBaseImage(CLAUDE_CONTROLLER_BASE_IMAGE);
   const home = await mkdtemp(claudeControllerHomePrefix());
+  // Private to the host user, removed before the controller starts, and
+  // reaped with the home if this process dies first.
+  const envFile = join(home, ".cocalc-auth.env");
   const launcher = projectPoolPodmanLauncher(projectId);
   const name = `claude-controller-${projectId}-${randomUUID()}`;
   let created = false;
@@ -295,13 +293,15 @@ ${skill}
   let stopped: Promise<void> | undefined;
   let cleanupRetries = 0;
   let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
-  const credentialSync = createClaudeCredentialSync({
-    projectId,
-    accountId,
-    credentialId,
-    home,
-    restoredPayload: registered.payload,
-  });
+  const credentialSync = token
+    ? undefined
+    : createClaudeCredentialSync({
+        projectId,
+        accountId,
+        credentialId,
+        home,
+        restoredPayload: registered.payload,
+      });
   const command = (args: string[]) =>
     new Promise<void>((resolve, reject) => {
       execFile(
@@ -351,9 +351,9 @@ ${skill}
         const failure = results.find((result) => result.status === "rejected");
         if (failure?.status === "rejected") throw failure.reason;
       },
-      refreshCredential: () => credentialSync.finish(),
+      refreshCredential: async () => await credentialSync?.finish(),
       removeHome: async () => {
-        await credentialSync.idle();
+        await credentialSync?.idle();
         await rm(home, { recursive: true, force: true });
       },
       launched,
@@ -375,84 +375,82 @@ ${skill}
         throw error;
       }));
   try {
-    await restoreClaudeSubscriptionHome(home, registered.payload);
+    if (!token) await restoreClaudeSubscriptionHome(home, registered.payload);
     let sessionDirectory: string | undefined;
-    if (purpose === "agent") {
-      // Resolve identity from the admitted conversation, never the subscription
-      // or environment inherited by the credential-bearing controller.
-      const identityContext = {
-        COCALC_CODEX_CHAT_PATH: conversation!.path,
-        COCALC_CODEX_THREAD_ID: conversation!.threadId,
-      };
-      const projectPaths = await localPath({ project_id: projectId });
-      sessionDirectory = await ensureClaudeTranscriptDirectory({
-        projectHome: projectPaths.home,
-        accountId,
-        credentialId,
-      });
-      cliLease = await createProjectCliTokenLease({
+    // Resolve identity from the admitted conversation, never the subscription
+    // or environment inherited by the credential-bearing controller.
+    const identityContext = {
+      COCALC_CODEX_CHAT_PATH: conversation!.path,
+      COCALC_CODEX_THREAD_ID: conversation!.threadId,
+    };
+    const projectPaths = await localPath({ project_id: projectId });
+    sessionDirectory = await ensureClaudeTranscriptDirectory({
+      projectHome: projectPaths.home,
+      accountId,
+      credentialId,
+    });
+    cliLease = await createProjectCliTokenLease({
+      projectId,
+      accountId,
+      agentSessionKey: JSON.stringify([
+        "claude-subscription",
         projectId,
         accountId,
-        agentSessionKey: JSON.stringify([
-          "claude-subscription",
+        credentialId,
+        conversation!.path,
+        conversation!.threadId,
+      ]),
+      currentEnv: identityContext,
+      home: projectPaths.home,
+      scratch: projectPaths.scratch,
+    });
+    if (!cliLease) throw Error("Scoped Claude CLI credentials unavailable");
+    const cliEnv: Record<string, string> = {
+      ...identityContext,
+      COCALC_PROJECT_ID: projectId,
+      COCALC_BEARER_TOKEN: "",
+      COCALC_AGENT_TOKEN: "",
+      COCALC_BEARER_TOKEN_FILE: cliLease.containerPath,
+      COCALC_AGENT_TOKEN_FILE: cliLease.containerPath,
+      COCALC_AGENT_IDENTITY_FILE: cliLease.identityContainerPath ?? "",
+      COCALC_AGENT_MENTION_REFERENCES_FILE: "",
+      // Holds the managed CoCalc connector key only during a turn whose
+      // agent has the connector enabled.
+      COCALC_CONNECTOR_API_KEY_FILE: cliLease.connectorContainerPath ?? "",
+      COCALC_API_URL: resolveProjectRuntimeApiUrl(),
+    };
+    applyProjectRuntimeCliEnv(cliEnv, accountId);
+    toolBridge = await createClaudeProjectToolBridge(
+      projectId,
+      async (script, cwd, signal, options) => {
+        let result;
+        try {
+          result = await sandboxExec({
+            project_id: projectId,
+            script,
+            cwd: cwd ?? binding.profile.cwd,
+            env: cliEnv,
+            signal,
+            ...options,
+          });
+        } catch (error) {
+          await cliLease?.close();
+          throw error;
+        }
+        if (result.cleanupConfirmed !== true) {
+          // Fence CLI authority independently of process/container cleanup.
+          await cliLease?.close();
+        }
+        return result;
+      },
+      async () => {
+        await getClaudeSubscriptionCredential({
           projectId,
           accountId,
           credentialId,
-          conversation!.path,
-          conversation!.threadId,
-        ]),
-        currentEnv: identityContext,
-        home: projectPaths.home,
-        scratch: projectPaths.scratch,
-      });
-      if (!cliLease) throw Error("Scoped Claude CLI credentials unavailable");
-      const cliEnv: Record<string, string> = {
-        ...identityContext,
-        COCALC_PROJECT_ID: projectId,
-        COCALC_BEARER_TOKEN: "",
-        COCALC_AGENT_TOKEN: "",
-        COCALC_BEARER_TOKEN_FILE: cliLease.containerPath,
-        COCALC_AGENT_TOKEN_FILE: cliLease.containerPath,
-        COCALC_AGENT_IDENTITY_FILE: cliLease.identityContainerPath ?? "",
-        COCALC_AGENT_MENTION_REFERENCES_FILE: "",
-        // Holds the managed CoCalc connector key only during a turn whose
-        // agent has the connector enabled.
-        COCALC_CONNECTOR_API_KEY_FILE: cliLease.connectorContainerPath ?? "",
-        COCALC_API_URL: resolveProjectRuntimeApiUrl(),
-      };
-      applyProjectRuntimeCliEnv(cliEnv, accountId);
-      toolBridge = await createClaudeProjectToolBridge(
-        projectId,
-        async (script, cwd, signal, options) => {
-          let result;
-          try {
-            result = await sandboxExec({
-              project_id: projectId,
-              script,
-              cwd: cwd ?? binding.profile.cwd,
-              env: cliEnv,
-              signal,
-              ...options,
-            });
-          } catch (error) {
-            await cliLease?.close();
-            throw error;
-          }
-          if (result.cleanupConfirmed !== true) {
-            // Fence CLI authority independently of process/container cleanup.
-            await cliLease?.close();
-          }
-          return result;
-        },
-        async () => {
-          await getClaudeSubscriptionCredential({
-            projectId,
-            accountId,
-            credentialId,
-          });
-        },
-      );
-    }
+        });
+      },
+    );
     if (projectNeedsRestrictedClaudeEgress(projectId)) {
       // The controller runs in the project's network containment, which
       // blocks the internet but not the host's own addresses. Reach Anthropic
@@ -465,35 +463,44 @@ ${skill}
       restrictedEgress = await startClaudeRestrictedEgress({
         projectId,
         host,
-        claudeAiConnectors:
-          purpose === "agent" && credential.claudeAiConnectors !== false,
+        claudeAiConnectors: claudeAiConnectors !== false,
       });
     }
     const owner = await harnessOwner();
     const managedHarnesses =
       process.env.COCALC_MANAGED_HARNESSES ?? MANAGED_HARNESSES;
+    if (token)
+      await writeFile(envFile, `CLAUDE_CODE_OAUTH_TOKEN=${token}\n`, {
+        flag: "wx",
+        mode: 0o600,
+      });
     created = true;
-    await command(
-      claudeSubscriptionContainerArgs({
-        name,
-        projectId,
-        owner,
-        rootfs,
-        home,
-        managedHarnesses,
-        purpose,
-        nodeMounts: getNodeRuntimeMounts(),
-        toolBridgeDirectory: toolBridge?.directory,
-        claudeAiConnectors: credential.claudeAiConnectors,
-        sessionDirectory,
-        uid: process.getuid!(),
-        gid: process.getgid!(),
-        runtimeArgs: await podmanRuntimeArgs(),
-        env: restrictedEgress?.env,
-      }),
-    );
+    try {
+      await command(
+        claudeSubscriptionContainerArgs({
+          name,
+          projectId,
+          owner,
+          rootfs,
+          home,
+          managedHarnesses,
+          nodeMounts: getNodeRuntimeMounts(),
+          toolBridgeDirectory: toolBridge?.directory,
+          claudeAiConnectors,
+          sessionDirectory,
+          uid: process.getuid!(),
+          gid: process.getgid!(),
+          runtimeArgs: await podmanRuntimeArgs(),
+          env: restrictedEgress?.env,
+          ...(token ? { envFile } : {}),
+        }),
+      );
+    } finally {
+      // Podman copied it into the container's configuration.
+      await rm(envFile, { force: true });
+    }
     launched = true;
-    credentialSync.start();
+    credentialSync?.start();
     const proc = spawn(
       launcher.command,
       [...launcher.argsPrefix, "start", "--attach", "--interactive", name],
@@ -522,6 +529,7 @@ ${skill}
       endConnectorTurn: cliLease
         ? () => cliLease!.endConnectorTurn()
         : undefined,
+      ...(token ? { subscriptionAuth: "oauth-token" as const } : {}),
       stdin: proc.stdin,
       stdout: proc.stdout,
       stderr: proc.stderr,

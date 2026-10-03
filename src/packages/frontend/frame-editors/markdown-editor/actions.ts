@@ -199,6 +199,7 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
     value: string,
     do_not_exit_undo_mode?: boolean,
     localSource?: string,
+    base?: string,
   ): void {
     if (localSource === "slate") {
       try {
@@ -210,7 +211,19 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
         // The syncstring can be unavailable while the editor is opening/closing.
       }
     }
-    super.set_value(value, do_not_exit_undo_mode, localSource);
+    super.set_value(value, do_not_exit_undo_mode, localSource, base);
+  }
+
+  // Save a rich text (Slate) frame's edits through the editor's own save,
+  // which merges them into the current value from the value it showed. Writing
+  // its markdown directly would delete remote changes it has not shown yet
+  // (e.g. while a remote merge is deferred because its user is typing).
+  // Returns false if there is no such editor.
+  private saveSlateEditor(id: string): boolean {
+    const editor = this.getSlateEditor(id) as any;
+    if (typeof editor?.saveValue !== "function") return false;
+    editor.saveValue(true);
+    return true;
   }
 
   set_syncstring_to_codemirror(
@@ -219,6 +232,7 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
   ): void {
     const activeId = id ?? this._get_active_id?.();
     if (activeId != null && this._get_frame_type(activeId) == "slate") {
+      if (this.saveSlateEditor(activeId)) return;
       const markdown = this.getSlateMarkdown(activeId);
       if (markdown != null) {
         this.set_value(markdown, do_not_exit_undo_mode, "slate");
@@ -311,7 +325,12 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
     if (cm == null) return;
     // important to get markdown from cm and not syncstring to get latest version.
     const markdown = cm.getValue();
-    this.set_value(markdown, true, "cm");
+    const base = this.mergeCoordinator?.getBaseValue();
+    if (base != null) {
+      this.set_value(markdown, true, "cm", base);
+    } else {
+      this.set_value(markdown, true, "cm");
+    }
     const slate_id = this.show_focused_frame_of_type("slate");
     if (slate_id == null) return;
     const pos = cm.getDoc().getCursor();
@@ -359,9 +378,11 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
   }
 
   private sync_slate_to_cm(id: string) {
-    const markdown = this.getSlateMarkdown(id);
-    if (markdown != null) {
-      this.set_value(markdown, true, "slate");
+    if (!this.saveSlateEditor(id)) {
+      const markdown = this.getSlateMarkdown(id);
+      if (markdown != null) {
+        this.set_value(markdown, true, "slate");
+      }
     }
     const editor = this.getSlateEditor(id);
     if (editor == null) return;

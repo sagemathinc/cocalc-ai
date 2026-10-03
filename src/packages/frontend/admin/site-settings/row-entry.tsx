@@ -4,7 +4,7 @@
  */
 
 import humanizeList from "humanize-list";
-import { Select } from "antd";
+import { Button, Select } from "antd";
 import { useMemo } from "react";
 import { CopyToClipBoard } from "@cocalc/frontend/components";
 import { SERVER_SETTINGS_ENV_PREFIX } from "@cocalc/util/consts";
@@ -135,8 +135,14 @@ export function RowEntry({
             />
             <div style={{ fontSize: "90%", display: "inlineBlock" }}>
               {!Array.isArray(value) &&
-              name === "version_recommended_browser" ? (
-                <VersionHint value={value} />
+              (name === "version_recommended_browser" ||
+                name === "version_min_browser") ? (
+                <VersionHint
+                  name={name}
+                  value={value}
+                  readonly={!!isReadonly[name]}
+                  onChangeEntry={onChangeEntry}
+                />
               ) : undefined}
               {hint}
               <ReadOnly readonly={isReadonly[name]} />
@@ -157,9 +163,26 @@ export function RowEntry({
   }
 }
 
-function VersionHint({ value }: { value: string }) {
+// The required/recommended browser version: browsers whose frontend is older
+// than it must (or are asked to) reload. It can be at most the version of the
+// frontend that is being served, i.e. of this page once it has been reloaded
+// after a deploy; the server caps it there (buildPublicSiteSettings), so a
+// higher value would not lock out every browser, but it would not do what was
+// intended either.
+function VersionHint({
+  name,
+  value,
+  readonly,
+  onChangeEntry,
+}: {
+  name: string;
+  value: string;
+  readonly: boolean;
+  onChangeEntry: (name: string, value: string) => void;
+}) {
+  const parsed = parseInt(value);
   let error;
-  if (new Date(parseInt(value) * 1000) > new Date()) {
+  if (Number.isFinite(parsed) && parsed > version) {
     error = (
       <div
         style={{
@@ -169,15 +192,16 @@ function VersionHint({ value }: { value: string }) {
           padding: "15px",
         }}
       >
-        INVALID version - it is in the future!!
+        Higher than the version of this page ({version}): no browser has a newer
+        frontend than the one being served, so this is capped at the served
+        version. Use the version of this page, after reloading it following a
+        deploy.
       </div>
     );
-  } else {
-    error = undefined;
   }
   return (
     <div style={{ marginTop: "15px", color: "#666" }}>
-      Your browser version:{" "}
+      Version of this page:{" "}
       <CopyToClipBoard
         style={{
           display: "inline-block",
@@ -186,6 +210,17 @@ function VersionHint({ value }: { value: string }) {
         }}
         value={`${version}`}
       />{" "}
+      {!readonly && parsed !== version && (
+        <Button size="small" onClick={() => onChangeEntry(name, `${version}`)}>
+          Use this version
+        </Button>
+      )}
+      {name === "version_min_browser" && (
+        <div>
+          Takes effect only up to the recommended version: set both to force
+          every older browser to reload.
+        </div>
+      )}
       {error}
     </div>
   );

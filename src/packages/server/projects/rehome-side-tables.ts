@@ -81,6 +81,12 @@ export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
     reason:
       "Invite inbox rows are project-scoped directory/projection state and need explicit source/destination reconciliation before project rehome can preserve them.",
   },
+  project_conversations: {
+    table: "project_conversations",
+    status: "not-portable",
+    reason:
+      "Conversation records are plain rows keyed by project_id with no host or bay references; they only need to be copied once project rehome supports copying project side tables.",
+  },
   project_moves: {
     table: "project_moves",
     status: "operation-local",

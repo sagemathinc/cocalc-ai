@@ -76,9 +76,15 @@ describe("confirm noAutosave works", () => {
     await waitUntilSynced([s1, s2]);
     // Order depends on logical-time slot ordering; just assert convergence.
     expect(s1.to_str()).toEqual(s2.to_str());
-    expect(new Set(s1.to_str().split("-"))).toEqual(
-      new Set(["new", "ver", "1", "2"]),
-    );
+    // Both concurrent insertions are kept (exact three-way merge).
+    expect(
+      new Set(
+        s1
+          .to_str()
+          .split("-")
+          .map((x) => x.trim()),
+      ),
+    ).toEqual(new Set(["new", "ver", "1", "2"]));
     expect(s1.getHeads().length).toBe(2);
     expect(s2.getHeads().length).toBe(2);
   });

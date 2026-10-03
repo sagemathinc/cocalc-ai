@@ -9,7 +9,12 @@ const COCALC_CLI = '"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"';
 export function harnessPrompt(
   request: Pick<
     AcpEvaluateRequest,
-    "prompt" | "project_id" | "chat" | "harness_credential" | "runtime"
+    | "prompt"
+    | "project_id"
+    | "chat"
+    | "harness_credential"
+    | "runtime"
+    | "agent_memory_context"
   >,
 ): string {
   // Leave native harness commands intact, as on the Codex path.
@@ -38,13 +43,14 @@ ${projectGuidance}
 ${request.runtime ? `Project working directory for this turn: ${JSON.stringify(request.runtime.profile.cwd)}. Use this directory for project commands unless the task requires another directory.` : ""}
 ${request.harness_credential?.mode === "account-subscription" ? CLAUDE_PROJECT_JOB_GUIDANCE : ""}
 ${request.harness_credential?.mode === "account-subscription" ? "Use request_user_input_async on the project tools server for clarification when useful independent work can continue. It saves a question card and returns immediately; the answer arrives as a new user message. Continue working without polling, and incorporate the answer when it arrives. Use blocking questions only when the answer is required before any useful work. Never use questions for secrets, authentication or permission escalation." : ""}
+${request.harness_credential?.mode === "account-subscription" ? "To look at an image saved in the project (a screenshot, plot or rendered page), use project_read_image instead of describing or measuring it indirectly." : ""}
 ${cocalcAccessGuidance(COCALC_CLI)}
 Complete foreground work before ending the turn. CoCalc cannot wake a completed turn when a background command finishes; do not promise a later notification.
 Use the scoped runtime identity and credentials already provided in the environment. Do not fall back to account credentials when a scoped operation fails.
 Current turn publication context (non-secret metadata, not an authorization grant):
 ${JSON.stringify(context)}
 Use these exact values as explicit --project, --path, --thread-id, and --message-date arguments when publishing an artifact; never infer the producing message from history or reuse a prior turn's timestamp.
-${publication}
+${publication}${request.agent_memory_context ? `\n${request.agent_memory_context}` : ""}
 [/CoCalc project context]
 
 ${request.prompt}`;

@@ -102,6 +102,28 @@ describeDb("account-home Agent Networks", () => {
       await store.name(account, { endpoint, name });
   });
 
+  test("names carry the identity's stored theme, so lists show it without the chat", async () => {
+    identity.mockImplementation(async (owner, endpoint) => ({
+      ...(await identityResult(owner, endpoint)),
+      appearance:
+        endpoint.agent_id === peer.agent_id
+          ? { name: "Code Reviewer", thread_color: "#123456" }
+          : null,
+    }));
+    try {
+      const names = await store.names(account);
+      expect(names.find((a) => a.name === "reviewer")?.appearance).toEqual({
+        name: "Code Reviewer",
+        thread_color: "#123456",
+      });
+      expect(
+        names.find((a) => a.name === "builder")?.appearance,
+      ).toBeUndefined();
+    } finally {
+      identity.mockImplementation(identityResult);
+    }
+  });
+
   test("repairs names of confirmed deleted projects and frees their slots", async () => {
     projectWasDeleted.mockImplementation(async (id) => id === project);
     identity.mockImplementation(async (owner, endpoint) => {

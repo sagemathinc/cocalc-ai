@@ -53,6 +53,7 @@ export function is_different_date(
 }
 
 interface TimeAgoElementProps {
+  accessibleLabel?: string;
   placement?;
   tip?: string | React.JSX.Element; // optional body of the tip popover with title the original time.
   live?: boolean; // whether or not to auto-update
@@ -63,6 +64,7 @@ interface TimeAgoElementProps {
 }
 
 export const TimeAgoElement: React.FC<TimeAgoElementProps> = ({
+  accessibleLabel,
   placement,
   tip,
   live,
@@ -72,6 +74,21 @@ export const TimeAgoElement: React.FC<TimeAgoElementProps> = ({
   click_to_toggle,
 }) => {
   const isLive = live ?? true;
+  // Opt-in semantics for standalone dates; legacy uses may be inside buttons.
+  const interactiveProps =
+    accessibleLabel && click_to_toggle
+      ? {
+          role: "button",
+          tabIndex: 0,
+          "aria-label": accessibleLabel,
+          onKeyDown: (event: React.KeyboardEvent<HTMLSpanElement>) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              event.currentTarget.click();
+            }
+          },
+        }
+      : {};
 
   if (placement == null) {
     placement = "top";
@@ -121,7 +138,7 @@ export const TimeAgoElement: React.FC<TimeAgoElementProps> = ({
         )}
         placement={placement}
       >
-        {el}
+        {accessibleLabel ? <span {...interactiveProps}>{el}</span> : el}
       </Popover>
     );
   }
@@ -156,7 +173,7 @@ export const TimeAgoElement: React.FC<TimeAgoElementProps> = ({
         )}
         placement={placement}
       >
-        {el}
+        {accessibleLabel ? <span {...interactiveProps}>{el}</span> : el}
       </Popover>
     );
   }
@@ -363,6 +380,7 @@ export function RelativeTimeText({
 }
 
 interface TimeAgoProps {
+  accessibleLabel?: string;
   placement?;
   tip?: string | React.JSX.Element; // optional body of the tip popover with title the original time.
   live?: boolean; // whether or not to auto-update
@@ -374,6 +392,7 @@ interface TimeAgoProps {
 
 export const TimeAgo: React.FC<TimeAgoProps> = React.memo(
   ({
+    accessibleLabel,
     placement,
     tip,
     live,
@@ -390,6 +409,7 @@ export const TimeAgo: React.FC<TimeAgoProps> = React.memo(
 
     return (
       <TimeAgoElement
+        accessibleLabel={accessibleLabel}
         date={date}
         placement={placement}
         tip={tip}
@@ -405,6 +425,7 @@ export const TimeAgo: React.FC<TimeAgoProps> = React.memo(
     return !(
       is_different_date(props.date, next.date) ||
       misc_is_different(props, next, [
+        "accessibleLabel",
         "placement",
         "tip",
         "live",
