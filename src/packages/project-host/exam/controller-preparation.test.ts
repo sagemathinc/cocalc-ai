@@ -3,24 +3,38 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { randomUUID } from "node:crypto";
-import { closeDatabase } from "@cocalc/lite/hub/sqlite/database";
+import { randomUUID, scryptSync } from "node:crypto";
+import { hubApi } from "@cocalc/lite/hub/api";
+import { closeDatabase, getDatabase } from "@cocalc/lite/hub/sqlite/database";
 import {
   applyExamRunLocal,
   closeAndCleanupExamRunLocal,
   getExamRunStatusLocal,
+  joinExamRun,
+  openExamRunLocal,
 } from "./controller";
 import { verifyExamPublicRoute } from "./public-route";
 
 const IMAGE = "cocalc.local/rootfs/exam";
 const DIGEST = "sha256:cached";
 
+// The projects and volumes that currently exist on the mocked host.
+const mockProjects = new Set<string>();
+const mockVolumes = new Set<string>();
+
 jest.mock("@cocalc/backend/execute-code", () => ({
   executeCode: async () => ({ stdout: "", stderr: "", exit_code: 0 }),
 }));
 
 jest.mock("@cocalc/lite/hub/api", () => ({
-  hubApi: { projects: { createProject: async () => {}, stop: async () => {} } },
+  hubApi: {
+    projects: {
+      createProject: jest.fn(async ({ project_id }: { project_id: string }) => {
+        mockVolumes.add(project_id);
+      }),
+      stop: async () => {},
+    },
+  },
 }));
 
 jest.mock("@cocalc/project-runner/run/sandbox-exec", () => ({
@@ -32,9 +46,13 @@ jest.mock("@cocalc/project-runner/run/sandbox-exec", () => ({
 }));
 
 jest.mock("../file-server", () => ({
-  deleteVolume: async () => {},
-  getVolume: async () => {
-    throw new Error("project volume does not exist");
+  deleteVolume: async (project_id: string) => {
+    mockVolumes.delete(project_id);
+  },
+  getVolume: async (project_id: string) => {
+    if (!mockVolumes.has(project_id)) {
+      throw new Error("project volume does not exist");
+    }
   },
 }));
 
@@ -43,9 +61,14 @@ jest.mock("../rootfs-cache", () => ({
 }));
 
 jest.mock("../sqlite/projects", () => ({
-  deleteProjectLocal: () => {},
-  getProject: () => undefined,
-  upsertProject: () => {},
+  deleteProjectLocal: (project_id: string) => {
+    mockProjects.delete(project_id);
+  },
+  getProject: (project_id: string) =>
+    mockProjects.has(project_id) ? { project_id } : undefined,
+  upsertProject: ({ project_id }: { project_id: string }) => {
+    mockProjects.add(project_id);
+  },
 }));
 
 jest.mock("./network-policy", () => ({
@@ -56,6 +79,12 @@ jest.mock("./network-policy", () => ({
 jest.mock("./public-route", () => ({
   verifyExamPublicRoute: jest.fn(async () => {}),
 }));
+
+function hashToken(token: string): string {
+  const salt = Buffer.from("fixed-test-salt");
+  const digest = scryptSync(token, salt, 32);
+  return `scrypt-v1$${salt.toString("base64url")}$${digest.toString("base64url")}`;
+}
 
 function examRequest() {
   const host_id = randomUUID();
@@ -122,6 +151,8 @@ describe("project-host exam run preparation", () => {
     process.env = { ...env, COCALC_LITE_SQLITE_FILENAME: ":memory:" };
     closeDatabase();
     jest.mocked(verifyExamPublicRoute).mockReset();
+    mockProjects.clear();
+    mockVolumes.clear();
   });
 
   afterEach(() => {
@@ -169,5 +200,47 @@ describe("project-host exam run preparation", () => {
       "stopped",
     );
     expect(getExamRunStatusLocal().run_id).toBeUndefined();
+  });
+
+  it("erases a student project that was still provisioning when cleanup started", async () => {
+    const request = { ...examRequest(), token_hash: hashToken("exam-token") };
+    await applyExamRunLocal(request);
+    openExamRunLocal({ run_id: request.run.run_id, config_generation: 1 });
+
+    let project_id = "";
+    let createStarted!: () => void;
+    let finishCreate!: () => void;
+    const started = new Promise<void>((resolve) => (createStarted = resolve));
+    (hubApi.projects.createProject as jest.Mock).mockImplementationOnce(
+      async (opts: { project_id: string }) => {
+        project_id = opts.project_id;
+        createStarted();
+        await new Promise<void>((resolve) => (finishCreate = resolve));
+        mockVolumes.add(opts.project_id);
+      },
+    );
+
+    const join = joinExamRun({ token: "exam-token", source: "test" });
+    await started;
+    const cleanup = closeAndCleanupExamRunLocal({
+      run_id: request.run.run_id,
+      config_generation: 1,
+    });
+    // Let cleanup get as far as it can while the project is still being created.
+    await new Promise((resolve) => setImmediate(resolve));
+    finishCreate();
+    await Promise.allSettled([join, cleanup]);
+
+    expect(mockVolumes.has(project_id)).toBe(false);
+    expect(mockProjects.has(project_id)).toBe(false);
+    expect(
+      getDatabase()
+        .prepare(
+          "SELECT COUNT(*) AS count FROM exam_sessions WHERE status='active'",
+        )
+        .get(),
+    ).toEqual({ count: 0 });
+    await expect(cleanup).resolves.toMatchObject({ status: "stopped" });
+    await expect(join).rejects.toThrow("scratchpad access is closed");
   });
 });
