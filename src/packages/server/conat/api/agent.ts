@@ -8,6 +8,7 @@ import * as identities from "@cocalc/server/agents/api";
 import * as rpc from "@cocalc/server/agents/rpc";
 export {
   getCocalcConnectorConfig,
+  listCocalcConnectorConfigs,
   saveCocalcConnectorConfig,
   removeCocalcConnectorConfig,
   beginCocalcConnectorTurn,

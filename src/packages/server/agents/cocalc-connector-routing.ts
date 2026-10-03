@@ -19,12 +19,14 @@ import {
 } from "./cocalc-connector-turn";
 import {
   getCocalcConnectorConfig as getConfigAtHome,
+  listCocalcConnectorConfigs as listConfigsAtHome,
   saveCocalcConnectorConfig as saveConfigAtHome,
   removeCocalcConnectorConfig as removeConfigAtHome,
 } from "./cocalc-connector-config";
 
 export const agentConnectorControl: InterBayAgentConnectorApi = {
   getConfig: getConfigAtHome,
+  listConfigs: listConfigsAtHome,
   saveConfig: saveConfigAtHome,
   removeConfig: removeConfigAtHome,
   begin: beginManagedCocalcConnectorTurn,
@@ -71,6 +73,12 @@ export const getCocalcConnectorConfig: AgentApi["getCocalcConnectorConfig"] =
   async (input) => {
     const opts = requiredAccount(input);
     return await (await accountHomeApi(opts.account_id)).getConfig(opts);
+  };
+
+export const listCocalcConnectorConfigs: AgentApi["listCocalcConnectorConfigs"] =
+  async (input) => {
+    const opts = requiredAccount(input ?? {});
+    return await (await accountHomeApi(opts.account_id)).listConfigs(opts);
   };
 
 export const saveCocalcConnectorConfig: AgentApi["saveCocalcConnectorConfig"] =

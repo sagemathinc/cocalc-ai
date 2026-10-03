@@ -102,6 +102,32 @@ export async function getCocalcConnectorConfig({
   return rows[0] ?? null;
 }
 
+/**
+ * All of the account's saved CoCalc access settings, for its Connections page.
+ * These are the account's own records; each use is still authorized at turn
+ * start, and the page shows only agents the account can currently reach.
+ */
+export async function listCocalcConnectorConfigs({
+  account_id,
+}: {
+  account_id?: string;
+}): Promise<CocalcConnectorConfig[]> {
+  if (!account_id || !isValidUUID(account_id)) {
+    throw new Error("invalid account_id");
+  }
+  await assertAccountHome(account_id);
+  const { rows } = await getPool().query<CocalcConnectorConfig>(
+    `SELECT config_id,account_id,agent_id,source_project_id,scope,
+            revision,enabled,created_at,updated_at
+       FROM agent_cocalc_connector_configs
+      WHERE account_id=$1
+      ORDER BY updated_at DESC
+      LIMIT 1000`,
+    [account_id],
+  );
+  return rows;
+}
+
 export async function saveCocalcConnectorConfig({
   account_id,
   session_hash,
