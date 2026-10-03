@@ -5,12 +5,11 @@ must give the same result as merging the whole documents as strings
 */
 
 import { from_str } from "../doc";
+import { from_str as immerFromStr } from "../../immer-db/doc";
 import { dbMerge3, mergeDbStrings } from "../merge3";
 import { makeRng, type Rng } from "../../sim";
 
 const opts = { primaryKeys: ["type", "id"], stringCols: ["input"] };
-const fromStr = (s: string) => from_str(s, opts.primaryKeys, opts.stringCols);
-const merge3 = dbMerge3<any>(fromStr, (d) => d.to_str(), opts);
 
 const words = ["a", "b", "c", "x = 1", "print(x)", "\n", "tk"];
 const pick = <T>(rng: Rng, xs: T[]) => xs[Math.floor(rng() * xs.length)];
@@ -29,7 +28,7 @@ function randomRecord(rng: Rng, id: string) {
   return r;
 }
 
-function edit(rng: Rng, doc: any): any {
+function edit(rng: Rng, doc: any, fromStr: (s: string) => any): any {
   const records = doc
     .to_str()
     .split("\n")
@@ -67,7 +66,15 @@ function edit(rng: Rng, doc: any): any {
   return fromStr(unique.map((x: any) => JSON.stringify(x)).join("\n"));
 }
 
-test("the fast merge equals the whole-document merge", () => {
+// Chats use the immer document, whose changes() and getOne() return plain
+// objects rather than immutable ones.
+test.each([
+  ["immutable", from_str],
+  ["immer", immerFromStr],
+])("the fast merge equals the whole-document merge (%s)", (_, from) => {
+  const fromStr = (s: string): any =>
+    from(s, opts.primaryKeys, opts.stringCols);
+  const merge3 = dbMerge3<any>(fromStr, (d) => d.to_str(), opts);
   const rng = makeRng(7);
   for (let run = 0; run < 3000; run++) {
     const base = fromStr(
@@ -77,11 +84,11 @@ test("the fast merge equals the whole-document merge", () => {
     );
     // Build a and b from base by patches, as the patch graph does, so
     // unchanged records are shared.
-    const a = base.apply_patch(base.make_patch(edit(rng, base)));
-    const b = base.apply_patch(base.make_patch(edit(rng, base)));
+    const a = base.apply_patch(base.make_patch(edit(rng, base, fromStr)));
+    const b = base.apply_patch(base.make_patch(edit(rng, base, fromStr)));
     const ancestors =
       rng() < 0.2
-        ? [base, a.apply_patch(a.make_patch(edit(rng, a)))]
+        ? [base, a.apply_patch(a.make_patch(edit(rng, a, fromStr)))]
         : undefined;
     const fast = merge3(base, a, b, ancestors);
     const reference = fromStr(

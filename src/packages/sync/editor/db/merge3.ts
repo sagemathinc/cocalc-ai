@@ -241,13 +241,18 @@ function mergeRecord(
   return mergeFields(r0, ra, rb, stringCols, anc);
 }
 
-// The immutable db document (patchflow's DbDocument) API the fast merge uses.
+// The db document API the fast merge uses. Both of patchflow's documents
+// provide it: DbDocument returns immutable keys and records, DbDocumentImmer
+// (used for chats) returns plain objects.
 interface DbDoc {
   changes(prev: DbDoc): { forEach(fn: (key: any) => void): void };
-  getOne(where: object): { toJS(): Record } | undefined;
+  getOne(where: object): any;
   set(record: Record): DbDoc;
   delete(where: object): DbDoc;
 }
+
+const toPlain = (x: any): Record | undefined =>
+  x != null && typeof x.toJS === "function" ? x.toJS() : x;
 
 const isDbDoc = (doc: any): doc is DbDoc =>
   doc != null &&
@@ -284,7 +289,7 @@ export function dbMerge3<D>(
   const changed = (doc: DbDoc, prev: DbDoc) => {
     const keys = new Map<string, Record>();
     doc.changes(prev).forEach((key) => {
-      const where = key.toJS();
+      const where = toPlain(key)!;
       keys.set(keyOf(where), where);
     });
     return keys;
@@ -300,7 +305,7 @@ export function dbMerge3<D>(
     // The record with exactly this primary key; a where clause could also
     // match a record that has more key fields set.
     const get = (doc: DbDoc, key: string, where: Record) => {
-      const record = doc.getOne(where)?.toJS();
+      const record = toPlain(doc.getOne(where));
       if (record == null) return undefined;
       if (keyOf(record) !== key) throw new MismatchedKey();
       return record;
