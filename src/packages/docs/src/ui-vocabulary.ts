@@ -1066,6 +1066,19 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     usedIn: [bold("claude-code", "Connect Claude Pro/Max")],
   },
   {
+    // The heading that tells the first-run new-agent form, which has no
+    // runtime choice, from the full form.
+    id: "claude.first-run-form",
+    label: "What would you like to work on?",
+    anchors: [
+      def(
+        WORKSPACE_PAGE,
+        '? "What would you like to work on?" : "What should your new agent do?"',
+      ),
+    ],
+    usedIn: [bold("claude-code", "What would you like to work on?")],
+  },
+  {
     id: "agents.connector.cocalc",
     label: "CoCalc",
     anchors: [def("frontend/agents/composer-connectors.tsx", '? "CoCalc"')],
