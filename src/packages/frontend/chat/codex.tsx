@@ -88,6 +88,7 @@ import { AgentCommunication } from "./agent-communication";
 import { getLatestAcpThreadIdForThread } from "./thread-session";
 import {
   getCodexPaymentSourceShortLabel,
+  getCodexModelPayer,
   getCodexPaymentSourceOptions,
   getCodexPaymentSourceTooltip,
 } from "./use-codex-payment-source";
@@ -1260,14 +1261,17 @@ function NativeCodexConfigButton({
   };
 
   const modelMenu: MenuProps = {
-    selectedKeys: selectedModelValue ? [selectedModelValue] : [],
+    selectedKeys: displayedModel ? [displayedModel] : [],
     items: [
-      ...models.map((model) => ({
-        key: model.value,
-        label: model.label,
-        disabled: model.disabled,
-        title: model.description,
-      })),
+      ...models.map((model) => {
+        const payer = getCodexModelPayer(model.value, paymentSource);
+        return {
+          key: model.value,
+          label: payer ? `${model.label} · ${payer.label}` : model.label,
+          disabled: model.disabled,
+          title: model.description,
+        };
+      }),
       ...(paymentSource?.source === "subscription"
         ? [
             { key: "__refresh-models-divider__", type: "divider" as const },
@@ -1286,7 +1290,18 @@ function NativeCodexConfigButton({
         clearCachedCodexModelCatalog({ accountId });
         return;
       }
-      applyQuickConfigPatch({ model: `${key}` });
+      const payer = getCodexModelPayer(`${key}`, paymentSource);
+      if (payer?.needsConnection) {
+        // The membership allowance only covers its own model; offer the
+        // sign-in instead of silently keeping the included one.
+        setPaymentOpen(true);
+        return;
+      }
+      applyQuickConfigPatch(
+        payer?.switchTo
+          ? { paymentSource: payer.switchTo, model: `${key}` }
+          : { model: `${key}` },
+      );
     },
   };
 
@@ -1462,13 +1477,7 @@ function NativeCodexConfigButton({
                 overflow: "hidden",
               }}
             >
-              {siteFundedPolicy ? (
-                <Tooltip title="CoCalc Membership chooses the model">
-                  <ComposerPillButton style={{ cursor: "default" }}>
-                    {displayedModel}
-                  </ComposerPillButton>
-                </Tooltip>
-              ) : (
+              {
                 <Dropdown
                   menu={modelMenu}
                   trigger={["click"]}
@@ -1493,7 +1502,7 @@ function NativeCodexConfigButton({
                     </span>
                   </ComposerPillButton>
                 </Dropdown>
-              )}
+              }
               <Text type="secondary">·</Text>
               {siteFundedPolicy ? (
                 <Tooltip title="CoCalc Membership chooses the thinking level">
