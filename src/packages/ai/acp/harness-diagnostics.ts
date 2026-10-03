@@ -3,6 +3,18 @@ import getLogger from "@cocalc/backend/logger";
 
 const logger = getLogger("ai:acp:harness-diagnostics");
 const LIMIT = 16 * 1024;
+const METHODS = new Set([
+  "initialize",
+  "session/new",
+  "session/load",
+  "session/fork",
+  "session/set_mode",
+  "session/set_config_option",
+  "session/prompt",
+  "session/steering",
+  "session/cancel",
+  "runtime/failure",
+]);
 
 // Only fixed diagnostic vocabulary survives. Regex secret removal alone cannot
 // safely retain arbitrary provider messages, prompts, tool output, or stderr.
@@ -194,7 +206,7 @@ export function recordHarnessDiagnostic(input: {
         project_id: uuid(input.projectId),
         account_id: uuid(input.accountId),
         session_id: uuid(input.sessionId),
-        method: input.method,
+        method: METHODS.has(input.method) ? input.method : "unknown",
         elapsed_ms: input.elapsedMs,
         protocol_rejection: input.protocolRejection,
         error: diagnosticError(input.error),

@@ -2659,6 +2659,60 @@ test("internal rejection correlates stderr and nested error hints only in operat
   );
 });
 
+test(
+  "idle harness exit records once and closed prompts reuse its diagnostic ID",
+  { timeout: 5000 },
+  async (t) => {
+    const logger = require("@cocalc/backend/logger").default(
+      "ai:acp:harness-diagnostics",
+    );
+    const records = [];
+    let recorded;
+    const diagnostic = new Promise((resolve) => {
+      recorded = resolve;
+    });
+    t.mock.method(logger, "warn", (_label, json) => {
+      const record = JSON.parse(json);
+      records.push(record);
+      recorded(record);
+    });
+    const client = await start(t, ["--idle-exit"]);
+    await client.open();
+    const record = await diagnostic;
+    assert.equal(record.method, "runtime/failure");
+    assert.deepEqual(record.stderr.reported_exit_codes, [7]);
+    assert.ok(
+      record.error.signals.includes("process_exit") ||
+        record.error.signals.includes("transport_closed"),
+    );
+    for (let i = 0; i < 2; i++)
+      await assert.rejects(
+        client.prompt("hi", async () => {}),
+        (error) => {
+          assert.equal(error.code, "unavailable");
+          assert.ok(error.message.includes(record.diagnostic_id));
+          assert.doesNotMatch(error.message, /private-idle-detail/);
+          return true;
+        },
+      );
+    await client.dispose();
+    assert.equal(records.length, 1);
+    assert.doesNotMatch(JSON.stringify(records), /private-idle-detail/);
+  },
+);
+
+test("normal disposal does not create a failure diagnostic", async (t) => {
+  const logger = require("@cocalc/backend/logger").default(
+    "ai:acp:harness-diagnostics",
+  );
+  const records = [];
+  t.mock.method(logger, "warn", (...args) => records.push(args));
+  const client = await start(t);
+  await client.open();
+  await client.dispose();
+  assert.equal(records.length, 0);
+});
+
 test("session rejection identifies the failed operation without exposing process output", async (t) => {
   const client = await start(t, ["--reject-session"]);
   await assert.rejects(client.open(), (error) => {

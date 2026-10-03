@@ -250,6 +250,13 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
             params: { authStatus: { kind: "api_key", label: "API key" } },
           });
       }
+      if (process.argv.includes("--idle-exit"))
+        setTimeout(() => {
+          process.stderr.write(
+            "private-idle-detail: process exited with code 7\n",
+            () => process.exit(7),
+          );
+        }, 100);
       if (message.method === "session/new")
         return result(message.id, {
           sessionId: "fixture-session",

@@ -151,3 +151,21 @@ test("logging failure does not replace the original failure or prevent cleanup",
   );
   assert.equal(stderr.tail.length, 0);
 });
+
+test("method vocabulary is enforced at the logging boundary", (t) => {
+  const records = [];
+  t.mock.method(logger, "warn", (_label, json) =>
+    records.push(JSON.parse(json)),
+  );
+  recordHarnessDiagnostic({
+    method: "session/prompt\nBearer private-token",
+    projectId: "p",
+    accountId: "a",
+    elapsedMs: 0,
+    protocolRejection: false,
+    error: null,
+    stderr: new HarnessStderrDiagnostics(),
+  });
+  assert.equal(records[0].method, "unknown");
+  assert.doesNotMatch(JSON.stringify(records), /Bearer|private-token/);
+});

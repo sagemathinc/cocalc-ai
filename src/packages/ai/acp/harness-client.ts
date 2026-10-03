@@ -217,6 +217,9 @@ export class AcpHarnessClient {
   private disposed = false;
   private failure?: Error;
   private readonly stderrDiagnostics = new HarnessStderrDiagnostics();
+  private diagnosticId?: string;
+  private pendingRequests = 0;
+  private readonly startedAt = Date.now();
   private output: Promise<void> = Promise.resolve();
   private pendingBytes = 0;
   private listener?: (event: HarnessEvent) => Promise<void>;
@@ -498,8 +501,36 @@ export class AcpHarnessClient {
   }
 
   private fail(error: Error) {
+    if (this.disposed) return;
     this.failure ??= error;
+    // A pending request records its operation and rejection details in catch.
+    // Idle exits have no request to do that, so record before sealing stderr.
+    if (!this.pendingRequests)
+      this.recordFailure(error, "runtime/failure", this.startedAt, false);
     void this.dispose().catch(() => {});
+  }
+
+  private recordFailure(
+    error: unknown,
+    method: RequestMethod | "runtime/failure",
+    startedAt: number,
+    protocolRejection: boolean,
+  ): string {
+    return (this.diagnosticId ??= recordHarnessDiagnostic({
+      method,
+      projectId: this.binding.projectId,
+      accountId: this.binding.accountId,
+      sessionId: this.session?.sessionId,
+      elapsedMs: Date.now() - startedAt,
+      protocolRejection,
+      error,
+      failure: this.failure,
+      stderr: this.stderrDiagnostics,
+    }));
+  }
+
+  private diagnosticSuffix(): string {
+    return this.diagnosticId ? ` [Diagnostic ID: ${this.diagnosticId}]` : "";
   }
 
   private async request<T>(
@@ -509,6 +540,7 @@ export class AcpHarnessClient {
     mutation = false,
   ): Promise<T> {
     const startedAt = Date.now();
+    this.pendingRequests++;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const closed = this.connection.closed.then(() => {
       throw Error("ACP connection closed");
@@ -536,17 +568,12 @@ export class AcpHarnessClient {
         !this.failure &&
         !this.connection.signal.aborted &&
         typeof (error as any)?.code === "number";
-      const diagnosticId = recordHarnessDiagnostic({
-        method,
-        projectId: this.binding.projectId,
-        accountId: this.binding.accountId,
-        sessionId: this.session?.sessionId,
-        elapsedMs: Date.now() - startedAt,
-        protocolRejection,
+      const diagnosticId = this.recordFailure(
         error,
-        failure: this.failure,
-        stderr: this.stderrDiagnostics,
-      });
+        method,
+        startedAt,
+        protocolRejection,
+      );
       this.fail(Error("ACP operation failed"));
       throw new HarnessError(
         protocolRejection
@@ -564,6 +591,7 @@ export class AcpHarnessClient {
           ` [Diagnostic ID: ${diagnosticId}]`,
       );
     } finally {
+      this.pendingRequests--;
       if (timer) clearTimeout(timer);
     }
   }
@@ -615,7 +643,10 @@ export class AcpHarnessClient {
     if (this.session || this.active || this.opening)
       throw Error("ACP session is already open or opening");
     if (this.disposed)
-      throw new HarnessError("unavailable", "ACP runtime is closed");
+      throw new HarnessError(
+        "unavailable",
+        "ACP runtime is closed" + this.diagnosticSuffix(),
+      );
     this.opening = true;
     try {
       const params = {
@@ -689,7 +720,10 @@ export class AcpHarnessClient {
     beforeSend?: () => Promise<void>,
   ): Promise<{ stopReason: StopReason }> {
     if (this.disposed || this.failure)
-      throw new HarnessError("unavailable", "ACP runtime is closed");
+      throw new HarnessError(
+        "unavailable",
+        "ACP runtime is closed" + this.diagnosticSuffix(),
+      );
     if (!this.session || this.active || this.configuring)
       throw Error("ACP session must be idle and open");
     if (

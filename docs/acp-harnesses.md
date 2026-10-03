@@ -248,6 +248,10 @@ that exact ID (or the Lite/hub process log for locally launched harnesses):
 "/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js" --profile prod --api https://cocalc.ai host logs HOST_ID --source acp-worker --tail 5000
 ```
 
+Unexpected failures between requests are recorded once as `runtime/failure`.
+The next closed-runtime error reuses that ID; in-flight failures retain the
+request operation instead. Normal disposal does not generate a failure record.
+
 The `ai:acp:harness-diagnostics` warning contains a single-line JSON record with
 the same ID, timestamp, UUID principal/session context when available, operation,
 elapsed time, protocol codes, HTTP statuses, reported process exit codes, and
