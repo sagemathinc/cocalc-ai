@@ -443,8 +443,12 @@ export class Actions<T extends State = State>
     cursors?: object[];
   }): void {
     if (commit == null) commit = true;
+    // Set only the changed keys: the document merges an object into the
+    // existing data key by key. Spreading `element.data` (from the store, which
+    // can lag the synced document) would write back stale values of keys a
+    // collaborator just changed.
     this.setElement({
-      obj: { id: element.id, data: { ...element.data, ...obj } },
+      obj: { id: element.id, data: { ...obj } },
       commit,
       cursors,
     });
@@ -1758,6 +1762,16 @@ function elementPatchIsNoop(
     if (key == "id") continue;
     if (value === null) {
       if (current.has(key)) return false;
+    } else if (key == "data" && typeof value == "object") {
+      // data is merged key by key (see setElementData)
+      const data = current.get("data");
+      for (const [k, v] of Object.entries(value as object)) {
+        if (
+          v === null ? data?.has?.(k) : !immutableIs(data?.get?.(k), fromJS(v))
+        ) {
+          return false;
+        }
+      }
     } else if (!immutableIs(current.get(key), fromJS(value))) {
       return false;
     }

@@ -39,6 +39,13 @@ describe("inferAppBasePath", () => {
     ).toBe("/base");
   });
 
+  it("matches route markers only as whole path segments", () => {
+    expect(inferAppBasePath("/u/alice/agents/helper")).toBe("/");
+    expect(inferAppBasePath("/base/u/alice/agents/helper")).toBe("/base");
+    // "/u" must not match inside "/user".
+    expect(inferAppBasePath("/base/user")).toBe("/base/user");
+  });
+
   it("keeps the route itself when refreshing the app root under a base path", () => {
     expect(inferAppBasePath("/base")).toBe("/base");
     expect(inferAppBasePath("/")).toBe("/");

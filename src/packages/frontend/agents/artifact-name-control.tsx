@@ -1,3 +1,4 @@
+import { PublicAliasInfo } from "@cocalc/frontend/components/public-alias-info";
 import { useEffect, useRef, useState } from "react";
 import { Alert, Input, Modal } from "antd";
 import { artifactCatalogKey } from "@cocalc/util/artifact-catalog";
@@ -97,7 +98,9 @@ export function ArtifactNameControl({
         modalRender={(node) => <KeyboardBoundary>{node}</KeyboardBoundary>}
       >
         <p>
-          This name is personal to your account. Renaming keeps old links valid.
+          This name is personal to your account and appears in your public link
+          to the artifact. Renaming keeps old links valid.{" "}
+          <PublicAliasInfo kind="artifacts" />
         </p>
         <label htmlFor="artifact-personal-name">Artifact name</label>
         <Input

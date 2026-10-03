@@ -4293,8 +4293,8 @@ describe("CodexAppServerAgent", () => {
     expect(text).toContain("Do not publish artifacts by default");
     expect(text).toContain("project build <path>");
     expect(text).toContain("complete editor pipeline");
-    expect(text).toContain("project chat agent destinations --json");
-    expect(text).toContain("project chat send --to NAME --stdin --json");
+    expect(text).toContain("agent destinations --json");
+    expect(text).toContain("agent send NAME --stdin --json");
     expect(text).toContain("preferring live delivery when available");
     expect(text).toContain("explicit two-way Agent Network");
     expect(text).toContain("cannot create authority themselves");

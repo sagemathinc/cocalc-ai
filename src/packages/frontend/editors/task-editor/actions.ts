@@ -44,6 +44,7 @@ import type {
 } from "@cocalc/frontend/frame-editors/task-editor/actions";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { createFrontendTasksSession } from "./tasks-session";
+import { mergeText } from "@cocalc/sync/editor/generic/string-merge3";
 
 const LAST_EDITED_THRESH_S = 30;
 const TASKS_HELP_SLUG = "projects/tasks";
@@ -611,20 +612,33 @@ export class TaskActions extends Actions<TaskState> {
     });
   }
 
+  // `base` is the description this edit was made from (e.g. what an editor
+  // last loaded or saved). If the synced description has changed since then,
+  // e.g. a collaborator's edit not yet shown in the editor, the edit is merged
+  // into it instead of overwriting (reverting) that change. Returns the
+  // description saved, which an editor should show.
   public set_desc(
     task_id: string | undefined,
     desc: string,
     save: boolean = true,
-  ): void {
+    base?: string,
+  ): string | undefined {
     const resolved = this.resolveTaskId(task_id);
     if (resolved == null) return;
+    if (base != null) {
+      const current = this.syncdb?.get_one({ task_id: resolved })?.get("desc");
+      if (typeof current === "string" && current !== base && current !== desc) {
+        desc = mergeText({ base, local: desc, remote: current });
+      }
+    }
     if (!save) {
       this.set_task(resolved, { desc }, false, false);
-      return;
+      return desc;
     }
     this.runSessionMutation(async () => {
       await this.tasksSession.updateTask(resolved, { desc });
     });
+    return desc;
   }
 
   public set_color(task_id: string, color: string, save: boolean = true): void {

@@ -1,0 +1,22 @@
+/* Card checkboxes appear on hover or focus, and stay visible while any
+   project is selected (or on touch screens). */
+.cocalc-project-card .cocalc-project-card-select {
+  opacity: 0;
+}
+
+.cocalc-project-card:hover .cocalc-project-card-select,
+.cocalc-project-card:focus-within .cocalc-project-card-select,
+.cocalc-project-card.cocalc-project-card-selecting .cocalc-project-card-select {
+  opacity: 1;
+}
+
+.cocalc-project-card:hover {
+  border-color: var(--cocalc-ui-border-strong, var(--cocalc-ui-border));
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.08);
+}
+
+@media (hover: none) {
+  .cocalc-project-card .cocalc-project-card-select {
+    opacity: 1;
+  }
+}

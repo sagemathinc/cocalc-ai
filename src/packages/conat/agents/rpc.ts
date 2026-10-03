@@ -134,13 +134,30 @@ export type AgentRpcRequest =
       action: "propose-network";
     } & import("./personal").ProposeAgentNetworkOptions);
 
+/** A caller-supplied key for an error message: printable ASCII, bounded. */
+export function safeKeyPreview(key: string, max = 40): string {
+  const backslash = String.fromCharCode(92);
+  const escaped = [...key.slice(0, max)]
+    .map((char) => {
+      const code = char.codePointAt(0)!;
+      return code >= 0x20 && code < 0x7f && char !== '"' && char !== backslash
+        ? char
+        : `${backslash}u${code.toString(16).padStart(4, "0")}`;
+    })
+    .join("");
+  return key.length > max ? `${escaped}...` : escaped;
+}
+
 export function validateAgentEndpoint(value: AgentEndpoint): void {
   requireUuid(value?.project_id, "project_id");
   requireUuid(value?.agent_id, "agent_id");
-  if (
-    Object.keys(value).some((key) => !["project_id", "agent_id"].includes(key))
-  )
-    throw new Error("unexpected endpoint field");
+  const extra = Object.keys(value).find(
+    (key) => !["project_id", "agent_id"].includes(key),
+  );
+  if (extra !== undefined)
+    throw new Error(
+      `unexpected endpoint field "${safeKeyPreview(extra)}"; an endpoint has only project_id and agent_id`,
+    );
 }
 
 export function validateAgentRpcRequest(

@@ -88,6 +88,19 @@ export const TABLE_OWNERSHIP = {
         "Seed-authoritative sponsorship budgets, grants, reservations, events, attributions, and personal funding consents. Account rehome changes routing metadata but never moves or duplicates this financial state.",
     },
   ),
+  ...entries(["account_usernames", "account_username_release_log"], {
+    ownership: "seed-global",
+    authority: "seed",
+    portability: "stable",
+    secondary_reference_fields: {
+      account_id:
+        "Username identity owner, not account-home placement authority.",
+      owner_account_id:
+        "Released username owner, not account-home placement authority.",
+    },
+    notes:
+      "Global username reservations, current names, redirects, and transactional release audits. All operations route to the seed; account rehome must not move or delete this state.",
+  }),
   ...entries(["compute_funding_exposure_policy"], {
     ownership: "stable-bay",
     authority: "bay_id",
@@ -136,6 +149,7 @@ export const TABLE_OWNERSHIP = {
       "account_entitlement_overrides",
       "account_impersonation_grants",
       "account_impersonation_sessions",
+      "account_people_state",
       "account_resource_quarantine_audit_log",
       "account_second_factor_recovery_codes",
       "account_second_factors",
@@ -412,6 +426,19 @@ export const TABLE_OWNERSHIP = {
     rebuild: "No rebuild: callers must start a new explicit send attempt.",
   }),
 
+  ...entries(["agent_memory_usage"], {
+    ownership: "ephemeral",
+    authority: "local",
+    portability: "rebuildable",
+    secondary_reference_fields: {
+      account_id:
+        "Account whose agent memory usage is limited; rows live where that account's memory record is stored (its home bay).",
+    },
+    notes:
+      "Fixed-window agent memory rate counters shared by load-balanced hubs in the home bay. Losing rows only resets the current window.",
+    rebuild: "No rebuild: counters restart empty.",
+  }),
+
   ...entries(["external_credentials"], {
     ownership: "row-scoped",
     authority: "mixed",
@@ -446,6 +473,7 @@ export const TABLE_OWNERSHIP = {
       "project_archive_lifecycle_jobs",
       "project_collab_invite_blocks",
       "project_collab_invites",
+      "project_conversations",
       "project_entitlement_override_events",
       "project_entitlement_overrides",
       "project_events_outbox",

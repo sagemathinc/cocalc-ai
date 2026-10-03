@@ -144,6 +144,7 @@ export const system = {
   clearAccountEntitlementOverride: authFirstRequireAccount,
   listExternalCredentials: authFirstRequireAccount,
   updateCodexSubscriptionLabel: authFirstRequireAccount,
+  updateClaudeSubscriptionLabel: authFirstRequireAccount,
   revokeExternalCredential: authFirstRequireAccount,
   setOpenAiApiKey: authFirstRequireAccount,
   deleteOpenAiApiKey: authFirstRequireAccount,
@@ -2835,6 +2836,14 @@ export interface System {
   }) => Promise<ExternalCredentialInfo[]>;
 
   updateCodexSubscriptionLabel: (opts: {
+    account_id?: string;
+    id: string;
+    label?: string;
+  }) => Promise<{ updated: boolean }>;
+
+  // A name the owner chooses for a Claude subscription, e.g. its plan: a
+  // long-lived token cannot report the plan or account itself.
+  updateClaudeSubscriptionLabel: (opts: {
     account_id?: string;
     id: string;
     label?: string;

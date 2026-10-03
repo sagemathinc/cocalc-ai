@@ -6,6 +6,35 @@
         margin: 0;
       }
     </style>
+    <style id="cocalc-page-transitions">
+      /* Page-to-page navigations (e.g. the landing page to the app) animate:
+         the logo glides into place and the sidebar slides in. */
+      @view-transition {
+        navigation: auto;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        @view-transition {
+          navigation: none;
+        }
+      }
+      .cocalc-vt-logo {
+        view-transition-name: cocalc-logo;
+      }
+      #cocalc-shell-placeholder {
+        view-transition-name: cocalc-sidebar;
+      }
+      ::view-transition-new(cocalc-sidebar) {
+        animation: cocalc-sidebar-in 280ms ease-out;
+      }
+      @keyframes cocalc-sidebar-in {
+        from {
+          transform: translateX(-100%);
+        }
+      }
+      ::view-transition-group(cocalc-logo) {
+        animation-duration: 280ms;
+      }
+    </style>
     <style id="cocalc-app-startup-guard">
       html.cocalc-app-starting
         body[data-cocalc-entry="app"]
@@ -32,6 +61,59 @@
     <!-- cocalc-public-head-placeholder -->
   </head>
   <body data-cocalc-entry="<!-- cocalc-entry-placeholder -->">
+    <!-- While the app starts, the sidebar as it last looked (saved by the
+         app), so the first frame already has it. The app removes this. -->
+    <div id="cocalc-shell-placeholder" aria-hidden="true" hidden></div>
+    <script>
+      (function () {
+        try {
+          var body = document.body;
+          if (body.getAttribute("data-cocalc-entry") !== "app") return;
+          if (window.innerWidth < 768) return;
+          var saved = JSON.parse(
+            localStorage.getItem("cocalc-shell-placeholder-v1") || "null",
+          );
+          if (!saved || saved.hidden) return;
+          var el = document.getElementById("cocalc-shell-placeholder");
+          el.style.cssText =
+            "position:fixed;left:0;top:0;bottom:0;z-index:1;box-sizing:border-box;" +
+            "width:" +
+            Number(saved.width || 280) +
+            "px;" +
+            "background:" +
+            saved.background +
+            ";" +
+            "border-right:1px solid " +
+            saved.border +
+            ";" +
+            "color:" +
+            saved.color +
+            ";" +
+            "font:600 22px/1.2 " +
+            saved.font +
+            ";";
+          var row = document.createElement("div");
+          row.style.cssText =
+            "display:flex;align-items:center;gap:10px;padding:8px 4px 8px 24px;";
+          var img = document.createElement("img");
+          img.src = saved.icon;
+          img.width = 32;
+          img.height = 32;
+          img.alt = "";
+          img.className = "cocalc-vt-logo";
+          row.appendChild(img);
+          row.appendChild(document.createTextNode("CoCalc"));
+          el.appendChild(row);
+          el.hidden = false;
+          // Never outlive a slow or failed start.
+          setTimeout(function () {
+            el.remove();
+          }, 15000);
+        } catch (err) {
+          // the placeholder is only cosmetic
+        }
+      })();
+    </script>
     <div id="cocalc-crash-container" data-nosnippet></div>
     <div id="cocalc-load-container"></div>
     <div id="cocalc-scripts-container"></div>

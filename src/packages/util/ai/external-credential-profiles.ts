@@ -14,3 +14,6 @@ export const ANTHROPIC_API_PROVIDER = "anthropic";
 
 export const CLAUDE_SUBSCRIPTION_PROFILE_ID = "claude-subscription-v1";
 export const CLAUDE_SUBSCRIPTION_KIND = "claude-subscription-home-v1";
+// Metadata "authentication" of a subscription credential holding a
+// long-lived inference token (claude setup-token) rather than a home snapshot.
+export const CLAUDE_OAUTH_TOKEN_AUTHENTICATION = "claude-oauth-token";

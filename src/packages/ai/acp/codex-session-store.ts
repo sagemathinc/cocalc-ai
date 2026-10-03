@@ -4,7 +4,7 @@
 import fs from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import path from "node:path";
-import readline from "node:readline";
+import { createJsonLineReader } from "@cocalc/util/json-lines";
 import type { Readable, Transform } from "node:stream";
 import * as zlib from "node:zlib";
 
@@ -137,7 +137,7 @@ export async function readSessionMeta(
 
 async function readFirstLine(filePath: string): Promise<string> {
   const stream = openSessionReadStream(filePath);
-  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+  const rl = createJsonLineReader(stream);
   return await new Promise<string>((resolve, reject) => {
     let done = false;
     rl.on("line", (line) => {
@@ -187,7 +187,7 @@ async function planSessionHistoryRewrite(
   let totalCompactions = 0;
   let decodedBytes = 0;
   const input = openSessionReadStream(filePath);
-  const rl = readline.createInterface({ input, crlfDelay: Infinity });
+  const rl = createJsonLineReader(input);
   try {
     for await (const line of rl) {
       decodedBytes += Buffer.byteLength(line, "utf8") + 1;
@@ -256,7 +256,7 @@ async function renderTrimmedSessionHistory(
     chunks.push(`${plan.firstLine}\n`);
   }
   const input = openSessionReadStream(filePath);
-  const rl = readline.createInterface({ input, crlfDelay: Infinity });
+  const rl = createJsonLineReader(input);
   let lineNum = 0;
   try {
     for await (const line of rl) {
