@@ -39,6 +39,12 @@ import {
   PUBLIC_COMMUNITY_LINKS,
 } from "@cocalc/util/public-support-content";
 import {
+  PUBLIC_FOOTER_COMPANY_LINKS,
+  PUBLIC_FOOTER_PLATFORM_LINKS,
+  PUBLIC_FOOTER_RESOURCES_LINKS,
+  type PublicFooterLink,
+} from "@cocalc/util/public-footer-links";
+import {
   BILLING_INTERVAL_LABELS,
   hasPriceForBillingInterval,
   membershipPriceDisplay,
@@ -616,6 +622,32 @@ function renderSupport(route: PublicMetadataRoute, basePath: string): string {
 </section>
 <p>Direct contact and ticket options appear on this page according to the current deployment configuration.</p>
 </main>`;
+}
+
+// Each list shows its column title, as in the React footer, as bold text
+// rather than a heading, so the page's heading outline does not change.
+function renderFooterNav(
+  basePath: string,
+  title: string,
+  links: readonly PublicFooterLink[],
+): string {
+  return `<nav aria-label="${htmlEscape(
+    `${title} footer links`,
+  )}"><p><strong>${htmlEscape(title)}</strong></p><ul>${links
+    .map(({ label, path }) => `<li>${publicLink(basePath, path, label)}</li>`)
+    .join("")}</ul></nav>`;
+}
+
+// The fixed page links of the React footer, for crawlers and visitors
+// without JavaScript. The shell adds this after a page's crawler content; the
+// public bundle replaces both when it starts, so it never shows beside the
+// React footer.
+export function renderPublicFooterPrerender(basePath: string): string {
+  return `<footer data-cocalc-public-prerender="footer" style="${ARTICLE_STYLE}">
+${renderFooterNav(basePath, "Platform", PUBLIC_FOOTER_PLATFORM_LINKS)}
+${renderFooterNav(basePath, "Resources", PUBLIC_FOOTER_RESOURCES_LINKS)}
+${renderFooterNav(basePath, "Company", PUBLIC_FOOTER_COMPANY_LINKS)}
+</footer>`;
 }
 
 export function renderPublicRoutePrerender(
