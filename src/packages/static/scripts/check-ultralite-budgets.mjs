@@ -311,9 +311,10 @@ const surfaces = [
   {
     label: "Essential Docs",
     chunks: [...initial, ...docs],
-    // Connector, Claude, exam, and agents workspace guides expand the non-admin
-    // documentation: 324.4 KiB Brotli with the agents workspace guide, and
-    // 325.1 KiB with the documentation changes open beside it.
+    // Connector, Claude, exam, agent memory, and agents workspace guides expand
+    // the non-admin documentation: 325.5 KiB Brotli before the agents workspace
+    // guide's update, 326.3 KiB with it, and 326.8 KiB with the documentation
+    // changes open beside it.
     max: 328 * KiB,
   },
   {
