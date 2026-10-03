@@ -107,8 +107,8 @@ If the sidebar is hidden, click the **Show sidebar** button at the top left
 button (three horizontal lines, named Show agents for screen readers), or the
 back arrow in an agent's conversation. If the sidebar has no **Agents**
 section, check that **Disable all AI integrations** is off in account **AI**
-settings. If it is off, ask the site administrator whether agent access is
-enabled.
+settings. If that switch is not shown there, ask the site administrator whether
+AI is enabled.
 
 ## Review and continue
 
