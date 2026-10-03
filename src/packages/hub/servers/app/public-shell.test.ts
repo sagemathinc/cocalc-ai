@@ -928,6 +928,18 @@ describe("footer page links in the initial HTML", () => {
     );
   }
 
+  // Where the <div> that opens at `start` closes, counting nested divs.
+  function closeOfDiv(html: string, start: number): number {
+    let depth = 0;
+    for (const tag of html.slice(start).matchAll(/<div\b|<\/div>/g)) {
+      depth += tag[0] === "</div>" ? -1 : 1;
+      if (depth === 0) {
+        return start + tag.index;
+      }
+    }
+    return -1;
+  }
+
   it.each([
     ["cocalc.ai", "launchpad", "cocalc.ai"],
     ["a self-hosted Launchpad", "launchpad", "launchpad.example.edu"],
@@ -972,7 +984,9 @@ describe("footer page links in the initial HTML", () => {
     expect(container).toBeGreaterThanOrEqual(0);
     expect(content).toBeGreaterThan(container);
     expect(footer).toBeGreaterThan(html.indexOf("</main>", content));
-    expect(html.indexOf("</footer>")).toBeLessThan(html.lastIndexOf("</div>"));
+    expect(html.indexOf("</footer>", footer)).toBeLessThan(
+      closeOfDiv(html, container),
+    );
     expect(html.match(/<footer/g)).toHaveLength(1);
   });
 
