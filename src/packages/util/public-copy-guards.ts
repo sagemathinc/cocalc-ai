@@ -27,8 +27,9 @@ export const DOLLAR_AMOUNT = /\$\s*\d/;
 
 // Stale descriptions of agents. Claude Code is an integrated agent
 // (experimental preview), so copy must not list it among the terminal-only
-// agents; running it in a terminal is still possible, so a plain mention of
-// a terminal is allowed. Agents change project files as they work, with no
-// separate step that keeps or discards the work.
+// agents, in either order and with or without a serial comma; running it in a
+// terminal is still possible, so a plain mention of a terminal is allowed.
+// Agents change project files as they work, with no separate step that keeps
+// or discards the work.
 export const STALE_AGENT_PHRASES =
-  /Claude Code in a terminal, or other shell|Claude Code(,| and| or) (OpenCode|other (shell|command-line|terminal))|terminal-(native|based) agents such as Claude Code|before keeping it/i;
+  /Claude Code in a terminal, or other shell|Claude Code(,? and|,? or|,) (OpenCode|(an)?other (shell|command-line|terminal))|(terminal|command-line|shell)(-(native|based))? agents,? (such as|like) Claude Code|before keeping it/i;
