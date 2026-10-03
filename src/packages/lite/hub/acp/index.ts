@@ -101,8 +101,8 @@ import {
   dedupeBlobReferences,
   extractBlobReferences,
   harnessAttachmentNote,
+  openProjectBlobStorage,
   projectBlobMaterializationRoots,
-  pruneChatAttachments,
   rewriteBlobReferencesInPrompt,
   type MaterializedBlobAttachment,
 } from "./blob-materialization";
@@ -8017,179 +8017,186 @@ async function executeAcpRequest({
         : undefined,
       !!harness,
     );
-  if (!conatClient) {
-    throw Error("conat client must be initialized");
-  }
-  const chatContext = request.chat
-    ? {
-        ...request.chat,
-        started_at_ms:
-          Number(request.chat.started_at_ms) > 0
-            ? Number(request.chat.started_at_ms)
-            : startedAt,
-      }
-    : undefined;
-  const chatWriter = chatContext
-    ? new ChatStreamWriter({
-        metadata: chatContext,
-        runtimeKind: harness ? "acp" : "codex",
-        client: conatClient,
-        approverAccountId: request.account_id,
-        sessionKey: request.session_id,
-        workspaceRoot,
-        hostWorkspaceRoot: hostRoot,
-        hostProjectRoot,
-      })
-    : null;
-
-  let recoveryCode: CodexAcpRecoveryErrorCode | undefined;
-  let recoveryDetail: string | undefined;
-  const captureRecoveryCode = (payload?: AcpStreamPayload | null) => {
-    if (harness) return;
-    if (payload?.type !== "error") return;
-    const directive = failureRecoveryDirective(payload.code, payload.error);
-    if (!directive || recoveryCode) return;
-    recoveryCode = directive.code;
-    recoveryDetail = `${payload.error ?? ""}`.trim() || undefined;
-  };
-  let wrappedStream;
-  stream({ type: "status", state: "init" });
-  if (chatWriter != null) {
-    await chatWriter.waitUntilReady();
-    if (chatWriter.isClosed()) {
-      throw Error(
-        `failed to initialize chat writer -- ${chatWriter.syncdbError}`,
-      );
-    }
-    wrappedStream = async (payload?: AcpStreamPayload | null) => {
-      captureRecoveryCode(payload);
-      try {
-        await chatWriter.handle(payload);
-      } catch (err) {
-        if (harness) throw err;
-        if (payload?.type === "event" && payload.event.type === "goal")
-          throw err;
-        logger.warn("chat writer handle failed", err);
-      }
-      if (payload == null) {
-        stream(null);
-      }
-    };
-  } else {
-    wrappedStream = async (payload?: AcpStreamPayload | null) => {
-      captureRecoveryCode(payload);
-      await stream(payload);
-    };
-  }
-
-  let terminalState: AcpExecutionResult["terminalState"] = "completed";
-  let terminalError: string | undefined;
   try {
-    logger.debug("evaluate: running", {
-      reqId,
-    });
-    stream({ type: "status", state: "running" });
-    let terminalFallbackError: string | undefined;
-    try {
-      // Host-computed for this turn's account and only for native Codex and
-      // the qualified Claude harness; any wire value is dropped.
-      const memory =
-        !harness || isQualifiedClaudeCodeProfile(request.runtime?.profile)
-          ? await loadAgentMemoryContext(projectId, request.account_id)
-          : {};
-      if (memory.event) {
-        await wrappedStream({ type: "event", event: memory.event });
-      }
-      await currentAgent.evaluate({
-        ...request,
-        agent_memory_context: memory.context,
-        mentionReferences,
-        readPendingGoal: harness ? undefined : chatWriter?.readPendingGoal,
-        prompt: artifactReferences.length
-          ? `${augmentPromptWithAgentMentions(prompt, mentionReferences)}\n\nBound artifact references for this human turn (identity only, not access permission):\n${JSON.stringify(artifactReferences)}\nUse these exact source locators, not the displayed @names. These artifacts are in the current project; read their current content through the project chat artifact tools before editing. Do not infer other artifacts or projects from names.`
-          : augmentPromptWithAgentMentions(prompt, mentionReferences),
-        local_images: harness ? undefined : local_images,
-        image_attachments: harness ? image_attachments : undefined,
-        runtime_env: runtimeEnv,
-        config: harness ? undefined : effectiveConfig,
-        stream: wrappedStream,
-      });
-      logger.debug("evaluate: done", { reqId });
-    } catch (err) {
-      logger.warn("evaluate: agent failed", { reqId, err });
-      if (harnessKey) {
-        await currentAgent.dispose?.();
-        if (agents.get(harnessKey) === currentAgent) agents.delete(harnessKey);
-        agentProjectIds.delete(currentAgent);
-      }
-      // A persisted, provider-confirmed cancellation is terminal, not a
-      // failure. The adapter still throws so its retained process is disposed.
-      if (!(harness && chatWriter?.getTerminalState() === "interrupted")) {
-        terminalFallbackError = `${harness ? "ACP harness" : "codex agent"} failed: ${(err as Error)?.message ?? err}`;
-        try {
-          await wrappedStream({
-            type: "error",
-            error: terminalFallbackError,
-          });
-        } catch (streamErr) {
-          logger.warn("evaluate: failed to stream error", streamErr);
-        }
-      }
+    if (!conatClient) {
+      throw Error("conat client must be initialized");
     }
+    const chatContext = request.chat
+      ? {
+          ...request.chat,
+          started_at_ms:
+            Number(request.chat.started_at_ms) > 0
+              ? Number(request.chat.started_at_ms)
+              : startedAt,
+        }
+      : undefined;
+    const chatWriter = chatContext
+      ? new ChatStreamWriter({
+          metadata: chatContext,
+          runtimeKind: harness ? "acp" : "codex",
+          client: conatClient,
+          approverAccountId: request.account_id,
+          sessionKey: request.session_id,
+          workspaceRoot,
+          hostWorkspaceRoot: hostRoot,
+          hostProjectRoot,
+        })
+      : null;
+
+    let recoveryCode: CodexAcpRecoveryErrorCode | undefined;
+    let recoveryDetail: string | undefined;
+    const captureRecoveryCode = (payload?: AcpStreamPayload | null) => {
+      if (harness) return;
+      if (payload?.type !== "error") return;
+      const directive = failureRecoveryDirective(payload.code, payload.error);
+      if (!directive || recoveryCode) return;
+      recoveryCode = directive.code;
+      recoveryDetail = `${payload.error ?? ""}`.trim() || undefined;
+    };
+    let wrappedStream;
+    stream({ type: "status", state: "init" });
     if (chatWriter != null) {
-      const snapshot = chatWriter.watchdogSnapshot();
-      if (!snapshot.finished) {
-        logger.warn("evaluate: forcing terminal ACP payload", {
-          reqId,
-          messageDate: snapshot.messageDate,
-          path: snapshot.path,
-          events: snapshot.events,
-          fallback: terminalFallbackError ? "error" : "summary",
-        });
+      await chatWriter.waitUntilReady();
+      if (chatWriter.isClosed()) {
+        throw Error(
+          `failed to initialize chat writer -- ${chatWriter.syncdbError}`,
+        );
+      }
+      wrappedStream = async (payload?: AcpStreamPayload | null) => {
+        captureRecoveryCode(payload);
         try {
-          await chatWriter.handle(
-            terminalFallbackError
-              ? { type: "error", error: terminalFallbackError }
-              : { type: "summary", finalResponse: "" },
-          );
+          await chatWriter.handle(payload);
         } catch (err) {
-          logger.warn("evaluate: failed forced terminal payload", {
-            reqId,
-            err,
-          });
+          if (harness) throw err;
+          if (payload?.type === "event" && payload.event.type === "goal")
+            throw err;
+          logger.warn("chat writer handle failed", err);
+        }
+        if (payload == null) {
+          stream(null);
+        }
+      };
+    } else {
+      wrappedStream = async (payload?: AcpStreamPayload | null) => {
+        captureRecoveryCode(payload);
+        await stream(payload);
+      };
+    }
+
+    let terminalState: AcpExecutionResult["terminalState"] = "completed";
+    let terminalError: string | undefined;
+    try {
+      logger.debug("evaluate: running", {
+        reqId,
+      });
+      stream({ type: "status", state: "running" });
+      let terminalFallbackError: string | undefined;
+      try {
+        // Host-computed for this turn's account and only for native Codex and
+        // the qualified Claude harness; any wire value is dropped.
+        const memory =
+          !harness || isQualifiedClaudeCodeProfile(request.runtime?.profile)
+            ? await loadAgentMemoryContext(projectId, request.account_id)
+            : {};
+        if (memory.event) {
+          await wrappedStream({ type: "event", event: memory.event });
+        }
+        await currentAgent.evaluate({
+          ...request,
+          agent_memory_context: memory.context,
+          mentionReferences,
+          readPendingGoal: harness ? undefined : chatWriter?.readPendingGoal,
+          prompt: artifactReferences.length
+            ? `${augmentPromptWithAgentMentions(prompt, mentionReferences)}\n\nBound artifact references for this human turn (identity only, not access permission):\n${JSON.stringify(artifactReferences)}\nUse these exact source locators, not the displayed @names. These artifacts are in the current project; read their current content through the project chat artifact tools before editing. Do not infer other artifacts or projects from names.`
+            : augmentPromptWithAgentMentions(prompt, mentionReferences),
+          local_images: harness ? undefined : local_images,
+          image_attachments: harness ? image_attachments : undefined,
+          runtime_env: runtimeEnv,
+          config: harness ? undefined : effectiveConfig,
+          stream: wrappedStream,
+        });
+        logger.debug("evaluate: done", { reqId });
+      } catch (err) {
+        logger.warn("evaluate: agent failed", { reqId, err });
+        if (harnessKey) {
+          await currentAgent.dispose?.();
+          if (agents.get(harnessKey) === currentAgent)
+            agents.delete(harnessKey);
+          agentProjectIds.delete(currentAgent);
+        }
+        // A persisted, provider-confirmed cancellation is terminal, not a
+        // failure. The adapter still throws so its retained process is disposed.
+        if (!(harness && chatWriter?.getTerminalState() === "interrupted")) {
+          terminalFallbackError = `${harness ? "ACP harness" : "codex agent"} failed: ${(err as Error)?.message ?? err}`;
+          try {
+            await wrappedStream({
+              type: "error",
+              error: terminalFallbackError,
+            });
+          } catch (streamErr) {
+            logger.warn("evaluate: failed to stream error", streamErr);
+          }
         }
       }
+      if (chatWriter != null) {
+        const snapshot = chatWriter.watchdogSnapshot();
+        if (!snapshot.finished) {
+          logger.warn("evaluate: forcing terminal ACP payload", {
+            reqId,
+            messageDate: snapshot.messageDate,
+            path: snapshot.path,
+            events: snapshot.events,
+            fallback: terminalFallbackError ? "error" : "summary",
+          });
+          try {
+            await chatWriter.handle(
+              terminalFallbackError
+                ? { type: "error", error: terminalFallbackError }
+                : { type: "summary", finalResponse: "" },
+            );
+          } catch (err) {
+            logger.warn("evaluate: failed forced terminal payload", {
+              reqId,
+              err,
+            });
+          }
+        }
+      }
+    } finally {
+      terminalState = chatWriter?.getTerminalState() ?? terminalState;
+      terminalError =
+        terminalState === "error"
+          ? chatWriter?.getTerminalErrorText()
+          : undefined;
+      const elapsedMs = Date.now() - startedAt;
+      logger.debug("evaluate: end", { reqId, elapsedMs });
+      // TODO: we might not want to immediately close, since there is
+      // overhead in creating the syncdoc each time.
+      chatWriter?.dispose();
+      if (
+        chatWriter != null &&
+        !(await waitForChatWriterDisposal(chatWriter))
+      ) {
+        logger.warn("timed out disposing ACP chat writer; continuing cleanup", {
+          reqId,
+          project_id: request.chat?.project_id,
+          path: request.chat?.path,
+          thread_id: request.chat?.thread_id,
+          message_id: request.chat?.message_id,
+          automation_id: request.chat?.automation_id,
+          timeout_ms: ACP_CHAT_WRITER_DISPOSE_TIMEOUT_MS,
+        });
+      }
     }
+    return {
+      terminalState,
+      error: terminalError,
+      recoveryCode,
+      recoveryDetail,
+    };
   } finally {
-    terminalState = chatWriter?.getTerminalState() ?? terminalState;
-    terminalError =
-      terminalState === "error"
-        ? chatWriter?.getTerminalErrorText()
-        : undefined;
-    const elapsedMs = Date.now() - startedAt;
-    logger.debug("evaluate: end", { reqId, elapsedMs });
-    // TODO: we might not want to immediately close, since there is
-    // overhead in creating the syncdoc each time.
-    chatWriter?.dispose();
-    if (chatWriter != null && !(await waitForChatWriterDisposal(chatWriter))) {
-      logger.warn("timed out disposing ACP chat writer; continuing cleanup", {
-        reqId,
-        project_id: request.chat?.project_id,
-        path: request.chat?.path,
-        thread_id: request.chat?.thread_id,
-        message_id: request.chat?.message_id,
-        automation_id: request.chat?.automation_id,
-        timeout_ms: ACP_CHAT_WRITER_DISPOSE_TIMEOUT_MS,
-      });
-    }
     await cleanup();
   }
-  return {
-    terminalState,
-    error: terminalError,
-    recoveryCode,
-    recoveryDetail,
-  };
 }
 
 async function waitForChatWriterDisposal(
@@ -12789,11 +12796,7 @@ export async function init(
 async function materializeBlobs(
   prompt: string,
   projectId: string,
-  projectRoots?: {
-    host: string;
-    runtime: string;
-    attachments?: { host: string; runtime: string };
-  },
+  projectRoots?: ReturnType<typeof projectBlobMaterializationRoots>,
   forHarness = false,
 ): Promise<{
   prompt: string;
@@ -12816,26 +12819,22 @@ async function materializeBlobs(
   }
   const started = performance.now();
   // Harness agents keep pasted images as project files beyond the turn.
-  const persist = forHarness && projectRoots?.attachments != null;
-  let tempDir: string;
-  let runtimeTempDir: string;
-  if (persist) {
-    tempDir = projectRoots!.attachments!.host;
-    runtimeTempDir = projectRoots!.attachments!.runtime;
-    await fs.mkdir(tempDir, { recursive: true });
-    void pruneChatAttachments(tempDir).catch(() => {});
-  } else {
-    const hostTempRoot = projectRoots?.host ?? os.tmpdir();
-    await fs.mkdir(hostTempRoot, { recursive: true });
-    tempDir = await fs.mkdtemp(
-      path.join(hostTempRoot, `cocalc-blobs-${randomUUID()}-`),
-    );
-    runtimeTempDir = projectRoots
-      ? path.posix.join(projectRoots.runtime, path.basename(tempDir))
-      : tempDir;
-  }
+  const persist = forHarness && projectRoots != null;
+  const projectStorage = projectRoots
+    ? await openProjectBlobStorage({
+        hostProjectRoot: projectRoots.project.host,
+        runtimeProjectRoot: projectRoots.project.runtime,
+        persist,
+      })
+    : undefined;
+  // Non-container Lite runs in the same filesystem trust domain. Hosted
+  // projects must use the descriptor-confined storage above, never this path.
+  const tempDir = projectStorage
+    ? undefined
+    : await fs.mkdtemp(path.join(os.tmpdir(), `cocalc-blobs-${randomUUID()}-`));
   const removeTempDir = async () => {
-    if (!persist) await fs.rm(tempDir, { recursive: true, force: true });
+    if (projectStorage) await projectStorage.finish();
+    else if (tempDir) await fs.rm(tempDir, { recursive: true, force: true });
   };
   const attachments: MaterializedBlobAttachment[] = [];
   const imageAttachments: ReturnType<typeof acpImageAttachment>[] = [];
@@ -12872,12 +12871,10 @@ async function materializeBlobs(
             throw Error("ACP image attachment limit exceeded");
           imageAttachments.push(acpImageAttachment(buffer));
         }
-        const safeName = buildSafeBlobFilename(ref);
-        const hostFilePath = path.join(tempDir, safeName);
-        const runtimeFilePath = projectRoots
-          ? path.posix.join(runtimeTempDir, safeName)
-          : hostFilePath;
-        await fs.writeFile(hostFilePath, buffer);
+        const runtimeFilePath = projectStorage
+          ? await projectStorage.write(ref, buffer)
+          : path.join(tempDir!, buildSafeBlobFilename(ref));
+        if (!projectStorage) await fs.writeFile(runtimeFilePath, buffer);
         bytes += buffer.byteLength;
         attachments.push({ ref, path: runtimeFilePath });
       } catch (err) {

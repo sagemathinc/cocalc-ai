@@ -9,6 +9,7 @@
 
 import { randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
+import { withAccountRehomeWriteFence } from "./account-rehome-fence";
 import { normalizeAgentAppearance } from "@cocalc/util/agent-appearance";
 import {
   MAX_CONVERSATION_PARTICIPANTS,
@@ -87,6 +88,12 @@ export async function createConversationRecord({
   path = normalizeConversationPath(path);
   title = normalizeConversationTitle(title);
   await assertCollaborator(account_id, project_id);
+  const { rows: registered } = await getPool().query(
+    `SELECT ${COLUMNS} FROM project_conversations
+     WHERE project_id = $1 AND path = $2`,
+    [project_id, path],
+  );
+  if (registered[0] != null) return toConversation(registered[0]);
   const { rows: counts } = await getPool().query(
     "SELECT count(*)::int AS n FROM project_conversations WHERE project_id = $1",
     [project_id],
@@ -308,12 +315,16 @@ export async function setPersonalState({
   target_id,
   project_id,
   patch,
+  reclaimAliasFrom,
 }: {
   account_id: string;
   kind: PeopleStateKind;
   target_id: string;
   project_id?: string | null;
   patch: PersonalStatePatch;
+  // Only the server may supply a binding verified unavailable by its project
+  // owner. Match it exactly below; never infer absence from this bay's DB.
+  reclaimAliasFrom?: { target_id: string; project_id: string };
 }): Promise<PersonalStateRow> {
   assertPeopleStateKind(kind);
   const values: Record<string, unknown> = {};
@@ -341,8 +352,25 @@ export async function setPersonalState({
     ...insertColumns.map((column) => `${column} = EXCLUDED.${column}`),
   ];
   try {
-    const { rows } = await getPool().query(
-      `INSERT INTO account_people_state
+    return await withAccountRehomeWriteFence({
+      account_id,
+      action: "modify People state",
+      fn: async (db) => {
+        if (kind === "conversation" && values.alias && reclaimAliasFrom) {
+          await db.query(
+            `UPDATE account_people_state SET alias = NULL, updated = NOW()
+             WHERE account_id = $1 AND kind = 'conversation' AND alias = $2
+               AND target_id = $3 AND project_id = $4`,
+            [
+              account_id,
+              values.alias,
+              reclaimAliasFrom.target_id,
+              reclaimAliasFrom.project_id,
+            ],
+          );
+        }
+        const { rows } = await db.query(
+          `INSERT INTO account_people_state
          (account_id, kind, target_id, project_id, updated${insertColumns
            .map((column) => `, ${column}`)
            .join("")})
@@ -352,9 +380,11 @@ export async function setPersonalState({
        ON CONFLICT (account_id, kind, target_id)
        DO UPDATE SET ${updates.join(", ")}
        RETURNING ${STATE_COLUMNS}`,
-      params,
-    );
-    return toState(rows[0]);
+          params,
+        );
+        return toState(rows[0]);
+      },
+    });
   } catch (err) {
     if ((err as { code?: string })?.code === "23505") {
       throw Error(`you already use the alias @${values.alias}`);
@@ -397,16 +427,22 @@ export async function markConversationRead({
   read_through: number;
 }): Promise<void> {
   if (!Number.isFinite(read_through)) throw Error("invalid read_through");
-  await getPool().query(
-    `INSERT INTO account_people_state
+  await withAccountRehomeWriteFence({
+    account_id,
+    action: "mark conversation read",
+    fn: async (db) => {
+      await db.query(
+        `INSERT INTO account_people_state
        (account_id, kind, target_id, project_id, last_read, updated)
      VALUES ($1, 'conversation', $2, $3, $4, NOW())
      ON CONFLICT (account_id, kind, target_id)
      DO UPDATE SET
        last_read = GREATEST(account_people_state.last_read, EXCLUDED.last_read),
        updated = NOW()`,
-    [account_id, conversation_id, project_id, new Date(read_through)],
-  );
+        [account_id, conversation_id, project_id, new Date(read_through)],
+      );
+    },
+  });
 }
 
 // Latest explicit @mention of this account per (project, path), from the

@@ -112,6 +112,7 @@ export function ProjectsSidebar({
 }) {
   const actions = useActions("projects");
   const project_map = useTypedRedux("projects", "project_map");
+  const openProjects = useTypedRedux("projects", "open_projects");
   const account_id = useTypedRedux("account", "account_id");
   const current = useTypedRedux("page", "active_top_tab");
   const {
@@ -129,10 +130,14 @@ export function ProjectsSidebar({
   });
 
   function open(project_id: string, e?: React.MouseEvent) {
-    actions.open_project({
-      project_id,
-      switch_to: !(e?.button === 1 || e?.ctrlKey || e?.metaKey),
-    });
+    const switchTo = !(e?.button === 1 || e?.ctrlKey || e?.metaKey);
+    if (openProjects?.includes(project_id)) {
+      // Like the old project tabs: reveal the retained view, don't load files/.
+      if (switchTo)
+        void actions.redux.getActions("page").set_active_tab(project_id);
+    } else {
+      void actions.open_project({ project_id, switch_to: switchTo });
+    }
     onNavigate?.();
   }
 

@@ -331,3 +331,13 @@ test("search results have their own address, over the page of their kind", () =>
   expect(getPageTopTab(parsePageTarget("search/artifacts/x"))).toBe("agents");
   expect(parsePageTarget("search/bogus/x")).toMatchObject({ scope: "agents" });
 });
+test.each(["", "/", "/project/entry", "//entry", "/project/entry/extra"])(
+  "legacy Library suffix %s resolves like Artifacts and generates its current address",
+  (suffix) => {
+    const parsed = parsePageTarget(`library${suffix}`);
+    expect(parsed).toEqual(parsePageTarget(`artifacts${suffix}`));
+    expect(getPageTargetPath(parsed)).toBe(
+      getPageTargetPath(parsePageTarget(`artifacts${suffix}`)),
+    );
+  },
+);

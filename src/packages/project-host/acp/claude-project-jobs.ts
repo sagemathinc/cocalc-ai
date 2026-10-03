@@ -20,6 +20,7 @@ export type ProjectJobExecutor = (
 type Status = "running" | "completed" | "failed" | "canceled" | "timed_out";
 interface Job {
   id: string;
+  transient?: boolean;
   requestId?: string;
   fingerprint: string;
   abort: AbortController;
@@ -47,7 +48,7 @@ const RETENTION = 600_000;
 const OUTPUT_BYTES = 1024 * 1024;
 // Says who can recover and how: an agent cannot, and retrying does not help.
 const CLEANUP_UNCONFIRMED =
-  "Project job cleanup is unconfirmed, so this agent session cannot start more project commands. Only the user can recover: ask them to restart the project (project Settings, Restart). Waiting or retrying will not help.";
+  "Project job cleanup is unconfirmed, so this agent session cannot start more project tools. Only the user can recover: ask them to restart the project (project Settings, Restart). Waiting or retrying will not help.";
 const PAGE_BYTES = 64 * 1024;
 let activeJobs = 0;
 
@@ -106,8 +107,15 @@ export class ClaudeProjectJobs {
   }
   private prune() {
     for (const [id, job] of this.jobs)
-      if (job.finished !== undefined && Date.now() - job.finished > RETENTION)
+      if (
+        job.finished !== undefined &&
+        (job.transient || Date.now() - job.finished > RETENTION)
+      )
         this.jobs.delete(id);
+  }
+  private assertOpen() {
+    if (this.cleanupBlocked) throw Error(CLEANUP_UNCONFIRMED);
+    if (this.closed || this.paused) throw Error("Project tool is closed");
   }
   private get(id: unknown): Job {
     this.prune();
@@ -134,8 +142,7 @@ export class ClaudeProjectJobs {
     this.wake(job);
   }
   async start(args: Record<string, unknown>) {
-    if (this.cleanupBlocked) throw Error(CLEANUP_UNCONFIRMED);
-    if (this.closed || this.paused) throw Error("Project tool is closed");
+    this.assertOpen();
     const { script, cwd, request_id: requestId } = args;
     if (
       typeof script !== "string" ||
@@ -169,6 +176,60 @@ export class ClaudeProjectJobs {
       if (this.requests.size >= 1024)
         throw Error("Project retry-ID capacity reached for this controller");
     }
+    const job = this.createJob(
+      timeoutMs,
+      fingerprint,
+      requestId as string | undefined,
+    );
+    // Keep bounded tombstones even when output expires, so a retry never reruns
+    // an old command whose completion was not received by the caller.
+    if (job.requestId)
+      this.requests.set(job.requestId, { fingerprint, jobId: job.id });
+    job.done = this.run(job, script, cwd as string | undefined, {
+      timeoutMs,
+      onOutput: (stream, data) => this.append(job, stream, data),
+      onCleanupConfirmed: () => {},
+    }).then(
+      () => {},
+      () => {},
+    );
+    return this.wait({ job_id: job.id, cursor: 0, yield_time_ms: waitMs });
+  }
+
+  /** Every file/image/memory step shares command admission and cleanup accounting. */
+  readonly executeTool: ProjectJobExecutor = async (
+    script,
+    cwd,
+    signal,
+    options,
+  ) => {
+    this.assertOpen();
+    signal.throwIfAborted();
+    const job = this.createJob(options.timeoutMs, "");
+    job.transient = true;
+    const abort = () => this.stop(job, "canceled");
+    signal.addEventListener("abort", abort, { once: true });
+    const result = this.run(job, script, cwd, options)
+      .then((result) => {
+        if (result.cleanupConfirmed !== true) throw Error(CLEANUP_UNCONFIRMED);
+        job.abort.signal.throwIfAborted();
+        return result;
+      })
+      .finally(() => signal.removeEventListener("abort", abort));
+    job.done = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
+  };
+
+  private createJob(
+    timeoutMs: number,
+    fingerprint: string,
+    requestId?: string,
+  ): Job {
+    this.assertOpen();
+    this.prune();
     if (
       [...this.jobs.values()].filter((job) => job.finished === undefined)
         .length >= 4
@@ -189,7 +250,7 @@ export class ClaudeProjectJobs {
     }
     const job: Job = {
       id: randomUUID(),
-      requestId: requestId as string | undefined,
+      requestId,
       fingerprint,
       abort: new AbortController(),
       status: "running",
@@ -203,27 +264,29 @@ export class ClaudeProjectJobs {
       done: Promise.resolve(),
     };
     this.jobs.set(job.id, job);
-    // Keep bounded tombstones even when output expires, so a retry never reruns
-    // an old command whose completion was not received by the caller.
-    if (job.requestId)
-      this.requests.set(job.requestId, { fingerprint, jobId: job.id });
+    return job;
+  }
+
+  private run(
+    job: Job,
+    script: string,
+    cwd: string | undefined,
+    options: Parameters<ProjectJobExecutor>[3],
+  ): Promise<SandboxExecResult> {
     const reservation = reserve(job);
     let executionStarted = false;
-    const timer = setTimeout(() => this.stop(job, "timed_out"), timeoutMs);
-    job.done = Promise.resolve()
+    const timer = setTimeout(
+      () => this.stop(job, "timed_out"),
+      options.timeoutMs,
+    );
+    return Promise.resolve()
       .then(() => {
         job.abort.signal.throwIfAborted();
         executionStarted = true;
-        return this.execute(
-          script,
-          cwd as string | undefined,
-          job.abort.signal,
-          {
-            timeoutMs,
-            onOutput: (stream, data) => this.append(job, stream, data),
-            onCleanupConfirmed: reservation.confirmCleanup,
-          },
-        );
+        return this.execute(script, cwd, job.abort.signal, {
+          ...options,
+          onCleanupConfirmed: reservation.confirmCleanup,
+        });
       })
       .then((result) => {
         if (result.cleanupConfirmed !== true) {
@@ -231,13 +294,16 @@ export class ClaudeProjectJobs {
           // ability to account for execution authority in this controller.
           this.blockCleanup(job);
         }
-        if (result.stdout) this.append(job, "stdout", result.stdout);
-        if (result.stderr) this.append(job, "stderr", result.stderr);
+        if (!job.transient) {
+          if (result.stdout) this.append(job, "stdout", result.stdout);
+          if (result.stderr) this.append(job, "stderr", result.stderr);
+        }
         job.code = result.code;
         if (job.status === "running")
           job.status = result.code === 0 ? "completed" : "failed";
+        return result;
       })
-      .catch(() => {
+      .catch((error) => {
         if (executionStarted) {
           this.blockCleanup(job);
           this.append(job, "stderr", CLEANUP_UNCONFIRMED);
@@ -246,13 +312,13 @@ export class ClaudeProjectJobs {
           job.status = "failed";
           this.append(job, "stderr", "Project command failed to execute");
         }
+        throw executionStarted ? Error(CLEANUP_UNCONFIRMED) : error;
       })
       .finally(() => {
         clearTimeout(timer);
         reservation.settle();
         this.wake(job);
       });
-    return this.wait({ job_id: job.id, cursor: 0, yield_time_ms: waitMs });
   }
   async wait(args: Record<string, unknown>) {
     const job = this.get(args.job_id);
@@ -335,19 +401,22 @@ export class ClaudeProjectJobs {
   list() {
     this.prune();
     return {
-      jobs: [...this.jobs.values()].map((job) => ({
-        job_id: job.id,
-        request_id: job.requestId,
-        status: job.status,
-        code: job.code,
-        started_at: job.started,
-        deadline: job.deadline,
-        finished_at: job.finished,
-        cleanup_pending: job.status !== "running" && job.finished === undefined,
-        cleanup_error: job.cleanupUnconfirmed
-          ? "Runtime could not verify job cleanup"
-          : undefined,
-      })),
+      jobs: [...this.jobs.values()]
+        .filter((job) => !job.transient)
+        .map((job) => ({
+          job_id: job.id,
+          request_id: job.requestId,
+          status: job.status,
+          code: job.code,
+          started_at: job.started,
+          deadline: job.deadline,
+          finished_at: job.finished,
+          cleanup_pending:
+            job.status !== "running" && job.finished === undefined,
+          cleanup_error: job.cleanupUnconfirmed
+            ? "Runtime could not verify job cleanup"
+            : undefined,
+        })),
     };
   }
   async cancelAll() {

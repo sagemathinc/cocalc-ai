@@ -5,6 +5,7 @@
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { testCleanup } from "@cocalc/database/test-utils";
+import { MAX_CONVERSATIONS_PER_PROJECT } from "@cocalc/util/people";
 import {
   createConversationRecord,
   getConversation,
@@ -46,11 +47,23 @@ async function setUsers(id: string, users: Record<string, string>) {
 
 beforeAll(async () => {
   await initEphemeralDatabase({});
+  await getPool().query(`CREATE TABLE IF NOT EXISTS account_rehome_operations (
+    op_id uuid PRIMARY KEY, account_id uuid, source_bay_id text,
+    dest_bay_id text, status text, stage text, created_at timestamp DEFAULT NOW()
+  )`);
+  await getPool().query(`CREATE TABLE IF NOT EXISTS account_financial_handoffs (
+    account_id uuid, state text
+  )`);
 }, 30000);
 
 beforeEach(async () => {
   await getPool().query(
-    "TRUNCATE project_conversations, account_people_state, account_notification_index, artifact_catalog, artifact_catalog_sources, agent_identities, projects CASCADE",
+    "TRUNCATE account_financial_handoffs, account_rehome_operations, project_conversations, account_people_state, account_notification_index, artifact_catalog, artifact_catalog_sources, agent_identities, projects CASCADE",
+  );
+  await getPool().query(
+    `INSERT INTO accounts(account_id, home_bay_id) VALUES ($1, $3), ($2, $3)
+     ON CONFLICT (account_id) DO UPDATE SET home_bay_id = EXCLUDED.home_bay_id`,
+    [alice, bob, process.env.COCALC_BAY_ID || "bay-0"],
   );
   await setUsers(project_id, { [alice]: "owner", [bob]: "collaborator" });
   await setUsers(other_project_id, { [alice]: "owner" });
@@ -70,12 +83,179 @@ test("adding the same file twice returns one conversation", async () => {
   const b = await createConversationRecord({
     account_id: bob,
     project_id,
-    path: "/home/user/notes//team.chat",
+    path: "~/notes//team.chat",
     title: "Other title",
   });
   expect(b.conversation_id).toBe(a.conversation_id);
   expect(b.title).toBe("Team");
   expect(a.path).toBe("/home/user/notes/team.chat");
+});
+
+test("at capacity, existing registrations are unchanged but new paths fail", async () => {
+  await getPool().query(
+    `INSERT INTO project_conversations
+     (conversation_id, project_id, path, title, created_by, created, last_activity, participant_ids)
+     SELECT gen_random_uuid(), $1, '/home/user/' || n || '.chat', 'original', $2,
+       NOW(), NOW(), ARRAY[]::uuid[] FROM generate_series(1, $3::int) n`,
+    [project_id, alice, MAX_CONVERSATIONS_PER_PROJECT - 1],
+  );
+  const opts = {
+    account_id: alice,
+    project_id,
+    path: "last.chat",
+    title: "Last",
+  };
+  const last = await createConversationRecord(opts);
+  expect(
+    await createConversationRecord({
+      ...opts,
+      account_id: bob,
+      path: "~/last.chat",
+      title: "Replacement",
+    }),
+  ).toEqual(last);
+  await expect(
+    createConversationRecord({ ...opts, path: "overflow.chat" }),
+  ).rejects.toThrow("too many conversations");
+  await expect(
+    createConversationRecord({ ...opts, account_id: viewer }),
+  ).rejects.toThrow("collaborator");
+});
+
+test.each(["running", "stale-home", "frozen", "accepted", "imported"])(
+  "People writes are fenced during %s",
+  async (mode) => {
+    const target = {
+      account_id: alice,
+      kind: "conversation" as const,
+      target_id: viewer,
+      project_id,
+    };
+    await setPersonalState({
+      ...target,
+      patch: { alias: "team", pinned: true },
+    });
+    if (mode === "running") {
+      await getPool().query(
+        `INSERT INTO account_rehome_operations
+       (op_id, account_id, source_bay_id, dest_bay_id, status, stage)
+       VALUES (gen_random_uuid(), $1, 'bay-0', 'bay-2', 'running', 'requested')`,
+        [alice],
+      );
+    } else if (mode === "stale-home") {
+      await getPool().query(
+        "UPDATE accounts SET home_bay_id = 'other-bay' WHERE account_id = $1",
+        [alice],
+      );
+    } else {
+      await getPool().query(
+        "INSERT INTO account_financial_handoffs(account_id, state) VALUES ($1, $2)",
+        [alice, mode],
+      );
+    }
+    for (const patch of [
+      { alias: "new" },
+      { pinned: false },
+      { following: true },
+      { muted: true },
+      { scanned_at: 1000 },
+    ]) {
+      await expect(setPersonalState({ ...target, patch })).rejects.toThrow(
+        /account rehome|homed on|financial rehome/,
+      );
+    }
+    await expect(
+      markConversationRead({
+        account_id: alice,
+        project_id,
+        conversation_id: viewer,
+        read_through: 1000,
+      }),
+    ).rejects.toThrow(/account rehome|homed on|financial rehome/);
+    expect(
+      (
+        await getPersonalStates({
+          account_id: alice,
+          kind: "conversation",
+          target_ids: [viewer],
+        })
+      ).get(viewer),
+    ).toMatchObject({ alias: "team", pinned: true, last_read: null });
+    await expect(
+      setPersonalState({
+        ...target,
+        account_id: bob,
+        patch: { alias: "team" },
+      }),
+    ).resolves.toMatchObject({ alias: "team" });
+  },
+);
+
+test("alias reclamation matches the verified binding and preserves other state", async () => {
+  const old = {
+    account_id: alice,
+    kind: "conversation" as const,
+    target_id: viewer,
+    project_id,
+  };
+  await setPersonalState({ ...old, patch: { alias: "team", pinned: true } });
+  await setPersonalState({ ...old, account_id: bob, patch: { alias: "team" } });
+  const next = { ...old, target_id: bob, patch: { alias: "TEAM" } };
+  await expect(
+    setPersonalState({
+      ...next,
+      reclaimAliasFrom: { target_id: viewer, project_id: other_project_id },
+    }),
+  ).rejects.toThrow("already use the alias");
+  await expect(
+    setPersonalState({
+      ...next,
+      reclaimAliasFrom: { target_id: alice, project_id },
+    }),
+  ).rejects.toThrow("already use the alias");
+  // The release and replacement are one transaction, even if the new row
+  // fails after the old binding has been cleared.
+  await expect(
+    setPersonalState({
+      ...next,
+      target_id: "not-a-uuid",
+      reclaimAliasFrom: { target_id: viewer, project_id },
+    }),
+  ).rejects.toThrow("invalid input syntax");
+  expect(
+    await resolveAlias({
+      account_id: alice,
+      kind: "conversation",
+      alias: "team",
+    }),
+  ).toEqual({ target_id: viewer, project_id });
+  await setPersonalState({
+    ...next,
+    reclaimAliasFrom: { target_id: viewer, project_id },
+  });
+  expect(
+    await resolveAlias({
+      account_id: alice,
+      kind: "conversation",
+      alias: "team",
+    }),
+  ).toEqual({ target_id: bob, project_id });
+  expect(
+    await resolveAlias({
+      account_id: bob,
+      kind: "conversation",
+      alias: "team",
+    }),
+  ).toEqual({ target_id: viewer, project_id });
+  expect(
+    (
+      await getPersonalStates({
+        account_id: alice,
+        kind: "conversation",
+        target_ids: [viewer],
+      })
+    ).get(viewer),
+  ).toMatchObject({ alias: null, pinned: true });
 });
 
 test("only current owners/collaborators can create, see or touch", async () => {

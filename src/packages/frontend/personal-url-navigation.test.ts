@@ -1,6 +1,9 @@
 import { personalUrlDestination } from "./personal-url-navigation";
 
-jest.mock("./history", () => ({ load_target: jest.fn() }));
+jest.mock("./history", () => ({
+  load_target: jest.fn(),
+  replace_url: jest.fn(),
+}));
 
 const owner = { account_id: "a", username: "alice", redirect: false };
 const base = {

@@ -49,4 +49,24 @@ describeDb("Agent Network account rehome fence", () => {
     expect(tables).not.toContain("agent_personal_grants");
     expect(tables).not.toContain("agent_personal_requests");
   });
+
+  test.each(["conversation", "person", "project"])(
+    "retained People %s state blocks rehome, including default-only rows",
+    async (kind) => {
+      const account = randomUUID();
+      await expect(
+        assertNoPersonalStateForRehome(db, account),
+      ).resolves.toBeUndefined();
+      await db.query(
+        "INSERT INTO account_people_state(account_id, kind, target_id) VALUES($1, $2, $3)",
+        [account, kind, randomUUID()],
+      );
+      await expect(assertNoPersonalStateForRehome(db, account)).rejects.toThrow(
+        "People state",
+      );
+      await expect(
+        assertNoPersonalStateForRehome(db, randomUUID()),
+      ).resolves.toBeUndefined();
+    },
+  );
 });

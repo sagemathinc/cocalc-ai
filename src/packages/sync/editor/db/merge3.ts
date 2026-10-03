@@ -300,6 +300,15 @@ export function dbMerge3<D>(
     const [d0, da, db] = [base, a, b] as unknown as DbDoc[];
     const changedA = changed(da, d0);
     const changedB = changed(db, d0);
+    // Partial selectors can match multiple records: checking getOne's first
+    // match cannot make delete(where) safe. Use exact-key string merging.
+    for (const keys of [changedA, changedB]) {
+      for (const where of keys.values()) {
+        if (primaryKeys.some((key) => where[key] == null)) {
+          return viaStrings(base, a, b, ancestors);
+        }
+      }
+    }
     if (changedB.size === 0) return a;
     if (changedA.size === 0) return b;
     // The record with exactly this primary key; a where clause could also

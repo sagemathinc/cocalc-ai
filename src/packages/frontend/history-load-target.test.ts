@@ -1,5 +1,7 @@
 /** @jest-environment jsdom */
 
+import { waitFor } from "@testing-library/react";
+
 let mockPageState: Record<string, unknown> = {};
 const pageActions = {
   set_active_tab: jest.fn(),
@@ -19,6 +21,7 @@ const mentionsActions = {
 };
 const webappClient = {
   is_signed_in: jest.fn(() => false),
+  conat_client: { hub: { personalUrls: { resolveUrl: jest.fn() } } },
 };
 
 const accountStore = {
@@ -97,11 +100,13 @@ import {
   rememberProjectsView,
   openProjectsWorkspace,
   set_url,
+  replace_url,
   set_url_with_search,
   update_params,
 } from "./history";
 import { authViewUrl, signedInRedirectUrl } from "./auth/util";
 import { getPageUrlPath, parsePageTarget } from "./page-routing";
+import { openPersonalUrl } from "./personal-url-navigation";
 
 describe("load_target", () => {
   beforeEach(() => {
@@ -261,6 +266,175 @@ describe("load_target", () => {
       library_project_id: undefined,
       library_entry_id: undefined,
     });
+  });
+
+  it.each([
+    "library",
+    "library/",
+    "library/project/entry",
+    "library//entry",
+    "library/project/entry/extra",
+  ])("opens legacy %s as Artifacts without losing its suffix", (target) => {
+    load_target(target, false, false);
+    expect(pageActions.set_active_tab).toHaveBeenLastCalledWith(
+      "agents",
+      false,
+    );
+    expect(pageActions.setState).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        library_open: true,
+        library_project_id:
+          target.split("/")[1] ||
+          (target === "library//entry" ? "" : undefined),
+        library_entry_id: target.split("/").slice(2).join("/") || undefined,
+      }),
+    );
+    expect(projectsActions.load_target).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])(
+    "replaces personal aliases and preserves Back/Forward (clicked=%s)",
+    async (clicked) => {
+      const resolveUrl = webappClient.conat_client.hub.personalUrls.resolveUrl;
+      resolveUrl.mockResolvedValue({
+        status: "resolved",
+        owner: { account_id: "other", username: "alice", redirect: true },
+        kind: "chats",
+        alias: "old-name",
+        canonical_path: "/u/alice/chats/new-name",
+        target: {
+          kind: "conversation",
+          project_id: "project",
+          conversation_id: "conversation",
+        },
+      });
+      window.history.replaceState({}, "", "/settings/profile");
+      const length = history.length;
+      const alias = "/u/alice/chats/old-name";
+      if (!clicked) window.history.pushState({}, "", alias);
+      load_target(alias, false, clicked);
+      await waitFor(() =>
+        expect(location.pathname).toBe(
+          "/people/conversations/project/conversation",
+        ),
+      );
+      expect(history.length).toBe(length + 1);
+      expect(pageActions.set_active_tab).toHaveBeenLastCalledWith(
+        "people",
+        false,
+      );
+      const go = async (direction: "back" | "forward") => {
+        const popped = new Promise<void>((resolve) =>
+          window.addEventListener("popstate", () => resolve(), { once: true }),
+        );
+        history[direction]();
+        await popped;
+      };
+      await go("back");
+      expect(location.pathname).toBe("/settings/profile");
+      expect(accountActions.setState).toHaveBeenLastCalledWith({
+        active_page: "profile",
+      });
+      await go("forward");
+      expect(location.pathname).toBe(
+        "/people/conversations/project/conversation",
+      );
+      expect(resolveUrl).toHaveBeenCalledTimes(1);
+      expect(history.length).toBe(length + 1);
+    },
+  );
+
+  it.each(["agent", "artifact"])(
+    "replaces my renamed %s alias with its canonical personal address",
+    async (kind) => {
+      accountStore.get.mockImplementation((key) =>
+        key === "account_id" ? "me" : key === "is_logged_in" ? true : undefined,
+      );
+      const canonical = `/u/alice/${kind}s/reviewer`;
+      webappClient.conat_client.hub.personalUrls.resolveUrl.mockResolvedValue({
+        status: "resolved",
+        owner: { account_id: "me", username: "alice", redirect: true },
+        alias: "reviewer",
+        canonical_path: canonical,
+        target: {
+          kind,
+          agent_id: "id",
+          project_id: "project",
+          entry_id: "entry",
+        },
+      });
+      window.history.replaceState({}, "", `/u/old-name/${kind}s/reviewer`);
+      const length = history.length;
+      await openPersonalUrl(location.pathname);
+      expect(location.pathname).toBe(canonical);
+      expect(history.length).toBe(length);
+      expect(pageActions.set_active_tab).toHaveBeenLastCalledWith(
+        "agents",
+        false,
+      );
+    },
+  );
+
+  it("ignores an alias response after the user navigates away", async () => {
+    let resolve!: (value: unknown) => void;
+    webappClient.conat_client.hub.personalUrls.resolveUrl.mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
+    window.history.replaceState({}, "", "/u/alice/chats/team");
+    const pending = openPersonalUrl(location.pathname);
+    window.history.replaceState({}, "", "/settings/profile");
+    resolve({
+      status: "resolved",
+      owner: { account_id: "other" },
+      target: { kind: "person", person_id: "someone" },
+    });
+    await pending;
+    expect(location.pathname).toBe("/settings/profile");
+    expect(pageActions.set_active_tab).not.toHaveBeenCalled();
+  });
+
+  it("replaces unavailable aliases instead of trapping Back on the fallback page", async () => {
+    webappClient.conat_client.hub.personalUrls.resolveUrl.mockResolvedValue({
+      status: "unavailable",
+      owner: { account_id: "other" },
+    });
+    window.history.replaceState({}, "", "/u/alice/chats/gone");
+    const length = history.length;
+    await openPersonalUrl(location.pathname);
+    expect(location.pathname).toBe("/people");
+    expect(history.length).toBe(length);
+    expect(pageActions.set_active_tab).toHaveBeenLastCalledWith(
+      "people",
+      false,
+    );
+  });
+
+  it("agent name canonicalization preserves both the prior page and Forward history", async () => {
+    window.history.replaceState({}, "", "/projects");
+    set_url("/agents/id");
+    set_url("/settings/profile");
+    const length = history.length;
+    const go = async (direction: "back" | "forward") => {
+      const popped = new Promise<void>((resolve) =>
+        window.addEventListener("popstate", () => resolve(), { once: true }),
+      );
+      history[direction]();
+      await popped;
+    };
+    await go("back");
+    replace_url("/agents/reviewer");
+    expect(history.length).toBe(length);
+    await go("forward");
+    expect(location.pathname).toBe("/settings/profile");
+    await go("back");
+    expect(location.pathname).toBe("/agents/reviewer");
+    await go("back");
+    expect(location.pathname).toBe("/projects");
+    // Leave no forward entries for the following independent history tests.
+    await go("forward");
+    await go("forward");
   });
 
   it.each([

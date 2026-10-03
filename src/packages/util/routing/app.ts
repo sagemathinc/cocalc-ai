@@ -8,6 +8,7 @@ export const APP_ROUTES = new Set([
   "admin",
   "agents",
   "artifacts",
+  "library", // Legacy bookmarks and shared links.
   "all-agents",
   "u",
   "app-docs",

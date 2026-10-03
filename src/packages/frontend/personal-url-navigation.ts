@@ -13,7 +13,7 @@ import type {
   PersonalUrlTarget,
   ResolvedPersonalUrl,
 } from "@cocalc/util/personal-urls";
-import { load_target } from "./history";
+import { load_target, replace_url } from "./history";
 
 export function personalUrlDestination(
   result: ResolvedPersonalUrl,
@@ -57,26 +57,39 @@ function targetDestination(target: PersonalUrlTarget, rest?: string): string {
 
 export async function openPersonalUrl(path: string): Promise<void> {
   const url = path.startsWith("/") ? path : `/${path}`;
+  const requestedUrl = location.href;
   let destination: string | null = null;
+  let canonicalPath: string | undefined;
   try {
     const result = await webapp_client.conat_client.hub.personalUrls.resolveUrl(
       { url },
     );
-    destination = personalUrlDestination(
-      result,
-      redux.getStore("account")?.get("account_id"),
-    );
+    const accountId = redux.getStore("account")?.get("account_id");
+    destination = personalUrlDestination(result, accountId);
+    if (
+      accountId &&
+      result.status === "resolved" &&
+      result.owner.account_id === accountId &&
+      (result.target?.kind === "agent" || result.target?.kind === "artifact")
+    ) {
+      canonicalPath = result.canonical_path;
+    }
   } catch (err) {
+    if (location.href !== requestedUrl) return;
     alert_message({ type: "error", message: `${url}: ${err}` });
   }
+  // Back or another navigation may finish before the hub lookup does.
+  if (location.href !== requestedUrl) return;
   if (destination == null) {
     alert_message({
       type: "warning",
       message: `Nothing at ${url} is available to you.`,
     });
-    redux.getActions("page").set_active_tab("people");
+    replace_url("/people");
+    redux.getActions("page").set_active_tab("people", false);
     return;
   }
   // Replace /u/... with the canonical address of what it opened.
-  load_target(destination, false, true);
+  replace_url(canonicalPath ?? `/${destination}`);
+  load_target(destination, false, false);
 }

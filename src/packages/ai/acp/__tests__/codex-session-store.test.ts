@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as zlib from "node:zlib";
@@ -35,6 +35,17 @@ function eventLine(label: string): string {
 }
 
 describe("portable Codex session history", () => {
+  it("rejects corrupt compressed history instead of leaving export pending", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "codex-session-corrupt-"));
+    try {
+      const filePath = path.join(dir, "rollout-corrupt.jsonl.zst");
+      await writeFile(filePath, "not zstd data");
+      await expect(readPortableSessionHistory(filePath)).rejects.toThrow();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("exports a trimmed copy without mutating the source file", async () => {
     const filePath = await makeSessionFile([
       JSON.stringify({ type: "session_meta", payload: { id: "sess-1" } }),
