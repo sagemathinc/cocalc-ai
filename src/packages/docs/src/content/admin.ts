@@ -1080,8 +1080,14 @@ and shared tasks.
   only after diagnostics reports valid Zendesk and webhook configuration.
 - Every recipient must be a reviewed CRM contact with an active relationship
   to the target organization and a reviewed email address.
-- Suppressions, duplicate checks, organization cooldowns, per-domain limits,
-  and global limits are rechecked when work is claimed, not only at preview.
+- Recipient and organization status, primary-email status, suppressions,
+  same-kind duplicate checks, contact cooldowns, per-domain limits, and global
+  limits are rechecked when work is claimed, not only at preview.
+- While another initial send to the same contact is still creating its ticket
+  (in flight or indeterminate), a send of any kind fails at claim, even with a
+  cooldown override. Reconcile the first send, then requeue the blocked one
+  with \`cocalc admin crm outreach delivery retry\` or
+  \`cocalc admin crm outreach batch resume\`.
 - CoCalc records \`notification_requested\`; it does not claim that an email was
   delivered. Zendesk and its notification trigger remain authoritative.
 - Never use this system for bulk marketing lists. It is designed for one
@@ -1288,8 +1294,10 @@ should use the [CRM outreach CLI runbook](/app-docs/admin/crm-outreach).
 1. Read the status banner and queue summary. Do not prepare new sends if
    diagnostics report provider, consistency, or webhook problems.
 2. Check the minute, hour, and day usage before planning a batch. Site-wide,
-   per-domain, and organization cooldown limits are enforced again when the
-   worker claims a delivery.
+   per-domain, and contact cooldown limits are enforced again when the worker
+   claims a delivery. Recipient and organization status, primary-email status,
+   suppressions, and same-kind duplicates are also rechecked, and an unresolved
+   initial send to the same contact blocks sends of every kind.
 3. Filter **Deliveries** by recipient, state, engagement, owner, kind, batch,
    organization, opportunity, suggested action, Zendesk ticket, or date.
 4. Open an existing delivery or batch before creating a replacement. A timeout
