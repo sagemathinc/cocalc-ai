@@ -498,7 +498,16 @@ ens4\t0100B40A\t00000000\t0005
       residualTracker,
       detectRelayEvidence,
     });
-    await new Promise((resolve) => setTimeout(resolve, 90));
+    // Wait for the stop rather than a fixed time: under load one late tick
+    // can carry several residual buckets for the project.
+    for (
+      const deadline = Date.now() + 5000;
+      stopMock.mock.calls.length === 0 && Date.now() < deadline;
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    // A few more ticks: the hub's stop decision must keep the policy unused.
+    await new Promise((resolve) => setTimeout(resolve, 50));
     stop();
 
     expect(detectRelayEvidence).toHaveBeenCalledWith({ rootPid: 1234 });
