@@ -27,6 +27,7 @@ import initPublicAuth from "./app/public-auth";
 import initPublicContent from "./app/public-content";
 import initPublicFeatures from "./app/public-features";
 import initPublicLang from "./app/public-lang";
+import initPublicLlmsTxt from "./app/public-llms-txt";
 import initPublicSupport from "./app/public-support";
 import { resolveStaticPath, servePublicShell } from "./app/public-shell";
 import { initMetricsEndpoint, setupInstrumentation } from "./app/metrics";
@@ -220,6 +221,7 @@ export default async function init(opts: Options): Promise<{
 
   router.use("/robots.txt", initRobots());
   router.use("/sitemap.xml", initSitemap());
+  initPublicLlmsTxt(router);
 
   // Hosted bays currently run in Launchpad mode too. Keep self-hosted
   // Launchpad analytics opt-in while enabling it by default for Rocket.
