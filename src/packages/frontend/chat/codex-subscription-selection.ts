@@ -1,12 +1,21 @@
+/*
+ *  This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
+ *  License: MS-RSL - see LICENSE.md for details
+ */
+
+// Which ChatGPT subscription pays for a conversation, for the signed-in
+// account. Stored on the server (see payment-selection-store), so every
+// device sees the same choice. Undefined means the account's default.
+
 import { isValidUUID } from "@cocalc/util/misc";
+import {
+  PAYMENT_SELECTION_EVENT,
+  readPaymentDefault,
+  readPaymentSelection,
+  writePaymentSelection,
+} from "./payment-selection-store";
 
-const PREFIX = "cocalc:codex-subscription:v1";
-export const CODEX_SUBSCRIPTION_SELECTION_EVENT =
-  "cocalc:codex-subscription-selection";
-
-function key(accountId: string, projectId: string, threadKey: string): string {
-  return `${PREFIX}:${accountId}:${projectId}:${threadKey || "new"}`;
-}
+export const CODEX_SUBSCRIPTION_SELECTION_EVENT = PAYMENT_SELECTION_EVENT;
 
 export function readCodexSubscriptionSelection({
   accountId,
@@ -17,11 +26,17 @@ export function readCodexSubscriptionSelection({
   projectId?: string;
   threadKey?: string;
 }): string | undefined {
-  if (typeof localStorage === "undefined" || !accountId || !projectId) return;
-  const value =
-    localStorage.getItem(key(accountId, projectId, threadKey ?? "")) ??
-    undefined;
-  return value && isValidUUID(value) ? value : undefined;
+  const selection = readPaymentSelection({
+    accountId,
+    projectId,
+    threadKey,
+    provider: "codex",
+  });
+  if (selection?.mode === "credential") return selection.credential_id;
+  // Following the default: the account's chosen default, if any (else the
+  // designated default subscription applies on the server).
+  const fallback = readPaymentDefault({ accountId, provider: "codex" });
+  return fallback?.mode === "credential" ? fallback.credential_id : undefined;
 }
 
 export function writeCodexSubscriptionSelection({
@@ -35,9 +50,23 @@ export function writeCodexSubscriptionSelection({
   threadKey?: string;
   credentialId?: string;
 }): void {
-  const storageKey = key(accountId, projectId, threadKey ?? "");
-  if (credentialId && isValidUUID(credentialId)) {
-    localStorage.setItem(storageKey, credentialId);
-  } else localStorage.removeItem(storageKey);
-  window.dispatchEvent(new Event(CODEX_SUBSCRIPTION_SELECTION_EVENT));
+  const fallback = readPaymentDefault({ accountId, provider: "codex" });
+  // Choosing the account default keeps following it.
+  const followsDefault =
+    fallback?.mode === "credential" && fallback.credential_id === credentialId;
+  void writePaymentSelection({
+    accountId,
+    projectId,
+    threadKey,
+    provider: "codex",
+    selection:
+      !followsDefault && credentialId && isValidUUID(credentialId)
+        ? {
+            version: 1,
+            provider: "codex",
+            mode: "credential",
+            credential_id: credentialId,
+          }
+        : null,
+  });
 }

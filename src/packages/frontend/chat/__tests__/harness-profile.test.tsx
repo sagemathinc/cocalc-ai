@@ -24,6 +24,15 @@ import {
   harnessRuntimeFromDraft,
   qualifiedHarnessRuntime,
 } from "../harness-profile";
+import {
+  createMemoryPaymentApiForTests,
+  resetPaymentSelectionStoreForTests,
+  seedPaymentSelectionForTests,
+} from "../payment-selection-store";
+
+beforeEach(() =>
+  resetPaymentSelectionStoreForTests(createMemoryPaymentApiForTests()),
+);
 
 const draft = {
   id: "Pi",
@@ -57,7 +66,7 @@ jest.mock("../claude-subscription-connect", () => ({
   ),
 }));
 
-test("reconnecting selects the returned subscription and updates new-agent defaults", async () => {
+test("reconnecting selects the returned subscription for this agent and keeps the account default", async () => {
   const getStore = jest
     .spyOn(redux, "getStore")
     .mockReturnValue(accountStore as any);
@@ -102,17 +111,22 @@ test("reconnecting selects the returned subscription and updates new-agent defau
         threadKey: "thread-a",
       }),
     ).toMatchObject(expected);
+    // The first choice became the account default; choosing for one agent
+    // later never moves it, so agents following the default are unaffected.
     expect(
       readHarnessCredentialSelection({
         accountId: "account-a",
         forNewAgent: true,
       }),
-    ).toMatchObject(expected);
+    ).toMatchObject({
+      mode: "account-subscription",
+      credentialId: "00000000-0000-4000-8000-000000000001",
+      claudeAiConnectors: false,
+    });
     expect(document.activeElement).toBe(button);
   } finally {
     list.mockRestore();
     getStore.mockRestore();
-    localStorage.clear();
   }
 });
 
@@ -185,10 +199,17 @@ test("Claude account-key selection links to the shared security model by keyboar
   const getStore = jest
     .spyOn(redux, "getStore")
     .mockReturnValue(accountStore as any);
-  localStorage.setItem(
-    "cocalc:acp-harness-credential:v1:account-a:project-a:thread-a",
-    "account-api-key:00000000-0000-4000-8000-000000000001",
-  );
+  seedPaymentSelectionForTests({
+    accountId: "account-a",
+    projectId: "project-a",
+    threadKey: "thread-a",
+    selection: {
+      version: 1,
+      provider: "claude-code",
+      mode: "account-api-key",
+      credential_id: "00000000-0000-4000-8000-000000000001",
+    },
+  });
   try {
     render(
       <HarnessRuntimeSummary
@@ -221,7 +242,6 @@ test("Claude account-key selection links to the shared security model by keyboar
     expect(document.activeElement).toBe(link);
   } finally {
     getStore.mockRestore();
-    localStorage.clear();
   }
 });
 
@@ -229,10 +249,17 @@ test("Claude subscription selection exposes an explicit disconnect action", () =
   const getStore = jest
     .spyOn(redux, "getStore")
     .mockReturnValue(accountStore as any);
-  localStorage.setItem(
-    "cocalc:acp-harness-credential:v1:account-a:project-a:thread-a",
-    "account-subscription:00000000-0000-4000-8000-000000000001",
-  );
+  seedPaymentSelectionForTests({
+    accountId: "account-a",
+    projectId: "project-a",
+    threadKey: "thread-a",
+    selection: {
+      version: 1,
+      provider: "claude-code",
+      mode: "account-subscription",
+      credential_id: "00000000-0000-4000-8000-000000000001",
+    },
+  });
   try {
     render(
       <HarnessRuntimeSummary
@@ -249,7 +276,6 @@ test("Claude subscription selection exposes an explicit disconnect action", () =
     ).toBeTruthy();
   } finally {
     getStore.mockRestore();
-    localStorage.clear();
   }
 });
 
@@ -270,10 +296,17 @@ test("Claude subscription shows the verified billing account and plan", async ()
         },
       },
     ] as any);
-  localStorage.setItem(
-    "cocalc:acp-harness-credential:v1:account-a:project-a:thread-a",
-    "account-subscription:00000000-0000-4000-8000-000000000001",
-  );
+  seedPaymentSelectionForTests({
+    accountId: "account-a",
+    projectId: "project-a",
+    threadKey: "thread-a",
+    selection: {
+      version: 1,
+      provider: "claude-code",
+      mode: "account-subscription",
+      credential_id: "00000000-0000-4000-8000-000000000001",
+    },
+  });
   try {
     render(
       <HarnessRuntimeSummary
@@ -288,7 +321,6 @@ test("Claude subscription shows the verified billing account and plan", async ()
   } finally {
     list.mockRestore();
     getStore.mockRestore();
-    localStorage.clear();
   }
 });
 
@@ -840,7 +872,6 @@ test("changing payment refreshes options and discards the previous credential's 
     expect(onDiscover).toHaveBeenCalledTimes(2);
   } finally {
     getStore.mockRestore();
-    localStorage.clear();
   }
 });
 

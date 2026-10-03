@@ -50,6 +50,20 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "registers an existing Codex thread after ordinary project authorization",
   },
+  "agent.setPaymentSelections": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "changes which of the caller's own credentials pays for the caller's own agent turns; references only, ownership is rechecked at every turn",
+  },
+  "agent.copyPaymentSelection": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "copies the caller's own payment choice to a forked or fresh conversation",
+  },
+  "agent.resolvePaymentSelection": {
+    decision: "internal-auth-only",
+    reason: INTERNAL_AUTH_ONLY,
+  },
   "agent.startFreshConversation": {
     decision: "fresh-auth-not-required",
     reason:

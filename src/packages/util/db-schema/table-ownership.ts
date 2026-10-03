@@ -393,6 +393,18 @@ export const TABLE_OWNERSHIP = {
       "Native agent identity and restart-fence state belongs to the project owning bay. Project moves require explicit migration or reconstruction rules before these tables can be portable.",
   }),
 
+  ...entries(["agent_payment_selections"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      project_id:
+        "Agent locator for an account-home preference, not project placement authority.",
+    },
+    notes:
+      "Per-account payment choice for agents (credential references only), authoritative on the account home bay. Like account credentials it does not move on account rehome; a missing row means the account default.",
+  }),
+
   ...entries(["agent_identity_runs"], {
     ownership: "row-scoped",
     authority: "mixed",

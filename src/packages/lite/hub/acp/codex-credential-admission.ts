@@ -7,6 +7,13 @@ import type { AcpJobRequest, AcpRequest } from "@cocalc/conat/ai/acp/types";
 import { hubApi } from "../api";
 import { prepareHarnessRequest } from "./harness-runtime";
 import { decodeAcpJobRequest, latestHumanHarnessJob } from "../sqlite/acp-jobs";
+import {
+  codexCredentialFromSelection,
+  harnessCredentialFromSelection,
+  type AgentPaymentProvider,
+  type ClaudePaymentSelection,
+  type CodexPaymentSelection,
+} from "@cocalc/util/ai/agent-payment-selection";
 
 type CodexCredentialAdmissionResolver = (opts: {
   account_id: string;
@@ -25,6 +32,56 @@ const defaultResolver: CodexCredentialAdmissionResolver = async (opts) =>
 
 let resolver = defaultResolver;
 
+type PaymentSelectionResolver = (opts: {
+  account_id: string;
+  project_id: string;
+  thread_id: string;
+  provider: AgentPaymentProvider;
+}) => Promise<{ selection?: unknown; default?: unknown }>;
+
+const defaultPaymentSelectionResolver: PaymentSelectionResolver = async (
+  opts,
+) => await hubApi.agent.resolvePaymentSelection(opts);
+
+let paymentSelectionResolver = defaultPaymentSelectionResolver;
+
+export function setPaymentSelectionResolver(
+  next?: PaymentSelectionResolver,
+): void {
+  paymentSelectionResolver = next ?? defaultPaymentSelectionResolver;
+}
+
+// The account's stored choice for this conversation (shared by all of its
+// devices), for turns that arrive without one: agent messages, CLI sends,
+// automations. Undefined when nothing is stored or the hub cannot answer.
+async function storedPaymentSelection<T>(
+  request: AcpJobRequest,
+  provider: AgentPaymentProvider,
+): Promise<{ selection?: T; default?: T } | undefined> {
+  const thread_id = request.chat?.thread_id;
+  if (!thread_id) return;
+  try {
+    const resolved = await paymentSelectionResolver({
+      account_id: request.account_id,
+      project_id: request.chat?.project_id ?? request.project_id,
+      thread_id,
+      provider,
+    });
+    const pick = (value: any) =>
+      value?.provider === provider ? (value as T) : undefined;
+    const selection = pick(resolved?.selection);
+    const fallback = pick(resolved?.default);
+    if (!selection && !fallback) return;
+    return {
+      ...(selection ? { selection } : {}),
+      ...(fallback ? { default: fallback } : {}),
+    };
+  } catch {
+    // Older hubs lack this API; keep the previous behavior.
+    return;
+  }
+}
+
 export function setCodexCredentialAdmissionResolver(
   next?: CodexCredentialAdmissionResolver,
 ): void {
@@ -36,12 +93,27 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
 ): Promise<T> {
   if (request.request_kind === "command") return request;
   if (request.runtime !== undefined) {
-    if (
+    const claudeCode =
       request.runtime.profile.version === 2 &&
-      request.runtime.profile.id === "claude-code" &&
+      request.runtime.profile.id === "claude-code";
+    let harness_credential = request.harness_credential;
+    if (claudeCode && !harness_credential) {
+      const stored = await storedPaymentSelection<ClaudePaymentSelection>(
+        request,
+        "claude-code",
+      );
+      if (stored)
+        harness_credential = harnessCredentialFromSelection(
+          stored.selection,
+          stored.default,
+        );
+    }
+    if (
+      claudeCode &&
       request.chat?.agent_rpc_execution &&
-      !request.harness_credential
+      !harness_credential
     ) {
+      // Nothing stored yet: fall back to this account's last human turn.
       const previous = latestHumanHarnessJob({
         project_id: request.project_id,
         account_id: request.account_id,
@@ -51,7 +123,7 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
       const admitted = previous && decodeAcpJobRequest(previous);
       if (!admitted || admitted.request_kind === "command" || !admitted.runtime)
         throw Error(
-          "Open the recipient agent and send a message with its selected payment method before using Agent Networks.",
+          "The recipient agent has no payment method recorded for this account. Open it and send one message with its selected payment method before using Agent Networks.",
         );
       const { cwd: _oldCwd, ...oldProfile } = admitted.runtime.profile;
       const { cwd: _newCwd, ...newProfile } = request.runtime.profile;
@@ -59,9 +131,12 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
         throw Error(
           "Recipient runtime changed; send a message in the recipient agent to confirm its payment method.",
         );
-      request = { ...request, harness_credential: admitted.harness_credential };
+      harness_credential = admitted.harness_credential;
     }
-    return prepareHarnessRequest(request as AcpRequest) as T;
+    return prepareHarnessRequest({
+      ...request,
+      ...(harness_credential ? { harness_credential } : {}),
+    } as AcpRequest) as T;
   }
   const preference = request.config?.paymentSource ?? "auto";
   if (
@@ -71,7 +146,21 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
   ) {
     return request;
   }
-  const requestedCredentialId = `${request.config?.credentialId ?? ""}`.trim();
+  let storedCredentialId: string | undefined;
+  if (preference === "subscription" && !request.config?.credentialId) {
+    const stored = await storedPaymentSelection<CodexPaymentSelection>(
+      request,
+      "codex",
+    );
+    // This agent's subscription, else the account's chosen default; with
+    // neither, the hub uses the designated default subscription.
+    storedCredentialId =
+      codexCredentialFromSelection(stored?.selection) ??
+      codexCredentialFromSelection(stored?.default);
+  }
+  const requestedCredentialId = `${
+    request.config?.credentialId ?? storedCredentialId ?? ""
+  }`.trim();
   if (preference === "subscription-credential" && !requestedCredentialId) {
     throw new Error("An explicit ChatGPT subscription is required.");
   }
@@ -93,6 +182,11 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
   }
   const credentialId = `${resolved.credentialId ?? ""}`.trim();
   if (!credentialId) {
+    if (resolved.credentialPinRequired && request.chat?.agent_rpc_execution) {
+      throw new Error(
+        "The recipient agent has no payment method recorded for this account. Open it and send one message with its selected ChatGPT subscription before using Agent Networks.",
+      );
+    }
     if (resolved.credentialPinRequired || requestedCredentialId) {
       throw new Error("The selected ChatGPT subscription is unavailable.");
     }

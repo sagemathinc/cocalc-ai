@@ -3,11 +3,13 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-const PREFIX = "cocalc:codex-subscription:v1";
+// Agents page view of the per-account ChatGPT subscription choice, which is
+// stored on the server and shared by all devices.
 
-function key(accountId: string, projectId: string, threadId: string): string {
-  return `${PREFIX}:${accountId}:${projectId}:${threadId || "new"}`;
-}
+import {
+  readCodexSubscriptionSelection,
+  writeCodexSubscriptionSelection,
+} from "@cocalc/frontend/chat/codex-subscription-selection";
 
 export function readAgentSubscriptionSelection({
   accountId,
@@ -18,10 +20,11 @@ export function readAgentSubscriptionSelection({
   projectId?: string;
   threadId?: string;
 }): string | undefined {
-  if (typeof localStorage === "undefined" || !accountId || !projectId) return;
-  return (
-    localStorage.getItem(key(accountId, projectId, threadId ?? "")) ?? undefined
-  );
+  return readCodexSubscriptionSelection({
+    accountId,
+    projectId,
+    threadKey: threadId,
+  });
 }
 
 export function writeAgentSubscriptionSelection({
@@ -35,8 +38,11 @@ export function writeAgentSubscriptionSelection({
   threadId: string;
   credentialId?: string;
 }): void {
-  if (typeof localStorage === "undefined" || !accountId) return;
-  const storageKey = key(accountId, projectId, threadId);
-  if (credentialId) localStorage.setItem(storageKey, credentialId);
-  else localStorage.removeItem(storageKey);
+  if (!accountId) return;
+  void writeCodexSubscriptionSelection({
+    accountId,
+    projectId,
+    threadKey: threadId,
+    credentialId,
+  });
 }

@@ -38,6 +38,9 @@ const logger = getLogger("lite:acp:agent-rpc-service");
 // error text, which may contain credentials or another account's details.
 function launchFailureSummary(error: unknown): string {
   const text = error instanceof Error ? error.message : `${error}`;
+  if (/no payment method recorded|runtime changed/i.test(text)) {
+    return "The recipient agent has no payment method recorded for this account. Open the recipient agent and send it one message to choose how its turns are paid.";
+  }
   if (/timeout|timed out|deadline/i.test(text)) {
     return "The agent launch acknowledgment timed out.";
   }

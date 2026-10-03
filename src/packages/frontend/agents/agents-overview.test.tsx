@@ -34,6 +34,33 @@ jest.mock("@cocalc/frontend/components", () => ({
 jest.mock("@cocalc/frontend/people/api", () => ({
   peopleApi: () => ({ listAgents: (...a) => listAgents(...a) }),
 }));
+const SUB_A = "aaaaaaaa-0000-4000-8000-000000000001";
+const SUB_B = "aaaaaaaa-0000-4000-8000-000000000002";
+const listPaymentSelections = jest.fn();
+const setPaymentSelections = jest.fn(async () => ({ updated: 1 }));
+jest.mock("@cocalc/frontend/webapp-client", () => ({
+  webapp_client: {
+    conat_client: {
+      hub: {
+        agent: {
+          listPaymentSelections: (...a) => listPaymentSelections(...a),
+          setPaymentSelections: (...a) => setPaymentSelections(...a),
+          getPaymentSelections: async () => ({ selections: [], defaults: {} }),
+          copyPaymentSelection: async () => ({ copied: false }),
+        },
+        system: {
+          getCodexPaymentSource: async () => ({
+            subscriptions: [
+              { id: SUB_A, label: "Work", isDefault: true },
+              { id: SUB_B, label: "Personal" },
+            ],
+          }),
+          listExternalCredentials: async () => [],
+        },
+      },
+    },
+  },
+}));
 jest.mock("@cocalc/frontend/components/use-collection-preferences", () => ({
   useCollectionPreferences: () => ({
     value: { view: "list", order },
@@ -48,7 +75,7 @@ function agent(id: string, name: string, extra = {}): NamedAgent {
     name,
     endpoint: { project_id: project, agent_id: id } as any,
     path: `/home/user/${name}.chat`,
-    thread_id: "t",
+    thread_id: `t-${id}`,
     available: true,
     updated_at: "2026-09-01T00:00:00Z",
     ...extra,
@@ -83,6 +110,8 @@ function props(extra = {}) {
     onPinMine: jest.fn(),
     onMoveMine: jest.fn(),
     onOpenMine: jest.fn(),
+    onSetHidden: jest.fn(),
+    onRemove: jest.fn(),
     ...extra,
   };
 }
@@ -91,6 +120,86 @@ beforeEach(() => {
   jest.clearAllMocks();
   order = [];
   listAgents.mockResolvedValue({ agents: shared, unavailable_bays: 0 });
+  listPaymentSelections.mockResolvedValue({
+    selections: [
+      {
+        project_id: project,
+        thread_id: "t-a1",
+        provider: "codex",
+        selection: {
+          version: 1,
+          provider: "codex",
+          mode: "credential",
+          credential_id: SUB_B,
+        },
+        updated_at: "2026-10-01T00:00:00Z",
+      },
+    ],
+    defaults: {},
+  });
+});
+
+it("shows how each agent is paid", async () => {
+  render(<AgentsOverview {...props()} />);
+  expect(
+    await screen.findByRole("button", { name: "Open @alpha" }),
+  ).toBeInTheDocument();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Open @alpha" }),
+    ).toHaveTextContent("ChatGPT: Personal"),
+  );
+  expect(screen.getByRole("button", { name: "Open @gamma" })).toHaveTextContent(
+    "Paid with your default",
+  );
+});
+
+it("bulk operations act on the selected agents", async () => {
+  const p = props();
+  const user = userEvent.setup();
+  render(<AgentsOverview {...p} />);
+  expect(screen.queryByRole("toolbar", { name: "Selected agents" })).toBeNull();
+  await user.click(screen.getByRole("checkbox", { name: "Select @alpha" }));
+  await user.click(screen.getByRole("checkbox", { name: "Select @gamma" }));
+  const toolbar = screen.getByRole("toolbar", { name: "Selected agents" });
+  await user.click(
+    within(toolbar).getByRole("button", { name: "Hide from sidebar" }),
+  );
+  expect(p.onSetHidden).toHaveBeenCalledWith(["a1", "a3"], true);
+  await user.click(within(toolbar).getByRole("button", { name: "Remove…" }));
+  expect(p.onRemove).toHaveBeenCalledWith([mine[0], mine[2]]);
+  await user.click(screen.getByRole("checkbox", { name: "Select all agents" }));
+  expect(screen.getByText(/3 selected/)).toBeInTheDocument();
+});
+
+it("sets the payment method for every selected agent at once", async () => {
+  const user = userEvent.setup();
+  render(<AgentsOverview {...props()} />);
+  await user.click(screen.getByRole("checkbox", { name: "Select all agents" }));
+  await user.click(screen.getByRole("button", { name: "Set payment method…" }));
+  const dialog = await screen.findByRole("dialog");
+  await user.click(
+    within(dialog).getByRole("combobox", {
+      name: "ChatGPT subscription for selected agents",
+    }),
+  );
+  await user.click(await screen.findByTitle("Personal"));
+  await user.click(within(dialog).getByRole("button", { name: "Apply" }));
+  await waitFor(() => expect(setPaymentSelections).toHaveBeenCalledTimes(1));
+  expect(setPaymentSelections).toHaveBeenCalledWith({
+    targets: mine.map((a) => ({
+      project_id: project,
+      thread_id: a.thread_id,
+      path: a.path,
+      title: a.name,
+    })),
+    selection: {
+      version: 1,
+      provider: "codex",
+      mode: "credential",
+      credential_id: SUB_B,
+    },
+  });
 });
 
 it("shows the sidebar's pins in their own section, and hidden agents too", async () => {
