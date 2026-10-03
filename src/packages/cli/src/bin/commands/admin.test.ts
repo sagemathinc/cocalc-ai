@@ -585,6 +585,14 @@ test("admin support conventions exposes the shared status workflow", async () =>
   assert.match(vocabulary, /page and flyout are titled Virtual machines/);
   assert.match(vocabulary, /Recent Files or Project Activity Log/);
   assert.match(vocabulary, /no Users tab on the left rail/);
+  assert.match(
+    vocabulary,
+    /The People page in the sidebar is a different page/,
+  );
+  assert.match(
+    vocabulary,
+    /removing a collaborator still happens in the project's settings/,
+  );
 });
 
 test("admin support image verifies and writes a Zendesk attachment", async () => {

@@ -1064,6 +1064,50 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     ],
     usedIn: [bold("research", "Viewer file access")],
   },
+  // The People page in the sidebar is not the project's People settings
+  // (settings.people); the support conventions tell the two apart.
+  {
+    id: "nav.people",
+    label: "People",
+    anchors: [
+      // The sidebar section's header button, as shown, and its label prop,
+      // which names the section and its Expand or Collapse toggle.
+      def(WORKSPACE_PAGE, "> People </Button>"),
+      def(WORKSPACE_PAGE, 'label="People"'),
+      def(
+        "frontend/app/compact-agents-top-nav.tsx",
+        '{ key: "people", icon: <Icon name="users" />, label: "People" }',
+      ),
+      def("frontend/people/page.tsx", ">People</h1>"),
+    ],
+    usedIn: [conventions("The People page in the sidebar is a different page")],
+  },
+  ...(
+    [
+      ["conversations", "Conversations"],
+      ["collaborators", "Collaborators"],
+      ["invites", "Invites"],
+    ] as const
+  ).map(
+    ([key, label]): UiVocabularyEntry => ({
+      id: `people.tabs.${key}`,
+      label,
+      anchors: [
+        def("frontend/people/page.tsx", `key: "${key}", label: "${label}",`),
+      ],
+      usedIn: [
+        conventions("with the tabs Conversations, Collaborators and Invites"),
+      ],
+    }),
+  ),
+  {
+    id: "people.invite",
+    label: "Invite to projects",
+    anchors: [
+      def("frontend/people/collaborators.tsx", "Invite to projects</Button>"),
+    ],
+    usedIn: [conventions("A person's page there offers Invite to projects")],
+  },
   {
     id: "editor.build-log",
     label: "Build Log",
