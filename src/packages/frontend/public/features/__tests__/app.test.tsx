@@ -1223,24 +1223,52 @@ describe("research compute product visibility", () => {
     ).toContain(document.activeElement);
   });
 
-  it("opens project hosts for signed-in visitors", () => {
-    const { container } = render(
-      <PublicFeaturesApp
-        config={{ cocalc_product: "launchpad", is_authenticated: true }}
-        initialRoute={{ view: "detail", slug: "research-compute" }}
-      />,
-    );
+  // Signed out, the page has two sign-up links: with the record's label on
+  // cocalc.ai and the default label on other sites. Signed in, it has none.
+  it.each([
+    ["cocalc.ai", COCALC_AI, "Start on CoCalc.ai"],
+    [
+      "another Launchpad site",
+      { cocalc_product: "launchpad", dns: "launchpad.example.edu" },
+      "Start using CoCalc",
+    ],
+  ])(
+    "opens project hosts for signed-in visitors on %s",
+    (_site, site, signUpLabel) => {
+      const signUpLinks = (main: HTMLElement) =>
+        Array.from(main.querySelectorAll('a[href*="auth/sign-up"]'));
+      const signedOut = render(
+        <PublicFeaturesApp
+          config={site}
+          initialRoute={{ view: "detail", slug: "research-compute" }}
+        />,
+      );
+      const before = signUpLinks(screen.getByRole("main"));
+      expect(before.map((link) => link.textContent)).toEqual([
+        signUpLabel,
+        signUpLabel,
+      ]);
+      signedOut.unmount();
 
-    expect(container.textContent).not.toMatch(MANAGED_VM_TERMS);
-    const ctas = screen.getAllByRole("link", { name: "Open project hosts" });
-    expect(ctas).toHaveLength(2);
-    for (const cta of ctas) {
-      expect(cta.getAttribute("href")).toBe("/hosts");
-    }
-    expect(
-      screen.queryByRole("link", {
-        name: getPublicFeaturePage("research-compute")!.signUpLabel,
-      }),
-    ).toBeNull();
-  });
+      const { container } = render(
+        <PublicFeaturesApp
+          config={{ ...site, is_authenticated: true }}
+          initialRoute={{ view: "detail", slug: "research-compute" }}
+        />,
+      );
+      expect(container.textContent).not.toMatch(MANAGED_VM_TERMS);
+      const main = screen.getByRole("main");
+      const ctas = within(main).getAllByRole("link", {
+        name: "Open project hosts",
+      });
+      expect(ctas).toHaveLength(2);
+      for (const cta of ctas) {
+        expect(cta.getAttribute("href")).toBe("/hosts");
+      }
+      expect(signUpLinks(main)).toEqual([]);
+      expect(
+        within(main).queryByRole("link", { name: signUpLabel }),
+      ).toBeNull();
+    },
+  );
 });
