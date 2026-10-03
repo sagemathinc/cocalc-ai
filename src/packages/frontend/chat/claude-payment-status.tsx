@@ -2,9 +2,13 @@ import { Button, Popover, Progress, Typography } from "antd";
 import { useEffect, useRef, useState } from "react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import type { ClaudeSubscriptionUsage } from "@cocalc/util/ai/claude-usage";
+import { TimeAgo } from "@cocalc/frontend/components/time-ago";
+import {
+  CLAUDE_USAGE_METADATA_KEY,
+  claudeSubscriptionUsage,
+} from "@cocalc/util/ai/claude-usage";
 import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
-import { ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY } from "@cocalc/util/ai/external-credential-profiles";
+import { claudeSubscriptionName } from "@cocalc/frontend/agents/claude-credential-options";
 import {
   HARNESS_CREDENTIAL_SELECTION_EVENT,
   readHarnessCredentialSelection,
@@ -74,7 +78,6 @@ export function ClaudePaymentStatus({
   return (
     <PaymentStatus
       key={JSON.stringify([accountId, projectId, credential])}
-      projectId={projectId}
       credentialId={credentialId}
       mode={credential?.mode ?? "project-secret"}
       onConfigure={onConfigure}
@@ -83,63 +86,48 @@ export function ClaudePaymentStatus({
 }
 
 function PaymentStatus({
-  projectId,
   credentialId,
   mode,
   onConfigure,
 }: {
-  projectId: string;
   credentialId?: string;
   mode: string;
   onConfigure: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
-  const [usage, setUsage] = useState<ClaudeSubscriptionUsage>();
   const [credential, setCredential] = useState<ExternalCredentialInfo>();
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
   const subscription = mode === "account-subscription";
   const label = claudePaymentLabel(mode);
   useEffect(() => {
-    if (!open) return;
+    if (!open || !credentialId) return;
     let active = true;
-    if (credentialId) {
-      void webapp_client.conat_client.hub.system
-        .listExternalCredentials({ provider: "anthropic", scope: "account" })
-        .then((rows) => {
-          if (active)
-            setCredential(
-              rows.find(({ id, revoked }) => id === credentialId && !revoked),
-            );
-        })
-        .catch(() => {});
-    }
-    if (subscription && credentialId) {
-      setLoading(true);
-      setError("");
-      void webapp_client.conat_client.hub.projects
-        .getClaudeSubscriptionUsage({
-          project_id: projectId,
-          credential_id: credentialId,
-        })
-        .then((value) => {
-          if (active) setUsage(value);
-        })
-        .catch(() => {
-          if (active)
-            setError("Usage unavailable. Try again after your next turn.");
-        })
-        .finally(() => {
-          if (active) setLoading(false);
-        });
-    }
+    setLoading(true);
+    void webapp_client.conat_client.hub.system
+      .listExternalCredentials({ provider: "anthropic", scope: "account" })
+      .then((rows) => {
+        if (active)
+          setCredential(
+            rows.find(({ id, revoked }) => id === credentialId && !revoked),
+          );
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) setLoading(false);
+      });
     return () => {
       active = false;
     };
-  }, [open, projectId, credentialId, subscription]);
-  const identity =
-    credential?.metadata?.[ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY];
+  }, [open, credentialId]);
+  const name =
+    subscription && credential
+      ? claudeSubscriptionName(credential)
+      : credential?.metadata?.label;
+  // Saved from the limits Claude reports with each response of a turn.
+  const usage = claudeSubscriptionUsage(
+    credential?.metadata?.[CLAUDE_USAGE_METADATA_KEY],
+  );
   return (
     <Popover
       open={open}
@@ -157,41 +145,40 @@ function PaymentStatus({
         >
           <div style={{ width: 290, maxWidth: "calc(100vw - 48px)" }}>
             <Typography.Text strong>{label}</Typography.Text>
-            {identity && <div>{identity}</div>}
+            {name && name !== label && <div>{name}</div>}
             {subscription ? (
               <>
                 <div role="status">
-                  {loading
+                  {loading && !credential
                     ? "Loading subscription usage..."
-                    : error ||
-                      (!usage?.available
-                        ? "Usage not reported by Claude."
-                        : "")}
+                    : !usage
+                      ? "Usage appears here after your next Claude turn."
+                      : ""}
                 </div>
-                {!loading &&
-                  !error &&
-                  usage?.windows.map((window) => (
-                    <div key={window.name} style={{ marginTop: 12 }}>
-                      <div>
-                        {window.name}: {window.usedPercent}% used
-                      </div>
-                      <Progress
-                        percent={window.usedPercent}
-                        status="normal"
-                        showInfo={false}
-                        size="small"
-                      />
-                      {window.resetsAt && (
-                        <Typography.Text type="secondary">
-                          Resets {new Date(window.resetsAt).toLocaleString()}
-                        </Typography.Text>
-                      )}
+                {usage?.windows.map((window) => (
+                  <div key={window.name} style={{ marginTop: 12 }}>
+                    <div>
+                      {window.name}: {window.usedPercent}% used
                     </div>
-                  ))}
-                {usage && !error && (
-                  <div>
+                    <Progress
+                      percent={window.usedPercent}
+                      status="normal"
+                      showInfo={false}
+                      size="small"
+                    />
                     <Typography.Text type="secondary">
-                      Updated {new Date(usage.fetchedAt).toLocaleTimeString()}
+                      {window.resetSinceObserved ? "Reset " : "Resets "}
+                      <TimeAgo date={window.resetsAt} />
+                      {window.resetSinceObserved ? " (since this update)" : ""}
+                    </Typography.Text>
+                  </div>
+                ))}
+                {usage && (
+                  <div style={{ marginTop: 8 }}>
+                    <Typography.Text type="secondary">
+                      Updated <TimeAgo date={usage.observedAt} />, as of your
+                      latest Claude turn in CoCalc. Use elsewhere since then
+                      (claude.ai or other apps) is not included.
                     </Typography.Text>
                   </div>
                 )}

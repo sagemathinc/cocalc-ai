@@ -567,8 +567,7 @@ test("admin support conventions exposes the shared status workflow", async () =>
   assert.match(vocabulary, /accept that name from a user/);
   assert.match(vocabulary, /Git browser, not Git viewer/);
   assert.match(vocabulary, /Exams tab of a project host/);
-  assert.match(vocabulary, /tooltip Manage project hosts and virtual machines/);
-  assert.match(vocabulary, /accessible name is Compute/);
+  assert.match(vocabulary, /the item Compute: project hosts and VMs/);
   assert.match(vocabulary, /Quick Navigation lists the same page as Compute/);
   assert.match(vocabulary, /say sign in, not log in or login/);
   assert.match(

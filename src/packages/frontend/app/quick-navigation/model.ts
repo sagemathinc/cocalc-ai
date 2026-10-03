@@ -43,10 +43,24 @@ export type Destination =
   | { kind: "settings"; page: SettingsPageType }
   | { kind: "docs"; projectId?: string }
   | { kind: "agent"; agentId: string; agentName: string }
+  // The workspace: Library artifacts, People conversations and people.
+  | { kind: "artifact"; projectId: string; entryId: string }
+  | { kind: "conversation"; projectId: string; conversationId: string }
+  | { kind: "person"; accountId: string }
+  | { kind: "action"; action: WorkspaceAction }
   // Pages of the top navigation bar.
   | { kind: "app-page"; page: AppPage };
+export type WorkspaceAction =
+  | "new-agent"
+  | "new-project"
+  | "new-artifact"
+  | "new-conversation"
+  | "toggle-sidebar";
 export type AppPage =
   | "agents"
+  | "all-agents"
+  | "library"
+  | "people"
   | "projects"
   | "hosts"
   | "admin"

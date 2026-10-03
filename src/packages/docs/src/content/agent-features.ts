@@ -47,7 +47,7 @@ general availability or close its release gates.
 | [Save account defaults and refresh available models](/docs/ai/codex-settings) | Supported | Limited | Claude offers model refresh and remembers payment choices, but does not share all Codex account-default controls. Changes do not rewrite admitted work. |
 | [Inspect subscription usage and reconnect](/docs/ai/connect-credentials) | Supported | Preview | Provider-reported usage, not a per-agent hard spending limit. Claude offers Reconnect Claude in settings. |
 | [Restrict command execution modes](/docs/ai/codex-settings) | Conditional | Not supported | Hosted UI defaults to full project access; Codex Lite offers sandbox choices. Integrated Claude currently has full project access. |
-| [Use provider account connectors](/docs/ai/claude-code) | Conditional | Preview | Claude's Use my claude.ai connectors controls automatic connector inclusion for subsequent turns. This is not a common connector catalog across providers. |
+| [Use provider account connectors](/docs/ai/claude-code) | Conditional | Limited | Subscriptions connected now use a long-lived token that cannot load claude.ai connectors; earlier full sign-ins still can, controlled by Use my claude.ai connectors. This is not a common connector catalog across providers. |
 
 ## Conversations and control
 
@@ -78,6 +78,7 @@ isolated login controller. Both agents remain subject to CLI authorization.
 | --- | --- | --- | --- |
 | [Inspect/edit files and run project commands](/docs/files/project-files) | Supported | Preview | Both can change the shared project and run tests/builds. Review results rather than relying only on the final answer. |
 | [Honor project instructions and use CoCalc skills](/docs/cli/use-cocalc-cli) | Supported | Preview | Claude receives the CoCalc skill as instructions and reads project CLAUDE.md through project tools; it is not a separate native Skill tool. |
+| [Remember notes across sessions and projects](/docs/ai/agent-memory) | Supported | Preview | Off by default; the account owner turns it on in Settings -> AI. Codex and Claude share one account-wide set of notes. |
 | [Edit live collaborative text](/docs/cli/collaborative-text) | Supported | Conditional | Use the live text API so unsaved collaborative state is respected; a raw filesystem edit is not equivalent. |
 | [Read/edit/run live notebooks and inspect outputs](/docs/cli/notebook-workflows) | Supported | Conditional | Shared project CLI capability. Use live notebook APIs rather than rewriting an open .ipynb file. |
 | [Build LaTeX, documents, and other supported formats](/docs/cli/builds-and-versions) | Supported | Conditional | Requires the format's installed toolchain. Use the document build pipeline rather than assuming a shell command reproduces editor behavior. |
@@ -122,9 +123,10 @@ when authorized work runs.
 Inside a registered agent runtime, use the installed CLI's help and discovery:
 
 ~~~sh
-cocalc project chat agent whoami
-cocalc project chat agent destinations --json
-printf '%s' 'Please summarize your current result.' | cocalc project chat send --to PEER_NAME --stdin --json
+cocalc agent whoami
+cocalc agent destinations --json
+printf '%s' 'Please summarize your current result.' | cocalc agent send PEER_NAME --stdin --json
+cocalc agent send PEER_NAME --attach results.md "Results attached"
 ~~~
 
 Use the exact CLI executable supplied by that runtime if it differs from

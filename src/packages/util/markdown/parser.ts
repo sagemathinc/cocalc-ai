@@ -9,6 +9,7 @@ import { checkboxPlugin } from "./checkbox-plugin";
 import { hashtagPlugin } from "./hashtag-plugin";
 import { mentionPlugin } from "./mentions-plugin";
 import { blankLinesPlugin } from "./blank-lines-plugin";
+import { peopleReferencePlugin } from "../people-references";
 
 export const OPTIONS: MarkdownIt.Options = {
   html: true,
@@ -33,6 +34,7 @@ export function createMarkdownParser({
   parser.use(checkboxPlugin);
   parser.use(hashtagPlugin);
   parser.use(mentionPlugin);
+  parser.use(peopleReferencePlugin);
   parser.use(blankLinesPlugin);
   parser.linkify.set({ fuzzyLink: false, fuzzyEmail: false, fuzzyIP: false });
   if (renderBlankLines) {

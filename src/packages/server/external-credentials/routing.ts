@@ -20,6 +20,7 @@ import {
   hasExternalCredential,
   listExternalCredentials,
   revokeExternalCredential,
+  setExternalCredentialMetadataValueById,
   touchExternalCredential,
   updateExternalCredentialById,
   updateExternalCredentialLabelById,
@@ -212,6 +213,36 @@ export async function updateExternalCredentialLabelByIdRouted({
         id,
         selector,
         label,
+      }),
+  });
+}
+
+export async function setExternalCredentialMetadataValueByIdRouted({
+  id,
+  selector,
+  key,
+  value,
+}: {
+  id: string;
+  selector: ExternalCredentialSelector;
+  key: string;
+  value: unknown;
+}): Promise<boolean> {
+  return await withExternalCredentialAuthority({
+    selector,
+    local: async () =>
+      await setExternalCredentialMetadataValueById({
+        id,
+        selector,
+        key,
+        value,
+      }),
+    remote: async (dest_bay) =>
+      await remoteCredentialsClient(dest_bay).setMetadataValueById({
+        id,
+        selector,
+        key,
+        value,
       }),
   });
 }

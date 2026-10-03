@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import { isQualifiedClaudeCodeProfile } from "@cocalc/util/ai/qualified-harnesses";
 import { harnessPrompt } from "./harness-context";
+import { takeRateLimit } from "./harness-rate-limit";
 import { assertSameTurnPrincipal } from "./turn-principal";
 import { normalizeCodexAsyncQuestions } from "./codex-attention";
 import type {
@@ -45,6 +46,10 @@ export class HarnessAgent implements AcpAgent {
     private readonly validateAuthority?: (
       binding: HarnessBinding,
     ) => Promise<void>,
+    private readonly recordRateLimit?: (
+      binding: HarnessBinding,
+      rateLimit: unknown,
+    ) => void,
   ) {
     this.binding = {
       ...binding,
@@ -291,14 +296,27 @@ export class HarnessAgent implements AcpAgent {
                   event.update.sessionUpdate === "tool_call_update"))
             )
               toolBoundary = true;
+            let data: object = { ...event };
+            if (event.type === "update") {
+              const { update, rateLimit } = takeRateLimit(event.update);
+              data = { ...update };
+              if (rateLimit !== undefined) {
+                try {
+                  this.recordRateLimit?.(this.binding, rateLimit);
+                } catch (error) {
+                  logger.debug("rate limit not recorded", {
+                    error: `${error}`,
+                  });
+                }
+              }
+            }
             await request.stream({
               type: "event",
               event: {
                 type: "harness",
                 source: "acp",
                 kind: event.type,
-                data:
-                  event.type === "update" ? { ...event.update } : { ...event },
+                data: data as Record<string, unknown>,
               },
             });
           }

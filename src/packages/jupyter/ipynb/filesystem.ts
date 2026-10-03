@@ -4,6 +4,7 @@
  */
 
 import getLogger from "@cocalc/backend/logger";
+import { sha1 } from "@cocalc/util/misc";
 import type {
   Filesystem,
   JupyterImportIpynbResult,
@@ -279,8 +280,20 @@ export async function saveJupyterIpynb({
       );
     }
     await fs.writeFile(path, serialized, true);
+    let mtimeMs: number | undefined;
+    try {
+      mtimeMs = (await fs.stat(path))?.mtimeMs;
+    } catch {
+      // The sha1 alone still identifies the save.
+    }
     const live = validateIpynb(liveIpynb);
     logger.debug("saved portable notebook", { project_id, path, bytes });
-    return { ipynb: liveIpynb, bytes, converted: live !== input };
+    return {
+      ipynb: liveIpynb,
+      bytes,
+      converted: live !== input,
+      sha1: sha1(serialized),
+      mtimeMs,
+    };
   });
 }

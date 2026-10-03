@@ -1,5 +1,6 @@
 /** @jest-environment jsdom */
 
+let mockPageState: Record<string, unknown> = {};
 const pageActions = {
   set_active_tab: jest.fn(),
   setState: jest.fn(),
@@ -93,6 +94,8 @@ jest.mock("./notifications/fragment", () => ({
 
 import {
   load_target,
+  rememberProjectsView,
+  openProjectsWorkspace,
   set_url,
   set_url_with_search,
   update_params,
@@ -104,12 +107,16 @@ describe("load_target", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     pageActions.setState.mockReset();
+    mockPageState = {};
+    pageActions.setState.mockImplementation((update) =>
+      Object.assign(mockPageState, update),
+    );
     delete (globalThis as any).__cocalc_public_app;
     mockRedux.getStore.mockImplementation((name: string) => {
       if (name === "account") {
         return accountStore;
       }
-      return {};
+      return { get: (key) => mockPageState[key] };
     });
     webappClient.is_signed_in.mockReturnValue(false);
     accountStore.get.mockImplementation((key: string) => {
@@ -126,7 +133,7 @@ describe("load_target", () => {
       Object.assign(state, update),
     );
     load_target("agents/reviewer");
-    load_target("library/project-1/entry-1");
+    load_target("artifacts/project-1/entry-1");
     expect(state).toMatchObject({
       active_agent_id: "reviewer",
       active_agent_name: "reviewer",
@@ -134,18 +141,18 @@ describe("load_target", () => {
       library_project_id: "project-1",
       library_entry_id: "entry-1",
     });
-    load_target("library");
+    load_target("artifacts");
     expect(state.library_project_id).toBeUndefined();
     expect(state.library_entry_id).toBeUndefined();
     const pushState = jest.spyOn(window.history, "pushState");
     for (const path of [
-      "/library/project-1/entry-1",
+      "/artifacts/project-1/entry-1",
       "/agents/reviewer",
-      "/library",
+      "/artifacts",
     ]) {
       window.history.replaceState({}, "", path);
       window.onpopstate?.(new PopStateEvent("popstate"));
-      expect(state.library_open).toBe(path.startsWith("/library"));
+      expect(state.library_open).toBe(path.startsWith("/artifacts"));
       expect(state.active_agent_id).toBe("reviewer");
       expect(state.active_agent_name).toBe("reviewer");
       expect(pageActions.set_active_tab).toHaveBeenLastCalledWith(
@@ -158,7 +165,7 @@ describe("load_target", () => {
     expect(projectsActions.load_target).not.toHaveBeenCalled();
   });
 
-  it.each(["/library", "/library/project-1/entry-1"])(
+  it.each(["/artifacts", "/artifacts/project-1/entry-1"])(
     "preserves Forward to %s when the workspace rewrites the current agent URL after Back",
     async (libraryPath) => {
       mockRedux.getStore.mockImplementation((name: string) =>
@@ -232,10 +239,11 @@ describe("load_target", () => {
   it.each(["agents", "agents/new", "agents/another"])(
     "clears Library state on %s",
     (target) => {
-      load_target("library/project-1/entry-1");
+      load_target("artifacts/project-1/entry-1");
       load_target(target);
       expect(pageActions.setState).toHaveBeenLastCalledWith({
         library_open: false,
+        agents_overview_open: false,
         library_project_id: undefined,
         library_entry_id: undefined,
         active_agent_id: target.split("/")[1],
@@ -244,23 +252,35 @@ describe("load_target", () => {
     },
   );
 
+  it("opens the Agents page without changing the selected agent", () => {
+    load_target("all-agents");
+    expect(pageActions.set_active_tab).toHaveBeenLastCalledWith("agents", true);
+    expect(pageActions.setState).toHaveBeenLastCalledWith({
+      library_open: false,
+      agents_overview_open: true,
+      library_project_id: undefined,
+      library_entry_id: undefined,
+    });
+  });
+
   it.each([
-    "library/bad-project",
-    "library/project/entry/extra",
-    "library//entry",
+    "artifacts/bad-project",
+    "artifacts/project/entry/extra",
+    "artifacts//entry",
   ])("never opens a project for malformed Library route %s", (target) => {
     load_target(target);
     expect(pageActions.set_active_tab).toHaveBeenLastCalledWith("agents", true);
     expect(projectsActions.load_target).not.toHaveBeenCalled();
     expect(pageActions.setState).toHaveBeenCalledWith({
       library_open: true,
+      agents_overview_open: false,
       library_project_id: target.split("/")[1],
       library_entry_id: target.split("/").slice(2).join("/") || undefined,
     });
   });
 
   it("keeps the full Library return URL while requiring account login", () => {
-    const target = "/library/project-1/entry-1?view=grid#details";
+    const target = "/artifacts/project-1/entry-1?view=grid#details";
     window.history.replaceState({}, "", target);
     accountStore.get.mockReturnValue(false);
     load_target(target);
@@ -283,6 +303,7 @@ describe("load_target", () => {
     );
     expect(pageActions.setState).toHaveBeenLastCalledWith({
       library_open: true,
+      agents_overview_open: false,
       library_project_id: "project-1",
       library_entry_id: "entry-1",
     });
@@ -290,9 +311,9 @@ describe("load_target", () => {
   });
 
   it.each([
-    "library/project/entry",
-    "library//project/entry",
-    "library/project/entry/extra",
+    "artifacts/project/entry",
+    "artifacts//project/entry",
+    "artifacts/project/entry/extra",
   ])(
     "preserves Library path structure and full URL on history updates: %s",
     (target) => {
@@ -307,6 +328,7 @@ describe("load_target", () => {
       window.onpopstate?.(new PopStateEvent("popstate"));
       expect(pageActions.setState).toHaveBeenLastCalledWith({
         library_open: true,
+        agents_overview_open: false,
         library_project_id: target.split("/")[1],
         library_entry_id: target.split("/").slice(2).join("/"),
       });
@@ -418,4 +440,79 @@ describe("load_target", () => {
 
     expect(mockRedux.getActions).not.toHaveBeenCalled();
   });
+  it("Back reveals a retained project view without replaying its URL", () => {
+    const previous = location.href;
+    const projectId = "12345678-1234-4234-8234-123456789abc";
+    const runtime = {};
+    const hasProjectStore = jest.fn(() => true);
+    Object.assign(mockRedux, {
+      hasProjectStore,
+      getProjectStore: () => runtime,
+    });
+    accountStore.get.mockImplementation((key) =>
+      key === "account_id"
+        ? "retention-viewer"
+        : key === "is_logged_in"
+          ? true
+          : undefined,
+    );
+    try {
+      mockPageState.active_top_tab = projectId;
+      window.history.replaceState({}, "", `/projects/${projectId}/search/`);
+      set_url("/agents/example", "");
+      mockPageState.active_top_tab = "agents";
+      projectsActions.load_target.mockClear();
+      window.history.replaceState({}, "", `/projects/${projectId}/search/`);
+      window.onpopstate?.(new PopStateEvent("popstate"));
+      expect(pageActions.set_active_tab).toHaveBeenLastCalledWith(
+        projectId,
+        false,
+      );
+      expect(projectsActions.load_target).not.toHaveBeenCalled();
+      hasProjectStore.mockReturnValue(false);
+      window.onpopstate?.(new PopStateEvent("popstate"));
+      expect(projectsActions.load_target).toHaveBeenCalled();
+    } finally {
+      window.history.replaceState({}, "", previous);
+    }
+  });
+
+  it.each(["files/home/user/cocalc-ai", "search/", "settings"])(
+    "sidebar Projects resumes %s after the Library without loading a new target",
+    (target) => {
+      const previous = location.href;
+      const id = "12345678-1234-4234-8234-123456789abc";
+      const runtime = {};
+      const hasProjectStore = jest.fn(() => true);
+      Object.assign(mockRedux, {
+        hasProjectStore,
+        getProjectStore: () => runtime,
+      });
+      accountStore.get.mockImplementation((key) =>
+        key === "account_id"
+          ? "sidebar-viewer"
+          : key === "is_logged_in"
+            ? true
+            : undefined,
+      );
+      try {
+        mockPageState.active_top_tab = id;
+        window.history.replaceState({}, "", `/projects/${id}/${target}`);
+        const expected = location.href;
+        // set_active_tab captures this before changing the tab to agents.
+        rememberProjectsView();
+        mockPageState.active_top_tab = "agents";
+        set_url("/artifacts", "");
+        openProjectsWorkspace();
+        expect(location.href).toBe(expected);
+        expect(pageActions.set_active_tab).toHaveBeenLastCalledWith(id, false);
+        expect(projectsActions.load_target).not.toHaveBeenCalled();
+        hasProjectStore.mockReturnValue(false);
+        openProjectsWorkspace();
+        expect(pageActions.set_active_tab).toHaveBeenLastCalledWith("projects");
+      } finally {
+        window.history.replaceState({}, "", previous);
+      }
+    },
+  );
 });

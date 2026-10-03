@@ -1328,6 +1328,21 @@ function createEventEntry({
       level: event.ack?.error ? "error" : "info",
     };
   }
+  if (event?.type === "memory") {
+    const notes = typeof event.notes === "number" ? event.notes : 0;
+    return {
+      kind: "status",
+      id: `memory-${seq}`,
+      seq,
+      time,
+      label: "Memory",
+      detail:
+        event.state === "loaded"
+          ? `On · ${notes} saved ${notes === 1 ? "note" : "notes"} in context`
+          : "On, but the saved notes could not be loaded for this turn",
+      level: event.state === "loaded" ? "info" : "error",
+    };
+  }
   if (event?.type === "config") {
     return {
       kind: "config",

@@ -63,7 +63,7 @@ export interface CollaboratorFilter {
 /**
  * Get the state icon for a project state
  */
-function getStateIcon(state?: any): IconName | undefined {
+export function getStateIcon(state?: any): IconName | undefined {
   if (!state) return undefined;
   const current_state = state.get("state") ?? "";
   const s = COMPUTE_STATES[current_state];
@@ -95,7 +95,7 @@ export interface ProjectTableRecord {
   collaborators: string[]; // Array of collaborator account_ids (excluding current user)
 }
 
-function projectRoleTag(role: ProjectTableRecord["currentRole"]) {
+export function projectRoleTag(role: ProjectTableRecord["currentRole"]) {
   switch (role) {
     case "owner":
       return (
