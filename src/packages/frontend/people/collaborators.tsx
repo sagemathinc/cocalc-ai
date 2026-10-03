@@ -193,13 +193,17 @@ export function CollaboratorList({
             >
               <Avatar account_id={p.account_id} size={32} no_tooltip />
               <span style={{ minWidth: 0 }}>
+                {/* Names may wrap to two lines: the pin and menu leave too
+                    little width for one line of a full name. */}
                 <span
+                  title={p.name}
                   style={{
-                    display: "block",
+                    display: "-webkit-box",
+                    WebkitBoxOrient: "vertical",
+                    WebkitLineClamp: 2,
                     fontWeight: 500,
                     overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
+                    overflowWrap: "anywhere",
                   }}
                 >
                   {p.name}
@@ -209,7 +213,14 @@ export function CollaboratorList({
                     </span>
                   )}
                 </span>
-                <span style={{ color: UI_COLORS.secondary, fontSize: 13 }}>
+                <span
+                  style={{
+                    display: "block",
+                    color: UI_COLORS.secondary,
+                    fontSize: 13,
+                    whiteSpace: "nowrap",
+                  }}
+                >
                   {p.sharedProjects}{" "}
                   {p.sharedProjects === 1
                     ? "shared project"
@@ -217,9 +228,11 @@ export function CollaboratorList({
                 </span>
               </span>
             </button>
-            <span style={{ width: 28, display: "inline-flex" }}>
-              {controls.dragHandle}
-            </span>
+            {controls.dragHandle && (
+              <span style={{ width: 28, display: "inline-flex" }}>
+                {controls.dragHandle}
+              </span>
+            )}
             {controls.pinButton}
             {controls.menu(
               [
@@ -312,6 +325,12 @@ function Cell({
   );
 }
 
+// "Drew" from "Drew Sutherland", for short button labels.
+function firstName(name?: string): string {
+  const first = `${name ?? ""}`.trim().split(/\s+/)[0];
+  return first || "them";
+}
+
 export function PersonDetail({
   account_id,
   conversations,
@@ -362,6 +381,16 @@ export function PersonDetail({
           Start conversation
         </Button>
         <Button
+          icon={<Icon name="robot" />}
+          onClick={() =>
+            void import("@cocalc/frontend/agents/agent-participants").then(
+              ({ openNewAgentWith }) => openNewAgentWith([account_id]),
+            )
+          }
+        >
+          New agent with {firstName(person?.name)}
+        </Button>
+        <Button
           aria-pressed={!!person?.pinned}
           icon={<Icon name="pushpin" />}
           onClick={() =>
@@ -398,7 +427,8 @@ export function PersonDetail({
                 <Typography.Paragraph type="secondary">
                   Agents {person?.name ?? "they"} registered in projects you
                   share. Any collaborator on a project can open and message its
-                  agents; turns you start use your own credentials.
+                  agents; turns you start use your own credentials. Open one and
+                  choose “Add to my agents” to keep it in your sidebar.
                 </Typography.Paragraph>
                 {work.agents.length === 0 ? (
                   <Typography.Paragraph type="secondary">

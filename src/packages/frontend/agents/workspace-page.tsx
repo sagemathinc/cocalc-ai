@@ -112,6 +112,15 @@ import {
 import { set_window_title } from "@cocalc/frontend/browser";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { useWorkspaceRoute } from "./use-workspace-route";
+import {
+  inviteToAgent,
+  inviteToAgentProject,
+  mostRecentSharedProject,
+  projectIncludesAll,
+  takeRequestedParticipants,
+} from "./agent-participants";
+import { NewAgentPeople } from "./new-agent-people";
+import { ShareAgentModal } from "./share-agent-modal";
 import { useMobileSearchNavigation } from "./use-mobile-search-navigation";
 import { lite } from "@cocalc/frontend/lite";
 import { useNavigationIntent } from "./use-navigation-intent";
@@ -611,14 +620,26 @@ function NewAgentPanel({
       return { id: "", revision: "", executable: "", args: "" };
     }
   });
+  // People who get this agent too ("New agent with ..." from People).
+  const [participants, setParticipants] = useState<string[]>(() =>
+    isFirstRun ? [] : takeRequestedParticipants(),
+  );
+  // With people chosen, start in a project everyone shares.
+  const [sharedProjectId] = useState(() =>
+    participants.length
+      ? mostRecentSharedProject(projectMap, participants)
+      : undefined,
+  );
   const [projectId, setProjectId] = useState<string | undefined>(
     () =>
+      sharedProjectId ||
       sourceAgent?.endpoint.project_id ||
       restoredPreparation?.projectId ||
       mostRecentlyEditedWritableProject(projectMap),
   );
   const [directory, setDirectory] = useState(
     () =>
+      (sharedProjectId && getProjectHomeDirectory(sharedProjectId)) ||
       sourceRuntime?.profile?.cwd ||
       sourceConfig?.workingDirectory?.trim() ||
       (sourceAgent
@@ -1392,11 +1413,58 @@ function NewAgentPanel({
       claimedNameRef.current ?? normalizeAgentName(agentName),
       boundAccount.accountId,
     );
+    if (participants.length) {
+      void inviteParticipants(created, participants);
+    }
     if (isFirstRun) writePreparedFirstAgent(boundAccount.accountId);
     void completeFirstRunWithAgent(boundAccount.accountId, created.projectId);
     refreshNamedAgents();
     handedOff.current = true;
     onCreated(agentId);
+  }
+
+  // Best effort: the agent exists either way, and people can still be added
+  // from the agent later.
+  async function inviteParticipants(
+    created: PendingAgent,
+    accountIds: string[],
+  ): Promise<void> {
+    const project = projectMap?.get(created.projectId);
+    const collaborators = accountIds.filter((id) =>
+      projectIncludesAll(project, [id]),
+    );
+    const others = accountIds.filter((id) => !collaborators.includes(id));
+    const target = {
+      project_id: created.projectId,
+      path: created.path,
+      thread_id: created.threadId,
+      agent_name: claimedNameRef.current ?? normalizeAgentName(agentName),
+    };
+    try {
+      const notified = await inviteToAgent({
+        ...target,
+        account_ids: collaborators,
+      });
+      // Not collaborators yet: a project invitation that links to the agent.
+      const invited = await inviteToAgentProject({
+        ...target,
+        account_ids: others,
+      });
+      const reached = notified.length + invited.length;
+      if (reached)
+        antdMessage.success(
+          `Invited ${reached} ${reached === 1 ? "person" : "people"} to the agent.`,
+        );
+      const failed = accountIds.length - reached;
+      if (failed > 0)
+        antdMessage.warning(
+          `${failed} ${failed === 1 ? "invitation" : "invitations"} could not be sent; you can share the agent again later.`,
+        );
+    } catch (err) {
+      antdMessage.warning(
+        `The agent was created, but invitations failed: ${err}`,
+      );
+    }
   }
 
   function handleCreateError(
@@ -2019,6 +2087,15 @@ function NewAgentPanel({
               <NamedAgentUsage directory={namedAgentDirectory} />
             </span>
           </div>
+        )}
+        {!isFirstRun && (
+          <NewAgentPeople
+            participants={participants}
+            onChange={setParticipants}
+            projectId={projectId}
+            onSelectProject={selectProject}
+            disabled={busy || !!pending}
+          />
         )}
         {/* Always rendered: its line is reserved so starting does not shift the
             centered page, and its live region exists before announcing. */}
@@ -3339,6 +3416,7 @@ export function MyAgentsWorkspacePage({
   const [copyBusy, setCopyBusy] = useState(false);
   const [copyError, setCopyError] = useState("");
   const [retiringAgentId, setRetiringAgentId] = useState<string>();
+  const [shareAgent, setShareAgent] = useState<NamedAgent>();
   const [mobileList, setMobileList] = useState(!libraryOpen);
   useMobileSearchNavigation({
     active,
@@ -4053,7 +4131,8 @@ export function MyAgentsWorkspacePage({
   // The sidebar's per-agent menu, shared with the Agents page.
   function runAgentAction(agent: NamedAgent, key: string) {
     const id = agent.endpoint.agent_id;
-    if (key === "copy") openCopyAgent(agent);
+    if (key === "share") setShareAgent(agent);
+    else if (key === "copy") openCopyAgent(agent);
     else if (key === "fresh") startFresh(agent);
     else if (key === "access") setAccessAgent(agent);
     else if (key === "remove") confirmRetireAgent(agent);
@@ -4066,6 +4145,7 @@ export function MyAgentsWorkspacePage({
   function overviewActions(agent: NamedAgent) {
     const hidden = agentOrganization.groups.hidden.includes(agent);
     return [
+      { key: "share", label: "Share with people…" },
       { key: "artifacts", label: "Show artifacts" },
       { key: "copy", label: "Copy agent…" },
       { key: "fresh", label: "Start fresh conversation…" },
@@ -4210,6 +4290,11 @@ export function MyAgentsWorkspacePage({
           trigger={["click"]}
           menu={{
             items: [
+              {
+                key: "share",
+                icon: <Icon name="user-plus" />,
+                label: "Share with people…",
+              },
               {
                 key: "copy",
                 icon: <Icon name="copy" />,
@@ -5339,6 +5424,10 @@ export function MyAgentsWorkspacePage({
           }}
         />
       )}
+      <ShareAgentModal
+        agent={shareAgent}
+        onClose={() => setShareAgent(undefined)}
+      />
       {accessAgent && (
         <AgentAccessDialog
           open
