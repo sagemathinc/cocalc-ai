@@ -85,6 +85,7 @@ const SECTIONS = "frontend/project/settings/sections.tsx";
 const API_KEY_SCOPE = "frontend/components/api-key-scope-editor.tsx";
 const AGENT_ATTACHMENT = "frontend/chat/agent-file-attachment.tsx";
 const NETWORK_APPROVAL = "frontend/agents/network-approval.tsx";
+const AGENTS_OVERVIEW = "frontend/agents/agents-overview.tsx";
 
 const doc = (name: string): string => `docs/src/content/${name}.ts`;
 const entries = (name: string): string => `docs/src/entries/${name}.ts`;
@@ -247,12 +248,13 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "agents.page.title",
     label: "Agents",
     anchors: [
-      def("frontend/agents/agents-overview.tsx", "> Agents </h1>"),
+      def(AGENTS_OVERVIEW, "> Agents </h1>"),
       ren(WORKSPACE_PAGE, "<AgentsOverview"),
     ],
     usedIn: [
       { file: doc("ai"), text: "The **Agents** page" },
       { file: doc("ai"), text: "opens the **Agents** page with the rest" },
+      { file: doc("cocalc-at-a-glance"), text: "The **Agents** page" },
     ],
   },
   {
@@ -264,6 +266,43 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     ],
     usedIn: [bold("ai", "Show in sidebar")],
   },
+  {
+    id: "agents.overview.mine",
+    // Rendered with its count, as "Mine (N)".
+    label: "Mine",
+    anchors: [def(AGENTS_OVERVIEW, "label: `Mine (${mineItems.length})`")],
+    usedIn: [bold("ai", "Mine")],
+  },
+  {
+    id: "agents.overview.shared",
+    // Rendered with its count, as "Shared with me (N)", once the list loads.
+    label: "Shared with me",
+    anchors: [def(AGENTS_OVERVIEW, "label: `Shared with me${")],
+    usedIn: [
+      bold("ai", "Shared with me"),
+      bold("cocalc-at-a-glance", "Shared with me"),
+    ],
+  },
+  // The page's sort and grouping menus. "Name" is also the new-agent form's
+  // field, so the sort options cite the phrase that names them.
+  ...(
+    [
+      ["sort.recent", "recent", "Recent", "by **Recent** or **Name**"],
+      ["sort.name", "name", "Name", "by **Recent** or **Name**"],
+      ["group.none", "none", "No grouping", "**No grouping**"],
+      ["group.project", "project", "By project", "**By project**"],
+      ["group.person", "person", "By person", "**By person**"],
+    ] as const
+  ).map(
+    ([key, value, label, text]): UiVocabularyEntry => ({
+      id: `agents.overview.${key}`,
+      label,
+      anchors: [
+        def(AGENTS_OVERVIEW, `{ value: "${value}", label: "${label}" }`),
+      ],
+      usedIn: [{ file: doc("ai"), text }],
+    }),
+  ),
   {
     id: "agents.sidebar.artifacts",
     label: "Artifacts",

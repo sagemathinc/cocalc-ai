@@ -138,10 +138,27 @@ click its **More actions for @*name*** button (a vertical ellipsis), and choose
 menu and confirm with **Remove from Agents**; the conversation and artifacts
 remain, but that agent becomes unavailable to its Agent Networks. Removing
 frees its named-agent slot, and its name can be used again. Hiding does not
-free a slot. The **Agents** page, which the sidebar's **Agents** entry opens,
-lists all of your agents, including hidden ones, and its actions menu for each
-agent also has **Remove from Agents…**. To show a hidden agent in the sidebar
-again, choose **Show in sidebar** in that menu.
+free a slot.
+
+## Find agents on the Agents page
+
+The **Agents** page opens from the sidebar's **Agents** entry, or from
+**All agents…** below the listed agents. When the sidebar leaves out some of
+your agents, the link also says how many, as in All agents (3 more)…; hidden
+agents are not counted. The page's address ends in \`/all-agents\`.
+
+**Mine** lists all of your agents, including hidden ones, and shares the
+sidebar's pins. Its actions menu for each agent also has
+**Remove from Agents…**. To show a hidden agent in the sidebar again, choose
+**Show in sidebar** in that menu.
+
+**Shared with me** lists agents that other people registered in projects you
+own or collaborate on. Select one to open its conversation in its project.
+
+Sort either list by **Recent** or **Name**; on **Shared with me**, **Recent**
+puts the most recently registered agents first, after any you pin. To group
+either list by project, open the menu that shows **No grouping** and choose
+**By project**. **Shared with me** can also be grouped **By person**.
 
 For project-chat controls and access setup, see [Open Codex chat](/docs/ai/codex-chat)
 and [Connect AI access](/docs/ai/connect-credentials). For the complete workflow
