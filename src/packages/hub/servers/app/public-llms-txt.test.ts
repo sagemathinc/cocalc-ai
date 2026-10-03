@@ -8,11 +8,20 @@ import initPublicLlmsTxt, {
   renderLlmsTxt,
 } from "./public-llms-txt";
 
+// cocalc.ai runs the Launchpad product.
+jest.mock("@cocalc/server/launchpad/mode", () => ({
+  getCocalcProduct: () => "launchpad",
+  isLaunchpadProduct: () => true,
+}));
+
 jest.mock("@cocalc/database/settings/customize", () => ({
   __esModule: true,
   default: jest.fn(async () => ({ siteName: "CoCalc" })),
 }));
 
+import getCustomize from "@cocalc/database/settings/customize";
+
+const mockedCustomize = jest.mocked(getCustomize);
 const page = getDocsEntry(LLMS_TXT_PAGE_ID, { siteProfile: "cocalc-ai" })!;
 
 async function get(host: string) {
@@ -58,6 +67,20 @@ describe("/llms.txt", () => {
     expect(body).toContain(
       `## Start here\n\n- [${page.title}](https://cocalc.ai/docs/${page.slug}): ${page.summary}\n`,
     );
+  });
+
+  it("titles the site as the public pages do", async () => {
+    // The default Launchpad site name maps to the marketing name...
+    mockedCustomize.mockResolvedValueOnce({
+      siteName: "CoCalc Launchpad",
+    } as any);
+    expect((await get("cocalc.ai")).body).toMatch(/^# CoCalc\n/);
+    // ...unless the site has its own logo, which keeps the configured name.
+    mockedCustomize.mockResolvedValueOnce({
+      logoSquareURL: "https://example.com/logo.png",
+      siteName: "CoCalc Launchpad",
+    } as any);
+    expect((await get("cocalc.ai")).body).toMatch(/^# CoCalc Launchpad\n/);
   });
 
   it.each(["example.com", "lite1b.cocalc.ai", "localhost:9100"])(

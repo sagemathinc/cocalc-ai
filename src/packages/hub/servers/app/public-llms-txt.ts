@@ -16,7 +16,10 @@ import basePath from "@cocalc/backend/base-path";
 import getCustomize from "@cocalc/database/settings/customize";
 import { docsPath, getDocsEntry, type DocsAccess } from "@cocalc/docs";
 import { getLogger } from "@cocalc/hub/logger";
-import { getCocalcProduct } from "@cocalc/server/launchpad/mode";
+import {
+  getCocalcProduct,
+  isLaunchpadProduct,
+} from "@cocalc/server/launchpad/mode";
 import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
 import { getPublicMarketingSiteName } from "@cocalc/util/public-site-metadata";
 import {
@@ -131,9 +134,17 @@ export function serveLlmsTxt(req: Request, res: Response): void {
   }
   void (async () => {
     const customize = await getCustomize();
+    const product = getCocalcProduct();
     const text = renderLlmsTxt({
-      product: getCocalcProduct(),
-      siteName: getPublicMarketingSiteName({ site_name: customize?.siteName }),
+      product,
+      // The same brand inputs as the public pages' titles (public-shell.ts),
+      // so a site still on the default Launchpad name is titled the same way.
+      siteName: getPublicMarketingSiteName({
+        cocalc_product: product,
+        is_launchpad: isLaunchpadProduct(),
+        logo_square: customize?.logoSquareURL,
+        site_name: customize?.siteName,
+      }),
     });
     if (text == null) {
       res.sendStatus(404);
