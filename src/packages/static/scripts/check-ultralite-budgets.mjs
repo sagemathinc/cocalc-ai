@@ -304,16 +304,19 @@ const surfaces = [
   {
     label: "notifications",
     chunks: [...initial, ...notifications],
-    // The released connector/runtime integration measures 504.3 KiB Brotli.
-    // Keep a narrow margin instead of failing every unrelated PR on that base.
-    max: 506 * KiB,
+    // The released connector/runtime integration measures 504.3 KiB Brotli;
+    // with the Claude Code train, workspace stack and sync hardening (#872)
+    // it measures 507.3 KiB. Keep a narrow margin instead of failing every
+    // unrelated PR on that base.
+    max: 509 * KiB,
   },
   {
     label: "Essential Docs",
     chunks: [...initial, ...docs],
-    // Connector, Claude, exam, agent memory, and agents workspace guides expand
-    // the non-admin documentation: 325.5 KiB Brotli before the agents workspace
-    // guide's update, and 326.5 KiB with it.
+    // Connector, Claude, and exam guides expand the non-admin documentation;
+    // the released baseline is 320.6 KiB Brotli before the exam UI updates,
+    // and 325.5 KiB with the #872 release. The agents workspace guide's
+    // update brings it to 326.5 KiB; keep a narrow margin for other guides.
     max: 328 * KiB,
   },
   {

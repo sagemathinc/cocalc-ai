@@ -37,6 +37,16 @@ const mockLoadTarget = jest.fn();
 const mockLoadProjectListWindow = jest.fn();
 const mockEnsureHostInfo = jest.fn();
 
+// The phone layout: IS_MOBILE on a screen narrower than "lg".
+let mockLarge = true;
+let mockIsMobile = false;
+jest.mock("@cocalc/frontend/feature", () => ({
+  ...jest.requireActual("@cocalc/frontend/feature"),
+  get IS_MOBILE() {
+    return mockIsMobile;
+  },
+}));
+
 jest.mock("./actions", () => ({}));
 jest.mock("@cocalc/frontend/history", () => ({
   load_target: (...args: unknown[]) => mockLoadTarget(...args),
@@ -58,7 +68,7 @@ jest.mock("antd", () => {
       </button>
     )),
     Col: ({ children }: any) => <div>{children}</div>,
-    Grid: { useBreakpoint: () => ({ lg: true }) },
+    Grid: { useBreakpoint: () => ({ lg: mockLarge }) },
     Layout,
     Row: ({ children }: any) => <div>{children}</div>,
     Space: ({ children }: any) => <div>{children}</div>,
@@ -697,4 +707,21 @@ test("a New Project request made before the page mounts opens the minimal creato
   expect(
     screen.getByRole("button", { name: /New project/ }),
   ).toBeInTheDocument();
+});
+
+test("phones also start with the minimal project creator", async () => {
+  mockIsMobile = true;
+  mockLarge = false;
+  try {
+    render(<ProjectsPage />);
+    expect(screen.getByTestId("mobile-projects-list")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /New project/ }));
+    expect(await screen.findByTestId("quick-project-creator")).toHaveAttribute(
+      "data-open",
+      "true",
+    );
+  } finally {
+    mockIsMobile = false;
+    mockLarge = true;
+  }
 });
