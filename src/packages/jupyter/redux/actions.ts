@@ -31,7 +31,8 @@ declare const localStorage: any;
 import * as immutable from "immutable";
 import { Actions } from "@cocalc/util/redux/Actions";
 import { three_way_merge } from "@cocalc/sync/editor/generic/util";
-import { callback2, once } from "@cocalc/util/async-utils";
+import { mergeText } from "@cocalc/sync/editor/generic/string-merge3";
+import { callback2, once, until } from "@cocalc/util/async-utils";
 import * as misc from "@cocalc/util/misc";
 import { delay } from "awaiting";
 import * as cell_utils from "@cocalc/jupyter/util/cell-utils";
@@ -58,6 +59,9 @@ import {
   jupyterRuntimeCellIdFromKey,
   jupyterRuntimeCellKey,
   JUPYTER_RUNTIME_CELL_KEY_PREFIX,
+  JUPYTER_RUNTIME_IPYNB_SAVE_KEY_PREFIX,
+  JUPYTER_RUNTIME_IPYNB_SAVES_KEPT,
+  type JupyterRuntimeIpynbSave,
   JUPYTER_RUNTIME_LIMITS_KEY,
   JUPYTER_RUNTIME_NBCONVERT_KEY,
   JUPYTER_RUNTIME_SETTINGS_FIELDS,
@@ -132,6 +136,10 @@ function getCellMetadataLastRuntimeMs(cell: immutable.Map<string, any>): any {
   return undefined;
 }
 
+// How long a client that finds the .ipynb file changed waits for a save of
+// it to be recorded before taking it for an external edit (see isIpynbSave).
+const IPYNB_SAVE_RECORD_WAIT_MS = 3000;
+
 export class JupyterActions extends Actions<JupyterStoreState> {
   public is_project: boolean;
   readonly path: string;
@@ -149,8 +157,15 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   public syncdb: SyncDB;
   private runtimeState?: JupyterRuntimeState;
   private runtimeStateInitStarted = false;
+  // Whether opening the runtime state has finished, successfully or not.
+  private runtimeStateSettled = false;
   private pendingRuntimeRecords: Map<string, object> = new Map();
   private pendingDeletedRuntimeRecords: Set<string> = new Set();
+  // Cells deleted by another client (most recent last), and cells this
+  // client is deleting; see restoreRemotelyDeletedCell.
+  private remotelyDeletedCells: Map<string, immutable.Map<string, any>> =
+    new Map();
+  private locallyDeletingCells: Set<string> = new Set();
   private labels?: {
     math: { [label: string]: { tag: string; id: string } };
     fig: { [label: string]: { tag: string; id: string } };
@@ -280,8 +295,104 @@ export class JupyterActions extends Actions<JupyterStoreState> {
         this.applyRuntimeStateSnapshot();
       } catch (err) {
         this.dbg("initRuntimeState")("failed to initialize runtime state", err);
+      } finally {
+        this.runtimeStateSettled = true;
       }
     })();
+  };
+
+  // Record a save of the .ipynb file (see JupyterRuntimeIpynbSave).
+  protected recordIpynbSave = ({
+    sha1,
+    mtimeMs,
+  }: {
+    sha1?: string;
+    mtimeMs?: number;
+  }): void => {
+    if (!sha1 || this.is_closed()) return;
+    const record: JupyterRuntimeIpynbSave = { sha1, savedAt: Date.now() };
+    if (typeof mtimeMs === "number" && Number.isFinite(mtimeMs)) {
+      record.mtimeMs = mtimeMs;
+    }
+    this.setRuntimeRecord(
+      `${JUPYTER_RUNTIME_IPYNB_SAVE_KEY_PREFIX}${sha1}`,
+      record,
+    );
+    const saves = this.getIpynbSaves();
+    for (const old of saves.slice(JUPYTER_RUNTIME_IPYNB_SAVES_KEPT)) {
+      this.deleteRuntimeRecord(
+        `${JUPYTER_RUNTIME_IPYNB_SAVE_KEY_PREFIX}${old.sha1}`,
+      );
+    }
+  };
+
+  // Recorded saves of the .ipynb file, newest first.
+  protected getIpynbSaves = (): JupyterRuntimeIpynbSave[] => {
+    const keys = new Set<string>(this.pendingRuntimeRecords.keys());
+    for (const key of Object.keys(this.runtimeState?.getAll() ?? {})) {
+      keys.add(key);
+    }
+    const saves: JupyterRuntimeIpynbSave[] = [];
+    for (const key of keys) {
+      if (!key.startsWith(JUPYTER_RUNTIME_IPYNB_SAVE_KEY_PREFIX)) continue;
+      const save = this.getRuntimeRecord<JupyterRuntimeIpynbSave>(key);
+      if (save?.sha1) saves.push(save);
+    }
+    return saves.sort((a, b) => (b.savedAt ?? 0) - (a.savedAt ?? 0));
+  };
+
+  // Whether the file on disk (its text and modification time) is a save by a
+  // client of this notebook rather than an external edit: it is one of the
+  // recorded saves, or not modified after the newest one. Waits briefly for
+  // the runtime state to open; without it nothing is known to be a save.
+  // A save is recorded just after the file is written, so a client that reads
+  // the file in between sees a save that is not recorded yet; such a file is
+  // taken for an external edit only if no save of it is recorded within
+  // IPYNB_SAVE_RECORD_WAIT_MS.
+  protected isIpynbSave = async ({
+    text,
+    mtimeMs,
+  }: {
+    text: string;
+    mtimeMs?: number;
+  }): Promise<boolean> => {
+    if (!this.runtimeStateSettled) {
+      this.initRuntimeState();
+      try {
+        await until(() => this.runtimeStateSettled || this.is_closed(), {
+          start: 50,
+          max: 250,
+          timeout: 5000,
+        });
+      } catch {
+        // timeout: decide with what is known
+      }
+    }
+    const hash = sha1(text);
+    const recorded = (): boolean => {
+      const saves = this.getIpynbSaves();
+      if (saves.length == 0) return false;
+      if (saves.some((save) => save.sha1 === hash)) return true;
+      const newest = Math.max(
+        ...saves.map((save) => save.mtimeMs ?? Number.NEGATIVE_INFINITY),
+      );
+      return (
+        typeof mtimeMs === "number" &&
+        Number.isFinite(newest) &&
+        mtimeMs <= newest
+      );
+    };
+    if (recorded()) return true;
+    try {
+      await until(() => recorded() || this.is_closed(), {
+        start: 100,
+        max: 250,
+        timeout: IPYNB_SAVE_RECORD_WAIT_MS,
+      });
+    } catch {
+      // timeout: not a recorded save
+    }
+    return recorded();
   };
 
   private runtimeStateChange = (change?: { key?: string }): void => {
@@ -903,12 +1014,43 @@ export class JupyterActions extends Actions<JupyterStoreState> {
 
   // Set the input of the given cell in the syncdb, which will also change the store.
   // Might throw a CellWriteProtectedException
-  public set_cell_input(id: string, input: string, save = true): void {
+  // `base` is the input this edit was made from (e.g. what an editor last
+  // loaded or saved). If the synced input has changed since then, e.g. a
+  // collaborator's edit merged but not yet shown in the editor, the edit is
+  // merged into it instead of overwriting (and so reverting) that change.
+  // Returns the input the cell has afterwards (which an editor should show),
+  // or undefined if nothing was written.
+  public set_cell_input(
+    id: string,
+    input: string,
+    save = true,
+    base?: string,
+  ): string | undefined {
     if (!this.store) return;
-    if (this.store.getIn(["cells", id, "input"]) == input) {
-      // nothing changed.   Note, I tested doing the above check using
-      // both this.syncdb and this.store, and this.store is orders of magnitude faster.
-      return;
+    // Whether the cell exists, and its input, come from the synced document:
+    // the store can lag it by a few ms in either direction.
+    const record = this.syncdb?.get_one({ type: "cell", id });
+    if (record == null) {
+      return this.restoreRemotelyDeletedCell(id, input, save);
+    }
+    const current = record.get("input");
+    if (
+      base != null &&
+      typeof current === "string" &&
+      current !== base &&
+      current !== input
+    ) {
+      input = mergeText({ base, local: input, remote: current });
+    }
+    if (current === input) {
+      // Nothing changed, but a caller that asks to save may have made other
+      // changes it relies on this to commit (e.g. split_cell's new cell).
+      // Commit only then: an editor applies every collaborator's change it
+      // receives through here, and committing with several heads always
+      // makes a merge patch, which every other client receives in turn --
+      // with ten people in a notebook, a storm of patches that never ends.
+      if (save && this.syncdb?.hasDraft?.()) this._sync();
+      return input;
     }
     if (this.check_edit_protection(id, "changing input")) {
       // note -- we assume above that there was an actual change before checking
@@ -928,6 +1070,31 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       start: null,
       end: null,
     });
+    return input;
+  }
+
+  // Input typed into a cell that another user deleted concurrently, e.g.
+  // saved by its editor as it unmounts because of the delete. As when the
+  // edit and the delete merge (typed text beats a concurrent delete), bring
+  // the cell back whole with the new input instead of dropping what was
+  // typed. Cells this client deleted, or never had, are not recreated.
+  private restoreRemotelyDeletedCell(
+    id: string,
+    input: string,
+    save: boolean,
+  ): string | undefined {
+    // A cell deleted remotely that the store has not caught up with yet is
+    // still in the store (a local delete updates the store synchronously).
+    const cell =
+      this.remotelyDeletedCells.get(id) ?? this.store.getIn(["cells", id]);
+    this.remotelyDeletedCells.delete(id);
+    if (cell == null || cell.get("input") === input) return;
+    const record = cell.toJS();
+    for (const key of ["cursors", "state", "start", "end", "done", "last"]) {
+      delete record[key];
+    }
+    this._set({ ...record, type: "cell", id, input }, save);
+    return input;
   }
 
   set_cell_output = (id: string, output: any, save = true) => {
@@ -1159,6 +1326,14 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       this.deleteRuntimeRecord(jupyterRuntimeCellKey(id));
       this.reset_more_output(id); // free up memory locally
       this.handleCellDeleted(id);
+      if (old_cell != null && !this.locallyDeletingCells.has(id)) {
+        this.remotelyDeletedCells.delete(id);
+        this.remotelyDeletedCells.set(id, old_cell);
+        if (this.remotelyDeletedCells.size > 100) {
+          const oldest = this.remotelyDeletedCells.keys().next().value;
+          if (oldest != null) this.remotelyDeletedCells.delete(oldest);
+        }
+      }
       if (old_cell != null) {
         const cell_list = this.store.get_cell_list().filter((x) => x !== id);
         this.setState({ cells: cells.delete(id), cell_list });
@@ -1390,6 +1565,20 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       // no possible way to do anything.
       return;
     }
+    const debugHook = (globalThis as any).__simpleInputMergeDebug;
+    if (typeof debugHook === "function") {
+      // Debugging aid (see SimpleInputMerge): every write, and its caller.
+      debugHook("jupyter:set", {
+        obj: { ...obj, input: obj.input },
+        stack: new Error().stack?.split("\n").slice(2, 9).join("\n"),
+      });
+    }
+    if (this.wouldCreatePartialCell(obj)) {
+      // E.g., an input editor saving as it unmounts because its cell was just
+      // deleted, or output arriving for a deleted cell. Creating the record
+      // would bring the cell back as a "ghost" without a position or input.
+      return;
+    }
     // check write protection regarding specific keys to be set
     if (
       obj.type === "cell" &&
@@ -1434,6 +1623,18 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     );
   };
 
+  // A cell record can only be created whole, with a position and an input:
+  // setting other fields of a cell that does not exist (any more), e.g. its
+  // position from a move based on a store that has not caught up with a
+  // delete yet, must not create one.
+  private wouldCreatePartialCell = (obj: any): boolean => {
+    const get = (key: string) =>
+      typeof obj?.get === "function" ? obj.get(key) : obj?.[key];
+    if (get("type") !== "cell" || get("id") == null) return false;
+    if (get("pos") != null && typeof get("input") === "string") return false;
+    return this.syncdb.get_one({ type: "cell", id: get("id") }) == null;
+  };
+
   // might throw a CellDeleteProtectedException
   _delete = (obj: any, save = true) => {
     if (
@@ -1452,11 +1653,18 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     this.syncdb.delete(obj);
     if (obj.type === "cell" && obj.id != null) {
       this.deleteRuntimeRecord(jupyterRuntimeCellKey(obj.id));
+      this.remotelyDeletedCells.delete(obj.id);
     }
     if (save) {
       this.syncdb.commit();
     }
-    this._syncdb_change(immutable.fromJS([{ type: obj.type, id: obj.id }]));
+    const local = obj.type === "cell" && obj.id != null ? obj.id : undefined;
+    if (local != null) this.locallyDeletingCells.add(local);
+    try {
+      this._syncdb_change(immutable.fromJS([{ type: obj.type, id: obj.id }]));
+    } finally {
+      if (local != null) this.locallyDeletingCells.delete(local);
+    }
   };
 
   public _sync = () => {
@@ -1660,19 +1868,22 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     if (this.check_edit_protection(id, "splitting cell")) {
       return;
     }
+    // The cell may have just been deleted (e.g. by a collaborator); check
+    // before inserting anything, so no half-done split is left behind.
+    const cell = this.store.get("cells").get(id);
+    if (cell == null || this.syncdb.get_one({ type: "cell", id }) == null) {
+      return;
+    }
     // insert a new cell before the currently selected one
     const new_id: string = this.insert_cell_adjacent(id, -1, false);
-
-    // split the cell content at the cursor loc
-    const cell = this.store.get("cells").get(id);
-    if (cell == null) {
-      throw Error(`no cell with id=${id}`);
-    }
     const cell_type = cell.get("cell_type");
     if (cell_type !== "code") {
       this.set_cell_type(new_id, cell_type, false);
     }
-    const input = cell.get("input");
+    // The input comes from the synced document: the store can lag it, and
+    // the split replaces the cell's input, so anything newer would be lost.
+    const synced = this.syncdb.get_one({ type: "cell", id })?.get("input");
+    const input = typeof synced === "string" ? synced : cell.get("input");
     if (input == null) {
       this.syncdb.commit();
       return; // very easy case.
@@ -1713,16 +1924,26 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       if (this.check_edit_protection(id, "merging cell")) return;
     }
     if (this.check_delete_protection(next_id)) return;
+    // Either cell may have just been deleted (e.g. by a collaborator): check
+    // before deleting the cell below, so no half-done merge is left behind.
+    for (const id of [cell_id, next_id]) {
+      if (this.syncdb.get_one({ type: "cell", id }) == null) return;
+    }
 
     const cells = this.store.get("cells");
     if (cells == null) {
       return;
     }
 
-    const input: string =
-      cells.getIn([cell_id, "input"], "") +
-      "\n" +
-      cells.getIn([next_id, "input"], "");
+    // The inputs come from the synced document: the store can lag it, and
+    // anything newer in the cell below would be deleted with it.
+    const inputOf = (id: string): string => {
+      const input = this.syncdb.get_one({ type: "cell", id })?.get("input");
+      return typeof input === "string"
+        ? input
+        : (cells.getIn([id, "input"], "") as string);
+    };
+    const input: string = inputOf(cell_id) + "\n" + inputOf(next_id);
 
     const output0 = cells.getIn([cell_id, "output"]) as any;
     const output1 = cells.getIn([next_id, "output"]) as any;

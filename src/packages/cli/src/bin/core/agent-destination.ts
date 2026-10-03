@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import {
   agentRpcSourceKey,
   validateAgentEndpoint,
+  validateAgentRpcTarget,
   type AgentEndpoint,
   type AgentRpcTarget,
 } from "@cocalc/conat/agents/rpc";
@@ -17,6 +18,8 @@ export interface ResolvedAgentDestination {
   target: AgentRpcTarget;
   agent_network_id: string;
   agent_network_title: string;
+  delivery_mode?: AgentNetworkDiscovery["peers"][number]["networks"][number]["delivery_mode"];
+  project_title?: string;
 }
 
 export function matchesAgentNetwork(
@@ -107,6 +110,10 @@ export function resolveAgentName(
     target,
     agent_network_id: network.agent_network_id,
     agent_network_title: network.title,
+    delivery_mode: network.delivery_mode,
+    ...(first.member.kind === "registered" && first.member.project_title
+      ? { project_title: first.member.project_title }
+      : {}),
   };
 }
 
@@ -141,4 +148,138 @@ export async function resolveRuntimeAgentName(
     apiUrl,
   )) as AgentNetworkDiscovery;
   return resolveAgentName(name, destinations, references, requestedNetwork);
+}
+
+type Peer = AgentNetworkDiscovery["peers"][number];
+
+function peerTarget({ member }: Peer): AgentRpcTarget {
+  return member.kind === "registered" ? member.endpoint : member.source;
+}
+
+function peerName({ member }: Peer): string {
+  return (member.kind === "registered" ? member.name : member.label) ?? "";
+}
+
+const isUuid = (value: unknown): value is string =>
+  typeof value === "string" &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+
+/**
+ * Read one --targets entry: a peer name, or the target in any of the shapes
+ * discovery prints (an endpoint, a member with an endpoint, a peer with a
+ * member). Returns a name to look up, or an explicit target.
+ */
+export function parseBroadcastTarget(
+  entry: unknown,
+  index: number,
+): { name: string } | { member_id: string } | { target: AgentRpcTarget } {
+  const where = `--targets[${index}]`;
+  if (typeof entry === "string") {
+    const name = entry.trim().replace(/^@/, "");
+    return isUuid(name) ? { member_id: name } : { name };
+  }
+  if (!entry || typeof entry !== "object" || Array.isArray(entry))
+    throw new Error(
+      `${where}: expected a peer name or an object with project_id and agent_id`,
+    );
+  let value: any = entry;
+  if (value.member && typeof value.member === "object") value = value.member;
+  if (value.kind === "external" && value.source) value = value.source;
+  if (value.endpoint && typeof value.endpoint === "object")
+    value = value.endpoint;
+  let target: AgentRpcTarget;
+  if (value.kind === "external") {
+    target = value;
+  } else if (value.project_id !== undefined || value.agent_id !== undefined) {
+    target = { project_id: value.project_id, agent_id: value.agent_id };
+  } else if (isUuid(value.member_id)) {
+    return { member_id: value.member_id };
+  } else if (typeof value.name === "string") {
+    return { name: value.name };
+  } else {
+    throw new Error(
+      `${where}: expected a peer name or an object with project_id and agent_id`,
+    );
+  }
+  try {
+    validateAgentRpcTarget(target);
+  } catch (error) {
+    throw new Error(`${where}: ${(error as Error).message}`);
+  }
+  return { target };
+}
+
+/**
+ * Turn --targets (or --to names) into explicit targets and the one Agent
+ * Network they all share. The directory is only needed for names, member
+ * ids, a network given by title, or no network at all.
+ */
+export function resolveBroadcastTargets(
+  entries: unknown[],
+  directory: AgentNetworkDiscovery | undefined,
+  requestedNetwork?: string,
+): {
+  targets: AgentRpcTarget[];
+  names: (string | undefined)[];
+  agent_network_id: string;
+  agent_network_title?: string;
+} {
+  if (!Array.isArray(entries) || entries.length === 0)
+    throw new Error("--targets must be a non-empty JSON array");
+  const parsed = entries.map(parseBroadcastTarget);
+  if (!directory) {
+    if (!isUuid(requestedNetwork) || parsed.some((p) => !("target" in p)))
+      throw new Error("Agent discovery is required to resolve these targets");
+    return {
+      targets: parsed.map((p) => (p as { target: AgentRpcTarget }).target),
+      names: parsed.map(() => undefined),
+      agent_network_id: requestedNetwork as string,
+    };
+  }
+  const peers = parsed.map((p, index) => {
+    const where = `--targets[${index}]`;
+    const matches = directory.peers.filter((peer) =>
+      "target" in p
+        ? agentRpcSourceKey(peerTarget(peer)) === agentRpcSourceKey(p.target)
+        : "member_id" in p
+          ? peer.member.member_id === p.member_id ||
+            (peer.member.kind === "registered" &&
+              peer.member.endpoint.agent_id === p.member_id)
+          : peerName(peer).trim().toLowerCase() === p.name.toLowerCase(),
+    );
+    if (matches.length === 0)
+      throw new Error(
+        `${where}: no network peer ${"name" in p ? `named @${p.name}` : "matches this target"}; run agent destinations. No message was sent.`,
+      );
+    if (
+      new Set(matches.map((peer) => agentRpcSourceKey(peerTarget(peer)))).size >
+      1
+    )
+      throw new Error(`${where}: ambiguous peer; no message was sent`);
+    return matches[0];
+  });
+  const shared = peers[0].networks.filter((network) =>
+    peers.every((peer) =>
+      peer.networks.some(
+        (other) => other.agent_network_id === network.agent_network_id,
+      ),
+    ),
+  );
+  const network = selectAgentNetwork(shared, requestedNetwork);
+  if (!network)
+    throw new Error(
+      shared.length === 0
+        ? "No single Agent Network includes all of these targets; no message was sent"
+        : `None of the shared Agent Networks (${shared
+            .map(({ title }) => JSON.stringify(title))
+            .join(
+              ", ",
+            )}) matches --agent-network ${JSON.stringify(requestedNetwork)}; no message was sent`,
+    );
+  return {
+    targets: peers.map(peerTarget),
+    names: peers.map(peerName),
+    agent_network_id: network.agent_network_id,
+    agent_network_title: network.title,
+  };
 }

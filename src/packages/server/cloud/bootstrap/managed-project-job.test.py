@@ -12,6 +12,7 @@ import selectors
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 import types
 import unittest
@@ -212,8 +213,45 @@ class ManagedJobTests(unittest.TestCase):
             scope = Path(directory)
             self.assertEqual(m.live_scope_processes(scope), 0)
             (scope / "cgroup.procs").write_text("10\n11\n12\n")
-            with mock.patch.object(m, "identity", side_effect=["123", ProcessLookupError(), FileNotFoundError()]):
-                self.assertEqual(m.live_scope_processes(scope), 1)
+            with mock.patch.object(m, "identity", side_effect=["123", ProcessLookupError(), FileNotFoundError()]), \
+                mock.patch.object(m, "process_name", return_value="sleep"):
+                self.assertEqual(m.live_scope_processes(scope, grace=0), 1)
+
+    def test_leftover_diagnostic_ignores_podman_exec_infrastructure(self):
+        m = helper()
+        with tempfile.TemporaryDirectory() as directory:
+            # A process named like podman's exec monitor.
+            conmon = Path(directory) / "conmon"
+            conmon.write_bytes(Path("/bin/sleep").read_bytes())
+            conmon.chmod(0o755)
+            infra = subprocess.Popen([str(conmon), "30"])
+            leftover = subprocess.Popen(["/bin/sleep", "30"])
+            try:
+                scope = Path(directory) / "scope"
+                scope.mkdir()
+                procs = scope / "cgroup.procs"
+                procs.write_text(f"{infra.pid}\n")
+                self.assertEqual(m.live_scope_processes(scope, grace=0), 0)
+                procs.write_text(f"{infra.pid}\n{leftover.pid}\n")
+                self.assertEqual(m.live_scope_processes(scope, grace=0), 1)
+            finally:
+                for process in (infra, leftover):
+                    process.kill()
+                    process.wait()
+
+    def test_leftover_diagnostic_waits_for_exiting_processes(self):
+        m = helper()
+        with tempfile.TemporaryDirectory() as directory:
+            exiting = subprocess.Popen(["/bin/sleep", "0.1"])
+            # Reap it as soon as it exits, as the real parent would.
+            reaper = threading.Thread(target=exiting.wait)
+            reaper.start()
+            try:
+                (Path(directory) / "cgroup.procs").write_text(f"{exiting.pid}\n")
+                self.assertEqual(m.live_scope_processes(Path(directory), grace=2), 0)
+            finally:
+                exiting.kill()
+                reaper.join()
 
     def test_reconciliation_preserves_managed_cgroups(self):
         source = inspect.getsource(bootstrap.install_privileged_wrappers)

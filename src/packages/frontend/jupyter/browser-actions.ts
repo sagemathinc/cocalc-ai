@@ -4487,6 +4487,9 @@ export class JupyterActions extends JupyterActions0 {
     }
     const result = await this.syncdb.fs.jupyterSaveIpynb!(this.path, ipynb);
     if (this.isClosed()) return;
+    // Recorded even if the notebook changed meanwhile: the file is then older
+    // than the live notebook, which must never import it.
+    this.recordIpynbSave(result);
     const versionAfterSave = this.getRtcVersion();
     if (versionAfterSave !== snapshotVersion) {
       // The file now contains an older snapshot. Keep the notebook dirty and
@@ -4536,6 +4539,42 @@ export class JupyterActions extends JupyterActions0 {
     await this.setToIpynb(imported.ipynb);
   };
 
+  // A file on disk that a client of this notebook saved is never imported:
+  // its mtime can be newer than the last live change although its content is
+  // older (a save that finished writing after a newer edit arrived), and
+  // importing it would erase that edit. The live notebook is saved instead.
+  // Only external edits of the file are imported.
+  private diskIsIpynbSave = async (
+    read: DiskIpynbRead,
+    patchSeq?: number,
+  ): Promise<boolean> => {
+    if (read.bytes == 0 || this.syncdb.get_one?.({ type: "cell" }) == null) {
+      // Nothing live to lose.
+      return false;
+    }
+    const mtimeMs = await this.getDiskMtimeMs();
+    if (!(await this.isIpynbSave({ text: read.text, mtimeMs }))) {
+      this.runDebug("watch.load.not_own_save", () => {
+        const saves = this.getIpynbSaves();
+        return {
+          patchSeq,
+          mtimeMs,
+          saves: saves.length,
+          newestSaveMtimeMs: saves[0]?.mtimeMs,
+          newestSavedAt: saves[0]?.savedAt,
+        };
+      });
+      return false;
+    }
+    this.runDebug("watch.load.skipped.own_save", { patchSeq, mtimeMs });
+    if (this.saveIpynbInFlight == null) {
+      void this.saveIpynb().catch((err) => {
+        this.runDebug("ipynb.save.failed", { err: `${err}` });
+      });
+    }
+    return true;
+  };
+
   private isIpynbDeleted = false;
   private watchLoadFromDisk = async ({
     patch,
@@ -4583,13 +4622,16 @@ export class JupyterActions extends JupyterActions0 {
           this.runDebug("watch.load.skipped.matches_rtc", { patchSeq });
           return;
         }
+        if (await this.diskIsIpynbSave(read, patchSeq)) return;
         await this.loadFromDisk({
           diskRead: read,
           expectedRtcVersion,
         });
       } else {
         // Initial source selection has already compared disk and RTC mtimes.
-        await this.loadFromDisk({ diskRead });
+        const read = diskRead ?? (await this.readIpynbFromDisk());
+        if (await this.diskIsIpynbSave(read, patchSeq)) return;
+        await this.loadFromDisk({ diskRead: read });
       }
       // Disk notebooks contain native attachment bytes, whereas the live
       // syncdoc contains global blob URLs. Authoritative reload must therefore

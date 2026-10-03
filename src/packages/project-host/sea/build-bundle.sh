@@ -120,34 +120,43 @@ cd "$ROOT"
 echo "- Build project-host"
 pnpm --filter @cocalc/project-host run build
 
-echo "- Bundle entry point with @vercel/ncc"
-"$ROOT/scripts/ncc.sh" build packages/project-host/bin/start.js \
+# The ncc bundles are independent (separate entry points and output
+# directories), so they are built in parallel.
+NCC_PIDS=()
+ncc_bundle() {
+  local label="$1"
+  shift
+  echo "- Bundle $label with @vercel/ncc"
+  "$ROOT/scripts/ncc.sh" build "$@" &
+  NCC_PIDS+=("$!")
+}
+ncc_bundle "entry point" packages/project-host/bin/start.js \
   -o "$OUT"/bundle \
   --source-map \
   --external node-pty \
   --external bufferutil \
   --external utf-8-validate
-
-echo "- Bundle main entrypoint (daemon target)"
-"$ROOT/scripts/ncc.sh" build packages/project-host/dist/main.js \
+ncc_bundle "main entrypoint (daemon target)" packages/project-host/dist/main.js \
   -o "$OUT"/main \
   --source-map \
   --external node-pty \
   --external bufferutil \
   --external utf-8-validate
-
-echo "- Bundle persistent app supervisor"
-"$ROOT/scripts/ncc.sh" build packages/project-host/dist/app-supervisor.js \
+ncc_bundle "persistent app supervisor" packages/project-host/dist/app-supervisor.js \
   -o "$OUT"/supervisor \
   --source-map
-
-echo "- Bundle bounded chat search worker"
-"$ROOT/scripts/ncc.sh" build packages/backend/dist/chat-store/search-worker.js \
+ncc_bundle "bounded chat search worker" packages/backend/dist/chat-store/search-worker.js \
   -o "$OUT"/chat-search-worker
-
-echo "- Bundle qualified ACP harness launcher"
-"$ROOT/scripts/ncc.sh" build packages/project-host/dist/acp/qualified-harness-entry.js \
+ncc_bundle "qualified ACP harness launcher" packages/project-host/dist/acp/qualified-harness-entry.js \
   -o "$OUT"/qualified-harness
+NCC_FAILED=0
+for pid in "${NCC_PIDS[@]}"; do
+  wait "$pid" || NCC_FAILED=1
+done
+if [ "$NCC_FAILED" = "1" ]; then
+  echo "ERROR: an ncc bundle failed" >&2
+  exit 1
+fi
 
 echo "- Copy compiled project-host dist/"
 if [ -d "packages/project-host/dist" ]; then
@@ -409,7 +418,7 @@ OUT="$FINAL_OUT"
 if [ -n "$FINAL_TARBALL" ]; then
   mkdir -p "$(dirname "$FINAL_TARBALL")"
   TMP_TARBALL="$FINAL_TARBALL.tmp.$$"
-  tar -C "$(dirname "$OUT")" -Jcf "$TMP_TARBALL" "$(basename "$OUT")"
+  XZ_OPT="${XZ_OPT:--T0}" tar -C "$(dirname "$OUT")" -Jcf "$TMP_TARBALL" "$(basename "$OUT")"
   tar -tJf "$TMP_TARBALL" >/dev/null
   mv "$TMP_TARBALL" "$FINAL_TARBALL"
   TMP_TARBALL=""

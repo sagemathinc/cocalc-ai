@@ -199,7 +199,7 @@ test("loads the real source without an agent, preserves focus, and delegates exp
   expect(
     screen.getByRole("group", { name: "Library artifact navigation" }),
   ).toHaveFocus();
-  const back = screen.getByRole("button", { name: "Back to Library" });
+  const back = screen.getByRole("button", { name: "Back to Artifacts" });
   back.focus();
   await screen.findByRole("heading", { name: "Actual source title", level: 1 });
   expect(back).toHaveFocus();
@@ -295,7 +295,9 @@ test("parent navigation remains keyboard accessible while loading, updating, and
   expect(screen.getByRole("heading", { name: "Latest title" })).toBeVisible();
   expect(navigation).toHaveFocus();
   await user.tab();
-  expect(screen.getByRole("button", { name: "Back to Library" })).toHaveFocus();
+  expect(
+    screen.getByRole("button", { name: "Back to Artifacts" }),
+  ).toHaveFocus();
   await user.tab({ shift: true });
   act(() => {
     record = undefined;
@@ -552,7 +554,7 @@ test("missing/deleted records never manufacture an artifact and keep Back availa
   expect(screen.getByRole("alert")).toHaveTextContent("Artifact unavailable");
   expect(screen.queryByRole("document")).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Artifact" })).toBeVisible();
-  const back = screen.getByRole("button", { name: "Back to Library" });
+  const back = screen.getByRole("button", { name: "Back to Artifacts" });
   back.focus();
   await userEvent.setup().keyboard("{Enter}");
   expect(onBack).toHaveBeenCalledTimes(1);
@@ -584,7 +586,7 @@ test("late agent discovery does not reload the resource or steal focus", async (
     <LibraryArtifactView target={target} onBack={() => {}} />,
   );
   await screen.findByRole("heading", { name: "Actual source title" });
-  const back = screen.getByRole("button", { name: "Back to Library" });
+  const back = screen.getByRole("button", { name: "Back to Artifacts" });
   back.focus();
   view.rerender(
     <LibraryArtifactView

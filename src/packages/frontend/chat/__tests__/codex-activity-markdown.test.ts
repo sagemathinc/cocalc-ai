@@ -37,6 +37,26 @@ describe("codexEventsToMarkdown", () => {
     expect(markdown).not.toContain("secret-session");
   });
 
+  it("exports whether agent memory reached the turn", () => {
+    const markdown = codexEventsToMarkdown([
+      {
+        type: "event",
+        seq: 1,
+        event: { type: "memory", state: "loaded", notes: 3 },
+      } as any,
+      {
+        type: "event",
+        seq: 2,
+        event: { type: "memory", state: "unavailable" },
+      } as any,
+    ]);
+
+    expect(markdown).toContain("- Memory: On · 3 saved notes in context");
+    expect(markdown).toContain(
+      "- Memory: On, but the saved notes could not be loaded for this turn",
+    );
+  });
+
   it("exports terminal input and output as separate blocks", () => {
     const markdown = codexEventsToMarkdown([
       {

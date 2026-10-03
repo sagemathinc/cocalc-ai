@@ -9,6 +9,7 @@ import {
   SIGNUP_EMAIL_DOMAIN_POLICY_SETTING_KEYS,
 } from "../accounts/signup-email-domain-policy";
 import { hasStripeBillingConfiguration } from "../stripe/billing";
+import { version as FRONTEND_VERSION } from "../smc-version";
 
 export const PUBLIC_SITE_SETTINGS_KEYS = Object.freeze(
   Object.keys(site_settings_conf) as SiteSettingsKeys[],
@@ -33,7 +34,14 @@ export function isPublicSiteSettingKey(key: string): key is SiteSettingsKeys {
   return PUBLIC_SITE_SETTINGS_SET.has(key as SiteSettingsKeys);
 }
 
-export function buildPublicSiteSettings(all: Record<string, any>): {
+// The required and recommended browser versions never exceed the version of
+// the frontend this build serves (smc-version.js): otherwise even a browser
+// that has just loaded the current frontend would be too old, and everyone
+// would be disconnected (required) or told to reload forever (recommended).
+export function buildPublicSiteSettings(
+  all: Record<string, any>,
+  frontendVersion: number = FRONTEND_VERSION,
+): {
   configuration: Record<string, any>;
   version: VersionSettings;
 } {
@@ -64,12 +72,14 @@ export function buildPublicSiteSettings(all: Record<string, any>): {
       ? configuration.version_min_browser
       : normalizeVersionValue(configuration.version_min_browser);
 
-  const boundedBrowser = Math.min(minBrowser || 0, recommended || 0);
+  const boundedRecommended = Math.min(recommended || 0, frontendVersion);
+  const boundedBrowser = Math.min(minBrowser || 0, boundedRecommended);
 
   configuration.version_min_browser = boundedBrowser;
   version.version_min_browser = boundedBrowser;
   if (!Number.isNaN(recommended)) {
-    version.version_recommended_browser = recommended;
+    configuration.version_recommended_browser = boundedRecommended;
+    version.version_recommended_browser = boundedRecommended;
   }
 
   // Public pages need a derived flag that indicates whether Zendesk-backed

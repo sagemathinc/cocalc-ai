@@ -110,10 +110,11 @@ describe("synchronized editing with branching and merging", () => {
   });
 
   it("get the current value, which is a merge", () => {
+    // Two independent first versions are both kept, each on its own line.
     const v1 = s1.to_str();
     const v2 = s2.to_str();
-    expect(v1).toEqual("xy");
-    expect(v2).toEqual("xy");
+    expect(v2).toEqual(v1);
+    expect(v1.split("\n").filter(Boolean)).toEqual(["x", "y"]);
   });
 
   it("commit current value and see that there is a new single head that both share, thus resolving the merge in this way", async () => {
@@ -211,13 +212,13 @@ describe("do the example in the blog post 'Lies I was Told About Collaborative E
     alice.commit();
   });
 
-  it("Both come back online -- the resolution is the empty (with either order above) string because the **best effort** application of inserting the u (with context) to either is a no-op.", async () => {
+  it("Both come back online -- the resolution keeps Bob's edited title: with exact three-way merges, text edited on one side and deleted on the other is kept, so the edit is not silently lost (the old best-effort patch application made this the empty string).", async () => {
     await bob.save();
     await alice.save();
     await delay(GAP_DELAY);
     await waitUntilSynced([bob, alice]);
-    expect(alice.to_str()).toEqual("");
-    expect(bob.to_str()).toEqual("");
+    expect(alice.to_str()).toEqual("The Colour of Pomegranates");
+    expect(bob.to_str()).toEqual("The Colour of Pomegranates");
   });
 
   it("the important thing about the cocalc approach is that a consistent history is saved, so everybody knows precisely what happened. **I.e., the fact that at one point Bob adding a British u is not lost to either party!**", () => {
@@ -244,12 +245,12 @@ describe("do the example in the blog post 'Lies I was Told About Collaborative E
     bob.commit();
   });
 
-  it("both empty again", async () => {
+  it("Bob's edit is kept again (in the other order too)", async () => {
     await bob.save();
     await alice.save();
     await waitUntilSynced([bob, alice]);
-    expect(alice.to_str()).toEqual("");
-    expect(bob.to_str()).toEqual("");
+    expect(alice.to_str()).toEqual("The Colour of Pomegranates");
+    expect(bob.to_str()).toEqual("The Colour of Pomegranates");
   });
 
   it("There are two heads; either client can resolve the merge conflict.", async () => {

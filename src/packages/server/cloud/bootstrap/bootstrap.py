@@ -4794,20 +4794,35 @@ class BackgroundWarningTracker:
         self.seen = self.note in text
         self.tail = b"" if self.seen else text[-(len(self.note) - 1):]
 
-def live_scope_processes(scope):
+# Podman's own processes for the exec session (e.g. conmon) can outlive the
+# command for a moment. They are not the command's leftovers.
+JOB_INFRASTRUCTURE = frozenset({"conmon", "podman", "catatonit", "crun", "runc"})
+
+def process_name(pid):
+    return Path(f"/proc/{pid}/comm").read_text().strip()
+
+def live_scope_processes(scope, grace=0.5):
     # Diagnostic only. Cleanup always uses atomic cgroup.kill, never this count.
-    try:
-        pids = (scope / "cgroup.procs").read_text().split()
-    except OSError:
-        return 0
-    count = 0
-    for pid in pids:
+    # Allow exiting processes a moment to go, so that the "remaining job
+    # processes" note is printed only for processes the command left behind.
+    until = time.monotonic() + grace
+    while True:
         try:
-            identity(int(pid))
-            count += 1
-        except (OSError, ValueError):
-            pass
-    return count
+            pids = (scope / "cgroup.procs").read_text().split()
+        except OSError:
+            return 0
+        count = 0
+        for pid in pids:
+            try:
+                identity(int(pid))
+                name = process_name(int(pid))
+            except (OSError, ValueError):
+                continue
+            if name not in JOB_INFRASTRUCTURE:
+                count += 1
+        if count == 0 or time.monotonic() >= until:
+            return count
+        time.sleep(0.05)
 
 def kill_scope(scope, timeout=10):
     # cgroup.kill covers fork/setsid/reparenting races, unlike PID enumeration.

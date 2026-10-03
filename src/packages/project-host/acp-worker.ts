@@ -1,3 +1,4 @@
+import { initAgentMemoryContextProvider } from "./acp/agent-memory-context";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "@cocalc/conat/core/client";
 import { inboxPrefix } from "@cocalc/conat/names";
@@ -24,8 +25,10 @@ import { sandboxExec } from "@cocalc/project-runner/run/sandbox-exec";
 import { initCodexProjectRunner } from "./codex/codex-project";
 import {
   setHarnessAuthorityValidator,
+  setHarnessRateLimitRecorder,
   setHarnessLauncher,
 } from "@cocalc/lite/hub/acp/harness-runtime";
+import { recordHarnessRateLimit } from "./acp/claude-subscription-usage";
 import { launchHarnessInProject } from "./acp/harness-launcher";
 import { validateHarnessAuthority } from "./acp/harness-authority";
 import {
@@ -144,9 +147,11 @@ function configureProjectHostAcpRuntime(): void {
   initCodexProjectRunner();
   setHarnessLauncher(launchHarnessInProject);
   setHarnessAuthorityValidator(validateHarnessAuthority);
+  setHarnessRateLimitRecorder(recordHarnessRateLimit);
   initCodexSiteKeyGovernor();
   initCodexAttachmentBlobReader();
   initCodexGeneratedImageBlobWriter();
+  initAgentMemoryContextProvider();
 }
 
 function configureProjectHostAcpSessionPublisher(): void {
