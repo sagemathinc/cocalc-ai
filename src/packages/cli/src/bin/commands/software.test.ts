@@ -4403,6 +4403,51 @@ test("software smoke static runs HTTP checks against the profile API", async () 
   assert.deepEqual(methods.slice(-3), ["GET", "HEAD", "HEAD"]);
 });
 
+for (const overlap of [true, false]) {
+  test(`software smoke counts unique retained assets (overlap=${overlap})`, async () => {
+    const dir = mkdtempSync(join(tmpdir(), "software-smoke-assets-"));
+    const assets = Array.from(
+      { length: 6000 },
+      (_, i) => `chunk-${i}-0123456789abcdef.js`,
+    );
+    let heads = 0;
+    const program = createProgram(
+      makeDeps({
+        localStore: join(dir, "store"),
+        fetch: async (_input, init) => {
+          if (init?.method === "HEAD") heads += 1;
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              schema: 1,
+              builds: [
+                { assets },
+                { assets: overlap ? assets : assets.map((a) => `other-${a}`) },
+              ],
+            }),
+          } as Response;
+        },
+      }),
+    );
+    const run = program.parseAsync([
+      "node",
+      "test",
+      "--quiet",
+      "software",
+      "smoke",
+      "static",
+      "staging",
+    ]);
+    if (overlap) {
+      await run;
+      assert.equal(heads, 6000);
+    } else {
+      await assert.rejects(run, /frontend asset history exceeds 10000 files/);
+    }
+  });
+}
+
 test("software smoke hub also runs Rocket host route health", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-smoke-hub-"));
   const runs: CapturedRun[] = [];
