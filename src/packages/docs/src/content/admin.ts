@@ -70,7 +70,7 @@ settings, email, backup, runtime policies, and other operational controls.
 
 ## Work with settings
 
-1. Open the Admin tab.
+1. Open the account menu at the bottom of the sidebar, then select **Admin**.
 2. Open **Site Settings**.
 3. Search for the setting or section you need.
 4. Read the current value and nearby help text before changing it.

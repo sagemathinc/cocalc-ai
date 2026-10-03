@@ -95,7 +95,7 @@ export const ADMIN_ENTRIES: DocsEntry[] = [
       "/public/docs/runtime-image-09add8c9.webp",
       "Site configuration controls with cloud and runtime settings",
     ),
-    lastReviewed: "2026-09-30",
+    lastReviewed: "2026-10-02",
     slug: "admin/site-settings",
     status: "ready",
     summary:
