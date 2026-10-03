@@ -4,6 +4,7 @@ import { redux } from "@cocalc/frontend/app-framework";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { ReadonlyNotebook } from "@cocalc/frontend/jupyter/readonly-notebook";
+import { BlobStoreContext } from "@cocalc/frontend/jupyter/output-messages/use-blob";
 import type { ReadonlyNotebookDocument } from "@cocalc/frontend/jupyter/readonly-notebook";
 import type { SyncDB } from "@cocalc/sync/editor/db/sync";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
@@ -24,6 +25,7 @@ export default function NotebookArtifact({
   const { actions } = useProjectContext();
   const fileContext = useFileContext();
   const [syncdb, setSyncdb] = useState<SyncDB>();
+  const [blobStore, setBlobStore] = useState<{ asyncBlobStore?: any }>();
   const [doc, setDoc] = useState<ReadonlyNotebookDocument>();
   const [error, setError] = useState("");
   const [connected, setConnected] = useState(false);
@@ -54,6 +56,7 @@ export default function NotebookArtifact({
       const notebook = redux.getEditorActions(projectId, path)?.jupyter_actions;
       const syncdb = notebook?.syncdb;
       if (!syncdb) throw Error("Notebook session unavailable");
+      setBlobStore({ asyncBlobStore: notebook?.asyncBlobStore });
       setSyncdb(syncdb);
     })().catch((err) => {
       if (!disposed) setError(String(err));
@@ -143,13 +146,15 @@ export default function NotebookArtifact({
             urlTransform: getUrlTransform({ project_id: projectId, path }),
           }}
         >
-          <ReadonlyNotebook
-            project_id={projectId}
-            path={path}
-            doc={doc}
-            scrollPosition={scrollPosition}
-            font_size={fontSize}
-          />
+          <BlobStoreContext.Provider value={blobStore}>
+            <ReadonlyNotebook
+              project_id={projectId}
+              path={path}
+              doc={doc}
+              scrollPosition={scrollPosition}
+              font_size={fontSize}
+            />
+          </BlobStoreContext.Provider>
         </FileContext.Provider>
       )}
     </KeyboardBoundary>

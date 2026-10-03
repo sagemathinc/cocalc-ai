@@ -6,6 +6,7 @@
 import type { DocsEntry } from "../types";
 import { CLAUDE_CODE_BODY } from "../content/claude-code";
 import { AGENT_FEATURES_BODY } from "../content/agent-features";
+import { AGENT_MEMORY_BODY } from "../content/agent-memory";
 import { COCALC_ACCESS_BODY } from "../content/cocalc-access";
 import { docsIcon, projectActionParameters } from "../helpers";
 import {
@@ -50,6 +51,22 @@ export const AI_ENTRIES: DocsEntry[] = [
     summary:
       "Use Claude Code in CoCalc: experimental setup, images, Agent Networks, credentials, billing, and the security model.",
     title: "Claude Code in CoCalc (Experimental Preview)",
+  },
+  {
+    audiences: ["agents", "researchers", "students", "teams"],
+    body: AGENT_MEMORY_BODY.trim(),
+    category: "AI",
+    id: "ai.agent-memory",
+    lastReviewed: "2026-10-01",
+    noActionReason:
+      "Turn agent memory on or off in Settings -> AI; agents manage notes with the CLI.",
+    slug: "ai/agent-memory",
+    status: "ready",
+    searchKeywords:
+      "memory remember forget notes saved notes index persistent preferences Codex Claude project chat memory",
+    summary:
+      "Let Codex and Claude Code keep short notes across sessions and projects: turn it on, see what agents see, and manage notes.",
+    title: "Agent memory",
   },
   {
     audiences: ["agents", "researchers", "students", "teams"],

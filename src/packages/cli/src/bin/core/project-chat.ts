@@ -10,6 +10,7 @@ import {
   validateArtifact,
   validateArtifactPublication,
   artifactPublicationKey,
+  withoutArtifactStorageDate,
   type PublishArtifactInput,
   type ChatThreadConfigRecord,
 } from "@cocalc/chat";
@@ -328,94 +329,97 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
     ) {
       throw Error("artifact writes require explicit experimental opt-in");
     }
-    return await withProjectChatFile({
-      deps,
-      ctx,
-      projectIdentifier,
-      chatPath: path,
-      fn: async ({ syncdb, rows, project }) => {
-        if (action === "publish") {
-          const input = prepareArtifactPublication({
-            payload: payload ?? {},
-            threadId,
-            artifactId,
-            messageId: resolveArtifactMessage(
-              rows,
+    // Records keep their storage-key date internally; callers see real times.
+    return withoutArtifactStorageDate(
+      await withProjectChatFile({
+        deps,
+        ctx,
+        projectIdentifier,
+        chatPath: path,
+        fn: async ({ syncdb, rows, project }) => {
+          if (action === "publish") {
+            const input = prepareArtifactPublication({
+              payload: payload ?? {},
               threadId,
-              messageDate ?? "",
-            ),
-          });
-          const result = publishArtifact(syncdb, input);
+              artifactId,
+              messageId: resolveArtifactMessage(
+                rows,
+                threadId,
+                messageDate ?? "",
+              ),
+            });
+            const result = publishArtifact(syncdb, input);
+            syncdb.commit();
+            await syncdb.save();
+            await syncdb.save_to_disk();
+            return {
+              ...result,
+              artifact_id: input.artifact_id,
+              message_id: input.message_id,
+              operation_id: input.operation_id,
+              current: readArtifact(syncdb, input),
+            };
+          }
+          if (action === "context") {
+            return {
+              project_id: project.project_id,
+              path,
+              thread_id: threadId,
+              message_id: resolveArtifactMessage(
+                rows,
+                threadId,
+                messageDate ?? "",
+              ),
+            };
+          }
+          if (action === "list") {
+            return rows
+              .filter(
+                (row) =>
+                  row.event === "chat-artifact" && row.thread_id === threadId,
+              )
+              .slice(0, 100)
+              .map(validateArtifact);
+          }
+          const target = { thread_id: threadId, artifact_id: artifactId ?? "" };
+          if (action === "read") {
+            return operationId
+              ? validateArtifactPublication(
+                  syncdb.get_one(artifactPublicationKey(target, operationId)),
+                )
+              : readArtifact(syncdb, target);
+          }
+          if (
+            !payload ||
+            (action === "update"
+              ? typeof payload.base !== "string"
+              : payload.base !== undefined)
+          ) {
+            throw Error(
+              "create requires a payload without base; update requires the base returned by read",
+            );
+          }
+          // An artifact belongs to an actual producing message, never browser selection.
+          if (
+            !rows.some(
+              (row) =>
+                row.event === "chat" &&
+                row.thread_id === threadId &&
+                row.message_id === payload.message_id,
+            )
+          ) {
+            throw Error(
+              "artifact producing message does not exist in the specified thread",
+            );
+          }
+          const result = publishArtifact(syncdb, { ...payload, ...target });
           syncdb.commit();
           await syncdb.save();
           await syncdb.save_to_disk();
-          return {
-            ...result,
-            artifact_id: input.artifact_id,
-            message_id: input.message_id,
-            operation_id: input.operation_id,
-            current: readArtifact(syncdb, input),
-          };
-        }
-        if (action === "context") {
-          return {
-            project_id: project.project_id,
-            path,
-            thread_id: threadId,
-            message_id: resolveArtifactMessage(
-              rows,
-              threadId,
-              messageDate ?? "",
-            ),
-          };
-        }
-        if (action === "list") {
-          return rows
-            .filter(
-              (row) =>
-                row.event === "chat-artifact" && row.thread_id === threadId,
-            )
-            .slice(0, 100)
-            .map(validateArtifact);
-        }
-        const target = { thread_id: threadId, artifact_id: artifactId ?? "" };
-        if (action === "read") {
-          return operationId
-            ? validateArtifactPublication(
-                syncdb.get_one(artifactPublicationKey(target, operationId)),
-              )
-            : readArtifact(syncdb, target);
-        }
-        if (
-          !payload ||
-          (action === "update"
-            ? typeof payload.base !== "string"
-            : payload.base !== undefined)
-        ) {
-          throw Error(
-            "create requires a payload without base; update requires the base returned by read",
-          );
-        }
-        // An artifact belongs to an actual producing message, never browser selection.
-        if (
-          !rows.some(
-            (row) =>
-              row.event === "chat" &&
-              row.thread_id === threadId &&
-              row.message_id === payload.message_id,
-          )
-        ) {
-          throw Error(
-            "artifact producing message does not exist in the specified thread",
-          );
-        }
-        const result = publishArtifact(syncdb, { ...payload, ...target });
-        syncdb.commit();
-        await syncdb.save();
-        await syncdb.save_to_disk();
-        return { ...result, current: readArtifact(syncdb, target) };
-      },
-    });
+          return { ...result, current: readArtifact(syncdb, target) };
+        },
+      }),
+    );
   }
 
   async function projectChatThreadCreateData({

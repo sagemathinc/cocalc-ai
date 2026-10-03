@@ -47,7 +47,7 @@ import {
   resolveCodexCompletionNotificationEnabled,
 } from "@cocalc/util/notification-preferences";
 import { readCodexSubscriptionSelection } from "./codex-subscription-selection";
-import { readHarnessCredentialSelection } from "./harness-credential-selection";
+import { healedHarnessCredential } from "./harness-credential-heal";
 
 let lastGeneratedAcpMessageMs = 0;
 const ACP_ACK_TIMEOUT_MS = 2 * 60 * 1000;
@@ -381,7 +381,7 @@ export async function processAcpLLM({
   });
   const harnessCredential =
     runtime?.profile.version === 2 && runtime.profile.id === "claude-code"
-      ? readHarnessCredentialSelection({
+      ? await healedHarnessCredential({
           accountId: redux.getStore("account")?.get("account_id"),
           projectId: project_id,
           threadKey: thread_id,

@@ -1343,7 +1343,6 @@ export const projects = {
   codexDeviceAuthCancel: authFirstRequireAccount,
   claudeSubscriptionLoginStart: authFirstRequireAccount,
   claudeSubscriptionLoginStatus: authFirstRequireAccount,
-  getClaudeSubscriptionUsage: authFirstRequireAccount,
   claudeSubscriptionLoginSubmitCode: authFirstRequireAccount,
   claudeSubscriptionLoginCancel: authFirstRequireAccount,
   codexUploadAuthFile: authFirstRequireAccount,
@@ -2590,11 +2589,6 @@ export interface Projects {
     project_id: string;
     id: string;
   }) => Promise<{ id: string; canceled: boolean }>;
-
-  getClaudeSubscriptionUsage: (opts: {
-    project_id: string;
-    credential_id: string;
-  }) => Promise<import("@cocalc/util/ai/claude-usage").ClaudeSubscriptionUsage>;
 
   claudeSubscriptionLoginStart: (opts: {
     account_id?: string;

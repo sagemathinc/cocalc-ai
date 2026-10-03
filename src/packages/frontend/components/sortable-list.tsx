@@ -33,6 +33,7 @@ import {
   sortableKeyboardCoordinates,
   useSortable,
   verticalListSortingStrategy,
+  rectSortingStrategy,
 } from "@dnd-kit/sortable";
 import {
   restrictToVerticalAxis,
@@ -52,6 +53,7 @@ interface Props {
   ) => void;
   onDragMove?: () => void;
   disabled?: boolean;
+  layout?: "list" | "grid";
 }
 
 export function getSortableDragIndices({
@@ -93,6 +95,7 @@ export function SortableList({
   onDragMove,
   children,
   disabled,
+  layout = "list",
 }: Props) {
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -137,9 +140,18 @@ export function SortableList({
       onDragEnd={onDragEnd}
       onDragCancel={() => setDragId(null)}
       onDragMove={onDragMove}
-      modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
+      modifiers={
+        layout === "grid"
+          ? [restrictToFirstScrollableAncestor]
+          : [restrictToVerticalAxis, restrictToFirstScrollableAncestor]
+      }
     >
-      <SortableContext items={items} strategy={verticalListSortingStrategy}>
+      <SortableContext
+        items={items}
+        strategy={
+          layout === "grid" ? rectSortingStrategy : verticalListSortingStrategy
+        }
+      >
         {Item != null && (
           <>
             {typeof document !== "undefined" &&

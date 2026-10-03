@@ -51,6 +51,8 @@ export interface Actions {
     value: string,
     do_not_exit_undo_mode?: boolean,
     localSource?: string,
+    // The syncstring value `value` was derived from (see SyncDoc.from_str).
+    base?: string,
   ) => void;
   set_slate_value?: (value: Descendant[]) => void;
   syncstring_commit?: () => void;

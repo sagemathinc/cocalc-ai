@@ -204,5 +204,9 @@ export async function resolveExternalAgentName(
     target: matches[0].member.endpoint,
     agent_network_id: network.agent_network_id,
     agent_network_title: network.title,
+    delivery_mode: network.delivery_mode,
+    ...(matches[0].member.project_title
+      ? { project_title: matches[0].member.project_title }
+      : {}),
   };
 }
