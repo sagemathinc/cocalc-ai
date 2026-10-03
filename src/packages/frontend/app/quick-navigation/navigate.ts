@@ -3,11 +3,22 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import {
+  newArtifactRequest,
+  newConversationRequest,
+  toggleSidebarRequest,
+} from "@cocalc/frontend/app/sidebar-search-requests";
+import {
+  closedLibraryState,
+  openAgentsOverview,
+  openLibrary,
+} from "@cocalc/frontend/agents/library-navigation";
+import { requestNewProject } from "@cocalc/frontend/projects/new-project-request";
+import { load_target } from "@cocalc/frontend/history";
 import { redux } from "@cocalc/frontend/app-framework";
-import { closedLibraryState } from "@cocalc/frontend/agents/library-navigation";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import { openAppDocs, openProjectDocs } from "@cocalc/frontend/docs/navigation";
-import type { Destination } from "./model";
+import type { Destination, WorkspaceAction } from "./model";
 import { activateProjectTab } from "@cocalc/frontend/project/page/activate-project-tab";
 import { FIXED_PROJECT_TABS } from "@cocalc/frontend/project/page/file-tab";
 
@@ -100,7 +111,28 @@ export async function navigate(
     return;
   }
   if (destination.kind === "app-page") {
+    if (destination.page === "all-agents") return void openAgentsOverview();
+    if (destination.page === "library") return void openLibrary();
     redux.getActions("page").set_active_tab(destination.page, true);
+    return;
+  }
+  if (destination.kind === "artifact") {
+    void openLibrary(destination.projectId, destination.entryId);
+    return;
+  }
+  if (destination.kind === "conversation" || destination.kind === "person") {
+    const page = redux.getActions("page");
+    page.setState({
+      people_route:
+        destination.kind === "person"
+          ? `collaborators/${destination.accountId}`
+          : `conversations/${destination.projectId}/${destination.conversationId}`,
+    });
+    page.set_active_tab("people", true);
+    return;
+  }
+  if (destination.kind === "action") {
+    runWorkspaceAction(destination.action);
     return;
   }
   if (destination.kind === "agent") {
@@ -232,4 +264,29 @@ export async function navigate(
       path: destination.path,
       frameId,
     });
+}
+
+function runWorkspaceAction(action: WorkspaceAction): void {
+  const page = redux.getActions("page");
+  switch (action) {
+    case "new-agent":
+      load_target("agents/new");
+      return;
+    case "new-project":
+      requestNewProject();
+      page.set_active_tab("projects", true);
+      return;
+    case "new-artifact":
+      newArtifactRequest.request();
+      void openLibrary();
+      return;
+    case "new-conversation":
+      newConversationRequest.request();
+      page.setState({ people_route: undefined });
+      page.set_active_tab("people", true);
+      return;
+    case "toggle-sidebar":
+      toggleSidebarRequest.request();
+      return;
+  }
 }

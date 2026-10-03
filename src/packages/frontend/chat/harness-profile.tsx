@@ -1,13 +1,5 @@
-import {
-  Button,
-  Input,
-  Modal,
-  Popconfirm,
-  Select,
-  Space,
-  Tag,
-  Typography,
-} from "antd";
+import { Button, Input, Modal, Select, Space, Tag, Typography } from "antd";
+import { AgentMemoryButton } from "@cocalc/frontend/account/agent-memory-settings";
 import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import type { ReactNode, Ref } from "react";
 import {
@@ -31,24 +23,27 @@ import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
 import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-profiles";
 import { ClaudeProjectSecretModal } from "./claude-project-secret-modal";
 import {
-  FreshAuthModal,
-  useFreshAuthAction,
-} from "@cocalc/frontend/auth/fresh-auth";
-import {
   HARNESS_CREDENTIAL_SELECTION_EVENT,
   readHarnessCredentialSelection,
   writeHarnessCredentialSelection,
 } from "./harness-credential-selection";
-import { ClaudeSubscriptionConnect } from "./claude-subscription-connect";
+import { ClaudeSubscriptionManage } from "./claude-subscription-manage";
 import { DocsLink } from "@cocalc/frontend/docs/link";
 import {
   ClaudePaymentStatus,
   useClaudePaymentLabel,
 } from "./claude-payment-status";
-import { ClaudeConnectorPreference } from "./claude-connector-preference";
+import {
+  ClaudeConnectorPreference,
+  claudeConnectorsAvailable,
+} from "./claude-connector-preference";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { AgentSpeedControl } from "./agent-speed-control";
-import { newAgentClaudeCredentialOptions } from "@cocalc/frontend/agents/claude-credential-options";
+import {
+  newAgentClaudeCredentialOptions,
+  newAgentClaudeCredentialValue,
+  preferredClaudeCredential,
+} from "@cocalc/frontend/agents/claude-credential-options";
 
 const HARNESS_LIMITATIONS =
   "Text and image prompts. Live guidance works when the harness advertises it; otherwise messages queue. Automations are not supported yet.";
@@ -108,8 +103,6 @@ function ClaudeCredentialControl({
   const [credentialsLoaded, setCredentialsLoaded] = useState(false);
   const [secretsOpen, setSecretsOpen] = useState(false);
   const [error, setError] = useState("");
-  const [disconnectBusy, setDisconnectBusy] = useState(false);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const selection = readHarnessCredentialSelection({
     accountId,
     projectId,
@@ -164,6 +157,25 @@ function ClaudeCredentialControl({
             ),
           );
           setCredentialsLoaded(true);
+          // A disconnected account credential: use the preferred current one.
+          const current = readHarnessCredentialSelection({
+            accountId,
+            projectId,
+            threadKey,
+          });
+          if (
+            current?.mode === "account-subscription" ||
+            current?.mode === "account-api-key"
+          ) {
+            const next = preferredClaudeCredential(current, rows);
+            if (next !== current && next.mode !== "project-secret")
+              writeHarnessCredentialSelection({
+                accountId,
+                projectId,
+                threadKey,
+                credential: next,
+              });
+          }
         }
       })
       .catch((err) => {
@@ -232,80 +244,40 @@ function ClaudeCredentialControl({
           Manage project secret
         </Button>
       )}
-      {value.startsWith("account-subscription:") && (
-        <ClaudeConnectorPreference
-          enabled={connectorsEnabled}
-          onChange={(enabled) => {
-            writeHarnessCredentialSelection({
-              accountId,
-              projectId,
-              threadKey,
-              credential: {
-                version: 1,
-                provider: "anthropic",
-                mode: "account-subscription",
-                credentialId: value.slice("account-subscription:".length),
-                ...(enabled ? {} : { claudeAiConnectors: false }),
-              },
-            });
-            setConnectorsEnabled(enabled);
-          }}
-        />
-      )}
-      {value.startsWith("account-subscription:") && (
-        <Popconfirm
-          title="Disconnect Claude subscription?"
-          description="Blocks new project-tool calls and future turns. Inference already in flight may continue."
-          okText="Disconnect"
-          okButtonProps={{ danger: true }}
-          onConfirm={async () => {
-            setDisconnectBusy(true);
-            setError("");
-            try {
-              const credentialId = value.slice("account-subscription:".length);
-              const completed = await runFreshAuthAction(async () => {
-                await webapp_client.conat_client.hub.system.revokeExternalCredential(
-                  {
-                    id: credentialId,
-                    browser_id: webapp_client.browser_id,
-                  },
-                );
-              });
-              if (!completed) return;
-              setCredentials((rows) =>
-                rows.filter((row) => row.id !== credentialId),
-              );
-              const credential = {
-                version: 1 as const,
-                provider: "anthropic" as const,
-                mode: "project-secret" as const,
-              };
-              writeHarnessCredentialSelection({
-                accountId,
-                projectId,
-                threadKey,
-                credential,
-              });
-              setValue("project-secret");
-            } catch (err) {
-              setError(harnessErrorMessage(err));
-            } finally {
-              setDisconnectBusy(false);
-            }
-          }}
-        >
-          <Button danger loading={disconnectBusy}>
-            Disconnect Claude subscription
-          </Button>
-        </Popconfirm>
-      )}
-      <ClaudeSubscriptionConnect
-        compact
-        reconnectCredentialId={selectedSubscription?.id}
-        hasConnection={credentials.some(
-          (row) => row.kind === CLAUDE_SUBSCRIPTION_KIND,
-        )}
+      <ClaudeSubscriptionManage
         projectId={projectId}
+        credentials={credentials}
+        selectedId={
+          value.startsWith("account-subscription:")
+            ? value.slice("account-subscription:".length)
+            : undefined
+        }
+        onRenamed={(id, label) =>
+          setCredentials((rows) =>
+            rows.map((row) => {
+              if (row.id !== id) return row;
+              const metadata = { ...row.metadata };
+              if (label) metadata.label = label;
+              else delete metadata.label;
+              return { ...row, metadata };
+            }),
+          )
+        }
+        onDisconnected={(id) => {
+          const remaining = credentials.filter((row) => row.id !== id);
+          setCredentials(remaining);
+          // Fall back to another subscription, never to the project secret:
+          // with none left, the user chooses (connect or pick a key).
+          const next = preferredClaudeCredential(undefined, remaining);
+          if (next.mode === "project-secret") return;
+          writeHarnessCredentialSelection({
+            accountId,
+            projectId,
+            threadKey,
+            credential: next,
+          });
+          setValue(newAgentClaudeCredentialValue(next));
+        }}
         onConnected={async (credentialId) => {
           writeHarnessCredentialSelection({
             accountId,
@@ -333,7 +305,32 @@ function ClaudeCredentialControl({
             ),
           );
         }}
-      />
+      >
+        {value.startsWith("account-subscription:") &&
+          claudeConnectorsAvailable(
+            credentials,
+            value.slice("account-subscription:".length),
+          ) && (
+            <ClaudeConnectorPreference
+              enabled={connectorsEnabled}
+              onChange={(enabled) => {
+                writeHarnessCredentialSelection({
+                  accountId,
+                  projectId,
+                  threadKey,
+                  credential: {
+                    version: 1,
+                    provider: "anthropic",
+                    mode: "account-subscription",
+                    credentialId: value.slice("account-subscription:".length),
+                    ...(enabled ? {} : { claudeAiConnectors: false }),
+                  },
+                });
+                setConnectorsEnabled(enabled);
+              }}
+            />
+          )}
+      </ClaudeSubscriptionManage>
       {credentialsLoaded &&
         value.startsWith("account-subscription:") &&
         !selectedSubscription && (
@@ -356,7 +353,6 @@ function ClaudeCredentialControl({
           warning={claudeCredentialTrustWarning("project-secret")}
         />
       )}
-      <FreshAuthModal {...freshAuthModalProps} />
     </Space>
   );
 }
@@ -995,6 +991,11 @@ function HarnessRuntimeSummaryContent({
           },
         }}
       >
+        {claude && (
+          <div style={{ marginBottom: 12 }}>
+            <AgentMemoryButton />
+          </div>
+        )}
         {form}
       </Modal>
     </>

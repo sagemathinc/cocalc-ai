@@ -77,6 +77,11 @@ export interface HarnessProcess {
   endConnectorTurn?(): Promise<void>;
   /** Launcher must terminate the execution boundary, including descendants. */
   stop(): Promise<void>;
+  /**
+   * Trusted launcher fact: the controller authenticates only with a
+   * long-lived subscription token, which cannot report the account's plan.
+   */
+  subscriptionAuth?: "oauth-token";
 }
 
 export type HarnessAsyncQuestionHandler = (input: unknown) => Promise<{
@@ -779,6 +784,12 @@ export class AcpHarnessClient {
         "Claude startup was interrupted. No message was sent.",
       );
     if (isClaudeSubscriptionStatus(this.authStatus)) return;
+    // A token-authenticated controller reports no plan, so the adapter says
+    // "none" (or an account). Any other billing method is still refused.
+    if (this.process.subscriptionAuth === "oauth-token") {
+      const kind = (this.authStatus as { kind?: unknown } | undefined)?.kind;
+      if (kind === "none" || kind === "account") return;
+    }
     const status = this.authStatus as
       | { kind?: string; account?: { plan?: unknown } }
       | undefined;

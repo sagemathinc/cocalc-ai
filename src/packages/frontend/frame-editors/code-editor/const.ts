@@ -9,6 +9,10 @@
 
 // 50 words per minute is about 250ms between characters, so something bigger than that.
 export const SAVE_DEBOUNCE_MS = 750;
+// Save at least this often while the user keeps typing (a debounced save
+// would otherwise wait until they pause). Long unsaved stretches make the
+// eventual save a merge of far-diverged versions with others' edits.
+export const SAVE_MAX_WAIT_MS = 3000;
 
 // for testing sync issues manually, it is much easier with this large -- do not do this in production though!
 // export const SAVE_DEBOUNCE_MS = 3000;

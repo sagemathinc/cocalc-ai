@@ -7,6 +7,7 @@ import {
   validateArtifactFeedback,
   artifactFeedbackPrompt,
   validateArtifactFile,
+  withoutArtifactStorageDate,
 } from "../artifacts";
 
 test.each([
@@ -248,4 +249,44 @@ test("bounds the combined feedback snapshot, not only each field", () => {
       end: 0,
     }),
   ).toThrow(/serialized snapshot/);
+});
+
+describe("withoutArtifactStorageDate", () => {
+  it("drops the storage-key date from artifact rows only", () => {
+    const value = {
+      published: true,
+      current: {
+        artifact: {
+          event: "chat-artifact",
+          date: "1970-01-01T00:00:00.000Z",
+          title: "t",
+        },
+        base: "[]",
+      },
+      rows: [
+        {
+          event: "chat-artifact-publication",
+          date: "1970-01-01T00:00:00.000Z",
+          published_at: "2026-10-02T06:00:00.000Z",
+        },
+        // Other rows keep their dates, even a 1970 one.
+        { event: "chat", date: "1970-01-01T00:00:00.000Z" },
+        { event: "chat-artifact", date: "2026-10-02T06:00:00.000Z" },
+      ],
+    };
+    expect(withoutArtifactStorageDate(value)).toEqual({
+      published: true,
+      current: { artifact: { event: "chat-artifact", title: "t" }, base: "[]" },
+      rows: [
+        {
+          event: "chat-artifact-publication",
+          published_at: "2026-10-02T06:00:00.000Z",
+        },
+        { event: "chat", date: "1970-01-01T00:00:00.000Z" },
+        { event: "chat-artifact", date: "2026-10-02T06:00:00.000Z" },
+      ],
+    });
+    // The input is not modified.
+    expect(value.current.artifact.date).toBe("1970-01-01T00:00:00.000Z");
+  });
 });

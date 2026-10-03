@@ -60,8 +60,15 @@ export const DescriptionRendered: React.FC<Props> = React.memo(
             searchWords={searchWords}
             onChange={
               actions != null
-                ? (value) => {
-                    actions.set_desc(task_id, value, true);
+                ? (next) => {
+                    // A checkbox toggled in the rendered description: merge
+                    // into newer synced text rather than overwrite it.
+                    actions.set_desc(
+                      task_id,
+                      next,
+                      true,
+                      value === desc ? desc : undefined,
+                    );
                   }
                 : undefined
             }

@@ -98,34 +98,36 @@ test.each([false, true])(
       expect(
         screen.getByRole("textbox", { name: "Claude sign-in code" }),
       ).toBeTruthy();
+      // The trigger buttons step aside while signing in.
+      expect(
+        screen.queryByRole("button", {
+          name: reconnect ? "Reconnect Claude" : "Connect Claude Pro/Max",
+        }),
+      ).toBeNull();
+      const connectButton = screen.getByRole("button", { name: "Connect" });
+      expect(connectButton).toBeDisabled();
       await user.type(
         screen.getByRole("textbox", { name: "Claude sign-in code" }),
-        "example-code",
+        "examplecode#examplestate",
       );
       await act(async () => {
-        await user.click(screen.getByRole("button", { name: "Submit code" }));
+        await user.click(screen.getByRole("button", { name: "Connect" }));
       });
       expect(submit).toHaveBeenCalledWith({
         project_id: "project-a",
         id: "login-1",
-        code: "example-code",
+        code: "examplecode#examplestate",
       });
       expect(screen.getByRole("status")).toHaveTextContent(
-        "Submitting sign-in code...",
+        "Connecting to Claude",
       );
       expect(
-        screen.getByRole("button", { name: "Submit code" }),
-      ).toBeDisabled();
-      expect(
-        screen.getByRole("textbox", { name: "Claude sign-in code" }),
-      ).toBeDisabled();
+        screen.queryByRole("textbox", { name: "Claude sign-in code" }),
+      ).toBeNull();
       await act(async () => resolveSubmit());
       expect(screen.getByRole("status")).toHaveTextContent(
-        "Verifying Claude sign-in...",
+        "Connecting to Claude",
       );
-      expect(
-        screen.getByRole("textbox", { name: "Claude sign-in code" }),
-      ).toHaveValue("");
       await act(async () => {
         jest.advanceTimersByTime(1500);
         await Promise.resolve();
@@ -179,16 +181,16 @@ test("a failed code submission keeps the code and allows correction", async () =
     );
     await user.type(
       screen.getByRole("textbox", { name: "Claude sign-in code" }),
-      "example-code",
+      "examplecode#examplestate",
     );
-    await user.click(screen.getByRole("button", { name: "Submit code" }));
-    expect(screen.getByRole("alert")).toHaveTextContent(
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
       "Unable to submit code",
     );
     expect(
       screen.getByRole("textbox", { name: "Claude sign-in code" }),
-    ).toHaveValue("example-code");
-    expect(screen.getByRole("button", { name: "Submit code" })).toBeEnabled();
+    ).toHaveValue("examplecode#examplestate");
+    expect(screen.getByRole("button", { name: "Connect" })).toBeEnabled();
     expect(screen.queryByRole("status")).toBeNull();
   } finally {
     start.mockRestore();
@@ -239,8 +241,11 @@ test("focused sign-in opens with Enter and Escape cancels and restores focus", a
     ).toHaveAttribute("target", "_blank");
     expect(
       screen.getByRole("textbox", { name: "Claude sign-in code" }),
-    ).toHaveAttribute("placeholder", "Paste the code from Claude");
-    expect(screen.getByRole("button", { name: "Submit code" })).toBeDisabled();
+    ).toHaveAttribute(
+      "placeholder",
+      "Paste the code Claude shows after you sign in",
+    );
+    expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(cancel).toHaveBeenCalledWith({
@@ -286,9 +291,9 @@ test("closing while sign-in starts cancels its eventual session without reopenin
       name: "Connect Claude Pro/Max",
     });
     await user.click(button);
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Opening Claude sign-in",
-    );
+    expect(
+      screen.getByRole("button", { name: /Preparing sign-in/ }),
+    ).toBeTruthy();
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await act(async () =>
@@ -335,7 +340,7 @@ test("a modal start failure offers an explicit retry", async () => {
       screen.getByRole("button", { name: "Connect Claude Pro/Max" }),
     );
     expect(screen.getByRole("alert")).toHaveTextContent("Service unavailable");
-    await user.click(screen.getByRole("button", { name: "Retry sign-in" }));
+    await user.click(screen.getByRole("button", { name: "Try again" }));
     expect(start).toHaveBeenCalledTimes(2);
     expect(
       screen.getByRole("link", { name: "Open Claude sign-in" }),
@@ -376,5 +381,56 @@ test("unmount cancels an active sign-in so navigation does not block the next at
     });
   } finally {
     start.mockRestore();
+  }
+});
+
+test("pasting a complete code connects at once; a partial code gets a hint", async () => {
+  const start = jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginStart",
+    )
+    .mockResolvedValue({
+      id: "paste-login",
+      state: "pending",
+      verificationUrl: "https://claude.com/oauth/authorize",
+    } as any);
+  const submit = jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginSubmitCode",
+    )
+    .mockResolvedValue(undefined as any);
+  try {
+    render(
+      <ClaudeSubscriptionConnect
+        projectId="project-a"
+        onConnected={jest.fn()}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", { name: "Connect Claude Pro/Max" }),
+    );
+    const box = screen.getByRole("textbox", { name: "Claude sign-in code" });
+    await user.click(box);
+    await user.paste("onlyhalfofthecode");
+    expect(screen.getByText(/does not look like the whole code/)).toBeTruthy();
+    expect(submit).not.toHaveBeenCalled();
+    await user.clear(box);
+    await user.paste("  qooDIvd1gVrO7RWAgK5#qazX7djX16S5sYo8  ");
+    await waitFor(() =>
+      expect(submit).toHaveBeenCalledWith({
+        project_id: "project-a",
+        id: "paste-login",
+        code: "qooDIvd1gVrO7RWAgK5#qazX7djX16S5sYo8",
+      }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Connecting to Claude",
+    );
+  } finally {
+    start.mockRestore();
+    submit.mockRestore();
   }
 });

@@ -33,6 +33,7 @@ import type { AppPage, Candidate, Editor } from "./model";
 import { settingsKeywords } from "./settings-keywords";
 import { frameLayout } from "./frames";
 import { useNamedAgents } from "@cocalc/frontend/agents/api";
+import { useWorkspaceCandidates } from "./workspace-candidates";
 import {
   MY_AGENTS_ORGANIZATION_SETTING,
   normalizeAgentWorkspaceOrganization,
@@ -98,6 +99,10 @@ export function useNavigationData() {
   const isAdmin = asArray(useTypedRedux("account", "groups")).includes("admin");
   const settingsContext = useSettingsNavigationContext();
   const { bookmarkedProjects } = useBookmarkedProjects();
+  const workspaceItems = useWorkspaceCandidates(
+    namedAgentDirectory?.agents ?? [],
+    signedIn && !lite,
+  );
   const [version, setVersion] = useState(0);
   const [stars, setStars] = useState<Record<string, string[]>>({});
   const projectIds = useMemo(
@@ -398,6 +403,7 @@ export function useNavigationData() {
         priority: 35,
         destination: { kind: "app-page", page },
       });
+  items.push(...workspaceItems);
   items.push({
     id: "docs",
     title: "Documentation",

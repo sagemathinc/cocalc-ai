@@ -9,18 +9,20 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: () => "account-a",
   redux: { getActions: () => ({ erase_active_key_handler: jest.fn() }) },
 }));
+jest.mock("@cocalc/frontend/components/time-ago", () => ({
+  TimeAgo: ({ date }: { date: string }) => <span>at {date}</span>,
+}));
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
       hub: {
         system: { listExternalCredentials: jest.fn(async () => []) },
-        projects: { getClaudeSubscriptionUsage: jest.fn() },
       },
     },
   },
 }));
-const getUsage = jest.mocked(
-  webapp_client.conat_client.hub.projects.getClaudeSubscriptionUsage,
+const listCredentials = jest.mocked(
+  webapp_client.conat_client.hub.system.listExternalCredentials,
 );
 const credentialId = "00000000-0000-4000-8000-000000000001";
 function choose(
@@ -36,25 +38,29 @@ function choose(
         : { version: 1, provider: "anthropic", mode, credentialId },
   });
 }
+function credential(metadata: Record<string, unknown>) {
+  return [{ id: credentialId, revoked: null, metadata }] as any;
+}
+const hour = 3600;
 beforeEach(() => {
   localStorage.clear();
   jest.clearAllMocks();
 });
 
-test("payment status loads subscription windows on focus and dismisses with Escape", async () => {
+test("payment status shows saved subscription limits on focus and dismisses with Escape", async () => {
   choose("account-subscription");
-  getUsage.mockResolvedValue({
-    available: true,
-    fetchedAt: "2026-09-26T14:00:00Z",
-    windows: [
-      {
-        name: "Current session (5 hours)",
-        usedPercent: 8,
-        resetsAt: "2026-09-26T15:00:00Z",
+  const now = Math.floor(Date.now() / 1000);
+  listCredentials.mockResolvedValue(
+    credential({
+      claude_usage: {
+        observed_at: new Date((now - 120) * 1000).toISOString(),
+        windows: {
+          five_hour: { utilization: 0.08, resets_at: now + hour },
+          seven_day: { utilization: 0.31, resets_at: now + 50 * hour },
+        },
       },
-      { name: "This week", usedPercent: 1 },
-    ],
-  });
+    }),
+  );
   const configure = jest.fn();
   render(
     <ClaudePaymentStatus
@@ -63,18 +69,22 @@ test("payment status loads subscription windows on focus and dismisses with Esca
       onConfigure={configure}
     />,
   );
-  expect(getUsage).not.toHaveBeenCalled();
+  expect(listCredentials).not.toHaveBeenCalled();
   const user = userEvent.setup();
   await user.tab();
   expect(
     await screen.findByText("Current session (5 hours): 8% used"),
   ).toBeTruthy();
-  expect(screen.getByText("This week: 1% used")).toBeTruthy();
-  expect(screen.getByText(/^Resets /)).toBeTruthy();
-  expect(getUsage).toHaveBeenCalledWith({
-    project_id: "project-a",
-    credential_id: credentialId,
-  });
+  expect(screen.getByText("This week: 31% used")).toBeTruthy();
+  expect(screen.getAllByText(/^Resets/)).toHaveLength(2);
+  expect(
+    screen.getByText(/as of your latest Claude turn in CoCalc/),
+  ).toBeTruthy();
+  expect(
+    screen
+      .getByRole("link", { name: "View usage on Claude" })
+      .getAttribute("href"),
+  ).toBe("https://claude.ai/settings/usage");
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
   expect(document.activeElement).toBe(
@@ -86,14 +96,16 @@ test("payment status loads subscription windows on focus and dismisses with Esca
   expect(configure).toHaveBeenCalledTimes(1);
 });
 
-test("changing credential clears subscription usage and API-key modes never query it", async () => {
+test("a window that reset since the last turn says so", async () => {
   choose("account-subscription");
-  let resolve!: (value: any) => void;
-  getUsage.mockImplementationOnce(
-    () =>
-      new Promise((r) => {
-        resolve = r;
-      }),
+  const now = Math.floor(Date.now() / 1000);
+  listCredentials.mockResolvedValue(
+    credential({
+      claude_usage: {
+        observed_at: new Date((now - 6 * hour) * 1000).toISOString(),
+        windows: { five_hour: { utilization: 0.9, resets_at: now - hour } },
+      },
+    }),
   );
   render(
     <ClaudePaymentStatus
@@ -102,31 +114,15 @@ test("changing credential clears subscription usage and API-key modes never quer
       onConfigure={jest.fn()}
     />,
   );
-  const user = userEvent.setup();
-  await user.tab();
-  await waitFor(() => expect(getUsage).toHaveBeenCalledTimes(1));
-  act(() => choose("account-api-key"));
-  await act(async () =>
-    resolve({
-      available: true,
-      fetchedAt: new Date().toISOString(),
-      windows: [{ name: "private old window", usedPercent: 8 }],
-    }),
-  );
-  const button = screen.getByRole("button", {
-    name: "Account API key: payment settings",
-  });
-  act(() => button.focus());
-  expect(
-    await screen.findByText("Anthropic bills API usage to the key owner."),
-  ).toBeTruthy();
-  expect(screen.queryByText(/private old window/)).toBeNull();
-  expect(getUsage).toHaveBeenCalledTimes(1);
+  await userEvent.setup().tab();
+  expect(await screen.findByText(/\(since this update\)/)).toBeTruthy();
 });
 
-test("unavailable subscription usage does not invent percentages or expose server errors", async () => {
+test("without saved limits it explains when they appear, never invents percentages", async () => {
   choose("account-subscription");
-  getUsage.mockRejectedValue(Error("private provider diagnostic"));
+  listCredentials.mockResolvedValue(
+    credential({ claude_usage: { private: "provider diagnostic" } }),
+  );
   render(
     <ClaudePaymentStatus
       projectId="project-a"
@@ -136,15 +132,27 @@ test("unavailable subscription usage does not invent percentages or expose serve
   );
   await userEvent.setup().tab();
   expect(
-    await screen.findByText(
-      "Usage unavailable. Try again after your next turn.",
-    ),
+    await screen.findByText("Usage appears here after your next Claude turn."),
   ).toBeTruthy();
-  expect(screen.queryByText(/private provider/)).toBeNull();
-  expect(screen.queryByText(/0%/)).toBeNull();
+  expect(screen.queryByText(/provider diagnostic/)).toBeNull();
+  expect(screen.queryByText(/% used/)).toBeNull();
+});
+
+test("API-key modes show billing text, not subscription usage", async () => {
+  choose("account-api-key");
+  render(
+    <ClaudePaymentStatus
+      projectId="project-a"
+      threadKey="thread-a"
+      onConfigure={jest.fn()}
+    />,
+  );
+  const button = screen.getByRole("button", {
+    name: "Account API key: payment settings",
+  });
+  act(() => button.focus());
   expect(
-    screen
-      .getByRole("link", { name: "View usage on Claude" })
-      .getAttribute("href"),
-  ).toBe("https://claude.ai/settings/usage");
+    await screen.findByText("Anthropic bills API usage to the key owner."),
+  ).toBeTruthy();
+  expect(screen.queryByText(/% used/)).toBeNull();
 });
