@@ -627,7 +627,7 @@ function withCode(text: string): ReactNode {
 
 function FeaturesIndex({ config }: { config?: FeaturesConfig }) {
   const pages = getOrderedFeatureIndexPages(config);
-  // Signed-in visitors already have Projects in the top navigation.
+  // Signed-in visitors already have "Open <site name>" in the top navigation.
   const signUp = config?.is_authenticated
     ? undefined
     : getPublicFeaturesSignUp(config);
