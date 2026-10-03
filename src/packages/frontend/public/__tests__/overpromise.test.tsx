@@ -7,6 +7,11 @@ import {
   getPublicRouteMetadata,
   PUBLIC_SITEMAP_PATHS,
 } from "@cocalc/util/public-site-metadata";
+import {
+  DOLLAR_AMOUNT,
+  STALE_AGENT_PHRASES,
+  UNSUPPORTED_CAPABILITY_TERMS,
+} from "@cocalc/util/public-copy-guards";
 import "@cocalc/util/public-site-metadata-docs";
 import PublicApp from "../app";
 import { FEATURE_PAGES } from "../features/catalog";
@@ -41,12 +46,6 @@ const HELD_FEATURE_SLUGS = [
   "project-hosts",
   "dedicated-compute",
 ];
-// "default Octave kernel" used to live here: no Octave image existed, so the
-// claim was false. The octave-11-3 image ships Octave as its default Jupyter
-// kernel, so the octave page may say so now.
-const UNSUPPORTED_CAPABILITY_TERMS =
-  /built-in scheduler|recurring runs?|preinstalled (language stack|C\+\+|Fortran|Rust)/i;
-const DOLLAR_AMOUNT = /\$\s*\d/;
 
 const originalFetch = global.fetch;
 
@@ -116,6 +115,7 @@ describe("rendered public marketing overpromise canary", () => {
     }
 
     expect(text).not.toMatch(OVERPROMISE_TERMS);
+    expect(text).not.toMatch(STALE_AGENT_PHRASES);
     if (path !== "pricing") {
       expect(text).not.toMatch(DOLLAR_AMOUNT);
     }
