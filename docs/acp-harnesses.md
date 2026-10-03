@@ -238,6 +238,39 @@ logs. Project-host errors intentionally avoid logging launch arguments.
 
 ## Failure Checklist
 
+### Correlating a harness request failure
+
+Failed ACP protocol requests include `[Diagnostic ID: <uuid>]` in the saved
+user-facing error. Search the owning execution host's `acp-worker` logs for
+that exact ID (or the Lite/hub process log for locally launched harnesses):
+
+```sh
+"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js" --profile prod --api https://cocalc.ai host logs HOST_ID --source acp-worker --tail 5000
+```
+
+The `ai:acp:harness-diagnostics` warning contains a single-line JSON record with
+the same ID, timestamp, UUID principal/session context when available, operation,
+elapsed time, protocol codes, HTTP statuses, reported process exit codes, and
+fixed-vocabulary error signals extracted from nested errors and stderr. Ensure
+`DEBUG` includes `cocalc:warn:ai:acp:harness-diagnostics` (production's usual
+`cocalc:*` includes it). These records use existing operator log access and
+retention; there is no new user-readable diagnostic store or RPC. Retrieve them
+before normal log rotation. The ID is a lookup key, not an access credential.
+
+Raw stderr is held only in a bounded 16 KiB process-local tail and released on
+cleanup. Only allowlisted signals and explicitly labelled numeric status/exit
+codes are logged, never arbitrary error messages, stack traces, prompts, tool
+output, headers, credentials, paths, or process environments. Unrecognized text
+is omitted rather than guessed safe by secret-pattern replacement. Signals are
+untrusted hints, not verified root causes. The stderr tail covers the runtime's
+lifetime (possibly multiple turns); it is not necessarily from the failed
+request, and truncation/byte counts are included. Empty signals mean the cause
+is still unknown. Logging failure or disabled logging can leave an ID without
+a retained record. Nothing here automatically retries, resets, or changes the
+delivery classification of a failed turn.
+
+### Checks
+
 - **Execution is not enabled:** verify the opt-in on the project host that owns
   the project, not just the hub or browser. Keep native Codex separate; do not
   change payment settings to work around an ACP admission error.

@@ -29,6 +29,10 @@ import type {
 } from "@cocalc/util/ai/runtime";
 import { harnessTransport } from "./harness-transport";
 import {
+  HarnessStderrDiagnostics,
+  recordHarnessDiagnostic,
+} from "./harness-diagnostics";
+import {
   ACP_MAX_IMAGE_BYTES,
   ACP_MAX_TOTAL_IMAGE_BYTES,
   ACP_MAX_IMAGES,
@@ -212,6 +216,7 @@ export class AcpHarnessClient {
   private canceled = false;
   private disposed = false;
   private failure?: Error;
+  private readonly stderrDiagnostics = new HarnessStderrDiagnostics();
   private output: Promise<void> = Promise.resolve();
   private pendingBytes = 0;
   private listener?: (event: HarnessEvent) => Promise<void>;
@@ -240,8 +245,7 @@ export class AcpHarnessClient {
       ),
     };
     this.timeoutMs = timeoutMs;
-    // Drain stderr, but never copy untrusted process output into chat or logs.
-    process.stderr.on("data", () => {});
+    process.stderr.on("data", (chunk) => this.stderrDiagnostics.append(chunk));
     process.stderr.on("error", () => this.fail(Error("ACP stderr failed")));
     process.stdin.on("error", () => this.fail(Error("ACP stdin closed")));
     this.connection = new ClientSideConnection(
@@ -504,6 +508,7 @@ export class AcpHarnessClient {
     prompt = false,
     mutation = false,
   ): Promise<T> {
+    const startedAt = Date.now();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const closed = this.connection.closed.then(() => {
       throw Error("ACP connection closed");
@@ -531,6 +536,17 @@ export class AcpHarnessClient {
         !this.failure &&
         !this.connection.signal.aborted &&
         typeof (error as any)?.code === "number";
+      const diagnosticId = recordHarnessDiagnostic({
+        method,
+        projectId: this.binding.projectId,
+        accountId: this.binding.accountId,
+        sessionId: this.session?.sessionId,
+        elapsedMs: Date.now() - startedAt,
+        protocolRejection,
+        error,
+        failure: this.failure,
+        stderr: this.stderrDiagnostics,
+      });
       this.fail(Error("ACP operation failed"));
       throw new HarnessError(
         protocolRejection
@@ -538,13 +554,14 @@ export class AcpHarnessClient {
           : prompt || mutation
             ? "outcome_unknown"
             : "unavailable",
-        protocolRejection
+        (protocolRejection
           ? this.rejectionMessage(error, method)
           : mutation
             ? "ACP copy outcome is uncertain; do not automatically retry"
             : prompt
               ? "ACP delivery or completion is uncertain; do not automatically resend this turn"
-              : "ACP runtime unavailable or setup timed out",
+              : "ACP runtime unavailable or setup timed out") +
+          ` [Diagnostic ID: ${diagnosticId}]`,
       );
     } finally {
       if (timer) clearTimeout(timer);
@@ -990,6 +1007,7 @@ export class AcpHarnessClient {
 
   dispose(): Promise<void> {
     if (this.shutdown) return this.shutdown;
+    this.stderrDiagnostics.seal();
     this.disposed = true;
     this.finishAuthWait?.();
     this.questionAbort?.abort();

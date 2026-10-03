@@ -476,6 +476,25 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           id: message.id,
           error: { code: -32000, message: "secret rejection details" },
         });
+      if (text === "diagnostic-reject") {
+        process.stderr.write(
+          "Authorization: Bearer private-stderr; HTTP 503 overloaded\n",
+        );
+        return setTimeout(
+          () =>
+            send({
+              id: message.id,
+              error: {
+                code: -32603,
+                message: "private-message",
+                data: {
+                  error: { status: 429, message: "rate limit private-data" },
+                },
+              },
+            }),
+          50,
+        );
+      }
       if (text === "wrong-session") {
         update("wrong", "another-session");
         return;

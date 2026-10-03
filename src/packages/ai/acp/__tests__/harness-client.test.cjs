@@ -2594,6 +2594,13 @@ test("bounded harness heap exhaustion preserves partial output and prevents reus
 });
 
 test("provider rejection is distinct from ambiguous delivery and is redacted", async (t) => {
+  const logger = require("@cocalc/backend/logger").default(
+    "ai:acp:harness-diagnostics",
+  );
+  const records = [];
+  t.mock.method(logger, "warn", (_label, record) =>
+    records.push(JSON.parse(record)),
+  );
   const client = await start(t);
   await client.open();
   await assert.rejects(
@@ -2604,10 +2611,54 @@ test("provider rejection is distinct from ambiguous delivery and is redacted", a
       assert.match(e.message, /Open agent settings/);
       assert.match(e.message, /ACP session\/prompt, code -32000/);
       assert.ok(!e.message.includes("secret"));
+      const id = e.message.match(/Diagnostic ID: ([0-9a-f-]{36})/)?.[1];
+      assert.ok(id);
+      assert.equal(records.length, 1);
+      assert.equal(records[0].diagnostic_id, id);
+      assert.equal(records[0].method, "session/prompt");
+      assert.deepEqual(records[0].error.protocol_codes, [-32000]);
+      assert.ok(!JSON.stringify(records).includes("secret"));
       return true;
     },
   );
 });
+test("internal rejection correlates stderr and nested error hints only in operator logs", async (t) => {
+  const logger = require("@cocalc/backend/logger").default(
+    "ai:acp:harness-diagnostics",
+  );
+  const records = [];
+  t.mock.method(logger, "warn", (_label, record) =>
+    records.push(JSON.parse(record)),
+  );
+  const client = await start(t);
+  await client.open();
+  const events = [];
+  await assert.rejects(
+    client.prompt("diagnostic-reject", async (event) => events.push(event)),
+    (error) => {
+      const id = error.message.match(/Diagnostic ID: ([0-9a-f-]{36})/)?.[1];
+      assert.ok(id);
+      assert.equal(error.code, "rejected");
+      assert.equal(records.length, 1);
+      assert.equal(records[0].diagnostic_id, id);
+      assert.deepEqual(records[0].error.protocol_codes, [-32603]);
+      assert.deepEqual(records[0].error.http_statuses, [429]);
+      assert.deepEqual(records[0].stderr.http_statuses, [503]);
+      assert.deepEqual(records[0].stderr.signals, ["overloaded"]);
+      assert.doesNotMatch(
+        JSON.stringify({ error: error.message, events, records }),
+        /private-|Bearer/,
+      );
+      assert.doesNotMatch(error.message, /503|429|overloaded/);
+      return true;
+    },
+  );
+  await assert.rejects(
+    client.prompt("hi", async () => {}),
+    { code: "unavailable" },
+  );
+});
+
 test("session rejection identifies the failed operation without exposing process output", async (t) => {
   const client = await start(t, ["--reject-session"]);
   await assert.rejects(client.open(), (error) => {
