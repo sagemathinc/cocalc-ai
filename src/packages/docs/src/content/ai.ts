@@ -63,10 +63,13 @@ If you have no projects, or your new account has not used one, CoCalc may open
 the new-agent request box instead. Otherwise, choose **New Agent** under
 **Agents** in the sidebar, or select one of your agents there. If the **Agents**
 section is collapsed, expand it first with the arrow to its left
-(**Expand Agents**). At phone width, if CoCalc shows the sidebar instead of the
-request box, choose **New Agent** there. Describe a result you can inspect, such
-as a comparison, document, application, or visualization. Include the relevant
-files and the checks that would make the result useful.
+(**Expand Agents**). The section lists your pinned agents, a few others (the
+most recent, or the first in your custom order), and the open agent;
+**All agents…** below them opens the **Agents** page with the rest. At phone
+width, if CoCalc shows the sidebar instead of the request box, choose
+**New Agent** there. Describe a result you can inspect, such as a comparison,
+document, application, or visualization. Include the relevant files and the
+checks that would make the result useful.
 
 When CoCalc opens the request box for you, it asks **What would you like to work
 on?** There is no name, project, runtime, model, or payment source to choose;
@@ -137,7 +140,8 @@ remain, but that agent becomes unavailable to its Agent Networks. Removing
 frees its named-agent slot, and its name can be used again. Hiding does not
 free a slot. The **Agents** page, which the sidebar's **Agents** entry opens,
 lists all of your agents, including hidden ones, and its actions menu for each
-agent also has **Remove from Agents…**.
+agent also has **Remove from Agents…**. To show a hidden agent in the sidebar
+again, choose **Show in sidebar** in that menu.
 
 For project-chat controls and access setup, see [Open Codex chat](/docs/ai/codex-chat)
 and [Connect AI access](/docs/ai/connect-credentials). For the complete workflow

@@ -228,13 +228,37 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     usedIn: [bold("ai", "Expand Agents")],
   },
   {
+    id: "agents.sidebar.all-agents",
+    // Rendered as "All agents (N more)…" when the section leaves agents out.
+    label: "All agents…",
+    anchors: [
+      def(
+        WORKSPACE_PAGE,
+        'All agents{moreAgents > 0 ? ` (${moreAgents} more)` : ""}…',
+      ),
+    ],
+    usedIn: [bold("ai", "All agents…")],
+  },
+  {
     id: "agents.page.title",
     label: "Agents",
     anchors: [
       def("frontend/agents/agents-overview.tsx", "> Agents </h1>"),
       ren(WORKSPACE_PAGE, "<AgentsOverview"),
     ],
-    usedIn: [{ file: doc("ai"), text: "The **Agents** page" }],
+    usedIn: [
+      { file: doc("ai"), text: "The **Agents** page" },
+      { file: doc("ai"), text: "opens the **Agents** page with the rest" },
+    ],
+  },
+  {
+    id: "agents.page.show-in-sidebar",
+    label: "Show in sidebar",
+    anchors: [
+      def(WORKSPACE_PAGE, '{ key: "show", label: "Show in sidebar" }'),
+      ren(WORKSPACE_PAGE, "mineActions={overviewActions}"),
+    ],
+    usedIn: [bold("ai", "Show in sidebar")],
   },
   {
     id: "agents.sidebar.artifacts",
