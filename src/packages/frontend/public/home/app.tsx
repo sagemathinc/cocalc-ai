@@ -23,6 +23,7 @@ import {
   PUBLIC_TYPE,
   PUBLIC_WEIGHT,
 } from "@cocalc/frontend/public/theme";
+import { publicHomeTitle } from "@cocalc/util/public-site-metadata";
 import { COLORS } from "@cocalc/util/theme";
 import {
   getPublicHomeHighlights,
@@ -1266,11 +1267,12 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
   const siteName = getPublicMarketingSiteName(config);
   const authenticated = !!config?.is_authenticated;
   const trustHref = builtinPolicyPath(config, "trust");
+  const homeTitle = publicHomeTitle(config);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
-    document.title = siteName;
-  }, [siteName]);
+    document.title = homeTitle;
+  }, [homeTitle]);
 
   return (
     <PublicPage active="home" config={marketingConfig}>

@@ -43,6 +43,8 @@ export interface PublicRouteMetadata {
   canonicalPath: string;
   description: string;
   faq?: PublicRouteMetadataFaq[];
+  // Alt text for the link preview image, set when the image carries text.
+  imageAlt?: string;
   imagePath: string;
   // Set for pages that exist but should not be indexed by search engines
   // (e.g. docs entries restricted to admins or signed-in users); servers
@@ -119,14 +121,20 @@ function docsPath(slug?: string): string {
   return slug ? `/docs/${slug.replace(/^\/+/, "")}` : "/docs";
 }
 
-const DEFAULT_SOCIAL_IMAGE = "public/landing/project-notebook-20260916.jpg";
+// Broad pages share one link preview image: a 1200x630 brand card (the size
+// link previews use) with the logo, the tagline and the address cocalc.ai.
+// Pages about one tool keep that tool's own image. Custom brands and other
+// hosts get a product screenshot instead of the card (withLinkPreviewImage).
+const BRAND_SOCIAL_IMAGE = "public/landing/cocalc-brand-social-20260925.png";
+const BRAND_SOCIAL_IMAGE_ALT = "CoCalc: build and use software with AI";
+const UNBRANDED_SOCIAL_IMAGE = "public/landing/project-notebook-20260916.jpg";
+const DEFAULT_SOCIAL_IMAGE = BRAND_SOCIAL_IMAGE;
 const PRODUCT_SOCIAL_IMAGE = DEFAULT_SOCIAL_IMAGE;
-const WORKFLOW_SOCIAL_IMAGE = "public/landing/project-terminal-20260916.jpg";
+const WORKFLOW_SOCIAL_IMAGE = DEFAULT_SOCIAL_IMAGE;
 const FEATURE_SOCIAL_IMAGE = DEFAULT_SOCIAL_IMAGE;
 
 const PUBLIC_IMAGE_DIMENSIONS: Record<string, PublicImageDimensions> = {
   "/public/features/api-screenshot.png": { height: 1066, width: 1400 },
-  "/public/features/chatgpt-fix-code.png": { height: 552, width: 747 },
   "/public/features/cocalc-jupyter2-20170508.png": {
     height: 908,
     width: 1605,
@@ -155,6 +163,10 @@ const PUBLIC_IMAGE_DIMENSIONS: Record<string, PublicImageDimensions> = {
   "/public/features/sagemath-jupyter.png": { height: 858, width: 1508 },
   "/public/features/terminal.png": { height: 607, width: 1362 },
   "/public/features/whiteboard-sage.png": { height: 1734, width: 3024 },
+  "/public/landing/cocalc-brand-social-20260925.png": {
+    height: 630,
+    width: 1200,
+  },
   "/public/landing/project-notebook-20260916.jpg": {
     height: 650,
     width: 1050,
@@ -166,7 +178,17 @@ const PUBLIC_IMAGE_DIMENSIONS: Record<string, PublicImageDimensions> = {
 };
 
 export const PUBLIC_SITE_DESCRIPTION =
-  "CoCalc keeps people, AI agents, and project work together in persistent shared Linux projects with files, notebooks, terminals, history, and recovery.";
+  "CoCalc helps people and teams build and use software with AI. Agents work in shared Linux projects with your files, notebooks, terminals, and collaborators.";
+
+// Under the default CoCalc brand the Home title leads with the tagline; a
+// custom brand keeps its own site name. The server-rendered head and the
+// Home page both use this, so the browser tab keeps the title after load.
+export function publicHomeTitle(config?: PublicRouteMetadataConfig): string {
+  const siteName = getPublicMarketingSiteName(config);
+  return usesDefaultPublicBrand(config)
+    ? pageTitle("Build and Use Software with AI", siteName)
+    : siteName;
+}
 
 const PRODUCT_SITEMAP_PATHS = [
   "products",
@@ -355,6 +377,15 @@ export function getPublicMarketingSiteName(
 ): string {
   if (usesDefaultLaunchpadPublicBrand(config)) return SITE_NAME;
   return config?.site_name ?? SITE_NAME;
+}
+
+// The default CoCalc brand: no custom logo, and the marketing site name is
+// CoCalc (the default Launchpad brand maps to it).
+function usesDefaultPublicBrand(config?: PublicRouteMetadataConfig): boolean {
+  return (
+    !hasCustomPublicLogo(config) &&
+    getPublicMarketingSiteName(config) === SITE_NAME
+  );
 }
 
 function routeParts(
@@ -638,7 +669,10 @@ function featureRouteMetadata(
     return {
       canonicalPath: publicPath(`features/${page.slug}`, options),
       description: page.metadataSummary ?? page.summary,
-      imagePath: publicPath(page.image ?? FEATURE_SOCIAL_IMAGE, options),
+      imagePath: publicPath(
+        page.metadataImage ?? page.image ?? FEATURE_SOCIAL_IMAGE,
+        options,
+      ),
       title: pageTitle(page.metadataTitle ?? page.title, siteName),
     };
   }
@@ -1017,7 +1051,7 @@ function getSameOriginPublicRouteMetadata(
         canonicalPath: publicPath("", options),
         description: PUBLIC_SITE_DESCRIPTION,
         imagePath: publicPath(DEFAULT_SOCIAL_IMAGE, options),
-        title: siteName,
+        title: publicHomeTitle(config),
       };
     case "products":
       return productRouteMetadata(route.route, siteName, options);
@@ -1061,6 +1095,44 @@ function getSameOriginPublicRouteMetadata(
 }
 
 export function getPublicRouteMetadata(
+  route: PublicMetadataRoute,
+  config?: PublicRouteMetadataConfig,
+  options?: PublicRouteMetadataOptions,
+): PublicRouteMetadata {
+  return withLinkPreviewImage(
+    getCanonicalPublicRouteMetadata(route, config, options),
+    config,
+    options,
+  );
+}
+
+// The brand card shows the CoCalc logo and the address cocalc.ai. A page uses
+// it only under the default CoCalc brand and when its canonical URL is on
+// cocalc.ai; otherwise it gets a product screenshot without branding.
+function withLinkPreviewImage(
+  metadata: PublicRouteMetadata,
+  config: PublicRouteMetadataConfig | undefined,
+  options: PublicRouteMetadataOptions | undefined,
+): PublicRouteMetadata {
+  if (
+    normalizePublicImagePath(metadata.imagePath) !==
+    normalizePublicImagePath(BRAND_SOCIAL_IMAGE)
+  ) {
+    return metadata;
+  }
+  const canonicalOnCocalcAi =
+    isCanonicalPublicSiteHost(config?.dns) ||
+    metadata.canonicalPath.startsWith(`${CANONICAL_PUBLIC_SITE_ORIGIN}/`);
+  if (usesDefaultPublicBrand(config) && canonicalOnCocalcAi) {
+    return { ...metadata, imageAlt: BRAND_SOCIAL_IMAGE_ALT };
+  }
+  return {
+    ...metadata,
+    imagePath: publicPath(UNBRANDED_SOCIAL_IMAGE, options),
+  };
+}
+
+function getCanonicalPublicRouteMetadata(
   route: PublicMetadataRoute,
   config?: PublicRouteMetadataConfig,
   options?: PublicRouteMetadataOptions,

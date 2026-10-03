@@ -326,7 +326,7 @@ function FooterBrand({ config }: { config?: PublicConfig }) {
           maxWidth: "34ch",
         }}
       >
-        Persistent shared projects where people and AI agents work together.
+        Build and use software with AI.
       </Paragraph>
       {defaultBrand ? (
         <Text style={{ color: PUBLIC_COLORS.footerText }}>
