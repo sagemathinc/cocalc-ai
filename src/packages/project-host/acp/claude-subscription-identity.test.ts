@@ -27,7 +27,9 @@ jest.mock("../codex/codex-project", () => ({
   resolveProjectRuntimeApiUrl: () => "http://project-hub",
 }));
 jest.mock("./claude-subscription-registry", () => ({
-  getClaudeSubscriptionCredential: async () => ({ payload: {}, identity: {} }),
+  getClaudeSubscriptionCredential: async () => ({
+    payload: JSON.stringify({ version: 1, files: [] }),
+  }),
   syncClaudeSubscriptionCredential: jest.fn(async ({ baseline }) => baseline),
 }));
 jest.mock("./claude-subscription-home", () => ({
@@ -133,7 +135,7 @@ beforeEach(async () => {
 afterEach(async () => rm(home, { recursive: true, force: true }));
 
 test("registered subscription agent gets its identity only in project tools", async () => {
-  const handle = await launch(binding, "agent", conversation);
+  const handle = await launch(binding, conversation);
   try {
     expect(createProjectCliTokenLease).toHaveBeenCalledWith({
       projectId: binding.projectId,
@@ -194,18 +196,11 @@ test.each([
   { path: "", threadId: "thread" },
   { path: "a.chat", threadId: "" },
 ])("agent launch rejects missing conversation context: %s", async (context) => {
-  await expect(launch(binding, "agent", context)).rejects.toThrow(
+  await expect(launch(binding, context as any)).rejects.toThrow(
     "admitted conversation",
   );
   expect(createProjectCliTokenLease).not.toHaveBeenCalled();
   expect(spawn).not.toHaveBeenCalled();
-});
-
-test("usage lookup does not acquire project or agent authority", async () => {
-  const handle = await launch(binding, "usage");
-  await handle.stop();
-  expect(createProjectCliTokenLease).not.toHaveBeenCalled();
-  expect(createClaudeProjectToolBridge).not.toHaveBeenCalled();
 });
 
 test("unregistered chat does not inherit another agent identity", async () => {
@@ -215,7 +210,7 @@ test("unregistered chat does not inherit another agent identity", async () => {
     setAgentSessionKey: jest.fn(),
     close: closeLease,
   });
-  const handle = await launch(binding, "agent", conversation);
+  const handle = await launch(binding, conversation);
   try {
     const execute = jest.mocked(createClaudeProjectToolBridge).mock.calls[0][1];
     await execute(

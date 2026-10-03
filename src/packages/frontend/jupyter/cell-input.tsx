@@ -111,16 +111,37 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
       new SimpleInputMerge(initialInput),
     );
     const getValueRef = useRef<any>(null);
+    const setValueRef = useRef<((value: string) => void) | null>(null);
 
+    // Saving a cell's input updates the synced document and the store
+    // synchronously, so a value that was stored is the new baseline at once
+    // (any later change is based on it). Treating it as a save still waiting
+    // for its echo would merge later changes from an older baseline, e.g.
+    // bring back lines a split just moved to another cell.
+    const noteSaved = (value: string, stored: boolean) => {
+      if (stored) mergeHelperRef.current.noteLocalEcho(value);
+      else mergeHelperRef.current.noteSaved(value);
+    };
+
+    // `base`: the input the value was made from, if known (see
+    // JupyterActions.set_cell_input).
     const setCellInput = useCallback(
-      (value) => {
+      (value, base?: string) => {
         const input = value ?? "";
         setLocalValue(input);
         if (!props.actions || props.input_is_readonly) {
           return;
         }
-        props.actions.set_cell_input(props.id, input, true);
-        mergeHelperRef.current.noteSaved(input);
+        const written = props.actions.set_cell_input(
+          props.id,
+          input,
+          true,
+          base,
+        );
+        const saved = written ?? input;
+        if (saved !== input) setLocalValue(saved);
+        noteSaved(saved, written != null);
+        return saved;
       },
       [props.input_is_readonly, props.id, props.actions],
     );
@@ -202,11 +223,15 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
             then changing it, changes the original cell... causing timetravel
             to "instantly revert". */
           }
-          onSetCellInput={(input) => {
-            mergeHelperRef.current.noteSaved(input);
+          onSetCellInput={(input, stored) => {
+            // `input` is what was saved, which can include a collaborator's
+            // change merged into this editor's edit: show it.
+            noteSaved(input, stored);
+            setLocalValue(input);
           }}
           complete={props.complete}
           getValueRef={getValueRef}
+          setValueRef={setValueRef}
           value={value}
           options={options(type)}
           id={props.cell.get("id")}
@@ -282,7 +307,12 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
       mergeHelperRef.current.handleRemote({
         remote,
         getLocal: () => getValueRef.current?.() ?? localValueRef.current,
-        applyMerged: setCellInput,
+        // The merge is of what the editor shows now: show it now too, since
+        // (re)rendering it later would replace anything typed meanwhile.
+        applyMerged: (value) => {
+          const saved = setCellInput(value, remote);
+          setValueRef.current?.(saved ?? value);
+        },
       });
     }, [props.cell.get("input")]);
 

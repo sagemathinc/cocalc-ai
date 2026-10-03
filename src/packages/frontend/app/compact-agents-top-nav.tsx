@@ -76,6 +76,7 @@ export function CompactAgentsTopNav({
         ]
       : []),
     { key: "projects", icon: <Icon name="edit" />, label: "Projects" },
+    { key: "people", icon: <Icon name="users" />, label: "People" },
     { key: "hosts", icon: <Icon name="server" />, label: "Compute" },
     {
       key: "notifications",

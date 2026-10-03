@@ -11,39 +11,63 @@ export interface ArtifactGitHubPR {
   local?: { path: string; common_directory: string };
 }
 
+const GITHUB_PR_HINT =
+  " (cocalc project chat artifact publish --github-pr <number> fills these in)";
+
+function invalid(field: string, requirement: string, value: unknown): Error {
+  const shown =
+    value === undefined
+      ? "missing"
+      : `got ${JSON.stringify(value)?.slice(0, 80)}`;
+  return Error(`github_pr.${field} ${requirement}; ${shown}${GITHUB_PR_HINT}`);
+}
+
 export function validateArtifactGitHubPR(value: unknown): ArtifactGitHubPR {
   const row = value as ArtifactGitHubPR;
+  if (!row || typeof row !== "object")
+    throw Error(`github_pr must be an object${GITHUB_PR_HINT}`);
   if (
-    !row ||
     typeof row.repository !== "string" ||
     row.repository.length > 256 ||
     !/^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+$/.test(row.repository) ||
-    [".", ".."].includes(row.repository.split("/")[1]) ||
-    !Number.isSafeInteger(row.number) ||
-    row.number < 1
+    [".", ".."].includes(row.repository.split("/")[1])
   )
-    throw Error("invalid GitHub PR identity");
-  if (
-    !["open", "closed", "merged"].includes(row.state) ||
-    typeof row.draft !== "boolean" ||
-    !["unknown", "pending", "passing", "failing"].includes(row.checks)
-  )
-    throw Error("invalid GitHub PR status");
+    throw invalid(
+      "repository",
+      'must be "owner/name", such as "sagemathinc/cocalc-ai"',
+      row.repository,
+    );
+  if (!Number.isSafeInteger(row.number) || row.number < 1)
+    throw invalid("number", "must be a positive integer", row.number);
+  if (!["open", "closed", "merged"].includes(row.state))
+    throw invalid("state", 'must be "open", "closed" or "merged"', row.state);
+  if (typeof row.draft !== "boolean")
+    throw invalid("draft", "must be true or false", row.draft);
+  if (!["unknown", "pending", "passing", "failing"].includes(row.checks))
+    throw invalid(
+      "checks",
+      'must be "unknown", "pending", "passing" or "failing"',
+      row.checks,
+    );
   if (
     typeof row.fetched_at !== "string" ||
     row.fetched_at.length > 32 ||
     !Number.isFinite(Date.parse(row.fetched_at))
   )
-    throw Error("invalid GitHub PR retrieval time");
-  if (
-    ![row.base_sha, row.head_sha].every(
-      (sha) => typeof sha === "string" && /^[a-f0-9]{40}$/.test(sha),
-    )
-  )
-    throw Error("GitHub PR revisions must be full commit SHAs");
+    throw invalid(
+      "fetched_at",
+      "must be an ISO timestamp of when the PR was read",
+      row.fetched_at,
+    );
+  for (const field of ["base_sha", "head_sha"] as const) {
+    const sha = row[field];
+    if (typeof sha !== "string" || !/^[a-f0-9]{40}$/.test(sha))
+      throw invalid(field, "must be a full 40-character commit SHA", sha);
+  }
   let local: ArtifactGitHubPR["local"];
   if (row.local !== undefined) {
-    for (const path of [row.local?.path, row.local?.common_directory]) {
+    for (const field of ["path", "common_directory"] as const) {
+      const path = row.local?.[field];
       if (
         typeof path !== "string" ||
         !path.startsWith("/") ||
@@ -51,7 +75,11 @@ export function validateArtifactGitHubPR(value: unknown): ArtifactGitHubPR {
         /[\x00-\x1f\x7f\\]/.test(path) ||
         path.split("/").includes("..")
       )
-        throw Error("invalid GitHub PR local repository path");
+        throw invalid(
+          `local.${field}`,
+          "must be an absolute path without .. or control characters",
+          path,
+        );
     }
     local = {
       path: row.local.path,

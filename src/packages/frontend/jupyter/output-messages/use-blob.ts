@@ -1,5 +1,5 @@
 import useIsMountedRef from "@cocalc/frontend/app-framework/is-mounted-hook";
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import LRU from "lru-cache";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 
@@ -46,6 +46,18 @@ const blobToUrl = reuseInFlight(
   { createKey: (args: any[]) => args[0].sha1 },
 );
 
+// Read-only views (e.g. a notebook artifact preview) render cells without
+// JupyterActions, which would make them editable. They provide just the
+// notebook's blob store here so stored outputs (images, PDFs) still load.
+export const BlobStoreContext = createContext<{ asyncBlobStore?: any } | undefined>(
+  undefined,
+);
+
+export function useBlobSource(actions?: any) {
+  const fallback = useContext(BlobStoreContext);
+  return actions?.asyncBlobStore != null ? actions : fallback;
+}
+
 export default function useBlob({
   sha1,
   actions,
@@ -60,6 +72,7 @@ export default function useBlob({
   setError: (string) => void;
   leaveAsString?: (buf) => boolean;
 }) {
+  actions = useBlobSource(actions);
   const isMounted = useIsMountedRef();
   const [src, setSrc] = useState<string | undefined>(cache.get(sha1));
   useEffect(() => {

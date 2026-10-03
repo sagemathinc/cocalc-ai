@@ -18,6 +18,10 @@ export default function init(
   const v: string[] = [];
   const routes = new Set(APP_ROUTES);
   for (const path of routes) {
+    if (path === "u") {
+      v.push("/u", "/u/{*rest}");
+      continue;
+    }
     v.push(`/${path}{*rest}`);
   }
   if (opts.includeAuth) {

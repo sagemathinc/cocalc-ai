@@ -56,6 +56,7 @@ export class JupyterActions extends JupyterActions0 {
     if (typeof saveIpynb === "function") {
       try {
         const result = await saveIpynb(this.path, ipynb);
+        this.recordIpynbSave(result);
         if (result.converted) {
           await this.setToIpynb(result.ipynb);
         }

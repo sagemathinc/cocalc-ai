@@ -86,8 +86,19 @@ jest.mock("./quick-navigation", () => ({
   __esModule: true,
   default: () => null,
 }));
+jest.mock("./home-workspace-navigation", () => ({
+  HomeWorkspaceNavigation: () => <button>More navigation</button>,
+}));
+const mockActiveContent = jest.fn();
 jest.mock("./active-content", () => ({
-  ActiveContent: () => <div>Active content</div>,
+  ActiveContent: (props) => {
+    mockActiveContent(props);
+    return (
+      <section aria-label="Workspace content">
+        {props.navigation}Active content
+      </section>
+    );
+  },
 }));
 jest.mock("./connection-indicator", () => ({
   ConnectionIndicator: () => null,
@@ -119,9 +130,6 @@ jest.mock("./bootstrap-ux-latency", () => ({
 }));
 jest.mock("@cocalc/frontend/monitoring/ux-latency", () => ({
   configureUxLatency: jest.fn(),
-}));
-jest.mock("@cocalc/frontend/projects/projects-nav-mode", () => ({
-  getStoredProjectsNavMode: () => "tabs",
 }));
 jest.mock("./lazy-with-retry", () => ({
   lazyWithRetry: (_load, label) => () => (
@@ -160,43 +168,22 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
-test.each([false, true])(
-  "Agents hides the full navigation and Projects restores it (narrow=%s)",
-  async (isNarrow) => {
-    narrow = isNarrow;
-    const mounted = render(view());
-    const nav = screen.getByRole("navigation");
-    const logo = within(nav).getByRole("link", { name: "CoCalc home" });
-    const agents = within(nav).getByRole("button", { name: "Agents" });
-    const projects = within(nav).getByRole("button", { name: "Projects" });
-    const hosts = within(nav).getByRole("button", { name: "Compute" });
-    const segment = [logo, agents, projects, hosts];
-    expect(Array.from(nav.children).slice(0, 4)).toEqual(segment);
-    expect(
-      screen.getByRole("region", { name: "post-surface project navigation" }),
-    ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Docs" })).toBeVisible();
-    const user = userEvent.setup();
-    agents.focus();
-    await user.keyboard("{Enter}");
-    expect(actions.set_active_tab).toHaveBeenCalledWith("agents");
-    activeTab = "agents";
-    mounted.rerender(view());
-    expect(screen.queryByRole("navigation")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Docs" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Appearance" })).toBeNull();
-    expect(
-      screen.queryByRole("region", { name: "post-surface project navigation" }),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("region", { name: "post-surface navigation" }),
-    ).toBeNull();
-    activeTab = "projects";
-    mounted.rerender(view());
-    expect(screen.getByRole("navigation")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Compute" })).toBeVisible();
-  },
-);
+test("narrow screens keep a compact bar inside the shared workspace", async () => {
+  narrow = true;
+  const mounted = render(view());
+  const nav = screen.getByRole("navigation");
+  expect(
+    screen.getByRole("region", { name: "Workspace content" }),
+  ).toContainElement(nav);
+  // The sidebar owns the logo and Agents entry in the shell.
+  expect(within(nav).queryByRole("link", { name: "CoCalc home" })).toBeNull();
+  expect(within(nav).queryByRole("button", { name: "Agents" })).toBeNull();
+  expect(within(nav).getByRole("button", { name: "Projects" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "More navigation" })).toBeVisible();
+  activeTab = "agents";
+  mounted.rerender(view());
+  expect(screen.queryByRole("navigation")).toBeNull();
+});
 
 test.each(["lite", "exam", "fullscreen", "auth"])(
   "retained navigation respects %s visibility",
@@ -210,18 +197,43 @@ test.each(["lite", "exam", "fullscreen", "auth"])(
   },
 );
 
-test("retained tabs preserve login and AI visibility", () => {
+test("signed out: the logo and no app navigation; AI-disabled accounts use the sidebar", () => {
   activeTab = "projects";
   loggedIn = false;
   const mounted = render(view());
   expect(screen.getByRole("link", { name: "CoCalc home" })).toBeVisible();
   expect(screen.queryByRole("button", { name: "Agents" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Projects" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Compute" })).toBeNull();
   loggedIn = true;
   aiDisabled = true;
   mounted.rerender(view());
-  expect(screen.queryByRole("button", { name: "Agents" })).toBeNull();
-  expect(screen.getByRole("button", { name: "Projects" })).toBeVisible();
-  expect(screen.getByRole("button", { name: "Compute" })).toBeVisible();
+  // Same as everyone else: no top bar on wide screens.
+  expect(screen.queryByRole("navigation")).toBeNull();
+});
+
+test("wide screens have no top bar; projects are in the sidebar", () => {
+  render(view());
+  expect(screen.queryByRole("navigation")).toBeNull();
+  expect(
+    screen.queryByRole("region", { name: "post-surface project navigation" }),
+  ).toBeNull();
+  expect(screen.queryByRole("button", { name: "Compute" })).toBeNull();
+});
+
+test("project pages show the show-sidebar control in their own top row", () => {
+  activeTab = "1ce4fe78-19c7-40a8-a598-947975744cd9";
+  const mounted = render(view());
+  // null: the workspace hands its show-sidebar control to the page's header.
+  expect(mockActiveContent).toHaveBeenLastCalledWith(
+    expect.objectContaining({ navigation: null }),
+  );
+  activeTab = "projects";
+  mounted.rerender(view());
+  expect(mockActiveContent).toHaveBeenLastCalledWith(
+    expect.objectContaining({ navigation: null }),
+  );
+  // Other pages keep a minimal row for it.
+  activeTab = "settings";
+  mounted.rerender(view());
+  expect(mockActiveContent.mock.lastCall[0].navigation).not.toBeNull();
 });

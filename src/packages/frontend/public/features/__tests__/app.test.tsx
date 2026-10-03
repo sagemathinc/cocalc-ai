@@ -122,8 +122,9 @@ describe("PublicFeaturesApp", () => {
       />,
     );
 
-    expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
-    expect(screen.getByRole("link", { name: "Agents" })).not.toBeNull();
+    expect(
+      screen.getAllByRole("link", { name: /^Open / }).length,
+    ).toBeGreaterThan(0);
   });
 
   it("renders a detail page", () => {

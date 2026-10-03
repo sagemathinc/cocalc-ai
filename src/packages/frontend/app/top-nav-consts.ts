@@ -8,23 +8,6 @@ import { CSS } from "@cocalc/frontend/app-framework";
 // below this, the "page" is considered "narrow" and we use a different style
 export const NARROW_THRESHOLD_PX = 550;
 
-// show labels of projects, if there are less than this many
-export const HIDE_LABEL_THRESHOLD = 6;
-
-// Once several projects are open, the icon already makes this destination
-// clear and the label is more valuable as space for project titles.
-export const HIDE_PROJECTS_LABEL_AT_COUNT = 4;
-
-export function shouldHideProjectsLabel(
-  openProjectCount: number,
-  isNarrow: boolean,
-  tabsMode: boolean,
-): boolean {
-  return (
-    isNarrow || (tabsMode && openProjectCount >= HIDE_PROJECTS_LABEL_AT_COUNT)
-  );
-}
-
 // the width of the top bar
 export const NAV_HEIGHT_PX = 36;
 

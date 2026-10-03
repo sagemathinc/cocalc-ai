@@ -5,6 +5,7 @@ import { normalizeApiKeyScopeV1 } from "@cocalc/util/api-key-scope";
 import { normalizeApiKeyActionReview } from "@cocalc/util/api-key-management";
 import { apiKeyForProject } from "../core/managed-connector-auth";
 import { requestApiKeyActionWithKey } from "../core/api-key-actions";
+import { registerAccountUsernameCommand } from "./personal-urls";
 
 import type {
   ManagedEgressEventSummary,
@@ -188,6 +189,7 @@ export function registerAccountCommand(
   const { withContext, toIso, resolveAccountByIdentifier } = deps;
 
   const account = program.command("account").description("account operations");
+  registerAccountUsernameCommand(account, { withContext });
 
   account
     .command("where [account]")
