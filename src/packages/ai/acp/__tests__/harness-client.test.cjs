@@ -628,6 +628,7 @@ function adapter(
   connector,
 ) {
   let launches = 0;
+  const launchedSessions = [];
   let stops = 0;
   let askAsync;
   const agent = new HarnessAgent(
@@ -657,8 +658,9 @@ function adapter(
         : {}),
     },
     { path: "a.chat", threadId: "conversation-a" },
-    async ({ profile: launchProfile }) => {
+    async ({ profile: launchProfile }, sessionId) => {
       launches++;
+      launchedSessions.push(sessionId);
       const child = spawn(
         subscription ? profile.executable : launchProfile.executable,
         subscription ? [...profile.args, ...flags] : launchProfile.args,
@@ -730,6 +732,7 @@ function adapter(
     request,
     events,
     launches: () => launches,
+    launchedSessions,
     stops: () => stops,
     askAsync: (input) => askAsync(input),
   };
@@ -911,7 +914,8 @@ test("agent adapter persists streaming and stop before summary and reuses its se
 });
 
 test("explicit context reset retires the warm harness before opening a fresh session", async (t) => {
-  const { agent, request, events, launches, stops } = adapter(t);
+  const { agent, request, events, launches, stops, launchedSessions } =
+    adapter(t);
   await agent.evaluate(request);
   await agent.evaluate(request); // Missing is not an explicit reset.
   assert.equal(events.at(-1).finalResponse, "Hello world 2");
@@ -919,10 +923,17 @@ test("explicit context reset retires the warm harness before opening a fresh ses
   await agent.evaluate({ ...request, session_id: "" });
   assert.equal(stops(), 1);
   assert.equal(launches(), 2);
+  assert.deepEqual(launchedSessions, [undefined, ""]);
   assert.equal(events.at(-1).finalResponse, "Hello world 1");
   await agent.evaluate({ ...request, session_id: "fixture-session" });
   assert.equal(events.at(-1).finalResponse, "Hello world 2");
   assert.equal(launches(), 2);
+});
+
+test("launcher receives the admitted saved session for transcript resolution", async (t) => {
+  const { agent, request, launchedSessions } = adapter(t);
+  await agent.evaluate({ ...request, session_id: "fixture-session" });
+  assert.deepEqual(launchedSessions, ["fixture-session"]);
 });
 
 test("context reset cannot launch a replacement after unconfirmed cleanup", async (t) => {
@@ -2177,6 +2188,10 @@ test("unsupported controls are not silently accepted", async (t) => {
   const client = await start(t);
   await client.open();
   assert.deepEqual(client.controls, { configOptions: [] });
+  await assert.rejects(
+    client.configure({ configOptions: [{ id: "fast", value: "off" }] }),
+    { code: "unsupported" },
+  );
   await assert.rejects(client.configure({ modeId: "plan" }), {
     code: "unsupported",
   });
@@ -2260,7 +2275,12 @@ test("qualified Claude negotiates concrete values on new and resumed sessions an
   for (const resume of [false, true]) {
     const child = spawn(
       process.execPath,
-      [...profile.args, "--config-options", "--recommended-values"],
+      [
+        ...profile.args,
+        "--config-options",
+        "--recommended-values",
+        "--fast-config",
+      ],
       {
         env: {},
         stdio: "pipe",
@@ -2294,13 +2314,30 @@ test("qualified Claude negotiates concrete values on new and resumed sessions an
     );
     t.after(() => client.dispose());
     await client.open(resume ? "fixture-session" : undefined);
+    // Inherited Standard speed must not prevent new or resumed turns when the
+    // selected model does not advertise fast mode. Explicit fast still fails.
+    await client.configure({ configOptions: [{ id: "fast", value: "off" }] });
+    await assert.rejects(
+      client.configure({ configOptions: [{ id: "fast", value: "on" }] }),
+      /not advertised/,
+    );
+    await assert.rejects(
+      client.configure({ configOptions: [{ id: "unknown", value: "off" }] }),
+      /not advertised/,
+    );
     const settings = {
       configOptions: [
         { id: "model", value: "deep" },
         { id: "effort", value: "default" },
+        { id: "fast", value: "off" },
       ],
     };
     await client.configure(settings);
+    assert.equal(
+      client.controls.configOptions.find(({ id }) => id === "fast")
+        .currentValue,
+      "off",
+    );
     assert.equal(settings.configOptions[1].value, "default");
     assert.equal(
       client.controls.configOptions.find(({ id }) => id === "model")

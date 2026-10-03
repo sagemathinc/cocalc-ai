@@ -87,7 +87,7 @@ export function resolveHarnessCommand(
 /** Internal worker launcher. Admission must authorize the principal before calling. */
 export async function launchHarnessInProject(
   binding: HarnessBinding,
-  conversation: { path: string; threadId: string },
+  conversation: { path: string; threadId: string; sessionId?: string },
 ): Promise<HarnessProcess> {
   const { projectId, accountId } = binding;
   const path = conversation?.path;
@@ -108,6 +108,7 @@ export async function launchHarnessInProject(
     return await launchClaudeSubscriptionController(binding, {
       path,
       threadId,
+      ...(conversation.sessionId ? { sessionId: conversation.sessionId } : {}),
     });
   }
   const harnessCommand = resolveHarnessCommand(

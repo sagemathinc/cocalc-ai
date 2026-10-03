@@ -98,6 +98,7 @@ export interface HarnessBinding {
 
 export type HarnessLauncher = (
   binding: HarnessBinding,
+  sessionId?: string,
 ) => Promise<HarnessProcess>;
 export type HarnessQuestionHandler = (
   questions: AcpAttentionQuestion[],
@@ -416,6 +417,18 @@ export class AcpHarnessClient {
         "ACP session must be idle and open",
       );
     const selected = parseHarnessSessionSettings(settings);
+    // Claude omits the speed control for models without fast mode. A saved
+    // explicit "off" remains satisfied, but never silently discard "on".
+    const absentClaudeFastOff = (
+      id: string,
+      value: string,
+      advertised: boolean,
+    ) =>
+      !advertised &&
+      this.binding.profile.version === 2 &&
+      this.binding.profile.id === "claude-code" &&
+      id === "fast" &&
+      value === "off";
     this.configuring = true;
     try {
       if (selected.modeId != null) {
@@ -440,6 +453,8 @@ export class AcpHarnessClient {
         const control = this.controls.configOptions.find(
           ({ id }) => id === choice.id,
         );
+        if (absentClaudeFastOff(choice.id, choice.value, control != null))
+          continue;
         if (
           control &&
           this.binding.profile.version === 2 &&
@@ -477,11 +492,13 @@ export class AcpHarnessClient {
       if (selected.configOptions?.length) {
         const effective = this.controls.configOptions;
         if (
-          selected.configOptions.some(
-            ({ id, value }) =>
-              effective.find((control) => control.id === id)?.currentValue !==
-              value,
-          )
+          selected.configOptions.some(({ id, value }) => {
+            const control = effective.find((control) => control.id === id);
+            return (
+              !absentClaudeFastOff(id, value, control != null) &&
+              control?.currentValue !== value
+            );
+          })
         )
           throw new HarnessError(
             "rejected",
