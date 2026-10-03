@@ -19,9 +19,13 @@ const COCALC_AI = {
 
 const PAGE = getPublicFeaturePage("ai")!;
 
-function renderAi(basePath: string, config?: PublicRouteMetadataConfig) {
+function renderAi(
+  basePath: string,
+  config?: PublicRouteMetadataConfig,
+  slug = "ai",
+) {
   return renderPublicRoutePrerender(
-    { section: "features", route: { view: "detail", slug: "ai" } },
+    { section: "features", route: { view: "detail", slug } },
     basePath,
     config,
   );
@@ -81,6 +85,21 @@ describe("AI feature page initial HTML", () => {
       expect(html).not.toContain("<details");
     },
   );
+
+  // The hub serves /features/:slug for the record's alias too, and the React
+  // page renders the AI page there (ai-page.test.tsx).
+  it("renders the same fallback at the record's alias, openai-chatgpt", () => {
+    expect(PAGE.aliases).toContain("openai-chatgpt");
+    const html = renderAi("/", COCALC_AI, "openai-chatgpt");
+
+    expect(header(html)).toEqual([
+      "p: CoCalc feature",
+      "h1: AI Agents",
+      `p: ${PUBLIC_AI_CLAUDE_HEADLINE}`,
+      `p: ${PUBLIC_AI_INTRO}`,
+    ]);
+    expect(html).toBe(renderAi("/", COCALC_AI));
+  });
 
   // The same sites as the Home highlight that names Claude Code.
   it.each([

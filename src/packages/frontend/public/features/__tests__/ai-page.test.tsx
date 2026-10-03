@@ -42,11 +42,12 @@ const INTERFACE_TITLE = "Use the agent interface that fits the task.";
 
 function renderAiPage(
   config?: ComponentProps<typeof PublicFeaturesApp>["config"],
+  slug = "ai",
 ) {
   return render(
     <PublicFeaturesApp
       config={config}
-      initialRoute={{ slug: "ai", view: "detail" }}
+      initialRoute={{ slug, view: "detail" }}
     />,
   );
 }
@@ -92,6 +93,27 @@ describe("AI feature page", () => {
         ).toBe(href);
       }
     }
+  });
+
+  // The hub serves /features/:slug for the record's alias too, and its crawler
+  // fallback renders the AI page there (public-prerender-ai.test.ts).
+  it("renders the same page at the record's alias, openai-chatgpt", () => {
+    expect(PAGE.aliases).toContain("openai-chatgpt");
+    const alias = renderAiPage(COCALC_AI, "openai-chatgpt");
+
+    expect(
+      screen.getByRole("heading", {
+        level: 2,
+        name: PUBLIC_AI_CLAUDE_HEADLINE,
+      }),
+    ).not.toBeNull();
+    expect(screen.getByText(PUBLIC_AI_INTRO)).not.toBeNull();
+    expect(
+      within(card(PAGE.sections![0].title)).getByText(PUBLIC_AI_MENTIONS_LINE),
+    ).not.toBeNull();
+    const aliasText = alias.container.textContent;
+    alias.unmount();
+    expect(aliasText).toBe(renderAiPage(COCALC_AI).container.textContent);
   });
 
   // The same sites as the Home highlight that names Claude Code.
