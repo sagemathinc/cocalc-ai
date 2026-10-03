@@ -112,6 +112,7 @@ import {
 import { set_window_title } from "@cocalc/frontend/browser";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { useWorkspaceRoute } from "./use-workspace-route";
+import { useMobileSearchNavigation } from "./use-mobile-search-navigation";
 import { lite } from "@cocalc/frontend/lite";
 import { useNavigationIntent } from "./use-navigation-intent";
 import {
@@ -3232,11 +3233,14 @@ function SidebarSection({
 
 export function MyAgentsWorkspacePage({
   active = true,
+  agentRouteActive = active,
   children,
   contentLabel,
   contentNavigation,
 }: {
   active?: boolean;
+  // The persistent shell can be active while a different page owns the URL.
+  agentRouteActive?: boolean;
   // Project and account pages shown in the content pane beside the sidebar.
   children?: ReactNode;
   // Set when the content pane (not an agent or the Library) is showing.
@@ -3336,6 +3340,15 @@ export function MyAgentsWorkspacePage({
   const [copyError, setCopyError] = useState("");
   const [retiringAgentId, setRetiringAgentId] = useState<string>();
   const [mobileList, setMobileList] = useState(!libraryOpen);
+  useMobileSearchNavigation({
+    active,
+    isNarrow,
+    searchOpen: searchState.open,
+    searchRun: searchState.run,
+    mobileList,
+    setMobileList,
+    contentRef: workspaceContent,
+  });
   const [showHidden, setShowHidden] = useState(false);
   const [agentSidebarWidth, setAgentSidebarWidth] = useState(
     initialAgentSidebarWidth,
@@ -3587,7 +3600,8 @@ export function MyAgentsWorkspacePage({
       ) ?? selected);
 
   useWorkspaceRoute({
-    active: active && !libraryOpen,
+    active:
+      agentRouteActive && !contentOpen && !libraryOpen && !searchState.open,
     activeAgentId,
     selected,
   });

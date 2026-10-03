@@ -11,6 +11,72 @@ import { makeRng, type Rng } from "../../sim";
 
 const opts = { primaryKeys: ["type", "id"], stringCols: ["input"] };
 
+describe.each([
+  ["immutable", from_str],
+  ["immer", immerFromStr],
+])("partial primary keys (%s)", (_, from) => {
+  const fromStr = (s: string): any =>
+    from(s, opts.primaryKeys, opts.stringCols);
+  const merge3 = dbMerge3<any>(fromStr, (d) => d.to_str(), opts);
+  const orders = [
+    [0, 1, 2],
+    [0, 2, 1],
+    [1, 0, 2],
+    [1, 2, 0],
+    [2, 0, 1],
+    [2, 1, 0],
+  ];
+
+  test.each(["id", "type"])(
+    "preserves all records when %s is missing, in every insertion order",
+    (missingKey) => {
+      const partial: any = { type: "settings", id: "extra", value: 0 };
+      delete partial[missingKey];
+      const extra = { type: "settings", id: "extra", value: 42 };
+      const cell = { type: "cell", id: "a", input: "base" };
+      // Construct each version directly: patch application can itself use
+      // partial selectors and hide the merge regression by losing data first.
+      const document = (records: object[], order: number[]) =>
+        fromStr(order.map((i) => JSON.stringify(records[i])).join("\n"));
+      for (const baseOrder of orders) {
+        for (const aOrder of orders) {
+          for (const bOrder of orders) {
+            const base = document([partial, extra, cell], baseOrder);
+            const a = document(
+              [partial, extra, { ...cell, input: "edited" }],
+              aOrder,
+            );
+            const b = document([{ ...partial, value: 1 }, extra, cell], bOrder);
+            for (const [left, right] of [
+              [a, b],
+              [b, a],
+            ]) {
+              const reference = fromStr(
+                mergeDbStrings({
+                  ...opts,
+                  base: base.to_str(),
+                  a: left.to_str(),
+                  b: right.to_str(),
+                }),
+              );
+              const result = merge3(base, left, right);
+              expect(result.is_equal(reference)).toBe(true);
+              const records = result
+                .to_str()
+                .split("\n")
+                .map((line: string) => JSON.parse(line));
+              expect(records).toHaveLength(3);
+              expect(records).toContainEqual(extra);
+              expect(records).toContainEqual({ ...partial, value: 1 });
+              expect(records).toContainEqual({ ...cell, input: "edited" });
+            }
+          }
+        }
+      }
+    },
+  );
+});
+
 const words = ["a", "b", "c", "x = 1", "print(x)", "\n", "tk"];
 const pick = <T>(rng: Rng, xs: T[]) => xs[Math.floor(rng() * xs.length)];
 

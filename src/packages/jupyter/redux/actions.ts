@@ -341,10 +341,11 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     return saves.sort((a, b) => (b.savedAt ?? 0) - (a.savedAt ?? 0));
   };
 
-  // Whether the file on disk (its text and modification time) is a save by a
-  // client of this notebook rather than an external edit: it is one of the
-  // recorded saves, or not modified after the newest one. Waits briefly for
-  // the runtime state to open; without it nothing is known to be a save.
+  // Whether the file on disk is a client save rather than an external edit:
+  // it was not modified after the newest save, or matches a recorded hash
+  // when the disk or matching save has no usable mtime. With known mtimes,
+  // a newer rewrite of retained bytes is an external edit, not a save.
+  // Waits briefly for runtime state to open; without it no save is known.
   // A save is recorded just after the file is written, so a client that reads
   // the file in between sees a save that is not recorded yet; such a file is
   // taken for an external edit only if no save of it is recorded within
@@ -372,15 +373,27 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     const recorded = (): boolean => {
       const saves = this.getIpynbSaves();
       if (saves.length == 0) return false;
-      if (saves.some((save) => save.sha1 === hash)) return true;
+      // A successful write may lack an mtime when its subsequent stat fails.
+      // Its hash alone cannot distinguish a self-save from an external
+      // restoration of identical bytes; prefer protecting live edits here.
+      if (
+        saves.some(
+          (save) => save.sha1 === hash && !Number.isFinite(save.mtimeMs),
+        )
+      ) {
+        return true;
+      }
       const newest = Math.max(
         ...saves.map((save) => save.mtimeMs ?? Number.NEGATIVE_INFINITY),
       );
-      return (
+      if (
         typeof mtimeMs === "number" &&
-        Number.isFinite(newest) &&
-        mtimeMs <= newest
-      );
+        Number.isFinite(mtimeMs) &&
+        Number.isFinite(newest)
+      ) {
+        return mtimeMs <= newest;
+      }
+      return saves.some((save) => save.sha1 === hash);
     };
     if (recorded()) return true;
     try {

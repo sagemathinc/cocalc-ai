@@ -402,12 +402,36 @@ export const peopleControl: InterBayPeopleApi = {
     assertPeopleStateKind(kind);
     requireUuid(target_id, "target_id");
     if (project_id != null) requireUuid(project_id, "project_id");
+    let reclaimAliasFrom: { target_id: string; project_id: string } | undefined;
+    if (kind === "conversation" && patch?.alias) {
+      const binding = await resolveAlias({
+        account_id: account_id!,
+        kind,
+        alias: patch.alias,
+      });
+      if (binding?.project_id && binding.target_id !== target_id) {
+        // A missing local row proves nothing: the project may be remote.
+        // Routing/transport failures must leave the alias reserved.
+        // Only reclaim this account's alias; other accounts do so on reuse.
+        const record = await (
+          await owner(binding.project_id)
+        ).getRecord({
+          account_id: account_id!,
+          project_id: binding.project_id,
+          conversation_id: binding.target_id,
+        });
+        if (record == null) {
+          reclaimAliasFrom = { ...binding, project_id: binding.project_id };
+        }
+      }
+    }
     return await setPersonalState({
       account_id: account_id!,
       kind,
       target_id,
       project_id,
       patch: patch ?? {},
+      reclaimAliasFrom,
     });
   },
 

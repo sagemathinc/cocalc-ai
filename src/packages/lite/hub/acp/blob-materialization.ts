@@ -1,4 +1,6 @@
-import { promises as fs } from "node:fs";
+import { constants, promises as fs } from "node:fs";
+import type { FileHandle } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { AcpImageAttachment } from "@cocalc/ai/acp/types";
 import { ACP_MAX_IMAGE_BYTES } from "@cocalc/util/ai/harness-limits";
@@ -8,6 +10,10 @@ const CHAT_BLOB_TEMP_RELATIVE_PATH = ".local/share/cocalc/tmp";
 // a screenshot, keep as a fixture). Named by blob UUID, so repeats reuse a file.
 const CHAT_ATTACHMENTS_RELATIVE_PATH = ".local/share/cocalc/chat-attachments";
 export const CHAT_ATTACHMENT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+const BLOB_UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const ATTACHMENT_NAME =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-[A-Za-z0-9._-]+$/i;
 
 export type BlobReference = {
   url: string;
@@ -51,8 +57,10 @@ export function projectBlobMaterializationRoots({
   host: string;
   runtime: string;
   attachments: { host: string; runtime: string };
+  project: { host: string; runtime: string };
 } {
   return {
+    project: { host: hostProjectRoot, runtime: runtimeProjectRoot },
     host: path.join(hostProjectRoot, CHAT_BLOB_TEMP_RELATIVE_PATH),
     runtime: path.posix.join(runtimeProjectRoot, CHAT_BLOB_TEMP_RELATIVE_PATH),
     attachments: {
@@ -78,20 +86,21 @@ export function harnessAttachmentNote(
 }
 
 // Best-effort removal of saved attachments older than maxAgeMs.
-export async function pruneChatAttachments(
-  hostDirectory: string,
+async function pruneChatAttachments(
+  directory: FileHandle,
   now = Date.now(),
   maxAgeMs = CHAT_ATTACHMENT_MAX_AGE_MS,
 ): Promise<number> {
   let removed = 0;
   let names: string[];
   try {
-    names = await fs.readdir(hostDirectory);
+    names = await fs.readdir(descriptorPath(directory));
   } catch {
     return 0;
   }
   for (const name of names) {
-    const file = path.join(hostDirectory, name);
+    if (!ATTACHMENT_NAME.test(name)) continue;
+    const file = path.join(descriptorPath(directory), name);
     try {
       const info = await fs.lstat(file);
       if (info.isFile() && now - info.mtimeMs > maxAgeMs) {
@@ -103,6 +112,125 @@ export async function pruneChatAttachments(
     }
   }
   return removed;
+}
+
+function descriptorPath(directory: FileHandle): string {
+  return `/proc/self/fd/${directory.fd}`;
+}
+
+// The project mount is host-controlled, but every directory beneath it is
+// project-controlled. Pin each component before using it; realpath/lstat checks
+// followed by pathname writes are not a confinement boundary.
+export async function openProjectBlobStorage({
+  hostProjectRoot,
+  runtimeProjectRoot,
+  persist,
+}: {
+  hostProjectRoot: string;
+  runtimeProjectRoot: string;
+  persist: boolean;
+}): Promise<{
+  write: (ref: BlobReference, data: Buffer) => Promise<string>;
+  finish: () => Promise<void>;
+}> {
+  if (process.platform !== "linux") {
+    throw Error("Confined project attachment storage requires Linux");
+  }
+  const flags =
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
+  const handles: FileHandle[] = [];
+  let temporary: { parent: FileHandle; name: string } | undefined;
+  const files = new Set<string>();
+  let finished = false;
+  const close = async () => {
+    for (const handle of handles.reverse()) await handle.close();
+  };
+  try {
+    let directory = await fs.open(hostProjectRoot, flags);
+    handles.push(directory);
+    const relative = persist
+      ? CHAT_ATTACHMENTS_RELATIVE_PATH
+      : CHAT_BLOB_TEMP_RELATIVE_PATH;
+    for (const component of relative.split("/")) {
+      const child = path.join(descriptorPath(directory), component);
+      try {
+        await fs.mkdir(child, { mode: 0o755 });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      }
+      directory = await fs.open(child, flags);
+      handles.push(directory);
+    }
+    let runtimeDirectory = path.posix.join(runtimeProjectRoot, relative);
+    if (persist) {
+      await pruneChatAttachments(directory);
+    } else {
+      const name = `cocalc-blobs-${randomUUID()}`;
+      temporary = { parent: directory, name };
+      const child = path.join(descriptorPath(directory), name);
+      await fs.mkdir(child, { mode: 0o755 });
+      directory = await fs.open(child, flags);
+      handles.push(directory);
+      runtimeDirectory = path.posix.join(runtimeDirectory, name);
+    }
+    return {
+      write: async (ref, data) => {
+        if (finished) throw Error("Attachment storage is closed");
+        const name = buildSafeBlobFilename(ref);
+        const temporaryName = `.attachment-${randomUUID()}`;
+        const temp = path.join(descriptorPath(directory), temporaryName);
+        // Exclusive creation and rename never follow a pre-existing file link
+        // or truncate a hard-linked target. The parent remains fd-anchored.
+        try {
+          const file = await fs.open(temp, "wx", 0o644);
+          try {
+            await file.writeFile(data);
+          } finally {
+            await file.close();
+          }
+          await fs.rename(temp, path.join(descriptorPath(directory), name));
+          files.add(name);
+        } finally {
+          await fs.unlink(temp).catch((err: NodeJS.ErrnoException) => {
+            if (err.code !== "ENOENT") throw err;
+          });
+        }
+        return path.posix.join(runtimeDirectory, name);
+      },
+      finish: async () => {
+        if (finished) return;
+        finished = true;
+        try {
+          if (temporary) {
+            for (const name of files) {
+              await fs
+                .unlink(path.join(descriptorPath(directory), name))
+                .catch(() => {});
+            }
+            // Never recursively remove a project-controlled directory tree.
+            await fs
+              .rmdir(
+                path.join(descriptorPath(temporary.parent), temporary.name),
+              )
+              .catch(() => {});
+          }
+        } finally {
+          await close();
+        }
+      },
+    };
+  } catch (err) {
+    try {
+      if (temporary) {
+        await fs
+          .rmdir(path.join(descriptorPath(temporary.parent), temporary.name))
+          .catch(() => {});
+      }
+    } finally {
+      await close();
+    }
+    throw err;
+  }
 }
 
 const BLOB_MARKDOWN_RE = /!\[[^\]]*\]\(((?:[^)]+)?\/blobs\/[^)]+)\)/gi;
@@ -123,6 +251,7 @@ export function dedupeBlobReferences(
 }
 
 export function buildSafeBlobFilename(ref: BlobReference): string {
+  if (!BLOB_UUID.test(ref.uuid)) throw Error("Invalid attachment blob UUID");
   const baseName = sanitizeFilename(ref.filename || ref.uuid);
   const extension = path.extname(baseName);
   const finalName =

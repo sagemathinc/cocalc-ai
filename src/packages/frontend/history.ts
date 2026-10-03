@@ -173,10 +173,16 @@ export function set_url(url: string, hash?: string) {
   set_url_with_search(url, undefined, hash);
 }
 
+// Canonicalizing a route must not insert an entry that traps browser Back.
+export function replace_url(url: string, hash?: string) {
+  set_url_with_search(url, undefined, hash, true);
+}
+
 export function set_url_with_search(
   url: string,
   search?: string,
   hash?: string,
+  replace: boolean = false,
 ) {
   if (IS_EMBEDDED) {
     // no need to mess with url in embedded mode.
@@ -195,7 +201,7 @@ export function set_url_with_search(
     search ?? reviewSearchForNavigation(current, join(appBasePath, url));
   // Empty Library segments are invalid selections, not redundant separators.
   // path.join would turn /artifacts//project/entry into a different, valid route.
-  const full_url = /^\/?artifacts(?:\/|$)/.test(url)
+  const full_url = /^\/?(?:artifacts|library)(?:\/|$)/.test(url)
     ? `${join(appBasePath, "/")}${url.replace(/^\//, "")}${query_params}${hash ?? location.hash}`
     : join(appBasePath, url + query_params + (hash ?? location.hash));
   if (full_url === location.pathname + location.search + location.hash) {
@@ -203,7 +209,8 @@ export function set_url_with_search(
     // Rewriting that URL would push a duplicate and discard Forward history.
     return;
   }
-  history.pushState({}, "", full_url);
+  if (replace) history.replaceState({}, "", full_url);
+  else history.pushState({}, "", full_url);
   consumeGitReviewOnlyNavigation(new URL(location.href));
   window.dispatchEvent(new Event(APP_NAVIGATION_EVENT));
 }
@@ -354,11 +361,16 @@ export function load_target(
       redux.getActions("page").set_active_tab("hosts", change_history);
       break;
 
-    case "u":
-      void import("./personal-url-navigation").then(({ openPersonalUrl }) =>
-        openPersonalUrl(parsed.path),
-      );
+    case "u": {
+      // A clicked alias gets one entry; resolution replaces that entry.
+      // Direct loads and Back/Forward already have the alias in history.
+      if (change_history) set_url(`/${target}`);
+      const requestedUrl = location.href;
+      void import("./personal-url-navigation").then(({ openPersonalUrl }) => {
+        if (location.href === requestedUrl) return openPersonalUrl(parsed.path);
+      });
       break;
+    }
 
     case "people":
       redux.getActions("page").setState({ people_route: parsed.route });

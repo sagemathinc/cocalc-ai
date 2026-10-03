@@ -442,6 +442,7 @@ export const ActiveContent: React.FC<Props> = React.memo(({ navigation }) => {
         <MyAgentsWorkspacePage
           key={accountId ?? "signed-out"}
           active={managedEgressBlocked == null}
+          agentRouteActive={agentsActive}
           contentLabel={
             managedEgressBlocked != null
               ? "Account unavailable"

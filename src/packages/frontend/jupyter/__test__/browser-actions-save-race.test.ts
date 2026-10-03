@@ -268,10 +268,21 @@ describe("Jupyter browser disk-save reconciliation", () => {
     function openingActions({ diskMtimeMs }: { diskMtimeMs: number }) {
       const actions = createActions();
       actions.runtimeStateSettled = true;
-      actions.loadFromDisk = jest.fn(async () => {});
-      actions.saveIpynb = jest.fn(async () => {});
+      jest.spyOn(actions, "loadFromDisk");
+      jest.spyOn(actions, "saveIpynb");
+      actions.hasUnsavedChanges = false;
+      actions.toIpynb = jest.fn(async () => ({ cells: ["newer"] }));
       actions.syncdb = {
-        fs: { stat: jest.fn(async () => ({ mtimeMs: diskMtimeMs })) },
+        fs: {
+          stat: jest.fn(async () => ({ mtimeMs: diskMtimeMs })),
+          jupyterImportIpynb: jest.fn(async (ipynb) => ({ ipynb })),
+          jupyterSaveIpynb: jest.fn(async (_path, ipynb) => ({
+            bytes: 100,
+            converted: false,
+            ipynb,
+          })),
+        },
+        get_state: () => "ready",
         get_one: () => ({ type: "cell", id: "a" }),
         has_uncommitted_changes: () => false,
         newestVersion: () => "v1",
@@ -340,6 +351,130 @@ describe("Jupyter browser disk-save reconciliation", () => {
       });
       expect(actions.loadFromDisk).not.toHaveBeenCalled();
     });
+
+    it.each([false, true])(
+      "imports externally restored retained bytes (initial=%s)",
+      async (initial) => {
+        jest.useFakeTimers();
+        try {
+          const actions = openingActions({ diskMtimeMs: 3000 });
+          actions.recordIpynbSave({ sha1: sha1(savedText), mtimeMs: 1000 });
+          actions.recordIpynbSave({ sha1: sha1("newer"), mtimeMs: 2000 });
+          actions.recordIpynbSave({ sha1: sha1("unrelated hash-only save") });
+          const diskRead = {
+            bytes: savedText.length,
+            text: savedText,
+            ipynb: { cells: ["saved"] },
+          };
+
+          const loading = actions.watchLoadFromDisk({ initial, diskRead });
+          await jest.advanceTimersByTimeAsync(4000);
+          await loading;
+
+          expect(actions.loadFromDisk).toHaveBeenCalledWith(
+            expect.objectContaining({ diskRead }),
+          );
+          expect(actions.syncdb.fs.jupyterImportIpynb).toHaveBeenCalledWith(
+            diskRead.ipynb,
+          );
+          expect(actions.setToIpynb).toHaveBeenCalledWith(diskRead.ipynb);
+          expect(actions.saveIpynb).not.toHaveBeenCalled();
+          expect(actions.syncdb.fs.jupyterSaveIpynb).not.toHaveBeenCalled();
+        } finally {
+          jest.useRealTimers();
+        }
+      },
+    );
+
+    it("waits for a delayed self-save record even when the hash is retained", async () => {
+      jest.useFakeTimers();
+      try {
+        const actions = openingActions({ diskMtimeMs: 3000 });
+        actions.recordIpynbSave({ sha1: sha1(savedText), mtimeMs: 1000 });
+        actions.recordIpynbSave({ sha1: sha1("newer"), mtimeMs: 2000 });
+        const loading = actions.watchLoadFromDisk({
+          initial: true,
+          diskRead: { bytes: savedText.length, text: savedText, ipynb: {} },
+        });
+        await jest.advanceTimersByTimeAsync(200);
+        expect(actions.loadFromDisk).not.toHaveBeenCalled();
+        expect(actions.saveIpynb).not.toHaveBeenCalled();
+        expect(actions.syncdb.fs.jupyterImportIpynb).not.toHaveBeenCalled();
+        expect(actions.syncdb.fs.jupyterSaveIpynb).not.toHaveBeenCalled();
+
+        actions.recordIpynbSave({ sha1: sha1(savedText), mtimeMs: 3000 });
+        await jest.advanceTimersByTimeAsync(1000);
+        await loading;
+        await actions.saveIpynbInFlight;
+        expect(actions.loadFromDisk).not.toHaveBeenCalled();
+        expect(actions.saveIpynb).toHaveBeenCalledTimes(1);
+        expect(actions.syncdb.fs.jupyterImportIpynb).not.toHaveBeenCalled();
+        expect(actions.setToIpynb).not.toHaveBeenCalled();
+        expect(actions.syncdb.fs.jupyterSaveIpynb).toHaveBeenCalledTimes(1);
+        expect(actions.syncdb.fs.jupyterSaveIpynb).toHaveBeenCalledWith(
+          "race.ipynb",
+          { cells: ["newer"] },
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("still recognizes retained bytes when the disk mtime is unavailable", async () => {
+      const actions = openingActions({ diskMtimeMs: 1000 });
+      actions.recordIpynbSave({ sha1: sha1(savedText), mtimeMs: 1000 });
+      await expect(actions.isIpynbSave({ text: savedText })).resolves.toBe(
+        true,
+      );
+    });
+
+    it.each([
+      { initial: false, delayed: false },
+      { initial: false, delayed: true },
+      { initial: true, delayed: false },
+      { initial: true, delayed: true },
+    ])(
+      "protects a self-save without its mtime (initial=$initial, delayed=$delayed)",
+      async ({ initial, delayed }) => {
+        jest.useFakeTimers();
+        try {
+          const actions = openingActions({ diskMtimeMs: 3000 });
+          actions.recordIpynbSave({ sha1: sha1("older"), mtimeMs: 1000 });
+          // A successful write can return just a hash if its stat fails.
+          const recordSave = () =>
+            actions.recordIpynbSave({ sha1: sha1(savedText) });
+          if (!delayed) recordSave();
+          const loading = actions.watchLoadFromDisk({
+            initial,
+            diskRead: {
+              bytes: savedText.length,
+              text: savedText,
+              ipynb: { cells: ["saved"] },
+            },
+          });
+          if (delayed) {
+            await jest.advanceTimersByTimeAsync(200);
+            expect(actions.syncdb.fs.jupyterImportIpynb).not.toHaveBeenCalled();
+            expect(actions.syncdb.fs.jupyterSaveIpynb).not.toHaveBeenCalled();
+            recordSave();
+          }
+          await jest.advanceTimersByTimeAsync(4000);
+          await loading;
+          await actions.saveIpynbInFlight;
+
+          expect(actions.loadFromDisk).not.toHaveBeenCalled();
+          expect(actions.syncdb.fs.jupyterImportIpynb).not.toHaveBeenCalled();
+          expect(actions.setToIpynb).not.toHaveBeenCalled();
+          expect(actions.syncdb.fs.jupyterSaveIpynb).toHaveBeenCalledTimes(1);
+          expect(actions.syncdb.fs.jupyterSaveIpynb).toHaveBeenCalledWith(
+            "race.ipynb",
+            { cells: ["newer"] },
+          );
+        } finally {
+          jest.useRealTimers();
+        }
+      },
+    );
 
     it("imports an external edit of the file", async () => {
       const actions = openingActions({ diskMtimeMs: 6000 });

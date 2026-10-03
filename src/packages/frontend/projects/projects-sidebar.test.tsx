@@ -5,7 +5,7 @@
 
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { fromJS } from "immutable";
+import { fromJS, List } from "immutable";
 import { ProjectsSidebar, sidebarProjects } from "./projects-sidebar";
 
 const me = "11111111-1111-4111-8111-111111111111";
@@ -14,6 +14,7 @@ const setActiveTab = jest.fn();
 const setProjectBookmarked = jest.fn();
 let mockPins: string[] = [];
 let mockCurrent = "p2";
+let mockOpenProjects = List<string>();
 
 const mockProjects = fromJS({
   p1: { title: "Alpha", last_active: { [me]: "2026-09-01" } },
@@ -34,7 +35,9 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   }),
   useTypedRedux: (store: string, field: string) =>
     store === "projects"
-      ? mockProjects
+      ? field === "open_projects"
+        ? mockOpenProjects
+        : mockProjects
       : field === "account_id"
         ? me
         : mockCurrent,
@@ -53,6 +56,51 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockPins = [];
   mockCurrent = "p2";
+  mockOpenProjects = List<string>();
+});
+
+it("keyboard switching resumes retained project directories without reopening them", async () => {
+  mockOpenProjects = List(["p1", "p2"]);
+  const directories = { p1: "notes/subdirectory", p2: "other/work" };
+  openProject.mockImplementation(({ project_id }) => {
+    directories[project_id] = "";
+  });
+  const user = userEvent.setup();
+  const onNavigate = jest.fn();
+  render(<ProjectsSidebar search="" onNavigate={onNavigate} />);
+  for (const [title, id] of [
+    ["Alpha", "p1"],
+    ["Beta", "p2"],
+    ["Alpha", "p1"],
+  ]) {
+    const button = screen.getByRole("button", {
+      name: `Open project ${title}`,
+    });
+    button.focus();
+    await user.keyboard("{Enter}");
+    expect(setActiveTab).toHaveBeenLastCalledWith(id);
+    expect(button).toHaveFocus();
+  }
+  expect(openProject).not.toHaveBeenCalled();
+  expect(directories).toEqual({ p1: "notes/subdirectory", p2: "other/work" });
+  expect(onNavigate).toHaveBeenCalledTimes(3);
+  openProject.mockReset();
+});
+
+it("modified clicks do not foreground or reload a retained project", async () => {
+  mockOpenProjects = List(["p1"]);
+  const user = userEvent.setup();
+  render(<ProjectsSidebar search="" />);
+  await user.keyboard("{Control>}");
+  await user.click(screen.getByRole("button", { name: "Open project Alpha" }));
+  expect(openProject).not.toHaveBeenCalled();
+  expect(setActiveTab).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Open project Gamma" }));
+  expect(openProject).toHaveBeenCalledWith({
+    project_id: "p3",
+    switch_to: false,
+  });
+  await user.keyboard("{/Control}");
 });
 
 test("pins first in pin order; recent by my last use; hidden and deleted left out", () => {
