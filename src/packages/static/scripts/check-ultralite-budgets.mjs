@@ -313,8 +313,7 @@ const surfaces = [
     chunks: [...initial, ...docs],
     // Connector, Claude, exam, agent memory, and agents workspace guides expand
     // the non-admin documentation: 325.5 KiB Brotli before the agents workspace
-    // guide's update, 326.3 KiB with it, and 326.8 KiB with the documentation
-    // changes open beside it.
+    // guide's update, and 326.5 KiB with it.
     max: 328 * KiB,
   },
   {
