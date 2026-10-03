@@ -146,6 +146,30 @@ Table({
   },
 });
 
+// How the next agent-message turn for an agent is paid, per executing account.
+// Kept out of agent_identities: identity rows are returned verbatim to every
+// project collaborator, while this is one account's own choice. Values are
+// credential references (never secrets); the host revalidates ownership.
+Table({
+  name: "agent_turn_funding",
+  rules: {
+    primary_key: ["agent_id", "account_id"],
+    pg_custom_indexes: [
+      { name: "agent_turn_funding_project", query: "(project_id)" },
+    ],
+  },
+  fields: {
+    agent_id: required("uuid", "Registered agent."),
+    account_id: required("uuid", "Account whose turns this funds."),
+    project_id: required("uuid", "Agent project, for hard deletion."),
+    funding: {
+      ...required("map", "Versioned next-turn payment selection."),
+      pg_type: "JSONB",
+    },
+    updated_at: created("Last human send that recorded this selection."),
+  },
+});
+
 Table({
   name: "agent_identity_runs",
   rules: {

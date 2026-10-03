@@ -53,6 +53,7 @@ import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { assertProjectHostAgentTokenAccess } from "@cocalc/server/conat/api/project-host-token-auth";
 import { assertActor, assertAgent, assertRun } from "./access";
 import { agentStore } from "./store";
+import { getNextTurnFunding } from "./turn-funding";
 import {
   assertExternalAgentLoginEnabled,
   externalControl,
@@ -644,6 +645,11 @@ export const authorizeRpcAdmission: AgentApi["authorizeRpcAdmission"] = async (
   if (isExternalAgentSource(e.source) && e.file_references !== undefined)
     throw new Error("external agents cannot send project file references");
   await reauthorizeEnvelope(e);
+  const next_turn_funding = await getNextTurnFunding({
+    agent_id: target.agent_id,
+    account_id: e.account_id,
+  });
+  return next_turn_funding ? { next_turn_funding } : {};
 };
 
 export const authorizeRpcExecution: AgentApi["authorizeRpcExecution"] = async (

@@ -25,6 +25,10 @@ import {
 } from "@cocalc/conat/agents/rpc";
 import { prepareChatSend, admitPreparedChatSend } from "@cocalc/chat/send";
 import {
+  applyAgentTurnFunding,
+  type AgentTurnFunding,
+} from "@cocalc/util/ai/agent-turn-funding";
+import {
   acquireChatSyncDB,
   releaseChatSyncDB,
   type ImmerDB,
@@ -38,6 +42,9 @@ const logger = getLogger("lite:acp:agent-rpc-service");
 // error text, which may contain credentials or another account's details.
 function launchFailureSummary(error: unknown): string {
   const text = error instanceof Error ? error.message : `${error}`;
+  if (/no payment method recorded|runtime changed/i.test(text)) {
+    return "The recipient agent has no payment method recorded for this account. Open the recipient agent and send it one message to choose how its turns are paid.";
+  }
   if (/timeout|timed out|deadline/i.test(text)) {
     return "The agent launch acknowledgment timed out.";
   }
@@ -51,7 +58,10 @@ function launchFailureSummary(error: unknown): string {
 }
 
 export interface AgentRpcExecutionAdapter {
-  authorize(e: AgentRpcEnvelope): Promise<void>;
+  /** Also returns how the envelope's account pays for the recipient's turn. */
+  authorize(
+    e: AgentRpcEnvelope,
+  ): Promise<{ next_turn_funding?: AgentTurnFunding } | void>;
   ensureRunning(e: AgentRpcEnvelope): Promise<void>;
   validateFileReferences?(e: AgentRpcEnvelope): Promise<void>;
   stageAttachments?(
@@ -136,7 +146,9 @@ export function createAgentRpcService(
 ) {
   const reservations = new AgentAttachmentReservations(
     capacity,
-    (e) => deps.authorize(e),
+    async (e) => {
+      await deps.authorize(e);
+    },
     async (e) => {
       await deps.withChat(e, async (db) => {
         const value = db.get();
@@ -222,10 +234,11 @@ export function createAgentRpcService(
         let chatEffect: "none" | "saved" | "unknown" = "none";
         let starting = false;
         let validatingFiles = false;
+        let funding: AgentTurnFunding | undefined;
         const guard = async () => {
           if (!Number.isFinite(e.deadline) || Date.now() >= e.deadline)
             throw new Error("submission deadline expired");
-          await deps.authorize(e);
+          funding = (await deps.authorize(e))?.next_turn_funding;
           if (Date.now() >= e.deadline)
             throw new Error("submission deadline expired");
         };
@@ -349,6 +362,8 @@ export function createAgentRpcService(
             chatEffect = "saved";
             savedMessage = prepared.message;
             await guard();
+            // Pay exactly as this account's last human send to the recipient.
+            prepared.request = applyAgentTurnFunding(prepared.request, funding);
             admissionStarted = true;
             await deps.admit(prepared);
             // A receipt records admission, not completion of the agent's work.
@@ -586,12 +601,11 @@ export function createLocalAgentRpcService(
         (async () => {
           throw new Error("project startup adapter unavailable");
         }),
-      authorize: async (envelope) => {
+      authorize: async (envelope) =>
         await api.authorizeRpcAdmission({
           account_id: envelope.account_id,
           envelope,
-        });
-      },
+        }),
       validateFileReferences: async (e) => {
         const fs = client.fs({
           project_id: e.target.project_id,

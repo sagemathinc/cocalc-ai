@@ -15,6 +15,7 @@ import {
   authFirstRequireHostWithAccountTarget,
 } from "./util";
 import type { ApiKeyScope } from "@cocalc/util/db-schema/api-keys";
+import type { AgentTurnFunding } from "@cocalc/util/ai/agent-turn-funding";
 import type {
   AgentIdentity,
   AgentCredential,
@@ -59,6 +60,7 @@ export const agent = {
   listIdentities: authFirstRequireAccount,
   getIdentity: authFirstRequireAccount,
   resolveIdentity: authFirstRequireAccount,
+  setNextTurnFunding: authFirstRequireAccount,
   disableIdentity: authFirstRequireAccountWithBoundSession,
   recoverIdentity: authFirstRequireAccountWithBoundSession,
   issueIdentity: authFirstRequireHostWithAccountTarget,
@@ -321,9 +323,18 @@ export interface AgentApi {
   setPersonalMessagingState(
     opts: AgentHumanAuth & SetPersonalMessagingStateOptions,
   ): Promise<PersonalMessagingControls>;
+  /** Returns how the envelope's account pays for the recipient's turn. */
   authorizeRpcAdmission(
     opts: AgentHostAuth & { envelope: AgentRpcEnvelope },
-  ): Promise<void>;
+  ): Promise<{ next_turn_funding?: AgentTurnFunding } | void>;
+  /** Record the caller's own payment choice for the agent bound to a thread. */
+  setNextTurnFunding(opts: {
+    account_id?: string;
+    project_id: string;
+    path: string;
+    thread_id: string;
+    funding: AgentTurnFunding;
+  }): Promise<{ recorded: boolean }>;
   authorizeRpcExecution(
     opts: AgentHostAuth & {
       authorization: NonNullable<

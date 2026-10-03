@@ -6,6 +6,7 @@ import {
 } from "@cocalc/ai/agent-sdk";
 import * as identities from "@cocalc/server/agents/api";
 import * as rpc from "@cocalc/server/agents/rpc";
+import * as turnFunding from "@cocalc/server/agents/turn-funding";
 export {
   getCocalcConnectorConfig,
   saveCocalcConnectorConfig,
@@ -53,6 +54,7 @@ export const startFreshConversation = identities.startFreshConversation;
 export const listIdentities = identities.listIdentities;
 export const getIdentity = identities.getIdentity;
 export const resolveIdentity = identities.resolveIdentity;
+export const setNextTurnFunding = turnFunding.setNextTurnFunding;
 export const disableIdentity = identities.disableIdentity;
 export const recoverIdentity = identities.recoverIdentity;
 export const issueIdentity = identities.issueIdentity;

@@ -393,6 +393,14 @@ export const TABLE_OWNERSHIP = {
       "Native agent identity and restart-fence state belongs to the project owning bay. Project moves require explicit migration or reconstruction rules before these tables can be portable.",
   }),
 
+  ...entries(["agent_turn_funding"], {
+    ownership: "project-owning",
+    authority: "project_id",
+    portability: "unsupported",
+    notes:
+      "Per-account payment choice for a project-owned agent identity; lives with the identity in the project owning bay and is re-recorded by the next human send.",
+  }),
+
   ...entries(["agent_identity_runs"], {
     ownership: "row-scoped",
     authority: "mixed",

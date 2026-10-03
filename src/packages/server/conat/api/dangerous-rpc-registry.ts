@@ -50,6 +50,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "registers an existing Codex thread after ordinary project authorization",
   },
+  "agent.setNextTurnFunding": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "records the caller's own credential reference for agent messages after project authorization; the host revalidates ownership at each turn",
+  },
   "agent.startFreshConversation": {
     decision: "fresh-auth-not-required",
     reason:

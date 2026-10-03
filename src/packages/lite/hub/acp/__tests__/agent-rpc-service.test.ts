@@ -836,3 +836,98 @@ test("startup timeout retains host capacity until the actual startup settles", a
     jest.useRealTimers();
   }
 });
+
+describe("server-side next-turn funding", () => {
+  const credentialId = "11111111-2222-4333-8444-555555555555";
+  const claudeRuntime = {
+    version: 1,
+    kind: "acp",
+    profile: {
+      version: 2,
+      kind: "acp",
+      id: "claude-code",
+      revision: "0.81.1",
+      cwd: "/home/user",
+      executionPolicy: "full-access",
+      credentialMode: "project-managed",
+    },
+  };
+
+  test("a Claude Code recipient pays with the recorded account credential", async () => {
+    const { e, deps, service, db } = fixture();
+    db.get()[0].agent_runtime = claudeRuntime;
+    const harness_credential = {
+      version: 1,
+      provider: "anthropic",
+      mode: "account-subscription",
+      credentialId,
+    };
+    deps.authorize = jest.fn(async () => ({
+      next_turn_funding: {
+        version: 1,
+        kind: "harness",
+        profile_id: "claude-code",
+        harness_credential,
+      },
+    })) as any;
+    expect(await service.submit(e)).toMatchObject({ outcome: "accepted" });
+    const prepared = (deps.admit as jest.Mock).mock.calls[0][0];
+    expect(prepared.request.harness_credential).toEqual(harness_credential);
+  });
+
+  test("a Codex subscription recipient is pinned to the recorded subscription", async () => {
+    const { e, deps, service, db } = fixture();
+    db.get()[0].acp_config = { paymentSource: "subscription" };
+    deps.authorize = jest.fn(async () => ({
+      next_turn_funding: {
+        version: 1,
+        kind: "codex",
+        credential_id: credentialId,
+      },
+    })) as any;
+    expect(await service.submit(e)).toMatchObject({ outcome: "accepted" });
+    const prepared = (deps.admit as jest.Mock).mock.calls[0][0];
+    expect(prepared.request.config).toMatchObject({
+      paymentSource: "subscription-credential",
+      credentialId,
+    });
+  });
+
+  test("a record for a different runtime is not applied", async () => {
+    const { e, deps, service, db } = fixture();
+    db.get()[0].acp_config = { paymentSource: "account-api-key" };
+    deps.authorize = jest.fn(async () => ({
+      next_turn_funding: {
+        version: 1,
+        kind: "harness",
+        profile_id: "claude-code",
+        harness_credential: {
+          version: 1,
+          provider: "anthropic",
+          mode: "project-secret",
+        },
+      },
+    })) as any;
+    expect(await service.submit(e)).toMatchObject({ outcome: "accepted" });
+    const prepared = (deps.admit as jest.Mock).mock.calls[0][0];
+    expect(prepared.request.harness_credential).toBeUndefined();
+    expect(prepared.request.config.paymentSource).toBe("account-api-key");
+    expect(prepared.request.config.credentialId).toBeUndefined();
+  });
+
+  test("a missing payment method produces a specific launch receipt", async () => {
+    const { e, deps, service, db } = fixture();
+    deps.admit = jest.fn(async () => {
+      throw new Error(
+        "The recipient agent has no payment method recorded for this account. Open it and send one message with its selected payment method before using Agent Networks.",
+      );
+    });
+    await service.submit(e);
+    const receipt = db
+      .get()
+      .find((row) => row.agent_rpc_launch?.state === "unknown");
+    expect(receipt.agent_rpc_launch.error).toMatch(
+      /no payment method recorded for this account/,
+    );
+  });
+});

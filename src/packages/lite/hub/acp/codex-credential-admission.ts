@@ -51,7 +51,7 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
       const admitted = previous && decodeAcpJobRequest(previous);
       if (!admitted || admitted.request_kind === "command" || !admitted.runtime)
         throw Error(
-          "Open the recipient agent and send a message with its selected payment method before using Agent Networks.",
+          "The recipient agent has no payment method recorded for this account. Open it and send one message with its selected payment method before using Agent Networks.",
         );
       const { cwd: _oldCwd, ...oldProfile } = admitted.runtime.profile;
       const { cwd: _newCwd, ...newProfile } = request.runtime.profile;
@@ -93,6 +93,11 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
   }
   const credentialId = `${resolved.credentialId ?? ""}`.trim();
   if (!credentialId) {
+    if (resolved.credentialPinRequired && request.chat?.agent_rpc_execution) {
+      throw new Error(
+        "The recipient agent has no payment method recorded for this account. Open it and send one message with its selected ChatGPT subscription before using Agent Networks.",
+      );
+    }
     if (resolved.credentialPinRequired || requestedCredentialId) {
       throw new Error("The selected ChatGPT subscription is unavailable.");
     }

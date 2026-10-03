@@ -120,3 +120,18 @@ test("normalizes a valid explicit selector without dropping its credential ID", 
     credentialId,
   });
 });
+
+test("an agent-message turn without a recorded subscription says how to fix it", async () => {
+  setCodexCredentialAdmissionResolver(async () => ({
+    source: "subscription",
+    credentialPinRequired: true,
+  }));
+  const agentTurn = request() as any;
+  agentTurn.chat.agent_rpc_execution = { version: 3 };
+  await expect(pinCodexCredentialAtAdmission(agentTurn)).rejects.toThrow(
+    "no payment method recorded for this account",
+  );
+  await expect(pinCodexCredentialAtAdmission(request())).rejects.toThrow(
+    "The selected ChatGPT subscription is unavailable.",
+  );
+});

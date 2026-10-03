@@ -10,6 +10,7 @@ import {
 } from "@cocalc/conat/service/typed";
 import type { Options } from "@cocalc/conat/service/service";
 import type { AgentIdentity } from "@cocalc/conat/agents/protocol";
+import type { AgentTurnFunding } from "@cocalc/util/ai/agent-turn-funding";
 
 export interface AgentIdentityRoute {
   bay_id: string;
@@ -47,6 +48,9 @@ export interface InterBayAgentIdentityApi {
     opts: AgentIdentityRunRequest,
   ): Promise<ActiveAgentIdentityRun>;
   register(opts: AgentIdentityThreadRequest): Promise<AgentIdentity>;
+  setNextTurnFunding(
+    opts: AgentIdentityThreadRequest & { funding: AgentTurnFunding },
+  ): Promise<{ recorded: boolean }>;
   startFreshConversation(
     opts: AgentIdentityLookupRequest & { expected_thread_id: string },
   ): Promise<AgentIdentity>;
