@@ -966,6 +966,13 @@ describe("footer page links in the initial HTML", () => {
           "Resources footer links",
           "Company footer links",
         ]);
+        expect(
+          [
+            ...footer!.matchAll(
+              /<nav [^>]*><p><strong>([^<]*)<\/strong><\/p><ul>/g,
+            ),
+          ].map(([, title]) => title),
+        ).toEqual(["Platform", "Resources", "Company"]);
         expect(navLinks(footer!, "Platform")).toEqual(PLATFORM);
         expect(navLinks(footer!, "Resources")).toEqual(RESOURCES);
         expect(navLinks(footer!, "Company")).toEqual(COMPANY);

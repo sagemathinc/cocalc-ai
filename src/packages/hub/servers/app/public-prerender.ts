@@ -624,12 +624,16 @@ function renderSupport(route: PublicMetadataRoute, basePath: string): string {
 </main>`;
 }
 
+// Each list shows its column title, as in the React footer, as bold text
+// rather than a heading, so the page's heading outline does not change.
 function renderFooterNav(
   basePath: string,
   title: string,
   links: readonly PublicFooterLink[],
 ): string {
-  return `<nav aria-label="${htmlEscape(`${title} footer links`)}"><ul>${links
+  return `<nav aria-label="${htmlEscape(
+    `${title} footer links`,
+  )}"><p><strong>${htmlEscape(title)}</strong></p><ul>${links
     .map(({ label, path }) => `<li>${publicLink(basePath, path, label)}</li>`)
     .join("")}</ul></nav>`;
 }
