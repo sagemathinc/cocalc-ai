@@ -62,15 +62,6 @@ const SITES: { config: PublicConfig; name: string; onCocalcAi: boolean }[] = [
   },
 ];
 
-const JUPYTER_COCALC_AI =
-  "Open a hosted notebook on CoCalc.ai and bring your team into the same workspace.";
-const JUPYTER_ELSEWHERE =
-  "Open a notebook and bring your team into the same workspace.";
-const HOME_NEXT_STEP_COCALC_AI =
-  "Start with CoCalc.ai, review the product paths, or open support and sales options when licensing, procurement, support, or private deployment are part of the decision.";
-const HOME_NEXT_STEP_ELSEWHERE =
-  "Review the product paths, or open support and sales options when licensing, procurement, support, or private deployment are part of the decision.";
-
 beforeAll(() => {
   Object.defineProperty(window, "matchMedia", {
     writable: true,
@@ -86,6 +77,15 @@ beforeAll(() => {
     }),
   });
 });
+
+// Whether text in `scope`, apart from its links, names CoCalc.ai. The sign-up
+// labels are checked exactly; the prose around them is not, so a routine copy
+// edit needs no test change.
+function namesCocalcAi(scope: HTMLElement): boolean {
+  return within(scope)
+    .queryAllByText(/CoCalc\.ai/)
+    .some((element) => element.closest("a") == null);
+}
 
 function expectSignUpLinks(
   container: HTMLElement,
@@ -119,18 +119,17 @@ describe.each(SITES)("sign-up copy on $name", ({ config, onCocalcAi }) => {
   });
 
   it("names CoCalc.ai in the Jupyter page's final action only on cocalc.ai", () => {
-    render(
+    const { container } = render(
       <PublicFeaturesApp
         config={config}
         initialRoute={{ slug: "jupyter-notebook", view: "detail" }}
       />,
     );
-    expect(
-      screen.getByText(onCocalcAi ? JUPYTER_COCALC_AI : JUPYTER_ELSEWHERE),
-    ).not.toBeNull();
-    expect(
-      screen.queryByText(onCocalcAi ? JUPYTER_ELSEWHERE : JUPYTER_COCALC_AI),
-    ).toBeNull();
+    const action = container.querySelector<HTMLElement>(
+      ".cocalc-feature-final-panel",
+    );
+    expect(action).not.toBeNull();
+    expect(namesCocalcAi(action!)).toBe(onCocalcAi);
   });
 
   it("labels the Home hero and next step for the site", () => {
@@ -139,11 +138,7 @@ describe.each(SITES)("sign-up copy on $name", ({ config, onCocalcAi }) => {
     expectSignUpLinks(hero, label, "/auth/sign-up", 1);
     const next = screen.getByRole("region", { name: "Next step" });
     expectSignUpLinks(next, label, "/auth/sign-up", 1);
-    expect(
-      within(next).getByText(
-        onCocalcAi ? HOME_NEXT_STEP_COCALC_AI : HOME_NEXT_STEP_ELSEWHERE,
-      ),
-    ).not.toBeNull();
+    expect(namesCocalcAi(next)).toBe(onCocalcAi);
     if (!onCocalcAi) {
       expect(
         screen.queryByRole("link", { name: COCALC_AI_SIGN_UP_LABEL }),
@@ -183,7 +178,9 @@ describe("sign-up copy before the configuration arrives", () => {
       "/auth/sign-up",
       1,
     );
-    expect(screen.getByText(HOME_NEXT_STEP_ELSEWHERE)).not.toBeNull();
+    expect(
+      namesCocalcAi(screen.getByRole("region", { name: "Next step" })),
+    ).toBe(false);
   });
 
   it("keeps showing projects to signed-in visitors on every site", () => {
