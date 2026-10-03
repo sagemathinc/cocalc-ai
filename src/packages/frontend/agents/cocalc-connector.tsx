@@ -35,6 +35,8 @@ export function CocalcConnector({
   renderTrigger?: (state: {
     config: CocalcConnectorConfig | null;
     onOpen: () => void;
+    loaded: boolean;
+    loadError: string;
   }) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -44,6 +46,8 @@ export function CocalcConnector({
   const [confirmRemove, setConfirmRemove] = useState(false);
   const removed = useRef(false);
   const [error, setError] = useState("");
+  // Loading failures only, so a status line never reports a failed save.
+  const [loadError, setLoadError] = useState("");
   const [config, setConfig] = useState<CocalcConnectorConfig | null>(null);
   const [scope, setScope] = useState<ApiKeyScope>(EMPTY_API_KEY_SCOPE);
   const [enabled, setEnabled] = useState(false);
@@ -57,6 +61,7 @@ export function CocalcConnector({
     setLoading(true);
     setLoaded(false);
     setError("");
+    setLoadError("");
     void personalAgentApi()
       .getCocalcConnectorConfig({
         agent_id: agent.endpoint.agent_id,
@@ -76,7 +81,9 @@ export function CocalcConnector({
         setLoaded(true);
       })
       .catch((err) => {
-        if (!cancelled) setError(`${err}`);
+        if (cancelled) return;
+        setError(`${err}`);
+        setLoadError(`${err}`);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -148,7 +155,7 @@ export function CocalcConnector({
   return (
     <>
       {renderTrigger ? (
-        renderTrigger({ config, onOpen })
+        renderTrigger({ config, onOpen, loaded, loadError })
       ) : (
         <Button
           aria-label={composer ? "CoCalc connector" : "CoCalc access"}
