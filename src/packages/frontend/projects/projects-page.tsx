@@ -866,6 +866,7 @@ export const ProjectsPage: React.FC = () => {
                           rootfsImagesLoading={rootfsImagesLoading}
                           selectedProjectIds={selectedProjectIds}
                           onSelectedProjectIdsChange={setSelectedProjectIds}
+                          scrollParent={projectListElement}
                         />
                       )}
                     </CocalcErrorBoundary>

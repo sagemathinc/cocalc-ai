@@ -135,6 +135,10 @@ export function ProjectsCollection({
   onSelectedProjectIdsChange: (ids: string[]) => void;
   view: CollectionView;
   onViewChange: (view: CollectionView) => void;
+  // The scrolling element the cards are virtualized in. null until it mounts:
+  // nothing is rendered then, since rendering every card unvirtualized is slow
+  // with thousands of projects (an instructor of a large course). Undefined
+  // renders every card.
   scrollParent?: HTMLElement | null;
 }) {
   const intl = useIntl();
@@ -348,7 +352,7 @@ export function ProjectsCollection({
         <Typography.Paragraph type="secondary">
           No matching projects.
         </Typography.Paragraph>
-      ) : scrollParent ? (
+      ) : scrollParent === null ? null : scrollParent ? (
         <VirtualCollectionContext.Provider
           value={{ scrollParent, loadMore: () => {} }}
         >
