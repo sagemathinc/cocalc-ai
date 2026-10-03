@@ -213,7 +213,11 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       def("frontend/agents/organization-controls.tsx", "> New Agent </Button>"),
       ren(WORKSPACE_PAGE, "<AgentOrganizationControls"),
     ],
-    usedIn: [bold("ai", "New Agent")],
+    usedIn: [
+      bold("ai", "New Agent"),
+      bold("claude-code", "New Agent"),
+      { file: entries("ai"), text: "Choose New Agent" },
+    ],
   },
   {
     id: "agents.sidebar.expand",
