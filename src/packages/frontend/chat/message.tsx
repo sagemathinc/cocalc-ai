@@ -2815,6 +2815,8 @@ export default function Message({
     return (
       <div>
         <ChatInput
+          projectId={project_id}
+          path={path}
           fontSize={font_size}
           autoFocus={autoFocusEdit}
           cacheId={`${path}${project_id}${date}`}
@@ -2950,6 +2952,8 @@ export default function Message({
     return (
       <div style={{ marginLeft: mode === "standalone" ? "30px" : "0" }}>
         <ChatInput
+          projectId={project_id}
+          path={path}
           fontSize={font_size}
           autoFocus={autoFocusReply}
           moveCursorToEndOfLine={moveCursorToEndOfLine}

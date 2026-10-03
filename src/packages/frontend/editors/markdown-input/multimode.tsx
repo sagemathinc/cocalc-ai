@@ -485,6 +485,8 @@ export default function MultiMarkdownInput({
         ) : undefined}
         {mode === "editor" ? (
           <SlateRichTextAdapter
+            project_id={project_id}
+            path={path}
             mergeRemoteValues={mergeRemoteValues}
             getRemoteValue={getRemoteValue}
             localHistoryCacheId={
