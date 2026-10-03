@@ -16,10 +16,10 @@ feature-by-feature comparison, including known messaging limitations.
 
 ## Start a conversation
 
-1. Choose **New Agent** under **Agents** in the sidebar, and select a project.
-   If the form asks **What would you like to work on?**, it has no runtime
-   choice and starts a Codex agent; once that agent is created, choose
-   **New Agent** again for Claude Code.
+1. Choose **New Agent** in the sidebar's **Agents** section (expand it if it is
+   collapsed), and select a project. If the form asks **What would you like to
+   work on?**, it has no runtime choice and starts a Codex agent; once that
+   agent is created, choose **New Agent** again for Claude Code.
 2. Select **Claude** and open its settings icon to configure Claude Code.
 3. Choose a credential in settings: a project API-key secret, an account API key, or a
    connected Claude Pro/Max subscription, where offered by the site.
