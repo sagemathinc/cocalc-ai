@@ -291,8 +291,8 @@ describe("bootstrap-host promoted artifact defaults", () => {
       os: "linux",
       arch: "amd64",
       sha256:
-        "e19b876ca7a56b39f5f6fa24537df57319908fa44c5a99280948f62a8138f7d3",
-      url: `${softwareBaseUrl}/harnesses/claude-code/0.81.1/e19b876ca7a56b39f5f6fa24537df57319908fa44c5a99280948f62a8138f7d3/harnesses-linux-amd64.tar.xz`,
+        "aa275272bf79e32ad333790679535d4d45ea2cd32d08a271865e64ed0b6361d1",
+      url: `${softwareBaseUrl}/harnesses/claude-code/0.81.1/aa275272bf79e32ad333790679535d4d45ea2cd32d08a271865e64ed0b6361d1/harnesses-linux-amd64.tar.xz`,
     });
     // Older bootstrap runners ignore the new spec; do not enable ACP in them.
     expect(scripts.envLines).not.toContain("COCALC_ACP_HARNESSES=1");
@@ -312,7 +312,7 @@ describe("bootstrap-host promoted artifact defaults", () => {
       os: "linux",
       arch: "arm64",
       sha256:
-        "d39ceeceb2501c65502f49c24662c15076361a59c717f8ccfa6d7a99e26c1dac",
+        "e5a52385ff5e95a9c9eeeac8f9875e773a66622af64ccb3fb00a8f5b1708ff88",
     });
     expect(arm64.url).toBe(
       `${softwareBaseUrl}/harnesses/claude-code/0.81.1/${arm64.sha256}/harnesses-linux-arm64.tar.xz`,

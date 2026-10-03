@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 
 import { redux, project_redux_name } from "@cocalc/frontend/app-framework";
-import { set_url } from "@cocalc/frontend/history";
+import { set_url, rememberProjectsView } from "@cocalc/frontend/history";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { PageActions } from "./actions";
 import { init_store } from "./store";
@@ -40,6 +40,7 @@ jest.mock("@cocalc/frontend/browser", () => ({ set_window_title: jest.fn() }));
 jest.mock("@cocalc/frontend/history", () => ({
   set_url: jest.fn(),
   update_params: jest.fn(),
+  rememberProjectsView: jest.fn(),
 }));
 jest.mock("@cocalc/frontend/i18n", () => ({
   labels: {
@@ -68,6 +69,10 @@ jest.mock("@cocalc/frontend/app-framework/project-runtime", () => ({
 jest.mock("@cocalc/frontend/project/reduced-runtime", () => ({
   hasReducedProjectState: () => false,
   getReducedProjectState: () => undefined,
+}));
+
+jest.mock("@cocalc/frontend/agents/use-retained-workspaces", () => ({
+  defaultRetainedWorkspaceLimit: () => 2,
 }));
 
 const A = "00000000-0000-4000-8000-000000000001";
@@ -230,7 +235,7 @@ describe("project context across global navigation", () => {
     expect(page().get("active_agent_id")).toBe("agent-123");
     expect(page().get("active_agent_name")).toBe("reviewer");
     expect(projectActions[B].hide).toHaveBeenCalledTimes(1);
-    expect(set_url).toHaveBeenLastCalledWith(`/library/${A}/entry`, "");
+    expect(set_url).toHaveBeenLastCalledWith(`/artifacts/${A}/entry`, "");
   });
 
   it.each([false, true])(
@@ -246,7 +251,7 @@ describe("project context across global navigation", () => {
       await actions.set_active_tab("account");
       await actions.set_active_tab("agents");
       expect(set_url).toHaveBeenLastCalledWith(
-        detail ? `/library/${A}/${B}` : "/library",
+        detail ? `/artifacts/${A}/${B}` : "/artifacts",
         "",
       );
       expect(page().get("active_agent_id")).toBe("agent-123");
@@ -257,14 +262,14 @@ describe("project context across global navigation", () => {
     },
   );
 
-  it.each(["library", `library/${A}/${B}`, "agents/reviewer"])(
+  it.each(["artifacts", `artifacts/${A}/${B}`, "agents/reviewer"])(
     "initializes scalar route state on reload of %s",
     (target) => {
       jest.requireMock("@cocalc/frontend/client/handle-target").default =
         target;
       redux.removeStore("page");
       init_store();
-      const library = target.startsWith("library");
+      const library = target.startsWith("artifacts");
       expect(page().get("active_top_tab")).toBe("agents");
       expect(page().get("library_open")).toBe(library);
       expect(page().get("library_project_id")).toBe(
@@ -401,5 +406,27 @@ describe("project context across global navigation", () => {
     );
     expect(page().get("active_top_tab")).toBe(A);
     expect(page().get("last_project_tab")).toBe(A);
+  });
+});
+
+test("captures the Projects workspace before switching to the Library", async () => {
+  actions.setState({ active_top_tab: A, library_open: true });
+  let capturedTab: unknown;
+  jest.mocked(rememberProjectsView).mockImplementationOnce(() => {
+    capturedTab = redux.getStore("page").get("active_top_tab");
+  });
+  await actions.set_active_tab("agents");
+  expect(capturedTab).toBe(A);
+  expect(redux.getStore("page").get("active_top_tab")).toBe("agents");
+});
+
+describe("only recent projects stay open", () => {
+  it("releases the least recently visited project like a closed tab", async () => {
+    await actions.set_active_tab(A);
+    await actions.set_active_tab(B);
+    redux.getActions("projects").setState({ open_projects: [A, B, C] });
+    await actions.set_active_tab(C);
+    expect(projects().get("open_projects").toJS()).toEqual([B, C]);
+    expect(page().get("active_top_tab")).toBe(C);
   });
 });

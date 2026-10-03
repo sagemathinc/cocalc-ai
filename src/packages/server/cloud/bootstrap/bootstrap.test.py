@@ -7172,5 +7172,6 @@ class StarInstallScriptTest(unittest.TestCase):
         self.assertIn("last_seen >= :'restart_at'::timestamptz", script)
 
 
+
 if __name__ == "__main__":
     unittest.main()

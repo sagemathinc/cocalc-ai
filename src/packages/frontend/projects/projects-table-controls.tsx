@@ -45,6 +45,8 @@ interface Props {
   projectListChanged?: boolean;
   projectListChangedCount?: number;
   onRefreshProjectList?: () => void;
+  // The filter input; wide screens use the page's search box instead.
+  showSearch?: boolean;
 }
 
 export function ProjectsTableControls({
@@ -55,6 +57,7 @@ export function ProjectsTableControls({
   projectListChanged = false,
   projectListChangedCount = 0,
   onRefreshProjectList,
+  showSearch = true,
 }: Props) {
   const intl = useIntl();
   const actions = useActions("projects");
@@ -134,22 +137,29 @@ export function ProjectsTableControls({
     <Space style={CONTROLS_STYLE} orientation="horizontal">
       {/* Left section: Search and Hashtags */}
       <Space wrap ref={searchRef}>
-        <Input.Search
-          placeholder={intl.formatMessage({
-            id: "projects.table-controls.search.placeholder",
-            defaultMessage: "Filter projects...",
-          })}
-          autoFocus
-          value={searchDraft}
-          onChange={handleSearchChange}
-          onPressEnter={handlePressEnter}
-          style={{ width: IS_MOBILE ? 125 : 250 }}
-          allowClear
-        />
-        {searchUpdating && (
-          <Typography.Text type="secondary" style={{ whiteSpace: "nowrap" }}>
-            Updating...
-          </Typography.Text>
+        {showSearch && (
+          <>
+            <Input.Search
+              placeholder={intl.formatMessage({
+                id: "projects.table-controls.search.placeholder",
+                defaultMessage: "Filter projects...",
+              })}
+              autoFocus
+              value={searchDraft}
+              onChange={handleSearchChange}
+              onPressEnter={handlePressEnter}
+              style={{ width: IS_MOBILE ? 125 : 250 }}
+              allowClear
+            />
+            {searchUpdating && (
+              <Typography.Text
+                type="secondary"
+                style={{ whiteSpace: "nowrap" }}
+              >
+                Updating...
+              </Typography.Text>
+            )}
+          </>
         )}
 
         <Select

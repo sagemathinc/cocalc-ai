@@ -2162,8 +2162,12 @@ export function ChatRoomThreadPanel({
   const threadImagePreview = showThreadImagePreview
     ? compactThreadImage?.trim()
     : undefined;
+  // Controls rendered elsewhere (portal) need no space above the log.
   const reserveToolbarSpace =
-    !embeddingOptions.agentWorkspace && !mobile && showTopControls;
+    !embeddingOptions.agentWorkspace &&
+    !mobile &&
+    showTopControls &&
+    topRightControlsPortal === undefined;
   const runningStatusTop = reserveToolbarSpace ? 52 : 8;
   const contentTopInset =
     (reserveToolbarSpace ? 44 : 0) + (selectedRunningCodexMessage ? 56 : 0);

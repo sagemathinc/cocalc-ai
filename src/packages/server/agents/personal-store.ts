@@ -152,6 +152,7 @@ export class PersonalAgentStore {
         const identity = await this.endpoint(account, named.endpoint);
         named.path = identity.path;
         named.thread_id = identity.thread_id;
+        if (identity.appearance) named.appearance = identity.appearance;
       } catch {
         const projectId = named.endpoint.project_id;
         if (!deletedProjects.has(projectId))

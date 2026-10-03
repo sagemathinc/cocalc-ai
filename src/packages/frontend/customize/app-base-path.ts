@@ -47,6 +47,20 @@ function inferLocaleAliasBasePath(pathname: string): string | undefined {
   }
 }
 
+// Where a route marker such as "/u" starts a whole path segment: "/u/..."
+// or "/u", but not the "/u" inside "/user".
+function routeMarkerIndex(pathname: string, marker: string): number {
+  let index = pathname.indexOf(marker);
+  while (index !== -1) {
+    const next = pathname[index + marker.length];
+    if (next == null || next === "/" || next === "?" || next === "#") {
+      return index;
+    }
+    index = pathname.indexOf(marker, index + 1);
+  }
+  return -1;
+}
+
 export function inferAppBasePath(pathname?: string): string {
   const normalizedPathname = `${pathname ?? ""}`.trim();
   if (!normalizedPathname || normalizedPathname === "/") {
@@ -60,11 +74,15 @@ export function inferAppBasePath(pathname?: string): string {
     return staticIndex === 0 ? "/" : normalizedPathname.slice(0, staticIndex);
   }
 
+  // The base path ends where the first app route segment starts (e.g. in
+  // /u/alice/agents/x that is /u, not /agents).
+  let first = -1;
   for (const marker of APP_BASE_PATH_ROUTE_MARKERS) {
-    const index = normalizedPathname.indexOf(marker);
-    if (index !== -1) {
-      return index === 0 ? "/" : normalizedPathname.slice(0, index);
-    }
+    const index = routeMarkerIndex(normalizedPathname, marker);
+    if (index !== -1 && (first === -1 || index < first)) first = index;
+  }
+  if (first !== -1) {
+    return first === 0 ? "/" : normalizedPathname.slice(0, first);
   }
 
   const langBasePath = inferLangBasePath(normalizedPathname);

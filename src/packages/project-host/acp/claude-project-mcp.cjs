@@ -6,7 +6,6 @@
 /* Trusted controller-side MCP transport. Project effects go only through the scoped socket. */
 const fs = require("node:fs");
 const net = require("node:net");
-const readline = require("node:readline");
 const root = process.env.COCALC_PROJECT_TOOL_DIR || "/run/cocalc/agent-tools";
 const token = fs.readFileSync(root + "/token", "utf8");
 const tools = [
@@ -89,6 +88,159 @@ const tools = [
     },
   },
   {
+    name: "project_read_image",
+    description:
+      "View an image file saved in the CoCalc project (PNG, JPEG, GIF or WebP, up to 800 KB), such as a screenshot, plot or rendered page, returned as an image you can see. Use it to check visual results instead of describing or measuring them indirectly. For SVG or PDF, render a PNG first; for large images, save a smaller or cropped copy.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description:
+            "Image path in the project; relative paths start in the turn's project working directory",
+        },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "project_read_file",
+    description:
+      "Read a text file in the CoCalc project. Returns lines prefixed with their line numbers and a tab (like cat -n), plus total_lines. Reads up to 2000 lines from offset by default and at most 256 KB; use offset and limit to page through larger files. Prefer this over sed/cat through project_exec. Binary files are refused; use project_read_image for images.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description:
+            "File path in the project; relative paths start in the turn's project working directory",
+        },
+        offset: {
+          type: "integer",
+          minimum: 1,
+          description: "First line to return (1-based); default 1",
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          description: "Maximum number of lines to return; default 2000",
+        },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "project_edit_file",
+    description:
+      "Edit a text file in the CoCalc project by exact string replacement. old_string must match the file exactly, including indentation, without the line-number prefixes from project_read_file, and must occur exactly once unless replace_all is true. The file is replaced atomically and the edit is refused if the file changed during it. Files up to 1 MB.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description:
+            "File path in the project; relative paths start in the turn's project working directory",
+        },
+        old_string: { type: "string", description: "Exact text to replace" },
+        new_string: { type: "string", description: "Replacement text" },
+        replace_all: {
+          type: "boolean",
+          description: "Replace every occurrence instead of requiring one",
+        },
+      },
+      required: ["path", "old_string", "new_string"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "project_write_file",
+    description:
+      "Create or overwrite a text file in the CoCalc project with the given content (up to 1 MB), atomically and keeping an existing file's permissions. Prefer project_edit_file for changes to existing files. The parent directory must exist unless create_dirs is true.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description:
+            "File path in the project; relative paths start in the turn's project working directory",
+        },
+        content: { type: "string", description: "Complete new file content" },
+        create_dirs: {
+          type: "boolean",
+          description: "Create missing parent directories",
+        },
+      },
+      required: ["path", "content"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "memory_list",
+    description:
+      "List your persistent memory notes (name, one-line description, last update). Memory belongs to the account this turn runs as and follows it across projects and sessions. It works only after that account's owner turns it on in Settings > AI; otherwise these tools return an error.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "memory_read",
+    description: "Read the full text of one memory note.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          pattern: "^[a-z0-9][a-z0-9-]{0,63}$",
+          description: "Short kebab-case note name, such as deploy-lite4b",
+        },
+      },
+      required: ["name"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "memory_write",
+    description:
+      "Create or replace one memory note: a single fact worth knowing in future sessions (user preferences and corrections, project conventions, how to build/test/deploy, lessons from mistakes). Reuse an existing name to update a note rather than adding a near-duplicate. Never store secrets or credentials. Body up to 8000 characters.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          pattern: "^[a-z0-9][a-z0-9-]{0,63}$",
+          description: "Short kebab-case note name, such as deploy-lite4b",
+        },
+        description: {
+          type: "string",
+          description: "One line (at most 200 characters) used in the index",
+        },
+        body: { type: "string", description: "The note itself" },
+      },
+      required: ["name", "description", "body"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "memory_delete",
+    description: "Delete a memory note that is wrong or no longer useful.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          pattern: "^[a-z0-9][a-z0-9-]{0,63}$",
+          description: "Short kebab-case note name, such as deploy-lite4b",
+        },
+      },
+      required: ["name"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "request_user_input_async",
     description:
       "Ask the user one to three short questions while continuing useful work. Returns immediately after saving a question card; the reply arrives as a user message during this turn, or a continuation if the turn has finished. Do not poll or stop unrelated work waiting for a reply. Use only for missing information, preferences, or clarification, never authentication, secrets, or permission escalation. Use a unique request_id and reuse it only when retrying the identical request.",
@@ -157,6 +309,14 @@ function execute(tool, args) {
     });
   });
 }
+/** Writes one JSON-RPC message, escaping U+2028/U+2029 for line readers. */
+function send(message) {
+  process.stdout.write(
+    JSON.stringify(message).replace(/[\u2028\u2029]/g, (c) =>
+      c === "\u2028" ? "\\u2028" : "\\u2029",
+    ) + "\n",
+  );
+}
 /** @param {any} message */
 async function handle(message) {
   if (!message || typeof message !== "object" || message.id === undefined)
@@ -192,34 +352,111 @@ async function handle(message) {
           ? !canceledSuccessfully &&
             ["failed", "canceled", "timed_out"].includes(output.status)
           : "code" in output && output.code !== 0);
-      result = {
-        content: [{ type: "text", text: JSON.stringify(output) }],
-        isError,
-      };
+      const image = output.image;
+      result =
+        message.params.name === "project_read_file" &&
+        typeof output.content === "string"
+          ? {
+              content: [
+                {
+                  type: "text",
+                  text:
+                    `${output.path}: lines ${output.start_line}-${output.end_line} of ${output.total_lines}` +
+                    (output.truncated
+                      ? " (truncated at 256 KB; continue with offset)"
+                      : "") +
+                    "\n" +
+                    output.content,
+                },
+              ],
+              isError: false,
+            }
+          : image && typeof image.data === "string"
+            ? {
+                content: [
+                  { type: "image", data: image.data, mimeType: image.mimeType },
+                  {
+                    type: "text",
+                    text: JSON.stringify({
+                      path: output.path,
+                      bytes: output.bytes,
+                      mimeType: image.mimeType,
+                    }),
+                  },
+                ],
+                isError: false,
+              }
+            : {
+                content: [{ type: "text", text: JSON.stringify(output) }],
+                isError,
+              };
     } else {
       throw new Error("Unsupported project tool method");
     }
-    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n");
+    send({ jsonrpc: "2.0", id, result });
   } catch (error) {
-    process.stdout.write(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        id,
-        error: {
-          code: -32000,
-          message: error.message || "Project tool failed",
-        },
-      }) + "\n",
-    );
+    send({
+      jsonrpc: "2.0",
+      id,
+      error: {
+        code: -32000,
+        message: error.message || "Project tool failed",
+      },
+    });
   }
 }
-const input = readline.createInterface({ input: process.stdin });
-input.on("line", (line) => {
-  if (line.length > 65536) return;
+// Requests are newline-delimited JSON. Split only on "\n": readline would also
+// split on U+2028/U+2029, which JSON.stringify leaves raw inside strings, and
+// the resulting fragments used to be dropped silently, hanging the tool call.
+// Large enough for a 1 MB project_write_file request (JSON-escaped).
+const MAX_REQUEST_LENGTH = 2600000;
+function requestId(line) {
+  const match = line.match(/"id"\s*:\s*("(?:[^"\\]|\\.)*"|-?\d+)/);
+  if (!match) return undefined;
   try {
-    void handle(JSON.parse(line));
+    return JSON.parse(match[1]);
   } catch {
-    /* Ignore malformed notifications. */
+    return undefined;
   }
+}
+function reject(line, code, message) {
+  const id = requestId(line);
+  if (id === undefined) {
+    process.stderr.write(`cocalc-project-tools: ${message}\n`);
+    return;
+  }
+  send({ jsonrpc: "2.0", id, error: { code, message } });
+}
+function onLine(raw) {
+  const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+  if (!line.trim()) return;
+  if (line.length > MAX_REQUEST_LENGTH)
+    return reject(line, -32600, "Project tool request is too large");
+  let message;
+  try {
+    message = JSON.parse(line);
+  } catch {
+    return reject(line, -32700, "Project tool request was not valid JSON");
+  }
+  void handle(message);
+}
+let pending = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  pending += chunk;
+  let index;
+  while ((index = pending.indexOf("\n")) >= 0) {
+    const line = pending.slice(0, index);
+    pending = pending.slice(index + 1);
+    onLine(line);
+  }
+  if (pending.length > MAX_REQUEST_LENGTH * 2) {
+    reject(pending, -32600, "Project tool request is too large");
+    pending = "";
+  }
+});
+process.stdin.on("end", () => {
+  if (pending) onLine(pending);
+  pending = "";
 });
 module.exports = {};

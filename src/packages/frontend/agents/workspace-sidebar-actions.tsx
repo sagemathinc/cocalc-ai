@@ -1,32 +1,71 @@
-import { Button } from "antd";
-import { Icon } from "@cocalc/frontend/components/icon";
 import type { ReactNode } from "react";
+import { useState } from "react";
+import { APP_ICON } from "@cocalc/frontend/art";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { AgentsSidebarToggle } from "./workspace-sidebar-toggle";
 
 export function WorkspaceSidebarActions({
-  onProjects,
-  onNewAgent,
+  firstNavigationItem,
   children,
   footer,
+  headerActions,
   onHideSidebar,
+  fillHeight = false,
 }: {
-  onProjects?: () => void;
-  onNewAgent: () => void;
+  firstNavigationItem: ReactNode;
+  // The children divide the height between themselves and scroll on their
+  // own (collapsible sidebar sections) instead of scrolling as one list.
+  fillHeight?: boolean;
   children?: ReactNode;
   footer?: ReactNode;
+  // Shown beside the hide-sidebar control (e.g. notifications).
+  headerActions?: ReactNode;
   onHideSidebar?: () => void;
 }) {
+  const [brandFocused, setBrandFocused] = useState(false);
   return (
     <>
-      <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center" }}>
-        <Button
-          type="text"
-          icon={<Icon name="plus" />}
-          onClick={onNewAgent}
-          style={{ justifyContent: "flex-start", flex: 1 }}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          flex: "0 0 auto",
+          padding: "8px 4px 8px 12px",
+          gap: 8,
+        }}
+      >
+        <a
+          href={appBasePath || "/"}
+          aria-label="CoCalc home"
+          onFocus={() => setBrandFocused(true)}
+          onBlur={() => setBrandFocused(false)}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            flex: 1,
+            minWidth: 0,
+            color: UI_COLORS.text,
+            fontSize: 22,
+            fontWeight: 600,
+            textDecoration: "none",
+            borderRadius: 4,
+            outline: brandFocused ? `2px solid ${UI_COLORS.focus}` : undefined,
+            outlineOffset: 2,
+          }}
         >
-          New Agent
-        </Button>
+          {/* Shares its page-transition name with the landing page's logo. */}
+          <img
+            className="cocalc-vt-logo"
+            src={APP_ICON}
+            alt=""
+            width={32}
+            height={32}
+          />
+          CoCalc
+        </a>
+        {headerActions}
         {onHideSidebar && (
           <AgentsSidebarToggle hidden={false} onToggle={onHideSidebar} />
         )}
@@ -39,9 +78,9 @@ export function WorkspaceSidebarActions({
           flex: "1 1 0",
           minHeight: 0,
           minWidth: 0,
-          overflowY: "auto",
+          overflowY: fillHeight ? "hidden" : "auto",
           overflowX: "hidden",
-          marginTop: 10,
+          ...(fillHeight ? { display: "flex", flexDirection: "column" } : {}),
         }}
       >
         <div
@@ -49,19 +88,10 @@ export function WorkspaceSidebarActions({
             display: "flex",
             flexDirection: "column",
             gap: 10,
+            ...(fillHeight ? { flex: "1 1 0", minHeight: 0 } : {}),
           }}
         >
-          {onProjects && (
-            <Button
-              type="text"
-              block
-              icon={<Icon name="folder-open" />}
-              onClick={onProjects}
-              style={{ justifyContent: "flex-start" }}
-            >
-              Projects
-            </Button>
-          )}
+          {firstNavigationItem}
           {children}
         </div>
       </div>

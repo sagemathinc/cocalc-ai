@@ -2907,3 +2907,38 @@ test("an arbitrary ACP harness never begins a CoCalc connector turn", async (t) 
   await agent.evaluate(request);
   assert.deepEqual(calls, []);
 });
+
+test("a token-authenticated controller is admitted without a reported plan", async (t) => {
+  const client = await start(
+    t,
+    ["--claude-adapter", "--none-status"],
+    undefined,
+    [],
+    undefined,
+    undefined,
+    { subscriptionAuth: "oauth-token" },
+    "claude-subscription-controller",
+  );
+  await client.open();
+  const events = [];
+  await client.prompt("hello", async (event) => events.push(event));
+  assert.ok(events.some((event) => event.type === "message"));
+});
+
+test("a token-authenticated controller still refuses API-key billing", async (t) => {
+  const client = await start(
+    t,
+    ["--claude-adapter", "--api-key-status"],
+    undefined,
+    [],
+    undefined,
+    undefined,
+    { subscriptionAuth: "oauth-token" },
+    "claude-subscription-controller",
+  );
+  await client.open();
+  await assert.rejects(
+    client.prompt("hello", async () => {}),
+    /different billing method/,
+  );
+});
