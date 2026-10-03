@@ -535,9 +535,14 @@ function crawlerText(html: string): string {
     .trim();
 }
 
+// Keeps each guard's own flags, as the React tests' toMatch() does, and adds
+// only the "g" that matchAll() needs.
 function guardHits(label: string, pattern: RegExp, value: string): string[] {
+  const flags = pattern.flags.includes("g")
+    ? pattern.flags
+    : `${pattern.flags}g`;
   return Array.from(
-    value.matchAll(new RegExp(pattern.source, "gi")),
+    value.matchAll(new RegExp(pattern.source, flags)),
     ([match]) => `${label}: "${match}"`,
   );
 }
@@ -581,10 +586,18 @@ describe("crawler fallback copy guards", () => {
           sections.add(route.section);
           const text = crawlerText(html);
           const { description, title } = getPublicRouteMetadata(route, config);
-          // Internal terms: title, description and H1 only, like the React
-          // metadata checks. Body text may use rendered labels, such as the
-          // pricing heading "Dedicated project hosts".
-          const h1 = crawlerText(/<h1>([\s\S]*?)<\/h1>/.exec(html)?.[1] ?? "");
+          const h1 = crawlerText(
+            /<h1\b[^>]*>([\s\S]*?)<\/h1>/.exec(html)?.[1] ?? "",
+          );
+          if (h1 === "") violations.push(`${path} has no H1 text`);
+          // Internal terms: the full text on Home, like the React Home tests;
+          // elsewhere title, description and H1, like the React metadata
+          // checks, so body text may use rendered labels, such as the pricing
+          // heading "Dedicated project hosts".
+          const internalTermScope =
+            route.section === "home"
+              ? [title, description, text]
+              : [title, description, h1];
           violations.push(
             ...[
               ...guardHits("overpromise", OVERPROMISE_TERMS, text),
@@ -600,16 +613,20 @@ describe("crawler fallback copy guards", () => {
               ...guardHits(
                 "internal term",
                 INTERNAL_IMPLEMENTATION_TERMS,
-                [title, description, h1].join("\n"),
+                internalTermScope.join("\n"),
               ),
             ].map((hit) => `${path} ${hit}`),
           );
         }
       }
       expect(violations).toEqual([]);
+      // Every section that has a fallback, so one that leaves the sitemap
+      // cannot drop out of the check unnoticed.
       for (const section of [
         "home",
+        "about",
         "features",
+        "guides",
         "pricing",
         "products",
         "support",

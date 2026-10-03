@@ -8,8 +8,8 @@
 // public-prerender.ts against these same lists.
 
 // Internal/implementation language that must never leak into public copy.
-// The hub test checks title, description and H1; the React tests check
-// metadata and, on Home, the full text.
+// The React tests check metadata and, on Home, the full text. The hub test
+// checks title, description and H1 and, on Home, the full text.
 export const INTERNAL_IMPLEMENTATION_TERMS =
   /serious\s+technical\s+work|project hosts|backend state|logs stay scoped|RootFS|multi-bay|control plane|postgres|kubernetes|systemd|conat/i;
 
