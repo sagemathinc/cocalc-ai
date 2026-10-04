@@ -12,7 +12,10 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   getPublicMarketingConfig,
   getPublicMarketingSiteName,
+  getPublicSignUpLabel,
+  isCocalcAiLaunchpadSite,
   type PublicConfig,
+  usePublicConfig,
 } from "@cocalc/frontend/public/config";
 import { PublicPage } from "@cocalc/frontend/public/layout/shell";
 import {
@@ -385,6 +388,7 @@ function Hero({
   highlights: readonly string[];
   siteName: string;
 }) {
+  const signUpLabel = getPublicSignUpLabel(usePublicConfig());
   return (
     <section
       aria-label={`${siteName} hero`}
@@ -437,7 +441,7 @@ function Hero({
             size="large"
             type="primary"
           >
-            {authenticated ? "Open projects" : "Start on CoCalc.ai"}
+            {authenticated ? "Open projects" : signUpLabel}
           </Button>
           <Button href={appPath(PUBLIC_HOME_SECONDARY_CTA.href)} size="large">
             {PUBLIC_HOME_SECONDARY_CTA.label}
@@ -720,6 +724,7 @@ function PathSection({
   authenticated: boolean;
   trustHref?: string;
 }) {
+  const config = usePublicConfig();
   return (
     <section
       aria-label="Next step"
@@ -746,9 +751,9 @@ function PathSection({
             Ready to choose how CoCalc fits?
           </Title>
           <Paragraph style={{ fontSize: 17, margin: 0, maxWidth: 760 }}>
-            Start with CoCalc.ai, review the product paths, or open support and
-            sales options when licensing, procurement, support, or private
-            deployment are part of the decision.
+            {isCocalcAiLaunchpadSite(config)
+              ? "Start with CoCalc.ai, review the product paths, or open support and sales options when licensing, procurement, support, or private deployment are part of the decision."
+              : "Review the product paths, or open support and sales options when licensing, procurement, support, or private deployment are part of the decision."}
           </Paragraph>
           {trustHref ? (
             <Paragraph
@@ -775,7 +780,7 @@ function PathSection({
             href={authenticated ? appPath("projects") : appPath("auth/sign-up")}
             type="primary"
           >
-            {authenticated ? "Open projects" : "Start on CoCalc.ai"}
+            {authenticated ? "Open projects" : getPublicSignUpLabel(config)}
           </Button>
           <Button href={appPath("products")}>Review product paths</Button>
           <Button href={appPath("support")}>Review support and sales</Button>

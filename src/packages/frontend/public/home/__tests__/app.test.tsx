@@ -66,6 +66,7 @@ describe("PublicHomeApp", () => {
       <PublicHomeApp
         config={{
           cocalc_product: "launchpad",
+          dns: "cocalc.ai",
           is_launchpad: true,
           site_name: "CoCalc Launchpad",
         }}
