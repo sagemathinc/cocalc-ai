@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { agentWorkingDirectory } from "./agent-working-directory";
 import {
   Alert,
   Button,
@@ -154,11 +155,15 @@ function gitRepoCheckKey(
 async function checkPathIsInGitRepo({
   projectId,
   path,
+  directory,
 }: {
   projectId: string;
   path: string;
+  // Check this directory itself (e.g. the agent's working directory) rather
+  // than the folder containing `path`.
+  directory?: string;
 }): Promise<boolean> {
-  const key = gitRepoCheckKey(projectId, path);
+  const key = gitRepoCheckKey(projectId, directory ? `dir:${directory}` : path);
   if (key == null) {
     return false;
   }
@@ -170,7 +175,7 @@ async function checkPathIsInGitRepo({
   if (inflight != null) {
     return await inflight;
   }
-  const cwd = containingPath(path) || ".";
+  const cwd = directory || containingPath(path) || ".";
   const promise = webapp_client.project_client
     .exec({
       project_id: projectId,
@@ -195,9 +200,11 @@ async function checkPathIsInGitRepo({
 function useShowGitBrowserButton({
   project_id,
   path,
+  directory,
 }: {
   project_id?: string;
   path?: string;
+  directory?: string;
 }): boolean {
   const project = useProjectFromMap(project_id);
   const projectIsRunning = project?.getIn?.(["state", "state"]) === "running";
@@ -209,7 +216,10 @@ function useShowGitBrowserButton({
     if (!projectIsRunning || !project_id || !path) {
       return;
     }
-    const key = gitRepoCheckKey(project_id, path);
+    const key = gitRepoCheckKey(
+      project_id,
+      directory ? `dir:${directory}` : path,
+    );
     const cached = key != null ? gitRepoCheckCache.get(key) : undefined;
     if (cached != null) {
       setShowGitButton(cached);
@@ -219,6 +229,7 @@ function useShowGitBrowserButton({
       const isGitRepo = await checkPathIsInGitRepo({
         projectId: project_id,
         path,
+        directory,
       });
       if (!cancelled) {
         setShowGitButton(isGitRepo);
@@ -227,7 +238,7 @@ function useShowGitBrowserButton({
     return () => {
       cancelled = true;
     };
-  }, [path, project_id, projectIsRunning]);
+  }, [directory, path, project_id, projectIsRunning]);
 
   return showGitButton;
 }
@@ -612,7 +623,6 @@ export function ChatRoomThreadPanel({
     "state",
     "tools_version",
   ]);
-  const showGitBrowserButton = useShowGitBrowserButton({ project_id, path });
   const codexNewChatDefaultsSetting = useAccountOtherSetting(
     OTHER_SETTINGS_CODEX_NEW_CHAT_DEFAULTS,
   );
@@ -781,6 +791,14 @@ export function ChatRoomThreadPanel({
           threadId: selectedThreadId,
         })
       : undefined;
+  // The agent's working directory (Codex or Claude), where its repository is;
+  // agent chat files themselves usually live outside any repository.
+  const threadWorkingDirectory = agentWorkingDirectory(selectedThreadMeta);
+  const showGitBrowserButton = useShowGitBrowserButton({
+    project_id,
+    path,
+    directory: threadWorkingDirectory,
+  });
   const archivedRowsCount = (() => {
     const value = selectedThreadMeta?.archived_chat_rows;
     if (typeof value !== "number" || !Number.isFinite(value)) return 0;
@@ -2359,9 +2377,7 @@ export function ChatRoomThreadPanel({
               fontSize={fontSize}
               project_id={project_id}
               path={path}
-              activityBasePath={
-                selectedThreadMeta?.acp_config?.workingDirectory
-              }
+              activityBasePath={threadWorkingDirectory}
               date={selectedRunningCodexDate}
               logRefs={{
                 store: selectedRunningLogStore,
