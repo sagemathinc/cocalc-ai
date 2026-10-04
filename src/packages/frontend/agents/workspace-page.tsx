@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { setBrowserTabAccent } from "@cocalc/frontend/browser-tab-accent";
 import { explainHiddenSidebarOnce } from "./sidebar-hidden-hint";
 import {
   normalizeAgentName,
@@ -267,6 +268,7 @@ import {
   readAgentThreadAppearance,
   resolveAgentHeaderTheme,
   resolveNamedAgentTheme,
+  themeIdentityColor,
   sameAgentHeaderAppearance,
   type AgentHeaderAppearance,
 } from "./workspace-header-theme";
@@ -2740,6 +2742,19 @@ function AgentWorkspace({
     textColor: headerTextColor,
     title,
   } = resolvedTheme;
+  // The color that marks this thread everywhere: header strip, sidebar row,
+  // browser tab.
+  const identityColor = themeIdentityColor(
+    resolvedTheme,
+    selectedAgent?.endpoint.agent_id ??
+      selectedThread ??
+      agent.endpoint.agent_id,
+  );
+  useEffect(() => {
+    if (!active) return;
+    setBrowserTabAccent(identityColor);
+    return () => setBrowserTabAccent(undefined);
+  }, [active, identityColor]);
   const openAppearanceEditor = () => {
     if (!selectedThread) return;
     const metadata = readAgentThreadAppearance(chatActions, selectedThread);
@@ -2827,8 +2842,8 @@ function AgentWorkspace({
         style={{
           alignItems: "center",
           background: backgroundColor,
-          borderBottom: `2px solid ${primaryColor ?? UI_COLORS.border}`,
-          boxShadow: primaryColor ? `inset 4px 0 0 ${primaryColor}` : undefined,
+          borderBottom: `1px solid ${UI_COLORS.border}`,
+          boxShadow: `inset 0 3px 0 ${identityColor}`,
           color: headerTextColor,
           display: "flex",
           gap: 8,
@@ -3676,10 +3691,17 @@ export function MyAgentsWorkspacePage({
           : creating
             ? "New Agent"
             : selected
-              ? `@${selected.name} - Agents`
+              ? selected.thread_title?.trim() || `@${selected.name}`
               : "Agents",
     );
-  }, [active, contentOpen, libraryOpen, creating, selected?.name]);
+  }, [
+    active,
+    contentOpen,
+    libraryOpen,
+    creating,
+    selected?.name,
+    selected?.thread_title,
+  ]);
   const creatingSourceAgent = agentFirstRunStarted(accountId)
     ? undefined
     : (agents.find(
@@ -4219,7 +4241,7 @@ export function MyAgentsWorkspacePage({
         style={{
           alignItems: "center",
           background: active ? UI_COLORS.selected : "transparent",
-          borderInlineStart: `3px solid ${theme.primaryColor ?? "transparent"}`,
+          borderInlineStart: `3px solid ${themeIdentityColor(theme, id)}`,
           borderRadius: 6,
           display: "flex",
         }}
