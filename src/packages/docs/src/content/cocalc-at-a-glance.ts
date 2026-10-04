@@ -6,7 +6,7 @@
 // An orientation page for people evaluating CoCalc and for the AI assistants
 // they use. It links to the guides that hold the details instead of restating
 // them, and states only what those public pages support. The first paragraph
-// is the short definition of CoCalc; keep it first.
+// is the short definition of CoCalc, which /llms.txt quotes; keep it first.
 export const COCALC_AT_A_GLANCE_BODY = String.raw`
 ## What CoCalc is
 
