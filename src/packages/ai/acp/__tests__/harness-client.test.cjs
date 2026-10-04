@@ -1328,6 +1328,39 @@ test("outbound bound fits maximum images and JSON-escaped text without raising t
   }
 });
 
+test("harness guidance carries pasted images into the running turn", async (t) => {
+  const { agent, request, events } = adapter(t, ["--steering"]);
+  let ready;
+  const started = new Promise((resolve) => (ready = resolve));
+  const run = agent.evaluate({
+    ...request,
+    prompt: "hang",
+    stream: async (event) => {
+      events.push(event);
+      if (event.event?.text === "working") ready();
+    },
+  });
+  await started;
+  assert.deepEqual(
+    await agent.steer("fixture-session", {
+      ...request,
+      prompt: "See [Attached image 1]",
+      image_attachments: [
+        {
+          mimeType: "image/png",
+          data: Buffer.from("fixture").toString("base64"),
+        },
+      ],
+    }),
+    { state: "steered", threadId: "fixture-session" },
+  );
+  await run;
+  assert.equal(
+    events.at(-1).finalResponse,
+    "workingsteered: See [Attached image 1] [1 image]",
+  );
+});
+
 test("harness guidance injects into a running turn and never starts an idle one", async (t) => {
   const { agent, request, events } = adapter(t, ["--steering"]);
   let ready;

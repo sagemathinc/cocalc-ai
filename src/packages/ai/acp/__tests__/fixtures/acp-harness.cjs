@@ -631,7 +631,14 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           reason: "noRunningTurn",
         });
       result(message.id, { outcome: "injected" });
-      update(`steered: ${message.params.prompt[0].text}`);
+      {
+        const images = message.params.prompt.filter(
+          (block) => block.type === "image",
+        ).length;
+        update(
+          `steered: ${message.params.prompt[0].text}${images ? ` [${images} image]` : ""}`,
+        );
+      }
       result(pendingPrompt, { stopReason: "end_turn" });
       pendingPrompt = undefined;
       return;

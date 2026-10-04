@@ -10870,6 +10870,7 @@ async function trySteerCandidateIds({
   request,
   candidateIds,
   claimGuard,
+  hostProjectRoot,
 }: {
   projectId: string;
   threadId?: string;
@@ -10877,6 +10878,7 @@ async function trySteerCandidateIds({
   request: AcpSteerRequest;
   candidateIds?: string[];
   claimGuard?: () => boolean;
+  hostProjectRoot?: string;
 }): Promise<AcpSteerAttemptResult> {
   const ids = new Set<string>();
   const writer = findChatWriter({ threadId, chat });
@@ -10900,51 +10902,86 @@ async function trySteerCandidateIds({
 
   let firstError: unknown;
   let sawNotSteerable = false;
-  for (const id of ids) {
-    // Cached writer/lease aliases can outlive an ACP reset. Only the current
-    // native session may receive guidance, never another candidate's context.
-    if (request.runtime && id !== request.session_id) continue;
-    for (const agent of agentsForProject(projectId)) {
-      if (typeof agent.steer !== "function") {
-        continue;
-      }
-      if (claimGuard && !claimGuard()) {
-        throw new Error("durable ACP steer claim was lost");
-      }
-      try {
-        // Authorized RPC guidance inherits the actual live turn's funding,
-        // not next-turn preferences. Keep the original for durable/queue fallback.
-        const steerRequest =
-          request.chat.agent_rpc_execution?.guidance === true
-            ? {
-                ...request,
-                config: {
-                  ...request.config,
-                  paymentSource: undefined,
-                  credentialId: undefined,
-                },
-              }
-            : request;
-        const result = await agent.steer(id, steerRequest);
-        if (result.state === "steered") {
-          return {
-            state: "steered",
-            threadId: result.threadId ?? id,
-          };
+  // Harness agents (Claude) take pasted images as content blocks, exactly as
+  // for a new turn; prepared once, only if a harness agent is asked.
+  let harnessRequest:
+    | Promise<Awaited<ReturnType<typeof materializeBlobs>>>
+    | undefined;
+  try {
+    for (const id of ids) {
+      // Cached writer/lease aliases can outlive an ACP reset. Only the current
+      // native session may receive guidance, never another candidate's context.
+      if (request.runtime && id !== request.session_id) continue;
+      for (const agent of agentsForProject(projectId)) {
+        if (typeof agent.steer !== "function") {
+          continue;
         }
-        if (result.state === "not_steerable") {
-          sawNotSteerable = true;
+        if (claimGuard && !claimGuard()) {
+          throw new Error("durable ACP steer claim was lost");
         }
-      } catch (err) {
-        if ((err as { code?: string }).code === "principal_mismatch") throw err;
-        if (firstError === undefined) {
-          firstError = err;
+        try {
+          // Authorized RPC guidance inherits the actual live turn's funding,
+          // not next-turn preferences. Keep the original for durable/queue fallback.
+          const steerRequest =
+            request.chat.agent_rpc_execution?.guidance === true
+              ? {
+                  ...request,
+                  config: {
+                    ...request.config,
+                    paymentSource: undefined,
+                    credentialId: undefined,
+                  },
+                }
+              : request;
+          let deliveredRequest: Parameters<NonNullable<AcpAgent["steer"]>>[1] =
+            steerRequest;
+          if (
+            harnessAgents.has(agent) &&
+            extractBlobReferences(request.prompt).length
+          ) {
+            harnessRequest ??= materializeBlobs(
+              request.prompt,
+              projectId,
+              hostProjectRoot
+                ? projectBlobMaterializationRoots({
+                    hostProjectRoot,
+                    runtimeProjectRoot: DEFAULT_PROJECT_RUNTIME_HOME,
+                  })
+                : undefined,
+              true,
+            );
+            const { prompt, image_attachments } = await harnessRequest;
+            deliveredRequest = { ...steerRequest, prompt, image_attachments };
+          }
+          const result = await agent.steer(id, deliveredRequest);
+          if (result.state === "steered") {
+            return {
+              state: "steered",
+              threadId: result.threadId ?? id,
+            };
+          }
+          if (result.state === "not_steerable") {
+            sawNotSteerable = true;
+          }
+        } catch (err) {
+          if ((err as { code?: string }).code === "principal_mismatch")
+            throw err;
+          if (firstError === undefined) {
+            firstError = err;
+          }
+          logger.warn("failed to steer codex session", {
+            threadId: id,
+            err,
+          });
         }
-        logger.warn("failed to steer codex session", {
-          threadId: id,
-          err,
-        });
       }
+    }
+  } finally {
+    if (harnessRequest) {
+      void harnessRequest.then(
+        ({ cleanup }) => cleanup(),
+        () => {},
+      );
     }
   }
 
@@ -12302,6 +12339,10 @@ async function attemptAcpSteerRequest(
     useContainer && executor instanceof ContainerExecutor
       ? executor.getMountPoint()
       : workspaceRoot;
+  const hostProjectRoot =
+    useContainer && executor instanceof ContainerExecutor
+      ? executor.getProjectMountPoint()
+      : undefined;
   const useNativeTerminal = useContainer ? false : sessionMode === "auto";
   const bindings = buildExecutorAdapters(executor, workspaceRoot, hostRoot);
   if (!request.runtime) {
@@ -12325,6 +12366,7 @@ async function attemptAcpSteerRequest(
     request,
     candidateIds,
     claimGuard,
+    hostProjectRoot,
   });
   if (result.state === "steered") {
     await recordAcpGuidanceDelivered(request);

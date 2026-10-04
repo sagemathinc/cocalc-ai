@@ -407,11 +407,16 @@ export class HarnessAgent implements AcpAgent {
       !this.client?.running ||
       !this.client.supportsSteering ||
       request.local_images?.length ||
+      // Images arrive as image_attachments, with their references rewritten;
+      // a remaining blob reference was not materialized.
       /(?:<img\b[^>]*\bsrc=|!\[[^\]]*\]\()[^\n]*\/blobs\//i.test(request.prompt)
     )
       return { state: "not_steerable", threadId };
     await this.validateAuthority?.(this.binding);
-    const outcome = await this.client.steer(request.prompt);
+    const outcome = await this.client.steer(
+      request.prompt,
+      request.image_attachments ?? [],
+    );
     return {
       state: outcome === "injected" ? "steered" : "not_steerable",
       threadId,
