@@ -452,6 +452,50 @@ describe("core landing page initial HTML", () => {
     expect(reactBody).toBe(expected);
     expect(fallback).toBe(expected);
   });
+
+  // The React Home page no longer has the tool catalogue, the audience cards
+  // or the product list (frontend/public/home tests), so neither does its
+  // crawler fallback, on any product. The React "Next step" section still
+  // links "Review product paths" and "Review support and sales", so this
+  // test does not pin those labels as absent.
+  it.each([
+    [
+      "cocalc.ai",
+      {
+        cocalc_product: "launchpad",
+        dns: "cocalc.ai",
+        is_launchpad: true,
+        site_name: "CoCalc",
+      },
+    ],
+    ["a Launchpad site", { cocalc_product: "launchpad", is_launchpad: true }],
+    ["a Rocket site", { cocalc_product: "rocket" }],
+    ["CoCalc Plus", { cocalc_product: "plus" }],
+    ["no site configuration", undefined],
+  ])(
+    "keeps only the agent section after the Home first screen on %s",
+    (_site, config) => {
+      for (const basePath of ["/", "/prefix"]) {
+        const html = renderPublicRoutePrerender(
+          { section: "home" },
+          basePath,
+          config,
+        );
+        expect(
+          [...html.matchAll(/<h2>([^<]+)<\/h2>/g)].map(([, text]) => text),
+        ).toEqual(["Agents work where your project lives."]);
+        for (const removed of [
+          "One project, many workflows.",
+          "Browse feature workflows",
+          "Choose how CoCalc runs.",
+          "customer-operated",
+          "Pricing and licensing",
+        ]) {
+          expect(html).not.toContain(removed);
+        }
+      }
+    },
+  );
 });
 
 describe("feature initial HTML product availability", () => {

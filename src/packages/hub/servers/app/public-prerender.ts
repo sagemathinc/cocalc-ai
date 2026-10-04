@@ -144,16 +144,6 @@ function renderHome(
   <p>Use the integrated Codex agent or Claude Code, or run other command-line agents in project terminals, all with the files, tools, and running services your collaborators already use. Claude Code is an experimental preview on sites that enable it and works with your personal Claude Pro or Max subscription.</p>
   <p>${publicLink(basePath, "features/ai", "See agent workflows")} ${publicLink(basePath, "features/compare", "Compare with agent sandboxes")}</p>
 </section>
-<section>
-  <h2>One project, many workflows.</h2>
-  <p>Keep notebooks, terminals, code, documents, services, discussion, history, and recovery in one durable project.</p>
-  <p>${publicLink(basePath, "features", "Browse feature workflows")} ${publicLink(basePath, "docs", "Read the documentation")}</p>
-</section>
-<section>
-  <h2>Choose how CoCalc runs.</h2>
-  <p>Start with hosted CoCalc.ai, run CoCalc locally or on one VM, or evaluate a customer-operated private deployment.</p>
-  <p>${publicLink(basePath, "products", "Review product paths")} ${publicLink(basePath, "pricing", "Pricing and licensing")} ${publicLink(basePath, "support", "Review support and sales")}</p>
-</section>
 </main>`;
 }
 
