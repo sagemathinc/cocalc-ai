@@ -8,7 +8,6 @@
 // a restart is recommended; below the site's minimum project version it is
 // required. Projects are never restarted automatically.
 
-import { Popconfirm } from "antd";
 import { type CSSProperties, useEffect, useState } from "react";
 
 import {
@@ -182,21 +181,11 @@ export function ProjectUpdateIndicator({
         label={required ? "Update required" : "Update"}
         description={
           required
-            ? `This project runs ${what} that is no longer supported. Update it by restarting the project.`
-            : `Newer ${what} ${status.parts.length > 1 ? "are" : "is"} available. Update by restarting the project.`
+            ? `This project runs ${what} that is no longer supported. Updating restarts the project; running kernels, terminals and agent turns stop.`
+            : `Newer ${what} ${status.parts.length > 1 ? "are" : "is"} available. Updating restarts the project; running kernels, terminals and agent turns stop.`
         }
-        wrap={(button) => (
-          <Popconfirm
-            placement="bottomRight"
-            title="Update project?"
-            description={`Restarts the project with the newer ${what}. Running kernels, terminals and agent turns stop.`}
-            okText="Update"
-            cancelText="Not now"
-            onConfirm={restart}
-          >
-            {button}
-          </Popconfirm>
-        )}
+        actionLabel="Update project"
+        onAction={restart}
       />
     </span>
   );

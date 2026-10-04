@@ -33,46 +33,47 @@ describe("update indicator", () => {
     expect(versionTime("previous")).toBeUndefined();
   });
 
-  it("cannot be dismissed, acts on click and can shrink to an icon", async () => {
-    const onClick = jest.fn();
+  it("cannot be dismissed; a click explains, acts and offers the icon form", async () => {
+    const onAction = jest.fn();
     mockIconOnly = false;
-    const { rerender } = render(
+    const pill = () => (
       <UpdatePill
         level="recommended"
         label="Update"
         description="A new version is available."
-        onClick={onClick}
-      />,
+        actionLabel="Reload page"
+        onAction={onAction}
+      />
     );
+    const { rerender } = render(pill());
     const user = userEvent.setup();
-    await user.click(
-      screen.getByRole("button", { name: "A new version is available." }),
-    );
-    expect(onClick).toHaveBeenCalled();
-    expect(screen.getByText("Update")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /dismiss|close/i })).toBeNull();
-    await user.click(
-      screen.getByRole("button", { name: "Show update as an icon" }),
-    );
+    // Only the word: no icon, no extra controls, nothing to dismiss.
+    const button = screen.getByRole("button", {
+      name: "Update: A new version is available.",
+    });
+    expect(button).toHaveTextContent("Update");
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    await user.click(button);
+    expect(
+      await screen.findByText("A new version is available."),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Show as icon" }));
     expect(mockSetOtherSettings).toHaveBeenCalledWith(
       "update_indicator_icon_only",
       true,
     );
-    mockIconOnly = true;
-    rerender(
-      <UpdatePill
-        level="recommended"
-        label="Update"
-        description="A new version is available."
-        onClick={onClick}
-      />,
+    await user.click(button);
+    await user.click(
+      await screen.findByRole("button", { name: "Reload page" }),
     );
+    expect(onAction).toHaveBeenCalled();
+    mockIconOnly = true;
+    rerender(pill());
     expect(screen.queryByText("Update")).toBeNull();
     expect(
-      screen.getByRole("button", { name: "A new version is available." }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Show update label" }),
+      screen.getByRole("button", {
+        name: "Update: A new version is available.",
+      }),
     ).toBeInTheDocument();
   });
 });

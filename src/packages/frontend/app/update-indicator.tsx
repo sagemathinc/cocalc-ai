@@ -5,11 +5,11 @@
 
 // Small update indicators, in the spirit of Chrome's "Update" button: always
 // visible while something is out of date (never dismissable), more urgent the
-// longer the update waits, and clicking it applies the update. Users can
-// shrink it to an icon; that choice is an account setting.
+// longer the update waits. Clicking it says what is new and offers the update.
+// Users can shrink it to an icon; that choice is an account setting.
 
-import { Button, theme } from "antd";
-import { type ReactNode, useEffect, useState } from "react";
+import { Button, Popover, theme } from "antd";
+import { useEffect, useState } from "react";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { version } from "@cocalc/util/smc-version";
@@ -47,24 +47,22 @@ export function UpdatePill({
   since,
   label,
   description,
-  icon = "arrow-circle-up",
-  onClick,
-  wrap,
+  actionLabel,
+  onAction,
 }: {
   level: UpdateLevel;
   since?: number;
   label: string;
-  // Full sentence for screen readers and the tooltip.
+  // What is new and what the action does, shown when the pill is clicked.
   description: string;
-  icon?: string;
-  onClick?: () => void;
-  // Wraps the action button, e.g. in a confirmation.
-  wrap?: (button: ReactNode) => ReactNode;
+  actionLabel: string;
+  onAction: () => void;
 }) {
   const { token } = theme.useToken();
   const iconOnly = !!useTypedRedux("account", "other_settings")?.get(
     ICON_ONLY_SETTING,
   );
+  const [open, setOpen] = useState(false);
   const urgency = updateUrgency(level, since);
   const [color, tint] =
     urgency === "high"
@@ -72,58 +70,78 @@ export function UpdatePill({
       : urgency === "elevated"
         ? [token.colorWarning, token.colorWarningBg]
         : [token.colorSuccess, token.colorSuccessBg];
-  const setIconOnly = (value: boolean) =>
+  const setIconOnly = (value: boolean) => {
+    setOpen(false);
     redux.getActions("account")?.set_other_settings(ICON_ONLY_SETTING, value);
-  const action = (
-    <Button
-      size="small"
-      type="text"
-      onClick={onClick}
-      aria-label={description}
-      title={description}
-      icon={<Icon name={icon as any} style={{ color }} />}
-      style={{
-        color,
-        fontWeight: 500,
-        paddingInline: iconOnly ? 4 : 6,
-        height: 22,
-      }}
-    >
-      {iconOnly ? undefined : label}
-    </Button>
+  };
+  const content = (
+    <div style={{ maxWidth: 280 }}>
+      <div>{description}</div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          marginTop: 10,
+        }}
+      >
+        <Button
+          type="link"
+          size="small"
+          style={{ padding: 0, color: token.colorTextTertiary }}
+          onClick={() => setIconOnly(!iconOnly)}
+        >
+          {iconOnly ? "Show label" : "Show as icon"}
+        </Button>
+        <Button
+          type="primary"
+          size="small"
+          onClick={() => {
+            setOpen(false);
+            onAction();
+          }}
+        >
+          {actionLabel}
+        </Button>
+      </div>
+    </div>
   );
+  // Like Chrome's: a word on a tinted pill, or only the colored icon. One
+  // click shows what is new, the action, and the choice of form.
   return (
-    <span
-      role="group"
-      aria-label={label}
-      // Like Chrome's: a tinted pill with its label, or just the colored icon.
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        flex: "0 0 auto",
-        border: `1px solid ${iconOnly ? "transparent" : color}`,
-        borderRadius: 999,
-        background: iconOnly ? "transparent" : tint,
-        lineHeight: 1,
-      }}
+    <Popover
+      trigger="click"
+      placement="bottomRight"
+      open={open}
+      onOpenChange={setOpen}
+      content={content}
     >
-      {wrap ? wrap(action) : action}
       <Button
         size="small"
         type="text"
-        aria-label={iconOnly ? "Show update label" : "Show update as an icon"}
-        title={iconOnly ? "Show label" : "Shrink to an icon"}
-        onClick={() => setIconOnly(!iconOnly)}
-        icon={<Icon name={iconOnly ? "chevron-right" : "chevron-left"} />}
-        style={{
-          width: 14,
-          minWidth: 14,
-          height: 22,
-          padding: 0,
-          color: token.colorTextTertiary,
-        }}
-      />
-    </span>
+        aria-label={`${label}: ${description}`}
+        aria-haspopup="dialog"
+        icon={
+          iconOnly ? (
+            <Icon name="arrow-circle-up" style={{ color }} />
+          ) : undefined
+        }
+        style={
+          iconOnly
+            ? { color, paddingInline: 4 }
+            : {
+                color,
+                background: tint,
+                borderRadius: 999,
+                fontWeight: 500,
+                paddingInline: 10,
+              }
+        }
+      >
+        {iconOnly ? undefined : label}
+      </Button>
+    </Popover>
   );
 }
 
@@ -205,10 +223,11 @@ export function BrowserUpdateIndicator({
       label={required ? "Update required" : "Update"}
       description={
         required
-          ? "This tab runs a CoCalc version that is no longer supported. Reload it now."
-          : "A new version of CoCalc is available. Reload this tab to update."
+          ? "This tab runs a CoCalc version that is no longer supported. Reload the page to update."
+          : "A new version of CoCalc is available. Reload the page to update."
       }
-      onClick={update.reload}
+      actionLabel="Reload page"
+      onAction={update.reload}
     />
   );
 }
