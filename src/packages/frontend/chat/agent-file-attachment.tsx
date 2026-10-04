@@ -141,18 +141,31 @@ export function AgentFileAttachment({
     }
   };
 
+  const attach = [
+    {
+      key: "upload",
+      icon: <Icon name="upload" />,
+      label: "Upload files",
+    },
+    {
+      key: "choose",
+      icon: <Icon name="folder-open" />,
+      label: "Choose project files",
+    },
+  ];
   const menu: MenuProps = {
     items: [
-      {
-        key: "upload",
-        icon: <Icon name="upload" />,
-        label: "Upload files",
-      },
-      {
-        key: "choose",
-        icon: <Icon name="folder-open" />,
-        label: "Choose project files",
-      },
+      // With connectors in the menu, label what affects only this message.
+      ...(extraMenuItems.length
+        ? [
+            {
+              type: "group" as const,
+              key: "attach",
+              label: "Attach",
+              children: attach,
+            },
+          ]
+        : attach),
       ...(onSetGoal
         ? [
             { type: "divider" as const },
