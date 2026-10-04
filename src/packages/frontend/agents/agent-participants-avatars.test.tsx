@@ -10,6 +10,8 @@ jest.mock("./api", () => ({
   personalAgentApi: () => ({ listAgentParticipants }),
 }));
 jest.mock("@cocalc/frontend/app-framework", () => ({
+  // The shared Tooltip reads the hide-tooltips account setting.
+  useAccountOtherSetting: () => undefined,
   redux: {
     getStore: () => ({
       get_name: (id: string) => (id === "drew" ? "Drew" : "Cathy"),
