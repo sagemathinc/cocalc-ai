@@ -11,6 +11,7 @@ A single tab in a project.
 
 // cSpell:ignore fixedtab popout
 
+import { useIdChatTitle } from "./id-chat-title";
 import { Popover, Tag } from "antd";
 import { CSSProperties, ReactNode } from "react";
 import { defineMessage, useIntl } from "react-intl";
@@ -334,6 +335,7 @@ export function FileTab(props: Readonly<Props>) {
     path != null ? workspaces.resolveWorkspaceForPath(path) : null;
   const userMap = useTypedRedux("users", "user_map");
   const currentAccountId = useTypedRedux("account", "account_id");
+  const idChatTitle = useIdChatTitle(project_id, path);
 
   // True if there is activity (e.g., active output) in this tab
   const has_activity = useRedux(
@@ -418,7 +420,9 @@ export function FileTab(props: Readonly<Props>) {
         generatedWorkspaceChatLabel(path, workspaceRecord, {
           currentAccountId,
           userMap,
-        }) ?? path_split(path).tail;
+        }) ??
+        idChatTitle ??
+        path_split(path).tail;
     }
   }
 
