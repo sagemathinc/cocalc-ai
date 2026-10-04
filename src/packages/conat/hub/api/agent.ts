@@ -73,6 +73,7 @@ export const agent = {
   setPaymentSelections: authFirstRequireAccount,
   copyPaymentSelection: authFirstRequireAccount,
   resolvePaymentSelection: authFirstRequireHostWithAccountTarget,
+  reportRuntime: authFirstRequireHostWithAccountTarget,
   disableIdentity: authFirstRequireAccountWithBoundSession,
   recoverIdentity: authFirstRequireAccountWithBoundSession,
   issueIdentity: authFirstRequireHostWithAccountTarget,
@@ -376,6 +377,15 @@ export interface AgentApi {
       provider: AgentPaymentProvider;
     },
   ): Promise<ResolvedAgentPaymentSelection>;
+  /** Host admitting a turn: which runtime the agent uses. */
+  reportRuntime(
+    opts: AgentHostAuth & {
+      project_id: string;
+      path: string;
+      thread_id: string;
+      runtime: import("@cocalc/util/ai/agent-runtime-kind").AgentRuntimeSummary;
+    },
+  ): Promise<void>;
   resolveIdentity(opts: {
     account_id?: string;
     project_id: string;

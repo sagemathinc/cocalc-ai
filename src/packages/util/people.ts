@@ -110,6 +110,7 @@ export interface SharedArtifact {
 export interface ProjectAgent extends SharedAgent {
   created_by: string;
   appearance?: AgentAppearance | null;
+  runtime?: import("./ai/agent-runtime-kind").AgentRuntimeSummary;
 }
 
 export interface SharedWork {

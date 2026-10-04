@@ -5,6 +5,7 @@
 
 import type { AcpJobRequest, AcpRequest } from "@cocalc/conat/ai/acp/types";
 import { hubApi } from "../api";
+import { reportAgentRuntimeOnce } from "./agent-runtime-report";
 import {
   type AcpHarnessProfile,
   parseAcpHarnessProfile,
@@ -96,6 +97,7 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
   request: T,
 ): Promise<T> {
   if (request.request_kind === "command") return request;
+  reportAgentRuntimeOnce(request);
   if (request.runtime !== undefined) {
     const claudeCode =
       request.runtime.profile.version === 2 &&

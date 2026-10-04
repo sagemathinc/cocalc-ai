@@ -570,7 +570,8 @@ export async function listProjectAgents({
   if (project_ids.length === 0) return [];
   const { rows } = await getPool().query(
     `SELECT a.agent_id, a.project_id, a.name, a.path, a.thread_id,
-            a.created_by, a.created_at, a.collaborator_access, a.appearance
+            a.created_by, a.created_at, a.collaborator_access, a.appearance,
+            a.runtime
      FROM agent_identities a
      JOIN projects p ON p.project_id = a.project_id
      WHERE a.project_id = ANY($1::uuid[])
@@ -592,6 +593,7 @@ export async function listProjectAgents({
       row.collaborator_access === "view" ? "view" : "message",
     created_at: new Date(row.created_at).valueOf(),
     appearance: row.appearance ?? null,
+    ...(row.runtime ? { runtime: row.runtime } : {}),
   }));
 }
 

@@ -102,7 +102,7 @@ describeDb("account-home Agent Networks", () => {
       await store.name(account, { endpoint, name });
   });
 
-  test("names carry the identity's stored theme, so lists show it without the chat", async () => {
+  test("names carry the identity's stored theme once reconciled, so lists show it without the chat", async () => {
     identity.mockImplementation(async (owner, endpoint) => ({
       ...(await identityResult(owner, endpoint)),
       appearance:
@@ -111,6 +111,9 @@ describeDb("account-home Agent Networks", () => {
           : null,
     }));
     try {
+      // Listing reads only the snapshot; the project bay's change
+      // notification (or the background repair) brings it up to date.
+      await store.repair(account);
       const names = await store.names(account);
       expect(names.find((a) => a.name === "reviewer")?.appearance).toEqual({
         name: "Code Reviewer",
@@ -131,6 +134,7 @@ describeDb("account-home Agent Networks", () => {
       return identityResult(owner, endpoint);
     });
     try {
+      await store.repair(account);
       expect((await store.names(account)).map(({ name }) => name)).toEqual([
         "remote",
       ]);
@@ -154,8 +158,10 @@ describeDb("account-home Agent Networks", () => {
   test("keeps names when deletion is unconfirmed or the evidence service fails", async () => {
     identity.mockRejectedValue(new Error("owner temporarily unavailable"));
     try {
+      await store.repair(account);
       expect(await store.names(account)).toHaveLength(4);
       projectWasDeleted.mockRejectedValue(new Error("timeout"));
+      await store.repair(account);
       expect(await store.names(account)).toHaveLength(4);
     } finally {
       projectWasDeleted.mockReset().mockResolvedValue(false);

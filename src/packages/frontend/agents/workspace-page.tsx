@@ -308,6 +308,7 @@ import {
   writeAgentSubscriptionSelection,
 } from "./agent-subscription-selection";
 import { copyPaymentSelection } from "@cocalc/frontend/chat/payment-selection-store";
+import { WithAgentRuntimeMark } from "./agent-runtime-mark";
 import {
   assertAgentWorkingDirectory,
   AgentProjectHomeNotReadyError,
@@ -4136,18 +4137,22 @@ export function MyAgentsWorkspacePage({
     const theme = resolveNamedAgentTheme(agent, appearance);
     return (
       <AgentRunningIndicator agent={agent}>
-        <ThreadBadge
-          icon={appearance?.thread_icon}
-          color={theme.primaryColor}
-          accentColor={theme.accentColor}
-          image={appearance?.thread_image}
-          fallbackIcon={
-            theme.primaryColor || theme.accentColor || appearance?.thread_image
-              ? undefined
-              : "robot"
-          }
-          size={size}
-        />
+        <WithAgentRuntimeMark runtime={agent.runtime}>
+          <ThreadBadge
+            icon={appearance?.thread_icon}
+            color={theme.primaryColor}
+            accentColor={theme.accentColor}
+            image={appearance?.thread_image}
+            fallbackIcon={
+              theme.primaryColor ||
+              theme.accentColor ||
+              appearance?.thread_image
+                ? undefined
+                : "robot"
+            }
+            size={size}
+          />
+        </WithAgentRuntimeMark>
       </AgentRunningIndicator>
     );
   }

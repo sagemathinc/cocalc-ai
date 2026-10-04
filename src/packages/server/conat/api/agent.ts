@@ -59,6 +59,7 @@ export const listPaymentSelections = payments.listPaymentSelections;
 export const setPaymentSelections = payments.setPaymentSelections;
 export const copyPaymentSelection = payments.copyPaymentSelection;
 export const resolvePaymentSelection = payments.resolvePaymentSelection;
+export const reportRuntime = identities.reportRuntime;
 export const disableIdentity = identities.disableIdentity;
 export const recoverIdentity = identities.recoverIdentity;
 export const issueIdentity = identities.issueIdentity;

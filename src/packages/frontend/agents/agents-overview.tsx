@@ -17,16 +17,18 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { Alert, Button, Checkbox, Select, Tabs, Typography } from "antd";
+import { Alert, Button, Checkbox, Grid, Select, Tabs, Typography } from "antd";
 import {
   displayOrder,
   rangeSelection,
 } from "@cocalc/frontend/components/collection-selection";
 import {
   agentPaymentSummary,
+  paymentGroups,
   SetPaymentModal,
   useAgentPayments,
 } from "./agent-payments";
+import { WithAgentRuntimeMark } from "./agent-runtime-mark";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, TimeAgo } from "@cocalc/frontend/components";
@@ -168,6 +170,8 @@ export function AgentsOverview(props: Props) {
   const [group, setGroup] = useState<Group>("none");
   const shared = useSharedAgents(active);
   const payments = useAgentPayments(active);
+  // Phones: two-line rows and compact controls.
+  const narrow = !!Grid.useBreakpoint().xs;
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const anchor = useRef<string | undefined>(undefined);
@@ -254,9 +258,23 @@ export function AgentsOverview(props: Props) {
   const paymentFor = (item: OverviewItem) => {
     const thread_id = item.mine?.thread_id ?? item.shared?.thread_id;
     return thread_id && !payments.loading
-      ? agentPaymentSummary(payments, item.project_id, thread_id)
+      ? agentPaymentSummary(payments, {
+          project_id: item.project_id,
+          thread_id,
+          runtime: item.mine?.runtime ?? item.shared?.runtime,
+          payment: item.mine?.payment,
+        })
       : undefined;
   };
+  const paymentTargets = selectedAgents.map((agent) => ({
+    project_id: agent.endpoint.project_id,
+    thread_id: agent.thread_id,
+    path: agent.path,
+    title: props.agentTitle(agent),
+    runtime: agent.runtime,
+  }));
+  const groups = paymentGroups(paymentTargets);
+  const canSetPayment = groups.codex.length + groups.claude.length > 0;
   const sharedOrder = preferences.value.order;
   const pins =
     tab === "mine"
@@ -346,9 +364,11 @@ export function AgentsOverview(props: Props) {
           renderItem={(item, controls) => {
             const actionsNode = (
               <div style={CONTROLS_STYLE}>
-                <span style={{ width: 28, display: "inline-flex" }}>
-                  {controls.dragHandle}
-                </span>
+                {!narrow && (
+                  <span style={{ width: 28, display: "inline-flex" }}>
+                    {controls.dragHandle}
+                  </span>
+                )}
                 {controls.pinButton}
                 {controls.menu(actions(item), `More actions for @${item.name}`)}
               </div>
@@ -381,7 +401,9 @@ export function AgentsOverview(props: Props) {
               badge: item.mine ? (
                 props.renderBadge(item.mine)
               ) : (
-                <SharedBadge appearance={item.shared?.appearance} />
+                <WithAgentRuntimeMark runtime={item.shared?.runtime}>
+                  <SharedBadge appearance={item.shared?.appearance} />
+                </WithAgentRuntimeMark>
               ),
               project: projectTitle(item.project_id),
               person: item.created_by ? personName(item.created_by) : "",
@@ -391,7 +413,7 @@ export function AgentsOverview(props: Props) {
             return view === "grid" ? (
               <GridCard {...cardProps} />
             ) : (
-              <ListRow {...cardProps} />
+              <ListRow {...cardProps} narrow={narrow} />
             );
           }}
         />
@@ -488,7 +510,16 @@ export function AgentsOverview(props: Props) {
               aria-label="Selected agents"
               style={{ display: "inline-flex", gap: 4, flexWrap: "wrap" }}
             >
-              <Button size="small" onClick={() => setPaymentOpen(true)}>
+              <Button
+                size="small"
+                disabled={!canSetPayment}
+                title={
+                  canSetPayment
+                    ? undefined
+                    : "These agents use project-managed credentials"
+                }
+                onClick={() => setPaymentOpen(true)}
+              >
                 Set payment method…
               </Button>
               <Button
@@ -523,7 +554,7 @@ export function AgentsOverview(props: Props) {
             aria-label="Sort agents"
             value={sort}
             onChange={setSort}
-            style={{ minWidth: 120 }}
+            style={{ minWidth: narrow ? 96 : 120 }}
             options={[
               { value: "recent", label: "Recent" },
               { value: "name", label: "Name" },
@@ -533,7 +564,7 @@ export function AgentsOverview(props: Props) {
             aria-label="Group agents"
             value={effectiveGroup}
             onChange={setGroup}
-            style={{ minWidth: 150 }}
+            style={{ minWidth: narrow ? 120 : 150 }}
             options={[
               { value: "none", label: "No grouping" },
               { value: "project", label: "By project" },
@@ -551,12 +582,7 @@ export function AgentsOverview(props: Props) {
         )}
         <SetPaymentModal
           open={paymentOpen}
-          agents={selectedAgents.map((agent) => ({
-            project_id: agent.endpoint.project_id,
-            thread_id: agent.thread_id,
-            path: agent.path,
-            title: props.agentTitle(agent),
-          }))}
+          agents={paymentTargets}
           payments={payments}
           onClose={() => setPaymentOpen(false)}
         />
@@ -806,7 +832,61 @@ function ListRow({
   person,
   onOpen,
   actions,
-}: CardProps) {
+  narrow,
+}: CardProps & { narrow?: boolean }) {
+  if (narrow)
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "8px 4px 8px 8px",
+          border: `1px solid ${UI_COLORS.border}`,
+          marginTop: -1,
+          background: UI_COLORS.surface,
+          opacity: item.available ? undefined : 0.7,
+        }}
+      >
+        {checkbox}
+        <button
+          type="button"
+          aria-label={`Open @${item.name}`}
+          onClick={onOpen}
+          style={{
+            ...OPEN_BUTTON,
+            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
+          {badge}
+          <span
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              minWidth: 0,
+              flex: 1,
+              gap: 2,
+            }}
+          >
+            <Title item={item} />
+            <span
+              style={{ ...ELLIPSIS, color: UI_COLORS.secondary, fontSize: 12 }}
+            >
+              {[person || project, payment].filter(Boolean).join(" · ")}
+            </span>
+            <span
+              style={{ ...ELLIPSIS, color: UI_COLORS.secondary, fontSize: 12 }}
+            >
+              <Activity item={item} />
+            </span>
+          </span>
+        </button>
+        {actions}
+      </div>
+    );
   return (
     <div
       style={{

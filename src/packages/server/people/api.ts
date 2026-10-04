@@ -7,6 +7,7 @@
 // and personal state (pins, read markers) on the account's home bay. The
 // conversation list is built on the home bay with one request per owning bay.
 
+import { notifyIdentityWatchers } from "@cocalc/server/agents/identity-watchers";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 import type { PeopleApi } from "@cocalc/conat/hub/api/people";
 import {
@@ -243,6 +244,8 @@ export const peopleControl: InterBayPeopleApi = {
     await assertOwner(opts.project_id);
     requireUuid(opts.agent_id, "agent_id");
     await setAgentAppearance({ ...opts, account_id: opts.account_id! });
+    // Name books keep a copy of the agent's appearance.
+    void notifyIdentityWatchers(opts.agent_id);
   },
 
   async refresh(opts) {

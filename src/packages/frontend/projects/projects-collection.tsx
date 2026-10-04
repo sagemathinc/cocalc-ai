@@ -15,7 +15,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { Checkbox, Select, Tag, Typography } from "antd";
+import { Checkbox, Grid, Select, Tag, Typography } from "antd";
 import { useIntl } from "react-intl";
 import { useActions } from "@cocalc/frontend/app-framework";
 import { Icon, TimeAgo } from "@cocalc/frontend/components";
@@ -112,6 +112,7 @@ export function ProjectsCollection({
   const [group, setGroup] = useState<ProjectsGroup>("none");
   const [rootfsModalProjectId, setRootfsModalProjectId] = useState("");
   const aliases = useProjectAliases();
+  const narrow = !!Grid.useBreakpoint().xs;
   const [aliasFor, setAliasFor] = useState<ProjectTableRecord>();
   const items = useMemo(
     () => sortProjectRecords(records, sort),
@@ -188,9 +189,11 @@ export function ProjectsCollection({
     );
     const actionsNode = (
       <div style={CONTROLS_STYLE}>
-        <span style={{ width: 28, display: "inline-flex" }}>
-          {controls.dragHandle}
-        </span>
+        {!narrow && (
+          <span style={{ width: 28, display: "inline-flex" }}>
+            {controls.dragHandle}
+          </span>
+        )}
         {controls.pinButton}
         <ProjectActionsMenu
           record={record}
@@ -204,6 +207,7 @@ export function ProjectsCollection({
     );
     const props = {
       record,
+      narrow,
       selecting: selectedProjectIds.length > 0,
       checkbox,
       actions: actionsNode,
@@ -370,6 +374,8 @@ interface ItemProps {
   actions: ReactNode;
   rootfs: ReactNode;
   onOpen: (e?: React.MouseEvent) => void;
+  /** Phones: title and time only. */
+  narrow?: boolean;
 }
 
 function Title({
@@ -639,7 +645,14 @@ function GridCard({
 }
 
 // One-line row with fixed columns: project, host, collaborators, edited.
-function ListRow({ record, checkbox, actions, rootfs, onOpen }: ItemProps) {
+function ListRow({
+  record,
+  checkbox,
+  actions,
+  rootfs,
+  onOpen,
+  narrow,
+}: ItemProps) {
   return (
     <div
       style={{
@@ -663,8 +676,9 @@ function ListRow({ record, checkbox, actions, rootfs, onOpen }: ItemProps) {
           flex: 1,
           alignSelf: "stretch",
           display: "grid",
-          gridTemplateColumns:
-            "minmax(0, 4fr) minmax(0, 1.4fr) 112px minmax(88px, 120px)",
+          gridTemplateColumns: narrow
+            ? "minmax(0, 1fr) auto"
+            : "minmax(0, 4fr) minmax(0, 1.4fr) 112px minmax(88px, 120px)",
           alignItems: "center",
           gap: 12,
         }}
@@ -704,15 +718,21 @@ function ListRow({ record, checkbox, actions, rootfs, onOpen }: ItemProps) {
             {rootfs}
           </span>
         </span>
-        <span style={{ ...ELLIPSIS, color: UI_COLORS.secondary, fontSize: 13 }}>
-          {record.host ?? ""}
-        </span>
-        <span style={{ display: "inline-flex", minWidth: 0 }}>
-          <CollaboratorsAvatars
-            collaboratorIds={record.collaborators}
-            size={22}
-          />
-        </span>
+        {!narrow && (
+          <span
+            style={{ ...ELLIPSIS, color: UI_COLORS.secondary, fontSize: 13 }}
+          >
+            {record.host ?? ""}
+          </span>
+        )}
+        {!narrow && (
+          <span style={{ display: "inline-flex", minWidth: 0 }}>
+            <CollaboratorsAvatars
+              collaboratorIds={record.collaborators}
+              size={22}
+            />
+          </span>
+        )}
         <span
           style={{
             ...ELLIPSIS,
