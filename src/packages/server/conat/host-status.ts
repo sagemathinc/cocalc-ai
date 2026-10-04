@@ -573,7 +573,14 @@ export async function initHostStatusService() {
                       THEN (state->>'runtime_generation')::bigint
                     ELSE NULL
                   END,
-                  'started_at', state->>'started_at'
+                  'started_at', state->>'started_at', 'project_bundle_version',
+              CASE WHEN $2::jsonb->>'state' = 'running'
+                THEN COALESCE($2::jsonb->>'project_bundle_version', state->>'project_bundle_version')
+              END,
+              'tools_version',
+              CASE WHEN $2::jsonb->>'state' = 'running'
+                THEN COALESCE($2::jsonb->>'tools_version', state->>'tools_version')
+              END
                 ))
               WHERE project_id=$1
                 AND (
@@ -588,7 +595,14 @@ export async function initHostStatusService() {
                         THEN (state->>'runtime_generation')::bigint
                       ELSE NULL
                     END,
-                    'started_at', state->>'started_at'
+                    'started_at', state->>'started_at', 'project_bundle_version',
+              CASE WHEN $2::jsonb->>'state' = 'running'
+                THEN COALESCE($2::jsonb->>'project_bundle_version', state->>'project_bundle_version')
+              END,
+              'tools_version',
+              CASE WHEN $2::jsonb->>'state' = 'running'
+                THEN COALESCE($2::jsonb->>'tools_version', state->>'tools_version')
+              END
                   ))
                 )`,
             [project_id, stateObj, stateTime],

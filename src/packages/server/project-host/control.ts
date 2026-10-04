@@ -528,7 +528,15 @@ async function saveProjectStateSnapshot(
                 ELSE NULL
               END,
               'started_at',
-              state->>'started_at'
+              state->>'started_at',
+              'project_bundle_version',
+              CASE WHEN $2::jsonb->>'state' = 'running'
+                THEN COALESCE($2::jsonb->>'project_bundle_version', state->>'project_bundle_version')
+              END,
+              'tools_version',
+              CASE WHEN $2::jsonb->>'state' = 'running'
+                THEN COALESCE($2::jsonb->>'tools_version', state->>'tools_version')
+              END
             ))
           END
         WHERE project_id=$1
@@ -552,7 +560,15 @@ async function saveProjectStateSnapshot(
                   ELSE NULL
                 END,
                 'started_at',
-                state->>'started_at'
+                state->>'started_at',
+                'project_bundle_version',
+              CASE WHEN $2::jsonb->>'state' = 'running'
+                THEN COALESCE($2::jsonb->>'project_bundle_version', state->>'project_bundle_version')
+              END,
+              'tools_version',
+              CASE WHEN $2::jsonb->>'state' = 'running'
+                THEN COALESCE($2::jsonb->>'tools_version', state->>'tools_version')
+              END
               ))
             END
           )`,
@@ -623,6 +639,68 @@ async function getAssignedProjectHostControlClient({
     host_id,
     client: await getRoutedHostControlClient({ host_id, timeout }),
   };
+}
+
+const VERSION_BACKFILL_RETRY_MS = 10 * 60_000;
+const versionBackfillMisses = new Map<string, number>();
+
+/**
+ * A running project's state can lack the project code and tools versions it
+ * started with: older hubs dropped them on later state reports, and some
+ * start paths never recorded them. Ask its host (which knows) and record
+ * them, so the frontend can tell when a restart would bring newer ones.
+ * Best effort; a host that cannot say is asked again only after a while.
+ */
+export async function backfillRunningProjectVersions<T extends object>(
+  project_id: string,
+  state: T,
+): Promise<T> {
+  const current = state as any;
+  if (
+    current?.state !== "running" ||
+    (current.project_bundle_version && current.tools_version)
+  ) {
+    return state;
+  }
+  const missedAt = versionBackfillMisses.get(project_id);
+  if (missedAt != null && Date.now() - missedAt < VERSION_BACKFILL_RETRY_MS) {
+    return state;
+  }
+  try {
+    const { client } = await getAssignedProjectHostControlClient({
+      project_id,
+      timeout: 5_000,
+    });
+    const live = await client.getProjectStatus({ project_id });
+    const versions: Record<string, string> = {};
+    if (live?.state === "running") {
+      for (const key of ["project_bundle_version", "tools_version"] as const) {
+        const value = `${live?.[key] ?? ""}`.trim();
+        if (value) versions[key] = value;
+      }
+    }
+    if (Object.keys(versions).length === 0) {
+      versionBackfillMisses.set(project_id, Date.now());
+      return state;
+    }
+    versionBackfillMisses.delete(project_id);
+    // Only into the same run the host described.
+    await pool().query(
+      `UPDATE projects SET state = state || $2::jsonb
+        WHERE project_id=$1
+          AND state->>'state' = 'running'
+          AND state->>'time' IS NOT DISTINCT FROM $3::text`,
+      [project_id, versions, current.time == null ? null : `${current.time}`],
+    );
+    return { ...state, ...versions };
+  } catch (err) {
+    versionBackfillMisses.set(project_id, Date.now());
+    log.debug("backfillRunningProjectVersions failed", {
+      project_id,
+      err: `${err}`,
+    });
+    return state;
+  }
 }
 
 async function hasActiveProjectStartLro(project_id: string): Promise<boolean> {
