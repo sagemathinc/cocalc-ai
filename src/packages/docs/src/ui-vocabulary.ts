@@ -647,6 +647,13 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     aliases: ["Compute hosts"],
   },
   {
+    id: "nav.admin",
+    label: "Admin",
+    // Listed in the account menu only for administrators.
+    anchors: [def(ACCOUNT_MENU, 'label: "Admin" }')],
+    usedIn: [bold("admin", "Admin")],
+  },
+  {
     id: "nav.agents",
     label: "Agents",
     anchors: [
