@@ -96,7 +96,8 @@ function Label({ path, project_id, label, onClose }) {
           cursor: "pointer",
           display: "inline-flex",
           flex: "0 0 20px",
-          height: "24px",
+          // The name's row height: appearing on hover must not move it.
+          height: "22px",
           justifyContent: "center",
           position: "relative",
           zIndex: 1,
