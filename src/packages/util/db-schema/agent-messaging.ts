@@ -143,6 +143,11 @@ Table({
       pg_type: "JSONB",
       desc: "Copy of the thread's theme (title, colors, icon, image) so agent lists show it without loading the chat. The .chat thread metadata is the source.",
     },
+    runtime: {
+      type: "map",
+      pg_type: "JSONB",
+      desc: "Runtime kind ({kind: codex | claude-code | acp, name?}), recorded at registration from the thread's configuration and confirmed by the project host when it admits a turn.",
+    },
   },
 });
 
@@ -181,6 +186,24 @@ Table({
     title: { type: "string", desc: "Agent name at the last change." },
     updated_at: created("Last change by the account."),
     last_used_at: timestamp("Last turn admitted with this selection."),
+  },
+});
+
+// Accounts that named an agent (in their home bays' name books). Kept with the
+// identity so its changes reach exactly those name books.
+Table({
+  name: "agent_identity_watchers",
+  rules: {
+    primary_key: ["agent_id", "account_id"],
+    pg_custom_indexes: [
+      { name: "agent_identity_watchers_project", query: "(project_id)" },
+    ],
+  },
+  fields: {
+    agent_id: required("uuid", "Registered agent."),
+    account_id: required("uuid", "Account that named the agent."),
+    project_id: required("uuid", "Agent project, for hard deletion."),
+    created_at: created("When the account named the agent."),
   },
 });
 

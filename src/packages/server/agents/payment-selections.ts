@@ -202,6 +202,7 @@ export const paymentSelectionsHome: AgentPaymentSelectionsApi = {
         );
         updated = rows.length;
       }
+      publishChangedAgents(opts.account_id, list);
       return { updated };
     }
     const count = +(
@@ -246,6 +247,7 @@ export const paymentSelectionsHome: AgentPaymentSelectionsApi = {
       );
       updated += rows.length;
     }
+    publishChangedAgents(opts.account_id, list);
     return { updated };
   },
 
@@ -273,6 +275,7 @@ export const paymentSelectionsHome: AgentPaymentSelectionsApi = {
         to.thread_id,
       ],
     );
+    if (rows.length > 0) publishChangedAgents(opts.account_id, [to]);
     return { copied: rows.length > 0 };
   },
 
@@ -306,6 +309,51 @@ export const paymentSelectionsHome: AgentPaymentSelectionsApi = {
     };
   },
 };
+
+/** Attach this account's payment selections to its named agents (home bay). */
+export async function loadAgentPayments(
+  account_id: string,
+  agents: import("@cocalc/conat/agents/personal").NamedAgent[],
+): Promise<void> {
+  const keyOf = (agent: {
+    endpoint: { project_id: string };
+    thread_id: string;
+  }) =>
+    agentPaymentTargetKey({
+      project_id: agent.endpoint.project_id,
+      thread_id: agent.thread_id,
+    });
+  const keys = agents.filter((agent) => agent.thread_id).map(keyOf);
+  if (keys.length === 0) return;
+  const { rows } = await db().query(
+    "SELECT * FROM agent_payment_selections WHERE account_id=$1 AND target_key=ANY($2::text[])",
+    [account_id, keys],
+  );
+  const records = toResult(rows).selections;
+  for (const agent of agents) {
+    const mine = records.filter(
+      (record) =>
+        record.project_id === agent.endpoint.project_id &&
+        record.thread_id === agent.thread_id,
+    );
+    if (mine.length > 0) agent.payment = mine;
+    else delete agent.payment;
+  }
+}
+
+// Agents page cards show payment; push changed agents to the account's browsers.
+function publishChangedAgents(
+  account_id: string,
+  threads: { project_id: string; thread_id: string }[],
+) {
+  void import("./named-agent-feed")
+    .then(({ publishNamedAgentsForThreads }) =>
+      publishNamedAgentsForThreads(account_id, threads),
+    )
+    .catch((err) =>
+      logger.debug("could not publish agent payment change", { err: `${err}` }),
+    );
+}
 
 async function withHome<T>(
   account_id: string,

@@ -167,6 +167,9 @@ describeDb("fresh conversation identity persistence", () => {
         )
       ).rows,
     ).toEqual(membershipsBefore);
+    // The project bay notifies name books of the new conversation; here,
+    // reconcile directly (the notification is asynchronous).
+    await personal.repair(account_id);
     const names = await personal.names(account_id);
     expect(names.find((agent) => agent.name === "helper")).toMatchObject({
       endpoint: source,

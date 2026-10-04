@@ -82,7 +82,15 @@ export type PersonalControlRequest =
         outcome: import("@cocalc/conat/agents/rpc").AgentRpcBroadcastOutcome;
       };
     }
-  | { action: "observeNetworkActivity"; options: AgentNetworkActivity };
+  | { action: "observeNetworkActivity"; options: AgentNetworkActivity }
+  | {
+      // Trusted fabric only, from the agent's project bay.
+      action: "identityChanged";
+      options: {
+        endpoint: AgentEndpoint;
+        snapshot: import("@cocalc/conat/agents/personal").NamedAgentSnapshot;
+      };
+    };
 export type PersonalControlResult =
   | PersonalAgentDenial
   | void

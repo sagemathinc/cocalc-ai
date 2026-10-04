@@ -47,6 +47,10 @@ export interface InterBayAgentIdentityApi {
     opts: AgentIdentityRunRequest,
   ): Promise<ActiveAgentIdentityRun>;
   register(opts: AgentIdentityThreadRequest): Promise<AgentIdentity>;
+  /** Start or stop sending this agent's identity changes to the account. */
+  watch(
+    opts: AgentIdentityLookupRequest & { watching: boolean },
+  ): Promise<void>;
   startFreshConversation(
     opts: AgentIdentityLookupRequest & { expected_thread_id: string },
   ): Promise<AgentIdentity>;

@@ -405,6 +405,18 @@ export const TABLE_OWNERSHIP = {
       "Per-account payment choice for agents (credential references only), authoritative on the account home bay. Like account credentials it does not move on account rehome; a missing row means the account default.",
   }),
 
+  ...entries(["agent_identity_watchers"], {
+    ownership: "project-owning",
+    authority: "project_id",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      account_id:
+        "Account whose home-bay name book receives this agent's identity changes, not placement authority.",
+    },
+    notes:
+      "Which accounts named a project-owned agent. Lives with the identity in the project owning bay; name books re-register during their background repair.",
+  }),
+
   ...entries(["agent_identity_runs"], {
     ownership: "row-scoped",
     authority: "mixed",

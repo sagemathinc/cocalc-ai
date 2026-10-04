@@ -39,6 +39,12 @@ export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
     reason:
       "Runtime credentials derive authority from project-owned identities and must not be copied to a new bay.",
   },
+  agent_identity_watchers: {
+    table: "agent_identity_watchers",
+    status: "not-portable",
+    reason:
+      "Keyed by project-owned identities that do not move; name books repair their snapshots and re-register.",
+  },
   agent_message_project_fences: {
     table: "agent_message_project_fences",
     status: "not-portable",

@@ -25,6 +25,7 @@ import { agentRpcControl } from "./rpc";
 import { PersonalAgentStore } from "./personal-store";
 import { assertPersonalAccountAuthority } from "./personal-rehome";
 import { agentProjectWasDeleted } from "./deleted-project";
+import { namedAgentHooks } from "./named-agent-feed";
 
 const DEFAULT_MAX_NAMED_AGENTS = 100;
 const DEFAULT_MAX_NETWORK_MEMBERS = 3;
@@ -87,6 +88,7 @@ export function personalStore(db = agentStore()) {
     assertPersonalAccountAuthority,
     agentProjectWasDeleted,
     (source, run_id) => principal(source, run_id, true),
+    namedAgentHooks,
   );
 }
 
@@ -269,6 +271,12 @@ export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
       );
     case "observeNetworkActivity":
       return store.observeActivity(account, request.options);
+    case "identityChanged":
+      return store.applyIdentityChange(
+        account,
+        request.options.endpoint,
+        request.options.snapshot,
+      );
     default:
       throw new Error("unsupported personal agent operation");
   }

@@ -197,6 +197,22 @@ export interface AccountFeedLroSummaryEvent {
   summary: LroSummary;
 }
 
+/** One of this account's named agents changed (full row, upsert by agent). */
+export interface AccountFeedAgentUpsertEvent {
+  type: "agent.upsert";
+  ts: number;
+  account_id: string;
+  agent: import("@cocalc/conat/agents/personal").NamedAgent;
+}
+
+export interface AccountFeedAgentRemoveEvent {
+  type: "agent.remove";
+  ts: number;
+  account_id: string;
+  project_id: string;
+  agent_id: string;
+}
+
 export type AccountFeedEvent =
   | AccountFeedAccountUpsertEvent
   | AccountFeedNotificationUpsertEvent
@@ -208,7 +224,9 @@ export type AccountFeedEvent =
   | AccountFeedCollaboratorRemoveEvent
   | AccountFeedNewsRefreshEvent
   | AccountFeedProjectDetailInvalidateEvent
-  | AccountFeedLroSummaryEvent;
+  | AccountFeedLroSummaryEvent
+  | AccountFeedAgentUpsertEvent
+  | AccountFeedAgentRemoveEvent;
 
 export function accountFeedStreamName(): string {
   return "account-feed";
