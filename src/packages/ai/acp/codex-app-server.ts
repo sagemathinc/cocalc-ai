@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { artifactPublicationGuidance } from "./publication-guidance";
+import {
+  artifactPublicationGuidance,
+  MATH_FORMATTING_GUIDANCE,
+} from "./publication-guidance";
 import { cocalcAccessGuidance } from "./cocalc-access-guidance";
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -1775,7 +1778,7 @@ function addRuntimeGuidance(
   const workbench = `\n\n${artifactPublicationGuidance(
     getCoCalcCliCommand(runtimeEnv),
     runtimeEnv?.COCALC_WORKBENCH === "1",
-  )}`;
+  )}\n\n${MATH_FORMATTING_GUIDANCE}`;
   return `${getCoCalcRuntimeGuidanceHeader(getCoCalcCliCommand(runtimeEnv), {
     hasBrowser: !!hasBrowser,
   })}${attribution}${workbench}${memoryContext ? `\n\n${memoryContext}` : ""}\n\n${prompt}`;
