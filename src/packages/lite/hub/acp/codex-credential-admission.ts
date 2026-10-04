@@ -5,7 +5,10 @@
 
 import type { AcpJobRequest, AcpRequest } from "@cocalc/conat/ai/acp/types";
 import { hubApi } from "../api";
-import { parseAcpHarnessProfile } from "@cocalc/util/ai/runtime";
+import {
+  type AcpHarnessProfile,
+  parseAcpHarnessProfile,
+} from "@cocalc/util/ai/runtime";
 import { prepareHarnessRequest } from "./harness-runtime";
 import { decodeAcpJobRequest, latestHumanHarnessJob } from "../sqlite/acp-jobs";
 
@@ -56,7 +59,7 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
         );
       // Compare the profiles as they run now: a job admitted before a
       // harness version bump names the superseded pin, which parsing upgrades.
-      const normalized = (value: typeof request.runtime.profile) => {
+      const normalized = (value: AcpHarnessProfile) => {
         try {
           return parseAcpHarnessProfile(value);
         } catch {
