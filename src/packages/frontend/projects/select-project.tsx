@@ -14,10 +14,14 @@ type ProjectSelectionList = { id: string; title: string }[];
 
 interface Props {
   ariaLabel?: string;
+  id?: string;
   exclude?: string[]; // project_id's to exclude
   at_top?: string[]; // include these projects at the top of the selector first (assuming they are in the project_map)
   disabled?: boolean;
   fullCollaboratorOnly?: boolean;
+  // Offer only projects this accepts (a plain project object).
+  filter?: (project: any) => boolean;
+  placeholder?: string;
   onChange: (project_id: string) => void; // called when specific project selected
   value?: string | null; // null keeps a controlled picker empty
   defaultValue?: string;
@@ -35,6 +39,9 @@ function hasFullCollaboratorAccess(project: any, account_id?: string): boolean {
 
 export function SelectProject({
   ariaLabel,
+  id,
+  filter,
+  placeholder = "Select a project...",
   exclude,
   at_top,
   disabled = false,
@@ -98,9 +105,11 @@ export function SelectProject({
 
     const others: ProjectSelectionList = [];
     for (let i of v) {
+      if (i.deleted && i.project_id != value) continue;
       if (fullCollaboratorOnly && !hasFullCollaboratorAccess(i, account_id)) {
         continue;
       }
+      if (filter != null && i.project_id != value && !filter(i)) continue;
       const is_hidden = !!i.users?.[account_id ?? ""]?.hide;
       if (i.project_id == value || is_hidden == include_hidden) {
         others.push({ id: i.project_id, title: i.title });
@@ -112,6 +121,7 @@ export function SelectProject({
     exclude,
     at_top,
     fullCollaboratorOnly,
+    filter,
     include_hidden,
     value,
   ]);
@@ -124,12 +134,13 @@ export function SelectProject({
     <div style={style}>
       <div style={{ display: "flex", flexDirection: "row" }}>
         <Select
+          id={id}
           aria-label={ariaLabel}
           allowClear
           disabled={disabled}
           style={{ marginRight: "15px", flex: 1, minWidth: 0 }}
           showSearch={true}
-          placeholder={"Select a project..."}
+          placeholder={placeholder}
           optionFilterProp={"children"}
           value={value}
           defaultValue={defaultValue}

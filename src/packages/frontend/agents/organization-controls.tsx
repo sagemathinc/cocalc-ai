@@ -32,19 +32,24 @@ export function AgentOrganizationControls({
         }
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginTop: 8,
-        }}
-      >
-        {showLabel ? (
-          <Typography.Text type="secondary">Agents</Typography.Text>
-        ) : (
-          <span />
-        )}
+      {showLabel && (
+        <Typography.Text
+          type="secondary"
+          style={{ display: "block", marginTop: 8 }}
+        >
+          Agents
+        </Typography.Text>
+      )}
+      {/* One row: the create action, with organizing tucked beside it. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <Button
+          type="text"
+          icon={<Icon name="plus" />}
+          onClick={onNewAgent}
+          style={{ flex: "1 1 auto", justifyContent: "flex-start" }}
+        >
+          New agent
+        </Button>
         <Button
           ref={trigger}
           type="text"
@@ -56,15 +61,6 @@ export function AgentOrganizationControls({
           onClick={() => setOpen((value) => !value)}
         />
       </div>
-      <Button
-        block
-        type="text"
-        icon={<Icon name="plus" />}
-        onClick={onNewAgent}
-        style={{ justifyContent: "flex-start", marginTop: 8 }}
-      >
-        New Agent
-      </Button>
       <div id={id} hidden={!open}>
         <Segmented
           block

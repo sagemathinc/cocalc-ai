@@ -3,11 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useMemo, useState } from "react";
-import { Alert, Form, Input, Modal, Radio, Select } from "antd";
+import { useCallback, useMemo, useState } from "react";
+import { Alert, Form, Input, Modal, Radio } from "antd";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { Conversation } from "@cocalc/util/people";
 import { isProjectCollaboratorRole } from "@cocalc/util/project-access";
+import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { peopleApi, conversationsChanged } from "./api";
 import { createConversation } from "./create";
 
@@ -45,6 +46,11 @@ export function NewConversationModal({
   onCreated: (conversation: Conversation) => void;
 }) {
   const projects = useCollaboratorProjects(personId);
+  // With a person, only projects you share with them.
+  const sharedWithPerson = useCallback(
+    (project: any) => !personId || project.users?.[personId] != null,
+    [personId],
+  );
   const [project_id, setProjectId] = useState<string>();
   const [title, setTitle] = useState("");
   const [mode, setMode] = useState<"new" | "existing">("new");
@@ -98,19 +104,16 @@ export function NewConversationModal({
               : "Everyone in the project can read and join."
           }
         >
-          <Select
+          <SelectProject
             id="people-new-conversation-project"
-            showSearch
-            optionFilterProp="label"
+            ariaLabel="Project"
+            fullCollaboratorOnly
+            filter={sharedWithPerson}
             placeholder={
               projects.length ? "Choose a project" : "No shared projects"
             }
-            value={project_id}
+            value={project_id ?? null}
             onChange={setProjectId}
-            options={projects.map((p) => ({
-              value: p.project_id,
-              label: p.title,
-            }))}
           />
         </Form.Item>
         <Form.Item label="Title" htmlFor="people-new-conversation-title">

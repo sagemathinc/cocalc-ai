@@ -15,6 +15,7 @@ import { Alert, Button, Checkbox, Empty, Select } from "antd";
 import type { InputRef } from "antd";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { Icon, isIconName } from "@cocalc/frontend/components";
+import { PageCreateButton } from "@cocalc/frontend/components/page-create-button";
 import { blobImageUrl } from "@cocalc/frontend/components/theme-image-url";
 import type { ForeignArtifactTarget } from "@cocalc/frontend/frame-editors/chat-editor/foreign-artifact-source";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
@@ -448,11 +449,6 @@ function AccountArtifactBrowser({
           >
             Artifacts
           </h1>
-          {onNewArtifact && (
-            <Button icon={<Icon name="plus" />} onClick={onNewArtifact}>
-              New artifact
-            </Button>
-          )}
           <div
             role="group"
             aria-label="Artifacts view"
@@ -474,6 +470,9 @@ function AccountArtifactBrowser({
             />
           </div>
           <PageSearchBox scope="artifacts" inputRef={searchRef} />
+          {onNewArtifact && (
+            <PageCreateButton label="New artifact" onClick={onNewArtifact} />
+          )}
         </header>
         <div
           style={{

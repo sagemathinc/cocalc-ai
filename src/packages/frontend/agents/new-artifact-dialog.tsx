@@ -7,8 +7,10 @@
 // to the chosen project's Library conversation (see library-create).
 
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Input, Modal, Select, Typography } from "antd";
+import { Alert, Button, Input, Modal, Typography } from "antd";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { SelectProject } from "@cocalc/frontend/projects/select-project";
+import { isProjectCollaboratorRole } from "@cocalc/util/project-access";
 import { Icon, type IconName } from "@cocalc/frontend/components";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
@@ -62,10 +64,15 @@ export function NewArtifactDialog({
   const project_map = useTypedRedux("projects", "project_map");
   const account_id = useTypedRedux("account", "account_id");
   const lastProject = useTypedRedux("page", "last_project_tab");
+  // Only for the initial choice; the picker sorts and filters itself.
   const projects = useMemo(() => {
     const list: { value: string; label: string; used: number }[] = [];
     project_map?.forEach((project, project_id: string) => {
       if (project.get("deleted")) return;
+      const me = project.getIn(["users", account_id]) as any;
+      if (!isProjectCollaboratorRole(me?.get("group")) || me?.get("hide")) {
+        return;
+      }
       list.push({
         value: project_id,
         label: project.get("title") || "Untitled",
@@ -99,7 +106,7 @@ export function NewArtifactDialog({
     setPr(undefined);
     setError("");
     setProject(
-      lastProject && project_map?.get(lastProject)
+      lastProject && projects.some(({ value }) => value === lastProject)
         ? lastProject
         : projects[0]?.value,
     );
@@ -224,16 +231,15 @@ export function NewArtifactDialog({
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <label>
+          <label htmlFor="new-artifact-project">
             Project
-            <Select
-              aria-label="Project"
-              showSearch
-              optionFilterProp="label"
-              value={project_id}
+            <SelectProject
+              id="new-artifact-project"
+              ariaLabel="Project"
+              fullCollaboratorOnly
+              value={project_id ?? null}
               onChange={setProject}
-              options={projects}
-              style={{ width: "100%", marginTop: 4 }}
+              style={{ marginTop: 4 }}
             />
           </label>
           {kind === "github-pr" && (

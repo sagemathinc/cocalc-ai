@@ -4593,7 +4593,7 @@ export function MyAgentsWorkspacePage({
                 >
                   <Space
                     direction="vertical"
-                    size={10}
+                    size={4}
                     style={{ width: "100%" }}
                   >
                     {
@@ -5223,6 +5223,7 @@ export function MyAgentsWorkspacePage({
         {accountId && (
           <AgentsOverview
             active={active && overviewOpen && (!isNarrow || !mobileList)}
+            onNewAgent={aiDisabled ? undefined : startNewAgent}
             navigation={libraryNavigationControl()}
             mine={[
               ...agentOrganization.groups.pinned,

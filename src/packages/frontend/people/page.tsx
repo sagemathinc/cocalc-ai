@@ -10,6 +10,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Alert, Button, Select, Tabs } from "antd";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
+import { PageCreateButton } from "@cocalc/frontend/components/page-create-button";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   DEFAULT_PERSONAL_STATE,
@@ -262,13 +263,10 @@ export function PeoplePage() {
               Scan
             </Button>
           )}
-          <Button
-            type="primary"
-            icon={<Icon name="plus" />}
+          <PageCreateButton
+            label="New conversation"
             onClick={() => setNewFor({})}
-          >
-            New conversation
-          </Button>
+          />
         </header>
         <Tabs
           activeKey={route.tab}
