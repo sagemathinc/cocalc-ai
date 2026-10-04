@@ -14,6 +14,7 @@ const setActiveTab = jest.fn();
 const setProjectBookmarked = jest.fn();
 let mockPins: string[] = [];
 let mockCurrent = "p2";
+let mockLast: string | undefined;
 let mockOpenProjects = List<string>();
 
 const mockProjects = fromJS({
@@ -40,7 +41,9 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
         : mockProjects
       : field === "account_id"
         ? me
-        : mockCurrent,
+        : field === "last_project_tab"
+          ? mockLast
+          : mockCurrent,
 }));
 jest.mock("@cocalc/frontend/components", () => ({ Icon: () => null }));
 jest.mock("./theme", () => ({ ProjectThemeAvatar: () => null }));
@@ -56,7 +59,20 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockPins = [];
   mockCurrent = "p2";
+  mockLast = undefined;
   mockOpenProjects = List<string>();
+});
+
+it("a collapsed section keeps the last project after moving to another page", () => {
+  mockCurrent = "agents";
+  mockLast = "p3";
+  render(<ProjectsSidebar search="" inSection onlyCurrent />);
+  expect(
+    screen.getByRole("button", { name: "Open project Gamma" }),
+  ).toHaveAttribute("aria-current", "page");
+  expect(
+    screen.queryByRole("button", { name: "Open project Beta" }),
+  ).toBeNull();
 });
 
 it("keyboard switching resumes retained project directories without reopening them", async () => {

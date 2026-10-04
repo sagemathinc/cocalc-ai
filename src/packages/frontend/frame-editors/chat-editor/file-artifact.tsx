@@ -1,7 +1,16 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import type React from "react";
-import { createPortal } from "react-dom";
-import { Icon, type IconName } from "@cocalc/frontend/components";
+import type { IconName } from "@cocalc/frontend/components";
+
+export type FileArtifactAction = {
+  key: string;
+  label: string;
+  icon: IconName;
+  disabled?: boolean;
+  // Shown as a button rather than in a menu.
+  primary?: boolean;
+  onClick: () => void;
+};
 import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
 import { Alert, Button, Space } from "antd";
 import { ARTIFACT_TEXT_LIMIT } from "@cocalc/chat";
@@ -183,7 +192,7 @@ function SavedFileArtifact({
   projectId,
   localComments = false,
   fontSize,
-  toolbarPortal,
+  onToolbarActions,
 }: {
   artifact: ArtifactRecord;
   historical: boolean;
@@ -191,11 +200,12 @@ function SavedFileArtifact({
   onComment?: (feedback: ArtifactFeedback) => Promise<void>;
   localComments?: boolean;
   fontSize?: number;
-  // A page that shows the artifact full size puts these tools in its own
-  // one-row header, as icons; the path is shown there too.
-  toolbarPortal?: HTMLElement | null;
+  // A page that shows the artifact full size offers these tools in its own
+  // one-row header (and menu) instead of a toolbar here; the path is shown
+  // there too.
+  onToolbarActions?: (actions: FileArtifactAction[]) => void;
 }) {
-  const compact = toolbarPortal !== undefined;
+  const compact = onToolbarActions !== undefined;
   const { actions, projectAccess } = useProjectContext();
   const context = useFileContext();
   const path = artifact.file!.path;
@@ -281,22 +291,42 @@ function SavedFileArtifact({
       cancelled = true;
     };
   }, [actions, path, refresh, supported, binary]);
-  const toolProps = (label: string, icon: IconName) =>
-    compact
-      ? {
-          type: "text" as const,
-          size: "small" as const,
-          "aria-label": label,
-          title: label,
-          icon: <Icon name={icon} />,
-        }
-      : {};
+  const openInProject = () => {
+    void actions?.open_file({ path }).catch((err) => setError(String(err)));
+  };
+  const download = () => {
+    void actions
+      ?.download_file({ path, log: true })
+      .catch((err) => setError(String(err)));
+  };
+  useEffect(() => {
+    onToolbarActions?.([
+      {
+        key: "open",
+        label: "Open in project",
+        icon: "external-link",
+        disabled: !actions,
+        primary: true,
+        onClick: openInProject,
+      },
+      {
+        key: "download",
+        label: "Download",
+        icon: "download",
+        disabled: !actions,
+        onClick: download,
+      },
+      {
+        key: "refresh",
+        label: "Refresh",
+        icon: "refresh",
+        disabled: loading || !supported,
+        onClick: () => setRefresh((n) => n + 1),
+      },
+    ]);
+  }, [onToolbarActions, actions, path, loading, supported]);
   const renderToolbar = (toolbar: React.ReactElement) =>
-    compact
-      ? toolbarPortal
-        ? createPortal(toolbar, toolbarPortal)
-        : null
-      : toolbar;
+    compact ? null : toolbar;
   return (
     <KeyboardBoundary
       className="smc-vfill"
@@ -308,13 +338,8 @@ function SavedFileArtifact({
       }}
     >
       {renderToolbar(
-        <Space
-          wrap={!compact}
-          size={compact ? 2 : 8}
-          style={compact ? undefined : { flexShrink: 0, marginBottom: 8 }}
-        >
+        <Space wrap style={{ flexShrink: 0, marginBottom: 8 }}>
           <Button
-            {...toolProps("Open in project", "external-link")}
             disabled={!actions}
             onClick={() => {
               void actions
@@ -322,10 +347,9 @@ function SavedFileArtifact({
                 .catch((err) => setError(String(err)));
             }}
           >
-            {compact ? null : "Open in project"}
+            Open in project
           </Button>
           <Button
-            {...toolProps("Download", "download")}
             disabled={!actions}
             onClick={() => {
               void actions
@@ -333,14 +357,13 @@ function SavedFileArtifact({
                 .catch((err) => setError(String(err)));
             }}
           >
-            {compact ? null : "Download"}
+            Download
           </Button>
           <Button
-            {...toolProps("Refresh", "refresh")}
             disabled={loading || !supported}
             onClick={() => setRefresh((n) => n + 1)}
           >
-            {compact ? null : "Refresh"}
+            Refresh
           </Button>
           {localComments ? (
             <LocalCommentButton
@@ -352,7 +375,6 @@ function SavedFileArtifact({
             />
           ) : (
             <Button
-              {...toolProps("Comment", "comment")}
               disabled={
                 !onComment ||
                 binary ||
@@ -379,7 +401,7 @@ function SavedFileArtifact({
                 }
               }}
             >
-              {compact ? null : "Comment"}
+              Comment
             </Button>
           )}
           {selection && (
@@ -392,16 +414,9 @@ function SavedFileArtifact({
               Clear selection
             </Button>
           )}
-          {compact ? (
-            // Only worth saying while it is happening.
-            <span role="status" style={{ fontSize: 12, opacity: 0.7 }}>
-              {loading ? "Loading…" : ""}
-            </span>
-          ) : (
-            <span role="status">
-              {loading ? "Loading current saved file..." : "Current saved file"}
-            </span>
-          )}
+          <span role="status">
+            {loading ? "Loading current saved file..." : "Current saved file"}
+          </span>
         </Space>,
       )}
       {selection && (

@@ -5,7 +5,10 @@
 
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { LibrarySidebar } from "./library-sidebar";
+import {
+  LibrarySidebar,
+  resetLastOpenArtifactForTests,
+} from "./library-sidebar";
 
 const setPinned = jest.fn();
 const hit = (id: string, title: string) => ({
@@ -102,4 +105,27 @@ it("an artifact opened by its name is current too, even with the section collaps
   ).toBeNull();
   mockRoute = { project: "p", entry: "e2" };
   mockNames = [];
+});
+
+it("a collapsed section keeps the last artifact after moving to another page", () => {
+  resetLastOpenArtifactForTests();
+  mockRoute = { project: "p", entry: "e3" };
+  const view = (
+    <LibrarySidebar
+      inSection
+      onlyCurrent
+      search=""
+      accountId="acct"
+      agents={[]}
+      onOpen={jest.fn()}
+      onAll={jest.fn()}
+    />
+  );
+  const { rerender } = render(view);
+  mockRoute = {};
+  rerender(view);
+  expect(
+    screen.getByRole("button", { name: "Open artifact Notes" }),
+  ).toBeInTheDocument();
+  mockRoute = { project: "p", entry: "e2" };
 });

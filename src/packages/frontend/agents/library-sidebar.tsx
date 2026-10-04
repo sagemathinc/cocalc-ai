@@ -32,6 +32,12 @@ const MATCHES = 50;
 // In a sidebar section, which shows a few and links to the full page.
 const SECTION_RECENT = 3;
 
+let lastOpenArtifact: { project: string; entry: string } | undefined;
+
+export function resetLastOpenArtifactForTests() {
+  lastOpenArtifact = undefined;
+}
+
 export function LibrarySidebar({
   search,
   inSection = false,
@@ -68,8 +74,19 @@ export function LibrarySidebar({
     routeEntry == null && routeProject
       ? names.find((alias) => alias.active && alias.name === routeProject)
       : undefined;
-  const openProject = openAlias?.project_id ?? routeProject;
-  const openEntry = openAlias?.entry_id ?? routeEntry;
+  const routeOpen =
+    (openAlias?.project_id ?? routeProject) &&
+    (openAlias?.entry_id ?? routeEntry)
+      ? {
+          project: (openAlias?.project_id ?? routeProject)!,
+          entry: (openAlias?.entry_id ?? routeEntry)!,
+        }
+      : undefined;
+  // The last artifact opened stays listed after leaving it, so a collapsed
+  // section still offers the way back (as agents and people do).
+  if (routeOpen) lastOpenArtifact = routeOpen;
+  const openProject = (routeOpen ?? lastOpenArtifact)?.project;
+  const openEntry = (routeOpen ?? lastOpenArtifact)?.entry;
   const results = catalogResults(metadata.entries, agents, {
     query: search,
     sort: "recent",
