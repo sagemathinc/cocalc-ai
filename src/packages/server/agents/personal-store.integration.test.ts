@@ -162,6 +162,39 @@ describeDb("account-home Agent Networks", () => {
     }
   });
 
+  test("repair stops watching agents of a project the account was removed from", async () => {
+    const watch = jest.fn(async () => {});
+    const watched = new PersonalAgentStore(
+      db,
+      identity,
+      principal,
+      async () => {},
+      projectWasDeleted,
+      principal,
+      { watch },
+    );
+    identity.mockImplementation(async (owner, endpoint) => {
+      if (endpoint.project_id === project)
+        throw new Error("user must be a collaborator on project");
+      if (endpoint.project_id === otherProject)
+        throw new Error("owner temporarily unavailable");
+      return identityResult(owner, endpoint);
+    });
+    try {
+      await watched.repair(account);
+      const unwatched = watch.mock.calls
+        .filter(([, , watching]) => watching === false)
+        .map(([, endpoint]) => endpoint.project_id);
+      // Denied: unwatched. A transient failure keeps the watch.
+      expect(new Set(unwatched)).toEqual(new Set([project]));
+      expect((await watched.names(account)).every((a) => !a.available)).toBe(
+        true,
+      );
+    } finally {
+      identity.mockImplementation(identityResult);
+    }
+  });
+
   test("keeps names when deletion is unconfirmed or the evidence service fails", async () => {
     identity.mockRejectedValue(new Error("owner temporarily unavailable"));
     try {

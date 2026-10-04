@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { AgentIdentity } from "@cocalc/conat/agents/protocol";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
+import { isActorDenial } from "./actor-denial";
 import {
   agentRpcSourceKey,
   isExternalAgentSource,
@@ -294,7 +295,13 @@ export class PersonalAgentStore {
           await this.hooks
             .watch?.(account, endpoint, true)
             .catch(() => undefined);
-        } catch {
+        } catch (err) {
+          // No longer allowed in the project: stop receiving its changes
+          // (a transient failure keeps the watch).
+          if (isActorDenial(err))
+            await this.hooks
+              .watch?.(account, endpoint, false)
+              .catch(() => undefined);
           const projectId = row.project_id;
           if (!deletedProjects.has(projectId))
             deletedProjects.set(

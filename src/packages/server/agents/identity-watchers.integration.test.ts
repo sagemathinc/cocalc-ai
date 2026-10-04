@@ -22,7 +22,11 @@ jest.mock("@cocalc/server/conat/api/project-host-token-auth", () => ({
   assertProjectHostAgentTokenAccess: (...args) => assertHost(...args),
 }));
 
-import { notifyIdentityWatchers, watchIdentity } from "./identity-watchers";
+import {
+  dropProjectIdentityWatchers,
+  notifyIdentityWatchers,
+  watchIdentity,
+} from "./identity-watchers";
 import { reportRuntime } from "./api";
 
 const describeDb =
@@ -102,6 +106,48 @@ describeDb("agent identity watchers", () => {
     ).rejects.toThrow("not a collaborator");
     await notifyIdentityWatchers(agent_id);
     expect(withPersonalHome).not.toHaveBeenCalled();
+  });
+
+  const watchers = async () =>
+    (
+      await getPool().query(
+        "SELECT account_id FROM agent_identity_watchers WHERE agent_id=$1 ORDER BY account_id",
+        [agent_id],
+      )
+    ).rows.map((row) => row.account_id);
+
+  test("someone removed from the project stops receiving the agent's changes", async () => {
+    for (const account_id of [alice, bob])
+      await watchIdentity({ account_id, project_id, agent_id, watching: true });
+    // Bob is removed from the project after naming the agent.
+    assertActor.mockImplementation(async (account_id) => {
+      if (account_id === bob)
+        throw new Error("user must be a collaborator on project");
+    });
+    await notifyIdentityWatchers(agent_id);
+    expect(withPersonalHome).toHaveBeenCalledTimes(1);
+    expect(withPersonalHome).toHaveBeenCalledWith(alice, expect.anything());
+    expect(await watchers()).toEqual([alice]);
+  });
+
+  test("a transient access failure skips one push but keeps the watch", async () => {
+    await watchIdentity({
+      account_id: bob,
+      project_id,
+      agent_id,
+      watching: true,
+    });
+    assertActor.mockRejectedValueOnce(new Error("timeout"));
+    await notifyIdentityWatchers(agent_id);
+    expect(withPersonalHome).not.toHaveBeenCalled();
+    expect(await watchers()).toEqual([bob]);
+  });
+
+  test("removing a collaborator drops their watches on the project's agents", async () => {
+    for (const account_id of [alice, bob])
+      await watchIdentity({ account_id, project_id, agent_id, watching: true });
+    await dropProjectIdentityWatchers({ project_id, account_id: bob });
+    expect(await watchers()).toEqual([alice]);
   });
 
   test("the host's runtime report fills in the runtime and notifies once", async () => {
