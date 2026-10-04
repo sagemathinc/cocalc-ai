@@ -29,6 +29,7 @@ import {
   PUBLIC_ABOUT_REASON,
   PUBLIC_TEAM_MEMBERS,
 } from "@cocalc/util/public-about-content";
+import { getPublicCompareSections } from "@cocalc/util/public-compare-content";
 import {
   PUBLIC_FEATURED_GUIDES,
   PUBLIC_GUIDE_GROUPS,
@@ -413,7 +414,12 @@ function renderFeatureDetail(
   basePath: string,
   config: PublicRouteMetadataConfig,
 ): string {
-  const sections = (page.sections ?? [])
+  // The Compare page's fit lists depend on the site.
+  const sections = (
+    page.slug === "compare"
+      ? getPublicCompareSections(config)
+      : (page.sections ?? [])
+  )
     .map((section) => renderSection(section, basePath, config))
     .join("");
   const title = page.metadataTitle ?? page.title;

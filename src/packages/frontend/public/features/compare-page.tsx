@@ -14,6 +14,7 @@ import {
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
+import { getPublicCompareSections } from "@cocalc/util/public-compare-content";
 import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
 import { builtinPolicyPath, type PublicConfig } from "../common";
 import {
@@ -28,9 +29,6 @@ const PANEL_SHADOW = `0 14px 34px ${alpha(PUBLIC_COLORS.heading, 0.07)}`;
 const COMPARE_PAGE = getPublicFeaturePage("compare")!;
 const SANDBOX_OVERVIEW = COMPARE_PAGE.sections?.find(
   ({ title }) => title === "Shared project or agent sandbox?",
-)!;
-const SANDBOX_CHOICES = COMPARE_PAGE.sections?.filter(({ title }) =>
-  title.startsWith("Choose "),
 )!;
 const SANDBOX_BOUNDARY = COMPARE_PAGE.sections?.find(
   ({ title }) => title === "Check the operating boundary",
@@ -345,6 +343,9 @@ export default function CompareFeaturePage({
     subject: "CoCalc fit evaluation",
     title: "Talk with CoCalc about fit",
   });
+  const sandboxChoices = getPublicCompareSections(config).filter(({ title }) =>
+    title.startsWith("Choose "),
+  );
   const hasBuiltinTrustPage = !!builtinPolicyPath(config, "trust");
   const boundaryLinks = SANDBOX_BOUNDARY.links?.filter(
     ({ href }) =>
@@ -432,7 +433,7 @@ export default function CompareFeaturePage({
             </Paragraph>
           ))}
           <div className="cocalc-compare-sandbox-grid">
-            {SANDBOX_CHOICES.map((choice) => (
+            {sandboxChoices.map((choice) => (
               <article
                 className="cocalc-compare-sandbox-card"
                 key={choice.title}
