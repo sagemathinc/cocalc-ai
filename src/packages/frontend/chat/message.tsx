@@ -3207,6 +3207,7 @@ export default function Message({
           <AgentLaunchStatus
             receipt={field(message, "agent_rpc_launch")}
             acpState={acpState}
+            projectId={project_id}
             onResubmit={
               actions && !read_only && sender_is_viewer(account_id, message)
                 ? () =>

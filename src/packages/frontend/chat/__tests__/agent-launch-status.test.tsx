@@ -4,6 +4,14 @@ import userEvent from "@testing-library/user-event";
 import { fromJS } from "immutable";
 import { AgentLaunchStatus } from "../agent-launch-status";
 
+jest.mock("@cocalc/frontend/account/codex-credentials-panel", () => ({
+  CodexCredentialsPanel: ({
+    defaultProjectId,
+  }: {
+    defaultProjectId?: string;
+  }) => <div>credentials panel for {defaultProjectId}</div>,
+}));
+
 it("normalizes immutable receipts and permits an explicit keyboard resubmit only", async () => {
   const onResubmit = jest.fn(async () => false);
   render(
@@ -60,4 +68,27 @@ it("turns an abandoned pending receipt into an unconfirmed notice, without retry
   ).toBeTruthy();
   expect(onResubmit).not.toHaveBeenCalled();
   jest.useRealTimers();
+});
+
+it("offers Connect when the agent could not run because nothing pays for it", async () => {
+  render(
+    <AgentLaunchStatus
+      receipt={{
+        state: "rejected",
+        updated_at: 1,
+        error: "Not run",
+        needs: "codex-connection",
+      }}
+      projectId="project-1"
+      onResubmit={jest.fn(async () => true)}
+    />,
+  );
+  const status = screen.getByRole("status").textContent;
+  expect(status).toContain("needs a ChatGPT plan or API key");
+  expect(status).not.toContain("does not prove the turn failed");
+  await userEvent.click(screen.getByRole("button", { name: "Connect" }));
+  expect(screen.getByText("credentials panel for project-1")).toBeTruthy();
+  expect(
+    screen.getByRole("button", { name: "Resubmit to Agent" }),
+  ).toBeTruthy();
 });

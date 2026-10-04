@@ -4,6 +4,7 @@
  */
 
 import type { AcpJobRequest, AcpRequest } from "@cocalc/conat/ai/acp/types";
+import { agentRecipientSetupError } from "@cocalc/conat/agents/rpc";
 import { hubApi } from "../api";
 import { reportAgentRuntimeOnce } from "./agent-runtime-report";
 import {
@@ -128,7 +129,8 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
       });
       const admitted = previous && decodeAcpJobRequest(previous);
       if (!admitted || admitted.request_kind === "command" || !admitted.runtime)
-        throw Error(
+        throw agentRecipientSetupError(
+          "human-turn",
           "The recipient agent has no payment method recorded for this account. Open it and send one message with its selected payment method before using Agent Networks.",
         );
       // Compare the profiles as they run now: a job admitted before a
@@ -147,7 +149,8 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
         request.runtime.profile,
       );
       if (JSON.stringify(oldProfile) !== JSON.stringify(newProfile))
-        throw Error(
+        throw agentRecipientSetupError(
+          "human-turn",
           "Recipient runtime changed; send a message in the recipient agent to confirm its payment method.",
         );
       harness_credential = admitted.harness_credential;
@@ -190,19 +193,28 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
       preference === "subscription-credential" ? "subscription" : preference,
     credential_id: requestedCredentialId || undefined,
   });
+  const agentMessage = !!request.chat?.agent_rpc_execution;
   if (resolved.source !== "subscription") {
     if (preference !== "auto") {
-      throw new Error(
+      const reason =
         resolved.unavailableReason ||
-          "The selected ChatGPT subscription is unavailable.",
-      );
+        "The selected ChatGPT subscription is unavailable.";
+      throw agentMessage
+        ? agentRecipientSetupError("codex-connection", reason)
+        : new Error(reason);
+    }
+    if (agentMessage && resolved.source === "none") {
+      // Nothing can pay for this turn. Refuse it now so the sender learns
+      // why, rather than admitting a turn that fails in the recipient thread.
+      throw agentRecipientSetupError("codex-connection");
     }
     return request;
   }
   const credentialId = `${resolved.credentialId ?? ""}`.trim();
   if (!credentialId) {
     if (resolved.credentialPinRequired && request.chat?.agent_rpc_execution) {
-      throw new Error(
+      throw agentRecipientSetupError(
+        "codex-connection",
         "The recipient agent has no payment method recorded for this account. Open it and send one message with its selected ChatGPT subscription before using Agent Networks.",
       );
     }

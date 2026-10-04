@@ -21,6 +21,7 @@ export const NameAgent = ({
   ) : null;
 };
 export const getCodexPaymentSourceOptions = () => [];
+export const getCodexModelPayer = () => undefined;
 export const isCodexPaymentSourceNeedsUserConfiguration = () => false;
 export const useAgentMentions = () => ({
   agents: [],

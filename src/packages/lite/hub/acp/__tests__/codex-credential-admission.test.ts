@@ -287,3 +287,18 @@ describe("the account's stored payment selection", () => {
     });
   });
 });
+
+test("an agent message refuses a turn nothing can pay for, before queueing", async () => {
+  setCodexCredentialAdmissionResolver(async () => ({ source: "none" }));
+  const agentMessage = {
+    ...request(),
+    config: { paymentSource: "auto" as const },
+    chat: { ...request().chat, agent_rpc_execution: {} as any },
+  };
+  await expect(pinCodexCredentialAtAdmission(agentMessage)).rejects.toThrow(
+    "[agent-recipient-setup:codex-connection]",
+  );
+  // A person's own turn keeps its existing behavior and error text.
+  const own = { ...request(), config: { paymentSource: "auto" as const } };
+  await expect(pinCodexCredentialAtAdmission(own)).resolves.toBe(own);
+});

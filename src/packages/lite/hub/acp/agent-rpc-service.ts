@@ -13,6 +13,7 @@ import {
   type StagedAgentAttachments,
 } from "@cocalc/conat/agents/attachment-staging";
 import {
+  parseAgentRecipientSetup,
   rpcOutcome,
   validateAgentRpcRequest,
   type AgentRpcEnvelope,
@@ -374,7 +375,15 @@ export function createAgentRpcService(
             return rpcOutcome(e, "accepted", { chat_effect: chatEffect });
           });
         } catch (error) {
-          const detail = launchFailureSummary(error);
+          // Admission refused the turn before queueing it because the
+          // recipient cannot pay for it: a definite rejection, not an
+          // unconfirmed launch.
+          const setup = parseAgentRecipientSetup(error);
+          const detail = setup
+            ? setup.need === "codex-connection"
+              ? "Not run: connect a ChatGPT plan or OpenAI API key for this agent, then resubmit this message."
+              : "Not run: send this agent one message yourself to confirm its payment method, then resubmit this message."
+            : launchFailureSummary(error);
           logger.warn("agent message launch failed", {
             project_id: e.target.project_id,
             attempt_id: e.attempt_id,
@@ -392,8 +401,9 @@ export function createAgentRpcService(
                   sender_id: message.sender_id,
                   message_id: message.message_id,
                   agent_rpc_launch: {
-                    state: admissionStarted ? "unknown" : "rejected",
+                    state: admissionStarted && !setup ? "unknown" : "rejected",
                     error: detail,
+                    ...(setup ? { needs: setup.need } : {}),
                     updated_at: Date.now(),
                   },
                 });
@@ -407,6 +417,14 @@ export function createAgentRpcService(
               });
             }
           }
+          if (setup)
+            return rpcOutcome(e, "rejected", {
+              chat_effect: chatEffect,
+              // Older senders validate codes, so reuse an existing one; the
+              // reason carries what the sending agent should relay.
+              code: "execution_not_allowed",
+              reason: setup.reason,
+            });
           const startupUnknown =
             starting &&
             (error instanceof StartupDeadline ||

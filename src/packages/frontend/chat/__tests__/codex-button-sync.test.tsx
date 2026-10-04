@@ -242,6 +242,10 @@ jest.mock("../use-codex-payment-source", () => ({
       .requireActual("../use-codex-payment-source")
       .getCodexPaymentSourceOptions(...args),
   getCodexPaymentSourceTooltip: () => "ChatGPT",
+  getCodexModelPayer: (...args: any[]) =>
+    jest
+      .requireActual("../use-codex-payment-source")
+      .getCodexModelPayer(...args),
 }));
 
 describe("CodexConfigButton", () => {
