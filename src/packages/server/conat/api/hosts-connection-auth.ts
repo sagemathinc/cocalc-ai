@@ -441,6 +441,22 @@ export async function issueProjectHostAgentAuthTokenInternalHelper({
   return { host_id, token, expires_at };
 }
 
+function hostSoftwareVersions(
+  metadata: any,
+): Pick<HostConnectionInfo, "project_bundle_version" | "tools_version"> {
+  const software = metadata?.software ?? {};
+  const value = (v: unknown) => {
+    const s = typeof v === "string" ? v.trim() : "";
+    return s || undefined;
+  };
+  const project_bundle_version = value(software.project_bundle);
+  const tools_version = value(software.tools);
+  return {
+    ...(project_bundle_version ? { project_bundle_version } : {}),
+    ...(tools_version ? { tools_version } : {}),
+  };
+}
+
 export async function resolveHostConnectionLocalHelper({
   account_id,
   host_id,
@@ -606,6 +622,7 @@ export async function resolveHostConnectionLocalHelper({
     size: typeof metadata?.size === "string" ? metadata.size : null,
     ssh_server,
     connect_url,
+    ...hostSoftwareVersions(metadata),
     host_session_id:
       typeof metadata?.host_session_id === "string" &&
       metadata.host_session_id.trim()
