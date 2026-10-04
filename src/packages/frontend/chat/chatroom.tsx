@@ -255,8 +255,18 @@ type ChatThreadCompletionSnapshot = {
   newestMessageDate?: string;
   stableSourceId?: string;
   threadLabel: string;
+  agentLabel: string;
   notifyOnTurnFinish: boolean;
 };
+
+// The name a turn notification uses for the thread's agent.
+export function threadAgentLabel(metadata?: {
+  agent_runtime?: { kind?: string; profile?: { id?: string } } | null;
+}): string {
+  const runtime = metadata?.agent_runtime;
+  if (runtime?.kind !== "acp") return "Codex";
+  return runtime.profile?.id === "claude-code" ? "Claude" : "Agent";
+}
 
 export function getLatestCodexActivityDate(
   messages: readonly ChatMessage[],
@@ -415,6 +425,7 @@ function buildChatThreadCompletionSnapshots({
       threadLabel:
         `${thread.displayLabel ?? thread.label ?? metadata?.name ?? ""}`.trim() ||
         "this chat",
+      agentLabel: threadAgentLabel(metadata),
       notifyOnTurnFinish: threadNotifyOnTurnFinishEnabled(
         metadata?.acp_config,
         metadata?.codex_completion_notification,
@@ -1849,6 +1860,7 @@ function ChatPanelContent({
           path,
           thread_id: current.threadId,
           thread_label: current.threadLabel,
+          agent_label: current.agentLabel,
           newest_message_date: current.newestMessageDate,
           stable_source_id: current.stableSourceId,
         });

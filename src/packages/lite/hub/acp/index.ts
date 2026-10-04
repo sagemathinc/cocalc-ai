@@ -2158,6 +2158,7 @@ export class ChatStreamWriter {
   private completionNoticePublished = false;
   private approverAccountId: string;
   private runtimeKind: "codex" | "acp";
+  private agentLabel: string;
   private interruptedMessage?: string;
   private contentBeforeInterrupt?: string;
   private interruptNotified = false;
@@ -2739,6 +2740,7 @@ export class ChatStreamWriter {
           undefined,
         terminal_state: terminalState,
         error_text: terminalState === "error" ? this.lastErrorText : undefined,
+        agent_label: this.agentLabel,
       });
       await publishCodexTurnNotice({
         client: this.client,
@@ -2771,9 +2773,12 @@ export class ChatStreamWriter {
     liveLogStreamFactory,
     livePreviewStreamFactory,
     runtimeKind = "codex",
+    agentLabel,
   }: {
     metadata: AcpChatContext;
     runtimeKind?: "codex" | "acp";
+    // Names the agent in turn notifications ("Claude"); see buildCodexTurnNoticeOptions.
+    agentLabel?: string;
     client: ConatClient;
     approverAccountId: string;
     sessionKey?: string;
@@ -2795,6 +2800,8 @@ export class ChatStreamWriter {
     }
     this.metadata = metadata;
     this.runtimeKind = runtimeKind;
+    this.agentLabel =
+      agentLabel ?? (runtimeKind === "codex" ? "Codex" : "Agent");
     this.approverAccountId = approverAccountId;
     this.client = client;
     this.chatKey = chatKey(metadata);
@@ -8034,6 +8041,10 @@ async function executeAcpRequest({
       ? new ChatStreamWriter({
           metadata: chatContext,
           runtimeKind: harness ? "acp" : "codex",
+          agentLabel:
+            request.runtime?.profile.id === "claude-code"
+              ? "Claude"
+              : undefined,
           client: conatClient,
           approverAccountId: request.account_id,
           sessionKey: request.session_id,
@@ -10185,6 +10196,8 @@ async function writeQueuedJobFailureToChat({
     const writer = new ChatStreamWriter({
       metadata: request.chat,
       runtimeKind: request.runtime?.kind === "acp" ? "acp" : "codex",
+      agentLabel:
+        request.runtime?.profile.id === "claude-code" ? "Claude" : undefined,
       client: conatClient,
       approverAccountId: request.account_id,
       sessionKey: request.session_id,
