@@ -2336,6 +2336,55 @@ test("qualified Claude negotiates concrete values on new and resumed sessions an
   }
 });
 
+test("Claude runs the newest Opus unless a model was chosen", async (t) => {
+  for (const id of ["claude-code", "other"]) {
+    const child = spawn(
+      process.execPath,
+      [...profile.args, "--config-options", "--opus"],
+      { env: {}, stdio: "pipe" },
+    );
+    const closed = new Promise((resolve) => child.once("close", resolve));
+    const client = await AcpHarnessClient.start(
+      {
+        projectId: "project-a",
+        accountId: "account-a",
+        profile:
+          id === "claude-code"
+            ? {
+                version: 2,
+                kind: "acp",
+                id,
+                revision: "0.85.1",
+                cwd: "/home/user",
+                executionPolicy: "full-access",
+                credentialMode: "project-managed",
+              }
+            : profile,
+      },
+      async () => ({
+        stdin: child.stdin,
+        stdout: child.stdout,
+        stderr: child.stderr,
+        closed,
+        stop: async () => {
+          child.kill("SIGKILL");
+          await closed;
+        },
+      }),
+    );
+    t.after(() => client.dispose());
+    await client.open();
+    const model = () =>
+      client.controls.configOptions.find(({ id }) => id === "model")
+        .currentValue;
+    await client.configure({});
+    assert.equal(model(), id === "claude-code" ? "opus" : "fast");
+    await client.configure({ configOptions: [{ id: "model", value: "deep" }] });
+    assert.equal(model(), "deep");
+    await client.dispose();
+  }
+});
+
 test("native session forks negotiate support, preserve the source and never load or prompt", async (t) => {
   for (const [flags, policy, code] of [
     [["--fork"], "default", undefined],

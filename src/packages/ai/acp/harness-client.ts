@@ -36,6 +36,7 @@ import {
   ACP_MAX_OUTBOUND_FRAME_BYTES,
 } from "@cocalc/util/ai/harness-limits";
 import {
+  defaultClaudeModel,
   harnessSessionControls,
   parseHarnessSessionSettings,
   resolveClaudeConfigValue,
@@ -436,15 +437,26 @@ export class AcpHarnessClient {
           this.session.modes!.currentModeId = selected.modeId;
         }
       }
+      const claude =
+        this.binding.profile.version === 2 &&
+        this.binding.profile.id === "claude-code";
+      if (claude && !selected.configOptions?.some(({ id }) => id === "model")) {
+        // No model chosen: run CoCalc's default, not Claude Code's plan default.
+        const model = this.controls.configOptions.find(
+          ({ id }) => id === "model",
+        );
+        const value = model && defaultClaudeModel(model);
+        if (value)
+          selected.configOptions = [
+            { id: "model", value },
+            ...(selected.configOptions ?? []),
+          ];
+      }
       for (const choice of selected.configOptions ?? []) {
         const control = this.controls.configOptions.find(
           ({ id }) => id === choice.id,
         );
-        if (
-          control &&
-          this.binding.profile.version === 2 &&
-          this.binding.profile.id === "claude-code"
-        )
+        if (control && claude)
           choice.value = resolveClaudeConfigValue(control, choice.value);
         if (!control?.options.some(({ value }) => value === choice.value))
           throw new HarnessError(

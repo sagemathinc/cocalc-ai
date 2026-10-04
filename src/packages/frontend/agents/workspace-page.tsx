@@ -696,6 +696,7 @@ function NewAgentPanel({
     ExternalCredentialInfo[]
   >([]);
   const [claudeCredentialsLoaded, setClaudeCredentialsLoaded] = useState(false);
+  const claudeCredentialsAccount = useRef<string | undefined>(undefined);
   const initialClaudeCredential = useRef(
     readHarnessCredentialSelection({
       accountId: boundAccount.accountId,
@@ -837,8 +838,11 @@ function NewAgentPanel({
   useEffect(() => {
     if (runtimeKind !== "claude-code") return;
     let disposed = false;
-    setAnthropicCredentials([]);
-    setClaudeCredentialsLoaded(false);
+    // Switching runtimes back and forth keeps the list while it refreshes.
+    if (claudeCredentialsAccount.current !== boundAccount.accountId) {
+      setAnthropicCredentials([]);
+      setClaudeCredentialsLoaded(false);
+    }
     void webapp_client.conat_client.hub.system
       .listExternalCredentials({
         provider: "anthropic",
@@ -846,6 +850,7 @@ function NewAgentPanel({
       })
       .then((rows) => {
         if (!disposed) {
+          claudeCredentialsAccount.current = boundAccount.accountId;
           setAnthropicCredentials(
             rows.filter(
               (row) =>

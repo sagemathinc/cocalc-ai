@@ -1,5 +1,7 @@
 import {
+  defaultClaudeModel,
   harnessSessionControls,
+  orderClaudeModelOptions,
   parseHarnessSessionControls,
   parseHarnessSessionSettings,
   resolveClaudeConfigValue,
@@ -224,4 +226,57 @@ test("saved Claude models follow the 1M-context suffix the adapter now uses", ()
       "high[1m]",
     ),
   ).toBe("high[1m]");
+});
+
+test("Claude models are ordered newest first, then biggest first", () => {
+  const options = [
+    { value: "sonnet", name: "Sonnet 5" },
+    { value: "claude-fable-5-1[1m]", name: "Fable 5.1" },
+    { value: "opus[1m]", name: "Opus 5.5 (1M context)" },
+    { value: "haiku", name: "Haiku 4.5" },
+    { value: "my-custom-model", name: "Custom" },
+    { value: "claude-sonnet-5-5-20261001", name: "claude-sonnet-5-5-20261001" },
+  ];
+  expect(orderClaudeModelOptions(options).map(({ value }) => value)).toEqual([
+    "opus[1m]",
+    "claude-sonnet-5-5-20261001",
+    "claude-fable-5-1[1m]",
+    "sonnet",
+    "haiku",
+    "my-custom-model",
+  ]);
+  expect(
+    orderClaudeModelOptions([
+      { value: "opus", name: "Opus 5" },
+      { value: "fable", name: "Fable 5" },
+      { value: "default", name: "Default" },
+    ]).map(({ value }) => value),
+  ).toEqual(["default", "fable", "opus"]);
+});
+
+test("the newest Opus is CoCalc's default Claude model", () => {
+  const model = {
+    id: "model",
+    name: "Model",
+    currentValue: "sonnet",
+    recommendedValue: "sonnet",
+    options: [
+      { value: "sonnet", name: "Sonnet 5" },
+      { value: "claude-fable-5-1[1m]", name: "Fable 5.1" },
+      { value: "claude-opus-5-1", name: "Opus 5.1" },
+      { value: "opus", name: "Opus 5.5" },
+      { value: "haiku", name: "Haiku 4.5" },
+    ],
+  };
+  expect(defaultClaudeModel(model)).toBe("opus");
+  // The old default sentinel follows it too.
+  expect(resolveClaudeConfigValue(model, "default")).toBe("opus");
+  // Without an Opus the harness's own recommendation stays.
+  const noOpus = {
+    ...model,
+    options: model.options.filter(({ name }) => !name.startsWith("Opus")),
+  };
+  expect(defaultClaudeModel(noOpus)).toBeUndefined();
+  expect(resolveClaudeConfigValue(noOpus, "default")).toBe("sonnet");
+  expect(defaultClaudeModel({ ...model, id: "effort" })).toBeUndefined();
 });

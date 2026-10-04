@@ -3,6 +3,8 @@ import { AgentMemoryButton } from "@cocalc/frontend/account/agent-memory-setting
 import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import type { ReactNode, Ref } from "react";
 import {
+  defaultClaudeModel,
+  orderClaudeModelOptions,
   parseHarnessSessionControls,
   resolveClaudeConfigValue,
 } from "@cocalc/util/ai/harness-controls";
@@ -66,6 +68,16 @@ export function claudeCredentialTrustWarning(
     : "Full-project-trust preview: the project secret can be read, copied, or used by project collaborators and code Claude runs. Anthropic bills the key owner. Use only with trusted collaborators and code.";
 }
 
+const CATALOG_TTL_MS = 30 * 60_000;
+const discoveredCatalogs = new Map<
+  string,
+  { profile: unknown; controls: unknown; at: number }
+>();
+
+export function clearHarnessCatalogsForTests(): void {
+  discoveredCatalogs.clear();
+}
+
 interface HarnessRuntimeSummaryProps {
   compact?: boolean;
   // With compact: one chip summarizing the settings (for phones); it opens
@@ -82,6 +94,9 @@ interface HarnessRuntimeSummaryProps {
   configureButtonRef?: Ref<HTMLButtonElement>;
   disabled?: boolean;
   discoveryKey?: string;
+  // Reuse a discovered catalog under this key (everything it depends on),
+  // so switching away and back does not start another discovery session.
+  catalogKey?: string;
   unavailableLabel?: string;
   discoveryPending?: boolean;
   inlinePayment?: string;
@@ -436,6 +451,7 @@ function HarnessRuntimeSummaryContent({
   configureButtonRef,
   disabled,
   discoveryKey,
+  catalogKey,
   unavailableLabel,
   discoveryPending,
   inlinePayment,
@@ -455,11 +471,20 @@ function HarnessRuntimeSummaryContent({
   const [autoDiscovered, setAutoDiscovered] = useState(false);
   const generation = useRef(0);
   const [ignoredReported, setIgnoredReported] = useState<string>();
-  const [discovered, setDiscovered] = useState<{
-    profile: unknown;
-    controls: unknown;
-    reportedAtLoad: string | undefined;
-  }>();
+  const cachedCatalog = () => {
+    const hit = catalogKey ? discoveredCatalogs.get(catalogKey) : undefined;
+    if (!hit || Date.now() - hit.at > CATALOG_TTL_MS) return undefined;
+    const { profile, controls } = hit;
+    return { profile, controls, reportedAtLoad: JSON.stringify(reported) };
+  };
+  const [discovered, setDiscovered] = useState<
+    | {
+        profile: unknown;
+        controls: unknown;
+        reportedAtLoad: string | undefined;
+      }
+    | undefined
+  >(cachedCatalog);
   const { profile, settings = {} } = runtime;
   const claude = profile.id === "claude-code";
   const name = claude ? "Claude Code" : `ACP: ${profile.id}`;
@@ -527,6 +552,8 @@ function HarnessRuntimeSummaryContent({
         throw Error(
           "Harness profile changed; reload its settings before discovery",
         );
+      if (catalogKey)
+        discoveredCatalogs.set(catalogKey, { ...result, at: Date.now() });
       setDiscovered({ ...result, reportedAtLoad: JSON.stringify(reported) });
     } catch (err) {
       if (started === generation.current)
@@ -542,7 +569,7 @@ function HarnessRuntimeSummaryContent({
     generation.current++;
     setLoading(false);
     setIgnoredReported(JSON.stringify(reported));
-    setDiscovered(undefined);
+    setDiscovered(cachedCatalog());
     setAutoDiscovered(false);
     setError("");
     setDiscoveryError(undefined);
@@ -598,6 +625,7 @@ function HarnessRuntimeSummaryContent({
       (control === controls?.mode
         ? settings.modeId
         : settings.configOptions?.find(({ id }) => id === control.id)?.value) ??
+      (claude ? defaultClaudeModel(control) : undefined) ??
       control.currentValue;
     const selectedValue = claude
       ? resolveClaudeConfigValue(control, value)
@@ -617,6 +645,7 @@ function HarnessRuntimeSummaryContent({
       (legacy
         ? settings.modeId
         : settings.configOptions?.find(({ id }) => id === control.id)?.value) ??
+      (claude ? defaultClaudeModel(control) : undefined) ??
       control.currentValue;
     const selectedValue = claude
       ? resolveClaudeConfigValue(control, value)
@@ -646,7 +675,10 @@ function HarnessRuntimeSummaryContent({
                 },
               ]
             : []),
-          ...control.options.map((option) => ({
+          ...(claude && control.id === "model"
+            ? orderClaudeModelOptions(control.options)
+            : control.options
+          ).map((option) => ({
             value: option.value,
             label:
               claude && option.value === "default" ? "Default" : option.name,

@@ -61,6 +61,9 @@ const controls = () =>
                 options: [
                   { value: "fast", name: "Fast" },
                   { value: "deep", name: "Deep" },
+                  ...(process.argv.includes("--opus")
+                    ? [{ value: "opus", name: "Opus 5.5" }]
+                    : []),
                 ],
               },
             ],
@@ -288,7 +291,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       }
       if (
         message.params.configId !== "model" ||
-        !["fast", "deep"].includes(message.params.value)
+        !["fast", "deep", "opus"].includes(message.params.value)
       )
         return result(message.id, {});
       selectedModel = message.params.value;

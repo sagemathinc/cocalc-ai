@@ -14,7 +14,10 @@ import { fromJS } from "immutable";
 import { useProjectSecrets } from "@cocalc/frontend/project/use-project-secrets";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { HarnessSessionSettings } from "@cocalc/util/ai/harness-controls";
-import { qualifiedHarnessRuntime } from "@cocalc/frontend/chat/harness-profile";
+import {
+  clearHarnessCatalogsForTests,
+  qualifiedHarnessRuntime,
+} from "@cocalc/frontend/chat/harness-profile";
 import {
   NewAgentClaudeControls,
   NewAgentAcpControls,
@@ -89,6 +92,7 @@ const result = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  clearHarnessCatalogsForTests();
   jest
     .spyOn(
       webapp_client.conat_client.hub.projects,
@@ -223,6 +227,52 @@ test("new Claude agent exposes real model/effort controls and keeps both first-t
   });
   expect(discoverNewAgentHarness).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole("combobox", { name: /Mode$/ })).toBeNull();
+});
+
+test("switching to another runtime and back reuses the discovered models", async () => {
+  const { unmount } = render(<NewAgentClaudeControls {...props} />);
+  await screen.findByRole("combobox", { name: "Claude Code Model" });
+  unmount();
+  render(<NewAgentClaudeControls {...props} />);
+  // Shown at once: no "Loading model" and no second discovery session.
+  expect(
+    screen.getByRole("combobox", { name: "Claude Code Model" }),
+  ).toBeTruthy();
+  expect(screen.queryByText("Loading model")).toBeNull();
+  expect(discoverNewAgentHarness).toHaveBeenCalledTimes(1);
+});
+
+test("Claude models default to the newest Opus and list newest first", async () => {
+  jest.mocked(discoverNewAgentHarness).mockResolvedValue({
+    ...result,
+    controls: {
+      configOptions: [
+        {
+          id: "model",
+          name: "Model",
+          currentValue: "sonnet",
+          recommendedValue: "sonnet",
+          options: [
+            { value: "sonnet", name: "Sonnet 5" },
+            { value: "claude-fable-5-1[1m]", name: "Fable 5.1" },
+            { value: "opus", name: "Opus 5.5" },
+            { value: "haiku", name: "Haiku 4.5" },
+          ],
+        },
+      ],
+    },
+  } as any);
+  render(<NewAgentClaudeControls {...props} />);
+  const model = await screen.findByRole("combobox", {
+    name: "Claude Code Model",
+  });
+  expect(screen.getByText("Opus 5.5")).toBeTruthy();
+  await userEvent.setup().click(model);
+  const listbox = await screen.findByRole("listbox");
+  const names = within(listbox.parentElement!)
+    .getAllByRole("option")
+    .map((option) => option.textContent);
+  expect(names).toEqual(["Opus 5.5", "Fable 5.1", "Sonnet 5", "Haiku 4.5"]);
 });
 
 test("saved default selections display the adapter's concrete recommendations", async () => {
