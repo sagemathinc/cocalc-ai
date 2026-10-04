@@ -24,6 +24,11 @@ import type { ProjectAccessRequestStatus } from "@cocalc/conat/hub/api/projects"
 import { codexNotificationFragment } from "../codex-notification-target";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { notificationAgentName } from "@cocalc/frontend/agents/notification-name";
+import { isConversationStoragePath } from "@cocalc/util/people";
+import {
+  openConversation,
+  useNotificationConversation,
+} from "./conversation-lookup";
 
 const logger = getLogger("frontend:notifications:notification-row");
 
@@ -127,6 +132,12 @@ export function NotificationRow(props: Props) {
     threadId: thread_id ?? fragmentId?.thread,
   });
   const is_read = mention.getIn(["users", target, "read"]);
+  // People conversations live in files named by an id; name them by title.
+  const conversation = useNotificationConversation(
+    kind === "account_notice" ? undefined : project_id,
+    path,
+  );
+  const isConversation = !!path && isConversationStoragePath(path);
 
   const row_style: CSS = {
     ...(is_read ? { color: UI_COLORS.secondary } : {}),
@@ -181,6 +192,11 @@ export function NotificationRow(props: Props) {
   async function clickNotificationTarget(): Promise<void> {
     if (!project_id || !path) return;
     try {
+      if (conversation) {
+        await openConversation(conversation);
+        markReadState("read");
+        return;
+      }
       const { openAgentNotification } =
         await import("../../agents/open-notification");
       if (
@@ -455,7 +471,19 @@ export function NotificationRow(props: Props) {
         <strong>
           <User account_id={source} user_map={user_map} />
         </strong>{" "}
-        {isThreadFollowNotification ? (
+        {isConversation ? (
+          <>
+            {isThreadFollowNotification ? "replied in" : "mentioned you in"}{" "}
+            {conversation ? (
+              <>
+                the conversation <strong>{conversation.title}</strong>
+              </>
+            ) : (
+              "a conversation"
+            )}{" "}
+            in the project{" "}
+          </>
+        ) : isThreadFollowNotification ? (
           <>
             replied in the chat <code>{shownPath}</code> in the project{" "}
           </>
