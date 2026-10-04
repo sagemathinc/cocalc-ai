@@ -267,3 +267,26 @@ it.each(["Enter", "click"])(
     expect(onClose).toHaveBeenCalledTimes(1);
   },
 );
+
+it("hands the new project back instead of opening it when asked to", async () => {
+  // E.g., creating a project for a new agent from the agent's project picker.
+  const onCreated = jest.fn();
+  const onClose = jest.fn();
+  const user = userEvent.setup();
+  render(
+    <QuickProjectCreator
+      open
+      defaultTitle="Agent work"
+      onClose={onClose}
+      onMoreOptions={jest.fn()}
+      onCreated={onCreated}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Create" }));
+  await waitFor(() => expect(onCreated).toHaveBeenCalledWith("new-project-id"));
+  expect(createProject).toHaveBeenCalledWith(
+    expect.objectContaining({ title: "Agent work", start: true }),
+  );
+  expect(openProject).not.toHaveBeenCalled();
+  expect(onClose).toHaveBeenCalled();
+});

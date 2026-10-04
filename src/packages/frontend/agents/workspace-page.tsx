@@ -338,6 +338,14 @@ import {
 
 const { Text, Title } = Typography;
 
+const QuickProjectCreator = lazyWithRetry(
+  async () => ({
+    default: (await import("@cocalc/frontend/projects/quick-project-creator"))
+      .QuickProjectCreator,
+  }),
+  "new project dialog",
+);
+
 const NewProjectCreator = lazyWithRetry(
   async () => ({
     default: (await import("@cocalc/frontend/projects/create-project"))
@@ -716,12 +724,17 @@ function NewAgentPanel({
   const [moreSettingsOpen, setMoreSettingsOpen] = useState(false);
   const [membershipDetailsOpen, setMembershipDetailsOpen] = useState(false);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  // The simple "New project" dialog first; "More options…" opens the full one.
+  const [quickProjectOpen, setQuickProjectOpen] = useState(false);
   const [projectCreationTitle, setProjectCreationTitle] = useState("");
   const [projectCreatorInstance, setProjectCreatorInstance] = useState(0);
   const projectCreatorTrigger = useRef<HTMLElement | null>(null);
   const emailVerificationRequired = useEmailVerificationRequired();
   const createProjectMounted = useRef(false);
-  if (createProjectOpen) createProjectMounted.current = true;
+  if (createProjectOpen || quickProjectOpen)
+    createProjectMounted.current = true;
+  const fullProjectCreatorMounted = useRef(false);
+  if (createProjectOpen) fullProjectCreatorMounted.current = true;
   const projectSettingsButton = useRef<HTMLButtonElement>(null);
   const [anthropicCredentials, setAnthropicCredentials] = useState<
     ExternalCredentialInfo[]
@@ -833,6 +846,7 @@ function NewAgentPanel({
 
   function closeProjectCreator() {
     setCreateProjectOpen(false);
+    setQuickProjectOpen(false);
     requestAnimationFrame(() => {
       const trigger = projectCreatorTrigger.current;
       if (trigger?.isConnected) trigger.focus();
@@ -854,7 +868,7 @@ function NewAgentPanel({
     setProjectCreatorInstance((instance) => instance + 1);
     setSettingsOpen(false);
     setMoreSettingsOpen(false);
-    setCreateProjectOpen(true);
+    setQuickProjectOpen(true);
   }
 
   useEffect(() => {
@@ -2193,16 +2207,32 @@ function NewAgentPanel({
       {createProjectMounted.current && (
         <CocalcErrorBoundary
           scope="agents.create-project"
-          resetKeys={[createProjectOpen]}
+          resetKeys={[createProjectOpen, quickProjectOpen]}
         >
           <Suspense fallback={null}>
-            <NewProjectCreator
-              key={projectCreatorInstance}
-              default_value={projectCreationTitle}
-              open={createProjectOpen}
+            <QuickProjectCreator
+              key={`quick-${projectCreatorInstance}`}
+              open={quickProjectOpen}
+              defaultTitle={projectCreationTitle}
               onClose={closeProjectCreator}
               onCreated={selectProject}
+              onMoreOptions={(title) => {
+                setQuickProjectOpen(false);
+                setProjectCreationTitle(title);
+                // Remount so the full dialog starts from the name typed here.
+                setProjectCreatorInstance((instance) => instance + 1);
+                setCreateProjectOpen(true);
+              }}
             />
+            {fullProjectCreatorMounted.current && (
+              <NewProjectCreator
+                key={projectCreatorInstance}
+                default_value={projectCreationTitle}
+                open={createProjectOpen}
+                onClose={closeProjectCreator}
+                onCreated={selectProject}
+              />
+            )}
           </Suspense>
         </CocalcErrorBoundary>
       )}

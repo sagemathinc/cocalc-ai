@@ -6,7 +6,8 @@
 // A minimal "New project": a name, at most a few one-click images, and the
 // defaults on one line (saying why that image), with "More options" for the
 // full creator. Uses the same draft (defaults, image, host, region) and create
-// path as the full creator.
+// path as the full creator. With onCreated (e.g., choosing a project for a new
+// agent) the new project is handed back instead of opened.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Button, Input, Modal, Typography, type InputRef } from "antd";
@@ -24,11 +25,13 @@ export function QuickProjectCreator({
   defaultTitle = "",
   onClose,
   onMoreOptions,
+  onCreated,
 }: {
   open: boolean;
   defaultTitle?: string;
   onClose: () => void;
   onMoreOptions: (title: string) => void;
+  onCreated?: (projectId: string) => void;
 }) {
   const runtime = useProjectRuntimeCapabilities();
   const { draft, summary, rootfsLoading, rootfsImages, isAdmin, setRootfs } =
@@ -113,7 +116,9 @@ export function QuickProjectCreator({
       if (!runtime.host_placement) delete opts.host_id;
       const actions = redux.getActions("projects");
       const project_id = await actions.create_project(opts);
-      actions.open_project({ project_id, target: "files/", switch_to: true });
+      if (onCreated) onCreated(project_id);
+      else
+        actions.open_project({ project_id, target: "files/", switch_to: true });
       onClose();
     } catch (err) {
       setError(`${err}`.replace(/^Error: /, ""));
@@ -144,10 +149,10 @@ export function QuickProjectCreator({
             type="primary"
             loading={busy}
             disabled={busy || !title.trim()}
-            icon={<Icon name="arrow-right" />}
+            icon={onCreated ? undefined : <Icon name="arrow-right" />}
             onClick={() => void create()}
           >
-            Create and open
+            {onCreated ? "Create" : "Create and open"}
           </Button>
         </div>
       }
