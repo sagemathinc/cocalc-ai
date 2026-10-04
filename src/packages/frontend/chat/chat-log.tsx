@@ -26,7 +26,8 @@ import {
   type ComponentProps,
   type ReactNode,
 } from "react";
-import { Button } from "antd";
+import { Button, Divider } from "antd";
+import { isContextClearedMarker } from "@cocalc/chat";
 import type { AcpAttentionRecord } from "@cocalc/conat/ai/acp/types";
 import { VirtuosoHandle } from "react-virtuoso";
 import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
@@ -1805,6 +1806,18 @@ export function MessageList({
     if (message == null) {
       console.warn("empty message", { date, index, sortedDates });
       return <div style={{ height: "30px" }} />;
+    }
+    if (isContextClearedMarker(message)) {
+      return (
+        <div
+          style={{
+            ...CHAT_LOG_READING_WIDTH,
+            paddingTop: index == 0 ? "20px" : undefined,
+          }}
+        >
+          <Divider plain>Context cleared</Divider>
+        </div>
+      );
     }
     const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
     const messageAcpState = messageId

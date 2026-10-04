@@ -48,6 +48,41 @@ export function resolveHarnessSessionId(
   return normalizeCodexSessionId(persisted) ?? inferred;
 }
 
+// A "Context cleared" line in an agent thread: turns after it start a new
+// agent session, so no session is inferred from messages before it.
+export const CONTEXT_CLEARED_FIELD = "acp_context_cleared";
+
+type ChatRowLike = { get?: (key: string) => unknown } | Record<string, unknown>;
+
+function rowField(row: ChatRowLike | null | undefined, key: string): unknown {
+  if (row == null) return undefined;
+  return typeof (row as any).get === "function"
+    ? (row as any).get(key)
+    : (row as Record<string, unknown>)[key];
+}
+
+export function isContextClearedMarker(
+  row: ChatRowLike | null | undefined,
+): boolean {
+  return rowField(row, CONTEXT_CLEARED_FIELD) === true;
+}
+
+// The messages since the latest "Context cleared" line (all of them if none),
+// and that line's message id: a fresh session key for a Codex thread.
+export function messagesSinceContextCleared<T extends ChatRowLike>(
+  messages: readonly T[],
+): { messages: readonly T[]; clearedMessageId?: string } {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (!isContextClearedMarker(messages[i])) continue;
+    const id = rowField(messages[i], "message_id");
+    return {
+      messages: messages.slice(i + 1),
+      clearedMessageId: typeof id === "string" && id ? id : undefined,
+    };
+  }
+  return { messages };
+}
+
 export function normalizeCodexMention(model?: string): string | undefined {
   if (!model || model === "codex-agent") return undefined;
   return model;
