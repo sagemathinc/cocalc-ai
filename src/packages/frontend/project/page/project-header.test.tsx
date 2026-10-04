@@ -35,8 +35,10 @@ jest.mock("@cocalc/frontend/projects/project-status-display", () => ({
 jest.mock("@cocalc/frontend/project/start-button", () => ({
   StartButton: () => <button>Start</button>,
 }));
+let mockTheme: any = null;
 jest.mock("@cocalc/frontend/projects/theme", () => ({
   ProjectThemeAvatar: () => <span data-testid="avatar" />,
+  projectThemeFromProject: () => mockTheme,
 }));
 jest.mock("./project-version-update", () => ({
   ProjectUpdateIndicator: () => <span>Update</span>,
@@ -48,6 +50,7 @@ import { ProjectPageHeader } from "./project-header";
 beforeEach(() => {
   jest.clearAllMocks();
   mockState = "running";
+  mockTheme = null;
 });
 
 test("says which project this is, whether it runs, and its update", async () => {
@@ -74,4 +77,17 @@ test("viewers get no runtime controls and no update", async () => {
     .click(screen.getByRole("button", { name: "Project actions" }));
   expect(await screen.findByText("Project settings")).toBeInTheDocument();
   expect(screen.queryByText("Restart project")).toBeNull();
+});
+
+test("the project's theme colors the header like an agent's", () => {
+  // The accent color fills the header, with readable text.
+  mockTheme = { color: "#123456", accent_color: "#0000ff" };
+  const { rerender } = render(<ProjectPageHeader project_id="p1" />);
+  const header = screen.getByRole("banner");
+  expect(header).toHaveStyle({ background: "#0000ff" });
+  expect(header).toHaveStyle({ boxShadow: "inset 0 3px 0 #123456" });
+  // Only a main color: a pale tint of it.
+  mockTheme = { color: "#123456" };
+  rerender(<ProjectPageHeader project_id="p1" />);
+  expect(screen.getByRole("banner").style.background).toContain("#123456");
 });

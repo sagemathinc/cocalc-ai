@@ -25,20 +25,23 @@ import {
   useRestarting,
 } from "@cocalc/frontend/projects/project-status-display";
 import { StartButton } from "@cocalc/frontend/project/start-button";
-import { ProjectThemeAvatar } from "@cocalc/frontend/projects/theme";
+import {
+  ProjectThemeAvatar,
+  projectThemeFromProject,
+} from "@cocalc/frontend/projects/theme";
+import { headerColors } from "@cocalc/frontend/components/header-colors";
+import { themeIdentityColor } from "@cocalc/frontend/components/identity-color";
 import { ProjectUpdateIndicator } from "./project-version-update";
 import { useProjectState } from "./project-state-hook";
 
 export function ProjectPageHeader({
   project_id,
-  identityColor,
   leading,
   badges,
   runtimeControls,
   showUpdate,
 }: {
   project_id: string;
-  identityColor?: string;
   // E.g., the show-sidebar control when the sidebar is hidden.
   leading?: ReactNode;
   // Status tags after the project's state (read only, internet blocked).
@@ -56,6 +59,18 @@ export function ProjectPageHeader({
     project?.getIn(["state", "started_at"]),
   );
   const title = `${project?.get("title") ?? ""}`.trim() || "Untitled project";
+  // The project's theme colors the header exactly as an agent's does.
+  const theme = projectThemeFromProject(project);
+  const primaryColor = theme?.color?.trim() || undefined;
+  const accentColor = theme?.accent_color?.trim() || undefined;
+  const { backgroundColor, textColor } = headerColors({
+    primaryColor,
+    accentColor,
+  });
+  const identityColor = themeIdentityColor(
+    { primaryColor, accentColor },
+    project_id,
+  );
   const status = egressError
     ? "Account internet usage blocked"
     : restarting
@@ -96,14 +111,19 @@ export function ProjectPageHeader({
     },
   ];
   return (
-    <PageHeader identityColor={identityColor} aria-label={`Project ${title}`}>
+    <PageHeader
+      identityColor={identityColor}
+      background={backgroundColor}
+      color={textColor}
+      aria-label={`Project ${title}`}
+    >
       {leading}
       <Button
         type="text"
         aria-label="Project settings"
         title="Project settings"
         onClick={openSettings}
-        style={{ height: 32, padding: 4 }}
+        style={{ color: textColor, height: 32, padding: 4 }}
       >
         <ProjectThemeAvatar project={project} size={24} />
       </Button>
@@ -156,6 +176,7 @@ export function ProjectPageHeader({
         <Button
           type="text"
           aria-label="Project actions"
+          style={{ color: textColor }}
           icon={<Icon name="ellipsis" rotate="90" />}
         />
       </Dropdown>

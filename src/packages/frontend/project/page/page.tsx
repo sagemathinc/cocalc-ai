@@ -3,7 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { autoThemeColor } from "@cocalc/frontend/components/identity-color";
 import { useWorkspaceContentNavigation } from "@cocalc/frontend/agents/workspace-content-navigation";
 import { DndContext, useDraggable } from "@dnd-kit/core";
 import {
@@ -996,21 +995,11 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     );
   }
 
-  const projectTheme: any = useTypedRedux("projects", "project_map")?.getIn([
-    project_id,
-    "theme",
-  ]);
-  const projectIdentityColor =
-    `${projectTheme?.get?.("color") ?? ""}`.trim() ||
-    `${projectTheme?.get?.("accent_color") ?? ""}`.trim() ||
-    autoThemeColor(project_id);
-
   function renderHeader() {
     if (fullscreen && fullscreen !== "project") return;
     return (
       <ProjectPageHeader
         project_id={project_id}
-        identityColor={projectIdentityColor}
         leading={
           // The workspace's show-sidebar control, when the sidebar is
           // hidden and there is no top bar (sidebar navigation).

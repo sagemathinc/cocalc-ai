@@ -3,11 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { avatar_fontcolor } from "@cocalc/frontend/account/avatar/font-color";
+import { headerColors } from "@cocalc/frontend/components/header-colors";
 import type { ThreadMetadataSnapshot } from "@cocalc/frontend/chat/actions";
 import { deriveThreadLabel } from "@cocalc/frontend/chat/threads";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
-import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export type AgentHeaderAppearance = Pick<
   ThreadMetadataSnapshot,
@@ -40,16 +39,10 @@ export function resolveAgentHeaderTheme({
 }) {
   const accentColor = appearance?.thread_accent_color?.trim() || undefined;
   const primaryColor = appearance?.thread_color?.trim() || undefined;
-  const backgroundColor =
-    accentColor ??
-    (primaryColor
-      ? `color-mix(in srgb, ${primaryColor} 14%, ${UI_COLORS.surface})`
-      : UI_COLORS.surface);
   return {
     accentColor,
-    backgroundColor,
     primaryColor,
-    textColor: accentColor ? avatar_fontcolor(accentColor) : UI_COLORS.text,
+    ...headerColors({ primaryColor, accentColor }),
     title: appearance?.name?.trim() || fallbackTitle,
   };
 }
