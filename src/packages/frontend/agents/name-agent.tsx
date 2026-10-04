@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Alert, Button, Input, Modal, Space } from "antd";
 import type { ButtonProps } from "antd";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
@@ -61,6 +61,29 @@ export function NameAgent({
     },
   );
   const atLimit = !agent && namedAgentLimitReached(directory);
+  // Someone else's agent (e.g. shared with you): naming it adds it to your
+  // agents, so say that, and suggest the name it already has.
+  const [sharedName, setSharedName] = useState<string>();
+  useEffect(() => {
+    if (agent) return;
+    let canceled = false;
+    setSharedName(undefined);
+    void personalAgentApi()
+      .resolveIdentity({ project_id: projectId, path, thread_id: threadId })
+      .then((identity) => {
+        if (
+          !canceled &&
+          identity &&
+          !identity.disabled_at &&
+          identity.created_by !== boundAccount.accountId
+        )
+          setSharedName(identity.name);
+      })
+      .catch(() => {});
+    return () => {
+      canceled = true;
+    };
+  }, [agent != null, projectId, path, threadId, boundAccount.accountId]);
   async function save() {
     if (lock.current || problem || atLimit) return;
     lock.current = true;
@@ -117,19 +140,37 @@ export function NameAgent({
       <Button
         {...triggerButtonProps}
         size="small"
-        aria-label={agent ? `Rename @${agent.name}` : "Name agent"}
+        aria-label={
+          agent
+            ? `Rename @${agent.name}`
+            : sharedName
+              ? "Add to my agents"
+              : "Name agent"
+        }
         onClick={() => {
-          setName(agent?.name ?? "");
+          setName(agent?.name ?? sharedName ?? "");
           setDescription(agent?.description ?? "");
           setError("");
           setOpen(true);
         }}
       >
-        {triggerLabel ?? (agent ? `@${agent.name}` : "Name agent")}
+        {triggerLabel ??
+          (agent
+            ? `@${agent.name}`
+            : sharedName
+              ? "Add to my agents"
+              : "Name agent")}
       </Button>
       <Modal
         open={open}
-        title={modalTitle ?? (agent ? "Edit agent name" : "Name agent")}
+        title={
+          modalTitle ??
+          (agent
+            ? "Edit agent name"
+            : sharedName
+              ? "Add to my agents"
+              : "Name agent")
+        }
         okText="Save agent name"
         confirmLoading={busy}
         okButtonProps={{ disabled: !!problem || busy || atLimit }}
@@ -141,6 +182,9 @@ export function NameAgent({
       >
         <Space orientation="vertical" style={{ width: "100%" }}>
           <p>
+            {sharedName && !agent
+              ? "This agent is shared with you. Give it a name to keep it in your sidebar; the name is yours alone. "
+              : ""}
             This name is in your account across projects. Naming does not start
             work, grant communication, or make shared chat history private.
           </p>

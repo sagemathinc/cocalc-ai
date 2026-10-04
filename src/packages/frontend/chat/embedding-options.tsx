@@ -34,6 +34,10 @@ export interface ChatEmbeddingOptions {
   // On narrow screens the host renders the chat's header controls here
   // instead of the chat adding its own title row (the host shows the title).
   mobileHeaderControlsPortal?: HTMLElement | null;
+  // On wider screens the host renders the thread's top-right tools (zoom,
+  // copy, search) here, in its own header row, instead of floating them over
+  // the messages.
+  headerControlsPortal?: HTMLElement | null;
 }
 
 const Context = createContext<ChatEmbeddingOptions | undefined>(undefined);

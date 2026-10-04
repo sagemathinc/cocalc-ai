@@ -4,6 +4,8 @@
  */
 
 import {
+  autoThemeColor,
+  themeIdentityColor,
   readAgentThreadAppearance,
   resolveAgentHeaderTheme,
   resolveNamedAgentTheme,
@@ -103,5 +105,23 @@ it("reads appearance through the thread lookup key used by chat", () => {
   });
   expect(getThreadMetadata).toHaveBeenCalledWith("root-message-date", {
     threadId: "stable-thread-id",
+  });
+});
+
+describe("identity color", () => {
+  it("is the thread's own color when it has one", () => {
+    expect(themeIdentityColor({ primaryColor: "#123456" }, "a")).toBe(
+      "#123456",
+    );
+    expect(themeIdentityColor({ accentColor: "#abcdef" }, "a")).toBe(
+      "#abcdef",
+    );
+  });
+
+  it("gives unthemed threads a stable color that differs between threads", () => {
+    expect(themeIdentityColor({}, "agent-1")).toBe(autoThemeColor("agent-1"));
+    expect(autoThemeColor("agent-1")).toBe(autoThemeColor("agent-1"));
+    expect(autoThemeColor("agent-1")).not.toBe(autoThemeColor("agent-2"));
+    expect(autoThemeColor("agent-1")).toMatch(/^hsl\(\d+ 45% 62%\)$/);
   });
 });

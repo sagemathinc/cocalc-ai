@@ -309,6 +309,16 @@ it("search matches names, project titles and creators", async () => {
   expect(screen.getByRole("button", { name: "Open @beta" })).toBeVisible();
 });
 
+it("creates a new agent from the header, after search like every page", async () => {
+  const onNewAgent = jest.fn();
+  render(<AgentsOverview {...props()} onNewAgent={onNewAgent} />);
+  const header = screen.getByRole("heading", { name: "Agents" }).parentElement!;
+  const create = within(header).getByRole("button", { name: "New agent" });
+  expect(header.lastElementChild).toBe(create);
+  create.click();
+  expect(onNewAgent).toHaveBeenCalledTimes(1);
+});
+
 test("filter and sort helpers", () => {
   const items = [
     {

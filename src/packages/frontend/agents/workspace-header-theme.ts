@@ -84,3 +84,8 @@ export function readAgentThreadAppearance(
     thread_image: metadata?.thread_image,
   };
 }
+
+export {
+  autoThemeColor,
+  themeIdentityColor,
+} from "@cocalc/frontend/components/identity-color";

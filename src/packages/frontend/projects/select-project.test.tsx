@@ -120,4 +120,16 @@ describe("SelectProject", () => {
     expect(screen.getByText("Hidden Project")).toBeTruthy();
     expect(screen.queryByText("Owner Project")).toBeNull();
   });
+
+  it("offers only projects the filter accepts, still sorted by recent use", () => {
+    render(
+      <SelectProject
+        filter={(project) => project.project_id !== "collab-project"}
+        onChange={jest.fn()}
+      />,
+    );
+    expect(
+      screen.getAllByRole("option").map((option) => option.textContent),
+    ).toEqual(["Owner Project", "Viewer Project"]);
+  });
 });

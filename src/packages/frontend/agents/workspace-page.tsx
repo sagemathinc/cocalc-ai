@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { PageHeader } from "@cocalc/frontend/components/page-header";
+import { setBrowserTabAccent } from "@cocalc/frontend/browser-tab-accent";
 import { explainHiddenSidebarOnce } from "./sidebar-hidden-hint";
 import {
   normalizeAgentName,
@@ -112,6 +114,15 @@ import {
 import { set_window_title } from "@cocalc/frontend/browser";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { useWorkspaceRoute } from "./use-workspace-route";
+import {
+  inviteToAgent,
+  inviteToAgentProject,
+  mostRecentSharedProject,
+  projectIncludesAll,
+  takeRequestedParticipants,
+} from "./agent-participants";
+import { NewAgentPeople } from "./new-agent-people";
+import { ShareAgentModal } from "./share-agent-modal";
 import { useMobileSearchNavigation } from "./use-mobile-search-navigation";
 import { lite } from "@cocalc/frontend/lite";
 import { useNavigationIntent } from "./use-navigation-intent";
@@ -246,6 +257,7 @@ import {
 } from "./agent-running-indicator";
 import { AgentProjectSelector } from "./agent-project-selector";
 import { AgentProjectStatus } from "./project-status";
+import { AgentParticipants } from "./agent-participants-avatars";
 import { AgentHostRecovery } from "./host-recovery";
 import { useWorkspaceSelectedThread } from "./use-workspace-selected-thread";
 import {
@@ -257,6 +269,7 @@ import {
   readAgentThreadAppearance,
   resolveAgentHeaderTheme,
   resolveNamedAgentTheme,
+  themeIdentityColor,
   sameAgentHeaderAppearance,
   type AgentHeaderAppearance,
 } from "./workspace-header-theme";
@@ -617,14 +630,26 @@ function NewAgentPanel({
       return { id: "", revision: "", executable: "", args: "" };
     }
   });
+  // People who get this agent too ("New agent with ..." from People).
+  const [participants, setParticipants] = useState<string[]>(() =>
+    isFirstRun ? [] : takeRequestedParticipants(),
+  );
+  // With people chosen, start in a project everyone shares.
+  const [sharedProjectId] = useState(() =>
+    participants.length
+      ? mostRecentSharedProject(projectMap, participants)
+      : undefined,
+  );
   const [projectId, setProjectId] = useState<string | undefined>(
     () =>
+      sharedProjectId ||
       sourceAgent?.endpoint.project_id ||
       restoredPreparation?.projectId ||
       mostRecentlyEditedWritableProject(projectMap),
   );
   const [directory, setDirectory] = useState(
     () =>
+      (sharedProjectId && getProjectHomeDirectory(sharedProjectId)) ||
       sourceRuntime?.profile?.cwd ||
       sourceConfig?.workingDirectory?.trim() ||
       (sourceAgent
@@ -1405,11 +1430,58 @@ function NewAgentPanel({
       claimedNameRef.current ?? normalizeAgentName(agentName),
       boundAccount.accountId,
     );
+    if (participants.length) {
+      void inviteParticipants(created, participants);
+    }
     if (isFirstRun) writePreparedFirstAgent(boundAccount.accountId);
     void completeFirstRunWithAgent(boundAccount.accountId, created.projectId);
     refreshNamedAgents();
     handedOff.current = true;
     onCreated(agentId);
+  }
+
+  // Best effort: the agent exists either way, and people can still be added
+  // from the agent later.
+  async function inviteParticipants(
+    created: PendingAgent,
+    accountIds: string[],
+  ): Promise<void> {
+    const project = projectMap?.get(created.projectId);
+    const collaborators = accountIds.filter((id) =>
+      projectIncludesAll(project, [id]),
+    );
+    const others = accountIds.filter((id) => !collaborators.includes(id));
+    const target = {
+      project_id: created.projectId,
+      path: created.path,
+      thread_id: created.threadId,
+      agent_name: claimedNameRef.current ?? normalizeAgentName(agentName),
+    };
+    try {
+      const notified = await inviteToAgent({
+        ...target,
+        account_ids: collaborators,
+      });
+      // Not collaborators yet: a project invitation that links to the agent.
+      const invited = await inviteToAgentProject({
+        ...target,
+        account_ids: others,
+      });
+      const reached = notified.length + invited.length;
+      if (reached)
+        antdMessage.success(
+          `Invited ${reached} ${reached === 1 ? "person" : "people"} to the agent.`,
+        );
+      const failed = accountIds.length - reached;
+      if (failed > 0)
+        antdMessage.warning(
+          `${failed} ${failed === 1 ? "invitation" : "invitations"} could not be sent; you can share the agent again later.`,
+        );
+    } catch (err) {
+      antdMessage.warning(
+        `The agent was created, but invitations failed: ${err}`,
+      );
+    }
   }
 
   function handleCreateError(
@@ -2049,6 +2121,15 @@ function NewAgentPanel({
             </span>
           </div>
         )}
+        {!isFirstRun && (
+          <NewAgentPeople
+            participants={participants}
+            onChange={setParticipants}
+            projectId={projectId}
+            onSelectProject={selectProject}
+            disabled={busy || !!pending}
+          />
+        )}
         {/* Always rendered: its line is reserved so starting does not shift the
             centered page, and its live region exists before announcing. */}
         <PreparationStatus active={busy} phase={preparationPhase} />
@@ -2456,6 +2537,9 @@ function AgentProjectContext({
           hideCompactThreadHeader: true,
           hideComposerIdentity: true,
           mobileHeaderControlsPortal,
+          // The same header slot: zoom, copy and search sit in the agent's
+          // one header row instead of floating over the messages.
+          headerControlsPortal: mobileHeaderControlsPortal,
           openFilesInWorkbench: true,
           sidebarHiddenByDefault: true,
           sidebarPreferenceKey: `cocalc:agents:chat-sidebar-hidden:${agent.account_id}:${agent.endpoint.agent_id}`,
@@ -2545,6 +2629,9 @@ function AgentWorkspace({
     value: AgentHeaderAppearance;
   }>();
   const [appearanceOpen, setAppearanceOpen] = useState(false);
+  // Clicking the title renames it in place; the badge opens the full
+  // appearance editor.
+  const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const [appearanceThreadId, setAppearanceThreadId] = useState<string>();
   const [appearanceDraft, setAppearanceDraft] =
     useState<ThemeEditorDraft | null>(null);
@@ -2696,6 +2783,19 @@ function AgentWorkspace({
     textColor: headerTextColor,
     title,
   } = resolvedTheme;
+  // The color that marks this thread everywhere: header strip, sidebar row,
+  // browser tab.
+  const identityColor = themeIdentityColor(
+    resolvedTheme,
+    selectedAgent?.endpoint.agent_id ??
+      selectedThread ??
+      agent.endpoint.agent_id,
+  );
+  useEffect(() => {
+    if (!active) return;
+    setBrowserTabAccent(identityColor);
+    return () => setBrowserTabAccent(undefined);
+  }, [active, identityColor]);
   const openAppearanceEditor = () => {
     if (!selectedThread) return;
     const metadata = readAgentThreadAppearance(chatActions, selectedThread);
@@ -2709,6 +2809,19 @@ function AgentWorkspace({
     });
     setAppearanceThreadId(selectedThread);
     setAppearanceOpen(true);
+  };
+  const startTitleEdit = () => {
+    if (!selectedThread || !chatActions) return;
+    setTitleDraft(title);
+  };
+  const saveTitle = () => {
+    if (titleDraft == null) return;
+    const next = titleDraft.trim();
+    setTitleDraft(null);
+    if (!selectedThread || !next || next === title) return;
+    if (!chatActions?.renameThread?.(selectedThread, next)) {
+      antdMessage.error("Unable to rename thread.");
+    }
   };
   const saveAppearance = () => {
     if (!appearanceThreadId || !appearanceDraft) return;
@@ -2779,20 +2892,10 @@ function AgentWorkspace({
         visibility: active ? "visible" : "hidden",
       }}
     >
-      <header
-        style={{
-          alignItems: "center",
-          background: backgroundColor,
-          borderBottom: `2px solid ${primaryColor ?? UI_COLORS.border}`,
-          boxShadow: primaryColor ? `inset 4px 0 0 ${primaryColor}` : undefined,
-          color: headerTextColor,
-          display: "flex",
-          gap: 12,
-          padding: "2px 12px",
-          height: 64,
-          flexShrink: 0,
-          boxSizing: "border-box",
-        }}
+      <PageHeader
+        identityColor={identityColor}
+        background={backgroundColor}
+        color={headerTextColor}
       >
         {onShowList && (
           <Button
@@ -2812,7 +2915,7 @@ function AgentWorkspace({
           aria-label="Edit thread appearance"
           type="text"
           onClick={openAppearanceEditor}
-          style={{ color: headerTextColor, height: 44, padding: 4 }}
+          style={{ color: headerTextColor, height: 32, padding: 4 }}
         >
           <ThreadBadge
             icon={appearance?.thread_icon}
@@ -2824,53 +2927,77 @@ function AgentWorkspace({
                 ? undefined
                 : "robot"
             }
-            size={36}
+            size={24}
           />
         </Button>
+        {/* One line: the title, then muted context that gives way first. */}
         <div
           style={{
             minWidth: 0,
             flex: 1,
             display: "flex",
-            flexDirection: "column",
-            gap: 0,
+            alignItems: "baseline",
+            gap: 10,
           }}
         >
-          <Button
-            type="text"
-            aria-label={`Edit thread title: ${title}`}
-            title={title}
-            onClick={openAppearanceEditor}
-            style={{
-              color: "inherit",
-              fontSize: 16,
-              fontWeight: 600,
-              height: "auto",
-              padding: 0,
-              justifyContent: "flex-start",
-              minWidth: 0,
-              maxWidth: "100%",
-            }}
-          >
-            <span
+          {titleDraft != null ? (
+            <Input
+              autoFocus
+              size="small"
+              aria-label="Thread title"
+              value={titleDraft}
+              maxLength={200}
+              onChange={(event) => setTitleDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.stopPropagation();
+                  setTitleDraft(null);
+                }
+              }}
+              onPressEnter={saveTitle}
+              onBlur={saveTitle}
+              style={{ fontSize: 15, fontWeight: 600, maxWidth: "60%" }}
+            />
+          ) : (
+            <Button
+              type="text"
+              aria-label={`Rename thread: ${title}`}
+              title={title}
+              onClick={startTitleEdit}
               style={{
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
+                color: "inherit",
+                fontSize: 15,
+                fontWeight: 600,
+                height: "auto",
+                padding: 0,
+                justifyContent: "flex-start",
+                minWidth: 0,
+                maxWidth: "60%",
+                flex: "0 1 auto",
               }}
             >
-              {title}
-            </span>
-          </Button>
+              <span
+                style={{
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {title}
+              </span>
+            </Button>
+          )}
           <div
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 8,
+              gap: 6,
               minWidth: 0,
-              width: "100%",
+              flex: "1 1 0",
               flexWrap: "nowrap",
+              overflow: "hidden",
               fontSize: 12,
+              opacity: 0.75,
             }}
           >
             {!unregistered ? (
@@ -2901,6 +3028,8 @@ function AgentWorkspace({
             )}
             <span aria-hidden="true">·</span>
             <AgentProjectStatus agent={agent} active={active} />
+            <AgentParticipants endpoint={agent.endpoint} />
+            {workingDirectoryLabel && <span aria-hidden="true">·</span>}
             {workingDirectoryLabel && (
               <Button
                 type="text"
@@ -2910,7 +3039,7 @@ function AgentWorkspace({
                 style={{
                   color: "inherit",
                   textAlign: "left",
-                  flex: "1 1 180px",
+                  flex: "0 1 auto",
                   justifyContent: "flex-start",
                   minWidth: 0,
                   padding: 0,
@@ -2950,7 +3079,6 @@ function AgentWorkspace({
           <AgentsWorkspaceNavigation
             foregroundColor={headerTextColor}
             onOpenDocs={openDocs}
-            onOpenTerminal={() => runFrameAction("terminal")}
             workspaceItems={[
               {
                 key: "workspace-terminal",
@@ -3022,7 +3150,7 @@ function AgentWorkspace({
             }
           />
         )}
-      </header>
+      </PageHeader>
       <Modal
         title="Working directory"
         open={directoryOpen}
@@ -3376,6 +3504,7 @@ export function MyAgentsWorkspacePage({
   const [copyBusy, setCopyBusy] = useState(false);
   const [copyError, setCopyError] = useState("");
   const [retiringAgentId, setRetiringAgentId] = useState<string>();
+  const [shareAgent, setShareAgent] = useState<NamedAgent>();
   const [mobileList, setMobileList] = useState(!libraryOpen);
   useMobileSearchNavigation({
     active,
@@ -3626,10 +3755,17 @@ export function MyAgentsWorkspacePage({
           : creating
             ? "New Agent"
             : selected
-              ? `@${selected.name} - Agents`
+              ? selected.thread_title?.trim() || `@${selected.name}`
               : "Agents",
     );
-  }, [active, contentOpen, libraryOpen, creating, selected?.name]);
+  }, [
+    active,
+    contentOpen,
+    libraryOpen,
+    creating,
+    selected?.name,
+    selected?.thread_title,
+  ]);
   const creatingSourceAgent = agentFirstRunStarted(accountId)
     ? undefined
     : (agents.find(
@@ -4134,7 +4270,8 @@ export function MyAgentsWorkspacePage({
   // The sidebar's per-agent menu, shared with the Agents page.
   function runAgentAction(agent: NamedAgent, key: string) {
     const id = agent.endpoint.agent_id;
-    if (key === "copy") openCopyAgent(agent);
+    if (key === "share") setShareAgent(agent);
+    else if (key === "copy") openCopyAgent(agent);
     else if (key === "fresh") startFresh(agent);
     else if (key === "access") setAccessAgent(agent);
     else if (key === "remove") confirmRetireAgent(agent);
@@ -4147,6 +4284,7 @@ export function MyAgentsWorkspacePage({
   function overviewActions(agent: NamedAgent) {
     const hidden = agentOrganization.groups.hidden.includes(agent);
     return [
+      { key: "share", label: "Share with people…" },
       { key: "artifacts", label: "Show artifacts" },
       { key: "copy", label: "Copy agent…" },
       { key: "fresh", label: "Start fresh conversation…" },
@@ -4215,7 +4353,7 @@ export function MyAgentsWorkspacePage({
         style={{
           alignItems: "center",
           background: active ? UI_COLORS.selected : "transparent",
-          borderInlineStart: `3px solid ${theme.primaryColor ?? "transparent"}`,
+          borderInlineStart: `3px solid ${themeIdentityColor(theme, id)}`,
           borderRadius: 6,
           display: "flex",
         }}
@@ -4295,6 +4433,11 @@ export function MyAgentsWorkspacePage({
           trigger={["click"]}
           menu={{
             items: [
+              {
+                key: "share",
+                icon: <Icon name="user-plus" />,
+                label: "Share with people…",
+              },
               {
                 key: "copy",
                 icon: <Icon name="copy" />,
@@ -4595,7 +4738,7 @@ export function MyAgentsWorkspacePage({
                 >
                   <Space
                     direction="vertical"
-                    size={10}
+                    size={4}
                     style={{ width: "100%" }}
                   >
                     {
@@ -5225,6 +5368,7 @@ export function MyAgentsWorkspacePage({
         {accountId && (
           <AgentsOverview
             active={active && overviewOpen && (!isNarrow || !mobileList)}
+            onNewAgent={aiDisabled ? undefined : startNewAgent}
             navigation={libraryNavigationControl()}
             mine={[
               ...agentOrganization.groups.pinned,
@@ -5432,6 +5576,10 @@ export function MyAgentsWorkspacePage({
           }}
         />
       )}
+      <ShareAgentModal
+        agent={shareAgent}
+        onClose={() => setShareAgent(undefined)}
+      />
       {accessAgent && (
         <AgentAccessDialog
           open

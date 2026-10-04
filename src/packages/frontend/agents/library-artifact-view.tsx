@@ -6,7 +6,14 @@
 import { PublicAliasInfo } from "@cocalc/frontend/components/public-alias-info";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Alert, Button, Input, Modal } from "antd";
+import {
+  Alert,
+  Button,
+  Dropdown,
+  Input,
+  message as antdMessage,
+  Modal,
+} from "antd";
 import { readArtifact } from "@cocalc/chat";
 import type { ArtifactRecord } from "@cocalc/chat";
 import { useArtifactChanges } from "@cocalc/frontend/chat/artifacts";
@@ -14,7 +21,10 @@ import { copyTextToClipboard } from "@cocalc/frontend/components/copy-to-clipboa
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { ActionListArtifact } from "@cocalc/frontend/frame-editors/chat-editor/action-list-artifact";
 import { CommitArtifact } from "@cocalc/frontend/frame-editors/chat-editor/commit-artifact";
-import { FileArtifact } from "@cocalc/frontend/frame-editors/chat-editor/file-artifact";
+import {
+  FileArtifact,
+  type FileArtifactAction,
+} from "@cocalc/frontend/frame-editors/chat-editor/file-artifact";
 import ForeignArtifactSource from "@cocalc/frontend/frame-editors/chat-editor/foreign-artifact-source";
 import type {
   ArtifactSourceData,
@@ -24,6 +34,15 @@ import { GitHubPRArtifact } from "@cocalc/frontend/frame-editors/chat-editor/git
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { get_local_storage, set_local_storage } from "@cocalc/frontend/misc";
+import { Icon } from "@cocalc/frontend/components";
+import {
+  PAGE_HEADER_CONTEXT_STYLE,
+  PAGE_HEADER_TITLE_STYLE,
+  PageHeader,
+} from "@cocalc/frontend/components/page-header";
+import { autoThemeColor } from "@cocalc/frontend/components/identity-color";
 import { normalizeArtifactName } from "./artifact-names";
 
 export interface LibraryArtifactViewProps {
@@ -48,6 +67,31 @@ export function LibraryArtifactView(props: LibraryArtifactViewProps) {
 
 export default LibraryArtifactView;
 
+const ARTIFACT_FONT_SIZE_KEY = "artifact-font-size-v1";
+export const ARTIFACT_FONT_MIN = 10;
+export const ARTIFACT_FONT_MAX = 28;
+const ARTIFACT_FONT_DEFAULT = 14;
+
+export function readArtifactFontSize(): number {
+  return clampArtifactFontSize(
+    parseInt(`${get_local_storage(ARTIFACT_FONT_SIZE_KEY) ?? ""}`, 10),
+  );
+}
+
+function writeArtifactFontSize(value: number): number {
+  const size = clampArtifactFontSize(value);
+  set_local_storage(ARTIFACT_FONT_SIZE_KEY, String(size));
+  return size;
+}
+
+export function clampArtifactFontSize(value: unknown): number {
+  const size =
+    typeof value === "number" && Number.isFinite(value)
+      ? Math.round(value)
+      : ARTIFACT_FONT_DEFAULT;
+  return Math.max(ARTIFACT_FONT_MIN, Math.min(ARTIFACT_FONT_MAX, size));
+}
+
 function LibraryArtifactPage({
   target,
   artifactName,
@@ -57,6 +101,21 @@ function LibraryArtifactPage({
   navigation,
 }: LibraryArtifactViewProps) {
   const [title, setTitle] = useState<string>();
+  const [filePath, setFilePath] = useState<string>();
+  const [themeColor, setThemeColor] = useState<string>();
+  // Text size for reading artifacts, separate from the whole-page zoom.
+  // Per device (a phone wants a different size than a laptop).
+  const [fontSize, setFontSizeState] = useState(readArtifactFontSize);
+  const setFontSize = (value: number) =>
+    setFontSizeState(writeArtifactFontSize(value));
+  // The file preview's tools: the primary one is a button in this row, the
+  // rest are in its menu.
+  const [fileActions, setFileActions] = useState<FileArtifactAction[]>([]);
+  const projectTitle = useTypedRedux("projects", "project_map")?.getIn([
+    target.projectId,
+    "title",
+  ]) as string | undefined;
+  const context = [projectTitle, filePath].filter(Boolean).join(" · ");
   const [error, setError] = useState("");
   const [opening, setOpening] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -88,6 +147,8 @@ function LibraryArtifactPage({
       if (!(await copyTextToClipboard({ text: window.location.href })))
         throw Error("Clipboard access is unavailable");
       setCopied(true);
+      // The action is in a menu, so say so where it can be seen.
+      void antdMessage.success("Link copied");
     } catch (err) {
       setError(`Unable to copy link: ${err}`);
     }
@@ -118,77 +179,142 @@ function LibraryArtifactPage({
         background: UI_COLORS.surface,
       }}
     >
-      <header
+      <PageHeader
         ref={header}
         role="group"
         aria-label="Library artifact navigation"
         tabIndex={-1}
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          alignItems: "center",
-          gap: 8,
-          padding: 12,
-          borderBottom: `1px solid ${UI_COLORS.border}`,
-          flexShrink: 0,
-        }}
+        identityColor={themeColor ?? autoThemeColor(target.artifactId)}
       >
         {navigation}
         <nav
           aria-label="Breadcrumb"
           style={{
             display: "flex",
-            flexWrap: "wrap",
             alignItems: "center",
-            gap: 8,
-            flex: "1 1 240px",
+            gap: 6,
+            flex: "1 1 0",
             minWidth: 0,
+            overflow: "hidden",
+            whiteSpace: "nowrap",
           }}
         >
-          <Button type="text" onClick={onBack} aria-label="Back to Artifacts">
+          <Button
+            type="text"
+            size="small"
+            onClick={onBack}
+            aria-label="Back to Artifacts"
+          >
             Artifacts
           </Button>
           <span aria-hidden="true">/</span>
-          <h1
-            aria-current="page"
-            style={{
-              fontSize: "1.2em",
-              margin: 0,
-              overflowWrap: "anywhere",
-              minWidth: 0,
-            }}
-          >
+          <h1 aria-current="page" title={title} style={PAGE_HEADER_TITLE_STYLE}>
             {title ?? "Artifact"}
           </h1>
+          {context && (
+            <span title={context} style={PAGE_HEADER_CONTEXT_STYLE}>
+              {context}
+            </span>
+          )}
         </nav>
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 8,
-            maxWidth: "100%",
+        {onName && (
+          <Button
+            type="text"
+            size="small"
+            title={artifactName ? "Rename this artifact" : "Name this artifact"}
+            onClick={() => {
+              setNameDraft(artifactName ?? "");
+              setNameError("");
+              setNameOpen(true);
+            }}
+          >
+            {artifactName ? `@${artifactName}` : "Name artifact"}
+          </Button>
+        )}
+        {fileActions
+          .filter((action) => action.primary)
+          .map((action) => (
+            <Button
+              key={action.key}
+              size="small"
+              icon={<Icon name={action.icon} />}
+              disabled={action.disabled}
+              onClick={action.onClick}
+            >
+              {action.label}
+            </Button>
+          ))}
+        <Dropdown
+          trigger={["click"]}
+          menu={{
+            items: [
+              ...fileActions
+                .filter((action) => !action.primary)
+                .map((action) => ({
+                  key: action.key,
+                  label: action.label,
+                  icon: <Icon name={action.icon} />,
+                  disabled: action.disabled,
+                })),
+              ...(onShowConversation
+                ? [
+                    {
+                      key: "conversation",
+                      label: "Open conversation",
+                      icon: <Icon name="comments" />,
+                      disabled: opening,
+                    },
+                  ]
+                : []),
+              {
+                key: "copy-link",
+                label: "Copy link",
+                icon: <Icon name="link" />,
+              },
+              { type: "divider" as const },
+              {
+                key: "text-smaller",
+                label: "Smaller text",
+                icon: <Icon name="minus" />,
+                disabled: fontSize <= ARTIFACT_FONT_MIN,
+              },
+              {
+                key: "text-larger",
+                label: `Larger text (${fontSize}px)`,
+                icon: <Icon name="plus" />,
+                disabled: fontSize >= ARTIFACT_FONT_MAX,
+              },
+            ],
+            onClick: ({ key }) => {
+              const file = fileActions.find((action) => action.key === key);
+              if (file) file.onClick();
+              else if (key === "conversation") void openConversation();
+              else if (key === "copy-link") void copyLink();
+              else if (key === "text-smaller") setFontSize(fontSize - 1);
+              else if (key === "text-larger") setFontSize(fontSize + 1);
+            },
           }}
         >
-          {onShowConversation && (
-            <Button disabled={opening} onClick={() => void openConversation()}>
-              Conversation
-            </Button>
-          )}
-          {onName && (
-            <Button
-              onClick={() => {
-                setNameDraft(artifactName ?? "");
-                setNameError("");
-                setNameOpen(true);
-              }}
-            >
-              {artifactName ? `@${artifactName}` : "Name artifact"}
-            </Button>
-          )}
-          <Button onClick={() => void copyLink()}>Copy link</Button>
-        </div>
-        <span role="status">{copied ? "Link copied" : ""}</span>
-      </header>
+          <Button
+            type="text"
+            size="small"
+            aria-label="More artifact actions"
+            icon={<Icon name="ellipsis" />}
+          />
+        </Dropdown>
+        <span
+          role="status"
+          style={{
+            position: "absolute",
+            width: 1,
+            height: 1,
+            overflow: "hidden",
+            clip: "rect(0 0 0 0)",
+          }}
+        >
+          {copied ? "Link copied" : ""}
+        </span>
+      </PageHeader>
       {error && <Alert type="error" title={error} />}
       <Modal
         open={nameOpen}
@@ -230,6 +356,10 @@ function LibraryArtifactPage({
             source={source}
             target={target}
             onTitle={setTitle}
+            onPath={setFilePath}
+            onColor={setThemeColor}
+            fontSize={fontSize}
+            onToolbarActions={setFileActions}
           />
         )}
       </ForeignArtifactSource>
@@ -241,10 +371,18 @@ function LibraryArtifactContent({
   source,
   target,
   onTitle,
+  onPath,
+  onColor,
+  onToolbarActions,
+  fontSize,
 }: {
   source: ArtifactSourceData;
   target: ForeignArtifactTarget;
   onTitle: (title: string | undefined) => void;
+  onPath: (path: string | undefined) => void;
+  onColor: (color: string | undefined) => void;
+  onToolbarActions: (actions: FileArtifactAction[]) => void;
+  fontSize: number;
 }) {
   useArtifactChanges(source.syncdb);
   const context = useFileContext();
@@ -263,6 +401,19 @@ function LibraryArtifactContent({
     onTitle(title);
     return () => onTitle(undefined);
   }, [title, onTitle]);
+  const color =
+    artifact?.theme?.color?.trim() ||
+    artifact?.theme?.accent_color?.trim() ||
+    undefined;
+  useEffect(() => {
+    onColor(color);
+    return () => onColor(undefined);
+  }, [color, onColor]);
+  const artifactPath = artifact?.file?.path;
+  useEffect(() => {
+    onPath(artifactPath);
+    return () => onPath(undefined);
+  }, [artifactPath, onPath]);
 
   if (!artifact)
     return (
@@ -284,6 +435,8 @@ function LibraryArtifactContent({
           artifact={artifact}
           historical={false}
           localComments={false}
+          onToolbarActions={onToolbarActions}
+          fontSize={fontSize}
         />
       ) : artifact.kind === "commit" ? (
         <CommitArtifact
@@ -317,7 +470,12 @@ function LibraryArtifactContent({
                   : context.urlTransform?.(url, tag),
             }}
           >
-            <div role="document" aria-label="Artifact document" tabIndex={0}>
+            <div
+              role="document"
+              aria-label="Artifact document"
+              tabIndex={0}
+              style={{ fontSize }}
+            >
               <StaticMarkdown value={artifact.input} />
             </div>
           </FileContext.Provider>

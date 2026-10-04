@@ -35,6 +35,8 @@ import { waitForChatReady } from "./create";
 import { ReferencePicker } from "./reference-picker";
 import type { ChatInputControl } from "@cocalc/frontend/chat/input";
 import { serializePeopleReference } from "@cocalc/util/people-references";
+import { PageHeader } from "@cocalc/frontend/components/page-header";
+import { autoThemeColor } from "@cocalc/frontend/components/identity-color";
 
 export function ConversationView({
   conversation,
@@ -114,6 +116,10 @@ export function ConversationView({
     >
       <ConversationHeader
         conversation={conversation}
+        identityColor={
+          conversationThreadColor(actions) ??
+          autoThemeColor(conversation.conversation_id)
+        }
         onClose={onClose}
         onInsertLink={actions ? () => setPicking(true) : undefined}
         toolsRef={setToolsPortal}
@@ -243,13 +249,31 @@ function MountedChat({
   );
 }
 
+// A conversation is one chat thread; its theme color, if set, identifies it.
+function conversationThreadColor(actions?: ChatActions): string | undefined {
+  try {
+    const key = actions?.getThreadIndex?.()?.keys().next().value;
+    if (!key) return undefined;
+    const meta = actions?.getThreadMetadata?.(key, { threadId: key });
+    return (
+      meta?.thread_color?.trim() ||
+      meta?.thread_accent_color?.trim() ||
+      undefined
+    );
+  } catch {
+    return undefined;
+  }
+}
+
 function ConversationHeader({
   conversation,
+  identityColor,
   onClose,
   onInsertLink,
   toolsRef,
 }: {
   conversation: ListedConversation;
+  identityColor?: string;
   onClose: () => void;
   onInsertLink?: () => void;
   toolsRef?: (element: HTMLElement | null) => void;
@@ -319,20 +343,8 @@ function ConversationHeader({
 
   // One row: identity on the left, then the chat's tools and ours.
   return (
-    <div
-      style={{
-        borderBottom: `1px solid ${UI_COLORS.border}`,
-        padding: "6px 8px",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          minWidth: 0,
-        }}
-      >
+    <div>
+      <PageHeader identityColor={identityColor}>
         <Button
           type="text"
           aria-label="Back to conversations"
@@ -444,7 +456,7 @@ function ConversationHeader({
             icon={<Icon name="ellipsis" />}
           />
         </Dropdown>
-      </div>
+      </PageHeader>
       {error && (
         <Alert
           role="alert"

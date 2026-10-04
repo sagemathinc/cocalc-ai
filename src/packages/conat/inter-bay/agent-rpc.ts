@@ -91,9 +91,13 @@ export type PersonalControlRequest =
         snapshot: import("@cocalc/conat/agents/personal").NamedAgentSnapshot;
       };
     };
+  // Read-only, asked of a collaborator's home bay by listAgentParticipants
+  // after the requester's own access to the project was checked.
+  | { action: "hasNamedAgent"; options: { endpoint: AgentEndpoint } };
 export type PersonalControlResult =
   | PersonalAgentDenial
   | void
+  | { named: boolean }
   | Awaited<ReturnType<AgentApi[PersonalHumanMethod]>>
   | AgentNetworkAuthorization
   | AgentNetworkDiscovery

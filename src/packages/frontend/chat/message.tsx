@@ -1930,6 +1930,14 @@ export default function Message({
               configValue("serviceTier") === "fast" ? "Fast" : "Standard",
             ],
             ["Payment", configValue("paymentSource") ?? "Automatic"],
+            [
+              "Billed to",
+              (() => {
+                const id = `${field(message, "acp_account_id") ?? ""}`.trim();
+                if (!id) return undefined;
+                return id === account_id ? "You" : get_user_name(id);
+              })(),
+            ],
             ["Working directory", configValue("workingDirectory")],
           ].filter((entry) => entry[1]);
           Modal.info({
@@ -2095,6 +2103,19 @@ export default function Message({
     buttons.push(
       <span key="more">{renderCodexOverflowMenu({ footer: true })}</span>,
     );
+    // In a shared agent, say when someone else's credentials paid for this
+    // turn; your own turns (the usual case) show nothing.
+    const billedTo = `${field(message, "acp_account_id") ?? ""}`.trim();
+    if (billedTo && billedTo !== account_id) {
+      buttons.push(
+        <span
+          key="billed-to"
+          style={{ color: UI_COLORS.muted, fontSize: 12, marginLeft: 6 }}
+        >
+          billed to {get_user_name(billedTo) || "a collaborator"}
+        </span>,
+      );
+    }
 
     return (
       <div
@@ -2794,6 +2815,8 @@ export default function Message({
     return (
       <div>
         <ChatInput
+          projectId={project_id}
+          path={path}
           fontSize={font_size}
           autoFocus={autoFocusEdit}
           cacheId={`${path}${project_id}${date}`}
@@ -2929,6 +2952,8 @@ export default function Message({
     return (
       <div style={{ marginLeft: mode === "standalone" ? "30px" : "0" }}>
         <ChatInput
+          projectId={project_id}
+          path={path}
           fontSize={font_size}
           autoFocus={autoFocusReply}
           moveCursorToEndOfLine={moveCursorToEndOfLine}

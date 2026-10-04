@@ -43,6 +43,10 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   },
   useTypedRedux: () => undefined,
 }));
+jest.mock("@cocalc/frontend/components", () => ({
+  Icon: () => null,
+  Tooltip: ({ children }) => children,
+}));
 jest.mock("@cocalc/frontend/app-framework/project-runtime", () => ({
   ensureProjectReduxRuntime: jest.fn(),
 }));
@@ -239,20 +243,20 @@ test("loads the real source without an agent, preserves focus, and delegates exp
   ).not.toBeInTheDocument();
   expect(onShowConversation).not.toHaveBeenCalled();
   expect(event).not.toHaveBeenCalled();
+  // The header keeps few controls; the rest are in one menu.
   await user.tab();
-  expect(screen.getByRole("button", { name: "Conversation" })).toHaveFocus();
-  await user.keyboard("{Enter}");
-  expect(onShowConversation).toHaveBeenCalledWith(target);
-  await user.tab();
-  expect(screen.getByRole("button", { name: "Copy link" })).toHaveFocus();
+  expect(
+    screen.getByRole("button", { name: "More artifact actions" }),
+  ).toHaveFocus();
   await user.tab();
   expect(screen.getByRole("document")).toHaveFocus();
-  await user.tab({ shift: true });
   await user.tab({ shift: true });
   await user.tab({ shift: true });
   expect(back).toHaveFocus();
   await user.keyboard(" ");
   expect(onBack).toHaveBeenCalledTimes(1);
+  await chooseFromMenu(user, "Open conversation");
+  expect(onShowConversation).toHaveBeenCalledWith(target);
   expect(db.set).not.toHaveBeenCalled();
   expect(mockOpen).toHaveBeenCalledTimes(1);
   window.removeEventListener(FOREIGN_ARTIFACT_CONVERSATION_EVENT, event);
@@ -359,20 +363,18 @@ test("Copy link reads the parent's current URL at activation and reports clipboa
       "",
       "/library/source-project/stable-entry",
     );
-    const copy = screen.getByRole("button", { name: "Copy link" });
-    copy.focus();
-    await user.keyboard("{Enter}");
+    const copiedStatus = () =>
+      screen.queryByText("Link copied", { selector: "span[role=status]" });
+    await chooseFromMenu(user, "Copy link");
     expect(mockCopy).toHaveBeenLastCalledWith({ text: window.location.href });
-    expect(screen.getByText("Link copied")).toHaveAttribute("role", "status");
-    expect(copy).toHaveFocus();
+    expect(copiedStatus()).toBeInTheDocument();
     mockCopy.mockResolvedValueOnce(false);
-    await user.keyboard(" ");
+    await chooseFromMenu(user, "Copy link");
     expect(screen.getByRole("alert")).toHaveTextContent("Unable to copy link");
-    expect(screen.queryByText("Link copied")).not.toBeInTheDocument();
-    expect(copy).toHaveFocus();
-    await user.keyboard("{Enter}");
+    expect(copiedStatus()).not.toBeInTheDocument();
+    await chooseFromMenu(user, "Copy link");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByText("Link copied")).toHaveAttribute("role", "status");
+    expect(copiedStatus()).toBeInTheDocument();
     expect(mockOpen).toHaveBeenCalledTimes(1);
   } finally {
     window.history.replaceState(null, "", originalUrl);
@@ -415,18 +417,12 @@ test.each(["throw", "reject"])(
       />,
     );
     await screen.findByRole("heading", { name: "Actual source title" });
-    const open = within(
-      screen.getByRole("group", { name: "Library artifact navigation" }),
-    ).getByRole("button", { name: "Conversation" });
-    open.focus();
-    await user.keyboard("{Enter}");
+    await chooseFromMenu(user, "Open conversation");
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Unable to open source conversation: Error: Conversation unavailable",
     );
-    expect(open).toBeEnabled();
-    expect(open).toHaveFocus();
     expect(onShowConversation).toHaveBeenCalledWith(target);
-    await user.keyboard(" ");
+    await chooseFromMenu(user, "Open conversation");
     expect(onShowConversation).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(mockOpen).toHaveBeenCalledTimes(1);
@@ -450,13 +446,17 @@ test("source navigation prevents duplicate activation while its promise is pendi
     />,
   );
   await screen.findByRole("heading", { name: "Actual source title" });
-  const open = screen.getByRole("button", { name: "Conversation" });
-  await user.click(open);
-  expect(open).toBeDisabled();
-  await user.click(open);
+  await chooseFromMenu(user, "Open conversation");
+  await user.click(
+    screen.getByRole("button", { name: "More artifact actions" }),
+  );
+  const item = () =>
+    screen.getByRole("menuitem", { name: "Open conversation" });
+  await waitFor(() => expect(item()).toHaveAttribute("aria-disabled", "true"));
+  await user.click(item());
   expect(onShowConversation).toHaveBeenCalledTimes(1);
   await act(async () => finish());
-  expect(open).toBeEnabled();
+  expect(item()).not.toHaveAttribute("aria-disabled", "true");
 });
 
 test("Open in project uses the associated file in the source project, not the chat", async () => {
@@ -472,7 +472,15 @@ test("Open in project uses the associated file in the source project, not the ch
   await userEvent.setup().keyboard("{Enter}");
   expect(open).toHaveFocus();
   expect(mockOpen).toHaveBeenLastCalledWith({ path: "reports/result.txt" });
-  expect(screen.getByRole("button", { name: "Comment" })).toBeDisabled();
+  // Only Open in project is a button; the other file tools are in the menu.
+  expect(screen.queryByRole("button", { name: "Download" })).toBeNull();
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "More artifact actions" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Download" }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("menuitem", { name: "Refresh" })).toBeInTheDocument();
   act(() => {
     record = sourceRecord({ kind: "file", file: { path: "reports/new.txt" } });
     db.emit("change");
@@ -649,3 +657,36 @@ test("the source loader retains the legacy warning by default", async () => {
     screen.getByRole("button", { name: "Show in conversation" }),
   ).toBeEnabled();
 });
+
+test("the artifact's text size is adjustable from its menu and kept on this device", async () => {
+  localStorage.clear();
+  const user = userEvent.setup();
+  const { unmount } = render(
+    <LibraryArtifactView target={target} onBack={jest.fn()} />,
+  );
+  const doc = await screen.findByRole("document", {
+    name: "Artifact document",
+  });
+  expect(doc).toHaveStyle({ fontSize: "14px" });
+  await chooseFromMenu(user, "Larger text (14px)");
+  expect(doc).toHaveStyle({ fontSize: "15px" });
+  unmount();
+  render(<LibraryArtifactView target={target} onBack={jest.fn()} />);
+  const again = await screen.findByRole("document", {
+    name: "Artifact document",
+  });
+  expect(again).toHaveStyle({ fontSize: "15px" });
+  await chooseFromMenu(user, "Smaller text");
+  expect(again).toHaveStyle({ fontSize: "14px" });
+});
+
+async function chooseFromMenu(
+  user: ReturnType<typeof userEvent.setup>,
+  label: string,
+) {
+  await user.click(
+    screen.getByRole("button", { name: "More artifact actions" }),
+  );
+  const items = await screen.findAllByRole("menuitem", { name: label });
+  await user.click(items[items.length - 1]);
+}

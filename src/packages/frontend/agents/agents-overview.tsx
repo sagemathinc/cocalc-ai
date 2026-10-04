@@ -32,6 +32,7 @@ import { WithAgentRuntimeMark } from "./agent-runtime-mark";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, TimeAgo } from "@cocalc/frontend/components";
+import { PageCreateButton } from "@cocalc/frontend/components/page-create-button";
 import {
   Collection,
   CollectionViewControl,
@@ -85,6 +86,7 @@ interface Props {
   // Bulk operations on selected agents of your own.
   onSetHidden: (agentIds: string[], hidden: boolean) => void;
   onRemove: (agents: NamedAgent[]) => void;
+  onNewAgent?: () => void;
 }
 
 // Open another person's agent: its conversation, in its project.
@@ -464,6 +466,9 @@ export function AgentsOverview(props: Props) {
             label="Agents"
           />
           <PageSearchBox scope="agents" />
+          {props.onNewAgent && (
+            <PageCreateButton label="New agent" onClick={props.onNewAgent} />
+          )}
         </header>
         <div
           style={{

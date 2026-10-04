@@ -39,13 +39,13 @@ const actions = {
   store: { get: () => undefined },
 } as any;
 
-function renderTurn(generating: boolean) {
+function renderTurn(generating: boolean, billedTo = "viewer") {
   const message = {
     date: 2000,
     message_id: "assistant-1",
     thread_id: "thread-1",
     sender_id: "codex",
-    acp_account_id: "codex",
+    acp_account_id: billedTo,
     generating,
     history: [{ content: generating ? ":robot: Thinking..." : "All done." }],
   };
@@ -57,7 +57,7 @@ function renderTurn(generating: boolean) {
         message={message as any}
         messages={new Map([["2000", message]]) as any}
         account_id="viewer"
-        get_user_name={() => "Codex"}
+        get_user_name={(id) => (id === "drew" ? "Drew" : "Codex")}
         mode="standalone"
         is_thread_body={false}
       />
@@ -191,4 +191,18 @@ test("footer actions support keyboard navigation and restore disclosure focus", 
     which: 27,
   });
   await waitFor(() => expect(more).toHaveFocus());
+});
+
+test("a shared agent's turn paid by someone else says who", () => {
+  renderTurn(false, "drew");
+  expect(
+    within(screen.getByTestId("chat-message-actions")).getByText(
+      "billed to Drew",
+    ),
+  ).toBeVisible();
+});
+
+test("your own turns don't show who paid", () => {
+  renderTurn(false, "viewer");
+  expect(screen.queryByText(/billed to/)).toBeNull();
 });

@@ -3,7 +3,13 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { WorkspaceSidebarActions } from "./workspace-sidebar-actions";
 
+const mockNotificationCount = 0;
 jest.mock("@cocalc/frontend/art", () => ({ APP_ICON: "/logo.svg" }));
+jest.mock("@cocalc/frontend/app/notifications", () => ({
+  NOTIFICATION_BADGE_MAX: 99,
+  useNotificationCount: () => mockNotificationCount,
+}));
+
 jest.mock("@cocalc/frontend/customize/app-base-path", () => ({
   appBasePath: "/",
 }));
@@ -66,7 +72,7 @@ test("account footer stays outside the keyboard-accessible navigation scroll are
   });
   expect(scroll).toHaveStyle({ overflowY: "auto", minHeight: 0 });
   expect(
-    within(scroll).queryByRole("button", { name: "New Agent" }),
+    within(scroll).queryByRole("button", { name: "New agent" }),
   ).toBeNull();
   expect(
     within(scroll).queryByRole("button", { name: "Account menu" }),
@@ -85,7 +91,7 @@ test("does not render a duplicate New Agent button above navigation", () => {
   render(
     <WorkspaceSidebarActions firstNavigationItem={<button>Projects</button>} />,
   );
-  expect(screen.queryByRole("button", { name: "New Agent" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "New agent" })).toBeNull();
 });
 
 test.each(["Projects", "Artifacts"])(

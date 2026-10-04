@@ -21,6 +21,7 @@ import {
   updateAgentNetwork as updateAgentNetworkImpl,
 } from "@cocalc/server/agents/personal";
 export {
+  listAgentParticipants,
   listNamedAgents,
   nameAgent,
   retireNamedAgent,

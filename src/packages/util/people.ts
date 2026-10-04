@@ -181,9 +181,24 @@ export function normalizeConversationPath(path: unknown): string {
   return normalized;
 }
 
+// Where new conversations' chat files go: application data, so under the XDG
+// data directory, like agent chats. Conversations keep their recorded path,
+// so ones created under the old ~/.cocalc/conversations still open.
+export const CONVERSATIONS_DIRECTORY = ".local/share/cocalc/conversations";
+
 // Where a brand new conversation's chat file goes. It is just storage.
 export function newConversationPath(home: string, id: string): string {
-  return normalizeConversationPath(`${home}/.cocalc/conversations/${id}.chat`);
+  return normalizeConversationPath(
+    `${home}/${CONVERSATIONS_DIRECTORY}/${id}.chat`,
+  );
+}
+
+// True for a chat file the People page created, whose name is just an id,
+// so it should be described by its conversation title instead.
+export function isConversationStoragePath(path: string): boolean {
+  return /(^|\/)(\.local\/share\/cocalc|\.cocalc)\/conversations\/[^/]+\.chat$/.test(
+    path,
+  );
 }
 
 export function isConversationUnread(

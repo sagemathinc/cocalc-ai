@@ -3229,7 +3229,10 @@ function ChatPanelContent({
         onCreateThread={async () => {
           await createThreadWithoutMessage();
         }}
-        showThreadImagePreview={showThreadImagePreview && !narrow}
+        showThreadImagePreview={
+          // A host header already shows the thread's image as its badge.
+          showThreadImagePreview && !narrow && !embeddingOptions.agentWorkspace
+        }
         hideChatTypeSelector={hideChatTypeSelector || !aiAgentPolicyAllowed}
         activityJumpDate={
           activityJumpAttentionId ? undefined : activityJumpDate
@@ -3263,9 +3266,15 @@ function ChatPanelContent({
             {!narrow && focusButton}
           </>
         }
-        compactTopRightControls={effectiveThreadPanelCompactTopRightControls}
+        compactTopRightControls={
+          effectiveThreadPanelCompactTopRightControls ||
+          embeddingOptions.headerControlsPortal !== undefined
+        }
         topRightControlsPortal={
-          narrow ? mobileToolsPortal : threadPanelTopRightControlsPortal
+          narrow
+            ? mobileToolsPortal
+            : (threadPanelTopRightControlsPortal ??
+              embeddingOptions.headerControlsPortal)
         }
         readOnly={effectiveReadOnly}
       />

@@ -32,6 +32,12 @@ const MATCHES = 50;
 // In a sidebar section, which shows a few and links to the full page.
 const SECTION_RECENT = 3;
 
+let lastOpenArtifact: { project: string; entry: string } | undefined;
+
+export function resetLastOpenArtifactForTests() {
+  lastOpenArtifact = undefined;
+}
+
 export function LibrarySidebar({
   search,
   inSection = false,
@@ -60,8 +66,27 @@ export function LibrarySidebar({
   const metadata = useSyncExternalStore(catalog.subscribe, catalog.get);
   const pins = useArtifactPins();
   const { names } = useArtifactNames();
-  const openProject = useTypedRedux("page", "library_project_id");
-  const openEntry = useTypedRedux("page", "library_entry_id");
+  const routeProject = useTypedRedux("page", "library_project_id");
+  const routeEntry = useTypedRedux("page", "library_entry_id");
+  // A named artifact opens by its name (/artifacts/<name>), which the route
+  // holds in place of the project id; resolve it to mark the open artifact.
+  const openAlias =
+    routeEntry == null && routeProject
+      ? names.find((alias) => alias.active && alias.name === routeProject)
+      : undefined;
+  const routeOpen =
+    (openAlias?.project_id ?? routeProject) &&
+    (openAlias?.entry_id ?? routeEntry)
+      ? {
+          project: (openAlias?.project_id ?? routeProject)!,
+          entry: (openAlias?.entry_id ?? routeEntry)!,
+        }
+      : undefined;
+  // The last artifact opened stays listed after leaving it, so a collapsed
+  // section still offers the way back (as agents and people do).
+  if (routeOpen) lastOpenArtifact = routeOpen;
+  const openProject = (routeOpen ?? lastOpenArtifact)?.project;
+  const openEntry = (routeOpen ?? lastOpenArtifact)?.entry;
   const results = catalogResults(metadata.entries, agents, {
     query: search,
     sort: "recent",
