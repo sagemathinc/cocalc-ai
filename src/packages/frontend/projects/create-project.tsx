@@ -10,14 +10,12 @@ Create a new project
 import {
   Alert,
   Button,
-  Card,
   Checkbox,
   Form,
   Input,
   Modal,
   Popover,
   Space,
-  Tag,
   Typography,
 } from "antd";
 import { delay } from "awaiting";
@@ -36,13 +34,8 @@ import { cocalc_setup_profile } from "@cocalc/frontend/components/constants";
 import { labels } from "@cocalc/frontend/i18n";
 
 import { R2_REGION_LABELS } from "@cocalc/util/consts";
-import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { SelectNewHost } from "@cocalc/frontend/hosts/select-new-host";
-import {
-  latestRootfsVersionEntries,
-  sectionLabel,
-  sectionTagColor,
-} from "@cocalc/frontend/rootfs/catalog-ui";
+import { latestRootfsVersionEntries } from "@cocalc/frontend/rootfs/catalog-ui";
 import { RootfsCatalogPicker } from "@cocalc/frontend/rootfs/catalog-picker";
 import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
 import {
@@ -57,6 +50,7 @@ import {
 import { ProjectCreateHealthCard } from "./create/project-create-health-card";
 import { useProjectCreateDraft } from "./create/use-project-create-draft";
 import { useProjectRuntimeCapabilities } from "@cocalc/frontend/project/runtime-capabilities";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import "./create-project.css";
 
 const IS_STAR_SETUP_PROFILE = cocalc_setup_profile === "star";
@@ -66,45 +60,6 @@ interface Props {
   open: boolean;
   onClose: () => void;
   onCreated?: (projectId: string) => void;
-}
-
-const PROJECT_PRESETS: {
-  mode: ProjectCreateMode;
-  title: string;
-  description: string;
-}[] = [
-  {
-    mode: "standard",
-    title: "Standard",
-    description: "General-purpose CPU images; automatic host placement.",
-  },
-  {
-    mode: "gpu",
-    title: "GPU",
-    description: "GPU-ready software; requires a GPU project host.",
-  },
-  {
-    mode: "teaching",
-    title: "Teaching",
-    description: "Images curated for classes and workshops.",
-  },
-  {
-    mode: "custom",
-    title: "All images",
-    description: "All compatible images; choose the host yourself.",
-  },
-];
-
-function projectPresetDescription(preset: (typeof PROJECT_PRESETS)[number]) {
-  if (!IS_STAR_SETUP_PROFILE) return preset.description;
-  switch (preset.mode) {
-    case "standard":
-      return "General-purpose image.";
-    case "custom":
-      return "Choose your own image.";
-    default:
-      return preset.description;
-  }
 }
 
 export function NewProjectCreator({
@@ -122,7 +77,6 @@ export function NewProjectCreator({
   const [createAction, setCreateAction] = useState<"create" | "open" | null>(
     null,
   );
-  const [titlePreview, setTitlePreview] = useState<string>(default_value);
   const saving = createAction != null;
   const new_project_title_ref = useRef<any>(null);
   const [showOlderRootfsVersions, setShowOlderRootfsVersions] =
@@ -161,12 +115,42 @@ export function NewProjectCreator({
   );
   const pickerRootfsImages = useMemo(
     () =>
+      // Official images first; otherwise the catalog's order.
       latestRootfsVersionEntries(filteredRootfsImages, {
         showOlderVersions: showOlderRootfsVersions,
         preserveIds: [draft.rootfs_image_id],
-      }),
+      })
+        .map((entry, index) => ({ entry, index }))
+        .sort(
+          (a, b) =>
+            Number(!!b.entry.official) - Number(!!a.entry.official) ||
+            a.index - b.index,
+        )
+        .map(({ entry }) => entry),
     [draft.rootfs_image_id, filteredRootfsImages, showOlderRootfsVersions],
   );
+  // GPU is offered only when a GPU host is available to you (yours, or one
+  // shared with you).
+  const [gpuHostAvailable, setGpuHostAvailable] = useState(false);
+  useEffect(() => {
+    if (!open || !runtime.gpu) return;
+    let canceled = false;
+    void webapp_client.conat_client.hub.hosts
+      .listHosts({ catalog: true })
+      .then((hosts) => {
+        if (!canceled) {
+          setGpuHostAvailable(
+            (hosts ?? []).some(
+              (host: any) => host?.gpu === true && !host?.deleted,
+            ),
+          );
+        }
+      })
+      .catch(() => {});
+    return () => {
+      canceled = true;
+    };
+  }, [open, runtime.gpu]);
   const selectedRootfsEntry = useMemo(() => {
     const imageId = draft.rootfs_image_id?.trim();
     if (imageId) {
@@ -181,7 +165,6 @@ export function NewProjectCreator({
       return;
     }
     form.setFieldsValue({ title: draft.title });
-    setTitlePreview(draft.title);
   }, [draft.title, form, open]);
 
   const is_mounted_ref = useIsMountedRef();
@@ -195,7 +178,6 @@ export function NewProjectCreator({
 
   function reset_form(): void {
     reset();
-    setTitlePreview(draft.title);
     set_error("");
     setCreateAction(null);
     setRootfsMode("catalog");
@@ -309,60 +291,12 @@ export function NewProjectCreator({
     return (
       <Space orientation="vertical" size="small" style={{ maxWidth: 420 }}>
         <Paragraph style={{ marginBottom: 0 }}>
-          An image defines the software installed in the project.
+          An image is the software installed in the project: choose SageMath for
+          Sage and math, R for R, and so on. You can change it later.
         </Paragraph>
         <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          Choose SageMath for Sage/Python/math work, R for R projects, and
-          minimal images only when you want a small base to customize yourself.
-          GPU images provide CUDA-ready software, but GPU hardware also requires
-          a GPU project host.
+          Search finds images by name, purpose or tag (e.g. teaching).
         </Paragraph>
-        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          Managed catalog images are recommended.
-        </Paragraph>
-      </Space>
-    );
-  }
-
-  function renderRootfsCatalogSelector(): React.JSX.Element {
-    return (
-      <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-        <RootfsCatalogPicker
-          images={pickerRootfsImages}
-          selectedImage={draft.rootfs_image}
-          selectedId={draft.rootfs_image_id}
-          onSelect={(entry) =>
-            setRootfs({ image: entry.image, image_id: entry.id })
-          }
-          loading={rootfsLoading}
-          disabled={saving}
-          search={rootfsSearch}
-          onSearchChange={setRootfsSearch}
-        />
-        <Space wrap>
-          <Checkbox
-            checked={showOlderRootfsVersions}
-            onChange={(e) => setShowOlderRootfsVersions(e.target.checked)}
-            disabled={saving}
-          >
-            Show older versions
-          </Checkbox>
-          {isAdmin && (
-            <Button
-              type="link"
-              onClick={() => setRootfsMode("custom")}
-              style={{ paddingLeft: 0, width: "fit-content" }}
-              disabled={saving}
-            >
-              Advanced OCI / Docker image
-            </Button>
-          )}
-        </Space>
-        {rootfsError && (
-          <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            Catalog load issue: {rootfsError}
-          </Paragraph>
-        )}
       </Space>
     );
   }
@@ -404,312 +338,179 @@ export function NewProjectCreator({
     );
   }
 
+  // One section: what is chosen and why, then the list to change it.
   function renderRootfsSection(): React.JSX.Element {
     const displayImage = draft.rootfs_image?.trim() || "";
-    const displayLabel =
-      selectedRootfsEntry?.label || displayImage || "No image selected";
+    const reason = describeProjectImageReason(draft.rootfs_reason);
     return (
-      <Card
-        size="small"
-        styles={{ body: { padding: "10px 12px" } }}
-        style={{ borderColor: UI_COLORS.border }}
-      >
-        <Space orientation="vertical" size={6} style={{ width: "100%" }}>
-          <Space
-            align="center"
-            style={{ width: "100%", justifyContent: "space-between" }}
-            wrap
-          >
-            <Space size="middle" wrap>
-              <span
-                style={{
-                  alignItems: "center",
-                  background: UI_COLORS.warningBg,
-                  borderRadius: 10,
-                  color: UI_COLORS.warning,
-                  display: "inline-flex",
-                  height: 32,
-                  justifyContent: "center",
-                  width: 32,
-                }}
-              >
-                <Icon name="cube" />
-              </span>
-              <span>
-                <div style={{ fontWeight: 700, color: UI_COLORS.text }}>
-                  Image
-                  <Popover content={renderRootfsHelp()} trigger="click">
-                    <Button
-                      size="small"
-                      type="link"
-                      style={{ padding: "0 0 0 6px", height: "auto" }}
-                    >
-                      What should I choose?
-                    </Button>
-                  </Popover>
-                </div>
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  {displayLabel}
-                  {describeProjectImageReason(draft.rootfs_reason)
-                    ? ` (${describeProjectImageReason(draft.rootfs_reason)})`
-                    : ""}
-                </Typography.Text>
-              </span>
-            </Space>
-            <Space size={4} wrap className="cc-project-create-preset-tags">
-              {PROJECT_PRESETS.map((preset) => {
-                const active = draft.mode === preset.mode;
-                return (
-                  <button
-                    key={preset.mode}
-                    type="button"
-                    className="cc-project-create-preset-tag"
-                    aria-pressed={active}
-                    title={projectPresetDescription(preset)}
-                    disabled={saving}
-                    onClick={() => handleApplyPreset(preset.mode)}
-                    style={{
-                      borderColor: active ? UI_COLORS.focus : UI_COLORS.border,
-                      background: active
-                        ? UI_COLORS.selected
-                        : UI_COLORS.surface,
-                      color: active ? UI_COLORS.link : UI_COLORS.text,
-                      boxShadow: active
-                        ? `0 0 0 1px ${UI_COLORS.focus} inset`
-                        : undefined,
-                    }}
-                  >
-                    {preset.title}
-                  </button>
-                );
-              })}
-            </Space>
-          </Space>
-          <Typography.Text
-            className="cc-project-create-preset-description"
-            type="secondary"
-            style={{ fontSize: 12 }}
-          >
-            {projectPresetDescription(
-              PROJECT_PRESETS.find((preset) => preset.mode === draft.mode) ??
-                PROJECT_PRESETS[0],
-            )}
+      <section aria-label="Image">
+        <div
+          style={{
+            display: "flex",
+            alignItems: "baseline",
+            gap: 8,
+            flexWrap: "wrap",
+            marginBottom: 6,
+          }}
+        >
+          <span style={{ fontWeight: 600 }}>Image</span>
+          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+            {selectedRootfsEntry?.label || displayImage || "Choose one below"}
+            {reason ? ` (${reason})` : ""}
           </Typography.Text>
-          {!selectedRootfsEntry && displayImage && (
-            <code style={{ fontSize: "11px", overflowWrap: "anywhere" }}>
-              {displayImage}
-            </code>
-          )}
-          {selectedRootfsEntry && renderRootfsWarning(selectedRootfsEntry)}
-          {rootfsMode === "catalog"
-            ? renderRootfsCatalogSelector()
-            : renderCustomRootfsSelector()}
-        </Space>
-      </Card>
-    );
-  }
-
-  function renderSummarySection(): React.JSX.Element {
-    const title =
-      `${(new_project_title_ref.current as any)?.input?.value ?? titlePreview}`.trim() ||
-      "Project name required";
-    const summaryItems = [
-      {
-        icon: "project-outlined",
-        label: "Project name",
-        value: title,
-        color: UI_COLORS.infoBg,
-      },
-      {
-        icon: "sliders",
-        label: "Preset",
-        value: presetTitle(draft.mode),
-        color: UI_COLORS.inset,
-        hidden: !runtime.rootfs,
-      },
-      {
-        icon: "cube",
-        label: "Image",
-        value: summary.rootfsLabel,
-        color: UI_COLORS.warningBg,
-        hidden: !runtime.rootfs,
-      },
-      {
-        icon: "servers",
-        label: "Host / region",
-        value: summary.hostName || summary.host_id || "Automatic placement",
-        color: UI_COLORS.successBg,
-        hidden: IS_STAR_SETUP_PROFILE || !runtime.host_placement,
-      },
-      {
-        icon: "database",
-        label: "Backups",
-        value: R2_REGION_LABELS[draft.region],
-        color: UI_COLORS.inset,
-        hidden: !runtime.backups,
-      },
-      {
-        icon: "terminal",
-        label: "Runtime",
-        value: runtime.label,
-        color: UI_COLORS.infoBg,
-      },
-    ];
-    return (
-      <Card
-        size="small"
-        styles={{ body: { padding: 16 } }}
-        className="cc-project-create-summary-card"
-        style={{
-          borderColor: UI_COLORS.border,
-          background: UI_COLORS.surface,
-        }}
-      >
-        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 16 }}>Project summary</div>
-          </div>
-          <Space orientation="vertical" size={0} style={{ width: "100%" }}>
-            {summaryItems
-              .filter((item) => !item.hidden)
-              .map((item, index, visibleItems) => (
-                <div
-                  key={item.label}
-                  className="cc-project-create-summary-row"
-                  style={{
-                    borderBottom:
-                      index === visibleItems.length - 1
-                        ? undefined
-                        : `1px solid ${UI_COLORS.border}`,
-                  }}
-                >
-                  <span
-                    className="cc-project-create-summary-icon"
-                    style={{
-                      background: item.color,
-                      color: UI_COLORS.info,
-                    }}
-                  >
-                    <Icon name={item.icon as any} />
-                  </span>
-                  <span style={{ minWidth: 0 }}>
-                    <div style={{ color: UI_COLORS.secondary, fontSize: 12 }}>
-                      {item.label}
-                    </div>
-                    <div
-                      style={{
-                        color: UI_COLORS.text,
-                        fontSize: 13,
-                        fontWeight: 600,
-                        overflowWrap: "anywhere",
-                      }}
-                    >
-                      {item.value}
-                    </div>
-                  </span>
-                </div>
-              ))}
-          </Space>
-          <Space wrap>
-            {runtime.gpu && summary.gpu && <Tag color="purple">GPU</Tag>}
-            {runtime.rootfs && selectedRootfsEntry?.section && (
-              <Tag color={sectionTagColor(selectedRootfsEntry.section)}>
-                {sectionLabel(selectedRootfsEntry.section)}
-              </Tag>
-            )}
-            {runtime.rootfs && selectedRootfsEntry?.warning && (
-              <Tag color="orange">Review</Tag>
-            )}
-            {runtime.rootfs && !selectedRootfsEntry && summary.rootfs_image && (
-              <Tag color={isAdmin ? "orange" : "red"}>
-                {isAdmin ? "Advanced OCI" : "Unavailable image"}
-              </Tag>
-            )}
-          </Space>
-          {runtime.rootfs && summary.warnings.length > 0 && (
-            <Alert type="warning" showIcon title={summary.warnings.join(" ")} />
-          )}
+          <span style={{ flex: 1 }} />
+          <Popover content={renderRootfsHelp()} trigger="click">
+            <Button size="small" type="link" style={{ padding: 0 }}>
+              What should I choose?
+            </Button>
+          </Popover>
+        </div>
+        {!selectedRootfsEntry && displayImage && (
+          <code style={{ fontSize: "11px", overflowWrap: "anywhere" }}>
+            {displayImage}
+          </code>
+        )}
+        {selectedRootfsEntry && renderRootfsWarning(selectedRootfsEntry)}
+        {rootfsMode === "catalog" ? (
           <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-            {!onCreated && (
-              <Button
-                type="primary"
-                block
-                onClick={() => create_project({ openAfterCreate: true })}
-                disabled={isDisabled()}
-                title={
-                  titleIsMissing
-                    ? "Enter a project name before creating."
-                    : undefined
-                }
-                loading={createAction === "open"}
-                icon={<Icon name="arrow-right" />}
-              >
-                Create and Open
-              </Button>
-            )}
-            <Button
-              type={onCreated ? "primary" : undefined}
-              block
-              onClick={() => create_project({ openAfterCreate: false })}
-              disabled={isDisabled()}
-              title={
-                titleIsMissing
-                  ? "Enter a project name before creating."
-                  : undefined
+            <RootfsCatalogPicker
+              images={pickerRootfsImages}
+              selectedImage={draft.rootfs_image}
+              selectedId={draft.rootfs_image_id}
+              onSelect={(entry) =>
+                setRootfs({ image: entry.image, image_id: entry.id })
               }
-              loading={createAction === "create"}
-              icon={<Icon name="plus-circle" />}
-            >
-              Create Project
-            </Button>
-            <Button block onClick={cancel_editing} disabled={saving}>
-              {intl.formatMessage(labels.cancel)}
-            </Button>
+              loading={rootfsLoading}
+              disabled={saving}
+              search={rootfsSearch}
+              onSearchChange={setRootfsSearch}
+              searchPlaceholder="Search images, e.g. SageMath, R, Python, LaTeX, teaching..."
+              height="auto"
+              maxHeight={300}
+            />
+            <Space wrap size="middle">
+              {(gpuHostAvailable || draft.mode === "gpu") && (
+                <Checkbox
+                  checked={draft.mode === "gpu"}
+                  onChange={(e) =>
+                    handleApplyPreset(e.target.checked ? "gpu" : "standard")
+                  }
+                  disabled={saving}
+                >
+                  Use a GPU
+                </Checkbox>
+              )}
+              <Checkbox
+                checked={showOlderRootfsVersions}
+                onChange={(e) => setShowOlderRootfsVersions(e.target.checked)}
+                disabled={saving}
+              >
+                Show older versions
+              </Checkbox>
+              {isAdmin && (
+                <Button
+                  type="link"
+                  onClick={() => setRootfsMode("custom")}
+                  style={{ padding: 0 }}
+                  disabled={saving}
+                >
+                  Advanced OCI / Docker image
+                </Button>
+              )}
+            </Space>
+            {rootfsError && (
+              <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+                Catalog load issue: {rootfsError}
+              </Paragraph>
+            )}
           </Space>
-        </Space>
-      </Card>
+        ) : (
+          renderCustomRootfsSelector()
+        )}
+      </section>
     );
   }
 
-  function render_input_section(): React.JSX.Element | undefined {
-    const helpTxt = intl.formatMessage({
-      id: "projects.create-project.helpTxt",
-      defaultMessage: "Pick a title. You can easily change it later!",
-    });
+  // Asked for in place (name, image); only other problems are warnings.
+  const otherWarnings = summary.warnings.filter(
+    (warning) =>
+      warning !== "Project title is required." &&
+      warning !== "Choose an image.",
+  );
 
-    return (
-      <Space
-        orientation="vertical"
-        size={10}
-        className="cc-project-create-form-column"
-      >
+  useEffect(() => {
+    if (open) {
+      start_editing();
+    } else {
+      reset_form();
+    }
+  }, [open]);
+
+  if (!open) return null;
+
+  const createDisabledTitle = titleIsMissing
+    ? "Name the project first."
+    : runtime.rootfs && !summary.rootfs_image.trim()
+      ? "Choose an image first."
+      : undefined;
+
+  return (
+    <Modal
+      open={open}
+      destroyOnHidden
+      className="cc-project-create-modal"
+      width="min(720px, 96vw)"
+      title={intl.formatMessage(labels.create_project)}
+      onCancel={cancel_editing}
+      mask={{ closable: !saving }}
+      styles={{
+        body: { maxHeight: "min(720px, 80vh)", overflowY: "auto" },
+      }}
+      footer={
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <Button onClick={cancel_editing} disabled={saving}>
+            {intl.formatMessage(labels.cancel)}
+          </Button>
+          <Button
+            type={onCreated ? "primary" : "default"}
+            onClick={() => create_project({ openAfterCreate: false })}
+            disabled={isDisabled()}
+            title={createDisabledTitle}
+            loading={createAction === "create"}
+          >
+            Create
+          </Button>
+          {!onCreated && (
+            <Button
+              type="primary"
+              onClick={() => create_project({ openAfterCreate: true })}
+              disabled={isDisabled()}
+              title={createDisabledTitle}
+              loading={createAction === "open"}
+              icon={<Icon name="arrow-right" />}
+            >
+              Create and open
+            </Button>
+          )}
+        </div>
+      }
+    >
+      <Space orientation="vertical" size={16} style={{ width: "100%" }}>
         <Form form={form} layout="vertical">
           <Form.Item
-            label={
-              <span style={{ fontWeight: 700 }}>
-                {intl.formatMessage(labels.title)}
-              </span>
-            }
+            label={<span style={{ fontWeight: 600 }}>Name</span>}
             name="title"
             style={{ marginBottom: 0 }}
             initialValue={draft.title}
-            rules={[
-              {
-                required: true,
-                whitespace: true,
-                min: 1,
-                message: helpTxt,
-              },
-            ]}
           >
             <Input
               ref={new_project_title_ref}
-              placeholder={`Name your new ${projectLabelLower}...`}
+              size="large"
+              placeholder={`Name your new ${projectLabelLower}`}
               disabled={saving}
               onKeyDown={handle_keypress}
               onChange={(e) => {
                 setTitle(e.target.value);
-                setTitlePreview(e.target.value);
               }}
               autoFocus
             />
@@ -737,76 +538,14 @@ export function NewProjectCreator({
             showHelp={false}
           />
         )}
+        <ProjectCreateHealthCard open={open} onlyWhenNeeded />
+        {runtime.rootfs && otherWarnings.length > 0 && (
+          <Alert type="warning" showIcon title={otherWarnings.join(" ")} />
+        )}
         {render_error()}
       </Space>
-    );
-  }
-
-  useEffect(() => {
-    if (open) {
-      start_editing();
-    } else {
-      reset_form();
-    }
-  }, [open]);
-
-  if (!open) return null;
-
-  return (
-    <Modal
-      open={open}
-      destroyOnHidden
-      className="cc-project-create-modal"
-      width="min(1180px, 96vw)"
-      title={
-        <Space size="middle" align="start">
-          <span
-            className="cc-project-create-title-icon"
-            style={{
-              background: UI_COLORS.infoBg,
-              color: UI_COLORS.info,
-            }}
-          >
-            <Icon name="plus-circle" />
-          </span>
-          <span>
-            <div className="cc-project-create-title">
-              {intl.formatMessage(labels.create_project)}
-            </div>
-            <Typography.Text
-              type="secondary"
-              className="cc-project-create-subtitle"
-            >
-              Pick a good default now. Everything can be changed later.
-            </Typography.Text>
-          </span>
-        </Space>
-      }
-      onCancel={cancel_editing}
-      footer={null}
-      mask={{ closable: !saving }}
-      styles={{
-        body: {
-          background: UI_COLORS.inset,
-          maxHeight: "min(780px, 88vh)",
-          overflowY: "auto",
-          padding: 14,
-        },
-      }}
-    >
-      <div className="cc-project-create-body">
-        <ProjectCreateHealthCard open={open} />
-        <div className="cc-project-create-content-grid">
-          {render_input_section()}
-          {renderSummarySection()}
-        </div>
-      </div>
     </Modal>
   );
-}
-
-function presetTitle(mode: ProjectCreateMode): string {
-  return PROJECT_PRESETS.find((preset) => preset.mode === mode)?.title ?? mode;
 }
 
 function renderRootfsWarning(

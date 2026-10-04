@@ -106,6 +106,9 @@ export function rootfsEntryMatchesProjectMode(
   mode: ProjectCreateMode,
 ): boolean {
   if (!isRootfsProjectPreset(mode)) return true;
+  // Standard is every CPU image: preset tags curate GPU and teaching lists,
+  // but must not hide images (e.g. the one your last project uses).
+  if (mode === "standard") return entry.gpu !== true;
   if (mode === "gpu" && entry.gpu === true) return true;
   const tags = normalizedRootfsTags(entry);
   return ROOTFS_PROJECT_PRESET_TAGS[mode].some((tag) => tags.has(tag));
