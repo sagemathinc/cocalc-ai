@@ -70,8 +70,6 @@ function context(
         release_id: "release-hidden",
       }),
     ],
-    siteDefaultRootfs: "cocalc.local/rootfs/standard",
-    siteDefaultRootfsGpu: "cocalc.local/rootfs/gpu",
     ...opts,
   };
 }
@@ -309,7 +307,7 @@ describe("project create draft", () => {
     });
     const ctx = context({
       rootfsImages: [context().rootfsImages[0], genericGpu, presetGpu],
-      siteDefaultRootfsGpu: undefined,
+      accountDefaultRootfsGpu: undefined,
     });
 
     const draft = applyProjectPreset(
@@ -375,7 +373,7 @@ describe("project create draft", () => {
     const draft = createInitialProjectDraft(
       context({
         rootfsImages: [],
-        siteDefaultRootfs: undefined,
+        accountDefaultRootfs: undefined,
       }),
     );
 
@@ -391,12 +389,62 @@ describe("project create draft", () => {
       context({
         isAdmin: true,
         rootfsImages: [],
-        siteDefaultRootfs: undefined,
+        accountDefaultRootfs: undefined,
       }),
     );
 
     expect(draft.rootfs_image).toBe("");
     expect(draft.rootfs_image_id).toBeUndefined();
+  });
+
+  it("starts with the image of the project you used most recently, and says so", () => {
+    const draft = createInitialProjectDraft(
+      context({
+        recentProjectImages: [
+          { project_id: "p1", title: "Thesis", image_id: "sage" },
+        ],
+      }),
+    );
+    expect(draft.rootfs_image_id).toBe("sage");
+    expect(draft.rootfs_reason).toEqual({
+      kind: "recent",
+      project_id: "p1",
+      title: "Thesis",
+    });
+    expect(projectDraftSummary(draft, context()).rootfsReason?.kind).toBe(
+      "recent",
+    );
+  });
+
+  it("drops the reason once you pick an image yourself", () => {
+    const ctx = context({
+      recentProjectImages: [
+        { project_id: "p1", title: "Thesis", image_id: "sage" },
+      ],
+    });
+    const draft = setProjectDraftRootfs(
+      createInitialProjectDraft(ctx),
+      { image: "cocalc.local/rootfs/standard", image_id: "standard" },
+      ctx,
+    );
+    expect(draft.rootfs_image_id).toBe("standard");
+    expect(draft.rootfs_reason).toBeUndefined();
+  });
+
+  it("a recent project's image counts only if the mode offers it", () => {
+    const ctx = context({
+      recentProjectImages: [
+        { project_id: "p1", title: "Plain", image_id: "standard" },
+      ],
+    });
+    // Teaching offers only teaching-tagged images (here just sage).
+    const draft = applyProjectPreset(
+      createInitialProjectDraft(ctx),
+      "teaching",
+      ctx,
+    );
+    expect(draft.rootfs_image_id).toBe("sage");
+    expect(draft.rootfs_reason).toEqual({ kind: "only" });
   });
 
   it("keeps the selected region in create options", () => {

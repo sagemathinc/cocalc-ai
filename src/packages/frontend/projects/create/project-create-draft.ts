@@ -16,8 +16,10 @@ import {
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
 import {
-  chooseNewProjectRootfsDefault,
+  chooseDefaultProjectImage,
   isNewProjectRootfsSelectable,
+  type ProjectImageReason,
+  type RecentProjectImage,
 } from "../create-project-rootfs";
 
 export type ProjectCreateMode = "standard" | "gpu" | "teaching" | "custom";
@@ -32,11 +34,14 @@ export type ProjectCreateDraft = {
   start: boolean;
   rootfs_touched: boolean;
   host_touched: boolean;
+  // Why the image was chosen automatically (unset once the user picks one).
+  rootfs_reason?: ProjectImageReason;
 };
 
 export type ProjectRootfsSelection = {
   image: string;
   image_id?: string;
+  reason?: ProjectImageReason;
 };
 
 export type ProjectCreateContext = {
@@ -44,10 +49,12 @@ export type ProjectCreateContext = {
   preferredRegion: R2Region;
   rootfsImages: RootfsImageEntry[];
   selectedHost?: Host;
-  siteDefaultRootfs?: string;
-  siteDefaultRootfsGpu?: string;
   accountDefaultRootfs?: string;
   accountDefaultRootfsGpu?: string;
+  // Your projects, most recently used by you first, with their images.
+  recentProjectImages?: RecentProjectImage[];
+  // The newest version of a catalog image.
+  latestRootfsVersion?: (entry: RootfsImageEntry) => RootfsImageEntry;
   isAdmin?: boolean;
 };
 
@@ -69,6 +76,7 @@ export type ProjectCreateSummary = {
   rootfs_image_id?: string;
   rootfsLabel: string;
   rootfsEntry?: RootfsImageEntry;
+  rootfsReason?: ProjectImageReason;
   host_id?: string;
   hostName?: string;
   gpu: boolean;
@@ -98,72 +106,12 @@ export function rootfsEntryMatchesProjectMode(
   mode: ProjectCreateMode,
 ): boolean {
   if (!isRootfsProjectPreset(mode)) return true;
+  // Standard is every CPU image: preset tags curate GPU and teaching lists,
+  // but must not hide images (e.g. the one your last project uses).
+  if (mode === "standard") return entry.gpu !== true;
   if (mode === "gpu" && entry.gpu === true) return true;
   const tags = normalizedRootfsTags(entry);
   return ROOTFS_PROJECT_PRESET_TAGS[mode].some((tag) => tags.has(tag));
-}
-
-function rootfsPresetTagRank(
-  entry: RootfsImageEntry,
-  mode: ProjectCreateMode,
-): number | undefined {
-  if (!isRootfsProjectPreset(mode)) return;
-  const tags = normalizedRootfsTags(entry);
-  const presetTags = ROOTFS_PROJECT_PRESET_TAGS[mode];
-  const rank = presetTags.findIndex((tag) => tags.has(tag));
-  if (rank >= 0) return rank;
-  if (mode === "gpu" && entry.gpu === true) return presetTags.length;
-  return;
-}
-
-function compareTaggedRootfsEntry(
-  a: { entry: RootfsImageEntry; rank: number },
-  b: { entry: RootfsImageEntry; rank: number },
-): number {
-  if (a.rank !== b.rank) return a.rank - b.rank;
-  const aPriority = a.entry.priority ?? 0;
-  const bPriority = b.entry.priority ?? 0;
-  if (aPriority !== bPriority) return bPriority - aPriority;
-  if (!!a.entry.official !== !!b.entry.official) {
-    return a.entry.official ? -1 : 1;
-  }
-  const aTime = Date.parse(a.entry.created ?? "") || 0;
-  const bTime = Date.parse(b.entry.created ?? "") || 0;
-  if (aTime !== bTime) return bTime - aTime;
-  return a.entry.id.localeCompare(b.entry.id);
-}
-
-function preferredTaggedRootfsImages({
-  context,
-  mode,
-  gpu,
-}: {
-  context: ProjectCreateContext;
-  mode: ProjectCreateMode;
-  gpu: boolean;
-}): string[] {
-  if (mode === "custom") return [];
-  return context.rootfsImages
-    .map((entry) => ({
-      entry,
-      rank: rootfsPresetTagRank(entry, mode),
-    }))
-    .filter(
-      (
-        item,
-      ): item is {
-        entry: RootfsImageEntry;
-        rank: number;
-      } =>
-        item.rank != null &&
-        isNewProjectRootfsSelectable({
-          entry: item.entry,
-          isGpu: gpu,
-          isAdmin: context.isAdmin,
-        }),
-    )
-    .sort(compareTaggedRootfsEntry)
-    .map(({ entry }) => entry.image);
 }
 
 function selectedHostForDraft(
@@ -188,33 +136,6 @@ function wantsGpu(
   );
 }
 
-function preferredRootfsImages({
-  draft,
-  context,
-  gpu,
-}: {
-  draft: ProjectCreateDraft;
-  context: ProjectCreateContext;
-  gpu: boolean;
-}): Array<string | undefined> {
-  const siteDefault = clean(context.siteDefaultRootfs) || DEFAULT_PROJECT_IMAGE;
-  const siteGpu = clean(context.siteDefaultRootfsGpu);
-  const accountDefault = clean(context.accountDefaultRootfs);
-  const accountDefaultGpu = clean(context.accountDefaultRootfsGpu);
-  const tagged = preferredTaggedRootfsImages({
-    context,
-    mode: draft.mode,
-    gpu,
-  });
-  if (draft.mode === "teaching") {
-    return [...tagged, accountDefault, siteDefault];
-  }
-  if (gpu) {
-    return [accountDefaultGpu, siteGpu, ...tagged, accountDefault, siteDefault];
-  }
-  return [accountDefault, siteDefault, ...tagged];
-}
-
 function defaultRootfsForDraft({
   draft,
   context,
@@ -223,19 +144,25 @@ function defaultRootfsForDraft({
   context: ProjectCreateContext;
 }): ProjectRootfsSelection {
   const gpu = wantsGpu(draft, context);
+  // The same images the picker offers for this mode.
   const images = context.rootfsImages.filter((entry) =>
     rootfsEntryMatchesProjectMode(entry, draft.mode),
   );
-  const entry = chooseNewProjectRootfsDefault({
+  const chosen = chooseDefaultProjectImage({
     images,
     isGpu: gpu,
     isAdmin: context.isAdmin,
-    preferredImages: preferredRootfsImages({ draft, context, gpu }),
-    fallbackImage: DEFAULT_PROJECT_IMAGE,
+    accountDefault: gpu
+      ? clean(context.accountDefaultRootfsGpu) ||
+        clean(context.accountDefaultRootfs)
+      : context.accountDefaultRootfs,
+    recent: context.recentProjectImages,
+    latestVersion: context.latestRootfsVersion,
   });
   return {
-    image: entry?.image || "",
-    image_id: entry?.id,
+    image: chosen?.entry.image || "",
+    image_id: chosen?.entry.id,
+    reason: chosen?.reason,
   };
 }
 
@@ -321,6 +248,7 @@ export function normalizeProjectDraft(
       ...next,
       rootfs_image: rootfs.image,
       rootfs_image_id: rootfs.image_id,
+      rootfs_reason: rootfs.reason,
     };
   }
 
@@ -390,6 +318,7 @@ export function setProjectDraftRootfs(
       rootfs_image: clean(rootfs.image),
       rootfs_image_id: clean(rootfs.image_id) || undefined,
       rootfs_touched: true,
+      rootfs_reason: undefined,
     },
     context,
   );
@@ -452,6 +381,7 @@ export function projectDraftSummary(
     rootfsLabel:
       rootfsEntry?.label || draft.rootfs_image || "No image selected",
     rootfsEntry,
+    rootfsReason: draft.rootfs_reason,
     host_id: draft.host_id,
     hostName: selectedHost?.name,
     gpu: wantsGpu(draft, context),

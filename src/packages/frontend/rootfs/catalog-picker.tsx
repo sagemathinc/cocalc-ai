@@ -48,6 +48,7 @@ export function RootfsCatalogPicker({
   searchPlaceholder = "Search images, e.g. SageMath, R, Python, GPU...",
   emptyText = "No matching images. Try a different search.",
   height = 260,
+  maxHeight,
 }: {
   images: RootfsImageEntry[];
   selectedImage?: string;
@@ -59,7 +60,9 @@ export function RootfsCatalogPicker({
   onSearchChange?: (value: string) => void;
   searchPlaceholder?: string;
   emptyText?: string;
-  height?: number;
+  // "auto" sizes to the list, up to maxHeight.
+  height?: number | "auto";
+  maxHeight?: number;
 }) {
   const [internalSearch, setInternalSearch] = useState("");
   const query = search ?? internalSearch;
@@ -81,7 +84,10 @@ export function RootfsCatalogPicker({
         onChange={(event) => setSearch(event.target.value)}
         disabled={disabled || loading}
       />
-      <div className="cc-rootfs-catalog-picker-list" style={{ height }}>
+      <div
+        className="cc-rootfs-catalog-picker-list"
+        style={{ height: height === "auto" ? undefined : height, maxHeight }}
+      >
         {visibleImages.map((entry) => {
           const selected =
             entry.id === selectedId || entry.image === selectedImage;

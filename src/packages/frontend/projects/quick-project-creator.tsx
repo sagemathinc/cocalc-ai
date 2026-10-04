@@ -3,11 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// A minimal "New project": a name and the defaults on one line, with
-// "More options" for the full creator. Uses the same draft (defaults, image,
-// host, region) and create path as the full creator.
+// A minimal "New project": a name, at most a few one-click images, and the
+// defaults on one line (saying why that image), with "More options" for the
+// full creator. Uses the same draft (defaults, image, host, region) and create
+// path as the full creator.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Button, Input, Modal, Typography, type InputRef } from "antd";
 import { redux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
@@ -15,6 +16,8 @@ import { useProjectRuntimeCapabilities } from "@cocalc/frontend/project/runtime-
 import { R2_REGION_LABELS } from "@cocalc/util/consts";
 import { projectDraftToCreateOptions } from "./create/project-create-draft";
 import { useProjectCreateDraft } from "./create/use-project-create-draft";
+import { describeProjectImageReason } from "./create-project-rootfs";
+import { quickProjectImageChoices } from "./onboarding/rootfs";
 
 export function QuickProjectCreator({
   open,
@@ -28,9 +31,17 @@ export function QuickProjectCreator({
   onMoreOptions: (title: string) => void;
 }) {
   const runtime = useProjectRuntimeCapabilities();
-  const { draft, summary, rootfsLoading } = useProjectCreateDraft({
-    defaultValue: defaultTitle,
-  });
+  const { draft, summary, rootfsLoading, rootfsImages, isAdmin, setRootfs } =
+    useProjectCreateDraft({
+      defaultValue: defaultTitle,
+    });
+  const choices = useMemo(
+    () =>
+      runtime.rootfs
+        ? quickProjectImageChoices({ images: rootfsImages, isAdmin })
+        : [],
+    [runtime.rootfs, rootfsImages, isAdmin],
+  );
   const [title, setTitle] = useState(defaultTitle);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -44,11 +55,16 @@ export function QuickProjectCreator({
   }, [open, defaultTitle]);
 
   const needsImage = runtime.rootfs && !summary.rootfs_image.trim();
+  const reason = describeProjectImageReason(summary.rootfsReason);
   const defaults = [
     runtime.rootfs
       ? rootfsLoading && needsImage
         ? "Loading images..."
-        : summary.rootfsLabel || summary.rootfs_image
+        : needsImage
+          ? choices.length > 0
+            ? "Choose an image above"
+            : "No image chosen yet"
+          : `${summary.rootfsLabel || summary.rootfs_image}${reason ? ` (${reason})` : ""}`
       : undefined,
     runtime.host_placement
       ? summary.hostName
@@ -58,6 +74,14 @@ export function QuickProjectCreator({
     `backups in ${R2_REGION_LABELS[summary.region] ?? summary.region}`,
   ].filter(Boolean);
 
+  // The name and image are asked for in place; only other problems need a
+  // warning here.
+  const otherWarnings = summary.warnings.filter(
+    (warning) =>
+      warning !== "Project title is required." &&
+      warning !== "Choose an image.",
+  );
+
   async function create() {
     if (creating.current) return;
     const name = title.trim();
@@ -66,7 +90,11 @@ export function QuickProjectCreator({
       return;
     }
     if (needsImage) {
-      setError("No image is available yet; try More options.");
+      setError(
+        choices.length > 0
+          ? "Choose an image for the project."
+          : "Choose an image for the project under More options.",
+      );
       return;
     }
     creating.current = true;
@@ -134,6 +162,39 @@ export function QuickProjectCreator({
         onChange={(e) => setTitle(e.target.value)}
         onPressEnter={() => void create()}
       />
+      {choices.length > 0 && (
+        <div
+          role="group"
+          aria-label="Image"
+          style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}
+        >
+          {choices.map((choice) => {
+            const selected =
+              draft.rootfs_image_id === choice.entry.id ||
+              (!draft.rootfs_image_id &&
+                draft.rootfs_image === choice.entry.image);
+            return (
+              <Button
+                key={choice.kind}
+                size="small"
+                type={selected ? "primary" : "default"}
+                ghost={selected}
+                aria-pressed={selected}
+                title={choice.entry.label}
+                icon={<Icon name={choice.icon} />}
+                onClick={() =>
+                  setRootfs({
+                    image: choice.entry.image,
+                    image_id: choice.entry.id,
+                  })
+                }
+              >
+                {choice.label}
+              </Button>
+            );
+          })}
+        </div>
+      )}
       <Typography.Paragraph
         type="secondary"
         style={{ marginTop: 10, marginBottom: 0, fontSize: 13 }}
@@ -142,11 +203,11 @@ export function QuickProjectCreator({
         {". "}
         Everything can be changed later.
       </Typography.Paragraph>
-      {summary.warnings.length > 0 && (
+      {otherWarnings.length > 0 && (
         <Alert
           type="warning"
           style={{ marginTop: 10 }}
-          title={summary.warnings.join(" ")}
+          title={otherWarnings.join(" ")}
         />
       )}
       {error && (

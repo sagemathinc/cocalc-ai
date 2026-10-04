@@ -11,6 +11,9 @@ import {
   managedRootfsCatalogUrl,
   useRootfsImages,
 } from "@cocalc/frontend/rootfs/manifest";
+import { latestRootfsUpgradeEntry } from "@cocalc/frontend/rootfs/catalog-ui";
+import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
+import type { RecentProjectImage } from "../create-project-rootfs";
 import {
   DEFAULT_R2_REGION,
   mapCountryRegionToR2Region,
@@ -42,20 +45,13 @@ export function useProjectCreateDraft({
     "customize",
     "cloudflare_region_code",
   );
-  const siteDefaultRootfs = useTypedRedux(
-    "customize",
-    "project_rootfs_default_image",
-  );
-  const siteDefaultRootfsGpu = useTypedRedux(
-    "customize",
-    "project_rootfs_default_image_gpu",
-  );
   const accountDefaultRootfs = useTypedRedux("account", "default_rootfs_image");
   const accountDefaultRootfsGpu = useTypedRedux(
     "account",
     "default_rootfs_image_gpu",
   );
   const isAdmin = !!useTypedRedux("account", "is_admin");
+  const recentProjectImages = useRecentProjectImages();
   const {
     images: rootfsImages,
     loading: rootfsLoading,
@@ -64,6 +60,12 @@ export function useProjectCreateDraft({
     limit: 1000,
   });
   const [selectedHost, setSelectedHost] = useState<Host | undefined>();
+  const latestRootfsVersion = useCallback(
+    (entry: RootfsImageEntry) =>
+      latestRootfsUpgradeEntry({ current: entry, images: rootfsImages }) ??
+      entry,
+    [rootfsImages],
+  );
 
   const preferredRegion = useMemo(
     () =>
@@ -79,10 +81,10 @@ export function useProjectCreateDraft({
       preferredRegion,
       rootfsImages,
       selectedHost,
-      siteDefaultRootfs,
-      siteDefaultRootfsGpu,
       accountDefaultRootfs,
       accountDefaultRootfsGpu,
+      recentProjectImages,
+      latestRootfsVersion,
       isAdmin,
     }),
     [
@@ -90,11 +92,11 @@ export function useProjectCreateDraft({
       accountDefaultRootfsGpu,
       defaultTitleValue,
       isAdmin,
+      latestRootfsVersion,
       preferredRegion,
+      recentProjectImages,
       rootfsImages,
       selectedHost,
-      siteDefaultRootfs,
-      siteDefaultRootfsGpu,
     ],
   );
 
@@ -178,4 +180,44 @@ export function useProjectCreateDraft({
     applyPreset,
     reset,
   };
+}
+
+const RECENT_PROJECTS = 25;
+
+// Your projects with a catalog image, most recently used *by you* first (a
+// collaborator's activity in a shared project does not count).
+export function recentProjectImagesFromMap(
+  projectMap: any,
+  accountId?: string,
+): RecentProjectImage[] {
+  if (!projectMap || !accountId) return [];
+  const list: (RecentProjectImage & { used: number })[] = [];
+  projectMap.forEach((project: any, project_id: string) => {
+    if (project?.get?.("deleted")) return;
+    const image_id = `${project.get("rootfs_image_id") ?? ""}`.trim();
+    const used = new Date(
+      project.getIn(["last_active", accountId]) ?? 0,
+    ).valueOf();
+    if (!image_id || !used) return;
+    list.push({
+      project_id,
+      title: `${project.get("title") ?? ""}`.trim() || "Untitled",
+      image_id,
+      used,
+    });
+  });
+  return list
+    .sort((a, b) => b.used - a.used)
+    .slice(0, RECENT_PROJECTS)
+    .map(({ used: _used, ...project }) => project);
+}
+
+function useRecentProjectImages(): RecentProjectImage[] {
+  const projectMap = useTypedRedux("projects", "project_map");
+  const accountId = useTypedRedux("account", "account_id");
+  const recent = recentProjectImagesFromMap(projectMap, accountId);
+  // The project map changes constantly (states, activity); only a change in
+  // this list should re-run the image default.
+  const key = JSON.stringify(recent);
+  return useMemo(() => recent, [key]);
 }

@@ -238,7 +238,15 @@ function GaugeCard({ gauge, isLast }: { gauge: Gauge; isLast?: boolean }) {
   );
 }
 
-export function ProjectCreateHealthCard({ open }: { open: boolean }) {
+export function ProjectCreateHealthCard({
+  open,
+  onlyWhenNeeded = false,
+}: {
+  open: boolean;
+  // Show nothing unless a limit is close or reached (or capacity could not
+  // be checked): usage meters are noise when everything is fine.
+  onlyWhenNeeded?: boolean;
+}) {
   const [membership, setMembership] = useState<MembershipDetails | null>(null);
   const [runtime, setRuntime] = useState<AccountRuntimeSponsorStatus | null>(
     null,
@@ -318,6 +326,12 @@ export function ProjectCreateHealthCard({ open }: { open: boolean }) {
       });
     }
   }
+
+  const needed =
+    !!error ||
+    !!runtimeActionError ||
+    gauges.some((gauge) => gauge.tone === "warning" || gauge.tone === "danger");
+  if (onlyWhenNeeded && !needed) return null;
 
   return (
     <Card

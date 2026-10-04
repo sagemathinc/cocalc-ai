@@ -2834,6 +2834,9 @@ export default function RootFilesystemImage({
                     : "Publishing creates a new immutable managed image reference. This project keeps its current image."
                   : "This saves catalog metadata for the current image string without creating a new managed image artifact."}
             </Paragraph>
+            {/* Saving from here must report its own failures; the picker's
+                error display is in another modal. */}
+            <ShowError error={error} setError={setError} />
           </Space>
         </Modal>
       )}
