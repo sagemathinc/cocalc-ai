@@ -925,6 +925,41 @@ test("explicit context reset retires the warm harness before opening a fresh ses
   assert.equal(launches(), 2);
 });
 
+test(
+  "adapter next turn preserves idle-exit diagnostic through configure",
+  { timeout: 5000 },
+  async (t) => {
+    const logger = require("@cocalc/backend/logger").default(
+      "ai:acp:harness-diagnostics",
+    );
+    const records = [];
+    let recorded;
+    const diagnostic = new Promise((resolve) => {
+      recorded = resolve;
+    });
+    t.mock.method(logger, "warn", (_label, json) => {
+      const record = JSON.parse(json);
+      records.push(record);
+      recorded(record);
+    });
+    const { agent, request, events, launches } = adapter(t, ["--idle-exit"]);
+    await agent.evaluate(request);
+    assert.equal(events.at(-1).finalResponse, "Hello world 1");
+    const record = await diagnostic;
+    assert.equal(record.method, "runtime/failure");
+    await assert.rejects(
+      agent.evaluate({ ...request, session_id: "fixture-session" }),
+      (error) => {
+        assert.equal(error.code, "unavailable");
+        assert.ok(error.message.includes(record.diagnostic_id));
+        return true;
+      },
+    );
+    assert.equal(records.length, 1);
+    assert.equal(launches(), 1);
+  },
+);
+
 test("context reset cannot launch a replacement after unconfirmed cleanup", async (t) => {
   const { agent, request, launches } = adapter(t, [], undefined, true);
   await agent.evaluate(request);
@@ -2643,6 +2678,13 @@ test("bounded harness heap exhaustion preserves partial output and prevents reus
 });
 
 test("provider rejection is distinct from ambiguous delivery and is redacted", async (t) => {
+  const logger = require("@cocalc/backend/logger").default(
+    "ai:acp:harness-diagnostics",
+  );
+  const records = [];
+  t.mock.method(logger, "warn", (_label, record) =>
+    records.push(JSON.parse(record)),
+  );
   const client = await start(t);
   await client.open();
   await assert.rejects(
@@ -2653,10 +2695,119 @@ test("provider rejection is distinct from ambiguous delivery and is redacted", a
       assert.match(e.message, /Open agent settings/);
       assert.match(e.message, /ACP session\/prompt, code -32000/);
       assert.ok(!e.message.includes("secret"));
+      const id = e.message.match(/Diagnostic ID: ([0-9a-f-]{36})/)?.[1];
+      assert.ok(id);
+      assert.equal(records.length, 1);
+      assert.equal(records[0].diagnostic_id, id);
+      assert.equal(records[0].method, "session/prompt");
+      assert.deepEqual(records[0].error.protocol_codes, [-32000]);
+      assert.ok(!JSON.stringify(records).includes("secret"));
       return true;
     },
   );
 });
+test("internal rejection correlates stderr and nested error hints only in operator logs", async (t) => {
+  const logger = require("@cocalc/backend/logger").default(
+    "ai:acp:harness-diagnostics",
+  );
+  const records = [];
+  t.mock.method(logger, "warn", (_label, record) =>
+    records.push(JSON.parse(record)),
+  );
+  const client = await start(t);
+  await client.open();
+  const events = [];
+  await assert.rejects(
+    client.prompt("diagnostic-reject", async (event) => events.push(event)),
+    (error) => {
+      const id = error.message.match(/Diagnostic ID: ([0-9a-f-]{36})/)?.[1];
+      assert.ok(id);
+      assert.equal(error.code, "rejected");
+      assert.equal(records.length, 1);
+      assert.equal(records[0].diagnostic_id, id);
+      assert.deepEqual(records[0].error.protocol_codes, [-32603]);
+      assert.deepEqual(records[0].error.http_statuses, [429]);
+      assert.deepEqual(records[0].stderr.http_statuses, [503]);
+      assert.deepEqual(records[0].stderr.signals, ["overloaded"]);
+      assert.doesNotMatch(
+        JSON.stringify({ error: error.message, events, records }),
+        /private-|Bearer/,
+      );
+      assert.doesNotMatch(error.message, /503|429|overloaded/);
+      return true;
+    },
+  );
+  await assert.rejects(
+    client.prompt("hi", async () => {}),
+    { code: "unavailable" },
+  );
+});
+
+test(
+  "idle harness exit records once and closed prompts reuse its diagnostic ID",
+  { timeout: 5000 },
+  async (t) => {
+    const logger = require("@cocalc/backend/logger").default(
+      "ai:acp:harness-diagnostics",
+    );
+    const records = [];
+    let recorded;
+    const diagnostic = new Promise((resolve) => {
+      recorded = resolve;
+    });
+    t.mock.method(logger, "warn", (_label, json) => {
+      const record = JSON.parse(json);
+      records.push(record);
+      recorded(record);
+    });
+    const client = await start(t, ["--idle-exit"]);
+    await client.open();
+    const record = await diagnostic;
+    assert.equal(record.method, "runtime/failure");
+    assert.deepEqual(record.stderr.reported_exit_codes, [7]);
+    assert.ok(
+      record.error.signals.includes("process_exit") ||
+        record.error.signals.includes("transport_closed"),
+    );
+    for (let i = 0; i < 2; i++)
+      await assert.rejects(
+        client.prompt("hi", async () => {}),
+        (error) => {
+          assert.equal(error.code, "unavailable");
+          assert.ok(error.message.includes(record.diagnostic_id));
+          assert.doesNotMatch(error.message, /private-idle-detail/);
+          return true;
+        },
+      );
+    await client.dispose();
+    assert.equal(records.length, 1);
+    assert.doesNotMatch(JSON.stringify(records), /private-idle-detail/);
+    for (const action of [
+      () => client.configure({}),
+      () => client.open(),
+      () => client.fork("source-session"),
+    ]) {
+      await assert.rejects(action(), (error) => {
+        assert.equal(error.code, "unavailable");
+        assert.ok(error.message.includes(record.diagnostic_id));
+        return true;
+      });
+    }
+  },
+);
+
+test("normal disposal does not create a failure diagnostic", async (t) => {
+  const logger = require("@cocalc/backend/logger").default(
+    "ai:acp:harness-diagnostics",
+  );
+  const records = [];
+  t.mock.method(logger, "warn", (...args) => records.push(args));
+  const client = await start(t);
+  await client.open();
+  await client.dispose();
+  assert.equal(records.length, 0);
+});
+
 test("session rejection identifies the failed operation without exposing process output", async (t) => {
   const client = await start(t, ["--reject-session"]);
   await assert.rejects(client.open(), (error) => {
