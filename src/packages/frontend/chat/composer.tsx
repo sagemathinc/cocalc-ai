@@ -740,7 +740,7 @@ export function ChatRoomComposer({
                   aria-valuetext={
                     manualHeightPx == null
                       ? "Fits the text"
-                      : `At least ${clampHeight(manualHeightPx)} pixels`
+                      : `${clampHeight(manualHeightPx)} pixels`
                   }
                   onKeyDown={(event) => {
                     if (isZenMode) return;
@@ -852,10 +852,13 @@ export function ChatRoomComposer({
                   height={chatInputHeight}
                   autoGrow={chatInputHeight == null}
                   autoGrowMinHeight={reservedHeight}
-                  autoGrowMaxHeight={Math.max(
-                    autoGrowMaxHeight,
-                    reservedHeight,
-                  )}
+                  autoGrowMaxHeight={
+                    // A dragged height is the height: long content scrolls
+                    // inside instead of growing back past it.
+                    manualHeightPx != null
+                      ? reservedHeight
+                      : Math.max(autoGrowMaxHeight, reservedHeight)
+                  }
                   compactModeSwitch
                   softFocus
                   onChange={(value) => {
