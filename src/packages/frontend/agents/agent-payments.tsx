@@ -399,6 +399,8 @@ export function SetPaymentModal({
     <Modal
       open={open}
       title={`Set payment method for ${plural(n, "agent")}`}
+      // Wide enough that a pasted Claude sign-in code fits without wrapping.
+      width={680}
       okText="Apply"
       okButtonProps={{ disabled: nothing, loading: saving }}
       onOk={() => void save()}
