@@ -1267,6 +1267,8 @@ export interface Host {
   machine?: HostMachine;
   provider_instance_id?: string;
   public_ip?: string;
+  private_ip?: string;
+  network_observed_at?: string;
   public_url?: string | null;
   internal_url?: string | null;
   ssh_server?: string | null;

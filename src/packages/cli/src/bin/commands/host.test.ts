@@ -147,7 +147,11 @@ function withStderrCapture(fn: () => Promise<void> | void): Promise<string> {
 function makeDeps(
   capture: Capture,
   overrides: Partial<HostCommandDeps> = {},
-  ctxGlobals: { json?: boolean; output?: "table" | "json" } = {
+  ctxGlobals: {
+    json?: boolean;
+    output?: "table" | "json";
+    hostSshNetwork?: string;
+  } = {
     json: true,
     output: "json",
   },
@@ -1995,6 +1999,65 @@ test("host ssh-trust forwards the resolved host", async () => {
   assert.equal(capture.data.host_id, "host-1");
   assert.equal(capture.data.bay_id, "bay-0");
   assert.equal(capture.data.cloud_provider_succeeded, true);
+});
+
+test("host ssh passes profile network and explicit override and prints resolution", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const modes: string[] = [];
+  const deps = makeDeps(
+    capture,
+    {
+      resolveHostSshEndpoint: async (
+        _ctx: any,
+        _host: string,
+        network: string,
+      ) => {
+        modes.push(network);
+        return {
+          host: { id: "host-1" },
+          ssh_host: "host.internal",
+          ssh_port: 22,
+          ssh_user: "ubuntu",
+          network: "private",
+          requested_network: network,
+          resolved_ip: "10.0.0.2",
+          selection_reason: "test",
+        };
+      },
+    },
+    { json: true, hostSshNetwork: "private" },
+  );
+  const program = new Command();
+  registerHostCommand(program, deps);
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "ssh",
+    "host-1",
+    "--print",
+  ]);
+  assert.equal(capture.data.resolved_ip, "10.0.0.2");
+  assert.equal(capture.data.network, "private");
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "ssh",
+    "host-1",
+    "--network",
+    "public",
+    "--print",
+  ]);
+  assert.deepEqual(modes, ["private", "public"]);
+  assert.deepEqual(capture.hostSshKeyInstallRequests, []);
 });
 
 test("host ssh --install-key uses the resolved ssh user", async () => {

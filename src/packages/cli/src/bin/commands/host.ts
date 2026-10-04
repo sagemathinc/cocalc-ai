@@ -1298,6 +1298,8 @@ function emitHostGetHuman({
     "Endpoints",
     formatFieldValueRows({
       public_ip: host.public_ip ?? "",
+      private_ip: host.private_ip ?? "",
+      network_observed_at: host.network_observed_at ?? "",
       public_url: host.public_url ?? "",
       internal_url: host.internal_url ?? "",
       ssh_server: host.ssh_server ?? "",
@@ -1832,6 +1834,8 @@ export function registerHostCommand(
           last_seen: h.last_seen ?? null,
           provider_instance_id: h.provider_instance_id ?? null,
           public_ip: h.public_ip ?? null,
+          private_ip: h.private_ip ?? null,
+          network_observed_at: h.network_observed_at ?? null,
           public_url: h.public_url ?? null,
           internal_url: h.internal_url ?? null,
           ssh_server: h.ssh_server ?? null,
@@ -4502,6 +4506,10 @@ Examples:
     .command("ssh <host>")
     .description("ssh into host (owner-only key install supported)")
     .option(
+      "--network <network>",
+      "private|public|auto (default: profile setting, otherwise auto)",
+    )
+    .option(
       "--user <user>",
       "ssh username (defaults to host ssh_user or ubuntu)",
     )
@@ -4521,6 +4529,7 @@ Examples:
       async (
         hostIdentifier: string,
         opts: {
+          network?: string;
           user?: string;
           port?: string;
           identity?: string;
@@ -4532,7 +4541,11 @@ Examples:
         command: Command,
       ) => {
         await withContext(command, "host ssh", async (ctx) => {
-          const endpoint = await resolveHostSshEndpoint(ctx, hostIdentifier);
+          const endpoint = await resolveHostSshEndpoint(
+            ctx,
+            hostIdentifier,
+            opts.network ?? ctx.globals.hostSshNetwork ?? "auto",
+          );
           let installResult:
             | (HostSshAuthorizedKeysRow & { added: boolean })
             | null = null;
@@ -4581,6 +4594,10 @@ Examples:
               host_id: endpoint.host.id,
               host_name: endpoint.host.name,
               ssh_server: endpoint.ssh_server,
+              network: endpoint.network,
+              requested_network: endpoint.requested_network,
+              resolved_ip: endpoint.resolved_ip,
+              selection_reason: endpoint.selection_reason,
               ssh_host: endpoint.ssh_host,
               ssh_port: port ?? null,
               ssh_target: sshTarget,
@@ -4595,6 +4612,10 @@ Examples:
               host_id: endpoint.host.id,
               host_name: endpoint.host.name,
               ssh_server: endpoint.ssh_server,
+              network: endpoint.network,
+              requested_network: endpoint.requested_network,
+              resolved_ip: endpoint.resolved_ip,
+              selection_reason: endpoint.selection_reason,
               ssh_host: endpoint.ssh_host,
               ssh_port: port ?? null,
               ssh_target: sshTarget,

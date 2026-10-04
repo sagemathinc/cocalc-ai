@@ -65,6 +65,39 @@ function makeDeps(
   };
 }
 
+test("auth ssh-network changes only the selected profile preference", async () => {
+  const capture: { data?: any } = {};
+  const config = {
+    profiles: {
+      prod: { cookie: "fake", host_ssh_network: "auto" },
+      other: { cookie: "other" },
+    },
+  };
+  let saved: any;
+  const program = new Command();
+  registerAuthCommand(
+    program,
+    makeDeps(capture, {
+      selectedProfileName: () => "prod",
+      loadAuthConfig: () => config,
+      saveAuthConfig: (value: any) => {
+        saved = value;
+      },
+    }),
+  );
+  await program.parseAsync(["node", "test", "auth", "ssh-network", "private"]);
+  assert.deepEqual(capture.data, {
+    profile: "prod",
+    host_ssh_network: "private",
+  });
+  assert.equal(saved.profiles.prod.cookie, "fake");
+  assert.deepEqual(saved.profiles.other, { cookie: "other" });
+  await assert.rejects(
+    program.parseAsync(["node", "test", "auth", "ssh-network", "invalid"]),
+    /network must be/,
+  );
+});
+
 test("external agent login creates only a separate scoped profile, despite ambient human credentials", async () => {
   const dir = mkdtempSync(join(tmpdir(), "cocalc-external-login-"));
   const priorHome = process.env.HOME,
