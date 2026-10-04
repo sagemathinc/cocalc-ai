@@ -56,7 +56,7 @@ test("materializes a project-owned key only in the child environment", async () 
     { encoding: "utf8", flag: "r" },
   );
   expect(launch.executable).toBe(
-    "/opt/cocalc/harnesses/claude-code/0.81.1-r1/bin/claude-agent-acp",
+    "/opt/cocalc/bin2/claude-code/bin/claude-agent-acp",
   );
   expect(launch.args).toEqual(["--hide-claude-auth"]);
   expect(launch.env.ANTHROPIC_API_KEY).toBe("project-key");

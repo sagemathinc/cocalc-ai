@@ -328,7 +328,8 @@ test("duplicate discovery cannot launch a second process", async () => {
 });
 
 test("disabled discovery never launches and never falls back to Codex", async () => {
-  delete process.env.COCALC_ACP_HARNESSES;
+  // Harnesses are on by default; "0" is the operator kill switch.
+  process.env.COCALC_ACP_HARNESSES = "0";
   await expect(discoverHarnessControls(request)).rejects.toThrow("not enabled");
   expect(launch).not.toHaveBeenCalled();
 });

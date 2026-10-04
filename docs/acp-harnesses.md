@@ -68,10 +68,11 @@ generation or full native Codex workbench parity.
 
 ### Setup Steps
 
-1. Deploy a compatible frontend and project host. Set
-   `COCALC_ACP_HARNESSES=1` in the project-host environment and restart that host
-   using its normal deployment procedure. Only enable test hosts initially.
-   Old hosts fail the versioned ACP request rather than falling back to Codex.
+1. Deploy a compatible frontend and project host. ACP harnesses are enabled on
+   every project host; set `COCALC_ACP_HARNESSES=0` in a host's environment to
+   turn them off there. Claude Code itself ships in the host's tools bundle (as
+   `claude` on every project's PATH), so upgrade the host's tools too. Old hosts
+   fail the versioned ACP request rather than falling back to Codex.
 2. Install a pinned harness and any required adapter inside the project/image.
    Install explicitly as the project user; CoCalc does not invoke package
    installers when a conversation starts. Check dependency/runtime requirements

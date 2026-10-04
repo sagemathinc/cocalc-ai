@@ -45,6 +45,7 @@ import { harnessOwner, HARNESS_OWNER_LABEL } from "./harness-reaper";
 import { createAnthropicAccountCredentialRelay } from "./anthropic-credential-relay";
 import type { CredentialHttpRelay } from "./credential-http-relay";
 import { launchClaudeSubscriptionController } from "./claude-subscription-controller";
+import { claudeCodeToolsDir } from "./claude-code-tools";
 import {
   startClaudeRestrictedEgress,
   type ClaudeRestrictedEgress,
@@ -127,6 +128,10 @@ export async function launchHarnessInProject(
     !threadId
   )
     throw Error("ACP launch requires an admitted conversation");
+  // The sidecar runs Claude Code from the host's tools (mounted at
+  // /opt/cocalc/bin2); say so plainly instead of failing inside Podman.
+  if (profile.version === 2 && profile.id === "claude-code")
+    await claudeCodeToolsDir();
   await ensureProjectContainerRunning({ projectId, accountId });
   const owner = await harnessOwner();
   const launcher = projectPoolPodmanLauncher(projectId);

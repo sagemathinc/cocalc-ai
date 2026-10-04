@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 # Build a tools tarball containing the project host helper binaries
-# (dropbear, rg, rustic, etc.) from the local build output.
+# (dropbear, rg, rustic, codex, Claude Code, etc.) from the local build output.
 #
 # Usage:
 #   ./build-tools.sh [output-directory]
@@ -22,6 +22,8 @@ BACKEND_PKG_DIR="$ROOT/packages/backend"
 CLI_BUNDLE_JS="$CLI_PKG_DIR/build/bundle/index.js"
 CLI_BUNDLE_LICENSES="$CLI_PKG_DIR/build/bundle/licenses.txt"
 X11_LAUNCHER="$(dirname "$0")/cocalc-x11"
+CLAUDE_INSTALLER="$(cd "$(dirname "$0")" && pwd)/install-claude-code.sh"
+CLAUDE_SOURCE="$ROOT/packages/project/managed-harnesses"
 
 source "$(dirname "$0")/tools-cache.sh"
 CACHE_ROOT="$(cocalc_tools_cache_root)"
@@ -76,6 +78,38 @@ EOF
   install -m 0644 "$REFLECT_BUILD/LICENSE.txt" "$work_dir/share/licenses/reflect/LICENSE.txt"
 }
 
+# Claude Code is cached separately from the downloaded binaries: its inputs
+# are the pinned lockfile, CoCalc's adapter patch and the installer.
+claude_code_cache_key() {
+  local arch="$1"
+  local hash
+  hash="$(
+    cat "$CLAUDE_SOURCE/package.json" "$CLAUDE_SOURCE/package-lock.json" \
+      "$CLAUDE_SOURCE/patch-claude-agent-acp.cjs" "$CLAUDE_INSTALLER" |
+      sha256sum | awk '{print $1}'
+  )"
+  printf 'tools-claude-code-%s-%s-%s\n' "$OS" "$arch" "$hash"
+}
+
+install_claude_code() {
+  local arch="$1"
+  local work_dir="$2"
+  local cache_dir="$CACHE_ROOT/$(claude_code_cache_key "$arch")"
+  local stage="$work_dir.claude-code"
+  rm -rf "$stage"
+  mkdir -p "$stage/bin" "$stage/share"
+  if cocalc_tools_restore_cache "$cache_dir" "$stage"; then
+    echo "  - Restored Claude Code from cache: $cache_dir"
+  else
+    bash "$CLAUDE_INSTALLER" "$arch" "$stage/bin"
+    cocalc_tools_save_cache "$cache_dir" "$stage"
+  fi
+  rm -rf "$work_dir/bin/claude-code"
+  mv "$stage/bin/claude-code" "$work_dir/bin/claude-code"
+  ln -sfn claude-code/bin/claude "$work_dir/bin/claude"
+  rm -rf "$stage"
+}
+
 # Each architecture is built in its own work directory, so both are built in
 # parallel; compression uses all cores (xz -T0).
 build_arch() {
@@ -100,6 +134,7 @@ build_arch() {
     cocalc_tools_save_cache "$CACHE_DIR" "$ARCH_WORK_DIR"
     echo "  - Saved downloaded tools cache: $CACHE_DIR"
   fi
+  install_claude_code "$ARCH" "$ARCH_WORK_DIR"
   install_cocalc_cli_runtime "$ARCH_WORK_DIR"
   local TARGET="$OUT_DIR/tools-${OS}-${ARCH}.tar.xz"
   rm -f "$TARGET"
@@ -111,6 +146,7 @@ build_arch() {
 PIDS=()
 for ARCH in "${ARCHES[@]}"; do
   CACHE_DIRS_USED+=("$CACHE_ROOT/$(cocalc_tools_cache_key "$ROOT" "tools" "$OS" "$ARCH" "all")")
+  CACHE_DIRS_USED+=("$CACHE_ROOT/$(claude_code_cache_key "$ARCH")")
   build_arch "$ARCH" &
   PIDS+=("$!")
 done
