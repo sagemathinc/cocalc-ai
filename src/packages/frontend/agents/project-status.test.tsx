@@ -15,6 +15,9 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   }),
   useTypedRedux: () => undefined,
 }));
+jest.mock("@cocalc/frontend/components", () => ({
+  Icon: () => null,
+}));
 jest.mock("@cocalc/frontend/project/use-project-run-quota", () => ({
   useProjectRunQuota: () => ({ runQuota: { network: true } }),
 }));

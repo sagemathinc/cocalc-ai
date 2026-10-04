@@ -3,7 +3,13 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { WorkspaceSidebarActions } from "./workspace-sidebar-actions";
 
+const mockNotificationCount = 0;
 jest.mock("@cocalc/frontend/art", () => ({ APP_ICON: "/logo.svg" }));
+jest.mock("@cocalc/frontend/app/notifications", () => ({
+  NOTIFICATION_BADGE_MAX: 99,
+  useNotificationCount: () => mockNotificationCount,
+}));
+
 jest.mock("@cocalc/frontend/customize/app-base-path", () => ({
   appBasePath: "/",
 }));

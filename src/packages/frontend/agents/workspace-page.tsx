@@ -2497,6 +2497,9 @@ function AgentProjectContext({
           hideCompactThreadHeader: true,
           hideComposerIdentity: true,
           mobileHeaderControlsPortal,
+          // The same header slot: zoom, copy and search sit in the agent's
+          // one header row instead of floating over the messages.
+          headerControlsPortal: mobileHeaderControlsPortal,
           openFilesInWorkbench: true,
           sidebarHiddenByDefault: true,
           sidebarPreferenceKey: `cocalc:agents:chat-sidebar-hidden:${agent.account_id}:${agent.endpoint.agent_id}`,
@@ -2828,9 +2831,9 @@ function AgentWorkspace({
           boxShadow: primaryColor ? `inset 4px 0 0 ${primaryColor}` : undefined,
           color: headerTextColor,
           display: "flex",
-          gap: 12,
-          padding: "2px 12px",
-          height: 64,
+          gap: 8,
+          padding: "0 8px",
+          height: 40,
           flexShrink: 0,
           boxSizing: "border-box",
         }}
@@ -2853,7 +2856,7 @@ function AgentWorkspace({
           aria-label="Edit thread appearance"
           type="text"
           onClick={openAppearanceEditor}
-          style={{ color: headerTextColor, height: 44, padding: 4 }}
+          style={{ color: headerTextColor, height: 32, padding: 4 }}
         >
           <ThreadBadge
             icon={appearance?.thread_icon}
@@ -2865,16 +2868,17 @@ function AgentWorkspace({
                 ? undefined
                 : "robot"
             }
-            size={36}
+            size={24}
           />
         </Button>
+        {/* One line: the title, then muted context that gives way first. */}
         <div
           style={{
             minWidth: 0,
             flex: 1,
             display: "flex",
-            flexDirection: "column",
-            gap: 0,
+            alignItems: "baseline",
+            gap: 10,
           }}
         >
           <Button
@@ -2884,13 +2888,14 @@ function AgentWorkspace({
             onClick={openAppearanceEditor}
             style={{
               color: "inherit",
-              fontSize: 16,
+              fontSize: 15,
               fontWeight: 600,
               height: "auto",
               padding: 0,
               justifyContent: "flex-start",
               minWidth: 0,
-              maxWidth: "100%",
+              maxWidth: "60%",
+              flex: "0 1 auto",
             }}
           >
             <span
@@ -2907,11 +2912,13 @@ function AgentWorkspace({
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 8,
+              gap: 6,
               minWidth: 0,
-              width: "100%",
+              flex: "1 1 0",
               flexWrap: "nowrap",
+              overflow: "hidden",
               fontSize: 12,
+              opacity: 0.75,
             }}
           >
             {!unregistered ? (
@@ -2943,6 +2950,7 @@ function AgentWorkspace({
             <span aria-hidden="true">·</span>
             <AgentProjectStatus agent={agent} active={active} />
             <AgentParticipants endpoint={agent.endpoint} />
+            {workingDirectoryLabel && <span aria-hidden="true">·</span>}
             {workingDirectoryLabel && (
               <Button
                 type="text"
@@ -2952,7 +2960,7 @@ function AgentWorkspace({
                 style={{
                   color: "inherit",
                   textAlign: "left",
-                  flex: "1 1 180px",
+                  flex: "0 1 auto",
                   justifyContent: "flex-start",
                   minWidth: 0,
                   padding: 0,
@@ -2992,7 +3000,6 @@ function AgentWorkspace({
           <AgentsWorkspaceNavigation
             foregroundColor={headerTextColor}
             onOpenDocs={openDocs}
-            onOpenTerminal={() => runFrameAction("terminal")}
             workspaceItems={[
               {
                 key: "workspace-terminal",
