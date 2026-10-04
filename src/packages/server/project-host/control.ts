@@ -641,7 +641,10 @@ async function getAssignedProjectHostControlClient({
   };
 }
 
+// A host that answered without versions is asked again after 10 minutes; an
+// unreachable one (e.g., upgrading) after a minute.
 const VERSION_BACKFILL_RETRY_MS = 10 * 60_000;
+const VERSION_BACKFILL_ERROR_RETRY_MS = 60_000;
 const versionBackfillMisses = new Map<string, number>();
 
 /**
@@ -662,8 +665,8 @@ export async function backfillRunningProjectVersions<T extends object>(
   ) {
     return state;
   }
-  const missedAt = versionBackfillMisses.get(project_id);
-  if (missedAt != null && Date.now() - missedAt < VERSION_BACKFILL_RETRY_MS) {
+  const retryAt = versionBackfillMisses.get(project_id);
+  if (retryAt != null && Date.now() < retryAt) {
     return state;
   }
   try {
@@ -680,7 +683,10 @@ export async function backfillRunningProjectVersions<T extends object>(
       }
     }
     if (Object.keys(versions).length === 0) {
-      versionBackfillMisses.set(project_id, Date.now());
+      versionBackfillMisses.set(
+        project_id,
+        Date.now() + VERSION_BACKFILL_RETRY_MS,
+      );
       return state;
     }
     versionBackfillMisses.delete(project_id);
@@ -694,7 +700,10 @@ export async function backfillRunningProjectVersions<T extends object>(
     );
     return { ...state, ...versions };
   } catch (err) {
-    versionBackfillMisses.set(project_id, Date.now());
+    versionBackfillMisses.set(
+      project_id,
+      Date.now() + VERSION_BACKFILL_ERROR_RETRY_MS,
+    );
     log.debug("backfillRunningProjectVersions failed", {
       project_id,
       err: `${err}`,
