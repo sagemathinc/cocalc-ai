@@ -8,7 +8,7 @@ import {
 } from "@cocalc/util/ai/runtime";
 import { createHash } from "node:crypto";
 
-type Conversation = { path: string; threadId: string };
+type Conversation = { path: string; threadId: string; sessionId?: string };
 type Factory = (
   binding: HarnessBinding,
   conversation: Conversation,
@@ -149,6 +149,7 @@ async function withTemporaryHarness<T>(
     const conversation = {
       path: prepared.chat!.path,
       threadId: prepared.chat!.thread_id!,
+      ...(fork ? { sessionId: prepared.session_id } : {}),
     };
     const binding: HarnessBinding = {
       projectId: prepared.project_id,
@@ -327,7 +328,7 @@ export async function createHarnessAgent(
       credential: prepared.harness_credential!,
     },
     conversation,
-    (binding) => factory(binding, conversation),
+    (binding, sessionId) => factory(binding, { ...conversation, sessionId }),
     attention,
     authorityValidator,
     rateLimitRecorder,

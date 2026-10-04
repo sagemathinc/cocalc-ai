@@ -266,32 +266,36 @@ test("sidecar preserves structured argv, project networking and pool containment
   expect(mockUnmount).toHaveBeenCalledTimes(1);
 });
 
-test("subscription controller receives the admitted conversation for agent identity", async () => {
-  const subscription = {
-    ...binding,
-    profile: {
-      version: 2 as const,
-      kind: "acp" as const,
-      id: "claude-code" as const,
-      revision: "0.85.1",
-      cwd: "/home/user",
-      credentialMode: "project-managed" as const,
-      executionPolicy: "full-access" as const,
-    },
-    credential: {
-      version: 1 as const,
-      provider: "anthropic" as const,
-      mode: "account-subscription" as const,
-      credentialId: "13ba1a66-881b-4fe1-b732-15088f82434f",
-    },
-  };
-  await launch(subscription, conversation);
-  expect(launchClaudeSubscriptionController).toHaveBeenCalledWith(
-    subscription,
-    conversation,
-  );
-  expect(mockLease).not.toHaveBeenCalled();
-});
+test.each([undefined, "00000000-0000-4000-8000-000000000009"])(
+  "subscription controller receives admitted conversation and session %s",
+  async (sessionId) => {
+    const subscription = {
+      ...binding,
+      profile: {
+        version: 2 as const,
+        kind: "acp" as const,
+        id: "claude-code" as const,
+        revision: "0.85.1",
+        cwd: "/home/user",
+        credentialMode: "project-managed" as const,
+        executionPolicy: "full-access" as const,
+      },
+      credential: {
+        version: 1 as const,
+        provider: "anthropic" as const,
+        mode: "account-subscription" as const,
+        credentialId: "13ba1a66-881b-4fe1-b732-15088f82434f",
+      },
+    };
+    const admitted = { ...conversation, ...(sessionId ? { sessionId } : {}) };
+    await launch(subscription, admitted);
+    expect(launchClaudeSubscriptionController).toHaveBeenCalledWith(
+      subscription,
+      admitted,
+    );
+    expect(mockLease).not.toHaveBeenCalled();
+  },
+);
 
 test("qualified profiles resolve only through the trusted entry point", () => {
   const command = resolveHarnessCommand({

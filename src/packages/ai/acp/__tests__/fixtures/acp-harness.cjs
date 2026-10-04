@@ -10,6 +10,7 @@ let counter = 0;
 let selectedModel = "fast";
 let selectedThinking = "low";
 let selectedMode = "code";
+let selectedSpeed = "on";
 const recommended = (value) => ({
   _meta: { jetbrains: { air: { version: 1, recommendedValue: value } } },
 });
@@ -17,6 +18,20 @@ const controls = () =>
   process.argv.includes("--config-options")
     ? {
         configOptions: [
+          ...(process.argv.includes("--fast-config") && selectedModel === "deep"
+            ? [
+                {
+                  id: "fast",
+                  name: "Speed",
+                  type: "select",
+                  currentValue: selectedSpeed,
+                  options: [
+                    { value: "on", name: "Fast" },
+                    { value: "off", name: "Standard" },
+                  ],
+                },
+              ]
+            : []),
           ...(process.argv.includes("--recommended-values")
             ? [
                 {
@@ -280,6 +295,13 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         });
       return result(message.id, controls());
     case "session/set_config_option":
+      if (
+        process.argv.includes("--fast-config") &&
+        message.params.configId === "fast"
+      ) {
+        selectedSpeed = message.params.value;
+        return result(message.id, controls());
+      }
       if (
         process.argv.includes("--recommended-values") &&
         message.params.configId === "effort"
