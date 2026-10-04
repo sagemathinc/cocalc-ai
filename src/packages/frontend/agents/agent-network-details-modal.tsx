@@ -25,10 +25,7 @@ import {
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { uuid } from "@cocalc/util/misc";
 import { personalAgentApi } from "./api";
-import {
-  duplicateNetworkTitle,
-  networkProjectCount,
-} from "./agent-network-utils";
+import { duplicateNetworkTitle } from "./agent-network-utils";
 import { AgentNetworkSummary } from "./agent-network-summary";
 
 const { Text } = Typography;
@@ -108,18 +105,16 @@ export function AgentNetworkDetailsModal({
     key: string,
     action: () => Promise<unknown>,
     success: string,
-    requireFresh = false,
   ) {
     if (busy) return false;
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      const completed = requireFresh
-        ? await runFreshAuthAction(async () => {
-            await action();
-          })
-        : await action().then(() => true);
+      // The hub decides when fresh auth is needed; the wrapper asks only then.
+      const completed = await runFreshAuthAction(async () => {
+        await action();
+      });
       if (completed) {
         requestIds.current.delete(key);
         setNotice(success);
@@ -135,7 +130,6 @@ export function AgentNetworkDetailsModal({
   }
 
   if (!network) return null;
-  const projects = networkProjectCount(network);
   const duplicateTitle = duplicateNetworkTitle(
     networks,
     title,
@@ -154,7 +148,6 @@ export function AgentNetworkDetailsModal({
           delivery_mode: deliveryMode,
         }),
       `Delivery changed to ${deliveryMode}.`,
-      deliveryMode === "live" && projects > 1,
     );
   };
 
@@ -309,7 +302,6 @@ export function AgentNetworkDetailsModal({
                           action,
                         }),
                       `Network ${action === "pause" ? "paused" : "resumed"}.`,
-                      action === "resume" && projects > 1,
                     );
                   }}
                 >

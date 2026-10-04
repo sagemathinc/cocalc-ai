@@ -32,13 +32,14 @@ const mockOpenSettings = jest.fn();
 jest.mock("./settings-routing", () => ({
   openAccountSettings: (...args) => mockOpenSettings(...args),
 }));
+const mockFreshAuth = jest.fn(async (action: () => Promise<void>) => {
+  await action();
+  return true;
+});
 jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
   FreshAuthModal: () => null,
   useFreshAuthAction: () => ({
-    runFreshAuthAction: async (action) => {
-      await action();
-      return true;
-    },
+    runFreshAuthAction: (action) => mockFreshAuth(action),
     freshAuthModalProps: {},
   }),
 }));
@@ -281,4 +282,36 @@ test("the Connectors page is listed in settings, except in Lite", () => {
   expect(pages(false)).toContain("connectors");
   expect(pages(true)).not.toContain("connections");
   expect(pages(true)).not.toContain("connectors");
+});
+
+test("resuming all messaging goes through fresh authentication", async () => {
+  // The hub requires fresh auth to resume; without the wrapper the user only
+  // saw "fresh auth is required".
+  mockNetworks.directory!.controls.paused = true;
+  mockAgents.directory!.controls!.paused = true;
+  mockApi.setPersonalMessagingState.mockResolvedValue({});
+  const user = userEvent.setup();
+  render(<ConnectionsPage />);
+  mockFreshAuth.mockClear();
+  await user.click(
+    screen.getByRole("button", { name: "Resume all messaging" }),
+  );
+  await waitFor(() =>
+    expect(mockApi.setPersonalMessagingState).toHaveBeenCalledWith({
+      action: "resume",
+    }),
+  );
+  expect(mockFreshAuth).toHaveBeenCalledTimes(1);
+  expect(await screen.findByText("Agent messaging resumed.")).toBeVisible();
+});
+
+test("network changes go through fresh authentication", async () => {
+  const user = userEvent.setup();
+  render(<ConnectionsPage />);
+  mockFreshAuth.mockClear();
+  await user.click(
+    screen.getByRole("button", { name: "Pause the Team network" }),
+  );
+  await waitFor(() => expect(mockApi.updateAgentNetwork).toHaveBeenCalled());
+  expect(mockFreshAuth).toHaveBeenCalledTimes(1);
 });
