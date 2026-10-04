@@ -777,6 +777,31 @@ export async function sendQueuedAcpTurnImmediately({
   }
 }
 
+// "Resubmit to Agent": send the request again as a new turn, exactly as if the
+// user had typed it now, so it uses the conversation's current agent, model and
+// payment setup. Replaying the stored request would reuse the original turn's
+// funding, and is not possible after a turn's outcome became unknown.
+export function resubmitAcpTurnAsNew({
+  actions,
+  message,
+}: {
+  actions: ChatActions;
+  message: ChatMessage;
+}): boolean {
+  const threadId = field<string>(message, "thread_id");
+  const input = latestMessageContent(message).trim();
+  if (!threadId || !input) return false;
+  const sent = actions.sendChat({
+    input,
+    acp_prompt:
+      `${field<string>(message, "acp_prompt") ?? ""}`.trim() || undefined,
+    reply_thread_id: threadId,
+    preserveSelectedThread: true,
+    skipDraftDelete: true,
+  });
+  return !!sent;
+}
+
 export async function resendCanceledAcpTurn({
   actions,
   message,

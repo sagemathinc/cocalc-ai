@@ -81,6 +81,7 @@ import { codexEventsToMarkdown } from "./codex-activity";
 import {
   cancelQueuedAcpTurn,
   resendCanceledAcpTurn,
+  resubmitAcpTurnAsNew,
   sendQueuedAcpTurnImmediately,
 } from "./acp-api";
 import { History, HistoryFooter, HistoryTitle } from "./history";
@@ -1119,10 +1120,9 @@ export default function Message({
     }
     setResubmittingAgentParentId(acpResubmitParentMessageId);
     try {
-      const ok = await resendCanceledAcpTurn({
+      const ok = resubmitAcpTurnAsNew({
         actions,
         message: acpResubmitParentMessage,
-        useCurrentPayment: true,
       });
       if (!ok) {
         throw Error("Unable to resubmit this request to Agent.");
