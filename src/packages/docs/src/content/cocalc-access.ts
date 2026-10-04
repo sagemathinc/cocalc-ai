@@ -23,7 +23,7 @@ a report in your own project."
 
 ## Configure access
 
-Open a named agent and choose **+ > CoCalc** in the message composer. Once
+Open a named agent and choose **+ > CoCalc access** in the message composer. Once
 configured, the small CoCalc connector icon beside **+** reopens these settings;
 it is muted when access is disabled. Settings apply to the agent across
 conversations, not just the current conversation.
@@ -40,7 +40,7 @@ agent; another collaborator does not automatically receive your permissions.
 To keep the settings for later, turn off **Enable CoCalc access** and save.
 To delete the saved settings altogether, choose **Remove connector** and confirm.
 Removal also revokes active temporary credentials and hides the connector icon.
-You can configure it again through **+ > CoCalc**.
+You can configure it again through **+ > CoCalc access**.
 
 ## What the choices mean
 

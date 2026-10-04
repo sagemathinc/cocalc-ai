@@ -60,14 +60,14 @@ export const MY_AGENTS_BODY = String.raw`
 
 After signing in, CoCalc opens your projects list, or the page your link named.
 If you have no projects, or your new account has not used one, CoCalc may open
-the new-agent request box instead. Otherwise, choose **New Agent** under
+the new-agent request box instead. Otherwise, choose **New agent** under
 **Agents** in the sidebar, or select one of your agents there. If the **Agents**
 section is collapsed, expand it first with the arrow to its left
 (**Expand Agents**). The section lists your pinned agents, a few others (the
 most recent, or the first in your custom order), and the open agent;
 **All agents…** below them opens the **Agents** page with the rest. At phone
 width, if CoCalc shows the sidebar instead of the request box, choose
-**New Agent** there. Describe a result you can inspect, such as a comparison,
+**New agent** there. Describe a result you can inspect, such as a comparison,
 document, application, or visualization. Include the relevant files and the
 checks that would make the result useful.
 

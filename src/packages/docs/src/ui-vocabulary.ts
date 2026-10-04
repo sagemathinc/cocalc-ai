@@ -209,15 +209,15 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
   // sidebar's Agents entry is nav.agents.
   {
     id: "agents.sidebar.new-agent",
-    label: "New Agent",
+    label: "New agent",
     anchors: [
-      def("frontend/agents/organization-controls.tsx", "> New Agent </Button>"),
+      def("frontend/agents/organization-controls.tsx", "> New agent </Button>"),
       ren(WORKSPACE_PAGE, "<AgentOrganizationControls"),
     ],
     usedIn: [
-      bold("ai", "New Agent"),
-      bold("claude-code", "New Agent"),
-      { file: entries("ai"), text: "Choose New Agent" },
+      bold("ai", "New agent"),
+      bold("claude-code", "New agent"),
+      { file: entries("ai"), text: "Choose New agent" },
     ],
   },
   {
@@ -1469,9 +1469,11 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
   },
   {
     id: "agents.connector.cocalc",
-    label: "CoCalc",
-    anchors: [def("frontend/agents/composer-connectors.tsx", '? "CoCalc"')],
-    usedIn: [{ file: doc("cocalc-access"), text: "**+ > CoCalc**" }],
+    label: "CoCalc access",
+    anchors: [
+      def("frontend/agents/composer-connectors.tsx", 'label: "CoCalc access"'),
+    ],
+    usedIn: [{ file: doc("cocalc-access"), text: "**+ > CoCalc access**" }],
   },
   ...(
     [
