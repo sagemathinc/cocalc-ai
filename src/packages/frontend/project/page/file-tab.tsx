@@ -701,9 +701,9 @@ const FULLPATH_LABEL_STYLE: CSS = {
 } as const;
 
 const FADE_OUT_STYLE: CSS = {
-  maskImage: "linear-gradient(to right, #000 calc(100% - 16px), transparent)",
+  maskImage: "linear-gradient(to right, #000 calc(100% - 12px), transparent)",
   WebkitMaskImage:
-    "linear-gradient(to right, #000 calc(100% - 16px), transparent)",
+    "linear-gradient(to right, #000 calc(100% - 12px), transparent)",
 };
 
 function DisplayedLabel({ path, label, inline = true }) {
