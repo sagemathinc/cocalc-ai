@@ -110,9 +110,15 @@ export function useProjectUpdate(project_id: string): {
   const minProject = useTypedRedux("customize", "version_min_project") ?? 0;
   const [liveStatus, setLiveStatus] = useState<LiveProjectStatus>();
 
-  const state = `${liveStatus?.state ?? projectState?.get?.("state") ?? ""}`;
+  // The project's own state record is live; liveStatus is a periodic fetch
+  // that is only a fallback for versions and must never outlive its run.
+  const state = `${projectState?.get?.("state") ?? ""}`;
+  const run = `${state}:${projectState?.get?.("started_at") ?? ""}:${
+    projectState?.get?.("runtime_generation") ?? ""
+  }`;
 
   useEffect(() => {
+    setLiveStatus(undefined);
     if (publicDirectoryShareProjection) return;
     if (state !== "running") return;
     let closed = false;
@@ -137,18 +143,18 @@ export function useProjectUpdate(project_id: string): {
       closed = true;
       clearInterval(interval);
     };
-  }, [actions, host_id, project_id, publicDirectoryShareProjection, state]);
+  }, [actions, host_id, project_id, publicDirectoryShareProjection, run]);
 
   const restart = () => void actions?.restart_project(project_id);
   if (publicDirectoryShareProjection || state !== "running") return { restart };
   return {
     status: projectUpdateStatus({
       runningBundle:
-        versionString(liveStatus?.project_bundle_version) ??
-        versionString(projectState?.get?.("project_bundle_version")),
+        versionString(projectState?.get?.("project_bundle_version")) ??
+        versionString(liveStatus?.project_bundle_version),
       runningTools:
-        versionString(liveStatus?.tools_version) ??
-        versionString(projectState?.get?.("tools_version")),
+        versionString(projectState?.get?.("tools_version")) ??
+        versionString(liveStatus?.tools_version),
       hostBundle: versionString(hostInfo?.get?.("project_bundle_version")),
       hostTools: versionString(hostInfo?.get?.("tools_version")),
       minProject: Number(minProject) || 0,
