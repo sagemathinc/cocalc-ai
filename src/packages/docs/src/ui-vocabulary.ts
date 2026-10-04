@@ -1335,6 +1335,59 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     ],
     usedIn: [bold("teaching", "Create Shared Project")],
   },
+
+  // Claude Code and an agent's CoCalc connector
+  {
+    id: "claude.connect-subscription",
+    label: "Connect Claude Pro/Max",
+    anchors: [
+      def(
+        "frontend/chat/claude-subscription-connect.tsx",
+        '"Connect Claude Pro/Max"',
+      ),
+      ren(
+        "frontend/agents/new-agent-harness-controls.tsx",
+        "<ClaudeSubscriptionConnect",
+      ),
+    ],
+    usedIn: [bold("claude-code", "Connect Claude Pro/Max")],
+  },
+  {
+    // The heading that tells the first-run new-agent form, which has no
+    // runtime choice, from the full form.
+    id: "claude.first-run-form",
+    label: "What would you like to work on?",
+    anchors: [
+      def(
+        WORKSPACE_PAGE,
+        '? "What would you like to work on?" : "What should your new agent do?"',
+      ),
+    ],
+    usedIn: [bold("claude-code", "What would you like to work on?")],
+  },
+  {
+    id: "agents.connector.cocalc",
+    label: "CoCalc",
+    anchors: [def("frontend/agents/composer-connectors.tsx", '? "CoCalc"')],
+    usedIn: [{ file: doc("cocalc-access"), text: "**+ > CoCalc**" }],
+  },
+  ...(
+    [
+      ["enable", "Enable CoCalc access"],
+      ["save", "Save access"],
+      ["remove", "Remove connector"],
+    ] as const
+  ).map(
+    ([key, label]): UiVocabularyEntry => ({
+      id: `agents.connector.${key}`,
+      label,
+      anchors: [
+        def("frontend/agents/cocalc-connector.tsx", `> ${label} <`),
+        ren("frontend/agents/composer-connectors.tsx", "<CocalcConnector"),
+      ],
+      usedIn: [bold("cocalc-access", label)],
+    }),
+  ),
 ];
 
 const USERS_RETIRED =
