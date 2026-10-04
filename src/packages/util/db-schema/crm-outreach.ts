@@ -296,6 +296,17 @@ Table({
         name: "crm_outreach_delivery_followup_idx",
         query: "(follow_up_due_at,id) WHERE state='notification_requested'",
       },
+      // Claim-time eligibility scans a recipient's history under the global
+      // claim lock: contact cooldown, then same-kind and in-flight sends.
+      {
+        name: "crm_outreach_delivery_contact_idx",
+        query: "(normalized_email,notification_requested_at)",
+      },
+      {
+        name: "crm_outreach_delivery_nonterminal_email_idx",
+        query:
+          "(normalized_email,kind) WHERE state IN ('approved','queued','creating_ticket','notification_requested')",
+      },
     ],
     pg_indexes: [
       "batch_id",
