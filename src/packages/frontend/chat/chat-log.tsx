@@ -576,6 +576,22 @@ const CHAT_LOG_READING_WIDTH: CSSProperties = {
   width: "100%",
 } as const;
 
+const NEWEST_MESSAGES_BUTTON_DELAY_MS = 200;
+
+// `value` once it has been true for `delayMs`; false immediately.
+export function useSettledTrue(value: boolean, delayMs: number): boolean {
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    if (!value) {
+      setSettled(false);
+      return;
+    }
+    const timer = setTimeout(() => setSettled(true), delayMs);
+    return () => clearTimeout(timer);
+  }, [value, delayMs]);
+  return value && settled;
+}
+
 const NEWEST_MESSAGES_BUTTON_STYLE: CSSProperties = {
   position: "absolute",
   left: "50%",
@@ -1199,8 +1215,12 @@ export function MessageList({
   );
   const endRef = useRef<HTMLDivElement | null>(null);
   const blockScrollInput = anyOverlayOpen === true;
-  const showNewestMessagesButton =
-    sortedDates.length > 0 && (!atBottom || manualScroll);
+  // Show only once "not at the bottom" has lasted a moment (hide at once):
+  // content settling near the bottom must not make the button flicker.
+  const showNewestMessagesButton = useSettledTrue(
+    sortedDates.length > 0 && (!atBottom || manualScroll),
+    NEWEST_MESSAGES_BUTTON_DELAY_MS,
+  );
   const attentionJumpExists =
     activityJumpAttentionId != null &&
     attentionRecords.some(
@@ -2360,6 +2380,9 @@ export function MessageList({
           increaseViewportBy={CHAT_VIRTUOSO_INCREASE_VIEWPORT_BY}
           initialTopMostItemIndex={initialIndex}
           atTopThreshold={240}
+          // Sub-pixel re-measurement and streaming output jitter around the
+          // default 4px; a little slack keeps "at bottom" stable.
+          atBottomThreshold={24}
           itemSize={measureVirtuosoItem}
           itemContent={renderVirtuosoItem}
           computeItemKey={computeVirtuosoItemKey}
