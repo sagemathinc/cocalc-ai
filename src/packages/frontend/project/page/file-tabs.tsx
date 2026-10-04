@@ -60,7 +60,12 @@ function Label({ path, project_id, label, onClose }) {
         alignItems: "center",
         display: "flex",
         minWidth: 0,
-        width: "100%",
+        // The tab's width is fixed; the name takes what the close button
+        // does not, and the close button only shows on the active tab or
+        // under the pointer (like Chrome), so names get the room.
+        ...(width != null
+          ? { width: Math.max(MIN_WIDTH, width + 15) }
+          : { width: "100%" }),
       }}
     >
       <FileTab
@@ -69,16 +74,12 @@ function Label({ path, project_id, label, onClose }) {
         path={path}
         label={idChatTitle ?? label}
         noPopover={active != null}
-        style={{
-          // The close button sits beside the label, never over it.
-          ...(width != null
-            ? { width: Math.max(MIN_WIDTH, width - 5) }
-            : undefined),
-        }}
+        style={{ flex: "1 1 auto", minWidth: 0 }}
         onClose={onClose}
       />
       <span
         aria-hidden="true"
+        className="cocalc-file-tab-close"
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -640,6 +641,7 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
                 }}
                 onEdit={onEdit}
                 style={{ width: "100%" }}
+                className="cocalc-file-tabs"
                 size="small"
                 items={items}
                 activeKey={activeKey}

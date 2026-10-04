@@ -13,7 +13,13 @@ A single tab in a project.
 
 import { useIdChatTitle } from "./id-chat-title";
 import { Popover, Tag } from "antd";
-import { CSSProperties, ReactNode } from "react";
+import {
+  CSSProperties,
+  ReactNode,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { defineMessage, useIntl } from "react-intl";
 
 import { getAlertName } from "@cocalc/comm/project-status/types";
@@ -680,7 +686,6 @@ function getTabAccentColor(key: string, mode: string): string {
 
 const LABEL_STYLE: CSS = {
   overflow: "hidden",
-  textOverflow: "ellipsis",
   margin: "auto",
   whiteSpace: "nowrap",
 } as const;
@@ -695,7 +700,21 @@ const FULLPATH_LABEL_STYLE: CSS = {
   padding: "0 1px", // need less since have ..
 } as const;
 
+const FADE_OUT_STYLE: CSS = {
+  maskImage: "linear-gradient(to right, #000 calc(100% - 16px), transparent)",
+  WebkitMaskImage:
+    "linear-gradient(to right, #000 calc(100% - 16px), transparent)",
+};
+
 function DisplayedLabel({ path, label, inline = true }) {
+  const labelRef = useRef<HTMLDivElement>(null);
+  const [overflowing, setOverflowing] = useState(false);
+  useLayoutEffect(() => {
+    const element = labelRef.current;
+    if (!element) return;
+    const next = element.scrollWidth > element.clientWidth + 1;
+    if (next !== overflowing) setOverflowing(next);
+  });
   const isFullPathLabel = typeof label === "string" && label.includes("/");
   const displayLabel =
     isFullPathLabel && typeof label === "string"
@@ -734,11 +753,16 @@ function DisplayedLabel({ path, label, inline = true }) {
   // The "ltr" below is needed because of the direction 'rtl' in label_style, which
   // we have to compensate for in some situations, e.g., a file name "this is a file!"
   // will have the ! moved to the beginning by rtl.
+  const fullPath = label.includes("/");
   return (
     <div
+      ref={labelRef}
       style={{
         ...LABEL_STYLE,
-        ...(label.includes("/") ? FULLPATH_LABEL_STYLE : undefined),
+        ...(fullPath ? FULLPATH_LABEL_STYLE : undefined),
+        // Like Chrome: a name that does not fit fades out instead of
+        // spending its last few characters on "...".
+        ...(overflowing && !fullPath ? FADE_OUT_STYLE : undefined),
       }}
     >
       <span style={{ direction: "ltr" }}>

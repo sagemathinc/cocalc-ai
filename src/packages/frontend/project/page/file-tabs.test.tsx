@@ -200,6 +200,24 @@ describe("FileTabs keyboard navigation", () => {
     expect(mockActions.close_tab).toHaveBeenCalledWith("a.ts");
   });
 
+  it("marks the close button so it shows only on the active or hovered tab", () => {
+    render(
+      <FileTabs
+        activeTab="editor-a.ts"
+        openFiles={List(["a.ts", "b.ts"])}
+        project_id="project-1"
+      />,
+    );
+    // projects_nav.css hides .cocalc-file-tab-close inside .cocalc-file-tabs
+    // except on :hover, the active tab and keyboard focus.
+    expect(screen.getByTitle("Close a.ts")).toHaveClass(
+      "cocalc-file-tab-close",
+    );
+    expect(screen.getByTitle("Close b.ts")).toHaveClass(
+      "cocalc-file-tab-close",
+    );
+  });
+
   it("reorders only the visible workspace subset when dragging tabs", () => {
     workspaces.selection = { kind: "workspace", workspace_id: "w1" } as any;
     workspaces.filterPaths = (paths: string[]) =>
