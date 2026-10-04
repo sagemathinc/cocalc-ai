@@ -81,7 +81,7 @@ const binding = {
     version: 2 as const,
     kind: "acp" as const,
     id: "claude-code" as const,
-    revision: "0.81.1",
+    revision: "0.85.1",
     cwd: "/home/user/work",
     credentialMode: "project-managed" as const,
     executionPolicy: "full-access" as const,

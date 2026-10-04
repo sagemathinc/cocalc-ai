@@ -252,7 +252,7 @@ test(
       version: 1,
       kind: "acp",
       id: "claude-code",
-      revision: "0.81.1",
+      revision: "0.85.1",
       executable: claudeAgentAcpBin,
       args: ["--hide-claude-auth"],
       cwd: "/tmp",
@@ -300,7 +300,7 @@ test(
     assert.deepEqual(info.agentInfo, {
       name: "@agentclientprotocol/claude-agent-acp",
       title: "Claude Agent",
-      version: "0.81.1",
+      version: "0.85.1",
     });
     assert.deepEqual(info.authMethods, []);
     assert.equal(info.agentCapabilities.loadSession, true);
@@ -639,7 +639,7 @@ function adapter(
             version: 2,
             kind: "acp",
             id: "claude-code",
-            revision: "0.81.1",
+            revision: "0.85.1",
             cwd: "/tmp",
             credentialMode: "project-managed",
             executionPolicy: "full-access",
@@ -2275,7 +2275,7 @@ test("qualified Claude negotiates concrete values on new and resumed sessions an
           version: 2,
           kind: "acp",
           id: "claude-code",
-          revision: "0.81.1",
+          revision: "0.85.1",
           cwd: "/home/user",
           executionPolicy: "full-access",
           credentialMode: "project-managed",
@@ -2387,7 +2387,7 @@ test("qualified profiles accept only pinned catalog identity", () => {
     version: 2,
     kind: "acp",
     id: "claude-code",
-    revision: "0.81.1",
+    revision: "0.85.1",
     cwd: "/home/user",
     executionPolicy: "full-access",
     credentialMode: "project-managed",

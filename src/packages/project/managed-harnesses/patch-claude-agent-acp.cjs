@@ -4,7 +4,8 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-// Patch applied by build-harnesses.sh to the pinned claude-agent-acp 0.81.1.
+// Patch applied by sea/install-claude-code.sh to the pinned claude-agent-acp
+// 0.85.1 (still needed: the bug is unchanged upstream).
 //
 // The adapter forwards Claude's rate_limit_event (subscription 5-hour and
 // weekly utilization) only after the turn's first assistant message. Claude
@@ -18,7 +19,7 @@ const { readFileSync, writeFileSync } = require("node:fs");
 const ORIGINAL = `                    case "rate_limit_event": {
                         if (lastAssistantTotalUsage !== null) {
                             await sendUpdate({
-                                sessionId: message.session_id,
+                                sessionId: params.sessionId,
                                 update: attachUsageModel({
                                     sessionUpdate: "usage_update",
                                     used: lastAssistantTotalUsage,
@@ -33,7 +34,7 @@ const ORIGINAL = `                    case "rate_limit_event": {
 const PATCHED = `                    case "rate_limit_event": {
                         // CoCalc patch: forward even before the first assistant message.
                         await sendUpdate({
-                            sessionId: message.session_id,
+                            sessionId: params.sessionId,
                             update: attachUsageModel({
                                 sessionUpdate: "usage_update",
                                 used: lastAssistantTotalUsage ?? session.contextUsedTokens ?? 0,
@@ -63,6 +64,7 @@ module.exports = { ORIGINAL, PATCHED, patchSource };
 
 if (require.main === module) {
   const file = process.argv[2];
-  if (!file) throw Error("usage: patch-claude-agent-acp.cjs <dist/acp-agent.js>");
+  if (!file)
+    throw Error("usage: patch-claude-agent-acp.cjs <dist/acp-agent.js>");
   writeFileSync(file, patchSource(readFileSync(file, "utf8")));
 }

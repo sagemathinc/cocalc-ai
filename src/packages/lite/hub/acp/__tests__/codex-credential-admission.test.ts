@@ -4,6 +4,13 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { CLAUDE_CODE_QUALIFICATION } from "@cocalc/util/ai/qualified-harnesses";
+
+// Launch preparation is covered by harness-runtime tests; here only the
+// credential chosen at admission matters.
+jest.mock("../harness-runtime", () => ({
+  prepareHarnessRequest: (request: unknown) => request,
+}));
 import {
   pinCodexCredentialAtAdmission,
   setCodexCredentialAdmissionResolver,
@@ -119,4 +126,47 @@ test("normalizes a valid explicit selector without dropping its credential ID", 
     paymentSource: "subscription-credential",
     credentialId,
   });
+});
+
+test("an agent message after a Claude version bump still uses the last human choice", async () => {
+  const profile = (revision: string) => ({
+    version: 2 as const,
+    kind: "acp" as const,
+    id: "claude-code",
+    revision,
+    cwd: "/home/user",
+    executionPolicy: "full-access" as const,
+    credentialMode: "project-managed" as const,
+  });
+  const credential = {
+    version: 1 as const,
+    provider: "anthropic" as const,
+    mode: "account-api-key" as const,
+    credentialId: randomUUID(),
+  };
+  const thread = `thread-${randomUUID()}`;
+  const base = request();
+  // A human turn admitted under the previous pin.
+  enqueueAcpJob({
+    ...base,
+    config: undefined,
+    runtime: { version: 1, kind: "acp", profile: profile("0.81.1") },
+    harness_credential: credential,
+    chat: { ...base.chat, thread_id: thread },
+  } as any);
+  const admitted = await pinCodexCredentialAtAdmission({
+    ...base,
+    config: undefined,
+    runtime: {
+      version: 1,
+      kind: "acp",
+      profile: profile(CLAUDE_CODE_QUALIFICATION.package.version),
+    },
+    chat: {
+      ...base.chat,
+      thread_id: thread,
+      agent_rpc_execution: { version: 3 },
+    },
+  } as any);
+  expect(admitted.harness_credential).toEqual(credential);
 });

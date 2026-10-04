@@ -14,6 +14,9 @@ export type QualifiedHarnessCandidate = {
     integrity: string;
     gitHead: string;
     node: string;
+    // Earlier pins of this harness. Saved profiles that name one of these are
+    // upgraded to the current version: CoCalc installs and runs only one.
+    supersededVersions?: readonly string[];
   };
   launch: {
     binary: string;
@@ -51,11 +54,12 @@ export const CLAUDE_CODE_QUALIFICATION: QualifiedHarnessCandidate = {
   protocolVersion: 1,
   package: {
     name: "@agentclientprotocol/claude-agent-acp",
-    version: "0.81.1",
+    version: "0.85.1",
     integrity:
-      "sha512-I+7tUPsrYnI0nBmdUonoRmdCi7ohyzZ0SeCpeIUFuVZ7a8ZxDyUNO6zBJpaeAIwuPXCk8aw+7t+QiwXS6FwskQ==",
-    gitHead: "b264b52bee80e49f20caf1941f7d7cb89edb80c4",
+      "sha512-XpBAh6m98ib0R1yu0fC7OOZNk2n/KxA6ykH1QXSr/dYJGDgm4ILr4lprlvEBDxFytzVEpup24Mjkv0qZPmMsMQ==",
+    gitHead: "686c0c99b3b89217b74d1f5de8272e7c9ef1aab4",
     node: ">=22",
+    supersededVersions: ["0.81.1"],
   },
   launch: {
     binary: "claude-agent-acp",

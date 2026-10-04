@@ -31,7 +31,7 @@ test("materializes only an ephemeral relay capability for account keys", async (
   mockReadFile.mockResolvedValue(" relay-token \n");
   const launch = await qualifiedHarnessLaunch(
     "claude-code",
-    "0.81.1",
+    "0.85.1",
     "account-api-key",
   );
   expect(mockReadFile).toHaveBeenCalledWith(
@@ -50,7 +50,7 @@ test("materializes only an ephemeral relay capability for account keys", async (
 
 test("materializes a project-owned key only in the child environment", async () => {
   mockReadFile.mockResolvedValue(" project-key \n");
-  const launch = await qualifiedHarnessLaunch("claude-code", "0.81.1");
+  const launch = await qualifiedHarnessLaunch("claude-code", "0.85.1");
   expect(mockReadFile).toHaveBeenCalledWith(
     "/run/secrets/cocalc/ANTHROPIC_API_KEY",
     { encoding: "utf8", flag: "r" },
@@ -68,7 +68,7 @@ test("rejects unknown revisions and missing project credentials", async () => {
     "not available",
   );
   mockReadFile.mockResolvedValue(" \n");
-  await expect(qualifiedHarnessLaunch("claude-code", "0.81.1")).rejects.toThrow(
+  await expect(qualifiedHarnessLaunch("claude-code", "0.85.1")).rejects.toThrow(
     "Project secret ANTHROPIC_API_KEY is invalid",
   );
 });
