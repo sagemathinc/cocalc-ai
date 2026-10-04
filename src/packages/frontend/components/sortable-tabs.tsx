@@ -41,6 +41,8 @@ interface Props {
   children?: ReactNode;
   style?: CSSProperties;
   maxItemWidth?: number;
+  // The narrowest a tab's slot may get before Ant's overflow menu takes over.
+  minItemWidth?: number;
   itemChromeWidth?: number;
   overflowWidth?: number;
 }
@@ -92,6 +94,7 @@ export function SortableTabs(props: Props) {
     children,
     style,
     maxItemWidth = 250 + 65,
+    minItemWidth = 80,
     itemChromeWidth = 55,
     overflowWidth = 46,
   } = props;
@@ -134,7 +137,7 @@ export function SortableTabs(props: Props) {
     // overflowWidth accounts for the Ant Design overflow dropdown.
     const itemWidth =
       Math.max(
-        80,
+        minItemWidth,
         Math.min(
           maxItemWidth,
           ((resize?.width ?? 500) - overflowWidth) / Math.max(1, items.length),
@@ -152,6 +155,7 @@ export function SortableTabs(props: Props) {
     divRef.current,
     isPointerOver,
     maxItemWidth,
+    minItemWidth,
     itemChromeWidth,
     overflowWidth,
   ]);

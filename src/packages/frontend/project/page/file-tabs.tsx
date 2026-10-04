@@ -627,6 +627,9 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
             // Only the tab padding (6px + 4px) surrounds the label now: the
             // close button lives inside it, shown on hover/active.
             itemChromeWidth={10}
+            // Shrink to fit like Chrome (icon plus a few letters) before
+            // hiding tabs behind Ant's overflow menu.
+            minItemWidth={MIN_WIDTH + 10}
             onDragStart={onDragStart}
             onDragEnd={onDragEnd}
           >
