@@ -61,6 +61,9 @@ const controls = () =>
                 options: [
                   { value: "fast", name: "Fast" },
                   { value: "deep", name: "Deep" },
+                  ...(process.argv.includes("--opus")
+                    ? [{ value: "opus", name: "Opus 5.5" }]
+                    : []),
                 ],
               },
             ],
@@ -123,7 +126,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           name: process.argv.includes("--claude-adapter")
             ? "@agentclientprotocol/claude-agent-acp"
             : "cocalc-fixture",
-          version: process.argv.includes("--claude-adapter") ? "0.81.1" : "1",
+          version: process.argv.includes("--claude-adapter") ? "0.85.1" : "1",
         },
         agentCapabilities: {
           loadSession: !process.argv.includes("--no-resume"),
@@ -288,7 +291,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       }
       if (
         message.params.configId !== "model" ||
-        !["fast", "deep"].includes(message.params.value)
+        !["fast", "deep", "opus"].includes(message.params.value)
       )
         return result(message.id, {});
       selectedModel = message.params.value;

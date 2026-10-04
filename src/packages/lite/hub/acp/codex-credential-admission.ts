@@ -5,6 +5,10 @@
 
 import type { AcpJobRequest, AcpRequest } from "@cocalc/conat/ai/acp/types";
 import { hubApi } from "../api";
+import {
+  type AcpHarnessProfile,
+  parseAcpHarnessProfile,
+} from "@cocalc/util/ai/runtime";
 import { prepareHarnessRequest } from "./harness-runtime";
 import { decodeAcpJobRequest, latestHumanHarnessJob } from "../sqlite/acp-jobs";
 
@@ -53,8 +57,21 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
         throw Error(
           "Open the recipient agent and send a message with its selected payment method before using Agent Networks.",
         );
-      const { cwd: _oldCwd, ...oldProfile } = admitted.runtime.profile;
-      const { cwd: _newCwd, ...newProfile } = request.runtime.profile;
+      // Compare the profiles as they run now: a job admitted before a
+      // harness version bump names the superseded pin, which parsing upgrades.
+      const normalized = (value: AcpHarnessProfile) => {
+        try {
+          return parseAcpHarnessProfile(value);
+        } catch {
+          return value; // Unknown profiles are compared as recorded.
+        }
+      };
+      const { cwd: _oldCwd, ...oldProfile } = normalized(
+        admitted.runtime.profile,
+      );
+      const { cwd: _newCwd, ...newProfile } = normalized(
+        request.runtime.profile,
+      );
       if (JSON.stringify(oldProfile) !== JSON.stringify(newProfile))
         throw Error(
           "Recipient runtime changed; send a message in the recipient agent to confirm its payment method.",

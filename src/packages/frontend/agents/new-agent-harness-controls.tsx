@@ -234,6 +234,12 @@ export function NewAgentClaudeControls({
       <HarnessRuntimeControl
         key={JSON.stringify([accountId, projectId, runtime.profile])}
         discoveryKey={JSON.stringify([credential, needsConnection])}
+        catalogKey={JSON.stringify([
+          accountId,
+          projectId,
+          runtime.profile,
+          credential,
+        ])}
         compact
         configureLabel="Configure Claude Code"
         configureButtonRef={configureButton}

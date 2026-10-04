@@ -14,8 +14,8 @@ SOURCE="$SEA/../managed-harnesses"
 ARCH="${1:?architecture required}"
 DEST="${2:?destination required}"
 OS="linux"
-CLAUDE_VERSION="0.81.1"
-CLAUDE_INTEGRITY="sha512-I+7tUPsrYnI0nBmdUonoRmdCi7ohyzZ0SeCpeIUFuVZ7a8ZxDyUNO6zBJpaeAIwuPXCk8aw+7t+QiwXS6FwskQ=="
+CLAUDE_VERSION="0.85.1"
+CLAUDE_INTEGRITY="sha512-XpBAh6m98ib0R1yu0fC7OOZNk2n/KxA6ykH1QXSr/dYJGDgm4ILr4lprlvEBDxFytzVEpup24Mjkv0qZPmMsMQ=="
 
 case "$ARCH" in
   amd64) NPM_CPU="x64" ;;

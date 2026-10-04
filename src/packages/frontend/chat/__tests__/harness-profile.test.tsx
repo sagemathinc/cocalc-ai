@@ -122,7 +122,7 @@ test("qualified Claude profiles contain only trusted catalog identity", () => {
     version: 2,
     kind: "acp",
     id: "claude-code",
-    revision: "0.81.1",
+    revision: "0.85.1",
     cwd: "/home/user",
     executionPolicy: "full-access",
     credentialMode: "project-managed",
@@ -540,7 +540,7 @@ test("an unavailable saved model remains explicit and can be replaced from the d
   }));
   function Composer() {
     const [settings, setSettings] = useState({
-      configOptions: [{ id: "model", value: "opus[1m]" }],
+      configOptions: [{ id: "model", value: "claude-opus-4-1" }],
     });
     return (
       <HarnessRuntimeControl
@@ -558,7 +558,7 @@ test("an unavailable saved model remains explicit and can be replaced from the d
   const model = await screen.findByRole("combobox", {
     name: "Claude Code Model",
   });
-  expect(screen.getByText("opus[1m] (unavailable)")).toBeTruthy();
+  expect(screen.getByText("claude-opus-4-1 (unavailable)")).toBeTruthy();
   expect(model.getAttribute("aria-invalid")).toBe("true");
   expect(onSettings).not.toHaveBeenCalled();
   model.focus();
@@ -1027,4 +1027,41 @@ test("the phone summary is one chip that opens the full settings", async () => {
   } finally {
     getStore.mockRestore();
   }
+});
+
+test("a model catalog saved under a superseded Claude pin is rediscovered", async () => {
+  const runtime = qualifiedHarnessRuntime("claude-code", "/home/user");
+  const onDiscover = jest.fn(async () => ({
+    profile: runtime.profile,
+    controls: claudeControls,
+  }));
+  const { unmount } = render(
+    <HarnessRuntimeControl
+      compact
+      runtime={runtime}
+      reported={{
+        profile: { ...runtime.profile, revision: "0.81.1" },
+        controls: claudeControls,
+      }}
+      onDiscover={onDiscover}
+      onSettings={jest.fn()}
+    />,
+  );
+  await waitFor(() => expect(onDiscover).toHaveBeenCalledTimes(1));
+  unmount();
+  // A current catalog is used as is.
+  const current = jest.fn();
+  render(
+    <HarnessRuntimeControl
+      compact
+      runtime={runtime}
+      reported={{ profile: runtime.profile, controls: claudeControls }}
+      onDiscover={current}
+      onSettings={jest.fn()}
+    />,
+  );
+  expect(
+    screen.getByRole("combobox", { name: "Claude Code Model" }),
+  ).toBeTruthy();
+  expect(current).not.toHaveBeenCalled();
 });

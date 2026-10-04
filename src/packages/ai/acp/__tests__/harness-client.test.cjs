@@ -252,7 +252,7 @@ test(
       version: 1,
       kind: "acp",
       id: "claude-code",
-      revision: "0.81.1",
+      revision: "0.85.1",
       executable: claudeAgentAcpBin,
       args: ["--hide-claude-auth"],
       cwd: "/tmp",
@@ -300,7 +300,7 @@ test(
     assert.deepEqual(info.agentInfo, {
       name: "@agentclientprotocol/claude-agent-acp",
       title: "Claude Agent",
-      version: "0.81.1",
+      version: "0.85.1",
     });
     assert.deepEqual(info.authMethods, []);
     assert.equal(info.agentCapabilities.loadSession, true);
@@ -639,7 +639,7 @@ function adapter(
             version: 2,
             kind: "acp",
             id: "claude-code",
-            revision: "0.81.1",
+            revision: "0.85.1",
             cwd: "/tmp",
             credentialMode: "project-managed",
             executionPolicy: "full-access",
@@ -2275,7 +2275,7 @@ test("qualified Claude negotiates concrete values on new and resumed sessions an
           version: 2,
           kind: "acp",
           id: "claude-code",
-          revision: "0.81.1",
+          revision: "0.85.1",
           cwd: "/home/user",
           executionPolicy: "full-access",
           credentialMode: "project-managed",
@@ -2336,6 +2336,55 @@ test("qualified Claude negotiates concrete values on new and resumed sessions an
   }
 });
 
+test("Claude runs the newest Opus unless a model was chosen", async (t) => {
+  for (const id of ["claude-code", "other"]) {
+    const child = spawn(
+      process.execPath,
+      [...profile.args, "--config-options", "--opus"],
+      { env: {}, stdio: "pipe" },
+    );
+    const closed = new Promise((resolve) => child.once("close", resolve));
+    const client = await AcpHarnessClient.start(
+      {
+        projectId: "project-a",
+        accountId: "account-a",
+        profile:
+          id === "claude-code"
+            ? {
+                version: 2,
+                kind: "acp",
+                id,
+                revision: "0.85.1",
+                cwd: "/home/user",
+                executionPolicy: "full-access",
+                credentialMode: "project-managed",
+              }
+            : profile,
+      },
+      async () => ({
+        stdin: child.stdin,
+        stdout: child.stdout,
+        stderr: child.stderr,
+        closed,
+        stop: async () => {
+          child.kill("SIGKILL");
+          await closed;
+        },
+      }),
+    );
+    t.after(() => client.dispose());
+    await client.open();
+    const model = () =>
+      client.controls.configOptions.find(({ id }) => id === "model")
+        .currentValue;
+    await client.configure({});
+    assert.equal(model(), id === "claude-code" ? "opus" : "fast");
+    await client.configure({ configOptions: [{ id: "model", value: "deep" }] });
+    assert.equal(model(), "deep");
+    await client.dispose();
+  }
+});
+
 test("native session forks negotiate support, preserve the source and never load or prompt", async (t) => {
   for (const [flags, policy, code] of [
     [["--fork"], "default", undefined],
@@ -2387,7 +2436,7 @@ test("qualified profiles accept only pinned catalog identity", () => {
     version: 2,
     kind: "acp",
     id: "claude-code",
-    revision: "0.81.1",
+    revision: "0.85.1",
     cwd: "/home/user",
     executionPolicy: "full-access",
     credentialMode: "project-managed",
