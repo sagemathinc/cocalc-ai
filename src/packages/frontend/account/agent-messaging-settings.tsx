@@ -57,8 +57,7 @@ function AccountAgentMessaging() {
     >
       <p style={{ marginBottom: 0 }}>
         These account-wide controls affect all Agent Networks and external agent
-        installations. Manage individual agents and network tags in the Agents
-        workspace.
+        installations.
       </p>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         <Button

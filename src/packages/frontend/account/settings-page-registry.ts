@@ -13,7 +13,7 @@ import { ACCOUNT_PREFERENCES_KEYBOARD_PAGE } from "./account-preferences-keyboar
 import { ACCOUNT_PREFERENCES_OTHER_PAGE } from "./account-preferences-other";
 import { ACCOUNT_PREFERENCES_PROFILE_PAGE } from "./account-preferences-profile";
 import { ACCOUNT_PREFERENCES_SECURITY_PAGE } from "./account-preferences-security";
-import { CONNECTIONS_SETTINGS_PAGE } from "./connections-page";
+import { CONNECTORS_SETTINGS_PAGE } from "./connectors-page";
 import {
   SITE_LICENSES_SETTINGS_PAGE,
   SOFTWARE_LICENSES_SETTINGS_PAGE,
@@ -37,7 +37,7 @@ export const SETTINGS_PAGE_DEFINITIONS = {
   ai: ACCOUNT_PREFERENCES_AI_PAGE,
   appearance: ACCOUNT_PREFERENCES_APPEARANCE_PAGE,
   communication: ACCOUNT_PREFERENCES_COMMUNICATION_PAGE,
-  connections: CONNECTIONS_SETTINGS_PAGE,
+  connectors: CONNECTORS_SETTINGS_PAGE,
   editor: ACCOUNT_PREFERENCES_EDITOR_PAGE,
   keyboard: ACCOUNT_PREFERENCES_KEYBOARD_PAGE,
   keys: ACCOUNT_PREFERENCES_SECURITY_PAGE,

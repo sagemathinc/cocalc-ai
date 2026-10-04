@@ -119,7 +119,7 @@ export const ACCOUNT_SETTINGS_NAVIGATION: NavigationNode[] = [
       { type: "page", page: "ai" },
       {
         type: "page",
-        page: "connections",
+        page: "connectors",
         visible: ({ isLite }) => !isLite,
       },
       {

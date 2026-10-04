@@ -229,9 +229,9 @@ function NamedAgentConnectors({
             ? []
             : [
                 {
-                  key: "manage-connections",
-                  label: "Manage connections…",
-                  onClick: () => openAccountSettings({ page: "connections" }),
+                  key: "manage-connectors",
+                  label: "Manage connectors",
+                  onClick: () => openAccountSettings({ page: "connectors" }),
                 },
               ]),
         ],

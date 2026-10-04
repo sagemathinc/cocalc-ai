@@ -65,7 +65,7 @@ describe("settings-navigation", () => {
       expect(preferences.pages.map(({ page }) => page)).not.toContain("keys");
       // Agent connectors need the hub; Lite has none.
       expect(preferences.pages.map(({ page }) => page)).not.toContain(
-        "connections",
+        "connectors",
       );
     }
     expect(

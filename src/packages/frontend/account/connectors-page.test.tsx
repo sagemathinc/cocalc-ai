@@ -5,7 +5,7 @@ import type {
   AgentNetworkDirectory,
   NamedAgentDirectory,
 } from "@cocalc/conat/agents/personal";
-import { ConnectionsPage } from "./connections-page";
+import { ConnectorsPage as ConnectionsPage } from "./connectors-page";
 import { getVisibleSettingsNavigation } from "./settings-navigation";
 
 const mockApi = {
@@ -13,6 +13,8 @@ const mockApi = {
   getCocalcConnectorConfig: jest.fn(),
   saveCocalcConnectorConfig: jest.fn(),
   removeCocalcConnectorConfig: jest.fn(),
+  updateAgentNetwork: jest.fn(),
+  setPersonalMessagingState: jest.fn(),
 };
 let mockAgents: { directory?: NamedAgentDirectory; error?: string };
 let mockNetworks: { directory?: AgentNetworkDirectory; error?: string };
@@ -22,6 +24,7 @@ jest.mock("@cocalc/frontend/agents/api", () => ({
   useNamedAgents: () => mockAgents,
   useAgentNetworks: () => mockNetworks,
   refreshAgentNetworks: () => mockRefreshNetworks(),
+  refreshNamedAgents: () => mockRefreshNetworks(),
   sameEndpoint: (a, b) =>
     a.project_id === b.project_id && a.agent_id === b.agent_id,
 }));
@@ -42,6 +45,13 @@ jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
 jest.mock("@cocalc/frontend/components/api-key-scope-editor", () => ({
   EMPTY_API_KEY_SCOPE: { version: 1, account: [], projects: [] },
   ApiKeyScopeEditor: () => null,
+}));
+jest.mock("@cocalc/frontend/agents/external-installations", () => ({
+  ExternalAgentInstallations: () => <div>External agent installations</div>,
+}));
+jest.mock("@cocalc/frontend/app-framework", () => ({
+  ...jest.requireActual("@cocalc/frontend/app-framework"),
+  useTypedRedux: () => "account",
 }));
 jest.mock("@cocalc/frontend/docs/navigation", () => ({
   openProjectDocs: jest.fn(),
@@ -105,8 +115,10 @@ beforeEach(() => {
     directory: {
       enabled: true,
       agents: [agent("builder", "builder-id"), agent("writer", "writer-id")],
+      controls: { paused: false, generation: 1 },
     },
   };
+  mockApi.updateAgentNetwork.mockResolvedValue({});
   mockNetworks = {
     directory: {
       enabled: true,
@@ -166,29 +178,96 @@ test("says when no agent has CoCalc access, and retries after an error", async (
   expect(await screen.findByText("@builder")).toBeVisible();
 });
 
-test("shows open networks with their agents and state, and links to AI settings", async () => {
+test("shows open networks with their agents, status and delivery", async () => {
   const user = userEvent.setup();
   render(<ConnectionsPage />);
   const team = screen.getByText("Team").closest("tr")!;
   // Removed members are not counted.
   expect(within(team).getByText("1")).toBeVisible();
   expect(within(team).getByText("Active")).toBeVisible();
+  expect(within(team).getByText("Queued")).toBeVisible();
   expect(screen.queryByText("Old")).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Messaging settings" }));
-  expect(mockOpenSettings).toHaveBeenLastCalledWith({ page: "ai" });
+  // The account-wide controls moved here from AI settings.
+  expect(
+    screen.getByRole("button", { name: "Pause all messaging" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Revoke all networks" }),
+  ).toBeVisible();
+  expect(screen.getByText("External agent installations")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "AI settings" }));
-  expect(mockOpenSettings).toHaveBeenCalledTimes(2);
+  expect(mockOpenSettings).toHaveBeenCalledWith({ page: "ai" });
 });
 
-test("paused messaging is stated on every network", () => {
-  mockNetworks.directory!.controls.paused = true;
+test("clicking Active pauses the network", async () => {
+  const user = userEvent.setup();
   render(<ConnectionsPage />);
-  expect(screen.getByText("All agent messaging is paused.")).toBeVisible();
-  const team = screen.getByText("Team").closest("tr")!;
-  expect(within(team).getByText("Paused")).toBeVisible();
+  await user.click(
+    screen.getByRole("button", { name: "Pause the Team network" }),
+  );
+  await waitFor(() =>
+    expect(mockApi.updateAgentNetwork).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent_network_id: "network-Team",
+        action: "pause",
+      }),
+    ),
+  );
+  expect(mockRefreshNetworks).toHaveBeenCalled();
 });
 
-test("the Connections page is listed in settings, except in Lite", () => {
+test("switching to live delivery asks first", async () => {
+  const user = userEvent.setup();
+  render(<ConnectionsPage />);
+  await user.click(
+    screen.getByRole("button", {
+      name: "Use live delivery in the Team network",
+    }),
+  );
+  expect(mockApi.updateAgentNetwork).not.toHaveBeenCalled();
+  await user.click(
+    await screen.findByRole("button", { name: "Enable live delivery" }),
+  );
+  await waitFor(() =>
+    expect(mockApi.updateAgentNetwork).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "set-delivery",
+        delivery_mode: "live",
+      }),
+    ),
+  );
+});
+
+test("deleting a network asks first, then closes it", async () => {
+  const user = userEvent.setup();
+  render(<ConnectionsPage />);
+  await user.click(
+    screen.getByRole("button", { name: "Delete the Team network" }),
+  );
+  expect(mockApi.updateAgentNetwork).not.toHaveBeenCalled();
+  await user.click(
+    await screen.findByRole("button", { name: "Delete network" }),
+  );
+  await waitFor(() =>
+    expect(mockApi.updateAgentNetwork).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "close" }),
+    ),
+  );
+});
+
+test("when all messaging is paused, every network says so", () => {
+  mockNetworks.directory!.controls.paused = true;
+  mockAgents.directory!.controls!.paused = true;
+  render(<ConnectionsPage />);
+  expect(screen.getByText("All agent messaging is paused")).toBeVisible();
+  const team = screen.getByText("Team").closest("tr")!;
+  expect(within(team).getByText("Paused (all messaging)")).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Resume all messaging" }),
+  ).toBeVisible();
+});
+
+test("the Connectors page is listed in settings, except in Lite", () => {
   const pages = (isLite: boolean) =>
     getVisibleSettingsNavigation({
       isLite,
@@ -199,6 +278,7 @@ test("the Connections page is listed in settings, except in Lite", () => {
     } as any).flatMap((node) =>
       node.type === "group" ? node.pages.map(({ page }) => page) : [node.page],
     );
-  expect(pages(false)).toContain("connections");
+  expect(pages(false)).toContain("connectors");
   expect(pages(true)).not.toContain("connections");
+  expect(pages(true)).not.toContain("connectors");
 });

@@ -3,16 +3,19 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-// Settings > Connections: the services the account's agents can use and which
-// agents use each. A connection is turned on for an agent, and scoped, from
-// the connectors list (+) in that agent's message box.
+// Settings > Connectors: the services the account's agents can use and which
+// agents use each. A connector is turned on for an agent, and scoped, from the
+// connectors list (+) in that agent's message box.
 
+import { DeleteOutlined } from "@ant-design/icons";
 import { Alert, Button, Spin, Table, Typography } from "antd";
 import { useCallback, useEffect, useState } from "react";
 import { defineMessage } from "react-intl";
 import type { AgentNetwork, NamedAgent } from "@cocalc/conat/agents/personal";
 import type { CocalcConnectorConfig } from "@cocalc/conat/hub/api/agent";
 import { Panel } from "@cocalc/frontend/antd-bootstrap";
+import { FreshAuthModal } from "@cocalc/frontend/auth/fresh-auth";
+import { Tooltip } from "@cocalc/frontend/components";
 import {
   personalAgentApi,
   refreshAgentNetworks,
@@ -22,34 +25,42 @@ import {
 import { activeNetworkMembers } from "@cocalc/frontend/agents/agent-network-utils";
 import { CocalcConnector } from "@cocalc/frontend/agents/cocalc-connector";
 import { cocalcAccessSummary } from "@cocalc/frontend/agents/composer-connectors";
+import { useAgentNetworkActions } from "@cocalc/frontend/agents/use-agent-network-actions";
+import { AgentMessagingSettings } from "./agent-messaging-settings";
 import { openAccountSettings } from "./settings-routing";
 import type { SettingsPageDefinition } from "./settings-page";
 
 const COCALC_ACCESS = "CoCalc access";
 const AGENT_NETWORKS = "Agent Networks";
 
-export const CONNECTIONS_SETTINGS_PAGE = {
-  component: ConnectionsPage,
+export const CONNECTORS_SETTINGS_PAGE = {
+  component: ConnectorsPage,
   description: defineMessage({
-    id: "account.settings.overview.connections",
+    id: "account.settings.overview.connectors",
     defaultMessage: "Services your agents can use, and which agents use each.",
   }),
-  controls: [COCALC_ACCESS, AGENT_NETWORKS],
+  controls: [
+    COCALC_ACCESS,
+    AGENT_NETWORKS,
+    "Pause all messaging",
+    "Revoke all networks",
+    "External agent installations",
+  ],
   icon: "api",
-  key: "connections",
+  key: "connectors",
   label: defineMessage({
-    id: "account.settings.connections.label",
-    defaultMessage: "Connections",
+    id: "account.settings.connectors.label",
+    defaultMessage: "Connectors",
   }),
 } satisfies SettingsPageDefinition;
 
-export function ConnectionsPage() {
+export function ConnectorsPage() {
   return (
     <>
       <Typography.Paragraph type="secondary" style={{ maxWidth: 900 }}>
-        Connections let your agents use services beyond their own project. Turn
+        Connectors let your agents use services beyond their own project. Turn
         one on for an agent, and choose what it can reach, from the connectors
-        list (+) in that agent&apos;s message box. Agents use connections only
+        list (+) in that agent&apos;s message box. Agents use connectors only
         during their turns, through CoCalc. The Claude and ChatGPT subscriptions
         agents run on are in{" "}
         <Button
@@ -180,13 +191,37 @@ function CocalcAccessSection() {
   );
 }
 
-function networkState(network: AgentNetwork, allPaused: boolean): string {
-  if (allPaused || network.state === "paused") return "Paused";
-  return network.delivery_mode === "live" ? "Active, live" : "Active";
+// A small borderless button for a table cell that toggles one setting.
+function ToggleCell({
+  label,
+  text,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  text: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Tooltip title={label}>
+      <Button
+        type="link"
+        size="small"
+        aria-label={label}
+        disabled={disabled}
+        onClick={onClick}
+        style={{ paddingInline: 0 }}
+      >
+        {text}
+      </Button>
+    </Tooltip>
+  );
 }
 
 function AgentNetworksSection() {
   const { directory, error } = useAgentNetworks();
+  const actions = useAgentNetworkActions();
   const networks = (directory?.networks ?? []).filter(
     ({ state }) => state !== "closed",
   );
@@ -196,7 +231,9 @@ function AgentNetworksSection() {
       <Typography.Paragraph type="secondary">
         Lets your agents message each other, across projects and across Claude
         and Codex. You create networks and choose their members on the Agents
-        page; agents cannot create them.
+        page; agents cannot create them. A live network can add a message to a
+        member&apos;s running turn as guidance; a queued one waits for the turn
+        to finish.
       </Typography.Paragraph>
       {error ? (
         <Alert
@@ -209,47 +246,81 @@ function AgentNetworksSection() {
         />
       ) : directory == null ? (
         <Spin aria-label="Loading Agent Networks" />
+      ) : networks.length === 0 ? (
+        <Typography.Paragraph>You have no Agent Networks.</Typography.Paragraph>
       ) : (
         <>
-          {allPaused && (
+          {actions.error && (
             <Alert
-              type="warning"
+              role="alert"
+              type="error"
               showIcon
-              title="All agent messaging is paused."
+              title={actions.error}
               style={{ marginBottom: 12 }}
             />
           )}
-          {networks.length === 0 ? (
-            <Typography.Paragraph>
-              You have no Agent Networks.
-            </Typography.Paragraph>
-          ) : (
-            <Table<AgentNetwork>
-              size="small"
-              pagination={false}
-              rowKey="agent_network_id"
-              dataSource={networks}
-              style={{ marginBottom: 12 }}
-              columns={[
-                { key: "title", title: "Network", dataIndex: "title" },
-                {
-                  key: "members",
-                  title: "Agents",
-                  render: (_, network) => activeNetworkMembers(network).length,
-                },
-                {
-                  key: "state",
-                  title: "State",
-                  render: (_, network) => networkState(network, allPaused),
-                },
-              ]}
-            />
-          )}
+          <Table<AgentNetwork>
+            size="small"
+            pagination={false}
+            rowKey="agent_network_id"
+            dataSource={networks}
+            style={{ marginBottom: 16 }}
+            columns={[
+              { key: "title", title: "Network", dataIndex: "title" },
+              {
+                key: "members",
+                title: "Agents",
+                render: (_, network) => activeNetworkMembers(network).length,
+              },
+              {
+                key: "status",
+                title: "Status",
+                render: (_, network) =>
+                  allPaused ? (
+                    "Paused (all messaging)"
+                  ) : (
+                    <ToggleCell
+                      text={network.state === "paused" ? "Paused" : "Active"}
+                      label={`${network.state === "paused" ? "Resume" : "Pause"} the ${network.title} network`}
+                      disabled={actions.busy != null}
+                      onClick={() => actions.togglePaused(network)}
+                    />
+                  ),
+              },
+              {
+                key: "delivery",
+                title: "Delivery",
+                render: (_, network) => (
+                  <ToggleCell
+                    text={network.delivery_mode === "live" ? "Live" : "Queued"}
+                    label={`Use ${network.delivery_mode === "live" ? "queued" : "live"} delivery in the ${network.title} network`}
+                    disabled={actions.busy != null}
+                    onClick={() => actions.toggleDelivery(network)}
+                  />
+                ),
+              },
+              {
+                key: "delete",
+                title: "",
+                align: "right",
+                render: (_, network) => (
+                  <Button
+                    size="small"
+                    danger
+                    type="text"
+                    icon={<DeleteOutlined aria-hidden />}
+                    aria-label={`Delete the ${network.title} network`}
+                    disabled={actions.busy != null}
+                    onClick={() => actions.remove(network)}
+                  />
+                ),
+              },
+            ]}
+          />
         </>
       )}
-      <Button onClick={() => openAccountSettings({ page: "ai" })}>
-        Messaging settings
-      </Button>
+      <AgentMessagingSettings />
+      <FreshAuthModal {...actions.freshAuthModalProps} />
     </Panel>
   );
 }
