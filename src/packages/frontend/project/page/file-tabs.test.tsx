@@ -124,6 +124,10 @@ jest.mock("../context", () => ({
   }),
 }));
 
+jest.mock("./id-chat-title", () => ({
+  useIdChatTitle: () => undefined,
+  useIdChatTitles: () => new Map(),
+}));
 jest.mock("./file-tab", () => ({
   FileTab: ({ label }: any) => <span>{label}</span>,
 }));

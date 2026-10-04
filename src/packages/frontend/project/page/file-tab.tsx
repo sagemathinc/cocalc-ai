@@ -680,7 +680,7 @@ function getTabAccentColor(key: string, mode: string): string {
 
 const LABEL_STYLE: CSS = {
   overflow: "hidden",
-  //textOverflow: "ellipsis",
+  textOverflow: "ellipsis",
   margin: "auto",
   whiteSpace: "nowrap",
 } as const;

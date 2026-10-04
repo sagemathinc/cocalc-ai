@@ -63,10 +63,13 @@ export function ChatFontSizeControls({
         whiteSpace: "nowrap",
       }}
     >
-      <Tooltip title={`Decrease chat font size (${fontSize}px)`}>
+      <Tooltip
+        title={`Decrease ${tooltipLabel.toLowerCase()} font size (${fontSize}px)`}
+      >
         <Button
           size="small"
           type="text"
+          aria-label={`Decrease ${tooltipLabel.toLowerCase()} font size`}
           disabled={!canDecreaseFontSize || onDecreaseFontSize == null}
           onClick={onDecreaseFontSize}
           style={{ minWidth: 24, height: 22, padding: "0 4px" }}
@@ -77,10 +80,13 @@ export function ChatFontSizeControls({
       <Tooltip title={`${tooltipLabel} font size: ${fontSize}px`}>
         <ToolbarDivider />
       </Tooltip>
-      <Tooltip title={`Increase chat font size (${fontSize}px)`}>
+      <Tooltip
+        title={`Increase ${tooltipLabel.toLowerCase()} font size (${fontSize}px)`}
+      >
         <Button
           size="small"
           type="text"
+          aria-label={`Increase ${tooltipLabel.toLowerCase()} font size`}
           disabled={!canIncreaseFontSize || onIncreaseFontSize == null}
           onClick={onIncreaseFontSize}
           style={{ minWidth: 24, height: 22, padding: "0 4px" }}

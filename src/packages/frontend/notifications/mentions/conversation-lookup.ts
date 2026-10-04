@@ -63,6 +63,25 @@ export function findConversation(
   );
 }
 
+// The account's conversation list, from the shared cache; undefined while
+// loading or when not wanted.
+export function useConversationList(
+  enabled: boolean,
+): ListedConversation[] | undefined {
+  const [list, setList] = useState<ListedConversation[]>();
+  useEffect(() => {
+    if (!enabled) return;
+    let canceled = false;
+    void listConversations().then((conversations) => {
+      if (!canceled) setList(conversations);
+    });
+    return () => {
+      canceled = true;
+    };
+  }, [enabled]);
+  return enabled ? list : undefined;
+}
+
 // The People conversation a notification's file belongs to: undefined while
 // unknown, null when the file is not a known conversation.
 export function useNotificationConversation(

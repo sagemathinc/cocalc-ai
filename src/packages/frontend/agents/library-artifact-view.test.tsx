@@ -34,17 +34,24 @@ let mockReadOnly = false;
 let mockActions: any;
 let db: any;
 let record: ArtifactRecord | undefined;
+let mockArtifactFontSize: number | undefined;
+const mockSetOtherSettings = jest.fn();
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
     getProjectActions: (id) => mockGetProject(id),
     getEditorActions: () => mockActions,
-    getActions: () => undefined,
+    getActions: (name) =>
+      name === "account"
+        ? { set_other_settings: mockSetOtherSettings }
+        : undefined,
   },
   useTypedRedux: () => undefined,
+  useAccountOtherSetting: () => mockArtifactFontSize,
 }));
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: () => null,
+  Tooltip: ({ children }) => children,
 }));
 jest.mock("@cocalc/frontend/app-framework/project-runtime", () => ({
   ensureProjectReduxRuntime: jest.fn(),
@@ -243,6 +250,14 @@ test("loads the real source without an agent, preserves focus, and delegates exp
   expect(onShowConversation).not.toHaveBeenCalled();
   expect(event).not.toHaveBeenCalled();
   await user.tab();
+  expect(
+    screen.getByRole("button", { name: "Decrease artifact font size" }),
+  ).toHaveFocus();
+  await user.tab();
+  expect(
+    screen.getByRole("button", { name: "Increase artifact font size" }),
+  ).toHaveFocus();
+  await user.tab();
   expect(screen.getByRole("button", { name: "Conversation" })).toHaveFocus();
   await user.keyboard("{Enter}");
   expect(onShowConversation).toHaveBeenCalledWith(target);
@@ -250,9 +265,7 @@ test("loads the real source without an agent, preserves focus, and delegates exp
   expect(screen.getByRole("button", { name: "Copy link" })).toHaveFocus();
   await user.tab();
   expect(screen.getByRole("document")).toHaveFocus();
-  await user.tab({ shift: true });
-  await user.tab({ shift: true });
-  await user.tab({ shift: true });
+  for (let i = 0; i < 5; i++) await user.tab({ shift: true });
   expect(back).toHaveFocus();
   await user.keyboard(" ");
   expect(onBack).toHaveBeenCalledTimes(1);
@@ -651,4 +664,20 @@ test("the source loader retains the legacy warning by default", async () => {
   expect(
     screen.getByRole("button", { name: "Show in conversation" }),
   ).toBeEnabled();
+});
+
+test("the artifact's text size is adjustable from its header and kept with the account", async () => {
+  mockArtifactFontSize = 16;
+  render(<LibraryArtifactView target={target} onBack={jest.fn()} />);
+  const document = await screen.findByRole("document", {
+    name: "Artifact document",
+  });
+  expect(document).toHaveStyle({ fontSize: "16px" });
+  const controls = screen.getByLabelText("Artifact text size");
+  const [smaller, larger] = within(controls).getAllByRole("button");
+  await userEvent.click(larger);
+  expect(mockSetOtherSettings).toHaveBeenCalledWith("artifact_font_size", 17);
+  await userEvent.click(smaller);
+  expect(mockSetOtherSettings).toHaveBeenCalledWith("artifact_font_size", 15);
+  mockArtifactFontSize = undefined;
 });

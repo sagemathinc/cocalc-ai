@@ -60,8 +60,16 @@ export function LibrarySidebar({
   const metadata = useSyncExternalStore(catalog.subscribe, catalog.get);
   const pins = useArtifactPins();
   const { names } = useArtifactNames();
-  const openProject = useTypedRedux("page", "library_project_id");
-  const openEntry = useTypedRedux("page", "library_entry_id");
+  const routeProject = useTypedRedux("page", "library_project_id");
+  const routeEntry = useTypedRedux("page", "library_entry_id");
+  // A named artifact opens by its name (/artifacts/<name>), which the route
+  // holds in place of the project id; resolve it to mark the open artifact.
+  const openAlias =
+    routeEntry == null && routeProject
+      ? names.find((alias) => alias.active && alias.name === routeProject)
+      : undefined;
+  const openProject = openAlias?.project_id ?? routeProject;
+  const openEntry = openAlias?.entry_id ?? routeEntry;
   const results = catalogResults(metadata.entries, agents, {
     query: search,
     sort: "recent",

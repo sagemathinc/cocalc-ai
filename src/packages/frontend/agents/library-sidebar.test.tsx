@@ -17,12 +17,17 @@ const hit = (id: string, title: string) => ({
 });
 const mockHits = [hit("e1", "Report"), hit("e2", "Plot"), hit("e3", "Notes")];
 
+let mockRoute: { project?: string; entry?: string } = {
+  project: "p",
+  entry: "e2",
+};
+let mockNames: any[] = [];
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: (_store: string, field: string) =>
     field === "library_project_id"
-      ? "p"
+      ? mockRoute.project
       : field === "library_entry_id"
-        ? "e2"
+        ? mockRoute.entry
         : undefined,
 }));
 jest.mock("@cocalc/frontend/components", () => ({
@@ -34,7 +39,7 @@ jest.mock("@cocalc/frontend/chat/use-artifact-pins", () => ({
   useArtifactPins: () => ({ pins: ["e3"], setPinned, move: jest.fn() }),
 }));
 jest.mock("./artifact-names", () => ({
-  useArtifactNames: () => ({ names: [] }),
+  useArtifactNames: () => ({ names: mockNames }),
 }));
 const mockState = { entries: [], loading: false };
 jest.mock("./artifact-catalog-store", () => ({
@@ -73,4 +78,28 @@ it("pinned and recent artifacts; the open one is current", async () => {
   expect(onOpen).toHaveBeenCalledWith(mockHits[0]);
   await user.click(screen.getByRole("button", { name: "Pin Report" }));
   expect(setPinned).toHaveBeenCalledWith("e1", true);
+});
+
+it("an artifact opened by its name is current too, even with the section collapsed", () => {
+  mockRoute = { project: "plan" };
+  mockNames = [{ name: "plan", project_id: "p", entry_id: "e1", active: true }];
+  render(
+    <LibrarySidebar
+      inSection
+      onlyCurrent
+      search=""
+      accountId="acct"
+      agents={[]}
+      onOpen={jest.fn()}
+      onAll={jest.fn()}
+    />,
+  );
+  expect(
+    screen.getByRole("button", { name: "Open artifact Report" }),
+  ).toHaveAttribute("aria-current", "page");
+  expect(
+    screen.queryByRole("button", { name: "Open artifact Plot" }),
+  ).toBeNull();
+  mockRoute = { project: "p", entry: "e2" };
+  mockNames = [];
 });

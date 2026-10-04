@@ -1,3 +1,7 @@
+jest.mock("@cocalc/frontend/app-framework", () => ({
+  redux: { getActions: () => undefined },
+  redux_name: () => "",
+}));
 jest.mock("@cocalc/frontend/agents/api", () => ({}));
 jest.mock(
   "@cocalc/frontend/notifications/mentions/conversation-lookup",

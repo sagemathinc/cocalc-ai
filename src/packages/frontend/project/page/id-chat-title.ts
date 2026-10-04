@@ -7,8 +7,12 @@
 // (".local/share/cocalc/agents/<uuid>.chat"). A tab should say what the file
 // is, not show the id.
 
+import { redux, redux_name } from "@cocalc/frontend/app-framework";
 import { useNamedAgents } from "@cocalc/frontend/agents/api";
-import { useNotificationConversation } from "@cocalc/frontend/notifications/mentions/conversation-lookup";
+import {
+  findConversation,
+  useConversationList,
+} from "@cocalc/frontend/notifications/mentions/conversation-lookup";
 import { normalizeConversationPath } from "@cocalc/util/people";
 
 const ID_CHAT =
@@ -43,19 +47,54 @@ export function idChatAgentTitle(
   return agent.thread_title?.trim() || `@${agent.name}`;
 }
 
-// The title for an id-named chat file, or undefined for any other file (and
-// while it is being looked up).
+// An open chat that is neither: name it by its most recently active thread.
+function openChatThreadTitle(
+  project_id: string,
+  path: string,
+): string | undefined {
+  try {
+    const actions: any = redux.getActions(redux_name(project_id, path));
+    const index = actions?.getThreadIndex?.();
+    if (!index?.size) return undefined;
+    let newest: [string, number] | undefined;
+    for (const [key, entry] of index) {
+      const time = entry?.newestTime ?? 0;
+      if (!newest || time > newest[1]) newest = [key, time];
+    }
+    if (!newest) return undefined;
+    const name = actions.getThreadMetadata?.(newest[0], {
+      threadId: newest[0],
+    })?.name;
+    return typeof name === "string" && name.trim() ? name.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Titles for the id-named chat files among `paths` (others are absent).
+export function useIdChatTitles(
+  project_id: string,
+  paths: readonly string[],
+): Map<string, string> {
+  const relevant = paths.filter(isIdNamedChat);
+  const conversations = useConversationList(relevant.length > 0);
+  const named = useNamedAgents(relevant.length > 0);
+  const titles = new Map<string, string>();
+  for (const path of relevant) {
+    const title =
+      (conversations
+        ? findConversation(conversations, project_id, path)?.title
+        : undefined) ??
+      idChatAgentTitle(named.directory?.agents ?? [], project_id, path) ??
+      openChatThreadTitle(project_id, path);
+    if (title) titles.set(path, title);
+  }
+  return titles;
+}
+
 export function useIdChatTitle(
   project_id: string,
   path?: string,
 ): string | undefined {
-  const relevant = isIdNamedChat(path);
-  const conversation = useNotificationConversation(
-    relevant ? project_id : undefined,
-    relevant ? path : undefined,
-  );
-  const named = useNamedAgents(relevant);
-  if (!relevant || !path) return undefined;
-  if (conversation) return conversation.title;
-  return idChatAgentTitle(named.directory?.agents ?? [], project_id, path);
+  return useIdChatTitles(project_id, path ? [path] : []).get(path ?? "");
 }

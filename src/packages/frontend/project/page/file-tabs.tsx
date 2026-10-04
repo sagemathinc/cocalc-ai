@@ -32,6 +32,7 @@ import { useProjectContext } from "../context";
 import { generatedWorkspaceChatLabel } from "../workspaces/chat-display";
 import { reorderVisibleSubset } from "./file-tab-order";
 import { FileTab } from "./file-tab";
+import { useIdChatTitle, useIdChatTitles } from "./id-chat-title";
 import { FILE_TAB_STRIP_ATTRIBUTE } from "./keyboard-navigation";
 
 const MIN_WIDTH = 48;
@@ -51,6 +52,8 @@ function storeFileTabsMode(mode: FileTabsMode): void {
 function Label({ path, project_id, label, onClose }) {
   const { width } = useItemContext();
   const { active } = useSortable({ id: project_id });
+  // Chats named by an id (agents, conversations) show what they are.
+  const idChatTitle = useIdChatTitle(project_id, path);
   return (
     <div
       style={{
@@ -64,11 +67,12 @@ function Label({ path, project_id, label, onClose }) {
         key={path}
         project_id={project_id}
         path={path}
-        label={label}
+        label={idChatTitle ?? label}
         noPopover={active != null}
         style={{
+          // The close button sits beside the label, never over it.
           ...(width != null
-            ? { width: Math.max(MIN_WIDTH, width + 15), marginRight: "-10px" }
+            ? { width: Math.max(MIN_WIDTH, width - 5) }
             : undefined),
         }}
         onClose={onClose}
@@ -211,9 +215,14 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
       ),
     ),
   );
+  const idChatTitles = useIdChatTitles(project_id, paths);
   const labelMap = new Map<string, string>();
   for (let index = 0; index < labelsForPaths.length; index++) {
-    labelMap.set(paths[index], `${labelsForPaths[index] ?? paths[index]}`);
+    labelMap.set(
+      paths[index],
+      idChatTitles.get(paths[index]) ??
+        `${labelsForPaths[index] ?? paths[index]}`,
+    );
   }
 
   const recentFiles = useRecentFiles(

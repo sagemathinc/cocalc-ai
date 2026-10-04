@@ -24,7 +24,12 @@ import { GitHubPRArtifact } from "@cocalc/frontend/frame-editors/chat-editor/git
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  redux,
+  useAccountOtherSetting,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
+import { ChatFontSizeControls } from "@cocalc/frontend/chat/chat-font-size-controls";
 import { Icon } from "@cocalc/frontend/components";
 import {
   PAGE_HEADER_CONTEXT_STYLE,
@@ -56,6 +61,19 @@ export function LibraryArtifactView(props: LibraryArtifactViewProps) {
 
 export default LibraryArtifactView;
 
+export const ARTIFACT_FONT_SIZE_SETTING = "artifact_font_size";
+export const ARTIFACT_FONT_MIN = 10;
+export const ARTIFACT_FONT_MAX = 28;
+const ARTIFACT_FONT_DEFAULT = 14;
+
+export function clampArtifactFontSize(value: unknown): number {
+  const size =
+    typeof value === "number" && Number.isFinite(value)
+      ? Math.round(value)
+      : ARTIFACT_FONT_DEFAULT;
+  return Math.max(ARTIFACT_FONT_MIN, Math.min(ARTIFACT_FONT_MAX, size));
+}
+
 function LibraryArtifactPage({
   target,
   artifactName,
@@ -67,6 +85,18 @@ function LibraryArtifactPage({
   const [title, setTitle] = useState<string>();
   const [filePath, setFilePath] = useState<string>();
   const [themeColor, setThemeColor] = useState<string>();
+  // Text size for reading artifacts, kept with the account (every device),
+  // separate from the whole-page zoom.
+  const fontSize = clampArtifactFontSize(
+    useAccountOtherSetting<number>(ARTIFACT_FONT_SIZE_SETTING),
+  );
+  const setFontSize = (value: number) =>
+    redux
+      .getActions("account")
+      ?.set_other_settings(
+        ARTIFACT_FONT_SIZE_SETTING,
+        clampArtifactFontSize(value),
+      );
   // The file preview's tools render here, in this one header row.
   const [toolbar, setToolbar] = useState<HTMLSpanElement | null>(null);
   const projectTitle = useTypedRedux("projects", "project_map")?.getIn([
@@ -173,6 +203,16 @@ function LibraryArtifactPage({
             </span>
           )}
         </nav>
+        <ChatFontSizeControls
+          embedded
+          fontSize={fontSize}
+          label="Artifact text size"
+          tooltipLabel="Artifact"
+          canDecreaseFontSize={fontSize > ARTIFACT_FONT_MIN}
+          canIncreaseFontSize={fontSize < ARTIFACT_FONT_MAX}
+          onDecreaseFontSize={() => setFontSize(fontSize - 1)}
+          onIncreaseFontSize={() => setFontSize(fontSize + 1)}
+        />
         <span
           ref={setToolbar}
           style={{ display: "inline-flex", alignItems: "center" }}
@@ -270,6 +310,7 @@ function LibraryArtifactPage({
             onTitle={setTitle}
             onPath={setFilePath}
             onColor={setThemeColor}
+            fontSize={fontSize}
             toolbarPortal={toolbar}
           />
         )}
@@ -285,6 +326,7 @@ function LibraryArtifactContent({
   onPath,
   onColor,
   toolbarPortal,
+  fontSize,
 }: {
   source: ArtifactSourceData;
   target: ForeignArtifactTarget;
@@ -292,6 +334,7 @@ function LibraryArtifactContent({
   onPath: (path: string | undefined) => void;
   onColor: (color: string | undefined) => void;
   toolbarPortal: HTMLElement | null;
+  fontSize: number;
 }) {
   useArtifactChanges(source.syncdb);
   const context = useFileContext();
@@ -345,6 +388,7 @@ function LibraryArtifactContent({
           historical={false}
           localComments={false}
           toolbarPortal={toolbarPortal}
+          fontSize={fontSize}
         />
       ) : artifact.kind === "commit" ? (
         <CommitArtifact
@@ -378,7 +422,12 @@ function LibraryArtifactContent({
                   : context.urlTransform?.(url, tag),
             }}
           >
-            <div role="document" aria-label="Artifact document" tabIndex={0}>
+            <div
+              role="document"
+              aria-label="Artifact document"
+              tabIndex={0}
+              style={{ fontSize }}
+            >
               <StaticMarkdown value={artifact.input} />
             </div>
           </FileContext.Provider>
