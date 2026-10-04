@@ -150,25 +150,115 @@ describe("public route metadata", () => {
       },
     );
 
-    expect(metadata.title).toBe("CoCalc");
-    expect(metadata.description).toContain(
-      "people, AI agents, and project work",
-    );
-    expect(metadata.description).toContain("persistent shared Linux projects");
+    expect(metadata.title).toBe("Build and Use Software with AI | CoCalc");
+    expect(metadata.description).toContain("build and use software with AI");
+    expect(metadata.description).toContain("shared Linux projects");
     expect(metadata.description).not.toMatch(/notebooks, code, documents/i);
+    // Search results cut descriptions at about 160 characters.
+    expect(metadata.description.length).toBeLessThanOrEqual(160);
   });
 
   it("can build canonical and image paths below a server base path", () => {
     const metadata = getPublicRouteMetadata(
       productRoute("products-cocalc-star"),
-      { site_name: "CoCalc" },
+      { dns: "cocalc.ai", site_name: "CoCalc" },
       { basePath: "/base" },
     );
 
     expect(metadata.canonicalPath).toBe("/base/products/cocalc-star");
     expect(metadata.imagePath).toBe(
-      "/base/public/landing/project-notebook-20260916.jpg",
+      "/base/public/landing/cocalc-brand-social-20260925.png",
     );
+  });
+
+  it("uses the brand card for broad previews and keeps tool page images", () => {
+    const cocalcAi = { dns: "cocalc.ai", site_name: "CoCalc" };
+    const broadRoutes: PublicRoute[] = [
+      { section: "home" },
+      { route: { slug: "ai", view: "detail" }, section: "features" },
+      {
+        route: { slug: "openai-chatgpt", view: "detail" },
+        section: "features",
+      },
+      { route: { slug: "teaching", view: "detail" }, section: "features" },
+      { route: { view: "index" }, section: "features" },
+      productRoute("products"),
+      { section: "pricing" },
+      { route: { view: "docs-index" }, section: "docs" },
+      {
+        route: { slug: "projects/project-secrets", view: "docs-detail" },
+        section: "docs",
+      },
+      { route: { view: "index" }, section: "support" },
+    ];
+    for (const route of broadRoutes) {
+      expect(getPublicRouteMetadata(route, cocalcAi).imagePath).toBe(
+        "/public/landing/cocalc-brand-social-20260925.png",
+      );
+    }
+
+    expect(
+      getPublicRouteMetadata(
+        {
+          route: { slug: "jupyter-notebook", view: "detail" },
+          section: "features",
+        },
+        cocalcAi,
+      ).imagePath,
+    ).toBe("/public/features/cocalc-jupyter2-20170508.png");
+  });
+
+  it("keeps the brand card and tagline title off other brands and hosts", () => {
+    const card = "/public/landing/cocalc-brand-social-20260925.png";
+    const screenshot = "/public/landing/project-notebook-20260916.jpg";
+    const home: PublicRoute = { section: "home" };
+    const signIn: PublicRoute = {
+      route: { kind: "auth-form", view: "sign-in" },
+      section: "auth",
+    };
+    const docs: PublicRoute = {
+      route: { view: "docs-index" },
+      section: "docs",
+    };
+    const ai: PublicRoute = {
+      route: { slug: "ai", view: "detail" },
+      section: "features",
+    };
+
+    // A custom brand on its own host: no card anywhere, and the Home title
+    // is the site name.
+    const custom = {
+      dns: "compute.example.edu",
+      logo_square: "https://compute.example.edu/logo.png",
+      site_name: "Example Research Cloud",
+    };
+    expect(getPublicRouteMetadata(home, custom).title).toBe(
+      "Example Research Cloud",
+    );
+    for (const route of [home, signIn, docs, ai]) {
+      expect(getPublicRouteMetadata(route, custom).imagePath).toBe(screenshot);
+    }
+
+    // The default CoCalc brand on another host: the card only where the
+    // canonical URL is on cocalc.ai.
+    const launchpad = {
+      cocalc_product: "launchpad",
+      dns: "launchpad.example.edu",
+      is_launchpad: true,
+      site_name: "CoCalc Launchpad",
+    };
+    expect(getPublicRouteMetadata(home, launchpad).title).toBe(
+      "Build and Use Software with AI | CoCalc",
+    );
+    for (const route of [home, signIn, docs]) {
+      expect(getPublicRouteMetadata(route, launchpad).imagePath).toBe(
+        screenshot,
+      );
+    }
+    expect(getPublicRouteMetadata(ai, launchpad).canonicalPath).toBe(
+      "https://cocalc.ai/features/ai",
+    );
+    expect(getPublicRouteMetadata(ai, launchpad).imagePath).toBe(card);
   });
 
   it("canonicalizes duplicated marketing routes to cocalc.ai on branded hosts", () => {
@@ -312,7 +402,7 @@ describe("public route metadata", () => {
     );
     expect(headMeta('meta[name="twitter:card"]')).toBe("summary_large_image");
     expect(headMeta('meta[property="og:image"]')).toBe(
-      "http://localhost/public/landing/project-notebook-20260916.jpg",
+      "http://localhost/public/landing/cocalc-brand-social-20260925.png",
     );
     expect(canonicalHref()).toBe("https://cocalc.ai/products/cocalc-star");
   });
@@ -388,6 +478,35 @@ describe("robots noindex tag management", () => {
       document.head.querySelector(
         'meta[data-cocalc-public-route-meta="robots"]',
       ),
+    ).toBeNull();
+  });
+});
+
+describe("link preview alt text", () => {
+  it("adds alt text for the brand card and removes it for other images", () => {
+    const cocalcAi = { dns: "cocalc.ai", site_name: "CoCalc" };
+    const alt = "CoCalc: build and use software with AI";
+
+    applyPublicRouteMetadata(
+      getPublicRouteMetadata({ section: "home" }, cocalcAi),
+    );
+    expect(headMeta('meta[property="og:image:alt"]')).toBe(alt);
+    expect(headMeta('meta[name="twitter:image:alt"]')).toBe(alt);
+
+    applyPublicRouteMetadata(
+      getPublicRouteMetadata(
+        {
+          route: { slug: "jupyter-notebook", view: "detail" },
+          section: "features",
+        },
+        cocalcAi,
+      ),
+    );
+    expect(
+      document.head.querySelector('meta[property="og:image:alt"]'),
+    ).toBeNull();
+    expect(
+      document.head.querySelector('meta[name="twitter:image:alt"]'),
     ).toBeNull();
   });
 });

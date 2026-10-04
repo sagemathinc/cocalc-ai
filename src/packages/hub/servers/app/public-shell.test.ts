@@ -2,6 +2,7 @@ import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
+import { PUBLIC_FEATURE_PAGES } from "@cocalc/util/public-feature-pages";
 import {
   PUBLIC_BODY_PLACEHOLDER,
   PUBLIC_STATIC_BASE_PLACEHOLDER,
@@ -201,6 +202,17 @@ describe("public shell rendering", () => {
     },
   );
 
+  it("leads the Home title and description with the tagline", async () => {
+    const { html } = await renderPublicShell(request("/"));
+
+    expect(html).toContain(
+      "<title>Build and Use Software with AI | CoCalc</title>",
+    );
+    expect(html).toContain(
+      'content="CoCalc helps people and teams build and use software with AI.',
+    );
+  });
+
   it.each([
     ["/guides", "guides", "Durable collaborative projects"],
     ["/about", "about", "Building the future of collaborative computation."],
@@ -255,18 +267,33 @@ describe("public shell rendering", () => {
     );
   });
 
+  const BRAND_CARD = "public/landing/cocalc-brand-social-20260925.png";
+
   it.each([
-    ["/", "project-notebook-20260916.jpg", "1050", "650"],
-    ["/products/cocalc-star", "project-notebook-20260916.jpg", "1050", "650"],
-    ["/features/teaching", "project-terminal-20260916.jpg", "800", "400"],
+    ["/", BRAND_CARD, "1200", "630"],
+    ["/features/ai", BRAND_CARD, "1200", "630"],
+    ["/products", BRAND_CARD, "1200", "630"],
+    ["/products/cocalc-star", BRAND_CARD, "1200", "630"],
+    ["/pricing", BRAND_CARD, "1200", "630"],
+    ["/docs", BRAND_CARD, "1200", "630"],
+    ["/features/teaching", BRAND_CARD, "1200", "630"],
+    [
+      "/features/jupyter-notebook",
+      "public/features/cocalc-jupyter2-20170508.png",
+      "1605",
+      "908",
+    ],
   ])(
-    "emits current product evidence and dimensions for %s",
+    "emits the link preview image and dimensions for %s",
     async (path, image, width, height) => {
       const { html, status } = await renderPublicShell(request(path));
 
       expect(status).toBe(200);
       expect(html).toContain(
-        `content="https://cocalc.ai/public/landing/${image}" data-cocalc-public-route-meta="og:image"`,
+        `content="https://cocalc.ai/${image}" data-cocalc-public-route-meta="og:image"`,
+      );
+      expect(html).toContain(
+        `content="https://cocalc.ai/${image}" data-cocalc-public-route-meta="twitter:image"`,
       );
       expect(html).toContain(
         `content="${width}" data-cocalc-public-route-meta="og:image:width"`,
@@ -276,6 +303,72 @@ describe("public shell rendering", () => {
       );
     },
   );
+
+  // A preview image missing from the dimensions table loses its
+  // og:image:width and og:image:height tags without any other sign.
+  it.each(PUBLIC_FEATURE_PAGES.map((page) => page.slug))(
+    "emits link preview dimensions for /features/%s",
+    async (slug) => {
+      const { html, status } = await renderPublicShell(
+        request(`/features/${slug}`),
+      );
+
+      expect(status).toBe(200);
+      expect(html).toMatch(
+        /content="\d+" data-cocalc-public-route-meta="og:image:width"/,
+      );
+      expect(html).toMatch(
+        /content="\d+" data-cocalc-public-route-meta="og:image:height"/,
+      );
+    },
+  );
+
+  it("gives the brand card alt text and other preview images none", async () => {
+    const { html } = await renderPublicShell(request("/"));
+    for (const tag of [
+      'data-cocalc-public-route-meta="og:image:alt" property="og:image:alt"',
+      'data-cocalc-public-route-meta="twitter:image:alt" name="twitter:image:alt"',
+    ]) {
+      expect(html).toContain(
+        `content="CoCalc: build and use software with AI" ${tag}`,
+      );
+    }
+
+    const tool = await renderPublicShell(request("/features/jupyter-notebook"));
+    expect(tool.html).not.toContain("image:alt");
+  });
+
+  it("keeps the brand card and tagline title off other brands and hosts", async () => {
+    const host = "compute.example.edu";
+    const screenshot = `https://${host}/public/landing/project-notebook-20260916.jpg`;
+
+    // A custom brand on its own host.
+    for (const path of ["/", "/auth/sign-in", "/docs"]) {
+      mockedCustomize.mockResolvedValueOnce({
+        logoSquareURL: `https://${host}/logo.png`,
+        policy_pages: "sagemathinc",
+        siteName: "Example Research Cloud",
+      } as any);
+      const { html } = await renderPublicShell(request(path, {}, host));
+      expect(html).toContain(
+        `content="${screenshot}" data-cocalc-public-route-meta="og:image"`,
+      );
+      expect(html).toContain(
+        'content="1050" data-cocalc-public-route-meta="og:image:width"',
+      );
+      expect(html).not.toContain("cocalc-brand-social");
+      expect(html).not.toContain("image:alt");
+      if (path === "/") {
+        expect(html).toContain("<title>Example Research Cloud</title>");
+      }
+    }
+
+    // The default CoCalc brand on another host: no card on its own pages.
+    const { html } = await renderPublicShell(request("/docs", {}, host));
+    expect(html).toContain(
+      `content="${screenshot}" data-cocalc-public-route-meta="og:image"`,
+    );
+  });
 
   it("renders docs inside the container replaced by the public React app", async () => {
     const { html, status } = await renderPublicShell(

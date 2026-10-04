@@ -114,6 +114,23 @@ export function applyPublicRouteMetadata(metadata: PublicRouteMetadata): void {
       tag: "meta",
     });
   }
+
+  // Only images that carry text have alt text; drop it for the others.
+  if (metadata.imageAlt) {
+    upsertManagedElement<HTMLMetaElement>({
+      attrs: { content: metadata.imageAlt, property: "og:image:alt" },
+      key: "og:image:alt",
+      tag: "meta",
+    });
+    upsertManagedElement<HTMLMetaElement>({
+      attrs: { content: metadata.imageAlt, name: "twitter:image:alt" },
+      key: "twitter:image:alt",
+      tag: "meta",
+    });
+  } else {
+    removeManagedElement("og:image:alt");
+    removeManagedElement("twitter:image:alt");
+  }
 }
 
 export function PublicRouteHeadMetadata({

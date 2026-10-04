@@ -72,7 +72,7 @@ describe("PublicHomeApp", () => {
       />,
     );
 
-    expect(document.title).toBe("CoCalc");
+    expect(document.title).toBe("Build and Use Software with AI | CoCalc");
     expect(
       within(screen.getByRole("banner")).getByRole("link", {
         name: "CoCalc home",
