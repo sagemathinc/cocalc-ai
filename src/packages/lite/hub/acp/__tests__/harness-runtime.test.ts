@@ -283,7 +283,8 @@ test("connector opt-out is pinned at admission and changes the retained runtime 
 });
 
 test("unconfigured or disabled hosts reject instead of choosing native Codex", () => {
-  delete process.env.COCALC_ACP_HARNESSES;
+  // On by default; "0" is the operator kill switch.
+  process.env.COCALC_ACP_HARNESSES = "0";
   expect(() => prepareHarnessRequest(request())).toThrow(/not enabled/);
   process.env.COCALC_ACP_HARNESSES = "1";
   setHarnessLauncher();

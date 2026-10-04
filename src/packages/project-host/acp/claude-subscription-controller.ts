@@ -16,6 +16,7 @@ import { podmanEnv } from "@cocalc/backend/podman/env";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { normalizeRootfsImageName } from "@cocalc/util/rootfs-images";
 import { CLAUDE_CODE_INSTALL_ROOT } from "@cocalc/util/ai/qualified-harnesses";
+import { claudeCodeToolsDir } from "./claude-code-tools";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getNodeRuntimeMounts } from "@cocalc/project-runner/run/mounts";
 import { localPath } from "@cocalc/project-runner/run/filesystem";
@@ -56,7 +57,6 @@ import {
 
 const CONTROLLER_HOME = "/home/claude";
 const CONTROLLER_WORKSPACE = "/workspace";
-const MANAGED_HARNESSES = "/opt/cocalc/harnesses";
 const logger = getLogger("project-host:acp:claude-subscription-controller");
 
 // Project startup normalizes image references before caching them. Use the
@@ -122,7 +122,8 @@ export function claudeSubscriptionContainerArgs(options: {
   owner: string;
   home: string;
   rootfs: string;
-  managedHarnesses: string;
+  /** Host path of the installed Claude Code tools (see claude-code-tools). */
+  claudeCodeDir: string;
   nodeMounts: Record<string, string>;
   toolBridgeDirectory?: string;
   sessionDirectory?: string;
@@ -142,7 +143,7 @@ export function claudeSubscriptionContainerArgs(options: {
     owner,
     home,
     rootfs,
-    managedHarnesses,
+    claudeCodeDir,
     nodeMounts,
     toolBridgeDirectory,
     sessionDirectory,
@@ -189,8 +190,8 @@ export function claudeSubscriptionContainerArgs(options: {
         ]
       : []),
     mountArg({
-      source: managedHarnesses,
-      target: MANAGED_HARNESSES,
+      source: claudeCodeDir,
+      target: CLAUDE_CODE_INSTALL_ROOT,
       readOnly: true,
     }),
     ...(toolBridgeDirectory
@@ -467,8 +468,7 @@ ${skill}
       });
     }
     const owner = await harnessOwner();
-    const managedHarnesses =
-      process.env.COCALC_MANAGED_HARNESSES ?? MANAGED_HARNESSES;
+    const claudeCodeDir = await claudeCodeToolsDir();
     if (token)
       await writeFile(envFile, `CLAUDE_CODE_OAUTH_TOKEN=${token}\n`, {
         flag: "wx",
@@ -483,7 +483,7 @@ ${skill}
           owner,
           rootfs,
           home,
-          managedHarnesses,
+          claudeCodeDir,
           nodeMounts: getNodeRuntimeMounts(),
           toolBridgeDirectory: toolBridge?.directory,
           claudeAiConnectors,

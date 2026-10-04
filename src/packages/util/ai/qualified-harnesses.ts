@@ -31,10 +31,12 @@ export type QualifiedHarnessCandidate = {
   releaseGates: readonly string[];
 };
 
-// Installation identity is separate from the upstream npm version. Bump this
-// revision whenever either pinned archive changes; never replace an active tree.
-export const CLAUDE_CODE_INSTALL_REVISION = "0.81.1-r1";
-export const CLAUDE_CODE_INSTALL_ROOT = `/opt/cocalc/harnesses/claude-code/${CLAUDE_CODE_INSTALL_REVISION}`;
+// Claude Code ships in the project tools bundle (built by
+// project/sea/install-claude-code.sh), which project containers and ACP
+// sidecars mount read-only at /opt/cocalc/bin2. Tools versions are immutable
+// directories, so an active tree is never replaced underneath a session.
+export const CLAUDE_CODE_TOOLS_DIR = "claude-code";
+export const CLAUDE_CODE_INSTALL_ROOT = `/opt/cocalc/bin2/${CLAUDE_CODE_TOOLS_DIR}`;
 
 /**
  * Pinned qualification input, not yet a user-visible catalog entry.

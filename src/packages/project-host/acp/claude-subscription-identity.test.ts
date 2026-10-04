@@ -15,6 +15,9 @@ import { sandboxExec } from "@cocalc/project-runner/run/sandbox-exec";
 import { localPath } from "@cocalc/project-runner/run/filesystem";
 import { execFile, spawn } from "node:child_process";
 
+jest.mock("./claude-code-tools", () => ({
+  claudeCodeToolsDir: async () => "/tools/v1/claude-code",
+}));
 jest.mock("node:child_process", () => ({
   execFile: jest.fn(),
   spawn: jest.fn(),

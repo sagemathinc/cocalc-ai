@@ -193,7 +193,9 @@ export function prepareHarnessRequest(request: AcpRequest): AcpRequest {
     request.harness_credential,
     runtime.profile,
   );
-  if (!launcher || process.env.COCALC_ACP_HARNESSES !== "1")
+  // On wherever a project-host launcher exists: Claude Code ships with the
+  // host's tools (like codex). COCALC_ACP_HARNESSES=0 is an operator kill switch.
+  if (!launcher || process.env.COCALC_ACP_HARNESSES === "0")
     throw Error("ACP harness execution is not enabled on this host");
   if (
     !request.chat?.path ||

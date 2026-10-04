@@ -41,6 +41,10 @@ const mockCloseEgress = jest.fn();
 jest.mock("./claude-restricted-egress", () => ({
   startClaudeRestrictedEgress: (...args) => mockStartEgress(...args),
 }));
+const mockClaudeCodeToolsDir = jest.fn();
+jest.mock("./claude-code-tools", () => ({
+  claudeCodeToolsDir: (...args) => mockClaudeCodeToolsDir(...args),
+}));
 jest.mock("./claude-subscription-controller", () => ({
   launchClaudeSubscriptionController: jest.fn(),
 }));
@@ -144,6 +148,7 @@ beforeEach(() => {
     close: mockRelayClose,
   });
   mockStartEgress.mockResolvedValue(undefined);
+  mockClaudeCodeToolsDir.mockResolvedValue("/tools/v1/claude-code");
   mockWriteFile.mockResolvedValue(undefined);
   mockRm.mockResolvedValue(undefined);
   mockLease.mockResolvedValue({
@@ -151,6 +156,28 @@ beforeEach(() => {
     identityContainerPath: "/tmp/scoped/identity",
     close: mockCloseLease,
   });
+});
+
+test("a host whose tools lack Claude Code rejects before starting anything", async () => {
+  mockClaudeCodeToolsDir.mockRejectedValue(
+    new Error("Claude Code is not installed on this project host yet."),
+  );
+  await expect(
+    launchHarnessInProject({
+      ...binding,
+      profile: {
+        version: 2,
+        kind: "acp",
+        id: "claude-code",
+        revision: "0.81.1",
+        cwd: "/home/user",
+        credentialMode: "project-managed",
+        executionPolicy: "full-access",
+      },
+      credential: { version: 1, provider: "anthropic", mode: "project-secret" },
+    }),
+  ).rejects.toThrow("not installed on this project host");
+  expect(mockSpawn).not.toHaveBeenCalled();
 });
 
 test("account credentials are exposed only through a revocable relay mount", async () => {

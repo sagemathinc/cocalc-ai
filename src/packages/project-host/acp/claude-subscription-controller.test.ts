@@ -25,7 +25,7 @@ test("controller overlays the immutable image while keeping the root read-only",
     owner: "owner",
     home: "/auth",
     rootfs: "/immutable-image",
-    managedHarnesses: "/harnesses",
+    claudeCodeDir: "/tools/v1/claude-code",
     nodeMounts: {},
     uid: 1000,
     gid: 1000,
@@ -43,7 +43,7 @@ test("a subscription token is passed by env file, never on the command line", ()
     owner: "owner",
     home: "/auth",
     rootfs: "/rootfs",
-    managedHarnesses: "/harnesses",
+    claudeCodeDir: "/tools/v1/claude-code",
     nodeMounts: {},
     uid: 1000,
     gid: 1000,
@@ -62,7 +62,7 @@ test.each([undefined, true, false])(
       owner: "owner",
       home: "/auth",
       rootfs: "/rootfs",
-      managedHarnesses: "/harnesses",
+      claudeCodeDir: "/tools/v1/claude-code",
       nodeMounts: {},
       uid: 1000,
       gid: 1000,
@@ -130,7 +130,7 @@ test("subscription controller mounts only its transcript, not project secrets or
     owner: "123:00000000-0000-4000-8000-000000000002:456",
     rootfs: "/trusted-base-rootfs",
     home: "/private-auth-home",
-    managedHarnesses: "/managed-harnesses",
+    claudeCodeDir: "/tools/v7/claude-code",
     toolBridgeDirectory: "/private-tool-bridge",
     sessionDirectory: "/project-claude-transcript",
     nodeMounts: { "/managed-node": "/opt/cocalc/bin" },
@@ -152,7 +152,9 @@ test("subscription controller mounts only its transcript, not project secrets or
   expect(args).toContain(
     "mount:/project-claude-transcript:/home/claude/projects:false",
   );
-  expect(args).toContain("mount:/managed-harnesses:/opt/cocalc/harnesses:true");
+  expect(args).toContain(
+    "mount:/tools/v7/claude-code:/opt/cocalc/bin2/claude-code:true",
+  );
   expect(args).toContain("mount:/managed-node:/opt/cocalc/bin:true");
   expect(mountArg).toHaveBeenCalledWith({
     source: "/managed-node",
@@ -170,7 +172,7 @@ test("subscription controller mounts only its transcript, not project secrets or
   expect(args.slice(-3)).toEqual([
     "/trusted-base-rootfs:O",
     "/opt/cocalc/bin/node",
-    "/opt/cocalc/harnesses/claude-code/0.81.1-r1/app/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
+    "/opt/cocalc/bin2/claude-code/app/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
   ]);
 });
 
@@ -258,7 +260,7 @@ test("restricted egress environment reaches only the controller process", () => 
     owner: "owner",
     home: "/auth",
     rootfs: "/rootfs",
-    managedHarnesses: "/harnesses",
+    claudeCodeDir: "/tools/v1/claude-code",
     nodeMounts: {},
     uid: 1000,
     gid: 1000,

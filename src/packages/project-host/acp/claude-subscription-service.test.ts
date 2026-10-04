@@ -4,10 +4,12 @@
  */
 
 const mockAccess = jest.fn();
+const mockRealpath = jest.fn();
 const mockLogin = jest.fn();
 
 jest.mock("node:fs/promises", () => ({
   access: (...args) => mockAccess(...args),
+  realpath: (...args) => mockRealpath(...args),
 }));
 jest.mock("./claude-subscription-login", () => ({
   ClaudeSubscriptionLoginService: function (options) {
@@ -22,15 +24,19 @@ jest.mock("./claude-login-cleanup", () => ({
   reapAbandonedClaudeLogins: jest.fn(),
 }));
 
-const originalRoot = process.env.COCALC_MANAGED_HARNESSES;
+const originalTools = process.env.COCALC_PROJECT_TOOLS;
 beforeEach(() => {
   jest.resetModules();
   jest.clearAllMocks();
-  process.env.COCALC_MANAGED_HARNESSES = "/test/harnesses";
+  process.env.COCALC_PROJECT_TOOLS = "/test/tools/current";
+  // The live tools alias resolves to a concrete, immutable version.
+  mockRealpath.mockImplementation(async (path: string) =>
+    path.replace("/test/tools/current", "/test/tools/v9"),
+  );
 });
 afterEach(() => {
-  if (originalRoot === undefined) delete process.env.COCALC_MANAGED_HARNESSES;
-  else process.env.COCALC_MANAGED_HARNESSES = originalRoot;
+  if (originalTools === undefined) delete process.env.COCALC_PROJECT_TOOLS;
+  else process.env.COCALC_PROJECT_TOOLS = originalTools;
 });
 
 const supported =
@@ -38,7 +44,7 @@ const supported =
 const linuxTest = supported ? test : test.skip;
 
 linuxTest(
-  "login selects the patched installation, not the upstream version path",
+  "login runs the claude CLI from the host's installed tools",
   async () => {
     mockAccess.mockResolvedValue(undefined);
     const { getClaudeSubscriptionLoginService } =
@@ -46,22 +52,21 @@ linuxTest(
     await getClaudeSubscriptionLoginService();
     expect(mockLogin).toHaveBeenCalledWith(
       expect.objectContaining({
-        cliPath: expect.stringMatching(
-          /^\/test\/harnesses\/claude-code\/0\.81\.1-r1\/app\/node_modules\/@anthropic-ai\/claude-agent-sdk-linux-(x64|arm64)(-musl)?\/claude$/,
-        ),
+        cliPath: "/test/tools/v9/claude-code/bin/claude",
       }),
     );
   },
 );
 
 linuxTest(
-  "missing patched installation does not fall back to the old harness",
+  "a host without Claude Code in its tools says so plainly",
   async () => {
-    mockAccess.mockRejectedValue(new Error("ENOENT"));
+    mockRealpath.mockRejectedValue(new Error("ENOENT"));
     const { getClaudeSubscriptionLoginService } =
       await import("./claude-subscription-service");
-    await expect(getClaudeSubscriptionLoginService()).rejects.toThrow("ENOENT");
-    expect(mockAccess).toHaveBeenCalledTimes(1);
+    await expect(getClaudeSubscriptionLoginService()).rejects.toThrow(
+      "Claude Code is not installed on this project host yet",
+    );
     expect(mockLogin).not.toHaveBeenCalled();
   },
 );
