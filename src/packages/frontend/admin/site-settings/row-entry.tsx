@@ -219,7 +219,7 @@ function VersionHint({
       {name === "version_min_project" && (
         <div>
           After a deploy with a breaking project change, use the version of this
-          page: every project started before it shows a red &quot;Restart
+          page: every project started before it shows a red &quot;Update
           required&quot; indicator.
         </div>
       )}

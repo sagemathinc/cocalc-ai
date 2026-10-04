@@ -778,7 +778,7 @@ export const site_settings_conf: SiteSettings = {
   },
   version_min_project: {
     name: "Required project version",
-    desc: "Running projects whose project code was built before this time (seconds since the epoch, like the browser versions) show a red 'Restart required' indicator. Projects are never restarted automatically; 0 means no requirement.",
+    desc: "Running projects whose project code was built before this time (seconds since the epoch, like the browser versions) show a red 'Update required' indicator. Projects are never restarted automatically; 0 means no requirement.",
     default: "0",
     valid: only_nonneg_int,
     show: () => true,

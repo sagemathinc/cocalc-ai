@@ -47,7 +47,7 @@ export function UpdatePill({
   since,
   label,
   description,
-  icon = "refresh",
+  icon = "arrow-circle-up",
   onClick,
   wrap,
 }: {
@@ -66,12 +66,12 @@ export function UpdatePill({
     ICON_ONLY_SETTING,
   );
   const urgency = updateUrgency(level, since);
-  const color =
+  const [color, tint] =
     urgency === "high"
-      ? token.colorError
+      ? [token.colorError, token.colorErrorBg]
       : urgency === "elevated"
-        ? token.colorWarning
-        : token.colorSuccess;
+        ? [token.colorWarning, token.colorWarningBg]
+        : [token.colorSuccess, token.colorSuccessBg];
   const setIconOnly = (value: boolean) =>
     redux.getActions("account")?.set_other_settings(ICON_ONLY_SETTING, value);
   const action = (
@@ -96,13 +96,14 @@ export function UpdatePill({
     <span
       role="group"
       aria-label={label}
+      // Like Chrome's: a tinted pill with its label, or just the colored icon.
       style={{
         display: "inline-flex",
         alignItems: "center",
         flex: "0 0 auto",
-        border: `1px solid ${color}`,
+        border: `1px solid ${iconOnly ? "transparent" : color}`,
         borderRadius: 999,
-        background: token.colorBgContainer,
+        background: iconOnly ? "transparent" : tint,
         lineHeight: 1,
       }}
     >
@@ -201,7 +202,7 @@ export function BrowserUpdateIndicator({
     <UpdatePill
       level={update.level}
       since={update.since}
-      label={required ? "Reload required" : "Update"}
+      label={required ? "Update required" : "Update"}
       description={
         required
           ? "This tab runs a CoCalc version that is no longer supported. Reload it now."

@@ -179,18 +179,18 @@ export function ProjectUpdateIndicator({
       <UpdatePill
         level={status.level}
         since={status.since}
-        label={required ? "Restart required" : "Restart"}
+        label={required ? "Update required" : "Update"}
         description={
           required
-            ? `This project runs ${what} that is no longer supported. Restart the project.`
-            : `Newer ${what} ${status.parts.length > 1 ? "are" : "is"} available. Restart the project to use ${status.parts.length > 1 ? "them" : "it"}.`
+            ? `This project runs ${what} that is no longer supported. Update it by restarting the project.`
+            : `Newer ${what} ${status.parts.length > 1 ? "are" : "is"} available. Update by restarting the project.`
         }
         wrap={(button) => (
           <Popconfirm
             placement="bottomRight"
-            title="Restart project?"
-            description={`Uses the newer ${what}. Running kernels, terminals and agent turns stop.`}
-            okText="Restart"
+            title="Update project?"
+            description={`Restarts the project with the newer ${what}. Running kernels, terminals and agent turns stop.`}
+            okText="Update"
             cancelText="Not now"
             onConfirm={restart}
           >
