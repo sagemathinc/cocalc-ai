@@ -4,6 +4,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
+import { PUBLIC_FEATURES_HEADLINE } from "@cocalc/util/public-features-index";
 import PublicFeaturesApp from "../app";
 import { getFeatureIndexPages } from "../catalog";
 import { featurePath, getFeaturesRouteFromPath } from "../routes";
@@ -57,9 +58,7 @@ describe("PublicFeaturesApp", () => {
     );
 
     expect(
-      screen.getByRole("heading", {
-        name: "One persistent project for people, tools, and agents.",
-      }),
+      screen.getByRole("heading", { level: 1, name: PUBLIC_FEATURES_HEADLINE }),
     ).not.toBeNull();
     expect(screen.queryByText("Durable collaborative projects")).toBeNull();
     expect(screen.getByText("Runtime")).not.toBeNull();

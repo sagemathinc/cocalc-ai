@@ -12,6 +12,14 @@ import {
   type PublicFeatureSection,
 } from "@cocalc/util/public-feature-pages";
 import {
+  getPublicFeaturesIntro,
+  getPublicFeaturesSignUp,
+  getPublicFeaturesTasks,
+  PUBLIC_FEATURES_EYEBROW,
+  PUBLIC_FEATURES_HEADLINE,
+  PUBLIC_FEATURES_SECONDARY_CTA,
+} from "@cocalc/util/public-features-index";
+import {
   getPublicTeamMember,
   PUBLIC_ABOUT_AUDIENCES,
   PUBLIC_ABOUT_HEADLINE,
@@ -442,9 +450,32 @@ function renderFeatureIndex(
 </li>`,
     )
     .join("");
+  const link = ({ href, label }: { href: string; label: string }) =>
+    `<a href="${htmlEscape(publicFeatureHref(href, basePath))}">${htmlEscape(label)}</a>`;
+  const signUp = getPublicFeaturesSignUp(config);
+  const actions = [...(signUp ? [signUp] : []), PUBLIC_FEATURES_SECONDARY_CTA]
+    .map(link)
+    .join(" ");
+  // Text between backticks is a command name, as on the React page.
+  const tasks = getPublicFeaturesTasks(config)
+    .map(
+      ({ body, href, title }) =>
+        `<li><h2>${link({ href, label: title })}</h2><p>${body
+          .split("`")
+          .map((part, index) =>
+            index % 2 ? `<code>${htmlEscape(part)}</code>` : htmlEscape(part),
+          )
+          .join("")}</p></li>`,
+    )
+    .join("");
   return `<main data-cocalc-public-prerender="feature-index" style="${ARTICLE_STYLE}">
-<h1>CoCalc features</h1>
-<p>Keep people, AI agents, and project work together with notebooks, terminals, documents, software environments, collaboration, and history in persistent Linux projects.</p>
+<header>
+  <p>${htmlEscape(PUBLIC_FEATURES_EYEBROW)}</p>
+  <h1>${htmlEscape(PUBLIC_FEATURES_HEADLINE)}</h1>
+  <p>${htmlEscape(getPublicFeaturesIntro(config))}</p>
+  <p>${actions}</p>
+</header>
+<ul>${tasks}</ul>
 <ul>${pages}</ul>
 </main>`;
 }
