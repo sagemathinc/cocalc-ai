@@ -9,6 +9,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QuickProjectCreator } from "./quick-project-creator";
@@ -28,18 +29,58 @@ jest.mock("@cocalc/frontend/components", () => ({ Icon: () => null }));
 jest.mock("@cocalc/frontend/project/runtime-capabilities", () => ({
   useProjectRuntimeCapabilities: () => ({ rootfs: true, host_placement: true }),
 }));
+const setRootfs = jest.fn();
+let mockDraft: any;
+const officialImage = (id: string, tags: string[]) => ({
+  id,
+  image: `cocalc.local/rootfs/${id}`,
+  label: `${id} image`,
+  official: true,
+  release_id: `release-${id}`,
+  tags,
+});
+let mockImages: any[] = [];
 jest.mock("./create/use-project-create-draft", () => ({
   useProjectCreateDraft: () => ({
-    draft: { title: "", rootfs_image: "img", mode: "standard", region: "wnam" },
-    summary: {
-      rootfs_image: "img",
-      rootfsLabel: "standard 1.2",
-      region: "wnam",
-      warnings: [],
-    },
+    draft: mockDraft.draft,
+    summary: mockDraft.summary,
     rootfsLoading: false,
+    rootfsImages: mockImages,
+    isAdmin: false,
+    setRootfs: (...a) => setRootfs(...a),
   }),
 }));
+function useDraft({
+  image = "img",
+  image_id,
+  label = "standard 1.2",
+  reason,
+  warnings = [],
+}: {
+  image?: string;
+  image_id?: string;
+  label?: string;
+  reason?: any;
+  warnings?: string[];
+} = {}) {
+  mockDraft = {
+    draft: {
+      title: "",
+      rootfs_image: image,
+      rootfs_image_id: image_id,
+      rootfs_reason: reason,
+      mode: "standard",
+      region: "wnam",
+    },
+    summary: {
+      rootfs_image: image,
+      rootfsLabel: label,
+      rootfsReason: reason,
+      region: "wnam",
+      warnings,
+    },
+  };
+}
 jest.mock("./create/project-create-draft", () => ({
   projectDraftToCreateOptions: (draft) => ({
     title: draft.title,
@@ -48,7 +89,76 @@ jest.mock("./create/project-create-draft", () => ({
   }),
 }));
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockImages = [];
+  useDraft();
+});
+
+it("says why the image was chosen, and offers the site's few images in one click", async () => {
+  mockImages = [
+    officialImage("python", ["onboarding:jupyter-python"]),
+    officialImage("r", ["onboarding:jupyter-r"]),
+    officialImage("sage", ["onboarding:sage"]),
+  ];
+  useDraft({
+    image: "cocalc.local/rootfs/sage",
+    image_id: "sage",
+    label: "SageMath 10",
+    reason: { kind: "recent", project_id: "p1", title: "Thesis" },
+    // The empty name is asked for in place, not as a warning.
+    warnings: ["Project title is required."],
+  });
+  const user = userEvent.setup();
+  render(
+    <QuickProjectCreator open onClose={jest.fn()} onMoreOptions={jest.fn()} />,
+  );
+  expect(
+    screen.getByText(/SageMath 10 \(as in your project "Thesis"\)/),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("Project title is required.")).toBeNull();
+  const group = screen.getByRole("group", { name: "Image" });
+  expect(
+    within(group)
+      .getAllByRole("button")
+      .map((b) => b.textContent),
+  ).toEqual(["Python", "R", "SageMath"]);
+  expect(
+    within(group).getByRole("button", { name: "SageMath" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await user.click(within(group).getByRole("button", { name: "R" }));
+  expect(setRootfs).toHaveBeenCalledWith({
+    image: "cocalc.local/rootfs/r",
+    image_id: "r",
+  });
+});
+
+it("asks for an image when nothing says which one", async () => {
+  mockImages = [
+    officialImage("python", ["onboarding:jupyter-python"]),
+    officialImage("r", ["onboarding:jupyter-r"]),
+  ];
+  useDraft({
+    image: "",
+    label: "No image selected",
+    warnings: ["Choose an image."],
+  });
+  const user = userEvent.setup();
+  render(
+    <QuickProjectCreator
+      open
+      defaultTitle="Thesis"
+      onClose={jest.fn()}
+      onMoreOptions={jest.fn()}
+    />,
+  );
+  expect(screen.getByText(/Choose an image above/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /Create and open/ }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Choose an image for the project.",
+  );
+  expect(createProject).not.toHaveBeenCalled();
+});
 
 it("names the project, shows the defaults, creates and opens it", async () => {
   const user = userEvent.setup();

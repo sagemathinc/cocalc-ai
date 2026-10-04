@@ -45,7 +45,10 @@ import {
 } from "@cocalc/frontend/rootfs/catalog-ui";
 import { RootfsCatalogPicker } from "@cocalc/frontend/rootfs/catalog-picker";
 import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
-import { isNewProjectRootfsSelectable } from "./create-project-rootfs";
+import {
+  describeProjectImageReason,
+  isNewProjectRootfsSelectable,
+} from "./create-project-rootfs";
 import {
   type ProjectCreateMode,
   projectDraftToCreateOptions,
@@ -447,6 +450,9 @@ export function NewProjectCreator({
                 </div>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                   {displayLabel}
+                  {describeProjectImageReason(draft.rootfs_reason)
+                    ? ` (${describeProjectImageReason(draft.rootfs_reason)})`
+                    : ""}
                 </Typography.Text>
               </span>
             </Space>
