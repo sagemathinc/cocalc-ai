@@ -20,6 +20,16 @@ describe("project-host exam configuration", () => {
     ).toBe("exam-00000000-1000-4000-8000-000000000001-staging.cocalc.ai");
   });
 
+  it("names the exam hostname after the host id without a host- label", () => {
+    // The project host derives the same name (project-host/conat-router.ts).
+    expect(
+      __test__.examHostnameForHost({
+        id: "00000000-1000-4000-8000-000000000123",
+        public_url: "https://compute.example.com",
+      }),
+    ).toBe("exam-00000000-1000-4000-8000-000000000123.example.com");
+  });
+
   it("uses an already cached exam RootFS without pulling it again", async () => {
     const pullRootfsImage = jest.fn();
     const loadVisibleRootfsImages = jest.fn();

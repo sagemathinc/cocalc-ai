@@ -35,6 +35,7 @@ import { PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME } from "@cocalc/conat/auth/pro
 import { createProxyHandlers } from "@cocalc/project-proxy/proxy";
 import { getOrCreateSelfSigned } from "@cocalc/lite/tls";
 import { isValidUUID } from "@cocalc/util/misc";
+import { examHostnameFromPublicHostname } from "@cocalc/util/project-host-exam-hostname";
 import { createProjectHostConatAuth } from "./conat-auth";
 import { attachProjectApiRelay } from "./api-relay";
 import type { Client } from "@cocalc/conat/core/client";
@@ -522,16 +523,17 @@ function hostnameFromUrl(value: unknown): string {
   }
 }
 
+// The exam hostname the hub assigns to this host, from the public URL and id
+// the host registers with (PROJECT_HOST_PUBLIC_URL and PROJECT_HOST_ID).
 export function examHostnameFromProjectHostPublicUrl(
   value: unknown,
+  hostId?: unknown,
 ): string | undefined {
   const publicHostname = hostnameFromUrl(value);
   if (!publicHostname) return;
-  const labels = publicHostname.split(".");
-  const first = labels[0] ?? "";
-  if (!first.startsWith("host-")) return;
-  labels[0] = `exam-${first.slice("host-".length)}`;
-  return labels.join(".");
+  const host_id = `${hostId ?? ""}`.trim().toLowerCase();
+  if (!publicHostname.startsWith("host-") && !host_id) return;
+  return examHostnameFromPublicHostname(publicHostname, host_id);
 }
 
 export function shouldRouteProjectHostIngressToApp(
@@ -552,7 +554,10 @@ export function shouldRouteProjectHostIngressToApp(
   const infrastructureHostnames = new Set([
     publicHostname,
     hostnameFromUrl(process.env.PROJECT_HOST_INTERNAL_URL),
-    examHostnameFromProjectHostPublicUrl(process.env.PROJECT_HOST_PUBLIC_URL),
+    examHostnameFromProjectHostPublicUrl(
+      process.env.PROJECT_HOST_PUBLIC_URL,
+      process.env.PROJECT_HOST_ID,
+    ),
   ]);
   const requestLabels = requestHostname.split(".");
   const publicLabels = publicHostname.split(".");
