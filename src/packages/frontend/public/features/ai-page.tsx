@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Col, Flex, Row, Typography } from "antd";
+import { Button, Col, Flex, Row, theme, Typography } from "antd";
 
 import { type IconName } from "@cocalc/frontend/components/icon";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
@@ -57,8 +57,9 @@ const AI_PAGE_CSS = `
   max-width: 10.5ch;
 }
 
+/* The orange accent is too light for text: about 2:1 on the page. */
 .feature-ai-eyebrow {
-  color: ${AI_ACCENT};
+  color: ${PUBLIC_COLORS.heading};
   font-size: ${PUBLIC_TYPE.eyebrow}px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -487,6 +488,24 @@ function ProofStrip() {
   );
 }
 
+// Card titles are h3, so no heading level is skipped after a section's h2.
+// They keep the h4 size.
+function CardTitle({ children }: { children: string }) {
+  const { token } = theme.useToken();
+  return (
+    <Title
+      level={3}
+      style={{
+        fontSize: token.fontSizeHeading4,
+        lineHeight: token.lineHeightHeading4,
+        margin: 0,
+      }}
+    >
+      {children}
+    </Title>
+  );
+}
+
 function WorkflowSection() {
   return (
     <PublicSection>
@@ -514,9 +533,7 @@ function WorkflowSection() {
                 <div className="feature-ai-step">
                   <Flex vertical gap={12}>
                     <span className="feature-ai-step-number">{index + 1}</span>
-                    <Title level={4} style={{ margin: 0 }}>
-                      {step.title}
-                    </Title>
+                    <CardTitle>{step.title}</CardTitle>
                     <Paragraph style={{ margin: 0 }}>{step.body}</Paragraph>
                   </Flex>
                 </div>
@@ -698,9 +715,7 @@ function ComputeSection({
                 <div className="feature-ai-compute-route">
                   <Flex vertical gap={12}>
                     <IconBadge accent={AI_ACCENT} icon="server" />
-                    <Title level={4} style={{ margin: 0 }}>
-                      Project hosts
-                    </Title>
+                    <CardTitle>Project hosts</CardTitle>
                     <Paragraph style={{ margin: 0 }}>
                       Choose CPU, RAM, GPU, storage, and access that fit the
                       workload and available host catalog.
@@ -712,9 +727,7 @@ function ComputeSection({
                 <div className="feature-ai-compute-route">
                   <Flex vertical gap={12}>
                     <IconBadge accent={AI_ACCENT} icon="exchange" />
-                    <Title level={4} style={{ margin: 0 }}>
-                      Remote kernels
-                    </Title>
+                    <CardTitle>Remote kernels</CardTitle>
                     <Paragraph style={{ margin: 0 }}>
                       Keep the notebook in CoCalc while code runs near existing
                       software or data on another machine.
@@ -774,9 +787,7 @@ function OperatingModelSection() {
               {models.map(({ body, title }) => (
                 <Col key={title} xs={24} md={8}>
                   <article className="feature-ai-operating-card">
-                    <Title level={4} style={{ margin: 0 }}>
-                      {title}
-                    </Title>
+                    <CardTitle>{title}</CardTitle>
                     <Paragraph style={{ margin: "8px 0 0" }}>{body}</Paragraph>
                   </article>
                 </Col>
