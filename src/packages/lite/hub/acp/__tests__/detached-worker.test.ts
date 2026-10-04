@@ -1640,7 +1640,7 @@ describe("recoverDetachedWorkerStartupState", () => {
       (row: any) => row.event === "chat" && row.generating === false,
     );
     expect(repaired?.acp_interrupted_text).toContain(
-      "recover the live Codex turn",
+      "recover the live agent turn",
     );
   });
 
@@ -1856,7 +1856,7 @@ describe("recoverDetachedWorkerStartupState", () => {
   });
 
   it.each(["partial", "empty", "unavailable"])(
-    "preserves unknown harness outcome after worker loss (%s chat)",
+    "preserves unknown harness outcome when not resumed (%s chat)",
     async (chatState) => {
       const request = {
         ...makeRequest(),
@@ -1903,8 +1903,9 @@ describe("recoverDetachedWorkerStartupState", () => {
           heartbeat_at: Date.now() - 30000,
         },
       ]);
+      // Without automatic resumption (as when retries are exhausted).
       expect(
-        await recoverOrphanedAcpTurns({} as ConatClient, { autoResume: true }),
+        await recoverOrphanedAcpTurns({} as ConatClient, { autoResume: false }),
       ).toBe(1);
       expect(
         getAcpJob({
@@ -1937,6 +1938,70 @@ describe("recoverDetachedWorkerStartupState", () => {
       }
     },
   );
+
+  it("resumes a harness turn in its session after worker loss", async () => {
+    const request = {
+      ...makeRequest(),
+      runtime: { version: 1, kind: "acp", profile: {} },
+    };
+    const job = enqueueAcpJob(request as any);
+    claimNextQueuedAcpJobForThread({
+      project_id: job.project_id,
+      path: job.path,
+      thread_id: job.thread_id,
+      worker_id: "worker-old",
+      worker_bundle_version: "bundle-old",
+    });
+    const rows: any[] = [
+      {
+        event: "chat",
+        date: request.chat.message_date,
+        sender_id: request.chat.sender_id,
+        message_id: request.chat.message_id,
+        thread_id: request.chat.thread_id,
+        generating: true,
+        history: [{ content: "partial harness output" }],
+      },
+    ];
+    (chatServer.acquireChatSyncDB as jest.Mock).mockImplementation(async () =>
+      makeSyncdb(rows),
+    );
+    (turns.listRunningAcpTurnLeases as jest.Mock).mockReturnValue([
+      {
+        project_id: request.project_id,
+        path: request.chat.path,
+        message_date: request.chat.message_date,
+        sender_id: request.chat.sender_id,
+        message_id: request.chat.message_id,
+        thread_id: request.chat.thread_id,
+        owner_instance_id: "worker-old",
+        started_at: Date.now() - 60000,
+        heartbeat_at: Date.now() - 30000,
+      },
+    ]);
+    expect(
+      await recoverOrphanedAcpTurns({} as ConatClient, { autoResume: true }),
+    ).toBe(1);
+    expect(
+      getAcpJob({
+        project_id: job.project_id,
+        path: job.path,
+        user_message_id: job.user_message_id,
+      })?.state,
+    ).toBe("interrupted");
+    const children = listAcpJobsByRecoveryParent({
+      recovery_parent_op_id: job.op_id,
+    });
+    expect(children).toHaveLength(1);
+    expect(children[0].state).toBe("queued");
+    const resumed = decodeAcpJobRequest(children[0] as any);
+    if (resumed.request_kind === "command") throw Error("expected agent turn");
+    expect(resumed.runtime).toEqual(request.runtime);
+    expect(resumed.session_id).toBe("session-1");
+    expect(resumed.prompt).toContain(
+      "inspect what already completed and avoid duplicating side effects",
+    );
+  });
 
   it("does not let an unavailable chat block later orphan recovery", async () => {
     const badRequest = {

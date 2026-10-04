@@ -517,9 +517,9 @@ const automationStores = new Map<string, Promise<DKV<AcpAutomationRecord>>>();
 
 const INTERRUPT_STATUS_TEXT = "Conversation interrupted.";
 const RESTART_INTERRUPTED_NOTICE =
-  "**Conversation interrupted because CoCalc had to recover the live Codex turn.**";
+  "**Conversation interrupted because CoCalc had to recover the live agent turn.**";
 const STALE_TURN_INTERRUPTED_NOTICE =
-  "**Conversation interrupted because CoCalc lost the live Codex turn.**";
+  "**Conversation interrupted because CoCalc lost the live agent turn.**";
 const APP_SERVER_EXITED_NOTICE =
   "**Conversation interrupted because the Codex app-server exited unexpectedly.**";
 const COMMAND_BLOCKED_NOTICE =
@@ -762,7 +762,7 @@ function buildRecoveryContinuationPrompt({
   recoveryGuidance?: string;
 }): string {
   return [
-    "The previous Codex turn in this same session did not complete.",
+    "The previous turn in this same session did not complete.",
     `Recovery attempt: ${recoveryCount}.`,
     `Interruption summary: ${`${interruptedNotice ?? ""}`.replace(/\*\*/g, "").trim()}`,
     "Resume the work from the current workspace state.",
@@ -6217,12 +6217,6 @@ export async function recoverOrphanedAcpTurns(
     const request = recoverySourceJob
       ? decodeAcpJobRequest(recoverySourceJob)
       : undefined;
-    const outcomeUnknown =
-      request?.request_kind !== "command" && request?.runtime?.kind === "acp";
-    const turnNotice = outcomeUnknown
-      ? "ACP harness completion is unknown after worker loss; inspect the workspace before explicitly continuing. This turn was not automatically resent."
-      : interruptedNotice;
-    const turnReason = outcomeUnknown ? turnNotice : recoveryReason;
     const autoResumeDecision =
       autoResume && recoverySourceJob
         ? shouldAutoResumeRecoveredTurn({
@@ -6231,6 +6225,17 @@ export async function recoverOrphanedAcpTurns(
           })
         : { ok: false as const };
     const shouldAutoResume = autoResumeDecision.ok;
+    // A harness turn (Claude) that is resumed continues in its session with
+    // a prompt to check what already completed, as for Codex. Only one that
+    // is not resumed is left with an unknown outcome for the user to decide.
+    const outcomeUnknown =
+      !shouldAutoResume &&
+      request?.request_kind !== "command" &&
+      request?.runtime?.kind === "acp";
+    const turnNotice = outcomeUnknown
+      ? "ACP harness completion is unknown after worker loss; inspect the workspace before explicitly continuing. This turn was not automatically resent."
+      : interruptedNotice;
+    const turnReason = outcomeUnknown ? turnNotice : recoveryReason;
     if (autoResume && recoverySourceJob && !shouldAutoResume) {
       logger.warn("skipping ACP recovery continuation", {
         interrupted_op_id: recoverySourceJob.op_id,
@@ -9906,9 +9911,13 @@ async function enqueueRecoveryContinuationForJob({
   const sourceJob = current ?? job;
   if (sourceJob.error === ACP_PROJECT_RESTART_FENCE_REASON) return undefined;
   const request = decodeAcpJobRequest(sourceJob);
-  if (request.request_kind === "command" || request.runtime !== undefined) {
+  if (request.request_kind === "command") {
     return undefined;
   }
+  // A harness job (Claude) takes the thread's current session and settings
+  // when it starts, so it resumes the interrupted session even when this
+  // request predates it.
+  const harness = request.runtime !== undefined;
   const session_id =
     `${request.session_id ?? sourceJob.session_id ?? ""}`.trim();
   const thread_id =
@@ -9916,7 +9925,13 @@ async function enqueueRecoveryContinuationForJob({
   const project_id =
     `${request.chat?.project_id ?? request.project_id ?? sourceJob.project_id ?? ""}`.trim();
   const path = `${request.chat?.path ?? sourceJob.path ?? ""}`.trim();
-  if (!project_id || !path || !thread_id || !session_id || !request.chat) {
+  if (
+    !project_id ||
+    !path ||
+    !thread_id ||
+    (!session_id && !harness) ||
+    !request.chat
+  ) {
     return undefined;
   }
   const supersessionGuard = {
@@ -9984,7 +9999,8 @@ async function enqueueRecoveryContinuationForJob({
       originalPrompt: request.prompt,
       recoveryGuidance,
     }),
-    session_id,
+    // Never "" for a harness: that is the explicit session-reset marker.
+    session_id: session_id || undefined,
     recovery_parent_op_id: parentOpId,
     recovery_reason: recoveryReason,
     recovery_count: recoveryCount,
@@ -10066,6 +10082,10 @@ async function enqueueFailureRecoveryContinuation({
 }): Promise<AcpJobRow | undefined> {
   const directive = failureRecoveryDirective(recoveryCode, recoveryDetail);
   if (!directive) return undefined;
+  // These directives answer Codex error codes; a harness reports none.
+  const failed = decodeAcpJobRequest(job);
+  if (failed.request_kind !== "command" && failed.runtime !== undefined)
+    return undefined;
   const decision = shouldAutoResumeRecoveredTurn({
     turn: {
       started_at: job.started_at,
