@@ -27,6 +27,9 @@ jest.mock("@cocalc/frontend/projects/host-operational", () => ({
 jest.mock("@cocalc/frontend/keyboard/boundary", () => ({
   KeyboardBoundary: ({ children }) => <div>{children}</div>,
 }));
+jest.mock("@cocalc/frontend/project/page/project-version-update", () => ({
+  ProjectUpdateIndicator: () => null,
+}));
 jest.mock("./project-details", () => ({
   __esModule: true,
   default: () => <div>Project controls</div>,

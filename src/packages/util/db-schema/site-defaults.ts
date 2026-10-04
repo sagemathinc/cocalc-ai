@@ -107,6 +107,7 @@ export type SiteSettingsKeys =
   | "versions"
   | "version_min_browser"
   | "version_recommended_browser"
+  | "version_min_project"
   | "iframe_comm_hosts"
   | "onprem_quota_heading"
   | "default_quotas"
@@ -768,6 +769,16 @@ export const site_settings_conf: SiteSettings = {
   version_recommended_browser: {
     name: "Recommended version",
     desc: "Older clients receive an upgrade warning.",
+    default: "0",
+    valid: only_nonneg_int,
+    show: () => true,
+    tags: ["Version"],
+    group: "System / Advanced",
+    subgroup: "Versions",
+  },
+  version_min_project: {
+    name: "Required project version",
+    desc: "Running projects whose project code was built before this time (seconds since the epoch, like the browser versions) show a red 'Restart required' indicator. Projects are never restarted automatically; 0 means no requirement.",
     default: "0",
     valid: only_nonneg_int,
     show: () => true,

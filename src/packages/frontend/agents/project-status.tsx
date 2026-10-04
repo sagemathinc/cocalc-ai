@@ -10,6 +10,7 @@ import { normalizeProjectStateForDisplay } from "@cocalc/frontend/projects/host-
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { agentProjectTitle } from "./project-title";
+import { ProjectUpdateIndicator } from "@cocalc/frontend/project/page/project-version-update";
 
 const ProjectDetails = lazy(() => import("./project-details"));
 const WIDTH_KEY = "cocalc-agents-project-drawer-width";
@@ -100,6 +101,7 @@ export function AgentProjectStatus({
           {label}
         </span>
       </Button>
+      {active && <ProjectUpdateIndicator project_id={projectId} />}
       <Drawer
         title={title}
         open={open && active}
