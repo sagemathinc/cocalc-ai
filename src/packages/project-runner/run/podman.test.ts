@@ -1215,7 +1215,7 @@ describe("project-runner podman orphan fallback", () => {
     });
   });
 
-  it("falls back to indexed backups when full rustic backup listing is truncated", async () => {
+  it("preserves staging and aborts startup on incomplete inventory without an index fallback", async () => {
     mockProjectStartPodman(project1);
     const getBackups = jest
       .fn()
@@ -1249,32 +1249,34 @@ describe("project-runner podman orphan fallback", () => {
       releaseRestoreStaging: jest.fn(async () => undefined),
     });
 
-    const status = await start({
-      project_id: project1,
-      localPath: async () => ({
-        home: `/tmp/project-${project1}`,
-      }),
-      config: {
-        image: "docker.io/library/ubuntu:latest",
-        restore: "auto",
-      },
-    });
-
-    expect(getBackups).toHaveBeenNthCalledWith(1, { project_id: project1 });
-    expect(getBackups).toHaveBeenNthCalledWith(2, {
-      project_id: project1,
-      indexed_only: true,
-    });
-    expect(restoreBackup).toHaveBeenCalledWith(
-      expect.objectContaining({
+    await expect(
+      start({
         project_id: project1,
-        id: "backup-1",
+        localPath: async () => ({
+          home: `/tmp/project-${project1}`,
+        }),
+        config: {
+          image: "docker.io/library/ubuntu:latest",
+          restore: "auto",
+        },
       }),
+    ).rejects.toThrow("rustic snapshots output truncated");
+
+    expect(getBackups).toHaveBeenCalledTimes(1);
+    expect(getBackups).toHaveBeenCalledWith({
+      project_id: project1,
+      for_restore: true,
+    });
+    expect(restoreBackup).not.toHaveBeenCalled();
+    expect(
+      mockFileServerClient().finalizeRestoreStaging,
+    ).not.toHaveBeenCalled();
+    expect(mockFileServerClient().releaseRestoreStaging).toHaveBeenCalledWith(
+      expect.objectContaining({ cleanupStaging: false }),
     );
-    expect(status).toMatchObject({ state: "running" });
   });
 
-  it("falls back to indexed backups when full rustic backup listing is empty", async () => {
+  it("cleans staging and continues auto startup only after a successful empty inventory", async () => {
     mockProjectStartPodman(project1);
     const getBackups = jest
       .fn()
@@ -1315,16 +1317,14 @@ describe("project-runner podman orphan fallback", () => {
       },
     });
 
-    expect(getBackups).toHaveBeenNthCalledWith(1, { project_id: project1 });
-    expect(getBackups).toHaveBeenNthCalledWith(2, {
+    expect(getBackups).toHaveBeenCalledTimes(1);
+    expect(getBackups).toHaveBeenCalledWith({
       project_id: project1,
-      indexed_only: true,
+      for_restore: true,
     });
-    expect(restoreBackup).toHaveBeenCalledWith(
-      expect.objectContaining({
-        project_id: project1,
-        id: "backup-from-index",
-      }),
+    expect(restoreBackup).not.toHaveBeenCalled();
+    expect(mockFileServerClient().releaseRestoreStaging).toHaveBeenCalledWith(
+      expect.objectContaining({ cleanupStaging: true }),
     );
     expect(status).toMatchObject({ state: "running" });
   });
@@ -1399,6 +1399,11 @@ describe("project-runner podman orphan fallback", () => {
           time: new Date("2026-08-16T00:00:00.000Z"),
           summary: {},
         },
+        {
+          id: "backup-older",
+          time: new Date("2026-08-15T00:00:00.000Z"),
+          summary: {},
+        },
       ]),
       ensureRestoreStaging: jest.fn(async () => undefined),
       restoreBackup,
@@ -1423,4 +1428,62 @@ describe("project-runner podman orphan fallback", () => {
     );
     expect(status).toMatchObject({ state: "running" });
   });
+
+  it.each(["empty", "restore-failure", "finalize-failure"])(
+    "does not start an empty runtime after required restore: %s",
+    async (scenario) => {
+      mockProjectStartPodman(project1);
+      const handle = {
+        project_id: project1,
+        home: `/tmp/project-${project1}`,
+        restore: "required",
+        homeExists: true,
+        stagingRoot: `/tmp/project-${project1}/.restore-staging`,
+        stagingPath: `/tmp/project-${project1}/.restore-staging/project-${project1}`,
+        markerPath: `/tmp/project-${project1}/.restore-staging/project-${project1}.json`,
+      };
+      const restoreBackup = jest.fn(async () => {
+        if (scenario === "restore-failure") throw Error("restore failed");
+      });
+      const finalizeRestoreStaging = jest.fn(async () => {
+        if (scenario === "finalize-failure") throw Error("finalize failed");
+      });
+      const releaseRestoreStaging = jest.fn(async () => undefined);
+      mockFileServerClient.mockReturnValue({
+        beginRestoreStaging: jest.fn(async () => handle),
+        getBackups: jest.fn(async () =>
+          scenario === "empty"
+            ? []
+            : [{ id: "backup", time: new Date(), summary: {} }],
+        ),
+        ensureRestoreStaging: jest.fn(async () => undefined),
+        restoreBackup,
+        finalizeRestoreStaging,
+        releaseRestoreStaging,
+      });
+      await expect(
+        start({
+          project_id: project1,
+          localPath: async () => ({ home: handle.home }),
+          config: {
+            image: "docker.io/library/ubuntu:latest",
+            restore: "required",
+          },
+        }),
+      ).rejects.toThrow(
+        scenario === "empty"
+          ? "no backups available"
+          : scenario === "restore-failure"
+            ? "restore failed"
+            : "finalize failed",
+      );
+      expect(releaseRestoreStaging).toHaveBeenCalledWith({
+        handle,
+        cleanupStaging: scenario === "empty",
+      });
+      if (scenario === "empty") expect(restoreBackup).not.toHaveBeenCalled();
+      if (scenario !== "finalize-failure")
+        expect(finalizeRestoreStaging).not.toHaveBeenCalled();
+    },
+  );
 });
