@@ -742,6 +742,18 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
     if (!manageCommands.isVisible("save")) {
       return;
     }
+    if (
+      props.type == "chatroom" &&
+      !has_unsaved_changes &&
+      !is_saving &&
+      rtc_status !== "loading" &&
+      rtc_status !== "reconnecting" &&
+      rtc_status !== "error"
+    ) {
+      // Chat saves itself; a permanent "Saved" says nothing. Show the
+      // button only when there is something to report.
+      return;
+    }
     return (
       <SaveButton
         key="save"

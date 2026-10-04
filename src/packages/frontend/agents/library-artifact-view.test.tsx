@@ -43,6 +43,9 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   },
   useTypedRedux: () => undefined,
 }));
+jest.mock("@cocalc/frontend/components", () => ({
+  Icon: () => null,
+}));
 jest.mock("@cocalc/frontend/app-framework/project-runtime", () => ({
   ensureProjectReduxRuntime: jest.fn(),
 }));

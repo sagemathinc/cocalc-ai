@@ -24,6 +24,8 @@ import { GitHubPRArtifact } from "@cocalc/frontend/frame-editors/chat-editor/git
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { Icon } from "@cocalc/frontend/components";
 import { normalizeArtifactName } from "./artifact-names";
 
 export interface LibraryArtifactViewProps {
@@ -57,6 +59,14 @@ function LibraryArtifactPage({
   navigation,
 }: LibraryArtifactViewProps) {
   const [title, setTitle] = useState<string>();
+  const [filePath, setFilePath] = useState<string>();
+  // The file preview's tools render here, in this one header row.
+  const [toolbar, setToolbar] = useState<HTMLSpanElement | null>(null);
+  const projectTitle = useTypedRedux("projects", "project_map")?.getIn([
+    target.projectId,
+    "title",
+  ]) as string | undefined;
+  const context = [projectTitle, filePath].filter(Boolean).join(" · ");
   const [error, setError] = useState("");
   const [opening, setOpening] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -125,12 +135,14 @@ function LibraryArtifactPage({
         tabIndex={-1}
         style={{
           display: "flex",
-          flexWrap: "wrap",
           alignItems: "center",
           gap: 8,
-          padding: 12,
+          padding: "0 8px",
+          height: 40,
+          boxSizing: "border-box",
           borderBottom: `1px solid ${UI_COLORS.border}`,
           flexShrink: 0,
+          minWidth: 0,
         }}
       >
         {navigation}
@@ -138,44 +150,77 @@ function LibraryArtifactPage({
           aria-label="Breadcrumb"
           style={{
             display: "flex",
-            flexWrap: "wrap",
             alignItems: "center",
-            gap: 8,
-            flex: "1 1 240px",
+            gap: 6,
+            flex: "1 1 0",
             minWidth: 0,
+            overflow: "hidden",
+            whiteSpace: "nowrap",
           }}
         >
-          <Button type="text" onClick={onBack} aria-label="Back to Artifacts">
+          <Button
+            type="text"
+            size="small"
+            onClick={onBack}
+            aria-label="Back to Artifacts"
+          >
             Artifacts
           </Button>
           <span aria-hidden="true">/</span>
           <h1
             aria-current="page"
+            title={title}
             style={{
-              fontSize: "1.2em",
+              fontSize: 15,
+              fontWeight: 600,
               margin: 0,
-              overflowWrap: "anywhere",
               minWidth: 0,
+              flex: "0 1 auto",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
             }}
           >
             {title ?? "Artifact"}
           </h1>
+          {context && (
+            <span
+              title={context}
+              style={{
+                fontSize: 12,
+                opacity: 0.7,
+                minWidth: 0,
+                flex: "1 1 0",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {context}
+            </span>
+          )}
         </nav>
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 8,
-            maxWidth: "100%",
-          }}
-        >
+        <span
+          ref={setToolbar}
+          style={{ display: "inline-flex", alignItems: "center" }}
+        />
+        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
           {onShowConversation && (
-            <Button disabled={opening} onClick={() => void openConversation()}>
-              Conversation
-            </Button>
+            <Button
+              type="text"
+              size="small"
+              aria-label="Conversation"
+              title="Open the conversation this artifact came from"
+              icon={<Icon name="comments" />}
+              disabled={opening}
+              onClick={() => void openConversation()}
+            />
           )}
           {onName && (
             <Button
+              type="text"
+              size="small"
+              title={
+                artifactName ? "Rename this artifact" : "Name this artifact"
+              }
               onClick={() => {
                 setNameDraft(artifactName ?? "");
                 setNameError("");
@@ -185,9 +230,27 @@ function LibraryArtifactPage({
               {artifactName ? `@${artifactName}` : "Name artifact"}
             </Button>
           )}
-          <Button onClick={() => void copyLink()}>Copy link</Button>
+          <Button
+            type="text"
+            size="small"
+            aria-label="Copy link"
+            title={copied ? "Link copied" : "Copy link"}
+            icon={<Icon name={copied ? "check" : "link"} />}
+            onClick={() => void copyLink()}
+          />
         </div>
-        <span role="status">{copied ? "Link copied" : ""}</span>
+        <span
+          role="status"
+          style={{
+            position: "absolute",
+            width: 1,
+            height: 1,
+            overflow: "hidden",
+            clip: "rect(0 0 0 0)",
+          }}
+        >
+          {copied ? "Link copied" : ""}
+        </span>
       </header>
       {error && <Alert type="error" title={error} />}
       <Modal
@@ -230,6 +293,8 @@ function LibraryArtifactPage({
             source={source}
             target={target}
             onTitle={setTitle}
+            onPath={setFilePath}
+            toolbarPortal={toolbar}
           />
         )}
       </ForeignArtifactSource>
@@ -241,10 +306,14 @@ function LibraryArtifactContent({
   source,
   target,
   onTitle,
+  onPath,
+  toolbarPortal,
 }: {
   source: ArtifactSourceData;
   target: ForeignArtifactTarget;
   onTitle: (title: string | undefined) => void;
+  onPath: (path: string | undefined) => void;
+  toolbarPortal: HTMLElement | null;
 }) {
   useArtifactChanges(source.syncdb);
   const context = useFileContext();
@@ -263,6 +332,11 @@ function LibraryArtifactContent({
     onTitle(title);
     return () => onTitle(undefined);
   }, [title, onTitle]);
+  const artifactPath = artifact?.file?.path;
+  useEffect(() => {
+    onPath(artifactPath);
+    return () => onPath(undefined);
+  }, [artifactPath, onPath]);
 
   if (!artifact)
     return (
@@ -284,6 +358,7 @@ function LibraryArtifactContent({
           artifact={artifact}
           historical={false}
           localComments={false}
+          toolbarPortal={toolbarPortal}
         />
       ) : artifact.kind === "commit" ? (
         <CommitArtifact
