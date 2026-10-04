@@ -64,7 +64,7 @@ function Label({ path, project_id, label, onClose }) {
         // does not, and the close button only shows on the active tab or
         // under the pointer (like Chrome), so names get the room.
         ...(width != null
-          ? { width: Math.max(MIN_WIDTH, width + 15) }
+          ? { width: Math.max(MIN_WIDTH, width) }
           : { width: "100%" }),
       }}
     >
@@ -624,6 +624,9 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
         <div style={{ flex: "1 1 auto", minWidth: 0 }}>
           <SortableTabs
             items={keys}
+            // Only the tab padding (6px + 4px) surrounds the label now: the
+            // close button lives inside it, shown on hover/active.
+            itemChromeWidth={10}
             onDragStart={onDragStart}
             onDragEnd={onDragEnd}
           >
