@@ -26,6 +26,12 @@ import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
+import {
+  PAGE_HEADER_CONTEXT_STYLE,
+  PAGE_HEADER_TITLE_STYLE,
+  PageHeader,
+} from "@cocalc/frontend/components/page-header";
+import { autoThemeColor } from "@cocalc/frontend/components/identity-color";
 import { normalizeArtifactName } from "./artifact-names";
 
 export interface LibraryArtifactViewProps {
@@ -60,6 +66,7 @@ function LibraryArtifactPage({
 }: LibraryArtifactViewProps) {
   const [title, setTitle] = useState<string>();
   const [filePath, setFilePath] = useState<string>();
+  const [themeColor, setThemeColor] = useState<string>();
   // The file preview's tools render here, in this one header row.
   const [toolbar, setToolbar] = useState<HTMLSpanElement | null>(null);
   const projectTitle = useTypedRedux("projects", "project_map")?.getIn([
@@ -128,22 +135,12 @@ function LibraryArtifactPage({
         background: UI_COLORS.surface,
       }}
     >
-      <header
+      <PageHeader
         ref={header}
         role="group"
         aria-label="Library artifact navigation"
         tabIndex={-1}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "0 8px",
-          height: 40,
-          boxSizing: "border-box",
-          borderBottom: `1px solid ${UI_COLORS.border}`,
-          flexShrink: 0,
-          minWidth: 0,
-        }}
+        identityColor={themeColor ?? autoThemeColor(target.artifactId)}
       >
         {navigation}
         <nav
@@ -167,33 +164,11 @@ function LibraryArtifactPage({
             Artifacts
           </Button>
           <span aria-hidden="true">/</span>
-          <h1
-            aria-current="page"
-            title={title}
-            style={{
-              fontSize: 15,
-              fontWeight: 600,
-              margin: 0,
-              minWidth: 0,
-              flex: "0 1 auto",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            }}
-          >
+          <h1 aria-current="page" title={title} style={PAGE_HEADER_TITLE_STYLE}>
             {title ?? "Artifact"}
           </h1>
           {context && (
-            <span
-              title={context}
-              style={{
-                fontSize: 12,
-                opacity: 0.7,
-                minWidth: 0,
-                flex: "1 1 0",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-              }}
-            >
+            <span title={context} style={PAGE_HEADER_CONTEXT_STYLE}>
               {context}
             </span>
           )}
@@ -251,7 +226,7 @@ function LibraryArtifactPage({
         >
           {copied ? "Link copied" : ""}
         </span>
-      </header>
+      </PageHeader>
       {error && <Alert type="error" title={error} />}
       <Modal
         open={nameOpen}
@@ -294,6 +269,7 @@ function LibraryArtifactPage({
             target={target}
             onTitle={setTitle}
             onPath={setFilePath}
+            onColor={setThemeColor}
             toolbarPortal={toolbar}
           />
         )}
@@ -307,12 +283,14 @@ function LibraryArtifactContent({
   target,
   onTitle,
   onPath,
+  onColor,
   toolbarPortal,
 }: {
   source: ArtifactSourceData;
   target: ForeignArtifactTarget;
   onTitle: (title: string | undefined) => void;
   onPath: (path: string | undefined) => void;
+  onColor: (color: string | undefined) => void;
   toolbarPortal: HTMLElement | null;
 }) {
   useArtifactChanges(source.syncdb);
@@ -332,6 +310,14 @@ function LibraryArtifactContent({
     onTitle(title);
     return () => onTitle(undefined);
   }, [title, onTitle]);
+  const color =
+    artifact?.theme?.color?.trim() ||
+    artifact?.theme?.accent_color?.trim() ||
+    undefined;
+  useEffect(() => {
+    onColor(color);
+    return () => onColor(undefined);
+  }, [color, onColor]);
   const artifactPath = artifact?.file?.path;
   useEffect(() => {
     onPath(artifactPath);

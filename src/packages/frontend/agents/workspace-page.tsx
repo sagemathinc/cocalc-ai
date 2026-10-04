@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { PageHeader } from "@cocalc/frontend/components/page-header";
 import { setBrowserTabAccent } from "@cocalc/frontend/browser-tab-accent";
 import { explainHiddenSidebarOnce } from "./sidebar-hidden-hint";
 import {
@@ -2591,6 +2592,9 @@ function AgentWorkspace({
     value: AgentHeaderAppearance;
   }>();
   const [appearanceOpen, setAppearanceOpen] = useState(false);
+  // Clicking the title renames it in place; the badge opens the full
+  // appearance editor.
+  const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const [appearanceThreadId, setAppearanceThreadId] = useState<string>();
   const [appearanceDraft, setAppearanceDraft] =
     useState<ThemeEditorDraft | null>(null);
@@ -2769,6 +2773,19 @@ function AgentWorkspace({
     setAppearanceThreadId(selectedThread);
     setAppearanceOpen(true);
   };
+  const startTitleEdit = () => {
+    if (!selectedThread || !chatActions) return;
+    setTitleDraft(title);
+  };
+  const saveTitle = () => {
+    if (titleDraft == null) return;
+    const next = titleDraft.trim();
+    setTitleDraft(null);
+    if (!selectedThread || !next || next === title) return;
+    if (!chatActions?.renameThread?.(selectedThread, next)) {
+      antdMessage.error("Unable to rename thread.");
+    }
+  };
   const saveAppearance = () => {
     if (!appearanceThreadId || !appearanceDraft) return;
     const saved = chatActions?.setThreadAppearance?.(appearanceThreadId, {
@@ -2838,20 +2855,10 @@ function AgentWorkspace({
         visibility: active ? "visible" : "hidden",
       }}
     >
-      <header
-        style={{
-          alignItems: "center",
-          background: backgroundColor,
-          borderBottom: `1px solid ${UI_COLORS.border}`,
-          boxShadow: `inset 0 3px 0 ${identityColor}`,
-          color: headerTextColor,
-          display: "flex",
-          gap: 8,
-          padding: "0 8px",
-          height: 40,
-          flexShrink: 0,
-          boxSizing: "border-box",
-        }}
+      <PageHeader
+        identityColor={identityColor}
+        background={backgroundColor}
+        color={headerTextColor}
       >
         {onShowList && (
           <Button
@@ -2896,33 +2903,53 @@ function AgentWorkspace({
             gap: 10,
           }}
         >
-          <Button
-            type="text"
-            aria-label={`Edit thread title: ${title}`}
-            title={title}
-            onClick={openAppearanceEditor}
-            style={{
-              color: "inherit",
-              fontSize: 15,
-              fontWeight: 600,
-              height: "auto",
-              padding: 0,
-              justifyContent: "flex-start",
-              minWidth: 0,
-              maxWidth: "60%",
-              flex: "0 1 auto",
-            }}
-          >
-            <span
+          {titleDraft != null ? (
+            <Input
+              autoFocus
+              size="small"
+              aria-label="Thread title"
+              value={titleDraft}
+              maxLength={200}
+              onChange={(event) => setTitleDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.stopPropagation();
+                  setTitleDraft(null);
+                }
+              }}
+              onPressEnter={saveTitle}
+              onBlur={saveTitle}
+              style={{ fontSize: 15, fontWeight: 600, maxWidth: "60%" }}
+            />
+          ) : (
+            <Button
+              type="text"
+              aria-label={`Rename thread: ${title}`}
+              title={title}
+              onClick={startTitleEdit}
               style={{
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
+                color: "inherit",
+                fontSize: 15,
+                fontWeight: 600,
+                height: "auto",
+                padding: 0,
+                justifyContent: "flex-start",
+                minWidth: 0,
+                maxWidth: "60%",
+                flex: "0 1 auto",
               }}
             >
-              {title}
-            </span>
-          </Button>
+              <span
+                style={{
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {title}
+              </span>
+            </Button>
+          )}
           <div
             style={{
               display: "flex",
@@ -3086,7 +3113,7 @@ function AgentWorkspace({
             }
           />
         )}
-      </header>
+      </PageHeader>
       <Modal
         title="Working directory"
         open={directoryOpen}
