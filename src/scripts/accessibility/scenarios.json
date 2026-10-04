@@ -82,6 +82,69 @@
       ]
     },
     {
+      "id": "features-research-compute-details-expanded",
+      "title": "Research Compute technical details expanded",
+      "path": "/features/research-compute",
+      "authentication": "none",
+      "engine": "axe",
+      "minimumScore": 1,
+      "readySelector": "main",
+      "settleMs": 1000,
+      "actions": [
+        {
+          "type": "remember",
+          "key": "trigger",
+          "selector": "summary:has-text('Technical details')"
+        },
+        {
+          "type": "focus",
+          "selector": "summary:has-text('Technical details')"
+        },
+        {
+          "type": "press",
+          "key": "Enter"
+        },
+        {
+          "type": "wait",
+          "selector": "details.feature-compute-details[open]"
+        },
+        {
+          "type": "assertFocus",
+          "key": "trigger"
+        },
+        {
+          "type": "press",
+          "key": "Tab"
+        },
+        {
+          "type": "assertFocusWithin",
+          "selector": "details.feature-compute-details ~ div a[href*='auth/sign-up']"
+        },
+        {
+          "type": "press",
+          "key": "Shift+Tab"
+        },
+        {
+          "type": "assertFocus",
+          "key": "trigger"
+        }
+      ],
+      "cleanupActions": [
+        {
+          "type": "press",
+          "key": "Space"
+        },
+        {
+          "type": "assertHidden",
+          "selector": "details.feature-compute-details[open]"
+        },
+        {
+          "type": "assertFocus",
+          "key": "trigger"
+        }
+      ]
+    },
+    {
       "id": "pricing-details-expanded",
       "title": "Pricing exact limits expanded",
       "path": "/pricing",

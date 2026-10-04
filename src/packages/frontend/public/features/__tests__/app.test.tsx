@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
 import PublicFeaturesApp from "../app";
@@ -906,6 +907,40 @@ describe("PublicFeaturesApp", () => {
   });
 });
 
+// Managed VMs stay off the compute page, as an option or as a detail, until
+// they are generally available.
+const MANAGED_VM_TERMS = /\bVMs?\b|virtual machines?|\bWindows\b/i;
+
+// cocalc.ai is Launchpad on the canonical host; /customize reports the
+// request host as `dns`.
+const COCALC_AI = { cocalc_product: "launchpad", dns: "cocalc.ai" };
+
+// jsdom toggles a details element when its summary is clicked, but it does
+// not click a focused summary on Enter or Space as browsers do. This presses
+// the key on the focused element and then clicks that element, as a browser
+// would, after checking that the page did not cancel the key.
+async function pressOnFocusedSummary(
+  user: ReturnType<typeof userEvent.setup>,
+  key: "{Enter}" | "[Space]",
+) {
+  const focused = document.activeElement as HTMLElement;
+  expect(focused.tagName).toBe("SUMMARY");
+  let cancelled = false;
+  const watch = (event: Event) => {
+    if (event.defaultPrevented) cancelled = true;
+  };
+  window.addEventListener("keydown", watch);
+  window.addEventListener("keyup", watch);
+  try {
+    await user.keyboard(key);
+  } finally {
+    window.removeEventListener("keydown", watch);
+    window.removeEventListener("keyup", watch);
+  }
+  expect(cancelled).toBe(false);
+  focused.click();
+}
+
 describe("research compute product visibility", () => {
   it.each(["plus", undefined, "unknown"])(
     "omits only compute from the index and subnav for product %s",
@@ -977,25 +1012,19 @@ describe("research compute product visibility", () => {
         screen.getByRole("heading", { name: "Research Compute", level: 1 }),
       ).not.toBeNull();
       expect(
-        screen.getByRole("link", { name: "Understand project hosts" }),
+        screen.getByRole("link", { name: "Use project hosts" }),
       ).toHaveAttribute("href", "/docs/hosts/project-hosts");
       expect(
         screen.getByRole("heading", {
-          name: "Put the right compute behind the research.",
+          name: "Compute for demanding analysis and simulation.",
           level: 2,
         }),
       ).not.toBeNull();
-      expect(
-        screen.getByRole("link", { name: "Choose a compute path" }),
-      ).toHaveAttribute("href", "/docs/hosts/choose-compute");
-      expect(
-        screen.getByText(
-          /Selecting a machine does not reserve provider capacity/,
-        ),
-      ).not.toBeNull();
-      expect(
-        screen.getByRole("link", { name: "Compare operating models" }),
-      ).toHaveAttribute("href", "/products");
+      for (const link of screen.getAllByRole("link", {
+        name: "Choose compute for research",
+      })) {
+        expect(link).toHaveAttribute("href", "/docs/hosts/choose-compute");
+      }
       rerender(
         <PublicFeaturesApp
           config={{ cocalc_product: "plus" }}
@@ -1004,7 +1033,241 @@ describe("research compute product visibility", () => {
       );
       expect(screen.getByText("Feature page not found")).not.toBeNull();
       expect(
-        screen.queryByRole("link", { name: "Understand project hosts" }),
+        screen.queryByRole("link", { name: "Use project hosts" }),
+      ).toBeNull();
+    },
+  );
+
+  it("renders the compute page from its feature record, like the crawler fallback", () => {
+    const page = getPublicFeaturePage("research-compute", COCALC_AI)!;
+    const { container } = render(
+      <PublicFeaturesApp
+        config={{
+          ...COCALC_AI,
+          help_email: "help@example.com",
+          site_name: "CoCalc",
+        }}
+        initialRoute={{ view: "detail", slug: page.slug }}
+      />,
+    );
+
+    // One H1, the record's title; the hero line is the record's tagline.
+    expect(
+      Array.from(container.querySelectorAll("h1")).map((h) => h.textContent),
+    ).toEqual([page.title]);
+    expect(
+      screen.getByRole("heading", { level: 2, name: page.tagline }),
+    ).not.toBeNull();
+    expect(screen.getByText(page.summary)).not.toBeNull();
+
+    // In order: the options with the cost line, and the sizing section with
+    // its collapsed technical details.
+    expect(page.sections).toHaveLength(2);
+    const [options, sizing] = page.sections!;
+    for (const { paragraphs, title } of page.sections!) {
+      expect(
+        screen.getByRole("heading", { level: 2, name: title }),
+      ).not.toBeNull();
+      expect(paragraphs).toHaveLength(1);
+      expect(screen.getByText(paragraphs![0])).not.toBeNull();
+    }
+    expect(options.cards).toHaveLength(2);
+    for (const { body, link, title } of options.cards!) {
+      expect(
+        screen.getByRole("heading", { level: 3, name: title }),
+      ).not.toBeNull();
+      expect(screen.getByText(body)).not.toBeNull();
+      if (link) {
+        expect(
+          screen.getByRole("link", { name: link.label }).getAttribute("href"),
+        ).toBe(link.href);
+      }
+    }
+    expect(sizing.detailsLabel).toBe("Technical details");
+    const disclosure = screen.getByText(sizing.detailsLabel!)
+      .parentElement as HTMLDetailsElement;
+    expect(disclosure.tagName).toBe("DETAILS");
+    expect(disclosure.open).toBe(false);
+    expect(
+      within(disclosure)
+        .getAllByRole("listitem", { hidden: true })
+        .map((li) => li.textContent),
+    ).toEqual(sizing.bullets);
+    expect(sizing.links).toHaveLength(1);
+    for (const { href, label } of sizing.links!) {
+      const links = screen.getAllByRole("link", { name: label });
+      // The hero's documentation button and the link at the end.
+      expect(links).toHaveLength(2);
+      for (const link of links) {
+        expect(link.getAttribute("href")).toBe(href);
+      }
+    }
+    expect(page.docsUrl).toBe(sizing.links![0].href);
+
+    expect(page.signUpLabel).toBe("Start on CoCalc.ai");
+    const ctas = screen.getAllByRole("link", { name: page.signUpLabel });
+    expect(ctas).toHaveLength(2);
+    for (const cta of ctas) {
+      expect(cta.getAttribute("href")).toBe("/auth/sign-up?intent=code");
+    }
+    expect(
+      screen.getByRole("link", { name: "Contact CoCalc" }).getAttribute("href"),
+    ).toBe("mailto:help@example.com");
+
+    // The hero is text only, so no claim rests on an image.
+    expect(container.querySelector("figure")).toBeNull();
+    // No managed VM option, detail or guide link.
+    expect(container.textContent).not.toMatch(MANAGED_VM_TERMS);
+    expect(
+      container.querySelector('a[href*="projects/virtual-machines"]'),
+    ).toBeNull();
+  });
+
+  // Other sites, such as a customer-operated Launchpad or Rocket site, show
+  // the same page without CoCalc.ai's cost line and with the default sign-up
+  // label, as their crawler fallback does.
+  it.each([
+    ["launchpad", "launchpad.example.edu"],
+    ["rocket", "compute.example.edu"],
+  ])(
+    "leaves CoCalc.ai's sign-up and billing off the compute page for %s on %s",
+    (cocalc_product, dns) => {
+      const renderMain = (config: { cocalc_product: string; dns: string }) => {
+        const { unmount } = render(
+          <PublicFeaturesApp
+            config={config}
+            initialRoute={{ view: "detail", slug: "research-compute" }}
+          />,
+        );
+        const text = screen.getByRole("main").textContent!;
+        unmount();
+        return text;
+      };
+      const cocalcAi = getPublicFeaturePage("research-compute", COCALC_AI)!;
+      const costLine = cocalcAi.sections![0].paragraphs![0];
+      const onCocalcAi = renderMain(COCALC_AI);
+      expect(onCocalcAi).toContain(costLine);
+      // The hero button and the button at the end.
+      expect(onCocalcAi.split("Start on CoCalc.ai")).toHaveLength(3);
+
+      const page = getPublicFeaturePage("research-compute", {
+        cocalc_product,
+        dns,
+      })!;
+      expect(page.signUpLabel).toBeUndefined();
+      expect(page.sections![0].paragraphs).toEqual([]);
+      const elsewhere = renderMain({ cocalc_product, dns });
+      expect(elsewhere).toBe(
+        onCocalcAi
+          .replace(costLine, "")
+          .replaceAll("Start on CoCalc.ai", "Start using CoCalc"),
+      );
+      expect(elsewhere).not.toContain("CoCalc.ai");
+      expect(elsewhere).not.toContain("membership");
+    },
+  );
+
+  it("opens and closes the technical details from the keyboard", async () => {
+    const page = getPublicFeaturePage("research-compute", COCALC_AI)!;
+    const [options, sizing] = page.sections!;
+    render(
+      <PublicFeaturesApp
+        config={COCALC_AI}
+        initialRoute={{ view: "detail", slug: page.slug }}
+      />,
+    );
+    const user = userEvent.setup();
+
+    // A native disclosure. Testing Library has no role for <summary>, so the
+    // control is found by its label, which is its accessible name.
+    const summary = screen.getByText("Technical details");
+    expect(summary.tagName).toBe("SUMMARY");
+    const details = summary.parentElement as HTMLDetailsElement;
+    expect(details.tagName).toBe("DETAILS");
+    expect(details.firstElementChild).toBe(summary);
+    const items = within(details).getAllByRole("listitem", { hidden: true });
+    expect(items.map((item) => item.textContent)).toEqual(sizing.bullets);
+    const expectDisclosure = (open: boolean) => {
+      expect(details.open).toBe(open);
+      for (const item of items) {
+        if (open) {
+          expect(item).toBeVisible();
+        } else {
+          expect(item).not.toBeVisible();
+        }
+      }
+      expect(summary).toBeVisible();
+      expect(summary).toHaveFocus();
+    };
+
+    // Closed at first. Tab moves from the last option's link to the summary.
+    expect(details.open).toBe(false);
+    screen.getByRole("link", { name: options.cards![1].link!.label }).focus();
+    await user.tab();
+    expectDisclosure(false);
+
+    await pressOnFocusedSummary(user, "{Enter}");
+    expectDisclosure(true);
+    await pressOnFocusedSummary(user, "{Enter}");
+    expectDisclosure(false);
+    await pressOnFocusedSummary(user, "[Space]");
+    expectDisclosure(true);
+    await pressOnFocusedSummary(user, "[Space]");
+    expectDisclosure(false);
+
+    // Tab then leaves the summary for the button row after the list.
+    await user.tab();
+    expect(summary).not.toHaveFocus();
+    expect(
+      screen.getAllByRole("link", { name: "Start on CoCalc.ai" }),
+    ).toContain(document.activeElement);
+  });
+
+  // Signed out, the page has two sign-up links: with the record's label on
+  // cocalc.ai and the default label on other sites. Signed in, it has none.
+  it.each([
+    ["cocalc.ai", COCALC_AI, "Start on CoCalc.ai"],
+    [
+      "another Launchpad site",
+      { cocalc_product: "launchpad", dns: "launchpad.example.edu" },
+      "Start using CoCalc",
+    ],
+  ])(
+    "opens project hosts for signed-in visitors on %s",
+    (_site, site, signUpLabel) => {
+      const signUpLinks = (main: HTMLElement) =>
+        Array.from(main.querySelectorAll('a[href*="auth/sign-up"]'));
+      const signedOut = render(
+        <PublicFeaturesApp
+          config={site}
+          initialRoute={{ view: "detail", slug: "research-compute" }}
+        />,
+      );
+      const before = signUpLinks(screen.getByRole("main"));
+      expect(before.map((link) => link.textContent)).toEqual([
+        signUpLabel,
+        signUpLabel,
+      ]);
+      signedOut.unmount();
+
+      const { container } = render(
+        <PublicFeaturesApp
+          config={{ ...site, is_authenticated: true }}
+          initialRoute={{ view: "detail", slug: "research-compute" }}
+        />,
+      );
+      expect(container.textContent).not.toMatch(MANAGED_VM_TERMS);
+      const main = screen.getByRole("main");
+      const ctas = within(main).getAllByRole("link", {
+        name: "Open project hosts",
+      });
+      expect(ctas).toHaveLength(2);
+      for (const cta of ctas) {
+        expect(cta.getAttribute("href")).toBe("/hosts");
+      }
+      expect(signUpLinks(main)).toEqual([]);
+      expect(
+        within(main).queryByRole("link", { name: signUpLabel }),
       ).toBeNull();
     },
   );

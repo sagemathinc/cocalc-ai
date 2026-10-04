@@ -330,31 +330,59 @@ function renderSection(
   const paragraphs = (section.paragraphs ?? [])
     .map((paragraph) => `<p>${htmlEscape(paragraph)}</p>`)
     .join("");
-  const bullets =
+  const cards = (section.cards ?? [])
+    .map(
+      ({ body, link, title }) =>
+        `<h3>${htmlEscape(title)}</h3><p>${htmlEscape(body)}</p>${
+          link && featureLinkVisible(link.href, config)
+            ? `<p>${featureLink(link, basePath)}</p>`
+            : ""
+        }`,
+    )
+    .join("");
+  const bulletList =
     section.bullets?.length != null && section.bullets.length > 0
       ? `<ul>${section.bullets
           .map((bullet) => `<li>${htmlEscape(bullet)}</li>`)
           .join("")}</ul>`
       : "";
+  // Collapsed on the page too, so crawlers and visitors get the same text.
+  const bullets =
+    bulletList && section.detailsLabel
+      ? `<details><summary>${htmlEscape(
+          section.detailsLabel,
+        )}</summary>${bulletList}</details>`
+      : bulletList;
   const links =
     section.links?.length != null && section.links.length > 0
       ? `<ul>${section.links
-          .filter(
-            ({ href }) =>
-              !href.startsWith("/docs/") ||
-              getDocsEntry(href.slice("/docs/".length), {
-                product: config.cocalc_product === "plus" ? "plus" : undefined,
-              }) != null,
-          )
-          .map(
-            ({ href, label }) =>
-              `<li><a href="${htmlEscape(publicFeatureHref(href, basePath))}">${htmlEscape(label)}</a></li>`,
-          )
+          .filter(({ href }) => featureLinkVisible(href, config))
+          .map((link) => `<li>${featureLink(link, basePath)}</li>`)
           .join("")}</ul>`
       : "";
   return `<section><h2>${htmlEscape(
     section.title,
-  )}</h2>${paragraphs}${bullets}${links}</section>`;
+  )}</h2>${paragraphs}${cards}${bullets}${links}</section>`;
+}
+
+// Documentation links are shown only where the documentation exists.
+function featureLinkVisible(
+  href: string,
+  config: PublicRouteMetadataConfig,
+): boolean {
+  return (
+    !href.startsWith("/docs/") ||
+    getDocsEntry(href.slice("/docs/".length), {
+      product: config.cocalc_product === "plus" ? "plus" : undefined,
+    }) != null
+  );
+}
+
+function featureLink(
+  { href, label }: { href: string; label: string },
+  basePath: string,
+): string {
+  return `<a href="${htmlEscape(publicFeatureHref(href, basePath))}">${htmlEscape(label)}</a>`;
 }
 
 function renderFeatureNavigation(
