@@ -612,7 +612,11 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       def(SECTIONS, 'label: "People",'),
       def(SECTIONS, 'id: "people",'),
     ],
-    usedIn: [conventions("the People section of project settings")],
+    usedIn: [
+      conventions("the People section of project settings"),
+      { file: doc("collaboration"), text: "**Settings -> People**" },
+      { file: doc("research"), text: "project's **People** settings" },
+    ],
   },
   {
     id: "quick-navigation",
@@ -1187,6 +1191,53 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     ],
     usedIn: [bold("jupyter", "Target language")],
   },
+  {
+    id: "jupyter.run.output-limit",
+    label: "Output limit",
+    anchors: [
+      msg(COMMON, "menu.generic.run.label", 'defaultMessage: "Run"'),
+      ren(JUPYTER_EDITOR, "label: menu.run,"),
+      def(JUPYTER_EDITOR, 'label: "Output limit",'),
+    ],
+    usedIn: [{ file: doc("jupyter"), text: "**Run → Output limit**" }],
+  },
+  {
+    id: "jupyter.run.output-limit.choices",
+    label: "{mib} MiB",
+    anchors: [
+      def("jupyter/execute/output-budget.ts", "[1, 4, 16, 64]"),
+      ren("frontend/jupyter/output-limit-menu.ts", "${mib} MiB"),
+      ren("frontend/jupyter/output-limit-menu.ts", '" (default)"'),
+      ren("frontend/jupyter/output-limit-menu.ts", '" (selected)"'),
+    ],
+    usedIn: [
+      {
+        file: doc("jupyter"),
+        text: "**1 MiB (default)**, **4 MiB**, **16 MiB**, or **64 MiB**",
+      },
+    ],
+  },
+
+  // Recovery status lines at the top of the Find Snapshots and Backups tabs
+  ...(
+    [
+      ["snapshots", "Local snapshots", "snapshot"],
+      ["backups", "Off-host backups", "backup"],
+    ] as const
+  ).map(
+    ([key, label, kind]): UiVocabularyEntry => ({
+      id: `recovery.status.${key}`,
+      label,
+      anchors: [
+        def("frontend/project/recovery-status.tsx", `"${label}"`),
+        ren(
+          `frontend/project/find/find-tab-${key}.tsx`,
+          `<ProjectRecoveryStatus project_id={project_id} kind="${kind}" />`,
+        ),
+      ],
+      usedIn: [bold("files", label)],
+    }),
+  ),
 
   // Virtual machines
   ...(
@@ -1300,6 +1351,50 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     ],
     usedIn: [bold("research", "Viewer file access")],
   },
+  // The People page in the sidebar is not the project's People settings
+  // (settings.people); the support conventions tell the two apart.
+  {
+    id: "nav.people",
+    label: "People",
+    anchors: [
+      // The sidebar section's header button, as shown, and its label prop,
+      // which names the section and its Expand or Collapse toggle.
+      def(WORKSPACE_PAGE, "> People </Button>"),
+      def(WORKSPACE_PAGE, 'label="People"'),
+      def(
+        "frontend/app/compact-agents-top-nav.tsx",
+        '{ key: "people", icon: <Icon name="users" />, label: "People" }',
+      ),
+      def("frontend/people/page.tsx", ">People</h1>"),
+    ],
+    usedIn: [conventions("The People page in the sidebar is a different page")],
+  },
+  ...(
+    [
+      ["conversations", "Conversations"],
+      ["collaborators", "Collaborators"],
+      ["invites", "Invites"],
+    ] as const
+  ).map(
+    ([key, label]): UiVocabularyEntry => ({
+      id: `people.tabs.${key}`,
+      label,
+      anchors: [
+        def("frontend/people/page.tsx", `key: "${key}", label: "${label}",`),
+      ],
+      usedIn: [
+        conventions("with the tabs Conversations, Collaborators and Invites"),
+      ],
+    }),
+  ),
+  {
+    id: "people.invite",
+    label: "Invite to projects",
+    anchors: [
+      def("frontend/people/collaborators.tsx", "Invite to projects</Button>"),
+    ],
+    usedIn: [conventions("A person's page there offers Invite to projects")],
+  },
   {
     id: "editor.build-log",
     label: "Build Log",
@@ -1409,6 +1504,22 @@ export const UI_VOCABULARY_FACTS: readonly UiVocabularyFact[] = [
     before: "] as const;",
     text: '"users"',
     reason: USERS_RETIRED,
+  },
+  {
+    id: "shares.sign-in-required",
+    file: "server/public-directory-shares/index.ts",
+    kind: "present",
+    text: "anonymous public directory shares are not supported",
+    reason:
+      'The "Publish project files" guide (docs/src/content/projects.ts, sections "Share URLs and slugs" and "Viewer access model") says only someone signed in to the site can open an unlisted share. If the message only moved, point this fact at its new location. If anonymous shares become possible, update those sections, then this fact.',
+  },
+  {
+    id: "recovery.status.snapshot-date-scheduled-only",
+    file: "project-host/file-server.ts",
+    kind: "present",
+    text: ".filter(isISODate) .sort();",
+    reason:
+      'The Local snapshots status date comes from the newest date-named (scheduled) snapshot only, while Find searches every retained snapshot. The Files guide (docs/src/content/files.ts, "Find a retained file when its path is unknown") says so. If the filter only moved, point this fact at its new location. If the date starts counting other snapshots, update that paragraph, then this fact.',
   },
 ];
 
