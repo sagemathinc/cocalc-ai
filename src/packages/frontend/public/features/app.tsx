@@ -770,12 +770,14 @@ function FeatureDetail({
 
   const CustomPage =
     FEATURE_DETAIL_COMPONENTS[slug as keyof typeof FEATURE_DETAIL_COMPONENTS];
-  if (slug === "ai") {
+  // The record's slug, not the URL's, so its alias (openai-chatgpt) renders
+  // this page too, as the crawler fallback does.
+  if (page.slug === "ai") {
     return (
       <AIFeaturePage
+        config={config}
         helpEmail={helpEmail}
         isAuthenticated={isAuthenticated}
-        product={config?.cocalc_product}
       />
     );
   }

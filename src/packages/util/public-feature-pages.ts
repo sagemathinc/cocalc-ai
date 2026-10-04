@@ -326,7 +326,10 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
     title: "AI Agents in CoCalc",
     navLabel: "AI Agents",
     metadataTitle: "AI Agents",
-    tagline: "Use AI agents where the work already lives.",
+    // The page's headline, except where util/public-ai-page-content.ts names
+    // Claude Code in it.
+    tagline:
+      "Run AI agents where files, notebooks, compute, and teams stay together.",
     summary:
       "Use integrated Codex or terminal-based agents alongside your files, notebooks, terminals, review notes, and collaborators.",
     metadataSummary:
@@ -335,35 +338,30 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
     metadataImage: "/public/landing/cocalc-brand-social-20260925.png",
     docsUrl: "/docs/ai/codex-chat",
     index: true,
+    // The page's agent cards, under "Use the agent interface that fits the
+    // task." Both renderers take them from getPublicAiCards in
+    // util/public-ai-page-content.ts, which adds a line on hosted sites.
     sections: [
       {
-        title: "Codex in project threads",
+        title: "Integrated Codex and Claude Code",
         paragraphs: [
-          "Codex works in project chat threads. Human @mentions notify collaborators; they do not invoke models.",
-        ],
-        bullets: [
-          "Use OpenAI API keys or OpenAI subscription plans for native Codex support",
-          "Keep prompts, images, patches, and review notes in one durable thread",
-          "Let Codex work with files, terminals, and live notebook state",
-          "Run other command-line agents in project terminals as normal Linux tools",
-        ],
-        links: [{ href: "/docs/ai/codex-chat", label: "Set up Codex chat" }],
-      },
-      {
-        title: "Integrated chat or a terminal agent",
-        paragraphs: [
-          "Codex runs through project chat and can work with project files, terminals, and live notebook state. Claude Code is integrated as an experimental preview on sites that enable it and works with your personal Claude Pro or Max subscription. Other command-line agents can run in project terminals as ordinary Linux tools, with their own interfaces and credentials.",
+          "Codex works with project files, terminals, commands, and live notebook state through CoCalc's project chat. Claude Code is integrated as an experimental preview on sites that enable it and works with your personal Claude Pro or Max subscription.",
         ],
         links: [
+          { href: "/docs/ai/codex-chat", label: "Read the Codex guide" },
           {
             href: "/docs/ai/claude-code",
             label: "Claude Code in CoCalc (Experimental Preview)",
           },
-          { href: "/features/terminal", label: "Use project terminals" },
-          {
-            href: "/features/compare",
-            label: "Compare with agent sandboxes",
-          },
+        ],
+      },
+      {
+        title: "Terminal-based agents",
+        paragraphs: [
+          "Install and run other command-line agents as ordinary Linux tools in a project terminal.",
+        ],
+        links: [
+          { href: "/features/terminal", label: "Explore terminal workflows" },
         ],
       },
     ],
