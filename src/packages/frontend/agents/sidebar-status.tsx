@@ -15,6 +15,7 @@ import { ConnectionIndicator } from "@cocalc/frontend/app/connection-indicator";
 import { FullscreenButton } from "@cocalc/frontend/app/fullscreen-button";
 import { Notification } from "@cocalc/frontend/app/notifications";
 import { RunningGpuIndicator } from "@cocalc/frontend/app/running-gpu-indicator";
+import { BrowserUpdateIndicator } from "@cocalc/frontend/app/update-indicator";
 import { AppearanceControl } from "@cocalc/frontend/appearance/control";
 import { AccountCpuWarning } from "@cocalc/frontend/purchases/account-cpu-warning";
 import { AccountStorageWarning } from "@cocalc/frontend/purchases/account-storage-warning";
@@ -22,11 +23,23 @@ import { AIUsageWarning } from "@cocalc/frontend/purchases/ai-usage-warning";
 import BalanceButton from "@cocalc/frontend/purchases/balance-button";
 import { ManagedEgressWarning } from "@cocalc/frontend/purchases/managed-egress-warning";
 
-export function SidebarNotifications() {
+export function SidebarNotifications({
+  hidden = false,
+}: {
+  // A sidebar hidden with CSS leaves the update indicator to the top bar.
+  hidden?: boolean;
+}) {
   const { pageStyle } = useAppContext();
   const active = useTypedRedux("page", "active_top_tab") === "notifications";
   return (
-    <Notification type="notifications" active={active} pageStyle={pageStyle} />
+    <>
+      <BrowserUpdateIndicator fallback={hidden} />
+      <Notification
+        type="notifications"
+        active={active}
+        pageStyle={pageStyle}
+      />
+    </>
   );
 }
 

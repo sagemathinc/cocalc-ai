@@ -22,6 +22,7 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import { ConnectionIndicator } from "./connection-indicator";
 import { Notification } from "./notifications";
+import { BrowserUpdateIndicator } from "./update-indicator";
 import openSupportTab from "@cocalc/frontend/support/open";
 import type { PageStyle } from "./top-nav-consts";
 
@@ -138,6 +139,7 @@ export function CompactAgentsTopNav({
       <AccountCpuWarning pageStyle={pageStyle} />
       <AccountStorageWarning pageStyle={pageStyle} />
       <ManagedEgressWarning pageStyle={pageStyle} />
+      <BrowserUpdateIndicator fallback />
       {isLoggedIn ? (
         <Notification
           active={false}

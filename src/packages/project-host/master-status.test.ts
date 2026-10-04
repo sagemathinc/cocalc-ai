@@ -38,6 +38,10 @@ jest.mock("./sqlite/projects", () => ({
   markProjectStateReported: (...args: any[]) =>
     markProjectStateReportedMock(...args),
   deleteProjectLocal: jest.fn(),
+  getProject: () => ({
+    project_bundle_version: "1791099701123",
+    tools_version: "1791099787193",
+  }),
 }));
 
 jest.mock("./sqlite/provisioning", () => ({
@@ -227,6 +231,16 @@ describe("master-status project state reporting", () => {
     expect(
       reportProjectStateMock.mock.calls.map(([request]) => request.state.state),
     ).toEqual(["starting", "running"]);
+    // Running reports say what the project started with; others do not.
+    expect(
+      reportProjectStateMock.mock.calls.map(([request]) => [
+        request.state.project_bundle_version,
+        request.state.tools_version,
+      ]),
+    ).toEqual([
+      [undefined, undefined],
+      ["1791099701123", "1791099787193"],
+    ]);
     expect(
       markProjectStateReportedMock.mock.calls.map((call) => call[1]),
     ).toEqual(["starting", "running"]);

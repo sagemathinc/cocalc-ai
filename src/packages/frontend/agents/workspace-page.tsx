@@ -4426,7 +4426,11 @@ export function MyAgentsWorkspacePage({
               }
             : toggleAgentSidebar
         }
-        headerActions={<SidebarNotifications />}
+        headerActions={
+          <SidebarNotifications
+            hidden={agentSidebarHidden || (isNarrow && !mobileList)}
+          />
+        }
         footer={
           <div
             style={{

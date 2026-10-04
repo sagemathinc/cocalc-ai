@@ -168,6 +168,48 @@ describe("project state and storage request methods", () => {
       expect(new Date(result.time).getTime()).toBe(now.getTime());
     });
 
+    it("keeps the versions a run started with until it stops", async () => {
+      const pool = getPool();
+      const projectId = uuid();
+      await pool.query(
+        `INSERT INTO projects (project_id, state) VALUES ($1, $2::jsonb)`,
+        [
+          projectId,
+          JSON.stringify({
+            state: "running",
+            time: new Date("2026-10-04T12:00:00Z"),
+            project_bundle_version: "1791099701123",
+            tools_version: "1791099787193",
+          }),
+        ],
+      );
+      const read = async () =>
+        (
+          await pool.query("SELECT state FROM projects WHERE project_id=$1", [
+            projectId,
+          ])
+        ).rows[0].state;
+
+      await callback_opts(database.set_project_state.bind(database))({
+        project_id: projectId,
+        state: "running",
+        time: new Date("2026-10-04T12:05:00Z"),
+      });
+      expect(await read()).toMatchObject({
+        project_bundle_version: "1791099701123",
+        tools_version: "1791099787193",
+      });
+
+      await callback_opts(database.set_project_state.bind(database))({
+        project_id: projectId,
+        state: "opened",
+        time: new Date("2026-10-04T12:10:00Z"),
+      });
+      const stopped = await read();
+      expect(stopped.project_bundle_version).toBeUndefined();
+      expect(stopped.tools_version).toBeUndefined();
+    });
+
     it("starts runtime generation at 1 when a running runtime starts", async () => {
       const pool = getPool();
       const projectId = uuid();

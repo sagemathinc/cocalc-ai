@@ -136,7 +136,8 @@ export function RowEntry({
             <div style={{ fontSize: "90%", display: "inlineBlock" }}>
               {!Array.isArray(value) &&
               (name === "version_recommended_browser" ||
-                name === "version_min_browser") ? (
+                name === "version_min_browser" ||
+                name === "version_min_project") ? (
                 <VersionHint
                   name={name}
                   value={value}
@@ -214,6 +215,13 @@ function VersionHint({
         <Button size="small" onClick={() => onChangeEntry(name, `${version}`)}>
           Use this version
         </Button>
+      )}
+      {name === "version_min_project" && (
+        <div>
+          After a deploy with a breaking project change, use the version of this
+          page: every project started before it shows a red &quot;Restart
+          required&quot; indicator.
+        </div>
       )}
       {name === "version_min_browser" && (
         <div>

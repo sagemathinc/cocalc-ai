@@ -160,6 +160,7 @@ export interface CustomizeState {
   launchpad_mode?: string;
   version_min_browser: number;
   version_recommended_browser: number;
+  version_min_project: number;
   versions: string;
   cocalc_product?: string;
   is_launchpad?: boolean;

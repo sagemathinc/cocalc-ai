@@ -3,18 +3,28 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { CloseOutlined } from "@ant-design/icons";
-import { Button, Popconfirm } from "antd";
-import { useEffect, useState } from "react";
+// A running project keeps the project code (bundle) and the tools (cocalc
+// CLI, codex, Claude Code, ...) it started with. When its host has newer ones,
+// a restart is recommended; below the site's minimum project version it is
+// required. Projects are never restarted automatically.
 
-import { useActions, useProjectMapField } from "@cocalc/frontend/app-framework";
-import { Icon } from "@cocalc/frontend/components";
+import { Popconfirm } from "antd";
+import { type CSSProperties, useEffect, useState } from "react";
+
+import {
+  useActions,
+  useProjectMapField,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
+import {
+  UpdatePill,
+  type UpdateLevel,
+  versionTime,
+} from "@cocalc/frontend/app/update-indicator";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { COLORS } from "@cocalc/util/theme";
 import { useProjectState } from "./project-state-hook";
 
-const DISMISSED_KEY_PREFIX = "cocalc-dismissed-project-update";
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
 interface LiveProjectStatus {
@@ -23,39 +33,72 @@ interface LiveProjectStatus {
   tools_version?: string;
 }
 
-function storageKey(project_id: string, targetVersion: string): string {
-  return `${DISMISSED_KEY_PREFIX}:${project_id}:${targetVersion}`;
-}
-
-function isDismissed(project_id: string, targetVersion: string): boolean {
-  try {
-    return (
-      window.localStorage?.getItem(storageKey(project_id, targetVersion)) ===
-      "1"
-    );
-  } catch {
-    return false;
-  }
-}
-
-function dismiss(project_id: string, targetVersion: string): void {
-  try {
-    window.localStorage?.setItem(storageKey(project_id, targetVersion), "1");
-  } catch {
-    // Ignore storage failures; dismissal is only a UI preference.
-  }
-}
-
 function versionString(value: unknown): string | undefined {
   const s = `${value ?? ""}`.trim();
   return s || undefined;
 }
 
-export default function ProjectVersionUpdate({
-  project_id,
+export interface ProjectUpdateStatus {
+  level: UpdateLevel;
+  // What is newer on the host: "project code" and/or "tools".
+  parts: string[];
+  since?: number;
+}
+
+/**
+ * Compare what a running project uses with what its host has now.
+ * `minProject` is the site's required project version, in seconds like the
+ * browser versions; 0 means none.
+ */
+export function projectUpdateStatus({
+  runningBundle,
+  runningTools,
+  hostBundle,
+  hostTools,
+  minProject = 0,
 }: {
-  project_id: string;
-}) {
+  runningBundle?: string;
+  runningTools?: string;
+  hostBundle?: string;
+  hostTools?: string;
+  minProject?: number;
+}): ProjectUpdateStatus | undefined {
+  const parts: string[] = [];
+  const since: number[] = [];
+  for (const [part, running, host] of [
+    ["project code", runningBundle, hostBundle],
+    ["tools", runningTools, hostTools],
+  ] as const) {
+    if (running == null || host == null || running === host) continue;
+    const runningTime = versionTime(running);
+    const hostTime = versionTime(host);
+    // A host rolled back to older software is no reason to restart.
+    if (runningTime != null && hostTime != null && hostTime < runningTime)
+      continue;
+    parts.push(part);
+    if (hostTime != null) since.push(hostTime);
+  }
+  // Required only when a restart actually brings newer project code: a
+  // bundle built just before the minimum was set must not stay red forever.
+  const bundleTime = versionTime(runningBundle);
+  const required =
+    minProject > 0 &&
+    bundleTime != null &&
+    bundleTime < minProject * 1000 &&
+    parts.includes("project code");
+  if (!required && parts.length === 0) return undefined;
+  return {
+    level: required ? "required" : "recommended",
+    parts,
+    ...(since.length ? { since: Math.min(...since) } : {}),
+  };
+}
+
+/** Whether a project should restart; also for features that need it. */
+export function useProjectUpdate(project_id: string): {
+  status?: ProjectUpdateStatus;
+  restart: () => void;
+} {
   const actions = useActions("projects");
   const projectState = useProjectState(project_id);
   const host_id = useProjectMapField<string>(project_id, "host_id");
@@ -64,18 +107,18 @@ export default function ProjectVersionUpdate({
     "public_directory_share_projection",
   );
   const hostInfo = useHostInfo(host_id);
+  const minProject = useTypedRedux("customize", "version_min_project") ?? 0;
   const [liveStatus, setLiveStatus] = useState<LiveProjectStatus>();
-  const [closedTarget, setClosedTarget] = useState<string>();
 
-  const state = `${liveStatus?.state ?? projectState?.get?.("state") ?? ""}`;
-  const targetVersion = versionString(
-    hostInfo?.get?.("project_bundle_version"),
-  );
-  const runningVersion =
-    versionString(liveStatus?.project_bundle_version) ??
-    versionString(projectState?.get?.("project_bundle_version"));
+  // The project's own state record is live; liveStatus is a periodic fetch
+  // that is only a fallback for versions and must never outlive its run.
+  const state = `${projectState?.get?.("state") ?? ""}`;
+  const run = `${state}:${projectState?.get?.("started_at") ?? ""}:${
+    projectState?.get?.("runtime_generation") ?? ""
+  }`;
 
   useEffect(() => {
+    setLiveStatus(undefined);
     if (publicDirectoryShareProjection) return;
     if (state !== "running") return;
     let closed = false;
@@ -100,60 +143,74 @@ export default function ProjectVersionUpdate({
       closed = true;
       clearInterval(interval);
     };
-  }, [actions, host_id, project_id, publicDirectoryShareProjection, state]);
+  }, [actions, host_id, project_id, publicDirectoryShareProjection, run]);
 
-  if (
-    publicDirectoryShareProjection ||
-    state !== "running" ||
-    runningVersion == null ||
-    targetVersion == null ||
-    runningVersion === targetVersion ||
-    closedTarget === targetVersion ||
-    isDismissed(project_id, targetVersion)
-  ) {
-    return null;
-  }
+  const restart = () => void actions?.restart_project(project_id);
+  if (publicDirectoryShareProjection || state !== "running") return { restart };
+  return {
+    status: projectUpdateStatus({
+      runningBundle:
+        versionString(projectState?.get?.("project_bundle_version")) ??
+        versionString(liveStatus?.project_bundle_version),
+      runningTools:
+        versionString(projectState?.get?.("tools_version")) ??
+        versionString(liveStatus?.tools_version),
+      hostBundle: versionString(hostInfo?.get?.("project_bundle_version")),
+      hostTools: versionString(hostInfo?.get?.("tools_version")),
+      minProject: Number(minProject) || 0,
+    }),
+    restart,
+  };
+}
 
+export function ProjectUpdateIndicator({
+  project_id,
+  style,
+}: {
+  project_id: string;
+  style?: CSSProperties;
+}) {
+  const { status, restart } = useProjectUpdate(project_id);
+  if (!status) return null;
+  const required = status.level === "required";
+  const what = status.parts.join(" and ");
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        margin: "3px 6px 0 0",
-        padding: "2px 4px 2px 8px",
-        border: `1px solid ${COLORS.GRAY_L}`,
-        borderRadius: 999,
-        background: "white",
-        color: COLORS.GRAY_D,
-        fontSize: 12,
-        whiteSpace: "nowrap",
-        flex: "0 0 auto",
-      }}
-      title={`Project is running bundle ${runningVersion}; current host bundle is ${targetVersion}.`}
-    >
-      <Icon name="refresh" style={{ color: COLORS.GRAY }} />
-      <span>Project update</span>
-      <Popconfirm
-        placement="bottomRight"
-        title="Restart project?"
-        description="This restarts the project server so it uses the latest CoCalc project code."
-        okText="Restart"
-        cancelText="Not now"
-        onConfirm={() => actions?.restart_project(project_id)}
-      >
-        <Button size="small">Restart</Button>
-      </Popconfirm>
-      <Button
-        size="small"
-        type="text"
-        aria-label="Dismiss project update notice"
-        icon={<CloseOutlined />}
-        onClick={() => {
-          dismiss(project_id, targetVersion);
-          setClosedTarget(targetVersion);
-        }}
+    <span style={{ display: "inline-flex", flex: "0 0 auto", ...style }}>
+      <UpdatePill
+        level={status.level}
+        since={status.since}
+        label={required ? "Restart required" : "Restart"}
+        description={
+          required
+            ? `This project runs ${what} that is no longer supported. Restart the project.`
+            : `Newer ${what} ${status.parts.length > 1 ? "are" : "is"} available. Restart the project to use ${status.parts.length > 1 ? "them" : "it"}.`
+        }
+        wrap={(button) => (
+          <Popconfirm
+            placement="bottomRight"
+            title="Restart project?"
+            description={`Uses the newer ${what}. Running kernels, terminals and agent turns stop.`}
+            okText="Restart"
+            cancelText="Not now"
+            onConfirm={restart}
+          >
+            {button}
+          </Popconfirm>
+        )}
       />
-    </div>
+    </span>
+  );
+}
+
+export default function ProjectVersionUpdate({
+  project_id,
+}: {
+  project_id: string;
+}) {
+  return (
+    <ProjectUpdateIndicator
+      project_id={project_id}
+      style={{ margin: "3px 6px 0 0" }}
+    />
   );
 }

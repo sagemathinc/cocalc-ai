@@ -2676,9 +2676,19 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   }
 
   async function status({ project_id }: { project_id: string }) {
+    const runtime = await getProjectRuntimeStatus({ runnerApi, project_id });
+    // The runner does not know what the project started with; this host does.
+    const row =
+      (runtime as any)?.state === "running"
+        ? getProject(project_id)
+        : undefined;
     return {
       runtime: projectRuntimeConfiguration("podman"),
-      ...(await getProjectRuntimeStatus({ runnerApi, project_id })),
+      ...runtime,
+      ...(row?.project_bundle_version
+        ? { project_bundle_version: row.project_bundle_version }
+        : {}),
+      ...(row?.tools_version ? { tools_version: row.tools_version } : {}),
     };
   }
 
