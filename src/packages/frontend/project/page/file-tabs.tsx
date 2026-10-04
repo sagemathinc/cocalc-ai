@@ -56,6 +56,7 @@ function Label({ path, project_id, label, onClose }) {
   const idChatTitle = useIdChatTitle(project_id, path);
   return (
     <div
+      className="cocalc-file-tab-label"
       style={{
         alignItems: "center",
         display: "flex",

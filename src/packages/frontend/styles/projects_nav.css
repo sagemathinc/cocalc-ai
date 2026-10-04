@@ -36,3 +36,13 @@
 .cocalc-file-tabs .ant-tabs-tab-btn {
   min-width: 0;
 }
+
+/* Ant's overflow ("...") menu reuses each tab's label: there it sizes to the
+   name, not to the squeezed tab width. */
+.ant-tabs-dropdown .cocalc-file-tab-label {
+  width: auto !important;
+  max-width: 320px;
+}
+.ant-tabs-dropdown .cocalc-file-tab-label > :first-child {
+  flex: 0 1 auto !important;
+}
