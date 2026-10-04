@@ -7,6 +7,7 @@ import { after, before, getPool } from "@cocalc/server/test";
 import { uuid } from "@cocalc/util/misc";
 import {
   attestReleasedLroDedupeSuccesses,
+  claimLroOps,
   createLro,
   ensureLroSchema,
   expireDueLros,
@@ -22,6 +23,49 @@ beforeAll(async () => {
 afterAll(after);
 
 describe("LRO database maintenance integration", () => {
+  it("defers scheduled jobs, preserves dedupe, and excludes canceled jobs", async () => {
+    const kind = `scheduled-collection-test-${uuid()}`;
+    const scope_id = uuid();
+    const run_at = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000);
+    const args = {
+      kind,
+      scope_type: "project" as const,
+      scope_id,
+      input: { run_at: run_at.toISOString() },
+      expires_at: new Date(run_at.getTime() + 7 * 24 * 60 * 60 * 1000),
+      dedupe_key: `scheduled:${uuid()}`,
+    };
+    const scheduled = await createLro(args);
+    const duplicate = await createLro(args);
+    expect(duplicate.op_id).toBe(scheduled.op_id);
+    const canceled = await createLro({
+      ...args,
+      dedupe_key: `canceled:${uuid()}`,
+    });
+    await updateLro({ op_id: canceled.op_id, status: "canceled" });
+    const claim = {
+      kind,
+      owner_type: "hub" as const,
+      owner_id: uuid(),
+      input_not_before_key: "run_at",
+    };
+    await expect(expireDueLros({ kind })).resolves.toHaveLength(0);
+    await expect(claimLroOps(claim)).resolves.toHaveLength(0);
+    // Advance only the synthetic jobs' due times; cancellation must still win.
+    await getPool().query(
+      `UPDATE long_running_operations
+          SET input=jsonb_set(input, '{run_at}', to_jsonb((NOW() - interval '1 second')::text))
+        WHERE op_id=ANY($1::uuid[])`,
+      [[scheduled.op_id, canceled.op_id]],
+    );
+    await expect(claimLroOps(claim)).resolves.toEqual([
+      expect.objectContaining({ op_id: scheduled.op_id, status: "running" }),
+    ]);
+    await expect(getLro(canceled.op_id)).resolves.toMatchObject({
+      status: "canceled",
+    });
+  });
+
   it("expires only bounded due active rows", async () => {
     const kind = `expiration-test-${uuid()}`;
     const scope_id = uuid();
