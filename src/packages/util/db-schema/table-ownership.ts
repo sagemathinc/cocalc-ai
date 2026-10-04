@@ -1197,6 +1197,9 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
       "long_running_operations",
       "parallel_ops_limits",
       "project_rehome_operations",
+      // Audit receipts of the admin repair for premature scheduled
+      // collection expiry, kept on the bay that ran the repair.
+      "scheduled_collection_expiry_repairs",
     ],
     {
       ownership: "stable-bay",
