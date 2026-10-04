@@ -9,7 +9,15 @@
 // chat/payment-selection-store.
 
 import { useEffect, useState } from "react";
-import { Alert, Checkbox, Modal, Select, Space, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Checkbox,
+  Modal,
+  Select,
+  Space,
+  Typography,
+} from "antd";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
 import { claudeSubscriptionName } from "@cocalc/frontend/agents/claude-credential-options";
@@ -18,6 +26,9 @@ import {
   refreshPaymentSelections,
 } from "@cocalc/frontend/chat/payment-selection-store";
 import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-profiles";
+import type { AgentRuntimeSummary } from "@cocalc/util/ai/agent-runtime-kind";
+import { CodexCredentialsPanel } from "@cocalc/frontend/account/codex-credentials-panel";
+import { ClaudeSubscriptionConnect } from "@cocalc/frontend/chat/claude-subscription-connect";
 import type {
   AgentPaymentDefaults,
   AgentPaymentProvider,
@@ -182,12 +193,41 @@ export function selectionLabel(
 /** One line for an agent card: how this account pays for it. */
 export function agentPaymentSummary(
   payments: AgentPayments,
-  project_id: string,
-  thread_id: string,
+  agent: {
+    project_id: string;
+    thread_id: string;
+    runtime?: AgentRuntimeSummary;
+    /** Live from the name book; preferred over the separately loaded list. */
+    payment?: AgentPaymentSelectionRecord[];
+  },
 ): string {
-  const records = payments.records.get(paymentKey(project_id, thread_id)) ?? [];
-  if (records.length === 0) return "Paid with your default";
-  return records
+  if (agent.runtime?.kind === "acp") return "Project-managed credentials";
+  const records =
+    agent.payment ??
+    payments.records.get(paymentKey(agent.project_id, agent.thread_id)) ??
+    [];
+  const provider: AgentPaymentProvider | undefined =
+    agent.runtime?.kind === "claude-code"
+      ? "claude-code"
+      : agent.runtime?.kind === "codex"
+        ? "codex"
+        : undefined;
+  const relevant = provider
+    ? records.filter((r) => r.provider === provider)
+    : records;
+  if (relevant.length === 0) {
+    const label = provider
+      ? selectionLabel(
+          { version: 1, provider, mode: "default" } as AgentPaymentSelection,
+          payments,
+        )
+      : "Default";
+    const detail = label.match(/^Default \((.*)\)$/)?.[1];
+    return detail
+      ? `Paid with your default (${detail})`
+      : "Paid with your default";
+  }
+  return relevant
     .map(
       (r) =>
         `${r.provider === "codex" ? "ChatGPT" : "Claude"}: ${selectionLabel(r.selection, payments)}`,
@@ -203,6 +243,22 @@ export interface PaymentTargetAgent {
   thread_id: string;
   path?: string;
   title?: string;
+  /** Unknown for agents not yet reported; they get both choices. */
+  runtime?: AgentRuntimeSummary;
+}
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** Which selected agents each provider's choice applies to. */
+export function paymentGroups(agents: PaymentTargetAgent[]) {
+  return {
+    codex: agents.filter((a) => !a.runtime || a.runtime.kind === "codex"),
+    claude: agents.filter(
+      (a) => !a.runtime || a.runtime.kind === "claude-code",
+    ),
+    projectManaged: agents.filter((a) => a.runtime?.kind === "acp"),
+    unknown: agents.filter((a) => !a.runtime),
+  };
 }
 
 export function SetPaymentModal({
@@ -220,6 +276,7 @@ export function SetPaymentModal({
   const [claude, setClaude] = useState(KEEP);
   const [codexDefault, setCodexDefault] = useState(false);
   const [claudeDefault, setClaudeDefault] = useState(false);
+  const [connectChatGPT, setConnectChatGPT] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -231,22 +288,28 @@ export function SetPaymentModal({
     setError("");
   }, [open]);
 
+  const groups = paymentGroups(agents);
+  const codexCredentials = payments.credentials.filter(
+    (c) => c.provider === "codex",
+  );
+  const claudeCredentials = payments.credentials.filter(
+    (c) => c.provider === "claude-code",
+  );
   const codexOptions = [
     { value: KEEP, label: "Leave unchanged" },
     { value: FOLLOW, label: "Follow my default subscription" },
-    ...payments.credentials
-      .filter((c) => c.provider === "codex")
-      .map((c) => ({
-        value: c.id,
-        label: c.isDefault ? `${c.label} (current default)` : c.label,
-      })),
+    ...codexCredentials.map((c) => ({
+      value: c.id,
+      label: c.isDefault ? `${c.label} (current default)` : c.label,
+    })),
   ];
   const claudeOptions = [
     { value: KEEP, label: "Leave unchanged" },
     { value: FOLLOW, label: "Follow my default credential" },
-    ...payments.credentials
-      .filter((c) => c.provider === "claude-code")
-      .map((c) => ({ value: `${c.mode}:${c.id}`, label: c.label })),
+    ...claudeCredentials.map((c) => ({
+      value: `${c.mode}:${c.id}`,
+      label: c.label,
+    })),
     { value: "project-secret", label: "Project secret (ANTHROPIC_API_KEY)" },
   ];
 
@@ -272,22 +335,25 @@ export function SetPaymentModal({
 
   async function save() {
     const api = webapp_client.conat_client.hub.agent;
-    const targets = agents.map(({ project_id, thread_id, path, title }) => ({
-      project_id,
-      thread_id,
-      ...(path ? { path } : {}),
-      ...(title ? { title } : {}),
-    }));
+    const targetsOf = (list: PaymentTargetAgent[]) =>
+      list.map(({ project_id, thread_id, path, title }) => ({
+        project_id,
+        thread_id,
+        ...(path ? { path } : {}),
+        ...(title ? { title } : {}),
+      }));
     setSaving(true);
     setError("");
     try {
       const apply = async (
         provider: AgentPaymentProvider,
+        list: PaymentTargetAgent[],
         selection: AgentPaymentSelection | null,
         makeDefault: boolean,
       ) => {
+        const targets = targetsOf(list);
         if (makeDefault && selection) {
-          // Set the default, then every selected agent follows it.
+          // Set the default, then these agents follow it.
           await api.setPaymentSelections({ defaults: [provider], selection });
           await api.setPaymentSelections({
             targets,
@@ -304,10 +370,15 @@ export function SetPaymentModal({
           });
         }
       };
-      if (codex !== KEEP)
-        await apply("codex", codexSelection(codex), codexDefault);
-      if (claude !== KEEP)
-        await apply("claude-code", claudeSelection(claude), claudeDefault);
+      if (codex !== KEEP && groups.codex.length > 0)
+        await apply("codex", groups.codex, codexSelection(codex), codexDefault);
+      if (claude !== KEEP && groups.claude.length > 0)
+        await apply(
+          "claude-code",
+          groups.claude,
+          claudeSelection(claude),
+          claudeDefault,
+        );
       refreshPaymentSelections();
       payments.reload();
       onClose();
@@ -319,11 +390,15 @@ export function SetPaymentModal({
   }
 
   const n = agents.length;
-  const nothing = codex === KEEP && claude === KEEP;
+  const nothing =
+    (codex === KEEP || groups.codex.length === 0) &&
+    (claude === KEEP || groups.claude.length === 0);
+  const codexCount = groups.codex.length - groups.unknown.length;
+  const claudeCount = groups.claude.length - groups.unknown.length;
   return (
     <Modal
       open={open}
-      title={`Set payment method for ${n} ${n === 1 ? "agent" : "agents"}`}
+      title={`Set payment method for ${plural(n, "agent")}`}
       okText="Apply"
       okButtonProps={{ disabled: nothing, loading: saving }}
       onOk={() => void save()}
@@ -333,53 +408,111 @@ export function SetPaymentModal({
       <Space orientation="vertical" size={16} style={{ width: "100%" }}>
         <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
           Applies to turns you start or that agents send to these agents, on
-          every device. Each runtime uses its own choice: Codex agents use the
-          ChatGPT subscription, Claude Code agents the Claude credential.
+          every device.
         </Typography.Paragraph>
-        <div>
-          <Typography.Text strong>ChatGPT subscription (Codex)</Typography.Text>
-          <Select
-            aria-label="ChatGPT subscription for selected agents"
-            value={codex}
-            onChange={setCodex}
-            options={codexOptions}
-            style={{ width: "100%", marginTop: 4 }}
-          />
-          {codex !== KEEP && codex !== FOLLOW && (
-            <Checkbox
-              checked={codexDefault}
-              onChange={(e) => setCodexDefault(e.target.checked)}
-              style={{ marginTop: 6 }}
-            >
-              Make this my default, so these agents and every agent following
-              the default use it
-            </Checkbox>
-          )}
-        </div>
-        <div>
-          <Typography.Text strong>
-            Claude credential (Claude Code)
+        {groups.codex.length > 0 && (
+          <div>
+            <Typography.Text strong>
+              ChatGPT subscription ·{" "}
+              {codexCount > 0 ? plural(codexCount, "Codex agent") : "Codex"}
+            </Typography.Text>
+            {codexCredentials.length === 0 ? (
+              <div style={{ marginTop: 4 }}>
+                <Button onClick={() => setConnectChatGPT(true)}>
+                  Connect a ChatGPT plan…
+                </Button>
+              </div>
+            ) : (
+              <>
+                <Select
+                  aria-label="ChatGPT subscription for selected agents"
+                  value={codex}
+                  onChange={setCodex}
+                  options={codexOptions}
+                  style={{ width: "100%", marginTop: 4 }}
+                />
+                {codex !== KEEP && codex !== FOLLOW && (
+                  <Checkbox
+                    checked={codexDefault}
+                    onChange={(e) => setCodexDefault(e.target.checked)}
+                    style={{ marginTop: 6 }}
+                  >
+                    Make this my default, so these agents and every agent
+                    following the default use it
+                  </Checkbox>
+                )}
+              </>
+            )}
+          </div>
+        )}
+        {groups.claude.length > 0 && (
+          <div>
+            <Typography.Text strong>
+              Claude credential ·{" "}
+              {claudeCount > 0
+                ? plural(claudeCount, "Claude Code agent")
+                : "Claude Code"}
+            </Typography.Text>
+            {claudeCredentials.length === 0 ? (
+              <div style={{ marginTop: 4 }}>
+                <ClaudeSubscriptionConnect
+                  projectId={groups.claude[0].project_id}
+                  compact
+                  onConnected={(credentialId) => {
+                    payments.reload();
+                    setClaude(`account-subscription:${credentialId}`);
+                  }}
+                />
+              </div>
+            ) : (
+              <>
+                <Select
+                  aria-label="Claude credential for selected agents"
+                  value={claude}
+                  onChange={setClaude}
+                  options={claudeOptions}
+                  style={{ width: "100%", marginTop: 4 }}
+                />
+                {claude !== KEEP && claude !== FOLLOW && (
+                  <Checkbox
+                    checked={claudeDefault}
+                    onChange={(e) => setClaudeDefault(e.target.checked)}
+                    style={{ marginTop: 6 }}
+                  >
+                    Make this my default, so these agents and every agent
+                    following the default use it
+                  </Checkbox>
+                )}
+              </>
+            )}
+          </div>
+        )}
+        {groups.projectManaged.length > 0 && (
+          <Typography.Text type="secondary">
+            {plural(groups.projectManaged.length, "agent")} use
+            {groups.projectManaged.length === 1 ? "s" : ""} project-managed
+            credentials; nothing to set here.
           </Typography.Text>
-          <Select
-            aria-label="Claude credential for selected agents"
-            value={claude}
-            onChange={setClaude}
-            options={claudeOptions}
-            style={{ width: "100%", marginTop: 4 }}
-          />
-          {claude !== KEEP && claude !== FOLLOW && (
-            <Checkbox
-              checked={claudeDefault}
-              onChange={(e) => setClaudeDefault(e.target.checked)}
-              style={{ marginTop: 6 }}
-            >
-              Make this my default, so these agents and every agent following
-              the default use it
-            </Checkbox>
-          )}
-        </div>
+        )}
         {error && <Alert type="error" title={error} />}
       </Space>
+      <Modal
+        open={connectChatGPT}
+        title="Connect a ChatGPT plan"
+        footer={null}
+        width={760}
+        onCancel={() => {
+          setConnectChatGPT(false);
+          payments.reload();
+        }}
+        destroyOnHidden
+      >
+        <CodexCredentialsPanel
+          embedded
+          defaultProjectId={groups.codex[0]?.project_id}
+          onPaymentSourceChanged={() => payments.reload()}
+        />
+      </Modal>
     </Modal>
   );
 }

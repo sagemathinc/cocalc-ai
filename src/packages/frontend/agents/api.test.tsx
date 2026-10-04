@@ -12,6 +12,16 @@ import { AgentDirectoryContent } from "./directory-content";
 
 let mockAccountId: string | undefined;
 const mockList = jest.fn();
+const feedHandlers: Record<string, (...args: any[]) => void> = {};
+jest.mock("@cocalc/frontend/conat/account-dstream", () => ({
+  getSharedAccountDStream: async () => ({
+    on: (event: string, handler: (...args: any[]) => void) => {
+      feedHandlers[event] = handler;
+    },
+    removeListener: () => {},
+    isClosed: () => false,
+  }),
+}));
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: (store: string, key: string) =>
     store === "account" && key === "account_id" ? mockAccountId : undefined,
@@ -159,4 +169,61 @@ test("a failed load for a different account cannot retain the previous directory
   expect(result.current.directory).toBeUndefined();
   await waitFor(() => expect(result.current.error).toContain("offline"));
   expect(result.current.directory).toBeUndefined();
+});
+
+test("live changes from any device patch the list without reloading it", async () => {
+  mockAccountId = "live-account";
+  const agent = (name: string, agent_id: string, extra = {}) => ({
+    name,
+    endpoint: { project_id: "p", agent_id },
+    thread_id: "t",
+    ...extra,
+  });
+  mockList.mockResolvedValue({ agents: [agent("alpha", "a1")] });
+  const { result } = renderHook(() => useNamedAgents());
+  await waitFor(() => expect(result.current.directory?.agents).toHaveLength(1));
+  await waitFor(() => expect(feedHandlers.change).toBeDefined());
+  const calls = mockList.mock.calls.length;
+  // Another device names an agent.
+  await act(async () =>
+    feedHandlers.change({
+      type: "agent.upsert",
+      ts: 1,
+      account_id: "live-account",
+      agent: agent("beta", "b1", { runtime: { kind: "claude-code" } }),
+    }),
+  );
+  expect(result.current.directory?.agents.map((a) => a.name)).toEqual([
+    "alpha",
+    "beta",
+  ]);
+  // ... and changes one (fresh conversation).
+  await act(async () =>
+    feedHandlers.change({
+      type: "agent.upsert",
+      ts: 2,
+      account_id: "live-account",
+      agent: agent("alpha", "a1", { thread_id: "t2" }),
+    }),
+  );
+  expect(result.current.directory?.agents[0]).toMatchObject({
+    name: "alpha",
+    thread_id: "t2",
+  });
+  await act(async () =>
+    feedHandlers.change({
+      type: "agent.remove",
+      ts: 3,
+      account_id: "live-account",
+      project_id: "p",
+      agent_id: "b1",
+    }),
+  );
+  expect(result.current.directory?.agents.map((a) => a.name)).toEqual([
+    "alpha",
+  ]);
+  expect(mockList.mock.calls.length).toBe(calls);
+  // A gap in the feed reloads once.
+  await act(async () => feedHandlers["history-gap"]());
+  await waitFor(() => expect(mockList.mock.calls.length).toBe(calls + 1));
 });

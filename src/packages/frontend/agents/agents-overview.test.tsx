@@ -8,6 +8,7 @@ import userEvent from "@testing-library/user-event";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import type { ProjectAgent } from "@cocalc/util/people";
 import { AgentsOverview, filterAgents, sortAgents } from "./agents-overview";
+import { WithAgentRuntimeMark } from "./agent-runtime-mark";
 
 const bob = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const project = "11111111-1111-4111-8111-111111111111";
@@ -82,7 +83,17 @@ function agent(id: string, name: string, extra = {}): NamedAgent {
   };
 }
 
-const mine = [agent("a1", "alpha"), agent("a2", "beta"), agent("a3", "gamma")];
+const mine = [
+  agent("a1", "alpha", { runtime: { kind: "codex" } }),
+  agent("a2", "beta", { runtime: { kind: "claude-code" } }),
+  agent("a3", "gamma", { runtime: { kind: "acp", name: "pi" } }),
+];
+jest.mock("@cocalc/frontend/chat/claude-subscription-connect", () => ({
+  ClaudeSubscriptionConnect: () => <button>Connect Claude</button>,
+}));
+jest.mock("@cocalc/frontend/account/codex-credentials-panel", () => ({
+  CodexCredentialsPanel: () => <div>ChatGPT plans</div>,
+}));
 const shared: ProjectAgent[] = [
   {
     agent_id: "s1",
@@ -94,6 +105,7 @@ const shared: ProjectAgent[] = [
     created_at: 1000,
     collaborator_access: "view",
     appearance: { name: "Bob's Helper", thread_color: "#123456" },
+    runtime: { kind: "claude-code" },
   },
 ];
 
@@ -149,9 +161,57 @@ it("shows how each agent is paid", async () => {
       screen.getByRole("button", { name: "Open @alpha" }),
     ).toHaveTextContent("ChatGPT: Personal"),
   );
-  expect(screen.getByRole("button", { name: "Open @gamma" })).toHaveTextContent(
+  expect(screen.getByRole("button", { name: "Open @beta" })).toHaveTextContent(
     "Paid with your default",
   );
+  // A generic ACP harness has nothing per-account to pay with.
+  expect(screen.getByRole("button", { name: "Open @gamma" })).toHaveTextContent(
+    "Project-managed credentials",
+  );
+});
+
+it("marks each agent's runtime on its badge", async () => {
+  // Your own agents' badges come from renderBadge (the sidebar's badge,
+  // which carries the mark); shared agents are marked here.
+  const user = userEvent.setup();
+  render(<AgentsOverview {...props()} />);
+  await user.click(screen.getByRole("tab", { name: /Shared with me/ }));
+  expect(
+    await screen.findByRole("img", { name: "Claude Code" }),
+  ).toBeInTheDocument();
+  render(
+    <>
+      {[{ kind: "codex" }, { kind: "acp", name: "pi" }].map((runtime: any) => (
+        <WithAgentRuntimeMark key={runtime.kind} runtime={runtime}>
+          <span />
+        </WithAgentRuntimeMark>
+      ))}
+    </>,
+  );
+  expect(screen.getByRole("img", { name: "Codex" })).toBeInTheDocument();
+  expect(screen.getByRole("img", { name: "ACP: pi" })).toBeInTheDocument();
+});
+
+it("offers only the choices that apply to the selected agents", async () => {
+  const user = userEvent.setup();
+  render(<AgentsOverview {...props()} />);
+  // Project-managed only: nothing to set.
+  await user.click(screen.getByRole("checkbox", { name: "Select @gamma" }));
+  expect(
+    screen.getByRole("button", { name: "Set payment method…" }),
+  ).toBeDisabled();
+  // A Claude Code agent with no Claude credential: connect right here.
+  await user.click(screen.getByRole("checkbox", { name: "Select @beta" }));
+  await user.click(screen.getByRole("button", { name: "Set payment method…" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByText(/1 Claude Code agent/)).toBeInTheDocument();
+  expect(
+    within(dialog).getByRole("button", { name: "Connect Claude" }),
+  ).toBeInTheDocument();
+  expect(within(dialog).queryByText(/ChatGPT subscription/)).toBeNull();
+  expect(
+    within(dialog).getByText(/1 agent uses project-managed/),
+  ).toBeInTheDocument();
 });
 
 it("bulk operations act on the selected agents", async () => {
@@ -186,13 +246,16 @@ it("sets the payment method for every selected agent at once", async () => {
   await user.click(await screen.findByTitle("Personal"));
   await user.click(within(dialog).getByRole("button", { name: "Apply" }));
   await waitFor(() => expect(setPaymentSelections).toHaveBeenCalledTimes(1));
+  // Only the Codex agent takes a ChatGPT subscription.
   expect(setPaymentSelections).toHaveBeenCalledWith({
-    targets: mine.map((a) => ({
-      project_id: project,
-      thread_id: a.thread_id,
-      path: a.path,
-      title: a.name,
-    })),
+    targets: [
+      {
+        project_id: project,
+        thread_id: mine[0].thread_id,
+        path: mine[0].path,
+        title: mine[0].name,
+      },
+    ],
     selection: {
       version: 1,
       provider: "codex",
