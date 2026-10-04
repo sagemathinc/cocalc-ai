@@ -9,6 +9,7 @@ import * as rpc from "@cocalc/server/agents/rpc";
 import * as payments from "@cocalc/server/agents/payment-selections";
 export {
   getCocalcConnectorConfig,
+  listCocalcConnectorConfigs,
   saveCocalcConnectorConfig,
   removeCocalcConnectorConfig,
   beginCocalcConnectorTurn,

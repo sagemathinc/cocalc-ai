@@ -80,6 +80,7 @@ export const agent = {
   issueIdentity: authFirstRequireHostWithAccountTarget,
   endIdentityRun: authFirstRequireHostWithAccountTarget,
   getCocalcConnectorConfig: authFirstRequireAccount,
+  listCocalcConnectorConfigs: authFirstRequireAccount,
   saveCocalcConnectorConfig: authFirstRequireAccountWithBoundSession,
   removeCocalcConnectorConfig: authFirstRequireAccountWithBoundSession,
   beginCocalcConnectorTurn: authFirstRequireHostWithAccountTarget,
@@ -273,6 +274,10 @@ export interface AgentApi {
     agent_id: string;
     source_project_id: string;
   }): Promise<CocalcConnectorConfig | null>;
+  /** The signed-in account's saved CoCalc access settings, newest first. */
+  listCocalcConnectorConfigs(opts?: {
+    account_id?: string;
+  }): Promise<CocalcConnectorConfig[]>;
   saveCocalcConnectorConfig(
     opts: AgentHumanAuth & {
       agent_id: string;

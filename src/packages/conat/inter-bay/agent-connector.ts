@@ -21,6 +21,11 @@ export interface InterBayAgentConnectorApi {
   getConfig(
     opts: RequiredAccount<Parameters<AgentApi["getCocalcConnectorConfig"]>[0]>,
   ): ReturnType<AgentApi["getCocalcConnectorConfig"]>;
+  listConfigs(
+    opts: RequiredAccount<
+      NonNullable<Parameters<AgentApi["listCocalcConnectorConfigs"]>[0]>
+    >,
+  ): ReturnType<AgentApi["listCocalcConnectorConfigs"]>;
   saveConfig(
     opts: RequiredAccount<Parameters<AgentApi["saveCocalcConnectorConfig"]>[0]>,
   ): ReturnType<AgentApi["saveCocalcConnectorConfig"]>;

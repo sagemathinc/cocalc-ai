@@ -28,10 +28,13 @@ export function CocalcConnector({
   composer = false,
   renderTrigger,
   onRemoved,
+  onChanged,
 }: {
   agent: NamedAgent;
   composer?: boolean;
   onRemoved?: () => void;
+  /** After a successful save or removal, e.g. to refresh a list. */
+  onChanged?: () => void;
   renderTrigger?: (state: {
     config: CocalcConnectorConfig | null;
     onOpen: () => void;
@@ -119,7 +122,10 @@ export function CocalcConnector({
         });
         setConfig(saved);
       });
-      if (completed) setOpen(false);
+      if (completed) {
+        setOpen(false);
+        onChanged?.();
+      }
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -144,7 +150,10 @@ export function CocalcConnector({
         setEnabled(false);
         removed.current = true;
       });
-      if (completed) setOpen(false);
+      if (completed) {
+        setOpen(false);
+        onChanged?.();
+      }
     } catch (err) {
       setError(`${err}`);
     } finally {

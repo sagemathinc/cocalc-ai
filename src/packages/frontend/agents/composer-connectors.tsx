@@ -13,6 +13,8 @@ import type { CocalcConnectorConfig } from "@cocalc/conat/hub/api/agent";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
+import { lite } from "@cocalc/frontend/lite";
+import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import { CocalcConnector } from "./cocalc-connector";
 import { AgentNetworkTagsEditor } from "./agent-network-tags-editor";
 import { AgentNetworkDetailsModal } from "./agent-network-details-modal";
@@ -223,6 +225,15 @@ function NamedAgentConnectors({
             icon: <ApartmentOutlined aria-hidden />,
             onClick: openNetworks,
           },
+          ...(lite
+            ? []
+            : [
+                {
+                  key: "manage-connectors",
+                  label: "Manage connectors",
+                  onClick: () => openAccountSettings({ page: "connectors" }),
+                },
+              ]),
         ],
       },
     ];
