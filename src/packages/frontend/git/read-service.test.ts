@@ -484,6 +484,21 @@ describe("read-only Git fixtures", () => {
     expect((await readTargetDiff(service, range, 3)).files).toEqual([]);
   });
 
+  test("rangeCommits lists the commits a comparison introduces", async () => {
+    const branch = await service.compare(
+      repository,
+      mainTip,
+      featureTip,
+      "merge-base",
+    );
+    expect(await service.rangeCommits(branch)).toEqual([featureTip]);
+    const all = await service.compare(repository, root, mergeTip, "trees");
+    expect([...(await service.rangeCommits(all))!].sort()).toEqual(
+      [mergeTip, mainTip, featureTip].sort(),
+    );
+    expect(await service.rangeCommits(all, 2)).toBeUndefined();
+  });
+
   test("merge-base and trees are distinct; refs moving cannot change a pinned review", async () => {
     const range = await service.compare(
       repository,
