@@ -686,7 +686,10 @@ function getTabAccentColor(key: string, mode: string): string {
 
 const LABEL_STYLE: CSS = {
   overflow: "hidden",
-  margin: "auto",
+  // Left-aligned next to the icon, like Chrome: when many tabs share the
+  // width equally, a centered short name leaves a ragged gap before it.
+  margin: "auto auto auto 2px",
+  minWidth: 0,
   whiteSpace: "nowrap",
 } as const;
 
