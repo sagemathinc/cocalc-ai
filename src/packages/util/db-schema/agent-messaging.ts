@@ -146,6 +146,44 @@ Table({
   },
 });
 
+// How an account pays for its agents' turns, in the account's home bay so all
+// of its devices and every turn (human, agent message, CLI) see the same
+// choice. Kept out of project-owned identity rows, which every collaborator
+// can read. Values are credential references, never secrets.
+Table({
+  name: "agent_payment_selections",
+  rules: {
+    primary_key: ["account_id", "target_key", "provider"],
+    pg_custom_indexes: [
+      {
+        name: "agent_payment_selections_provider",
+        query: "(account_id,provider,updated_at)",
+      },
+    ],
+  },
+  fields: {
+    account_id: required(
+      "uuid",
+      "Account that pays; its home bay owns the row.",
+    ),
+    target_key: required(
+      "string",
+      "'thread:<project_id>:<thread_id>' for one agent, or 'default:<provider>'.",
+    ),
+    provider: required("string", "codex or claude-code."),
+    project_id: { type: "uuid", desc: "Agent project; null for defaults." },
+    path: { type: "string", desc: "Agent chat path; null for defaults." },
+    thread_id: { type: "string", desc: "Agent thread; null for defaults." },
+    selection: {
+      ...required("map", "Versioned credential-reference selection."),
+      pg_type: "JSONB",
+    },
+    title: { type: "string", desc: "Agent name at the last change." },
+    updated_at: created("Last change by the account."),
+    last_used_at: timestamp("Last turn admitted with this selection."),
+  },
+});
+
 Table({
   name: "agent_identity_runs",
   rules: {

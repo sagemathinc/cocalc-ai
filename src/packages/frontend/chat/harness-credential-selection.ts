@@ -3,16 +3,25 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { isValidUUID } from "@cocalc/util/misc";
+// Which Claude credential pays for a conversation, for the signed-in account.
+// Stored on the server (see payment-selection-store), so every device sees the
+// same choice. A conversation with no choice follows the account default.
+
 import type { AcpHarnessCredential } from "@cocalc/util/ai/runtime";
+import {
+  harnessCredentialFromSelection,
+  selectionFromHarnessCredential,
+  type ClaudePaymentSelection,
+} from "@cocalc/util/ai/agent-payment-selection";
+import {
+  PAYMENT_SELECTION_EVENT,
+  readPaymentDefault,
+  readPaymentSelection,
+  setPaymentDefault,
+  writePaymentSelection,
+} from "./payment-selection-store";
 
-const PREFIX = "cocalc:acp-harness-credential:v1";
-export const HARNESS_CREDENTIAL_SELECTION_EVENT =
-  "cocalc:acp-harness-credential-selection";
-
-function key(accountId: string, projectId: string, threadKey: string): string {
-  return `${PREFIX}:${accountId}:${projectId}:${threadKey || "new"}`;
-}
+export const HARNESS_CREDENTIAL_SELECTION_EVENT = PAYMENT_SELECTION_EVENT;
 
 export function readHarnessCredentialSelection({
   accountId,
@@ -25,51 +34,23 @@ export function readHarnessCredentialSelection({
   threadKey?: string;
   forNewAgent?: boolean;
 }): AcpHarnessCredential | undefined {
-  if (typeof localStorage === "undefined" || !accountId) return;
+  if (!accountId) return;
   if (!projectId && !forNewAgent) return;
   const stored = projectId
-    ? localStorage.getItem(key(accountId, projectId, threadKey ?? ""))
-    : null;
-  // Defaults apply only when creating agents, never to existing conversations.
-  const value =
-    stored ??
-    (forNewAgent
-      ? localStorage.getItem(`${PREFIX}:${accountId}:default`)
-      : null);
-  if (value == null && forNewAgent) return;
-  if (!value || value === "project-secret") {
-    return { version: 1, provider: "anthropic", mode: "project-secret" };
-  }
-  if (value.startsWith("account-api-key:")) {
-    const credentialId = value.slice("account-api-key:".length);
-    if (isValidUUID(credentialId)) {
-      return {
-        version: 1,
-        provider: "anthropic",
-        mode: "account-api-key",
-        credentialId,
-      };
-    }
-  }
-  if (value.startsWith("account-subscription:")) {
-    const credentialId = value.slice("account-subscription:".length);
-    const sourceKey =
-      stored != null && projectId
-        ? key(accountId, projectId, threadKey ?? "")
-        : `${PREFIX}:${accountId}:default`;
-    if (isValidUUID(credentialId)) {
-      return {
-        version: 1,
-        provider: "anthropic",
-        mode: "account-subscription",
-        credentialId,
-        ...(localStorage.getItem(`${sourceKey}:claude-ai-connectors`) === "off"
-          ? { claudeAiConnectors: false }
-          : {}),
-      };
-    }
-  }
-  return { version: 1, provider: "anthropic", mode: "project-secret" };
+    ? (readPaymentSelection({
+        accountId,
+        projectId,
+        threadKey,
+        provider: "claude-code",
+      }) as ClaudePaymentSelection | undefined)
+    : undefined;
+  const fallback = readPaymentDefault({
+    accountId,
+    provider: "claude-code",
+  }) as ClaudePaymentSelection | undefined;
+  // A new agent with nothing chosen yet has no preselected credential.
+  if (forNewAgent && !stored && !fallback) return;
+  return harnessCredentialFromSelection(stored, fallback);
 }
 
 export function writeHarnessCredentialSelection({
@@ -83,23 +64,35 @@ export function writeHarnessCredentialSelection({
   threadKey: string;
   credential: AcpHarnessCredential;
 }): void {
-  if (typeof localStorage === "undefined" || !accountId) return;
-  const storageKey = key(accountId, projectId, threadKey);
-  const value =
-    credential.mode === "account-api-key"
-      ? `account-api-key:${credential.credentialId}`
-      : credential.mode === "account-subscription"
-        ? `account-subscription:${credential.credentialId}`
-        : "project-secret";
-  localStorage.setItem(storageKey, value);
-  localStorage.setItem(`${PREFIX}:${accountId}:default`, value);
-  for (const target of [storageKey, `${PREFIX}:${accountId}:default`]) {
-    if (
-      credential.mode === "account-subscription" &&
-      credential.claudeAiConnectors === false
-    )
-      localStorage.setItem(`${target}:claude-ai-connectors`, "off");
-    else localStorage.removeItem(`${target}:claude-ai-connectors`);
+  const selection = selectionFromHarnessCredential(credential);
+  const fallback = readPaymentDefault({ accountId, provider: "claude-code" });
+  // The first credential chosen becomes the account default, so agents that
+  // follow the default have one; later choices never change it implicitly.
+  if (fallback == null) {
+    void setPaymentDefault({
+      accountId,
+      provider: "claude-code",
+      selection,
+      onlyIfAbsent: true,
+    });
+    void writePaymentSelection({
+      accountId,
+      projectId,
+      threadKey,
+      provider: "claude-code",
+      selection: null,
+    });
+    return;
   }
-  window.dispatchEvent(new Event(HARNESS_CREDENTIAL_SELECTION_EVENT));
+  // Choosing what the account default already is keeps following the
+  // default, so changing the default later moves this agent too.
+  const followsDefault =
+    fallback != null && JSON.stringify(fallback) === JSON.stringify(selection);
+  void writePaymentSelection({
+    accountId,
+    projectId,
+    threadKey,
+    provider: "claude-code",
+    selection: followsDefault ? null : selection,
+  });
 }

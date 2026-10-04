@@ -836,3 +836,21 @@ test("startup timeout retains host capacity until the actual startup settles", a
     jest.useRealTimers();
   }
 });
+
+describe("payment launch receipts", () => {
+  test("a missing payment method produces a specific launch receipt", async () => {
+    const { e, deps, service, db } = fixture();
+    deps.admit = jest.fn(async () => {
+      throw new Error(
+        "The recipient agent has no payment method recorded for this account. Open it and send one message with its selected payment method before using Agent Networks.",
+      );
+    });
+    await service.submit(e);
+    const receipt = db
+      .get()
+      .find((row) => row.agent_rpc_launch?.state === "unknown");
+    expect(receipt.agent_rpc_launch.error).toMatch(
+      /no payment method recorded for this account/,
+    );
+  });
+});
