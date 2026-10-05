@@ -10,18 +10,19 @@ import * as payments from "@cocalc/server/agents/payment-selections";
 export {
   getCocalcConnectorConfig,
   listCocalcConnectorConfigs,
-  listCliConnections,
-  connectCliToken,
-  disconnectCliConnection,
-  listCliConnectorGrants,
-  saveCliConnectorGrant,
-  beginCliConnectorTurn,
   saveCocalcConnectorConfig,
   removeCocalcConnectorConfig,
   beginCocalcConnectorTurn,
   renewCocalcConnectorTurn,
   endCocalcConnectorTurn,
 } from "@cocalc/server/agents/cocalc-connector-routing";
+import * as cliConnectors from "@cocalc/server/agents/cocalc-connector-routing";
+export const listCliConnections = cliConnectors.listCliConnections;
+export const connectCliToken = cliConnectors.connectCliToken;
+export const disconnectCliConnection = cliConnectors.disconnectCliConnection;
+export const listCliConnectorGrants = cliConnectors.listCliConnectorGrants;
+export const saveCliConnectorGrant = cliConnectors.saveCliConnectorGrant;
+export const beginCliConnectorTurn = cliConnectors.beginCliConnectorTurn;
 import {
   createAgentNetwork as createAgentNetworkImpl,
   resolveAgentNetworkProposal as resolveAgentNetworkProposalImpl,
