@@ -18,6 +18,7 @@ import {
   supportsCocalcConnector,
 } from "./composer-connectors";
 import { AgentFileAttachment } from "../chat/agent-file-attachment";
+import { refreshCliConnectors } from "./cli-connectors";
 
 // rc-util's constant test ID aliases dropdown and modal Escape registrations.
 jest.mock("@rc-component/util/lib/hooks/useId", () => ({
@@ -30,6 +31,11 @@ jest.mock("@rc-component/util/lib/hooks/useId", () => ({
 }));
 
 const mockApi = {
+  listCliConnections: jest.fn(),
+  listCliConnectorGrants: jest.fn(),
+  connectCliToken: jest.fn(),
+  saveCliConnectorGrant: jest.fn(),
+  disconnectCliConnection: jest.fn(),
   getCocalcConnectorConfig: jest.fn(),
   saveCocalcConnectorConfig: jest.fn(),
   removeCocalcConnectorConfig: jest.fn(),
@@ -125,6 +131,9 @@ async function openFromChip(
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockApi.listCliConnections.mockResolvedValue([]);
+  mockApi.listCliConnectorGrants.mockResolvedValue([]);
+  refreshCliConnectors();
   mockError = undefined;
   mockDirectory = {
     enabled: true,
@@ -227,6 +236,53 @@ test("the connectors chip opens CoCalc access and reflects saved disable", async
       agent_id: agent.endpoint.agent_id,
     }),
   );
+});
+
+test("GitHub on for the agent shows in the chip and opens its dialog", async () => {
+  mockApi.getCocalcConnectorConfig.mockResolvedValue(null);
+  mockApi.listCliConnections.mockResolvedValue([
+    {
+      connection_id: "conn-1",
+      connector: "github",
+      description: "@octo",
+      created: new Date(),
+      last_used: null,
+    },
+  ]);
+  mockApi.listCliConnectorGrants.mockResolvedValue([
+    {
+      grant_id: "grant-1",
+      account_id: "account",
+      agent_id: agent.endpoint.agent_id,
+      source_project_id: agent.endpoint.project_id,
+      connector: "github",
+      connection_id: "conn-1",
+      scope: {},
+      revision: 1,
+      enabled: true,
+      created_at: new Date(),
+      updated_at: new Date(),
+    },
+  ]);
+  refreshCliConnectors();
+  const user = userEvent.setup();
+  render(<Controls />);
+  expect(
+    await screen.findByRole("button", {
+      name: "Connectors for @builder: GitHub @octo",
+    }),
+  ).toHaveTextContent("1");
+  await openFromChip(user, /^GitHub/);
+  const dialog = await screen.findByRole("dialog", {
+    name: "GitHub for @builder",
+  });
+  await waitFor(() =>
+    expect(within(dialog).getByRole("switch")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    ),
+  );
+  expect(within(dialog).getByRole("radio", { name: "@octo" })).toBeChecked();
 });
 
 test("network icon tracks assigned tags, preserves details, and disappears after removal", async () => {

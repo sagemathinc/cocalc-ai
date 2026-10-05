@@ -12,9 +12,17 @@ import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import type { CocalcConnectorConfig } from "@cocalc/conat/hub/api/agent";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
+import type { IconName } from "@cocalc/frontend/components/icon";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { lite } from "@cocalc/frontend/lite";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
+import type { CliConnector } from "@cocalc/util/ai/cli-connectors";
+import {
+  CliConnectorAgentModal,
+  agentGrant,
+  cliConnectorSummary,
+  useCliConnectors,
+} from "./cli-connectors";
 import { CocalcConnector } from "./cocalc-connector";
 import { AgentNetworkTagsEditor } from "./agent-network-tags-editor";
 import { AgentNetworkDetailsModal } from "./agent-network-details-modal";
@@ -165,6 +173,33 @@ function NamedAgentConnectors({
   const chipRef = useRef<HTMLButtonElement>(null);
   const [networksOpen, setNetworksOpen] = useState(false);
   const [detailsId, setDetailsId] = useState<string>();
+  const [cliOpen, setCliOpen] = useState<CliConnector>();
+  const { data: cli, error: cliError } = useCliConnectors();
+  const cliItem = (connector: CliConnector, label: string, icon: IconName) => {
+    const status = !supportsCocalcAccess
+      ? "Codex and Claude only"
+      : cliError
+        ? "Unable to load"
+        : cli
+          ? cliConnectorSummary(cli, agent, connector)
+          : "";
+    return {
+      key: `${connector}-connector`,
+      label,
+      extra: status ? <Status text={status} warning={!!cliError} /> : undefined,
+      disabled: !supportsCocalcAccess,
+      icon: (
+        <span aria-hidden>
+          <Icon name={icon} />
+        </span>
+      ),
+      onClick: () => setCliOpen(connector),
+    };
+  };
+  const cliOn = (["github", "cloudflare"] as const).filter(
+    (connector) =>
+      supportsCocalcAccess && agentGrant(cli, agent, connector)?.enabled,
+  );
   const networks = directory?.networks ?? [];
   const assigned = networks.filter(
     (network) =>
@@ -216,6 +251,8 @@ function NamedAgentConnectors({
             ),
             onClick: cocalc?.onOpen,
           },
+          cliItem("github", "GitHub", "github"),
+          cliItem("cloudflare", "Cloudflare", "cloud"),
           {
             key: "agent-networks",
             label: "Agent Networks",
@@ -240,9 +277,13 @@ function NamedAgentConnectors({
     const cocalcConfigured = supportsCocalcAccess && cocalc?.config != null;
     const cocalcOn = cocalcConfigured && cocalc?.config?.enabled === true;
     const networksOn = assigned.length > 0 && !paused;
-    const active = Number(cocalcOn) + Number(networksOn);
+    const active = Number(cocalcOn) + cliOn.length + Number(networksOn);
     const parts = [
       ...(cocalcConfigured ? [`CoCalc access ${cocalcStatus}`] : []),
+      ...cliOn.map(
+        (connector) =>
+          `${connector === "github" ? "GitHub" : "Cloudflare"} ${cliConnectorSummary(cli, agent, connector)}`,
+      ),
       ...(assigned.length > 0 ? [`Agent Networks ${networksStatus}`] : []),
     ];
     return (
@@ -254,7 +295,7 @@ function NamedAgentConnectors({
           <ConnectorsChip
             label={`Connectors for @${agent.name}: ${parts.join("; ")}`}
             active={active}
-            warning={!!cocalc?.loadError || !!error}
+            warning={!!cocalc?.loadError || !!error || !!cliError}
             items={connectors}
             chipRef={chipRef}
           />
@@ -310,6 +351,17 @@ function NamedAgentConnectors({
             <Spin aria-label="Loading Agent Networks" />
           )}
         </Modal>
+      )}
+      {cliOpen && (
+        <CliConnectorAgentModal
+          agent={agent}
+          connector={cliOpen}
+          open
+          onClose={() => {
+            setCliOpen(undefined);
+            chipRef.current?.focus();
+          }}
+        />
       )}
       <AgentNetworkDetailsModal
         network={networks.find(

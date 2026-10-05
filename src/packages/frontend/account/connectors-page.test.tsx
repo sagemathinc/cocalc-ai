@@ -7,8 +7,14 @@ import type {
 } from "@cocalc/conat/agents/personal";
 import { ConnectorsPage as ConnectionsPage } from "./connectors-page";
 import { getVisibleSettingsNavigation } from "./settings-navigation";
+import { refreshCliConnectors } from "@cocalc/frontend/agents/cli-connectors";
 
 const mockApi = {
+  listCliConnections: jest.fn(),
+  listCliConnectorGrants: jest.fn(),
+  connectCliToken: jest.fn(),
+  saveCliConnectorGrant: jest.fn(),
+  disconnectCliConnection: jest.fn(),
   listCocalcConnectorConfigs: jest.fn(),
   getCocalcConnectorConfig: jest.fn(),
   saveCocalcConnectorConfig: jest.fn(),
@@ -112,6 +118,9 @@ const network = (title: string, state: "active" | "paused" | "closed") => ({
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockApi.listCliConnections.mockResolvedValue([]);
+  mockApi.listCliConnectorGrants.mockResolvedValue([]);
+  refreshCliConnectors();
   mockAgents = {
     directory: {
       enabled: true,
