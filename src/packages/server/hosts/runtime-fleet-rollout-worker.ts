@@ -72,6 +72,7 @@ type RecoveryStopGateSnapshot = {
   recovery_level: LaunchHealthLevel;
   latency_level: LaunchHealthLevel;
   hosts: Record<string, RecoveryStopGateHost>;
+  advisories?: string[];
 };
 
 const PRESSURE_FRESHNESS_MS = 5 * 60_000;
@@ -137,12 +138,10 @@ function recoveryStopGateFailure({
   baseline,
   current,
   host_ids,
-  require_measured_latency = false,
 }: {
   baseline: RecoveryStopGateSnapshot;
   current: RecoveryStopGateSnapshot;
   host_ids: string[];
-  require_measured_latency?: boolean;
 }): string | undefined {
   if (baseline.recovery_level === "unknown") {
     return "project recovery baseline is unknown";
@@ -150,19 +149,14 @@ function recoveryStopGateFailure({
   if (current.recovery_level === "unknown") {
     return "project recovery health is unknown";
   }
-  if (require_measured_latency && current.latency_level === "unknown") {
-    return "interactive latency is unmeasured; global promotion requires browser latency samples";
-  }
   const rank = (level: LaunchHealthLevel) =>
     level === "critical" ? 2 : level === "warning" ? 1 : 0;
-  if (rank(current.recovery_level) > rank(baseline.recovery_level)) {
-    return `project recovery health worsened from ${baseline.recovery_level} to ${current.recovery_level}`;
-  }
+  // Routine due-work and maintenance warnings are not release regressions.
   if (
-    baseline.latency_level !== "unknown" &&
-    current.latency_level === "unknown"
+    current.recovery_level === "critical" &&
+    baseline.recovery_level !== "critical"
   ) {
-    return "interactive latency health became unknown";
+    return `project recovery health worsened from ${baseline.recovery_level} to ${current.recovery_level}`;
   }
   if (rank(current.latency_level) > rank(baseline.latency_level)) {
     return `interactive latency health worsened from ${baseline.latency_level} to ${current.latency_level}`;
@@ -186,12 +180,6 @@ function recoveryStopGateFailure({
       return `host ${host_id} backup debt age regressed beyond elapsed time`;
     }
     if (
-      after.emergency_seconds != null &&
-      after.emergency_seconds > (before.emergency_seconds ?? 0)
-    ) {
-      return `host ${host_id} entered emergency storage pressure`;
-    }
-    if (
       before.latest_valid_pressure_at != null &&
       (after.latest_valid_pressure_at == null ||
         Date.parse(current.checked_at) -
@@ -202,6 +190,44 @@ function recoveryStopGateFailure({
     }
   }
   return undefined;
+}
+
+function recoveryStopGateAdvisories({
+  baseline,
+  current,
+  host_ids,
+}: {
+  baseline: RecoveryStopGateSnapshot;
+  current: RecoveryStopGateSnapshot;
+  host_ids: string[];
+}): string[] {
+  const advisories: string[] = [];
+  if (current.latency_level === "unknown") {
+    advisories.push(
+      "Browser latency is unmeasured; validate release workflows with synthetic smoke tests. No traffic is not a measured regression.",
+    );
+  }
+  if (current.recovery_level === "warning") {
+    advisories.push(
+      "Project recovery reports a warning; inspect recovery details. Critical regressions, backup debt jumps, and new failed attempts remain blocking.",
+    );
+  }
+  for (const host_id of host_ids) {
+    const before = baseline.hosts[host_id];
+    const after = current.hosts[host_id];
+    // A 24-hour cumulative PSI counter cannot show whether pressure persists
+    // or was caused by this rollout. Keep the evidence without latching failure.
+    if (
+      before &&
+      after?.emergency_seconds != null &&
+      after.emergency_seconds > (before.emergency_seconds ?? 0)
+    ) {
+      advisories.push(
+        `Host ${host_id} accumulated storage I/O pressure (${before.emergency_seconds ?? 0}s -> ${after.emergency_seconds}s over 24h); inspect current pressure. This counter alone does not establish a rollout failure.`,
+      );
+    }
+  }
+  return advisories;
 }
 
 function savedRecoveryStopGateBaseline(
@@ -230,18 +256,26 @@ async function assertRecoveryStopGate({
   baseline,
   current,
   host_ids,
-  require_measured_latency,
 }: {
   baseline: RecoveryStopGateSnapshot;
   current: RecoveryStopGateSnapshot;
   host_ids: string[];
-  require_measured_latency?: boolean;
 }): Promise<void> {
+  current.advisories = recoveryStopGateAdvisories({
+    baseline,
+    current,
+    host_ids,
+  });
+  if (current.advisories.length) {
+    logger.warn("fleet rollout health advisories", {
+      checked_at: current.checked_at,
+      advisories: current.advisories,
+    });
+  }
   const failure = recoveryStopGateFailure({
     baseline,
     current,
     host_ids,
-    require_measured_latency,
   });
   if (failure) throw new Error(`fleet rollout health gate stopped: ${failure}`);
   // Project quotas are customer-controlled and are not deployment regressions.
@@ -926,7 +960,6 @@ async function handleRollout(op: LroSummary): Promise<void> {
         baseline: recoveryStopGateBaseline,
         current: recoveryStopGateLatest,
         host_ids: hostIds,
-        require_measured_latency: true,
       });
       await publishProgress({
         phase: "promoting",
@@ -1084,6 +1117,7 @@ export function startHostRuntimeFleetRolloutWorker({
 }
 
 export const __test__ = {
+  recoveryStopGateAdvisories,
   assertRecoveryStopGate,
   buildRolloutWaves,
   componentRuntimeVersionsForPromotion,

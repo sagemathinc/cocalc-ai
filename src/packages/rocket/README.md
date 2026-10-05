@@ -27,6 +27,29 @@ The bundle includes the bay runtime plus the project-host, project, tools, and
 bootstrap artifacts needed for the bay's `/software/...` project-host bootstrap
 endpoints.
 
+## Runtime Fleet Health Gates
+
+Runtime rollout and global promotion use the same health policy. Missing browser
+latency samples (including an idle staging site), routine recovery warnings, and
+increases in the cumulative 24-hour I/O-pressure counter are advisory, not
+automatic rollout failures. A cumulative counter can increase after a short
+pressure event even when the host has already recovered; it does not establish
+release causality or current storage failure.
+
+Advisories are logged and retained in the operation's
+`recovery_stop_gate_latest.advisories` alongside the unchanged baseline and raw
+measurements. Inspect current pressure and use synthetic project/file/terminal
+and application smoke checks when organic traffic is absent. Unmeasured latency
+is not reported as healthy.
+
+Measured latency regressions, newly critical recovery health, unavailable
+recovery health, loss of previously available pressure telemetry, backup-debt
+age jumps, and new non-quota recovery failures still stop the rollout. Runtime
+version alignment, readiness, stabilization, and ACP drain checks are unchanged.
+This fleet policy does not disable host-local storage admission or disk-space
+and runtime-health protection. Do not rewrite an old failed campaign or baseline
+to apply a new gate policy.
+
 Kubernetes chart notes:
 
 - Conat persist must run as exactly one pod with fast, durable storage.

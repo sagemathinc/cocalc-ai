@@ -441,24 +441,57 @@ describe("fleet recovery stop gates", () => {
     expect(
       gate(current(), { ...baseline(), recovery_level: "unknown" }),
     ).toMatch(/baseline is unknown/);
-    expect(
-      __test__.recoveryStopGateFailure({
-        baseline: { ...baseline(), latency_level: "unknown" },
-        current: { ...current(), latency_level: "unknown" },
-        host_ids: ["canary"],
-        require_measured_latency: true,
-      }),
-    ).toMatch(/global promotion requires browser latency samples/);
   });
 
-  test("stops on a backup age jump or emergency pressure", () => {
+  test("unmeasured latency remains advisory even when prior samples age out", () => {
+    for (const before of [
+      baseline(),
+      { ...baseline(), latency_level: "unknown" as const },
+    ]) {
+      const after = { ...current(), latency_level: "unknown" as const };
+      expect(gate(after, before)).toBeUndefined();
+      expect(
+        __test__.recoveryStopGateAdvisories({
+          baseline: before,
+          current: after,
+          host_ids: ["canary"],
+        }),
+      ).toEqual([expect.stringContaining("Browser latency is unmeasured")]);
+    }
+  });
+
+  test("routine recovery warnings are advisory, not failed deployments", () => {
+    const after = { ...current(), recovery_level: "warning" as const };
+    expect(gate(after)).toBeUndefined();
+    expect(
+      __test__.recoveryStopGateAdvisories({
+        baseline: baseline(),
+        current: after,
+        host_ids: ["canary"],
+      }),
+    ).toEqual([expect.stringContaining("Project recovery reports a warning")]);
+  });
+
+  test("stops on a backup age jump", () => {
     const ageJump = current();
     ageJump.hosts.canary.oldest_backup_delay_seconds = 600;
     expect(gate(ageJump)).toMatch(/backup debt age/);
+  });
 
+  test("cumulative I/O pressure is retained as an advisory, not a latched failure", () => {
     const pressure = current();
     pressure.hosts.canary.emergency_seconds = 30;
-    expect(gate(pressure)).toMatch(/emergency storage pressure/);
+    expect(gate(pressure)).toBeUndefined();
+    expect(
+      __test__.recoveryStopGateAdvisories({
+        baseline: baseline(),
+        current: pressure,
+        host_ids: ["canary"],
+      }),
+    ).toEqual([expect.stringContaining("0s -> 30s")]);
+    expect(pressure.hosts.canary.emergency_seconds).toBe(30);
+    pressure.hosts.canary.latest_valid_pressure_at = null;
+    expect(gate(pressure)).toMatch(/lost fresh storage pressure telemetry/);
   });
 
   test("ignores legacy aggregate failure counters in saved snapshots", () => {
@@ -511,7 +544,6 @@ describe("fleet recovery failure admission", () => {
         baseline: snapshot,
         current: snapshot,
         host_ids: [host_id],
-        require_measured_latency: true,
       });
     const insert = async (
       reason: string | null,
@@ -533,6 +565,29 @@ describe("fleet recovery failure admission", () => {
     await insert("object_store_unavailable", "free", host_id, since);
     await expect(assertGate()).resolves.toBeUndefined();
 
+    const idleSite = {
+      ...snapshot,
+      latency_level: "unknown" as const,
+      recovery_level: "warning" as const,
+      hosts: {
+        [host_id]: { ...snapshot.hosts[host_id], emergency_seconds: 30 },
+      },
+      advisories: [] as string[],
+    };
+    await expect(
+      __test__.assertRecoveryStopGate({
+        baseline: snapshot,
+        current: idleSite,
+        host_ids: [host_id],
+      }),
+    ).resolves.toBeUndefined();
+    expect(idleSite.advisories).toEqual([
+      expect.stringContaining("Browser latency is unmeasured"),
+      expect.stringContaining("Project recovery reports a warning"),
+      expect.stringContaining("0s -> 30s"),
+    ]);
+    expect(snapshot.hosts[host_id].emergency_seconds).toBe(0);
+
     const health = await getProjectRecoveryAttemptHealth();
     expect(
       health.by_host
@@ -552,6 +607,13 @@ describe("fleet recovery failure admission", () => {
       await expect(assertGate()).rejects.toThrow(
         "new failed recovery attempt(s) on the upgraded hosts",
       );
+      await expect(
+        __test__.assertRecoveryStopGate({
+          baseline: snapshot,
+          current: idleSite,
+          host_ids: [host_id],
+        }),
+      ).rejects.toThrow("new failed recovery attempt(s) on the upgraded hosts");
       await getPool().query(
         `DELETE FROM project_maintenance_attempts
           WHERE host_id=$1 AND reason IS NOT DISTINCT FROM $2`,
