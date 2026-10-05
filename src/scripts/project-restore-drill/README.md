@@ -75,6 +75,11 @@ download/hash, attest, recheck exact canary ownership/placement and stopped
 state, submit deletion, and wait for its durable operation. No runtime is
 started just for these file/backup operations.
 
+The authoritative membership must contain **only the planned operator owner**.
+Adding any owner, collaborator or other member prevents cleanup, even if the
+operator is still an owner. Missing or malformed membership also fails closed.
+Do not repurpose or share a campaign canary while a drill is in progress.
+
 Use **`--keep-projects` only for deliberate debugging**. Successful retained
 projects are reported separately, not as deleted. Failed or uncertain drills
 are always retained for investigation, with project and operation IDs in their

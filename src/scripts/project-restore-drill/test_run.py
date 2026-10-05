@@ -32,14 +32,21 @@ class FakeDrill(Drill):
         self.bad_reservation = False
         self.failed_operation = None
         self.attestation_changes = {}
+        self.users = {OWNER: {"group": "owner"}}
 
     def cli(self, label, *args):
         self.calls.append((label, args))
         if self.fail == label:
             raise RuntimeError(label + ": unconfirmed outcome")
-        if label in ("reservation", "canary-check"):
-            bad = self.bad_reservation if label == "reservation" else self.bad_canary
-            return {"row_count": 0 if bad else 1}
+        if label == "reservation":
+            return {"row_count": 0 if self.bad_reservation else 1}
+        if label == "canary-check":
+            return {
+                "row_count": 0 if self.bad_canary else 1,
+                "fields": [{"name": "project_id"}, {"name": "users"}],
+                "rows": [] if self.bad_canary else [[PID, copy.deepcopy(self.users)]],
+                "truncated": False,
+            }
         if label == "create":
             return {"project_id": PID}
         if label == "attestation-check":
@@ -198,6 +205,51 @@ class DrillTests(unittest.TestCase):
         result = self.drill.run()
         self.assertIn("active or unknown runtime", result["error"])
         self.assertNotIn("delete-submit", self.labels())
+
+    def test_added_owner_or_collaborator_before_cleanup_prevents_deletion(self):
+        self.drill.verify()
+        for group in ("owner", "collaborator", "viewer", "unknown"):
+            with self.subTest(group=group):
+                # Every attempt starts at the same verified checkpoint; sharing
+                # occurred afterward, so the pre-cleanup check must detect it.
+                self.drill.checkpoint()
+                resumed = FakeDrill(self.args)
+                resumed.users[HOST] = {"group": group}
+                result = resumed.run()
+                self.assertIn("membership is not operator-only", result["error"])
+                self.assertIn(PID, result["error"])
+                self.assertNotIn("delete-submit", self.labels(resumed))
+                self.assertNotIn("complete", result)
+
+    def test_shared_canary_is_not_used_for_a_drill(self):
+        self.drill.users[HOST] = {"group": "collaborator"}
+        result = self.drill.run()
+        self.assertIn("membership is not operator-only", result["error"])
+        self.assertNotIn("upload", self.labels())
+        self.assertNotIn("delete-submit", self.labels())
+
+    def test_unknown_or_malformed_membership_is_not_deleted(self):
+        self.drill.verify()
+        for users in (
+            None,
+            [],
+            {},
+            {OWNER: None},
+            {OWNER: "owner"},
+            {OWNER: {"group": "collaborator"}},
+            {HOST: {"group": "owner"}},
+        ):
+            with self.subTest(users=users):
+                self.drill.checkpoint()
+                resumed = FakeDrill(self.args)
+                resumed.users = users
+                result = resumed.run()
+                self.assertIn("membership is not operator-only", result["error"])
+                self.assertNotIn("delete-submit", self.labels(resumed))
+
+    def test_sole_owner_metadata_does_not_prevent_cleanup(self):
+        self.drill.users[OWNER]["hide"] = True
+        self.assertEqual(self.drill.run()["cleanup"], "deleted")
 
     def test_crash_after_verification_resumes_only_cleanup(self):
         self.drill.verify()

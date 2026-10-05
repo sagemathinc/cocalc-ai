@@ -144,7 +144,7 @@ class Drill:
         data = self.query(
             "canary-check",
             f"""
-            SELECT p.project_id FROM projects p
+            SELECT p.project_id, p.users FROM projects p
             JOIN project_backup_repo_assignments a ON a.project_id=p.project_id
             WHERE p.project_id={sql_string(self.pid)}::uuid
               AND p.title={sql_string(s['title'])}
@@ -156,9 +156,25 @@ class Drill:
               AND (p.backup_repo_id IS NULL OR p.backup_repo_id=a.backup_repo_id)
         """,
         )
-        if data.get("row_count") != 1:
+        rows = data.get("rows", [])
+        fields = [field["name"] for field in data.get("fields", [])]
+        record = dict(zip(fields, rows[0])) if len(rows) == 1 else {}
+        users = record.get("users")
+        # Ownership alone is insufficient: a once-disposable canary may now be
+        # shared. Allow owner metadata, but no other member, even an unknown role.
+        if (
+            data.get("row_count") != 1
+            or data.get("truncated")
+            or record.get("project_id") != self.pid
+            or not isinstance(users, dict)
+            or set(users) != {s["owner"]}
+            or not isinstance(users[s["owner"]], dict)
+            or users[s["owner"]].get("group") != "owner"
+        ):
             raise RuntimeError(
-                "canary ownership/placement changed; refusing further work or deletion"
+                f"canary ownership/placement changed or membership is not operator-only "
+                f"for project {self.pid}; refusing further work or deletion; "
+                f"inspect {self.directory / 'canary-check.stdout.json'}"
             )
 
     def submit(self, label, key, *args):
