@@ -371,6 +371,48 @@ describe("fabric faults", () => {
     );
   });
 
+  it("keeps the attached bay working for its own accounts while the seed is frozen", async () => {
+    // Everything here concerns only bob and his own bay. The seed holds the
+    // cluster directory and global configuration, but bay-1 must not need it
+    // for its own accounts.
+    const timed = async (what, limitMs, fn) => {
+      const start = Date.now();
+      const result = await fn();
+      const elapsed = Date.now() - start;
+      assert.ok(elapsed < limitMs, `${what} took ${elapsed}ms`);
+      return result;
+    };
+    let project_id;
+    cluster.signal(SEED, "SIGSTOP");
+    try {
+      const bay = await timed("looking up his home bay", 5_000, () =>
+        bob.client.call("system.getAccountBay", {}),
+      );
+      assert.equal(bay.home_bay_id, ATTACHED);
+      project_id = await timed("creating a project", 10_000, () =>
+        createProject(bob.client, "created while the seed is frozen"),
+      );
+      await timed("renaming it", 5_000, () =>
+        rename(bob.client, project_id, "renamed while the seed is frozen"),
+      );
+      await eventually(
+        async () =>
+          (await listed(bob.client, project_id))?.title ===
+          "renamed while the seed is frozen",
+        { timeoutMs: 20_000, what: "the renamed project in bob's list" },
+      );
+    } finally {
+      cluster.signal(SEED, "SIGCONT");
+    }
+    // Once the seed is back, the project works across bays like any other.
+    assert.equal(await owningBay(project_id), ATTACHED);
+    await invite(bob, alice, project_id);
+    await eventually(() => listed(alice.client, project_id), {
+      timeoutMs: 60_000,
+      what: "bob's new project in alice's list",
+    });
+  });
+
   it("recovers after the seed's event loop stalls", async () => {
     cluster.signal(SEED, "SIGSTOP");
     await sleep(8_000);
