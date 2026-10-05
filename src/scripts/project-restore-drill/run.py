@@ -169,6 +169,45 @@ class Drill:
         self.state.pop("submission_pending")
         self.checkpoint()
 
+    def check_attestation(self):
+        s = self.state
+        expected = {
+            "op_id": s["restore_op_id"],
+            "project_id": self.pid,
+            "backup_id": s["backup_id"],
+            "backup_repo_id": self.scope["backup_repo_id"],
+            "restore_host_id": self.scope["host_id"],
+            "expected_sha256": s["expected_sha256"],
+            "observed_sha256": s["observed_sha256"],
+            "passed": True,
+        }
+        # The public attestation receipt intentionally omits the repository, host,
+        # and hashes. Read the immutable record, not the current project placement.
+        data = self.query(
+            "attestation-check",
+            f"""SELECT op_id, project_id, backup_id, backup_repo_id, restore_host_id,
+                       expected_sha256, observed_sha256, passed
+                  FROM project_restore_drill_attestations
+                 WHERE op_id={sql_string(s['restore_op_id'])}::uuid
+                   AND project_id={sql_string(self.pid)}::uuid""",
+        )
+        rows = data.get("rows", [])
+        fields = [field["name"] for field in data.get("fields", [])]
+        record = dict(zip(fields, rows[0])) if len(rows) == 1 else {}
+        if (
+            data.get("row_count") != 1
+            or data.get("truncated")
+            or record != expected
+            or record.get("passed") is not True
+            or s["expected_sha256"] != s["observed_sha256"]
+        ):
+            raise RuntimeError(
+                f"immutable attestation mismatch for project {self.pid}, "
+                f"operation {s['restore_op_id']}; inspect {self.directory / 'attestation-check.stdout.json'}"
+            )
+        s["attestation_check"] = data
+        self.checkpoint()
+
     def wait(self, op_id, label):
         deadline = time.monotonic() + 1200
         while time.monotonic() < deadline:
@@ -325,6 +364,7 @@ class Drill:
             raise RuntimeError(
                 "drill attestation did not confirm this canary; retaining project"
             )
+        self.check_attestation()
         s["verified"] = True
         self.checkpoint()
 
@@ -340,6 +380,7 @@ class Drill:
             return
         if "delete_op_id" not in s:
             self.check_canary()
+            self.check_attestation()
             project = self.cli("final-project", "project", "get", "--project", self.pid)
             if project.get("state") not in ("opened", "closed"):
                 raise RuntimeError(

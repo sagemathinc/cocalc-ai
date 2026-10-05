@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from run import Drill, save
 
@@ -30,6 +31,7 @@ class FakeDrill(Drill):
         self.bad_canary = False
         self.bad_reservation = False
         self.failed_operation = None
+        self.attestation_changes = {}
 
     def cli(self, label, *args):
         self.calls.append((label, args))
@@ -40,6 +42,25 @@ class FakeDrill(Drill):
             return {"row_count": 0 if bad else 1}
         if label == "create":
             return {"project_id": PID}
+        if label == "attestation-check":
+            record = {
+                "op_id": RESTORE,
+                "project_id": PID,
+                "backup_id": "snapshot",
+                "backup_repo_id": REPO,
+                "restore_host_id": HOST,
+                "expected_sha256": self.state["expected_sha256"],
+                "observed_sha256": self.state["observed_sha256"],
+                "passed": not self.mismatch,
+                **self.attestation_changes,
+            }
+            return {
+                "audit_id": "read-audit",
+                "row_count": 1,
+                "truncated": False,
+                "fields": [{"name": name} for name in record],
+                "rows": [list(record.values())],
+            }
         if label.endswith("-submit"):
             return {
                 "op_id": {
@@ -86,6 +107,8 @@ class DrillTests(unittest.TestCase):
             owner=OWNER,
             bay="bay-test",
             keep_projects=False,
+            node="node",
+            cli="cli.js",
         )
         self.drill = FakeDrill(self.args)
 
@@ -182,7 +205,13 @@ class DrillTests(unittest.TestCase):
         self.assertTrue(resumed.run()["complete"])
         self.assertEqual(
             self.labels(resumed),
-            ["canary-check", "final-project", "delete-submit", "delete-status"],
+            [
+                "canary-check",
+                "attestation-check",
+                "final-project",
+                "delete-submit",
+                "delete-status",
+            ],
         )
 
     def test_crash_after_delete_submission_polls_saved_operation_only(self):
@@ -246,6 +275,97 @@ class DrillTests(unittest.TestCase):
         self.assertIn("saved marker changed", result["error"])
         self.assertNotIn("backup-submit", self.labels(resumed))
         self.assertNotIn("delete-submit", self.labels(resumed))
+
+    def test_real_flat_cli_envelope_reaches_cleanup(self):
+        fake_cli = self.drill.cli
+        receipt = {
+            "audit_id": "audit",
+            "bay_id": "bay-test",
+            "op_id": RESTORE,
+            "project_id": PID,
+            "backup_id": "snapshot",
+            "passed": True,
+            "created": True,
+            "recorded_at": "2026-10-05T02:00:00.000Z",
+            "evidence_source": "operator_supplied",
+        }
+        envelope = {
+            "ok": True,
+            "command": "admin db project-restore-drill-attest",
+            "data": receipt,
+        }
+
+        def cli(label, *args):
+            if label == "attest":
+                return Drill.cli(self.drill, label, *args)
+            return fake_cli(label, *args)
+
+        self.drill.cli = cli
+        with patch(
+            "run.subprocess.run",
+            return_value=SimpleNamespace(
+                stdout=json.dumps(envelope), stderr="", returncode=0
+            ),
+        ) as process:
+            result = self.drill.run()
+        self.assertTrue(result["complete"])
+        self.assertEqual(result["cleanup"], "deleted")
+        self.assertEqual(result["attestation"], receipt)
+        self.assertIn("project-restore-drill-attest", process.call_args.args[0])
+        self.assertEqual(result["attestation_check"]["audit_id"], "read-audit")
+
+    def test_immutable_evidence_mismatches_prevent_verification_and_deletion(self):
+        for field in (
+            "op_id",
+            "project_id",
+            "backup_id",
+            "backup_repo_id",
+            "restore_host_id",
+            "expected_sha256",
+            "observed_sha256",
+            "passed",
+        ):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                args = copy.copy(self.args)
+                args.campaign_dir = Path(directory)
+                drill = FakeDrill(args)
+                drill.attestation_changes[field] = (
+                    False if field == "passed" else "wrong"
+                )
+                result = drill.run()
+                self.assertIn("immutable attestation mismatch", result["error"])
+                self.assertIn(RESTORE, result["error"])
+                self.assertNotIn("verified", result)
+                self.assertNotIn("delete-submit", self.labels(drill))
+
+    def test_attestation_read_failure_retains_canary(self):
+        self.drill.fail = "attestation-check"
+        result = self.drill.run()
+        self.assertIn("attestation-check", result["error"])
+        self.assertNotIn("verified", result)
+        self.assertNotIn("delete-submit", self.labels())
+
+    def test_resumed_cleanup_rechecks_immutable_evidence_before_deleting(self):
+        self.drill.verify()
+        resumed = FakeDrill(self.args)
+        resumed.attestation_changes["backup_repo_id"] = HOST
+        result = resumed.run()
+        self.assertIn("immutable attestation mismatch", result["error"])
+        self.assertNotIn("delete-submit", self.labels(resumed))
+
+    def test_missing_immutable_record_is_not_success(self):
+        original = self.drill.cli
+
+        def cli(label, *args):
+            if label == "attestation-check":
+                return {"row_count": 0, "fields": [], "rows": []}
+            return original(label, *args)
+
+        self.drill.cli = cli
+        result = self.drill.run()
+        self.assertIn("immutable attestation mismatch", result["error"])
+        self.assertNotIn("verified", result)
+        self.assertNotIn("delete-submit", self.labels())
 
 
 if __name__ == "__main__":

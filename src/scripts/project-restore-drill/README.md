@@ -6,6 +6,10 @@ canary project in the operator's project list. This runner **deletes each
 successful canary by default**, through the normal project deletion API, after
 saving the remote-only restore result, downloaded marker, hashes, and immutable
 operator attestation. It waits for deletion before marking the drill complete.
+Because the public attestation receipt omits some fields, an exact audited read
+checks the immutable operation, project, backup, repository, restore host and
+hashes before verification and again before submitting cleanup, including when
+resuming a verified checkpoint. Missing or mismatched evidence prevents deletion.
 Backups keep the deletion API's normal retention (currently seven days); this
 is not an immediate backup purge.
 
