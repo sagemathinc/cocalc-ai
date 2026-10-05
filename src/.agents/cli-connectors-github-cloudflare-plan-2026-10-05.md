@@ -155,7 +155,7 @@ sites or users who prefer that.
 ## Decisions (William, 2026-10-05)
 
 1. GitHub: agents act as the user (option A, user-to-server tokens).
-2. GitHub App: setup instructions are the admin docs page `admin/github-connector` (src/packages/docs, admin-only), written for any self-hosted site; site settings `github_connector_client_id`, `github_connector_client_secret`, `github_connector_app_url`. William creates cocalc.ai's app.
+2. GitHub App: setup instructions are the admin docs page `admin/agent-connectors` (src/packages/docs, admin-only), written for any self-hosted site; site settings `github_connector_client_id`, `github_connector_client_secret`, `github_connector_app_url`. William creates cocalc.ai's app.
 3. Cloudflare: sign in through `cf`'s own OAuth device flow with presets; paste-an-API-token as fallback.
 
 ## Decision after security review (William, 2026-10-05)

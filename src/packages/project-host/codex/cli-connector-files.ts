@@ -219,3 +219,46 @@ async function writeCliConnectorTokens(
     }
   }
 }
+
+// A live lease rewrites its token files every minute (renewal), so a token
+// file untouched for this long belongs to a worker that died.
+export const STALE_CLI_TOKEN_MS = 5 * 60_000;
+
+/**
+ * Remove token files left by dead runtime leases next to this one (worker or
+ * host crash). Expiring provider tokens bound what is left in between.
+ */
+export async function sweepStaleCliConnectorTokens({
+  runtimeDir,
+  ownLeaseName,
+  now = Date.now(),
+}: {
+  runtimeDir: string;
+  ownLeaseName: string;
+  now?: number;
+}): Promise<number> {
+  let removed = 0;
+  let leases: string[];
+  try {
+    leases = await fs.readdir(runtimeDir);
+  } catch {
+    return 0;
+  }
+  for (const lease of leases) {
+    if (!lease.startsWith(".cocalc-agent-") || lease === ownLeaseName) continue;
+    const dir = join(runtimeDir, lease, CLI_CONNECTOR_DIR);
+    for (const connector of CLI_CONNECTORS) {
+      const path = join(dir, tokenFile(connector));
+      try {
+        const stat = await fs.lstat(path);
+        if (now - stat.mtimeMs > STALE_CLI_TOKEN_MS) {
+          await fs.rm(path, { force: true });
+          removed++;
+        }
+      } catch {
+        // No such file: nothing to sweep.
+      }
+    }
+  }
+  return removed;
+}

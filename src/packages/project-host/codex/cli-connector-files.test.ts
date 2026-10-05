@@ -3,6 +3,8 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  STALE_CLI_TOKEN_MS,
+  sweepStaleCliConnectorTokens,
   applyCliConnectorEnv,
   syncCliConnectorTokens,
   writeCliConnectorTools,
@@ -173,5 +175,48 @@ describe("git credential helper", () => {
     expect(
       run("git", ["credential", "fill"], "protocol=https\nhost=gitlab.com\n\n"),
     ).toContain("password=own-password");
+  });
+});
+
+describe("sweeping tokens of dead leases", () => {
+  it("removes stale token files of other leases only", async () => {
+    const runtime = await fs.mkdtemp(join(tmpdir(), "cli-runtime-"));
+    try {
+      const lease = (name: string) => join(runtime, `.cocalc-agent-${name}`);
+      for (const name of ["dead", "live", "own"]) {
+        await writeCliConnectorTools(lease(name));
+        await syncCliConnectorTokens(lease(name), tokens);
+      }
+      const old = new Date(Date.now() - STALE_CLI_TOKEN_MS - 60_000);
+      for (const name of ["dead", "own"]) {
+        for (const file of ["github-token", "cloudflare-token"]) {
+          await fs.utimes(join(lease(name), "cli", file), old, old);
+        }
+      }
+      await expect(
+        sweepStaleCliConnectorTokens({
+          runtimeDir: runtime,
+          ownLeaseName: ".cocalc-agent-own",
+        }),
+      ).resolves.toBe(2);
+      expect(await fs.readdir(join(lease("dead"), "cli"))).toEqual(["bin"]);
+      expect((await fs.readdir(join(lease("live"), "cli"))).sort()).toEqual([
+        "bin",
+        "cloudflare-token",
+        "github-token",
+      ]);
+      expect((await fs.readdir(join(lease("own"), "cli"))).length).toBe(3);
+    } finally {
+      await fs.rm(runtime, { recursive: true, force: true });
+    }
+  });
+
+  it("is harmless when the runtime directory does not exist", async () => {
+    await expect(
+      sweepStaleCliConnectorTokens({
+        runtimeDir: join(dir, "missing"),
+        ownLeaseName: "x",
+      }),
+    ).resolves.toBe(0);
   });
 });

@@ -11,6 +11,7 @@ import { DeleteOutlined } from "@ant-design/icons";
 import {
   Alert,
   Button,
+  Checkbox,
   Tag,
   Modal,
   Radio,
@@ -30,7 +31,9 @@ import type {
 } from "@cocalc/conat/hub/api/agent";
 import {
   CLI_CONNECTOR_INFO,
+  CLOUDFLARE_SCOPE_PRESETS,
   type CliConnector,
+  type CloudflareScopePreset,
 } from "@cocalc/util/ai/cli-connectors";
 import {
   FreshAuthModal,
@@ -134,6 +137,7 @@ export function cliConnectorSummary(
 }
 
 type SignInState =
+  | { step: "choose" }
   | { step: "starting" }
   | { step: "waiting"; signIn: CliConnectorSignIn }
   | { step: "ended"; message: string };
@@ -157,11 +161,23 @@ export function ConnectCliSignInModal({
   const { data } = useCliConnectors();
   const appUrl =
     connector === "github" ? data?.setup.github.app_url : undefined;
+  // Cloudflare asks first what agents may do there; GitHub's permissions are
+  // those of the site's GitHub App.
+  const choosePresets = connector === "cloudflare";
+  const [presets, setPresets] = useState<CloudflareScopePreset[]>(["workers"]);
   const [state, setState] = useState<SignInState>({ step: "starting" });
+  // 0 until the sign-in starts; each "Try again" starts it once more.
   const [attempt, setAttempt] = useState(0);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setAttempt(0);
+      return;
+    }
+    if (choosePresets && attempt === 0) {
+      setState({ step: "choose" });
+      return;
+    }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = (signIn: CliConnectorSignIn, interval: number) => {
@@ -169,6 +185,7 @@ export function ConnectCliSignInModal({
         if (cancelled) return;
         try {
           const result = await personalAgentApi().pollCliConnectorSignIn({
+            connector,
             login_id: signIn.login_id,
           });
           if (cancelled) return;
@@ -199,6 +216,7 @@ export function ConnectCliSignInModal({
         const completed = await runFreshAuthAction(async () => {
           signIn = await personalAgentApi().startCliConnectorSignIn({
             connector,
+            ...(choosePresets ? { presets } : {}),
           });
         });
         if (cancelled) return;
@@ -224,7 +242,18 @@ export function ConnectCliSignInModal({
         open={open}
         title={`Connect ${label}`}
         footer={
-          state.step === "ended" ? (
+          state.step === "choose" ? (
+            <Space>
+              <Button onClick={onClose}>Cancel</Button>
+              <Button
+                type="primary"
+                disabled={presets.length === 0}
+                onClick={() => setAttempt((n) => n + 1)}
+              >
+                Continue
+              </Button>
+            </Space>
+          ) : state.step === "ended" ? (
             <Space>
               <Button onClick={onClose}>Close</Button>
               <Button type="primary" onClick={() => setAttempt((n) => n + 1)}>
@@ -239,6 +268,31 @@ export function ConnectCliSignInModal({
         destroyOnHidden
         modalRender={(node) => <KeyboardBoundary>{node}</KeyboardBoundary>}
       >
+        {state.step === "choose" && (
+          <Space direction="vertical" style={{ width: "100%" }}>
+            <Typography.Paragraph>
+              What may your agents do on Cloudflare? They get only these
+              permissions; connect again later to change them.
+            </Typography.Paragraph>
+            <Checkbox.Group
+              aria-label="Cloudflare permissions"
+              value={presets}
+              onChange={(value) => setPresets(value as CloudflareScopePreset[])}
+            >
+              <Space direction="vertical">
+                {(
+                  Object.keys(
+                    CLOUDFLARE_SCOPE_PRESETS,
+                  ) as CloudflareScopePreset[]
+                ).map((preset) => (
+                  <Checkbox key={preset} value={preset}>
+                    {CLOUDFLARE_SCOPE_PRESETS[preset].label}
+                  </Checkbox>
+                ))}
+              </Space>
+            </Checkbox.Group>
+          </Space>
+        )}
         {state.step === "starting" && (
           <Spin aria-label={`Starting ${label} sign-in`} />
         )}

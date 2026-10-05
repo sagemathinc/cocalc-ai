@@ -2019,8 +2019,25 @@ path, and that support knows how users should recover if their institutional
 identity is unavailable.
 `;
 
-export const ADMIN_GITHUB_CONNECTOR_BODY = String.raw`
-## What the GitHub connector does
+export const ADMIN_AGENT_CONNECTORS_BODY = String.raw`
+## What agent connectors do
+
+Connectors let a user's agents run command-line tools against outside
+services as that user, during the agent's turns only:
+
+- **GitHub:** \`gh\` and \`git\` over https://github.com.
+- **Cloudflare:** \`cf\` and \`wrangler\`.
+
+Each user signs in once from **Settings -> Connectors**, then turns a
+connector on for individual agents from the connectors list (+) in that
+agent's message box. Agents only ever get the provider's short-lived access
+tokens; CoCalc keeps the sign-in on its servers and refreshes them there.
+Admin settings are in **Admin -> Site Settings**, group **AI & Agents**,
+section **Agent Connectors**.
+
+## GitHub
+
+### What the GitHub connector does
 
 The GitHub connector lets a user's agents run \`gh\` and \`git\` with GitHub
 as that user, during the agent's turns only. Each user signs in to GitHub
@@ -2036,7 +2053,7 @@ agent can never do more than its user can.
 Each CoCalc site uses its own GitHub App. Setup takes about 10 minutes and
 needs a GitHub organization or account that will own the app.
 
-## 1. Create the GitHub App
+### 1. Create the GitHub App
 
 On GitHub, open the owner's settings: **Settings -> Developer settings ->
 GitHub Apps -> New GitHub App** (for an organization:
@@ -2054,7 +2071,7 @@ GitHub Apps -> New GitHub App** (for an organization:
 - **Setup URL:** empty. **Redirect on update:** unchecked.
 - **Webhook -> Active:** unchecked.
 
-## 2. Permissions
+### 2. Permissions
 
 Repository permissions (leave everything else at "No access"):
 
@@ -2075,12 +2092,12 @@ a matching git author email). Organization permissions: none.
 Grant only what your users' agents need. Users can still restrict the app to
 selected repositories when they install it.
 
-## 3. Who can install it
+### 3. Who can install it
 
 Choose **Any account**, so every user of your site can install the app on
 their own repositories. Then click **Create GitHub App**.
 
-## 4. Collect the values CoCalc needs
+### 4. Collect the values CoCalc needs
 
 On the app's settings page:
 
@@ -2092,7 +2109,7 @@ On the app's settings page:
 You do not need a private key: agents act as their users, so CoCalc never
 authenticates as the app itself.
 
-## 5. Enter them in CoCalc
+### 5. Enter them in CoCalc
 
 Open **Admin -> Site Settings**, group **AI & Agents**, section **Agent
 Connectors**, and set:
@@ -2107,7 +2124,7 @@ Paste the client secret only into this setting. Do not send it in chat, email
 or tickets, and do not give it to an agent. Only the hub uses it, to refresh
 user tokens. Leaving the Client ID blank turns the GitHub connector off.
 
-## 6. Check it
+### 6. Check it
 
 With a non-admin account:
 
@@ -2118,7 +2135,7 @@ With a non-admin account:
 3. Turn GitHub on for one agent from the connectors list (+) in its message
    box, and ask it to run \`gh repo view <owner>/<repo>\` and push a branch.
 
-## Rotating and revoking
+### Rotating and revoking
 
 - **Rotate the client secret:** generate a new one on GitHub, update the site
   setting, then delete the old secret on GitHub. Existing user connections
@@ -2128,4 +2145,36 @@ With a non-admin account:
 - **Turn the connector off for the whole site:** clear the Client ID. To also
   invalidate every user token, revoke them on GitHub by suspending or deleting
   the app.
+
+## Cloudflare
+
+### What the Cloudflare connector does
+
+The Cloudflare connector lets agents deploy Workers and Pages sites and manage
+R2 storage and DNS with \`cf\` and \`wrangler\`. It needs no setup: users sign
+in with the same OAuth device flow as Cloudflare's own \`cf\` CLI, and
+approve it on dash.cloudflare.com. When signing in, each user chooses what
+agents may do (Workers & sites, R2 storage, DNS); CoCalc requests only those
+scopes, never access to the whole account. Access tokens last about an hour
+and are refreshed on the hub.
+
+### Settings
+
+| Setting | Effect |
+| --- | --- |
+| Cloudflare Connector: Enabled | On by default. Turn it off to hide the connector on your site. |
+| Cloudflare Connector: OAuth Client ID | Optional. Blank uses the public client of Cloudflare's \`cf\` CLI. Set it only if your organization has its own Cloudflare OAuth client with the device flow enabled. |
+
+### Check it
+
+With a non-admin account, connect Cloudflare in **Settings -> Connectors**,
+choose **Workers & sites**, approve the code, turn Cloudflare on for one agent,
+and ask it to run \`cf whoami\` (installing \`cf\` with
+\`npm i -g --prefix ~/.local cf\` if the project does not have it).
+
+### Revoking
+
+A user disconnects in **Settings -> Connectors**, which also revokes the
+sign-in at Cloudflare. Turning the connector off for the site stops every new
+token at once; tokens already handed to a running turn expire within an hour.
 `;

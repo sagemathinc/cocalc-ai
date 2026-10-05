@@ -6,7 +6,7 @@
 // GitHub connector sign-in and tokens: the site's GitHub App, its device flow,
 // and GitHub's expiring user tokens (8 h), refreshed here on the hub. Only the
 // short-lived access token ever leaves the hub. Setup for site admins: docs
-// page admin/github-connector.
+// page admin/agent-connectors.
 
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 

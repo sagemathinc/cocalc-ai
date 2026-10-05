@@ -5,6 +5,7 @@ import {
 } from "@cocalc/util/ai/cli-connectors";
 import {
   applyCliConnectorEnv,
+  sweepStaleCliConnectorTokens,
   syncCliConnectorTokens,
   writeCliConnectorTools,
 } from "./cli-connector-files";
@@ -669,6 +670,17 @@ export async function createProjectCliTokenLease({
   await fs.mkdir(hostDir, { recursive: true, mode: 0o700 });
   await fs.chmod(hostDir, 0o700);
   await writeCliConnectorTools(hostDir);
+  const sweepStaleTokens = () =>
+    sweepStaleCliConnectorTokens({
+      runtimeDir: dirname(hostDir),
+      ownLeaseName: leaseName,
+    }).catch((err) =>
+      logger.warn("could not sweep stale CLI connector tokens", {
+        projectId,
+        err: `${err}`,
+      }),
+    );
+  void sweepStaleTokens();
 
   const writeToken = async (token: string): Promise<void> => {
     const tempPath = join(hostDir, `.token-${randomUUID()}.tmp`);
@@ -753,6 +765,7 @@ export async function createProjectCliTokenLease({
     let renewalPending = false;
     cliTimer = setInterval(() => {
       if (closed || renewalPending || !stillCurrent()) return;
+      void sweepStaleTokens();
       renewalPending = true;
       void hubApi.agent
         .beginCliConnectorTurn(request)

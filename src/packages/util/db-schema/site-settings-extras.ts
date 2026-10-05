@@ -983,7 +983,7 @@ export const EXTRAS: SettingsExtras = {
   },
   agent_connectors_heading: {
     name: "Agent Connectors",
-    desc: "Services agents can use as the user during their turns. See the admin docs page **Set up the GitHub connector** (/docs/admin/github-connector).",
+    desc: "Services agents can use as the user during their turns. See the admin docs page **Set up agent connectors** (/docs/admin/agent-connectors).",
     default: "",
     type: "header",
     tags: ["AI", "GitHub"],

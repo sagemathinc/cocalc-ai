@@ -151,6 +151,7 @@ describe("Settings > Connectors section", () => {
       expect(mockApi.pollCliConnectorSignIn).toHaveBeenCalledTimes(2),
     );
     expect(mockApi.pollCliConnectorSignIn).toHaveBeenCalledWith({
+      connector: "github",
       login_id: "login-1",
     });
     expect(within(dialog).getByText("ABCD-1234")).toBeVisible();
@@ -183,6 +184,54 @@ describe("Settings > Connectors section", () => {
     await waitFor(() =>
       expect(mockApi.startCliConnectorSignIn).toHaveBeenCalledTimes(2),
     );
+  });
+
+  it("asks what agents may do on Cloudflare before signing in", async () => {
+    mockApi.getCliConnectorSetup.mockResolvedValue({
+      ...SETUP,
+      cloudflare: { available: true },
+    });
+    refreshCliConnectors();
+    mockApi.startCliConnectorSignIn.mockResolvedValue({
+      ...signIn,
+      connector: "cloudflare",
+      verification_uri: "https://dash.cloudflare.com/oauth2/device",
+    });
+    mockApi.pollCliConnectorSignIn.mockReturnValue(new Promise(() => {}));
+    render(<CliConnectorSection connector="cloudflare" />);
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: "Connect another Cloudflare account",
+      }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Connect Cloudflare",
+    });
+    expect(mockApi.startCliConnectorSignIn).not.toHaveBeenCalled();
+    const workers = within(dialog).getByRole("checkbox", {
+      name: "Workers & sites",
+    });
+    expect(workers).toBeChecked();
+    await userEvent.click(workers);
+    expect(
+      within(dialog).getByRole("button", { name: "Continue" }),
+    ).toBeDisabled();
+    await userEvent.click(
+      within(dialog).getByRole("checkbox", { name: "R2 storage" }),
+    );
+    await userEvent.click(
+      within(dialog).getByRole("checkbox", { name: "DNS" }),
+    );
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Continue" }),
+    );
+    await waitFor(() =>
+      expect(mockApi.startCliConnectorSignIn).toHaveBeenCalledWith({
+        connector: "cloudflare",
+        presets: ["r2", "dns"],
+      }),
+    );
+    expect(await within(dialog).findByText("ABCD-1234")).toBeVisible();
   });
 
   it("says when the site has not set the connector up", async () => {
