@@ -275,6 +275,28 @@ function resolveSteerAssistantMessageId({
   return undefined;
 }
 
+// When an agent turn last wrote its reply. ACP writes history under the
+// assistant sender's raw model name, not necessarily an openai-* service.
+// Later human edits must not extend the turn and swallow subsequent prompts.
+function assistantFinishedAt(assistant: ChatMessageTyped): number {
+  return Math.max(
+    0,
+    ...historyArray(assistant).map((entry) => {
+      const author =
+        (entry as any)?.author_id ?? (entry as any)?.get?.("author_id");
+      if (
+        typeof author !== "string" ||
+        (author !== field(assistant, "sender_id") &&
+          !isLanguageModelService(author))
+      )
+        return 0;
+      const raw = (entry as any)?.date ?? (entry as any)?.get?.("date");
+      const time = new Date(raw).valueOf();
+      return Number.isFinite(time) ? time : 0;
+    }),
+  );
+}
+
 function isActiveAcpAssistantTurn({
   message,
   acpState,
@@ -382,6 +404,8 @@ function collectSteers({
   const compactMessageIds: SteerCollections["compactMessageIds"] = new Map();
   const byMessageId = new Map<string, ChatMessageTyped>();
   const replyParents = new Set<string>();
+  // Started agent turns per thread, to place mid-turn rows by time.
+  const turnsByThread = new Map<string, ChatMessageTyped[]>();
   for (const [, message] of messages) {
     if (message == null) continue;
     const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
@@ -398,7 +422,16 @@ function collectSteers({
     ) {
       const parent = parentMessageId(message);
       if (parent) replyParents.add(parent);
+      const threadId = `${field<string>(message, "thread_id") ?? ""}`.trim();
+      if (threadId && dateValue(message)) {
+        const turns = turnsByThread.get(threadId) ?? [];
+        turns.push(message);
+        turnsByThread.set(threadId, turns);
+      }
     }
+  }
+  for (const turns of turnsByThread.values()) {
+    turns.sort((a, b) => dateValue(a)!.valueOf() - dateValue(b)!.valueOf());
   }
   for (const [, message] of messages) {
     if (message == null || isAcpAssistantMessage(message)) continue;
@@ -417,6 +450,10 @@ function collectSteers({
       typeof rawLaunch?.toJS === "function" ? rawLaunch.toJS() : rawLaunch;
     const messageState = resolvedMessageAcpState({ message, acpState });
     if (replyParents.has(messageId)) continue;
+    const deliveredAtMs = Number(
+      field(message, "acp_guidance_delivered_at_ms"),
+    );
+    const delivered = Number.isFinite(deliveredAtMs) && deliveredAtMs > 0;
     const needsControls =
       (launch && launch.state !== "accepted") ||
       messageState === "queue" ||
@@ -427,50 +464,48 @@ function collectSteers({
       message,
       byMessageId,
     });
-    const assistantMessageId = resolveSteerAssistantMessageId({
+    // The turn this row arrived during: the one its parents lead to, else (e.g.
+    // a parent chain into an earlier turn, after a recovery restart) the latest
+    // turn in the thread that started before it and was then still going.
+    const spanningTurn = (assistant?: ChatMessageTyped) => {
+      const assistantDate = assistant && dateValue(assistant);
+      if (!assistant || !assistantDate) return undefined;
+      if (assistantDate.valueOf() >= messageDate.valueOf()) return undefined;
+      // Thread-level "running" does not identify which assistant turn owns a row.
+      const active =
+        field(assistant, "generating") === true ||
+        resolvedMessageAcpState({ message: assistant, acpState }) === "running";
+      const completed =
+        !active && messageDate.valueOf() <= assistantFinishedAt(assistant);
+      return active || completed
+        ? { assistant, assistantDate, active, completed }
+        : undefined;
+    };
+    const chainAssistantId = resolveSteerAssistantMessageId({
       message,
       byMessageId,
       includeMidturnMessages: true,
     });
-    const assistant = assistantMessageId
-      ? byMessageId.get(assistantMessageId)
-      : undefined;
-    const assistantDate = assistant && dateValue(assistant);
-    const visibleAssistant =
-      assistantDate &&
-      (!visibleKeys || visibleKeys.has(`${assistantDate.valueOf()}`));
-    if (!visibleAssistant) continue;
-    // Thread-level "running" does not identify which assistant turn owns a row.
-    const activeMidturn =
-      assistant &&
-      (field(assistant, "generating") === true ||
-        resolvedMessageAcpState({ message: assistant, acpState }) ===
-          "running") &&
-      assistantDate.valueOf() < messageDate.valueOf();
-    // ACP writes history under the assistant sender's raw model name, not
-    // necessarily an openai-* service. Later human edits must not extend the
-    // turn and swallow subsequent prompts on reload.
-    const finishedAt = Math.max(
-      0,
-      ...historyArray(assistant).map((entry) => {
-        const author =
-          (entry as any)?.author_id ?? (entry as any)?.get?.("author_id");
-        if (
-          typeof author !== "string" ||
-          (author !== field(assistant, "sender_id") &&
-            !isLanguageModelService(author))
-        )
-          return 0;
-        const raw = (entry as any)?.date ?? (entry as any)?.get?.("date");
-        const time = new Date(raw).valueOf();
-        return Number.isFinite(time) ? time : 0;
-      }),
-    );
-    const completedMidturn =
-      assistant &&
-      !activeMidturn &&
-      assistantDate.valueOf() < messageDate.valueOf() &&
-      messageDate.valueOf() <= finishedAt;
+    const threadTurns =
+      turnsByThread.get(
+        `${field<string>(message, "thread_id") ?? ""}`.trim(),
+      ) ?? [];
+    let latestBefore: ChatMessageTyped | undefined;
+    for (const turn of threadTurns) {
+      if (dateValue(turn)!.valueOf() >= messageDate.valueOf()) break;
+      latestBefore = turn;
+    }
+    const turn =
+      spanningTurn(
+        chainAssistantId ? byMessageId.get(chainAssistantId) : undefined,
+      ) ?? spanningTurn(latestBefore);
+    if (!turn) continue;
+    const { assistant, assistantDate } = turn;
+    const assistantMessageId =
+      `${field<string>(assistant, "message_id") ?? ""}`.trim() || undefined;
+    if (visibleKeys && !visibleKeys.has(`${assistantDate.valueOf()}`)) continue;
+    const activeMidturn = turn.active;
+    const completedMidturn = turn.completed;
     // Send mode describes intent, not proof that an older turn received it.
     // In particular a late immediate send must remain visible as a new prompt.
     if (!activeMidturn && !completedMidturn) continue;
@@ -486,23 +521,12 @@ function collectSteers({
     // Posted and queued messages are not part of a turn until they are sent.
     // Leave them as ordinary rows below it, where they can still be edited.
     if (!immediate && isAwaitingExplicitSend(message, state)) continue;
-    const deliveredAtMs = Number(
-      field(message, "acp_guidance_delivered_at_ms"),
-    );
     const steer: AttachedSteerMessage = {
       messageId,
       assistantMessageId,
-      date:
-        Number.isFinite(deliveredAtMs) && deliveredAtMs > 0
-          ? deliveredAtMs
-          : messageDate.valueOf(),
+      date: delivered ? deliveredAtMs : messageDate.valueOf(),
       text,
-      state:
-        Number.isFinite(deliveredAtMs) && deliveredAtMs > 0
-          ? "sent"
-          : rpc && state === "sent"
-            ? "saved"
-            : state,
+      state: delivered ? "sent" : rpc && state === "sent" ? "saved" : state,
     };
     const activeAssistantTurn = !immediate
       ? activeMidturn

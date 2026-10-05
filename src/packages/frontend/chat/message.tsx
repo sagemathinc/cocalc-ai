@@ -2377,6 +2377,27 @@ export default function Message({
     return (
       <>
         {renderForkNotice()}
+        {/* How this turn began: above its activity, not under it as it grows. */}
+        {showCodexActivity && acpRecoveryCount ? (
+          <div
+            style={{
+              color: UI_COLORS.muted,
+              fontSize: `${Math.max((font_size ?? 14) - 2, 11)}px`,
+              marginBottom: "8px",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              flexWrap: "wrap",
+            }}
+          >
+            <Icon name="history" />
+            <span>
+              Recovered automatically after restart
+              {acpRecoveryReason ? `: ${acpRecoveryReason}` : ""}. Attempt{" "}
+              {acpRecoveryCount}.
+            </span>
+          </div>
+        ) : null}
         <AgentMessageStatus
           show={showCodexActivity && !suppressInlineCodexActivity}
           activityToggle={getCodexActivityToggle()}
@@ -2431,26 +2452,6 @@ export default function Message({
         />
         {suppressInlineCodexActivity ? (
           <AttachedSteerStatusList attachedSteers={attachedSteers} />
-        ) : null}
-        {showCodexActivity && acpRecoveryCount ? (
-          <div
-            style={{
-              color: UI_COLORS.muted,
-              fontSize: `${Math.max((font_size ?? 14) - 2, 11)}px`,
-              marginBottom: "8px",
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              flexWrap: "wrap",
-            }}
-          >
-            <Icon name="history" />
-            <span>
-              Recovered automatically after restart
-              {acpRecoveryReason ? `: ${acpRecoveryReason}` : ""}. Attempt{" "}
-              {acpRecoveryCount}.
-            </span>
-          </div>
         ) : null}
         {shouldRenderInterleavedCodexActivityBody && !activityFeed
           ? renderInterleavedCodexBody({
