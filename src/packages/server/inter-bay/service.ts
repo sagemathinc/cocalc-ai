@@ -550,7 +550,6 @@ import {
   toWire as collabInviteToWire,
   upsertProjectedCollabInviteDirect,
 } from "@cocalc/server/projects/collab-invite-inbox";
-import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import * as computeFunding from "@cocalc/server/conat/api/compute-funding";
 import { checkFundingApprovalRecipientsOnHome } from "@cocalc/server/compute/funding/approval-recipients";
 import {
@@ -583,27 +582,20 @@ import { listCourseFundingSourcesOnBay } from "@cocalc/server/compute/funding/so
 import {
   copyEmailProjectInviteLink,
   createCollabInvite,
-  getProjectAccessLandingInfo,
   inviteCollaboratorWithoutAccount,
-  listProjectAccessRequestBlocks,
-  listProjectAccessRequests,
   listCollabInvites,
   previewEmailProjectInvite,
   redeemEmailProjectInvite,
   removeCollaborator,
   repairAcceptedCourseStudentInviteAccountsLocal,
-  requestProjectAccess,
   respondCollabInviteCanonical,
   respondEmailProjectInvite,
-  respondProjectAccessRequest,
-  unblockProjectAccessRequester,
 } from "@cocalc/server/projects/collaborators";
 import { ensureCourseManagerAccessLocal } from "@cocalc/server/projects/course/ensure-manager-access";
 import {
   getCourseManagedProjectStatesLocal,
   reconcileCourseManagedProjectLocal,
 } from "@cocalc/server/projects/course/reconcile-managed-project";
-import { getProjectCollaboratorInviteUsage } from "@cocalc/server/membership/project-limits";
 import {
   leaveOrDeleteProjectsForAccount,
   transferProjectOwnershipExplicitly,
@@ -2830,23 +2822,8 @@ async function startProjectCollabInviteService(): Promise<void> {
       await getCourseReconfigureOperationLocal(opts),
     cancelCourseReconfigureOperation: async (opts) =>
       await cancelCourseReconfigureOperationLocal(opts),
-    getProjectAccessLandingInfo: async (opts) =>
-      await getProjectAccessLandingInfo(opts),
-    requestProjectAccess: async (opts) => await requestProjectAccess(opts),
-    listProjectAccessRequests: async (opts) =>
-      await listProjectAccessRequests(opts),
-    respondProjectAccessRequest: async (opts) =>
-      await respondProjectAccessRequest(opts),
-    listProjectAccessRequestBlocks: async (opts) =>
-      await listProjectAccessRequestBlocks(opts),
-    unblockProjectAccessRequester: async (opts) =>
-      await unblockProjectAccessRequester(opts),
     removeCollaborator: async (opts) => {
       await removeCollaborator(opts);
-    },
-    getUsage: async (opts) => {
-      await assertLocalProjectCollaborator(opts);
-      return await getProjectCollaboratorInviteUsage(opts.project_id);
     },
     leaveOrDeleteProjects: async ({ account_id, project_ids }) =>
       await leaveOrDeleteProjectsForAccount({

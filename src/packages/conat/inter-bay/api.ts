@@ -210,12 +210,6 @@ import type {
 } from "@cocalc/conat/hub/api/system";
 import type {
   ProjectActiveOperationSummary,
-  ProjectAccessLandingInfo,
-  ProjectAccessRequestAction,
-  ProjectAccessRequestBlockRow,
-  ProjectAccessRequestRow,
-  ProjectAccessRequestSource,
-  ProjectAccessRequestStatus,
   ProjectBackupSchedule,
   CourseManagerAccessResult,
   CourseReconfigureManagedProjectType,
@@ -2522,49 +2516,6 @@ export interface ProjectCollabInviteCreateResultWire {
   invite: ProjectCollabInviteWire;
 }
 
-export interface ProjectAccessLandingInfoRequest {
-  account_id: string;
-  project_id: string;
-}
-
-export interface ProjectAccessRequestCreateRequest {
-  account_id: string;
-  project_id: string;
-  requested_role: Exclude<ProjectUserRole, "owner">;
-  read_policy?: ProjectViewerReadPolicy | null;
-  message?: string;
-  source?: ProjectAccessRequestSource | string;
-}
-
-export interface ProjectAccessRequestListRequest {
-  account_id: string;
-  project_id: string;
-  status?: ProjectAccessRequestStatus;
-  limit?: number;
-}
-
-export interface ProjectAccessRequestRespondRequest {
-  account_id: string;
-  project_id: string;
-  request_id: string;
-  action: ProjectAccessRequestAction;
-  role?: Exclude<ProjectUserRole, "owner">;
-  read_policy?: ProjectViewerReadPolicy | null;
-  message?: string;
-}
-
-export interface ProjectAccessRequestBlocksListRequest {
-  account_id: string;
-  project_id: string;
-  limit?: number;
-}
-
-export interface ProjectAccessRequestUnblockRequest {
-  account_id: string;
-  project_id: string;
-  blocked_account_id: string;
-}
-
 export interface ProjectCollabInviteWithoutAccountRequest {
   account_id: string;
   opts: {
@@ -2630,17 +2581,6 @@ export interface ProjectCollabInviteRespondEmailRequest {
   token: string;
   project_id?: string;
   trusted_product_access_checked?: boolean;
-}
-
-export interface ProjectCollaboratorInviteUsageRequest {
-  account_id: string;
-  project_id: string;
-}
-
-export interface ProjectCollaboratorInviteUsageWire {
-  current: number;
-  limit: number | null;
-  remaining: number | null;
 }
 
 export interface ProjectCollabInviteListRequest {
@@ -5380,32 +5320,7 @@ export interface InterBayProjectCollabInviteApi {
   cancelCourseReconfigureOperation: (
     opts: ProjectCourseReconfigureOperationRequest,
   ) => Promise<void>;
-  getProjectAccessLandingInfo: (
-    opts: ProjectAccessLandingInfoRequest,
-  ) => Promise<ProjectAccessLandingInfo>;
-  requestProjectAccess: (
-    opts: ProjectAccessRequestCreateRequest,
-  ) => Promise<ProjectAccessRequestRow>;
-  listProjectAccessRequests: (
-    opts: ProjectAccessRequestListRequest,
-  ) => Promise<ProjectAccessRequestRow[]>;
-  respondProjectAccessRequest: (
-    opts: ProjectAccessRequestRespondRequest,
-  ) => Promise<ProjectAccessRequestRow>;
-  listProjectAccessRequestBlocks: (
-    opts: ProjectAccessRequestBlocksListRequest,
-  ) => Promise<ProjectAccessRequestBlockRow[]>;
-  unblockProjectAccessRequester: (
-    opts: ProjectAccessRequestUnblockRequest,
-  ) => Promise<{
-    unblocked: boolean;
-    project_id: string;
-    blocked_account_id: string;
-  }>;
   removeCollaborator: (opts: ProjectRemoveCollaboratorRequest) => Promise<void>;
-  getUsage: (
-    opts: ProjectCollaboratorInviteUsageRequest,
-  ) => Promise<ProjectCollaboratorInviteUsageWire>;
   leaveOrDeleteProjects: (
     opts: ProjectLeaveOrDeleteProjectsRequest,
   ) => Promise<ProjectLeaveOrDeleteProjectsResult[]>;
@@ -12825,57 +12740,6 @@ export function createInterBayProjectCollabInviteClient({
       method: "cancel-course-reconfigure-operation",
     }),
   });
-  const accessLandingInfoClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "getProjectAccessLandingInfo">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({
-      dest_bay,
-      method: "access-landing-info",
-    }),
-  });
-  const requestProjectAccessClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "requestProjectAccess">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({ dest_bay, method: "request-access" }),
-  });
-  const listProjectAccessRequestsClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "listProjectAccessRequests">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({
-      dest_bay,
-      method: "list-access-requests",
-    }),
-  });
-  const respondProjectAccessRequestClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "respondProjectAccessRequest">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({
-      dest_bay,
-      method: "respond-access-request",
-    }),
-  });
-  const listProjectAccessRequestBlocksClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "listProjectAccessRequestBlocks">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({
-      dest_bay,
-      method: "list-access-request-blocks",
-    }),
-  });
-  const unblockProjectAccessRequesterClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "unblockProjectAccessRequester">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({
-      dest_bay,
-      method: "unblock-access-requester",
-    }),
-  });
   const removeCollaboratorClient = createServiceClient<
     Pick<InterBayProjectCollabInviteApi, "removeCollaborator">
   >({
@@ -12883,15 +12747,6 @@ export function createInterBayProjectCollabInviteClient({
     subject: projectCollabInviteSubject({
       dest_bay,
       method: "remove-collaborator",
-    }),
-  });
-  const usageClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "getUsage">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({
-      dest_bay,
-      method: "usage",
     }),
   });
   const transferProjectOwnershipClient = createServiceClient<
@@ -12957,7 +12812,6 @@ export function createInterBayProjectCollabInviteClient({
       ),
     removeCollaborator: async (opts) =>
       await removeCollaboratorClient.removeCollaborator(opts),
-    getUsage: async (opts) => await usageClient.getUsage(opts),
     leaveOrDeleteProjects: async (opts) =>
       await leaveOrDeleteProjectsClient.leaveOrDeleteProjects(opts),
     transferProjectOwnership: async (opts) =>
@@ -12973,22 +12827,6 @@ export function createInterBayProjectCollabInviteClient({
     previewEmail: async (opts) => await previewEmailClient.previewEmail(opts),
     respondEmail: async (opts) => await respondEmailClient.respondEmail(opts),
     respond: async (opts) => await respondClient.respond(opts),
-    getProjectAccessLandingInfo: async (opts) =>
-      await accessLandingInfoClient.getProjectAccessLandingInfo(opts),
-    requestProjectAccess: async (opts) =>
-      await requestProjectAccessClient.requestProjectAccess(opts),
-    listProjectAccessRequests: async (opts) =>
-      await listProjectAccessRequestsClient.listProjectAccessRequests(opts),
-    respondProjectAccessRequest: async (opts) =>
-      await respondProjectAccessRequestClient.respondProjectAccessRequest(opts),
-    listProjectAccessRequestBlocks: async (opts) =>
-      await listProjectAccessRequestBlocksClient.listProjectAccessRequestBlocks(
-        opts,
-      ),
-    unblockProjectAccessRequester: async (opts) =>
-      await unblockProjectAccessRequesterClient.unblockProjectAccessRequester(
-        opts,
-      ),
   };
 }
 
@@ -13141,17 +12979,6 @@ export function createInterBayProjectCollabInviteHandlers({
         respondEmail: async (opts) => await impl.respondEmail(opts),
       },
     }),
-    createServiceHandler<Pick<InterBayProjectCollabInviteApi, "getUsage">>({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "usage",
-      }),
-      impl: {
-        getUsage: async (opts) => await impl.getUsage(opts),
-      },
-    }),
     createServiceHandler<Pick<InterBayProjectCollabInviteApi, "list">>({
       ...options,
       service: "inter-bay-project-collab-invite",
@@ -13262,90 +13089,6 @@ export function createInterBayProjectCollabInviteHandlers({
       impl: {
         cancelCourseReconfigureOperation: async (opts) =>
           await impl.cancelCourseReconfigureOperation(opts),
-      },
-    }),
-    createServiceHandler<
-      Pick<InterBayProjectCollabInviteApi, "getProjectAccessLandingInfo">
-    >({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "access-landing-info",
-      }),
-      impl: {
-        getProjectAccessLandingInfo: async (opts) =>
-          await impl.getProjectAccessLandingInfo(opts),
-      },
-    }),
-    createServiceHandler<
-      Pick<InterBayProjectCollabInviteApi, "requestProjectAccess">
-    >({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "request-access",
-      }),
-      impl: {
-        requestProjectAccess: async (opts) =>
-          await impl.requestProjectAccess(opts),
-      },
-    }),
-    createServiceHandler<
-      Pick<InterBayProjectCollabInviteApi, "listProjectAccessRequests">
-    >({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "list-access-requests",
-      }),
-      impl: {
-        listProjectAccessRequests: async (opts) =>
-          await impl.listProjectAccessRequests(opts),
-      },
-    }),
-    createServiceHandler<
-      Pick<InterBayProjectCollabInviteApi, "respondProjectAccessRequest">
-    >({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "respond-access-request",
-      }),
-      impl: {
-        respondProjectAccessRequest: async (opts) =>
-          await impl.respondProjectAccessRequest(opts),
-      },
-    }),
-    createServiceHandler<
-      Pick<InterBayProjectCollabInviteApi, "listProjectAccessRequestBlocks">
-    >({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "list-access-request-blocks",
-      }),
-      impl: {
-        listProjectAccessRequestBlocks: async (opts) =>
-          await impl.listProjectAccessRequestBlocks(opts),
-      },
-    }),
-    createServiceHandler<
-      Pick<InterBayProjectCollabInviteApi, "unblockProjectAccessRequester">
-    >({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "unblock-access-requester",
-      }),
-      impl: {
-        unblockProjectAccessRequester: async (opts) =>
-          await impl.unblockProjectAccessRequester(opts),
       },
     }),
     createServiceHandler<
