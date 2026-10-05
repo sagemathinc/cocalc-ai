@@ -61,16 +61,11 @@ const tokens = [
   },
 ];
 
-it("puts the wrappers first on PATH and appends the git helper", () => {
-  const e: Record<string, string> = {
-    PATH: "/usr/bin",
-    GIT_CONFIG_COUNT: "2",
-  };
+it("puts the wrappers first on PATH and leaves git config alone", () => {
+  const e: Record<string, string> = { PATH: "/usr/bin" };
   applyCliConnectorEnv(e, "/c");
   expect(e.PATH).toBe("/c/cli/bin:/usr/bin");
-  expect(e.GIT_CONFIG_COUNT).toBe("3");
-  expect(e.GIT_CONFIG_KEY_2).toBe("credential.https://github.com.helper");
-  expect(e.GIT_CONFIG_VALUE_2).toBe("/c/cli/bin/git-credential-cocalc");
+  expect(Object.keys(e)).toEqual(["PATH"]);
   applyCliConnectorEnv(e, "/c");
   expect(e.PATH).toBe("/c/cli/bin:/usr/bin");
 });
@@ -130,13 +125,43 @@ describe("git credential helper", () => {
     ).toBe("");
   });
 
-  it("is used by git itself", async () => {
+  it("is used by git itself, only during a turn", async () => {
+    const fill = () =>
+      run("git", ["credential", "fill"], "protocol=https\nhost=github.com\n\n");
     await syncCliConnectorTokens(dir, tokens);
-    const out = run(
+    expect(fill()).toContain("password=gho_test");
+    await syncCliConnectorTokens(dir, []);
+    // Without the connector, git is unchanged: no helper, so no credentials.
+    expect(() =>
+      execFileSync("git", ["credential", "fill"], {
+        env: { ...env(), GIT_TERMINAL_PROMPT: "0" },
+        input: "protocol=https\nhost=github.com\n\n",
+        encoding: "utf8",
+        stdio: "pipe",
+      }),
+    ).toThrow();
+  });
+
+  it("never lets an existing helper store the connector token", async () => {
+    await fs.writeFile(
+      join(dir, ".gitconfig"),
+      "[credential]\n\thelper = store\n",
+    );
+    const store = join(dir, ".git-credentials");
+    await fs.writeFile(store, "https://user:own-password@gitlab.com\n");
+    await syncCliConnectorTokens(dir, tokens);
+    const filled = run(
       "git",
       ["credential", "fill"],
       "protocol=https\nhost=github.com\n\n",
     );
-    expect(out).toContain("password=gho_test");
+    expect(filled).toContain("password=gho_test");
+    // git approves credentials that worked; that must not reach "store".
+    run("git", ["credential", "approve"], filled + "\n");
+    expect(await fs.readFile(store, "utf8")).not.toContain("gho_test");
+    // Other hosts still use the project's own helpers.
+    expect(
+      run("git", ["credential", "fill"], "protocol=https\nhost=gitlab.com\n\n"),
+    ).toContain("password=own-password");
   });
 });

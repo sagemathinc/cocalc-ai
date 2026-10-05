@@ -755,16 +755,13 @@ export async function createProjectCliTokenLease({
         .beginCliConnectorTurn(request)
         .then((next) => setCliTokens(next ?? [], stillCurrent))
         .catch(async (error) => {
-          const now = Date.now();
-          const keep = isTransientProjectCliTokenError(error)
-            ? cliTokens.filter(({ expires_at }) => expires_at > now)
-            : [];
+          // Any failure removes the tokens: the hub could not confirm the
+          // grant is still on. The next successful renewal restores them.
           logger.warn("CLI connector renewal failed", {
             projectId,
-            kept: keep.length,
             err: `${error}`,
           });
-          await setCliTokens(keep, stillCurrent);
+          await setCliTokens([], stillCurrent);
         })
         .catch(() => undefined)
         .finally(() => {

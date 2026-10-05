@@ -23,10 +23,17 @@ const createMock = jest.fn();
 const getByIdMock = jest.fn();
 const listMock = jest.fn();
 const revokeMock = jest.fn();
+const releaseMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
-  default: jest.fn(() => ({ query: (...args: any[]) => queryMock(...args) })),
+  default: jest.fn(() => ({
+    query: (...args: any[]) => queryMock(...args),
+    connect: async () => ({
+      query: (...args: any[]) => queryMock(...args),
+      release: () => releaseMock(),
+    }),
+  })),
 }));
 jest.mock("@cocalc/server/external-credentials/store", () => ({
   createExternalCredential: (...a: any[]) => createMock(...a),
@@ -87,6 +94,7 @@ beforeEach(() => {
     getByIdMock,
     listMock,
     revokeMock,
+    releaseMock,
   ]) {
     mock.mockReset().mockResolvedValue(undefined);
   }
@@ -189,11 +197,39 @@ describe("agent grants", () => {
     ).rejects.toThrow("connection is unavailable");
   });
 
-  it("turning off needs no fresh auth", async () => {
+  it("turning off needs no fresh auth, and only updates an existing grant", async () => {
     const { saveCliConnectorGrant } = await import("./cli-connectors");
-    await saveCliConnectorGrant({ ...base, enabled: false });
+    await saveCliConnectorGrant({
+      ...base,
+      enabled: false,
+      expected_revision: 1,
+    });
     expect(configChangeMock).not.toHaveBeenCalled();
     expect(homeMock).toHaveBeenCalled();
+    const [sql, params] = queryMock.mock.calls.at(-1)!;
+    expect(sql).toMatch(/^\s*UPDATE agent_connector_grants/);
+    expect(sql).not.toMatch(/INSERT/);
+    expect(params.at(-1)).toBe(1);
+    // Without the revision the user saw, nothing is written.
+    queryMock.mockClear();
+    await expect(
+      saveCliConnectorGrant({ ...base, enabled: false }),
+    ).rejects.toThrow("invalid grant revision");
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("turning on over an existing grant needs its revision", async () => {
+    const { saveCliConnectorGrant } = await import("./cli-connectors");
+    await saveCliConnectorGrant({
+      ...base,
+      enabled: true,
+      connection_id: connectionId,
+    });
+    const [sql, params] = queryMock.mock.calls.at(-1)!;
+    // A missing revision is NULL, which never matches an existing row.
+    expect(sql).toContain("WHERE agent_connector_grants.revision=$8::integer");
+    expect(sql).not.toMatch(/IS NULL/);
+    expect(params[7]).toBeNull();
   });
 
   it("a stale revision fails instead of overwriting", async () => {
@@ -249,6 +285,40 @@ describe("turn tokens", () => {
     await expect(issueCliConnectorTurnTokens(request)).rejects.toThrow(
       "not the agent's turn",
     );
+  });
+
+  it("reads the grants again under a lock after the turn checks", async () => {
+    const { issueCliConnectorTurnTokens } = await import("./cli-connectors");
+    await issueCliConnectorTurnTokens(request);
+    const sql = queryMock.mock.calls.map(([q]) => `${q}`.trim());
+    const locked = sql.findIndex((q) => /FOR SHARE/.test(q));
+    expect(sql[locked - 1]).toBe("BEGIN");
+    expect(sql.at(-1)).toBe("COMMIT");
+    expect(liveTurnMock.mock.invocationCallOrder[0]).toBeLessThan(
+      queryMock.mock.invocationCallOrder[locked],
+    );
+    expect(releaseMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a grant turned off during the turn checks hands out nothing", async () => {
+    const { issueCliConnectorTurnTokens } = await import("./cli-connectors");
+    queryMock.mockImplementation(async (q: string) =>
+      /FOR SHARE/.test(q) ? { rows: [] } : { rows: [grant] },
+    );
+    await expect(issueCliConnectorTurnTokens(request)).resolves.toEqual([]);
+    expect(getByIdMock).not.toHaveBeenCalled();
+  });
+
+  it("rolls back and releases on failure", async () => {
+    const { issueCliConnectorTurnTokens } = await import("./cli-connectors");
+    getByIdMock.mockRejectedValueOnce(Error("decrypt failed"));
+    await expect(issueCliConnectorTurnTokens(request)).rejects.toThrow(
+      "decrypt failed",
+    );
+    expect(queryMock.mock.calls.map(([q]) => `${q}`.trim())).toContain(
+      "ROLLBACK",
+    );
+    expect(releaseMock).toHaveBeenCalledTimes(1);
   });
 
   it("skips a connection that no longer exists", async () => {

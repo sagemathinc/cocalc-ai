@@ -107,6 +107,32 @@ const WRAPPERS: {
 
 export const GIT_CREDENTIAL_HELPER_NAME = "git-credential-cocalc";
 
+// git with the GitHub connector: only while a token is present, github.com
+// credentials come from CoCalc alone. The empty helper resets every helper
+// configured before it, so no other helper (e.g. "store") is asked to save
+// the connector token. Without a token this runs git unchanged.
+const GIT_WRAPPER = `#!/bin/sh
+# CoCalc GitHub connector wrapper for git.
+self_dir=$(cd "$(dirname "$0")" && pwd)
+real=""
+old_ifs=$IFS
+IFS=:
+for d in $PATH; do
+  [ "$d" = "$self_dir" ] && continue
+  if [ -x "$d/git" ]; then real="$d/git"; break; fi
+done
+IFS=$old_ifs
+if [ -z "$real" ]; then
+  echo "git: not installed in this project." >&2
+  exit 127
+fi
+if [ -r "$self_dir/../${tokenFile("github")}" ]; then
+  exec "$real" -c credential.https://github.com.helper= \\
+    -c "credential.https://github.com.helper=$self_dir/${GIT_CREDENTIAL_HELPER_NAME}" "$@"
+fi
+exec "$real" "$@"
+`;
+
 export async function writeCliConnectorTools(hostDir: string): Promise<void> {
   const dir = join(hostDir, CLI_CONNECTOR_DIR);
   const bin = join(dir, "bin");
@@ -125,10 +151,10 @@ export async function writeCliConnectorTools(hostDir: string): Promise<void> {
     GIT_CREDENTIAL_HELPER,
     { mode: 0o700 },
   );
+  await fs.writeFile(join(bin, "git"), GIT_WRAPPER, { mode: 0o700 });
 }
 
-// Puts the wrappers first on PATH and adds the git credential helper after
-// any helpers the project already configures.
+// Puts the wrappers (gh, git, cf, wrangler) first on PATH.
 export function applyCliConnectorEnv(
   env: Record<string, string | undefined>,
   containerDir: string,
@@ -138,11 +164,6 @@ export function applyCliConnectorEnv(
     .split(":")
     .filter((part) => part && part !== bin);
   env.PATH = [bin, ...path].join(":");
-  const count = Number.parseInt(`${env.GIT_CONFIG_COUNT ?? ""}`, 10);
-  const index = Number.isInteger(count) && count >= 0 ? count : 0;
-  env[`GIT_CONFIG_KEY_${index}`] = "credential.https://github.com.helper";
-  env[`GIT_CONFIG_VALUE_${index}`] = join(bin, GIT_CREDENTIAL_HELPER_NAME);
-  env.GIT_CONFIG_COUNT = `${index + 1}`;
 }
 
 function validToken(token: string): boolean {

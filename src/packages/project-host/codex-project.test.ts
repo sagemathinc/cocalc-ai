@@ -645,9 +645,7 @@ describe("initCodexProjectRunner", () => {
     try {
       const bin = spawned.runtimeEnv!.PATH.split(":")[0];
       expect(bin).toMatch(/\/cli\/bin$/);
-      expect(spawned.runtimeEnv!.GIT_CONFIG_VALUE_0).toBe(
-        `${bin}/git-credential-cocalc`,
-      );
+      expect(spawned.runtimeEnv!.GIT_CONFIG_COUNT).toBeUndefined();
       expect(spawnMock.mock.calls.at(-1)![1]).toContainEqual(
         expect.stringMatching(/^PATH=.*\/cli\/bin:/),
       );
@@ -699,11 +697,12 @@ describe("initCodexProjectRunner", () => {
         // Let the renewal settle so the next one is not skipped as pending.
         await new Promise((resolve) => setTimeout(resolve, 20));
       };
-      // A transient hub failure keeps the unexpired token.
+      // Even a transient hub failure removes the token until the hub
+      // confirms the grant again.
       await renewTo(async () => {
         throw new Error("timeout");
-      }, true);
-      expect(await fs.readFile(tokenFile, "utf8")).toBe("gho_cli_token\n");
+      }, false);
+      await renewTo(async () => [github], true);
       // The user turned GitHub off: the next renewal removes it.
       await renewTo(async () => [], false);
       // Turned back on, then a refusal (e.g. the turn ended) removes it.

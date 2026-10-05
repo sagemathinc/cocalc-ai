@@ -295,35 +295,51 @@ export async function saveCliConnectorGrant({
   ) {
     throw Error("invalid grant revision");
   }
-  if (enabled) {
-    requireUuid(connection_id, "connection_id");
-    await authorizeConfigChange({
-      account_id: owner,
-      session_hash,
-      agent_id,
-      source_project_id,
-    });
-    const connection = await getExternalCredentialById({
-      id: connection_id!,
-      selector: selector(owner, connector),
-      touchLastUsed: false,
-    });
-    if (!connection) throw Error("connection is unavailable");
-  } else {
+  if (!enabled) {
+    // Turning off narrows access, so it needs no fresh authentication, but
+    // it only changes a grant that exists, at the revision the user saw.
     await assertAccountHome(owner);
+    if (expected_revision === undefined) throw Error("invalid grant revision");
+    const { rows } = await getPool().query<CliConnectorGrant>(
+      `UPDATE agent_connector_grants
+          SET enabled=false, revision=revision+1, updated_at=now()
+        WHERE account_id=$1 AND agent_id=$2 AND source_project_id=$3
+          AND connector=$4 AND revision=$5
+        RETURNING grant_id,account_id,agent_id,source_project_id,connector,
+                  connection_id,scope,revision,enabled,created_at,updated_at`,
+      [owner, agent_id, source_project_id, connector, expected_revision],
+    );
+    if (!rows[0]) {
+      throw Error("connector settings changed; reload and try again");
+    }
+    return rows[0];
   }
+  requireUuid(connection_id, "connection_id");
+  await authorizeConfigChange({
+    account_id: owner,
+    session_hash,
+    agent_id,
+    source_project_id,
+  });
+  const connection = await getExternalCredentialById({
+    id: connection_id!,
+    selector: selector(owner, connector),
+    touchLastUsed: false,
+  });
+  if (!connection) throw Error("connection is unavailable");
+  // A new grant needs no revision; changing one needs the revision the user
+  // saw (a missing one never matches).
   const { rows } = await getPool().query<CliConnectorGrant>(
     `INSERT INTO agent_connector_grants
        (grant_id,account_id,agent_id,source_project_id,connector,
         connection_id,scope,revision,enabled,created_at,updated_at)
      VALUES($1,$2,$3,$4,$5,$6,'{}'::JSONB,1,$7,now(),now())
      ON CONFLICT (account_id,agent_id,source_project_id,connector) DO UPDATE
-       SET connection_id=COALESCE(EXCLUDED.connection_id,
-                                  agent_connector_grants.connection_id),
-           enabled=EXCLUDED.enabled,
+       SET connection_id=EXCLUDED.connection_id,
+           enabled=true,
            revision=agent_connector_grants.revision+1,
            updated_at=now()
-     WHERE $8::integer IS NULL OR agent_connector_grants.revision=$8::integer
+     WHERE agent_connector_grants.revision=$8::integer
      RETURNING grant_id,account_id,agent_id,source_project_id,connector,
                connection_id,scope,revision,enabled,created_at,updated_at`,
     [
@@ -332,8 +348,8 @@ export async function saveCliConnectorGrant({
       agent_id,
       source_project_id,
       connector,
-      enabled ? connection_id : null,
-      enabled,
+      connection_id,
+      true,
       expected_revision ?? null,
     ],
   );
@@ -400,21 +416,42 @@ export async function issueCliConnectorTurnTokens({
     agent_id,
     turn: turn_ref,
   });
-  const tokens: CliConnectorTurnToken[] = [];
-  for (const grant of grants) {
-    if (!isCliConnector(grant.connector)) continue;
-    const connection = await getExternalCredentialById({
-      id: grant.connection_id!,
-      selector: selector(owner, grant.connector),
-    });
-    if (!connection) continue;
-    const payload = parsePayload(connection.payload);
-    tokens.push({
-      connector: grant.connector,
-      token: payload.token,
-      expires_at: now + PASTED_TOKEN_DELIVERY_MS,
-      description: `${connection.metadata?.description ?? ""}`,
-    });
+  // Read the grants again and the tokens under a share lock, so a concurrent
+  // turn-off or disconnect (which update these rows) is ordered entirely
+  // before or after this issuance, never in between.
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const { rows: locked } = await client.query<CliConnectorGrant>(
+      `SELECT grant_id,connector,connection_id
+         FROM agent_connector_grants
+        WHERE account_id=$1 AND agent_id=$2 AND source_project_id=$3
+          AND enabled AND connection_id IS NOT NULL
+        FOR SHARE`,
+      [owner, agent_id, source_project_id],
+    );
+    const tokens: CliConnectorTurnToken[] = [];
+    for (const grant of locked) {
+      if (!isCliConnector(grant.connector)) continue;
+      const connection = await getExternalCredentialById({
+        id: grant.connection_id!,
+        selector: selector(owner, grant.connector),
+      });
+      if (!connection) continue;
+      const payload = parsePayload(connection.payload);
+      tokens.push({
+        connector: grant.connector,
+        token: payload.token,
+        expires_at: now + PASTED_TOKEN_DELIVERY_MS,
+        description: `${connection.metadata?.description ?? ""}`,
+      });
+    }
+    await client.query("COMMIT");
+    return tokens;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
   }
-  return tokens;
 }
