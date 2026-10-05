@@ -6,6 +6,8 @@ import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
 
 import { createInterBayAgentIdentityHandler } from "@cocalc/conat/inter-bay/agent-identities";
 import { agentIdentityControl } from "@cocalc/server/agents/identity-control";
+import { createAgentPaymentSelectionsHandler } from "@cocalc/conat/inter-bay/agent-payment-selections";
+import { paymentSelectionsHome } from "@cocalc/server/agents/payment-selections";
 import { createInterBayArtifactCatalogHandler } from "@cocalc/conat/inter-bay/artifact-catalog";
 import { catalogOwnerControl } from "@cocalc/server/artifacts/catalog-api";
 import { createInterBayPeopleHandler } from "@cocalc/conat/inter-bay/people";
@@ -21,6 +23,7 @@ import { createInterBayAgentConnectorHandler } from "@cocalc/conat/inter-bay/age
 import { agentConnectorControl } from "@cocalc/server/agents/cocalc-connector-routing";
 import { agentRpcControl } from "@cocalc/server/agents/rpc";
 import { list as listOperations } from "@cocalc/server/conat/api/lro";
+import { repairScheduledCollectionExpiryLocal } from "@cocalc/server/lro/scheduled-collection-expiry-repair";
 import {
   createProjectOnOwningBay,
   getProjectCreationStatus,
@@ -71,6 +74,7 @@ import {
   createInterBayProjectControlSetRootfsImageHandler,
   createInterBayProjectControlStateHandler,
   createInterBayProjectLroHandler,
+  createInterBayScheduledCollectionExpiryRepairHandler,
   createInterBayProjectReferenceHandler,
   createInterBayProjectControlStopHandler,
   type InterBayAuthTokenApi,
@@ -713,6 +717,12 @@ export async function initInterBayServices(): Promise<void> {
         bay_id: getConfiguredBayId(),
         parallel: true,
         impl: agentIdentityControl,
+      }),
+      createAgentPaymentSelectionsHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bay_id: getConfiguredBayId(),
+        parallel: true,
+        impl: paymentSelectionsHome,
       }),
       createInterBayArtifactCatalogHandler({
         client: getInterBayFabricClient({ noCache: true }),
@@ -2713,9 +2723,17 @@ async function startProjectLroService(): Promise<void> {
   const impl: InterBayProjectLroApi = {
     publishProgress: async (opts) =>
       await handleProjectLroPublishProgress(opts),
+    repairScheduledCollectionExpiry: async (opts) =>
+      await repairScheduledCollectionExpiryLocal(opts),
   };
   services.push(
     createInterBayProjectLroHandler({
+      client,
+      bay_id: getConfiguredBayId(),
+      parallel: true,
+      impl,
+    }),
+    createInterBayScheduledCollectionExpiryRepairHandler({
       client,
       bay_id: getConfiguredBayId(),
       parallel: true,

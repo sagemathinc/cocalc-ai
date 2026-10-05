@@ -8,6 +8,10 @@ import {
   useNamedAgents,
 } from "@cocalc/frontend/agents/api";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 
 export function AgentMessagingSettings() {
   const accountId = useTypedRedux("account", "account_id");
@@ -21,6 +25,8 @@ function AccountAgentMessaging() {
   const [notice, setNotice] = useState("");
   const [revision, setRevision] = useState(0);
   const lock = useRef(false);
+  // Resuming re-grants messaging authority, so the hub requires fresh auth.
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   async function accountAction(
     action: SetPersonalMessagingStateOptions["action"],
@@ -31,7 +37,10 @@ function AccountAgentMessaging() {
     setError("");
     setNotice("");
     try {
-      await personalAgentApi().setPersonalMessagingState({ action });
+      const completed = await runFreshAuthAction(async () => {
+        await personalAgentApi().setPersonalMessagingState({ action });
+      });
+      if (!completed) return;
       setNotice(
         action === "pause"
           ? "All future agent messaging is paused."
@@ -57,8 +66,7 @@ function AccountAgentMessaging() {
     >
       <p style={{ marginBottom: 0 }}>
         These account-wide controls affect all Agent Networks and external agent
-        installations. Manage individual agents and network tags in the Agents
-        workspace.
+        installations.
       </p>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         <Button
@@ -102,6 +110,7 @@ function AccountAgentMessaging() {
         <Alert type="warning" title="All agent messaging is paused" />
       )}
       <ExternalAgentInstallations revision={revision} />
+      <FreshAuthModal {...freshAuthModalProps} />
     </Space>
   );
 }

@@ -252,7 +252,7 @@ test(
       version: 1,
       kind: "acp",
       id: "claude-code",
-      revision: "0.81.1",
+      revision: "0.85.1",
       executable: claudeAgentAcpBin,
       args: ["--hide-claude-auth"],
       cwd: "/tmp",
@@ -300,7 +300,7 @@ test(
     assert.deepEqual(info.agentInfo, {
       name: "@agentclientprotocol/claude-agent-acp",
       title: "Claude Agent",
-      version: "0.81.1",
+      version: "0.85.1",
     });
     assert.deepEqual(info.authMethods, []);
     assert.equal(info.agentCapabilities.loadSession, true);
@@ -628,6 +628,7 @@ function adapter(
   connector,
 ) {
   let launches = 0;
+  const launchedSessions = [];
   let stops = 0;
   let askAsync;
   const agent = new HarnessAgent(
@@ -639,7 +640,7 @@ function adapter(
             version: 2,
             kind: "acp",
             id: "claude-code",
-            revision: "0.81.1",
+            revision: "0.85.1",
             cwd: "/tmp",
             credentialMode: "project-managed",
             executionPolicy: "full-access",
@@ -657,8 +658,9 @@ function adapter(
         : {}),
     },
     { path: "a.chat", threadId: "conversation-a" },
-    async ({ profile: launchProfile }) => {
+    async ({ profile: launchProfile }, sessionId) => {
       launches++;
+      launchedSessions.push(sessionId);
       const child = spawn(
         subscription ? profile.executable : launchProfile.executable,
         subscription ? [...profile.args, ...flags] : launchProfile.args,
@@ -730,6 +732,7 @@ function adapter(
     request,
     events,
     launches: () => launches,
+    launchedSessions,
     stops: () => stops,
     askAsync: (input) => askAsync(input),
   };
@@ -911,7 +914,8 @@ test("agent adapter persists streaming and stop before summary and reuses its se
 });
 
 test("explicit context reset retires the warm harness before opening a fresh session", async (t) => {
-  const { agent, request, events, launches, stops } = adapter(t);
+  const { agent, request, events, launches, stops, launchedSessions } =
+    adapter(t);
   await agent.evaluate(request);
   await agent.evaluate(request); // Missing is not an explicit reset.
   assert.equal(events.at(-1).finalResponse, "Hello world 2");
@@ -919,10 +923,52 @@ test("explicit context reset retires the warm harness before opening a fresh ses
   await agent.evaluate({ ...request, session_id: "" });
   assert.equal(stops(), 1);
   assert.equal(launches(), 2);
+  assert.deepEqual(launchedSessions, [undefined, ""]);
   assert.equal(events.at(-1).finalResponse, "Hello world 1");
   await agent.evaluate({ ...request, session_id: "fixture-session" });
   assert.equal(events.at(-1).finalResponse, "Hello world 2");
   assert.equal(launches(), 2);
+});
+
+test(
+  "adapter next turn preserves idle-exit diagnostic through configure",
+  { timeout: 5000 },
+  async (t) => {
+    const logger = require("@cocalc/backend/logger").default(
+      "ai:acp:harness-diagnostics",
+    );
+    const records = [];
+    let recorded;
+    const diagnostic = new Promise((resolve) => {
+      recorded = resolve;
+    });
+    t.mock.method(logger, "warn", (_label, json) => {
+      const record = JSON.parse(json);
+      records.push(record);
+      recorded(record);
+    });
+    const { agent, request, events, launches } = adapter(t, ["--idle-exit"]);
+    await agent.evaluate(request);
+    assert.equal(events.at(-1).finalResponse, "Hello world 1");
+    const record = await diagnostic;
+    assert.equal(record.method, "runtime/failure");
+    await assert.rejects(
+      agent.evaluate({ ...request, session_id: "fixture-session" }),
+      (error) => {
+        assert.equal(error.code, "unavailable");
+        assert.ok(error.message.includes(record.diagnostic_id));
+        return true;
+      },
+    );
+    assert.equal(records.length, 1);
+    assert.equal(launches(), 1);
+  },
+);
+
+test("launcher receives the admitted saved session for transcript resolution", async (t) => {
+  const { agent, request, launchedSessions } = adapter(t);
+  await agent.evaluate({ ...request, session_id: "fixture-session" });
+  assert.deepEqual(launchedSessions, ["fixture-session"]);
 });
 
 test("context reset cannot launch a replacement after unconfirmed cleanup", async (t) => {
@@ -2177,6 +2223,10 @@ test("unsupported controls are not silently accepted", async (t) => {
   const client = await start(t);
   await client.open();
   assert.deepEqual(client.controls, { configOptions: [] });
+  await assert.rejects(
+    client.configure({ configOptions: [{ id: "fast", value: "off" }] }),
+    { code: "unsupported" },
+  );
   await assert.rejects(client.configure({ modeId: "plan" }), {
     code: "unsupported",
   });
@@ -2260,7 +2310,12 @@ test("qualified Claude negotiates concrete values on new and resumed sessions an
   for (const resume of [false, true]) {
     const child = spawn(
       process.execPath,
-      [...profile.args, "--config-options", "--recommended-values"],
+      [
+        ...profile.args,
+        "--config-options",
+        "--recommended-values",
+        "--fast-config",
+      ],
       {
         env: {},
         stdio: "pipe",
@@ -2275,7 +2330,7 @@ test("qualified Claude negotiates concrete values on new and resumed sessions an
           version: 2,
           kind: "acp",
           id: "claude-code",
-          revision: "0.81.1",
+          revision: "0.85.1",
           cwd: "/home/user",
           executionPolicy: "full-access",
           credentialMode: "project-managed",
@@ -2294,13 +2349,30 @@ test("qualified Claude negotiates concrete values on new and resumed sessions an
     );
     t.after(() => client.dispose());
     await client.open(resume ? "fixture-session" : undefined);
+    // Inherited Standard speed must not prevent new or resumed turns when the
+    // selected model does not advertise fast mode. Explicit fast still fails.
+    await client.configure({ configOptions: [{ id: "fast", value: "off" }] });
+    await assert.rejects(
+      client.configure({ configOptions: [{ id: "fast", value: "on" }] }),
+      /not advertised/,
+    );
+    await assert.rejects(
+      client.configure({ configOptions: [{ id: "unknown", value: "off" }] }),
+      /not advertised/,
+    );
     const settings = {
       configOptions: [
         { id: "model", value: "deep" },
         { id: "effort", value: "default" },
+        { id: "fast", value: "off" },
       ],
     };
     await client.configure(settings);
+    assert.equal(
+      client.controls.configOptions.find(({ id }) => id === "fast")
+        .currentValue,
+      "off",
+    );
     assert.equal(settings.configOptions[1].value, "default");
     assert.equal(
       client.controls.configOptions.find(({ id }) => id === "model")
@@ -2332,6 +2404,55 @@ test("qualified Claude negotiates concrete values on new and resumed sessions an
       client.configure({ configOptions: [{ id: "model", value: "invented" }] }),
       /not advertised/,
     );
+    await client.dispose();
+  }
+});
+
+test("Claude runs the newest Opus unless a model was chosen", async (t) => {
+  for (const id of ["claude-code", "other"]) {
+    const child = spawn(
+      process.execPath,
+      [...profile.args, "--config-options", "--opus"],
+      { env: {}, stdio: "pipe" },
+    );
+    const closed = new Promise((resolve) => child.once("close", resolve));
+    const client = await AcpHarnessClient.start(
+      {
+        projectId: "project-a",
+        accountId: "account-a",
+        profile:
+          id === "claude-code"
+            ? {
+                version: 2,
+                kind: "acp",
+                id,
+                revision: "0.85.1",
+                cwd: "/home/user",
+                executionPolicy: "full-access",
+                credentialMode: "project-managed",
+              }
+            : profile,
+      },
+      async () => ({
+        stdin: child.stdin,
+        stdout: child.stdout,
+        stderr: child.stderr,
+        closed,
+        stop: async () => {
+          child.kill("SIGKILL");
+          await closed;
+        },
+      }),
+    );
+    t.after(() => client.dispose());
+    await client.open();
+    const model = () =>
+      client.controls.configOptions.find(({ id }) => id === "model")
+        .currentValue;
+    await client.configure({});
+    assert.equal(model(), id === "claude-code" ? "opus" : "fast");
+    await client.configure({ configOptions: [{ id: "model", value: "deep" }] });
+    assert.equal(model(), "deep");
     await client.dispose();
   }
 });
@@ -2387,7 +2508,7 @@ test("qualified profiles accept only pinned catalog identity", () => {
     version: 2,
     kind: "acp",
     id: "claude-code",
-    revision: "0.81.1",
+    revision: "0.85.1",
     cwd: "/home/user",
     executionPolicy: "full-access",
     credentialMode: "project-managed",
@@ -2594,6 +2715,13 @@ test("bounded harness heap exhaustion preserves partial output and prevents reus
 });
 
 test("provider rejection is distinct from ambiguous delivery and is redacted", async (t) => {
+  const logger = require("@cocalc/backend/logger").default(
+    "ai:acp:harness-diagnostics",
+  );
+  const records = [];
+  t.mock.method(logger, "warn", (_label, record) =>
+    records.push(JSON.parse(record)),
+  );
   const client = await start(t);
   await client.open();
   await assert.rejects(
@@ -2604,10 +2732,119 @@ test("provider rejection is distinct from ambiguous delivery and is redacted", a
       assert.match(e.message, /Open agent settings/);
       assert.match(e.message, /ACP session\/prompt, code -32000/);
       assert.ok(!e.message.includes("secret"));
+      const id = e.message.match(/Diagnostic ID: ([0-9a-f-]{36})/)?.[1];
+      assert.ok(id);
+      assert.equal(records.length, 1);
+      assert.equal(records[0].diagnostic_id, id);
+      assert.equal(records[0].method, "session/prompt");
+      assert.deepEqual(records[0].error.protocol_codes, [-32000]);
+      assert.ok(!JSON.stringify(records).includes("secret"));
       return true;
     },
   );
 });
+test("internal rejection correlates stderr and nested error hints only in operator logs", async (t) => {
+  const logger = require("@cocalc/backend/logger").default(
+    "ai:acp:harness-diagnostics",
+  );
+  const records = [];
+  t.mock.method(logger, "warn", (_label, record) =>
+    records.push(JSON.parse(record)),
+  );
+  const client = await start(t);
+  await client.open();
+  const events = [];
+  await assert.rejects(
+    client.prompt("diagnostic-reject", async (event) => events.push(event)),
+    (error) => {
+      const id = error.message.match(/Diagnostic ID: ([0-9a-f-]{36})/)?.[1];
+      assert.ok(id);
+      assert.equal(error.code, "rejected");
+      assert.equal(records.length, 1);
+      assert.equal(records[0].diagnostic_id, id);
+      assert.deepEqual(records[0].error.protocol_codes, [-32603]);
+      assert.deepEqual(records[0].error.http_statuses, [429]);
+      assert.deepEqual(records[0].stderr.http_statuses, [503]);
+      assert.deepEqual(records[0].stderr.signals, ["overloaded"]);
+      assert.doesNotMatch(
+        JSON.stringify({ error: error.message, events, records }),
+        /private-|Bearer/,
+      );
+      assert.doesNotMatch(error.message, /503|429|overloaded/);
+      return true;
+    },
+  );
+  await assert.rejects(
+    client.prompt("hi", async () => {}),
+    { code: "unavailable" },
+  );
+});
+
+test(
+  "idle harness exit records once and closed prompts reuse its diagnostic ID",
+  { timeout: 5000 },
+  async (t) => {
+    const logger = require("@cocalc/backend/logger").default(
+      "ai:acp:harness-diagnostics",
+    );
+    const records = [];
+    let recorded;
+    const diagnostic = new Promise((resolve) => {
+      recorded = resolve;
+    });
+    t.mock.method(logger, "warn", (_label, json) => {
+      const record = JSON.parse(json);
+      records.push(record);
+      recorded(record);
+    });
+    const client = await start(t, ["--idle-exit"]);
+    await client.open();
+    const record = await diagnostic;
+    assert.equal(record.method, "runtime/failure");
+    assert.deepEqual(record.stderr.reported_exit_codes, [7]);
+    assert.ok(
+      record.error.signals.includes("process_exit") ||
+        record.error.signals.includes("transport_closed"),
+    );
+    for (let i = 0; i < 2; i++)
+      await assert.rejects(
+        client.prompt("hi", async () => {}),
+        (error) => {
+          assert.equal(error.code, "unavailable");
+          assert.ok(error.message.includes(record.diagnostic_id));
+          assert.doesNotMatch(error.message, /private-idle-detail/);
+          return true;
+        },
+      );
+    await client.dispose();
+    assert.equal(records.length, 1);
+    assert.doesNotMatch(JSON.stringify(records), /private-idle-detail/);
+    for (const action of [
+      () => client.configure({}),
+      () => client.open(),
+      () => client.fork("source-session"),
+    ]) {
+      await assert.rejects(action(), (error) => {
+        assert.equal(error.code, "unavailable");
+        assert.ok(error.message.includes(record.diagnostic_id));
+        return true;
+      });
+    }
+  },
+);
+
+test("normal disposal does not create a failure diagnostic", async (t) => {
+  const logger = require("@cocalc/backend/logger").default(
+    "ai:acp:harness-diagnostics",
+  );
+  const records = [];
+  t.mock.method(logger, "warn", (...args) => records.push(args));
+  const client = await start(t);
+  await client.open();
+  await client.dispose();
+  assert.equal(records.length, 0);
+});
+
 test("session rejection identifies the failed operation without exposing process output", async (t) => {
   const client = await start(t, ["--reject-session"]);
   await assert.rejects(client.open(), (error) => {

@@ -176,6 +176,8 @@ export function MarkdownTextAdapter({
 }
 
 interface SlateRichTextAdapterProps {
+  project_id?: string;
+  path?: string;
   mergeRemoteValues?: boolean;
   getRemoteValue?: () => string;
   localHistoryCacheId?: string;
@@ -229,6 +231,8 @@ interface SlateRichTextAdapterProps {
 }
 
 export function SlateRichTextAdapter({
+  project_id,
+  path,
   mergeRemoteValues,
   getRemoteValue,
   localHistoryCacheId,
@@ -313,6 +317,8 @@ export function SlateRichTextAdapter({
       className={height != "auto" ? "smc-vfill" : undefined}
     >
       <EditableMarkdown
+        project_id={project_id}
+        path={path}
         mergeRemoteValues={mergeRemoteValues}
         getRemoteValue={getRemoteValue}
         selectionRef={selectionRef}

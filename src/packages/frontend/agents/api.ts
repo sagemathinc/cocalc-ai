@@ -4,6 +4,11 @@ import type {
   NamedAgent,
   NamedAgentDirectory,
 } from "@cocalc/conat/agents/personal";
+import {
+  accountFeedStreamName,
+  type AccountFeedEvent,
+} from "@cocalc/conat/hub/api/account-feed";
+import { getSharedAccountDStream } from "@cocalc/frontend/conat/account-dstream";
 import type { AgentEndpoint } from "@cocalc/conat/agents/rpc";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -21,13 +26,88 @@ export function refreshNamedAgents() {
 
 export const refreshAgentNetworks = refreshNamedAgents;
 
+// The latest directory per account, patched in place by the account feed
+// (agent.upsert / agent.remove), so every open view updates within moments of
+// a change on any device without reloading the list.
+const directories = new Map<string, NamedAgentDirectory>();
+const versions = new Map<string, number>();
+const directoryListeners = new Set<(accountId: string) => void>();
+
+function setDirectory(accountId: string, directory: NamedAgentDirectory) {
+  directories.set(accountId, directory);
+  for (const listener of directoryListeners) listener(accountId);
+}
+
+const byName = (a: NamedAgent, b: NamedAgent) => a.name.localeCompare(b.name);
+
+/** Apply one live change; exported for tests. */
+export function applyNamedAgentEvent(
+  accountId: string,
+  event: AccountFeedEvent,
+): void {
+  if (event.type !== "agent.upsert" && event.type !== "agent.remove") return;
+  versions.set(accountId, (versions.get(accountId) ?? 0) + 1);
+  const directory = directories.get(accountId);
+  if (!directory) return;
+  const id =
+    event.type === "agent.upsert"
+      ? event.agent.endpoint.agent_id
+      : event.agent_id;
+  const agents = directory.agents.filter(
+    (agent) => agent.endpoint.agent_id !== id,
+  );
+  if (event.type === "agent.upsert") agents.push(event.agent);
+  setDirectory(accountId, { ...directory, agents: agents.sort(byName) });
+}
+
+let feedAccountId: string | undefined;
+let feed: Awaited<ReturnType<typeof getSharedAccountDStream>> | undefined;
+
+function onFeedChange(event?: AccountFeedEvent) {
+  if (feedAccountId && event) applyNamedAgentEvent(feedAccountId, event);
+}
+
+function onFeedGap() {
+  // Missed events: one reload of the (cheap, single-query) directory.
+  refreshNamedAgents();
+}
+
+async function ensureNamedAgentsFeed(accountId: string): Promise<void> {
+  if (feedAccountId === accountId && feed && !feed.isClosed()) return;
+  feed?.removeListener("change", onFeedChange);
+  feed?.removeListener("history-gap", onFeedGap);
+  feedAccountId = accountId;
+  try {
+    const next = await getSharedAccountDStream<AccountFeedEvent>({
+      account_id: accountId,
+      name: accountFeedStreamName(),
+      ephemeral: true,
+      maxListeners: 100,
+    });
+    if (feedAccountId !== accountId) return;
+    next.on("change", onFeedChange);
+    next.on("history-gap", onFeedGap);
+    feed = next as typeof feed;
+  } catch (err) {
+    console.warn("agents realtime feed error", err);
+  }
+}
+
 export function loadNamedAgents(
   accountId: string,
 ): Promise<NamedAgentDirectory> {
   let request = directoryRequests.get(accountId);
   if (!request) {
+    const version = versions.get(accountId) ?? 0;
     request = personalAgentApi()
       .listNamedAgents({})
+      .then((directory) => {
+        setDirectory(accountId, directory);
+        // A live change raced this load; take one more (cheap) look.
+        if ((versions.get(accountId) ?? 0) !== version)
+          setTimeout(refreshNamedAgents, 0);
+        return directory;
+      })
       .catch((err) => {
         directoryRequests.delete(accountId);
         throw err;
@@ -108,6 +188,19 @@ export function useNamedAgents(enabled = true) {
       listeners.delete(refresh);
     };
   }, []);
+  useEffect(() => {
+    if (!accountId || !enabled) return;
+    void ensureNamedAgentsFeed(accountId);
+    const changed = (changedAccountId: string) => {
+      const directory = directories.get(changedAccountId);
+      if (changedAccountId === accountId && directory)
+        setState({ accountId, directory, loading: false });
+    };
+    directoryListeners.add(changed);
+    return () => {
+      directoryListeners.delete(changed);
+    };
+  }, [accountId, enabled]);
   useEffect(() => {
     let disposed = false;
     if (!accountId || !enabled) {

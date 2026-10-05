@@ -95,7 +95,7 @@ export const ADMIN_ENTRIES: DocsEntry[] = [
       "/public/docs/runtime-image-09add8c9.webp",
       "Site configuration controls with cloud and runtime settings",
     ),
-    lastReviewed: "2026-05-26",
+    lastReviewed: "2026-10-02",
     slug: "admin/site-settings",
     status: "ready",
     summary:
@@ -261,7 +261,7 @@ export const ADMIN_ENTRIES: DocsEntry[] = [
       "/public/docs/cocalc-cli-862b8d4e.webp",
       "A terminal managing CoCalc software artifacts and deployments",
     ),
-    lastReviewed: "2026-09-11",
+    lastReviewed: "2026-09-30",
     noActionReason:
       "Command-line runbook; run the shown cocalc software commands in an authenticated source checkout.",
     searchKeywords:

@@ -7,6 +7,10 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import {
+  isCocalcAiLaunchpadSite,
+  usePublicConfig,
+} from "@cocalc/frontend/public/config";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
@@ -14,6 +18,7 @@ import {
   getPublicFeaturePage,
   publicFeatureHref,
 } from "@cocalc/util/public-feature-pages";
+import { getPublicFeatureSignUpLabel } from "@cocalc/util/public-site-policy";
 import {
   BulletList,
   featureAppPath as appPath,
@@ -44,12 +49,13 @@ export default function TerminalFeaturePage({
   helpEmail?: string;
   isAuthenticated?: boolean;
 }) {
+  const onCocalcAi = isCocalcAiLaunchpadSite(usePublicConfig());
   const primaryCtaHref = isAuthenticated
     ? appPath("projects")
     : featureSignUpPath("code");
   const primaryCtaLabel = isAuthenticated
     ? "Open projects"
-    : (PAGE.signUpLabel ?? "Start using CoCalc");
+    : getPublicFeatureSignUpLabel(PAGE, onCocalcAi);
 
   return (
     <Flex vertical gap={36}>

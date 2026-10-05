@@ -6,8 +6,10 @@ import {
 } from "@cocalc/ai/agent-sdk";
 import * as identities from "@cocalc/server/agents/api";
 import * as rpc from "@cocalc/server/agents/rpc";
+import * as payments from "@cocalc/server/agents/payment-selections";
 export {
   getCocalcConnectorConfig,
+  listCocalcConnectorConfigs,
   saveCocalcConnectorConfig,
   removeCocalcConnectorConfig,
   beginCocalcConnectorTurn,
@@ -20,6 +22,7 @@ import {
   updateAgentNetwork as updateAgentNetworkImpl,
 } from "@cocalc/server/agents/personal";
 export {
+  listAgentParticipants,
   listNamedAgents,
   nameAgent,
   retireNamedAgent,
@@ -53,6 +56,12 @@ export const startFreshConversation = identities.startFreshConversation;
 export const listIdentities = identities.listIdentities;
 export const getIdentity = identities.getIdentity;
 export const resolveIdentity = identities.resolveIdentity;
+export const getPaymentSelections = payments.getPaymentSelections;
+export const listPaymentSelections = payments.listPaymentSelections;
+export const setPaymentSelections = payments.setPaymentSelections;
+export const copyPaymentSelection = payments.copyPaymentSelection;
+export const resolvePaymentSelection = payments.resolvePaymentSelection;
+export const reportRuntime = identities.reportRuntime;
 export const disableIdentity = identities.disableIdentity;
 export const recoverIdentity = identities.recoverIdentity;
 export const issueIdentity = identities.issueIdentity;

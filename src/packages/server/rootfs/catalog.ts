@@ -151,6 +151,7 @@ type RootfsLifecycleSnapshot = {
   image_id: string;
   release_id: string | null;
   slug: string | null;
+  supersedes_image_id?: string | null;
   owner_id: string | null;
   hidden: boolean | null;
   blocked: boolean | null;
@@ -1426,6 +1427,7 @@ export async function assertRootfsSupersessionAllowed({
   gpu,
   official,
   supersedes_image_id,
+  current_supersedes_image_id,
 }: {
   image_id: string;
   owner_id: string | null;
@@ -1434,9 +1436,14 @@ export async function assertRootfsSupersessionAllowed({
   gpu?: boolean | null;
   official?: boolean | null;
   supersedes_image_id?: string | null;
+  // The link already stored for this image, if updating one.
+  current_supersedes_image_id?: string | null;
 }): Promise<void> {
   const predecessorId = trimString(supersedes_image_id);
   if (!predecessorId) return;
+  // Only a new or changed link is checked. An unchanged one may predate these
+  // rules (e.g. no family), and must not make the entry impossible to edit.
+  if (predecessorId === trimString(current_supersedes_image_id)) return;
   if (predecessorId === image_id) {
     throw Error("a rootfs image cannot supersede itself");
   }
@@ -1549,11 +1556,12 @@ async function upsertRootfsRow({
       deleted: boolean | null;
       release_id: string | null;
       slug: string | null;
+      supersedes_image_id: string | null;
       hidden: boolean | null;
       blocked: boolean | null;
       blocked_reason: string | null;
     }>(
-      `SELECT image_id, owner_id, release_id, slug, hidden, blocked, blocked_reason, deleted
+      `SELECT image_id, owner_id, release_id, slug, supersedes_image_id, hidden, blocked, blocked_reason, deleted
        FROM rootfs_images
        WHERE image_id=$1`,
       [image_id],
@@ -1582,7 +1590,7 @@ async function upsertRootfsRow({
     image_id = rows[0]?.image_id ?? v4();
     if (rows[0]?.image_id) {
       const existingRows = await pool.query<RootfsLifecycleSnapshot>(
-        `SELECT image_id, owner_id, release_id, slug, hidden, blocked, blocked_reason, deleted
+        `SELECT image_id, owner_id, release_id, slug, supersedes_image_id, hidden, blocked, blocked_reason, deleted
          FROM rootfs_images
          WHERE image_id=$1`,
         [image_id],
@@ -1661,6 +1669,7 @@ async function upsertRootfsRow({
     gpu,
     official,
     supersedes_image_id,
+    current_supersedes_image_id: previous?.supersedes_image_id,
   });
 
   await assertCanCreateOrUpdateRootfs({

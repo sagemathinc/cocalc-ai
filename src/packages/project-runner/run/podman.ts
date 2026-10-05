@@ -554,14 +554,6 @@ async function maybeRestoreFromBackup({
   let stage = "begin";
   const report = (event: ProgressEvent) =>
     reportProgress({ project_id, op_id: lro_op_id, event });
-  const shouldFallbackToIndexedBackupList = (err: unknown): boolean => {
-    const text = `${err ?? ""}`.toLowerCase();
-    return (
-      text.includes(
-        "rustic snapshots output truncated while listing backups",
-      ) || text.includes("failed to parse rustic snapshots json")
-    );
-  };
   try {
     let backupId = explicitBackupId;
     if (!backupId) {
@@ -572,46 +564,7 @@ async function maybeRestoreFromBackup({
         desc: "checking backups...",
       });
 
-      let backups: Awaited<ReturnType<typeof fs.getBackups>>;
-      try {
-        backups = await fs.getBackups({ project_id });
-      } catch (err) {
-        if (!shouldFallbackToIndexedBackupList(err)) {
-          throw err;
-        }
-        logger.warn(
-          "start: full backup listing failed; trying indexed backup list",
-          {
-            project_id,
-            err: `${err}`,
-          },
-        );
-        try {
-          backups = await fs.getBackups({ project_id, indexed_only: true });
-        } catch (indexedErr) {
-          logger.warn("start: indexed backup listing also failed", {
-            project_id,
-            err: `${indexedErr}`,
-          });
-          throw err;
-        }
-        if (!backups.length) {
-          throw err;
-        }
-      }
-      if (!backups.length) {
-        try {
-          backups = await fs.getBackups({ project_id, indexed_only: true });
-        } catch (err) {
-          logger.warn(
-            "start: indexed backup list failed after empty full list",
-            {
-              project_id,
-              err: `${err}`,
-            },
-          );
-        }
-      }
+      const backups = await fs.getBackups({ project_id, for_restore: true });
       if (!backups.length) {
         cleanupStaging = true;
         if (effectiveRestore === "required") {

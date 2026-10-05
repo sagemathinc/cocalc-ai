@@ -1191,6 +1191,34 @@ Examples:
     );
 
   auth
+    .command("ssh-network <network>")
+    .description(
+      "set the selected auth profile's host SSH network: private|public|auto",
+    )
+    .action(async (network: string, command: Command) => {
+      await runLocalCommand(
+        command,
+        "auth ssh-network",
+        async (globals: any) => {
+          if (!["private", "public", "auto"].includes(network)) {
+            throw new Error("network must be private, public, or auto");
+          }
+          const configPath = authConfigPath();
+          const config = loadAuthConfig(configPath);
+          const profile = selectedProfileName(globals, config, env);
+          if (!config.profiles[profile] || profile === "_env") {
+            throw new Error(
+              `auth profile '${profile}' not found or not persistent`,
+            );
+          }
+          config.profiles[profile].host_ssh_network = network;
+          saveAuthConfig(config, configPath);
+          return { profile, host_ssh_network: network };
+        },
+      );
+    });
+
+  auth
     .command("use <profile>")
     .description("set the current auth profile")
     .action(async (profileName: string, command: Command) => {

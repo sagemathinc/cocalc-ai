@@ -3,9 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { access } from "node:fs/promises";
-import { constants } from "node:fs";
-import { CLAUDE_CODE_INSTALL_REVISION } from "@cocalc/util/ai/qualified-harnesses";
+import { claudeCodeCliPath } from "./claude-code-tools";
 import { ClaudeSubscriptionLoginService } from "./claude-subscription-login";
 import {
   getClaudeSubscriptionCredential,
@@ -42,22 +40,12 @@ export function startClaudeLoginReaper(): () => void {
   return () => clearInterval(timer);
 }
 
-function managedClaudeCliPath(): string {
-  if (process.platform !== "linux" || !["x64", "arm64"].includes(process.arch))
-    throw Error("Claude subscription login is not available on this host");
-  const report = process.report?.getReport() as
-    | { header?: { glibcVersionRuntime?: string } }
-    | undefined;
-  const variant = report?.header?.glibcVersionRuntime ? "" : "-musl";
-  const root = process.env.COCALC_MANAGED_HARNESSES ?? "/opt/cocalc/harnesses";
-  return `${root}/claude-code/${CLAUDE_CODE_INSTALL_REVISION}/app/node_modules/@anthropic-ai/claude-agent-sdk-linux-${process.arch}${variant}/claude`;
-}
-
 export async function getClaudeSubscriptionLoginService(): Promise<ClaudeSubscriptionLoginService> {
   if (closing) throw Error("Claude sign-in service is closing");
   if (service) return service;
-  const cliPath = managedClaudeCliPath();
-  await access(cliPath, constants.X_OK);
+  if (process.platform !== "linux" || !["x64", "arm64"].includes(process.arch))
+    throw Error("Claude subscription login is not available on this host");
+  const cliPath = await claudeCodeCliPath();
   if (closing) throw Error("Claude sign-in service is closing");
   return (service ??= new ClaudeSubscriptionLoginService({
     cliPath,

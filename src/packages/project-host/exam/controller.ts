@@ -79,6 +79,8 @@ interface LocalExamSessionRow {
 const tokenFailures = new ExamTokenFailureLimit();
 let watchdogStarted = false;
 let cleanupInFlight: Promise<HostExamRuntimeStatus> | undefined;
+// Projects still being created, by run, so cleanup can wait for them.
+const provisioningInFlight = new Map<string, Set<Promise<void>>>();
 
 function ensureSchema(): void {
   const db = initDatabase();
@@ -409,7 +411,32 @@ async function eraseProject(session: LocalExamSessionRow): Promise<void> {
   }
 }
 
-async function provisionProject({
+function provisionProject(opts: {
+  row: LocalExamRunRow;
+  account_id: string;
+  project_id: string;
+}): Promise<void> {
+  const { run_id } = opts.row;
+  const inFlight = provisioningInFlight.get(run_id) ?? new Set();
+  provisioningInFlight.set(run_id, inFlight);
+  const provisioning = createExamProject(opts);
+  inFlight.add(provisioning);
+  const done = () => {
+    inFlight.delete(provisioning);
+  };
+  provisioning.then(done, done);
+  return provisioning;
+}
+
+async function waitForProvisioning(run_id: string): Promise<void> {
+  const inFlight = provisioningInFlight.get(run_id);
+  while (inFlight?.size) {
+    await Promise.allSettled(inFlight);
+  }
+  provisioningInFlight.delete(run_id);
+}
+
+async function createExamProject({
   row,
   account_id,
   project_id,
@@ -466,11 +493,21 @@ async function provisionProject({
       project_id,
       policy: "disabled",
     });
-    getDatabase()
+    // If cleanup started while the project was being created, erase it
+    // instead of handing out a session for a run that is being erased.
+    const activated = getDatabase()
       .prepare(
-        "UPDATE exam_sessions SET status='active', last_error=NULL WHERE account_id=?",
+        `UPDATE exam_sessions SET status='active', last_error=NULL
+         WHERE account_id=? AND status='provisioning'
+           AND run_id IN (
+             SELECT run_id FROM exam_runs
+             WHERE status IN ('preparing', 'ready', 'open')
+           )`,
       )
       .run(account_id);
+    if (Number(activated.changes) !== 1) {
+      throw new Error("scratchpad access is closed");
+    }
   } catch (err) {
     const session = getDatabase()
       .prepare("SELECT * FROM exam_sessions WHERE account_id=?")
@@ -901,6 +938,7 @@ export async function closeAndCleanupExamRunLocal({
     db.prepare(
       "UPDATE exam_runs SET status='cleaning', admission_open=0, updated_at_ms=? WHERE run_id=?",
     ).run(Date.now(), run_id);
+    await waitForProvisioning(run_id);
     const errors: string[] = [];
     for (const session of listSessions(run_id)) {
       if (session.status === "deleted") continue;

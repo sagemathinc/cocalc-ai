@@ -70,7 +70,7 @@ settings, email, backup, runtime policies, and other operational controls.
 
 ## Work with settings
 
-1. Open the Admin tab.
+1. Open the account menu at the bottom of the sidebar, then select **Admin**.
 2. Open **Site Settings**.
 3. Search for the setting or section you need.
 4. Read the current value and nearby help text before changing it.
@@ -85,6 +85,34 @@ roll-forward/roll-back test.
 Some settings have dedicated helper wizards, such as Cloudflare, GCP service
 accounts, Nebius CLI, launcher defaults, and runtime retention policies. Use
 those wizards when available instead of editing related fields independently.
+
+## Project Recovery settings
+
+Under **System / Advanced**, the **Project Recovery** subgroup has three
+settings. All are off or empty by default, and each owning bay checks only its
+own projects. CoCalc Star installs do not show them.
+
+- **Project Recovery Customer Warnings** sends the owner and collaborators of a
+  paying project a notice, with a **Review recovery status** link, when a
+  snapshot is not confirmed within 30 minutes of being due, or an off-host
+  backup within 6 hours. It works independently of operator notifications.
+- **Project Recovery On-Call Account ID** is the account ID of the
+  administrator who receives operator notifications. Set it before turning on
+  **Project Recovery Operator Notifications**.
+- **Project Recovery Operator Notifications** sends project snapshot and backup
+  incident alerts, and a daily oldest-debt report, to the on-call
+  administrator. While it is on, if the on-call account ID is empty or is not
+  an administrator on this bay, no incident alerts or daily report are sent;
+  every administrator gets a configuration alert instead.
+
+While operator notifications are on, a missing **Project Recovery On-Call
+Account ID**, or no usable **Critical email lane backend**, makes the **Project
+snapshots and backups** health check critical; see
+[Manage software releases with cocalc software](/app-docs/admin/cocalc-software).
+**Critical email lane backend** is in the **Lanes** subgroup of
+**Messaging & Email**. The page lists it when **Email sending enabled** is on
+and **Email backend type** is not \`none\`, or when **Show hidden** is on. Its
+\`default\` value uses **Email backend type**.
 `;
 
 export const ADMIN_USERS_BODY = String.raw`
@@ -1080,8 +1108,14 @@ and shared tasks.
   only after diagnostics reports valid Zendesk and webhook configuration.
 - Every recipient must be a reviewed CRM contact with an active relationship
   to the target organization and a reviewed email address.
-- Suppressions, duplicate checks, organization cooldowns, per-domain limits,
-  and global limits are rechecked when work is claimed, not only at preview.
+- Recipient and organization status, primary-email status, suppressions,
+  same-kind duplicate checks, contact cooldowns, per-domain limits, and global
+  limits are rechecked when work is claimed, not only at preview.
+- While another initial send to the same contact is still creating its ticket
+  (in flight or indeterminate), a send of any kind fails at claim, even with a
+  cooldown override. Reconcile the first send, then requeue the blocked one
+  with \`cocalc admin crm outreach delivery retry\` or
+  \`cocalc admin crm outreach batch resume\`.
 - CoCalc records \`notification_requested\`; it does not claim that an email was
   delivered. Zendesk and its notification trigger remain authoritative.
 - Never use this system for bulk marketing lists. It is designed for one
@@ -1288,8 +1322,10 @@ should use the [CRM outreach CLI runbook](/app-docs/admin/crm-outreach).
 1. Read the status banner and queue summary. Do not prepare new sends if
    diagnostics report provider, consistency, or webhook problems.
 2. Check the minute, hour, and day usage before planning a batch. Site-wide,
-   per-domain, and organization cooldown limits are enforced again when the
-   worker claims a delivery.
+   per-domain, and contact cooldown limits are enforced again when the worker
+   claims a delivery. Recipient and organization status, primary-email status,
+   suppressions, and same-kind duplicates are also rechecked, and an unresolved
+   initial send to the same contact blocks sends of every kind.
 3. Filter **Deliveries** by recipient, state, engagement, owner, kind, batch,
    organization, opportunity, suggested action, Zendesk ticket, or date.
 4. Open an existing delivery or batch before creating a replacement. A timeout
@@ -1596,6 +1632,24 @@ cohort. It runs the canary first, requires a continuous healthy stabilization
 interval, then continues in bounded waves. A failed host or automatic rollback
 stops later waves; hosts from completed waves may already have changed.
 
+Each campaign also has a recovery and latency health gate:
+
+- Before the canary, it records the **Project snapshots and backups** and
+  **Browser-observed latency** health checks as a baseline. It does not start
+  while project recovery health is unknown.
+- After each wave, it checks again. It stops if either check is worse than the
+  baseline, if either becomes unknown after being known, or if an upgraded host
+  records a new failed snapshot or backup attempt, falls further behind on
+  backups than the time elapsed, enters emergency storage pressure, or stops
+  reporting fresh storage pressure. An attempt that fails because a project is
+  over its storage quota does not stop the campaign; it still appears in the
+  **Project snapshots and backups** health check.
+- Before default promotion, it also requires measured browser latency. If
+  **Browser-observed latency** is unknown, the campaign stops without
+  promoting.
+
+A stopped campaign fails, and its error names the reason.
+
 The direct \`host deploy rollout-fleet\` command returns a queued operation
 unless \`--wait\` is supplied. \`software deploy\` supplies \`--wait\` for these
 campaigns. Inspect the operation ID and per-host results, including excluded
@@ -1614,9 +1668,39 @@ After a change, review the evidence for the affected layer:
   verify a research result.
 - With an explicit site profile, \`cocalc --profile <profile> admin health --wide\`
   reports individual operator checks, timestamps, latency observations, the
-  latest recorded smoke result, and backup/restore-test status. Review the
-  selected bay, sample coverage and each check; unknown, missing or stale
-  evidence is not a successful check.
+  latest recorded smoke result, bay backup and restore tests (**Backups and
+  restore drills**), and project recovery (**Project snapshots and backups**).
+  Review the selected bay, sample coverage and each check; unknown, missing or
+  stale evidence is not a successful check.
+- **Project snapshots and backups** counts overdue project snapshots and
+  backups, hosts without recent storage pressure telemetry, and active backup
+  shards with a passing remote-only restore drill from the last 30 days. It
+  also shows whether Project Recovery operator notifications and customer
+  warnings are on. Only drills recorded with
+  \`admin db project-restore-drill-attest\` count.
+- To run a drill, restore one marker file from a backup of a project you
+  collaborate on with \`cocalc project backup restore -w <project>
+  --backup-id <id> --path <marker> --dest <new-path> --remote-only --wait\`.
+  The result includes the \`op_id\` to attest, and
+  \`cocalc project backup list -w <project>\` lists backup IDs. Always pass
+  \`--path\` and a new \`--dest\`: without \`--path\` the whole backup is
+  restored, and without \`--dest\` it is restored in place, over the project's
+  current files.
+- For project-level recovery evidence, use the audited \`admin db\` commands.
+  They run only on the bay the CLI is connected to (\`--bay\` cannot select
+  another bay), so connect to the project's owning bay first:
+  - \`cocalc admin db project-recovery --project-id <uuid>\` shows the
+    project's recent snapshot and backup attempts.
+  - \`cocalc admin db project-restore-drills\` lists remote-only project
+    restores from the last 30 days, with any attestation. Use
+    \`--window-days <days>\` (up to 365) to change the range or
+    \`--project-id <uuid>\` to limit it to one project.
+  - \`cocalc admin db project-restore-drill-attest --op-id <uuid>
+    --expected-sha256 <hex> --observed-sha256 <hex> --reason <reason>\`
+    records the SHA-256 of the original and the restored marker for a
+    successful remote-only restore. It passes only when the two hashes match.
+    It is a write: it requires fresh auth and an audit reason, and cannot be
+    changed afterwards.
 - A recorded smoke success covers its recorded steps and project. Verify the
   affected terminal or kernel, file synchronization and required application
   with a representative disposable workload before declaring that workflow

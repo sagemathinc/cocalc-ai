@@ -4,6 +4,11 @@
  */
 
 import {
+  getPublicAiCards,
+  getPublicAiHeadline,
+  PUBLIC_AI_INTRO,
+} from "@cocalc/util/public-ai-page-content";
+import {
   getPublicFeatureIndexPages,
   getPublicFeaturePage,
   PUBLIC_FEATURE_NAV_ITEMS,
@@ -11,6 +16,14 @@ import {
   type PublicFeaturePage,
   type PublicFeatureSection,
 } from "@cocalc/util/public-feature-pages";
+import {
+  getPublicFeaturesIntro,
+  getPublicFeaturesSignUp,
+  getPublicFeaturesTasks,
+  PUBLIC_FEATURES_EYEBROW,
+  PUBLIC_FEATURES_HEADLINE,
+  PUBLIC_FEATURES_SECONDARY_CTA,
+} from "@cocalc/util/public-features-index";
 import {
   getPublicTeamMember,
   PUBLIC_ABOUT_AUDIENCES,
@@ -21,6 +34,7 @@ import {
   PUBLIC_ABOUT_REASON,
   PUBLIC_TEAM_MEMBERS,
 } from "@cocalc/util/public-about-content";
+import { getPublicCompareSections } from "@cocalc/util/public-compare-content";
 import {
   PUBLIC_FEATURED_GUIDES,
   PUBLIC_GUIDE_GROUPS,
@@ -38,6 +52,12 @@ import {
   PUBLIC_COMMUNITY_INTRO,
   PUBLIC_COMMUNITY_LINKS,
 } from "@cocalc/util/public-support-content";
+import {
+  PUBLIC_FOOTER_COMPANY_LINKS,
+  PUBLIC_FOOTER_PLATFORM_LINKS,
+  PUBLIC_FOOTER_RESOURCES_LINKS,
+  type PublicFooterLink,
+} from "@cocalc/util/public-footer-links";
 import {
   BILLING_INTERVAL_LABELS,
   hasPriceForBillingInterval,
@@ -63,6 +83,12 @@ import {
   type PublicMetadataRoute,
   type PublicRouteMetadataConfig,
 } from "@cocalc/util/public-site-metadata";
+import {
+  COCALC_AI_SIGN_UP_LABEL,
+  getPublicFeatureSignUpLabel,
+  isCocalcAiLaunchpad,
+  PUBLIC_SIGN_UP_LABEL,
+} from "@cocalc/util/public-site-policy";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 const ARTICLE_STYLE = [
@@ -122,12 +148,15 @@ function renderHome(
   basePath: string,
   config: PublicRouteMetadataConfig,
 ): string {
+  const signUpLabel = isCocalcAiLaunchpad(config)
+    ? COCALC_AI_SIGN_UP_LABEL
+    : PUBLIC_SIGN_UP_LABEL;
   return `<main data-cocalc-public-prerender="home" style="${ARTICLE_STYLE}">
 <header>
   <p>${htmlEscape(PUBLIC_HOME_EYEBROW)}</p>
   <h1>${htmlEscape(PUBLIC_HOME_HEADLINE)}</h1>
   <p>${htmlEscape(PUBLIC_HOME_INTRO)}</p>
-  <p>${publicLink(basePath, "auth/sign-up", "Start on CoCalc.ai")} ${publicLink(basePath, PUBLIC_HOME_SECONDARY_CTA.href, PUBLIC_HOME_SECONDARY_CTA.label)}</p>
+  <p>${publicLink(basePath, "auth/sign-up", signUpLabel)} ${publicLink(basePath, PUBLIC_HOME_SECONDARY_CTA.href, PUBLIC_HOME_SECONDARY_CTA.label)}</p>
   <ul>${getPublicHomeHighlights(config)
     .map((highlight) => `<li>${htmlEscape(highlight)}</li>`)
     .join("")}</ul>
@@ -137,16 +166,6 @@ function renderHome(
   <h2>Agents work where your project lives.</h2>
   <p>Use the integrated Codex agent or Claude Code, or run other command-line agents in project terminals, all with the files, tools, and running services your collaborators already use. Claude Code is an experimental preview on sites that enable it and works with your personal Claude Pro or Max subscription.</p>
   <p>${publicLink(basePath, "features/ai", "See agent workflows")} ${publicLink(basePath, "features/compare", "Compare with agent sandboxes")}</p>
-</section>
-<section>
-  <h2>One project, many workflows.</h2>
-  <p>Keep notebooks, terminals, code, documents, services, discussion, history, and recovery in one durable project.</p>
-  <p>${publicLink(basePath, "features", "Browse feature workflows")} ${publicLink(basePath, "docs", "Read the documentation")}</p>
-</section>
-<section>
-  <h2>Choose how CoCalc runs.</h2>
-  <p>Start with hosted CoCalc.ai, run CoCalc locally or on one VM, or evaluate a customer-operated private deployment.</p>
-  <p>${publicLink(basePath, "products", "Review product paths")} ${publicLink(basePath, "pricing", "Pricing and licensing")} ${publicLink(basePath, "support", "Review support and sales")}</p>
 </section>
 </main>`;
 }
@@ -330,31 +349,59 @@ function renderSection(
   const paragraphs = (section.paragraphs ?? [])
     .map((paragraph) => `<p>${htmlEscape(paragraph)}</p>`)
     .join("");
-  const bullets =
+  const cards = (section.cards ?? [])
+    .map(
+      ({ body, link, title }) =>
+        `<h3>${htmlEscape(title)}</h3><p>${htmlEscape(body)}</p>${
+          link && featureLinkVisible(link.href, config)
+            ? `<p>${featureLink(link, basePath)}</p>`
+            : ""
+        }`,
+    )
+    .join("");
+  const bulletList =
     section.bullets?.length != null && section.bullets.length > 0
       ? `<ul>${section.bullets
           .map((bullet) => `<li>${htmlEscape(bullet)}</li>`)
           .join("")}</ul>`
       : "";
+  // Collapsed on the page too, so crawlers and visitors get the same text.
+  const bullets =
+    bulletList && section.detailsLabel
+      ? `<details><summary>${htmlEscape(
+          section.detailsLabel,
+        )}</summary>${bulletList}</details>`
+      : bulletList;
   const links =
     section.links?.length != null && section.links.length > 0
       ? `<ul>${section.links
-          .filter(
-            ({ href }) =>
-              !href.startsWith("/docs/") ||
-              getDocsEntry(href.slice("/docs/".length), {
-                product: config.cocalc_product === "plus" ? "plus" : undefined,
-              }) != null,
-          )
-          .map(
-            ({ href, label }) =>
-              `<li><a href="${htmlEscape(publicFeatureHref(href, basePath))}">${htmlEscape(label)}</a></li>`,
-          )
+          .filter(({ href }) => featureLinkVisible(href, config))
+          .map((link) => `<li>${featureLink(link, basePath)}</li>`)
           .join("")}</ul>`
       : "";
   return `<section><h2>${htmlEscape(
     section.title,
-  )}</h2>${paragraphs}${bullets}${links}</section>`;
+  )}</h2>${paragraphs}${cards}${bullets}${links}</section>`;
+}
+
+// Documentation links are shown only where the documentation exists.
+function featureLinkVisible(
+  href: string,
+  config: PublicRouteMetadataConfig,
+): boolean {
+  return (
+    !href.startsWith("/docs/") ||
+    getDocsEntry(href.slice("/docs/".length), {
+      product: config.cocalc_product === "plus" ? "plus" : undefined,
+    }) != null
+  );
+}
+
+function featureLink(
+  { href, label }: { href: string; label: string },
+  basePath: string,
+): string {
+  return `<a href="${htmlEscape(publicFeatureHref(href, basePath))}">${htmlEscape(label)}</a>`;
 }
 
 function renderFeatureNavigation(
@@ -381,26 +428,39 @@ function renderFeatureDetail(
   basePath: string,
   config: PublicRouteMetadataConfig,
 ): string {
-  const sections = (page.sections ?? [])
+  // The Compare page's fit lists depend on the site. The AI page's hero shows
+  // its headline for this site and its intro, and its sections are the page's
+  // agent cards, as on the React page.
+  const isAiPage = page.slug === "ai";
+  const sections = (
+    (page.slug === "compare"
+      ? getPublicCompareSections(config)
+      : isAiPage
+        ? getPublicAiCards(config)
+        : page.sections) ?? []
+  )
     .map((section) => renderSection(section, basePath, config))
     .join("");
   const title = page.metadataTitle ?? page.title;
   const highlights = (page.highlights ?? [])
     .map((item) => `<li>${htmlEscape(item)}</li>`)
     .join("");
+  const lead = isAiPage
+    ? [getPublicAiHeadline(config), PUBLIC_AI_INTRO]
+    : [page.tagline, page.metadataSummary ?? page.summary, page.summary];
   return `<article data-cocalc-public-prerender="feature" style="${ARTICLE_STYLE}">
 <header>
   <p>CoCalc feature</p>
   <h1>${htmlEscape(title)}</h1>
-  <p>${htmlEscape(page.tagline)}</p>
-  <p>${htmlEscape(page.metadataSummary ?? page.summary)}</p>
-  <p>${htmlEscape(page.summary)}</p>${highlights ? `<ul>${highlights}</ul>` : ""}
+${lead.map((line) => `  <p>${htmlEscape(line)}</p>`).join("\n")}${
+    highlights ? `<ul>${highlights}</ul>` : ""
+  }
 </header>
 ${sections}
 ${renderFeatureNavigation(basePath, page.slug, config)}
-<p><a href="${htmlEscape(
-    joinUrlPath(basePath, "auth/sign-up"),
-  )}">${htmlEscape(page.signUpLabel ?? "Start using CoCalc")}</a></p>
+<p><a href="${htmlEscape(joinUrlPath(basePath, "auth/sign-up"))}">${htmlEscape(
+    getPublicFeatureSignUpLabel(page, isCocalcAiLaunchpad(config)),
+  )}</a></p>
 </article>`;
 }
 
@@ -418,9 +478,32 @@ function renderFeatureIndex(
 </li>`,
     )
     .join("");
+  const link = ({ href, label }: { href: string; label: string }) =>
+    `<a href="${htmlEscape(publicFeatureHref(href, basePath))}">${htmlEscape(label)}</a>`;
+  const signUp = getPublicFeaturesSignUp(config);
+  const actions = [...(signUp ? [signUp] : []), PUBLIC_FEATURES_SECONDARY_CTA]
+    .map(link)
+    .join(" ");
+  // Text between backticks is a command name, as on the React page.
+  const tasks = getPublicFeaturesTasks(config)
+    .map(
+      ({ body, href, title }) =>
+        `<li><h2>${link({ href, label: title })}</h2><p>${body
+          .split("`")
+          .map((part, index) =>
+            index % 2 ? `<code>${htmlEscape(part)}</code>` : htmlEscape(part),
+          )
+          .join("")}</p></li>`,
+    )
+    .join("");
   return `<main data-cocalc-public-prerender="feature-index" style="${ARTICLE_STYLE}">
-<h1>CoCalc features</h1>
-<p>Keep people, AI agents, and project work together with notebooks, terminals, documents, software environments, collaboration, and history in persistent Linux projects.</p>
+<header>
+  <p>${htmlEscape(PUBLIC_FEATURES_EYEBROW)}</p>
+  <h1>${htmlEscape(PUBLIC_FEATURES_HEADLINE)}</h1>
+  <p>${htmlEscape(getPublicFeaturesIntro(config))}</p>
+  <p>${actions}</p>
+</header>
+<ul>${tasks}</ul>
 <ul>${pages}</ul>
 </main>`;
 }
@@ -616,6 +699,32 @@ function renderSupport(route: PublicMetadataRoute, basePath: string): string {
 </section>
 <p>Direct contact and ticket options appear on this page according to the current deployment configuration.</p>
 </main>`;
+}
+
+// Each list shows its column title, as in the React footer, as bold text
+// rather than a heading, so the page's heading outline does not change.
+function renderFooterNav(
+  basePath: string,
+  title: string,
+  links: readonly PublicFooterLink[],
+): string {
+  return `<nav aria-label="${htmlEscape(
+    `${title} footer links`,
+  )}"><p><strong>${htmlEscape(title)}</strong></p><ul>${links
+    .map(({ label, path }) => `<li>${publicLink(basePath, path, label)}</li>`)
+    .join("")}</ul></nav>`;
+}
+
+// The fixed page links of the React footer, for crawlers and visitors
+// without JavaScript. The shell adds this after a page's crawler content; the
+// public bundle replaces both when it starts, so it never shows beside the
+// React footer.
+export function renderPublicFooterPrerender(basePath: string): string {
+  return `<footer data-cocalc-public-prerender="footer" style="${ARTICLE_STYLE}">
+${renderFooterNav(basePath, "Platform", PUBLIC_FOOTER_PLATFORM_LINKS)}
+${renderFooterNav(basePath, "Resources", PUBLIC_FOOTER_RESOURCES_LINKS)}
+${renderFooterNav(basePath, "Company", PUBLIC_FOOTER_COMPANY_LINKS)}
+</footer>`;
 }
 
 export function renderPublicRoutePrerender(

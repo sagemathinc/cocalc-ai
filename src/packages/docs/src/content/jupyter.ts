@@ -113,11 +113,25 @@ interpreter in the terminal does not by itself establish that a Python kernel
 is installed and registered. If the selector has no usable kernel, see
 [Custom Jupyter kernels](/docs/jupyter/custom-kernels).
 
-A run can limit the output initially displayed in the notebook. When available,
-**Fetch additional output...** retrieves more output retained by the backend.
-That output can become unavailable; a saved or read-only view may not offer the
-same retrieval control. Many printed lines can be combined into fewer output
-messages, so the number of visible lines is not a reliable completeness check.
+Each cell run has an output limit, 1 MiB by default. Past the limit, the
+notebook shows an "Output truncated" message and discards further output, but
+the code keeps running. Discarded output cannot be fetched later. To change the
+limit:
+
+1. Open **Run → Output limit**.
+2. Choose **1 MiB (default)**, **4 MiB**, **16 MiB**, or **64 MiB**. The
+   current choice is marked (selected).
+3. Rerun the cell.
+
+The limit is saved in the notebook and applies to everyone who runs it. It
+cannot be changed in a read-only notebook.
+
+Output within the limit can still be held back from the initial display. When
+available, **Fetch additional output...** retrieves more output retained by the
+backend. That output can become unavailable; a saved or read-only view may not
+offer the same retrieval control. Many printed lines can be combined into fewer
+output messages, so the number of visible lines is not a reliable completeness
+check.
 
 For research results, have the calculation write the complete table, array, or
 other artifact to a file. Record its actual location and validate its expected

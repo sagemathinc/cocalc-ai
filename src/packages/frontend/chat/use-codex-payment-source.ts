@@ -88,6 +88,58 @@ export function getCodexPaymentSourceOptions(
   ];
 }
 
+export type CodexModelPayer = {
+  // Short suffix for a model menu entry, e.g. "included".
+  label: string;
+  // Choosing this model needs a ChatGPT plan or API key that is not connected.
+  needsConnection: boolean;
+  // Payment source to switch to when choosing this model leaves the
+  // membership allowance.
+  switchTo?: CodexPaymentSourcePreference;
+};
+
+// Who pays for a model, shown only while the CoCalc Membership allowance is
+// in effect: it covers one fixed model, and every other model needs the
+// user's own ChatGPT plan or API key.
+export function getCodexModelPayer(
+  model: string,
+  paymentSource?: CodexPaymentSourceInfo,
+): CodexModelPayer | undefined {
+  const policy = paymentSource?.siteFundedCodex?.policy;
+  if (
+    lite ||
+    paymentSource?.source !== "site-api-key" ||
+    paymentSource.siteFundedCodex?.enabled !== true ||
+    !policy
+  ) {
+    return undefined;
+  }
+  if (model === policy.model) {
+    return { label: "included", needsConnection: false };
+  }
+  const plan = !!(
+    paymentSource.hasSubscription || paymentSource.subscriptions?.length
+  );
+  const switchTo: CodexPaymentSourcePreference | undefined = plan
+    ? "subscription"
+    : paymentSource.hasProjectApiKey
+      ? "project-api-key"
+      : paymentSource.hasAccountApiKey
+        ? "account-api-key"
+        : undefined;
+  const key = paymentSource.hasProjectApiKey || paymentSource.hasAccountApiKey;
+  return {
+    label:
+      plan && !key
+        ? "your ChatGPT plan"
+        : key && !plan
+          ? "your API key"
+          : "your ChatGPT plan or API key",
+    needsConnection: switchTo == null,
+    switchTo,
+  };
+}
+
 const CACHE_TTL_MS = 15_000;
 type PaymentSourceCacheEntry = {
   paymentSource?: CodexPaymentSourceInfo;

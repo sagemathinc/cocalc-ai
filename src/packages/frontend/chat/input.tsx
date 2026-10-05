@@ -26,6 +26,8 @@ import type { MarkdownPosition } from "@cocalc/frontend/editors/markdown-input/t
 
 interface Props {
   projectId?: string;
+  // The chat file; mentions link back to it.
+  path?: string;
   on_send: (value: string) => void;
   on_queue?: (value: string) => void;
   on_post?: (value: string) => void;
@@ -147,6 +149,7 @@ export function insertTranscriptAtMarkdownPosition({
 
 export default function ChatInput({
   projectId,
+  path,
   autoFocus,
   cacheId,
   date,
@@ -435,6 +438,7 @@ export default function ChatInput({
   return (
     <MarkdownInput
       project_id={projectId}
+      path={path}
       key={`chat-input-session-${sessionToken ?? "default"}-${editorResetEpoch}`}
       fixedMode={fixedMode}
       slateExternalMultilinePasteAsCodeBlock={externalMultilinePasteAsCodeBlock}

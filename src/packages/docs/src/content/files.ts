@@ -307,6 +307,15 @@ corresponding snapshot or backup service and retained data for your project.
    \`*.csv\`, then choose **Search**. For snapshot **Contents**, enter a distinctive
    text fragment instead. Check each result's path and retained version.
 
+The **Snapshots** tab opens with a **Local snapshots** status line, and the
+**Backups** tab with an **Off-host backups** line. Each shows the latest
+confirmed recovery point, or says that none is confirmed, that a scheduled one
+is overdue, that the automatic schedule is disabled, or that the status is
+unknown or unavailable. The **Local snapshots** date covers scheduled snapshots
+only, while search looks in every retained snapshot, including ones you created
+yourself, so that date is not the limit of what search can find. A change made
+after the newest retained snapshot or backup will not be found.
+
 **Filter results** narrows the displayed matches; use the main search field to
 change the filename or contents query. Clear **Filter results** before
 interpreting an empty result. Also check the folder, search mode, and options,

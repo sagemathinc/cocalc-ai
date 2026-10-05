@@ -102,7 +102,14 @@ describeDb("account-home Agent Networks", () => {
       await store.name(account, { endpoint, name });
   });
 
-  test("names carry the identity's stored theme, so lists show it without the chat", async () => {
+  test("hasName reports whether this account has the agent (for its participants)", async () => {
+    expect(await store.hasName(account, source)).toBe(true);
+    expect(await store.hasName(randomUUID(), source)).toBe(false);
+    await store.retire(account, { endpoint: source });
+    expect(await store.hasName(account, source)).toBe(false);
+  });
+
+  test("names carry the identity's stored theme once reconciled, so lists show it without the chat", async () => {
     identity.mockImplementation(async (owner, endpoint) => ({
       ...(await identityResult(owner, endpoint)),
       appearance:
@@ -111,6 +118,9 @@ describeDb("account-home Agent Networks", () => {
           : null,
     }));
     try {
+      // Listing reads only the snapshot; the project bay's change
+      // notification (or the background repair) brings it up to date.
+      await store.repair(account);
       const names = await store.names(account);
       expect(names.find((a) => a.name === "reviewer")?.appearance).toEqual({
         name: "Code Reviewer",
@@ -131,6 +141,7 @@ describeDb("account-home Agent Networks", () => {
       return identityResult(owner, endpoint);
     });
     try {
+      await store.repair(account);
       expect((await store.names(account)).map(({ name }) => name)).toEqual([
         "remote",
       ]);
@@ -151,11 +162,46 @@ describeDb("account-home Agent Networks", () => {
     }
   });
 
+  test("repair stops watching agents of a project the account was removed from", async () => {
+    const watch = jest.fn(async () => {});
+    const watched = new PersonalAgentStore(
+      db,
+      identity,
+      principal,
+      async () => {},
+      projectWasDeleted,
+      principal,
+      { watch },
+    );
+    identity.mockImplementation(async (owner, endpoint) => {
+      if (endpoint.project_id === project)
+        throw new Error("user must be a collaborator on project");
+      if (endpoint.project_id === otherProject)
+        throw new Error("owner temporarily unavailable");
+      return identityResult(owner, endpoint);
+    });
+    try {
+      await watched.repair(account);
+      const unwatched = watch.mock.calls
+        .filter(([, , watching]) => watching === false)
+        .map(([, endpoint]) => endpoint.project_id);
+      // Denied: unwatched. A transient failure keeps the watch.
+      expect(new Set(unwatched)).toEqual(new Set([project]));
+      expect((await watched.names(account)).every((a) => !a.available)).toBe(
+        true,
+      );
+    } finally {
+      identity.mockImplementation(identityResult);
+    }
+  });
+
   test("keeps names when deletion is unconfirmed or the evidence service fails", async () => {
     identity.mockRejectedValue(new Error("owner temporarily unavailable"));
     try {
+      await store.repair(account);
       expect(await store.names(account)).toHaveLength(4);
       projectWasDeleted.mockRejectedValue(new Error("timeout"));
+      await store.repair(account);
       expect(await store.names(account)).toHaveLength(4);
     } finally {
       projectWasDeleted.mockReset().mockResolvedValue(false);

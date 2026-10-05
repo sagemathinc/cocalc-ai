@@ -3,10 +3,21 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Col, Flex, Row, Typography } from "antd";
+import { Button, Col, Flex, Row, theme, Typography } from "antd";
 
 import { type IconName } from "@cocalc/frontend/components/icon";
-import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import {
+  getPublicAiCards,
+  getPublicAiHeadline,
+  PUBLIC_AI_INTRO,
+} from "@cocalc/util/public-ai-page-content";
+import {
+  getPublicFeaturePage,
+  publicFeatureHref,
+  type PublicFeatureSection,
+} from "@cocalc/util/public-feature-pages";
+import type { PublicRouteMetadataConfig } from "@cocalc/util/public-site-metadata";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import {
   alpha,
@@ -46,8 +57,9 @@ const AI_PAGE_CSS = `
   max-width: 10.5ch;
 }
 
+/* The orange accent is too light for text: about 2:1 on the page. */
 .feature-ai-eyebrow {
-  color: ${AI_ACCENT};
+  color: ${PUBLIC_COLORS.heading};
   font-size: ${PUBLIC_TYPE.eyebrow}px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -370,6 +382,10 @@ const USE_CASES = [
   },
 ] satisfies { body: string; icon: IconName; title: string }[];
 
+// The agent cards come from getPublicAiCards, which the crawler fallback
+// renders too (hub/servers/app/public-prerender.ts).
+const INTERFACE_ICONS: IconName[] = ["comments", "terminal"];
+
 function ProjectWorkspaceMock() {
   return (
     <figure style={{ margin: 0 }}>
@@ -472,6 +488,24 @@ function ProofStrip() {
   );
 }
 
+// Card titles are h3, so no heading level is skipped after a section's h2.
+// They keep the h4 size.
+function CardTitle({ children }: { children: string }) {
+  const { token } = theme.useToken();
+  return (
+    <Title
+      level={3}
+      style={{
+        fontSize: token.fontSizeHeading4,
+        lineHeight: token.lineHeightHeading4,
+        margin: 0,
+      }}
+    >
+      {children}
+    </Title>
+  );
+}
+
 function WorkflowSection() {
   return (
     <PublicSection>
@@ -499,9 +533,7 @@ function WorkflowSection() {
                 <div className="feature-ai-step">
                   <Flex vertical gap={12}>
                     <span className="feature-ai-step-number">{index + 1}</span>
-                    <Title level={4} style={{ margin: 0 }}>
-                      {step.title}
-                    </Title>
+                    <CardTitle>{step.title}</CardTitle>
                     <Paragraph style={{ margin: 0 }}>{step.body}</Paragraph>
                   </Flex>
                 </div>
@@ -558,7 +590,13 @@ function UseCaseSection() {
   );
 }
 
-function InterfaceSection({ showCodexDocs }: { showCodexDocs: boolean }) {
+function InterfaceSection({
+  cards,
+  showCodexDocs,
+}: {
+  cards: readonly PublicFeatureSection[];
+  showCodexDocs: boolean;
+}) {
   return (
     <PublicSection>
       <section
@@ -585,50 +623,40 @@ function InterfaceSection({ showCodexDocs }: { showCodexDocs: boolean }) {
             </Paragraph>
           </div>
           <Row gutter={[18, 18]}>
-            <Col xs={24} md={12}>
-              <article className="feature-ai-interface-card">
-                <Flex vertical gap={14}>
-                  <IconBadge accent={AI_ACCENT} icon="comments" />
-                  <Title level={3} style={{ margin: 0 }}>
-                    Integrated Codex and Claude Code
-                  </Title>
-                  <Paragraph style={{ margin: 0 }}>
-                    Codex works with project files, terminals, commands, and
-                    live notebook state through CoCalc's project chat. Claude
-                    Code is integrated as an experimental preview on sites that
-                    enable it and works with your personal Claude Pro or Max
-                    subscription.
-                  </Paragraph>
-                  {showCodexDocs ? (
-                    <>
-                      <Button href={appPath("docs/ai/codex-chat")}>
-                        Read the Codex guide
-                      </Button>
-                      <Button href={appPath("docs/ai/claude-code")}>
-                        Claude Code in CoCalc (Experimental Preview)
-                      </Button>
-                    </>
-                  ) : null}
-                </Flex>
-              </article>
-            </Col>
-            <Col xs={24} md={12}>
-              <article className="feature-ai-interface-card">
-                <Flex vertical gap={14}>
-                  <IconBadge accent={AI_ACCENT} icon="terminal" />
-                  <Title level={3} style={{ margin: 0 }}>
-                    Terminal-based agents
-                  </Title>
-                  <Paragraph style={{ margin: 0 }}>
-                    Install and run other command-line agents as ordinary Linux
-                    tools in a project terminal.
-                  </Paragraph>
-                  <Button href={appPath("features/terminal")}>
-                    Explore terminal workflows
-                  </Button>
-                </Flex>
-              </article>
-            </Col>
+            {cards.map(({ links, paragraphs, title }, index) => (
+              <Col key={title} xs={24} md={12}>
+                <article className="feature-ai-interface-card">
+                  <Flex vertical gap={14}>
+                    <IconBadge
+                      accent={AI_ACCENT}
+                      icon={INTERFACE_ICONS[index % INTERFACE_ICONS.length]}
+                    />
+                    <Title level={3} style={{ margin: 0 }}>
+                      {title}
+                    </Title>
+                    {(paragraphs ?? []).map((paragraph) => (
+                      <Paragraph key={paragraph} style={{ margin: 0 }}>
+                        {paragraph}
+                      </Paragraph>
+                    ))}
+                    {(links ?? [])
+                      // CoCalc Plus does not include this documentation.
+                      .filter(
+                        ({ href }) =>
+                          showCodexDocs || !href.startsWith("/docs/"),
+                      )
+                      .map(({ href, label }) => (
+                        <Button
+                          href={publicFeatureHref(href, appBasePath)}
+                          key={href}
+                        >
+                          {label}
+                        </Button>
+                      ))}
+                  </Flex>
+                </article>
+              </Col>
+            ))}
           </Row>
         </Flex>
       </section>
@@ -687,9 +715,7 @@ function ComputeSection({
                 <div className="feature-ai-compute-route">
                   <Flex vertical gap={12}>
                     <IconBadge accent={AI_ACCENT} icon="server" />
-                    <Title level={4} style={{ margin: 0 }}>
-                      Project hosts
-                    </Title>
+                    <CardTitle>Project hosts</CardTitle>
                     <Paragraph style={{ margin: 0 }}>
                       Choose CPU, RAM, GPU, storage, and access that fit the
                       workload and available host catalog.
@@ -701,9 +727,7 @@ function ComputeSection({
                 <div className="feature-ai-compute-route">
                   <Flex vertical gap={12}>
                     <IconBadge accent={AI_ACCENT} icon="exchange" />
-                    <Title level={4} style={{ margin: 0 }}>
-                      Remote kernels
-                    </Title>
+                    <CardTitle>Remote kernels</CardTitle>
                     <Paragraph style={{ margin: 0 }}>
                       Keep the notebook in CoCalc while code runs near existing
                       software or data on another machine.
@@ -763,9 +787,7 @@ function OperatingModelSection() {
               {models.map(({ body, title }) => (
                 <Col key={title} xs={24} md={8}>
                   <article className="feature-ai-operating-card">
-                    <Title level={4} style={{ margin: 0 }}>
-                      {title}
-                    </Title>
+                    <CardTitle>{title}</CardTitle>
                     <Paragraph style={{ margin: "8px 0 0" }}>{body}</Paragraph>
                   </article>
                 </Col>
@@ -779,14 +801,15 @@ function OperatingModelSection() {
 }
 
 export default function AIFeaturePage({
+  config,
   helpEmail,
   isAuthenticated,
-  product,
 }: {
+  config?: PublicRouteMetadataConfig;
   helpEmail?: string;
   isAuthenticated?: boolean;
-  product?: string;
 }) {
+  const product = config?.cocalc_product;
   const primaryHref = isAuthenticated
     ? appPath("projects")
     : featureSignUpPath("codex");
@@ -820,15 +843,10 @@ export default function AIFeaturePage({
                     id="feature-ai-hero-title"
                     level={2}
                   >
-                    Run AI agents where files, notebooks, compute, and teams
-                    stay together.
+                    {getPublicAiHeadline(config)}
                   </Title>
                   <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                    Use integrated Codex or terminal-based agents beside the
-                    same project files, live notebooks, Linux terminals,
-                    applications, and collaborators. Inspect the work as it
-                    happens, open what the agent saves, and continue from the
-                    same context.
+                    {PUBLIC_AI_INTRO}
                   </Paragraph>
                   <Flex wrap gap={12}>
                     <Button size="large" type="primary" href={primaryHref}>
@@ -850,7 +868,10 @@ export default function AIFeaturePage({
 
         <WorkflowSection />
         <UseCaseSection />
-        <InterfaceSection showCodexDocs={showCodexDocs} />
+        <InterfaceSection
+          cards={getPublicAiCards(config)}
+          showCodexDocs={showCodexDocs}
+        />
         <ComputeSection showResearchCompute={showResearchCompute} />
         <OperatingModelSection />
 

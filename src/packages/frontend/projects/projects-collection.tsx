@@ -15,7 +15,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { Checkbox, Select, Tag, Typography } from "antd";
+import { Checkbox, Grid, Select, Tag, Typography } from "antd";
 import { useIntl } from "react-intl";
 import { useActions } from "@cocalc/frontend/app-framework";
 import { Icon, TimeAgo } from "@cocalc/frontend/components";
@@ -65,58 +65,16 @@ export function sortProjectRecords(
   );
 }
 
-// The order Collection shows items in: pins (in pin order), then the rest,
-// each grouped (by first appearance) when grouping is on. Shift-click
-// selection ranges follow this order.
-export function displayOrder(
-  ids: string[],
-  pins: string[],
-  groupKey?: (id: string) => string,
-): string[] {
-  const pinPosition = new Map(pins.map((id, index) => [id, index]));
-  const pinned = ids
-    .filter((id) => pinPosition.has(id))
-    .sort((a, b) => pinPosition.get(a)! - pinPosition.get(b)!);
-  const others = ids.filter((id) => !pinPosition.has(id));
-  const grouped = (section: string[]) => {
-    if (!groupKey) return section;
-    const groups = new Map<string, string[]>();
-    for (const id of section) {
-      const key = groupKey(id);
-      groups.set(key, [...(groups.get(key) ?? []), id]);
-    }
-    return [...groups.values()].flat();
-  };
-  return [...grouped(pinned), ...grouped(others)];
-}
-
-// Shift-click: set every selectable id between the anchor and `id` to `on`.
-export function rangeSelection({
-  order,
-  selected,
-  anchor,
-  id,
-  on,
-  selectable,
-}: {
-  order: string[];
-  selected: string[];
-  anchor?: string;
-  id: string;
-  on: boolean;
-  selectable: (id: string) => boolean;
-}): string[] {
-  const from = anchor == null ? -1 : order.indexOf(anchor);
-  const to = order.indexOf(id);
-  const range =
-    from < 0 || to < 0
-      ? [id]
-      : order.slice(Math.min(from, to), Math.max(from, to) + 1);
-  const targets = new Set(range.filter(selectable));
-  targets.add(id);
-  const rest = selected.filter((x) => !targets.has(x));
-  return on ? [...rest, ...order.filter((x) => targets.has(x))] : rest;
-}
+// Selection helpers live in a small module so other collections can use
+// them without loading this page.
+export {
+  displayOrder,
+  rangeSelection,
+} from "@cocalc/frontend/components/collection-selection";
+import {
+  displayOrder,
+  rangeSelection,
+} from "@cocalc/frontend/components/collection-selection";
 
 export function ProjectsCollection({
   visible_projects,
@@ -154,6 +112,7 @@ export function ProjectsCollection({
   const [group, setGroup] = useState<ProjectsGroup>("none");
   const [rootfsModalProjectId, setRootfsModalProjectId] = useState("");
   const aliases = useProjectAliases();
+  const narrow = !!Grid.useBreakpoint().xs;
   const [aliasFor, setAliasFor] = useState<ProjectTableRecord>();
   const items = useMemo(
     () => sortProjectRecords(records, sort),
@@ -230,9 +189,11 @@ export function ProjectsCollection({
     );
     const actionsNode = (
       <div style={CONTROLS_STYLE}>
-        <span style={{ width: 28, display: "inline-flex" }}>
-          {controls.dragHandle}
-        </span>
+        {!narrow && (
+          <span style={{ width: 28, display: "inline-flex" }}>
+            {controls.dragHandle}
+          </span>
+        )}
         {controls.pinButton}
         <ProjectActionsMenu
           record={record}
@@ -246,6 +207,7 @@ export function ProjectsCollection({
     );
     const props = {
       record,
+      narrow,
       selecting: selectedProjectIds.length > 0,
       checkbox,
       actions: actionsNode,
@@ -412,6 +374,8 @@ interface ItemProps {
   actions: ReactNode;
   rootfs: ReactNode;
   onOpen: (e?: React.MouseEvent) => void;
+  /** Phones: title and time only. */
+  narrow?: boolean;
 }
 
 function Title({
@@ -681,7 +645,14 @@ function GridCard({
 }
 
 // One-line row with fixed columns: project, host, collaborators, edited.
-function ListRow({ record, checkbox, actions, rootfs, onOpen }: ItemProps) {
+function ListRow({
+  record,
+  checkbox,
+  actions,
+  rootfs,
+  onOpen,
+  narrow,
+}: ItemProps) {
   return (
     <div
       style={{
@@ -705,8 +676,9 @@ function ListRow({ record, checkbox, actions, rootfs, onOpen }: ItemProps) {
           flex: 1,
           alignSelf: "stretch",
           display: "grid",
-          gridTemplateColumns:
-            "minmax(0, 4fr) minmax(0, 1.4fr) 112px minmax(88px, 120px)",
+          gridTemplateColumns: narrow
+            ? "minmax(0, 1fr) auto"
+            : "minmax(0, 4fr) minmax(0, 1.4fr) 112px minmax(88px, 120px)",
           alignItems: "center",
           gap: 12,
         }}
@@ -746,15 +718,21 @@ function ListRow({ record, checkbox, actions, rootfs, onOpen }: ItemProps) {
             {rootfs}
           </span>
         </span>
-        <span style={{ ...ELLIPSIS, color: UI_COLORS.secondary, fontSize: 13 }}>
-          {record.host ?? ""}
-        </span>
-        <span style={{ display: "inline-flex", minWidth: 0 }}>
-          <CollaboratorsAvatars
-            collaboratorIds={record.collaborators}
-            size={22}
-          />
-        </span>
+        {!narrow && (
+          <span
+            style={{ ...ELLIPSIS, color: UI_COLORS.secondary, fontSize: 13 }}
+          >
+            {record.host ?? ""}
+          </span>
+        )}
+        {!narrow && (
+          <span style={{ display: "inline-flex", minWidth: 0 }}>
+            <CollaboratorsAvatars
+              collaboratorIds={record.collaborators}
+              size={22}
+            />
+          </span>
+        )}
         <span
           style={{
             ...ELLIPSIS,

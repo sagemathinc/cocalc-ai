@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { PageHeader } from "@cocalc/frontend/components/page-header";
+import { setBrowserTabAccent } from "@cocalc/frontend/browser-tab-accent";
 import { explainHiddenSidebarOnce } from "./sidebar-hidden-hint";
 import {
   normalizeAgentName,
@@ -112,6 +114,15 @@ import {
 import { set_window_title } from "@cocalc/frontend/browser";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { useWorkspaceRoute } from "./use-workspace-route";
+import {
+  inviteToAgent,
+  inviteToAgentProject,
+  mostRecentSharedProject,
+  projectIncludesAll,
+  takeRequestedParticipants,
+} from "./agent-participants";
+import { NewAgentPeople } from "./new-agent-people";
+import { ShareAgentModal } from "./share-agent-modal";
 import { useMobileSearchNavigation } from "./use-mobile-search-navigation";
 import { lite } from "@cocalc/frontend/lite";
 import { useNavigationIntent } from "./use-navigation-intent";
@@ -246,6 +257,7 @@ import {
 } from "./agent-running-indicator";
 import { AgentProjectSelector } from "./agent-project-selector";
 import { AgentProjectStatus } from "./project-status";
+import { AgentParticipants } from "./agent-participants-avatars";
 import { AgentHostRecovery } from "./host-recovery";
 import { useWorkspaceSelectedThread } from "./use-workspace-selected-thread";
 import {
@@ -257,6 +269,7 @@ import {
   readAgentThreadAppearance,
   resolveAgentHeaderTheme,
   resolveNamedAgentTheme,
+  themeIdentityColor,
   sameAgentHeaderAppearance,
   type AgentHeaderAppearance,
 } from "./workspace-header-theme";
@@ -278,6 +291,7 @@ import {
 } from "@cocalc/frontend/chat/codex-defaults";
 import {
   fetchCodexPaymentSourceForSubmit,
+  getCodexModelPayer,
   getCodexPaymentSourceOptions,
   useCodexPaymentSource,
 } from "@cocalc/frontend/chat/use-codex-payment-source";
@@ -286,7 +300,10 @@ import {
   cachedAccountCodexModels,
   discoverAccountCodexModels,
 } from "@cocalc/frontend/chat/codex-model-discovery";
-import { codexModelOptionsForCatalog } from "@cocalc/frontend/chat/codex";
+import {
+  CodexPaymentCredentialsModal,
+  codexModelOptionsForCatalog,
+} from "@cocalc/frontend/chat/codex";
 import {
   createAgentProjectOnce,
   createDefaultAgentProject,
@@ -307,6 +324,8 @@ import {
   readAgentSubscriptionSelection,
   writeAgentSubscriptionSelection,
 } from "./agent-subscription-selection";
+import { copyPaymentSelection } from "@cocalc/frontend/chat/payment-selection-store";
+import { WithAgentRuntimeMark } from "./agent-runtime-mark";
 import {
   assertAgentWorkingDirectory,
   AgentProjectHomeNotReadyError,
@@ -318,6 +337,14 @@ import {
 } from "./workspace-path";
 
 const { Text, Title } = Typography;
+
+const QuickProjectCreator = lazyWithRetry(
+  async () => ({
+    default: (await import("@cocalc/frontend/projects/quick-project-creator"))
+      .QuickProjectCreator,
+  }),
+  "new project dialog",
+);
 
 const NewProjectCreator = lazyWithRetry(
   async () => ({
@@ -611,14 +638,26 @@ function NewAgentPanel({
       return { id: "", revision: "", executable: "", args: "" };
     }
   });
+  // People who get this agent too ("New agent with ..." from People).
+  const [participants, setParticipants] = useState<string[]>(() =>
+    isFirstRun ? [] : takeRequestedParticipants(),
+  );
+  // With people chosen, start in a project everyone shares.
+  const [sharedProjectId] = useState(() =>
+    participants.length
+      ? mostRecentSharedProject(projectMap, participants)
+      : undefined,
+  );
   const [projectId, setProjectId] = useState<string | undefined>(
     () =>
+      sharedProjectId ||
       sourceAgent?.endpoint.project_id ||
       restoredPreparation?.projectId ||
       mostRecentlyEditedWritableProject(projectMap),
   );
   const [directory, setDirectory] = useState(
     () =>
+      (sharedProjectId && getProjectHomeDirectory(sharedProjectId)) ||
       sourceRuntime?.profile?.cwd ||
       sourceConfig?.workingDirectory?.trim() ||
       (sourceAgent
@@ -685,17 +724,23 @@ function NewAgentPanel({
   const [moreSettingsOpen, setMoreSettingsOpen] = useState(false);
   const [membershipDetailsOpen, setMembershipDetailsOpen] = useState(false);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  // The simple "New project" dialog first; "More options…" opens the full one.
+  const [quickProjectOpen, setQuickProjectOpen] = useState(false);
   const [projectCreationTitle, setProjectCreationTitle] = useState("");
   const [projectCreatorInstance, setProjectCreatorInstance] = useState(0);
   const projectCreatorTrigger = useRef<HTMLElement | null>(null);
   const emailVerificationRequired = useEmailVerificationRequired();
   const createProjectMounted = useRef(false);
-  if (createProjectOpen) createProjectMounted.current = true;
+  if (createProjectOpen || quickProjectOpen)
+    createProjectMounted.current = true;
+  const fullProjectCreatorMounted = useRef(false);
+  if (createProjectOpen) fullProjectCreatorMounted.current = true;
   const projectSettingsButton = useRef<HTMLButtonElement>(null);
   const [anthropicCredentials, setAnthropicCredentials] = useState<
     ExternalCredentialInfo[]
   >([]);
   const [claudeCredentialsLoaded, setClaudeCredentialsLoaded] = useState(false);
+  const claudeCredentialsAccount = useRef<string | undefined>(undefined);
   const initialClaudeCredential = useRef(
     readHarnessCredentialSelection({
       accountId: boundAccount.accountId,
@@ -759,6 +804,7 @@ function NewAgentPanel({
     paymentSource,
     loading: paymentSourceLoading,
     error: paymentSourceError,
+    refresh: refreshPaymentSource,
   } = useCodexPaymentSource({
     projectId,
     preference: paymentPreference,
@@ -768,6 +814,7 @@ function NewAgentPanel({
   } as Parameters<typeof useCodexPaymentSource>[0] & {
     credentialId?: string;
   });
+  const [signInOpen, setSignInOpen] = useState(false);
   const modelOptions = useMemo(
     () => defaultModelOptions(modelCatalog, config.model),
     [config.model, modelCatalog],
@@ -799,6 +846,7 @@ function NewAgentPanel({
 
   function closeProjectCreator() {
     setCreateProjectOpen(false);
+    setQuickProjectOpen(false);
     requestAnimationFrame(() => {
       const trigger = projectCreatorTrigger.current;
       if (trigger?.isConnected) trigger.focus();
@@ -820,7 +868,7 @@ function NewAgentPanel({
     setProjectCreatorInstance((instance) => instance + 1);
     setSettingsOpen(false);
     setMoreSettingsOpen(false);
-    setCreateProjectOpen(true);
+    setQuickProjectOpen(true);
   }
 
   useEffect(() => {
@@ -837,8 +885,11 @@ function NewAgentPanel({
   useEffect(() => {
     if (runtimeKind !== "claude-code") return;
     let disposed = false;
-    setAnthropicCredentials([]);
-    setClaudeCredentialsLoaded(false);
+    // Switching runtimes back and forth keeps the list while it refreshes.
+    if (claudeCredentialsAccount.current !== boundAccount.accountId) {
+      setAnthropicCredentials([]);
+      setClaudeCredentialsLoaded(false);
+    }
     void webapp_client.conat_client.hub.system
       .listExternalCredentials({
         provider: "anthropic",
@@ -846,6 +897,7 @@ function NewAgentPanel({
       })
       .then((rows) => {
         if (!disposed) {
+          claudeCredentialsAccount.current = boundAccount.accountId;
           setAnthropicCredentials(
             rows.filter(
               (row) =>
@@ -1392,11 +1444,58 @@ function NewAgentPanel({
       claimedNameRef.current ?? normalizeAgentName(agentName),
       boundAccount.accountId,
     );
+    if (participants.length) {
+      void inviteParticipants(created, participants);
+    }
     if (isFirstRun) writePreparedFirstAgent(boundAccount.accountId);
     void completeFirstRunWithAgent(boundAccount.accountId, created.projectId);
     refreshNamedAgents();
     handedOff.current = true;
     onCreated(agentId);
+  }
+
+  // Best effort: the agent exists either way, and people can still be added
+  // from the agent later.
+  async function inviteParticipants(
+    created: PendingAgent,
+    accountIds: string[],
+  ): Promise<void> {
+    const project = projectMap?.get(created.projectId);
+    const collaborators = accountIds.filter((id) =>
+      projectIncludesAll(project, [id]),
+    );
+    const others = accountIds.filter((id) => !collaborators.includes(id));
+    const target = {
+      project_id: created.projectId,
+      path: created.path,
+      thread_id: created.threadId,
+      agent_name: claimedNameRef.current ?? normalizeAgentName(agentName),
+    };
+    try {
+      const notified = await inviteToAgent({
+        ...target,
+        account_ids: collaborators,
+      });
+      // Not collaborators yet: a project invitation that links to the agent.
+      const invited = await inviteToAgentProject({
+        ...target,
+        account_ids: others,
+      });
+      const reached = notified.length + invited.length;
+      if (reached)
+        antdMessage.success(
+          `Invited ${reached} ${reached === 1 ? "person" : "people"} to the agent.`,
+        );
+      const failed = accountIds.length - reached;
+      if (failed > 0)
+        antdMessage.warning(
+          `${failed} ${failed === 1 ? "invitation" : "invitations"} could not be sent; you can share the agent again later.`,
+        );
+    } catch (err) {
+      antdMessage.warning(
+        `The agent was created, but invitations failed: ${err}`,
+      );
+    }
   }
 
   function handleCreateError(
@@ -1517,6 +1616,7 @@ function NewAgentPanel({
     paymentSource.siteFundedCodex?.enabled
       ? paymentSource.siteFundedCodex.policy
       : undefined;
+  const displayedModel = siteFundedPolicy?.model ?? config.model ?? "";
   const advancedSettings = (
     <div style={{ width: 360, maxWidth: "calc(100vw - 48px)" }}>
       <Space orientation="vertical" size={10} style={{ width: "100%" }}>
@@ -1828,17 +1928,32 @@ function NewAgentPanel({
               >
                 <Dropdown
                   menu={{
-                    items: modelOptions.map(({ value, label, disabled }) => ({
-                      key: value,
-                      label,
-                      disabled,
-                    })),
-                    selectedKeys: config.model ? [config.model] : [],
+                    items: modelOptions.map(({ value, label, disabled }) => {
+                      const payer = getCodexModelPayer(value, paymentSource);
+                      return {
+                        key: value,
+                        label: payer ? `${label} · ${payer.label}` : label,
+                        disabled,
+                      };
+                    }),
+                    selectedKeys: [displayedModel],
                     onClick: ({ key }) => {
+                      const payer = getCodexModelPayer(key, paymentSource);
+                      if (payer?.needsConnection) {
+                        setSignInOpen(true);
+                        return;
+                      }
                       modelCustomized.current = true;
                       setConfig((current) =>
                         reconcileAgentConfig(
-                          { ...current, model: key },
+                          payer?.switchTo
+                            ? {
+                                ...current,
+                                model: key,
+                                paymentSource: payer.switchTo,
+                                credentialId: undefined,
+                              }
+                            : { ...current, model: key },
                           modelOptions,
                         ),
                       );
@@ -1847,15 +1962,15 @@ function NewAgentPanel({
                   trigger={["click"]}
                 >
                   <ComposerPillButton
-                    aria-label={`Change model. Current model: ${config.model}`}
-                    disabled={busy || !!pending || !!siteFundedPolicy}
+                    aria-label={`Change model. Current model: ${displayedModel}`}
+                    disabled={busy || !!pending}
                     style={{
                       maxWidth: 150,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                     }}
                   >
-                    {config.model}
+                    {displayedModel}
                   </ComposerPillButton>
                 </Dropdown>
                 <Text type="secondary">·</Text>
@@ -2020,6 +2135,15 @@ function NewAgentPanel({
             </span>
           </div>
         )}
+        {!isFirstRun && (
+          <NewAgentPeople
+            participants={participants}
+            onChange={setParticipants}
+            projectId={projectId}
+            onSelectProject={selectProject}
+            disabled={busy || !!pending}
+          />
+        )}
         {/* Always rendered: its line is reserved so starting does not shift the
             centered page, and its live region exists before announcing. */}
         <PreparationStatus active={busy} phase={preparationPhase} />
@@ -2083,16 +2207,32 @@ function NewAgentPanel({
       {createProjectMounted.current && (
         <CocalcErrorBoundary
           scope="agents.create-project"
-          resetKeys={[createProjectOpen]}
+          resetKeys={[createProjectOpen, quickProjectOpen]}
         >
           <Suspense fallback={null}>
-            <NewProjectCreator
-              key={projectCreatorInstance}
-              default_value={projectCreationTitle}
-              open={createProjectOpen}
+            <QuickProjectCreator
+              key={`quick-${projectCreatorInstance}`}
+              open={quickProjectOpen}
+              defaultTitle={projectCreationTitle}
               onClose={closeProjectCreator}
               onCreated={selectProject}
+              onMoreOptions={(title) => {
+                setQuickProjectOpen(false);
+                setProjectCreationTitle(title);
+                // Remount so the full dialog starts from the name typed here.
+                setProjectCreatorInstance((instance) => instance + 1);
+                setCreateProjectOpen(true);
+              }}
             />
+            {fullProjectCreatorMounted.current && (
+              <NewProjectCreator
+                key={projectCreatorInstance}
+                default_value={projectCreationTitle}
+                open={createProjectOpen}
+                onClose={closeProjectCreator}
+                onCreated={selectProject}
+              />
+            )}
           </Suspense>
         </CocalcErrorBoundary>
       )}
@@ -2100,6 +2240,14 @@ function NewAgentPanel({
         open={membershipDetailsOpen}
         onClose={() => setMembershipDetailsOpen(false)}
       />
+      {signInOpen && (
+        <CodexPaymentCredentialsModal
+          open
+          projectId={projectId}
+          refreshPaymentSource={() => refreshPaymentSource?.()}
+          onClose={() => setSignInOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -2419,6 +2567,9 @@ function AgentProjectContext({
           hideCompactThreadHeader: true,
           hideComposerIdentity: true,
           mobileHeaderControlsPortal,
+          // The same header slot: zoom, copy and search sit in the agent's
+          // one header row instead of floating over the messages.
+          headerControlsPortal: mobileHeaderControlsPortal,
           openFilesInWorkbench: true,
           sidebarHiddenByDefault: true,
           sidebarPreferenceKey: `cocalc:agents:chat-sidebar-hidden:${agent.account_id}:${agent.endpoint.agent_id}`,
@@ -2508,6 +2659,9 @@ function AgentWorkspace({
     value: AgentHeaderAppearance;
   }>();
   const [appearanceOpen, setAppearanceOpen] = useState(false);
+  // Clicking the title renames it in place; the badge opens the full
+  // appearance editor.
+  const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const [appearanceThreadId, setAppearanceThreadId] = useState<string>();
   const [appearanceDraft, setAppearanceDraft] =
     useState<ThemeEditorDraft | null>(null);
@@ -2659,6 +2813,19 @@ function AgentWorkspace({
     textColor: headerTextColor,
     title,
   } = resolvedTheme;
+  // The color that marks this thread everywhere: header strip, sidebar row,
+  // browser tab.
+  const identityColor = themeIdentityColor(
+    resolvedTheme,
+    selectedAgent?.endpoint.agent_id ??
+      selectedThread ??
+      agent.endpoint.agent_id,
+  );
+  useEffect(() => {
+    if (!active) return;
+    setBrowserTabAccent(identityColor);
+    return () => setBrowserTabAccent(undefined);
+  }, [active, identityColor]);
   const openAppearanceEditor = () => {
     if (!selectedThread) return;
     const metadata = readAgentThreadAppearance(chatActions, selectedThread);
@@ -2672,6 +2839,19 @@ function AgentWorkspace({
     });
     setAppearanceThreadId(selectedThread);
     setAppearanceOpen(true);
+  };
+  const startTitleEdit = () => {
+    if (!selectedThread || !chatActions) return;
+    setTitleDraft(title);
+  };
+  const saveTitle = () => {
+    if (titleDraft == null) return;
+    const next = titleDraft.trim();
+    setTitleDraft(null);
+    if (!selectedThread || !next || next === title) return;
+    if (!chatActions?.renameThread?.(selectedThread, next)) {
+      antdMessage.error("Unable to rename thread.");
+    }
   };
   const saveAppearance = () => {
     if (!appearanceThreadId || !appearanceDraft) return;
@@ -2742,20 +2922,10 @@ function AgentWorkspace({
         visibility: active ? "visible" : "hidden",
       }}
     >
-      <header
-        style={{
-          alignItems: "center",
-          background: backgroundColor,
-          borderBottom: `2px solid ${primaryColor ?? UI_COLORS.border}`,
-          boxShadow: primaryColor ? `inset 4px 0 0 ${primaryColor}` : undefined,
-          color: headerTextColor,
-          display: "flex",
-          gap: 12,
-          padding: "2px 12px",
-          height: 64,
-          flexShrink: 0,
-          boxSizing: "border-box",
-        }}
+      <PageHeader
+        identityColor={identityColor}
+        background={backgroundColor}
+        color={headerTextColor}
       >
         {onShowList && (
           <Button
@@ -2775,7 +2945,7 @@ function AgentWorkspace({
           aria-label="Edit thread appearance"
           type="text"
           onClick={openAppearanceEditor}
-          style={{ color: headerTextColor, height: 44, padding: 4 }}
+          style={{ color: headerTextColor, height: 32, padding: 4 }}
         >
           <ThreadBadge
             icon={appearance?.thread_icon}
@@ -2787,53 +2957,77 @@ function AgentWorkspace({
                 ? undefined
                 : "robot"
             }
-            size={36}
+            size={24}
           />
         </Button>
+        {/* One line: the title, then muted context that gives way first. */}
         <div
           style={{
             minWidth: 0,
             flex: 1,
             display: "flex",
-            flexDirection: "column",
-            gap: 0,
+            alignItems: "baseline",
+            gap: 10,
           }}
         >
-          <Button
-            type="text"
-            aria-label={`Edit thread title: ${title}`}
-            title={title}
-            onClick={openAppearanceEditor}
-            style={{
-              color: "inherit",
-              fontSize: 16,
-              fontWeight: 600,
-              height: "auto",
-              padding: 0,
-              justifyContent: "flex-start",
-              minWidth: 0,
-              maxWidth: "100%",
-            }}
-          >
-            <span
+          {titleDraft != null ? (
+            <Input
+              autoFocus
+              size="small"
+              aria-label="Thread title"
+              value={titleDraft}
+              maxLength={200}
+              onChange={(event) => setTitleDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.stopPropagation();
+                  setTitleDraft(null);
+                }
+              }}
+              onPressEnter={saveTitle}
+              onBlur={saveTitle}
+              style={{ fontSize: 15, fontWeight: 600, maxWidth: "60%" }}
+            />
+          ) : (
+            <Button
+              type="text"
+              aria-label={`Rename thread: ${title}`}
+              title={title}
+              onClick={startTitleEdit}
               style={{
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
+                color: "inherit",
+                fontSize: 15,
+                fontWeight: 600,
+                height: "auto",
+                padding: 0,
+                justifyContent: "flex-start",
+                minWidth: 0,
+                maxWidth: "60%",
+                flex: "0 1 auto",
               }}
             >
-              {title}
-            </span>
-          </Button>
+              <span
+                style={{
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {title}
+              </span>
+            </Button>
+          )}
           <div
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 8,
+              gap: 6,
               minWidth: 0,
-              width: "100%",
+              flex: "1 1 0",
               flexWrap: "nowrap",
+              overflow: "hidden",
               fontSize: 12,
+              opacity: 0.75,
             }}
           >
             {!unregistered ? (
@@ -2864,6 +3058,8 @@ function AgentWorkspace({
             )}
             <span aria-hidden="true">·</span>
             <AgentProjectStatus agent={agent} active={active} />
+            <AgentParticipants endpoint={agent.endpoint} />
+            {workingDirectoryLabel && <span aria-hidden="true">·</span>}
             {workingDirectoryLabel && (
               <Button
                 type="text"
@@ -2873,7 +3069,7 @@ function AgentWorkspace({
                 style={{
                   color: "inherit",
                   textAlign: "left",
-                  flex: "1 1 180px",
+                  flex: "0 1 auto",
                   justifyContent: "flex-start",
                   minWidth: 0,
                   padding: 0,
@@ -2913,7 +3109,6 @@ function AgentWorkspace({
           <AgentsWorkspaceNavigation
             foregroundColor={headerTextColor}
             onOpenDocs={openDocs}
-            onOpenTerminal={() => runFrameAction("terminal")}
             workspaceItems={[
               {
                 key: "workspace-terminal",
@@ -2985,7 +3180,7 @@ function AgentWorkspace({
             }
           />
         )}
-      </header>
+      </PageHeader>
       <Modal
         title="Working directory"
         open={directoryOpen}
@@ -3339,6 +3534,7 @@ export function MyAgentsWorkspacePage({
   const [copyBusy, setCopyBusy] = useState(false);
   const [copyError, setCopyError] = useState("");
   const [retiringAgentId, setRetiringAgentId] = useState<string>();
+  const [shareAgent, setShareAgent] = useState<NamedAgent>();
   const [mobileList, setMobileList] = useState(!libraryOpen);
   useMobileSearchNavigation({
     active,
@@ -3589,10 +3785,17 @@ export function MyAgentsWorkspacePage({
           : creating
             ? "New Agent"
             : selected
-              ? `@${selected.name} - Agents`
+              ? selected.thread_title?.trim() || `@${selected.name}`
               : "Agents",
     );
-  }, [active, contentOpen, libraryOpen, creating, selected?.name]);
+  }, [
+    active,
+    contentOpen,
+    libraryOpen,
+    creating,
+    selected?.name,
+    selected?.thread_title,
+  ]);
   const creatingSourceAgent = agentFirstRunStarted(accountId)
     ? undefined
     : (agents.find(
@@ -3711,15 +3914,18 @@ export function MyAgentsWorkspacePage({
       agent_id: agent.endpoint.agent_id,
       expected_thread_id: agent.thread_id,
     });
-    writeAgentSubscriptionSelection({
+    // The server keeps the payment choice; refresh the cached copy.
+    await copyPaymentSelection({
       accountId,
-      projectId: agent.endpoint.project_id,
-      threadId: next.thread_id,
-      credentialId: readAgentSubscriptionSelection({
-        accountId,
-        projectId: agent.endpoint.project_id,
-        threadId: agent.thread_id,
-      }),
+      from: {
+        project_id: agent.endpoint.project_id,
+        thread_id: agent.thread_id,
+      },
+      to: {
+        project_id: agent.endpoint.project_id,
+        thread_id: next.thread_id,
+        path: agent.path,
+      },
     });
     refreshNamedAgents();
     selectAgentId(agent.endpoint.agent_id);
@@ -3947,15 +4153,17 @@ export function MyAgentsWorkspacePage({
       });
       await actions.syncdb?.save();
       await actions.save_to_disk();
-      writeAgentSubscriptionSelection({
+      await copyPaymentSelection({
         accountId,
-        projectId: copyingAgent.endpoint.project_id,
-        threadId,
-        credentialId: readAgentSubscriptionSelection({
-          accountId,
-          projectId: copyingAgent.endpoint.project_id,
-          threadId: copyingAgent.thread_id,
-        }),
+        from: {
+          project_id: copyingAgent.endpoint.project_id,
+          thread_id: copyingAgent.thread_id,
+        },
+        to: {
+          project_id: copyingAgent.endpoint.project_id,
+          thread_id: threadId,
+          path: copyingAgent.path,
+        },
       });
       const locator = {
         project_id: copyingAgent.endpoint.project_id,
@@ -3992,6 +4200,46 @@ export function MyAgentsWorkspacePage({
     }
   }
 
+  // After named agents are retired: drop their workspaces and move the
+  // selection to a remaining agent (or the new-agent form).
+  function afterRetire(removed: Set<string>) {
+    const remaining = agents.filter(
+      ({ endpoint }) => !removed.has(endpoint.agent_id),
+    );
+    for (const agent of agents) {
+      if (!removed.has(agent.endpoint.agent_id)) continue;
+      const workspace = agentWorkspaceKey(agent);
+      if (
+        !remaining.some(
+          (candidate) => agentWorkspaceKey(candidate) === workspace,
+        )
+      )
+        unmountWorkspace(workspace);
+    }
+    if (selected && removed.has(selected.endpoint.agent_id)) {
+      const nextAgent = remaining[0];
+      if (nextAgent) {
+        mountAgent(nextAgent);
+        selectAgentId(nextAgent.endpoint.agent_id);
+      } else {
+        setCreatingSourceAgentId(undefined);
+        setCreating(true);
+        redux.getActions("page").setState({
+          ...closedLibraryState,
+          active_agent_id: "new",
+          active_agent_name: undefined,
+        });
+        set_url(
+          getPageUrlPath({
+            page: "agents",
+            agent_id: "new",
+          }),
+        );
+      }
+    }
+    refreshNamedAgents();
+  }
+
   function confirmRetireAgent(agent: NamedAgent) {
     Modal.confirm({
       title: `Remove @${agent.name} from Agents?`,
@@ -4005,40 +4253,7 @@ export function MyAgentsWorkspacePage({
           await personalAgentApi().retireNamedAgent({
             endpoint: agent.endpoint,
           });
-          const workspace = agentWorkspaceKey(agent);
-          const nextAgent = agents.find(
-            ({ endpoint }) => endpoint.agent_id !== agent.endpoint.agent_id,
-          );
-          if (
-            !agents.some(
-              (candidate) =>
-                candidate.endpoint.agent_id !== agent.endpoint.agent_id &&
-                agentWorkspaceKey(candidate) === workspace,
-            )
-          ) {
-            unmountWorkspace(workspace);
-          }
-          if (selected?.endpoint.agent_id === agent.endpoint.agent_id) {
-            if (nextAgent) {
-              mountAgent(nextAgent);
-              selectAgentId(nextAgent.endpoint.agent_id);
-            } else {
-              setCreatingSourceAgentId(undefined);
-              setCreating(true);
-              redux.getActions("page").setState({
-                ...closedLibraryState,
-                active_agent_id: "new",
-                active_agent_name: undefined,
-              });
-              set_url(
-                getPageUrlPath({
-                  page: "agents",
-                  agent_id: "new",
-                }),
-              );
-            }
-          }
-          refreshNamedAgents();
+          afterRetire(new Set([agent.endpoint.agent_id]));
           antdMessage.success(`Removed @${agent.name} from Agents.`);
         } catch (err) {
           antdMessage.error(`Unable to remove @${agent.name}: ${err}`);
@@ -4050,10 +4265,43 @@ export function MyAgentsWorkspacePage({
     });
   }
 
+  function confirmRetireAgents(list: NamedAgent[]) {
+    if (list.length === 1) return confirmRetireAgent(list[0]);
+    Modal.confirm({
+      title: `Remove ${list.length} agents from Agents?`,
+      content:
+        "This frees their named-agent slots. Conversations and artifacts are preserved, and historical Agent Networks keep their records, but these agents become unavailable to those networks.",
+      okText: `Remove ${list.length} agents`,
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        const removed = new Set<string>();
+        const failed: string[] = [];
+        for (const agent of list) {
+          try {
+            await personalAgentApi().retireNamedAgent({
+              endpoint: agent.endpoint,
+            });
+            removed.add(agent.endpoint.agent_id);
+          } catch (err) {
+            failed.push(`@${agent.name}: ${err}`);
+          }
+        }
+        if (removed.size > 0) afterRetire(removed);
+        if (failed.length === 0)
+          antdMessage.success(`Removed ${removed.size} agents from Agents.`);
+        else
+          antdMessage.error(
+            `Removed ${removed.size} of ${list.length} agents. ${failed.join("; ")}`,
+          );
+      },
+    });
+  }
+
   // The sidebar's per-agent menu, shared with the Agents page.
   function runAgentAction(agent: NamedAgent, key: string) {
     const id = agent.endpoint.agent_id;
-    if (key === "copy") openCopyAgent(agent);
+    if (key === "share") setShareAgent(agent);
+    else if (key === "copy") openCopyAgent(agent);
     else if (key === "fresh") startFresh(agent);
     else if (key === "access") setAccessAgent(agent);
     else if (key === "remove") confirmRetireAgent(agent);
@@ -4066,6 +4314,7 @@ export function MyAgentsWorkspacePage({
   function overviewActions(agent: NamedAgent) {
     const hidden = agentOrganization.groups.hidden.includes(agent);
     return [
+      { key: "share", label: "Share with people…" },
       { key: "artifacts", label: "Show artifacts" },
       { key: "copy", label: "Copy agent…" },
       { key: "fresh", label: "Start fresh conversation…" },
@@ -4086,18 +4335,22 @@ export function MyAgentsWorkspacePage({
     const theme = resolveNamedAgentTheme(agent, appearance);
     return (
       <AgentRunningIndicator agent={agent}>
-        <ThreadBadge
-          icon={appearance?.thread_icon}
-          color={theme.primaryColor}
-          accentColor={theme.accentColor}
-          image={appearance?.thread_image}
-          fallbackIcon={
-            theme.primaryColor || theme.accentColor || appearance?.thread_image
-              ? undefined
-              : "robot"
-          }
-          size={size}
-        />
+        <WithAgentRuntimeMark runtime={agent.runtime}>
+          <ThreadBadge
+            icon={appearance?.thread_icon}
+            color={theme.primaryColor}
+            accentColor={theme.accentColor}
+            image={appearance?.thread_image}
+            fallbackIcon={
+              theme.primaryColor ||
+              theme.accentColor ||
+              appearance?.thread_image
+                ? undefined
+                : "robot"
+            }
+            size={size}
+          />
+        </WithAgentRuntimeMark>
       </AgentRunningIndicator>
     );
   }
@@ -4130,7 +4383,7 @@ export function MyAgentsWorkspacePage({
         style={{
           alignItems: "center",
           background: active ? UI_COLORS.selected : "transparent",
-          borderInlineStart: `3px solid ${theme.primaryColor ?? "transparent"}`,
+          borderInlineStart: `3px solid ${themeIdentityColor(theme, id)}`,
           borderRadius: 6,
           display: "flex",
         }}
@@ -4210,6 +4463,11 @@ export function MyAgentsWorkspacePage({
           trigger={["click"]}
           menu={{
             items: [
+              {
+                key: "share",
+                icon: <Icon name="user-plus" />,
+                label: "Share with people…",
+              },
               {
                 key: "copy",
                 icon: <Icon name="copy" />,
@@ -4371,7 +4629,11 @@ export function MyAgentsWorkspacePage({
               }
             : toggleAgentSidebar
         }
-        headerActions={<SidebarNotifications />}
+        headerActions={
+          <SidebarNotifications
+            hidden={agentSidebarHidden || (isNarrow && !mobileList)}
+          />
+        }
         footer={
           <div
             style={{
@@ -4506,7 +4768,7 @@ export function MyAgentsWorkspacePage({
                 >
                   <Space
                     direction="vertical"
-                    size={10}
+                    size={4}
                     style={{ width: "100%" }}
                   >
                     {
@@ -5136,6 +5398,7 @@ export function MyAgentsWorkspacePage({
         {accountId && (
           <AgentsOverview
             active={active && overviewOpen && (!isNarrow || !mobileList)}
+            onNewAgent={aiDisabled ? undefined : startNewAgent}
             navigation={libraryNavigationControl()}
             mine={[
               ...agentOrganization.groups.pinned,
@@ -5160,6 +5423,10 @@ export function MyAgentsWorkspacePage({
             onPinMine={agentOrganization.setPinned}
             onMoveMine={agentOrganization.moveToIndex}
             onOpenMine={(agent) => selectAgent(agent)}
+            onSetHidden={(ids, hidden) => {
+              for (const id of ids) agentOrganization.setHidden(id, hidden);
+            }}
+            onRemove={confirmRetireAgents}
           />
         )}
         {active && artifactOpen && accountId && (!isNarrow || !mobileList) && (
@@ -5339,6 +5606,10 @@ export function MyAgentsWorkspacePage({
           }}
         />
       )}
+      <ShareAgentModal
+        agent={shareAgent}
+        onClose={() => setShareAgent(undefined)}
+      />
       {accessAgent && (
         <AgentAccessDialog
           open

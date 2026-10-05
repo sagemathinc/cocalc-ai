@@ -33,7 +33,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "test:harness": "pnpm build && node --test acp/__tests__/harness-client.test.cjs",
+    "test:harness": "pnpm build && node --test acp/__tests__/harness-client.test.cjs acp/__tests__/harness-diagnostics.test.cjs",
     "build": "pnpm exec tsc --build",
     "clean": "rm -rf dist node_modules tsconfig.tsbuildinfo",
     "test": "pnpm exec jest",

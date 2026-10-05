@@ -114,7 +114,12 @@ export function ProjectsSidebar({
   const project_map = useTypedRedux("projects", "project_map");
   const openProjects = useTypedRedux("projects", "open_projects");
   const account_id = useTypedRedux("account", "account_id");
-  const current = useTypedRedux("page", "active_top_tab");
+  const activeTopTab = useTypedRedux("page", "active_top_tab");
+  const lastProject = useTypedRedux("page", "last_project_tab");
+  // The open project, or the last one when another page is showing, so a
+  // collapsed section still offers the way back (as agents and people do).
+  const current =
+    activeTopTab && project_map?.has(activeTopTab) ? activeTopTab : lastProject;
   const {
     bookmarkedProjects,
     setProjectBookmarked,

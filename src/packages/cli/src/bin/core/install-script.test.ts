@@ -35,11 +35,12 @@ function writeManifest({
   artifact: string;
   version: string;
 }): void {
+  const os = process.platform === "darwin" ? "darwin" : "linux";
   const arch = process.arch === "arm64" ? "arm64" : "amd64";
   const manifestDir = join(baseDir, "cocalc");
   mkdirSync(manifestDir, { recursive: true });
   writeFileSync(
-    join(manifestDir, `latest-linux-${arch}.json`),
+    join(manifestDir, `latest-${os}-${arch}.json`),
     `${JSON.stringify({
       url: pathToFileURL(artifact).href,
       sha256: sha256(artifact),
@@ -62,7 +63,9 @@ function runInstaller({ dir, baseDir }: { dir: string; baseDir: string }) {
     "#!/usr/bin/env bash\necho 'xz must not be used' >&2\nexit 97\n",
   );
   chmodSync(join(poisonBin, "xz"), 0o755);
-  return spawnSync("bash", [installer], {
+  // stock macOS `curl ... | bash` runs /bin/bash 3.2
+  const bash = process.platform === "darwin" ? "/bin/bash" : "bash";
+  return spawnSync(bash, [installer], {
     encoding: "utf8",
     env: {
       ...process.env,
@@ -179,7 +182,12 @@ exit 127
 
 test(
   "installer retains support for uncompressed macOS-style artifacts",
-  { skip: process.platform !== "linux" },
+  {
+    skip: !(
+      process.platform === "linux" ||
+      (process.platform === "darwin" && process.arch === "arm64")
+    ),
+  },
   () => {
     const dir = mkdtempSync(join(tmpdir(), "cocalc-cli-installer-raw-"));
     const artifact = join(dir, "raw-cocalc");

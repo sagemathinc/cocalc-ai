@@ -1570,6 +1570,8 @@ export function parseRow(
     machine,
     provider_instance_id: metadata.runtime?.instance_id,
     public_ip: metadata.runtime?.public_ip,
+    private_ip: metadata.runtime?.private_ip,
+    network_observed_at: metadata.runtime?.observed_at,
     public_url: row.public_url ?? null,
     internal_url: row.internal_url ?? null,
     ssh_server: row.ssh_server ?? null,

@@ -406,6 +406,56 @@ test("admin db query forwards audited read-only SQL options", async () => {
   });
 });
 
+test("scheduled collection expiry repair previews by default and forwards reviewed commit guards", async () => {
+  const captured: any[] = [];
+  const program = new Command();
+  registerAdminCommand(
+    program,
+    adminDeps({
+      adminDb: {
+        repairScheduledCollectionExpiry: async (opts) => {
+          captured.push(opts);
+          return {};
+        },
+      },
+    }) as any,
+  );
+  const args = [
+    "node",
+    "test",
+    "admin",
+    "db",
+    "repair-scheduled-collection-expiry",
+    "--project-id",
+    "11111111-1111-4111-8111-111111111111",
+    "--op-id",
+    "22222222-2222-4222-8222-222222222222",
+    "--expected-updated-at",
+    "2026-01-01T00:00:00Z",
+    "--expected-expires-at",
+    "2026-01-08T00:00:00Z",
+    "--expected-run-at",
+    "2026-01-20T00:00:00Z",
+    "--idempotency-key",
+    "synthetic-repair",
+    "--reason",
+    "synthetic test",
+  ];
+  await program.parseAsync(args);
+  await program.parseAsync([...args, "--commit"]);
+  assert.deepEqual(captured[0], {
+    project_id: args[6],
+    op_id: args[8],
+    expected_updated_at: "2026-01-01T00:00:00Z",
+    expected_expires_at: "2026-01-08T00:00:00Z",
+    expected_run_at: "2026-01-20T00:00:00Z",
+    idempotency_key: "synthetic-repair",
+    reason: "synthetic test",
+    commit: false,
+  });
+  assert.deepEqual(captured[1], { ...captured[0], commit: true });
+});
+
 test("admin host logs forwards audited bounded log options", async () => {
   let capturedArgs: any;
   const program = new Command();
@@ -585,6 +635,14 @@ test("admin support conventions exposes the shared status workflow", async () =>
   assert.match(vocabulary, /page and flyout are titled Virtual machines/);
   assert.match(vocabulary, /Recent Files or Project Activity Log/);
   assert.match(vocabulary, /no Users tab on the left rail/);
+  assert.match(
+    vocabulary,
+    /The People page in the sidebar is a different page/,
+  );
+  assert.match(
+    vocabulary,
+    /removing a collaborator still happens in the project's settings/,
+  );
 });
 
 test("admin support image verifies and writes a Zendesk attachment", async () => {

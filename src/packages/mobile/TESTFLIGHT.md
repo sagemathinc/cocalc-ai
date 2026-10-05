@@ -5,7 +5,38 @@ The first iOS beta is for internal testers only. Use the production variant,
 does not depend on Metro. The development app has a separate bundle ID and is
 not the TestFlight candidate.
 
-## Current candidate built on 2026-09-24
+## Current candidate built on 2026-09-25
+
+- Source: `origin/main` at PR #698's merge commit
+  `54fd64e6d9a2e4fb31830d62f70fd0ab863aec5e`, plus the iOS build-number
+  commit `3fbb99af53cb2e81635eeee7aa27c56d044b7424`.
+- Production iOS archive: `/tmp/CoCalc-0.1.0-2-3fbb99af.xcarchive`.
+- Bundle ID: `com.sagemath.cocalc.mobile`; version/build: `0.1.0 (2)`.
+- Embedded `main.jsbundle` SHA-256:
+  `335d8ce63b529f759c17dc4a04ff4afde3fe5df2f06e11d79f5ddacf9d2bc04b`.
+- The clean production prebuild, CocoaPods install, Xcode Release archive, and
+  `codesign --verify --deep --strict` passed. The archive's native and Expo
+  configuration both identify the production app and build 2.
+- Xcode Organizer exported an internal-only App Store Connect IPA with automatic
+  cloud-managed Apple Distribution signing, symbols included, and version/build
+  management disabled:
+  `/tmp/CoCalc-TestFlight-internal-0.1.0-2-3fbb99af/CoCalc.ipa`.
+  A copy is in `tmp/mobile-testflight-0.1.0-2/CoCalc.ipa` for review.
+- Exported IPA SHA-256:
+  `7def13c30c016297c5d8c378026becabc1a01d1454f06115d8db8e3c5ca3ba36`.
+  Its native bundle ID and version, embedded JavaScript bundle, and signing
+  match the archive. The export options record
+  `testFlightInternalTestingOnly=true`; the store provisioning profile has
+  `beta-reports-active=true` and `get-task-allow=false`.
+- Xcode Organizer uploaded build `0.1.0 (2)` to Apple for internal TestFlight
+  testing on 2026-09-25 and reports **Uploaded to Apple**. App Store Connect
+  processing and assignment to the internal beta group are still pending
+  verification. Xcode reported **Upload Symbols Failed** for
+  `hermesvm.framework` UUID `5A86B6FB-CE4E-331E-96E2-CA2281AD05ED`; this
+  did not block the app upload, but Hermes crash frames may not be
+  symbolicated.
+
+## Previous candidate built on 2026-09-24
 
 - Source: `feature/cocalc-mobile` at
   `58cce520b4fc0a11e01f2cff4122bffc8f194e48`, including the browser and
@@ -111,7 +142,7 @@ No IPA was produced, and nothing was uploaded to Apple or offered to testers.
 
 1. The local IPA export and inspection are complete. To repeat the GUI export,
    open the current archive in Xcode with
-   `/usr/bin/open -a Xcode /tmp/CoCalc-voice-20260924-dictation.xcarchive`. In
+   `/usr/bin/open -a Xcode /tmp/CoCalc-0.1.0-2-3fbb99af.xcarchive`. In
    **Window → Organizer → Archives**, select the CoCalc archive and click
    **Distribute App**. In Xcode 26.6, choose **Custom → Distribute**, then
    **App Store Connect → Export**. The top-level **TestFlight Internal Only**
@@ -122,12 +153,19 @@ No IPA was produced, and nothing was uploaded to Apple or offered to testers.
    Settings → Apple Accounts → Manage Certificates… → + → Apple Distribution**
    for that team, then retry the GUI export. Keep credentials in Xcode; do not
    add them to this repository.
-2. The App Store Connect app record, internal-only upload, processing, group,
-   and initial tester invitation are complete. Open the
+2. The App Store Connect app record, internal-only upload, group, and initial
+   tester invitation are complete for build 1. For build 2, wait until Apple
+   marks it **Ready to Test**, then add it to the group (automatic distribution
+   is disabled). Open the
    [internal TestFlight group](https://appstoreconnect.apple.com/teams/69a6de70-8088-47e3-e053-5b8c7c11a4d1/apps/6815857970/testflight/groups/b055741d-ac74-4c72-a726-d957a641b9aa)
-   to check tester acceptance. The app-record name can be revisited before any
-   public release; the phone still displays **CoCalc**. For a later candidate,
-   increment `ios.buildNumber` in `app.config.ts` and rebuild the archive.
+   to manage builds and testers. Invite an employee as an App Store Connect
+   user in **Users and Access → People**, with app access to CoCalc and a
+   TestFlight-eligible role. Then add them to the internal testing group. They
+   can use an existing Apple Account or create one; they do not need a paid
+   Developer Program membership. The app-record name can be revisited before
+   any public release; the phone still displays **CoCalc**. For a later
+   candidate, increment `ios.buildNumber` in `app.config.ts` and rebuild the
+   archive.
 3. The existing IPA was inspected before upload. A future
    command-line export may still need a local distribution identity because
    Xcode used a cloud-managed certificate for this GUI export. If retrying the
@@ -140,25 +178,28 @@ No IPA was produced, and nothing was uploaded to Apple or offered to testers.
 
    ```bash
    xcodebuild -exportArchive \
-     -archivePath /tmp/CoCalc-voice-20260924-dictation.xcarchive \
+     -archivePath /tmp/CoCalc-0.1.0-2-3fbb99af.xcarchive \
      -exportOptionsPlist testflight-internal-export-options.plist \
      -exportPath /tmp/CoCalc-TestFlight-internal \
      -allowProvisioningUpdates
    ```
 
-4. The IPA's bundle ID, version, signing, and embedded bundle were inspected,
-   and the exact TestFlight build is installed on an iPhone. Repeat the sign-in,
-   chat, attachment, live voice, and dictation smoke tests on that installation.
-   Add further internal testers to the group only by explicit choice.
-   This internal-only build must not be added to external testing.
+4. The IPA's bundle ID, version, signing, and embedded bundle were inspected.
+   Build 2 has not yet been installed on an iPhone. Repeat the sign-in, chat,
+   attachment, live voice, progress, guidance, interrupt, and dictation smoke
+   tests after TestFlight installs build 2. This internal-only build cannot be
+   added to external testing.
 
 Suggested **What to Test** text:
 
 > Sign in to your CoCalc site, open and create agents, read and send messages,
 > and attach a photo and a PDF. Start a live voice call in an agent thread,
-> speak a task, confirm it appears in chat, and end the call while the agent
-> continues. Check a long conversation, background and reopen the app, and
-> report any lost draft, scroll jump, audio-routing, or payment-setting mismatch.
+> speak a task, and confirm it appears in chat. During a long-running turn,
+> ask for recent progress, send guidance, and ask voice to interrupt the turn.
+> Check that guidance appears in the correct place in the message stream. End
+> a voice call while the agent continues. Check a long conversation, background
+> and reopen the app, and report any lost draft, scroll jump, audio-routing,
+> or payment-setting mismatch.
 
 Qualify the matching **Live voice** control in the web agent workspace against
 the same staging home-bay service before widening the beta.
@@ -169,4 +210,5 @@ review, an external beta, or a store release.
 
 Apple references: [distribution from Xcode](https://developer.apple.com/documentation/xcode/distributing-your-app-for-beta-testing-and-releases),
 [creating an app record](https://developer.apple.com/help/app-store-connect/create-an-app-record/add-a-new-app),
-and [adding an internal TestFlight group](https://developer.apple.com/help/app-store-connect/test-a-beta-version/add-internal-testers).
+[adding an internal TestFlight group](https://developer.apple.com/help/app-store-connect/test-a-beta-version/add-internal-testers),
+and [adding App Store Connect users](https://developer.apple.com/help/app-store-connect/manage-your-team/add-and-edit-users).

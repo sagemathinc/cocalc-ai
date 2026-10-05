@@ -151,6 +151,13 @@ def newest_file(path: str) -> str:
 SUCCESSFUL_BUILD = ".successful-build"
 
 
+# packages/static bundles the compiled frontend, so a frontend change must
+# rebuild it even though no file under packages/static changed.
+STATIC_INPUTS = [
+    'packages/assets', 'packages/frontend', 'packages/essential-frontend'
+]
+
+
 def needs_build(package: str) -> bool:
     # Code below was hopelessly naive, e.g, a failed build would not get retried.
     # We only need to do a build if the newest file in the tree is not
@@ -158,8 +165,25 @@ def needs_build(package: str) -> bool:
     path = os.path.join(os.path.dirname(__file__), package)
     if not os.path.exists(os.path.join(path, 'dist')):
         return True
+    if package == 'packages/static' and static_inputs_changed(path):
+        return True
     newest = newest_file(path)
     return not newest.startswith('./' + SUCCESSFUL_BUILD)
+
+
+def static_inputs_changed(static_path: str) -> bool:
+    marker = os.path.join(static_path, SUCCESSFUL_BUILD)
+    if not os.path.exists(marker):
+        return True
+    built = os.path.getmtime(marker)
+    for dep in STATIC_INPUTS:
+        if needs_build(dep):
+            return True
+        dep_marker = os.path.join(os.path.dirname(__file__), dep,
+                                  SUCCESSFUL_BUILD)
+        if os.path.exists(dep_marker) and os.path.getmtime(dep_marker) > built:
+            return True
+    return False
 
 
 def handle_path(s: str,

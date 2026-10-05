@@ -8,7 +8,7 @@ import {
 } from "@cocalc/util/ai/runtime";
 import { createHash } from "node:crypto";
 
-type Conversation = { path: string; threadId: string };
+type Conversation = { path: string; threadId: string; sessionId?: string };
 type Factory = (
   binding: HarnessBinding,
   conversation: Conversation,
@@ -149,6 +149,7 @@ async function withTemporaryHarness<T>(
     const conversation = {
       path: prepared.chat!.path,
       threadId: prepared.chat!.thread_id!,
+      ...(fork ? { sessionId: prepared.session_id } : {}),
     };
     const binding: HarnessBinding = {
       projectId: prepared.project_id,
@@ -193,7 +194,9 @@ export function prepareHarnessRequest(request: AcpRequest): AcpRequest {
     request.harness_credential,
     runtime.profile,
   );
-  if (!launcher || process.env.COCALC_ACP_HARNESSES !== "1")
+  // On wherever a project-host launcher exists: Claude Code ships with the
+  // host's tools (like codex). COCALC_ACP_HARNESSES=0 is an operator kill switch.
+  if (!launcher || process.env.COCALC_ACP_HARNESSES === "0")
     throw Error("ACP harness execution is not enabled on this host");
   if (
     !request.chat?.path ||
@@ -325,7 +328,7 @@ export async function createHarnessAgent(
       credential: prepared.harness_credential!,
     },
     conversation,
-    (binding) => factory(binding, conversation),
+    (binding, sessionId) => factory(binding, { ...conversation, sessionId }),
     attention,
     authorityValidator,
     rateLimitRecorder,

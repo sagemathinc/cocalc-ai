@@ -10,27 +10,22 @@ import { normalizeProjectStateForDisplay } from "@cocalc/frontend/projects/host-
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { agentProjectTitle } from "./project-title";
+import { ProjectUpdateIndicator } from "@cocalc/frontend/project/page/project-version-update";
+import { Icon } from "@cocalc/frontend/components";
 
 const ProjectDetails = lazy(() => import("./project-details"));
 const WIDTH_KEY = "cocalc-agents-project-drawer-width";
 
-export function projectStatusLabel(state?: string, network?: unknown): string {
-  if (network === false || network === 0) return "Internet access blocked";
-  switch (state) {
-    case "running":
-      return "Running";
-    case "starting":
-      return "Starting…";
-    case "stopping":
-      return "Stopping…";
-    case "opened":
-    case "closed":
-    case "stopped":
-      return "Stopped";
-    default:
-      return state ? `Project ${state}` : "Status unknown";
-  }
-}
+export {
+  projectStatusColor,
+  projectStatusLabel,
+  useRestarting,
+} from "@cocalc/frontend/projects/project-status-display";
+import {
+  projectStatusColor,
+  projectStatusLabel,
+  useRestarting,
+} from "@cocalc/frontend/projects/project-status-display";
 
 export function AgentProjectStatus({
   agent,
@@ -50,6 +45,11 @@ export function AgentProjectStatus({
     hostId,
     hostInfo,
   });
+  const restarting = useRestarting(
+    projectId,
+    state,
+    project?.getIn(["state", "started_at"]),
+  );
   const [open, setOpen] = useState(false);
   useEffect(() => {
     if (!active) setOpen(false);
@@ -62,7 +62,17 @@ export function AgentProjectStatus({
     }
   });
   const title = agentProjectTitle(agent, project?.get("title"));
-  const label = `Project: ${title} · ${egressError ? "Account internet usage blocked" : projectStatusLabel(state, runQuota?.network)}`;
+  const status = egressError
+    ? "Account internet usage blocked"
+    : restarting
+      ? "Restarting…"
+      : projectStatusLabel(state, runQuota?.network);
+  const label = `Project: ${title} · ${status}`;
+  const dot = projectStatusColor(
+    restarting ? "starting" : state,
+    runQuota?.network,
+    !!egressError,
+  );
   function resize(value: number) {
     const next = Math.max(280, Math.min(window.innerWidth, value));
     setWidth(next);
@@ -82,13 +92,15 @@ export function AgentProjectStatus({
           color: "inherit",
           maxWidth: "100%",
           height: 24,
-          flex: "1 1 0",
+          padding: 0,
+          flex: "0 1 auto",
           minWidth: 0,
           overflow: "hidden",
           whiteSpace: "nowrap",
           textAlign: "left",
         }}
       >
+        <Icon name="folder-open" style={{ fontSize: 11 }} />
         <span
           style={{
             minWidth: 0,
@@ -97,9 +109,20 @@ export function AgentProjectStatus({
             whiteSpace: "nowrap",
           }}
         >
-          {label}
+          {title}
         </span>
+        <span
+          aria-hidden="true"
+          style={{
+            width: 7,
+            height: 7,
+            borderRadius: "50%",
+            background: dot,
+            flex: "0 0 auto",
+          }}
+        />
       </Button>
+      {active && <ProjectUpdateIndicator project_id={projectId} />}
       <Drawer
         title={title}
         open={open && active}

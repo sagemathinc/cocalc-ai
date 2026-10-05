@@ -14,6 +14,10 @@ import {
 } from "./new-agent-defaults";
 import { assertCodexFundingModelReady } from "@cocalc/frontend/chat/codex-submit-preflight";
 import {
+  createMemoryPaymentApiForTests,
+  resetPaymentSelectionStoreForTests,
+} from "@cocalc/frontend/chat/payment-selection-store";
+import {
   readAgentSubscriptionSelection,
   writeAgentSubscriptionSelection,
 } from "./agent-subscription-selection";
@@ -215,12 +219,15 @@ describe("new agent defaults", () => {
     ).not.toThrow();
   });
 
-  it("carries an exact subscription selection to the new thread", () => {
+  it("carries an exact subscription selection to the new thread", async () => {
+    const server = createMemoryPaymentApiForTests();
+    resetPaymentSelectionStoreForTests(server);
+    const credentialId = "00000000-0000-4000-8000-000000000002";
     writeAgentSubscriptionSelection({
       accountId: "account",
       projectId: "project",
       threadId: "new-thread",
-      credentialId: "credential-2",
+      credentialId,
     });
     expect(
       readAgentSubscriptionSelection({
@@ -228,7 +235,13 @@ describe("new agent defaults", () => {
         projectId: "project",
         threadId: "new-thread",
       }),
-    ).toBe("credential-2");
+    ).toBe(credentialId);
+    // Saved for every device of the account, not just this browser.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(server.rows.get("thread:project:new-thread:codex")).toMatchObject({
+      credential_id: credentialId,
+    });
+    resetPaymentSelectionStoreForTests();
   });
 });
 

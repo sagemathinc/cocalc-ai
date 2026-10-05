@@ -3,6 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
+import type { IconName } from "@cocalc/frontend/components/icon";
 import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
 import { isNewProjectRootfsSelectable } from "../create-project-rootfs";
 
@@ -24,6 +25,9 @@ export type OnboardingRootfsSelection = {
 };
 
 export const ONBOARDING_ROOTFS_ADMIN_TAGS = [
+  // The image for people with nothing else to go on (see
+  // ROOTFS_TAG_NEW_PROJECT_DEFAULT).
+  "onboarding:default",
   "onboarding:jupyter-python",
   "onboarding:jupyter-r",
   "onboarding:jupyter-julia",
@@ -46,6 +50,7 @@ export const ONBOARDING_ROOTFS_TAGS: Record<
   "jupyter-python": [
     "onboarding:jupyter-python",
     "onboarding:jupyter",
+    "python",
     "jupyter",
     "preset:standard",
   ],
@@ -177,4 +182,57 @@ export function chooseOnboardingRootfs({
     return { image: fallbackImage, image_id: fallbackId || undefined };
   }
   return undefined;
+}
+
+// The few images the quick "New project" dialog offers as one-click choices.
+export const QUICK_PROJECT_IMAGE_KINDS: {
+  kind: OnboardingProjectKind;
+  label: string;
+  icon: IconName;
+}[] = [
+  { kind: "jupyter-python", label: "Python", icon: "python" },
+  { kind: "jupyter-r", label: "R", icon: "r" },
+  { kind: "sage", label: "SageMath", icon: "sagemath" },
+  { kind: "latex", label: "LaTeX", icon: "tex" },
+];
+
+// Tags too generic to say which of these an image is.
+const GENERIC_TAGS = new Set([
+  "onboarding:jupyter",
+  "jupyter",
+  "preset:standard",
+]);
+
+export type QuickProjectImageChoice = {
+  kind: OnboardingProjectKind;
+  label: string;
+  icon: IconName;
+  entry: RootfsImageEntry;
+};
+
+// One choice per kind the site's official images clearly provide (tagged
+// for it by an admin, or by name), each image at most once.
+export function quickProjectImageChoices({
+  images,
+  isAdmin,
+}: {
+  images: RootfsImageEntry[];
+  isAdmin?: boolean;
+}): QuickProjectImageChoice[] {
+  const seen = new Set<string>();
+  const choices: QuickProjectImageChoice[] = [];
+  for (const { kind, label, icon } of QUICK_PROJECT_IMAGE_KINDS) {
+    const selection = chooseOnboardingRootfs({ images, kind, isAdmin });
+    if (
+      !selection?.entry ||
+      !selection.matched_tag ||
+      GENERIC_TAGS.has(selection.matched_tag) ||
+      seen.has(selection.entry.id)
+    ) {
+      continue;
+    }
+    seen.add(selection.entry.id);
+    choices.push({ kind, label, icon, entry: selection.entry });
+  }
+  return choices;
 }

@@ -66,6 +66,7 @@ import {
   storeFlyoutState,
 } from "./flyouts/state";
 import HomePageButton from "./home-page/button";
+import { ProjectPageHeader } from "./project-header";
 import ProjectTabs, {
   FIXED_TABS_BG_COLOR,
   HiddenActivityBarLauncher,
@@ -156,12 +157,6 @@ const ProjectWarningBanner = lazyWithRetry(
     default: (await import("../project-banner")).ProjectWarningBanner,
   }),
   "project warning banners",
-);
-const ProjectVersionUpdate = lazyWithRetry(
-  async () => ({
-    default: (await import("./project-version-update")).default,
-  }),
-  "project version update",
 );
 
 function fullPageProjectTab(tab?: string): string | undefined {
@@ -1000,17 +995,39 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     );
   }
 
+  function renderHeader() {
+    if (fullscreen && fullscreen !== "project") return;
+    return (
+      <ProjectPageHeader
+        project_id={project_id}
+        leading={
+          // The workspace's show-sidebar control, when the sidebar is
+          // hidden and there is no top bar (sidebar navigation).
+          workspaceNavigation
+        }
+        badges={
+          <>
+            {isViewer ? <ViewerReadOnlyTag project_id={project_id} /> : null}
+            {networkAccessDisabled ? <NetworkDisabledBadge /> : null}
+          </>
+        }
+        runtimeControls={
+          !isViewer &&
+          !workspaceBlocked &&
+          !hardDeleteBlocked &&
+          projectCtx.projectAccess.capabilities.useProjectRuntime
+        }
+        showUpdate={!isViewer && !hardDeleteBlocked && showPostSurfaceBanners}
+      />
+    );
+  }
+
   function renderTopRow() {
     if (fullscreen && fullscreen !== "project") return;
 
     if (workspaceBlocked || hardDeleteBlocked) {
       return (
         <div style={{ display: "flex", height: "36px" }}>
-          {
-            // The workspace's show-sidebar control, when the sidebar is
-            // hidden and there is no top bar (sidebar navigation).
-            workspaceNavigation
-          }
           {hideActionButtons ? <HiddenActivityBarLauncher /> : null}
           <HomePageButton
             project_id={project_id}
@@ -1031,12 +1048,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     // CSS note: the paddingTop is here to not make the tabs touch the top row (looks funny)
     // this was part of the container-content div, which makes little sense for e.g. the banner bars
     return (
-      <div style={{ display: "flex", height: "36px" }}>
-        {
-          // The workspace's show-sidebar control, when the sidebar is
-          // hidden and there is no top bar (sidebar navigation).
-          workspaceNavigation
-        }
+      <div style={{ display: "flex", height: "36px", position: "relative" }}>
         {hideActionButtons ? <HiddenActivityBarLauncher /> : null}
         <HomePageButton
           project_id={project_id}
@@ -1049,21 +1061,8 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
         />
         {renderFlyoutHeader()}
         <div style={{ flex: 1, overflow: "hidden", display: "flex" }}>
-          {isViewer ? (
-            <ViewerReadOnlyTag project_id={project_id} />
-          ) : (
-            projectCtx.projectAccess.capabilities.useProjectRuntime && (
-              <StartButton minimal style={{ margin: "2px 4px 0px 4px" }} />
-            )
-          )}
-          {networkAccessDisabled ? <NetworkDisabledBadge /> : null}
           <ProjectTabs project_id={project_id} />
         </div>
-        {!isViewer && showPostSurfaceBanners ? (
-          <React.Suspense fallback={null}>
-            <ProjectVersionUpdate project_id={project_id} />
-          </React.Suspense>
-        ) : null}
       </div>
     );
   }
@@ -1251,6 +1250,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
               }}
             />
           ) : null}
+          {renderHeader()}
           {!hardDeleteBlocked && !isViewer && showPostSurfaceBanners ? (
             <React.Suspense fallback={null}>
               <ProjectWarningBanner />

@@ -413,7 +413,12 @@ export interface Fileserver {
     // made if counts are too large!
     limit?: number;
   }) => Promise<void>;
-  getBackups: (opts: { project_id: string; indexed_only?: boolean }) => Promise<
+  getBackups: (opts: {
+    project_id: string;
+    indexed_only?: boolean;
+    // Startup inventory must not depend on the interactive backup browser.
+    for_restore?: boolean;
+  }) => Promise<
     {
       id: string;
       time: Date;

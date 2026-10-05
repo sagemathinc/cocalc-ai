@@ -4,9 +4,17 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { CLAUDE_CODE_QUALIFICATION } from "@cocalc/util/ai/qualified-harnesses";
+
+// Launch preparation is covered by harness-runtime tests; here only the
+// credential chosen at admission matters.
+jest.mock("../harness-runtime", () => ({
+  prepareHarnessRequest: (request: unknown) => request,
+}));
 import {
   pinCodexCredentialAtAdmission,
   setCodexCredentialAdmissionResolver,
+  setPaymentSelectionResolver,
 } from "../codex-credential-admission";
 import { closeAcpDatabase, initAcpDatabase } from "../../sqlite/acp-database";
 import { decodeAcpJobRequest, enqueueAcpJob } from "../../sqlite/acp-jobs";
@@ -119,4 +127,178 @@ test("normalizes a valid explicit selector without dropping its credential ID", 
     paymentSource: "subscription-credential",
     credentialId,
   });
+});
+
+test("an agent message after a Claude version bump still uses the last human choice", async () => {
+  const profile = (revision: string) => ({
+    version: 2 as const,
+    kind: "acp" as const,
+    id: "claude-code",
+    revision,
+    cwd: "/home/user",
+    executionPolicy: "full-access" as const,
+    credentialMode: "project-managed" as const,
+  });
+  const credential = {
+    version: 1 as const,
+    provider: "anthropic" as const,
+    mode: "account-api-key" as const,
+    credentialId: randomUUID(),
+  };
+  const thread = `thread-${randomUUID()}`;
+  const base = request();
+  // A human turn admitted under the previous pin.
+  enqueueAcpJob({
+    ...base,
+    config: undefined,
+    runtime: { version: 1, kind: "acp", profile: profile("0.81.1") },
+    harness_credential: credential,
+    chat: { ...base.chat, thread_id: thread },
+  } as any);
+  const admitted = await pinCodexCredentialAtAdmission({
+    ...base,
+    config: undefined,
+    runtime: {
+      version: 1,
+      kind: "acp",
+      profile: profile(CLAUDE_CODE_QUALIFICATION.package.version),
+    },
+    chat: {
+      ...base.chat,
+      thread_id: thread,
+      agent_rpc_execution: { version: 3 },
+    },
+  } as any);
+  expect(admitted.harness_credential).toEqual(credential);
+});
+
+test("an agent-message turn without a recorded subscription says how to fix it", async () => {
+  setCodexCredentialAdmissionResolver(async () => ({
+    source: "subscription",
+    credentialPinRequired: true,
+  }));
+  const agentTurn = request() as any;
+  agentTurn.chat.agent_rpc_execution = { version: 3 };
+  await expect(pinCodexCredentialAtAdmission(agentTurn)).rejects.toThrow(
+    "no payment method recorded for this account",
+  );
+  await expect(pinCodexCredentialAtAdmission(request())).rejects.toThrow(
+    "The selected ChatGPT subscription is unavailable.",
+  );
+});
+
+describe("the account's stored payment selection", () => {
+  const credentialId = "00000000-0000-4000-8000-0000000000aa";
+  afterEach(() => setPaymentSelectionResolver());
+
+  test("a Codex turn with no pinned subscription uses the stored one", async () => {
+    const lookup = jest.fn(async () => ({
+      selection: {
+        version: 1,
+        provider: "codex",
+        mode: "credential",
+        credential_id: credentialId,
+      },
+    }));
+    setPaymentSelectionResolver(lookup);
+    setCodexCredentialAdmissionResolver(async (opts) => ({
+      source: "subscription",
+      credentialId: opts.credential_id,
+    }));
+    const admitted = await pinCodexCredentialAtAdmission(request());
+    expect(lookup).toHaveBeenCalledWith({
+      account_id: accountId,
+      project_id: projectId,
+      thread_id: "thread-1",
+      provider: "codex",
+    });
+    expect(admitted.config).toMatchObject({
+      paymentSource: "subscription-credential",
+      credentialId,
+    });
+  });
+
+  test("an explicit choice in the request wins and skips the lookup", async () => {
+    const lookup = jest.fn();
+    setPaymentSelectionResolver(lookup);
+    const explicit = randomUUID();
+    setCodexCredentialAdmissionResolver(async (opts) => ({
+      source: "subscription",
+      credentialId: opts.credential_id,
+    }));
+    const admitted = await pinCodexCredentialAtAdmission({
+      ...request(),
+      config: {
+        paymentSource: "subscription" as const,
+        credentialId: explicit,
+      },
+    });
+    expect(lookup).not.toHaveBeenCalled();
+    expect(admitted.config?.credentialId).toBe(explicit);
+  });
+
+  test("an unreachable hub keeps the previous behavior", async () => {
+    setPaymentSelectionResolver(async () => {
+      throw new Error("no such method");
+    });
+    const designated = randomUUID();
+    setCodexCredentialAdmissionResolver(async () => ({
+      source: "subscription",
+      credentialId: designated,
+    }));
+    const admitted = await pinCodexCredentialAtAdmission(request());
+    expect(admitted.config?.credentialId).toBe(designated);
+  });
+
+  test("a Claude Code agent message is paid by the stored selection or the account default", async () => {
+    const runtime = {
+      version: 1 as const,
+      kind: "acp" as const,
+      profile: {
+        version: 2 as const,
+        kind: "acp" as const,
+        id: "claude-code",
+        revision: "0.81.1",
+        cwd: "/home/user",
+        executionPolicy: "full-access" as const,
+        credentialMode: "project-managed" as const,
+      },
+    };
+    const agentTurn = {
+      ...request(),
+      config: undefined,
+      runtime,
+      chat: { ...request().chat, agent_rpc_execution: { version: 3 } },
+    } as any;
+    setPaymentSelectionResolver(async () => ({
+      default: {
+        version: 1,
+        provider: "claude-code",
+        mode: "account-api-key",
+        credential_id: credentialId,
+      },
+    }));
+    const admitted = await pinCodexCredentialAtAdmission(agentTurn);
+    expect(admitted.harness_credential).toEqual({
+      version: 1,
+      provider: "anthropic",
+      mode: "account-api-key",
+      credentialId,
+    });
+  });
+});
+
+test("an agent message refuses a turn nothing can pay for, before queueing", async () => {
+  setCodexCredentialAdmissionResolver(async () => ({ source: "none" }));
+  const agentMessage = {
+    ...request(),
+    config: { paymentSource: "auto" as const },
+    chat: { ...request().chat, agent_rpc_execution: {} as any },
+  };
+  await expect(pinCodexCredentialAtAdmission(agentMessage)).rejects.toThrow(
+    "[agent-recipient-setup:codex-connection]",
+  );
+  // A person's own turn keeps its existing behavior and error text.
+  const own = { ...request(), config: { paymentSource: "auto" as const } };
+  await expect(pinCodexCredentialAtAdmission(own)).resolves.toBe(own);
 });

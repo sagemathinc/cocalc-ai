@@ -1,4 +1,16 @@
 import { Suspense, useEffect, useRef, useState } from "react";
+import type React from "react";
+import type { IconName } from "@cocalc/frontend/components";
+
+export type FileArtifactAction = {
+  key: string;
+  label: string;
+  icon: IconName;
+  disabled?: boolean;
+  // Shown as a button rather than in a menu.
+  primary?: boolean;
+  onClick: () => void;
+};
 import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
 import { Alert, Button, Space } from "antd";
 import { ARTIFACT_TEXT_LIMIT } from "@cocalc/chat";
@@ -180,6 +192,7 @@ function SavedFileArtifact({
   projectId,
   localComments = false,
   fontSize,
+  onToolbarActions,
 }: {
   artifact: ArtifactRecord;
   historical: boolean;
@@ -187,7 +200,12 @@ function SavedFileArtifact({
   onComment?: (feedback: ArtifactFeedback) => Promise<void>;
   localComments?: boolean;
   fontSize?: number;
+  // A page that shows the artifact full size offers these tools in its own
+  // one-row header (and menu) instead of a toolbar here; the path is shown
+  // there too.
+  onToolbarActions?: (actions: FileArtifactAction[]) => void;
 }) {
+  const compact = onToolbarActions !== undefined;
   const { actions, projectAccess } = useProjectContext();
   const context = useFileContext();
   const path = artifact.file!.path;
@@ -273,6 +291,42 @@ function SavedFileArtifact({
       cancelled = true;
     };
   }, [actions, path, refresh, supported, binary]);
+  const openInProject = () => {
+    void actions?.open_file({ path }).catch((err) => setError(String(err)));
+  };
+  const download = () => {
+    void actions
+      ?.download_file({ path, log: true })
+      .catch((err) => setError(String(err)));
+  };
+  useEffect(() => {
+    onToolbarActions?.([
+      {
+        key: "open",
+        label: "Open in project",
+        icon: "external-link",
+        disabled: !actions,
+        primary: true,
+        onClick: openInProject,
+      },
+      {
+        key: "download",
+        label: "Download",
+        icon: "download",
+        disabled: !actions,
+        onClick: download,
+      },
+      {
+        key: "refresh",
+        label: "Refresh",
+        icon: "refresh",
+        disabled: loading || !supported,
+        onClick: () => setRefresh((n) => n + 1),
+      },
+    ]);
+  }, [onToolbarActions, actions, path, loading, supported]);
+  const renderToolbar = (toolbar: React.ReactElement) =>
+    compact ? null : toolbar;
   return (
     <KeyboardBoundary
       className="smc-vfill"
@@ -283,81 +337,88 @@ function SavedFileArtifact({
         background: UI_COLORS.surface,
       }}
     >
-      <Space wrap style={{ flexShrink: 0, marginBottom: 8 }}>
-        <Button
-          disabled={!actions}
-          onClick={() => {
-            void actions
-              ?.open_file({ path })
-              .catch((err) => setError(String(err)));
-          }}
-        >
-          Open in project
-        </Button>
-        <Button
-          disabled={!actions}
-          onClick={() => {
-            void actions
-              ?.download_file({ path, log: true })
-              .catch((err) => setError(String(err)));
-          }}
-        >
-          Download
-        </Button>
-        <Button
-          disabled={loading || !supported}
-          onClick={() => setRefresh((n) => n + 1)}
-        >
-          Refresh
-        </Button>
-        {localComments ? (
-          <LocalCommentButton
-            disabled={
-              !supported ||
-              loading ||
-              (binary && path.toLowerCase().endsWith(".pdf"))
-            }
-          />
-        ) : (
+      {renderToolbar(
+        <Space wrap style={{ flexShrink: 0, marginBottom: 8 }}>
           <Button
-            disabled={
-              !onComment || binary || loaded?.path !== path || feedbackTooLarge
-            }
-            onMouseDown={(e) => e.preventDefault()}
+            disabled={!actions}
             onClick={() => {
-              if (!onComment || !contentRef.current || loaded?.path !== path)
-                return;
-              try {
-                const feedback =
-                  selection ??
-                  captureArtifactSelection(
-                    contentRef.current,
-                    { ...artifact, input: loaded.content },
-                    window.getSelection(),
-                  );
-                void onComment(feedback).catch((err) => setError(String(err)));
-              } catch (err) {
-                setError(String(err));
+              void actions
+                ?.open_file({ path })
+                .catch((err) => setError(String(err)));
+            }}
+          >
+            Open in project
+          </Button>
+          <Button
+            disabled={!actions}
+            onClick={() => {
+              void actions
+                ?.download_file({ path, log: true })
+                .catch((err) => setError(String(err)));
+            }}
+          >
+            Download
+          </Button>
+          <Button
+            disabled={loading || !supported}
+            onClick={() => setRefresh((n) => n + 1)}
+          >
+            Refresh
+          </Button>
+          {localComments ? (
+            <LocalCommentButton
+              disabled={
+                !supported ||
+                loading ||
+                (binary && path.toLowerCase().endsWith(".pdf"))
               }
-            }}
-          >
-            Comment
-          </Button>
-        )}
-        {selection && (
-          <Button
-            onClick={() => {
-              setSelection(undefined);
-              window.getSelection()?.removeAllRanges();
-            }}
-          >
-            Clear selection
-          </Button>
-        )}
-        <span role="status">
-          {loading ? "Loading current saved file..." : "Current saved file"}
-        </span>
-      </Space>
+            />
+          ) : (
+            <Button
+              disabled={
+                !onComment ||
+                binary ||
+                loaded?.path !== path ||
+                feedbackTooLarge
+              }
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                if (!onComment || !contentRef.current || loaded?.path !== path)
+                  return;
+                try {
+                  const feedback =
+                    selection ??
+                    captureArtifactSelection(
+                      contentRef.current,
+                      { ...artifact, input: loaded.content },
+                      window.getSelection(),
+                    );
+                  void onComment(feedback).catch((err) =>
+                    setError(String(err)),
+                  );
+                } catch (err) {
+                  setError(String(err));
+                }
+              }}
+            >
+              Comment
+            </Button>
+          )}
+          {selection && (
+            <Button
+              onClick={() => {
+                setSelection(undefined);
+                window.getSelection()?.removeAllRanges();
+              }}
+            >
+              Clear selection
+            </Button>
+          )}
+          <span role="status">
+            {loading ? "Loading current saved file..." : "Current saved file"}
+          </span>
+        </Space>,
+      )}
       {selection && (
         <div role="note">
           Comment uses the selected saved-file snapshot, even after refresh.
@@ -369,7 +430,7 @@ function SavedFileArtifact({
           can still be previewed or opened.
         </div>
       )}
-      {artifact.title !== path.split("/").pop() && (
+      {!compact && artifact.title !== path.split("/").pop() && (
         <div style={{ overflowWrap: "anywhere", flexShrink: 0 }}>{path}</div>
       )}
       {historical && (

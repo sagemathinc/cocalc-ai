@@ -16,6 +16,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   newArchEnabled: true,
   ios: {
     supportsTablet: true,
+    buildNumber: "2",
     appleTeamId: isProduction ? "BVF94G2MB4" : undefined,
     bundleIdentifier: isProduction
       ? "com.sagemath.cocalc.mobile"

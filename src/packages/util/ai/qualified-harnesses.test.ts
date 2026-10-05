@@ -14,14 +14,13 @@ test("Claude qualification is pinned and fails closed on subscriptions", () => {
     protocolVersion: 1,
     package: {
       name: "@agentclientprotocol/claude-agent-acp",
-      version: "0.81.1",
+      version: "0.85.1",
       integrity: expect.stringMatching(/^sha512-/),
       gitHead: expect.stringMatching(/^[a-f0-9]{40}$/),
     },
     launch: {
       binary: "claude-agent-acp",
-      executable:
-        "/opt/cocalc/harnesses/claude-code/0.81.1-r1/bin/claude-agent-acp",
+      executable: "/opt/cocalc/bin2/claude-code/bin/claude-agent-acp",
       requiredArgs: expect.arrayContaining(["--hide-claude-auth"]),
       projectSecret: {
         name: "ANTHROPIC_API_KEY",

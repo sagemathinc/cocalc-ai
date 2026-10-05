@@ -13,8 +13,21 @@ const createLibraryArtifact = jest.fn(async () => ({}));
 jest.mock("@cocalc/frontend/app-framework", () => {
   const { fromJS } = require("immutable");
   const projects = fromJS({
-    p1: { title: "Thesis", last_active: { me: "2026-09-01" } },
-    p2: { title: "Course", last_active: { me: "2026-09-20" } },
+    p1: {
+      title: "Thesis",
+      last_active: { me: "2026-09-01" },
+      users: { me: { group: "owner" } },
+    },
+    p2: {
+      title: "Course",
+      last_active: { me: "2026-09-20" },
+      users: { me: { group: "collaborator" } },
+    },
+    viewer: {
+      title: "Viewing",
+      last_active: { me: "2026-09-30" },
+      users: { me: { group: "viewer" } },
+    },
   });
   return {
     useTypedRedux: (store: string, field: string) =>
@@ -26,6 +39,12 @@ jest.mock("@cocalc/frontend/app-framework", () => {
   };
 });
 jest.mock("@cocalc/frontend/components", () => ({ Icon: () => null }));
+// The shared picker (sorting, Hidden) has its own tests.
+jest.mock("@cocalc/frontend/projects/select-project", () => ({
+  SelectProject: ({ value }: { value?: string | null }) => (
+    <div data-testid="project-picker">{value}</div>
+  ),
+}));
 jest.mock("./library-create", () => ({
   createLibraryArtifact: (...a) => createLibraryArtifact(...a),
 }));

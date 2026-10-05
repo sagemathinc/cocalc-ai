@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import PublicHomeApp from "../app";
 import { PUBLIC_COLORS, publicAccent } from "../../theme";
@@ -17,7 +18,6 @@ import { COLORS } from "@cocalc/util/theme";
 import {
   combineLeak,
   DARK_FEATURE_CARD_STYLE,
-  expectLinkHrefs,
   HERO_H1_MAX,
   INTERNAL_IMPLEMENTATION_TERMS,
   SECTION_H2_MAX,
@@ -66,13 +66,14 @@ describe("PublicHomeApp", () => {
       <PublicHomeApp
         config={{
           cocalc_product: "launchpad",
+          dns: "cocalc.ai",
           is_launchpad: true,
           site_name: "CoCalc Launchpad",
         }}
       />,
     );
 
-    expect(document.title).toBe("CoCalc");
+    expect(document.title).toBe("Build and Use Software with AI | CoCalc");
     expect(
       within(screen.getByRole("banner")).getByRole("link", {
         name: "CoCalc home",
@@ -91,9 +92,6 @@ describe("PublicHomeApp", () => {
     expect(getHomepageSectionLabels(container)).toEqual([
       "CoCalc hero",
       "AI agents in CoCalc",
-      "Who CoCalc helps",
-      "Core workflows",
-      "Ways to run CoCalc",
       "Why CoCalc is different",
       "Next step",
     ]);
@@ -108,7 +106,7 @@ describe("PublicHomeApp", () => {
     // Here we only hold the h2 count and an anti-sprawl length bound, so the
     // per-section headline wording can change without a test edit.
     const sectionHeadings = Array.from(container.querySelectorAll("h2"));
-    expect(sectionHeadings).toHaveLength(6);
+    expect(sectionHeadings).toHaveLength(3);
     for (const heading of sectionHeadings) {
       expect(textLength(heading)).toBeLessThanOrEqual(SECTION_H2_MAX);
     }
@@ -236,171 +234,43 @@ describe("PublicHomeApp", () => {
       /Launchpad, Rocket, Star, or Plus/i,
     );
 
-    const audiences = screen.getByRole("region", {
-      name: "Who CoCalc helps",
-    });
-    expect(
-      within(audiences).getByRole("heading", {
-        level: 2,
-        name: "For work that must persist across people and agents.",
-      }),
-    ).not.toBeNull();
-    expect(
-      within(audiences).queryByText(/Different audiences can start/i),
-    ).toBeNull();
-    expect(
-      within(audiences).getByRole("link", {
-        name: /Researchers, analysts, and builders/i,
-      }),
-    ).toHaveAttribute("href", "/docs/hosts/choose-compute");
-    expect(
-      within(audiences).getByRole("link", {
-        name: /Educators and learners/i,
-      }),
-    ).toHaveAttribute("href", "/features/teaching");
-    expect(
-      within(audiences).getByRole("link", {
-        name: /Organizations and platform teams/i,
-      }),
-    ).toHaveAttribute("href", "/products");
-    for (const title of [
-      "Researchers, analysts, and builders",
-      "Organizations and platform teams",
-      "Educators and learners",
+    // Home no longer carries the audience cards, the tool catalogue or the
+    // list of products. Features lists the tool pages, and Products the
+    // products.
+    for (const removed of [
+      "Who CoCalc helps",
+      "Core workflows",
+      "Ways to run CoCalc",
+    ]) {
+      expect(screen.queryByRole("region", { name: removed })).toBeNull();
+    }
+    const home = container.querySelector(".cocalc-public-home") as HTMLElement;
+    for (const removedLink of [
+      /Researchers, analysts, and builders/,
+      /Organizations and platform teams/,
+      /Educators and learners/,
+      "Browse feature workflows",
+      /Jupyter Notebooks/,
+      /LaTeX Editor/,
+      /Whiteboard/,
+      "Compare operating models",
+      "Pricing and licensing",
     ]) {
       expect(
-        within(audiences).getByRole("heading", { level: 3, name: title }),
-      ).not.toBeNull();
+        within(home).queryByRole("link", { name: removedLink }),
+      ).toBeNull();
     }
-
-    const workflows = screen.getByRole("region", {
-      name: "Core workflows",
-    });
-    expect(
-      within(workflows).getByRole("link", {
-        name: "Browse feature workflows",
-      }),
-    ).toHaveAttribute("href", "/features");
-    expect(
-      within(workflows)
-        .getByRole("img", {
-          name: "A CoCalc project terminal listing synthetic files and reproducing an 18.3-second average",
-        })
-        .getAttribute("src"),
-    ).toBe("/public/landing/project-terminal-20260916.jpg");
-    expect(
-      within(workflows).getByText(
-        /project terminal reruns the same synthetic analysis/i,
-      ),
-    ).not.toBeNull();
-    const workflowCards = within(workflows).getByRole("group", {
-      name: "CoCalc workflow feature cards",
-    });
-    expectLinkHrefs(workflowCards, [
-      "/features/jupyter-notebook",
-      "/features/latex-editor",
-      "/features/terminal",
-      "/features/ai",
-      "/features/teaching",
-      "/features/whiteboard",
-    ]);
-    for (const title of [
-      "Jupyter Notebooks",
-      "LaTeX Editor",
-      "Linux Terminal",
-      "AI Agents",
-      "Teaching a Course",
-      "Whiteboard",
-    ]) {
-      expect(
-        within(workflowCards).getByRole("heading", { level: 3, name: title }),
-      ).not.toBeNull();
-    }
-    for (const removedLabel of [
-      "Compute",
-      "Writing",
-      "Linux",
-      "Agent help",
-      "Courses",
-      "Visual work",
-    ]) {
-      expect(within(workflowCards).queryByText(removedLabel)).toBeNull();
-    }
-
-    const products = screen.getByRole("region", {
-      name: "Ways to run CoCalc",
-    });
-    expect(
-      within(products).getByRole("link", {
-        name: "Compare operating models",
-      }),
-    ).toHaveAttribute("href", "/products");
-    expect(
-      within(products).getByRole("link", { name: "Pricing and licensing" }),
-    ).toHaveAttribute("href", "/pricing");
-    expect(
-      within(products).getByRole("link", { name: /CoCalc\.ai/i }),
-    ).toHaveAttribute("href", "/auth/sign-up");
-    expect(
-      within(products).getByRole("link", { name: /CoCalc Plus/i }),
-    ).toHaveAttribute("href", "/products/cocalc-plus");
-    expect(
-      within(products).getByRole("link", { name: /CoCalc Star/i }),
-    ).toHaveAttribute("href", "/products/cocalc-star");
-    expect(
-      within(products).getByRole("link", { name: /CoCalc Launchpad/i }),
-    ).toHaveAttribute("href", "/products/cocalc-launchpad");
-    expect(
-      within(products).getByRole("link", { name: /CoCalc Rocket/i }),
-    ).toHaveAttribute("href", "/products/cocalc-rocket");
-    for (const option of [
-      "CoCalc.ai",
+    for (const product of [
       "CoCalc Plus",
       "CoCalc Star",
       "CoCalc Launchpad",
       "CoCalc Rocket",
     ]) {
-      expect(
-        within(products).getByRole("heading", { level: 3, name: option }),
-      ).not.toBeNull();
+      expect(within(home).queryByText(product)).toBeNull();
     }
-    for (const option of [
-      "Hosted",
-      "Local",
-      "One VM",
-      "Private",
-      "Enterprise",
-    ]) {
-      expect(within(products).getByText(option)).not.toBeNull();
-    }
-    expect(within(products).getByText("Local")).toHaveStyle({
-      color: publicAccent(COLORS.ANTD_GREEN_D),
-    });
-    expect(within(products).getByText("One VM")).toHaveStyle({
-      color: publicAccent(COLORS.BRWN),
-    });
-    expect(within(products).getByText("Private")).toHaveStyle({
-      color: publicAccent(COLORS.BRWN),
-    });
-    for (const removedLabel of [
-      "Same CoCalc project model",
-      "Code",
-      "Files",
-      "Notebooks",
-      "Documents",
-      "AI",
-      "Individual",
-      "Organization",
-    ]) {
-      expect(within(products).queryByText(removedLabel)).toBeNull();
-    }
+    expect(home.innerHTML).not.toContain("products/cocalc-");
     expect(
-      within(products).getByText(
-        "Lightweight private deployment for pilots, labs, workshops, and small teams.",
-      ),
-    ).not.toBeNull();
-    expect(
-      within(products).queryByText(/customer-operated private deployment/i),
+      within(home).queryByRole("img", { name: /project terminal/i }),
     ).toBeNull();
 
     const difference = screen.getByRole("region", {
@@ -588,18 +458,51 @@ describe("PublicHomeApp", () => {
     expect(
       screen.queryByRole("region", { name: "CoCalc.ai workspace overview" }),
     ).toBeNull();
-    expect(screen.getAllByText("CoCalc Star").length).toBeGreaterThan(0);
-    expect(container.innerHTML).toContain("products/cocalc-star");
     expect(container.innerHTML).not.toMatch(
       combineLeak(INTERNAL_IMPLEMENTATION_TERMS),
     );
-    expect(
-      screen.getAllByRole("link", { name: "Compare operating models" }),
-    ).toHaveLength(1);
     expect(container.textContent ?? "").not.toMatch(
       STALE_REPETITIVE_HOME_LINES,
     );
   });
+
+  // The removed sections sat between the agent links and the difference
+  // cards, so the keyboard path now goes straight from one to the other.
+  it.each([
+    ["Enter", "{Enter}"],
+    ["Space", "[Space]"],
+  ])(
+    "keeps a keyboard path from the agent links to the difference cards (%s)",
+    async (_key, keys) => {
+      const user = userEvent.setup();
+      render(
+        <PublicHomeApp
+          config={{
+            cocalc_product: "launchpad",
+            is_launchpad: true,
+            site_name: "CoCalc Launchpad",
+          }}
+        />,
+      );
+      const compare = within(
+        screen.getByRole("region", { name: "AI agents in CoCalc" }),
+      ).getByRole("link", { name: "Compare with agent sandboxes" });
+      compare.focus();
+      expect(compare).toHaveFocus();
+
+      await user.tab();
+      const firstCard = within(
+        screen.getByRole("region", { name: "Why CoCalc is different" }),
+      ).getByRole("button", { name: /Project-centered workflow/ });
+      expect(firstCard).toHaveFocus();
+
+      expect(screen.queryByRole("dialog")).toBeNull();
+      await user.keyboard(keys);
+      expect(
+        screen.getByRole("dialog", { name: "Project-centered workflow" }),
+      ).not.toBeNull();
+    },
+  );
 
   it("shows project entry points when authenticated", () => {
     render(

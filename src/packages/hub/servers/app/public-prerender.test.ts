@@ -1,7 +1,24 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
+import {
+  DOLLAR_AMOUNT,
+  INTERNAL_IMPLEMENTATION_TERMS,
+  OVERPROMISE_TERMS,
+  STALE_AGENT_PHRASES,
+  UNSUPPORTED_CAPABILITY_TERMS,
+} from "@cocalc/util/public-copy-guards";
+import {
+  getPublicFeaturePage,
+  PUBLIC_FEATURE_PAGES,
+} from "@cocalc/util/public-feature-pages";
+import type { PublicPricingTier } from "@cocalc/util/public-pricing";
+import {
+  buildPublicSitemapPaths,
+  getPublicMetadataRouteFromPath,
+  getPublicRouteMetadata,
+} from "@cocalc/util/public-site-metadata";
 import { renderPublicRoutePrerender } from "./public-prerender";
+import type { PublicRoutePrerenderData } from "./public-prerender";
 import {
   PUBLIC_HOME_EYEBROW,
   PUBLIC_HOME_HEADLINE,
@@ -10,6 +27,11 @@ import {
   PUBLIC_HOME_SECONDARY_CTA,
   PUBLIC_HOME_TRUST_LINE,
 } from "@cocalc/util/public-home-content";
+import {
+  getPublicFeaturesTasks,
+  PUBLIC_FEATURES_EYEBROW,
+  PUBLIC_FEATURES_HEADLINE,
+} from "@cocalc/util/public-features-index";
 
 describe("public feature initial HTML", () => {
   it.each(["/prefix", "/docs"])(
@@ -37,10 +59,11 @@ describe("public feature initial HTML", () => {
     "renders the terminal record that the React page renders, on %s",
     (basePath) => {
       const page = getPublicFeaturePage("terminal")!;
+      // On cocalc.ai, which shows the record's sign-up label.
       const html = renderPublicRoutePrerender(
         { section: "features", route: { view: "detail", slug: page.slug } },
         basePath,
-        {},
+        { cocalc_product: "launchpad", dns: "cocalc.ai" },
       );
 
       expect(page.highlights).toHaveLength(4);
@@ -178,6 +201,89 @@ describe("home first screen initial HTML", () => {
       expect(
         [...header.matchAll(/<li>([^<]+)<\/li>/g)].map(([, text]) => text),
       ).toEqual(expected);
+    },
+  );
+});
+
+describe("features index first screen initial HTML", () => {
+  // The React index renders the same records
+  // (frontend/public/features/__tests__/index-first-screen.test.tsx).
+  const tools = "and tools such as Jupyter, LaTeX, R, Julia, and SageMath.";
+  const hosted = `Codex agents, the CoCalc CLI, installed software, compute options, ${tools}`;
+  const cocalcAi = {
+    cocalc_product: "launchpad",
+    dns: "cocalc.ai",
+    is_launchpad: true,
+    site_name: "CoCalc",
+  };
+  it.each([
+    ["cocalc.ai", cocalcAi, "/", hosted, "Start on CoCalc.ai", 4],
+    [
+      "a Rocket site",
+      { cocalc_product: "rocket", dns: "cocalc.example.edu" },
+      "/prefix",
+      hosted,
+      "Create account",
+      4,
+    ],
+    [
+      "a customer-operated Launchpad site",
+      {
+        cocalc_product: "launchpad",
+        dns: "lp.example.org",
+        site_name: "CoCalc Launchpad",
+      },
+      "/",
+      hosted,
+      "Create account",
+      4,
+    ],
+    [
+      "CoCalc Plus",
+      { cocalc_product: "plus", dns: "localhost" },
+      "/",
+      "Codex agents and the software installed on your computer.",
+      undefined,
+      1,
+    ],
+    [
+      "no site configuration",
+      undefined,
+      "/",
+      `Codex agents, the CoCalc CLI, installed software, ${tools}`,
+      undefined,
+      3,
+    ],
+  ])(
+    "renders the shared first screen on %s",
+    (site, config, basePath, items, signUp, taskCount) => {
+      const prefix = basePath === "/" ? "" : basePath;
+      const html = renderPublicRoutePrerender(
+        { section: "features", route: { view: "index" } },
+        basePath,
+        config,
+      );
+      const firstScreen = html.slice(0, html.indexOf("</ul>") + 5);
+      const signUpLink = signUp
+        ? `<a href="${prefix}/auth/sign-up">${signUp}</a> `
+        : "";
+      expect(firstScreen).toContain(`<header>
+  <p>${PUBLIC_FEATURES_EYEBROW}</p>
+  <h1>${PUBLIC_FEATURES_HEADLINE}</h1>
+  <p>See what you can use in a CoCalc project: ${items}</p>
+  <p>${signUpLink}<a href="${prefix}/features/ai">Explore AI agents</a></p>
+</header>`);
+      const tasks = getPublicFeaturesTasks(config);
+      expect(tasks).toHaveLength(taskCount);
+      expect(firstScreen).toContain(
+        `<ul>${tasks
+          .map(
+            ({ body, href, title }) =>
+              `<li><h2><a href="${prefix}${href}">${title}</a></h2><p>${body.replace(/`([^`]+)`/g, "<code>$1</code>")}</p></li>`,
+          )
+          .join("")}</ul>`,
+      );
+      expect(firstScreen.includes("Claude Code")).toBe(site === "cocalc.ai");
     },
   );
 });
@@ -435,6 +541,50 @@ describe("core landing page initial HTML", () => {
     expect(reactBody).toBe(expected);
     expect(fallback).toBe(expected);
   });
+
+  // The React Home page no longer has the tool catalogue, the audience cards
+  // or the product list (frontend/public/home tests), so neither does its
+  // crawler fallback, on any product. The React "Next step" section still
+  // links "Review product paths" and "Review support and sales", so this
+  // test does not pin those labels as absent.
+  it.each([
+    [
+      "cocalc.ai",
+      {
+        cocalc_product: "launchpad",
+        dns: "cocalc.ai",
+        is_launchpad: true,
+        site_name: "CoCalc",
+      },
+    ],
+    ["a Launchpad site", { cocalc_product: "launchpad", is_launchpad: true }],
+    ["a Rocket site", { cocalc_product: "rocket" }],
+    ["CoCalc Plus", { cocalc_product: "plus" }],
+    ["no site configuration", undefined],
+  ])(
+    "keeps only the agent section after the Home first screen on %s",
+    (_site, config) => {
+      for (const basePath of ["/", "/prefix"]) {
+        const html = renderPublicRoutePrerender(
+          { section: "home" },
+          basePath,
+          config,
+        );
+        expect(
+          [...html.matchAll(/<h2>([^<]+)<\/h2>/g)].map(([, text]) => text),
+        ).toEqual(["Agents work where your project lives."]);
+        for (const removed of [
+          "One project, many workflows.",
+          "Browse feature workflows",
+          "Choose how CoCalc runs.",
+          "customer-operated",
+          "Pricing and licensing",
+        ]) {
+          expect(html).not.toContain(removed);
+        }
+      }
+    },
+  );
 });
 
 describe("feature initial HTML product availability", () => {
@@ -495,6 +645,138 @@ describe("feature initial HTML product availability", () => {
     },
   );
 
+  it.each(["/", "/prefix"])(
+    "renders the research compute record that the React page renders, on %s",
+    (basePath) => {
+      // cocalc.ai is Launchpad on the canonical host.
+      const config = { cocalc_product: "launchpad", dns: "cocalc.ai" };
+      const page = getPublicFeaturePage("research-compute", config)!;
+      const html = renderPublicRoutePrerender(
+        { section: "features", route: { view: "detail", slug: page.slug } },
+        basePath,
+        config,
+      );
+      const prefix = basePath === "/" ? "" : basePath;
+
+      expect(html).toContain(`<h1>${page.metadataTitle}</h1>`);
+      expect(page.sections).toHaveLength(2);
+      const [options, sizing] = page.sections!;
+      for (const text of [
+        `<p>${page.tagline}</p>`,
+        `<p>${page.summary}</p>`,
+        ...page.sections!.flatMap(({ paragraphs, title }) => [
+          `<h2>${title}</h2>`,
+          ...paragraphs!.map((paragraph) => `<p>${paragraph}</p>`),
+        ]),
+        ...options.cards!.map(
+          ({ body, title }) => `<h3>${title}</h3><p>${body}</p>`,
+        ),
+        `<details><summary>${sizing.detailsLabel}</summary><ul>${sizing
+          .bullets!.map((bullet) => `<li>${bullet}</li>`)
+          .join("")}</ul></details>`,
+      ]) {
+        expect(html).toContain(text);
+      }
+      const links = [
+        ...options.cards!.flatMap(({ link }) => (link ? [link] : [])),
+        ...sizing.links!,
+      ];
+      expect(links.map(({ href }) => href)).toEqual([
+        "/docs/hosts/project-hosts",
+        "/docs/jupyter/remote-kernels",
+        "/docs/hosts/choose-compute",
+      ]);
+      for (const { href, label } of links) {
+        expect(html).toContain(`href="${prefix}${href}">${label}</a>`);
+      }
+      expect(page.signUpLabel).toBe("Start on CoCalc.ai");
+      expect(html).toContain(
+        `href="${prefix}/auth/sign-up">${page.signUpLabel}</a>`,
+      );
+      expect(html).not.toContain("Start using CoCalc");
+      // Managed VMs stay off the page, as an option, a detail or a guide
+      // link, until they are generally available.
+      expect(html).not.toMatch(/\bVMs?\b|virtual machines?|\bWindows\b/i);
+      expect(html).not.toContain("projects/virtual-machines");
+    },
+  );
+
+  // Other sites, such as a customer-operated Launchpad or Rocket site, get
+  // the same page without CoCalc.ai's cost line and with the default sign-up
+  // label, as the React page does.
+  it.each([
+    ["launchpad", "launchpad.example.edu", "/"],
+    ["rocket", "compute.example.edu", "/"],
+    ["rocket", "compute.example.edu", "/prefix"],
+  ])(
+    "leaves CoCalc.ai's sign-up and billing off research compute for %s on %s%s",
+    (cocalc_product, dns, basePath) => {
+      const route = {
+        section: "features" as const,
+        route: { view: "detail" as const, slug: "research-compute" },
+      };
+      const cocalcAiConfig = { cocalc_product: "launchpad", dns: "cocalc.ai" };
+      const costLine = getPublicFeaturePage("research-compute", cocalcAiConfig)!
+        .sections![0].paragraphs![0];
+      const onCocalcAi = renderPublicRoutePrerender(
+        route,
+        basePath,
+        cocalcAiConfig,
+      );
+      expect(onCocalcAi).toContain(`<p>${costLine}</p>`);
+      expect(onCocalcAi).toContain(">Start on CoCalc.ai</a>");
+
+      const config = { cocalc_product, dns };
+      const page = getPublicFeaturePage("research-compute", config)!;
+      expect(page.signUpLabel).toBeUndefined();
+      expect(page.sections![0].paragraphs).toEqual([]);
+      const html = renderPublicRoutePrerender(route, basePath, config);
+      expect(html).toBe(
+        onCocalcAi
+          .replace(`<p>${costLine}</p>`, "")
+          .replace(">Start on CoCalc.ai</a>", ">Start using CoCalc</a>"),
+      );
+      expect(html).not.toContain("CoCalc.ai");
+      expect(html).not.toContain("membership");
+    },
+  );
+
+  it.each([
+    ["launchpad", "cocalc.ai"],
+    ["rocket", "compute.example.edu"],
+  ])(
+    "collapses the research compute technical details, like the page, for %s on %s",
+    (cocalc_product, dns) => {
+      const config = { cocalc_product, dns };
+      const sizing = getPublicFeaturePage("research-compute", config)!
+        .sections![1];
+      const html = renderPublicRoutePrerender(
+        {
+          section: "features",
+          route: { view: "detail", slug: "research-compute" },
+        },
+        "/",
+        config,
+      );
+
+      // One details element, closed (no open attribute). Its summary comes
+      // first and is the record's label, and every bullet is inside it.
+      expect(html.match(/<details\b[^>]*>/g)).toEqual(["<details>"]);
+      expect(html.match(/<summary\b[^>]*>/g)).toEqual(["<summary>"]);
+      const details = html.slice(
+        html.indexOf("<details>"),
+        html.indexOf("</details>") + "</details>".length,
+      );
+      expect(details).toBe(
+        `<details><summary>${sizing.detailsLabel}</summary><ul>${sizing
+          .bullets!.map((bullet) => `<li>${bullet}</li>`)
+          .join("")}</ul></details>`,
+      );
+      expect(sizing.detailsLabel).toBe("Technical details");
+      expect(sizing.bullets).toHaveLength(6);
+    },
+  );
+
   it("leaves documentation rendering to its existing owner", () => {
     expect(
       renderPublicRoutePrerender(
@@ -504,4 +786,118 @@ describe("feature initial HTML product availability", () => {
       ),
     ).toBe("");
   });
+});
+
+// The text a crawler reads: tags removed, entities from htmlEscape() decoded.
+function crawlerText(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Keeps each guard's own flags, as the React tests' toMatch() does, and adds
+// only the "g" that matchAll() needs.
+function guardHits(label: string, pattern: RegExp, value: string): string[] {
+  const flags = pattern.flags.includes("g")
+    ? pattern.flags
+    : `${pattern.flags}g`;
+  return Array.from(
+    value.matchAll(new RegExp(pattern.source, flags)),
+    ([match]) => `${label}: "${match}"`,
+  );
+}
+
+// One store tier with a trial and AI usage, so the tier text and the AI alert
+// that Pricing adds when tier data loads are checked too.
+const PRICING_TIERS: PublicPricingTier[] = [
+  {
+    ai_limits: { units_5h: 100 },
+    id: "member",
+    label: "Member",
+    price_monthly: "25",
+    price_yearly: "225",
+    store_visible: true,
+    trial_days: 7,
+  },
+];
+
+describe("crawler fallback copy guards", () => {
+  it.each(["plus", "launchpad", "rocket"])(
+    "keeps guarded copy out of every %s route with a fallback",
+    (cocalc_product) => {
+      const config = { cocalc_product };
+      const paths = new Set([
+        ...buildPublicSitemapPaths(config),
+        ...PUBLIC_FEATURE_PAGES.map(({ slug }) => `/features/${slug}`),
+      ]);
+      const sections = new Set<string>();
+      const violations: string[] = [];
+      for (const path of paths) {
+        const route = getPublicMetadataRouteFromPath(path);
+        // Pricing is checked with and without tier data, because the shell
+        // passes the tiers only when it has loaded them.
+        const variants: PublicRoutePrerenderData[] =
+          route.section === "pricing"
+            ? [{}, { pricingTiers: PRICING_TIERS }]
+            : [{}];
+        for (const data of variants) {
+          const html = renderPublicRoutePrerender(route, "/", config, data);
+          if (html === "") continue;
+          sections.add(route.section);
+          const text = crawlerText(html);
+          const { description, title } = getPublicRouteMetadata(route, config);
+          const h1 = crawlerText(
+            /<h1\b[^>]*>([\s\S]*?)<\/h1>/.exec(html)?.[1] ?? "",
+          );
+          if (h1 === "") violations.push(`${path} has no H1 text`);
+          // Internal terms: the full text on Home, like the React Home tests;
+          // elsewhere title, description and H1, like the React metadata
+          // checks, so body text may use rendered labels, such as the pricing
+          // heading "Dedicated project hosts".
+          const internalTermScope =
+            route.section === "home"
+              ? [title, description, text]
+              : [title, description, h1];
+          violations.push(
+            ...[
+              ...guardHits("overpromise", OVERPROMISE_TERMS, text),
+              ...guardHits(
+                "unsupported capability",
+                UNSUPPORTED_CAPABILITY_TERMS,
+                text,
+              ),
+              ...guardHits("stale agent phrase", STALE_AGENT_PHRASES, text),
+              ...(route.section === "pricing"
+                ? []
+                : guardHits("dollar amount", DOLLAR_AMOUNT, text)),
+              ...guardHits(
+                "internal term",
+                INTERNAL_IMPLEMENTATION_TERMS,
+                internalTermScope.join("\n"),
+              ),
+            ].map((hit) => `${path} ${hit}`),
+          );
+        }
+      }
+      expect(violations).toEqual([]);
+      // Every section that has a fallback, so one that leaves the sitemap
+      // cannot drop out of the check unnoticed.
+      for (const section of [
+        "home",
+        "about",
+        "features",
+        "guides",
+        "pricing",
+        "products",
+        "support",
+      ]) {
+        expect(sections).toContain(section);
+      }
+    },
+  );
 });

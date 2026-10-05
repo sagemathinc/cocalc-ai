@@ -10,6 +10,7 @@ let counter = 0;
 let selectedModel = "fast";
 let selectedThinking = "low";
 let selectedMode = "code";
+let selectedSpeed = "on";
 const recommended = (value) => ({
   _meta: { jetbrains: { air: { version: 1, recommendedValue: value } } },
 });
@@ -17,6 +18,20 @@ const controls = () =>
   process.argv.includes("--config-options")
     ? {
         configOptions: [
+          ...(process.argv.includes("--fast-config") && selectedModel === "deep"
+            ? [
+                {
+                  id: "fast",
+                  name: "Speed",
+                  type: "select",
+                  currentValue: selectedSpeed,
+                  options: [
+                    { value: "on", name: "Fast" },
+                    { value: "off", name: "Standard" },
+                  ],
+                },
+              ]
+            : []),
           ...(process.argv.includes("--recommended-values")
             ? [
                 {
@@ -61,6 +76,9 @@ const controls = () =>
                 options: [
                   { value: "fast", name: "Fast" },
                   { value: "deep", name: "Deep" },
+                  ...(process.argv.includes("--opus")
+                    ? [{ value: "opus", name: "Opus 5.5" }]
+                    : []),
                 ],
               },
             ],
@@ -123,7 +141,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           name: process.argv.includes("--claude-adapter")
             ? "@agentclientprotocol/claude-agent-acp"
             : "cocalc-fixture",
-          version: process.argv.includes("--claude-adapter") ? "0.81.1" : "1",
+          version: process.argv.includes("--claude-adapter") ? "0.85.1" : "1",
         },
         agentCapabilities: {
           loadSession: !process.argv.includes("--no-resume"),
@@ -250,6 +268,13 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
             params: { authStatus: { kind: "api_key", label: "API key" } },
           });
       }
+      if (process.argv.includes("--idle-exit"))
+        setTimeout(() => {
+          process.stderr.write(
+            "private-idle-detail: process exited with code 7\n",
+            () => process.exit(7),
+          );
+        }, 100);
       if (message.method === "session/new")
         return result(message.id, {
           sessionId: "fixture-session",
@@ -271,6 +296,13 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       return result(message.id, controls());
     case "session/set_config_option":
       if (
+        process.argv.includes("--fast-config") &&
+        message.params.configId === "fast"
+      ) {
+        selectedSpeed = message.params.value;
+        return result(message.id, controls());
+      }
+      if (
         process.argv.includes("--recommended-values") &&
         message.params.configId === "effort"
       ) {
@@ -288,7 +320,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       }
       if (
         message.params.configId !== "model" ||
-        !["fast", "deep"].includes(message.params.value)
+        !["fast", "deep", "opus"].includes(message.params.value)
       )
         return result(message.id, {});
       selectedModel = message.params.value;
@@ -476,6 +508,25 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           id: message.id,
           error: { code: -32000, message: "secret rejection details" },
         });
+      if (text === "diagnostic-reject") {
+        process.stderr.write(
+          "Authorization: Bearer private-stderr; HTTP 503 overloaded\n",
+        );
+        return setTimeout(
+          () =>
+            send({
+              id: message.id,
+              error: {
+                code: -32603,
+                message: "private-message",
+                data: {
+                  error: { status: 429, message: "rate limit private-data" },
+                },
+              },
+            }),
+          50,
+        );
+      }
       if (text === "wrong-session") {
         update("wrong", "another-session");
         return;

@@ -97,10 +97,11 @@ describe("AccountPreferencesAI", () => {
       ),
     ).toBeTruthy();
     expect(screen.getByText("AIUsageStatus")).toBeTruthy();
+    // Agent messaging controls moved to Settings > Connectors.
     expect(
-      screen.getByRole("heading", { name: "Agent messaging" }),
-    ).toBeTruthy();
-    expect(screen.getByText("Agent messaging controls")).toBeTruthy();
+      screen.queryByRole("heading", { name: "Agent messaging" }),
+    ).toBeNull();
+    expect(screen.queryByText("Agent messaging controls")).toBeNull();
     expect(
       screen.queryByRole("switch", { name: /agents|communication/i }),
     ).toBeNull();

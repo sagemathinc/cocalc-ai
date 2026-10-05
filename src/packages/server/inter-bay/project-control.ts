@@ -43,6 +43,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveProjectBayDirect } from "@cocalc/server/inter-bay/directory";
 import { projectControlSubject } from "@cocalc/server/inter-bay/subjects";
 import { getProject } from "@cocalc/server/projects/control";
+import { backfillRunningProjectVersions } from "@cocalc/server/project-host/control";
 import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 import { loadProjectReadDetailsDirect } from "@cocalc/server/projects/details";
 import { getProjectRecoveryStatusLocal } from "@cocalc/server/projects/maintenance-status";
@@ -620,7 +621,10 @@ export async function handleProjectControlState(
     "SELECT state FROM projects WHERE project_id=$1 LIMIT 1",
     [req.project_id],
   );
-  return rows[0]?.state ?? {};
+  return await backfillRunningProjectVersions(
+    req.project_id,
+    rows[0]?.state ?? {},
+  );
 }
 
 export async function handleProjectControlSetUsageAccount(

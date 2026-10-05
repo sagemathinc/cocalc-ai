@@ -393,6 +393,30 @@ export const TABLE_OWNERSHIP = {
       "Native agent identity and restart-fence state belongs to the project owning bay. Project moves require explicit migration or reconstruction rules before these tables can be portable.",
   }),
 
+  ...entries(["agent_payment_selections"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      project_id:
+        "Agent locator for an account-home preference, not project placement authority.",
+    },
+    notes:
+      "Per-account payment choice for agents (credential references only), authoritative on the account home bay. Like account credentials it does not move on account rehome; a missing row means the account default.",
+  }),
+
+  ...entries(["agent_identity_watchers"], {
+    ownership: "project-owning",
+    authority: "project_id",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      account_id:
+        "Account whose home-bay name book receives this agent's identity changes, not placement authority.",
+    },
+    notes:
+      "Which accounts named a project-owned agent. Lives with the identity in the project owning bay; name books re-register during their background repair.",
+  }),
+
   ...entries(["agent_identity_runs"], {
     ownership: "row-scoped",
     authority: "mixed",
@@ -1173,6 +1197,9 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
       "long_running_operations",
       "parallel_ops_limits",
       "project_rehome_operations",
+      // Audit receipts of the admin repair for premature scheduled
+      // collection expiry, kept on the bay that ran the repair.
+      "scheduled_collection_expiry_repairs",
     ],
     {
       ownership: "stable-bay",

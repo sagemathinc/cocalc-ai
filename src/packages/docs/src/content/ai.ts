@@ -58,33 +58,65 @@ share the same project state with collaborators.
 export const MY_AGENTS_BODY = String.raw`
 ## Start with a request
 
-After signing in, CoCalc normally opens **Agents**. If it does not, choose
-**Agents** in the main navigation. The new-agent request box appears when you
-have no named agents; otherwise choose **New Agent**. Describe a result you can
-inspect, such as a comparison, document, application, or visualization. Include
-the relevant files and the checks that would make the result useful.
+After signing in, CoCalc opens your projects list, or the page your link named.
+If you have no projects, or your new account has not used one, CoCalc may open
+the new-agent request box instead. Otherwise, choose **New agent** under
+**Agents** in the sidebar, or select one of your agents there. If the **Agents**
+section is collapsed, expand it first with the arrow to its left
+(**Expand Agents**). The section lists your pinned agents, a few others (the
+most recent, or the first in your custom order), and the open agent;
+**All agents…** below them opens the **Agents** page with the rest. At phone
+width, if CoCalc shows the sidebar instead of the request box, choose
+**New agent** there. Describe a result you can inspect, such as a comparison,
+document, application, or visualization. Include the relevant files and the
+checks that would make the result useful.
 
-1. Use the project and working-directory control if the work belongs in an
-   existing project. If you have no project selected, CoCalc creates one named
-   **Agents** when you start.
-2. Review the available payment source and model. Access, funding, project
+When CoCalc opens the request box for you, it asks **What would you like to work
+on?** There is no name, project, runtime, model, or payment source to choose;
+this first agent uses Codex. If CoCalc asks you to verify your email, do that
+first. When you start typing, CoCalc prepares a project, a chat, and a named
+agent. This can start project compute and uses a named-agent slot even before
+you send. Choose the up-arrow **Start agent** button, or press **Shift+Enter**,
+to send your request.
+
+In the new-agent form, type your request, then check the settings below the
+box. They start from the agent you had selected, if any.
+
+1. Click the suggested name, shown after an @, to change the agent's **Name**.
+2. The folder button shows the project and working directory. Open it to change
+   the **Project**, **Working directory**, or **Description (optional)**. With
+   no project, CoCalc says **Your first project will be created
+   automatically**, and titles that project from the first line of your
+   request, or **My first project** if there is no request.
+3. In the runtime menu, choose **Claude** for the Claude Code experimental
+   preview, where the site enables it; see [Use Claude Code](/docs/ai/claude-code).
+   For Codex, click the model, thinking level, or payment source button to
+   change it. When **CoCalc Membership** pays, whether chosen directly or
+   automatically, the thinking level is fixed. Access, funding, project
    permissions, and resource limits still apply.
-3. Choose the up-arrow **Start agent** button, or press **Shift+Enter**. This
-   creates the named agent and sends your request. It can start project compute
-   and use model allowance. If CoCalc warns that the agent was created but the
-   first request could not start, the request is preserved as a draft for you
-   to inspect before trying again.
+4. Choose **Start agent**, or press **Shift+Enter**. This creates the named
+   agent and sends your request. It can start project compute and use model
+   allowance. If CoCalc warns that the agent was created but the first request
+   could not start, the request is preserved as a draft for you to inspect
+   before trying again. With an empty request, the button's tooltip reads
+   **Create agent without a task**; it creates the agent without sending a
+   request.
 
-If **Agents** is absent from your installation, ask its administrator whether
-agent access is enabled.
+If the sidebar is hidden, click the **Show sidebar** button at the top left
+(the CoCalc logo with a right-pointing chevron). At phone width, use the menu
+button (three horizontal lines, named Show agents for screen readers), or the
+back arrow in an agent's conversation. If the sidebar has no **Agents**
+section, check that **Disable all AI integrations** is off in account **AI**
+settings. If that switch is not shown there, ask the site administrator whether
+AI is enabled.
 
 ## Review and continue
 
 Select a named agent to return to its conversation. Open a saved result from
 the chat to inspect it beside your request, then ask the same agent for a
-specific correction or another version. **Library** helps you find artifacts
-from named agents. Use **Open in project** when you need the underlying files,
-software, or complete project view.
+specific correction or another version. **Artifacts** in the sidebar helps you
+find artifacts from named agents. Use **Open in project** when you need the
+underlying files, software, or complete project view.
 
 ![A saved dispatch review image open beside its agent conversation in a fresh CoCalc project with fictional data](/public/docs/agents-workspace-dispatch-review-20260924.jpg)
 
@@ -93,16 +125,40 @@ underlying file remains in the project.
 
 ## Bring existing work into Agents
 
-Only registered named agents appear in the Agents list; existing project chats
+Only registered named agents are listed under **Agents**; existing project chats
 are not imported automatically. In a project chat, choose **Name agent** to
 register that thread. Naming it does not start work, grant communication with
 another agent, or change who can read the shared chat.
 
 Pin an agent to keep it near the top. You can use recent or custom ordering and
 group the list by project. These list preferences are personal to your account.
-Account **Agents** settings also lets you remove a named agent from the list;
-the conversation and artifacts remain, but that agent becomes unavailable to
-its Agent Networks.
+To take an agent out of the sidebar without removing it, point at it there,
+click its **More actions for @*name*** button (a vertical ellipsis), and choose
+**Hide from Agents**. To remove it, choose **Remove from Agents…** in the same
+menu and confirm with **Remove from Agents**; the conversation and artifacts
+remain, but that agent becomes unavailable to its Agent Networks. Removing
+frees its named-agent slot, and its name can be used again. Hiding does not
+free a slot.
+
+## Find agents on the Agents page
+
+The **Agents** page opens from the sidebar's **Agents** entry, or from
+**All agents…** below the listed agents. When the sidebar leaves out some of
+your agents, the link also says how many, as in All agents (3 more)…; hidden
+agents are not counted. The page's address ends in \`/all-agents\`.
+
+**Mine** lists all of your agents, including hidden ones, and shares the
+sidebar's pins. Its actions menu for each agent also has
+**Remove from Agents…**. To show a hidden agent in the sidebar again, choose
+**Show in sidebar** in that menu.
+
+**Shared with me** lists agents that other people registered in projects you
+own or collaborate on. Select one to open its conversation in its project.
+
+Sort either list by **Recent** or **Name**; on **Shared with me**, **Recent**
+puts the most recently registered agents first, after any you pin. To group
+either list by project, open the menu that shows **No grouping** and choose
+**By project**. **Shared with me** can also be grouped **By person**.
 
 For project-chat controls and access setup, see [Open Codex chat](/docs/ai/codex-chat)
 and [Connect AI access](/docs/ai/connect-credentials). For the complete workflow

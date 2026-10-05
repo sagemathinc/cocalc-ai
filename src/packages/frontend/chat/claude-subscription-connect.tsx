@@ -535,6 +535,8 @@ export function ClaudeSubscriptionConnect({
         <Modal
           title="Connect Claude Pro/Max"
           open={open}
+          // Wide enough that a pasted sign-in code fits without wrapping.
+          width={680}
           footer={null}
           onCancel={() => void cancel()}
           modalRender={(content) => (

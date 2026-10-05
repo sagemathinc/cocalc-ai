@@ -1,6 +1,7 @@
 import {
   chooseAutomaticProjectRootfs,
-  chooseNewProjectRootfsDefault,
+  chooseDefaultProjectImage,
+  describeProjectImageReason,
   isNewProjectRootfsSelectable,
 } from "./create-project-rootfs";
 
@@ -41,84 +42,107 @@ describe("new project image selection", () => {
     ).toBe(false);
   });
 
-  it("prefers a managed image over a configured OCI default", () => {
-    const selected = chooseNewProjectRootfsDefault({
+  const managed = (id: string, opts: Partial<RootfsImageEntry> = {}) =>
+    image(id, `cocalc.local/rootfs/${id}`, {
+      official: true,
+      release_id: `release-${id}`,
+      ...opts,
+    });
+  const catalog = [
+    managed("python"),
+    managed("r"),
+    managed("sage"),
+    managed("hidden", { hidden: true }),
+  ];
+
+  it("chooses nothing when there are several images and no signal", () => {
+    expect(chooseDefaultProjectImage({ images: catalog, isGpu: false })).toBe(
+      undefined,
+    );
+  });
+
+  it("uses your own default image first", () => {
+    const chosen = chooseDefaultProjectImage({
+      images: catalog,
+      isGpu: false,
+      accountDefault: "cocalc.local/rootfs/r",
+      recent: [{ project_id: "p1", title: "Thesis", image_id: "sage" }],
+    });
+    expect(chosen?.entry.id).toBe("r");
+    expect(chosen?.reason).toEqual({ kind: "account" });
+  });
+
+  it("then the image of the project you used most recently, at its newest version", () => {
+    const sageNew = managed("sage-2", { supersedes_image_id: "sage" });
+    const chosen = chooseDefaultProjectImage({
+      images: [...catalog, sageNew],
+      isGpu: false,
+      recent: [
+        // Its image is gone (hidden); the next project's counts.
+        { project_id: "p0", title: "Old", image_id: "hidden" },
+        { project_id: "p1", title: "Thesis", image_id: "sage" },
+        { project_id: "p2", title: "Stats", image_id: "r" },
+      ],
+      latestVersion: (entry) => (entry.id === "sage" ? sageNew : entry),
+    });
+    expect(chosen?.entry.id).toBe("sage-2");
+    expect(chosen?.reason).toEqual({
+      kind: "recent",
+      project_id: "p1",
+      title: "Thesis",
+    });
+    expect(describeProjectImageReason(chosen?.reason)).toBe(
+      'as in your project "Thesis"',
+    );
+  });
+
+  it("then the image a site admin tagged as the default for new projects", () => {
+    const chosen = chooseDefaultProjectImage({
       images: [
-        image("base", "buildpack-deps:noble-scm", { official: true }),
-        image("managed", "cocalc.local/rootfs/snapshot", {
-          official: true,
-          release_id: "release-1",
+        ...catalog,
+        managed("community", {
+          official: false,
+          tags: ["onboarding:default"],
         }),
+        managed("standard", { tags: ["onboarding:default"] }),
       ],
       isGpu: false,
-      preferredImages: ["buildpack-deps:noble-scm"],
-      fallbackImage: "buildpack-deps:noble-scm",
     });
-
-    expect(selected?.id).toBe("managed");
+    expect(chosen?.entry.id).toBe("standard");
+    expect(chosen?.reason).toEqual({ kind: "site" });
   });
 
-  it("does not select a hidden configured default", () => {
-    const selected = chooseNewProjectRootfsDefault({
-      images: [
-        image("hidden-base", "buildpack-deps:noble-scm", {
-          hidden: true,
-          official: true,
-        }),
-        image("managed", "cocalc.local/rootfs/snapshot", {
-          official: true,
-          release_id: "release-1",
-        }),
-      ],
+  it("uses the only image there is", () => {
+    const chosen = chooseDefaultProjectImage({
+      images: [managed("python"), managed("hidden", { hidden: true })],
       isGpu: false,
-      preferredImages: ["buildpack-deps:noble-scm"],
-      fallbackImage: "buildpack-deps:noble-scm",
     });
-
-    expect(selected?.id).toBe("managed");
+    expect(chosen?.entry.id).toBe("python");
+    expect(chosen?.reason).toEqual({ kind: "only" });
   });
 
-  it("does not offer OCI fallback to ordinary users", () => {
-    const selected = chooseNewProjectRootfsDefault({
-      images: [image("base", "buildpack-deps:noble-scm", { official: true })],
-      isGpu: false,
-      preferredImages: ["buildpack-deps:noble-scm"],
-      fallbackImage: "buildpack-deps:noble-scm",
-    });
-
-    expect(selected).toBeUndefined();
-  });
-
-  it("does not choose a default when multiple managed images are available", () => {
-    const selected = chooseNewProjectRootfsDefault({
-      images: [
-        image("standard", "cocalc.local/rootfs/standard", {
-          official: true,
-          release_id: "release-standard",
-        }),
-        image("sage", "cocalc.local/rootfs/sage", {
-          official: true,
-          release_id: "release-sage",
-        }),
-      ],
-      isGpu: false,
-      preferredImages: ["cocalc.local/rootfs/standard"],
-      fallbackImage: "cocalc.local/rootfs/standard",
-    });
-
-    expect(selected).toBeUndefined();
-  });
-
-  it("allows admins to fall back to OCI when no managed image is available", () => {
-    const selected = chooseNewProjectRootfsDefault({
-      images: [image("base", "buildpack-deps:noble-scm", { official: true })],
-      isGpu: false,
-      isAdmin: true,
-      preferredImages: ["buildpack-deps:noble-scm"],
-      fallbackImage: "buildpack-deps:noble-scm",
-    });
-
-    expect(selected?.id).toBe("base");
+  it("never picks a raw OCI image for ordinary users, or over managed images for admins", () => {
+    const oci = image("base", "buildpack-deps:noble-scm", { official: true });
+    expect(
+      chooseDefaultProjectImage({
+        images: [oci],
+        isGpu: false,
+        accountDefault: "buildpack-deps:noble-scm",
+      }),
+    ).toBe(undefined);
+    expect(
+      chooseDefaultProjectImage({
+        images: [oci, managed("python")],
+        isGpu: false,
+        isAdmin: true,
+        accountDefault: "buildpack-deps:noble-scm",
+      })?.entry.id,
+    ).toBe("python");
+    // With no managed images, an admin's only choice is the OCI image.
+    expect(
+      chooseDefaultProjectImage({ images: [oci], isGpu: false, isAdmin: true })
+        ?.entry.id,
+    ).toBe("base");
   });
 
   it("chooses an official managed CPU image when no onboarding tags are configured", () => {

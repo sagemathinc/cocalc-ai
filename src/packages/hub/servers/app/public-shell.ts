@@ -49,7 +49,10 @@ import {
   getCocalcProduct,
   isLaunchpadProduct,
 } from "@cocalc/server/launchpad/mode";
-import { renderPublicRoutePrerender } from "./public-prerender";
+import {
+  renderPublicFooterPrerender,
+  renderPublicRoutePrerender,
+} from "./public-prerender";
 import { renderPublicDocsPrerender } from "./public-docs-prerender";
 
 const logger = getLogger("hub:servers:public-shell");
@@ -474,6 +477,15 @@ async function buildHead(req: Request): Promise<{
           }),
         ]
       : []),
+    ...(metadata.imageAlt
+      ? [
+          metaTag({
+            content: metadata.imageAlt,
+            "data-cocalc-public-route-meta": "og:image:alt",
+            property: "og:image:alt",
+          }),
+        ]
+      : []),
     metaTag({
       content: "summary_large_image",
       "data-cocalc-public-route-meta": "twitter:card",
@@ -494,12 +506,25 @@ async function buildHead(req: Request): Promise<{
       "data-cocalc-public-route-meta": "twitter:image",
       name: "twitter:image",
     }),
+    ...(metadata.imageAlt
+      ? [
+          metaTag({
+            content: metadata.imageAlt,
+            "data-cocalc-public-route-meta": "twitter:image:alt",
+            name: "twitter:image:alt",
+          }),
+        ]
+      : []),
   ].join("\n  ");
 
+  const prerender =
+    renderPublicDocsPrerender(route, basePath, config) ||
+    renderPublicRoutePrerender(route, basePath, config, { pricingTiers });
   return {
-    body:
-      renderPublicDocsPrerender(route, basePath, config) ||
-      renderPublicRoutePrerender(route, basePath, config, { pricingTiers }),
+    // Only pages with crawler content get the footer's page links.
+    body: prerender
+      ? `${prerender}\n${renderPublicFooterPrerender(basePath)}`
+      : "",
     head: `${basePathMetaTag()}\n  <title>${htmlEscape(
       metadata.title,
     )}</title>\n  ${PUBLIC_PRERENDER_GUARD}\n  ${socialTags}`,

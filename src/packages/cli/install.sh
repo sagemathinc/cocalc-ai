@@ -158,7 +158,8 @@ if [[ -d "$TARGET_DIR/lib" ]]; then
   fi
   runtime_env=(env "LD_LIBRARY_PATH=$runtime_path")
 fi
-if ! smoke_output="$("${runtime_env[@]}" "$TARGET_BIN" --version 2>&1)"; then
+# bash 3.2 (macOS /bin/bash) treats an empty array as unbound under set -u.
+if ! smoke_output="$(${runtime_env[@]+"${runtime_env[@]}"} "$TARGET_BIN" --version 2>&1)"; then
   echo "CoCalc CLI was downloaded but could not start:" >&2
   echo "$smoke_output" >&2
   if [[ "$smoke_output" == *"libatomic.so.1"* ]]; then

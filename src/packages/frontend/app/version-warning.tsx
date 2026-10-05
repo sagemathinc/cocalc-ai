@@ -3,39 +3,34 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+// A browser older than the required version is disconnected, so it needs more
+// than the update indicator: say plainly that nothing works until a reload.
+// Recommended updates are only the indicator (BrowserUpdateIndicator).
+
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import { Gap, Icon } from "@cocalc/frontend/components";
-import { type CSSProperties, useEffect, useState } from "react";
+import { Gap } from "@cocalc/frontend/components";
+import { type CSSProperties, useEffect } from "react";
 import { version } from "@cocalc/util/smc-version";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import {
-  reloadForFrontendBuild,
-  useFrontendBuildMonitor,
-} from "./frontend-build-monitor";
+import { hardRefresh } from "./update-indicator";
 
-const VERSION_WARNING_STYLE = {
+const STYLE = {
   fontSize: "12pt",
   position: "fixed",
   left: 12,
-  backgroundColor: "#fcf8e3",
-  color: "#8a6d3b",
   top: 20,
-  borderRadius: 4,
-  padding: "15px",
   zIndex: 900,
-  boxShadow: "8px 8px 4px #888",
   width: "70%",
   marginTop: "1em",
+  borderRadius: 4,
+  padding: "15px",
+  backgroundColor: "red",
+  color: "#fff",
+  boxShadow: "8px 8px 4px #888",
 } as CSSProperties;
 
 export default function VersionWarning() {
-  const [closed, setClosed] = useState<boolean>(false);
-  const frontendBuild = useFrontendBuildMonitor();
   const minVersion = useTypedRedux("customize", "version_min_browser");
-  const recommendedVersion = useTypedRedux(
-    "customize",
-    "version_recommended_browser",
-  );
 
   useEffect(() => {
     if (minVersion > version) {
@@ -44,99 +39,22 @@ export default function VersionWarning() {
     }
   }, [minVersion]);
 
-  const manualUpdateRecommended = version < recommendedVersion;
-  const updateRecommended =
-    manualUpdateRecommended || frontendBuild.reloadRecommended;
-
-  if (!updateRecommended) {
-    return null;
-  }
-
-  if (version >= minVersion && closed) {
-    return null;
-  }
-
-  const style = {
-    ...VERSION_WARNING_STYLE,
-    ...(version < minVersion
-      ? { backgroundColor: "red", color: "#fff" }
-      : undefined),
-  };
-
-  function render_critical() {
-    if (version >= minVersion) {
-      return;
-    }
-    return (
-      <div>
-        <br />
-        THIS IS A CRITICAL UPDATE. YOU MUST <Gap />
-        <a
-          onClick={() => window.location.reload()}
-          style={{
-            cursor: "pointer",
-            color: "white",
-            fontWeight: "bold",
-            textDecoration: "underline",
-          }}
-        >
-          REFRESH THIS PAGE
-        </a>
-        <Gap /> IMMEDIATELY. Sorry for the inconvenience.
-      </div>
-    );
-  }
-
-  function render_suggested() {
-    return (
-      <div
+  if (!(version < minVersion)) return null;
+  return (
+    <div style={STYLE} role="alert">
+      THIS IS A CRITICAL UPDATE. YOU MUST <Gap />
+      <a
+        onClick={() => void hardRefresh()}
         style={{
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          gap: "10px",
+          cursor: "pointer",
+          color: "white",
+          fontWeight: "bold",
+          textDecoration: "underline",
         }}
       >
-        <div style={{ flex: "1 1 auto" }}>
-          <Icon name={"refresh"} />
-          {frontendBuild.reloadRecommended
-            ? " CoCalc was updated while this page was open. Reload to use one consistent version."
-            : " New Version Available: upgrade by"}
-          <Gap />
-          <a
-            onClick={() => reloadForFrontendBuild(frontendBuild.current)}
-            style={{
-              cursor: "pointer",
-              fontWeight: "bold",
-              color: style.color,
-              textDecoration: "underline",
-            }}
-          >
-            Reload this page
-          </a>
-          {frontendBuild.reloadRecommended ? " now." : "."}
-        </div>
-        {render_close()}
-      </div>
-    );
-  }
-
-  function render_close() {
-    if (version >= minVersion) {
-      return (
-        <Icon
-          name="times"
-          style={{ cursor: "pointer", marginTop: "5px", flex: "0 0 auto" }}
-          onClick={() => setClosed(true)}
-        />
-      );
-    }
-  }
-
-  return (
-    <div style={style}>
-      {render_suggested()}
-      {render_critical()}
+        REFRESH THIS PAGE
+      </a>
+      <Gap /> IMMEDIATELY. Sorry for the inconvenience.
     </div>
   );
 }

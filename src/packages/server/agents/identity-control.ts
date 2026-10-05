@@ -14,6 +14,7 @@ import {
   startFreshConversationLocal,
 } from "./api";
 import { agentStore } from "./store";
+import { watchIdentityLocal } from "./identity-watchers";
 
 async function assertOwner(opts: AgentIdentityReadRequest) {
   requireUuid(opts.account_id, "account_id");
@@ -79,6 +80,15 @@ export const agentIdentityControl: InterBayAgentIdentityApi = {
       project_id: opts.project_id,
       path: opts.path,
       thread_id: opts.thread_id,
+    });
+  },
+  watch: async (opts) => {
+    await assertOwner(opts);
+    await watchIdentityLocal({
+      account_id: opts.account_id,
+      project_id: opts.project_id,
+      agent_id: opts.agent_id,
+      watching: opts.watching,
     });
   },
   recover: async (opts) => {

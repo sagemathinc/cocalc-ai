@@ -27,7 +27,7 @@ import {
   setRevocationSyncCursor,
   upsertAccountRevocation,
 } from "./sqlite/account-revocations";
-import { deleteProjectLocal } from "./sqlite/projects";
+import { deleteProjectLocal, getProject } from "./sqlite/projects";
 import { deleteVolume } from "./file-server";
 import { recordProjectHostRpcTraffic } from "./rpc-traffic-audit";
 import { setProjectStateReporter } from "./project-state-reporter";
@@ -187,6 +187,23 @@ export async function reportProjectStateToMaster(
   await queue.drain;
 }
 
+// The project code and tools a running project started with, so the hub can
+// tell when a restart would bring newer ones.
+export function withRunningVersions(
+  project_id: string,
+  state: HostProjectStatus["state"],
+): HostProjectStatus["state"] {
+  if (typeof state === "string" || state.state !== "running") return state;
+  const row = getProject(project_id);
+  const project_bundle_version = `${row?.project_bundle_version ?? ""}`.trim();
+  const tools_version = `${row?.tools_version ?? ""}`.trim();
+  return {
+    ...state,
+    ...(project_bundle_version ? { project_bundle_version } : {}),
+    ...(tools_version ? { tools_version } : {}),
+  };
+}
+
 function normalizeReportedProjectState(
   state: HostProjectStatus["state"],
 ): HostProjectStatus["state"] {
@@ -267,7 +284,7 @@ async function sendProjectStateToMaster(
   const request = {
     ...hostInfo,
     project_id,
-    state,
+    state: withRunningVersions(project_id, state),
   };
   const started = Date.now();
   logger.debug("reportProjectStateToMaster", { project_id, state });

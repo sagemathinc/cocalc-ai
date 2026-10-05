@@ -29,6 +29,10 @@ import type {
 } from "@cocalc/util/ai/runtime";
 import { harnessTransport } from "./harness-transport";
 import {
+  HarnessStderrDiagnostics,
+  recordHarnessDiagnostic,
+} from "./harness-diagnostics";
+import {
   ACP_MAX_IMAGE_BYTES,
   ACP_MAX_TOTAL_IMAGE_BYTES,
   ACP_MAX_IMAGES,
@@ -36,6 +40,7 @@ import {
   ACP_MAX_OUTBOUND_FRAME_BYTES,
 } from "@cocalc/util/ai/harness-limits";
 import {
+  defaultClaudeModel,
   harnessSessionControls,
   parseHarnessSessionSettings,
   resolveClaudeConfigValue,
@@ -98,6 +103,7 @@ export interface HarnessBinding {
 
 export type HarnessLauncher = (
   binding: HarnessBinding,
+  sessionId?: string,
 ) => Promise<HarnessProcess>;
 export type HarnessQuestionHandler = (
   questions: AcpAttentionQuestion[],
@@ -212,6 +218,10 @@ export class AcpHarnessClient {
   private canceled = false;
   private disposed = false;
   private failure?: Error;
+  private readonly stderrDiagnostics = new HarnessStderrDiagnostics();
+  private diagnosticId?: string;
+  private pendingRequests = 0;
+  private readonly startedAt = Date.now();
   private output: Promise<void> = Promise.resolve();
   private pendingBytes = 0;
   private listener?: (event: HarnessEvent) => Promise<void>;
@@ -240,8 +250,7 @@ export class AcpHarnessClient {
       ),
     };
     this.timeoutMs = timeoutMs;
-    // Drain stderr, but never copy untrusted process output into chat or logs.
-    process.stderr.on("data", () => {});
+    process.stderr.on("data", (chunk) => this.stderrDiagnostics.append(chunk));
     process.stderr.on("error", () => this.fail(Error("ACP stderr failed")));
     process.stdin.on("error", () => this.fail(Error("ACP stdin closed")));
     this.connection = new ClientSideConnection(
@@ -369,7 +378,8 @@ export class AcpHarnessClient {
 
   /** Clone persisted native context without loading it or starting inference. */
   async fork(sessionId: string): Promise<{ sessionId: string }> {
-    if (this.session || this.active || this.opening || this.disposed)
+    this.assertRuntimeOpen();
+    if (this.session || this.active || this.opening)
       throw new HarnessError("unavailable", "ACP fork requires a fresh client");
     if (!this.info.agentCapabilities?.sessionCapabilities?.fork)
       throw new HarnessError(
@@ -404,18 +414,25 @@ export class AcpHarnessClient {
 
   /** Apply the admitted choices while idle; never mutate an in-flight turn. */
   async configure(settings: HarnessSessionSettings): Promise<void> {
-    if (
-      !this.session ||
-      this.active ||
-      this.opening ||
-      this.configuring ||
-      this.disposed
-    )
+    this.assertRuntimeOpen();
+    if (!this.session || this.active || this.opening || this.configuring)
       throw new HarnessError(
         "unavailable",
         "ACP session must be idle and open",
       );
     const selected = parseHarnessSessionSettings(settings);
+    // Claude omits the speed control for models without fast mode. A saved
+    // explicit "off" remains satisfied, but never silently discard "on".
+    const absentClaudeFastOff = (
+      id: string,
+      value: string,
+      advertised: boolean,
+    ) =>
+      !advertised &&
+      this.binding.profile.version === 2 &&
+      this.binding.profile.id === "claude-code" &&
+      id === "fast" &&
+      value === "off";
     this.configuring = true;
     try {
       if (selected.modeId != null) {
@@ -436,15 +453,28 @@ export class AcpHarnessClient {
           this.session.modes!.currentModeId = selected.modeId;
         }
       }
+      const claude =
+        this.binding.profile.version === 2 &&
+        this.binding.profile.id === "claude-code";
+      if (claude && !selected.configOptions?.some(({ id }) => id === "model")) {
+        // No model chosen: run CoCalc's default, not Claude Code's plan default.
+        const model = this.controls.configOptions.find(
+          ({ id }) => id === "model",
+        );
+        const value = model && defaultClaudeModel(model);
+        if (value)
+          selected.configOptions = [
+            { id: "model", value },
+            ...(selected.configOptions ?? []),
+          ];
+      }
       for (const choice of selected.configOptions ?? []) {
         const control = this.controls.configOptions.find(
           ({ id }) => id === choice.id,
         );
-        if (
-          control &&
-          this.binding.profile.version === 2 &&
-          this.binding.profile.id === "claude-code"
-        )
+        if (absentClaudeFastOff(choice.id, choice.value, control != null))
+          continue;
+        if (control && claude)
           choice.value = resolveClaudeConfigValue(control, choice.value);
         if (!control?.options.some(({ value }) => value === choice.value))
           throw new HarnessError(
@@ -477,11 +507,13 @@ export class AcpHarnessClient {
       if (selected.configOptions?.length) {
         const effective = this.controls.configOptions;
         if (
-          selected.configOptions.some(
-            ({ id, value }) =>
-              effective.find((control) => control.id === id)?.currentValue !==
-              value,
-          )
+          selected.configOptions.some(({ id, value }) => {
+            const control = effective.find((control) => control.id === id);
+            return (
+              !absentClaudeFastOff(id, value, control != null) &&
+              control?.currentValue !== value
+            );
+          })
         )
           throw new HarnessError(
             "rejected",
@@ -494,8 +526,44 @@ export class AcpHarnessClient {
   }
 
   private fail(error: Error) {
+    if (this.disposed) return;
     this.failure ??= error;
+    // A pending request records its operation and rejection details in catch.
+    // Idle exits have no request to do that, so record before sealing stderr.
+    if (!this.pendingRequests)
+      this.recordFailure(error, "runtime/failure", this.startedAt, false);
     void this.dispose().catch(() => {});
+  }
+
+  private recordFailure(
+    error: unknown,
+    method: RequestMethod | "runtime/failure",
+    startedAt: number,
+    protocolRejection: boolean,
+  ): string {
+    return (this.diagnosticId ??= recordHarnessDiagnostic({
+      method,
+      projectId: this.binding.projectId,
+      accountId: this.binding.accountId,
+      sessionId: this.session?.sessionId,
+      elapsedMs: Date.now() - startedAt,
+      protocolRejection,
+      error,
+      failure: this.failure,
+      stderr: this.stderrDiagnostics,
+    }));
+  }
+
+  private diagnosticSuffix(): string {
+    return this.diagnosticId ? ` [Diagnostic ID: ${this.diagnosticId}]` : "";
+  }
+
+  private assertRuntimeOpen(): void {
+    if (this.disposed || this.failure)
+      throw new HarnessError(
+        "unavailable",
+        "ACP runtime is closed" + this.diagnosticSuffix(),
+      );
   }
 
   private async request<T>(
@@ -504,6 +572,8 @@ export class AcpHarnessClient {
     prompt = false,
     mutation = false,
   ): Promise<T> {
+    const startedAt = Date.now();
+    this.pendingRequests++;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const closed = this.connection.closed.then(() => {
       throw Error("ACP connection closed");
@@ -531,6 +601,12 @@ export class AcpHarnessClient {
         !this.failure &&
         !this.connection.signal.aborted &&
         typeof (error as any)?.code === "number";
+      const diagnosticId = this.recordFailure(
+        error,
+        method,
+        startedAt,
+        protocolRejection,
+      );
       this.fail(Error("ACP operation failed"));
       throw new HarnessError(
         protocolRejection
@@ -538,15 +614,17 @@ export class AcpHarnessClient {
           : prompt || mutation
             ? "outcome_unknown"
             : "unavailable",
-        protocolRejection
+        (protocolRejection
           ? this.rejectionMessage(error, method)
           : mutation
             ? "ACP copy outcome is uncertain; do not automatically retry"
             : prompt
               ? "ACP delivery or completion is uncertain; do not automatically resend this turn"
-              : "ACP runtime unavailable or setup timed out",
+              : "ACP runtime unavailable or setup timed out") +
+          ` [Diagnostic ID: ${diagnosticId}]`,
       );
     } finally {
+      this.pendingRequests--;
       if (timer) clearTimeout(timer);
     }
   }
@@ -595,10 +673,9 @@ export class AcpHarnessClient {
   }
 
   async open(sessionId?: string): Promise<NewSessionResponse> {
+    this.assertRuntimeOpen();
     if (this.session || this.active || this.opening)
       throw Error("ACP session is already open or opening");
-    if (this.disposed)
-      throw new HarnessError("unavailable", "ACP runtime is closed");
     this.opening = true;
     try {
       const params = {
@@ -671,8 +748,7 @@ export class AcpHarnessClient {
     images: readonly AcpImageAttachment[] = [],
     beforeSend?: () => Promise<void>,
   ): Promise<{ stopReason: StopReason }> {
-    if (this.disposed || this.failure)
-      throw new HarnessError("unavailable", "ACP runtime is closed");
+    this.assertRuntimeOpen();
     if (!this.session || this.active || this.configuring)
       throw Error("ACP session must be idle and open");
     if (
@@ -990,6 +1066,7 @@ export class AcpHarnessClient {
 
   dispose(): Promise<void> {
     if (this.shutdown) return this.shutdown;
+    this.stderrDiagnostics.seal();
     this.disposed = true;
     this.finishAuthWait?.();
     this.questionAbort?.abort();

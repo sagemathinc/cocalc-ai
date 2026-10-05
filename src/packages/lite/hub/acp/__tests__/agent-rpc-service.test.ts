@@ -5,7 +5,7 @@ import {
   type AgentRpcExecutionAdapter,
 } from "../agent-rpc-service";
 import type { AgentRpcEnvelope } from "@cocalc/conat/agents/rpc";
-import { rpcOutcome } from "@cocalc/conat/agents/rpc";
+import { agentRecipientSetupError, rpcOutcome } from "@cocalc/conat/agents/rpc";
 import { AgentRpcAttempts } from "@cocalc/conat/agents/rpc-attempts";
 import { AgentRpcCapacity } from "@cocalc/conat/agents/rpc-capacity";
 
@@ -152,7 +152,7 @@ test.each([
           version: 2,
           kind: "acp",
           id: "claude-code",
-          revision: "0.81.1",
+          revision: "0.85.1",
           cwd: "/home/user",
           credentialMode: "project-managed",
           executionPolicy: "full-access",
@@ -506,6 +506,32 @@ test("saved launch failures get a visible receipt without leaking arbitrary back
   expect(deps.admit).toHaveBeenCalledTimes(1);
 });
 
+test("a recipient without a payment method is a definite rejection the sender can relay", async () => {
+  const { e, deps, service, db } = fixture();
+  deps.admit = jest.fn(async () => {
+    // As relayed by admitPreparedChatSend around the admission error.
+    throw new Error(
+      `Message m was saved in a.chat, but agent submission was not confirmed. Check the thread before resending: ${
+        agentRecipientSetupError("codex-connection").message
+      } private-credential`,
+    );
+  });
+  const outcome = await service.submit(e);
+  expect(outcome).toMatchObject({
+    outcome: "rejected",
+    chat_effect: "saved",
+    code: "execution_not_allowed",
+  });
+  expect(outcome.reason).toContain("no ChatGPT plan or OpenAI API key");
+  expect(outcome.reason).toContain("choose Connect");
+  expect(
+    db.get().find((row) => row.event === "chat").agent_rpc_launch,
+  ).toMatchObject({ state: "rejected", needs: "codex-connection" });
+  expect(JSON.stringify([outcome, db.get()])).not.toContain(
+    "private-credential",
+  );
+});
+
 test("accepted admission is not reclassified if its receipt cannot be saved", async () => {
   const { e, deps, service, db } = fixture();
   db.save
@@ -835,4 +861,22 @@ test("startup timeout retains host capacity until the actual startup settles", a
   } finally {
     jest.useRealTimers();
   }
+});
+
+describe("payment launch receipts", () => {
+  test("a missing payment method produces a specific launch receipt", async () => {
+    const { e, deps, service, db } = fixture();
+    deps.admit = jest.fn(async () => {
+      throw new Error(
+        "The recipient agent has no payment method recorded for this account. Open it and send one message with its selected payment method before using Agent Networks.",
+      );
+    });
+    await service.submit(e);
+    const receipt = db
+      .get()
+      .find((row) => row.agent_rpc_launch?.state === "unknown");
+    expect(receipt.agent_rpc_launch.error).toMatch(
+      /no payment method recorded for this account/,
+    );
+  });
 });

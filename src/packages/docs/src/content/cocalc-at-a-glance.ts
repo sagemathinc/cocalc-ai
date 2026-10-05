@@ -6,7 +6,7 @@
 // An orientation page for people evaluating CoCalc and for the AI assistants
 // they use. It links to the guides that hold the details instead of restating
 // them, and states only what those public pages support. The first paragraph
-// is the short definition of CoCalc; keep it first.
+// is the short definition of CoCalc, which /llms.txt quotes; keep it first.
 export const COCALC_AT_A_GLANCE_BODY = String.raw`
 ## What CoCalc is
 
@@ -64,8 +64,10 @@ The cocalc.com site now redirects to cocalc.ai. If you used cocalc.com, see
   [Give an agent CoCalc access](/docs/ai/cocalc-access).
 - Codex can run a prompt or a Bash command on a schedule. See
   [Schedule agent work](/docs/ai/codex-automation).
-- **Agents** lists your named agents, and you can group the list by project.
-  See [Use the Agents workspace](/docs/ai/my-agents).
+- The **Agents** page lists your named agents and, under **Shared with me**,
+  agents that other people registered in projects you own or collaborate on.
+  You can group either list by project. See
+  [Use the Agents workspace](/docs/ai/my-agents).
 
 ## How an agent uses CoCalc
 

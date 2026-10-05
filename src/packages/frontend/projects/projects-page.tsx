@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { PageCreateButton } from "@cocalc/frontend/components/page-create-button";
 import { Button, Grid, Layout } from "antd";
 import { Map, Set as ImmutableSet } from "immutable";
 import { Suspense, useRef } from "react";
@@ -702,24 +703,6 @@ export const ProjectsPage: React.FC = () => {
                       <Icon name="folder-open" />{" "}
                       {intl.formatMessage(labels.projects)}
                     </Title>
-                    <Button
-                      ref={createNewRef}
-                      type={collectionLayout ? "default" : "primary"}
-                      disabled={createProjectDisabled}
-                      title={
-                        createProjectDisabled
-                          ? "Verify your email address before creating projects."
-                          : undefined
-                      }
-                      onClick={handleCreateProject}
-                      icon={
-                        <Icon
-                          name={collectionLayout ? "plus" : "plus-circle"}
-                        />
-                      }
-                    >
-                      New project
-                    </Button>
                     {showLegacyProjectsButton ? (
                       <Button
                         icon={<Icon name="exchange" />}
@@ -757,6 +740,17 @@ export const ProjectsPage: React.FC = () => {
                         />
                       </div>
                     )}
+                    <PageCreateButton
+                      buttonRef={createNewRef}
+                      label="New project"
+                      disabled={createProjectDisabled}
+                      title={
+                        createProjectDisabled
+                          ? "Verify your email address before creating projects."
+                          : undefined
+                      }
+                      onClick={handleCreateProject}
+                    />
                   </div>
 
                   {narrow && (

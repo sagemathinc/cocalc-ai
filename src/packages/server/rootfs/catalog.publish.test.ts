@@ -105,6 +105,50 @@ describe("assertRootfsSupersessionAllowed", () => {
     official: true,
   };
 
+  it("does not re-check an unchanged link, so older entries stay editable", async () => {
+    const { assertRootfsSupersessionAllowed } = await import("./catalog");
+
+    // No family: a new link like this is refused (below), but one already
+    // stored is left alone when the entry is edited.
+    await expect(
+      assertRootfsSupersessionAllowed({
+        image_id: "image-2",
+        ...stableCpu,
+        family: null,
+        supersedes_image_id: "image-1",
+        current_supersedes_image_id: "image-1",
+      }),
+    ).resolves.toBeUndefined();
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("checks a changed link even when the entry already had one", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          channel: null,
+          deleted: false,
+          family: null,
+          gpu: null,
+          image_id: "image-3",
+          official: true,
+          owner_id: ACCOUNT_ID,
+        },
+      ],
+    });
+    const { assertRootfsSupersessionAllowed } = await import("./catalog");
+
+    await expect(
+      assertRootfsSupersessionAllowed({
+        image_id: "image-2",
+        ...stableCpu,
+        family: null,
+        supersedes_image_id: "image-3",
+        current_supersedes_image_id: "image-1",
+      }),
+    ).rejects.toThrow("same family");
+  });
+
   it("rejects self-supersession without querying", async () => {
     const { assertRootfsSupersessionAllowed } = await import("./catalog");
 

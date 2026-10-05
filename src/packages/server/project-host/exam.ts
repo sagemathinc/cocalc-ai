@@ -27,6 +27,7 @@ import {
 } from "@cocalc/server/cloud/dns";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import adminAlert from "@cocalc/server/messages/admin-alert";
+import { examHostnameFromPublicHostname } from "@cocalc/util/project-host-exam-hostname";
 import type { RootfsImageManifest } from "@cocalc/util/rootfs-images";
 
 const logger = getLogger("server:project-host:exam");
@@ -43,6 +44,8 @@ const ACTIVE_RUN_STATUSES: HostExamRunStatus[] = [
 ];
 const PROJECT_HOST_RPC_TIMEOUT_MS = 10 * 60_000;
 const MANUAL_CLEANUP_DEADLINE = "9999-12-31T23:59:59.000Z";
+const WAITING_FOR_HOST_STOPPED_AT_DEADLINE =
+  "waiting for the project host to report that the exam projects were erased; the host shuts itself down at the deadline, so the run completes when the host next runs";
 const STABLE_TOKEN_MARKER = "stable:";
 const DEFAULT_EXAM_CONFIG: Omit<HostExamConfigInput, "enabled"> = {
   title: "Exam Scratchpad",
@@ -498,13 +501,7 @@ function publicHostname(host: ExamHostRow): string {
 }
 
 function examHostnameForHost(host: ExamHostRow): string {
-  const target = publicHostname(host);
-  const labels = target.split(".");
-  const first = labels[0] ?? "";
-  labels[0] = first.startsWith("host-")
-    ? `exam-${first.slice("host-".length)}`
-    : `exam-${host.id}`;
-  return labels.join(".");
+  return examHostnameFromPublicHostname(publicHostname(host), host.id);
 }
 
 function publicIp(host: ExamHostRow): string {
@@ -755,9 +752,16 @@ async function loadRuntimeStatus(
     });
     // The project host is authoritative for which run is actually active.
     // Do not constrain this query using potentially stale central state.
-    const runtime = (await client.getExamRunStatus(
-      {},
-    )) as HostExamRuntimeStatus & Record<string, unknown>;
+    let runtime = (await client.getExamRunStatus({})) as HostExamRuntimeStatus &
+      Record<string, unknown>;
+    if (!runtime.run_id && run && run.status !== "stopped") {
+      // A run the host has finished, for example at its deadline, is no
+      // longer its current run. Ask for it by id so the central row heals.
+      const finished = (await client.getExamRunStatus({
+        run_id: run.run_id,
+      })) as HostExamRuntimeStatus & Record<string, unknown>;
+      if (finished.run_id === run.run_id) runtime = finished;
+    }
     return {
       ...runtime,
       active_projects: Number(
@@ -1581,16 +1585,29 @@ export async function reconcileDueExamRunsOnce(): Promise<void> {
   await ensureSchema();
   const { rows } = await getPool().query(
     `
-      SELECT r.*, h.public_url, h.metadata, h.status AS host_status, h.name
+      SELECT r.*, h.public_url, h.metadata, h.status AS host_status, h.name,
+        -- The host's own cleanup deadline. A host that stops at the deadline
+        -- is powered off by its watchdog once this passes, even if its
+        -- cleanup failed.
+        r.scheduled_stop_at
+          + COALESCE(c.cleanup_grace_minutes, 0) * INTERVAL '1 minute'
+          <= NOW() AS host_cleanup_deadline_passed
       FROM ${RUN_TABLE} r
       JOIN project_hosts h ON h.id=r.host_id
+      LEFT JOIN ${CONFIG_TABLE} c
+        ON c.host_id=r.host_id AND c.generation=r.config_generation
       WHERE r.status = ANY($1::TEXT[])
         AND r.cleanup_mode = 'scheduled'
         AND r.scheduled_stop_at <= NOW()
-      ORDER BY r.scheduled_stop_at
+        -- A run waiting for its stopped host has nothing to do until the host
+        -- runs again, and must not crowd newly due runs out of this batch.
+        AND (h.status = 'running' OR r.last_error IS DISTINCT FROM $2)
+      -- A run waiting for a host that still looks running is asked about
+      -- again, but only after the runs that are not waiting.
+      ORDER BY r.last_error IS NOT DISTINCT FROM $2, r.scheduled_stop_at
       LIMIT 16
     `,
-    [ACTIVE_RUN_STATUSES],
+    [ACTIVE_RUN_STATUSES, WAITING_FOR_HOST_STOPPED_AT_DEADLINE],
   );
   for (const row of rows) {
     const lockKey = `project-host-exam-run:${row.run_id}`;
@@ -1598,10 +1615,10 @@ export async function reconcileDueExamRunsOnce(): Promise<void> {
     let acquired = false;
     try {
       const lock = await db.query(
-        "SELECT pg_try_advisory_lock(hashtext($1)) AS acquired",
+        "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
         [lockKey],
       );
-      acquired = lock.rows[0]?.acquired === true;
+      acquired = lock.rows[0]?.locked === true;
       if (!acquired) continue;
       const host: ExamHostRow = {
         id: row.host_id,
@@ -1627,6 +1644,42 @@ export async function reconcileDueExamRunsOnce(): Promise<void> {
       } catch (err) {
         await db.query("ROLLBACK");
         throw err;
+      }
+      let hostUnavailable = host.status !== "running";
+      if (stopHostAtDeadline && !hostUnavailable) {
+        try {
+          const control = await getRoutedHostControlClient({
+            host_id: host.id,
+            timeout: 15_000,
+            fresh: true,
+          });
+          await control.getExamRunStatus({ run_id: row.run_id });
+        } catch (err) {
+          hostUnavailable = true;
+          logger.warn("unable to load exam run status at its deadline", {
+            host_id: row.host_id,
+            run_id: row.run_id,
+            err: `${err}`,
+          });
+        }
+      }
+      // The host erases the projects and powers itself off at the deadline
+      // without the hub, so its absence is expected rather than a failure.
+      // A host that still looks running but does not answer is waited for
+      // only until its own cleanup deadline. After that the cleanup below
+      // runs, and reports a failure if the host still does not answer.
+      const hostAbsenceExpected =
+        host.status !== "running" || row.host_cleanup_deadline_passed !== true;
+      if (hostUnavailable && stopHostAtDeadline && hostAbsenceExpected) {
+        await getPool().query(
+          `
+            UPDATE ${RUN_TABLE}
+            SET status='closing', last_error=$2, updated_at=NOW()
+            WHERE run_id=$1 AND status <> 'stopped'
+          `,
+          [row.run_id, WAITING_FOR_HOST_STOPPED_AT_DEADLINE],
+        );
+        continue;
       }
       await stopAndEraseExamRunLocal({
         host,

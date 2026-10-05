@@ -10,11 +10,29 @@
 
 import { PageSearchBox } from "@cocalc/frontend/search/page-search-box";
 import { useListQuery } from "@cocalc/frontend/search/list-query";
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
-import { Alert, Select, Tabs, Typography } from "antd";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
+import { Alert, Button, Checkbox, Grid, Select, Tabs, Typography } from "antd";
+import {
+  displayOrder,
+  rangeSelection,
+} from "@cocalc/frontend/components/collection-selection";
+import {
+  agentPaymentSummary,
+  paymentGroups,
+  SetPaymentModal,
+  useAgentPayments,
+} from "./agent-payments";
+import { WithAgentRuntimeMark } from "./agent-runtime-mark";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, TimeAgo } from "@cocalc/frontend/components";
+import { PageCreateButton } from "@cocalc/frontend/components/page-create-button";
 import {
   Collection,
   CollectionViewControl,
@@ -65,6 +83,10 @@ interface Props {
   // Move within the full list of pinned agents (the sidebar's order).
   onMoveMine: (agentId: string, index: number) => void;
   onOpenMine: (agent: NamedAgent) => void;
+  // Bulk operations on selected agents of your own.
+  onSetHidden: (agentIds: string[], hidden: boolean) => void;
+  onRemove: (agents: NamedAgent[]) => void;
+  onNewAgent?: () => void;
 }
 
 // Open another person's agent: its conversation, in its project.
@@ -149,6 +171,14 @@ export function AgentsOverview(props: Props) {
   const [sort, setSort] = useState<Sort>("recent");
   const [group, setGroup] = useState<Group>("none");
   const shared = useSharedAgents(active);
+  const payments = useAgentPayments(active);
+  // Phones: two-line rows and compact controls.
+  const narrow = !!Grid.useBreakpoint().xs;
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [paymentOpen, setPaymentOpen] = useState(false);
+  const anchor = useRef<string | undefined>(undefined);
+  // Selection is for your own agents; switching tabs starts over.
+  useEffect(() => setSelectedIds([]), [tab]);
 
   const projectTitle = (id: string) =>
     (project_map?.getIn([id, "title"]) as string | undefined) ?? "";
@@ -193,6 +223,60 @@ export function AgentsOverview(props: Props) {
       sort,
     );
   const items = visible(tab === "mine" ? mineItems : sharedItems);
+  const selecting = tab === "mine";
+  const selected = new Set(selectedIds);
+  const selectedAgents = mineItems
+    .filter((item) => selected.has(item.id))
+    .map((item) => item.mine!);
+  const allSelected =
+    items.length > 0 && items.every((item) => selected.has(item.id));
+  function toggleSelected(id: string, on: boolean, shift: boolean) {
+    if (shift && anchor.current != null) {
+      setSelectedIds(
+        rangeSelection({
+          order: displayOrder(
+            items.map((item) => item.id),
+            minePins,
+            group === "project"
+              ? (x) => items.find((item) => item.id === x)?.project_id ?? ""
+              : undefined,
+          ),
+          selected: selectedIds,
+          anchor: anchor.current,
+          id,
+          on,
+          selectable: () => true,
+        }),
+      );
+    } else {
+      setSelectedIds(
+        on
+          ? [...selectedIds.filter((x) => x !== id), id]
+          : selectedIds.filter((x) => x !== id),
+      );
+    }
+    anchor.current = id;
+  }
+  const paymentFor = (item: OverviewItem) => {
+    const thread_id = item.mine?.thread_id ?? item.shared?.thread_id;
+    return thread_id && !payments.loading
+      ? agentPaymentSummary(payments, {
+          project_id: item.project_id,
+          thread_id,
+          runtime: item.mine?.runtime ?? item.shared?.runtime,
+          payment: item.mine?.payment,
+        })
+      : undefined;
+  };
+  const paymentTargets = selectedAgents.map((agent) => ({
+    project_id: agent.endpoint.project_id,
+    thread_id: agent.thread_id,
+    path: agent.path,
+    title: props.agentTitle(agent),
+    runtime: agent.runtime,
+  }));
+  const groups = paymentGroups(paymentTargets);
+  const canSetPayment = groups.codex.length + groups.claude.length > 0;
   const sharedOrder = preferences.value.order;
   const pins =
     tab === "mine"
@@ -282,19 +366,46 @@ export function AgentsOverview(props: Props) {
           renderItem={(item, controls) => {
             const actionsNode = (
               <div style={CONTROLS_STYLE}>
-                <span style={{ width: 28, display: "inline-flex" }}>
-                  {controls.dragHandle}
-                </span>
+                {!narrow && (
+                  <span style={{ width: 28, display: "inline-flex" }}>
+                    {controls.dragHandle}
+                  </span>
+                )}
                 {controls.pinButton}
                 {controls.menu(actions(item), `More actions for @${item.name}`)}
               </div>
             );
+            const checkbox = selecting ? (
+              // Shift-click selects a range; keep it from also selecting text.
+              <span
+                onMouseDown={(e) => {
+                  if (e.shiftKey) e.preventDefault();
+                }}
+                style={{ display: "inline-flex" }}
+              >
+                <Checkbox
+                  aria-label={`Select @${item.name}`}
+                  checked={selected.has(item.id)}
+                  onChange={(e) =>
+                    toggleSelected(
+                      item.id,
+                      e.target.checked,
+                      !!(e.nativeEvent as MouseEvent | undefined)?.shiftKey,
+                    )
+                  }
+                />
+              </span>
+            ) : undefined;
             const cardProps = {
               item,
+              checkbox,
+              payment: paymentFor(item),
               badge: item.mine ? (
                 props.renderBadge(item.mine)
               ) : (
-                <SharedBadge appearance={item.shared?.appearance} />
+                <WithAgentRuntimeMark runtime={item.shared?.runtime}>
+                  <SharedBadge appearance={item.shared?.appearance} />
+                </WithAgentRuntimeMark>
               ),
               project: projectTitle(item.project_id),
               person: item.created_by ? personName(item.created_by) : "",
@@ -304,7 +415,7 @@ export function AgentsOverview(props: Props) {
             return view === "grid" ? (
               <GridCard {...cardProps} />
             ) : (
-              <ListRow {...cardProps} />
+              <ListRow {...cardProps} narrow={narrow} />
             );
           }}
         />
@@ -355,6 +466,9 @@ export function AgentsOverview(props: Props) {
             label="Agents"
           />
           <PageSearchBox scope="agents" />
+          {props.onNewAgent && (
+            <PageCreateButton label="New agent" onClick={props.onNewAgent} />
+          )}
         </header>
         <div
           style={{
@@ -374,16 +488,78 @@ export function AgentsOverview(props: Props) {
               flex: "1 1 auto",
             }}
           >
-            {count(items.length)}
+            {selecting && items.length > 0 ? (
+              <Checkbox
+                aria-label="Select all agents"
+                checked={allSelected}
+                indeterminate={!allSelected && selectedIds.length > 0}
+                onChange={(e) =>
+                  setSelectedIds(
+                    e.target.checked ? items.map((item) => item.id) : [],
+                  )
+                }
+              >
+                {count(items.length)}
+                {selectedIds.length > 0 && ` · ${selectedIds.length} selected`}
+              </Checkbox>
+            ) : (
+              count(items.length)
+            )}
             {tab === "shared" && shared.loading && shared.agents.length > 0
               ? " · Refreshing..."
               : ""}
           </div>
+          {selecting && selectedIds.length > 0 && (
+            <span
+              role="toolbar"
+              aria-label="Selected agents"
+              style={{ display: "inline-flex", gap: 4, flexWrap: "wrap" }}
+            >
+              <Button
+                size="small"
+                disabled={!canSetPayment}
+                title={
+                  canSetPayment
+                    ? undefined
+                    : "These agents use project-managed credentials"
+                }
+                onClick={() => setPaymentOpen(true)}
+              >
+                Set payment method…
+              </Button>
+              <Button
+                size="small"
+                onClick={() => props.onSetHidden(selectedIds, true)}
+              >
+                Hide from sidebar
+              </Button>
+              <Button
+                size="small"
+                onClick={() => props.onSetHidden(selectedIds, false)}
+              >
+                Show in sidebar
+              </Button>
+              <Button
+                size="small"
+                danger
+                onClick={() => props.onRemove(selectedAgents)}
+              >
+                Remove…
+              </Button>
+              <Button
+                size="small"
+                type="text"
+                onClick={() => setSelectedIds([])}
+              >
+                Clear
+              </Button>
+            </span>
+          )}
           <Select
             aria-label="Sort agents"
             value={sort}
             onChange={setSort}
-            style={{ minWidth: 120 }}
+            style={{ minWidth: narrow ? 96 : 120 }}
             options={[
               { value: "recent", label: "Recent" },
               { value: "name", label: "Name" },
@@ -393,7 +569,7 @@ export function AgentsOverview(props: Props) {
             aria-label="Group agents"
             value={effectiveGroup}
             onChange={setGroup}
-            style={{ minWidth: 150 }}
+            style={{ minWidth: narrow ? 120 : 150 }}
             options={[
               { value: "none", label: "No grouping" },
               { value: "project", label: "By project" },
@@ -403,6 +579,18 @@ export function AgentsOverview(props: Props) {
             ]}
           />
         </div>
+        {payments.error && (
+          <Alert
+            type="warning"
+            title={`Could not load how your agents are paid: ${payments.error}`}
+          />
+        )}
+        <SetPaymentModal
+          open={paymentOpen}
+          agents={paymentTargets}
+          payments={payments}
+          onClose={() => setPaymentOpen(false)}
+        />
         {preferences.error && (
           <Alert role="alert" type="warning" title={preferences.error} />
         )}
@@ -512,6 +700,9 @@ function SharedBadge({ appearance }: { appearance?: AgentAppearance | null }) {
 
 interface CardProps {
   item: OverviewItem;
+  checkbox?: ReactNode;
+  /** How you pay for this agent's turns. */
+  payment?: string;
   badge: ReactNode;
   project: string;
   person: string;
@@ -556,6 +747,8 @@ function Activity({ item }: { item: OverviewItem }) {
 // Fixed height so cards in a row line up, as in People.
 function GridCard({
   item,
+  checkbox,
+  payment,
   badge,
   project,
   person,
@@ -565,7 +758,7 @@ function GridCard({
   return (
     <div
       style={{
-        height: 132,
+        height: 152,
         boxSizing: "border-box",
         display: "flex",
         flexDirection: "column",
@@ -576,29 +769,47 @@ function GridCard({
         opacity: item.available ? undefined : 0.7,
       }}
     >
-      <button
-        type="button"
-        aria-label={`Open @${item.name}`}
-        onClick={onOpen}
-        style={{
-          ...OPEN_BUTTON,
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          gap: 6,
-        }}
-      >
-        <span
-          style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}
+      <div style={{ flex: 1, display: "flex", gap: 8, minHeight: 0 }}>
+        {checkbox && <div style={{ paddingTop: 6 }}>{checkbox}</div>}
+        <button
+          type="button"
+          aria-label={`Open @${item.name}`}
+          onClick={onOpen}
+          style={{
+            ...OPEN_BUTTON,
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+          }}
         >
-          {badge}
-          <Title item={item} />
-        </span>
-        <span style={{ ...ELLIPSIS, color: UI_COLORS.secondary, fontSize: 13 }}>
-          {person ? `${person} · ${project}` : project}
-          {item.description ? ` · ${item.description}` : ""}
-        </span>
-      </button>
+          <span
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              minWidth: 0,
+            }}
+          >
+            {badge}
+            <Title item={item} />
+          </span>
+          <span
+            style={{ ...ELLIPSIS, color: UI_COLORS.secondary, fontSize: 13 }}
+          >
+            {person ? `${person} · ${project}` : project}
+            {item.description ? ` · ${item.description}` : ""}
+          </span>
+          {payment && (
+            <span
+              title="How you pay for this agent's turns"
+              style={{ ...ELLIPSIS, color: UI_COLORS.secondary, fontSize: 12 }}
+            >
+              <Icon name="credit-card" /> {payment}
+            </span>
+          )}
+        </button>
+      </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span
           style={{
@@ -617,7 +828,70 @@ function GridCard({
 }
 
 // One-line row with fixed columns: agent, project, person, activity, actions.
-function ListRow({ item, badge, project, person, onOpen, actions }: CardProps) {
+function ListRow({
+  item,
+  checkbox,
+  payment,
+  badge,
+  project,
+  person,
+  onOpen,
+  actions,
+  narrow,
+}: CardProps & { narrow?: boolean }) {
+  if (narrow)
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "8px 4px 8px 8px",
+          border: `1px solid ${UI_COLORS.border}`,
+          marginTop: -1,
+          background: UI_COLORS.surface,
+          opacity: item.available ? undefined : 0.7,
+        }}
+      >
+        {checkbox}
+        <button
+          type="button"
+          aria-label={`Open @${item.name}`}
+          onClick={onOpen}
+          style={{
+            ...OPEN_BUTTON,
+            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
+          {badge}
+          <span
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              minWidth: 0,
+              flex: 1,
+              gap: 2,
+            }}
+          >
+            <Title item={item} />
+            <span
+              style={{ ...ELLIPSIS, color: UI_COLORS.secondary, fontSize: 12 }}
+            >
+              {[person || project, payment].filter(Boolean).join(" · ")}
+            </span>
+            <span
+              style={{ ...ELLIPSIS, color: UI_COLORS.secondary, fontSize: 12 }}
+            >
+              <Activity item={item} />
+            </span>
+          </span>
+        </button>
+        {actions}
+      </div>
+    );
   return (
     <div
       style={{
@@ -632,6 +906,7 @@ function ListRow({ item, badge, project, person, onOpen, actions }: CardProps) {
         opacity: item.available ? undefined : 0.7,
       }}
     >
+      {checkbox}
       <button
         type="button"
         aria-label={`Open @${item.name}`}
@@ -656,8 +931,11 @@ function ListRow({ item, badge, project, person, onOpen, actions }: CardProps) {
         <span style={{ ...ELLIPSIS, color: UI_COLORS.secondary, fontSize: 13 }}>
           {project}
         </span>
-        <span style={{ ...ELLIPSIS, color: UI_COLORS.secondary, fontSize: 13 }}>
-          {person || item.description || ""}
+        <span
+          title={payment ? "How you pay for this agent's turns" : undefined}
+          style={{ ...ELLIPSIS, color: UI_COLORS.secondary, fontSize: 13 }}
+        >
+          {person || payment || item.description || ""}
         </span>
         <span
           style={{

@@ -9,6 +9,16 @@ import { withAgentChat } from "./chat";
 import { withAgentIdentityOwner } from "./identity-routing";
 import { controlAcp } from "@cocalc/conat/ai/acp/client";
 import { conatWithProjectRoutingForAccount } from "@cocalc/server/conat/route-client";
+import { copyPaymentSelection } from "./payment-selections";
+import {
+  agentRuntimeFromThread,
+  parseAgentRuntimeSummary,
+  sameAgentRuntime,
+} from "@cocalc/util/ai/agent-runtime-kind";
+import { notifyIdentityWatchers } from "./identity-watchers";
+import getLogger from "@cocalc/backend/logger";
+
+const logger = getLogger("server:agents:api");
 
 export const startFreshConversation: AgentApi["startFreshConversation"] =
   async (opts) => {
@@ -19,11 +29,34 @@ export const startFreshConversation: AgentApi["startFreshConversation"] =
       agent_id: opts.agent_id,
       expected_thread_id: opts.expected_thread_id,
     };
-    return withAgentIdentityOwner({
+    const identity = await withAgentIdentityOwner({
       project_id: opts.project_id,
       local: () => startFreshConversationLocal(request),
       remote: (api, route) => api.startFreshConversation({ ...request, route }),
     });
+    // The new conversation keeps how this account pays for the agent.
+    if (identity.thread_id !== opts.expected_thread_id) {
+      try {
+        await copyPaymentSelection({
+          account_id: opts.account_id,
+          from: {
+            project_id: opts.project_id,
+            thread_id: opts.expected_thread_id,
+          },
+          to: {
+            project_id: opts.project_id,
+            thread_id: identity.thread_id,
+            path: identity.path,
+          },
+        });
+      } catch (err) {
+        logger.warn("could not copy agent payment selection", {
+          agent_id: opts.agent_id,
+          err: `${err}`,
+        });
+      }
+    }
+    return identity;
   };
 
 export const startFreshConversationLocal: AgentApi["startFreshConversation"] =
@@ -81,7 +114,7 @@ export const startFreshConversationLocal: AgentApi["startFreshConversation"] =
       );
     requireUuid(prepared.successor_thread_id, "successor_thread_id");
     await assertActor(opts.account_id, opts.project_id);
-    return db.transaction(async (sql) => {
+    const fresh = await db.transaction(async (sql) => {
       await sql.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
         `agent-identities:${opts.project_id}`,
       ]);
@@ -120,6 +153,9 @@ export const startFreshConversationLocal: AgentApi["startFreshConversation"] =
         )
       ).rows[0];
     });
+    // Everyone who named the agent sees its new conversation.
+    void notifyIdentityWatchers(opts.agent_id);
+    return fresh;
   };
 
 async function human(opts: AgentHumanAuth): Promise<string> {
@@ -189,7 +225,21 @@ export const registerIdentityLocal: AgentApi["registerIdentity"] = async (
             [opts.project_id, path, opts.thread_id],
           )
         ).rows[0];
-        if (existing) return existing;
+        const runtime = agentRuntimeFromThread(thread);
+        if (existing) {
+          // Identities registered before runtimes were recorded.
+          if (!existing.runtime && runtime) {
+            const updated = (
+              await sql.query(
+                "UPDATE agent_identities SET runtime=$2::jsonb WHERE agent_id=$1 RETURNING *",
+                [existing.agent_id, JSON.stringify(runtime)],
+              )
+            ).rows[0];
+            void notifyIdentityWatchers(existing.agent_id);
+            return updated;
+          }
+          return existing;
+        }
         const count = (
           await sql.query(
             "SELECT count(*) AS count FROM agent_identities WHERE project_id=$1",
@@ -200,8 +250,8 @@ export const registerIdentityLocal: AgentApi["registerIdentity"] = async (
           throw new Error("agent_identity_project_capacity");
         return (
           await sql.query(
-            `INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by)
-             VALUES($1,$2,$3,$4,$5,$6)
+            `INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by,runtime)
+             VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)
              ON CONFLICT(project_id,path,thread_id) WHERE disabled_at IS NULL
              DO NOTHING RETURNING *`,
             [
@@ -211,6 +261,7 @@ export const registerIdentityLocal: AgentApi["registerIdentity"] = async (
               opts.thread_id,
               thread.name || opts.thread_id,
               account_id,
+              runtime ? JSON.stringify(runtime) : null,
             ],
           )
         ).rows[0];
@@ -310,6 +361,7 @@ export const disableIdentity: AgentApi["disableIdentity"] = async (opts) => {
     "UPDATE agent_identities SET disabled_at=COALESCE(disabled_at,now()),disabled_by=$2 WHERE agent_id=$1",
     [opts.agent_id, account_id],
   );
+  void notifyIdentityWatchers(opts.agent_id);
 };
 
 async function assertIdentityRecoveryOwner(
@@ -405,8 +457,8 @@ export const recoverIdentityLocal: AgentApi["recoverIdentity"] = async (
         );
         const replacement = (
           await sql.query(
-            `INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by)
-             VALUES($1,$2,$3,$4,$5,$6) RETURNING *`,
+            `INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by,runtime)
+             VALUES($1,$2,$3,$4,$5,$6,$7::jsonb) RETURNING *`,
             [
               randomUUID(),
               previous.project_id,
@@ -414,6 +466,9 @@ export const recoverIdentityLocal: AgentApi["recoverIdentity"] = async (
               previous.thread_id,
               thread.name || previous.name,
               opts.account_id,
+              JSON.stringify(
+                agentRuntimeFromThread(thread) ?? previous.runtime ?? null,
+              ),
             ],
           )
         ).rows[0];
@@ -424,7 +479,10 @@ export const recoverIdentityLocal: AgentApi["recoverIdentity"] = async (
         return replacement;
       });
     },
-  );
+  ).then((replacement) => {
+    void notifyIdentityWatchers(previous.agent_id);
+    return replacement;
+  });
 };
 
 export const issueIdentity: AgentApi["issueIdentity"] = async (opts) => {
@@ -481,4 +539,25 @@ export const endIdentityRun: AgentApi["endIdentityRun"] = async (opts) => {
     "UPDATE agent_identity_runs SET ended_at=now() WHERE agent_id=$1 AND run_id=$2 AND account_id=$3",
     [opts.agent_id, opts.run_id, opts.account_id],
   );
+};
+
+// Host-attested: the project host admitting a turn reports the agent's
+// runtime, which fills in identities registered before runtimes were recorded.
+export const reportRuntime: AgentApi["reportRuntime"] = async (opts) => {
+  await assertLocalAgentProject(opts.project_id);
+  await assertProjectHostAgentTokenAccess({
+    host_id: opts.host_id!,
+    account_id: opts.account_id!,
+    project_id: opts.project_id,
+  });
+  const runtime = parseAgentRuntimeSummary(opts.runtime);
+  if (!runtime) throw new Error("invalid agent runtime");
+  const db = agentStore();
+  const agent = await db.find(opts.project_id, opts.path, opts.thread_id);
+  if (!agent || sameAgentRuntime(agent.runtime, runtime)) return;
+  await db.query(
+    "UPDATE agent_identities SET runtime=$2::jsonb WHERE agent_id=$1",
+    [agent.agent_id, JSON.stringify(runtime)],
+  );
+  void notifyIdentityWatchers(agent.agent_id);
 };

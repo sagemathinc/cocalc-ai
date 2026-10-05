@@ -967,6 +967,13 @@ export async function removeCollaborator({
     inviter_account_id: opts.account_id,
     project_id: opts.project_id,
   });
+  // Stop pushing the project's agents to the removed person.
+  const { dropProjectIdentityWatchers } =
+    await import("@cocalc/server/agents/identity-watchers");
+  await dropProjectIdentityWatchers({
+    project_id: opts.project_id,
+    account_id: opts.account_id,
+  });
   await publishProjectAccountFeedEventsBestEffort({
     project_id: opts.project_id,
   });

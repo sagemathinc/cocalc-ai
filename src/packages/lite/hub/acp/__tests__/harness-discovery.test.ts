@@ -5,14 +5,20 @@ import {
   pauseHarnessDiscovery,
   setHarnessLauncher,
   setHarnessAuthorityValidator,
+  createHarnessAgent,
 } from "../harness-runtime";
-import { AcpHarnessClient, disposeFailedHarness } from "@cocalc/ai/acp/harness";
+import {
+  AcpHarnessClient,
+  disposeFailedHarness,
+  HarnessAgent,
+} from "@cocalc/ai/acp/harness";
 import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
 import { CLAUDE_CODE_QUALIFICATION } from "@cocalc/util/ai/qualified-harnesses";
 
 jest.mock("@cocalc/ai/acp/harness", () => ({
   AcpHarnessClient: { start: jest.fn() },
   disposeFailedHarness: jest.fn(),
+  HarnessAgent: jest.fn(),
 }));
 
 const request: AcpRequest = {
@@ -100,11 +106,33 @@ test("discovery opens a temporary session without a prompt or existing session I
 
 test("fork clones native context without loading or configuring the source", async () => {
   expect(await forkHarnessSession(request)).toEqual({ sessionId: "copy" });
+  expect(launch).toHaveBeenCalledWith(expect.anything(), {
+    path: "a.chat",
+    threadId: "thread",
+    sessionId: request.session_id,
+  });
   expect(client.fork).toHaveBeenCalledWith(request.session_id);
   expect(client.open).not.toHaveBeenCalled();
   expect(client.configure).not.toHaveBeenCalled();
   expect(client.prompt).not.toHaveBeenCalled();
   expect(client.dispose).toHaveBeenCalledTimes(1);
+});
+
+test("turn launcher forwards the execution-time session rather than a stale admission snapshot", async () => {
+  await createHarnessAgent(request);
+  const [binding, , runLauncher] = (HarnessAgent as jest.Mock).mock.calls[0];
+  await runLauncher(binding, "current-session");
+  expect(launch).toHaveBeenLastCalledWith(binding, {
+    path: "a.chat",
+    threadId: "thread",
+    sessionId: "current-session",
+  });
+  await runLauncher(binding, "");
+  expect(launch).toHaveBeenLastCalledWith(binding, {
+    path: "a.chat",
+    threadId: "thread",
+    sessionId: "",
+  });
 });
 
 test("fork requires a source and shares project-stop admission fencing", async () => {
@@ -328,7 +356,8 @@ test("duplicate discovery cannot launch a second process", async () => {
 });
 
 test("disabled discovery never launches and never falls back to Codex", async () => {
-  delete process.env.COCALC_ACP_HARNESSES;
+  // Harnesses are on by default; "0" is the operator kill switch.
+  process.env.COCALC_ACP_HARNESSES = "0";
   await expect(discoverHarnessControls(request)).rejects.toThrow("not enabled");
   expect(launch).not.toHaveBeenCalled();
 });

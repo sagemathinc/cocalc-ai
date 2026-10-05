@@ -16,12 +16,15 @@ feature-by-feature comparison, including known messaging limitations.
 
 ## Start a conversation
 
-1. Open **Agents**, choose **New Agent**, and select a project.
+1. Choose **New agent** in the sidebar's **Agents** section (expand it if it is
+   collapsed), and select a project. If the form asks **What would you like to
+   work on?**, it has no runtime choice and starts a Codex agent; once that
+   agent is created, choose **New agent** again for Claude Code.
 2. Select **Claude** and open its settings icon to configure Claude Code.
 3. Choose a credential in settings: a project API-key secret, an account API key, or a
    connected Claude Pro/Max subscription, where offered by the site.
 4. For a project key, use the Claude API-key dialog. For a subscription, use
-   **Connect Claude Pro/Max (experimental)** and complete the sign-in flow.
+   **Connect Claude Pro/Max** and complete the sign-in flow.
    Never paste credentials or login codes into a chat message.
 5. Choose the model and effort in the composer before your first turn. Available
    options load automatically; loading is not a request to reconnect your account.

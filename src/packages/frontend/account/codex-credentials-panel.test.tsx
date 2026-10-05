@@ -601,6 +601,52 @@ describe("CodexCredentialsPanel", () => {
     });
   });
 
+  it("one button copies the code and opens ChatGPT, then says what it is waiting for", async () => {
+    getCodexPaymentSource.mockResolvedValue({ source: "subscription" });
+    getCodexUsageStatus.mockResolvedValue({
+      available: false,
+      checkedAt: "2026-06-10T00:00:00.000Z",
+      paymentSource: { source: "subscription" },
+      reason: "codex account authentication required to read rate limits",
+    });
+    codexDeviceAuthStart.mockResolvedValue({
+      id: "auth-1",
+      projectId: "project-1",
+      accountId: "account-1",
+      codexHome: "/tmp/.codex",
+      state: "pending",
+      verificationUrl: "https://chatgpt.com/device",
+      userCode: "ABCD-EFGH",
+      output: "",
+      startedAt: 1,
+      updatedAt: 1,
+    });
+    const open = jest.spyOn(window, "open").mockReturnValue(null);
+    render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
+    await waitFor(() =>
+      expect(screen.getByText("Sign in again with ChatGPT")).toBeTruthy(),
+    );
+    await act(async () => {
+      screen.getByText("Sign in again with ChatGPT").click();
+    });
+    const button = await screen.findByRole("button", {
+      name: "Copy code and open ChatGPT sign-in",
+    });
+    expect(screen.queryByText(/Waiting for you to approve/)).toBeNull();
+    await act(async () => {
+      button.click();
+    });
+    expect(open).toHaveBeenCalledWith(
+      "https://chatgpt.com/device",
+      "_blank",
+      "noopener",
+    );
+    expect(
+      screen.getByText(/Waiting for you to approve on OpenAI/),
+    ).toBeTruthy();
+    open.mockRestore();
+  });
+
   it("does not start sign-in on a host without credential lifecycle support", async () => {
     getCodexPaymentSource.mockResolvedValue({ source: "subscription" });
     getCodexUsageStatus.mockResolvedValue({

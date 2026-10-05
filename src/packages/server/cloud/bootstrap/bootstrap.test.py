@@ -1668,339 +1668,20 @@ class BootstrapStateFilesTest(unittest.TestCase):
             )
 
 
-class ManagedHarnessTest(unittest.TestCase):
+class CocalcInstallRootTest(unittest.TestCase):
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.base = Path(temporary.name)
-        self.root = self.base / "harnesses"
-        self.prefix = "claude-code/0.81.1"
-        self.destination = self.root / self.prefix
-        self.cfg = replace(make_cfg(str(self.base)), ssh_user="")
-        for name, value in (
-            ("MANAGED_HARNESSES_ROOT", self.root),
-            # Exercise real ownership/mode checks without requiring a root test runner.
-            ("MANAGED_HARNESS_OWNER", (os.getuid(), os.getgid())),
-        ):
-            patcher = mock.patch.object(bootstrap, name, value)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(bootstrap, "COCALC_INSTALL_ROOT", self.base)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         patcher = mock.patch.object(bootstrap, "log_line")
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def entry(self, name: str, data: bytes = b"fixture", *, kind=tarfile.REGTYPE,
-              link: str = "", mode: int = 0o644):
-        member = tarfile.TarInfo(name)
-        member.type = kind
-        member.mode = mode
-        member.uid = 12345
-        member.gid = 12345
-        member.linkname = link
-        member.size = len(data) if member.isreg() else 0
-        return member, data
-
-    def archive_config(self, extra=(), *, omitted=(), arch="amd64"):
-        cpu = "x64" if arch == "amd64" else "arm64"
-        files = {
-            "bin/claude-agent-acp": (b"#!/bin/sh\nexit 0\n", 0o6755),
-            "app/node_modules/@agentclientprotocol/claude-agent-acp/package.json": (
-                json.dumps({"name": "@agentclientprotocol/claude-agent-acp", "version": "0.81.1"}).encode(), 0o666),
-            "app/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js": (b"// adapter", 0o644),
-            "app/node_modules/@anthropic-ai/claude-agent-sdk/package.json": (
-                json.dumps({"name": "@anthropic-ai/claude-agent-sdk", "version": "0.3.280"}).encode(), 0o644),
-            "app/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs": (b"// sdk", 0o644),
-            f"app/node_modules/@anthropic-ai/claude-agent-sdk-linux-{cpu}/claude": (b"fixture-binary", 0o755),
-        }
-        entries = [self.entry(self.prefix, kind=tarfile.DIRTYPE)]
-        entries += [self.entry(f"{self.prefix}/{name}", data, mode=mode)
-                    for name, (data, mode) in files.items() if name not in omitted]
-        entries.append(self.entry(
-            f"{self.prefix}/app/node_modules/.bin/claude-agent-acp",
-            kind=tarfile.SYMTYPE,
-            link="../@agentclientprotocol/claude-agent-acp/dist/index.js",
-        ))
-        entries.extend(extra)
-        archive = self.base / "harness.tar.xz"
-        with tarfile.open(archive, "w:xz") as target:
-            for member, data in entries:
-                target.addfile(member, io.BytesIO(data) if member.isreg() else None)
-        spec = bootstrap.ManagedHarnessSpec(
-            name="claude-code", version="0.81.1", os="linux", arch=arch,
-            url=archive.as_uri(), sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
-        )
-        return replace(self.cfg, expected_arch=arch, managed_harness=spec)
-
-    def test_manifest_validation_and_legacy_round_trip(self) -> None:
-        cfg = self.archive_config()
-        state = bootstrap.build_desired_state(cfg)
-        parsed = bootstrap.parse_managed_harness(state["managed_harness"], "linux", "amd64")
-        self.assertEqual(parsed, cfg.managed_harness)
-        self.assertNotIn("managed_harness", bootstrap.build_desired_state(self.cfg))
-        self.assertIsNone(bootstrap.parse_managed_harness(None, "linux", "amd64"))
-        for change in (
-            {"sha256": ""}, {"sha256": "g" * 64}, {"sha256": "a" * 63},
-            {"name": "other"}, {"version": "../0.81.1"}, {"version": "0.81.2"},
-            {"os": "darwin"}, {"arch": "arm64"}, {"arch": "other"},
-            {"url": "relative.tar.xz"}, {"url": "https://example.org/path\n"},
-            {"install_revision": "../outside"}, {"install_revision": ""},
-            {"install_revision": "0.81.1-r0"}, {"install_revision": "0.81.2-r1"},
-            {"install_revision": 1}, {"install_revision": "0.81.1-r1/child"},
-        ):
-            with self.subTest(change=change), self.assertRaises(RuntimeError):
-                bootstrap.parse_managed_harness({**state["managed_harness"], **change}, "linux", "amd64")
-        with self.assertRaises(RuntimeError):
-            bootstrap.parse_managed_harness({}, "linux", "amd64")
-        with self.assertRaises(RuntimeError):
-            bootstrap.parse_managed_harness([], "linux", "amd64")
-
-    def test_load_config_retains_manifest(self) -> None:
-        cfg = replace(self.archive_config(), ssh_user="missing-runtime-user")
-        directory = Path(cfg.bootstrap_dir)
-        directory.mkdir()
-        with mock.patch.object(bootstrap, "resolve_runtime_user_identity", return_value=(2000, 2000)):
-            facts = bootstrap.build_host_facts(cfg)
-            desired = bootstrap.build_desired_state(cfg)
-        (directory / "bootstrap-host-facts.json").write_text(json.dumps(facts))
-        desired_path = directory / "bootstrap-desired-state.json"
-        desired_path.write_text(json.dumps(desired))
-        self.assertEqual(bootstrap.load_config(str(directory)).managed_harness, cfg.managed_harness)
-        desired.pop("managed_harness")
-        desired_path.write_text(json.dumps(desired))
-        self.assertIsNone(bootstrap.load_config(str(directory)).managed_harness)
-
-    def test_installs_verified_tree_and_reuses_without_download(self) -> None:
-        cfg = self.archive_config()
-        bootstrap.install_managed_harness(cfg)
-        self.assertTrue(bootstrap.verify_managed_harness(cfg))
-        executable = self.destination / "bin/claude-agent-acp"
-        self.assertEqual(executable.stat().st_mode & 0o7777, 0o755)
-        self.assertEqual(executable.stat().st_uid, os.getuid())
-        metadata = self.destination / "app/node_modules/@agentclientprotocol/claude-agent-acp/package.json"
-        self.assertEqual(metadata.stat().st_mode & 0o7777, 0o644)
-        link = self.destination / "app/node_modules/.bin/claude-agent-acp"
-        self.assertTrue(link.is_symlink())
-        self.assertEqual(link.read_bytes(), b"// adapter")
-        marker = self.destination / bootstrap.MANAGED_HARNESS_MARKER
-        self.assertEqual(marker.stat().st_mode & 0o777, 0o600)
-        self.assertNotIn("url", json.loads(marker.read_text())["artifact"])
-        with mock.patch.object(bootstrap, "download_file", side_effect=AssertionError("downloaded again")):
-            bootstrap.install_managed_harness(cfg)
-        self.assertEqual(list(self.root.glob(".install-*")), [])
-
-    def test_arm64_payload_layout(self) -> None:
-        cfg = self.archive_config(arch="arm64")
-        with mock.patch.object(bootstrap.os, "uname", return_value=type("Uname", (), {"sysname": "Linux", "machine": "aarch64"})()):
-            bootstrap.install_managed_harness(cfg)
-            self.assertTrue(bootstrap.verify_managed_harness(cfg))
-
-    def test_patched_revision_preserves_legacy_tree_and_can_roll_back(self) -> None:
-        old = self.archive_config()
-        bootstrap.install_managed_harness(old)
-        marker = self.destination / bootstrap.MANAGED_HARNESS_MARKER
-        old_marker = marker.read_bytes()
-        self.assertNotIn("install_revision", json.loads(old_marker)["artifact"])
-        old_tree = bootstrap._managed_harness_tree_sha256(self.destination)
-        new = self.archive_config([self.entry(f"{self.prefix}/patch", b"rate-limit patch")])
-        self.assertNotEqual(old.managed_harness.sha256, new.managed_harness.sha256)
-        # Republished bytes still fail closed if the installation identity is reused.
-        with self.assertRaisesRegex(RuntimeError, "Unverified managed harness collision"):
-            bootstrap.install_managed_harness(new)
-        new = replace(new, managed_harness=replace(new.managed_harness, install_revision="0.81.1-r1"))
-        self.assertEqual(
-            bootstrap.parse_managed_harness(bootstrap.build_desired_state(new)["managed_harness"], "linux", "amd64"),
-            new.managed_harness,
-        )
-        bootstrap.install_managed_harness(new)
-        revision = self.root / "claude-code/0.81.1-r1"
-        self.assertEqual((revision / "patch").read_bytes(), b"rate-limit patch")
-        self.assertTrue(bootstrap.verify_managed_harness(new))
-        self.assertEqual(marker.read_bytes(), old_marker)
-        self.assertEqual(bootstrap._managed_harness_tree_sha256(self.destination), old_tree)
-        with mock.patch.object(bootstrap, "download_file", side_effect=AssertionError("downloaded again")):
-            bootstrap.install_managed_harness(new)
-            bootstrap.install_managed_harness(old)
-        self.assertTrue(bootstrap.verify_managed_harness(old))
-        # A new revision is not an exemption from integrity checks.
-        (revision / "patch").write_bytes(b"tampered")
-        with self.assertRaisesRegex(RuntimeError, "Unverified managed harness collision"):
-            bootstrap.install_managed_harness(new)
-
-    def test_unverified_revision_is_not_adopted(self) -> None:
-        cfg = self.archive_config()
-        cfg = replace(cfg, managed_harness=replace(cfg.managed_harness, install_revision="0.81.1-r1"))
-        destination = self.root / "claude-code/0.81.1-r1"
-        destination.mkdir(parents=True)
-        (destination / "keep").write_text("operator evidence")
-        with self.assertRaisesRegex(RuntimeError, "Unverified managed harness collision"):
-            bootstrap.install_managed_harness(cfg)
-        self.assertEqual((destination / "keep").read_text(), "operator evidence")
-
-    def test_legacy_install_does_nothing(self) -> None:
-        with mock.patch.object(bootstrap, "download_file") as download:
-            bootstrap.install_managed_harness(self.cfg)
-        download.assert_not_called()
-        self.assertFalse(self.root.exists())
-
-    def test_checksum_failure_never_installs(self) -> None:
-        cfg = self.archive_config()
-        cfg = replace(cfg, managed_harness=replace(cfg.managed_harness, sha256="0" * 64))
-        with self.assertRaisesRegex(RuntimeError, "checksum mismatch"):
-            bootstrap.install_managed_harness(cfg)
-        self.assertFalse(self.destination.exists())
-        self.assertEqual(list(self.root.glob(".install-*")), [])
-
-    def test_rejects_unsafe_archive_entries(self) -> None:
-        bad_entries = [
-            self.entry("../outside"), self.entry("/outside"),
-            self.entry(f"{self.prefix}/../outside"), self.entry("claude-code/other/file"),
-            self.entry(f"{self.prefix}/bin/claude-agent-acp"),
-            self.entry(f"{self.prefix}/{bootstrap.MANAGED_HARNESS_MARKER}"),
-            self.entry(f"{self.prefix}/escape", kind=tarfile.SYMTYPE, link="../../../outside"),
-            self.entry(f"{self.prefix}/absolute", kind=tarfile.SYMTYPE, link="/etc/passwd"),
-            self.entry(f"{self.prefix}/hard", kind=tarfile.LNKTYPE, link=f"{self.prefix}/bin/claude-agent-acp"),
-            self.entry(f"{self.prefix}/fifo", kind=tarfile.FIFOTYPE),
-            self.entry(f"{self.prefix}/device", kind=tarfile.CHRTYPE),
-            self.entry(f"{self.prefix}/bin/claude-agent-acp/child"),
-            self.entry(f"{self.prefix}/app/node_modules/.bin/claude-agent-acp/child"),
-        ]
-        for bad in bad_entries:
-            with self.subTest(name=bad[0].name):
-                cfg = self.archive_config([bad])
-                with self.assertRaises(RuntimeError):
-                    bootstrap.install_managed_harness(cfg)
-                self.assertFalse(self.destination.exists())
-                self.assertEqual(list(self.root.glob(".install-*")), [])
-        self.assertFalse((self.base / "outside").exists())
-
-    def test_missing_sdk_executable_is_not_published(self) -> None:
-        cfg = self.archive_config(omitted=["app/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude"])
-        with self.assertRaises(OSError):
-            bootstrap.install_managed_harness(cfg)
-        self.assertFalse(self.destination.exists())
-
-    def test_unverified_existing_version_is_not_adopted_or_changed(self) -> None:
-        cfg = self.archive_config()
-        self.destination.mkdir(parents=True)
-        existing = self.destination / "keep"
-        existing.write_text("manual staging installation")
-        with self.assertRaisesRegex(RuntimeError, "Unverified managed harness collision"), \
-            mock.patch.object(bootstrap, "download_file", side_effect=AssertionError("downloaded")):
-            bootstrap.install_managed_harness(cfg)
-        self.assertEqual(existing.read_text(), "manual staging installation")
-
-    def test_redirected_or_writable_root_is_rejected(self) -> None:
-        cfg = self.archive_config()
-        other = self.base / "other"
-        other.mkdir()
-        self.root.symlink_to(other, target_is_directory=True)
-        with self.assertRaisesRegex(RuntimeError, "symlink"):
-            bootstrap.install_managed_harness(cfg)
-        self.root.unlink()
-        self.root.mkdir(mode=0o777)
-        self.root.chmod(0o777)
-        with self.assertRaisesRegex(RuntimeError, "not writable"):
-            bootstrap.install_managed_harness(cfg)
-
-    def test_modified_tree_or_marker_is_rejected(self) -> None:
-        cfg = self.archive_config()
-        bootstrap.install_managed_harness(cfg)
-        executable = self.destination / "bin/claude-agent-acp"
-        original = executable.read_bytes()
-        executable.write_bytes(b"modified")
-        with self.assertRaisesRegex(RuntimeError, "Unverified"):
-            bootstrap.verify_managed_harness(cfg)
-        executable.write_bytes(original)
-        marker = self.destination / bootstrap.MANAGED_HARNESS_MARKER
-        marker.chmod(0o666)
-        with self.assertRaisesRegex(RuntimeError, "Unverified"):
-            bootstrap.verify_managed_harness(cfg)
-        marker.chmod(0o600)
-        changed = replace(cfg, managed_harness=replace(cfg.managed_harness, sha256="1" * 64))
-        with self.assertRaisesRegex(RuntimeError, "Unverified"):
-            bootstrap.install_managed_harness(changed)
-
-    def test_interrupted_extraction_cleans_staging_and_can_retry(self) -> None:
-        cfg = self.archive_config()
-        extract = bootstrap._extract_managed_harness
-        def interrupted(*args):
-            extract(*args)
-            raise OSError("interrupted extraction")
-        with mock.patch.object(bootstrap, "_extract_managed_harness", side_effect=interrupted):
-            with self.assertRaisesRegex(OSError, "interrupted"):
-                bootstrap.install_managed_harness(cfg)
-        self.assertFalse(self.destination.exists())
-        self.assertEqual(list(self.root.glob(".install-*")), [])
-        bootstrap.install_managed_harness(cfg)
-        self.assertTrue(bootstrap.verify_managed_harness(cfg))
-
-    def test_enable_requires_verified_install_and_preserves_local_override(self) -> None:
-        cfg = self.archive_config()
-        self.assertEqual(cfg.env_lines, [])
-        env = Path(cfg.env_file)
-        env.write_text("PREVIOUS=kept\n")
-        local = env.with_name("project-host.local.env")
-        local.write_text("COCALC_ACP_HARNESSES=0\nLOCAL_SETTING=kept\n")
-        with self.assertRaisesRegex(RuntimeError, "before enabling ACP"):
-            bootstrap.write_env(cfg, 10)
-        self.assertEqual(env.read_text(), "PREVIOUS=kept\n")
-        bootstrap.install_managed_harness(cfg)
-        bootstrap.write_env(cfg, 10)
-        self.assertIn("COCALC_ACP_HARNESSES=1\n", env.read_text())
-        self.assertEqual(local.read_text(), "COCALC_ACP_HARNESSES=0\nLOCAL_SETTING=kept\n")
-        bootstrap.write_env(replace(self.cfg, env_lines=[]), 10)
-        self.assertNotIn("COCALC_ACP_HARNESSES", env.read_text())
-        self.assertIn("COCALC_ACP_HARNESSES=0", local.read_text())
-
-    def test_legacy_flags_unchanged_and_ignored_manifest_does_not_enable(self) -> None:
-        # An old reader ignores managed_harness and receives no eager flag from
-        # the renderer. Model that old-reader config without enabling admission.
-        cfg = replace(self.archive_config(), managed_harness=None)
-        bootstrap.write_env(cfg, 10)
-        self.assertNotIn("COCALC_ACP_HARNESSES", Path(cfg.env_file).read_text())
-        for value in ("0", "1"):
-            bootstrap.write_env(replace(cfg, env_lines=[f"COCALC_ACP_HARNESSES={value}"]), 10)
-            self.assertIn(f"COCALC_ACP_HARNESSES={value}", Path(cfg.env_file).read_text())
-
-    def test_wrong_owner_or_platform_is_rejected_before_download(self) -> None:
-        cfg = self.archive_config()
-        with mock.patch.object(bootstrap, "MANAGED_HARNESS_OWNER", (os.getuid() + 1, os.getgid())), \
-            self.assertRaises((RuntimeError, PermissionError)):
-            bootstrap.install_managed_harness(cfg)
-        with mock.patch.object(bootstrap.os, "uname", return_value=type("Uname", (), {"sysname": "Linux", "machine": "unsupported"})()), \
-            self.assertRaisesRegex(RuntimeError, "unsupported architecture"):
-            bootstrap.install_managed_harness(cfg)
-        self.assertFalse(self.root.exists())
-
-    def test_download_failure_and_atomic_rename_failure_leave_no_install(self) -> None:
-        cfg = self.archive_config()
-        for name in ("download_file", "rename"):
-            target = bootstrap if name == "download_file" else Path
-            with self.subTest(step=name), mock.patch.object(target, name, side_effect=OSError("injected failure")):
-                with self.assertRaisesRegex(OSError, "injected failure"):
-                    bootstrap.install_managed_harness(cfg)
-            self.assertFalse(self.destination.exists())
-            self.assertEqual(list(self.root.glob(".install-*")), [])
-
-    def test_environment_reconcile_does_not_install_or_restart(self) -> None:
-        cfg = self.archive_config()
-        with mock.patch.object(bootstrap, "ensure_runtime_user"), \
-            mock.patch.object(bootstrap, "ensure_bootstrap_paths"), \
-            mock.patch.object(bootstrap, "compute_image_size", return_value=10), \
-            mock.patch.object(bootstrap, "record_operation_start"), \
-            mock.patch.object(bootstrap, "record_operation_success"), \
-            mock.patch.object(bootstrap, "record_operation_failure") as failure, \
-            mock.patch.object(bootstrap, "report_bootstrap_status"), \
-            mock.patch.object(bootstrap, "write_bootstrap_state_files"), \
-            mock.patch.object(bootstrap, "install_managed_harness", side_effect=AssertionError("environment installed payload")), \
-            mock.patch.object(bootstrap, "start_project_host", side_effect=AssertionError("environment restarted host")):
-            with self.assertRaisesRegex(RuntimeError, "before enabling ACP"):
-                bootstrap.run_reconcile_environment(cfg)
-            failure.assert_called_once()
-            self.assertFalse(Path(cfg.env_file).exists())
-
     def assert_install_root_migration(self, *, prepare: bool) -> None:
-        cfg = replace(self.archive_config(), ssh_user="cocalc-host")
+        cfg = replace(make_cfg(str(self.base)), ssh_user="cocalc-host")
         runtime_owner = (2000, 2000)
         owners = {self.base: runtime_owner}
         children = []
@@ -2036,8 +1717,7 @@ class ManagedHarnessTest(unittest.TestCase):
                 return None
             return original_mkdir(path, *args, **kwargs)
 
-        with mock.patch.object(bootstrap, "MANAGED_HARNESS_OWNER", (0, 0)), \
-            mock.patch.object(Path, "lstat", lstat), \
+        with mock.patch.object(Path, "lstat", lstat), \
             mock.patch.object(Path, "mkdir", mkdir), \
             mock.patch.object(bootstrap.os, "fchown", fchown), \
             mock.patch.object(bootstrap.os, "chown", chown), \
@@ -2049,8 +1729,7 @@ class ManagedHarnessTest(unittest.TestCase):
                     cfg, ["chown", "cocalc-host:cocalc-host", "/var/lib/cocalc"],
                     "chown cocalc dirs",
                 )
-            bootstrap.install_managed_harness(cfg)
-            self.assertTrue(bootstrap.verify_managed_harness(cfg))
+            bootstrap.ensure_cocalc_install_root()
             self.assertEqual(owners[self.base], (0, 0))
             self.assertEqual(self.base.stat().st_mode & 0o777, 0o755)
             self.assertTrue(migrations)
@@ -2074,27 +1753,11 @@ class ManagedHarnessTest(unittest.TestCase):
         elsewhere.mkdir()
         redirected = self.base / "redirected"
         redirected.symlink_to(elsewhere, target_is_directory=True)
-        with mock.patch.object(bootstrap, "MANAGED_HARNESSES_ROOT", redirected / "harnesses"), \
+        with mock.patch.object(bootstrap, "COCALC_INSTALL_ROOT", redirected), \
             mock.patch.object(bootstrap.os, "fchown") as chown, \
             self.assertRaisesRegex(RuntimeError, "symlink"):
             bootstrap.ensure_cocalc_install_root()
         chown.assert_not_called()
-
-    def test_available_packaged_archives(self) -> None:
-        build = Path(__file__).resolve().parents[3] / "project/build"
-        archives = {arch: build / f"harnesses-linux-{arch}.tar.xz" for arch in ("amd64", "arm64")}
-        if not all(path.is_file() for path in archives.values()):
-            self.skipTest("optional managed harness build outputs are not available")
-        for arch, archive in archives.items():
-            with self.subTest(arch=arch), \
-                mock.patch.object(bootstrap, "MANAGED_HARNESSES_ROOT", self.base / arch), \
-                mock.patch.object(bootstrap.os, "uname", return_value=type("Uname", (), {"sysname": "Linux", "machine": arch})()):
-                cfg = replace(self.cfg, expected_arch=arch, managed_harness=bootstrap.ManagedHarnessSpec(
-                    name="claude-code", version="0.81.1", os="linux", arch=arch,
-                    url=archive.as_uri(), sha256=bootstrap._managed_harness_file_sha256(archive),
-                ))
-                bootstrap.install_managed_harness(cfg)
-                self.assertTrue(bootstrap.verify_managed_harness(cfg))
 
 
 class BootstrapRuntimeUserContractTest(unittest.TestCase):
@@ -6424,7 +6087,6 @@ class BootstrapModesTest(unittest.TestCase):
                 "configure_daily_root_cleanup",
                 "install_privileged_wrappers",
                 "install_privileged_tool_binaries",
-                "install_managed_harness",
                 "write_helpers",
                 "configure_runtime_sudoers",
                 "verify_runtime_sudoers",
@@ -6478,7 +6140,6 @@ class BootstrapModesTest(unittest.TestCase):
                     "configure_daily_root_cleanup",
                     "install_privileged_wrappers",
                     "install_privileged_tool_binaries",
-                    "install_managed_harness",
                     "write_helpers",
                     "configure_runtime_sudoers",
                     "verify_runtime_sudoers",
@@ -6679,7 +6340,6 @@ class BootstrapModesTest(unittest.TestCase):
             patch("ensure_subuids", lambda _cfg: None)
             patch("configure_podman", lambda _cfg: events.append("configure_podman"))
             patch("verify_runtime_user_contract", lambda _cfg: None)
-            patch("install_managed_harness", lambda _cfg: events.append("install_managed_harness"))
             patch("write_env", lambda _cfg, _size: events.append("write_env"))
             patch("ensure_runtime_user_manager", lambda _cfg: None)
             patch("configure_runtime_shell_env", lambda _cfg: None)
@@ -6717,7 +6377,6 @@ class BootstrapModesTest(unittest.TestCase):
                 events.index(f"extract:{Path(tmpdir) / 'container-runtime'}"),
                 events.index("configure_podman"),
             )
-            self.assertLess(events.index("install_managed_harness"), events.index("write_env"))
             self.assertLess(events.index("write_env"), events.index("start_project_host"))
             state = json.loads(
                 (Path(cfg.bootstrap_dir) / "bootstrap-state.json").read_text(

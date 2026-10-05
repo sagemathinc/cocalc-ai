@@ -15,6 +15,9 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   }),
   useTypedRedux: () => undefined,
 }));
+jest.mock("@cocalc/frontend/components", () => ({
+  Icon: () => null,
+}));
 jest.mock("@cocalc/frontend/project/use-project-run-quota", () => ({
   useProjectRunQuota: () => ({ runQuota: { network: true } }),
 }));
@@ -26,6 +29,9 @@ jest.mock("@cocalc/frontend/projects/host-operational", () => ({
 }));
 jest.mock("@cocalc/frontend/keyboard/boundary", () => ({
   KeyboardBoundary: ({ children }) => <div>{children}</div>,
+}));
+jest.mock("@cocalc/frontend/project/page/project-version-update", () => ({
+  ProjectUpdateIndicator: () => null,
 }));
 jest.mock("./project-details", () => ({
   __esModule: true,

@@ -104,6 +104,7 @@ jest.mock("@cocalc/frontend/project/servers/consts", () => ({
   ICON_USERS: "users",
 }));
 
+jest.mock("./id-chat-title", () => ({ useIdChatTitle: () => undefined }));
 jest.mock("@cocalc/frontend/project/workspaces/chat-display", () => ({
   generatedWorkspaceChatLabel: () => null,
 }));

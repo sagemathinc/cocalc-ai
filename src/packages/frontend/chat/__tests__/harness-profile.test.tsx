@@ -24,6 +24,15 @@ import {
   harnessRuntimeFromDraft,
   qualifiedHarnessRuntime,
 } from "../harness-profile";
+import {
+  createMemoryPaymentApiForTests,
+  resetPaymentSelectionStoreForTests,
+  seedPaymentSelectionForTests,
+} from "../payment-selection-store";
+
+beforeEach(() =>
+  resetPaymentSelectionStoreForTests(createMemoryPaymentApiForTests()),
+);
 
 const draft = {
   id: "Pi",
@@ -57,7 +66,7 @@ jest.mock("../claude-subscription-connect", () => ({
   ),
 }));
 
-test("reconnecting selects the returned subscription and updates new-agent defaults", async () => {
+test("reconnecting selects the returned subscription for this agent and keeps the account default", async () => {
   const getStore = jest
     .spyOn(redux, "getStore")
     .mockReturnValue(accountStore as any);
@@ -102,17 +111,22 @@ test("reconnecting selects the returned subscription and updates new-agent defau
         threadKey: "thread-a",
       }),
     ).toMatchObject(expected);
+    // The first choice became the account default; choosing for one agent
+    // later never moves it, so agents following the default are unaffected.
     expect(
       readHarnessCredentialSelection({
         accountId: "account-a",
         forNewAgent: true,
       }),
-    ).toMatchObject(expected);
+    ).toMatchObject({
+      mode: "account-subscription",
+      credentialId: "00000000-0000-4000-8000-000000000001",
+      claudeAiConnectors: false,
+    });
     expect(document.activeElement).toBe(button);
   } finally {
     list.mockRestore();
     getStore.mockRestore();
-    localStorage.clear();
   }
 });
 
@@ -122,7 +136,7 @@ test("qualified Claude profiles contain only trusted catalog identity", () => {
     version: 2,
     kind: "acp",
     id: "claude-code",
-    revision: "0.81.1",
+    revision: "0.85.1",
     cwd: "/home/user",
     executionPolicy: "full-access",
     credentialMode: "project-managed",
@@ -185,10 +199,17 @@ test("Claude account-key selection links to the shared security model by keyboar
   const getStore = jest
     .spyOn(redux, "getStore")
     .mockReturnValue(accountStore as any);
-  localStorage.setItem(
-    "cocalc:acp-harness-credential:v1:account-a:project-a:thread-a",
-    "account-api-key:00000000-0000-4000-8000-000000000001",
-  );
+  seedPaymentSelectionForTests({
+    accountId: "account-a",
+    projectId: "project-a",
+    threadKey: "thread-a",
+    selection: {
+      version: 1,
+      provider: "claude-code",
+      mode: "account-api-key",
+      credential_id: "00000000-0000-4000-8000-000000000001",
+    },
+  });
   try {
     render(
       <HarnessRuntimeSummary
@@ -221,7 +242,6 @@ test("Claude account-key selection links to the shared security model by keyboar
     expect(document.activeElement).toBe(link);
   } finally {
     getStore.mockRestore();
-    localStorage.clear();
   }
 });
 
@@ -229,10 +249,17 @@ test("Claude subscription selection exposes an explicit disconnect action", () =
   const getStore = jest
     .spyOn(redux, "getStore")
     .mockReturnValue(accountStore as any);
-  localStorage.setItem(
-    "cocalc:acp-harness-credential:v1:account-a:project-a:thread-a",
-    "account-subscription:00000000-0000-4000-8000-000000000001",
-  );
+  seedPaymentSelectionForTests({
+    accountId: "account-a",
+    projectId: "project-a",
+    threadKey: "thread-a",
+    selection: {
+      version: 1,
+      provider: "claude-code",
+      mode: "account-subscription",
+      credential_id: "00000000-0000-4000-8000-000000000001",
+    },
+  });
   try {
     render(
       <HarnessRuntimeSummary
@@ -249,7 +276,6 @@ test("Claude subscription selection exposes an explicit disconnect action", () =
     ).toBeTruthy();
   } finally {
     getStore.mockRestore();
-    localStorage.clear();
   }
 });
 
@@ -270,10 +296,17 @@ test("Claude subscription shows the verified billing account and plan", async ()
         },
       },
     ] as any);
-  localStorage.setItem(
-    "cocalc:acp-harness-credential:v1:account-a:project-a:thread-a",
-    "account-subscription:00000000-0000-4000-8000-000000000001",
-  );
+  seedPaymentSelectionForTests({
+    accountId: "account-a",
+    projectId: "project-a",
+    threadKey: "thread-a",
+    selection: {
+      version: 1,
+      provider: "claude-code",
+      mode: "account-subscription",
+      credential_id: "00000000-0000-4000-8000-000000000001",
+    },
+  });
   try {
     render(
       <HarnessRuntimeSummary
@@ -288,7 +321,6 @@ test("Claude subscription shows the verified billing account and plan", async ()
   } finally {
     list.mockRestore();
     getStore.mockRestore();
-    localStorage.clear();
   }
 });
 
@@ -540,7 +572,7 @@ test("an unavailable saved model remains explicit and can be replaced from the d
   }));
   function Composer() {
     const [settings, setSettings] = useState({
-      configOptions: [{ id: "model", value: "opus[1m]" }],
+      configOptions: [{ id: "model", value: "claude-opus-4-1" }],
     });
     return (
       <HarnessRuntimeControl
@@ -558,7 +590,7 @@ test("an unavailable saved model remains explicit and can be replaced from the d
   const model = await screen.findByRole("combobox", {
     name: "Claude Code Model",
   });
-  expect(screen.getByText("opus[1m] (unavailable)")).toBeTruthy();
+  expect(screen.getByText("claude-opus-4-1 (unavailable)")).toBeTruthy();
   expect(model.getAttribute("aria-invalid")).toBe("true");
   expect(onSettings).not.toHaveBeenCalled();
   model.focus();
@@ -840,7 +872,6 @@ test("changing payment refreshes options and discards the previous credential's 
     expect(onDiscover).toHaveBeenCalledTimes(2);
   } finally {
     getStore.mockRestore();
-    localStorage.clear();
   }
 });
 
@@ -1027,4 +1058,41 @@ test("the phone summary is one chip that opens the full settings", async () => {
   } finally {
     getStore.mockRestore();
   }
+});
+
+test("a model catalog saved under a superseded Claude pin is rediscovered", async () => {
+  const runtime = qualifiedHarnessRuntime("claude-code", "/home/user");
+  const onDiscover = jest.fn(async () => ({
+    profile: runtime.profile,
+    controls: claudeControls,
+  }));
+  const { unmount } = render(
+    <HarnessRuntimeControl
+      compact
+      runtime={runtime}
+      reported={{
+        profile: { ...runtime.profile, revision: "0.81.1" },
+        controls: claudeControls,
+      }}
+      onDiscover={onDiscover}
+      onSettings={jest.fn()}
+    />,
+  );
+  await waitFor(() => expect(onDiscover).toHaveBeenCalledTimes(1));
+  unmount();
+  // A current catalog is used as is.
+  const current = jest.fn();
+  render(
+    <HarnessRuntimeControl
+      compact
+      runtime={runtime}
+      reported={{ profile: runtime.profile, controls: claudeControls }}
+      onDiscover={current}
+      onSettings={jest.fn()}
+    />,
+  );
+  expect(
+    screen.getByRole("combobox", { name: "Claude Code Model" }),
+  ).toBeTruthy();
+  expect(current).not.toHaveBeenCalled();
 });

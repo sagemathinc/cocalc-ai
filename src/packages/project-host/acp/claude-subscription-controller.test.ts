@@ -10,7 +10,14 @@ import {
   ensureClaudeTranscriptDirectory,
 } from "./claude-subscription-controller";
 import { mountArg } from "@cocalc/backend/podman";
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -25,7 +32,7 @@ test("controller overlays the immutable image while keeping the root read-only",
     owner: "owner",
     home: "/auth",
     rootfs: "/immutable-image",
-    managedHarnesses: "/harnesses",
+    claudeCodeDir: "/tools/v1/claude-code",
     nodeMounts: {},
     uid: 1000,
     gid: 1000,
@@ -43,7 +50,7 @@ test("a subscription token is passed by env file, never on the command line", ()
     owner: "owner",
     home: "/auth",
     rootfs: "/rootfs",
-    managedHarnesses: "/harnesses",
+    claudeCodeDir: "/tools/v1/claude-code",
     nodeMounts: {},
     uid: 1000,
     gid: 1000,
@@ -62,7 +69,7 @@ test.each([undefined, true, false])(
       owner: "owner",
       home: "/auth",
       rootfs: "/rootfs",
-      managedHarnesses: "/harnesses",
+      claudeCodeDir: "/tools/v1/claude-code",
       nodeMounts: {},
       uid: 1000,
       gid: 1000,
@@ -113,6 +120,122 @@ test("Claude transcript mount rejects a project-controlled symlink", async () =>
   }
 });
 
+describe("Claude transcript lookup after reconnect", () => {
+  let projectHome: string;
+  const accountId = "00000000-0000-4000-8000-000000000002";
+  const oldCredential = "00000000-0000-4000-8000-000000000003";
+  const credentialId = "00000000-0000-4000-8000-000000000004";
+  const sessionId = "00000000-0000-4000-8000-000000000005";
+  let oldDirectory: string;
+  beforeEach(async () => {
+    projectHome = await mkdtemp(join(tmpdir(), "claude-reconnect-test-"));
+    oldDirectory = await ensureClaudeTranscriptDirectory({
+      projectHome,
+      accountId,
+      credentialId: oldCredential,
+    });
+    await mkdir(join(oldDirectory, "-workspace"));
+    await writeFile(
+      join(oldDirectory, "-workspace", `${sessionId}.jsonl`),
+      "saved context",
+    );
+  });
+  afterEach(async () => {
+    await rm(projectHome, { recursive: true, force: true });
+  });
+  const lookup = (extra = {}) =>
+    ensureClaudeTranscriptDirectory({
+      projectHome,
+      accountId,
+      credentialId,
+      sessionId,
+      ...extra,
+    });
+
+  test("resume and fork use the original tree without moving or replacing context", async () => {
+    const copyId = "00000000-0000-4000-8000-000000000006";
+    const source = await lookup();
+    expect(source).toBe(oldDirectory);
+    // A native fork writes its new transcript in the mounted source tree.
+    await writeFile(
+      join(source, "-workspace", `${copyId}.jsonl`),
+      "copied context",
+    );
+    expect(await lookup({ sessionId: copyId })).toBe(oldDirectory);
+    expect(
+      await readFile(join(source, "-workspace", `${sessionId}.jsonl`), "utf8"),
+    ).toBe("saved context");
+    expect(await lookup()).toBe(oldDirectory);
+  });
+
+  test("fresh sessions and explicit resets keep the current credential tree", async () => {
+    expect(await lookup({ sessionId: undefined })).toBe(
+      join(
+        projectHome,
+        ".local/share/cocalc/claude-sessions",
+        accountId,
+        credentialId,
+      ),
+    );
+    expect(await lookup({ sessionId: "" })).not.toBe(oldDirectory);
+  });
+
+  test("never searches another CoCalc account or project", async () => {
+    expect(
+      await lookup({ accountId: "00000000-0000-4000-8000-000000000007" }),
+    ).not.toBe(oldDirectory);
+    const otherProject = join(projectHome, "other-project");
+    await mkdir(otherProject);
+    expect(await lookup({ projectHome: otherProject })).not.toBe(oldDirectory);
+  });
+
+  test("missing context remains missing instead of choosing an unrelated transcript", async () => {
+    expect(
+      await lookup({ sessionId: "00000000-0000-4000-8000-000000000008" }),
+    ).not.toBe(oldDirectory);
+  });
+
+  test("duplicate session IDs fail closed even if one belongs to the current credential", async () => {
+    const current = await lookup({ sessionId: undefined });
+    await mkdir(join(current, "-workspace"));
+    await writeFile(
+      join(current, "-workspace", `${sessionId}.jsonl`),
+      "different context",
+    );
+    await expect(lookup()).rejects.toThrow("Ambiguous Claude transcript");
+    await expect(lookup()).rejects.toThrow(
+      join(oldDirectory, "-workspace", `${sessionId}.jsonl`),
+    );
+    await expect(lookup()).rejects.toThrow(
+      join(current, "-workspace", `${sessionId}.jsonl`),
+    );
+    expect(
+      await readFile(join(current, "-workspace", `${sessionId}.jsonl`), "utf8"),
+    ).toBe("different context");
+  });
+
+  test.each(["credential", "workspace", "transcript"])(
+    "rejects a symlink at the %s boundary",
+    async (boundary) => {
+      const target =
+        boundary === "credential"
+          ? oldDirectory
+          : boundary === "workspace"
+            ? join(oldDirectory, "-workspace")
+            : join(oldDirectory, "-workspace", `${sessionId}.jsonl`);
+      await rm(target, { recursive: true });
+      await symlink(tmpdir(), target);
+      await expect(lookup()).rejects.toThrow("Unsafe Claude transcript");
+    },
+  );
+
+  test("rejects path traversal in a saved session ID", async () => {
+    await expect(lookup({ sessionId: "../../elsewhere" })).rejects.toThrow(
+      "Invalid Claude transcript session",
+    );
+  });
+});
+
 jest.mock("@cocalc/backend/podman", () => ({
   mountArg: jest.fn(
     ({ source, target, readOnly }) =>
@@ -130,7 +253,7 @@ test("subscription controller mounts only its transcript, not project secrets or
     owner: "123:00000000-0000-4000-8000-000000000002:456",
     rootfs: "/trusted-base-rootfs",
     home: "/private-auth-home",
-    managedHarnesses: "/managed-harnesses",
+    claudeCodeDir: "/tools/v7/claude-code",
     toolBridgeDirectory: "/private-tool-bridge",
     sessionDirectory: "/project-claude-transcript",
     nodeMounts: { "/managed-node": "/opt/cocalc/bin" },
@@ -152,7 +275,9 @@ test("subscription controller mounts only its transcript, not project secrets or
   expect(args).toContain(
     "mount:/project-claude-transcript:/home/claude/projects:false",
   );
-  expect(args).toContain("mount:/managed-harnesses:/opt/cocalc/harnesses:true");
+  expect(args).toContain(
+    "mount:/tools/v7/claude-code:/opt/cocalc/bin2/claude-code:true",
+  );
   expect(args).toContain("mount:/managed-node:/opt/cocalc/bin:true");
   expect(mountArg).toHaveBeenCalledWith({
     source: "/managed-node",
@@ -170,7 +295,7 @@ test("subscription controller mounts only its transcript, not project secrets or
   expect(args.slice(-3)).toEqual([
     "/trusted-base-rootfs:O",
     "/opt/cocalc/bin/node",
-    "/opt/cocalc/harnesses/claude-code/0.81.1-r1/app/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
+    "/opt/cocalc/bin2/claude-code/app/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
   ]);
 });
 
@@ -258,7 +383,7 @@ test("restricted egress environment reaches only the controller process", () => 
     owner: "owner",
     home: "/auth",
     rootfs: "/rootfs",
-    managedHarnesses: "/harnesses",
+    claudeCodeDir: "/tools/v1/claude-code",
     nodeMounts: {},
     uid: 1000,
     gid: 1000,

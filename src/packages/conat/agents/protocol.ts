@@ -16,6 +16,10 @@ export interface AgentIdentity {
   conversation_history?: { thread_id: string; ended_at: string }[];
   disabled_at: Date | string | null;
   appearance?: AgentAppearance | null;
+  /** Runtime kind: recorded at registration, confirmed by the host. */
+  runtime?:
+    | import("@cocalc/util/ai/agent-runtime-kind").AgentRuntimeSummary
+    | null;
 }
 
 export interface AgentCredential {

@@ -1615,64 +1615,8 @@ class BundleSpec:
     manifest_url: str | None = None
 
 
-@dataclass(frozen=True)
-class ManagedHarnessSpec:
-    name: str
-    version: str
-    os: str
-    arch: str
-    url: str
-    sha256: str
-    install_revision: str | None = None
-
-
-MANAGED_HARNESSES_ROOT = Path("/opt/cocalc/harnesses")
-MANAGED_HARNESS_OWNER = (0, 0)
-MANAGED_HARNESS_MARKER = ".cocalc-verified-harness.json"
-
-
-def parse_managed_harness(
-    value: Any, expected_os: str, expected_arch: str
-) -> ManagedHarnessSpec | None:
-    if value is None:
-        return None
-    value = _ensure_object(value, "managed_harness")
-    fields = ("name", "version", "os", "arch", "url", "sha256")
-    spec = ManagedHarnessSpec(**{
-        field: _ensure_str(value.get(field), f"managed_harness.{field}")
-        for field in fields
-    }, install_revision=value.get("install_revision"))
-    _require(
-        spec.name == "claude-code" and spec.version == "0.81.1",
-        "unsupported managed harness name/version",
-    )
-    _require(
-        spec.install_revision is None
-        or (isinstance(spec.install_revision, str)
-            and re.fullmatch(re.escape(spec.version) + r"-r[1-9][0-9]*", spec.install_revision) is not None),
-        "invalid managed harness installation revision",
-    )
-    _require(
-        spec.os == expected_os == "linux"
-        and spec.arch in {"amd64", "arm64"}
-        and spec.arch == expected_arch,
-        "managed harness platform does not match host",
-    )
-    _require(
-        re.fullmatch(r"[a-fA-F0-9]{64}", spec.sha256) is not None,
-        "managed_harness.sha256 must be 64 hexadecimal characters",
-    )
-    url = urllib.parse.urlsplit(spec.url)
-    _require(
-        bool(spec.url)
-        and not any(character.isspace() for character in spec.url)
-        and url.scheme in {"https", "http", "file"}
-        and bool(url.path)
-        and not url.fragment
-        and (bool(url.netloc) if url.scheme != "file" else url.path.startswith("/")),
-        "managed_harness.url must be an absolute artifact URL",
-    )
-    return ManagedHarnessSpec(**{**asdict(spec), "sha256": spec.sha256.lower()})
+COCALC_INSTALL_ROOT = Path("/opt/cocalc")
+COCALC_INSTALL_OWNER = (0, 0)
 
 
 @dataclass(frozen=True)
@@ -1730,7 +1674,6 @@ class BootstrapConfig:
     bootstrap_done_paths: list[str]
     container_runtime_bundle: BundleSpec | None = None
     allow_loopback_rustic_rest: bool = False
-    managed_harness: ManagedHarnessSpec | None = None
 
 
 @dataclass(frozen=True)
@@ -2079,11 +2022,6 @@ def load_config(bootstrap_dir: str) -> BootstrapConfig:
             )
             if bundle_container_runtime
             else None
-        ),
-        managed_harness=parse_managed_harness(
-            desired.get("managed_harness"),
-            facts.get("expected_os"),
-            facts.get("expected_arch"),
         ),
     )
 
@@ -2700,8 +2638,6 @@ def build_desired_state(cfg: BootstrapConfig) -> dict[str, Any]:
             "current": cfg.container_runtime_bundle.current,
             "manifest_url": cfg.container_runtime_bundle.manifest_url,
         }
-    if cfg.managed_harness is not None:
-        state["managed_harness"] = asdict(cfg.managed_harness)
     return state
 
 
@@ -10655,12 +10591,6 @@ def write_env(cfg: BootstrapConfig, image_size_gb: int) -> None:
             continue
         key, value = parsed
         env_assignments[key] = value
-    if cfg.managed_harness is not None:
-        if not verify_managed_harness(cfg):
-            raise RuntimeError("managed harness must be installed before enabling ACP")
-        # Derive admission here, not in the hub's env_lines: an older bootstrap
-        # must not enable ACP merely because it ignored a new managed manifest.
-        env_assignments["COCALC_ACP_HARNESSES"] = "1"
     local_env_path = env_path.with_name(
         env_path.name[:-4] + ".local.env"
         if env_path.name.endswith(".env")
@@ -11080,260 +11010,24 @@ def resolve_bundle_spec(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleSpec:
 
 
 def ensure_cocalc_install_root() -> None:
-    path = MANAGED_HARNESSES_ROOT.parent
+    path = COCALC_INSTALL_ROOT
     _require(path.resolve() == path, f"CoCalc installation root contains a symlink: {path}")
     path.mkdir(mode=0o755, exist_ok=True)
     # Older bootstrap made /opt/cocalc runtime-owned. Migrate only that inode;
     # project-host, tools, bundles and container-runtime retain their ownership.
     fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        os.fchown(fd, *MANAGED_HARNESS_OWNER)
+        os.fchown(fd, *COCALC_INSTALL_OWNER)
         os.fchmod(fd, 0o755)
     finally:
         os.close(fd)
-    _managed_harness_directory(path)
-
-
-def _managed_harness_directory(path: Path, *, create: bool = False) -> None:
-    _require(path.resolve() == path, f"managed harness path contains a symlink: {path}")
-    if create:
-        path.mkdir(mode=0o755, exist_ok=True)
     info = path.lstat()
     _require(
         stat.S_ISDIR(info.st_mode)
-        and (info.st_uid, info.st_gid) == MANAGED_HARNESS_OWNER
+        and (info.st_uid, info.st_gid) == COCALC_INSTALL_OWNER
         and not info.st_mode & 0o022,
-        f"managed harness directory must be root-owned and not writable by others: {path}",
+        f"CoCalc installation root must be root-owned and not writable by others: {path}",
     )
-
-
-def _managed_harness_identity(spec: ManagedHarnessSpec) -> dict[str, str]:
-    # Preserve verification of pre-revision markers and rollback configurations.
-    return {key: value for key, value in asdict(spec).items() if key != "url" and value is not None}
-
-
-def _managed_harness_file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _managed_harness_tree_sha256(root: Path) -> str:
-    digest = hashlib.sha256()
-
-    def failed_walk(error: OSError) -> None:
-        raise error
-
-    for directory, directories, files in os.walk(root, followlinks=False, onerror=failed_walk):
-        directories.sort()
-        for name in sorted(directories + files):
-            path = Path(directory) / name
-            relative = path.relative_to(root).as_posix()
-            if relative == MANAGED_HARNESS_MARKER:
-                continue
-            info = path.lstat()
-            _require(
-                (info.st_uid, info.st_gid) == MANAGED_HARNESS_OWNER,
-                f"managed harness entry must be root-owned: {relative}",
-            )
-            mode = stat.S_IMODE(info.st_mode)
-            if stat.S_ISLNK(info.st_mode):
-                target = os.readlink(path)
-                _require(
-                    not target.startswith("/") and path.resolve(strict=True).is_relative_to(root),
-                    f"managed harness symlink escapes installation: {relative}",
-                )
-                entry = [relative, "symlink", target]
-            elif stat.S_ISDIR(info.st_mode):
-                _require(mode == 0o755, f"invalid managed harness directory mode: {relative}")
-                entry = [relative, "directory", mode]
-            else:
-                _require(
-                    stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and mode in {0o644, 0o755},
-                    f"invalid managed harness file: {relative}",
-                )
-                entry = [relative, "file", mode, _managed_harness_file_sha256(path)]
-            digest.update(json.dumps(entry, separators=(",", ":")).encode() + b"\n")
-    return digest.hexdigest()
-
-
-def _validate_managed_harness_payload(root: Path, spec: ManagedHarnessSpec) -> None:
-    _require(stat.S_IMODE(root.lstat().st_mode) == 0o755, "invalid managed harness version directory mode")
-    cpu = "x64" if spec.arch == "amd64" else "arm64"
-    modules = root / "app/node_modules"
-    for package, version in (
-        ("@agentclientprotocol/claude-agent-acp", spec.version),
-        ("@anthropic-ai/claude-agent-sdk", "0.3.280"),
-    ):
-        metadata = _ensure_object(
-            json.loads((modules / package / "package.json").read_text()),
-            "managed harness package metadata",
-        )
-        _require(
-            metadata.get("name") == package and metadata.get("version") == version,
-            f"managed harness package identity mismatch: {package}",
-        )
-    for relative in (
-        "bin/claude-agent-acp",
-        f"app/node_modules/@anthropic-ai/claude-agent-sdk-linux-{cpu}/claude",
-    ):
-        info = (root / relative).lstat()
-        _require(
-            stat.S_ISREG(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o755,
-            f"managed harness executable missing or invalid: {relative}",
-        )
-    for relative in (
-        "app/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
-        "app/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs",
-    ):
-        _require(stat.S_ISREG((root / relative).lstat().st_mode), f"missing managed harness entry: {relative}")
-
-
-def verify_managed_harness(cfg: BootstrapConfig) -> bool:
-    spec = cfg.managed_harness
-    if spec is None:
-        return False
-    parse_managed_harness(asdict(spec), cfg.expected_os, cfg.expected_arch)
-    ensure_platform(cfg)
-    root = MANAGED_HARNESSES_ROOT
-    destination = root / spec.name / (spec.install_revision or spec.version)
-    # Inspect ancestors even if the final version is absent; never follow a
-    # runtime-writable or redirected installation root.
-    for path in (root.parent, root, root / spec.name, destination):
-        if not path.exists() and not path.is_symlink():
-            return False
-        _managed_harness_directory(path)
-    try:
-        marker = destination / MANAGED_HARNESS_MARKER
-        info = marker.lstat()
-        _require(
-            stat.S_ISREG(info.st_mode)
-            and info.st_nlink == 1
-            and (info.st_uid, info.st_gid) == MANAGED_HARNESS_OWNER
-            and stat.S_IMODE(info.st_mode) == 0o600,
-            "invalid verification marker ownership or mode",
-        )
-        recorded = _ensure_object(json.loads(marker.read_text()), "managed harness marker")
-        _require(recorded.get("artifact") == _managed_harness_identity(spec), "artifact marker mismatch")
-        _require(
-            recorded.get("tree_sha256") == _managed_harness_tree_sha256(destination),
-            "installed tree checksum mismatch",
-        )
-        _validate_managed_harness_payload(destination, spec)
-    except (OSError, ValueError, RuntimeError) as error:
-        raise RuntimeError(
-            f"Unverified managed harness collision at {destination}; "
-            "operator inspection and verified replacement required"
-        ) from error
-    return True
-
-
-def _extract_managed_harness(archive_path: Path, destination: Path, spec: ManagedHarnessSpec) -> None:
-    prefix = PurePosixPath(spec.name, spec.version)
-    with tarfile.open(archive_path, "r:xz") as archive:
-        entries: dict[str, tarfile.TarInfo] = {}
-        size = 0
-        for member in archive:
-            name = member.name.rstrip("/")
-            _require(
-                bool(name) and not name.startswith("/")
-                and all(part not in {"", ".", ".."} for part in name.split("/")),
-                "invalid managed harness archive path",
-            )
-            if name == spec.name:
-                _require(member.isdir(), "invalid managed harness archive root")
-                continue
-            path = PurePosixPath(name)
-            _require(path.is_relative_to(prefix), "managed harness archive entry outside expected version")
-            relative = path.relative_to(prefix).as_posix()
-            _require(
-                relative not in entries and relative != MANAGED_HARNESS_MARKER,
-                "duplicate or reserved managed harness archive entry",
-            )
-            _require(
-                (member.isdir() or member.isreg() or member.issym()) and not member.issparse(),
-                "unsupported managed harness archive entry type",
-            )
-            _require(relative != "." or member.isdir(), "invalid managed harness version root")
-            entries[relative] = member
-            size += member.size
-            _require(len(entries) <= 100_000 and size <= 2 * 1024**3, "managed harness archive exceeds limits")
-
-        for relative, member in entries.items():
-            for parent in PurePosixPath(relative).parents:
-                ancestor = entries.get(parent.as_posix())
-                _require(ancestor is None or ancestor.isdir(), "managed harness archive has a non-directory parent")
-            if member.issym():
-                target = posixpath.normpath(posixpath.join(posixpath.dirname(relative), member.linkname))
-                _require(
-                    bool(member.linkname) and not member.linkname.startswith("/")
-                    and target in entries
-                    and (entries[target].isreg() or entries[target].isdir()),
-                    "managed harness archive symlink must target an internal file or directory",
-                )
-
-        # Materialize links last so no archive-controlled path can redirect a write.
-        for relative, member in entries.items():
-            path = destination / relative
-            if member.isdir():
-                path.mkdir(mode=0o755, parents=True, exist_ok=True)
-            elif member.isreg():
-                path.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-                source = archive.extractfile(member)
-                _require(source is not None, "missing managed harness archive data")
-                with source, path.open("xb") as target:
-                    shutil.copyfileobj(source, target)
-                path.chmod(0o755 if member.mode & 0o111 else 0o644)
-        for relative, member in entries.items():
-            if member.issym():
-                path = destination / relative
-                path.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-                path.symlink_to(member.linkname)
-        for directory, directories, files in os.walk(destination, followlinks=False):
-            os.chown(directory, *MANAGED_HARNESS_OWNER)
-            os.chmod(directory, 0o755)
-            for name in directories + files:
-                os.chown(Path(directory) / name, *MANAGED_HARNESS_OWNER, follow_symlinks=False)
-
-
-def install_managed_harness(cfg: BootstrapConfig) -> None:
-    spec = cfg.managed_harness
-    if spec is None:
-        return
-    parse_managed_harness(asdict(spec), cfg.expected_os, cfg.expected_arch)
-    ensure_platform(cfg)
-    ensure_cocalc_install_root()
-    if verify_managed_harness(cfg):
-        return
-    root = MANAGED_HARNESSES_ROOT
-    for path in (root.parent, root, root / spec.name):
-        _managed_harness_directory(path, create=True)
-    # Patched payloads may retain their npm version. Install them alongside the
-    # old revision so running controllers and rollback targets keep their bytes.
-    destination = root / spec.name / (spec.install_revision or spec.version)
-    # The private staging directory is on the destination filesystem; only a
-    # complete verified tree and its marker become visible in the final rename.
-    with tempfile.TemporaryDirectory(prefix=".install-", dir=root) as temporary:
-        staging = Path(temporary)
-        archive = staging / "harness.tar.xz"
-        payload = staging / "payload"
-        download_file(cfg, spec.url, str(archive))
-        verify_sha256(cfg, str(archive), spec.sha256)
-        payload.mkdir(mode=0o755)
-        _extract_managed_harness(archive, payload, spec)
-        _validate_managed_harness_payload(payload, spec)
-        marker = payload / MANAGED_HARNESS_MARKER
-        marker.write_text(json.dumps({
-            "artifact": _managed_harness_identity(spec),
-            "tree_sha256": _managed_harness_tree_sha256(payload),
-        }, sort_keys=True) + "\n")
-        os.chown(marker, *MANAGED_HARNESS_OWNER)
-        marker.chmod(0o600)
-        _require(not destination.exists() and not destination.is_symlink(), "managed harness installation collision")
-        payload.rename(destination)
-    _require(verify_managed_harness(cfg), "managed harness verification failed after installation")
 
 
 def extract_bundle(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleSpec:
@@ -13916,7 +13610,6 @@ def run_reconcile(cfg: BootstrapConfig) -> int:
             extract_bundle(cfg, cfg.container_runtime_bundle)
         configure_podman(cfg)
         verify_runtime_user_contract(cfg)
-        install_managed_harness(cfg)
         write_env(cfg, image_size_gb)
         ensure_runtime_user_manager(cfg)
         configure_runtime_shell_env(cfg)
@@ -13958,7 +13651,6 @@ def run_reconcile_helpers(cfg: BootstrapConfig) -> int:
         configure_daily_root_cleanup(cfg)
         install_privileged_wrappers(cfg)
         install_privileged_tool_binaries(cfg)
-        install_managed_harness(cfg)
         write_helpers(cfg)
         configure_runtime_sudoers(cfg)
         verify_runtime_sudoers(cfg)

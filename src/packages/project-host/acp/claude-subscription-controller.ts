@@ -7,8 +7,15 @@ import { randomUUID } from "node:crypto";
 import { CLAUDE_PROJECT_MCP_NAME } from "./claude-project-tool-source";
 import { CLAUDE_PROJECT_JOB_GUIDANCE } from "@cocalc/util/ai/claude-project-tools";
 import { execFile, spawn } from "node:child_process";
-import { lstat, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { join, relative } from "node:path";
 import type { HarnessBinding, HarnessProcess } from "@cocalc/ai/acp/harness";
 import { mountArg } from "@cocalc/backend/podman";
 import getLogger from "@cocalc/backend/logger";
@@ -16,6 +23,7 @@ import { podmanEnv } from "@cocalc/backend/podman/env";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { normalizeRootfsImageName } from "@cocalc/util/rootfs-images";
 import { CLAUDE_CODE_INSTALL_ROOT } from "@cocalc/util/ai/qualified-harnesses";
+import { claudeCodeToolsDir } from "./claude-code-tools";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getNodeRuntimeMounts } from "@cocalc/project-runner/run/mounts";
 import { localPath } from "@cocalc/project-runner/run/filesystem";
@@ -56,7 +64,6 @@ import {
 
 const CONTROLLER_HOME = "/home/claude";
 const CONTROLLER_WORKSPACE = "/workspace";
-const MANAGED_HARNESSES = "/opt/cocalc/harnesses";
 const logger = getLogger("project-host:acp:claude-subscription-controller");
 
 // Project startup normalizes image references before caching them. Use the
@@ -69,10 +76,13 @@ export async function ensureClaudeTranscriptDirectory(options: {
   projectHome: string;
   accountId: string;
   credentialId: string;
+  sessionId?: string;
 }): Promise<string> {
-  const { projectHome, accountId, credentialId } = options;
+  const { projectHome, accountId, credentialId, sessionId } = options;
   if (!isValidUUID(accountId) || !isValidUUID(credentialId))
     throw Error("Invalid Claude transcript owner");
+  if (sessionId && !isValidUUID(sessionId))
+    throw Error("Invalid Claude transcript session");
   let directory = projectHome;
   for (const part of [
     ".local",
@@ -80,7 +90,6 @@ export async function ensureClaudeTranscriptDirectory(options: {
     "cocalc",
     "claude-sessions",
     accountId,
-    credentialId,
   ]) {
     directory = join(directory, part);
     await mkdir(directory, { mode: 0o700 }).catch((error) => {
@@ -90,7 +99,62 @@ export async function ensureClaudeTranscriptDirectory(options: {
     if (!stat.isDirectory() || stat.isSymbolicLink())
       throw Error("Unsafe Claude transcript directory");
   }
-  return directory;
+  // Credentials authorize inference, not ownership of saved context. Reconnect
+  // can issue a new credential ID; locate only the admitted session under the
+  // same CoCalc owner and project. Keep its original tree (including fork and
+  // subagent context) in place rather than copying or merging transcript data.
+  if (sessionId) {
+    const matches: string[] = [];
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (!isValidUUID(entry.name)) continue;
+      const candidate = join(directory, entry.name);
+      let missing = false;
+      for (const path of [candidate, join(candidate, "-workspace")]) {
+        const stat = await lstat(path).catch((error) => {
+          if (error.code === "ENOENT") return undefined;
+          throw error;
+        });
+        if (!stat) {
+          missing = true;
+          break;
+        }
+        if (!stat.isDirectory() || stat.isSymbolicLink())
+          throw Error("Unsafe Claude transcript directory");
+      }
+      if (missing) continue;
+      const transcript = await lstat(
+        join(candidate, "-workspace", `${sessionId}.jsonl`),
+      ).catch((error) => {
+        if (error.code === "ENOENT") return undefined;
+        throw error;
+      });
+      if (!transcript) continue;
+      if (!transcript.isFile() || transcript.isSymbolicLink())
+        throw Error("Unsafe Claude transcript file");
+      matches.push(candidate);
+    }
+    if (matches.length > 1)
+      throw Error(
+        `Ambiguous Claude transcript session ${sessionId}; original data preserved. ` +
+          "Back up these files, then keep the intended session in place and move the other copies out of the Claude transcript directories before retrying. Matching files (host path; path relative to project home):\n" +
+          matches
+            .map((path) => {
+              const file = join(path, "-workspace", `${sessionId}.jsonl`);
+              return `${JSON.stringify(file)}; ${JSON.stringify(relative(projectHome, file))}`;
+            })
+            .sort()
+            .join("\n"),
+      );
+    if (matches.length === 1) return matches[0];
+  }
+  const current = join(directory, credentialId);
+  await mkdir(current, { mode: 0o700 }).catch((error) => {
+    if (error.code !== "EEXIST") throw error;
+  });
+  const stat = await lstat(current);
+  if (!stat.isDirectory() || stat.isSymbolicLink())
+    throw Error("Unsafe Claude transcript directory");
+  return current;
 }
 
 export async function cleanupClaudeSubscriptionController(options: {
@@ -122,7 +186,8 @@ export function claudeSubscriptionContainerArgs(options: {
   owner: string;
   home: string;
   rootfs: string;
-  managedHarnesses: string;
+  /** Host path of the installed Claude Code tools (see claude-code-tools). */
+  claudeCodeDir: string;
   nodeMounts: Record<string, string>;
   toolBridgeDirectory?: string;
   sessionDirectory?: string;
@@ -142,7 +207,7 @@ export function claudeSubscriptionContainerArgs(options: {
     owner,
     home,
     rootfs,
-    managedHarnesses,
+    claudeCodeDir,
     nodeMounts,
     toolBridgeDirectory,
     sessionDirectory,
@@ -189,8 +254,8 @@ export function claudeSubscriptionContainerArgs(options: {
         ]
       : []),
     mountArg({
-      source: managedHarnesses,
-      target: MANAGED_HARNESSES,
+      source: claudeCodeDir,
+      target: CLAUDE_CODE_INSTALL_ROOT,
       readOnly: true,
     }),
     ...(toolBridgeDirectory
@@ -239,7 +304,7 @@ export function claudeSubscriptionContainerArgs(options: {
 /** Credential-bearing controller: no project home, secrets, identity token or project network. */
 export async function launchClaudeSubscriptionController(
   binding: HarnessBinding,
-  conversation: { path: string; threadId: string },
+  conversation: { path: string; threadId: string; sessionId?: string },
 ): Promise<HarnessProcess> {
   const { projectId, accountId, credential } = binding;
   if (
@@ -388,6 +453,7 @@ ${skill}
       projectHome: projectPaths.home,
       accountId,
       credentialId,
+      sessionId: conversation.sessionId,
     });
     cliLease = await createProjectCliTokenLease({
       projectId,
@@ -467,8 +533,7 @@ ${skill}
       });
     }
     const owner = await harnessOwner();
-    const managedHarnesses =
-      process.env.COCALC_MANAGED_HARNESSES ?? MANAGED_HARNESSES;
+    const claudeCodeDir = await claudeCodeToolsDir();
     if (token)
       await writeFile(envFile, `CLAUDE_CODE_OAUTH_TOKEN=${token}\n`, {
         flag: "wx",
@@ -483,7 +548,7 @@ ${skill}
           owner,
           rootfs,
           home,
-          managedHarnesses,
+          claudeCodeDir,
           nodeMounts: getNodeRuntimeMounts(),
           toolBridgeDirectory: toolBridge?.directory,
           claudeAiConnectors,

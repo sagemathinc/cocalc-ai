@@ -1267,6 +1267,8 @@ export interface Host {
   machine?: HostMachine;
   provider_instance_id?: string;
   public_ip?: string;
+  private_ip?: string;
+  network_observed_at?: string;
   public_url?: string | null;
   internal_url?: string | null;
   ssh_server?: string | null;
@@ -1322,6 +1324,10 @@ export interface Host {
 
 export interface HostConnectionInfo {
   host_id: string;
+  // What a project started now would run, so a running project can tell
+  // whether a restart brings newer project code or tools.
+  project_bundle_version?: string;
+  tools_version?: string;
   bay_id?: string | null;
   name?: string | null;
   can_place?: boolean;

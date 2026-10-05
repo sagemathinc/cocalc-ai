@@ -15,6 +15,7 @@ import {
   resolveLegacyProjectHostBrowserSessionForExamMigration,
   resolveProjectHostBrowserSessionFromCookieHeader,
 } from "./browser-session";
+import { examHostnameFromProjectHostPublicUrl } from "./conat-router";
 import {
   getExamBrowserBootstrap,
   getExamBrowserSession,
@@ -254,6 +255,16 @@ function examRuntimeForRequest(req: express.Request) {
   return runtime;
 }
 
+// This host's exam address, which has no run before the first one, between
+// runs and after the last one.
+function isExamHostnameRequest(req: express.Request): boolean {
+  const hostname = examHostnameFromProjectHostPublicUrl(
+    process.env.PROJECT_HOST_PUBLIC_URL,
+    process.env.PROJECT_HOST_ID,
+  );
+  return !!hostname && requestHostname(req) === hostname;
+}
+
 export function resolveExamSessionForRequest(
   req: express.Request,
   res?: express.Response,
@@ -429,14 +440,50 @@ export function getExamJoinPage({
     cleanup_mode === "manual"
       ? "This practice project remains available until your instructor ends the session and erases all projects."
       : `This temporary project will be completely erased automatically <strong>${deadlineText}</strong>, with nothing retained.`;
+  return examPage({
+    title: escapedTitle,
+    publicRouteMarker: true,
+    main: `<div class="eyebrow">Temporary private computational project</div>
+  <h1>${escapedTitle}</h1>
+  ${
+    admission_open
+      ? `<p>Enter the token provided to you.</p>
+  <p>${cleanupText}</p>
+  <form method="post" action="/exam/join">
+    <label for="token">Access token</label>
+    <input id="token" name="token" type="password" autocomplete="off" required autofocus>
+    <button type="submit">Open scratchpad</button>
+  </form>`
+      : run_status === "closing" || run_status === "cleaning"
+        ? `<p>This exam session has ended. Its temporary projects are being erased.</p>`
+        : run_status === "error"
+          ? `<p>This scratchpad is not available right now. Ask your instructor.</p>`
+          : `<p>This temporary scratchpad has been prepared, but access is not open yet.</p>
+  ${examWaitingNotice(`This page checks again about every 30 seconds. When access opens, it shows the Open scratchpad button.${submitted ? "" : " You can also refresh this page."}`)}`
+  }
+  ${escaped ? `<div class="error" role="alert"${error === INVALID_TOKEN_ERROR ? " data-exam-token-rejected" : ""}>${escaped}</div>` : ""}`,
+  });
+}
+
+// The shell of the admission page and of the page for an exam address without
+// a run: the same language, viewport and styles, and the admission script.
+// Only a run's admission page carries the marker verifyExamPublicRoute checks.
+function examPage({
+  title,
+  main,
+  publicRouteMarker,
+}: {
+  title: string; // escaped
+  main: string;
+  publicRouteMarker: boolean;
+}): string {
   return `<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="cocalc-scratchpad" content="exam">
+  <meta charset="utf-8">${publicRouteMarker ? '\n  <meta name="cocalc-scratchpad" content="exam">' : ""}
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="same-origin">
-  <title>${escapedTitle} - CoCalc</title>
+  <title>${title} - CoCalc</title>
   <script src="/exam/admission.js" defer></script>
   <style>
     :root { color-scheme: light; font-family: "Avenir Next", "Segoe UI", sans-serif; }
@@ -467,27 +514,27 @@ export function getExamJoinPage({
   </style>
 </head>
 <body><main>
-  <div class="eyebrow">Temporary private computational project</div>
-  <h1>${escapedTitle}</h1>
-  ${
-    admission_open
-      ? `<p>Enter the token provided to you.</p>
-  <p>${cleanupText}</p>
-  <form method="post" action="/exam/join">
-    <label for="token">Access token</label>
-    <input id="token" name="token" type="password" autocomplete="off" required autofocus>
-    <button type="submit">Open scratchpad</button>
-  </form>`
-      : run_status === "closing" || run_status === "cleaning"
-        ? `<p>This exam session has ended. Its temporary projects are being erased.</p>`
-        : run_status === "error"
-          ? `<p>This scratchpad is not available right now. Ask your instructor.</p>`
-          : `<p>This temporary scratchpad has been prepared, but access is not open yet.</p>
-  <div class="closed" data-exam-waiting>This page checks again about every 30 seconds. When access opens, it shows the Open scratchpad button.${submitted ? "" : " You can also refresh this page."}</div>`
-  }
-  ${escaped ? `<div class="error" role="alert"${error === INVALID_TOKEN_ERROR ? " data-exam-token-rejected" : ""}>${escaped}</div>` : ""}
+  ${main}
 </main></body></html>`;
 }
+
+// While the page has this element, the admission script checks again about
+// every 30 seconds (see EXAM_ADMISSION_SCRIPT).
+function examWaitingNotice(text: string): string {
+  return `<div class="closed" data-exam-waiting>${text}</div>`;
+}
+
+// This host's exam address while no run uses it: before the first run, between
+// runs and after the last one. Like a waiting admission page, it checks again
+// and leaves for the run's page once that page stops waiting.
+export const EXAM_HOST_IDLE_PAGE = examPage({
+  title: "No exam is open",
+  publicRouteMarker: false,
+  main: `<h1>No exam is open</h1>
+  ${examWaitingNotice(
+    "No exam is open at this address right now. This page checks again about every 30 seconds and shows the Open scratchpad button when your instructor opens access. If you expected an exam now, ask your instructor.",
+  )}`,
+});
 
 function appRedirect(project_id: string): string {
   const params = new URLSearchParams({
@@ -549,8 +596,11 @@ export async function initHttp({
     );
   });
 
+  // The page for an exam address without a run loads this script too.
   app.get("/exam/admission.js", (req, res, next) => {
-    if (!examRuntimeForRequest(req)) return next();
+    if (!examRuntimeForRequest(req) && !isExamHostnameRequest(req)) {
+      return next();
+    }
     setExamResponseHeaders(res);
     res.type("application/javascript").send(EXAM_ADMISSION_SCRIPT);
   });
@@ -684,6 +734,13 @@ export function addCatchAll(app: express.Application) {
         target: target || `projects/${session.project_id}/files`,
       });
       res.redirect(`/static/app.html?${params.toString()}`);
+      return;
+    }
+    if (isExamHostnameRequest(req)) {
+      // No run uses this address. Keep Not Found, which a waiting page,
+      // including this one, treats as "check again".
+      setExamResponseHeaders(res);
+      res.status(404).type("html").send(EXAM_HOST_IDLE_PAGE);
       return;
     }
     logger.debug("no static frontend available for", req.url);

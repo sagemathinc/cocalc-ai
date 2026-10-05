@@ -231,6 +231,8 @@ describe("hub API argument transforms", () => {
       "agent.getMentionIdentity",
       "agent.issueIdentity",
       "agent.renewCocalcConnectorTurn",
+      "agent.reportRuntime",
+      "agent.resolvePaymentSelection",
       "aiSessions.upsertProjectHostSession",
       "apiKeys.getViewerReadPolicy",
       "hosts.checkCodexSiteUsageAllowance",
@@ -259,6 +261,8 @@ describe("hub API argument transforms", () => {
     "agent.beginCocalcConnectorTurn",
     "agent.renewCocalcConnectorTurn",
     "agent.endCocalcConnectorTurn",
+    "agent.resolvePaymentSelection",
+    "agent.reportRuntime",
     "apiKeys.getViewerReadPolicy",
   ])(
     "binds %s to the trusted host while preserving the execution account target",

@@ -21,7 +21,7 @@ import { ManagedEgressWarning } from "@cocalc/frontend/purchases/managed-egress-
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import { ConnectionIndicator } from "./connection-indicator";
-import { Notification } from "./notifications";
+import { BrowserUpdateIndicator } from "./update-indicator";
 import openSupportTab from "@cocalc/frontend/support/open";
 import type { PageStyle } from "./top-nav-consts";
 
@@ -78,11 +78,15 @@ export function CompactAgentsTopNav({
     { key: "projects", icon: <Icon name="edit" />, label: "Projects" },
     { key: "people", icon: <Icon name="users" />, label: "People" },
     { key: "hosts", icon: <Icon name="server" />, label: "Compute" },
-    {
-      key: "notifications",
-      icon: <Icon name="mail" />,
-      label: "Notifications",
-    },
+    ...(isLoggedIn
+      ? [
+          {
+            key: "notifications",
+            icon: <Icon name="mail" />,
+            label: "Notifications",
+          },
+        ]
+      : []),
     ...(groups?.includes("admin")
       ? [
           { type: "divider" as const },
@@ -138,14 +142,9 @@ export function CompactAgentsTopNav({
       <AccountCpuWarning pageStyle={pageStyle} />
       <AccountStorageWarning pageStyle={pageStyle} />
       <ManagedEgressWarning pageStyle={pageStyle} />
-      {isLoggedIn ? (
-        <Notification
-          active={false}
-          hideWhenEmpty
-          pageStyle={pageStyle}
-          type="notifications"
-        />
-      ) : null}
+      <BrowserUpdateIndicator fallback />
+      {/* Notifications live in the sidebar, or on its logo when it is
+          collapsed; never a second envelope here. */}
       <ConnectionIndicator
         height={pageStyle.height}
         hideWhenConnected

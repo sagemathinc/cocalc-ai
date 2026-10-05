@@ -41,6 +41,12 @@ import {
   getPublicColors,
   PUBLIC_DISPLAY_FONT_FAMILY,
 } from "@cocalc/frontend/public/theme";
+import {
+  PUBLIC_FOOTER_COMPANY_LINKS,
+  PUBLIC_FOOTER_PLATFORM_LINKS,
+  PUBLIC_FOOTER_RESOURCES_LINKS,
+  type PublicFooterLink,
+} from "@cocalc/util/public-footer-links";
 import { COMPANY_NAME } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
@@ -160,6 +166,10 @@ function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
 }
 
+function siteFooterLink({ label, path }: PublicFooterLink): FooterLinkSpec {
+  return { href: appPath(path), label };
+}
+
 function getPoliciesFooterLink(
   config?: PublicConfig,
 ): FooterLinkSpec | undefined {
@@ -194,8 +204,9 @@ function getFooterColumns(config?: PublicConfig) {
   const contactHref = config?.help_email?.trim()
     ? `mailto:${config.help_email.trim()}`
     : appPath("support");
+  // The page links are shared with the crawler fallback's footer.
   const companyLinks: FooterLinkSpec[] = [
-    { href: appPath("about"), label: "About" },
+    ...PUBLIC_FOOTER_COMPANY_LINKS.map(siteFooterLink),
     { href: contactHref, label: "Contact" },
   ];
   const policiesLink = getPoliciesFooterLink(config);
@@ -222,11 +233,8 @@ function getFooterColumns(config?: PublicConfig) {
     });
   }
 
-  const platformLinks: FooterLinkSpec[] = [
-    { href: appPath("features"), label: "Features" },
-    { href: appPath("products"), label: "Products" },
-    { href: appPath("pricing"), label: "Pricing" },
-  ];
+  const platformLinks: FooterLinkSpec[] =
+    PUBLIC_FOOTER_PLATFORM_LINKS.map(siteFooterLink);
   const statusPageUrl = getStatusPageUrl(config);
   if (statusPageUrl) {
     platformLinks.push({
@@ -243,17 +251,7 @@ function getFooterColumns(config?: PublicConfig) {
       title: "Platform",
     },
     {
-      links: [
-        {
-          href: appPath("docs"),
-          label: "Documentation",
-        },
-        {
-          href: appPath("guides"),
-          label: "Guides",
-        },
-        { href: appPath("support"), label: "Support" },
-      ],
+      links: PUBLIC_FOOTER_RESOURCES_LINKS.map(siteFooterLink),
       title: "Resources",
     },
     {
@@ -326,7 +324,7 @@ function FooterBrand({ config }: { config?: PublicConfig }) {
           maxWidth: "34ch",
         }}
       >
-        Persistent shared projects where people and AI agents work together.
+        Build and use software with AI.
       </Paragraph>
       {defaultBrand ? (
         <Text style={{ color: PUBLIC_COLORS.footerText }}>

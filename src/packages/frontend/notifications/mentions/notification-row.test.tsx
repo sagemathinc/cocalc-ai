@@ -4,6 +4,7 @@ import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { fromJS } from "immutable";
 import { NotificationRow } from "./notification-row";
+import { resetConversationLookupForTests } from "./conversation-lookup";
 
 const open_file = jest.fn();
 const mark = jest.fn();
@@ -12,6 +13,9 @@ const respondAccessRequest = jest.fn();
 const listAccessRequests = jest.fn();
 const mockEnsureProjectReduxRuntime = jest.fn();
 const mockOpenAgentNotification = jest.fn();
+const listConversations = jest.fn();
+const setState = jest.fn();
+const set_active_tab = jest.fn();
 
 jest.mock("../../agents/open-notification", () => ({
   openAgentNotification: (...args: any[]) => mockOpenAgentNotification(...args),
@@ -21,7 +25,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
     getStore: () => undefined,
     getProjectActions: () => ({ open_file }),
-    getActions: () => ({ mark, markMany }),
+    getActions: () => ({ mark, markMany, setState, set_active_tab }),
   },
 }));
 
@@ -58,6 +62,13 @@ jest.mock("@cocalc/frontend/editors/slate/static-markdown", () => ({
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
+    conat_client: {
+      hub: {
+        people: {
+          listConversations: (...args: any[]) => listConversations(...args),
+        },
+      },
+    },
     project_collaborators: {
       respond_access_request: (...args: any[]) => respondAccessRequest(...args),
       list_access_requests: (...args: any[]) => listAccessRequests(...args),
@@ -78,6 +89,80 @@ describe("NotificationRow", () => {
     mockEnsureProjectReduxRuntime.mockResolvedValue(undefined);
     mockOpenAgentNotification.mockReset();
     mockOpenAgentNotification.mockResolvedValue(false);
+    listConversations.mockReset();
+    listConversations.mockResolvedValue({ conversations: [] });
+    setState.mockReset();
+    set_active_tab.mockReset();
+    resetConversationLookupForTests();
+  });
+
+  it("names a People conversation by its title and opens it in People", async () => {
+    listConversations.mockResolvedValue({
+      conversations: [
+        {
+          conversation_id: "conv-1",
+          project_id: "project-1",
+          path: "/home/user/.local/share/cocalc/conversations/2b578cd7.chat",
+          title: "Small PR test",
+        },
+      ],
+    });
+    render(
+      <NotificationRow
+        id="mention-1"
+        user_map={{}}
+        mention={
+          fromJS({
+            kind: "mention",
+            project_id: "project-1",
+            path: ".local/share/cocalc/conversations/2b578cd7.chat",
+            source: "acct-2",
+            target: "acct-1",
+            time: new Date("2026-10-04T00:00:00.000Z"),
+            description: "@Bella what up?",
+            users: { "acct-1": { read: false, saved: false } },
+          }) as any
+        }
+      />,
+    );
+    await screen.findByText("Small PR test");
+    expect(screen.getByRole("listitem").textContent).toContain(
+      "mentioned you in the conversation Small PR test in the project",
+    );
+    expect(screen.queryByText(/2b578cd7/)).toBeNull();
+    fireEvent.click(screen.getByText("Small PR test"));
+    await waitFor(() =>
+      expect(setState).toHaveBeenCalledWith({
+        people_route: "conversations/project-1/conv-1",
+      }),
+    );
+    expect(set_active_tab).toHaveBeenCalledWith("people");
+    expect(open_file).not.toHaveBeenCalled();
+  });
+
+  it("never shows the id file name of a conversation it cannot find", async () => {
+    render(
+      <NotificationRow
+        id="mention-2"
+        user_map={{}}
+        mention={
+          fromJS({
+            kind: "mention",
+            project_id: "project-1",
+            path: ".cocalc/conversations/2b578cd7.chat",
+            source: "acct-2",
+            target: "acct-1",
+            time: new Date("2026-10-04T00:00:00.000Z"),
+            users: { "acct-1": { read: false, saved: false } },
+          }) as any
+        }
+      />,
+    );
+    await waitFor(() => expect(listConversations).toHaveBeenCalled());
+    expect(screen.getByRole("listitem").textContent).toContain(
+      "mentioned you in a conversation in the project",
+    );
+    expect(screen.queryByText(/2b578cd7/)).toBeNull();
   });
 
   it("includes the matching named agent in a Codex notice", () => {

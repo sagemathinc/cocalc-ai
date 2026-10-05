@@ -39,6 +39,10 @@ export function wireHostsApi(): void {
     forwardHost("agent.getMentionIdentity", [opts]);
   hubApi.agent.endIdentityRun = (opts) =>
     forwardHost("agent.endIdentityRun", [opts]);
+  hubApi.agent.resolvePaymentSelection = (opts) =>
+    forwardHost("agent.resolvePaymentSelection", [opts]);
+  hubApi.agent.reportRuntime = (opts) =>
+    forwardHost("agent.reportRuntime", [opts]);
   hubApi.agent.authorizeRpcAdmission = (opts) =>
     forwardHost("agent.authorizeRpcAdmission", [opts]);
   hubApi.agent.authorizeRpcExecution = (opts) =>

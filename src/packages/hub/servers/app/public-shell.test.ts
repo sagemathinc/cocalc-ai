@@ -2,10 +2,12 @@ import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
+import { PUBLIC_FEATURE_PAGES } from "@cocalc/util/public-feature-pages";
 import {
   PUBLIC_BODY_PLACEHOLDER,
   PUBLIC_STATIC_BASE_PLACEHOLDER,
 } from "@cocalc/util/public-site-metadata";
+import { renderPublicFooterPrerender } from "./public-prerender";
 import { renderPublicShell } from "./public-shell";
 
 // Public site fixtures model Launchpad explicitly; an unset product defaults
@@ -201,6 +203,17 @@ describe("public shell rendering", () => {
     },
   );
 
+  it("leads the Home title and description with the tagline", async () => {
+    const { html } = await renderPublicShell(request("/"));
+
+    expect(html).toContain(
+      "<title>Build and Use Software with AI | CoCalc</title>",
+    );
+    expect(html).toContain(
+      'content="CoCalc helps people and teams build and use software with AI.',
+    );
+  });
+
   it.each([
     ["/guides", "guides", "Durable collaborative projects"],
     ["/about", "about", "Building the future of collaborative computation."],
@@ -255,18 +268,33 @@ describe("public shell rendering", () => {
     );
   });
 
+  const BRAND_CARD = "public/landing/cocalc-brand-social-20260925.png";
+
   it.each([
-    ["/", "project-notebook-20260916.jpg", "1050", "650"],
-    ["/products/cocalc-star", "project-notebook-20260916.jpg", "1050", "650"],
-    ["/features/teaching", "project-terminal-20260916.jpg", "800", "400"],
+    ["/", BRAND_CARD, "1200", "630"],
+    ["/features/ai", BRAND_CARD, "1200", "630"],
+    ["/products", BRAND_CARD, "1200", "630"],
+    ["/products/cocalc-star", BRAND_CARD, "1200", "630"],
+    ["/pricing", BRAND_CARD, "1200", "630"],
+    ["/docs", BRAND_CARD, "1200", "630"],
+    ["/features/teaching", BRAND_CARD, "1200", "630"],
+    [
+      "/features/jupyter-notebook",
+      "public/features/cocalc-jupyter2-20170508.png",
+      "1605",
+      "908",
+    ],
   ])(
-    "emits current product evidence and dimensions for %s",
+    "emits the link preview image and dimensions for %s",
     async (path, image, width, height) => {
       const { html, status } = await renderPublicShell(request(path));
 
       expect(status).toBe(200);
       expect(html).toContain(
-        `content="https://cocalc.ai/public/landing/${image}" data-cocalc-public-route-meta="og:image"`,
+        `content="https://cocalc.ai/${image}" data-cocalc-public-route-meta="og:image"`,
+      );
+      expect(html).toContain(
+        `content="https://cocalc.ai/${image}" data-cocalc-public-route-meta="twitter:image"`,
       );
       expect(html).toContain(
         `content="${width}" data-cocalc-public-route-meta="og:image:width"`,
@@ -276,6 +304,72 @@ describe("public shell rendering", () => {
       );
     },
   );
+
+  // A preview image missing from the dimensions table loses its
+  // og:image:width and og:image:height tags without any other sign.
+  it.each(PUBLIC_FEATURE_PAGES.map((page) => page.slug))(
+    "emits link preview dimensions for /features/%s",
+    async (slug) => {
+      const { html, status } = await renderPublicShell(
+        request(`/features/${slug}`),
+      );
+
+      expect(status).toBe(200);
+      expect(html).toMatch(
+        /content="\d+" data-cocalc-public-route-meta="og:image:width"/,
+      );
+      expect(html).toMatch(
+        /content="\d+" data-cocalc-public-route-meta="og:image:height"/,
+      );
+    },
+  );
+
+  it("gives the brand card alt text and other preview images none", async () => {
+    const { html } = await renderPublicShell(request("/"));
+    for (const tag of [
+      'data-cocalc-public-route-meta="og:image:alt" property="og:image:alt"',
+      'data-cocalc-public-route-meta="twitter:image:alt" name="twitter:image:alt"',
+    ]) {
+      expect(html).toContain(
+        `content="CoCalc: build and use software with AI" ${tag}`,
+      );
+    }
+
+    const tool = await renderPublicShell(request("/features/jupyter-notebook"));
+    expect(tool.html).not.toContain("image:alt");
+  });
+
+  it("keeps the brand card and tagline title off other brands and hosts", async () => {
+    const host = "compute.example.edu";
+    const screenshot = `https://${host}/public/landing/project-notebook-20260916.jpg`;
+
+    // A custom brand on its own host.
+    for (const path of ["/", "/auth/sign-in", "/docs"]) {
+      mockedCustomize.mockResolvedValueOnce({
+        logoSquareURL: `https://${host}/logo.png`,
+        policy_pages: "sagemathinc",
+        siteName: "Example Research Cloud",
+      } as any);
+      const { html } = await renderPublicShell(request(path, {}, host));
+      expect(html).toContain(
+        `content="${screenshot}" data-cocalc-public-route-meta="og:image"`,
+      );
+      expect(html).toContain(
+        'content="1050" data-cocalc-public-route-meta="og:image:width"',
+      );
+      expect(html).not.toContain("cocalc-brand-social");
+      expect(html).not.toContain("image:alt");
+      if (path === "/") {
+        expect(html).toContain("<title>Example Research Cloud</title>");
+      }
+    }
+
+    // The default CoCalc brand on another host: no card on its own pages.
+    const { html } = await renderPublicShell(request("/docs", {}, host));
+    expect(html).toContain(
+      `content="${screenshot}" data-cocalc-public-route-meta="og:image"`,
+    );
+  });
 
   it("renders docs inside the container replaced by the public React app", async () => {
     const { html, status } = await renderPublicShell(
@@ -892,4 +986,131 @@ describe("pricing tiers in the initial HTML", () => {
       expect(html).not.toMatch(/\$\s*\d/);
     },
   );
+});
+
+// The React footer (frontend/public/layout/shell.tsx) lists the same page
+// links for the same sites; its tests use this matrix too.
+describe("footer page links in the initial HTML", () => {
+  const PLATFORM = [
+    ["Features", "/features"],
+    ["Products", "/products"],
+    ["Pricing", "/pricing"],
+  ];
+  const RESOURCES = [
+    ["Documentation", "/docs"],
+    ["Guides", "/guides"],
+    ["Support", "/support"],
+  ];
+  const COMPANY = [
+    ["About", "/about"],
+    ["News", "/news"],
+  ];
+
+  function footerOf(html: string): string | undefined {
+    return html.match(
+      /<footer data-cocalc-public-prerender="footer"[\s\S]*?<\/footer>/,
+    )?.[0];
+  }
+
+  function navLinks(footer: string, name: string): string[][] {
+    const nav = footer.match(
+      new RegExp(`<nav aria-label="${name} footer links">[\\s\\S]*?</nav>`),
+    )?.[0];
+    return [...(nav ?? "").matchAll(/<a href="([^"]*)">([^<]*)<\/a>/g)].map(
+      ([, href, label]) => [label, href],
+    );
+  }
+
+  // Where the <div> that opens at `start` closes, counting nested divs.
+  function closeOfDiv(html: string, start: number): number {
+    let depth = 0;
+    for (const tag of html.slice(start).matchAll(/<div\b|<\/div>/g)) {
+      depth += tag[0] === "</div>" ? -1 : 1;
+      if (depth === 0) {
+        return start + tag.index;
+      }
+    }
+    return -1;
+  }
+
+  it.each([
+    ["cocalc.ai", "launchpad", "cocalc.ai"],
+    ["a self-hosted Launchpad", "launchpad", "launchpad.example.edu"],
+    ["a customer-operated deployment", "rocket", "cocalc.example.com"],
+    ["CoCalc Plus", "plus", "localhost:5000"],
+  ] as const)(
+    "links the footer's pages on %s",
+    async (_site, product, host) => {
+      mockedProduct.mockReturnValue(product);
+      for (const path of ["/", "/about", "/docs", "/features"]) {
+        const { html, status } = await renderPublicShell(
+          request(path, {}, host),
+        );
+        const footer = footerOf(html);
+
+        expect({ path, status }).toEqual({ path, status: 200 });
+        expect(footer).toBeDefined();
+        expect(
+          [...footer!.matchAll(/<nav aria-label="([^"]*)">/g)].map(
+            ([, name]) => name,
+          ),
+        ).toEqual([
+          "Platform footer links",
+          "Resources footer links",
+          "Company footer links",
+        ]);
+        expect(
+          [
+            ...footer!.matchAll(
+              /<nav [^>]*><p><strong>([^<]*)<\/strong><\/p><ul>/g,
+            ),
+          ].map(([, title]) => title),
+        ).toEqual(["Platform", "Resources", "Company"]);
+        expect(navLinks(footer!, "Platform")).toEqual(PLATFORM);
+        expect(navLinks(footer!, "Resources")).toEqual(RESOURCES);
+        expect(navLinks(footer!, "Company")).toEqual(COMPANY);
+      }
+    },
+  );
+
+  it("follows the page's crawler content inside the container the app replaces", async () => {
+    const { html } = await renderPublicShell(request("/about"));
+    const container = html.indexOf('<div id="cocalc-webapp-container">');
+    const content = html.indexOf('<main data-cocalc-public-prerender="about"');
+    const footer = html.indexOf(
+      '<footer data-cocalc-public-prerender="footer"',
+    );
+
+    expect(container).toBeGreaterThanOrEqual(0);
+    expect(content).toBeGreaterThan(container);
+    expect(footer).toBeGreaterThan(html.indexOf("</main>", content));
+    expect(html.indexOf("</footer>", footer)).toBeLessThan(
+      closeOfDiv(html, container),
+    );
+    expect(html.match(/<footer/g)).toHaveLength(1);
+  });
+
+  it.each(["/news", "/auth/sign-in", "/features/no-such-page"])(
+    "adds no footer where %s has no crawler content",
+    async (path) => {
+      const { html } = await renderPublicShell(request(path));
+
+      expect(html).toContain('<div id="cocalc-webapp-container"></div>');
+      expect(footerOf(html)).toBeUndefined();
+    },
+  );
+
+  it("resolves the footer links under a base path", () => {
+    const footer = renderPublicFooterPrerender("/prefix");
+
+    expect(
+      ["Platform", "Resources", "Company"].map((name) =>
+        navLinks(footer, name).map(([, href]) => href),
+      ),
+    ).toEqual([
+      ["/prefix/features", "/prefix/products", "/prefix/pricing"],
+      ["/prefix/docs", "/prefix/guides", "/prefix/support"],
+      ["/prefix/about", "/prefix/news"],
+    ]);
+  });
 });

@@ -16,6 +16,15 @@ import {
 } from "./util";
 import type { ApiKeyScope } from "@cocalc/util/db-schema/api-keys";
 import type {
+  AgentPaymentProvider,
+  AgentPaymentTarget,
+} from "@cocalc/util/ai/agent-payment-selection";
+import type {
+  AgentPaymentSelectionsResult,
+  ResolvedAgentPaymentSelection,
+  SetAgentPaymentSelectionsRequest,
+} from "@cocalc/conat/inter-bay/agent-payment-selections";
+import type {
   AgentIdentity,
   AgentCredential,
 } from "@cocalc/conat/agents/protocol";
@@ -38,6 +47,7 @@ import type {
 
 export const agent = {
   listNamedAgents: authFirstRequireAccount,
+  listAgentParticipants: authFirstRequireAccount,
   // Owner-only: enabling memory and viewing or deleting notes need a human
   // session, never an agent's credential.
   manageAgentMemory: authFirstRequireAccountWithBoundSession,
@@ -59,11 +69,18 @@ export const agent = {
   listIdentities: authFirstRequireAccount,
   getIdentity: authFirstRequireAccount,
   resolveIdentity: authFirstRequireAccount,
+  getPaymentSelections: authFirstRequireAccount,
+  listPaymentSelections: authFirstRequireAccount,
+  setPaymentSelections: authFirstRequireAccount,
+  copyPaymentSelection: authFirstRequireAccount,
+  resolvePaymentSelection: authFirstRequireHostWithAccountTarget,
+  reportRuntime: authFirstRequireHostWithAccountTarget,
   disableIdentity: authFirstRequireAccountWithBoundSession,
   recoverIdentity: authFirstRequireAccountWithBoundSession,
   issueIdentity: authFirstRequireHostWithAccountTarget,
   endIdentityRun: authFirstRequireHostWithAccountTarget,
   getCocalcConnectorConfig: authFirstRequireAccount,
+  listCocalcConnectorConfigs: authFirstRequireAccount,
   saveCocalcConnectorConfig: authFirstRequireAccountWithBoundSession,
   removeCocalcConnectorConfig: authFirstRequireAccountWithBoundSession,
   beginCocalcConnectorTurn: authFirstRequireHostWithAccountTarget,
@@ -257,6 +274,10 @@ export interface AgentApi {
     agent_id: string;
     source_project_id: string;
   }): Promise<CocalcConnectorConfig | null>;
+  /** The signed-in account's saved CoCalc access settings, newest first. */
+  listCocalcConnectorConfigs(opts?: {
+    account_id?: string;
+  }): Promise<CocalcConnectorConfig[]>;
   saveCocalcConnectorConfig(
     opts: AgentHumanAuth & {
       agent_id: string;
@@ -276,6 +297,15 @@ export interface AgentApi {
     },
   ): Promise<void>;
   listNamedAgents(opts: { account_id?: string }): Promise<NamedAgentDirectory>;
+  /**
+   * The other people who have this agent in their own agents (named it): its
+   * participants. Only for owners and collaborators of the agent's project;
+   * returns account ids, never the names they chose.
+   */
+  listAgentParticipants(opts: {
+    account_id?: string;
+    endpoint: AgentEndpoint;
+  }): Promise<{ account_ids: string[]; unavailable: number }>;
   manageAgentMemory(
     opts: AgentHumanAuth &
       (
@@ -329,6 +359,46 @@ export interface AgentApi {
       authorization: NonNullable<
         import("@cocalc/conat/ai/acp/types").AcpChatContext["agent_rpc_execution"]
       >;
+    },
+  ): Promise<void>;
+  /** This account's payment selections for some agents, plus its defaults. */
+  getPaymentSelections(opts: {
+    account_id?: string;
+    targets: AgentPaymentTarget[];
+    /** Record that a turn is being sent with these selections. */
+    touch?: boolean;
+  }): Promise<AgentPaymentSelectionsResult>;
+  /** All of this account's payment selections, for the Agents page. */
+  listPaymentSelections(opts: {
+    account_id?: string;
+    provider?: AgentPaymentProvider;
+    limit?: number;
+  }): Promise<AgentPaymentSelectionsResult>;
+  /** Set (or clear, with null) how this account pays for agents or defaults. */
+  setPaymentSelections(
+    opts: { account_id?: string } & SetAgentPaymentSelectionsRequest,
+  ): Promise<{ updated: number }>;
+  /** Keep a selection when a conversation is forked or started fresh. */
+  copyPaymentSelection(opts: {
+    account_id?: string;
+    from: AgentPaymentTarget;
+    to: AgentPaymentTarget;
+  }): Promise<{ copied: boolean }>;
+  /** Host admitting a turn for an account: how that account pays. */
+  resolvePaymentSelection(
+    opts: AgentHostAuth & {
+      project_id: string;
+      thread_id: string;
+      provider: AgentPaymentProvider;
+    },
+  ): Promise<ResolvedAgentPaymentSelection>;
+  /** Host admitting a turn: which runtime the agent uses. */
+  reportRuntime(
+    opts: AgentHostAuth & {
+      project_id: string;
+      path: string;
+      thread_id: string;
+      runtime: import("@cocalc/util/ai/agent-runtime-kind").AgentRuntimeSummary;
     },
   ): Promise<void>;
   resolveIdentity(opts: {

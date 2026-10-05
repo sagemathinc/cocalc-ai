@@ -47,16 +47,28 @@ function usesDefaultPublicBrand(config?: PublicRouteMetadataConfig): boolean {
   );
 }
 
+// cocalc.ai itself: the default CoCalc brand on the canonical host, never
+// CoCalc Plus. Copy that uses this test names Claude Code, or CoCalc.ai as
+// the sign-up destination, only where this is true.
+// `config.dns` is the request host on both sides: the crawler
+// fallback reads it from the request, and /customize sets it from the Host
+// header for the browser.
+export function isPublicCocalcAiSite(
+  config?: PublicRouteMetadataConfig,
+): boolean {
+  return (
+    config?.cocalc_product !== "plus" &&
+    usesDefaultPublicBrand(config) &&
+    isCanonicalPublicSiteHost(config?.dns)
+  );
+}
+
 // CoCalc Plus is the local, one-user runtime, as the Products and Pricing
 // pages say for the same product. It has no collaborators, so it also drops
 // the collaboration highlight and keeps only the version history one.
 //
-// Claude Code runs only on sites that enable it, so the highlight that names
-// it shows only under the default CoCalc brand on cocalc.ai. Other hosted sites
-// get the other two highlights; Plus does not offer collaboration.
-// `config.dns` is the request host on both sides: the crawler
-// fallback reads it from the request, and /customize sets it from the Host
-// header for the browser.
+// The highlight that names Claude Code shows only on cocalc.ai (above). Other
+// hosted sites get the other two highlights; Plus does not offer collaboration.
 export function getPublicHomeHighlights(
   config?: PublicRouteMetadataConfig,
 ): readonly string[] {
@@ -67,10 +79,7 @@ export function getPublicHomeHighlights(
         highlight !== PUBLIC_HOME_COLLABORATION_HIGHLIGHT,
     );
   }
-  if (
-    usesDefaultPublicBrand(config) &&
-    isCanonicalPublicSiteHost(config?.dns)
-  ) {
+  if (isPublicCocalcAiSite(config)) {
     return PUBLIC_HOME_HIGHLIGHTS;
   }
   return PUBLIC_HOME_HIGHLIGHTS.filter(

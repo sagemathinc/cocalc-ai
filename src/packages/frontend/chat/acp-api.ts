@@ -47,6 +47,7 @@ import {
   resolveCodexCompletionNotificationEnabled,
 } from "@cocalc/util/notification-preferences";
 import { readCodexSubscriptionSelection } from "./codex-subscription-selection";
+import { fetchPaymentSelectionForSend } from "./payment-selection-store";
 import { healedHarnessCredential } from "./harness-credential-heal";
 
 let lastGeneratedAcpMessageMs = 0;
@@ -374,6 +375,13 @@ export async function processAcpLLM({
           ...(actions.getCodexConfig?.(thread_id) ?? {}),
           ...(acpConfigOverride ?? {}),
         });
+  // Use the latest choice, which may have been made on another device.
+  if (!isHarnessThread)
+    await fetchPaymentSelectionForSend({
+      accountId: redux.getStore("account")?.get("account_id"),
+      projectId: project_id,
+      threadKey: thread_id,
+    });
   const selectedCredentialId = readCodexSubscriptionSelection({
     accountId: redux.getStore("account")?.get("account_id"),
     projectId: project_id,

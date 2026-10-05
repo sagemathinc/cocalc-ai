@@ -616,8 +616,10 @@ Slugs are global, URL-safe names; if a slug is already in use, choose another.
 The normal **Publish** workflow creates an unlisted share. Other publication
 records can have a different visibility; check the displayed visibility in
 **Project Settings -> Publish** or **Account Settings -> Public Shares**.
-Anyone who receives an unlisted URL may be able to open it. Treat the URL as a
-sharing link, not as a private secret.
+While a share is enabled, anyone signed in to this CoCalc site who has its
+unlisted URL can open it. On a site that allows sign-up, that includes someone
+who creates an account just to open it. Treat the URL as a sharing link, not as
+a private secret.
 
 ## A share follows current project files
 

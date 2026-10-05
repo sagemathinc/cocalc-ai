@@ -1,6 +1,8 @@
 import type { ExternalAgentSource } from "./external";
 import type { AgentAppearance } from "@cocalc/util/agent-appearance";
 import type { AgentEndpoint, AgentRpcSource } from "./rpc";
+import type { AgentRuntimeSummary } from "@cocalc/util/ai/agent-runtime-kind";
+import type { AgentPaymentSelectionRecord } from "@cocalc/util/ai/agent-payment-selection";
 
 export type PersonalAgentDenialCode =
   | "approval_required"
@@ -36,6 +38,23 @@ export interface NamedAgent {
   updated_at: string;
   // The thread's theme, from the agent's identity record.
   appearance?: AgentAppearance;
+  /** Codex, Claude Code or a generic ACP harness. */
+  runtime?: AgentRuntimeSummary;
+  /** How this account pays for the agent's current conversation. */
+  payment?: AgentPaymentSelectionRecord[];
+}
+
+/**
+ * The parts of an agent's identity that a name book keeps a copy of, so
+ * listing named agents is one query in the account's home bay. The agent's
+ * project bay pushes changes to every account that named it.
+ */
+export interface NamedAgentSnapshot {
+  path: string;
+  thread_id: string;
+  appearance?: AgentAppearance | null;
+  runtime?: AgentRuntimeSummary | null;
+  available: boolean;
 }
 
 export interface PersonalMessagingControls {

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { AgentIdentity } from "@cocalc/conat/agents/protocol";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
+import { isActorDenial } from "./actor-denial";
 import {
   agentRpcSourceKey,
   isExternalAgentSource,
@@ -25,6 +26,7 @@ import {
   type AgentNetworkProposal,
   type CreateAgentNetworkOptions,
   type NamedAgent,
+  type NamedAgentSnapshot,
   type NameAgentOptions,
   type PersonalMessagingControls,
   type ProposeAgentNetworkOptions,
@@ -51,6 +53,49 @@ type Query = {
   query(sql: string, values?: unknown[]): Promise<{ rows: any[] }>;
 };
 
+/**
+ * Side effects of name-book changes, wired in production by personalStore():
+ * registering with the agent's project bay for identity changes, and pushing
+ * rows to the account's connected browsers. All best effort: the background
+ * repair in names() reconciles anything missed.
+ */
+export interface PersonalAgentHooks {
+  watch?(
+    account: string,
+    endpoint: AgentEndpoint,
+    watching: boolean,
+  ): Promise<void>;
+  upsert?(account: string, agent: NamedAgent): Promise<void>;
+  remove?(account: string, endpoint: AgentEndpoint): Promise<void>;
+  /** This account's payment selections for the agents' conversations. */
+  payments?(account: string, agents: NamedAgent[]): Promise<void>;
+  /** Reconcile snapshots in the background when listing (production). */
+  backgroundRepair?: boolean;
+}
+
+const REPAIR_INTERVAL_MS = 30 * 60_000;
+const REPAIR_CONCURRENCY = 8;
+const lastRepair = new Map<string, number>();
+
+export function identitySnapshot(identity: AgentIdentity): NamedAgentSnapshot {
+  return {
+    path: identity.path,
+    thread_id: identity.thread_id,
+    appearance: identity.appearance ?? null,
+    runtime: identity.runtime ?? null,
+    available: !identity.disabled_at,
+  };
+}
+
+const snapshotKey = (value: Partial<NamedAgentSnapshot>) =>
+  JSON.stringify([
+    value.path,
+    value.thread_id,
+    value.appearance ?? null,
+    value.runtime ?? null,
+    value.available !== false,
+  ]);
+
 export class PersonalAgentStore {
   constructor(
     private readonly db: AgentStore,
@@ -73,6 +118,7 @@ export class PersonalAgentStore {
       source: AgentEndpoint,
       run_id: string,
     ) => Promise<string> = principal,
+    private readonly hooks: PersonalAgentHooks = {},
   ) {}
 
   async assertHome(account_id: string) {
@@ -127,16 +173,177 @@ export class PersonalAgentStore {
   }
 
   private named(row: any, available = true): NamedAgent {
+    const {
+      available: snapshotAvailable,
+      appearance,
+      runtime,
+      ...metadata
+    } = row.metadata ?? {};
     return {
-      ...row.metadata,
+      ...metadata,
+      ...(appearance ? { appearance } : {}),
+      ...(runtime ? { runtime } : {}),
       account_id: row.account_id,
       name: row.name,
       endpoint: { project_id: row.project_id, agent_id: row.agent_id },
-      available,
+      available: available && snapshotAvailable !== false,
       updated_at: iso(row.updated_at),
     };
   }
 
+  private async withPayments(account: string, agents: NamedAgent[]) {
+    if (agents.length > 0) await this.hooks.payments?.(account, agents);
+    return agents;
+  }
+
+  private async publish(account: string, agents: NamedAgent[]) {
+    if (!this.hooks.upsert) return;
+    await this.withPayments(account, agents).catch(() => undefined);
+    await Promise.all(
+      agents.map((agent) =>
+        this.hooks.upsert!(account, agent).catch(() => undefined),
+      ),
+    );
+  }
+
+  /** This account's named agents whose conversation is one of these. */
+  async namesForThreads(
+    account: string,
+    threads: { project_id: string; thread_id: string }[],
+  ): Promise<NamedAgent[]> {
+    if (threads.length === 0) return [];
+    const rows = (
+      await this.db.query(
+        `SELECT * FROM agent_personal_names
+          WHERE account_id=$1 AND retired_at IS NULL
+            AND (project_id::text || ':' || (metadata->>'thread_id')) = ANY($2::text[])`,
+        [account, threads.map((t) => `${t.project_id}:${t.thread_id}`)],
+      )
+    ).rows;
+    return rows.map((row) => this.named(row));
+  }
+
+  /** Push current rows (with payment) for agents of these conversations. */
+  async publishThreads(
+    account: string,
+    threads: { project_id: string; thread_id: string }[],
+  ): Promise<void> {
+    await this.publish(account, await this.namesForThreads(account, threads));
+  }
+
+  /** The agent's project bay reports a changed identity. */
+  async applyIdentityChange(
+    account: string,
+    endpoint: AgentEndpoint,
+    snapshot: NamedAgentSnapshot,
+  ): Promise<void> {
+    validateAgentEndpoint(endpoint);
+    const value = {
+      path: `${snapshot.path ?? ""}`,
+      thread_id: `${snapshot.thread_id ?? ""}`,
+      appearance: snapshot.appearance ?? null,
+      runtime: snapshot.runtime ?? null,
+      available: snapshot.available !== false,
+    };
+    if (!value.path || !value.thread_id)
+      throw new Error("invalid agent identity snapshot");
+    const rows = (
+      await this.db.query(
+        `UPDATE agent_personal_names SET metadata=COALESCE(metadata,'{}'::jsonb) || $4::jsonb
+          WHERE account_id=$1 AND project_id=$2 AND agent_id=$3 AND retired_at IS NULL
+          RETURNING *`,
+        [
+          account,
+          endpoint.project_id,
+          endpoint.agent_id,
+          JSON.stringify(value),
+        ],
+      )
+    ).rows;
+    if (rows.length === 0) {
+      // No longer named here: stop receiving its changes.
+      await this.hooks.watch?.(account, endpoint, false).catch(() => undefined);
+      return;
+    }
+    await this.publish(
+      account,
+      rows.map((row) => this.named(row)),
+    );
+  }
+
+  /**
+   * Compare every snapshot with its live identity (the slow, possibly
+   * cross-bay path) and fix differences, so a missed change notification or
+   * a deleted project is eventually reflected. Runs in the background.
+   */
+  async repair(account: string): Promise<void> {
+    const rows = (
+      await this.db.query(
+        "SELECT * FROM agent_personal_names WHERE account_id=$1 AND retired_at IS NULL",
+        [account],
+      )
+    ).rows;
+    const deletedProjects = new Map<string, Promise<boolean>>();
+    const queue = [...rows];
+    const work = async () => {
+      for (let row = queue.shift(); row; row = queue.shift()) {
+        const endpoint = { project_id: row.project_id, agent_id: row.agent_id };
+        let snapshot: NamedAgentSnapshot | undefined;
+        try {
+          snapshot = identitySnapshot(await this.identity(account, endpoint));
+          // Make sure future changes reach this account.
+          await this.hooks
+            .watch?.(account, endpoint, true)
+            .catch(() => undefined);
+        } catch (err) {
+          // No longer allowed in the project: stop receiving its changes
+          // (a transient failure keeps the watch).
+          if (isActorDenial(err))
+            await this.hooks
+              .watch?.(account, endpoint, false)
+              .catch(() => undefined);
+          const projectId = row.project_id;
+          if (!deletedProjects.has(projectId))
+            deletedProjects.set(
+              projectId,
+              this.projectWasDeleted(projectId).catch(() => false),
+            );
+          if (await deletedProjects.get(projectId)) {
+            await this.retire(account, { endpoint });
+            continue;
+          }
+          snapshot = {
+            path: row.metadata?.path ?? "",
+            thread_id: row.metadata?.thread_id ?? "",
+            appearance: row.metadata?.appearance ?? null,
+            runtime: row.metadata?.runtime ?? null,
+            available: false,
+          };
+        }
+        if (snapshotKey(snapshot) !== snapshotKey(row.metadata ?? {}))
+          await this.applyIdentityChange(account, endpoint, snapshot).catch(
+            () => undefined,
+          );
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(REPAIR_CONCURRENCY, rows.length) }, work),
+    );
+  }
+
+  private scheduleRepair(account: string) {
+    if (!this.hooks.backgroundRepair) return;
+    const last = lastRepair.get(account) ?? 0;
+    if (Date.now() - last < REPAIR_INTERVAL_MS) return;
+    lastRepair.set(account, Date.now());
+    void this.repair(account).catch(() => undefined);
+  }
+
+  /**
+   * One local query: rows carry a snapshot of their identities, kept current
+   * by the agents' project bays, so listing never fans out across bays. A
+   * throttled background repair reconciles anything that was missed.
+   */
   async names(account: string): Promise<NamedAgent[]> {
     const rows = (
       await this.db.query(
@@ -144,31 +351,11 @@ export class PersonalAgentStore {
         [account],
       )
     ).rows;
-    const result: NamedAgent[] = [];
-    const deletedProjects = new Map<string, Promise<boolean>>();
-    for (const row of rows) {
-      const named = this.named(row);
-      try {
-        const identity = await this.endpoint(account, named.endpoint);
-        named.path = identity.path;
-        named.thread_id = identity.thread_id;
-        if (identity.appearance) named.appearance = identity.appearance;
-      } catch {
-        const projectId = named.endpoint.project_id;
-        if (!deletedProjects.has(projectId))
-          deletedProjects.set(
-            projectId,
-            this.projectWasDeleted(projectId).catch(() => false),
-          );
-        if (await deletedProjects.get(projectId)) {
-          await this.retire(account, { endpoint: named.endpoint });
-          continue;
-        }
-        named.available = false;
-      }
-      result.push(named);
-    }
-    return result;
+    this.scheduleRepair(account);
+    return this.withPayments(
+      account,
+      rows.map((row) => this.named(row)),
+    );
   }
 
   async name(
@@ -185,13 +372,12 @@ export class PersonalAgentStore {
       )
         throw new Error(`invalid ${key}`);
     const metadata = {
-      path: identity.path,
-      thread_id: identity.thread_id,
+      ...identitySnapshot(identity),
       description: opts.description,
       project_title: opts.project_title,
       thread_title: opts.thread_title,
     };
-    return this.locked(account, async (db) => {
+    const named = await this.locked(account, async (db) => {
       // Older retirements kept every alias reserved. Reclaim those rows, but
       // preserve redirects when the endpoint still has an active name.
       await db.query(
@@ -262,6 +448,11 @@ export class PersonalAgentStore {
       ).rows[0];
       return this.named(row);
     });
+    await this.hooks
+      .watch?.(account, opts.endpoint, true)
+      .catch(() => undefined);
+    await this.publish(account, [named]);
+    return named;
   }
 
   async retire(account: string, opts: RetireNamedAgentOptions): Promise<void> {
@@ -272,6 +463,10 @@ export class PersonalAgentStore {
         [account, opts.endpoint.project_id, opts.endpoint.agent_id],
       );
     });
+    await this.hooks
+      .watch?.(account, opts.endpoint, false)
+      .catch(() => undefined);
+    await this.hooks.remove?.(account, opts.endpoint).catch(() => undefined);
   }
 
   async resolveName(account: string, value: string): Promise<NamedAgent> {
@@ -353,6 +548,15 @@ export class PersonalAgentStore {
     if (member.kind !== "registered") return;
     await this.endpoint(account, member.endpoint);
     await this.assertRegisteredName(this.db, account, member.endpoint);
+  }
+
+  /** Whether this account has the agent in its agents (an active name). */
+  async hasName(account: string, endpoint: AgentEndpoint): Promise<boolean> {
+    const { rows } = await this.db.query(
+      "SELECT 1 FROM agent_personal_names WHERE account_id=$1 AND project_id=$2 AND agent_id=$3 AND retired_at IS NULL",
+      [account, endpoint.project_id, endpoint.agent_id],
+    );
+    return rows.length > 0;
   }
 
   private async assertRegisteredName(

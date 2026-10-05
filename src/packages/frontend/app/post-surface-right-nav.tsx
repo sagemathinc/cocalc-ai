@@ -12,6 +12,7 @@ import MembershipBadge from "@cocalc/frontend/account/membership-badge";
 import { RunningGpuIndicator } from "./running-gpu-indicator";
 
 import { Notification } from "./notifications";
+import { BrowserUpdateIndicator } from "./update-indicator";
 import type { PageStyle } from "./top-nav-consts";
 
 export function PostSurfaceRightNav({
@@ -34,6 +35,7 @@ export function PostSurfaceRightNav({
       <AccountCpuWarning pageStyle={pageStyle} />
       <AccountStorageWarning pageStyle={pageStyle} />
       <ManagedEgressWarning pageStyle={pageStyle} />
+      <BrowserUpdateIndicator fallback />
       {isLoggedIn ? (
         <Notification
           type="notifications"

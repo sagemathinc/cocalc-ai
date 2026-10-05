@@ -16,16 +16,33 @@
   background-color: var(--cocalc-ui-hover);
 }
 
-.cocalc-project-tabs.ant-tabs-card > .ant-tabs-nav .ant-tabs-tab {
+/* File tabs, like Chrome: the close button takes room only on the active tab
+   or under the pointer (or keyboard focus), so the names get the space. */
+.cocalc-file-tabs .cocalc-file-tab-close {
+  display: none !important;
+}
+.cocalc-file-tabs .ant-tabs-tab:hover .cocalc-file-tab-close,
+.cocalc-file-tabs .ant-tabs-tab-active .cocalc-file-tab-close,
+.cocalc-file-tabs .ant-tabs-tab:focus-within .cocalc-file-tab-close {
+  display: inline-flex !important;
+}
+
+/* antd's small card tabs pad 16px a side; the name needs that room. */
+.cocalc-file-tabs.ant-tabs-card > .ant-tabs-nav .ant-tabs-tab {
   padding-left: 6px;
   padding-right: 4px;
 }
 
-.cocalc-project-tabs .ant-tabs-tab-btn {
+.cocalc-file-tabs .ant-tabs-tab-btn {
   min-width: 0;
 }
 
-.cocalc-project-tabs .ant-tabs-tab-remove {
-  margin-left: 2px;
-  padding-inline: 2px;
+/* Ant's overflow ("...") menu reuses each tab's label: there it sizes to the
+   name, not to the squeezed tab width. */
+.ant-tabs-dropdown .cocalc-file-tab-label {
+  width: auto !important;
+  max-width: 320px;
+}
+.ant-tabs-dropdown .cocalc-file-tab-label > :first-child {
+  flex: 0 1 auto !important;
 }

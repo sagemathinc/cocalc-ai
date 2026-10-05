@@ -32,6 +32,7 @@ import { useProjectContext } from "../context";
 import { generatedWorkspaceChatLabel } from "../workspaces/chat-display";
 import { reorderVisibleSubset } from "./file-tab-order";
 import { FileTab } from "./file-tab";
+import { useIdChatTitle, useIdChatTitles } from "./id-chat-title";
 import { FILE_TAB_STRIP_ATTRIBUTE } from "./keyboard-navigation";
 
 const MIN_WIDTH = 48;
@@ -51,30 +52,35 @@ function storeFileTabsMode(mode: FileTabsMode): void {
 function Label({ path, project_id, label, onClose }) {
   const { width } = useItemContext();
   const { active } = useSortable({ id: project_id });
+  // Chats named by an id (agents, conversations) show what they are.
+  const idChatTitle = useIdChatTitle(project_id, path);
   return (
     <div
+      className="cocalc-file-tab-label"
       style={{
         alignItems: "center",
         display: "flex",
         minWidth: 0,
-        width: "100%",
+        // The tab's width is fixed; the name takes what the close button
+        // does not, and the close button only shows on the active tab or
+        // under the pointer (like Chrome), so names get the room.
+        ...(width != null
+          ? { width: Math.max(MIN_WIDTH, width) }
+          : { width: "100%" }),
       }}
     >
       <FileTab
         key={path}
         project_id={project_id}
         path={path}
-        label={label}
+        label={idChatTitle ?? label}
         noPopover={active != null}
-        style={{
-          ...(width != null
-            ? { width: Math.max(MIN_WIDTH, width + 15), marginRight: "-10px" }
-            : undefined),
-        }}
+        style={{ flex: "1 1 auto", minWidth: 0 }}
         onClose={onClose}
       />
       <span
         aria-hidden="true"
+        className="cocalc-file-tab-close"
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -90,7 +96,8 @@ function Label({ path, project_id, label, onClose }) {
           cursor: "pointer",
           display: "inline-flex",
           flex: "0 0 20px",
-          height: "24px",
+          // The name's row height: appearing on hover must not move it.
+          height: "22px",
           justifyContent: "center",
           position: "relative",
           zIndex: 1,
@@ -211,9 +218,14 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
       ),
     ),
   );
+  const idChatTitles = useIdChatTitles(project_id, paths);
   const labelMap = new Map<string, string>();
   for (let index = 0; index < labelsForPaths.length; index++) {
-    labelMap.set(paths[index], `${labelsForPaths[index] ?? paths[index]}`);
+    labelMap.set(
+      paths[index],
+      idChatTitles.get(paths[index]) ??
+        `${labelsForPaths[index] ?? paths[index]}`,
+    );
   }
 
   const recentFiles = useRecentFiles(
@@ -614,6 +626,12 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
         <div style={{ flex: "1 1 auto", minWidth: 0 }}>
           <SortableTabs
             items={keys}
+            // Only the tab padding (6px + 4px) surrounds the label now: the
+            // close button lives inside it, shown on hover/active.
+            itemChromeWidth={10}
+            // Shrink to fit like Chrome (icon plus a few letters) before
+            // hiding tabs behind Ant's overflow menu.
+            minItemWidth={MIN_WIDTH + 10}
             onDragStart={onDragStart}
             onDragEnd={onDragEnd}
           >
@@ -631,6 +649,7 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
                 }}
                 onEdit={onEdit}
                 style={{ width: "100%" }}
+                className="cocalc-file-tabs"
                 size="small"
                 items={items}
                 activeKey={activeKey}

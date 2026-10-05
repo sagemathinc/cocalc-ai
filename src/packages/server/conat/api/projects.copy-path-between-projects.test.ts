@@ -638,6 +638,45 @@ describe("projects.copyPathBetweenProjects", () => {
     );
   });
 
+  it.each([
+    ["2026-10-20T04:59:00.000Z", "2026-10-27T04:59:00.000Z"],
+    ["2026-09-20T04:59:00.000Z", "2026-10-08T12:00:00.000Z"],
+    [undefined, undefined],
+  ])("bounds collection expiry after run time %s", async (run_at, expiry) => {
+    const now = jest
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.parse("2026-10-01T12:00:00.000Z"));
+    try {
+      const { collectAssignment } = await import("./projects");
+      await collectAssignment({
+        account_id: "acct-1",
+        course_project_id: COURSE_PROJECT_ID,
+        assignment_id: "assignment-1",
+        run_at,
+        items: [
+          {
+            student_id: "student-1",
+            student_project_id: STUDENT_PROJECT_ID,
+            src_path: "Homework 1",
+            dest_path: "course-collect/Homework 1/student-1",
+          },
+        ],
+      });
+      const input = createLroMock.mock.calls[0][0];
+      if (expiry) {
+        expect(input.expires_at).toEqual(new Date(expiry));
+        expect(input.dedupe_key).toBe(
+          `course-collect:${COURSE_PROJECT_ID}:assignment-1:${run_at}`,
+        );
+      } else {
+        expect(input).not.toHaveProperty("expires_at");
+        expect(input.dedupe_key).toBeUndefined();
+      }
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it("creates a base-relative course assignment patch copy LRO", async () => {
     const { sendCourseAssignmentPatch } = await import("./projects");
     const result = await sendCourseAssignmentPatch({

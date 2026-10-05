@@ -121,6 +121,44 @@ export const AGENT_RPC_FAILURE_CODES = [
 ] as const;
 export type AgentRpcFailureCode = (typeof AGENT_RPC_FAILURE_CODES)[number];
 
+// What the recipient's owner must do before an agent message can run it.
+export type AgentRecipientSetupNeed = "codex-connection" | "human-turn";
+
+const RECIPIENT_SETUP =
+  /\[agent-recipient-setup:(codex-connection|human-turn)\]/;
+
+const RECIPIENT_SETUP_REASONS: Record<AgentRecipientSetupNeed, string> = {
+  "codex-connection":
+    "the recipient agent has no ChatGPT plan or OpenAI API key connected, so it cannot run. Ask the user to open the recipient agent and choose Connect in its thread; your message is saved there and can be resubmitted after connecting",
+  "human-turn":
+    "the recipient agent has not been run by its owner with a payment method yet. Ask the user to open the recipient agent and send it one message; your message is saved there and can be resubmitted afterwards",
+};
+
+/**
+ * Refuses an agent message turn at admission, before any job is queued,
+ * because the recipient cannot pay for it. The marker survives being relayed
+ * as error text, so the host can report a definite rejection instead of an
+ * unconfirmed launch.
+ */
+export function agentRecipientSetupError(
+  need: AgentRecipientSetupNeed,
+  detail?: string,
+): Error {
+  return new Error(
+    `[agent-recipient-setup:${need}] ${detail ?? RECIPIENT_SETUP_REASONS[need]}`,
+  );
+}
+
+export function parseAgentRecipientSetup(
+  error: unknown,
+): { need: AgentRecipientSetupNeed; reason: string } | undefined {
+  const text = error instanceof Error ? error.message : `${error ?? ""}`;
+  const need = RECIPIENT_SETUP.exec(text)?.[1] as
+    | AgentRecipientSetupNeed
+    | undefined;
+  return need ? { need, reason: RECIPIENT_SETUP_REASONS[need] } : undefined;
+}
+
 export type AgentRpcRequest =
   | (AgentRpcSend & { action: "send"; snapshot_payload?: AgentSnapshot[] })
   | (AgentRpcSend & { action: "prepare-attachments" | "cancel-attachments" })

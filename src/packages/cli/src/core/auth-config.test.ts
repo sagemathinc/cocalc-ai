@@ -16,6 +16,29 @@ import {
   type AuthConfig,
 } from "./auth-config";
 
+test("host SSH profile default respects API scope and explicit overrides", () => {
+  const config: AuthConfig = {
+    current_profile: "prod",
+    profiles: {
+      prod: { api: "https://prod.example", host_ssh_network: "private" },
+    },
+  };
+  assert.equal(
+    applyAuthProfile({}, config, {}).globals.hostSshNetwork,
+    "private",
+  );
+  assert.equal(
+    applyAuthProfile({ hostSshNetwork: "public" }, config, {}).globals
+      .hostSshNetwork,
+    "public",
+  );
+  assert.equal(
+    applyAuthProfile({ api: "https://other.example" }, config, {}).globals
+      .hostSshNetwork,
+    undefined,
+  );
+});
+
 test("sanitizeProfileName validates and defaults", () => {
   assert.equal(sanitizeProfileName(undefined), "default");
   assert.equal(sanitizeProfileName("  alpha-1  "), "alpha-1");

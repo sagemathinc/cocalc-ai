@@ -27,11 +27,9 @@ interface Props {
   hideWhenEmpty?: boolean;
 }
 
-export const Notification: React.FC<Props> = React.memo((props: Props) => {
-  const { active, hideWhenEmpty = false, type, pageStyle } = props;
-  const { topPaddingIcons, sidePaddingIcons, fontSizeIcons } = pageStyle;
-  const page_actions = useActions("page");
-
+// Unread notifications, news and invites: the one number shown wherever
+// notifications are (sidebar envelope, collapsed-sidebar logo).
+export function useNotificationCount(): number {
   const mentions_unread = useTypedRedux("mentions", "unread_count") ?? 0;
   const news_unread = useTypedRedux("news", "unread");
   const account_id = useTypedRedux("account", "account_id");
@@ -54,6 +52,16 @@ export const Notification: React.FC<Props> = React.memo((props: Props) => {
   useEffect(() => {
     set_window_title();
   }, [count, invite_unread, news_unread]);
+  return count;
+}
+
+export const NOTIFICATION_BADGE_MAX = 99;
+
+export const Notification: React.FC<Props> = React.memo((props: Props) => {
+  const { active, hideWhenEmpty = false, type, pageStyle } = props;
+  const { topPaddingIcons, sidePaddingIcons, fontSizeIcons } = pageStyle;
+  const page_actions = useActions("page");
+  const count = useNotificationCount();
 
   const outer_style: CSS = {
     background: "transparent",
@@ -97,6 +105,7 @@ export const Notification: React.FC<Props> = React.memo((props: Props) => {
           <Badge
             color={count == 0 ? COLORS.GRAY : undefined}
             count={count}
+            overflowCount={NOTIFICATION_BADGE_MAX}
             size="small"
             showZero={false}
             style={{ backgroundColor: "#52c41a" }}

@@ -85,6 +85,7 @@ const SECTIONS = "frontend/project/settings/sections.tsx";
 const API_KEY_SCOPE = "frontend/components/api-key-scope-editor.tsx";
 const AGENT_ATTACHMENT = "frontend/chat/agent-file-attachment.tsx";
 const NETWORK_APPROVAL = "frontend/agents/network-approval.tsx";
+const AGENTS_OVERVIEW = "frontend/agents/agents-overview.tsx";
 
 const doc = (name: string): string => `docs/src/content/${name}.ts`;
 const entries = (name: string): string => `docs/src/entries/${name}.ts`;
@@ -203,6 +204,285 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       ),
     ],
     usedIn: [conventions("the Agents rail tab")],
+  },
+  // The agents workspace guide (ai/my-agents) and the labels it cites. The
+  // sidebar's Agents entry is nav.agents.
+  {
+    id: "agents.sidebar.new-agent",
+    label: "New agent",
+    anchors: [
+      def("frontend/agents/organization-controls.tsx", "> New agent </Button>"),
+      ren(WORKSPACE_PAGE, "<AgentOrganizationControls"),
+    ],
+    usedIn: [
+      bold("ai", "New agent"),
+      bold("claude-code", "New agent"),
+      { file: entries("ai"), text: "Choose New agent" },
+    ],
+  },
+  {
+    id: "agents.sidebar.expand",
+    label: "Expand Agents",
+    anchors: [
+      def(
+        WORKSPACE_PAGE,
+        'title={`${expanded ? "Collapse" : "Expand"} ${label}`}',
+      ),
+      ren(WORKSPACE_PAGE, '<SidebarSection label="Agents"'),
+    ],
+    usedIn: [bold("ai", "Expand Agents")],
+  },
+  {
+    id: "agents.sidebar.all-agents",
+    // Rendered as "All agents (N more)…" when the section leaves agents out.
+    label: "All agents…",
+    anchors: [
+      def(
+        WORKSPACE_PAGE,
+        'All agents{moreAgents > 0 ? ` (${moreAgents} more)` : ""}…',
+      ),
+    ],
+    usedIn: [bold("ai", "All agents…")],
+  },
+  {
+    id: "agents.page.title",
+    label: "Agents",
+    anchors: [
+      def(AGENTS_OVERVIEW, "> Agents </h1>"),
+      ren(WORKSPACE_PAGE, "<AgentsOverview"),
+    ],
+    usedIn: [
+      { file: doc("ai"), text: "The **Agents** page" },
+      { file: doc("ai"), text: "opens the **Agents** page with the rest" },
+      { file: doc("cocalc-at-a-glance"), text: "The **Agents** page" },
+    ],
+  },
+  {
+    id: "agents.page.show-in-sidebar",
+    label: "Show in sidebar",
+    anchors: [
+      def(WORKSPACE_PAGE, '{ key: "show", label: "Show in sidebar" }'),
+      ren(WORKSPACE_PAGE, "mineActions={overviewActions}"),
+    ],
+    usedIn: [bold("ai", "Show in sidebar")],
+  },
+  {
+    id: "agents.overview.mine",
+    // Rendered with its count, as "Mine (N)".
+    label: "Mine",
+    anchors: [def(AGENTS_OVERVIEW, "label: `Mine (${mineItems.length})`")],
+    usedIn: [bold("ai", "Mine")],
+  },
+  {
+    id: "agents.overview.shared",
+    // Rendered with its count, as "Shared with me (N)", once the list loads.
+    label: "Shared with me",
+    anchors: [def(AGENTS_OVERVIEW, "label: `Shared with me${")],
+    usedIn: [
+      bold("ai", "Shared with me"),
+      bold("cocalc-at-a-glance", "Shared with me"),
+    ],
+  },
+  // The page's sort and grouping menus. "Name" is also the new-agent form's
+  // field, so the sort options cite the phrase that names them.
+  ...(
+    [
+      ["sort.recent", "recent", "Recent", "by **Recent** or **Name**"],
+      ["sort.name", "name", "Name", "by **Recent** or **Name**"],
+      ["group.none", "none", "No grouping", "**No grouping**"],
+      ["group.project", "project", "By project", "**By project**"],
+      ["group.person", "person", "By person", "**By person**"],
+    ] as const
+  ).map(
+    ([key, value, label, text]): UiVocabularyEntry => ({
+      id: `agents.overview.${key}`,
+      label,
+      anchors: [
+        def(AGENTS_OVERVIEW, `{ value: "${value}", label: "${label}" }`),
+      ],
+      usedIn: [{ file: doc("ai"), text }],
+    }),
+  ),
+  {
+    id: "agents.sidebar.artifacts",
+    label: "Artifacts",
+    anchors: [def(WORKSPACE_PAGE, "> Artifacts </Button>")],
+    usedIn: [
+      { file: doc("ai"), text: "**Artifacts** in the sidebar" },
+      { file: doc("agent-features"), text: "find them in Artifacts" },
+    ],
+  },
+  {
+    id: "agents.sidebar.show",
+    label: "Show sidebar",
+    anchors: [
+      def(
+        "frontend/agents/workspace-sidebar-toggle.tsx",
+        'hidden ? "Show sidebar" : "Hide sidebar"',
+      ),
+      ren(WORKSPACE_PAGE, "<AgentsSidebarToggle"),
+    ],
+    usedIn: [bold("ai", "Show sidebar")],
+  },
+  {
+    id: "agents.sidebar.show-narrow",
+    label: "Show agents",
+    anchors: [def(WORKSPACE_PAGE, 'aria-label="Show agents"')],
+    // An accessible name only, with no visible text or tooltip, so the guide
+    // describes the button and gives the name unbolded.
+    usedIn: [{ file: doc("ai"), text: "named Show agents" }],
+  },
+  {
+    id: "agents.sidebar.more-actions",
+    // The tooltip and accessible name of an icon-only button, composed with
+    // the agent's name, so the guide gives the pattern with *name* in italics.
+    label: "More actions for @{name}",
+    anchors: [def(WORKSPACE_PAGE, "title={`More actions for @${agent.name}`}")],
+    usedIn: [bold("ai", "More actions for @*name*")],
+  },
+  ...(
+    [
+      ["hide", "Hide from Agents", ': "Hide from Agents"'],
+      ["remove", "Remove from Agents…", ': "Remove from Agents…"'],
+      ["remove-confirm", "Remove from Agents", 'okText: "Remove from Agents"'],
+    ] as const
+  ).map(
+    ([key, label, text]): UiVocabularyEntry => ({
+      id: `agents.sidebar.${key}`,
+      label,
+      anchors: [def(WORKSPACE_PAGE, text)],
+      usedIn: [bold("ai", label)],
+    }),
+  ),
+  {
+    id: "agents.new.first-run",
+    label: "What would you like to work on?",
+    anchors: [def(WORKSPACE_PAGE, '? "What would you like to work on?"')],
+    usedIn: [bold("ai", "What would you like to work on?")],
+  },
+  {
+    id: "agents.new.start",
+    label: "Start agent",
+    anchors: [
+      def(WORKSPACE_PAGE, ': "Start agent (Shift+Enter)"'),
+      ren(
+        WORKSPACE_PAGE,
+        'emptyRequest ? "Create agent without a task" : "Start agent"',
+      ),
+    ],
+    usedIn: [bold("ai", "Start agent")],
+  },
+  {
+    id: "agents.new.create-without-task",
+    label: "Create agent without a task",
+    anchors: [
+      def(WORKSPACE_PAGE, '? "Create agent without a task (Shift+Enter)"'),
+    ],
+    usedIn: [bold("ai", "Create agent without a task")],
+  },
+  {
+    id: "agents.new.name",
+    label: "Name",
+    anchors: [
+      def("frontend/agents/new-agent-name-pill.tsx", 'label="Name"'),
+      ren(WORKSPACE_PAGE, "<NewAgentNamePill"),
+    ],
+    usedIn: [{ file: doc("ai"), text: "the agent's **Name**" }],
+  },
+  {
+    id: "agents.new.project",
+    label: "Project",
+    anchors: [
+      def("frontend/agents/agent-project-selector.tsx", "<span>Project</span>"),
+      ren(WORKSPACE_PAGE, "<AgentProjectSelector"),
+    ],
+    usedIn: [bold("ai", "Project")],
+  },
+  ...(
+    [
+      ["directory", "Working directory"],
+      ["description", "Description (optional)"],
+    ] as const
+  ).map(
+    ([key, label]): UiVocabularyEntry => ({
+      id: `agents.new.${key}`,
+      label,
+      anchors: [
+        def(WORKSPACE_PAGE, `<label htmlFor="new-agent-${key}">${label}`),
+      ],
+      usedIn: [bold("ai", label)],
+    }),
+  ),
+  {
+    id: "agents.new.no-project",
+    label: "Your first project will be created automatically",
+    anchors: [
+      def(
+        WORKSPACE_PAGE,
+        'title="Your first project will be created automatically"',
+      ),
+    ],
+    usedIn: [bold("ai", "Your first project will be created automatically")],
+  },
+  {
+    id: "agents.new.default-project-title",
+    label: "My first project",
+    anchors: [
+      def(
+        "frontend/agents/new-agent-defaults.ts",
+        'if (!title) return "My first project";',
+      ),
+    ],
+    usedIn: [bold("ai", "My first project")],
+  },
+  {
+    id: "agents.new.runtime.claude",
+    label: "Claude",
+    anchors: [
+      def(
+        "frontend/agents/new-agent-runtime-select.tsx",
+        '{ value: "claude-code", label: "Claude" }',
+      ),
+      ren(WORKSPACE_PAGE, "<NewAgentRuntimeSelect"),
+    ],
+    usedIn: [bold("ai", "Claude"), bold("claude-code", "Claude")],
+  },
+  {
+    id: "agents.new.payment.membership",
+    label: "CoCalc Membership",
+    anchors: [
+      def(
+        "frontend/chat/use-codex-payment-source.ts",
+        'label: "CoCalc Membership"',
+      ),
+      ren(WORKSPACE_PAGE, "getCodexPaymentSourceOptions(paymentSource)"),
+    ],
+    usedIn: [bold("ai", "CoCalc Membership")],
+  },
+  {
+    id: "account.ai",
+    label: "AI",
+    anchors: [
+      msg(COMMON, "labels.ai", 'defaultMessage: "AI"'),
+      ren("frontend/account/account-preferences-ai.tsx", "label: labels.ai,"),
+    ],
+    usedIn: [{ file: doc("ai"), text: "account **AI** settings" }],
+  },
+  {
+    id: "account.ai.disable-all",
+    label: "Disable all AI integrations",
+    anchors: [
+      msg(
+        "frontend/account/other-settings.tsx",
+        "account.other-settings.llm.disable_all",
+        "<strong>Disable all AI integrations</strong>",
+      ),
+      ren(
+        "frontend/account/other-settings.tsx",
+        "{anyAIEnabled && render_disable_all_ai()}",
+      ),
+    ],
+    usedIn: [bold("ai", "Disable all AI integrations")],
   },
   {
     id: "assistant.codex",
@@ -332,7 +612,11 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       def(SECTIONS, 'label: "People",'),
       def(SECTIONS, 'id: "people",'),
     ],
-    usedIn: [conventions("the People section of project settings")],
+    usedIn: [
+      conventions("the People section of project settings"),
+      { file: doc("collaboration"), text: "**Settings -> People**" },
+      { file: doc("research"), text: "project's **People** settings" },
+    ],
   },
   {
     id: "quick-navigation",
@@ -363,6 +647,13 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     aliases: ["Compute hosts"],
   },
   {
+    id: "nav.admin",
+    label: "Admin",
+    // Listed in the account menu only for administrators.
+    anchors: [def(ACCOUNT_MENU, 'label: "Admin" }')],
+    usedIn: [bold("admin", "Admin")],
+  },
+  {
     id: "nav.agents",
     label: "Agents",
     anchors: [
@@ -370,7 +661,14 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       def(WORKSPACE_PAGE, "onClick={showAgentsOverview}"),
       ren(QUICK_NAV_DATA, 'page: "agents", title: "Agents",'),
     ],
-    usedIn: [bold("cocalc-at-a-glance", "Agents")],
+    usedIn: [
+      bold("cocalc-at-a-glance", "Agents"),
+      { file: doc("ai"), text: "under **Agents** in the sidebar" },
+      { file: doc("ai"), text: "If the **Agents** section is collapsed" },
+      { file: doc("ai"), text: "listed under **Agents**" },
+      { file: doc("ai"), text: "the sidebar's **Agents** entry" },
+      { file: doc("ai"), text: "the sidebar has no **Agents** section" },
+    ],
   },
   {
     id: "hosts.page-tabs",
@@ -562,7 +860,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
         "This scratchpad is not available right now. Ask your instructor.",
         "This scratchpad is not available right now. Ask your instructor.",
       ],
-      ["student-not-found", "Not Found", 'error: "Not Found"'],
+      ["student-no-exam", "No exam is open", ">No exam is open<"],
       [
         "join-same-origin",
         "exam admission requires a same-origin request",
@@ -900,6 +1198,53 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     ],
     usedIn: [bold("jupyter", "Target language")],
   },
+  {
+    id: "jupyter.run.output-limit",
+    label: "Output limit",
+    anchors: [
+      msg(COMMON, "menu.generic.run.label", 'defaultMessage: "Run"'),
+      ren(JUPYTER_EDITOR, "label: menu.run,"),
+      def(JUPYTER_EDITOR, 'label: "Output limit",'),
+    ],
+    usedIn: [{ file: doc("jupyter"), text: "**Run → Output limit**" }],
+  },
+  {
+    id: "jupyter.run.output-limit.choices",
+    label: "{mib} MiB",
+    anchors: [
+      def("jupyter/execute/output-budget.ts", "[1, 4, 16, 64]"),
+      ren("frontend/jupyter/output-limit-menu.ts", "${mib} MiB"),
+      ren("frontend/jupyter/output-limit-menu.ts", '" (default)"'),
+      ren("frontend/jupyter/output-limit-menu.ts", '" (selected)"'),
+    ],
+    usedIn: [
+      {
+        file: doc("jupyter"),
+        text: "**1 MiB (default)**, **4 MiB**, **16 MiB**, or **64 MiB**",
+      },
+    ],
+  },
+
+  // Recovery status lines at the top of the Find Snapshots and Backups tabs
+  ...(
+    [
+      ["snapshots", "Local snapshots", "snapshot"],
+      ["backups", "Off-host backups", "backup"],
+    ] as const
+  ).map(
+    ([key, label, kind]): UiVocabularyEntry => ({
+      id: `recovery.status.${key}`,
+      label,
+      anchors: [
+        def("frontend/project/recovery-status.tsx", `"${label}"`),
+        ren(
+          `frontend/project/find/find-tab-${key}.tsx`,
+          `<ProjectRecoveryStatus project_id={project_id} kind="${kind}" />`,
+        ),
+      ],
+      usedIn: [bold("files", label)],
+    }),
+  ),
 
   // Virtual machines
   ...(
@@ -1013,6 +1358,50 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     ],
     usedIn: [bold("research", "Viewer file access")],
   },
+  // The People page in the sidebar is not the project's People settings
+  // (settings.people); the support conventions tell the two apart.
+  {
+    id: "nav.people",
+    label: "People",
+    anchors: [
+      // The sidebar section's header button, as shown, and its label prop,
+      // which names the section and its Expand or Collapse toggle.
+      def(WORKSPACE_PAGE, "> People </Button>"),
+      def(WORKSPACE_PAGE, 'label="People"'),
+      def(
+        "frontend/app/compact-agents-top-nav.tsx",
+        '{ key: "people", icon: <Icon name="users" />, label: "People" }',
+      ),
+      def("frontend/people/page.tsx", ">People</h1>"),
+    ],
+    usedIn: [conventions("The People page in the sidebar is a different page")],
+  },
+  ...(
+    [
+      ["conversations", "Conversations"],
+      ["collaborators", "Collaborators"],
+      ["invites", "Invites"],
+    ] as const
+  ).map(
+    ([key, label]): UiVocabularyEntry => ({
+      id: `people.tabs.${key}`,
+      label,
+      anchors: [
+        def("frontend/people/page.tsx", `key: "${key}", label: "${label}",`),
+      ],
+      usedIn: [
+        conventions("with the tabs Conversations, Collaborators and Invites"),
+      ],
+    }),
+  ),
+  {
+    id: "people.invite",
+    label: "Invite to projects",
+    anchors: [
+      def("frontend/people/collaborators.tsx", "Invite to projects</Button>"),
+    ],
+    usedIn: [conventions("A person's page there offers Invite to projects")],
+  },
   {
     id: "editor.build-log",
     label: "Build Log",
@@ -1048,6 +1437,61 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     ],
     usedIn: [bold("teaching", "Create Shared Project")],
   },
+
+  // Claude Code and an agent's CoCalc connector
+  {
+    id: "claude.connect-subscription",
+    label: "Connect Claude Pro/Max",
+    anchors: [
+      def(
+        "frontend/chat/claude-subscription-connect.tsx",
+        '"Connect Claude Pro/Max"',
+      ),
+      ren(
+        "frontend/agents/new-agent-harness-controls.tsx",
+        "<ClaudeSubscriptionConnect",
+      ),
+    ],
+    usedIn: [bold("claude-code", "Connect Claude Pro/Max")],
+  },
+  {
+    // The heading that tells the first-run new-agent form, which has no
+    // runtime choice, from the full form.
+    id: "claude.first-run-form",
+    label: "What would you like to work on?",
+    anchors: [
+      def(
+        WORKSPACE_PAGE,
+        '? "What would you like to work on?" : "What should your new agent do?"',
+      ),
+    ],
+    usedIn: [bold("claude-code", "What would you like to work on?")],
+  },
+  {
+    id: "agents.connector.cocalc",
+    label: "CoCalc access",
+    anchors: [
+      def("frontend/agents/composer-connectors.tsx", 'label: "CoCalc access"'),
+    ],
+    usedIn: [{ file: doc("cocalc-access"), text: "**+ > CoCalc access**" }],
+  },
+  ...(
+    [
+      ["enable", "Enable CoCalc access"],
+      ["save", "Save access"],
+      ["remove", "Remove connector"],
+    ] as const
+  ).map(
+    ([key, label]): UiVocabularyEntry => ({
+      id: `agents.connector.${key}`,
+      label,
+      anchors: [
+        def("frontend/agents/cocalc-connector.tsx", `> ${label} <`),
+        ren("frontend/agents/composer-connectors.tsx", "<CocalcConnector"),
+      ],
+      usedIn: [bold("cocalc-access", label)],
+    }),
+  ),
 ];
 
 const USERS_RETIRED =
@@ -1069,6 +1513,22 @@ export const UI_VOCABULARY_FACTS: readonly UiVocabularyFact[] = [
     before: "] as const;",
     text: '"users"',
     reason: USERS_RETIRED,
+  },
+  {
+    id: "shares.sign-in-required",
+    file: "server/public-directory-shares/index.ts",
+    kind: "present",
+    text: "anonymous public directory shares are not supported",
+    reason:
+      'The "Publish project files" guide (docs/src/content/projects.ts, sections "Share URLs and slugs" and "Viewer access model") says only someone signed in to the site can open an unlisted share. If the message only moved, point this fact at its new location. If anonymous shares become possible, update those sections, then this fact.',
+  },
+  {
+    id: "recovery.status.snapshot-date-scheduled-only",
+    file: "project-host/file-server.ts",
+    kind: "present",
+    text: ".filter(isISODate) .sort();",
+    reason:
+      'The Local snapshots status date comes from the newest date-named (scheduled) snapshot only, while Find searches every retained snapshot. The Files guide (docs/src/content/files.ts, "Find a retained file when its path is unknown") says so. If the filter only moved, point this fact at its new location. If the date starts counting other snapshots, update that paragraph, then this fact.',
   },
 ];
 

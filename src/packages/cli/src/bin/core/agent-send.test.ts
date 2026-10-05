@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { agentSendExitCode, agentSendSummary } from "./agent-send";
+import {
+  agentRecipientSetupError,
+  parseAgentRecipientSetup,
+} from "@cocalc/conat/agents/rpc";
 
 const target = { project_id: randomUUID(), agent_id: randomUUID() };
 const base = {
@@ -85,4 +89,25 @@ test("external inboxes and external senders get accurate summaries", () => {
     external_agent: "laptop",
   });
   assert.ok(unknown.includes('--external-agent "laptop".'));
+});
+
+test("a recipient with nothing to pay for turns gives a sentence to relay", () => {
+  const setup = parseAgentRecipientSetup(
+    agentRecipientSetupError("codex-connection"),
+  );
+  assert.equal(setup?.need, "codex-connection");
+  const summary = agentSendSummary(
+    sent({
+      outcome: "rejected",
+      code: "execution_not_allowed",
+      reason: setup!.reason,
+      chat_effect: "saved",
+    }),
+  );
+  assert.match(
+    summary,
+    /^Not delivered to @reviewer \(Support\) via Agent Network "cocalc": the recipient agent has no ChatGPT plan or OpenAI API key connected/,
+  );
+  assert.match(summary, /choose Connect in its thread/);
+  assert.match(summary, /saved in their thread, but no turn started\.$/);
 });

@@ -1,5 +1,5 @@
 import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
-import { chooseOnboardingRootfs } from "./rootfs";
+import { chooseOnboardingRootfs, quickProjectImageChoices } from "./rootfs";
 
 function image(
   id: string,
@@ -78,5 +78,33 @@ describe("chooseOnboardingRootfs", () => {
     });
     expect(result?.entry).toBe(entry);
     expect(result?.matched_tag).toBeUndefined();
+  });
+});
+
+describe("quick project image choices", () => {
+  it("offers Python, R, SageMath and LaTeX only for images clearly made for them", () => {
+    const choices = quickProjectImageChoices({
+      images: [
+        image("py", ["onboarding:jupyter-python"], { official: true }),
+        image("r", ["r", "jupyter"], { official: true }),
+        image("sage", ["sagemath"], { official: true }),
+        // Only generic tags: not offered as LaTeX (or anything else).
+        image("everything", ["jupyter", "preset:standard"], { official: true }),
+        // Not official: never offered.
+        image("tex", ["latex"]),
+      ],
+    });
+    expect(choices.map(({ label, entry }) => [label, entry.id])).toEqual([
+      ["Python", "py"],
+      ["R", "r"],
+      ["SageMath", "sage"],
+    ]);
+  });
+
+  it("offers each image once", () => {
+    const choices = quickProjectImageChoices({
+      images: [image("sage", ["sagemath", "latex"], { official: true })],
+    });
+    expect(choices.map(({ label }) => label)).toEqual(["SageMath"]);
   });
 });
