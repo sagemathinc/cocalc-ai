@@ -748,6 +748,10 @@ export function registerProjectOpsCommands(
       "allow a cross-region move and cut over the project's backup region after the first successful destination backup",
     )
     .option("--wait", "wait for completion")
+    .option(
+      "--allow-oversized-skip",
+      "move even if files over the backup file size limit cannot be included; those files are deleted",
+    )
     .action(
       async (
         opts: {
@@ -755,6 +759,7 @@ export function registerProjectOpsCommands(
           host: string;
           wait?: boolean;
           cutoverBackupRegion?: boolean;
+          allowOversizedSkip?: boolean;
         },
         command: Command,
       ) => {
@@ -765,6 +770,7 @@ export function registerProjectOpsCommands(
             project_id: ws.project_id,
             dest_host_id: host.id,
             backup_region_cutover: !!opts.cutoverBackupRegion,
+            ...(opts.allowOversizedSkip ? { allow_oversized_skip: true } : {}),
           });
 
           if (!opts.wait) {
@@ -970,6 +976,10 @@ export function registerProjectOpsCommands(
     .requiredOption("--dest-project <project>", "destination project")
     .requiredOption("--dest <path>", "destination path")
     .option("--wait", "wait for completion")
+    .option(
+      "--allow-oversized-skip",
+      "copy even if files over the source's backup file size limit are left out (copies to another host only)",
+    )
     .action(
       async (
         opts: {
@@ -978,6 +988,7 @@ export function registerProjectOpsCommands(
           destProject: string;
           dest: string;
           wait?: boolean;
+          allowOversizedSkip?: boolean;
         },
         command: Command,
       ) => {
@@ -987,6 +998,7 @@ export function registerProjectOpsCommands(
           const op = await ctx.hub.projects.copyPathBetweenProjects({
             src: { project_id: srcWs.project_id, path: opts.src },
             dest: { project_id: destWs.project_id, path: opts.dest },
+            ...(opts.allowOversizedSkip ? { allow_oversized_skip: true } : {}),
           });
 
           if (!opts.wait) {
