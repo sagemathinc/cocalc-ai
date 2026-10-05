@@ -364,4 +364,20 @@ describe("fabric faults", () => {
       "after an attached bay restart",
     );
   });
+  it("starts an attached bay while the seed's registry is unreadable", async () => {
+    // The bay's fabric handshakes are rejected until the registry answers;
+    // startup must wait for them rather than exit.
+    await cluster.stopBay(ATTACHED);
+    const locked = lockCredentialRegistry(20);
+    await sleep(2_000);
+    cluster.startBay(ATTACHED);
+    await locked;
+    await cluster.waitReady(ATTACHED);
+    await assertCrossBayRename(
+      alice.client,
+      bob.client,
+      bob.project,
+      "after starting during a registry outage",
+    );
+  });
 });
