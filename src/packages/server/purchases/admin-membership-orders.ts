@@ -91,6 +91,15 @@ async function transaction<T>(
 export async function prepareAdminMembershipOrder(
   opts: AdminMembershipPackagePurchaseOptions,
 ): Promise<AdminMembershipOrder> {
+  if (
+    opts.product.kind === "team" &&
+    opts.product.membership_class === "instructor" &&
+    (opts.source !== "free" || !toDecimal(opts.price).isZero())
+  ) {
+    throw Error(
+      "Instructor team packages require a complimentary zero-cost purchase",
+    );
+  }
   const request = JSON.stringify({
     product: opts.product,
     price: opts.price,
