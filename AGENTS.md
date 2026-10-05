@@ -100,6 +100,8 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
 - Route by explicit ownership: account `home_bay_id`, project `owning_bay_id`, and host `bay_id`.
 - Do not assume the local bay/database is authoritative unless the code has resolved ownership or is documented as one-bay-only.
 - Cross-bay project operations must use the inter-bay/project-host routing layer, not direct local DB/project-host shortcuts.
+- Prefer routing at the edge: for a hub API method whose authorization and effects all live on one project's owning bay, add it to `src/packages/conat/hub/api/routes.ts` and write the method as plain single-bay code. Do not add new `resolveProjectBay` + inter-bay client branches or `...Local` twins for such methods.
+- Cross-bay behavior must be covered by the real two-bay suite in `src/scripts/multibay/` (CI job `multibay`), not only by local/remote mocks.
 - For project-to-project operations, assume source and destination projects may belong to different bays unless the operation explicitly requires same-host/same-bay semantics.
 - Keep the control plane and data plane separate: hubs/bays authorize, route, synchronize state, and issue scoped project-host access, but steady-state project traffic such as files, terminals, Jupyter, Codex, previews, and app/server proxying should flow directly between the user/client and the project host whenever possible.
 - Do not proxy project data through the hub/control plane unless there is a documented reason. If a new access mode needs different permissions, prefer a distinct project-host subject/service with narrower capabilities over hub-mediated data access.

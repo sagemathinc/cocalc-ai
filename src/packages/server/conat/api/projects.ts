@@ -2428,18 +2428,8 @@ export async function setProjectMetadata({
   if (!isValidUUID(project_id)) {
     throw new Error("invalid project_id");
   }
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   const normalized = normalizeProjectMetadataPatch(patch);
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership != null && ownership.bay_id !== getConfiguredBayId()) {
-    await getInterBayBridge()
-      .projectCollabInvite(ownership.bay_id)
-      .setProjectMetadata({
-        account_id: actor,
-        project_id,
-        patch: normalized,
-      });
-    return;
-  }
   await setLocalProjectMetadata({
     account_id: actor,
     project_id,
@@ -2447,7 +2437,7 @@ export async function setProjectMetadata({
   });
 }
 
-export async function setLocalProjectMetadata({
+async function setLocalProjectMetadata({
   account_id,
   project_id,
   patch,
@@ -2515,17 +2505,7 @@ export async function setProjectManageUsersOwnerOnly({
   if (typeof manage_users_owner_only !== "boolean") {
     throw new Error("manage_users_owner_only must be a boolean");
   }
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership != null && ownership.bay_id !== getConfiguredBayId()) {
-    await getInterBayBridge()
-      .projectCollabInvite(ownership.bay_id)
-      .setManageUsersOwnerOnly({
-        account_id: actor,
-        project_id,
-        manage_users_owner_only,
-      });
-    return;
-  }
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   await setLocalProjectManageUsersOwnerOnly({
     account_id: actor,
     project_id,
@@ -2533,7 +2513,7 @@ export async function setProjectManageUsersOwnerOnly({
   });
 }
 
-export async function setLocalProjectManageUsersOwnerOnly({
+async function setLocalProjectManageUsersOwnerOnly({
   account_id,
   project_id,
   manage_users_owner_only,
@@ -4475,13 +4455,8 @@ export async function setProjectUserRole({
   account_id?: string;
   opts: Parameters<typeof setProjectUserRoleLocal>[0]["opts"];
 }) {
-  const ownership = await resolveProjectBay(opts.project_id);
-  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
-    return await setProjectUserRoleLocal({ account_id: account_id!, opts });
-  }
-  await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .setProjectUserRole({ account_id: account_id!, opts });
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  return await setProjectUserRoleLocal({ account_id: account_id!, opts });
 }
 
 function isCollabInviteNotFound(err: unknown, invite_id: string): boolean {

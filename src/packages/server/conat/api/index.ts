@@ -96,6 +96,7 @@ import {
   isBillingAuthorityHubApiCall,
 } from "@cocalc/server/purchases/billing-authority/client";
 import { registerBillingAuthorityHubApiExecutor } from "@cocalc/server/purchases/billing-authority/dispatch";
+import { executeHubApiCall, registerHubApiLocalExecutor } from "./edge-routing";
 
 const ssh = {} as any;
 const reflect = {} as any;
@@ -492,7 +493,8 @@ async function getResponse({
   if (isBillingAuthorityHubApiCall(name)) {
     return await executeBillingHubApiCall(call);
   }
-  return await getResponseLocal(call);
+  // Runs here, or on the bay that owns the call's data (see edge-routing).
+  return await executeHubApiCall(call);
 }
 
 async function getResponseLocal({
@@ -528,6 +530,7 @@ async function getResponseLocal({
 }
 
 registerBillingAuthorityHubApiExecutor(getResponseLocal);
+registerHubApiLocalExecutor(getResponseLocal);
 
 const AGENT_HUB_API_METHODS = new Set([
   "system.getPublicSiteUrl",

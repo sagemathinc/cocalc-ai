@@ -5,6 +5,8 @@ import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
  */
 
 import { createInterBayAgentIdentityHandler } from "@cocalc/conat/inter-bay/agent-identities";
+import { createInterBayHubApiHandler } from "@cocalc/conat/inter-bay/hub-api";
+import { handleForwardedHubApiCall } from "@cocalc/server/conat/api/edge-routing";
 import { agentIdentityControl } from "@cocalc/server/agents/identity-control";
 import { createAgentPaymentSelectionsHandler } from "@cocalc/conat/inter-bay/agent-payment-selections";
 import { paymentSelectionsHome } from "@cocalc/server/agents/payment-selections";
@@ -592,7 +594,6 @@ import {
   respondCollabInviteCanonical,
   respondEmailProjectInvite,
   respondProjectAccessRequest,
-  setProjectUserRole,
   unblockProjectAccessRequester,
 } from "@cocalc/server/projects/collaborators";
 import { ensureCourseManagerAccessLocal } from "@cocalc/server/projects/course/ensure-manager-access";
@@ -630,8 +631,6 @@ import {
   getCourseReconfigureOperationLocal,
   reconfigureCourseProjectsLocal,
   setLocalProjectDeletionProtection,
-  setLocalProjectManageUsersOwnerOnly,
-  setLocalProjectMetadata,
   setLocalProjectsHidden,
 } from "@cocalc/server/conat/api/projects";
 import { listVisibleRootfsImages } from "@cocalc/server/rootfs/catalog";
@@ -711,6 +710,12 @@ export async function initInterBayServices(): Promise<void> {
       createAgentRpcControlHandler(getConfiguredBayId(), agentRpcControl, {
         client: getInterBayFabricClient({ noCache: true }),
         parallel: true,
+      }),
+      createInterBayHubApiHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bay_id: getConfiguredBayId(),
+        parallel: true,
+        impl: { call: handleForwardedHubApiCall },
       }),
       createInterBayAgentIdentityHandler({
         client: getInterBayFabricClient({ noCache: true }),
@@ -2832,9 +2837,6 @@ async function startProjectCollabInviteService(): Promise<void> {
     removeCollaborator: async (opts) => {
       await removeCollaborator(opts);
     },
-    setProjectUserRole: async (opts) => {
-      await setProjectUserRole(opts);
-    },
     getUsage: async (opts) => {
       await assertLocalProjectCollaborator(opts);
       return await getProjectCollaboratorInviteUsage(opts.project_id);
@@ -2852,9 +2854,6 @@ async function startProjectCollabInviteService(): Promise<void> {
         project_ids,
         hide,
       }),
-    setProjectMetadata: async (opts) => await setLocalProjectMetadata(opts),
-    setManageUsersOwnerOnly: async (opts) =>
-      await setLocalProjectManageUsersOwnerOnly(opts),
     setDeletionProtection: async (opts) =>
       await setLocalProjectDeletionProtection(opts),
     respond: async ({
