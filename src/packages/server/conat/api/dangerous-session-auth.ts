@@ -79,7 +79,82 @@ function impersonationHasRecentSecondFactor(
   );
 }
 
-export async function requireDangerousSessionAuth({
+export type DangerousSessionAuthOptions = {
+  account_id?: string | null;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  require_second_factor?: boolean | "if_enabled";
+  allow_actor_impersonation?: boolean;
+};
+
+type DelegatedSessionAuthResult =
+  | { ok: true; session: AccountAuthSessionRow }
+  | { ok: false; error: string; attrs: Record<string, unknown> };
+
+/**
+ * Require a freshly authenticated session for a dangerous operation. Sessions
+ * live on the account's home bay, so on any other bay (e.g., the owning bay
+ * of a routed project call) the same check runs there instead.
+ */
+export async function requireDangerousSessionAuth(
+  opts: DangerousSessionAuthOptions,
+): Promise<AccountAuthSessionRow> {
+  const accountId = `${opts.account_id ?? ""}`.trim();
+  const home = accountId ? await remoteHomeBay(accountId) : undefined;
+  if (home == null) {
+    return await requireDangerousSessionAuthLocal(opts);
+  }
+  const { createInterBaySessionAuthClient } =
+    await import("@cocalc/conat/inter-bay/session-auth");
+  const { getInterBayFabricClient } =
+    await import("@cocalc/server/inter-bay/fabric");
+  const result: DelegatedSessionAuthResult =
+    await createInterBaySessionAuthClient({
+      client: getInterBayFabricClient(),
+      bay_id: home,
+    }).requireDangerousSessionAuth({ ...opts, account_id: accountId });
+  if (result.ok) return result.session;
+  throw Object.assign(new Error(result.error), result.attrs);
+}
+
+/** The account's home bay if it is another bay of a multibay cluster. */
+async function remoteHomeBay(account_id: string): Promise<string | undefined> {
+  const { isMultiBayCluster } = await import("@cocalc/server/cluster-config");
+  if (!isMultiBayCluster()) return;
+  const { getConfiguredBayId } = await import("@cocalc/server/bay-config");
+  const { resolveAccountHomeBay } =
+    await import("@cocalc/server/bay-directory");
+  const { home_bay_id } = await resolveAccountHomeBay({ account_id });
+  return home_bay_id && home_bay_id !== getConfiguredBayId()
+    ? home_bay_id
+    : undefined;
+}
+
+/** The home bay's side of a delegated check. */
+export async function handleDelegatedSessionAuth(
+  opts: DangerousSessionAuthOptions,
+): Promise<DelegatedSessionAuthResult> {
+  try {
+    const accountId = `${opts.account_id ?? ""}`.trim();
+    // Only the home bay holds the session; never delegate a second time.
+    if (accountId && (await remoteHomeBay(accountId)) != null) {
+      throw Object.assign(new Error("account is not homed on this bay"), {
+        code: 409,
+      });
+    }
+    return { ok: true, session: await requireDangerousSessionAuthLocal(opts) };
+  } catch (err) {
+    const { hubApiErrorAttrs } =
+      await import("@cocalc/conat/hub/api/error-attrs");
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : `${err}`,
+      attrs: hubApiErrorAttrs(err),
+    };
+  }
+}
+
+export async function requireDangerousSessionAuthLocal({
   account_id,
   browser_id,
   session_hash,
