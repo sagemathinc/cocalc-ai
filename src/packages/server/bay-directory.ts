@@ -141,9 +141,11 @@ async function getAccountRow(account_id: string): Promise<{
   }
   // An account homed here is served from this bay's own row (it is the
   // source of truth), so attached bays do not depend on the seed for it.
-  const homedHere = await getLocalAccountRow(account_id);
-  if (homedHere?.account_id && (await accountHomedHereLocally(account_id))) {
-    return homedHere;
+  if (await accountHomedHereLocally(account_id)) {
+    const homedHere = await getLocalAccountRow(account_id);
+    if (homedHere?.account_id) {
+      return homedHere;
+    }
   }
   const global = await getClusterAccountById(account_id);
   if (global?.account_id) {
