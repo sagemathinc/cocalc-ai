@@ -4,6 +4,10 @@
  */
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
+import {
+  ensureRestoreDrillAttestationTable,
+  getProjectRestoreDrillHealth,
+} from "./restore-drill-attestation";
 import { uuid } from "@cocalc/util/misc";
 
 const publishAccountFeedEventBestEffortMock = jest.fn();
@@ -340,6 +344,7 @@ describe("hard delete project cleanup", () => {
   beforeAll(async () => {
     await initEphemeralDatabase({});
     await ensureSupplementalSchemas();
+    await ensureRestoreDrillAttestationTable();
   }, 15000);
 
   beforeEach(() => {
@@ -381,11 +386,53 @@ describe("hard delete project cleanup", () => {
         project_rehome_operations,
         project_runtime_slots,
         project_rootfs_states,
+        project_restore_drill_attestations,
         project_secrets,
         projects,
         syncstrings
        CASCADE`,
     );
+  });
+
+  it("deletes a canary but preserves its attestation and coverage for other projects on the shard", async () => {
+    await seedCleanupRows();
+    await getPool().query(
+      `UPDATE projects SET backup_repo_id=$1, provisioned=true, last_backup=now()
+        WHERE project_id IN ($2, $3)`,
+      [BACKUP_REPO_ID, PROJECT_ID, OTHER_PROJECT_ID],
+    );
+    await getPool().query(
+      `INSERT INTO project_restore_drill_attestations
+         (op_id, project_id, backup_id, backup_repo_id, restore_host_id,
+          restore_finished_at, expected_sha256, observed_sha256, passed,
+          recorded_by, reason)
+       VALUES ($1, $2, 'canary-backup', $3, $4, now(), $5, $5, true, $6, 'canary readback')`,
+      [
+        EVENT_ID,
+        PROJECT_ID,
+        BACKUP_REPO_ID,
+        BLOB_ID,
+        "a".repeat(64),
+        ACCOUNT_ID,
+      ],
+    );
+    const { hardDeleteProject } = await import("./hard-delete");
+    await hardDeleteProject({ project_id: PROJECT_ID, account_id: ACCOUNT_ID });
+    await expect(countRows("projects", "project_id=$1")).resolves.toBe(0);
+    await expect(
+      countRows("account_project_index", "project_id=$1"),
+    ).resolves.toBe(0);
+    await expect(
+      countRows("project_restore_drill_attestations", "project_id=$1"),
+    ).resolves.toBe(1);
+    await expect(getProjectRestoreDrillHealth(BAY_ID)).resolves.toEqual([
+      expect.objectContaining({
+        backup_repo_id: BACKUP_REPO_ID,
+        backed_up_projects: 1,
+        latest_passed: true,
+        latest_backup_id: "canary-backup",
+      }),
+    ]);
   });
 
   it("purges project-scoped projection, runtime, backup, secret, and TimeTravel rows", async () => {
