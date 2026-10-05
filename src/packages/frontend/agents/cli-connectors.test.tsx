@@ -220,7 +220,7 @@ describe("Settings > Connectors section", () => {
       within(dialog).getByRole("checkbox", { name: "R2 storage" }),
     );
     await userEvent.click(
-      within(dialog).getByRole("checkbox", { name: "DNS" }),
+      within(dialog).getByRole("checkbox", { name: /^DNS/ }),
     );
     await userEvent.click(
       within(dialog).getByRole("button", { name: "Continue" }),

@@ -81,6 +81,24 @@ async function postForm(
   return body;
 }
 
+// The longest lifetimes accepted from GitHub (its documented 8 h access and
+// 6 month refresh tokens, plus a margin). Anything longer is refused and
+// revoked: the bound on what a project can hold depends on it.
+export const GITHUB_MAX_ACCESS_SECONDS = 8 * 3600 + 600;
+const GITHUB_MAX_REFRESH_SECONDS = 184 * 86400;
+
+/** now + seconds, if that is a sane, bounded time; otherwise undefined. */
+export function boundedExpiry(
+  now: number,
+  seconds: unknown,
+  max: number,
+): number | undefined {
+  const n = Number(seconds);
+  if (!Number.isFinite(n) || n <= 0 || n > max) return;
+  const at = now + Math.floor(n * 1000);
+  return Number.isSafeInteger(at) ? at : undefined;
+}
+
 function positive(value: unknown): number {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? n : 0;
@@ -152,15 +170,27 @@ function connectionFromTokens(
       "The site's GitHub App must have 'Expire user authorization tokens' turned on",
     );
   }
+  const access_expires_at = boundedExpiry(
+    now,
+    body.expires_in,
+    GITHUB_MAX_ACCESS_SECONDS,
+  );
+  const refresh_expires_at = boundedExpiry(
+    now,
+    body.refresh_token_expires_in ?? 15_811_200,
+    GITHUB_MAX_REFRESH_SECONDS,
+  );
+  if (access_expires_at == null || refresh_expires_at == null) {
+    throw Error("GitHub returned a token lifetime longer than allowed");
+  }
   return {
     version: 2,
     type: "github-app",
     client_id,
     access_token,
-    access_expires_at: now + positive(body.expires_in) * 1000,
+    access_expires_at,
     refresh_token,
-    refresh_expires_at:
-      now + (positive(body.refresh_token_expires_in) || 15_811_200) * 1000,
+    refresh_expires_at,
   };
 }
 
@@ -278,10 +308,22 @@ export async function refreshGithubConnection({
     throw new GithubReconnectRequired("GitHub sign-in was revoked or expired");
   }
   if (body.error) throw Error(`GitHub token refresh failed: ${body.error}`);
-  return {
-    connection: connectionFromTokens(body, config.client_id, now),
-    refreshed: true,
-  };
+  try {
+    return {
+      connection: connectionFromTokens(body, config.client_id, now),
+      refreshed: true,
+    };
+  } catch (err) {
+    // Unusable new tokens are revoked; the connection needs a new sign-in.
+    if (typeof body.access_token === "string") {
+      await revokeGithubToken({
+        config,
+        token: body.access_token,
+        fetchImpl,
+      }).catch(() => undefined);
+    }
+    throw new GithubReconnectRequired(`${(err as Error).message}`);
+  }
 }
 
 /** Invalidate a user token at GitHub (needs the app's client secret). */

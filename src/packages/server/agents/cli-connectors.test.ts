@@ -97,17 +97,31 @@ let connection: Row;
 // The pending sign-in row, if any.
 let signInRow: Row | undefined;
 
-// Answers GitHub endpoints by URL; records every request.
+// Answers provider endpoints by URL, as the global fetch; records every
+// request. A body {status: n} answers with that HTTP status.
 function github(routes: Record<string, unknown>) {
-  return jest.fn(async (url: string, init?: any) => {
+  const fetchMock = jest.fn(async (url: string, init?: any) => {
     const key = `${init?.method ?? "GET"} ${url}`;
-    const body = routes[key];
+    const body = routes[key] as any;
     if (body === undefined) throw Error(`unexpected ${key}`);
-    return { ok: true, status: 200, json: async () => body };
+    const status = typeof body?.status === "number" ? body.status : 200;
+    return {
+      ok: status < 400,
+      status,
+      json: async () => body,
+    };
   }) as any;
+  jest.spyOn(globalThis, "fetch").mockImplementation(fetchMock);
+  return fetchMock;
 }
 
+afterEach(() => {
+  jest.restoreAllMocks();
+});
+
 beforeEach(() => {
+  // Server time; requests cannot supply their own.
+  jest.spyOn(Date, "now").mockReturnValue(NOW);
   for (const mock of [
     queryMock,
     homeMock,
@@ -154,7 +168,13 @@ beforeEach(() => {
     return updated;
   });
   queryMock.mockResolvedValue({ rows: [grant] });
-  createMock.mockResolvedValue({ id: connectionId, created: true });
+  createMock.mockImplementation(async ({ selector, payload, metadata }) => {
+    // A new pending sign-in becomes the row later updates work on.
+    if (`${selector.kind}`.endsWith("-device-login")) {
+      signInRow = { id: connectionId, payload, metadata };
+    }
+    return { id: connectionId, created: true };
+  });
   getByIdMock.mockImplementation(async () => connection);
 });
 
@@ -204,16 +224,15 @@ function pendingSignIn(
 
 async function poll(
   connector: "github" | "cloudflare",
-  fetchImpl: any,
+  _fetch?: unknown,
   now = NOW,
 ) {
   const { pollCliConnectorSignIn } = await import("./cli-connectors");
+  jest.spyOn(Date, "now").mockReturnValue(now);
   return await pollCliConnectorSignIn({
     account_id: accountId,
     connector,
     login_id: connectionId,
-    now,
-    fetchImpl,
   });
 }
 
@@ -242,8 +261,6 @@ describe("signing in to GitHub", () => {
       account_id: accountId,
       session_hash: "s",
       connector: "github",
-      now: NOW,
-      fetchImpl,
     });
     expect(freshAuthMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -267,14 +284,18 @@ describe("signing in to GitHub", () => {
         owner_account_id: accountId,
       }),
     );
-    const payload = JSON.parse(saved.payload);
-    expect(payload).toEqual(
+    // Reserved before GitHub was asked, then filled in.
+    expect(JSON.parse(saved.payload)).toEqual(
+      expect.objectContaining({ starting: true, device_code: "" }),
+    );
+    expect(JSON.parse(signInRow!.payload)).toEqual(
       expect.objectContaining({
         device_code: "dev-123",
         interval: 5,
         next_poll_at: NOW + 5000,
       }),
     );
+    expect(signInRow!.payload).not.toContain('"starting"');
     // Abandoned sign-ins expire as leases instead of using up the limit.
     expect(Date.parse(saved.metadata.lease_expires_at)).toBeGreaterThan(NOW);
   });
@@ -382,10 +403,20 @@ describe("signing in to GitHub", () => {
 
   it("revokes the new token when it cannot even be recorded", async () => {
     pendingSignIn("github");
-    lockedMock.mockImplementationOnce(async ({ update }) => {
-      await update(signInRow);
-      throw Error("database unavailable");
-    });
+    // Writing the exchanged tokens fails (e.g. the database went away).
+    const store = lockedMock.getMockImplementation()!;
+    lockedMock.mockImplementation(async (opts) =>
+      store({
+        ...opts,
+        update: async (row) => {
+          const next = await opts.update(row);
+          if (next?.payload.includes('"exchanged"')) {
+            throw Error("database unavailable");
+          }
+          return next;
+        },
+      }),
+    );
     const fetchImpl = github({
       [GITHUB_TOKEN_URL]: githubTokens,
       [GITHUB_REVOKE]: {},
@@ -430,8 +461,6 @@ describe("signing in to GitHub", () => {
     await startCliConnectorSignIn({
       account_id: accountId,
       connector: "github",
-      now: NOW,
-      fetchImpl,
     });
     expect(revokes(fetchImpl)).toEqual([
       expect.stringContaining('"access_token":"ghu_orphan"'),
@@ -440,6 +469,138 @@ describe("signing in to GitHub", () => {
       id: connectionId,
       owner_account_id: accountId,
     });
+  });
+
+  it("ignores a client-supplied time or fetch in the request", async () => {
+    const { pollCliConnectorSignIn } = await import("./cli-connectors");
+    pendingSignIn("github", { next_poll_at: NOW + 5000 });
+    const fetchImpl = github({ [GITHUB_TOKEN_URL]: githubTokens });
+    const other = jest.fn();
+    await expect(
+      pollCliConnectorSignIn({
+        account_id: accountId,
+        connector: "github",
+        login_id: connectionId,
+        // Extra keys reach the hub unchanged; they must have no effect.
+        now: NOW + 1e9,
+        fetchImpl: other,
+      } as any),
+    ).resolves.toEqual({ status: "pending" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(other).not.toHaveBeenCalled();
+  });
+
+  it("a failing provider poll still uses up its interval", async () => {
+    pendingSignIn("github");
+    const fetchImpl = github({ [GITHUB_TOKEN_URL]: { status: 502 } });
+    await expect(poll("github", fetchImpl)).rejects.toThrow("HTTP 502");
+    await expect(poll("github", fetchImpl)).resolves.toEqual({
+      status: "pending",
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(signInRow!.payload).next_poll_at).toBe(NOW + 5000);
+  });
+
+  it("refuses a new sign-in before asking GitHub when too many are pending", async () => {
+    const { startCliConnectorSignIn } = await import("./cli-connectors");
+    listMock.mockResolvedValue([]);
+    createMock.mockRejectedValue(
+      Error("at most 3 active credentials are allowed"),
+    );
+    const fetchImpl = github({});
+    await expect(
+      startCliConnectorSignIn({ account_id: accountId, connector: "github" }),
+    ).rejects.toThrow("at most 3");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("keeps the tokens, encrypted, when revoking them fails", async () => {
+    const { startCliConnectorSignIn } = await import("./cli-connectors");
+    pendingSignIn("github");
+    let fetchImpl = github({
+      [GITHUB_TOKEN_URL]: githubTokens,
+      "GET https://api.github.com/user": { message: "Bad credentials" },
+      [GITHUB_REVOKE]: { status: 503 },
+    });
+    await expect(poll("github", fetchImpl)).rejects.toThrow(
+      "GitHub did not accept the new sign-in",
+    );
+    const kept = JSON.parse(signInRow!.payload);
+    expect(kept.exchanged.access_token).toBe("ghu_new");
+    expect(kept.cleanup_pending).toBe(true);
+    expect(revokeMock).not.toHaveBeenCalled();
+    // A later attempt confirms the revocation, then removes the sign-in.
+    listMock.mockResolvedValue([{ id: connectionId }]);
+    createMock.mockRejectedValue(Error("stop after recovery"));
+    fetchImpl = github({ [GITHUB_REVOKE]: { status: 204 } });
+    await expect(
+      startCliConnectorSignIn({ account_id: accountId, connector: "github" }),
+    ).rejects.toThrow("stop after recovery");
+    expect(revokes(fetchImpl)).toHaveLength(1);
+    expect(signInRow!.payload).not.toContain("ghu_new");
+    expect(revokeMock).toHaveBeenCalledWith({
+      id: connectionId,
+      owner_account_id: accountId,
+    });
+  });
+
+  it("stores an exchanged sign-in even if the site's app changed meanwhile", async () => {
+    pendingSignIn("github", {
+      exchanged: githubPayload(),
+      exchanged_at: NOW - 1000,
+    });
+    settings.github_connector_client_id = "Iv23other";
+    const fetchImpl = github({
+      "GET https://api.github.com/user": { login: "octocat" },
+    });
+    await expect(poll("github", fetchImpl)).resolves.toEqual(
+      expect.objectContaining({ status: "connected" }),
+    );
+  });
+
+  it("cannot revoke with another app's secret, so it keeps the tokens", async () => {
+    pendingSignIn("github", {
+      exchanged: githubPayload(),
+      exchanged_at: NOW - 1000,
+    });
+    settings.github_connector_client_id = "Iv23other";
+    const fetchImpl = github({
+      "GET https://api.github.com/user": { message: "Bad credentials" },
+    });
+    await expect(poll("github", fetchImpl)).rejects.toThrow();
+    expect(revokes(fetchImpl)).toEqual([]);
+    expect(JSON.parse(signInRow!.payload)).toEqual(
+      expect.objectContaining({ cleanup_pending: true }),
+    );
+    expect(revokeMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses and revokes tokens that live longer than GitHub's maximum", async () => {
+    pendingSignIn("github");
+    const fetchImpl = github({
+      [GITHUB_TOKEN_URL]: { ...githubTokens, expires_in: 9 * 3600 },
+      [GITHUB_REVOKE]: {},
+    });
+    await expect(poll("github", fetchImpl)).rejects.toThrow(
+      "longer than allowed",
+    );
+    expect(revokes(fetchImpl)).toHaveLength(1);
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it("stores a description without control characters", async () => {
+    pendingSignIn("cloudflare");
+    github({
+      [CF_TOKEN_URL]: cfTokens,
+      "GET https://api.cloudflare.com/client/v4/user": {
+        success: true,
+        result: { email: "me@ex‮ample.com\n[CLI connectors]" },
+      },
+    });
+    const result: any = await poll("cloudflare");
+    expect(result.connection.description).toBe(
+      "me@example.comCLI connectors (Workers & sites, R2 storage)",
+    );
   });
 
   it("an expired or another account's sign-in gives nothing", async () => {
@@ -477,7 +638,6 @@ describe("signing in to Cloudflare", () => {
       session_hash: "s",
       connector: "cloudflare",
       presets: ["r2"],
-      fetchImpl,
     });
     expect(started.user_code).toBe("WXYZ-9876");
     expect(freshAuthMock).toHaveBeenCalled();
@@ -543,7 +703,6 @@ describe("signing in to Cloudflare", () => {
         account_id: accountId,
         connector: "cloudflare",
         presets: ["dns"],
-        fetchImpl,
       }),
     ).rejects.toThrow("unexpected response");
   });
@@ -741,7 +900,6 @@ describe("turn tokens", () => {
     source_project_id: projectId,
     run_id: runId,
     turn_ref,
-    now: NOW,
   };
 
   it("returns nothing, cheaply, when the agent has no connector on", async () => {
@@ -830,7 +988,7 @@ describe("turn tokens", () => {
         refresh_token_expires_in: 15811200,
       },
     });
-    const tokens = await issueCliConnectorTurnTokens({ ...request, fetchImpl });
+    const tokens = await issueCliConnectorTurnTokens(request);
     expect(tokens).toEqual([
       expect.objectContaining({
         token: "ghu_fresh",
@@ -856,13 +1014,11 @@ describe("turn tokens", () => {
         error: "bad_refresh_token",
       },
     });
-    await expect(
-      issueCliConnectorTurnTokens({ ...request, fetchImpl }),
-    ).resolves.toEqual([]);
+    await expect(issueCliConnectorTurnTokens(request)).resolves.toEqual([]);
     expect(connection.metadata.needs_reconnect).toBe(true);
     // And it is not retried on later turns.
     fetchImpl.mockClear();
-    await issueCliConnectorTurnTokens({ ...request, fetchImpl });
+    await issueCliConnectorTurnTokens(request);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -890,7 +1046,7 @@ describe("turn tokens", () => {
         expires_in: 3600,
       },
     });
-    const tokens = await issueCliConnectorTurnTokens({ ...request, fetchImpl });
+    const tokens = await issueCliConnectorTurnTokens(request);
     expect(tokens).toEqual([
       {
         connector: "cloudflare",

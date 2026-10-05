@@ -8,6 +8,7 @@
 // tokens, refreshed here on the hub. Only the access token leaves the hub.
 
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { boundedExpiry } from "./cli-connector-github";
 import {
   CLOUDFLARE_SCOPE_PRESETS,
   cloudflareScopes,
@@ -20,6 +21,8 @@ const TIMEOUT_MS = 10_000;
 // cf's public OAuth client (no secret); a site may use its own instead.
 export const CF_CLI_CLIENT_ID = "cbca97e7-c331-4cdd-8fd8-e25a451b98bf";
 export const CLOUDFLARE_REFRESH_MARGIN_MS = 10 * 60_000;
+// The longest access-token lifetime accepted (Cloudflare issues about 1 h).
+export const CLOUDFLARE_MAX_ACCESS_SECONDS = 2 * 3600;
 
 type Fetch = typeof globalThis.fetch;
 
@@ -183,13 +186,21 @@ function connectionFromTokens(
   if (!refresh_token || !positive(body.expires_in)) {
     throw Error("Cloudflare sign-in failed: no expiring token");
   }
+  const access_expires_at = boundedExpiry(
+    now,
+    body.expires_in,
+    CLOUDFLARE_MAX_ACCESS_SECONDS,
+  );
+  if (access_expires_at == null) {
+    throw Error("Cloudflare returned a token lifetime longer than allowed");
+  }
   return {
     version: 2,
     type: "cloudflare-oauth",
     client_id: previous.client_id,
     presets: previous.presets,
     access_token,
-    access_expires_at: now + positive(body.expires_in) * 1000,
+    access_expires_at,
     refresh_token,
   };
 }
@@ -302,10 +313,23 @@ export async function refreshCloudflareConnection({
   if (body.error) {
     throw Error(`Cloudflare token refresh failed: ${body.error}`);
   }
-  return {
-    connection: connectionFromTokens(body, connection, now),
-    refreshed: true,
-  };
+  try {
+    return {
+      connection: connectionFromTokens(body, connection, now),
+      refreshed: true,
+    };
+  } catch (err) {
+    // Unusable new tokens are revoked; the connection needs a new sign-in.
+    for (const hint of ["refresh_token", "access_token"] as const) {
+      const token = body[hint];
+      if (typeof token === "string" && token) {
+        await revokeCloudflareToken({ config, token, hint, fetchImpl }).catch(
+          () => undefined,
+        );
+      }
+    }
+    throw new CloudflareReconnectRequired(`${(err as Error).message}`);
+  }
 }
 
 /** Revoke a token at Cloudflare (by default a refresh token). */

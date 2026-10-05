@@ -52,13 +52,8 @@ export function isCliConnector(value: unknown): value is CliConnector {
 export const CLOUDFLARE_SCOPE_PRESETS = {
   workers: {
     label: "Workers & sites",
-    scopes: [
-      "workers:write",
-      "workers_scripts:write",
-      "workers_routes:write",
-      "zone.read",
-      "dns_records:edit",
-    ],
+    // No DNS: custom domains need the DNS preset too, chosen explicitly.
+    scopes: ["workers:write", "workers_scripts:write", "workers_routes:write"],
   },
   r2: {
     label: "R2 storage",
@@ -70,7 +65,7 @@ export const CLOUDFLARE_SCOPE_PRESETS = {
     ],
   },
   dns: {
-    label: "DNS",
+    label: "DNS (also needed for custom domains)",
     scopes: ["zone.read", "dns_records:read", "dns_records:edit"],
   },
 } as const;
@@ -88,6 +83,20 @@ export function cloudflareScopes(presets: readonly string[]): string[] {
     for (const scope of known) scopes.add(scope);
   }
   return [...scopes];
+}
+
+/**
+ * A provider-derived description (account name, email), safe to store and to
+ * show to an agent: no control or bidirectional-formatting characters, short.
+ */
+export function sanitizeConnectionDescription(value: unknown): string {
+  return `${value ?? ""}`
+    .replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, "")
+    // No brackets: a description cannot close the prompt's block.
+    .replace(/[[\]]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120);
 }
 
 /** A token handed to one agent turn; never a refresh token. */
@@ -108,7 +117,8 @@ export function cliConnectorTurnContext(
   for (const connector of CLI_CONNECTORS) {
     const token = tokens.find((t) => t.connector === connector);
     if (!token) continue;
-    const who = token.description ? ` (${token.description})` : "";
+    const description = sanitizeConnectionDescription(token.description);
+    const who = description ? ` (${description})` : "";
     lines.push(
       connector === "github"
         ? `- GitHub${who}: \`gh\` and \`git\` over https://github.com are signed in as the user.`

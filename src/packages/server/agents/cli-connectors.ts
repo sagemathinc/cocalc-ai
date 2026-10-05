@@ -20,6 +20,7 @@ import type {
 import {
   CLI_CONNECTOR_INFO,
   isCliConnector,
+  sanitizeConnectionDescription,
   type CliConnector,
   type CliConnectorTurnToken,
 } from "@cocalc/util/ai/cli-connectors";
@@ -135,8 +136,6 @@ function pendingSelector(
   };
 }
 
-type Fetch = typeof globalThis.fetch;
-
 /** Which connectors this site has set up (no secrets). */
 export async function getCliConnectorSetup({
   account_id,
@@ -184,23 +183,34 @@ export async function listCliConnections({
 // A finished provider exchange whose connection was never stored (hub crash)
 // is revoked at the provider once it is this old.
 const EXCHANGED_RECOVERY_MS = 2 * 60_000;
-// Keep an exchanged sign-in (and its tokens) until finished or recovered,
+// Keep an exchanged sign-in (and its tokens) until it is stored or revoked,
 // instead of letting the pending lease silently drop them.
 const EXCHANGED_LEASE_MS = 30 * 24 * 3_600_000;
+// How long a reserved sign-in may wait for the provider's device code.
+const STARTING_LEASE_MS = 15 * 60_000;
 
 type ProviderConfig =
   | { connector: "github"; config: GithubConnectorConfig }
   | { connector: "cloudflare"; config: CloudflareConnectorConfig };
 type ProviderConnection = GithubAppConnection | CloudflareConnection;
 
-/** A pending sign-in. The hub enforces the provider's polling interval. */
+/**
+ * A pending sign-in. The hub admits at most one provider poll per interval;
+ * tokens the provider issued stay here, encrypted, until they are stored as a
+ * connection or their revocation is confirmed.
+ */
 type PendingSignIn = (GithubDeviceLogin | CloudflareDeviceLogin) & {
+  /** Reserved before the provider gave a device code. */
+  starting?: boolean;
   /** Seconds between provider polls; grows on slow_down. */
   interval: number;
   next_poll_at: number;
-  /** Tokens the provider issued, until stored as a connection or revoked. */
+  /** The poll admitted to ask the provider. */
+  claim?: string;
   exchanged?: ProviderConnection;
   exchanged_at?: number;
+  /** Not stored as a connection; only revocation remains to be confirmed. */
+  cleanup_pending?: boolean;
 };
 
 async function providerConfig(
@@ -214,70 +224,84 @@ async function providerConfig(
   return config ? { connector, config } : undefined;
 }
 
+function deviceLoginType(connector: CliConnector): string {
+  return connector === "github"
+    ? "github-device-login"
+    : "cloudflare-device-login";
+}
+
 function parsePending(
   payload: string,
   connector: CliConnector,
 ): PendingSignIn | undefined {
   const value = parseJson(payload);
-  const type =
-    connector === "github" ? "github-device-login" : "cloudflare-device-login";
-  return value?.type === type && Number.isFinite(value.next_poll_at)
+  return value?.type === deviceLoginType(connector) &&
+    Number.isFinite(value.next_poll_at)
     ? value
     : undefined;
 }
 
-/** Best effort: make provider tokens CoCalc will not keep unusable. */
+/**
+ * Make provider tokens CoCalc will not keep unusable. True once the provider
+ * confirmed it (an already invalid token counts). Uses the client that issued
+ * the tokens: a GitHub token can only be revoked with its own app's secret.
+ */
 async function revokeProviderConnection(
-  provider: ProviderConfig,
+  connector: CliConnector,
   connection: ProviderConnection,
-  fetchImpl?: Fetch,
-): Promise<void> {
-  if (provider.connector === "github") {
-    await revokeGithubToken({
-      config: provider.config,
-      token: connection.access_token,
-      fetchImpl,
-    }).catch(() => undefined);
-    return;
-  }
-  for (const hint of ["refresh_token", "access_token"] as const) {
-    await revokeCloudflareToken({
-      config: provider.config,
-      token: connection[hint],
-      hint,
-      fetchImpl,
-    }).catch(() => undefined);
+): Promise<boolean> {
+  try {
+    if (connector === "github") {
+      const config = await getGithubConnectorConfig();
+      if (!config || config.client_id !== connection.client_id) return false;
+      await revokeGithubToken({ config, token: connection.access_token });
+      return true;
+    }
+    for (const hint of ["refresh_token", "access_token"] as const) {
+      await revokeCloudflareToken({
+        config: { client_id: connection.client_id },
+        token: (connection as CloudflareConnection)[hint],
+        hint,
+      });
+    }
+    return true;
+  } catch {
+    return false;
   }
 }
 
+/** Who the tokens belong to; needs only the access token. */
 async function describeConnection(
-  provider: ProviderConfig,
+  connector: CliConnector,
   connection: ProviderConnection,
-  fetchImpl?: Fetch,
 ): Promise<string> {
-  if (provider.connector === "github") {
-    return `@${await githubLogin(connection.access_token, fetchImpl)}`;
+  if (connector === "github") {
+    return sanitizeConnectionDescription(
+      `@${await githubLogin(connection.access_token)}`,
+    );
   }
-  const email = await cloudflareEmail(connection.access_token, fetchImpl);
+  const email = sanitizeConnectionDescription(
+    await cloudflareEmail(connection.access_token),
+  ).slice(0, 80);
   return `${email || "Cloudflare"} (${presetLabels(
     (connection as CloudflareConnection).presets,
   )})`;
 }
 
 /**
- * Revoke sign-ins whose provider exchange finished but whose connection was
- * never stored (the hub stopped in between and nobody polled again).
+ * Revoke tokens of sign-ins that were never stored: those whose storing
+ * failed earlier, and those left when the hub stopped between the provider
+ * exchange and storing. A sign-in is removed only once its revocation is
+ * confirmed; otherwise it is kept, encrypted, for the next attempt.
  */
 async function recoverExchangedSignIns({
   owner,
   connector,
   now,
-  fetchImpl,
 }: {
   owner: string;
   connector: CliConnector;
   now: number;
-  fetchImpl?: Fetch;
 }): Promise<void> {
   const sel = pendingSelector(owner, connector);
   const rows = await listExternalCredentials({
@@ -287,7 +311,7 @@ async function recoverExchangedSignIns({
     scope: "account",
   });
   for (const row of rows) {
-    let stale = false;
+    let cleaned = false;
     await updateExternalCredentialPayloadLocked({
       selector: sel,
       id: row.id,
@@ -295,25 +319,23 @@ async function recoverExchangedSignIns({
         const pending = parsePending(credential.payload, connector);
         if (
           !pending?.exchanged ||
-          now - (pending.exchanged_at ?? 0) < EXCHANGED_RECOVERY_MS
+          (!pending.cleanup_pending &&
+            now - (pending.exchanged_at ?? 0) < EXCHANGED_RECOVERY_MS)
         ) {
           return;
         }
-        stale = true;
-        const provider = await providerConfig(connector);
-        if (provider) {
-          await revokeProviderConnection(
-            provider,
-            pending.exchanged,
-            fetchImpl,
-          );
+        if (await revokeProviderConnection(connector, pending.exchanged)) {
+          cleaned = true;
+          return {
+            payload: JSON.stringify({ ...pending, exchanged: undefined }),
+          };
         }
         return {
-          payload: JSON.stringify({ ...pending, exchanged: undefined }),
+          payload: JSON.stringify({ ...pending, cleanup_pending: true }),
         };
       },
     });
-    if (stale) {
+    if (cleaned) {
       await revokeExternalCredential({ id: row.id, owner_account_id: owner });
     }
   }
@@ -322,23 +344,22 @@ async function recoverExchangedSignIns({
 /**
  * Start signing in to a connector's provider (fresh authentication): the user
  * approves the returned code at the provider, then the browser polls.
- * Cloudflare requests only the scopes of the chosen presets.
+ * Cloudflare requests only the scopes of the chosen presets. A sign-in is
+ * reserved (at most a few per account) before the provider is asked.
  */
 export async function startCliConnectorSignIn({
   account_id,
   session_hash,
   connector: connectorInput,
   presets: presetsInput,
-  now = Date.now(),
-  fetchImpl,
 }: {
   account_id?: string;
   session_hash?: string;
   connector: string;
   presets?: string[];
-  now?: number;
-  fetchImpl?: Fetch;
 }): Promise<CliConnectorSignIn> {
+  // Server time only: never a value from the request.
+  const now = Date.now();
   const owner = requireUuid(account_id, "account_id");
   const connector = requireConnector(connectorInput);
   const presets =
@@ -358,35 +379,56 @@ export async function startCliConnectorSignIn({
     require_second_factor: true,
     allow_actor_impersonation: false,
   });
-  await recoverExchangedSignIns({ owner, connector, now, fetchImpl });
-  const started =
-    provider.connector === "github"
-      ? await startGithubDeviceLogin({
-          config: provider.config,
-          now,
-          fetchImpl,
-        })
-      : await startCloudflareDeviceLogin({
-          config: provider.config,
-          presets: presets!,
-          now,
-          fetchImpl,
-        });
+  await recoverExchangedSignIns({ owner, connector, now });
+  const sel = pendingSelector(owner, connector);
+  const lease = (at: number) => ({
+    connector,
+    [EXTERNAL_CREDENTIAL_LEASE_EXPIRY_METADATA_KEY]: new Date(at).toISOString(),
+  });
+  // Admission before any provider request.
+  const { id } = await createExternalCredential({
+    selector: sel,
+    payload: JSON.stringify({
+      version: 1,
+      type: deviceLoginType(connector),
+      starting: true,
+      client_id: "",
+      device_code: "",
+      expires_at: now + STARTING_LEASE_MS,
+      interval: 5,
+      next_poll_at: now + STARTING_LEASE_MS,
+    }),
+    metadata: lease(now + STARTING_LEASE_MS),
+    maxActive: MAX_PENDING_SIGN_INS,
+  });
+  let started:
+    | Awaited<ReturnType<typeof startGithubDeviceLogin>>
+    | Awaited<ReturnType<typeof startCloudflareDeviceLogin>>;
+  try {
+    started =
+      provider.connector === "github"
+        ? await startGithubDeviceLogin({ config: provider.config, now })
+        : await startCloudflareDeviceLogin({
+            config: provider.config,
+            presets: presets!,
+            now,
+          });
+  } catch (err) {
+    await revokeExternalCredential({ id, owner_account_id: owner });
+    throw err;
+  }
   const pending: PendingSignIn = {
     ...started.login,
     interval: started.interval,
     next_poll_at: now + started.interval * 1000,
   };
-  const { id } = await createExternalCredential({
-    selector: pendingSelector(owner, connector),
-    payload: JSON.stringify(pending),
-    metadata: {
-      connector,
-      [EXTERNAL_CREDENTIAL_LEASE_EXPIRY_METADATA_KEY]: new Date(
-        started.login.expires_at,
-      ).toISOString(),
-    },
-    maxActive: MAX_PENDING_SIGN_INS,
+  await updateExternalCredentialPayloadLocked({
+    selector: sel,
+    id,
+    update: async (credential) => ({
+      payload: JSON.stringify(pending),
+      metadata: { ...credential.metadata, ...lease(started.login.expires_at) },
+    }),
   });
   return {
     login_id: id,
@@ -399,161 +441,201 @@ export async function startCliConnectorSignIn({
 }
 
 /**
- * Finish a sign-in once the user approved it at the provider. Polls are
- * serialized on the pending sign-in and rate limited here, so at most one
- * provider request is made per interval however often this is called. Tokens
- * the provider issues are recorded before anything else, then stored as a
- * connection or revoked at the provider.
+ * Finish a sign-in once the user approved it at the provider. The hub admits
+ * at most one provider poll per interval, committed before the request, so
+ * neither fast nor failing polls reach the provider more often. Tokens the
+ * provider issues are recorded first, then stored as a connection or revoked;
+ * they are dropped only once one of those is confirmed.
  */
 export async function pollCliConnectorSignIn({
   account_id,
   connector: connectorInput,
   login_id,
-  now = Date.now(),
-  fetchImpl,
 }: {
   account_id?: string;
   connector: string;
   login_id: string;
-  now?: number;
-  fetchImpl?: Fetch;
 }): Promise<CliConnectorSignInStatus> {
+  // Server time only: never a value from the request.
+  const now = Date.now();
   const owner = requireUuid(account_id, "account_id");
   const connector = requireConnector(connectorInput);
   const id = requireUuid(login_id, "login_id");
   await assertAccountHome(owner);
   const sel = pendingSelector(owner, connector);
-  const provider = await providerConfig(connector);
   const consume = () =>
     revokeExternalCredential({ id, owner_account_id: owner });
 
-  // Phase 1: the provider exchange, at most once per interval.
-  type Exchange =
-    | { status: "pending"; slow_down?: boolean }
-    | { status: "expired" | "denied" }
-    | { status: "exchanged" };
-  // Assigned in the locked update below.
-  let exchange = { status: "expired" } as Exchange;
-  let issued: ProviderConnection | undefined;
-  try {
-    await updateExternalCredentialPayloadLocked({
-      selector: sel,
-      id,
-      update: async (credential) => {
-        const pending = parsePending(credential.payload, connector);
-        if (!pending || !provider) return;
-        if (pending.exchanged) {
-          exchange = { status: "exchanged" };
-          return;
-        }
-        if (now < pending.next_poll_at) {
-          // Too early: the provider is not asked.
-          exchange = { status: "pending" };
-          return;
-        }
-        const result =
-          provider.connector === "github"
-            ? await pollGithubDeviceLogin({
-                config: provider.config,
-                login: pending as GithubDeviceLogin,
-                now,
-                fetchImpl,
-              })
-            : await pollCloudflareDeviceLogin({
-                config: provider.config,
-                login: pending as CloudflareDeviceLogin,
-                now,
-                fetchImpl,
-              });
-        if (result.status === "pending") {
-          const interval = pending.interval + (result.slow_down ? 5 : 0);
-          exchange = result;
-          return {
-            payload: JSON.stringify({
-              ...pending,
-              interval,
-              next_poll_at: now + interval * 1000,
-            }),
-          };
-        }
-        if (result.status !== "connected") {
-          exchange = result;
-          return;
-        }
-        issued = result.connection;
-        exchange = { status: "exchanged" };
-        return {
-          payload: JSON.stringify({
-            ...pending,
-            exchanged: result.connection,
-            exchanged_at: now,
-          }),
-          metadata: {
-            ...credential.metadata,
-            [EXTERNAL_CREDENTIAL_LEASE_EXPIRY_METADATA_KEY]: new Date(
-              now + EXCHANGED_LEASE_MS,
-            ).toISOString(),
-          },
-        };
-      },
-    });
-  } catch (err) {
-    // Issued tokens that could not be recorded must not stay valid.
-    if (issued && provider) {
-      await revokeProviderConnection(provider, issued, fetchImpl);
-    }
-    throw err;
-  }
-  if (exchange.status === "pending") return exchange;
-  if (exchange.status !== "exchanged") {
-    await consume();
-    return exchange;
-  }
-
-  // Phase 2: store the connection (once, even across retries), then consume
-  // the sign-in. Any failure revokes the tokens at the provider.
-  let connection: CliConnection | undefined;
-  let failure: unknown;
+  // Phase 0: admission, committed before any provider request.
+  type Admission = "missing" | "early" | "admitted" | "exchanged";
+  let admission = "missing" as Admission;
+  const claim = randomUUID();
   await updateExternalCredentialPayloadLocked({
     selector: sel,
     id,
     update: async (credential) => {
       const pending = parsePending(credential.payload, connector);
-      if (!pending?.exchanged || !provider) return;
-      try {
-        const description = await describeConnection(
-          provider,
-          pending.exchanged,
-          fetchImpl,
-        );
-        const { id: connection_id } = await createExternalCredential({
-          selector: selector(owner, connector),
-          payload: JSON.stringify(pending.exchanged),
-          metadata: {
-            description,
-            connector,
-            source: "device-flow",
-            sign_in_id: id,
-          },
-          deduplicateMetadata: { key: "sign_in_id", value: id },
-          maxActive: MAX_CONNECTIONS_PER_CONNECTOR,
-        });
-        connection = {
-          connection_id,
-          connector,
-          description,
-          created: new Date(),
-          last_used: null,
-        };
-      } catch (err) {
-        failure = err;
-        await revokeProviderConnection(provider, pending.exchanged, fetchImpl);
+      if (!pending) return;
+      if (pending.exchanged) {
+        admission = "exchanged";
+        return;
       }
-      // The sign-in no longer holds the tokens either way.
-      return { payload: JSON.stringify({ ...pending, exchanged: undefined }) };
+      if (now < pending.next_poll_at) {
+        admission = "early";
+        return;
+      }
+      admission = "admitted";
+      return {
+        payload: JSON.stringify({
+          ...pending,
+          claim,
+          next_poll_at: now + pending.interval * 1000,
+        }),
+      };
     },
   });
-  await consume();
+  if (admission === "missing") return { status: "expired" };
+  if (admission === "early") return { status: "pending" };
+
+  // Phase 1: the admitted provider request; issued tokens are recorded.
+  if (admission === "admitted") {
+    const provider = await providerConfig(connector);
+    type Exchange =
+      | { status: "pending"; slow_down?: boolean }
+      | { status: "expired" | "denied" }
+      | { status: "exchanged" };
+    let exchange = { status: "pending" } as Exchange;
+    let issued: ProviderConnection | undefined;
+    try {
+      await updateExternalCredentialPayloadLocked({
+        selector: sel,
+        id,
+        update: async (credential) => {
+          const pending = parsePending(credential.payload, connector);
+          // Another poll took over, or the sign-in finished meanwhile.
+          if (!pending || pending.claim !== claim || pending.exchanged) {
+            return;
+          }
+          if (!provider) {
+            exchange = { status: "expired" };
+            return;
+          }
+          const result =
+            provider.connector === "github"
+              ? await pollGithubDeviceLogin({
+                  config: provider.config,
+                  login: pending as GithubDeviceLogin,
+                  now,
+                })
+              : await pollCloudflareDeviceLogin({
+                  config: provider.config,
+                  login: pending as CloudflareDeviceLogin,
+                  now,
+                });
+          if (result.status === "pending") {
+            exchange = result;
+            if (!result.slow_down) return;
+            const interval = pending.interval + 5;
+            return {
+              payload: JSON.stringify({
+                ...pending,
+                interval,
+                next_poll_at: now + interval * 1000,
+              }),
+            };
+          }
+          if (result.status !== "connected") {
+            exchange = result;
+            return;
+          }
+          issued = result.connection;
+          exchange = { status: "exchanged" };
+          return {
+            payload: JSON.stringify({
+              ...pending,
+              exchanged: result.connection,
+              exchanged_at: now,
+            }),
+            metadata: {
+              ...credential.metadata,
+              [EXTERNAL_CREDENTIAL_LEASE_EXPIRY_METADATA_KEY]: new Date(
+                now + EXCHANGED_LEASE_MS,
+              ).toISOString(),
+            },
+          };
+        },
+      });
+    } catch (err) {
+      // Issued tokens that could not be recorded must not stay valid.
+      if (issued) await revokeProviderConnection(connector, issued);
+      throw err;
+    }
+    if (exchange.status === "pending") return exchange;
+    if (exchange.status !== "exchanged") {
+      await consume();
+      return exchange;
+    }
+  }
+
+  // Phase 2: store the connection (once, even across retries), or else
+  // revoke the tokens; drop them only when one of those succeeded.
+  let connection: CliConnection | undefined;
+  let failure: unknown;
+  let done = false;
+  await updateExternalCredentialPayloadLocked({
+    selector: sel,
+    id,
+    update: async (credential) => {
+      const pending = parsePending(credential.payload, connector);
+      if (!pending?.exchanged) return;
+      if (!pending.cleanup_pending) {
+        try {
+          const description = await describeConnection(
+            connector,
+            pending.exchanged,
+          );
+          const { id: connection_id } = await createExternalCredential({
+            selector: selector(owner, connector),
+            payload: JSON.stringify(pending.exchanged),
+            metadata: {
+              description,
+              connector,
+              source: "device-flow",
+              sign_in_id: id,
+            },
+            deduplicateMetadata: { key: "sign_in_id", value: id },
+            maxActive: MAX_CONNECTIONS_PER_CONNECTOR,
+          });
+          connection = {
+            connection_id,
+            connector,
+            description,
+            created: new Date(),
+            last_used: null,
+          };
+          done = true;
+          return {
+            payload: JSON.stringify({ ...pending, exchanged: undefined }),
+          };
+        } catch (err) {
+          failure = err;
+        }
+      } else {
+        failure = Error("this sign-in could not be completed");
+      }
+      if (await revokeProviderConnection(connector, pending.exchanged)) {
+        done = true;
+        return {
+          payload: JSON.stringify({ ...pending, exchanged: undefined }),
+        };
+      }
+      // Keep the tokens, encrypted, until revocation can be confirmed.
+      return {
+        payload: JSON.stringify({ ...pending, cleanup_pending: true }),
+      };
+    },
+  });
+  if (done) await consume();
   if (failure) throw failure;
   return connection
     ? { status: "connected", connection }
@@ -779,8 +861,6 @@ export async function issueCliConnectorTurnTokens({
   source_project_id,
   run_id,
   turn_ref,
-  now = Date.now(),
-  fetchImpl,
 }: {
   account_id?: string;
   host_id?: string;
@@ -793,9 +873,9 @@ export async function issueCliConnectorTurnTokens({
     message_id: string;
     thread_id: string;
   };
-  now?: number;
-  fetchImpl?: Fetch;
 }): Promise<CliConnectorTurnToken[]> {
+  // Server time only: never a value from the request.
+  const now = Date.now();
   const owner = requireUuid(account_id, "account_id");
   const host = requireUuid(host_id, "host_id");
   requireUuid(agent_id, "agent_id");
@@ -849,7 +929,6 @@ export async function issueCliConnectorTurnTokens({
         owner,
         connection_id: grant.connection_id!,
         now,
-        fetchImpl,
       });
       if (token) tokens.push(token);
     }
@@ -878,13 +957,11 @@ async function connectorTurnToken({
   owner,
   connection_id,
   now,
-  fetchImpl,
 }: {
   connector: CliConnector;
   owner: string;
   connection_id: string;
   now: number;
-  fetchImpl?: Fetch;
 }): Promise<CliConnectorTurnToken | undefined> {
   let refresh:
     | ((
@@ -897,7 +974,7 @@ async function connectorTurnToken({
     refresh = async (payload) => {
       const connection = parseGithubConnection(payload);
       return connection
-        ? await refreshGithubConnection({ config, connection, now, fetchImpl })
+        ? await refreshGithubConnection({ config, connection, now })
         : undefined;
     };
   } else {
@@ -910,7 +987,6 @@ async function connectorTurnToken({
             config,
             connection,
             now,
-            fetchImpl,
           })
         : undefined;
     };
