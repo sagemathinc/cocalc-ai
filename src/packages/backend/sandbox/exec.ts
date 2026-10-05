@@ -109,9 +109,10 @@ export default async function exec({
       timeoutHandle = setTimeout(() => {
         truncated = true;
         child.kill("SIGTERM");
-        // Force kill after grace period
+        // Force kill after grace period. child.killed only records that a
+        // signal was sent, not that the process exited.
         setTimeout(() => {
-          if (!child.killed) {
+          if (child.exitCode === null && child.signalCode === null) {
             child.kill("SIGKILL");
           }
         }, 1000);
