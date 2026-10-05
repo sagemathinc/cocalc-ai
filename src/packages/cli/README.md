@@ -291,6 +291,12 @@ port is bound to loopback only, and before reporting ready the command checks,
 over an ssh channel into the project, that the port reaches this browser (it
 fails closed otherwise). If the command itself dies (crash, `kill -9`), a small
 watchdog removes the tunnel, stops the browser and deletes the profile.
+**Trust boundary:** DevTools is full control of a browser running as your
+local user. Anything in the project (its agents and its collaborators'
+processes) can drive it, including opening `file://` paths on your computer
+and addresses on your local network, and reading what the browser can read.
+The throwaway profile protects your existing cookies and history, not your
+machine. Only connect projects you trust.
 Use `project file check` to run a sanity suite (mkdir/put/list/cat/get/rg/fd/rm)
 against the current project context or `--project`.
 Use `project file check --bench --bench-runs <n>` to run repeated checks with

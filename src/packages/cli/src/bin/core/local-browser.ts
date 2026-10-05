@@ -139,7 +139,7 @@ export function findChrome(
   return found;
 }
 
-const START_URL_PROTOCOLS = new Set(["http:", "https:", "about:", "file:"]);
+const START_URL_PROTOCOLS = new Set(["http:", "https:", "about:"]);
 
 // The page to open first.  It becomes a positional argument of Chrome, so it
 // must not be something Chrome would parse as a switch (which could, e.g.,
@@ -154,7 +154,7 @@ export function startUrl(value?: string): string {
   }
   if (!START_URL_PROTOCOLS.has(protocol)) {
     throw new Error(
-      `--url must be an http, https, file or about URL, got '${value}'`,
+      `--url must be an http, https or about URL, got '${value}'`,
     );
   }
   return url;
@@ -347,42 +347,60 @@ export function devToolsBrowserId(versionJson: string): string | null {
 }
 
 // Runs as `node -e` (no separate file, so it also works from the bundled
-// CLI).  Polls the owning CLI process; once it is gone without having
-// stopped the watchdog (crash, SIGKILL), removes the forward, stops the
-// browser and releases the profile.
+// CLI).  Its stdin is a pipe held by the CLI: the OS closes it however the
+// CLI ends (crash, SIGKILL), so no PID polling is involved.  A normal exit
+// writes "stop" first.  On a close without "stop", it revokes the browser
+// first (SIGTERM, then SIGKILL after 5s) while removing the forward, then
+// releases the profile.  The browser PID is only signalled while its
+// command line still names this session's profile.
 const WATCHDOG_SOURCE = `
 const cfg = JSON.parse(process.argv[1]);
-const { spawnSync } = require("node:child_process");
-const { rmSync } = require("node:fs");
-const alive = (pid) => {
-  try { process.kill(pid, 0); return true; }
-  catch (err) { return err.code === "EPERM"; }
+const { spawn, spawnSync } = require("node:child_process");
+const { readFileSync, rmSync } = require("node:fs");
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const isBrowser = (pid) => {
+  try { process.kill(pid, 0); } catch (err) { if (err.code !== "EPERM") return false; }
+  if (process.platform === "win32") return true;
+  try {
+    const cmd = process.platform === "linux"
+      ? readFileSync("/proc/" + pid + "/cmdline", "utf8").split("\\0").join(" ")
+      : spawnSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" }).stdout;
+    return cmd.includes(cfg.browserMarker);
+  } catch { return false; }
 };
-const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-const timer = setInterval(() => {
-  if (alive(cfg.owner)) return;
-  clearInterval(timer);
-  const run = (command, args, env) => {
-    try {
-      spawnSync(command, args, { env: { ...process.env, ...env }, stdio: "ignore", timeout: 30000, windowsHide: true });
-    } catch {}
-  };
-  if (cfg.forward) run(cfg.forward.command, cfg.forward.args, cfg.forward.env);
-  if (alive(cfg.browser)) {
-    try { process.kill(cfg.browser, "SIGTERM"); } catch {}
-    for (let i = 0; i < 50 && alive(cfg.browser); i++) sleep(100);
-    if (alive(cfg.browser)) { try { process.kill(cfg.browser, "SIGKILL"); } catch {} }
-  }
+const signal = (sig) => { if (isBrowser(cfg.browser)) { try { process.kill(cfg.browser, sig); } catch {} } };
+const run = (command, args, env) => new Promise((resolve) => {
+  let child;
+  try {
+    child = spawn(command, args, { env: { ...process.env, ...env }, stdio: "ignore", windowsHide: true });
+  } catch { return resolve(); }
+  const timer = setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 30000);
+  child.on("error", () => { clearTimeout(timer); resolve(); });
+  child.on("close", () => { clearTimeout(timer); resolve(); });
+});
+async function cleanup() {
+  signal("SIGTERM");
+  const removing = cfg.forward ? run(cfg.forward.command, cfg.forward.args, cfg.forward.env) : Promise.resolve();
+  for (let i = 0; i < 50 && isBrowser(cfg.browser); i++) await sleep(100);
+  signal("SIGKILL");
+  await removing;
   if (cfg.release.removeDir) {
     try { rmSync(cfg.release.removeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch {}
   }
-  if (cfg.release.detachDevice) run("hdiutil", ["detach", cfg.release.detachDevice, "-force"], {});
-}, 1000);
+  if (cfg.release.detachDevice) await run("hdiutil", ["detach", cfg.release.detachDevice, "-force"], {});
+  process.exit(0);
+}
+let stopped = false;
+process.stdin.on("data", (data) => { if (String(data).includes("stop")) stopped = true; });
+process.stdin.on("error", () => {});
+process.stdin.on("close", () => (stopped ? process.exit(0) : cleanup()));
+process.stdin.resume();
 `;
 
 export interface WatchdogConfig {
-  owner: number;
   browser: number;
+  // Must appear in the browser's command line, e.g. its --user-data-dir.
+  browserMarker: string;
   release: ProfileDir["release"];
   // Process that removes the forward, e.g. `reflect forward remove NAME`.
   forward?: { command: string; args: string[]; env: Record<string, string> };
@@ -395,15 +413,18 @@ export function startCleanupWatchdog(config: WatchdogConfig): {
   const child = spawn(
     process.execPath,
     ["-e", WATCHDOG_SOURCE, JSON.stringify(config)],
-    { detached: true, stdio: "ignore", windowsHide: true },
+    { detached: true, stdio: ["pipe", "ignore", "ignore"], windowsHide: true },
   );
   child.on("error", () => {});
+  child.stdin?.on("error", () => {});
+  // Hold the pipe without keeping this process alive.
+  (child.stdin as { unref?: () => void } | null)?.unref?.();
   child.unref();
   return {
     pid: child.pid,
     stop: () => {
       try {
-        child.kill("SIGTERM");
+        child.stdin?.end("stop\n");
       } catch {}
     },
   };

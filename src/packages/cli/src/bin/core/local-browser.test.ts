@@ -162,7 +162,6 @@ test("extracts the per-process DevTools browser id", () => {
 test("--url cannot smuggle Chrome switches", () => {
   assert.equal(startUrl(undefined), "about:blank");
   assert.equal(startUrl("https://cocalc.ai/x?y=1"), "https://cocalc.ai/x?y=1");
-  assert.equal(startUrl("file:///tmp/a.html"), "file:///tmp/a.html");
   for (const bad of [
     "--remote-debugging-address=0.0.0.0",
     "--user-data-dir=/home/u/.config/google-chrome",
@@ -170,6 +169,7 @@ test("--url cannot smuggle Chrome switches", () => {
     "cocalc.ai",
     "javascript:alert(1)",
     "chrome://settings",
+    "file:///etc/passwd",
   ]) {
     assert.throws(() => startUrl(bad), /--url must be/, bad);
   }
@@ -184,25 +184,40 @@ const alive = (pid: number) => {
     return false;
   }
 };
-
-test("watchdog tears everything down when the owner dies", async () => {
-  const tmp = mkdtempSync(join(tmpdir(), "browser-watchdog-"));
-  const profile = join(tmp, "profile");
-  const marker = join(tmp, "forward-removed");
-  mkdirSync(profile);
-  const owner = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
-    stdio: "ignore",
-  });
-  const browser = spawn(
+const idle = (...extra: string[]) =>
+  // "--" so node passes the fake browser switch through instead of parsing it
+  spawn(
     process.execPath,
-    ["-e", "setInterval(() => {}, 1000)"],
+    ["-e", "setInterval(() => {}, 1000)", "--", ...extra],
     {
       stdio: "ignore",
     },
   );
-  const watchdog = startCleanupWatchdog({
-    owner: owner.pid!,
-    browser: browser.pid!,
+
+// The watchdog's lifetime is tied to the process that started it, so start
+// it from a separate "CLI" process that the test can SIGKILL.
+function ownerWithWatchdog(config: object) {
+  const mod = require.resolve("./local-browser");
+  return spawn(
+    process.execPath,
+    [
+      "-e",
+      `require(${JSON.stringify(mod)}).startCleanupWatchdog(JSON.parse(process.argv[1])); setInterval(() => {}, 1000);`,
+      JSON.stringify(config),
+    ],
+    { stdio: "ignore" },
+  );
+}
+
+test("watchdog tears everything down when its owner dies", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "browser-watchdog-"));
+  const profile = join(tmp, "profile");
+  const marker = join(tmp, "forward-removed");
+  mkdirSync(profile);
+  const browser = idle(`--user-data-dir=${profile}`);
+  const owner = ownerWithWatchdog({
+    browser: browser.pid,
+    browserMarker: `--user-data-dir=${profile}`,
     release: { removeDir: profile },
     forward: {
       command: process.execPath,
@@ -221,50 +236,65 @@ test("watchdog tears everything down when the owner dies", async () => {
     const deadline = Date.now() + 10_000;
     while (
       Date.now() < deadline &&
-      (existsSync(profile) || !existsSync(marker))
+      (existsSync(profile) || !existsSync(marker) || alive(browser.pid!))
     ) {
-      await sleep(200);
+      await sleep(100);
     }
-    await sleep(500);
     assert.equal(existsSync(profile), false, "profile removed");
     assert.equal(readFileSync(marker, "utf8"), "removed");
-    assert.equal(
-      browser.exitCode !== null || browser.signalCode !== null,
-      true,
-    );
+    assert.equal(alive(browser.pid!), false, "browser stopped");
   } finally {
-    watchdog.stop();
     owner.kill("SIGKILL");
     browser.kill("SIGKILL");
     rmSync(tmp, { recursive: true, force: true });
   }
 });
 
-test("a stopped watchdog leaves everything alone", async () => {
-  const owner = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
-    stdio: "ignore",
+test("watchdog never signals a process that is not this session's browser", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "browser-watchdog-"));
+  const profile = join(tmp, "profile");
+  mkdirSync(profile);
+  // e.g. the browser PID was reused by an unrelated process
+  const unrelated = idle("--user-data-dir=/somewhere/else");
+  const owner = ownerWithWatchdog({
+    browser: unrelated.pid,
+    browserMarker: `--user-data-dir=${profile}`,
+    release: { removeDir: profile },
   });
-  const browser = spawn(
-    process.execPath,
-    ["-e", "setInterval(() => {}, 1000)"],
-    {
-      stdio: "ignore",
-    },
-  );
+  try {
+    await sleep(1000);
+    owner.kill("SIGKILL");
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline && existsSync(profile)) await sleep(100);
+    await sleep(500);
+    assert.equal(existsSync(profile), false, "profile still released");
+    assert.ok(alive(unrelated.pid!), "unrelated process untouched");
+  } finally {
+    owner.kill("SIGKILL");
+    unrelated.kill("SIGKILL");
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("a stopped watchdog leaves everything alone", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "browser-watchdog-"));
+  const profile = join(tmp, "profile");
+  mkdirSync(profile);
+  const browser = idle(`--user-data-dir=${profile}`);
   const watchdog = startCleanupWatchdog({
-    owner: owner.pid!,
     browser: browser.pid!,
-    release: {},
+    browserMarker: `--user-data-dir=${profile}`,
+    release: { removeDir: profile },
   });
   try {
     await sleep(500);
     watchdog.stop();
-    await sleep(300);
-    owner.kill("SIGKILL");
-    await sleep(2000);
+    await sleep(1500);
+    assert.equal(watchdog.pid != null && alive(watchdog.pid), false);
     assert.ok(alive(browser.pid!), "browser left running");
+    assert.ok(existsSync(profile), "profile left in place");
   } finally {
-    owner.kill("SIGKILL");
     browser.kill("SIGKILL");
+    rmSync(tmp, { recursive: true, force: true });
   }
 });

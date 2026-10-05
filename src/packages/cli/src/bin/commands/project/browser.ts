@@ -8,7 +8,7 @@
  * 127.0.0.1:<port> inside the project, and only there.  Closing the browser
  * or Ctrl-C removes the forward and the profile.
  */
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { Command } from "commander";
 
 import {
@@ -33,6 +33,15 @@ import {
   ensureManagedProjectSshConfigEntry,
   managedProjectSshAlias,
 } from "./ssh-config";
+
+// DevTools is full control of a browser running as the local user.  The
+// throwaway profile protects existing cookies and history, not the machine.
+const TRUST_WARNING = [
+  "Warning: anything running in the project (its agents, and processes of its",
+  "collaborators) gets full control of this browser. It can open files on this",
+  "computer and addresses on its local network, and read what the browser can",
+  "read. Only connect projects you trust.",
+].join("\n");
 
 const FORWARD_NAME = /^cocalc-browser-([0-9a-f]{8})-(\d+)-(\d+)$/i;
 const VERIFY_TIMEOUT_MS = 45_000;
@@ -110,35 +119,61 @@ function parsePort(value: string | undefined): number {
   return port;
 }
 
+// /json/version is a few hundred bytes; whatever answers on the project port
+// is not trusted, so never buffer more than this.
+export const MAX_PROBE_RESPONSE_BYTES = 64 * 1024;
+
+export type ProbeResult =
+  | { kind: "none" } // nothing answered (yet)
+  | { kind: "answered"; response: string }
+  | { kind: "too-large" }; // more than MAX_PROBE_RESPONSE_BYTES: not a browser
+
 // GET /json/version from 127.0.0.1:<port> inside the project through an ssh
 // direct-tcpip channel (ssh -W), so nothing has to be installed there.
-// Resolves to the raw HTTP response, or null if nothing answered.
-function fetchProjectDevToolsVersion(
+export function fetchProjectDevToolsVersion(
   alias: string,
   projectPort: number,
   abort: AbortSignal,
-): Promise<string | null> {
+  spawnProbe: (args: string[]) => ChildProcess = (args) =>
+    spawn("ssh", args, { stdio: ["pipe", "pipe", "ignore"] }),
+): Promise<ProbeResult> {
   return new Promise((resolve) => {
-    if (abort.aborted) return resolve(null);
-    const child = spawn("ssh", ["-W", `127.0.0.1:${projectPort}`, alias], {
-      stdio: ["pipe", "pipe", "ignore"],
-    });
-    let response = "";
+    if (abort.aborted) return resolve({ kind: "none" });
+    const child = spawnProbe(["-W", `127.0.0.1:${projectPort}`, alias]);
+    const chunks: Buffer[] = [];
+    let bytes = 0;
     let settled = false;
-    const done = () => {
+    const done = (result?: ProbeResult) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      child.kill();
-      resolve(response || null);
+      abort.removeEventListener("abort", onAbort);
+      child.kill("SIGKILL");
+      resolve(
+        result ??
+          (bytes > 0
+            ? {
+                kind: "answered",
+                response: Buffer.concat(chunks).toString("utf8"),
+              }
+            : { kind: "none" }),
+      );
     };
-    const timer = setTimeout(done, 20_000);
-    abort.addEventListener("abort", done, { once: true });
-    child.stdout.on("data", (chunk) => (response += chunk));
-    child.on("error", done);
-    child.on("close", done);
-    child.stdin.on("error", () => {});
-    child.stdin.write(
+    const onAbort = () => done({ kind: "none" });
+    const timer = setTimeout(() => done(), 20_000);
+    abort.addEventListener("abort", onAbort, { once: true });
+    child.stdout?.on("data", (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > MAX_PROBE_RESPONSE_BYTES) {
+        done({ kind: "too-large" });
+        return;
+      }
+      chunks.push(chunk);
+    });
+    child.on("error", () => done());
+    child.on("close", () => done());
+    child.stdin?.on("error", () => {});
+    child.stdin?.write(
       `GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:${projectPort}\r\nConnection: close\r\n\r\n`,
     );
   });
@@ -171,9 +206,12 @@ async function verifyProjectSeesBrowser({
       abort,
     );
     if (abort.aborted) throw new Error("verification cancelled");
-    if (response != null) {
-      const body = response.slice(response.indexOf("\r\n\r\n") + 4);
-      if (devToolsBrowserId(body) === localId) return;
+    if (response.kind !== "none") {
+      if (response.kind === "answered") {
+        const text = response.response;
+        const body = text.slice(text.indexOf("\r\n\r\n") + 4);
+        if (devToolsBrowserId(body) === localId) return;
+      }
       throw new Error(
         `port ${projectPort} in the project is already used by another program; choose a different --port`,
       );
@@ -215,6 +253,8 @@ async function runBrowserConnect(
       console.error(line);
     }
   };
+
+  say(TRUST_WARNING);
 
   // Without --remote-bind the forwarded DevTools port would listen on every
   // interface of the project; refuse rather than fall back.
@@ -299,8 +339,8 @@ async function runBrowserConnect(
     // detached browser and reflect's persistent forward would keep giving the
     // project control of the browser; the watchdog tears both down.
     watchdog = startCleanupWatchdog({
-      owner: process.pid,
       browser: browser.child.pid!,
+      browserMarker: `--user-data-dir=${profile.path}`,
       release: profile.release,
       forward: reflectSyncCliInvocation(["forward", "remove", name, "--stop"]),
     });
@@ -411,7 +451,7 @@ export function registerProjectBrowserCommands(
   browser
     .command("connect")
     .description(
-      "launch a private local Chrome/Chromium whose DevTools endpoint is reachable at 127.0.0.1:<port> inside the project until the browser closes",
+      "launch a private local Chrome/Chromium whose DevTools endpoint is reachable at 127.0.0.1:<port> inside the project until the browser closes. Anything in the project then fully controls that browser, including opening local files and local-network addresses: only connect projects you trust",
     )
     .option("-w, --project <project>", "project id or name")
     .option("--port <port>", "project port for the DevTools endpoint", "9222")
@@ -424,7 +464,11 @@ export function registerProjectBrowserCommands(
       "memory: the profile lives in RAM and never touches disk; disk: a temporary directory. Either way it is deleted on exit",
       "memory",
     )
-    .option("--url <url>", "page to open first", "about:blank")
+    .option(
+      "--url <url>",
+      "page to open first (http, https or about)",
+      "about:blank",
+    )
     .option("--headless", "run the browser without a window")
     .option(
       "--direct",
