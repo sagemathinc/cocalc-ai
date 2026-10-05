@@ -5,6 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import getLogger from "@cocalc/backend/logger";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import cpExec from "@cocalc/backend/sandbox/cp";
+import { parseOutput } from "@cocalc/backend/sandbox/exec";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { getMasterConatClient } from "./master-status";
 import { getLocalHostId } from "./sqlite/hosts";
@@ -101,9 +102,12 @@ async function restoreSnapshotWithRetry({
   const source = `${row.snapshot_id}${srcPath ? ":" + srcPath : ""}`;
   for (let retry = 0; ; retry += 1) {
     try {
-      await restoreFs.rustic(["restore", source, stagingRel], {
-        timeout: RESTORE_TIMEOUT_MS,
-      });
+      // A failed or killed restore leaves partial files in staging.
+      parseOutput(
+        await restoreFs.rustic(["restore", source, stagingRel], {
+          timeout: RESTORE_TIMEOUT_MS,
+        }),
+      );
       return;
     } catch (err) {
       if (
