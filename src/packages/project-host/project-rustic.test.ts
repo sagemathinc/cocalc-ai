@@ -117,6 +117,26 @@ describe("project rustic wrapper", () => {
     expect(result.oversized_files).toBeUndefined();
   });
 
+  it("accepts sparse file sizes beyond 2^53", async () => {
+    const stderr = `COCALC_BACKUP_OVERSIZED_FILES {"max_file_bytes":40000000000,"count":1,"files":[{"path":"huge","size":11258999068426240}]}\n`;
+    mockedExecuteCode.mockResolvedValue({
+      type: "blocking",
+      stdout: '{"time":"2026-03-31T12:34:56.000Z","id":"backup-id"}',
+      stderr,
+      exit_code: 0,
+    } as any);
+    const result = await projectRusticBackup({
+      src: "/mnt/cocalc/project-1/.snapshots/temp",
+      repoProfile: "/mnt/cocalc/data/secrets/rustic/project-1.toml",
+      host: "project-1",
+      timeoutMs: 90_000,
+      maxFileBytes: 40_000_000_000,
+    });
+    expect(result.oversized_files?.files[0].size).toBeGreaterThan(
+      Number.MAX_SAFE_INTEGER,
+    );
+  });
+
   it("rejects a malformed skipped file report", async () => {
     mockedExecuteCode.mockResolvedValue({
       type: "blocking",

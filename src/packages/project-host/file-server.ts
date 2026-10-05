@@ -226,6 +226,7 @@ import { createProjectSandboxFilesystem } from "./file-server-sandbox-policy";
 import { importJupyterIpynb, saveJupyterIpynb } from "./jupyter-ipynb";
 import { resetClonedProjectState } from "./clone-state";
 import { withBackupParallelLimit } from "./backup-queue";
+import { createSharedWorkLimit } from "./shared-work-limit";
 export { getBackupExecutionStatus } from "./backup-queue";
 import {
   isProjectViewerRole,
@@ -4053,6 +4054,18 @@ function oversizedFilesError(
   return new Error(oversizedFilesMessage(action, report));
 }
 
+// The oversized-file scan walks project metadata as root, outside the
+// project's own resource limits, and any collaborator can request it. Share
+// identical scans, briefly reuse their results, and run few at once.
+const limitOversizedScan = createSharedWorkLimit<OversizedFilesReport | null>({
+  maxConcurrent: 2,
+  maxWaiting: 50,
+  reuseMs: 30_000,
+  maxEntries: 200,
+  busyMessage:
+    "too many backup file size checks are in progress on this host; try again shortly",
+});
+
 // Files a backup of the project would skip, optionally only beneath the given
 // home-relative paths. null means this host's backups skip nothing.
 async function getOversizedFiles({
@@ -4062,18 +4075,25 @@ async function getOversizedFiles({
   project_id: string;
   paths?: string[];
 }): Promise<OversizedFilesReport | null> {
-  const subpaths = (paths ?? []).map((path) =>
+  let subpaths = (paths ?? []).map((path) =>
     path.replace(/^(\.\/)+/, "").replace(/\/+$/, ""),
   );
-  const vol = await getVolume(project_id);
-  return await projectOversizedFiles({
-    src: vol.path,
-    maxFileBytes: await projectBackupMaxFileBytes(vol),
-    // Scanning the home directory itself means scanning everything.
-    subpaths: subpaths.some((path) => path === "" || path === ".")
-      ? []
-      : subpaths,
-  });
+  // Scanning the home directory itself means scanning everything.
+  if (subpaths.some((path) => path === "" || path === ".")) {
+    subpaths = [];
+  }
+  subpaths = [...new Set(subpaths)].sort();
+  return await limitOversizedScan(
+    JSON.stringify([project_id, subpaths]),
+    async () => {
+      const vol = await getVolume(project_id);
+      return await projectOversizedFiles({
+        src: vol.path,
+        maxFileBytes: await projectBackupMaxFileBytes(vol),
+        subpaths,
+      });
+    },
+  );
 }
 
 async function createBackup({
@@ -4084,6 +4104,7 @@ async function createBackup({
   managed_egress_override,
   replace_oldest_at_limit,
   freeze_source,
+  skip_oversized_files,
 }: {
   project_id: string;
   limit?: number;
@@ -4092,6 +4113,7 @@ async function createBackup({
   managed_egress_override?: ManagedBackupEgressOverride;
   replace_oldest_at_limit?: boolean;
   freeze_source?: boolean;
+  skip_oversized_files?: boolean;
 }): Promise<{
   time: Date;
   id: string;
@@ -4152,7 +4174,9 @@ async function createBackup({
               ? await freezeVolumeForArchiveBackup(vol)
               : undefined;
             try {
-              const maxFileBytes = await projectBackupMaxFileBytes(vol);
+              const maxFileBytes = skip_oversized_files
+                ? await projectBackupMaxFileBytes(vol)
+                : undefined;
               backupResult = await vol.rustic.backup({
                 tags: tags ?? ["cocalc-manual"],
                 parent,

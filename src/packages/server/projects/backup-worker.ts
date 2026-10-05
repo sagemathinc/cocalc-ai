@@ -357,6 +357,8 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
         managed_egress_override,
         replace_oldest_at_limit,
         freeze_source,
+        // This worker reports skipped files to every consumer of the result.
+        skip_oversized_files: true,
       });
     })();
     void backupOperation.then(

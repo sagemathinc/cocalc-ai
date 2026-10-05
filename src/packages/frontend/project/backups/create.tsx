@@ -123,10 +123,9 @@ export default function CreateBackup({
             interrupt your work.
           </p>
           <p>
-            Files larger than four times this project's disk quota (and at least
-            10 GB) are not backed up, so they are also left out of moves,
-            archives, and copies to projects on other hosts. Only sparse or
-            compressed files can be that large.
+            Files larger than this project&apos;s disk quota are not backed up,
+            so they are also left out of moves, archives, and copies to projects
+            on other hosts. Only sparse or compressed files can be that large.
           </p>
           <ShowError
             style={{ marginTop: "10px" }}

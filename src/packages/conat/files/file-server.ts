@@ -340,6 +340,11 @@ export interface Fileserver {
     managed_egress_override?: ManagedBackupEgressOverride;
     replace_oldest_at_limit?: boolean;
     freeze_source?: boolean;
+    // Skip files over the backup file size limit and report them as
+    // oversized_files. Only callers that act on that report may set this: an
+    // older caller would treat the backup as complete and could delete the
+    // only copy of the skipped files.
+    skip_oversized_files?: boolean;
   }) => Promise<{
     time: Date;
     id: string;

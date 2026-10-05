@@ -240,6 +240,10 @@ export function registerProjectLifecycleCommands(
     .description(
       "archive a project, creating a final backup first when the latest backup is stale",
     )
+    .addHelpText(
+      "after",
+      "\nThe archive keeps the files as of the final backup, a point-in-time snapshot;\nchanges made after it (by running code, collaborators, or agents) are not kept.\nFiles larger than the project's disk quota are not backed up, so archiving is\nrefused while any exist unless --allow-oversized-skip is given.",
+    )
     .option("-w, --project <project>", "project id or name")
     .option("--wait", "show progress while archiving")
     .option(

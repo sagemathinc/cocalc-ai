@@ -7,9 +7,11 @@ export const BACKUPS = ".backups";
 // restore from backups. Sparse files make apparent size unrelated to disk use,
 // and backing one up reads every hole. A dense file cannot exceed the disk
 // quota, so the quota-based limit only affects sparse or compressed files.
-// The privileged backup helper enforces the same clamp on whatever it is sent.
-export const BACKUP_MAX_FILE_QUOTA_MULTIPLE = 4;
-export const BACKUP_MIN_MAX_FILE_BYTES = 10 * 1000 ** 3;
+// Restores are dense, so a larger file could not be restored within the quota
+// anyway. The privileged backup helper enforces the same clamp on whatever it
+// is sent.
+export const BACKUP_MAX_FILE_QUOTA_MULTIPLE = 1;
+export const BACKUP_MIN_MAX_FILE_BYTES = 1000 ** 3;
 export const BACKUP_DEFAULT_MAX_FILE_BYTES = 100 * 1000 ** 3;
 export const BACKUP_CEILING_MAX_FILE_BYTES = 1000 ** 4;
 

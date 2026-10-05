@@ -950,6 +950,14 @@ export function ActionBox({
             first.
           </p>
         )}
+        {!readOnlySource && show_different_project && (
+          <p>
+            A copy to a project on another host is made from a backup taken when
+            the copy starts, a single point-in-time snapshot. It cannot include
+            files larger than this project&apos;s disk quota; CoCalc lists any
+            such files and asks first.
+          </p>
+        )}
       </>
     );
   }

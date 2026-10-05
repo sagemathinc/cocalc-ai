@@ -741,6 +741,10 @@ export function registerProjectOpsCommands(
     .description(
       "move a project to another host (use --cutover-backup-region for cross-region moves)",
     )
+    .addHelpText(
+      "after",
+      "\nThe destination is restored from a final backup, a point-in-time snapshot;\nchanges made after it (by running code, collaborators, or agents) are not moved.\nFiles larger than the project's disk quota are not backed up, so moving is\nrefused while any exist unless --allow-oversized-skip is given.",
+    )
     .option("-w, --project <project>", "project id or name")
     .requiredOption("--host <host>", "destination host id or name")
     .option(
@@ -971,6 +975,10 @@ export function registerProjectOpsCommands(
   project
     .command("copy-path")
     .description("copy a path between projects")
+    .addHelpText(
+      "after",
+      "\nA copy to a project on another host is made from a backup taken when the copy\nstarts, a point-in-time snapshot. It cannot include files larger than the\nsource project's disk quota, so it is refused while any are selected unless\n--allow-oversized-skip is given.",
+    )
     .requiredOption("--src-project <project>", "source project")
     .requiredOption("--src <path>", "source path")
     .requiredOption("--dest-project <project>", "destination project")

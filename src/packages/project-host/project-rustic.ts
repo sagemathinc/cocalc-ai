@@ -143,6 +143,12 @@ function isNonNegativeInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0;
 }
 
+// A sparse file's length can exceed 2^53 (up to about 8 EiB) while using no
+// disk. Such sizes only lose precision, which is fine for display.
+function isApparentSize(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
 export function parseOversizedFilesReport(
   stderr: string,
 ): OversizedFilesReport | undefined {
@@ -168,7 +174,7 @@ function validateOversizedFilesReport(json: string): OversizedFilesReport {
     !Array.isArray(report?.files) ||
     !report.files.every(
       (file: any) =>
-        typeof file?.path === "string" && isNonNegativeInteger(file?.size),
+        typeof file?.path === "string" && isApparentSize(file?.size),
     )
   ) {
     // Never treat an unreadable report as "nothing was skipped".
