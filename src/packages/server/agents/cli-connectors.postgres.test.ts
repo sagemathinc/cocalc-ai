@@ -81,6 +81,14 @@ describePostgres("CLI connector grants across PostgreSQL connections", () => {
     });
   };
 
+  // The losers must fail as conflicts, not for some unrelated reason.
+  const expectOnlyConflicts = (results: PromiseSettledResult<unknown>[]) => {
+    for (const r of results) {
+      if (r.status === "rejected")
+        expect(`${r.reason}`).toContain("connector settings changed");
+    }
+  };
+
   it("concurrent first grants cannot exceed the per-account bound", async () => {
     await pool.query(
       `INSERT INTO agent_connector_grants
@@ -110,6 +118,7 @@ describePostgres("CLI connector grants across PostgreSQL connections", () => {
       Array.from({ length: 6 }, () => enable(agent)),
     );
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expectOnlyConflicts(results);
     const { rows } = await pool.query(
       "SELECT revision FROM agent_connector_grants WHERE agent_id=$1",
       [agent],
@@ -124,6 +133,7 @@ describePostgres("CLI connector grants across PostgreSQL connections", () => {
       Array.from({ length: 6 }, () => enable(agent, 1)),
     );
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expectOnlyConflicts(results);
     const { rows } = await pool.query(
       "SELECT revision FROM agent_connector_grants WHERE agent_id=$1",
       [agent],
