@@ -29,6 +29,7 @@ import type {
 } from "@cocalc/util/ai/runtime";
 import { harnessTransport } from "./harness-transport";
 import {
+  diagnosticError,
   HarnessStderrDiagnostics,
   recordHarnessDiagnostic,
 } from "./harness-diagnostics";
@@ -187,6 +188,8 @@ export class HarnessError extends Error {
       | "unsupported"
       | "rejected",
     message: string,
+    // The agent's process was killed (SIGKILL), e.g. at a memory limit.
+    public readonly killed = false,
   ) {
     super(message);
   }
@@ -649,7 +652,20 @@ export class AcpHarnessClient {
         startedAt,
         protocolRejection,
       );
+      // An adapter whose agent process was SIGKILLed (e.g. by the kernel at
+      // the project's memory limit) reports a generic internal error; the
+      // kill shows in its stderr. Say so, and let the host recover.
+      const killed = [
+        ...diagnosticError(error).signals,
+        ...this.stderrDiagnostics.snapshot().signals,
+      ].includes("killed");
       this.fail(Error("ACP operation failed"));
+      if (killed)
+        throw new HarnessError(
+          prompt || mutation ? "outcome_unknown" : "unavailable",
+          `${this.agentName()}'s process was killed (SIGKILL) while it was working. [Diagnostic ID: ${diagnosticId}]`,
+          true,
+        );
       throw new HarnessError(
         protocolRejection
           ? "rejected"
@@ -671,14 +687,18 @@ export class AcpHarnessClient {
     }
   }
 
+  private agentName(): string {
+    return this.binding.profile.id === "claude-code" ||
+      this.sessionPolicy === "claude-subscription-controller"
+      ? "Claude"
+      : "The agent";
+  }
+
   private rejectionMessage(error: unknown, method: RequestMethod): string {
     const { code, data } = error as { code: number; data?: { cwd?: unknown } };
     const subscription =
       this.sessionPolicy === "claude-subscription-controller";
-    const agent =
-      this.binding.profile.id === "claude-code" || subscription
-        ? "Claude"
-        : "The agent";
+    const agent = this.agentName();
     let recovery: string;
     if (code === -32000) {
       recovery = subscription

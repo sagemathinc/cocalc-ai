@@ -70,6 +70,7 @@ jest.mock("@cocalc/ai/acp", () => ({
     modelCapacity: "codex_model_capacity",
     resourceKilled: "codex_resource_killed",
     turnLost: "codex_turn_lost",
+    harnessKilled: "acp_harness_killed",
   },
   CodexAcpAgent: class {},
   EchoAgent: class {},
@@ -933,6 +934,49 @@ describe("terminal failure recovery", () => {
     expect(
       listAcpJobsByRecoveryParent({ recovery_parent_op_id: queued.op_id }),
     ).toHaveLength(0);
+  });
+
+  it("resumes a harness turn whose agent was killed once, with memory guidance", async () => {
+    const request = {
+      ...makeRequest(),
+      runtime: { version: 1, kind: "acp", profile: {} },
+    };
+    const queued = enqueueAcpJob(request as any);
+    const rows: any[] = [];
+    (chatServer.acquireChatSyncDB as jest.Mock).mockImplementation(async () =>
+      makeSyncdb(rows),
+    );
+    const detail = JSON.stringify({ agent: "Claude", oom: true });
+    const resumed = await acpTestInternals.enqueueFailureRecoveryContinuation({
+      client: {} as ConatClient,
+      job: { ...queued, started_at: Date.now() },
+      recoveryCode: "acp_harness_killed",
+      recoveryDetail: detail,
+    });
+    expect(resumed?.recovery_count).toBe(1);
+    const prompt = (decodeAcpJobRequest(resumed as any) as any).prompt;
+    expect(prompt).toContain("ran out of memory");
+    expect(prompt).toContain("one at a time");
+    // Not a second time in a row.
+    expect(
+      await acpTestInternals.enqueueFailureRecoveryContinuation({
+        client: {} as ConatClient,
+        job: { ...(resumed as any), started_at: Date.now() },
+        recoveryCode: "acp_harness_killed",
+        recoveryDetail: detail,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("does not apply the harness kill recovery to a Codex job", async () => {
+    const queued = enqueueAcpJob(makeRequest() as any);
+    expect(
+      await acpTestInternals.enqueueFailureRecoveryContinuation({
+        client: {} as ConatClient,
+        job: { ...queued, started_at: Date.now() },
+        recoveryCode: "acp_harness_killed",
+      }),
+    ).toBeUndefined();
   });
 
   it("never creates a Codex recovery continuation for a generic harness", async () => {

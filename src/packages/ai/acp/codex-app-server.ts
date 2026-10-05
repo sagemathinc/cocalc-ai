@@ -94,6 +94,9 @@ export const CODEX_ACP_RECOVERY_ERROR_CODE = {
   modelCapacity: "codex_model_capacity",
   resourceKilled: "codex_resource_killed",
   turnLost: "codex_turn_lost",
+  // A harness agent's (Claude's) process was SIGKILLed, e.g. at the project's
+  // memory limit. Recorded by the host, not the app server.
+  harnessKilled: "acp_harness_killed",
 } as const;
 export type CodexAcpRecoveryErrorCode =
   (typeof CODEX_ACP_RECOVERY_ERROR_CODE)[keyof typeof CODEX_ACP_RECOVERY_ERROR_CODE];

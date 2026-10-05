@@ -2776,6 +2776,18 @@ test("provider rejection is distinct from ambiguous delivery and is redacted", a
     },
   );
 });
+test("an agent process killed mid-turn is reported as killed, not as a generic rejection", async (t) => {
+  const client = await start(t);
+  await client.open();
+  await assert.rejects(client.prompt("killed", async () => {}), (error) => {
+    assert.equal(error.killed, true);
+    assert.equal(error.code, "outcome_unknown");
+    assert.match(error.message, /process was killed \(SIGKILL\)/);
+    assert.match(error.message, /Diagnostic ID: [0-9a-f-]{36}/);
+    assert.doesNotMatch(error.message, /could not process/);
+    return true;
+  });
+});
 test("internal rejection correlates stderr and nested error hints only in operator logs", async (t) => {
   const logger = require("@cocalc/backend/logger").default(
     "ai:acp:harness-diagnostics",

@@ -28,6 +28,12 @@ import {
   forkCodexAppServerSession,
 } from "@cocalc/ai/acp";
 import { AgentTimeTravelRecorder } from "@cocalc/ai/sync";
+import {
+  formatMemoryLimit,
+  oomKilledBetween,
+  readProjectMemoryEvents,
+  type ProjectMemoryEvents,
+} from "./project-memory";
 import { init as initConatAcp } from "@cocalc/conat/ai/acp/server";
 import {
   initAcpDaemonControlService,
@@ -853,9 +859,95 @@ function failureRecoveryDirective(
         ].join("\n"),
       };
     }
+    case CODEX_ACP_RECOVERY_ERROR_CODE.harnessKilled: {
+      const { agent, oom } = parseHarnessKilledDetail(detail);
+      return {
+        code,
+        interruptedNotice: oom
+          ? `**${agent} was stopped because this project ran out of memory.**`
+          : `**${agent}'s process was killed unexpectedly.**`,
+        recoveryReason: oom
+          ? "agent stopped: project out of memory"
+          : "agent process killed",
+        delayMs: Math.max(1_000, ACP_RESOURCE_KILLED_RECOVERY_DELAY_MS),
+        maxRetries: Math.min(
+          HARNESS_KILLED_MAX_RECOVERIES,
+          ACP_AUTO_RECOVERY_MAX_RETRIES,
+        ),
+        recoveryGuidance: oom
+          ? "The previous turn was stopped because the project ran out of memory, most likely from a memory-heavy command you were running (for example test suites with many parallel workers). Check what completed and whether any of its processes are still running before continuing. Run memory-heavy commands one at a time and limit their parallelism (for example jest --maxWorkers=2, or --runInBand for one heavy suite); never start one while another is still running."
+          : "The previous turn's agent process was killed unexpectedly (SIGKILL). Check what completed before continuing. If you were running memory-heavy commands, run them one at a time with limited parallelism.",
+      };
+    }
     default:
       return undefined;
   }
+}
+
+// A harness turn whose agent was killed is resumed at most this many times
+// in a row, so a turn that keeps exhausting memory does not loop.
+const HARNESS_KILLED_MAX_RECOVERIES = 1;
+
+function harnessKilledDetail(agent: string, oom: boolean): string {
+  return JSON.stringify({ agent, oom });
+}
+
+function parseHarnessKilledDetail(detail?: string): {
+  agent: string;
+  oom: boolean;
+} {
+  try {
+    const parsed = JSON.parse(detail ?? "");
+    return {
+      agent:
+        parsed?.agent === "Claude" || parsed?.agent === "The agent"
+          ? parsed.agent
+          : "The agent",
+      oom: parsed?.oom === true,
+    };
+  } catch {
+    return { agent: "The agent", oom: false };
+  }
+}
+
+// When a harness turn failed because its agent was killed: an explanation
+// for the chat, and the recovery detail. A memory kill is recognized from the
+// project's OOM counter even if the harness itself died without reporting it.
+async function harnessKilledFailure({
+  err,
+  projectId,
+  memoryBefore,
+  agent,
+  resumable,
+  readMemory = readProjectMemoryEvents,
+}: {
+  err: unknown;
+  projectId: string;
+  memoryBefore: ProjectMemoryEvents;
+  agent: string;
+  resumable: boolean;
+  readMemory?: (projectId: string) => Promise<ProjectMemoryEvents>;
+}): Promise<{ message: string; detail: string } | undefined> {
+  const memoryAfter = await readMemory(projectId);
+  const oom = oomKilledBetween(memoryBefore, memoryAfter);
+  if (!oom && (err as { killed?: unknown })?.killed !== true) return;
+  const diagnostic =
+    `${(err as Error)?.message ?? ""}`.match(
+      /\[Diagnostic ID: [^\]]+\]/,
+    )?.[0] ?? "";
+  const limit = formatMemoryLimit(
+    memoryAfter.limitBytes ?? memoryBefore.limitBytes,
+  );
+  const next = resumable
+    ? "It is being resumed automatically."
+    : "It was already resumed automatically once, so it was not resumed again. Check what is using memory before trying again.";
+  const message = oom
+    ? `${agent} was stopped because this project ran out of memory${limit ? ` (its limit is ${limit})` : ""}, most likely from a memory-heavy command it was running. ${next}`
+    : `${agent}'s process was killed unexpectedly (SIGKILL). ${next}`;
+  return {
+    message: diagnostic ? `${message} ${diagnostic}` : message,
+    detail: harnessKilledDetail(agent, oom),
+  };
 }
 
 function shouldAutoResumeRecoveredTurn({
@@ -8124,6 +8216,10 @@ async function executeAcpRequest({
 
     let terminalState: AcpExecutionResult["terminalState"] = "completed";
     let terminalError: string | undefined;
+    // To tell whether a harness killed mid-turn hit the project's memory limit.
+    const memoryBefore = harness
+      ? await readProjectMemoryEvents(projectId)
+      : {};
     try {
       logger.debug("evaluate: running", {
         reqId,
@@ -8167,6 +8263,25 @@ async function executeAcpRequest({
         // failure. The adapter still throws so its retained process is disposed.
         if (!(harness && chatWriter?.getTerminalState() === "interrupted")) {
           terminalFallbackError = `${harness ? "ACP harness" : "codex agent"} failed: ${(err as Error)?.message ?? err}`;
+          if (harness) {
+            const killed = await harnessKilledFailure({
+              err,
+              projectId,
+              memoryBefore,
+              agent:
+                request.runtime?.profile.id === "claude-code"
+                  ? "Claude"
+                  : "The agent",
+              resumable:
+                Number(request.recovery_count ?? 0) <
+                HARNESS_KILLED_MAX_RECOVERIES,
+            });
+            if (killed) {
+              terminalFallbackError = killed.message;
+              recoveryCode = CODEX_ACP_RECOVERY_ERROR_CODE.harnessKilled;
+              recoveryDetail = killed.detail;
+            }
+          }
           try {
             await wrappedStream({
               type: "error",
@@ -10105,9 +10220,14 @@ async function enqueueFailureRecoveryContinuation({
 }): Promise<AcpJobRow | undefined> {
   const directive = failureRecoveryDirective(recoveryCode, recoveryDetail);
   if (!directive) return undefined;
-  // These directives answer Codex error codes; a harness reports none.
+  // Codex error codes apply to Codex jobs; a harness only has its own.
   const failed = decodeAcpJobRequest(job);
-  if (failed.request_kind !== "command" && failed.runtime !== undefined)
+  const harnessJob =
+    failed.request_kind !== "command" && failed.runtime !== undefined;
+  if (
+    harnessJob !==
+    (directive.code === CODEX_ACP_RECOVERY_ERROR_CODE.harnessKilled)
+  )
     return undefined;
   const decision = shouldAutoResumeRecoveredTurn({
     turn: {
@@ -13492,6 +13612,7 @@ export function getAcpAgentRuntimeStatus(): {
 }
 
 export const acpTestInternals = {
+  harnessKilledFailure,
   loadAgentMemoryContext,
   handleAcpAttentionRequest,
   persistAttentionResponseProjection,

@@ -508,6 +508,18 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           id: message.id,
           error: { code: -32000, message: "secret rejection details" },
         });
+      if (text === "killed") {
+        // As the Claude adapter reports its child being OOM-killed.
+        process.stderr.write("Claude Code process terminated by signal SIGKILL\n");
+        return setTimeout(
+          () =>
+            send({
+              id: message.id,
+              error: { code: -32603, message: "Internal error" },
+            }),
+          50,
+        );
+      }
       if (text === "diagnostic-reject") {
         process.stderr.write(
           "Authorization: Bearer private-stderr; HTTP 503 overloaded\n",

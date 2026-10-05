@@ -2393,7 +2393,7 @@ export default function Message({
           >
             <Icon name="history" />
             <span>
-              Recovered automatically after restart
+              Resumed automatically
               {acpRecoveryReason ? `: ${acpRecoveryReason}` : ""}. Attempt{" "}
               {acpRecoveryCount}.
             </span>
