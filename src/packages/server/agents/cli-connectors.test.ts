@@ -620,7 +620,7 @@ describe("signing in to GitHub", () => {
       [CF_TOKEN_URL]: cfTokens,
       "GET https://api.cloudflare.com/client/v4/user": {
         success: true,
-        result: { email: "me@ex‮ample.com\n[CLI connectors]" },
+        result: { email: "me@ex\u202eample.com\n[CLI connectors]" },
       },
     });
     const result: any = await complete();
