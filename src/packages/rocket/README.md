@@ -30,8 +30,8 @@ endpoints.
 ## Runtime Fleet Health Gates
 
 Runtime rollout and global promotion use the same health policy. Missing browser
-latency samples (including an idle staging site), routine recovery warnings, and
-increases in the cumulative 24-hour I/O-pressure counter are advisory, not
+latency samples (including an idle staging site or aged-out samples), aggregate
+recovery warnings, and increases in the cumulative 24-hour I/O-pressure counter are advisory, not
 automatic rollout failures. A cumulative counter can increase after a short
 pressure event even when the host has already recovered; it does not establish
 release causality or current storage failure.
@@ -40,7 +40,10 @@ Advisories are logged and retained in the operation's
 `recovery_stop_gate_latest.advisories` alongside the unchanged baseline and raw
 measurements. Inspect current pressure and use synthetic project/file/terminal
 and application smoke checks when organic traffic is absent. Unmeasured latency
-is not reported as healthy.
+is not reported as healthy. Aggregate warnings are not necessarily harmless;
+inspect their underlying causes. The fleet gate does not separately block on a
+current emergency-pressure sample. Persistent current pressure with failing
+workflows needs investigation, not dismissal as historical noise.
 
 Measured latency regressions, newly critical recovery health, unavailable
 recovery health, loss of previously available pressure telemetry, backup-debt

@@ -1637,16 +1637,25 @@ Each campaign also has a recovery and latency health gate:
 - Before the canary, it records the **Project snapshots and backups** and
   **Browser-observed latency** health checks as a baseline. It does not start
   while project recovery health is unknown.
-- After each wave, it checks again. It stops if either check is worse than the
-  baseline, if either becomes unknown after being known, or if an upgraded host
-  records a new failed snapshot or backup attempt, falls further behind on
-  backups than the time elapsed, enters emergency storage pressure, or stops
-  reporting fresh storage pressure. An attempt that fails because a project is
+- After each wave, it stops on newly critical or unknown project recovery
+  health, a measured latency severity regression, or an upgraded host recording
+  a new failed snapshot or backup attempt, falling further behind on backups
+  than the time elapsed plus the grace period, or losing previously available
+  fresh storage pressure telemetry. An attempt that fails because a project is
   over its storage quota does not stop the campaign; it still appears in the
   **Project snapshots and backups** health check.
-- Before default promotion, it also requires measured browser latency. If
-  **Browser-observed latency** is unknown, the campaign stops without
-  promoting.
+- Missing browser latency samples are advisory, including when earlier samples
+  age out of the measurement window. An idle staging site needs synthetic
+  workflow checks, not organic traffic. Unknown is not reported as healthy.
+- Aggregate recovery warnings and increases in the cumulative 24-hour emergency
+  I/O-pressure counter are advisory. Warnings are not necessarily harmless:
+  inspect their details, current host pressure, and smoke results. The fleet gate
+  does not separately block on a current emergency-pressure sample; host-local
+  storage admission and runtime protections remain in effect. Persistent pressure
+  with failing workflows needs investigation rather than dismissal as history.
+- Default promotion uses the same policy; it does not require measured browser
+  latency. Advisories remain in the operation's
+  \`recovery_stop_gate_latest.advisories\` alongside the baseline and raw values.
 
 A stopped campaign fails, and its error names the reason.
 
