@@ -271,3 +271,66 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
+
+  # A real two-bay cluster (seed + attached bay), each a full hub with its own
+  # PostgreSQL, joined by the real inter-bay fabric, plus fault injection.
+  # Multibay is not deployed yet; this keeps it working until it is.
+  multibay:
+    needs: [plan, build]
+    if: needs.plan.outputs.has_tests == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.2
+          run_install: false
+
+      - name: Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: src/packages/pnpm-lock.yaml
+
+      - name: PostgreSQL server binaries
+        run: |
+          # Each bay starts its own embedded PostgreSQL; the image ships the
+          # server, just not on PATH.
+          bindir="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -n 1)"
+          test -x "$bindir/initdb"
+          echo "$bindir" >> "$GITHUB_PATH"
+
+      - name: Install workspace dependencies
+        run: pnpm -C src/packages install --frozen-lockfile
+
+      - name: Download workspace build
+        uses: actions/download-artifact@v4
+        with:
+          name: workspace-build
+          path: src
+
+      - name: Extract workspace build
+        run: tar --extract --file src/workspace-build.tar --directory src
+
+      - name: Two-bay cluster tests
+        env:
+          MULTIBAY_DIR: /tmp/multibay
+          MULTIBAY_KEEP: "1"
+        run: |
+          mkdir -p "$MULTIBAY_DIR"
+          node --test --test-reporter=spec src/scripts/multibay/
+
+      - name: Upload cluster logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multibay-logs
+          path: |
+            /tmp/multibay/*/bay-*/*.log
+          if-no-files-found: warn
+          retention-days: 7
