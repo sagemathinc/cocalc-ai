@@ -197,7 +197,7 @@ function connectionFromTokens(
 export type CloudflarePollResult =
   | { status: "pending"; slow_down?: boolean }
   | { status: "expired" | "denied" }
-  | { status: "connected"; connection: CloudflareConnection; email: string };
+  | { status: "connected"; connection: CloudflareConnection };
 
 export async function pollCloudflareDeviceLogin({
   config,
@@ -232,17 +232,28 @@ export async function pollCloudflareDeviceLogin({
     default:
       throw Error(`Cloudflare sign-in failed: ${body.error}`);
   }
-  const connection = connectionFromTokens(body, login, now);
-  return {
-    status: "connected",
-    connection,
-    email: await cloudflareEmail(connection.access_token, fetchImpl),
-  };
+  let connection: CloudflareConnection;
+  try {
+    connection = connectionFromTokens(body, login, now);
+  } catch (err) {
+    // A token we will not use should not stay valid either.
+    for (const hint of ["refresh_token", "access_token"] as const) {
+      const token = body[hint];
+      if (typeof token === "string" && token) {
+        await revokeCloudflareToken({ config, token, hint, fetchImpl }).catch(
+          () => undefined,
+        );
+      }
+    }
+    throw err;
+  }
+  // The caller now owns these tokens: it must store or revoke them.
+  return { status: "connected", connection };
 }
 
-async function cloudflareEmail(
+export async function cloudflareEmail(
   token: string,
-  fetchImpl: Fetch,
+  fetchImpl: Fetch = globalThis.fetch,
 ): Promise<string> {
   const response = await fetchImpl(`${API}/user`, {
     headers: { authorization: `Bearer ${token}`, "user-agent": "CoCalc" },
@@ -297,14 +308,16 @@ export async function refreshCloudflareConnection({
   };
 }
 
-/** Revoke a refresh token at Cloudflare. */
+/** Revoke a token at Cloudflare (by default a refresh token). */
 export async function revokeCloudflareToken({
   config,
   token,
+  hint = "refresh_token",
   fetchImpl = globalThis.fetch,
 }: {
   config: CloudflareConnectorConfig;
   token: string;
+  hint?: "refresh_token" | "access_token";
   fetchImpl?: Fetch;
 }): Promise<void> {
   const response = await fetchImpl(`${DASH}/oauth2/revoke`, {
@@ -315,7 +328,7 @@ export async function revokeCloudflareToken({
     },
     body: new URLSearchParams({
       token,
-      token_type_hint: "refresh_token",
+      token_type_hint: hint,
       client_id: config.client_id,
     }).toString(),
     signal: AbortSignal.timeout(TIMEOUT_MS),

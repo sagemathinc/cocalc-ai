@@ -92,7 +92,10 @@ const githubPayload = (access_expires_at = NOW + 8 * HOUR) => ({
   refresh_token: "ghr_refresh",
   refresh_expires_at: NOW + 1000 * HOUR,
 });
-let connection: { id: string; payload: string; metadata: any };
+type Row = { id: string; payload: string; metadata: any };
+let connection: Row;
+// The pending sign-in row, if any.
+let signInRow: Row | undefined;
 
 // Answers GitHub endpoints by URL; records every request.
 function github(routes: Record<string, unknown>) {
@@ -132,22 +135,93 @@ beforeEach(() => {
     payload: JSON.stringify(githubPayload()),
     metadata: { description: "@octo" },
   };
+  signInRow = undefined;
   // A stored credential updated under its lock, as the real store does.
-  lockedMock.mockImplementation(async ({ update }) => {
-    const next = await update(connection);
-    if (next) {
-      connection = {
-        ...connection,
-        payload: next.payload,
-        metadata: next.metadata ?? connection.metadata,
-      };
-    }
-    return connection;
+  lockedMock.mockImplementation(async ({ selector, update }) => {
+    const pending = `${selector.kind}`.endsWith("-device-login");
+    const row = pending ? signInRow : connection;
+    if (!row) return undefined;
+    const next = await update(row);
+    const updated = next
+      ? {
+          ...row,
+          payload: next.payload,
+          metadata: next.metadata ?? row.metadata,
+        }
+      : row;
+    if (pending) signInRow = updated;
+    else connection = updated;
+    return updated;
   });
   queryMock.mockResolvedValue({ rows: [grant] });
   createMock.mockResolvedValue({ id: connectionId, created: true });
   getByIdMock.mockImplementation(async () => connection);
 });
+
+const GITHUB_TOKEN_URL = "POST https://github.com/login/oauth/access_token";
+const GITHUB_REVOKE =
+  "DELETE https://api.github.com/applications/Iv23test/token";
+const CF_TOKEN_URL = "POST https://dash.cloudflare.com/oauth2/token";
+const CF_REVOKE = "POST https://dash.cloudflare.com/oauth2/revoke";
+const githubTokens = {
+  access_token: "ghu_new",
+  expires_in: 28800,
+  refresh_token: "ghr_new",
+  refresh_token_expires_in: 15811200,
+};
+const cfTokens = {
+  access_token: "cf-access",
+  expires_in: 3600,
+  refresh_token: "cf-refresh",
+};
+
+function pendingSignIn(
+  connector: "github" | "cloudflare",
+  extra: Record<string, unknown> = {},
+) {
+  signInRow = {
+    id: connectionId,
+    payload: JSON.stringify({
+      version: 1,
+      type:
+        connector === "github"
+          ? "github-device-login"
+          : "cloudflare-device-login",
+      client_id:
+        connector === "github"
+          ? "Iv23test"
+          : "cbca97e7-c331-4cdd-8fd8-e25a451b98bf",
+      device_code: "dev-123",
+      ...(connector === "cloudflare" ? { presets: ["workers", "r2"] } : {}),
+      expires_at: NOW + 600_000,
+      interval: 5,
+      next_poll_at: NOW,
+      ...extra,
+    }),
+    metadata: {},
+  };
+}
+
+async function poll(
+  connector: "github" | "cloudflare",
+  fetchImpl: any,
+  now = NOW,
+) {
+  const { pollCliConnectorSignIn } = await import("./cli-connectors");
+  return await pollCliConnectorSignIn({
+    account_id: accountId,
+    connector,
+    login_id: connectionId,
+    now,
+    fetchImpl,
+  });
+}
+
+function revokes(fetchImpl: any): string[] {
+  return fetchImpl.mock.calls
+    .filter(([url]) => /revoke|applications/.test(url))
+    .map(([url, init]) => `${init?.method} ${url} ${init?.body ?? ""}`);
+}
 
 describe("signing in to GitHub", () => {
   const deviceCode = {
@@ -160,6 +234,7 @@ describe("signing in to GitHub", () => {
 
   it("starts only with fresh auth, and keeps the device code on the hub", async () => {
     const { startCliConnectorSignIn } = await import("./cli-connectors");
+    listMock.mockResolvedValue([]);
     const fetchImpl = github({
       "POST https://github.com/login/device/code": deviceCode,
     });
@@ -167,6 +242,7 @@ describe("signing in to GitHub", () => {
       account_id: accountId,
       session_hash: "s",
       connector: "github",
+      now: NOW,
       fetchImpl,
     });
     expect(freshAuthMock).toHaveBeenCalledWith(
@@ -178,7 +254,6 @@ describe("signing in to GitHub", () => {
     );
     expect(started).toEqual(
       expect.objectContaining({
-        connector: "github",
         login_id: connectionId,
         user_code: "ABCD-1234",
         verification_uri: "https://github.com/login/device",
@@ -192,11 +267,16 @@ describe("signing in to GitHub", () => {
         owner_account_id: accountId,
       }),
     );
-    expect(JSON.parse(saved.payload).device_code).toBe("dev-123");
-    // Abandoned sign-ins expire as leases instead of using up the limit.
-    expect(Date.parse(saved.metadata.lease_expires_at)).toBeGreaterThan(
-      Date.now(),
+    const payload = JSON.parse(saved.payload);
+    expect(payload).toEqual(
+      expect.objectContaining({
+        device_code: "dev-123",
+        interval: 5,
+        next_poll_at: NOW + 5000,
+      }),
     );
+    // Abandoned sign-ins expire as leases instead of using up the limit.
+    expect(Date.parse(saved.metadata.lease_expires_at)).toBeGreaterThan(NOW);
   });
 
   it("refuses when the site has no GitHub App, or for other connectors", async () => {
@@ -211,57 +291,35 @@ describe("signing in to GitHub", () => {
     expect(freshAuthMock).not.toHaveBeenCalled();
   });
 
-  const pending = (expires_at = Date.now() + 600_000) => ({
-    id: connectionId,
-    payload: JSON.stringify({
-      version: 1,
-      type: "github-device-login",
-      client_id: "Iv23test",
-      device_code: "dev-123",
-      expires_at,
-    }),
-    metadata: {},
-  });
-
-  it("waits while the user has not approved yet", async () => {
-    const { pollCliConnectorSignIn } = await import("./cli-connectors");
-    getByIdMock.mockResolvedValue(pending());
-    const fetchImpl = github({
-      "POST https://github.com/login/oauth/access_token": {
-        error: "authorization_pending",
-      },
+  it("enforces the polling interval on the hub, growing it on slow_down", async () => {
+    pendingSignIn("github", { next_poll_at: NOW + 5000 });
+    const fetchImpl = github({ [GITHUB_TOKEN_URL]: { error: "slow_down" } });
+    // Too early: GitHub is not asked.
+    await expect(poll("github", fetchImpl, NOW + 4999)).resolves.toEqual({
+      status: "pending",
     });
-    await expect(
-      pollCliConnectorSignIn({
-        account_id: accountId,
-        connector: "github",
-        login_id: connectionId,
-        fetchImpl,
-      }),
-    ).resolves.toEqual({ status: "pending" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    await expect(poll("github", fetchImpl, NOW + 5000)).resolves.toEqual({
+      status: "pending",
+      slow_down: true,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const pending = JSON.parse(signInRow!.payload);
+    expect(pending.interval).toBe(10);
+    expect(pending.next_poll_at).toBe(NOW + 15000);
+    await poll("github", fetchImpl, NOW + 14999);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(createMock).not.toHaveBeenCalled();
     expect(revokeMock).not.toHaveBeenCalled();
   });
 
   it("stores the expiring tokens as a connection once approved", async () => {
-    const { pollCliConnectorSignIn } = await import("./cli-connectors");
-    getByIdMock.mockResolvedValue(pending());
+    pendingSignIn("github");
     const fetchImpl = github({
-      "POST https://github.com/login/oauth/access_token": {
-        access_token: "ghu_new",
-        expires_in: 28800,
-        refresh_token: "ghr_new",
-        refresh_token_expires_in: 15811200,
-      },
+      [GITHUB_TOKEN_URL]: githubTokens,
       "GET https://api.github.com/user": { login: "octocat" },
     });
-    const result = await pollCliConnectorSignIn({
-      account_id: accountId,
-      connector: "github",
-      login_id: connectionId,
-      fetchImpl,
-    });
-    expect(result).toEqual({
+    await expect(poll("github", fetchImpl)).resolves.toEqual({
       status: "connected",
       connection: expect.objectContaining({ description: "@octocat" }),
     });
@@ -274,58 +332,129 @@ describe("signing in to GitHub", () => {
         refresh_token: "ghr_new",
       }),
     );
-    // The pending sign-in is consumed.
+    // A retried finish updates the same connection instead of adding one.
+    expect(saved.deduplicateMetadata).toEqual({
+      key: "sign_in_id",
+      value: connectionId,
+    });
+    // The sign-in no longer holds the tokens, and is consumed.
+    expect(signInRow!.payload).not.toContain("ghu_new");
+    expect(revokeMock).toHaveBeenCalledWith({
+      id: connectionId,
+      owner_account_id: accountId,
+    });
+    expect(revokes(fetchImpl)).toEqual([]);
+  });
+
+  it("revokes the new token when GitHub will not say who it is", async () => {
+    pendingSignIn("github");
+    const fetchImpl = github({
+      [GITHUB_TOKEN_URL]: githubTokens,
+      "GET https://api.github.com/user": { message: "Bad credentials" },
+      [GITHUB_REVOKE]: {},
+    });
+    await expect(poll("github", fetchImpl)).rejects.toThrow(
+      "GitHub did not accept the new sign-in",
+    );
+    expect(createMock).not.toHaveBeenCalled();
+    expect(revokes(fetchImpl)).toEqual([
+      `DELETE https://api.github.com/applications/Iv23test/token ${JSON.stringify(
+        { access_token: "ghu_new" },
+      )}`,
+    ]);
+    expect(signInRow!.payload).not.toContain("ghu_new");
+    expect(revokeMock).toHaveBeenCalled();
+  });
+
+  it("revokes the new token when the connection cannot be stored", async () => {
+    pendingSignIn("github");
+    createMock.mockRejectedValue(
+      Error("at most 10 active credentials are allowed"),
+    );
+    const fetchImpl = github({
+      [GITHUB_TOKEN_URL]: githubTokens,
+      "GET https://api.github.com/user": { login: "octocat" },
+      [GITHUB_REVOKE]: {},
+    });
+    await expect(poll("github", fetchImpl)).rejects.toThrow("at most 10");
+    expect(revokes(fetchImpl)).toHaveLength(1);
+  });
+
+  it("revokes the new token when it cannot even be recorded", async () => {
+    pendingSignIn("github");
+    lockedMock.mockImplementationOnce(async ({ update }) => {
+      await update(signInRow);
+      throw Error("database unavailable");
+    });
+    const fetchImpl = github({
+      [GITHUB_TOKEN_URL]: githubTokens,
+      [GITHUB_REVOKE]: {},
+    });
+    await expect(poll("github", fetchImpl)).rejects.toThrow(
+      "database unavailable",
+    );
+    expect(revokes(fetchImpl)).toHaveLength(1);
+  });
+
+  it("finishes a sign-in whose exchange was recorded before a crash", async () => {
+    pendingSignIn("github", {
+      exchanged: { ...githubPayload(), access_token: "ghu_saved" },
+      exchanged_at: NOW - 1000,
+    });
+    const fetchImpl = github({
+      "GET https://api.github.com/user": { login: "octocat" },
+    });
+    await expect(poll("github", fetchImpl)).resolves.toEqual(
+      expect.objectContaining({ status: "connected" }),
+    );
+    // The device code is not exchanged twice.
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+      "https://api.github.com/user",
+    ]);
+    expect(JSON.parse(createMock.mock.calls[0][0].payload).access_token).toBe(
+      "ghu_saved",
+    );
+  });
+
+  it("revokes tokens of a sign-in left unfinished, when the next one starts", async () => {
+    const { startCliConnectorSignIn } = await import("./cli-connectors");
+    pendingSignIn("github", {
+      exchanged: { ...githubPayload(), access_token: "ghu_orphan" },
+      exchanged_at: NOW - 3 * 60_000,
+    });
+    listMock.mockResolvedValue([{ id: connectionId }]);
+    const fetchImpl = github({
+      "POST https://github.com/login/device/code": deviceCode,
+      [GITHUB_REVOKE]: {},
+    });
+    await startCliConnectorSignIn({
+      account_id: accountId,
+      connector: "github",
+      now: NOW,
+      fetchImpl,
+    });
+    expect(revokes(fetchImpl)).toEqual([
+      expect.stringContaining('"access_token":"ghu_orphan"'),
+    ]);
     expect(revokeMock).toHaveBeenCalledWith({
       id: connectionId,
       owner_account_id: accountId,
     });
   });
 
-  it("refuses an app whose tokens do not expire, and revokes that token", async () => {
-    const { pollCliConnectorSignIn } = await import("./cli-connectors");
-    getByIdMock.mockResolvedValue(pending());
-    const fetchImpl = github({
-      "POST https://github.com/login/oauth/access_token": {
-        access_token: "gho_forever",
-      },
-      "DELETE https://api.github.com/applications/Iv23test/token": {},
-    });
-    await expect(
-      pollCliConnectorSignIn({
-        account_id: accountId,
-        connector: "github",
-        login_id: connectionId,
-        fetchImpl,
-      }),
-    ).rejects.toThrow("Expire user authorization tokens");
-    expect(createMock).not.toHaveBeenCalled();
-    const revoke = fetchImpl.mock.calls.find(
-      ([, init]) => init?.method === "DELETE",
-    );
-    expect(JSON.parse(revoke[1].body)).toEqual({ access_token: "gho_forever" });
-  });
-
   it("an expired or another account's sign-in gives nothing", async () => {
-    const { pollCliConnectorSignIn } = await import("./cli-connectors");
-    getByIdMock.mockResolvedValue(undefined);
-    await expect(
-      pollCliConnectorSignIn({
-        account_id: accountId,
-        connector: "github",
-        login_id: connectionId,
-      }),
-    ).resolves.toEqual({ status: "expired" });
-    expect(getByIdMock.mock.calls[0][0].selector.owner_account_id).toBe(
+    const fetchImpl = github({});
+    await expect(poll("github", fetchImpl)).resolves.toEqual({
+      status: "expired",
+    });
+    expect(lockedMock.mock.calls[0][0].selector.owner_account_id).toBe(
       accountId,
     );
-    getByIdMock.mockResolvedValue(pending(Date.now() - 1));
-    await expect(
-      pollCliConnectorSignIn({
-        account_id: accountId,
-        connector: "github",
-        login_id: connectionId,
-      }),
-    ).resolves.toEqual({ status: "expired" });
+    pendingSignIn("github", { expires_at: NOW - 1 });
+    await expect(poll("github", fetchImpl)).resolves.toEqual({
+      status: "expired",
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
     expect(createMock).not.toHaveBeenCalled();
   });
 });
@@ -333,6 +462,7 @@ describe("signing in to GitHub", () => {
 describe("signing in to Cloudflare", () => {
   it("asks only for the scopes of the chosen presets", async () => {
     const { startCliConnectorSignIn } = await import("./cli-connectors");
+    listMock.mockResolvedValue([]);
     const fetchImpl = github({
       "POST https://dash.cloudflare.com/oauth2/device/auth": {
         device_code: "cf-dev",
@@ -400,6 +530,7 @@ describe("signing in to Cloudflare", () => {
 
   it("refuses a verification page outside dash.cloudflare.com", async () => {
     const { startCliConnectorSignIn } = await import("./cli-connectors");
+    listMock.mockResolvedValue([]);
     const fetchImpl = github({
       "POST https://dash.cloudflare.com/oauth2/device/auth": {
         device_code: "cf-dev",
@@ -418,37 +549,15 @@ describe("signing in to Cloudflare", () => {
   });
 
   it("stores the connection with who and what it allows", async () => {
-    const { pollCliConnectorSignIn } = await import("./cli-connectors");
-    getByIdMock.mockResolvedValue({
-      id: connectionId,
-      payload: JSON.stringify({
-        version: 1,
-        type: "cloudflare-device-login",
-        client_id: "cbca97e7-c331-4cdd-8fd8-e25a451b98bf",
-        device_code: "cf-dev",
-        presets: ["workers", "r2"],
-        expires_at: Date.now() + 600_000,
-      }),
-      metadata: {},
-    });
+    pendingSignIn("cloudflare");
     const fetchImpl = github({
-      "POST https://dash.cloudflare.com/oauth2/token": {
-        access_token: "cf-access",
-        expires_in: 3600,
-        refresh_token: "cf-refresh",
-      },
+      [CF_TOKEN_URL]: cfTokens,
       "GET https://api.cloudflare.com/client/v4/user": {
         success: true,
         result: { email: "me@example.com" },
       },
     });
-    const result = await pollCliConnectorSignIn({
-      account_id: accountId,
-      connector: "cloudflare",
-      login_id: connectionId,
-      fetchImpl,
-    });
-    expect(result).toEqual({
+    await expect(poll("cloudflare", fetchImpl)).resolves.toEqual({
       status: "connected",
       connection: expect.objectContaining({
         connector: "cloudflare",
@@ -466,16 +575,57 @@ describe("signing in to Cloudflare", () => {
     );
   });
 
-  it("a GitHub sign-in cannot be finished as Cloudflare", async () => {
-    const { pollCliConnectorSignIn } = await import("./cli-connectors");
-    await pollCliConnectorSignIn({
-      account_id: accountId,
-      connector: "cloudflare",
-      login_id: connectionId,
+  it.each([
+    [
+      "Cloudflare will not say who it is",
+      () => undefined,
+      { success: false },
+      "Cloudflare did not accept the new sign-in",
+    ],
+    [
+      "the connection cannot be stored",
+      () =>
+        createMock.mockRejectedValue(
+          Error("at most 10 active credentials are allowed"),
+        ),
+      { success: true, result: { email: "me@example.com" } },
+      "at most 10",
+    ],
+  ])("revokes both new tokens when %s", async (_, arrange, user, error) => {
+    pendingSignIn("cloudflare");
+    arrange();
+    const fetchImpl = github({
+      [CF_TOKEN_URL]: cfTokens,
+      "GET https://api.cloudflare.com/client/v4/user": user,
+      [CF_REVOKE]: {},
     });
-    expect(getByIdMock.mock.calls[0][0].selector.kind).toBe(
+    await expect(poll("cloudflare", fetchImpl)).rejects.toThrow(error);
+    const revoked = revokes(fetchImpl).map((r) =>
+      Object.fromEntries(new URLSearchParams(r.split(" ").slice(2).join(" "))),
+    );
+    expect(revoked).toEqual([
+      expect.objectContaining({
+        token: "cf-refresh",
+        token_type_hint: "refresh_token",
+      }),
+      expect.objectContaining({
+        token: "cf-access",
+        token_type_hint: "access_token",
+      }),
+    ]);
+    expect(signInRow!.payload).not.toContain("cf-refresh");
+  });
+
+  it("a GitHub sign-in cannot be finished as Cloudflare", async () => {
+    pendingSignIn("github");
+    const fetchImpl = github({});
+    await expect(poll("cloudflare", fetchImpl)).resolves.toEqual({
+      status: "expired",
+    });
+    expect(lockedMock.mock.calls[0][0].selector.kind).toBe(
       "cloudflare-device-login",
     );
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
 

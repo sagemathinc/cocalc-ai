@@ -167,7 +167,7 @@ function connectionFromTokens(
 export type GithubPollResult =
   | { status: "pending"; slow_down?: boolean }
   | { status: "expired" | "denied" }
-  | { status: "connected"; connection: GithubAppConnection; login: string };
+  | { status: "connected"; connection: GithubAppConnection };
 
 export async function pollGithubDeviceLogin({
   config,
@@ -216,11 +216,8 @@ export async function pollGithubDeviceLogin({
     }
     throw err;
   }
-  return {
-    status: "connected",
-    connection,
-    login: await githubLogin(connection.access_token, fetchImpl),
-  };
+  // The caller now owns these tokens: it must store or revoke them.
+  return { status: "connected", connection };
 }
 
 export async function githubLogin(
