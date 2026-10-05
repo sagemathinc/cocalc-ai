@@ -44,6 +44,58 @@ import { Tooltip } from "@cocalc/frontend/components";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { personalAgentApi, useNamedAgents } from "./api";
 
+type DeviceSignIn = Extract<CliConnectorSignIn, { kind: "device" }>;
+
+// Navigation, replaceable in tests (jsdom cannot navigate).
+export const browser = {
+  assign: (url: string) => window.location.assign(url),
+};
+
+/** Marks a redirect back from Cloudflare (the hub's state prefix). */
+const CLOUDFLARE_STATE_PREFIX = "cocalc-cf.";
+
+export interface CloudflareCallback {
+  state: string;
+  code?: string;
+  error?: string;
+}
+
+/**
+ * Take a redirect back from Cloudflare out of the address (once), so the code
+ * is neither kept in history nor reused. Read as soon as this module loads.
+ */
+function takeCloudflareCallback(): CloudflareCallback | undefined {
+  if (typeof window === "undefined") return;
+  const params = new URLSearchParams(window.location.search);
+  const state = params.get("state");
+  if (!state?.startsWith(CLOUDFLARE_STATE_PREFIX)) return;
+  const callback = {
+    state,
+    code: params.get("code") ?? undefined,
+    error: params.get("error") ?? undefined,
+  };
+  for (const key of ["state", "code", "error", "error_description", "scope"]) {
+    params.delete(key);
+  }
+  const search = params.toString();
+  window.history.replaceState(
+    window.history.state,
+    "",
+    `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`,
+  );
+  return callback;
+}
+
+let cloudflareCallback = takeCloudflareCallback();
+
+/** The pending redirect back from Cloudflare, handed out once. */
+export function consumeCloudflareCallback(): CloudflareCallback | undefined {
+  cloudflareCallback ??= takeCloudflareCallback();
+  const callback = cloudflareCallback;
+  cloudflareCallback = undefined;
+  return callback;
+}
+
 export interface CliConnectorData {
   connections: CliConnection[];
   grants: CliConnectorGrant[];
@@ -139,7 +191,8 @@ export function cliConnectorSummary(
 type SignInState =
   | { step: "choose" }
   | { step: "starting" }
-  | { step: "waiting"; signIn: CliConnectorSignIn }
+  | { step: "redirecting" }
+  | { step: "waiting"; signIn: DeviceSignIn }
   | { step: "ended"; message: string };
 
 /**
@@ -180,7 +233,7 @@ export function ConnectCliSignInModal({
     }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const poll = (signIn: CliConnectorSignIn, interval: number) => {
+    const poll = (signIn: DeviceSignIn, interval: number) => {
       timer = setTimeout(async () => {
         if (cancelled) return;
         try {
@@ -222,6 +275,12 @@ export function ConnectCliSignInModal({
         if (cancelled) return;
         if (!completed || !signIn) {
           onClose();
+          return;
+        }
+        if (signIn.kind === "redirect") {
+          // The user approves at the provider and comes back to Settings.
+          setState({ step: "redirecting" });
+          browser.assign(signIn.authorize_url);
           return;
         }
         setState({ step: "waiting", signIn });
@@ -292,6 +351,12 @@ export function ConnectCliSignInModal({
               </Space>
             </Checkbox.Group>
           </Space>
+        )}
+        {state.step === "redirecting" && (
+          <Typography.Paragraph>
+            <Spin size="small" /> Opening {label}&hellip; Approve there, and you
+            will come back here.
+          </Typography.Paragraph>
         )}
         {state.step === "starting" && (
           <Spin aria-label={`Starting ${label} sign-in`} />
@@ -552,6 +617,52 @@ export function CliConnectorSection({
   const [managing, setManaging] = useState<NamedAgent>();
   const [busy, setBusy] = useState<string>();
   const [actionError, setActionError] = useState("");
+  const [returned, setReturned] = useState<{
+    type: "success" | "error";
+    message: string;
+  }>();
+  // Back from Cloudflare: finish the sign-in it approved (or not).
+  useEffect(() => {
+    if (connector !== "cloudflare") return;
+    const callback = consumeCloudflareCallback();
+    if (!callback) return;
+    if (callback.error || !callback.code) {
+      setReturned({
+        type: "error",
+        message:
+          callback.error === "access_denied"
+            ? "The sign-in was declined on Cloudflare."
+            : `Cloudflare sign-in failed${callback.error ? `: ${callback.error}` : ""}.`,
+      });
+      return;
+    }
+    personalAgentApi()
+      .completeCliConnectorSignIn({
+        connector,
+        state: callback.state,
+        code: callback.code,
+      })
+      .then(
+        (result) => {
+          refreshCliConnectors();
+          setReturned(
+            result.status === "connected"
+              ? {
+                  type: "success",
+                  message: `Connected ${result.connection.description}.`,
+                }
+              : {
+                  type: "error",
+                  message:
+                    result.status === "denied"
+                      ? "The sign-in was declined on Cloudflare."
+                      : "This sign-in expired. Connect again.",
+                },
+          );
+        },
+        (err) => setReturned({ type: "error", message: `${err}` }),
+      );
+  }, [connector]);
   const connections = (data?.connections ?? []).filter(
     (connection) => connection.connector === connector,
   );
@@ -626,6 +737,17 @@ export function CliConnectorSection({
               type="error"
               showIcon
               title={actionError}
+              style={{ marginBottom: 12 }}
+            />
+          )}
+          {returned && (
+            <Alert
+              role={returned.type === "error" ? "alert" : "status"}
+              type={returned.type}
+              showIcon
+              closable
+              onClose={() => setReturned(undefined)}
+              title={returned.message}
               style={{ marginBottom: 12 }}
             />
           )}

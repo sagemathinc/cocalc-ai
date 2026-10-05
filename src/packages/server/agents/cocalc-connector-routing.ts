@@ -26,6 +26,7 @@ import {
 import {
   getCliConnectorSetup as getCliSetupAtHome,
   pollCliConnectorSignIn as pollCliSignInAtHome,
+  completeCliConnectorSignIn as completeCliSignInAtHome,
   startCliConnectorSignIn as startCliSignInAtHome,
   disconnectCliConnection as disconnectCliConnectionAtHome,
   issueCliConnectorTurnTokens,
@@ -43,6 +44,7 @@ export const agentConnectorControl: InterBayAgentConnectorApi = {
   getCliSetup: getCliSetupAtHome,
   startCliSignIn: startCliSignInAtHome,
   pollCliSignIn: pollCliSignInAtHome,
+  completeCliSignIn: completeCliSignInAtHome,
   disconnectCliConnection: disconnectCliConnectionAtHome,
   listCliGrants: listCliGrantsAtHome,
   saveCliGrant: saveCliGrantAtHome,
@@ -174,3 +176,11 @@ export const beginCliConnectorTurn: AgentApi["beginCliConnectorTurn"] = async (
   const opts = requiredHost(input);
   return await (await accountHomeApi(opts.account_id)).beginCliTurn(opts);
 };
+
+export const completeCliConnectorSignIn: AgentApi["completeCliConnectorSignIn"] =
+  async (input) => {
+    const opts = requiredAccount(input);
+    return await (
+      await accountHomeApi(opts.account_id)
+    ).completeCliSignIn(opts);
+  };

@@ -89,6 +89,7 @@ export const agent = {
   getCliConnectorSetup: authFirstRequireAccount,
   startCliConnectorSignIn: authFirstRequireAccountWithBoundSession,
   pollCliConnectorSignIn: authFirstRequireAccount,
+  completeCliConnectorSignIn: authFirstRequireAccount,
   disconnectCliConnection: authFirstRequireAccount,
   listCliConnectorGrants: authFirstRequireAccount,
   saveCliConnectorGrant: authFirstRequireAccountWithBoundSession,
@@ -289,16 +290,25 @@ export interface CliConnectorSetup {
   cloudflare: { available: boolean };
 }
 
-/** A started sign-in: the user approves user_code at verification_uri. */
-export interface CliConnectorSignIn {
+/**
+ * A started sign-in. GitHub: the user enters user_code at verification_uri
+ * while the browser polls. Cloudflare: the browser goes to authorize_url and
+ * comes back to Settings > Connectors with a code to complete.
+ */
+export type CliConnectorSignIn = {
   login_id: string;
   connector: CliConnector;
-  user_code: string;
-  verification_uri: string;
-  /** Seconds between polls. */
-  interval: number;
   expires_at: number;
-}
+} & (
+  | {
+      kind: "device";
+      user_code: string;
+      verification_uri: string;
+      /** Seconds between polls. */
+      interval: number;
+    }
+  | { kind: "redirect"; authorize_url: string }
+);
 
 export type CliConnectorSignInStatus =
   | { status: "pending"; slow_down?: boolean }
@@ -339,6 +349,13 @@ export interface AgentApi {
     account_id?: string;
     connector: CliConnector;
     login_id: string;
+  }): Promise<CliConnectorSignInStatus>;
+  /** Finish a redirect sign-in with the provider's code and state. */
+  completeCliConnectorSignIn(opts: {
+    account_id?: string;
+    connector: CliConnector;
+    state: string;
+    code: string;
   }): Promise<CliConnectorSignInStatus>;
   /** Remove a connection and turn it off for every agent. */
   disconnectCliConnection(opts: {

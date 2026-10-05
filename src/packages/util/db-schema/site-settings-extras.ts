@@ -354,8 +354,8 @@ export type SiteSettingsExtrasKeys =
   | "github_connector_client_id"
   | "github_connector_client_secret"
   | "github_connector_app_url"
-  | "cloudflare_connector_enabled"
   | "cloudflare_connector_client_id"
+  | "cloudflare_connector_client_secret"
   | "github_block"
   | "prometheus_metrics"
   | "prometheus_metrics_allowlist"
@@ -1021,22 +1021,22 @@ export const EXTRAS: SettingsExtras = {
     group: "AI & Agents",
     subgroup: "Agent Connectors",
   },
-  cloudflare_connector_enabled: {
-    name: "Cloudflare Connector: Enabled",
-    desc: "Let users sign in to Cloudflare so their agents can use cf and wrangler during their turns. Needs no secrets: it uses the OAuth sign-in of Cloudflare's cf CLI with only the scopes each user chooses.",
-    default: "yes",
-    valid: only_booleans,
-    to_val: to_bool,
+  cloudflare_connector_client_id: {
+    name: "Cloudflare Connector: OAuth Client ID",
+    desc: "Client ID of this site's Cloudflare OAuth client, with redirect URL `https://<your site>/settings/connectors`. Leave blank to turn the Cloudflare connector off. See the admin docs page **Set up agent connectors**.",
+    default: "",
+    to_val: to_trimmed_str,
     tags: ["AI", "Cloudflare"],
     group: "AI & Agents",
     subgroup: "Agent Connectors",
   },
-  cloudflare_connector_client_id: {
-    name: "Cloudflare Connector: OAuth Client ID",
-    desc: "Optional. Blank uses the public client of Cloudflare's cf CLI. Set this only if your site has its own Cloudflare OAuth client with the device flow enabled.",
+  cloudflare_connector_client_secret: {
+    name: "Cloudflare Connector: OAuth Client Secret",
+    desc: "The client secret of the same Cloudflare OAuth client. Only the hub uses it, to exchange and refresh users' tokens.",
     default: "",
+    password: true,
     to_val: to_trimmed_str,
-    tags: ["AI", "Cloudflare"],
+    tags: ["AI", "Cloudflare", "Security"],
     group: "AI & Agents",
     subgroup: "Agent Connectors",
   },

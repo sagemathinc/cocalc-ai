@@ -2151,30 +2151,67 @@ With a non-admin account:
 ### What the Cloudflare connector does
 
 The Cloudflare connector lets agents deploy Workers and Pages sites and manage
-R2 storage and DNS with \`cf\` and \`wrangler\`. It needs no setup: users sign
-in with the same OAuth device flow as Cloudflare's own \`cf\` CLI, and
-approve it on dash.cloudflare.com. When signing in, each user chooses what
-agents may do (Workers & sites, R2 storage, DNS); CoCalc requests only those
-scopes, never access to the whole account. Access tokens last about an hour
-and are refreshed on the hub.
+R2 storage and DNS with \`cf\` and \`wrangler\`. Users approve it on
+dash.cloudflare.com, where the consent screen shows your site's name. When
+connecting, each user chooses what agents may do (Workers & sites, R2
+storage, DNS); CoCalc requests only those scopes. Access tokens last about an
+hour and are refreshed by CoCalc's servers with your client's secret.
 
-### Settings
+Each CoCalc site registers its own Cloudflare OAuth client. Cloudflare
+supports only the authorization-code flow for third-party clients.
 
-| Setting | Effect |
-| --- | --- |
-| Cloudflare Connector: Enabled | On by default. Turn it off to hide the connector on your site. |
-| Cloudflare Connector: OAuth Client ID | Optional. Blank uses the public client of Cloudflare's \`cf\` CLI. Set it only if your organization has its own Cloudflare OAuth client with the device flow enabled. |
+### 1. Create the OAuth client
 
-### Check it
+In the Cloudflare dashboard of the account that will own the client, go to
+**Manage Account -> OAuth clients -> Create client** (you need the Super
+Administrator, Administrator or OAuth Client Write role), and set:
+
+- **Client name:** your site's name; users see it when they approve.
+- **Response type:** \`code\`. **Grant type:** authorization code.
+- **Token authentication method:** \`client_secret_basic\`.
+- **Redirect URL:** \`https://<your site>/settings/connectors\`, exactly
+  (including any base path your site uses).
+- **Scopes:** mark \`account:read\` and \`user:read\` required. Add these as
+  optional, so users can choose: \`workers:write\`, \`workers_scripts:write\`,
+  \`workers_routes:write\` (Workers & sites); \`workers-r2.read\`,
+  \`workers-r2.write\`, \`workers-r2-bucket-item.read\`,
+  \`workers-r2-bucket-item.write\` (R2 storage); \`zone.read\`,
+  \`dns_records:read\`, \`dns_records:edit\` (DNS). Include \`offline_access\`
+  if it is offered: CoCalc refuses sign-ins without a refresh token.
+
+Save the **Client ID** and **Client Secret**; Cloudflare shows the secret only
+once.
+
+### 2. Private or public
+
+A new client is **private**: only members of the Cloudflare account that owns
+it can sign in. That is enough for a team that shares one Cloudflare account.
+To let every user of your site connect their own Cloudflare account, make the
+client **public**. That is permanent, and needs a logo, a client URL and
+domain verification of that URL (a \`TXT\` record).
+
+### 3. Enter it in CoCalc
+
+In **Admin -> Site Settings -> AI & Agents -> Agent Connectors**, set
+**Cloudflare Connector: OAuth Client ID** and **Cloudflare Connector: OAuth
+Client Secret**. Paste the secret only there. Leaving the Client ID blank
+turns the Cloudflare connector off.
+
+### 4. Check it
 
 With a non-admin account, connect Cloudflare in **Settings -> Connectors**,
-choose **Workers & sites**, approve the code, turn Cloudflare on for one agent,
+choose **Workers & sites**, approve on Cloudflare, and confirm you return to
+the Connectors page with the account listed. Turn Cloudflare on for one agent
 and ask it to run \`cf whoami\` (installing \`cf\` with
 \`npm i -g --prefix ~/.local cf\` if the project does not have it).
 
-### Revoking
+### Rotating and revoking
 
-A user disconnects in **Settings -> Connectors**, which also revokes the
-sign-in at Cloudflare. Turning the connector off for the site stops every new
-token at once; tokens already handed to a running turn expire within an hour.
+- **Rotate the client secret:** create a new secret in the client's menu,
+  update the site setting, then delete the old secret. Connections keep
+  working.
+- **A user stops access:** Disconnect in **Settings -> Connectors**, which also
+  revokes the tokens at Cloudflare.
+- **Turn the connector off for the whole site:** clear the Client ID. Tokens
+  already given to a running turn expire within an hour.
 `;

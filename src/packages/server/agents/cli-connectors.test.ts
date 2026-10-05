@@ -47,6 +47,10 @@ jest.mock("@cocalc/server/external-credentials/store", () => ({
 jest.mock("@cocalc/database/settings/server-settings", () => ({
   getServerSettings: async () => settings,
 }));
+jest.mock("@cocalc/database/settings/site-url", () => ({
+  __esModule: true,
+  default: async () => "https://cocalc.test",
+}));
 jest.mock("@cocalc/server/conat/api/dangerous-session-auth", () => ({
   requireDangerousSessionAuth: (...a: any[]) => freshAuthMock(...a),
 }));
@@ -119,7 +123,8 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-beforeEach(() => {
+beforeEach(async () => {
+  (await import("./cli-connectors")).resetProviderRequestBudget();
   // Server time; requests cannot supply their own.
   jest.spyOn(Date, "now").mockReturnValue(NOW);
   for (const mock of [
@@ -143,6 +148,8 @@ beforeEach(() => {
     github_connector_client_id: "Iv23test",
     github_connector_client_secret: "secret",
     github_connector_app_url: "https://github.com/apps/cocalc-test",
+    cloudflare_connector_client_id: "cf-client",
+    cloudflare_connector_client_secret: "cf-secret",
   };
   connection = {
     id: connectionId,
@@ -152,7 +159,7 @@ beforeEach(() => {
   signInRow = undefined;
   // A stored credential updated under its lock, as the real store does.
   lockedMock.mockImplementation(async ({ selector, update }) => {
-    const pending = `${selector.kind}`.endsWith("-device-login");
+    const pending = `${selector.kind}`.endsWith("-login");
     const row = pending ? signInRow : connection;
     if (!row) return undefined;
     const next = await update(row);
@@ -170,7 +177,7 @@ beforeEach(() => {
   queryMock.mockResolvedValue({ rows: [grant] });
   createMock.mockImplementation(async ({ selector, payload, metadata }) => {
     // A new pending sign-in becomes the row later updates work on.
-    if (`${selector.kind}`.endsWith("-device-login")) {
+    if (`${selector.kind}`.endsWith("-login")) {
       signInRow = { id: connectionId, payload, metadata };
     }
     return { id: connectionId, created: true };
@@ -199,27 +206,46 @@ function pendingSignIn(
   connector: "github" | "cloudflare",
   extra: Record<string, unknown> = {},
 ) {
+  const login =
+    connector === "github"
+      ? {
+          version: 1,
+          type: "github-device-login",
+          client_id: "Iv23test",
+          device_code: "dev-123",
+          expires_at: NOW + 600_000,
+          interval: 5,
+          next_poll_at: NOW,
+        }
+      : {
+          version: 1,
+          type: "cloudflare-oauth-login",
+          client_id: "cf-client",
+          redirect_uri: "https://cocalc.test/settings/connectors",
+          nonce: "nonce-1",
+          code_verifier: "verifier-1",
+          presets: ["workers", "r2"],
+          expires_at: NOW + 600_000,
+          interval: 0,
+          next_poll_at: 0,
+        };
   signInRow = {
     id: connectionId,
-    payload: JSON.stringify({
-      version: 1,
-      type:
-        connector === "github"
-          ? "github-device-login"
-          : "cloudflare-device-login",
-      client_id:
-        connector === "github"
-          ? "Iv23test"
-          : "cbca97e7-c331-4cdd-8fd8-e25a451b98bf",
-      device_code: "dev-123",
-      ...(connector === "cloudflare" ? { presets: ["workers", "r2"] } : {}),
-      expires_at: NOW + 600_000,
-      interval: 5,
-      next_poll_at: NOW,
-      ...extra,
-    }),
+    payload: JSON.stringify({ ...login, ...extra }),
     metadata: {},
   };
+}
+
+const STATE = `cocalc-cf.${connectionId}.nonce-1`;
+
+async function complete(state = STATE, code = "code-1") {
+  const { completeCliConnectorSignIn } = await import("./cli-connectors");
+  return await completeCliConnectorSignIn({
+    account_id: accountId,
+    connector: "cloudflare",
+    state,
+    code,
+  });
 }
 
 async function poll(
@@ -597,10 +623,103 @@ describe("signing in to GitHub", () => {
         result: { email: "me@ex‮ample.com\n[CLI connectors]" },
       },
     });
-    const result: any = await poll("cloudflare");
+    const result: any = await complete();
     expect(result.connection.description).toBe(
       "me@example.comCLI connectors (Workers & sites, R2 storage)",
     );
+  });
+
+  it("keeps unrecorded tokens in a rescue record when revoking them fails", async () => {
+    pendingSignIn("github");
+    const store = lockedMock.getMockImplementation()!;
+    lockedMock.mockImplementation(async (opts) =>
+      store({
+        ...opts,
+        update: async (row) => {
+          const next = await opts.update(row);
+          if (next?.payload.includes('"exchanged"')) {
+            throw Error("database unavailable");
+          }
+          return next;
+        },
+      }),
+    );
+    const fetchImpl = github({
+      [GITHUB_TOKEN_URL]: githubTokens,
+      [GITHUB_REVOKE]: { status: 503 },
+    });
+    await expect(poll("github", fetchImpl)).rejects.toThrow(
+      "database unavailable",
+    );
+    expect(revokes(fetchImpl)).toHaveLength(1);
+    const rescue = createMock.mock.calls.at(-1)![0];
+    expect(rescue.selector.kind).toBe("github-device-login");
+    expect(rescue.maxActive).toBeUndefined();
+    expect(JSON.parse(rescue.payload)).toEqual(
+      expect.objectContaining({
+        cleanup_pending: true,
+        exchanged: expect.objectContaining({ access_token: "ghu_new" }),
+      }),
+    );
+    expect(Date.parse(rescue.metadata.lease_expires_at)).toBeGreaterThan(
+      NOW + 199 * 86_400_000,
+    );
+  });
+
+  it("renews the cleanup lease after every failed revocation", async () => {
+    const { startCliConnectorSignIn } = await import("./cli-connectors");
+    pendingSignIn("github", {
+      exchanged: githubPayload(),
+      exchanged_at: NOW - 300 * 86_400_000,
+      cleanup_pending: true,
+    });
+    signInRow!.metadata = {
+      lease_expires_at: new Date(NOW - 1000).toISOString(),
+    };
+    listMock.mockResolvedValue([{ id: connectionId }]);
+    const reserved = jest.fn();
+    createMock.mockImplementation(async (opts) => {
+      reserved(opts);
+      throw Error("stop after recovery");
+    });
+    const fetchImpl = github({ [GITHUB_REVOKE]: { status: 503 } });
+    await expect(
+      startCliConnectorSignIn({ account_id: accountId, connector: "github" }),
+    ).rejects.toThrow("stop after recovery");
+    expect(revokes(fetchImpl)).toHaveLength(1);
+    // Renewed before the new reservation's lease sweep could drop it.
+    expect(lockedMock.mock.invocationCallOrder.at(-1)).toBeLessThan(
+      reserved.mock.invocationCallOrder[0],
+    );
+    expect(Date.parse(signInRow!.metadata.lease_expires_at)).toBeGreaterThan(
+      NOW + 199 * 86_400_000,
+    );
+    expect(JSON.parse(signInRow!.payload).exchanged.access_token).toBe(
+      "ghu_access",
+    );
+    expect(revokeMock).not.toHaveBeenCalled();
+  });
+
+  it("limits how many sign-ins a site's GitHub App is asked to start", async () => {
+    const { startCliConnectorSignIn } = await import("./cli-connectors");
+    listMock.mockResolvedValue([]);
+    const fetchImpl = github({
+      "POST https://github.com/login/device/code": {
+        device_code: "d",
+        user_code: "U",
+        verification_uri: "https://github.com/login/device",
+      },
+    });
+    for (let i = 0; i < 30; i++) {
+      await startCliConnectorSignIn({
+        account_id: accountId,
+        connector: "github",
+      });
+    }
+    await expect(
+      startCliConnectorSignIn({ account_id: accountId, connector: "github" }),
+    ).rejects.toThrow("Too many sign-ins");
+    expect(fetchImpl).toHaveBeenCalledTimes(30);
   });
 
   it("an expired or another account's sign-in gives nothing", async () => {
@@ -620,30 +739,37 @@ describe("signing in to GitHub", () => {
   });
 });
 
+const CF_BASIC = `Basic ${Buffer.from("cf-client:cf-secret").toString("base64")}`;
+
 describe("signing in to Cloudflare", () => {
-  it("asks only for the scopes of the chosen presets", async () => {
+  it("sends the user to Cloudflare with only the chosen scopes, and PKCE", async () => {
     const { startCliConnectorSignIn } = await import("./cli-connectors");
     listMock.mockResolvedValue([]);
-    const fetchImpl = github({
-      "POST https://dash.cloudflare.com/oauth2/device/auth": {
-        device_code: "cf-dev",
-        user_code: "WXYZ-9876",
-        verification_uri: "https://dash.cloudflare.com/oauth2/device",
-        expires_in: 600,
-        interval: 5,
-      },
-    });
-    const started = await startCliConnectorSignIn({
+    const fetchImpl = github({});
+    const started: any = await startCliConnectorSignIn({
       account_id: accountId,
       session_hash: "s",
       connector: "cloudflare",
       presets: ["r2"],
     });
-    expect(started.user_code).toBe("WXYZ-9876");
     expect(freshAuthMock).toHaveBeenCalled();
-    const form = new URLSearchParams(fetchImpl.mock.calls[0][1].body);
-    expect(form.get("client_id")).toBe("cbca97e7-c331-4cdd-8fd8-e25a451b98bf");
-    expect(form.get("scope")!.split(" ").sort()).toEqual(
+    // Nothing is asked of Cloudflare until the user returns.
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(started.kind).toBe("redirect");
+    const url = new URL(started.authorize_url);
+    expect(url.origin + url.pathname).toBe(
+      "https://dash.cloudflare.com/oauth2/auth",
+    );
+    const q = Object.fromEntries(url.searchParams);
+    expect(q).toEqual(
+      expect.objectContaining({
+        response_type: "code",
+        client_id: "cf-client",
+        redirect_uri: "https://cocalc.test/settings/connectors",
+        code_challenge_method: "S256",
+      }),
+    );
+    expect(q.scope.split(" ").sort()).toEqual(
       [
         "account:read",
         "user:read",
@@ -654,15 +780,23 @@ describe("signing in to Cloudflare", () => {
         "offline_access",
       ].sort(),
     );
+    const stored = JSON.parse(signInRow!.payload);
+    expect(q.state).toBe(`cocalc-cf.${connectionId}.${stored.nonce}`);
+    expect(q.code_challenge).toBe(
+      require("node:crypto")
+        .createHash("sha256")
+        .update(stored.code_verifier)
+        .digest("base64url"),
+    );
     expect(createMock.mock.calls[0][0].selector).toEqual(
       expect.objectContaining({
         provider: "cloudflare",
-        kind: "cloudflare-device-login",
+        kind: "cloudflare-oauth-login",
       }),
     );
   });
 
-  it("needs at least one known preset, and the site may turn it off", async () => {
+  it("needs a known preset, and the site's own OAuth client", async () => {
     const { startCliConnectorSignIn, getCliConnectorSetup } =
       await import("./cli-connectors");
     for (const presets of [undefined, [], ["everything"]]) {
@@ -674,7 +808,7 @@ describe("signing in to Cloudflare", () => {
         }),
       ).rejects.toThrow(/Cloudflare/);
     }
-    settings.cloudflare_connector_enabled = false as any;
+    settings.cloudflare_connector_client_secret = "";
     await expect(
       startCliConnectorSignIn({
         account_id: accountId,
@@ -688,26 +822,7 @@ describe("signing in to Cloudflare", () => {
     expect(freshAuthMock).not.toHaveBeenCalled();
   });
 
-  it("refuses a verification page outside dash.cloudflare.com", async () => {
-    const { startCliConnectorSignIn } = await import("./cli-connectors");
-    listMock.mockResolvedValue([]);
-    const fetchImpl = github({
-      "POST https://dash.cloudflare.com/oauth2/device/auth": {
-        device_code: "cf-dev",
-        user_code: "WXYZ-9876",
-        verification_uri: "https://dash.cloudflare.com.evil.example/device",
-      },
-    });
-    await expect(
-      startCliConnectorSignIn({
-        account_id: accountId,
-        connector: "cloudflare",
-        presets: ["dns"],
-      }),
-    ).rejects.toThrow("unexpected response");
-  });
-
-  it("stores the connection with who and what it allows", async () => {
+  it("exchanges the code as the site's client and stores the connection", async () => {
     pendingSignIn("cloudflare");
     const fetchImpl = github({
       [CF_TOKEN_URL]: cfTokens,
@@ -716,22 +831,79 @@ describe("signing in to Cloudflare", () => {
         result: { email: "me@example.com" },
       },
     });
-    await expect(poll("cloudflare", fetchImpl)).resolves.toEqual({
+    await expect(complete()).resolves.toEqual({
       status: "connected",
       connection: expect.objectContaining({
         connector: "cloudflare",
         description: "me@example.com (Workers & sites, R2 storage)",
       }),
     });
+    const [, init] = fetchImpl.mock.calls[0];
+    expect(init.headers.authorization).toBe(CF_BASIC);
+    expect(Object.fromEntries(new URLSearchParams(init.body))).toEqual({
+      grant_type: "authorization_code",
+      code: "code-1",
+      redirect_uri: "https://cocalc.test/settings/connectors",
+      code_verifier: "verifier-1",
+    });
     const saved = createMock.mock.calls[0][0];
     expect(saved.selector.kind).toBe("cloudflare-cli-connection");
     expect(JSON.parse(saved.payload)).toEqual(
       expect.objectContaining({
         type: "cloudflare-oauth",
+        client_id: "cf-client",
         presets: ["workers", "r2"],
         refresh_token: "cf-refresh",
       }),
     );
+    expect(revokeMock).toHaveBeenCalled();
+    // The same redirect cannot be used again.
+    fetchImpl.mockClear();
+    signInRow = undefined;
+    await expect(complete()).resolves.toEqual({ status: "expired" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("refuses a state with the wrong nonce or malformed, without asking Cloudflare", async () => {
+    pendingSignIn("cloudflare");
+    const fetchImpl = github({});
+    await expect(
+      complete(`cocalc-cf.${connectionId}.nonce-2`),
+    ).resolves.toEqual({ status: "expired" });
+    for (const state of ["", "x", `cocalc-cf.${connectionId}`, "a.b.c.d"]) {
+      await expect(complete(state)).rejects.toThrow("invalid sign-in response");
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(createMock).not.toHaveBeenCalled();
+    // The sign-in is still there for the real redirect.
+    expect(revokeMock).not.toHaveBeenCalled();
+  });
+
+  it("only looks up this account's sign-ins", async () => {
+    pendingSignIn("cloudflare");
+    github({ [CF_TOKEN_URL]: { error: "invalid_grant" } });
+    await complete();
+    expect(lockedMock.mock.calls[0][0].selector).toEqual(
+      expect.objectContaining({
+        owner_account_id: accountId,
+        kind: "cloudflare-oauth-login",
+      }),
+    );
+  });
+
+  it("a completion already under way asks Cloudflare nothing more", async () => {
+    pendingSignIn("cloudflare", { claim: "other" });
+    const fetchImpl = github({});
+    await expect(complete()).resolves.toEqual({ status: "pending" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("an expired or reused code ends the sign-in", async () => {
+    pendingSignIn("cloudflare");
+    github({ [CF_TOKEN_URL]: { error: "invalid_grant" } });
+    await expect(complete()).resolves.toEqual({ status: "expired" });
+    expect(revokeMock).toHaveBeenCalled();
+    expect(createMock).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -758,32 +930,34 @@ describe("signing in to Cloudflare", () => {
       "GET https://api.cloudflare.com/client/v4/user": user,
       [CF_REVOKE]: {},
     });
-    await expect(poll("cloudflare", fetchImpl)).rejects.toThrow(error);
-    const revoked = revokes(fetchImpl).map((r) =>
-      Object.fromEntries(new URLSearchParams(r.split(" ").slice(2).join(" "))),
+    await expect(complete()).rejects.toThrow(error);
+    const calls = fetchImpl.mock.calls.filter(([url]) =>
+      `${url}`.endsWith("/oauth2/revoke"),
     );
-    expect(revoked).toEqual([
-      expect.objectContaining({
-        token: "cf-refresh",
-        token_type_hint: "refresh_token",
-      }),
-      expect.objectContaining({
-        token: "cf-access",
-        token_type_hint: "access_token",
-      }),
+    expect(calls.map(([, init]) => init.headers.authorization)).toEqual([
+      CF_BASIC,
+      CF_BASIC,
+    ]);
+    expect(
+      calls.map(([, init]) =>
+        Object.fromEntries(new URLSearchParams(init.body)),
+      ),
+    ).toEqual([
+      { token: "cf-refresh", token_type_hint: "refresh_token" },
+      { token: "cf-access", token_type_hint: "access_token" },
     ]);
     expect(signInRow!.payload).not.toContain("cf-refresh");
   });
 
-  it("a GitHub sign-in cannot be finished as Cloudflare", async () => {
+  it("GitHub and Cloudflare sign-ins cannot finish as each other", async () => {
     pendingSignIn("github");
     const fetchImpl = github({});
+    await expect(complete()).resolves.toEqual({ status: "expired" });
+    pendingSignIn("cloudflare");
+    // A Cloudflare sign-in is never polled at the provider.
     await expect(poll("cloudflare", fetchImpl)).resolves.toEqual({
-      status: "expired",
+      status: "pending",
     });
-    expect(lockedMock.mock.calls[0][0].selector.kind).toBe(
-      "cloudflare-device-login",
-    );
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
@@ -1032,7 +1206,7 @@ describe("turn tokens", () => {
       payload: JSON.stringify({
         version: 2,
         type: "cloudflare-oauth",
-        client_id: "cbca97e7-c331-4cdd-8fd8-e25a451b98bf",
+        client_id: "cf-client",
         presets: ["r2"],
         access_token: "cf-old",
         access_expires_at: NOW + 60_000,
@@ -1071,6 +1245,47 @@ describe("turn tokens", () => {
 });
 
 describe("disconnecting", () => {
+  it("revokes both Cloudflare tokens, or keeps them for a later attempt", async () => {
+    const { disconnectCliConnection } = await import("./cli-connectors");
+    const cfConnection = {
+      id: connectionId,
+      payload: JSON.stringify({
+        version: 2,
+        type: "cloudflare-oauth",
+        client_id: "cf-client",
+        presets: ["r2"],
+        access_token: "cf-access",
+        access_expires_at: NOW + HOUR,
+        refresh_token: "cf-refresh",
+      }),
+      metadata: {},
+    };
+    getByIdMock.mockImplementation(async ({ selector }) =>
+      selector.kind === "cloudflare-cli-connection" ? cfConnection : undefined,
+    );
+    let fetchImpl = github({ [CF_REVOKE]: {} });
+    await disconnectCliConnection({
+      account_id: accountId,
+      connection_id: connectionId,
+    });
+    expect(
+      fetchImpl.mock.calls.map(([, init]) =>
+        new URLSearchParams(init.body).get("token"),
+      ),
+    ).toEqual(["cf-refresh", "cf-access"]);
+    expect(createMock).not.toHaveBeenCalled();
+    fetchImpl = github({ [CF_REVOKE]: { status: 503 } });
+    await disconnectCliConnection({
+      account_id: accountId,
+      connection_id: connectionId,
+    });
+    const rescue = createMock.mock.calls.at(-1)![0];
+    expect(rescue.selector.kind).toBe("cloudflare-oauth-login");
+    expect(JSON.parse(rescue.payload).exchanged.refresh_token).toBe(
+      "cf-refresh",
+    );
+  });
+
   it("turns off grants and revokes only a CLI connection", async () => {
     const { disconnectCliConnection } = await import("./cli-connectors");
     const fetchMock = jest

@@ -50,6 +50,11 @@ export interface InterBayAgentConnectorApi {
   pollCliSignIn(
     opts: RequiredAccount<Parameters<AgentApi["pollCliConnectorSignIn"]>[0]>,
   ): ReturnType<AgentApi["pollCliConnectorSignIn"]>;
+  completeCliSignIn(
+    opts: RequiredAccount<
+      Parameters<AgentApi["completeCliConnectorSignIn"]>[0]
+    >,
+  ): ReturnType<AgentApi["completeCliConnectorSignIn"]>;
   disconnectCliConnection(
     opts: RequiredAccount<Parameters<AgentApi["disconnectCliConnection"]>[0]>,
   ): ReturnType<AgentApi["disconnectCliConnection"]>;

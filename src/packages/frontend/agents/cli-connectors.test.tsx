@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { NamedAgentDirectory } from "@cocalc/conat/agents/personal";
 import {
+  browser,
   CliConnectorAgentModal,
   CliConnectorSection,
   refreshCliConnectors,
@@ -18,6 +19,7 @@ const mockApi = {
   getCliConnectorSetup: jest.fn(),
   startCliConnectorSignIn: jest.fn(),
   pollCliConnectorSignIn: jest.fn(),
+  completeCliConnectorSignIn: jest.fn(),
   saveCliConnectorGrant: jest.fn(),
   disconnectCliConnection: jest.fn(),
 };
@@ -108,6 +110,7 @@ describe("Settings > Connectors section", () => {
   });
 
   const signIn = {
+    kind: "device",
     login_id: "login-1",
     connector: "github",
     user_code: "ABCD-1234",
@@ -186,18 +189,20 @@ describe("Settings > Connectors section", () => {
     );
   });
 
-  it("asks what agents may do on Cloudflare before signing in", async () => {
+  it("asks what agents may do on Cloudflare, then sends the user there", async () => {
     mockApi.getCliConnectorSetup.mockResolvedValue({
       ...SETUP,
       cloudflare: { available: true },
     });
     refreshCliConnectors();
+    const assign = jest.spyOn(browser, "assign").mockImplementation(() => {});
     mockApi.startCliConnectorSignIn.mockResolvedValue({
-      ...signIn,
+      kind: "redirect",
+      login_id: "login-1",
       connector: "cloudflare",
-      verification_uri: "https://dash.cloudflare.com/oauth2/device",
+      authorize_url: "https://dash.cloudflare.com/oauth2/auth?x=1",
+      expires_at: Date.now() + 600_000,
     });
-    mockApi.pollCliConnectorSignIn.mockReturnValue(new Promise(() => {}));
     render(<CliConnectorSection connector="cloudflare" />);
     await userEvent.click(
       await screen.findByRole("button", {
@@ -226,12 +231,55 @@ describe("Settings > Connectors section", () => {
       within(dialog).getByRole("button", { name: "Continue" }),
     );
     await waitFor(() =>
-      expect(mockApi.startCliConnectorSignIn).toHaveBeenCalledWith({
-        connector: "cloudflare",
-        presets: ["r2", "dns"],
-      }),
+      expect(assign).toHaveBeenCalledWith(
+        "https://dash.cloudflare.com/oauth2/auth?x=1",
+      ),
     );
-    expect(await within(dialog).findByText("ABCD-1234")).toBeVisible();
+    expect(mockApi.startCliConnectorSignIn).toHaveBeenCalledWith({
+      connector: "cloudflare",
+      presets: ["r2", "dns"],
+    });
+    expect(mockApi.pollCliConnectorSignIn).not.toHaveBeenCalled();
+    assign.mockRestore();
+  });
+
+  it("finishes a Cloudflare sign-in on return, and cleans the address", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/settings/connectors?keep=1&state=cocalc-cf.login-1.nonce&code=the-code",
+    );
+    mockApi.completeCliConnectorSignIn.mockResolvedValue({
+      status: "connected",
+      connection: connection("conn-3", "me@example.com (R2 storage)"),
+    });
+    render(<CliConnectorSection connector="cloudflare" />);
+    expect(
+      await screen.findByText("Connected me@example.com (R2 storage)."),
+    ).toBeVisible();
+    expect(mockApi.completeCliConnectorSignIn).toHaveBeenCalledWith({
+      connector: "cloudflare",
+      state: "cocalc-cf.login-1.nonce",
+      code: "the-code",
+    });
+    expect(window.location.search).toBe("?keep=1");
+    // Only once.
+    render(<CliConnectorSection connector="cloudflare" />);
+    expect(mockApi.completeCliConnectorSignIn).toHaveBeenCalledTimes(1);
+  });
+
+  it("says when the user declined at Cloudflare", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/settings/connectors?state=cocalc-cf.login-1.nonce&error=access_denied",
+    );
+    render(<CliConnectorSection connector="cloudflare" />);
+    expect(
+      await screen.findByText("The sign-in was declined on Cloudflare."),
+    ).toBeVisible();
+    expect(mockApi.completeCliConnectorSignIn).not.toHaveBeenCalled();
+    expect(window.location.search).toBe("");
   });
 
   it("says when the site has not set the connector up", async () => {

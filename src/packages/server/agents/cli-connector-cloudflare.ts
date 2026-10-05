@@ -3,50 +3,70 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 
-// Cloudflare connector sign-in and tokens: the OAuth device flow of
-// Cloudflare's cf CLI with only the scopes the user chose, and its ~1 h access
-// tokens, refreshed here on the hub. Only the access token leaves the hub.
+// Cloudflare connector sign-in and tokens. Each CoCalc site registers its own
+// Cloudflare OAuth client (Cloudflare supports only the authorization-code
+// flow for third-party clients), so the consent screen names the site. The
+// hub is a confidential client: it exchanges the code with the client secret
+// (and PKCE), requests only the scopes the user chose, and refreshes the ~1 h
+// access tokens. Only access tokens leave the hub. Setup for site admins:
+// docs page admin/agent-connectors.
 
+import { createHash, randomBytes } from "node:crypto";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import { boundedExpiry } from "./cli-connector-github";
+import siteURL from "@cocalc/database/settings/site-url";
 import {
   CLOUDFLARE_SCOPE_PRESETS,
   cloudflareScopes,
   type CloudflareScopePreset,
 } from "@cocalc/util/ai/cli-connectors";
+import { boundedExpiry } from "./cli-connector-github";
 
 const DASH = "https://dash.cloudflare.com";
 const API = "https://api.cloudflare.com/client/v4";
 const TIMEOUT_MS = 10_000;
-// cf's public OAuth client (no secret); a site may use its own instead.
-export const CF_CLI_CLIENT_ID = "cbca97e7-c331-4cdd-8fd8-e25a451b98bf";
+// How long a user has to approve at Cloudflare and come back.
+const AUTHORIZATION_MS = 15 * 60_000;
 export const CLOUDFLARE_REFRESH_MARGIN_MS = 10 * 60_000;
 // The longest access-token lifetime accepted (Cloudflare issues about 1 h).
 export const CLOUDFLARE_MAX_ACCESS_SECONDS = 2 * 3600;
+/** Where Cloudflare sends the user back; register exactly this URL. */
+export const CLOUDFLARE_CALLBACK_PATH = "/settings/connectors";
+/** Marks a redirect back from Cloudflare (the state parameter's prefix). */
+export const CLOUDFLARE_STATE_PREFIX = "cocalc-cf";
 
 type Fetch = typeof globalThis.fetch;
 
 export interface CloudflareConnectorConfig {
   client_id: string;
+  client_secret: string;
+  redirect_uri: string;
 }
 
+/** The site's Cloudflare OAuth client, or undefined when not set up. */
 export async function getCloudflareConnectorConfig(): Promise<
   CloudflareConnectorConfig | undefined
 > {
   const settings = (await getServerSettings()) as Record<string, unknown>;
-  const enabled = settings.cloudflare_connector_enabled;
-  if (enabled === false || enabled === "no") return;
-  const client_id =
-    `${settings.cloudflare_connector_client_id ?? ""}`.trim() ||
-    CF_CLI_CLIENT_ID;
-  return { client_id };
+  const client_id = `${settings.cloudflare_connector_client_id ?? ""}`.trim();
+  const client_secret =
+    `${settings.cloudflare_connector_client_secret ?? ""}`.trim();
+  if (!client_id || !client_secret) return;
+  return {
+    client_id,
+    client_secret,
+    redirect_uri: `${await siteURL()}${CLOUDFLARE_CALLBACK_PATH}`,
+  };
 }
 
-export interface CloudflareDeviceLogin {
+/** A pending sign-in, kept encrypted on the hub until the user returns. */
+export interface CloudflareAuthLogin {
   version: 1;
-  type: "cloudflare-device-login";
+  type: "cloudflare-oauth-login";
   client_id: string;
-  device_code: string;
+  redirect_uri: string;
+  /** Proves the redirect belongs to this sign-in. */
+  nonce: string;
+  code_verifier: string;
   presets: CloudflareScopePreset[];
   expires_at: number;
 }
@@ -80,15 +100,85 @@ export function presetLabels(
   return presets.map((p) => CLOUDFLARE_SCOPE_PRESETS[p].label).join(", ");
 }
 
-async function postForm(
+function base64url(buffer: Buffer): string {
+  return buffer.toString("base64url");
+}
+
+/** The state parameter for a sign-in: its id and a secret nonce. */
+export function cloudflareState(login_id: string, nonce: string): string {
+  return `${CLOUDFLARE_STATE_PREFIX}.${login_id}.${nonce}`;
+}
+
+export function parseCloudflareState(
+  state: unknown,
+): { login_id: string; nonce: string } | undefined {
+  if (typeof state !== "string" || state.length > 200) return;
+  const [prefix, login_id, nonce, ...rest] = state.split(".");
+  if (prefix !== CLOUDFLARE_STATE_PREFIX || !login_id || !nonce || rest.length)
+    return;
+  return { login_id, nonce };
+}
+
+/** A new sign-in and the Cloudflare page where the user approves it. */
+export function startCloudflareAuthorization({
+  config,
+  presets,
+  login_id,
+  now = Date.now(),
+}: {
+  config: CloudflareConnectorConfig;
+  presets: CloudflareScopePreset[];
+  login_id: string;
+  now?: number;
+}): { login: CloudflareAuthLogin; authorize_url: string } {
+  const nonce = base64url(randomBytes(24));
+  const code_verifier = base64url(randomBytes(48));
+  const challenge = base64url(
+    createHash("sha256").update(code_verifier).digest(),
+  );
+  const url = new URL(`${DASH}/oauth2/auth`);
+  url.search = new URLSearchParams({
+    response_type: "code",
+    client_id: config.client_id,
+    redirect_uri: config.redirect_uri,
+    scope: [...cloudflareScopes(presets), "offline_access"].join(" "),
+    state: cloudflareState(login_id, nonce),
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+  }).toString();
+  return {
+    login: {
+      version: 1,
+      type: "cloudflare-oauth-login",
+      client_id: config.client_id,
+      redirect_uri: config.redirect_uri,
+      nonce,
+      code_verifier,
+      presets,
+      expires_at: now + AUTHORIZATION_MS,
+    },
+    authorize_url: url.toString(),
+  };
+}
+
+function clientAuth(config: CloudflareConnectorConfig): string {
+  return `Basic ${Buffer.from(
+    `${encodeURIComponent(config.client_id)}:${encodeURIComponent(
+      config.client_secret,
+    )}`,
+  ).toString("base64")}`;
+}
+
+async function postToken(
   fetchImpl: Fetch,
-  path: string,
+  config: CloudflareConnectorConfig,
   form: Record<string, string>,
 ): Promise<Record<string, any>> {
-  const response = await fetchImpl(`${DASH}${path}`, {
+  const response = await fetchImpl(`${DASH}/oauth2/token`, {
     method: "POST",
     headers: {
       accept: "application/json",
+      authorization: clientAuth(config),
       "content-type": "application/x-www-form-urlencoded",
       "user-agent": "CoCalc",
     },
@@ -102,70 +192,6 @@ async function postForm(
     throw Error(`Cloudflare sign-in failed (HTTP ${response.status})`);
   }
   return body;
-}
-
-function positive(value: unknown): number {
-  const n = Number(value);
-  return Number.isFinite(n) && n > 0 ? n : 0;
-}
-
-function trustedVerificationUrl(value: unknown): value is string {
-  if (typeof value !== "string") return false;
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" && url.hostname === "dash.cloudflare.com";
-  } catch {
-    return false;
-  }
-}
-
-export async function startCloudflareDeviceLogin({
-  config,
-  presets,
-  now = Date.now(),
-  fetchImpl = globalThis.fetch,
-}: {
-  config: CloudflareConnectorConfig;
-  presets: CloudflareScopePreset[];
-  now?: number;
-  fetchImpl?: Fetch;
-}): Promise<{
-  login: CloudflareDeviceLogin;
-  user_code: string;
-  verification_uri: string;
-  interval: number;
-}> {
-  const body = await postForm(fetchImpl, "/oauth2/device/auth", {
-    client_id: config.client_id,
-    scope: [...cloudflareScopes(presets), "offline_access"].join(" "),
-  });
-  if (body.error) throw Error(`Cloudflare sign-in failed: ${body.error}`);
-  const { device_code, user_code } = body;
-  const verification_uri = trustedVerificationUrl(
-    body.verification_uri_complete,
-  )
-    ? body.verification_uri_complete
-    : body.verification_uri;
-  if (
-    typeof device_code !== "string" ||
-    typeof user_code !== "string" ||
-    !trustedVerificationUrl(verification_uri)
-  ) {
-    throw Error("Cloudflare sign-in failed: unexpected response");
-  }
-  return {
-    login: {
-      version: 1,
-      type: "cloudflare-device-login",
-      client_id: config.client_id,
-      device_code,
-      presets,
-      expires_at: now + (positive(body.expires_in) || 600) * 1000,
-    },
-    user_code,
-    verification_uri,
-    interval: Math.max(5, positive(body.interval)),
-  };
 }
 
 function connectionFromTokens(
@@ -183,8 +209,10 @@ function connectionFromTokens(
   if (typeof access_token !== "string" || !access_token) {
     throw Error("Cloudflare sign-in failed: no token");
   }
-  if (!refresh_token || !positive(body.expires_in)) {
-    throw Error("Cloudflare sign-in failed: no expiring token");
+  if (!refresh_token || !body.expires_in) {
+    throw Error(
+      "Cloudflare sign-in failed: no expiring token (does the site's OAuth client allow offline_access?)",
+    );
   }
   const access_expires_at = boundedExpiry(
     now,
@@ -205,61 +233,73 @@ function connectionFromTokens(
   };
 }
 
-export type CloudflarePollResult =
-  | { status: "pending"; slow_down?: boolean }
+async function revokeIssued(
+  config: CloudflareConnectorConfig,
+  body: Record<string, any>,
+  fetchImpl: Fetch,
+): Promise<void> {
+  for (const hint of ["refresh_token", "access_token"] as const) {
+    const token = body[hint];
+    if (typeof token === "string" && token) {
+      await revokeCloudflareToken({ config, token, hint, fetchImpl }).catch(
+        () => undefined,
+      );
+    }
+  }
+}
+
+export type CloudflareExchangeResult =
   | { status: "expired" | "denied" }
   | { status: "connected"; connection: CloudflareConnection };
 
-export async function pollCloudflareDeviceLogin({
+/** Exchange the code Cloudflare returned for tokens. */
+export async function exchangeCloudflareCode({
   config,
   login,
+  code,
   now = Date.now(),
   fetchImpl = globalThis.fetch,
 }: {
   config: CloudflareConnectorConfig;
-  login: CloudflareDeviceLogin;
+  login: CloudflareAuthLogin;
+  code: string;
   now?: number;
   fetchImpl?: Fetch;
-}): Promise<CloudflarePollResult> {
-  if (login.client_id !== config.client_id || now >= login.expires_at) {
+}): Promise<CloudflareExchangeResult> {
+  if (
+    login.client_id !== config.client_id ||
+    login.redirect_uri !== config.redirect_uri ||
+    now >= login.expires_at
+  ) {
     return { status: "expired" };
   }
-  const body = await postForm(fetchImpl, "/oauth2/token", {
-    grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-    device_code: login.device_code,
-    client_id: config.client_id,
+  const body = await postToken(fetchImpl, config, {
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: login.redirect_uri,
+    code_verifier: login.code_verifier,
   });
   switch (body.error) {
     case undefined:
       break;
-    case "authorization_pending":
-      return { status: "pending" };
-    case "slow_down":
-      return { status: "pending", slow_down: true };
-    case "expired_token":
+    case "invalid_grant":
       return { status: "expired" };
     case "access_denied":
       return { status: "denied" };
     default:
       throw Error(`Cloudflare sign-in failed: ${body.error}`);
   }
-  let connection: CloudflareConnection;
   try {
-    connection = connectionFromTokens(body, login, now);
+    // The caller now owns these tokens: it must store or revoke them.
+    return {
+      status: "connected",
+      connection: connectionFromTokens(body, login, now),
+    };
   } catch (err) {
     // A token we will not use should not stay valid either.
-    for (const hint of ["refresh_token", "access_token"] as const) {
-      const token = body[hint];
-      if (typeof token === "string" && token) {
-        await revokeCloudflareToken({ config, token, hint, fetchImpl }).catch(
-          () => undefined,
-        );
-      }
-    }
+    await revokeIssued(config, body, fetchImpl);
     throw err;
   }
-  // The caller now owns these tokens: it must store or revoke them.
-  return { status: "connected", connection };
 }
 
 export async function cloudflareEmail(
@@ -300,10 +340,9 @@ export async function refreshCloudflareConnection({
   if (connection.access_expires_at - now > CLOUDFLARE_REFRESH_MARGIN_MS) {
     return { connection, refreshed: false };
   }
-  const body = await postForm(fetchImpl, "/oauth2/token", {
+  const body = await postToken(fetchImpl, config, {
     grant_type: "refresh_token",
     refresh_token: connection.refresh_token,
-    client_id: config.client_id,
   });
   if (body.error === "invalid_grant") {
     throw new CloudflareReconnectRequired(
@@ -320,14 +359,7 @@ export async function refreshCloudflareConnection({
     };
   } catch (err) {
     // Unusable new tokens are revoked; the connection needs a new sign-in.
-    for (const hint of ["refresh_token", "access_token"] as const) {
-      const token = body[hint];
-      if (typeof token === "string" && token) {
-        await revokeCloudflareToken({ config, token, hint, fetchImpl }).catch(
-          () => undefined,
-        );
-      }
-    }
+    await revokeIssued(config, body, fetchImpl);
     throw new CloudflareReconnectRequired(`${(err as Error).message}`);
   }
 }
@@ -347,14 +379,11 @@ export async function revokeCloudflareToken({
   const response = await fetchImpl(`${DASH}/oauth2/revoke`, {
     method: "POST",
     headers: {
+      authorization: clientAuth(config),
       "content-type": "application/x-www-form-urlencoded",
       "user-agent": "CoCalc",
     },
-    body: new URLSearchParams({
-      token,
-      token_type_hint: hint,
-      client_id: config.client_id,
-    }).toString(),
+    body: new URLSearchParams({ token, token_type_hint: hint }).toString(),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (!response.ok) {

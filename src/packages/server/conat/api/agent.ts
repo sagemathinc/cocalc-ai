@@ -21,6 +21,8 @@ export const listCliConnections = cliConnectors.listCliConnections;
 export const getCliConnectorSetup = cliConnectors.getCliConnectorSetup;
 export const startCliConnectorSignIn = cliConnectors.startCliConnectorSignIn;
 export const pollCliConnectorSignIn = cliConnectors.pollCliConnectorSignIn;
+export const completeCliConnectorSignIn =
+  cliConnectors.completeCliConnectorSignIn;
 export const disconnectCliConnection = cliConnectors.disconnectCliConnection;
 export const listCliConnectorGrants = cliConnectors.listCliConnectorGrants;
 export const saveCliConnectorGrant = cliConnectors.saveCliConnectorGrant;
