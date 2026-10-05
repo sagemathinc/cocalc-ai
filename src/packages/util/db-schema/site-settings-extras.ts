@@ -350,6 +350,10 @@ export type SiteSettingsExtrasKeys =
   | "github_project_id"
   | "github_username"
   | "github_token"
+  | "agent_connectors_heading"
+  | "github_connector_client_id"
+  | "github_connector_client_secret"
+  | "github_connector_app_url"
   | "github_block"
   | "prometheus_metrics"
   | "prometheus_metrics_allowlist"
@@ -974,6 +978,46 @@ export const EXTRAS: SettingsExtras = {
     valid: () => true,
     group: "Payments & Billing",
     subgroup: "Licensing",
+  },
+  agent_connectors_heading: {
+    name: "Agent Connectors",
+    desc: "Services agents can use as the user during their turns. See the admin docs page **Set up the GitHub connector** (/docs/admin/github-connector).",
+    default: "",
+    type: "header",
+    tags: ["AI", "GitHub"],
+    group: "AI & Agents",
+    subgroup: "Agent Connectors",
+  },
+  github_connector_client_id: {
+    name: "GitHub Connector: App Client ID",
+    desc: "Client ID of this site's GitHub App (it starts with `Iv23`). Not secret. Leave blank to turn the GitHub connector off.",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["AI", "GitHub"],
+    group: "AI & Agents",
+    subgroup: "Agent Connectors",
+  },
+  github_connector_client_secret: {
+    name: "GitHub Connector: App Client Secret",
+    desc: "A client secret of the same GitHub App. Only the hub uses it, to refresh users' 8-hour GitHub tokens.",
+    default: "",
+    password: true,
+    to_val: to_trimmed_str,
+    tags: ["AI", "GitHub", "Security"],
+    group: "AI & Agents",
+    subgroup: "Agent Connectors",
+  },
+  github_connector_app_url: {
+    name: "GitHub Connector: App Public Link",
+    desc: "The app's public page, `https://github.com/apps/<name>`. Users install the app on their repositories from there.",
+    default: "",
+    to_val: to_trimmed_str,
+    valid: (value: string) =>
+      value === "" ||
+      /^https:\/\/github\.com\/apps\/[a-z0-9-]+\/?$/.test(value),
+    tags: ["AI", "GitHub"],
+    group: "AI & Agents",
+    subgroup: "Agent Connectors",
   },
   openai_section: {
     name: "OpenAI / Codex Configuration",

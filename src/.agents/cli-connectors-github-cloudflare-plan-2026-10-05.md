@@ -155,5 +155,14 @@ sites or users who prefer that.
 ## Decisions (William, 2026-10-05)
 
 1. GitHub: agents act as the user (option A, user-to-server tokens).
-2. GitHub App: instructions in [github-app-setup-instructions.md](github-app-setup-instructions.md); William creates it.
+2. GitHub App: setup instructions are the admin docs page `admin/github-connector` (src/packages/docs, admin-only), written for any self-hosted site; site settings `github_connector_client_id`, `github_connector_client_secret`, `github_connector_app_url`. William creates cocalc.ai's app.
 3. Cloudflare: sign in through `cf`'s own OAuth device flow with presets; paste-an-API-token as fallback.
+
+## Decision after security review (William, 2026-10-05)
+
+Expiring provider tokens only. Pasted long-lived tokens are removed: during a
+turn any project code could copy one and use it indefinitely, and a host crash
+can leave the file behind (review finding F2). Users who want a long-lived
+token can run `gh auth` themselves in the meantime. GitHub: GitHub App device
+flow, 8 h user tokens refreshed by the hub. Cloudflare: cf OAuth device flow
+with scope presets.

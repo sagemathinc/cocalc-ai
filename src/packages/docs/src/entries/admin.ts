@@ -13,6 +13,7 @@ import {
   ADMIN_CRM_OUTREACH_BODY,
   ADMIN_CRM_OUTREACH_UI_BODY,
   ADMIN_CRM_UI_BODY,
+  ADMIN_GITHUB_CONNECTOR_BODY,
   ADMIN_MANAGED_EGRESS_BODY,
   ADMIN_MEMBERSHIP_AND_LICENSES_BODY,
   ADMIN_NEWS_BODY,
@@ -473,6 +474,27 @@ export const ADMIN_ENTRIES: DocsEntry[] = [
     summary:
       "Configure SSO providers and domain policies without locking users out.",
     title: "Configure SSO providers and domains",
+    visibility: "admin",
+  },
+  {
+    audiences: ["agents", "teams"],
+    body: ADMIN_GITHUB_CONNECTOR_BODY.trim(),
+    category: "Admin",
+    id: "admin.github-connector",
+    image: docsIcon(
+      "/public/docs/http-api-5067e8ed.webp",
+      "A GitHub App connection that lets agents use gh and git as their user",
+    ),
+    lastReviewed: "2026-10-05",
+    noActionReason:
+      "Setup happens on GitHub and in Admin -> Site Settings; the site settings page has the executable destination.",
+    searchKeywords:
+      "github app connector agents gh git device flow client id client secret self-hosted",
+    slug: "admin/github-connector",
+    status: "ready",
+    summary:
+      "Create your site's GitHub App so users' agents can use gh and git as them.",
+    title: "Set up the GitHub connector",
     visibility: "admin",
   },
 ];

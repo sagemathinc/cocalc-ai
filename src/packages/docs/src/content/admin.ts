@@ -2018,3 +2018,114 @@ verify that the provider works, that at least one admin has an alternate access
 path, and that support knows how users should recover if their institutional
 identity is unavailable.
 `;
+
+export const ADMIN_GITHUB_CONNECTOR_BODY = String.raw`
+## What the GitHub connector does
+
+The GitHub connector lets a user's agents run \`gh\` and \`git\` with GitHub
+as that user, during the agent's turns only. Each user signs in to GitHub
+once from **Settings -> Connectors**, then turns GitHub on for individual
+agents.
+
+Agents get GitHub's own short-lived user tokens (they expire after 8 hours).
+CoCalc refreshes them on the hub; the long-lived refresh token never enters a
+project. Access is always the intersection of the repositories where the user
+installed your site's GitHub App and the user's own GitHub permissions, so an
+agent can never do more than its user can.
+
+Each CoCalc site uses its own GitHub App. Setup takes about 10 minutes and
+needs a GitHub organization or account that will own the app.
+
+## 1. Create the GitHub App
+
+On GitHub, open the owner's settings: **Settings -> Developer settings ->
+GitHub Apps -> New GitHub App** (for an organization:
+\`https://github.com/organizations/<org>/settings/apps\`).
+
+- **GitHub App name:** a name your users recognize, such as your site's name.
+  Names are global on GitHub. Users see it when they approve sign-in.
+- **Homepage URL:** your site's URL.
+- **Callback URL:** leave empty if GitHub allows it; otherwise use your site's
+  URL. The connector uses the device flow, which never calls it.
+- **Expire user authorization tokens:** checked (the default).
+- **Request user authorization (OAuth) during installation:** unchecked.
+- **Enable Device Flow:** checked. This is the "approve a code in your
+  browser" sign-in the connector uses.
+- **Setup URL:** empty. **Redirect on update:** unchecked.
+- **Webhook -> Active:** unchecked.
+
+## 2. Permissions
+
+Repository permissions (leave everything else at "No access"):
+
+| Permission | Access | Why |
+| --- | --- | --- |
+| Contents | Read and write | Clone, push and create branches. |
+| Pull requests | Read and write | Create, comment on and review pull requests. |
+| Issues | Read and write | Work with issues. |
+| Metadata | Read-only | Required by GitHub. |
+| Actions | Read-only | Read CI runs. |
+| Checks | Read-only | Read check results on pull requests. |
+| Commit statuses | Read-only | Read CI status on commits. |
+| Workflows | Read and write | Optional: lets agents change files in \`.github/workflows\`; pushes that touch them fail without it. |
+
+Account permissions: **Email addresses: Read-only** (optional; lets CoCalc set
+a matching git author email). Organization permissions: none.
+
+Grant only what your users' agents need. Users can still restrict the app to
+selected repositories when they install it.
+
+## 3. Who can install it
+
+Choose **Any account**, so every user of your site can install the app on
+their own repositories. Then click **Create GitHub App**.
+
+## 4. Collect the values CoCalc needs
+
+On the app's settings page:
+
+1. Copy the **Client ID**. It starts with \`Iv23\` and is not secret.
+2. Copy the app's **public link**, \`https://github.com/apps/<name>\`.
+3. Under **Client secrets**, click **Generate a new client secret** and copy it
+   at once; GitHub shows it only once.
+
+You do not need a private key: agents act as their users, so CoCalc never
+authenticates as the app itself.
+
+## 5. Enter them in CoCalc
+
+Open **Admin -> Site Settings**, group **AI & Agents**, section **Agent
+Connectors**, and set:
+
+| Setting | Value |
+| --- | --- |
+| GitHub Connector: App Client ID | the Client ID |
+| GitHub Connector: App Client Secret | the client secret |
+| GitHub Connector: App Public Link | the public link |
+
+Paste the client secret only into this setting. Do not send it in chat, email
+or tickets, and do not give it to an agent. Only the hub uses it, to refresh
+user tokens. Leaving the Client ID blank turns the GitHub connector off.
+
+## 6. Check it
+
+With a non-admin account:
+
+1. Install the app on one test repository from its public link (**Install ->
+   Only select repositories**).
+2. In **Settings -> Connectors -> GitHub**, connect GitHub and approve the code
+   at \`https://github.com/login/device\`.
+3. Turn GitHub on for one agent from the connectors list (+) in its message
+   box, and ask it to run \`gh repo view <owner>/<repo>\` and push a branch.
+
+## Rotating and revoking
+
+- **Rotate the client secret:** generate a new one on GitHub, update the site
+  setting, then delete the old secret on GitHub. Existing user connections
+  keep working.
+- **A user stops access:** Disconnect in **Settings -> Connectors**, or on
+  GitHub under **Settings -> Applications -> Authorized GitHub Apps**.
+- **Turn the connector off for the whole site:** clear the Client ID. To also
+  invalidate every user token, revoke them on GitHub by suspending or deleting
+  the app.
+`;
