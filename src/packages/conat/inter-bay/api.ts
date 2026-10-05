@@ -1011,6 +1011,8 @@ export interface AccountRehomeAcceptRequest {
 
 /** Makes the destination's account row say "homed here" (rehome cutover). */
 export interface AccountRehomeFinalizeRequest {
+  /** The source's rehome operation; the destination checks it there. */
+  op_id: string;
   target_account_id: string;
   source_bay_id: string;
   dest_bay_id: string;

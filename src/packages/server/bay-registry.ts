@@ -352,20 +352,24 @@ export async function setBayProjectOwnershipAdmissionLocal({
   return mapRow(rows[0]);
 }
 
-// The ownership policy (draining bays) lives on the seed. While the seed is
-// unreachable, an attached bay applies the policy it last read.
+// The ownership policy (draining bays) lives on the seed. With allowStale
+// (creating a project on this bay), an attached bay applies the policy it
+// last read while the seed is unreachable, for a bounded time.
 const readBayRegistryForOwnershipPolicy =
   lastKnownSeedRead<BayRegistryEntry[]>("bay-registry");
 
 export async function assertBayAcceptsProjectOwnership(
   bay_id: string,
+  { allowStale = false }: { allowStale?: boolean } = {},
 ): Promise<void> {
   if (!isMultiBayCluster()) {
     return;
   }
   const entry = (
-    await readBayRegistryForOwnershipPolicy("all", () =>
-      listClusterBayRegistry(),
+    await readBayRegistryForOwnershipPolicy(
+      "all",
+      () => listClusterBayRegistry(),
+      { allowStale },
     )
   ).find((candidate) => candidate.bay_id === bay_id);
   if (entry?.accepts_project_ownership === false) {

@@ -127,6 +127,8 @@ jest.mock("@cocalc/conat/inter-bay/api", () => ({
     createInterBayAccountLocalClientMock(...args),
 }));
 
+const OTHER_ACCOUNT_FOR_FINALIZE = "99999999-9999-4999-8999-999999999999";
+
 describe("account rehome", () => {
   const OP_ID = "11111111-1111-4111-8111-111111111111";
   const TARGET_ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
@@ -417,6 +419,7 @@ describe("account rehome", () => {
     // directory points there, and before routing convergence is awaited.
     expect(finalizeRehomeMock).toHaveBeenCalledWith({
       dest_bay: "bay-2",
+      op_id: OP_ID,
       target_account_id: TARGET_ACCOUNT_ID,
       source_bay_id: "bay-1",
       dest_bay_id: "bay-2",
@@ -1306,37 +1309,66 @@ describe("account rehome", () => {
   });
 
   it("finalizes the cutover on the destination only", async () => {
+    const op = {
+      op_id: OP_ID,
+      account_id: TARGET_ACCOUNT_ID,
+      source_bay_id: "bay-2",
+      dest_bay_id: "bay-1",
+      status: "running",
+      stage: "projections_copied",
+    };
+    let sourceOp: any = op;
+    createInterBayAccountLocalClientMock = jest.fn(() => ({
+      getRehomeOperation: jest.fn(async () => sourceOp),
+    }));
+    const request = {
+      op_id: OP_ID,
+      target_account_id: TARGET_ACCOUNT_ID,
+      source_bay_id: "bay-2",
+      dest_bay_id: "bay-1",
+    };
+    const { finalizeAccountRehome } = await import("./rehome");
+
     queryMock = jest.fn(async () => ({
       rows: [{ home_bay_id: "bay-1" }],
       rowCount: 1,
     }));
-    const { finalizeAccountRehome } = await import("./rehome");
-    await finalizeAccountRehome({
-      target_account_id: TARGET_ACCOUNT_ID,
-      source_bay_id: "bay-2",
-      dest_bay_id: "bay-1",
-    });
+    await finalizeAccountRehome(request);
     const [sql, params] = queryMock.mock.calls[0];
     expect(sql).toContain("UPDATE accounts");
+    expect(sql).toContain("deleted IS NOT TRUE");
+    expect(sql).toContain("home_bay_id IN ($2, $3)");
     expect(params).toEqual([TARGET_ACCOUNT_ID, "bay-2", "bay-1"]);
 
-    // The row is homed somewhere else entirely: refuse.
+    // No active row homed on the source or destination (missing, deleted,
+    // blank or on a third bay): refuse instead of reporting success.
+    queryMock = jest.fn(async () => ({ rows: [], rowCount: 0 }));
+    await expect(finalizeAccountRehome(request)).rejects.toThrow(
+      "no active local row",
+    );
+
+    // Only for a matching source operation that has reached the cutover.
     queryMock = jest.fn(async () => ({
-      rows: [{ home_bay_id: "bay-3" }],
+      rows: [{ home_bay_id: "bay-1" }],
       rowCount: 1,
     }));
-    await expect(
-      finalizeAccountRehome({
-        target_account_id: TARGET_ACCOUNT_ID,
-        source_bay_id: "bay-2",
-        dest_bay_id: "bay-1",
-      }),
-    ).rejects.toThrow("homed on bay-3");
+    for (sourceOp of [
+      null,
+      { ...op, stage: "source_flipped" },
+      { ...op, account_id: OTHER_ACCOUNT_FOR_FINALIZE },
+      { ...op, dest_bay_id: "bay-3" },
+    ]) {
+      await expect(finalizeAccountRehome(request)).rejects.toThrow(
+        "does not match a source operation",
+      );
+    }
+    expect(queryMock).not.toHaveBeenCalled();
 
     // Only the destination bay may finalize.
+    sourceOp = op;
     await expect(
       finalizeAccountRehome({
-        target_account_id: TARGET_ACCOUNT_ID,
+        ...request,
         source_bay_id: "bay-1",
         dest_bay_id: "bay-2",
       }),

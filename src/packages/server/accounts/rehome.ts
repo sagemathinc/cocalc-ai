@@ -1356,10 +1356,12 @@ function assertFinancialEnvelope(
  * here: from now on this bay's own row says the account is homed here.
  */
 export async function finalizeAccountRehome({
+  op_id,
   target_account_id,
   source_bay_id,
   dest_bay_id,
 }: AccountRehomeFinalizeRequest): Promise<void> {
+  const opId = normalizeUuid("op_id", op_id);
   const accountId = normalizeUuid("target_account_id", target_account_id);
   const sourceBayId = normalizeBayId("source_bay_id", source_bay_id);
   const destBayId = normalizeBayId("dest_bay_id", dest_bay_id);
@@ -1369,24 +1371,43 @@ export async function finalizeAccountRehome({
       `account rehome finalize for ${accountId} reached ${localBayId}, not destination bay ${destBayId}`,
     );
   }
+  // Only for a committed operation of the source that has reached the cutover.
+  const source = await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: sourceBayId,
+  }).getRehomeOperation({ op_id: opId });
+  if (
+    !source ||
+    source.account_id !== accountId ||
+    source.source_bay_id !== sourceBayId ||
+    source.dest_bay_id !== destBayId ||
+    !FINALIZE_STAGES.has(source.stage)
+  ) {
+    throw new Error(
+      `account rehome finalize for ${accountId} does not match a source operation at the cutover`,
+    );
+  }
   const { rows } = await getPool().query<{ home_bay_id: string | null }>(
     `UPDATE accounts
-        SET home_bay_id = CASE
-              WHEN COALESCE(NULLIF(BTRIM(home_bay_id), ''), $3) = $2 THEN $3
-              ELSE home_bay_id
-            END
+        SET home_bay_id = $3
       WHERE account_id = $1
         AND deleted IS NOT TRUE
+        AND home_bay_id IN ($2, $3)
       RETURNING home_bay_id`,
     [accountId, sourceBayId, destBayId],
   );
-  const home = `${rows[0]?.home_bay_id ?? ""}`.trim() || localBayId;
-  if (home !== destBayId) {
+  if (rows.length !== 1) {
     throw new Error(
-      `account rehome finalize for ${accountId}: local row is homed on ${rows.length ? home : "nothing (no row)"}, expected ${sourceBayId} or ${destBayId}`,
+      `account rehome finalize for ${accountId}: no active local row homed on ${sourceBayId} or ${destBayId}`,
     );
   }
 }
+
+const FINALIZE_STAGES = new Set<string>([
+  "projections_copied",
+  "directory_updated",
+  "complete",
+]);
 
 async function assertNoFinancialHandoff(account_id: string) {
   const {
@@ -1799,6 +1820,7 @@ export async function runAccountRehomeOperation(
         dest_bay: op.dest_bay_id,
         timeout: ACCOUNT_REHOME_TIMEOUT_MS,
       }).finalizeRehome({
+        op_id,
         target_account_id: op.account_id,
         source_bay_id: op.source_bay_id,
         dest_bay_id: op.dest_bay_id,

@@ -142,22 +142,31 @@ export async function getClusterAccountsByIds(
 // explicit home bay, asks the cluster directory as before.
 
 /**
- * True if this is an attached bay of a multibay cluster and its own
- * `accounts` row says the account is homed here. Never asks the seed.
+ * On an attached bay of a multibay cluster: this bay's active row for the
+ * account, selected only while it explicitly says "homed here", in one query
+ * (so a concurrent rehome flip cannot slip between a check and a read).
+ * Never asks the seed. Null otherwise.
  */
+export async function localAccountRowIfHomedHere<T = { account_id: string }>(
+  account_id: string,
+  columns = "account_id",
+): Promise<T | null> {
+  if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
+    return null;
+  }
+  const { rows } = await getPool().query(
+    `SELECT ${columns} FROM accounts
+      WHERE account_id = $1 AND deleted IS NOT TRUE AND home_bay_id = $2`,
+    [account_id, currentBayId()],
+  );
+  return (rows[0] as T) ?? null;
+}
+
+/** True if localAccountRowIfHomedHere finds a row. Never asks the seed. */
 export async function accountHomedHereLocally(
   account_id: string,
 ): Promise<boolean> {
-  if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
-    return false;
-  }
-  const { rows } = await getPool().query<{ home_bay_id: string | null }>(
-    `SELECT home_bay_id FROM accounts
-      WHERE account_id = $1 AND deleted IS NOT TRUE`,
-    [account_id],
-  );
-  const home = `${rows[0]?.home_bay_id ?? ""}`.trim();
-  return home !== "" && home === currentBayId();
+  return (await localAccountRowIfHomedHere(account_id)) != null;
 }
 
 /**

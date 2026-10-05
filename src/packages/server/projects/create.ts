@@ -754,7 +754,9 @@ async function createProjectImpl(
     });
     await client.clone({ project_id, src_project_id });
   }
-  await assertBayAcceptsProjectOwnership(projectOwningBayId);
+  await assertBayAcceptsProjectOwnership(projectOwningBayId, {
+    allowStale: true,
+  });
   const { course, users } = initialCourseConfiguration;
 
   const client = await pool.connect();
