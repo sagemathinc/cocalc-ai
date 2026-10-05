@@ -4583,6 +4583,8 @@ STATE = Path("/run/cocalc-managed-project-jobs")
 PODMAN = "/opt/cocalc/container-runtime/current/bin/podman"
 UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 JOB = re.compile(r"job-(\d+)-(\d+)-(\d+)-(\d+)-(\d+)-(" + UUID + r")$")
+# The OOM policy of every project process (as the project launcher applies).
+PROJECT_OOM_SCORE_ADJ = "500"
 LEGACY_JOB = re.compile(r"job-\d+-\d+-\d+-\d+-" + UUID + r"$")
 
 @contextmanager
@@ -4916,6 +4918,15 @@ def prevent_privilege_gain(libc):
     if libc.prctl(38, 1, 0, 0, 0) != 0:  # PR_SET_NO_NEW_PRIVS
         raise RuntimeError("unable to disable new privileges")
 
+def apply_project_oom_policy(pid, proc=Path("/proc")):
+    # A job inherits this supervisor's host-service OOM protection. Without
+    # resetting it, at the project's memory limit the kernel spares a huge job
+    # (e.g. parallel test workers) and kills the project's agent instead.
+    path = proc / str(pid) / "oom_score_adj"
+    path.write_text(PROJECT_OOM_SCORE_ADJ + "\n")
+    if path.read_text().strip() != PROJECT_OOM_SCORE_ADJ:
+        raise RuntimeError("project OOM policy not applied")
+
 def launch_locked(scope, account, args, env, pipes):
     # Child cannot exec (or fork) until its parent has placed it in the scope
     # and verified membership under the same lock used by project stop.
@@ -4960,6 +4971,8 @@ def launch_locked(scope, account, args, env, pipes):
         (scope / "cgroup.procs").write_text(str(child))
         if not member(child, scope):
             raise RuntimeError("launcher containment not confirmed")
+        # Before the child can exec: it and everything it starts get it.
+        apply_project_oom_policy(child)
         os.write(gate_write, b"1")
         return child
     except BaseException:
