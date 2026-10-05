@@ -178,6 +178,7 @@ import {
 import type { TurnTimelineRow } from "./turn-timeline";
 import {
   EMPTY_TURN_ACTIVITY,
+  showArtifactCardsBelowMessage,
   useFedTurnActivity,
   useTurnActivity,
 } from "./turn-activity";
@@ -2754,7 +2755,7 @@ export default function Message({
             : withMessageFileContext(renderMessageBody({ message_class }))}
           {renderEditingMeta()}
           <ArtifactFeedbackNotice value={field(message, "artifact_feedback")} />
-          {turnActivity.artifactsInline ? null : (
+          {!showArtifactCardsBelowMessage(turnActivity) ? null : (
             <ArtifactCards
               actions={actions}
               threadId={field<string>(message, "thread_id")}
