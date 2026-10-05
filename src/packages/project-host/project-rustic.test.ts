@@ -66,6 +66,103 @@ describe("project rustic wrapper", () => {
     );
   });
 
+  it("passes the file size limit and returns skipped files", async () => {
+    const report = {
+      max_file_bytes: 40_000_000_000,
+      count: 3,
+      files: [{ path: "data/huge.img", size: 1_000_000_000_000 }],
+    };
+    mockedExecuteCode.mockResolvedValue({
+      type: "blocking",
+      stdout: '{"time":"2026-03-31T12:34:56.000Z","id":"backup-id"}',
+      stderr: `COCALC_BACKUP_OVERSIZED_FILES ${JSON.stringify(report)}\n[INFO] backup done\n`,
+      exit_code: 0,
+    } as any);
+
+    const result = await projectRusticBackup({
+      src: "/mnt/cocalc/project-1/.snapshots/temp",
+      repoProfile: "/mnt/cocalc/data/secrets/rustic/project-1.toml",
+      host: "project-1",
+      timeoutMs: 90_000,
+      maxFileBytes: 40_000_000_000,
+    });
+
+    expect(result.oversized_files).toEqual(report);
+    expect(mockedExecuteCode.mock.calls[0][0].args).toEqual([
+      "-n",
+      "/usr/local/sbin/cocalc-runtime-storage",
+      "project-rustic-backup",
+      "/mnt/cocalc/project-1/.snapshots/temp",
+      "/mnt/cocalc/data/secrets/rustic/project-1.toml",
+      "project-1",
+      "--max-file-bytes",
+      "40000000000",
+    ]);
+  });
+
+  it("reports no skipped files when the helper prints no report", async () => {
+    mockedExecuteCode.mockResolvedValue({
+      type: "blocking",
+      stdout: '{"time":"2026-03-31T12:34:56.000Z","id":"backup-id"}',
+      stderr: "[INFO] backup done\n",
+      exit_code: 0,
+    } as any);
+    const result = await projectRusticBackup({
+      src: "/mnt/cocalc/project-1/.snapshots/temp",
+      repoProfile: "/mnt/cocalc/data/secrets/rustic/project-1.toml",
+      host: "project-1",
+      timeoutMs: 90_000,
+      maxFileBytes: 40_000_000_000,
+    });
+    expect(result.oversized_files).toBeUndefined();
+  });
+
+  it("rejects a malformed skipped file report", async () => {
+    mockedExecuteCode.mockResolvedValue({
+      type: "blocking",
+      stdout: '{"time":"2026-03-31T12:34:56.000Z","id":"backup-id"}',
+      stderr: 'COCALC_BACKUP_OVERSIZED_FILES {"count":"lots"}\n',
+      exit_code: 0,
+    } as any);
+    await expect(
+      projectRusticBackup({
+        src: "/mnt/cocalc/project-1/.snapshots/temp",
+        repoProfile: "/mnt/cocalc/data/secrets/rustic/project-1.toml",
+        host: "project-1",
+        timeoutMs: 90_000,
+      }),
+    ).rejects.toThrow("malformed oversized file report");
+  });
+
+  it("retries without the limit on hosts whose wrapper predates it", async () => {
+    mockedExecuteCode
+      .mockResolvedValueOnce({
+        type: "blocking",
+        stdout: "",
+        stderr:
+          "SECURITY_DENY code=project-rustic-backup-bad-args detail=--max-file-bytes\n",
+        exit_code: 2,
+      } as any)
+      .mockResolvedValueOnce({
+        type: "blocking",
+        stdout: '{"time":"2026-03-31T12:34:56.000Z","id":"backup-id"}',
+        stderr: "",
+        exit_code: 0,
+      } as any);
+    const result = await projectRusticBackup({
+      src: "/mnt/cocalc/project-1/.snapshots/temp",
+      repoProfile: "/mnt/cocalc/data/secrets/rustic/project-1.toml",
+      host: "project-1",
+      timeoutMs: 90_000,
+      maxFileBytes: 40_000_000_000,
+    });
+    expect(result.id).toBe("backup-id");
+    expect(mockedExecuteCode).toHaveBeenCalledTimes(2);
+    expect(mockedExecuteCode.mock.calls[1][0].args).not.toContain(
+      "--max-file-bytes",
+    );
+  });
+
   it("restores through the privileged runtime storage wrapper", async () => {
     mockedExecuteCode.mockResolvedValue({
       type: "blocking",

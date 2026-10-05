@@ -29,6 +29,7 @@ import {
   releaseProjectDataArchiveFreezeOnHost,
 } from "@cocalc/server/project-host/control";
 import { BACKUP_TIMEOUT_MS } from "@cocalc/server/projects/backup-lro";
+import { assertOversizedFilesAllowed } from "./oversized-files";
 import {
   clearProjectArchiveLifecycleFinalBackup,
   createProjectArchiveLifecycleJob,
@@ -53,6 +54,9 @@ export type ArchiveProjectStorageOptions = {
   job_id?: string;
   reason?: ProjectArchiveReason;
   expected_host_id?: string | null;
+  // Manual archives only: the user confirmed that files over the backup file
+  // size limit may be lost. Automatic archives never skip files.
+  allow_oversized_skip?: boolean;
 };
 
 export class ProjectArchiveStorageError extends Error {
@@ -488,6 +492,7 @@ export async function archiveProjectStorage({
   job_id: providedJobId,
   reason: providedReason,
   expected_host_id,
+  allow_oversized_skip,
 }: ArchiveProjectStorageOptions): Promise<void> {
   let row = await loadArchiveRow(project_id);
   const currentState = `${row.state?.state ?? ""}`.trim();
@@ -550,6 +555,16 @@ export async function archiveProjectStorage({
       await assertAutomaticArchiveOwnershipCurrent({
         project_id,
         expected: ownership,
+      });
+    }
+    if (!automatic && hostCanRunMutations) {
+      // The source is deleted after this, so its oversized files would be
+      // gone. Hosts that cannot run mutations hold nothing newer to scan.
+      await assertOversizedFilesAllowed({
+        project_id,
+        account_id: actor_account_id ?? undefined,
+        action: "archive this project",
+        allow_oversized_skip,
       });
     }
     if (

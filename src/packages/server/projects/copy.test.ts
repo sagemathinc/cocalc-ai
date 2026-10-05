@@ -38,6 +38,13 @@ jest.mock("@cocalc/server/conat/file-server-client", () => ({
     getProjectFileServerClientMock(...args),
 }));
 
+const assertOversizedFilesAllowedMock = jest.fn(async (_opts: any) => {});
+jest.mock("@cocalc/server/projects/oversized-files", () => ({
+  ...jest.requireActual("@cocalc/server/projects/oversized-files"),
+  assertOversizedFilesAllowed: (opts: any) =>
+    assertOversizedFilesAllowedMock(opts),
+}));
+
 jest.mock("@cocalc/server/conat/route-client", () => ({
   __esModule: true,
   getExplicitProjectRoutedClient: (...args: any[]) =>
@@ -520,6 +527,57 @@ describe("projects.copyProjectFiles", () => {
         skip_collab_check: true,
       }),
     );
+  });
+
+  it("refuses a backup-based copy that would skip oversized files", async () => {
+    queryMock = makeProjectQuery({ src: "h1", dest: "h2" });
+    const createPathCopyArchiveMock = jest.fn(async () => {
+      throw new Error("PATH_COPY_ARCHIVE_LIMIT: compressed archive too large");
+    });
+    getProjectFileServerClientMock = jest.fn(async ({ project_id }) => {
+      if (project_id === "src") {
+        return {
+          flushJupyterNotebooksToDisk: (...args: any[]) =>
+            flushJupyterNotebooksToDiskMock(...args),
+          createPathCopyArchive: (...args: any[]) =>
+            createPathCopyArchiveMock(...args),
+          getBackups: jest.fn(async () => []),
+        };
+      }
+      return {
+        getCopyCapabilities: jest.fn(async () => ({ exact_replace: true })),
+      };
+    });
+    const { OversizedFilesError } = jest.requireActual(
+      "@cocalc/server/projects/oversized-files",
+    );
+    assertOversizedFilesAllowedMock.mockImplementationOnce(async (opts) => {
+      throw new OversizedFilesError(opts.action, {
+        max_file_bytes: 10_000_000_000,
+        count: 1,
+        files: [{ path: "data/huge.img", size: 1_000_000_000_000 }],
+      });
+    });
+
+    const { copyProjectFiles } = await import("./copy");
+    await expect(
+      copyProjectFiles({
+        account_id: "acct",
+        timeout_ms: 0,
+        flush_collaborative: true,
+        src: { project_id: "src", path: "/root/data" },
+        dests: [{ project_id: "dest", path: "/root/data" }],
+      }),
+    ).rejects.toThrow("data/huge.img");
+    expect(assertOversizedFilesAllowedMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        project_id: "src",
+        paths: ["data"],
+        allow_oversized_skip: undefined,
+      }),
+    );
+    expect(createBackupMock).not.toHaveBeenCalled();
+    expect(upsertMock).not.toHaveBeenCalled();
   });
 
   it("falls back before archiving when the destination host lacks the archive RPC", async () => {

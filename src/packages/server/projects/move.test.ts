@@ -136,6 +136,13 @@ jest.mock("./backup-purge", () => ({
     purgeProjectBackupsForRepoMock(...args),
 }));
 
+const assertOversizedFilesAllowedMock = jest.fn(async (_opts: any) => {});
+jest.mock("./oversized-files", () => ({
+  ...jest.requireActual("./oversized-files"),
+  assertOversizedFilesAllowed: (opts: any) =>
+    assertOversizedFilesAllowedMock(opts),
+}));
+
 jest.mock("./move-guard", () => ({
   acquireProjectMoveGuard: (...args: any[]) =>
     acquireProjectMoveGuardMock(...args),
@@ -576,6 +583,75 @@ describe("moveProjectToHost", () => {
       "write-sentinel",
       "stop-source",
     ]);
+  });
+
+  it("refuses before touching the source when files would be skipped", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("COALESCE(projects.owning_bay_id, $2)") &&
+        sql.includes("COALESCE(project_hosts.bay_id, $2)")
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              host_id: SOURCE_HOST_ID,
+              region: "wnam",
+              project_state: "running",
+              provisioned: true,
+              last_backup: null,
+              last_edited: null,
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes(
+          "SELECT status, deleted, last_seen, name FROM project_hosts",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              status: "running",
+              deleted: null,
+              last_seen: new Date(),
+              name: SOURCE_HOST_NAME,
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT host_id, state->>'state' AS project_state")) {
+        return { rows: [postTimeoutState] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { OversizedFilesError } = jest.requireActual("./oversized-files");
+    assertOversizedFilesAllowedMock.mockImplementationOnce(async (opts) => {
+      expect(opts).toMatchObject({
+        project_id: PROJECT_ID,
+        action: "move this project",
+        allow_oversized_skip: false,
+      });
+      throw new OversizedFilesError("move this project", {
+        max_file_bytes: 10_000_000_000,
+        count: 1,
+        files: [{ path: "huge.img", size: 1_000_000_000_000 }],
+      });
+    });
+
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost({
+        project_id: PROJECT_ID,
+        dest_host_id: DEST_HOST_ID,
+        account_id: "account-id",
+      }),
+    ).rejects.toThrow("huge.img");
+    expect(moveCallOrder).not.toContain("write-sentinel");
+    expect(moveCallOrder).not.toContain("stop-source");
   });
 
   it("clears stale destination data before restoring a final backup", async () => {

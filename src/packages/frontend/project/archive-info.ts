@@ -9,6 +9,7 @@ import {
   getBackupFileText as getProjectBackupFileText,
   getBackupFiles as getProjectBackupFiles,
   getBackups as getProjectBackups,
+  getOversizedFiles as getProjectOversizedFiles,
   getSnapshotFileText as getProjectSnapshotFileText,
 } from "@cocalc/conat/project/archive-info";
 import type {
@@ -143,6 +144,24 @@ export async function getSnapshotFileText({
       client,
       project_id: opts.project_id,
       caller: "getSnapshotFileText",
+    }),
+    ...opts,
+  });
+}
+
+export async function getOversizedFiles({
+  client,
+  ...opts
+}: {
+  client?: ConatClient;
+  project_id: string;
+  paths?: string[];
+}) {
+  return await getProjectOversizedFiles({
+    client: await getClient({
+      client,
+      project_id: opts.project_id,
+      caller: "getOversizedFiles",
     }),
     ...opts,
   });

@@ -132,6 +132,11 @@ import rustic, {
 } from "@cocalc/backend/sandbox/rustic";
 import { envToInt } from "@cocalc/backend/misc/env-to-number";
 import { isISODate, isValidUUID } from "@cocalc/util/misc";
+import {
+  backupMaxFileBytes,
+  oversizedFilesMessage,
+  type OversizedFilesReport,
+} from "@cocalc/util/consts/backups";
 import { getProject } from "./sqlite/projects";
 import {
   acceptProjectVolumeQuotaDesired,
@@ -236,6 +241,7 @@ import {
 } from "./rootfs-runtime-contract";
 import {
   ProjectRusticUnsupportedError,
+  projectOversizedFiles,
   projectRusticBackup,
   projectRusticRestore,
 } from "./project-rustic";
@@ -3970,8 +3976,16 @@ async function backupProjectToExternalRepository({
             host: projectRusticSnapshotHost(destination_project_id),
             timeoutMs: PROJECT_RUSTIC_TIMEOUT_MS,
             tags,
+            maxFileBytes: await projectBackupMaxFileBytes(vol),
             progress,
           });
+          if (backup.oversized_files) {
+            // The migration restores from this backup alone.
+            throw oversizedFilesError(
+              "migrate this project",
+              backup.oversized_files,
+            );
+          }
           return {
             time: backup.time,
             id: backup.id,
@@ -4019,6 +4033,49 @@ function archiveBackupSourceReleasedError(err: unknown): ConatError {
   });
 }
 
+async function projectBackupMaxFileBytes(vol: {
+  quota: { get: () => Promise<{ size: number }> };
+}): Promise<number> {
+  try {
+    return backupMaxFileBytes((await vol.quota.get()).size);
+  } catch (err) {
+    logger.warn("unable to read disk quota for backup file size limit", {
+      err: `${err}`,
+    });
+    return backupMaxFileBytes(null);
+  }
+}
+
+function oversizedFilesError(
+  action: string,
+  report: OversizedFilesReport,
+): Error {
+  return new Error(oversizedFilesMessage(action, report));
+}
+
+// Files a backup of the project would skip, optionally only beneath the given
+// home-relative paths. null means this host's backups skip nothing.
+async function getOversizedFiles({
+  project_id,
+  paths,
+}: {
+  project_id: string;
+  paths?: string[];
+}): Promise<OversizedFilesReport | null> {
+  const subpaths = (paths ?? []).map((path) =>
+    path.replace(/^(\.\/)+/, "").replace(/\/+$/, ""),
+  );
+  const vol = await getVolume(project_id);
+  return await projectOversizedFiles({
+    src: vol.path,
+    maxFileBytes: await projectBackupMaxFileBytes(vol),
+    // Scanning the home directory itself means scanning everything.
+    subpaths: subpaths.some((path) => path === "" || path === ".")
+      ? []
+      : subpaths,
+  });
+}
+
 async function createBackup({
   project_id,
   limit,
@@ -4035,7 +4092,12 @@ async function createBackup({
   managed_egress_override?: ManagedBackupEgressOverride;
   replace_oldest_at_limit?: boolean;
   freeze_source?: boolean;
-}): Promise<{ time: Date; id: string; generation: number | null }> {
+}): Promise<{
+  time: Date;
+  id: string;
+  generation: number | null;
+  oversized_files?: OversizedFilesReport;
+}> {
   const progress = createLroRusticReporter(lro, "backup");
   // The hub may reopen only when the host explicitly proves this stayed false
   // or returned to false after restoring the source and staged snapshots.
@@ -4090,6 +4152,7 @@ async function createBackup({
               ? await freezeVolumeForArchiveBackup(vol)
               : undefined;
             try {
+              const maxFileBytes = await projectBackupMaxFileBytes(vol);
               backupResult = await vol.rustic.backup({
                 tags: tags ?? ["cocalc-manual"],
                 parent,
@@ -4102,6 +4165,7 @@ async function createBackup({
                     timeoutMs: timeout,
                     tags,
                     parent,
+                    maxFileBytes,
                     progress,
                   }),
               });
@@ -4127,6 +4191,21 @@ async function createBackup({
               : await getGeneration(projectMountpoint(project_id)).catch(
                   () => null,
                 );
+            if (backupResult.oversized_files) {
+              logger.warn("backup skipped files larger than the limit", {
+                project_id,
+                backup_id: backupResult.id,
+                max_file_bytes: backupResult.oversized_files.max_file_bytes,
+                count: backupResult.oversized_files.count,
+              });
+              if (freeze_source) {
+                // The archive would delete the only copy of these files.
+                throw oversizedFilesError(
+                  "archive this project",
+                  backupResult.oversized_files,
+                );
+              }
+            }
             if (archiveFreeze) {
               logger.debug("archive backup source generation established", {
                 project_id,
@@ -4159,6 +4238,9 @@ async function createBackup({
               id: backupResult.id,
               summary: backupResult.summary,
               generation,
+              ...(backupResult.oversized_files
+                ? { oversized_files: backupResult.oversized_files }
+                : {}),
             };
           } catch (err) {
             if (freeze_source) {
@@ -5473,6 +5555,7 @@ export async function initFileServer({
     applyPathCopyArchive: reuseInFlight(applyPathCopyArchive),
     // backups
     createBackup: reuseInFlight(createBackup),
+    getOversizedFiles,
     backupProjectToExternalRepository: reuseInFlight(
       backupProjectToExternalRepository,
     ),

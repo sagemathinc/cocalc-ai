@@ -3,12 +3,14 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { existsSync } from "node:fs";
 import { executeCode } from "@cocalc/backend/execute-code";
 import {
   createRusticProgressHandler,
   type RusticProgressUpdate,
 } from "@cocalc/file-server/btrfs/rustic-progress";
 import { getBtrfsMutationContext } from "@cocalc/file-server/btrfs/operation-cache";
+import type { OversizedFilesReport } from "@cocalc/util/consts/backups";
 import type { ExecuteCodeStreamEvent } from "@cocalc/util/types/execute-code";
 
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
@@ -21,7 +23,8 @@ function isBackgroundBtrfsMutation(): boolean {
 type ProjectRusticCommand =
   | "project-rustic-backup"
   | "project-rustic-backup-maintenance"
-  | "project-rustic-restore";
+  | "project-rustic-restore"
+  | "project-oversized-files";
 
 export class ProjectRusticUnsupportedError extends Error {
   constructor(
@@ -132,6 +135,61 @@ async function runProjectRustic({
   return { stdout, stderr };
 }
 
+// The privileged helper prints this line when the backup skipped files larger
+// than its limit. The snapshot description records the same report.
+const OVERSIZED_FILES_MARKER = "COCALC_BACKUP_OVERSIZED_FILES ";
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
+export function parseOversizedFilesReport(
+  stderr: string,
+): OversizedFilesReport | undefined {
+  const line = stderr
+    .split("\n")
+    .find((line) => line.startsWith(OVERSIZED_FILES_MARKER));
+  if (line == null) return;
+  return validateOversizedFilesReport(
+    line.slice(OVERSIZED_FILES_MARKER.length),
+  );
+}
+
+function validateOversizedFilesReport(json: string): OversizedFilesReport {
+  let report: any;
+  try {
+    report = JSON.parse(json);
+  } catch {
+    report = undefined;
+  }
+  if (
+    !isNonNegativeInteger(report?.max_file_bytes) ||
+    !isNonNegativeInteger(report?.count) ||
+    !Array.isArray(report?.files) ||
+    !report.files.every(
+      (file: any) =>
+        typeof file?.path === "string" && isNonNegativeInteger(file?.size),
+    )
+  ) {
+    // Never treat an unreadable report as "nothing was skipped".
+    throw new Error(`malformed oversized file report: ${json.slice(0, 500)}`);
+  }
+  return {
+    max_file_bytes: report.max_file_bytes,
+    count: report.count,
+    files: report.files.map(({ path, size }) => ({ path, size })),
+  };
+}
+
+function isUnsupportedMaxFileBytesError(err: unknown): boolean {
+  const message = `${(err as any)?.message ?? err}`;
+  return (
+    message.includes("SECURITY_DENY") &&
+    message.includes("project-rustic-backup-bad-args") &&
+    message.includes("detail=--max-file-bytes")
+  );
+}
+
 export async function projectRusticBackup({
   src,
   repoProfile,
@@ -139,6 +197,7 @@ export async function projectRusticBackup({
   timeoutMs,
   tags,
   parent,
+  maxFileBytes,
   progress,
 }: {
   src: string;
@@ -147,30 +206,47 @@ export async function projectRusticBackup({
   timeoutMs: number;
   tags?: string[];
   parent?: string;
+  maxFileBytes?: number;
   progress?: (update: RusticProgressUpdate) => void;
 }): Promise<{
   time: Date;
   id: string;
   summary: { [key: string]: string | number };
+  oversized_files?: OversizedFilesReport;
 }> {
   const tagArgs = (tags ?? [])
     .map((tag) => tag.trim())
     .filter((tag) => tag.length > 0)
     .flatMap((tag) => ["--tag", tag]);
   const parentArgs = parent ? ["--parent", parent] : [];
-  const { stdout } = await runProjectRustic({
-    command: isBackgroundBtrfsMutation()
-      ? "project-rustic-backup-maintenance"
-      : "project-rustic-backup",
-    args: [src, repoProfile, host, ...tagArgs, ...parentArgs],
-    timeoutMs,
-    onProgress: progress,
-  });
-  const parsed = JSON.parse(stdout);
+  const maxFileArgs =
+    maxFileBytes == null ? [] : ["--max-file-bytes", `${maxFileBytes}`];
+  const run = async (extraArgs: string[]) =>
+    await runProjectRustic({
+      command: isBackgroundBtrfsMutation()
+        ? "project-rustic-backup-maintenance"
+        : "project-rustic-backup",
+      args: [src, repoProfile, host, ...tagArgs, ...parentArgs, ...extraArgs],
+      timeoutMs,
+      onProgress: progress,
+    });
+  let output: { stdout: string; stderr: string };
+  try {
+    output = await run(maxFileArgs);
+  } catch (err) {
+    // A host whose bootstrap predates the limit rejects the option before
+    // doing any work; it also applies no limit, as before.
+    if (maxFileArgs.length === 0 || !isUnsupportedMaxFileBytesError(err)) {
+      throw err;
+    }
+    output = await run([]);
+  }
+  const parsed = JSON.parse(output.stdout);
   return {
     time: new Date(parsed.time),
     id: parsed.id,
     summary: parsed.summary ?? {},
+    oversized_files: parseOversizedFilesReport(output.stderr),
   };
 }
 
@@ -195,4 +271,42 @@ export async function projectRusticRestore({
     timeoutMs,
     onProgress: progress,
   });
+}
+
+// List files a backup of src would skip, optionally only beneath the given
+// src-relative paths. Returns null on hosts whose privileged helper predates
+// the size limit: their backups do not skip anything.
+export async function projectOversizedFiles({
+  src,
+  maxFileBytes,
+  subpaths = [],
+  timeoutMs = 10 * 60_000,
+}: {
+  src: string;
+  maxFileBytes: number;
+  subpaths?: string[];
+  timeoutMs?: number;
+}): Promise<OversizedFilesReport | null> {
+  if (!existsSync(STORAGE_WRAPPER)) {
+    // Development and Lite hosts back up without the privileged helper.
+    return null;
+  }
+  try {
+    const { stdout } = await runProjectRustic({
+      command: "project-oversized-files",
+      args: [
+        src,
+        "--max-file-bytes",
+        `${maxFileBytes}`,
+        ...subpaths.flatMap((path) => ["--subpath", path]),
+      ],
+      timeoutMs,
+    });
+    return validateOversizedFilesReport(stdout.trim());
+  } catch (err) {
+    if (err instanceof ProjectRusticUnsupportedError) {
+      return null;
+    }
+    throw err;
+  }
 }

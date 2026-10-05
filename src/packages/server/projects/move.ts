@@ -28,6 +28,11 @@ import {
   start as startProjectLro,
 } from "../conat/api/projects";
 import { createBackup as createBackupLro } from "../conat/api/project-backups";
+import {
+  assertBackupOversizedFilesAllowed,
+  assertOversizedFilesAllowed,
+  OversizedFilesError,
+} from "./oversized-files";
 import type { ManagedBackupEgressOverride } from "@cocalc/conat/files/file-server";
 import { resolveHostConnection } from "../conat/api/hosts";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
@@ -166,6 +171,9 @@ export type MoveProjectToHostInput = {
   stop_dest_after_start?: boolean;
   backup_region_cutover?: boolean;
   managed_egress_override?: ManagedBackupEgressOverride;
+  // The user confirmed that files over the backup file size limit may be
+  // left out of the moved project.
+  allow_oversized_skip?: boolean;
 };
 
 type MoveProjectContext = {
@@ -187,6 +195,7 @@ type MoveProjectContext = {
   last_edited?: Date | null;
   last_changed?: Date | null;
   backup_region_cutover?: boolean;
+  allow_oversized_skip?: boolean;
 };
 
 export type MoveProjectProgressUpdate = {
@@ -816,6 +825,7 @@ async function buildMoveProjectContext(
     last_edited: projectRow.last_edited,
     last_changed: projectRow.last_changed,
     backup_region_cutover: !!input.backup_region_cutover,
+    allow_oversized_skip: input.allow_oversized_skip === true,
   };
 }
 
@@ -1358,6 +1368,7 @@ async function performBackupRegionCutover({
           }),
           shouldCancel,
           cancelStage: "cutover-backup",
+          allow_oversized_skip: context.allow_oversized_skip,
         }),
     });
     progress({
@@ -1470,6 +1481,7 @@ async function createFinalBackup({
   dedupe_key,
   shouldCancel,
   cancelStage = "backup",
+  allow_oversized_skip,
 }: {
   project_id: string;
   account_id: string;
@@ -1478,6 +1490,7 @@ async function createFinalBackup({
   dedupe_key?: string;
   shouldCancel?: () => Promise<boolean>;
   cancelStage?: string;
+  allow_oversized_skip?: boolean;
 }): Promise<{ id: string; time: string; op_id: string }> {
   const backupOp = await createBackupLro(
     {
@@ -1534,6 +1547,12 @@ async function createFinalBackup({
   if (!backupId) {
     throw new Error(`backup operation ${backupOp.op_id} did not return an id`);
   }
+  // The destination restores from this backup, before the source is removed.
+  assertBackupOversizedFilesAllowed({
+    backup_result: backup,
+    action: "move this project",
+    allow_oversized_skip,
+  });
   const backupTime =
     backup.time instanceof Date
       ? backup.time.toISOString()
@@ -1839,6 +1858,23 @@ export async function moveProjectToHost(
       });
     } else {
       if (context.provisioned !== false) {
+        // Refuse before stopping anything. A failed scan does not block the
+        // move: the final backup's own report is checked before restoring.
+        currentStage = "check-oversized-files";
+        try {
+          await assertOversizedFilesAllowed({
+            project_id: context.project_id,
+            account_id: context.account_id,
+            action: "move this project",
+            allow_oversized_skip: context.allow_oversized_skip,
+          });
+        } catch (err) {
+          if (err instanceof OversizedFilesError) throw err;
+          log.warn("moveProjectToHost unable to check for oversized files", {
+            project_id: context.project_id,
+            err: `${err}`,
+          });
+        }
         currentStage = "write-move-sentinel";
         progress({
           step: "backup",
@@ -1937,6 +1973,7 @@ export async function moveProjectToHost(
                 }),
                 shouldCancel,
                 cancelStage: "backup",
+                allow_oversized_skip: context.allow_oversized_skip,
               }),
           });
           const backup_id = result.id;

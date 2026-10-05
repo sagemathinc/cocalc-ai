@@ -5039,21 +5039,49 @@ export class ProjectsActions extends Actions<ProjectsState> {
       });
   };
 
+  private checkOversizedFiles = async (
+    opts: Parameters<
+      typeof import("@cocalc/frontend/project/backups/oversized-files").checkOversizedFiles
+    >[0],
+  ) => {
+    const { checkOversizedFiles } = await loadWithRetry(
+      async () =>
+        await import("@cocalc/frontend/project/backups/oversized-files"),
+      { name: "backup file size check" },
+    );
+    return await checkOversizedFiles(opts);
+  };
+
   private requestMoveProject = async ({
     project_id,
     dest_host_id,
     allow_offline,
     backup_region_cutover,
+    allow_oversized_skip,
   }: {
     project_id: string;
     dest_host_id?: string;
     allow_offline?: boolean;
     backup_region_cutover?: boolean;
+    allow_oversized_skip?: boolean;
   }): Promise<{
     op_id?: string;
     scope_type?: LroSummary["scope_type"];
     scope_id?: string;
   } | null> => {
+    if (allow_oversized_skip == null) {
+      const oversized = await this.checkOversizedFiles({
+        project_id,
+        title: "Move without these files?",
+        okText: "Move and lose these files",
+        consequence:
+          "The moved project is restored from a backup, which cannot include these files. They will be permanently deleted along with the old copy of the project.",
+      });
+      if (!oversized.proceed) {
+        return null;
+      }
+      allow_oversized_skip = oversized.allow_oversized_skip;
+    }
     try {
       return await webapp_client.conat_client.hub.projects.moveProject({
         project_id,
@@ -5061,6 +5089,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
         dest_host_id,
         allow_offline,
         backup_region_cutover,
+        ...(allow_oversized_skip ? { allow_oversized_skip: true } : {}),
       });
     } catch (err) {
       if (!allow_offline) {
@@ -5080,6 +5109,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
             dest_host_id,
             allow_offline: true,
             backup_region_cutover,
+            allow_oversized_skip,
           });
         }
       }
@@ -5421,6 +5451,17 @@ export class ProjectsActions extends Actions<ProjectsState> {
         control_error: "",
         control_status: "Checking backups before archive...",
       });
+      const { allow_oversized_skip, proceed } = await this.checkOversizedFiles({
+        project_id,
+        title: "Archive without these files?",
+        okText: "Archive and lose these files",
+        consequence:
+          "Archiving removes the project's files from its host and keeps only its backup, so these files will be permanently deleted.",
+      });
+      if (!proceed) {
+        actions?.setState?.({ control_status: "" });
+        return;
+      }
       await this.ensureArchiveBackupFresh(project_id, actions);
       actions?.setState?.({ control_status: "Archiving project..." });
       await writeAndWaitForProjection({
@@ -5431,6 +5472,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
           webapp_client.conat_client.hub.projects.archiveProject({
             project_id,
             timeout: ProjectsActions.ARCHIVE_RPC_TIMEOUT_MS,
+            ...(allow_oversized_skip ? { allow_oversized_skip: true } : {}),
           }),
         matchesProjection: () =>
           this.projectedProjectStateMatches({

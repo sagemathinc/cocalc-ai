@@ -401,6 +401,9 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
     if ("generation" in backup) {
       result.generation = backup.generation;
     }
+    if ("oversized_files" in backup && backup.oversized_files) {
+      result.oversized_files = backup.oversized_files;
+    }
     if (externalMigration) {
       result.migration_id = externalMigration.migration_id;
       result.destination_project_id = externalMigration.destination_project_id;
