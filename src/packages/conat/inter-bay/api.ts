@@ -232,7 +232,6 @@ import type {
   ProjectEnv,
   ProjectEntitlementOverride,
   ProjectLogRow,
-  ProjectMetadataPatch,
   ProjectHiddenResult,
   ProjectRegion,
   ProjectRootfsConfig,
@@ -2603,24 +2602,12 @@ export interface ProjectCollabInviteCopyEmailLinkRequest {
   invite_base_url?: string;
 }
 
-export interface ProjectSetManageUsersOwnerOnlyRequest {
-  account_id: string;
-  project_id: string;
-  manage_users_owner_only: boolean;
-}
-
 export interface ProjectSetDeletionProtectionRequest {
   account_id: string;
   browser_id?: string | null;
   session_hash?: string | null;
   project_id: string;
   enabled: boolean;
-}
-
-export interface ProjectSetMetadataRequest {
-  account_id: string;
-  project_id: string;
-  patch: ProjectMetadataPatch;
 }
 
 export interface ProjectCollabInviteEmailLinkWire {
@@ -2750,16 +2737,6 @@ export interface ProjectRemoveCollaboratorRequest {
   opts: {
     account_id: string;
     project_id: string;
-  };
-}
-
-export interface ProjectSetUserRoleRequest {
-  account_id: string;
-  opts: {
-    project_id: string;
-    target_account_id: string;
-    role: Exclude<ProjectUserRole, "owner">;
-    read_policy?: ProjectViewerReadPolicy | null;
   };
 }
 
@@ -5434,7 +5411,6 @@ export interface InterBayProjectCollabInviteApi {
     blocked_account_id: string;
   }>;
   removeCollaborator: (opts: ProjectRemoveCollaboratorRequest) => Promise<void>;
-  setProjectUserRole: (opts: ProjectSetUserRoleRequest) => Promise<void>;
   getUsage: (
     opts: ProjectCollaboratorInviteUsageRequest,
   ) => Promise<ProjectCollaboratorInviteUsageWire>;
@@ -5447,10 +5423,6 @@ export interface InterBayProjectCollabInviteApi {
   setProjectsHidden: (
     opts: ProjectSetHiddenRequest,
   ) => Promise<ProjectHiddenResult[]>;
-  setProjectMetadata: (opts: ProjectSetMetadataRequest) => Promise<void>;
-  setManageUsersOwnerOnly: (
-    opts: ProjectSetManageUsersOwnerOnlyRequest,
-  ) => Promise<void>;
   setDeletionProtection: (
     opts: ProjectSetDeletionProtectionRequest,
   ) => Promise<{ project_id: string; deletion_protection: boolean }>;
@@ -12924,15 +12896,6 @@ export function createInterBayProjectCollabInviteClient({
       method: "remove-collaborator",
     }),
   });
-  const setProjectUserRoleClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "setProjectUserRole">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({
-      dest_bay,
-      method: "set-project-user-role",
-    }),
-  });
   const usageClient = createServiceClient<
     Pick<InterBayProjectCollabInviteApi, "getUsage">
   >({
@@ -12967,24 +12930,6 @@ export function createInterBayProjectCollabInviteClient({
     subject: projectCollabInviteSubject({
       dest_bay,
       method: "set-projects-hidden",
-    }),
-  });
-  const setProjectMetadataClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "setProjectMetadata">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({
-      dest_bay,
-      method: "set-project-metadata",
-    }),
-  });
-  const setManageUsersOwnerOnlyClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "setManageUsersOwnerOnly">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({
-      dest_bay,
-      method: "set-manage-users-owner-only",
     }),
   });
   const setDeletionProtectionClient = createServiceClient<
@@ -13032,8 +12977,6 @@ export function createInterBayProjectCollabInviteClient({
       ),
     removeCollaborator: async (opts) =>
       await removeCollaboratorClient.removeCollaborator(opts),
-    setProjectUserRole: async (opts) =>
-      await setProjectUserRoleClient.setProjectUserRole(opts),
     getUsage: async (opts) => await usageClient.getUsage(opts),
     leaveOrDeleteProjects: async (opts) =>
       await leaveOrDeleteProjectsClient.leaveOrDeleteProjects(opts),
@@ -13041,10 +12984,6 @@ export function createInterBayProjectCollabInviteClient({
       await transferProjectOwnershipClient.transferProjectOwnership(opts),
     setProjectsHidden: async (opts) =>
       await setProjectsHiddenClient.setProjectsHidden(opts),
-    setProjectMetadata: async (opts) =>
-      await setProjectMetadataClient.setProjectMetadata(opts),
-    setManageUsersOwnerOnly: async (opts) =>
-      await setManageUsersOwnerOnlyClient.setManageUsersOwnerOnly(opts),
     setDeletionProtection: async (opts) =>
       await setDeletionProtectionClient.setDeletionProtection(opts),
     create: async (opts) => await createClient.create(opts),
@@ -13445,19 +13384,6 @@ export function createInterBayProjectCollabInviteHandlers({
       },
     }),
     createServiceHandler<
-      Pick<InterBayProjectCollabInviteApi, "setProjectUserRole">
-    >({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "set-project-user-role",
-      }),
-      impl: {
-        setProjectUserRole: async (opts) => await impl.setProjectUserRole(opts),
-      },
-    }),
-    createServiceHandler<
       Pick<InterBayProjectCollabInviteApi, "leaveOrDeleteProjects">
     >({
       ...options,
@@ -13496,33 +13422,6 @@ export function createInterBayProjectCollabInviteHandlers({
       }),
       impl: {
         setProjectsHidden: async (opts) => await impl.setProjectsHidden(opts),
-      },
-    }),
-    createServiceHandler<
-      Pick<InterBayProjectCollabInviteApi, "setManageUsersOwnerOnly">
-    >({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "set-manage-users-owner-only",
-      }),
-      impl: {
-        setManageUsersOwnerOnly: async (opts) =>
-          await impl.setManageUsersOwnerOnly(opts),
-      },
-    }),
-    createServiceHandler<
-      Pick<InterBayProjectCollabInviteApi, "setProjectMetadata">
-    >({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "set-project-metadata",
-      }),
-      impl: {
-        setProjectMetadata: async (opts) => await impl.setProjectMetadata(opts),
       },
     }),
     createServiceHandler<

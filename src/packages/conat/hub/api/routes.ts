@@ -1,0 +1,57 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+// Where a hub API call executes. A routed method runs on the bay that owns
+// the data it acts on: the hub that receives the call resolves that bay and,
+// if it is another bay, forwards the whole authenticated call there once.
+// The method itself is then ordinary single-bay code. Methods without a
+// route run where they are received.
+//
+// Only list methods whose authorization and effects all live on the owning
+// bay. A method that also needs account-home state at the edge (e.g., a
+// fresh-auth check against the caller's session) is not routable yet.
+
+import { isValidUUID } from "@cocalc/util/misc";
+
+export type HubApiRoute = {
+  owner: "project";
+  /** Extract the owning key from the call's arguments. */
+  key: (args: any[]) => unknown;
+};
+
+const projectFromOpts: HubApiRoute = {
+  owner: "project",
+  key: (args) => args?.[0]?.project_id,
+};
+
+const projectFromNestedOpts: HubApiRoute = {
+  owner: "project",
+  key: (args) => args?.[0]?.opts?.project_id,
+};
+
+const HUB_API_ROUTES: Record<string, HubApiRoute> = {
+  "projects.setProjectMetadata": projectFromOpts,
+  "projects.setProjectManageUsersOwnerOnly": projectFromOpts,
+  "projects.setProjectUserRole": projectFromNestedOpts,
+};
+
+export function getHubApiRoute(name: string): HubApiRoute | undefined {
+  return Object.prototype.hasOwnProperty.call(HUB_API_ROUTES, name)
+    ? HUB_API_ROUTES[name]
+    : undefined;
+}
+
+export function getHubApiRoutedMethods(): string[] {
+  return Object.keys(HUB_API_ROUTES).sort();
+}
+
+/** The owning key of a routed call, or undefined if it is not well formed. */
+export function hubApiRouteKey(
+  route: HubApiRoute,
+  args: any[],
+): string | undefined {
+  const key = route.key(args);
+  return typeof key === "string" && isValidUUID(key) ? key : undefined;
+}
