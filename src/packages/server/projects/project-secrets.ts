@@ -96,8 +96,8 @@ export async function ensureProjectSecretsSchema(
       name TEXT NOT NULL,
       encrypted_value JSONB NOT NULL,
       value_bytes INTEGER NOT NULL,
-      created_by UUID REFERENCES accounts(account_id),
-      updated_by UUID REFERENCES accounts(account_id),
+      created_by UUID,
+      updated_by UUID,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       allow_course_sharing BOOLEAN NOT NULL DEFAULT FALSE,
@@ -140,13 +140,24 @@ export async function ensureProjectSecretsSchema(
       source_grant_id UUID NOT NULL,
       source_secret_name TEXT NOT NULL,
       source_secret_revision BIGINT NOT NULL,
-      installed_by UUID NOT NULL REFERENCES accounts(account_id),
+      installed_by UUID NOT NULL,
       installed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (project_id, name),
       FOREIGN KEY (project_id, name)
         REFERENCES project_secrets(project_id, name) ON DELETE CASCADE
     )
+  `);
+  // These rows name the acting account, which may be homed on another bay
+  // and have no local `accounts` row, so they must not reference accounts.
+  await db.query(`
+    ALTER TABLE project_secrets
+      DROP CONSTRAINT IF EXISTS project_secrets_created_by_fkey,
+      DROP CONSTRAINT IF EXISTS project_secrets_updated_by_fkey
+  `);
+  await db.query(`
+    ALTER TABLE project_secret_managed_sources
+      DROP CONSTRAINT IF EXISTS project_secret_managed_sources_installed_by_fkey
   `);
 }
 
