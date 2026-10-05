@@ -410,6 +410,8 @@ export interface CleanupWatchdog {
   pid: number | undefined;
   // Disarm: resolves once "stop" has been handed to the pipe (or after 2s).
   stop: () => Promise<void>;
+  // Close the pipe without "stop": the watchdog cleans up right away.
+  trigger: () => Promise<void>;
 }
 
 export function startCleanupWatchdog(config: WatchdogConfig): CleanupWatchdog {
@@ -423,38 +425,44 @@ export function startCleanupWatchdog(config: WatchdogConfig): CleanupWatchdog {
   // Hold the pipe without keeping this process alive.
   (child.stdin as { unref?: () => void } | null)?.unref?.();
   child.unref();
-  return {
-    pid: child.pid,
-    stop: () =>
-      new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, 2000);
-        try {
-          child.stdin?.end("stop\n", () => {
-            clearTimeout(timer);
-            resolve();
-          });
-        } catch {
+  const endPipe = (data: string) =>
+    new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 2000);
+      try {
+        child.stdin?.end(data, () => {
           clearTimeout(timer);
           resolve();
-        }
-      }),
+        });
+      } catch {
+        clearTimeout(timer);
+        resolve();
+      }
+    });
+  return {
+    pid: child.pid,
+    stop: () => endPipe("stop\n"),
+    trigger: () => endPipe(""),
   };
 }
 
-// Run the session's own (idempotent) cleanup steps, and only then disarm the
-// watchdog.  If this process dies anywhere before that, the still-armed
-// watchdog finishes the job.
+// Run the session's own (idempotent) cleanup steps, and disarm the watchdog
+// only if all of them succeeded.  If one failed, hand over to the watchdog
+// at once so it retries; if this process dies before the end, the
+// still-armed watchdog finishes the job.  Resolves to whether all succeeded.
 export async function cleanupThenDisarm(
   steps: Array<() => Promise<unknown>>,
   watchdog: CleanupWatchdog | null,
   report: (err: unknown) => void,
-): Promise<void> {
+): Promise<boolean> {
+  let failed = false;
   for (const step of steps) {
     try {
       await step();
     } catch (err) {
+      failed = true;
       report(err);
     }
   }
-  await watchdog?.stop();
+  await (failed ? watchdog?.trigger() : watchdog?.stop());
+  return !failed;
 }

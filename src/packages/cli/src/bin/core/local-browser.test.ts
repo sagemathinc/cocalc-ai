@@ -349,3 +349,59 @@ test("the watchdog stays armed while the owner's own cleanup runs", async () => 
     rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test("a failed cleanup step hands over to the watchdog instead of disarming it", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "browser-watchdog-"));
+  const profile = join(tmp, "profile");
+  const marker = join(tmp, "forward-removed");
+  mkdirSync(profile);
+  const browser = idle(`--user-data-dir=${profile}`);
+  const mod = require.resolve("./local-browser");
+  // The "CLI" stays alive; its own forward removal and browser stop fail.
+  const owner = spawn(
+    process.execPath,
+    [
+      "-e",
+      `const m = require(${JSON.stringify(mod)});
+       const w = m.startCleanupWatchdog(JSON.parse(process.argv[1]));
+       setTimeout(() => m.cleanupThenDisarm(
+         [() => Promise.reject(new Error("remove failed")),
+          () => Promise.reject(new Error("stop failed"))],
+         w,
+         () => {},
+       ), 300);
+       setInterval(() => {}, 1000);`,
+      JSON.stringify({
+        browser: browser.pid,
+        browserMarker: `--user-data-dir=${profile}`,
+        release: { removeDir: profile },
+        forward: {
+          command: process.execPath,
+          args: [
+            "-e",
+            "require('node:fs').writeFileSync(process.env.MARKER, 'removed')",
+          ],
+          env: { MARKER: marker },
+        },
+      }),
+    ],
+    { stdio: "ignore" },
+  );
+  try {
+    const deadline = Date.now() + 10_000;
+    while (
+      Date.now() < deadline &&
+      (existsSync(profile) || alive(browser.pid!) || !existsSync(marker))
+    ) {
+      await sleep(100);
+    }
+    assert.ok(alive(owner.pid!), "owner still running");
+    assert.equal(alive(browser.pid!), false, "browser revoked by the watchdog");
+    assert.equal(existsSync(marker), true, "forward removal retried");
+    assert.equal(existsSync(profile), false, "profile released");
+  } finally {
+    owner.kill("SIGKILL");
+    browser.kill("SIGKILL");
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});

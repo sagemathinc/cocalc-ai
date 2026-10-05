@@ -326,6 +326,7 @@ async function runBrowserConnect(
   let watchdog: CleanupWatchdog | null = null;
   const verification = new AbortController();
   let endedBy = "browser closed";
+  let cleanedUp = false;
   try {
     profile = await createProfileDir(storage, sys);
     browser = await launchBrowser({
@@ -407,7 +408,7 @@ async function runBrowserConnect(
   } finally {
     for (const signal of signals) process.off(signal, onSignal);
     verification.abort();
-    await cleanupThenDisarm(
+    cleanedUp = await cleanupThenDisarm(
       [
         () =>
           forwardRef != null
@@ -423,7 +424,11 @@ async function runBrowserConnect(
       (err) => say(`cleanup: ${(err as Error)?.message ?? err}`),
     );
   }
-  say("Browser session ended; forward and profile removed.");
+  say(
+    cleanedUp
+      ? "Browser session ended; forward and profile removed."
+      : "Browser session ended; cleanup failed and was handed to the watchdog.",
+  );
   return {
     project_id: projectId,
     project_port: projectPort,
