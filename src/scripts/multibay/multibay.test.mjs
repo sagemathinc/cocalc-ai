@@ -8,7 +8,7 @@
 // by the real inter-bay fabric. Requires a built tree (`pnpm build`) and
 // PostgreSQL server binaries on PATH or discoverable via pg_config.
 //
-//   node --test src/scripts/multibay/
+//   node --test src/scripts/multibay/multibay.test.mjs
 //
 // MULTIBAY_KEEP=1 keeps the cluster's directory (logs, databases) afterwards.
 

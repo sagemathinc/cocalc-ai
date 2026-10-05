@@ -7,7 +7,7 @@ real inter-bay fabric. CI runs them in the `multibay` job of
 
 ```sh
 pnpm -C src build            # the hubs run from the built tree
-node --test --test-reporter=spec src/scripts/multibay/
+node --test --test-reporter=spec src/scripts/multibay/multibay.test.mjs
 ```
 
 PostgreSQL server binaries (`initdb`, `postgres`) must be on `PATH` or found

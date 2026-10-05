@@ -323,7 +323,7 @@ jobs:
           MULTIBAY_KEEP: "1"
         run: |
           mkdir -p "$MULTIBAY_DIR"
-          node --test --test-reporter=spec src/scripts/multibay/
+          node --test --test-reporter=spec src/scripts/multibay/multibay.test.mjs
 
       - name: Upload cluster logs
         if: failure()
