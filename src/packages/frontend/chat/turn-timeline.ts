@@ -27,6 +27,7 @@ export type TurnTimelineRow =
       time?: number;
       state?: InlineCodexActivityBlock["state"];
     }
+  | { kind: "thinking"; id: string; text: string; time?: number }
   | { kind: "artifact"; id: string; publication: ArtifactPublication };
 
 const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
@@ -171,11 +172,23 @@ export function buildTurnTimelineRows({
     }
   };
   let agentIndex = 0;
+  let thinkingIndex = 0;
   const guidanceIds = new Map<string, number>();
   for (const block of blocks) {
     const text = `${block.text ?? ""}`;
     if (!text.trim()) continue;
     if (typeof block.time === "number") emitArtifactsBefore(block.time);
+    if (block.kind === "thinking") {
+      // One collapsed row; its text is only parsed when opened.
+      rows.push({
+        kind: "thinking",
+        id: `thinking:${thinkingIndex}`,
+        text,
+        time: block.time,
+      });
+      thinkingIndex += 1;
+      continue;
+    }
     if (block.kind === "guidance") {
       const base = `guidance:${block.time ?? ""}`;
       const n = guidanceIds.get(base) ?? 0;

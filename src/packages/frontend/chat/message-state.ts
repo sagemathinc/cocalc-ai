@@ -65,7 +65,8 @@ export function getAcpMessageDeliveryLabel({
 }
 
 export type InlineCodexActivityBlock = {
-  kind: "agent" | "guidance";
+  // "thinking": the agent's reasoning, shown muted and collapsed.
+  kind: "agent" | "guidance" | "thinking";
   text: string;
   time?: number;
   state?: "saved" | "sending" | "sent" | "queued" | "not-sent";

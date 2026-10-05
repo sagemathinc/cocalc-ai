@@ -2112,6 +2112,23 @@ function compactLivePreviewBatch(
       continue;
     }
     flushProjection();
+    const last = compacted[compacted.length - 1];
+    if (
+      message.type === "event" &&
+      message.event.type === "thinking" &&
+      last?.type === "event" &&
+      last.event.type === "thinking"
+    ) {
+      // Adjacent reasoning chunks are one block; send them as one event.
+      compacted[compacted.length - 1] = {
+        ...message,
+        event: {
+          ...message.event,
+          text: `${last.event.text ?? ""}${message.event.text ?? ""}`,
+        },
+      };
+      continue;
+    }
     compacted.push(message);
   }
   flushProjection();
@@ -4493,6 +4510,12 @@ export class ChatStreamWriter {
           flush: event.event.delta !== true,
         });
       }
+      return;
+    }
+    if (event.type === "event" && event.event.type === "thinking") {
+      // The agent's reasoning is shown inline (muted, collapsed); a reply
+      // can be entirely in it. The client places it between messages.
+      this.livePreviewBatcher.add(event);
       return;
     }
     if (event.type === "event" && event.event.type === "subagent") {

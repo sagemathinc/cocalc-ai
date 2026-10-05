@@ -9,7 +9,8 @@
 
 import { Button, message as antdMessage } from "antd";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
-import { memo, useRef, type CSSProperties } from "react";
+import { memo, useRef, useState, type CSSProperties } from "react";
+import { Icon } from "@cocalc/frontend/components/icon";
 import type { InlineCodeLink } from "@cocalc/chat";
 import { copyTextToClipboard } from "@cocalc/frontend/components/copy-to-clipboard-util";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
@@ -91,6 +92,9 @@ const TurnTimelineRowView = memo(
     row: TurnTimelineRow;
     context: TurnTimelineContext;
   }) {
+    if (row.kind === "thinking") {
+      return <ThinkingRow row={row} context={context} />;
+    }
     if (row.kind === "artifact") {
       if (context.actions == null) return null;
       return (
@@ -127,6 +131,65 @@ const TurnTimelineRowView = memo(
   },
   (prev, next) => prev.context === next.context && sameRow(prev.row, next.row),
 );
+
+// Rows of thinking the user opened; virtualized rows remount while scrolling.
+const openThinkingRows = new Set<string>();
+
+// The agent's reasoning: one muted line (an excerpt) that opens to the text.
+function ThinkingRow({
+  row,
+  context,
+}: {
+  row: Extract<TurnTimelineRow, { kind: "thinking" }>;
+  context: TurnTimelineContext;
+}) {
+  const key = `${context.messageId}:${row.id}`;
+  const [open, setOpen] = useState(() => openThinkingRows.has(key));
+  const toggle = () => {
+    if (open) openThinkingRows.delete(key);
+    else openThinkingRows.add(key);
+    setOpen(!open);
+  };
+  const fontSize = Math.max((context.fontSize ?? 14) - 1, 11);
+  return (
+    <div
+      className="cocalc-turn-row cocalc-turn-thinking"
+      data-turn-row={row.id}
+    >
+      <button
+        type="button"
+        className="cocalc-turn-thinking-toggle"
+        aria-expanded={open}
+        onClick={toggle}
+        style={{ fontSize }}
+      >
+        <Icon name={open ? "caret-down" : "caret-right"} />
+        <span className="cocalc-turn-thinking-label">Thinking</span>
+        {open ? null : (
+          <span className="cocalc-turn-thinking-excerpt">
+            {row.text.replace(/\s+/g, " ").trim()}
+          </span>
+        )}
+      </button>
+      {open ? (
+        <div data-chat-selectable-message="true">
+          <StaticMarkdown
+            value={row.text}
+            preserveBlankLines={false}
+            className={context.className}
+            style={{
+              ...context.markdownStyle,
+              fontSize,
+              color: UI_COLORS.secondary,
+            }}
+            editorTheme={context.editorTheme}
+            highlightQuery={context.highlightQuery}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 function TimelineMarkdownRow({
   rowId,
