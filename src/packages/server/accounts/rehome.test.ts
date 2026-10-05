@@ -1355,6 +1355,8 @@ describe("account rehome", () => {
     for (sourceOp of [
       null,
       { ...op, stage: "source_flipped" },
+      { ...op, stage: "directory_updated" },
+      { ...op, stage: "complete", status: "succeeded" },
       { ...op, account_id: OTHER_ACCOUNT_FOR_FINALIZE },
       { ...op, dest_bay_id: "bay-3" },
     ]) {

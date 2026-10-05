@@ -1403,11 +1403,10 @@ export async function finalizeAccountRehome({
   }
 }
 
-const FINALIZE_STAGES = new Set<string>([
-  "projections_copied",
-  "directory_updated",
-  "complete",
-]);
+// The source finalizes only from this stage (a resumed operation repeats
+// it), so an operation that has moved on, e.g. a completed one, cannot be
+// replayed later against a row that a newer rehome left homed here.
+const FINALIZE_STAGES = new Set<string>(["projections_copied"]);
 
 async function assertNoFinancialHandoff(account_id: string) {
   const {
