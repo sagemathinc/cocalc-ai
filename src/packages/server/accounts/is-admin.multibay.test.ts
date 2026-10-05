@@ -6,9 +6,14 @@
 // Admin status is account-home state: other bays ask the home bay.
 
 let multiBay = true;
-const query = jest.fn();
+// This bay's (bay-0) active `accounts` row for ACCOUNT, if any.
+let localRow: { home_bay_id: string | null; groups?: string[] } | null = null;
+const query = jest.fn(async (sql: string) => ({
+  rows: localRow == null ? [] : [localRow],
+  sql,
+}));
 const userIsInGroup = jest.fn();
-const resolveAccountHomeBay = jest.fn();
+const getClusterAccountById = jest.fn();
 const remoteIsAdmin = jest.fn();
 const createInterBayAccountFactsClient = jest.fn(() => ({
   isAdmin: remoteIsAdmin,
@@ -28,8 +33,8 @@ jest.mock("./is-in-group", () => ({
   __esModule: true,
   default: (...args) => userIsInGroup(...args),
 }));
-jest.mock("@cocalc/server/bay-directory", () => ({
-  resolveAccountHomeBay: (...args) => resolveAccountHomeBay(...args),
+jest.mock("@cocalc/server/inter-bay/accounts", () => ({
+  getClusterAccountById: (...args) => getClusterAccountById(...args),
 }));
 jest.mock("@cocalc/server/inter-bay/fabric", () => ({
   getInterBayFabricClient: () => ({ fabric: true }),
@@ -43,11 +48,16 @@ import { clearHomeBayCacheForTests } from "./home-bay";
 import { accountFactsHome } from "./account-facts-service";
 
 const ACCOUNT = "1f8d5b7c-3c55-4a43-9f43-3ef8b2b2d0a1";
+const directory = (home_bay_id: string | null) =>
+  getClusterAccountById.mockResolvedValue(
+    home_bay_id == null ? null : { account_id: ACCOUNT, home_bay_id },
+  );
 
 beforeEach(() => {
   jest.clearAllMocks();
   clearHomeBayCacheForTests();
   multiBay = true;
+  localRow = null;
 });
 
 describe("isAdmin", () => {
@@ -59,18 +69,19 @@ describe("isAdmin", () => {
     expect(query).not.toHaveBeenCalled();
   });
 
-  it("answers from the local row for an account homed here", async () => {
-    query.mockResolvedValue({
-      rows: [{ groups: ["admin"], home_bay_id: "bay-0" }],
-    });
+  it("answers from the local row for an account explicitly homed here", async () => {
+    localRow = { home_bay_id: "bay-0", groups: ["admin"] };
     expect(await isAdmin(ACCOUNT)).toBe(true);
-    expect(resolveAccountHomeBay).not.toHaveBeenCalled();
+    expect(getClusterAccountById).not.toHaveBeenCalled();
     expect(remoteIsAdmin).not.toHaveBeenCalled();
+    // Only active rows count.
+    expect(
+      query.mock.calls.every(([sql]) => sql.includes("deleted IS NOT TRUE")),
+    ).toBe(true);
   });
 
   it("asks the home bay for an account homed elsewhere", async () => {
-    query.mockResolvedValue({ rows: [] });
-    resolveAccountHomeBay.mockResolvedValue({ home_bay_id: "bay-1" });
+    directory("bay-1");
     remoteIsAdmin.mockResolvedValue(true);
     expect(await isAdmin(ACCOUNT)).toBe(true);
     expect(createInterBayAccountFactsClient).toHaveBeenCalledWith(
@@ -80,54 +91,102 @@ describe("isAdmin", () => {
   });
 
   it("ignores a stale local copy of an account homed elsewhere", async () => {
-    query.mockResolvedValue({
-      rows: [{ groups: ["admin"], home_bay_id: "bay-1" }],
-    });
-    resolveAccountHomeBay.mockResolvedValue({ home_bay_id: "bay-1" });
+    localRow = { home_bay_id: "bay-1", groups: ["admin"] };
+    directory("bay-1");
     remoteIsAdmin.mockResolvedValue(false);
     expect(await isAdmin(ACCOUNT)).toBe(false);
   });
 
+  it("never uses a rehomed-away row while the directory still points here", async () => {
+    // Rehome race: the source row already names the destination, the
+    // directory does not yet. Fail closed instead of using the old groups.
+    localRow = { home_bay_id: "bay-1", groups: ["admin"] };
+    directory("bay-0");
+    await expect(isAdmin(ACCOUNT)).rejects.toMatchObject({ code: 409 });
+    // Nothing was cached: once the directory flips, the home bay answers.
+    directory("bay-1");
+    remoteIsAdmin.mockResolvedValue(false);
+    expect(await isAdmin(ACCOUNT)).toBe(false);
+  });
+
+  it("never uses a stale row for an account the directory does not know", async () => {
+    localRow = { home_bay_id: "bay-1", groups: ["admin"] };
+    directory(null);
+    await expect(isAdmin(ACCOUNT)).rejects.toMatchObject({ code: 409 });
+  });
+
   it("treats an account unknown to the directory as a non-admin", async () => {
-    query.mockResolvedValue({ rows: [] });
-    resolveAccountHomeBay.mockRejectedValue(
-      new Error(`account '${ACCOUNT}' not found`),
-    );
+    directory(null);
     expect(await isAdmin(ACCOUNT)).toBe(false);
     expect(remoteIsAdmin).not.toHaveBeenCalled();
   });
 
-  it("fails rather than guessing when the directory is unavailable", async () => {
-    query.mockResolvedValue({ rows: [] });
-    resolveAccountHomeBay.mockRejectedValue(new Error("timeout"));
-    await expect(isAdmin(ACCOUNT)).rejects.toThrow("timeout");
+  it("accepts a legacy row without a home bay only if the directory confirms", async () => {
+    localRow = { home_bay_id: null, groups: ["admin"] };
+    directory("bay-0");
+    expect(await isAdmin(ACCOUNT)).toBe(true);
+    directory("bay-1");
+    remoteIsAdmin.mockResolvedValue(false);
+    expect(await isAdmin(ACCOUNT)).toBe(false);
   });
 
-  it("caches the home bay briefly", async () => {
-    query.mockResolvedValue({ rows: [] });
-    resolveAccountHomeBay.mockResolvedValue({ home_bay_id: "bay-1" });
+  it("fails rather than guessing when the directory is unavailable, even on 'not found' errors", async () => {
+    getClusterAccountById.mockRejectedValue(new Error("timeout"));
+    await expect(isAdmin(ACCOUNT)).rejects.toThrow("timeout");
+    getClusterAccountById.mockRejectedValue(new Error("service not found"));
+    await expect(isAdmin(ACCOUNT)).rejects.toThrow("service not found");
+  });
+
+  it("caches only remote answers, and forgets them when the bay refuses", async () => {
+    directory("bay-1");
     remoteIsAdmin.mockResolvedValue(false);
     await isAdmin(ACCOUNT);
     await isAdmin(ACCOUNT);
-    expect(resolveAccountHomeBay).toHaveBeenCalledTimes(1);
+    expect(getClusterAccountById).toHaveBeenCalledTimes(1);
     expect(remoteIsAdmin).toHaveBeenCalledTimes(2);
+
+    remoteIsAdmin.mockRejectedValueOnce(
+      Object.assign(new Error("account is not homed on this bay"), {
+        code: 409,
+      }),
+    );
+    await expect(isAdmin(ACCOUNT)).rejects.toMatchObject({ code: 409 });
+    directory("bay-2");
+    await isAdmin(ACCOUNT);
+    expect(createInterBayAccountFactsClient).toHaveBeenLastCalledWith(
+      expect.objectContaining({ bay_id: "bay-2" }),
+    );
+  });
+
+  it("never caches a 'here' answer", async () => {
+    localRow = { home_bay_id: null, groups: [] };
+    directory("bay-0");
+    await isAdmin(ACCOUNT);
+    await isAdmin(ACCOUNT);
+    expect(getClusterAccountById).toHaveBeenCalledTimes(2);
   });
 });
 
 describe("accountFactsHome on the home bay", () => {
   it("answers for its own accounts", async () => {
-    query.mockResolvedValue({ rows: [{ home_bay_id: "bay-0" }] });
+    localRow = { home_bay_id: "bay-0" };
     userIsInGroup.mockResolvedValue(true);
     expect(await accountFactsHome.isAdmin({ account_id: ACCOUNT })).toBe(true);
   });
 
   it("refuses accounts homed elsewhere instead of asking again", async () => {
-    query.mockResolvedValue({ rows: [] });
-    resolveAccountHomeBay.mockResolvedValue({ home_bay_id: "bay-2" });
+    directory("bay-2");
     await expect(
       accountFactsHome.isAdmin({ account_id: ACCOUNT }),
     ).rejects.toMatchObject({ code: 409 });
     expect(userIsInGroup).not.toHaveBeenCalled();
     expect(remoteIsAdmin).not.toHaveBeenCalled();
+  });
+
+  it("refuses accounts it does not know", async () => {
+    directory(null);
+    await expect(
+      accountFactsHome.isAdmin({ account_id: ACCOUNT }),
+    ).rejects.toMatchObject({ code: 409 });
   });
 });

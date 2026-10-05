@@ -129,10 +129,10 @@ export async function handleDelegatedSessionAuth(
   try {
     const accountId = `${opts.account_id ?? ""}`.trim();
     // Only the home bay holds the session; never delegate a second time.
-    if (accountId && (await remoteHomeBay(accountId)) != null) {
-      throw Object.assign(new Error("account is not homed on this bay"), {
-        code: 409,
-      });
+    if (accountId) {
+      const { assertAccountHomedHere } =
+        await import("@cocalc/server/accounts/home-bay");
+      await assertAccountHomedHere(accountId);
     }
     return { ok: true, session: await requireDangerousSessionAuthLocal(opts) };
   } catch (err) {

@@ -16,6 +16,13 @@ const requireFreshAuthForSessionHash = jest.fn();
 jest.mock("@cocalc/server/accounts/home-bay", () => ({
   remoteHomeBay: async () =>
     multiBay && homeBay !== "bay-0" ? homeBay : undefined,
+  assertAccountHomedHere: async () => {
+    if (multiBay && homeBay !== "bay-0") {
+      throw Object.assign(new Error("account is not homed on this bay"), {
+        code: 409,
+      });
+    }
+  },
 }));
 jest.mock("@cocalc/server/inter-bay/fabric", () => ({
   getInterBayFabricClient: () => ({ fabric: true }),

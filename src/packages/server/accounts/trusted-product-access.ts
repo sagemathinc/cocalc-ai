@@ -64,10 +64,15 @@ export async function getAccountProductAccessTrust(
     await import("@cocalc/conat/inter-bay/account-facts");
   const { getInterBayFabricClient } =
     await import("@cocalc/server/inter-bay/fabric");
-  return await createInterBayAccountFactsClient({
-    client: getInterBayFabricClient(),
-    bay_id: home,
-  }).productAccessTrust({ account_id });
+  const { forgetAccountHomeOn409 } = await import("./home-bay");
+  try {
+    return await createInterBayAccountFactsClient({
+      client: getInterBayFabricClient(),
+      bay_id: home,
+    }).productAccessTrust({ account_id });
+  } catch (err) {
+    return forgetAccountHomeOn409(account_id, err);
+  }
 }
 
 export async function getAccountProductAccessTrustLocal(

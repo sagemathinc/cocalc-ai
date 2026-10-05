@@ -7,7 +7,7 @@
 
 import type { InterBayAccountFactsApi } from "@cocalc/conat/inter-bay/account-facts";
 import { isValidUUID } from "@cocalc/util/misc";
-import { remoteHomeBay } from "./home-bay";
+import { assertAccountHomedHere } from "./home-bay";
 import userIsInGroup from "./is-in-group";
 import { getAccountProductAccessTrustLocal } from "./trusted-product-access";
 
@@ -16,11 +16,7 @@ async function assertHomedHere(account_id: string): Promise<void> {
     throw new Error("invalid account_id");
   }
   // Never forward a second time: only the home bay answers.
-  if ((await remoteHomeBay(account_id)) != null) {
-    throw Object.assign(new Error("account is not homed on this bay"), {
-      code: 409,
-    });
-  }
+  await assertAccountHomedHere(account_id);
 }
 
 export const accountFactsHome: InterBayAccountFactsApi = {

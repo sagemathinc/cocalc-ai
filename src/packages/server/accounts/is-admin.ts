@@ -1,7 +1,7 @@
 import userIsInGroup from "./is-in-group";
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import { isMultiBayCluster } from "@cocalc/server/cluster-config";
-import { directoryRemoteHomeBay, homedHere } from "./home-bay";
+import { forgetAccountHomeOn409, resolveAccountHome } from "./home-bay";
 
 export default async function isAdmin(
   account_id?: string,
@@ -15,30 +15,31 @@ export default async function isAdmin(
   }
   // Admin status is account-home state: answer from the local row only when
   // the account is homed here, otherwise ask its home bay.
-  const { rows } = await (client ?? getPool("long")).query<{
-    groups: string[] | null;
-    home_bay_id: string | null;
-  }>("SELECT groups, home_bay_id FROM accounts WHERE account_id=$1", [
-    account_id,
-  ]);
-  const local = rows[0];
-  if (local != null && homedHere(local.home_bay_id)) {
-    return !!local.groups?.includes("admin");
-  }
-  const home = await directoryRemoteHomeBay(account_id);
-  if (home == null) {
-    return !!local?.groups?.includes("admin");
+  const home = await resolveAccountHome(account_id, client);
+  if (home.kind === "absent") return false;
+  if (home.kind === "here") {
+    const { rows } = await (client ?? getPool("long")).query<{
+      groups: string[] | null;
+    }>(
+      "SELECT groups FROM accounts WHERE account_id=$1 AND deleted IS NOT TRUE",
+      [account_id],
+    );
+    return !!rows[0]?.groups?.includes("admin");
   }
   const { createInterBayAccountFactsClient } =
     await import("@cocalc/conat/inter-bay/account-facts");
   const { getInterBayFabricClient } =
     await import("@cocalc/server/inter-bay/fabric");
-  return (
-    (await createInterBayAccountFactsClient({
-      client: getInterBayFabricClient(),
-      bay_id: home,
-    }).isAdmin({ account_id })) === true
-  );
+  try {
+    return (
+      (await createInterBayAccountFactsClient({
+        client: getInterBayFabricClient(),
+        bay_id: home.bay_id,
+      }).isAdmin({ account_id })) === true
+    );
+  } catch (err) {
+    return forgetAccountHomeOn409(account_id, err);
+  }
 }
 
 export async function getAdmins(): Promise<Set<string>> {
