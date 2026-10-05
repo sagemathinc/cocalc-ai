@@ -614,6 +614,21 @@ describe("signing in to GitHub", () => {
     expect(createMock).not.toHaveBeenCalled();
   });
 
+  it("keeps rejected tokens for a later attempt when revoking them fails", async () => {
+    pendingSignIn("github");
+    const fetchImpl = github({
+      [GITHUB_TOKEN_URL]: { ...githubTokens, expires_in: 9 * 3600 },
+      [GITHUB_REVOKE]: { status: 503 },
+    });
+    await expect(poll("github", fetchImpl)).rejects.toThrow(
+      "longer than allowed",
+    );
+    expect(revokes(fetchImpl)).toHaveLength(1);
+    const rescue = createMock.mock.calls.at(-1)![0];
+    expect(rescue.selector.kind).toBe("github-token-cleanup");
+    expect(JSON.parse(rescue.payload).tokens.refresh_token).toBe("ghr_new");
+  });
+
   it("stores a description without control characters", async () => {
     pendingSignIn("cloudflare");
     github({
@@ -653,16 +668,16 @@ describe("signing in to GitHub", () => {
     );
     expect(revokes(fetchImpl)).toHaveLength(1);
     const rescue = createMock.mock.calls.at(-1)![0];
-    expect(rescue.selector.kind).toBe("github-device-login");
+    // A kind of its own that no lease sweep removes.
+    expect(rescue.selector.kind).toBe("github-token-cleanup");
     expect(rescue.maxActive).toBeUndefined();
-    expect(JSON.parse(rescue.payload)).toEqual(
+    expect(rescue.metadata.lease_expires_at).toBeUndefined();
+    expect(JSON.parse(rescue.payload).tokens).toEqual(
       expect.objectContaining({
-        cleanup_pending: true,
-        exchanged: expect.objectContaining({ access_token: "ghu_new" }),
+        client_id: "Iv23test",
+        access_token: "ghu_new",
+        refresh_token: "ghr_new",
       }),
-    );
-    expect(Date.parse(rescue.metadata.lease_expires_at)).toBeGreaterThan(
-      NOW + 199 * 86_400_000,
     );
   });
 
@@ -892,10 +907,33 @@ describe("signing in to Cloudflare", () => {
   });
 
   it("a completion already under way asks Cloudflare nothing more", async () => {
-    pendingSignIn("cloudflare", { claim: "other" });
+    pendingSignIn("cloudflare", { claim: "other", claim_at: NOW - 1000 });
     const fetchImpl = github({});
     await expect(complete()).resolves.toEqual({ status: "pending" });
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("a claim left by a stopped hub expires", async () => {
+    pendingSignIn("cloudflare", { claim: "other", claim_at: NOW - 61_000 });
+    const fetchImpl = github({ [CF_TOKEN_URL]: { error: "invalid_grant" } });
+    await expect(complete()).resolves.toEqual({ status: "expired" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("when the site's budget is used up, releases the claim for a retry", async () => {
+    github({ [CF_TOKEN_URL]: { error: "invalid_grant" } });
+    for (let i = 0; i < 30; i++) {
+      pendingSignIn("cloudflare");
+      await complete();
+    }
+    pendingSignIn("cloudflare");
+    const fetchImpl = github({ [CF_TOKEN_URL]: cfTokens });
+    await expect(complete()).resolves.toEqual({
+      status: "pending",
+      slow_down: true,
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(JSON.parse(signInRow!.payload).claim).toBeUndefined();
   });
 
   it("an expired or reused code ends the sign-in", async () => {
@@ -1234,6 +1272,21 @@ describe("turn tokens", () => {
     expect(stored.refresh_token).toBe("cf-refresh");
   });
 
+  it("keeps rotated tokens it rejects when revoking them fails", async () => {
+    const { issueCliConnectorTurnTokens } = await import("./cli-connectors");
+    connection.payload = JSON.stringify(githubPayload(NOW + 60_000));
+    const fetchImpl = github({
+      [GITHUB_TOKEN_URL]: { ...githubTokens, expires_in: 9 * 3600 },
+      [GITHUB_REVOKE]: { status: 503 },
+    });
+    await expect(issueCliConnectorTurnTokens(request)).resolves.toEqual([]);
+    expect(revokes(fetchImpl)).toHaveLength(1);
+    expect(connection.metadata.needs_reconnect).toBe(true);
+    const rescue = createMock.mock.calls.at(-1)![0];
+    expect(rescue.selector.kind).toBe("github-token-cleanup");
+    expect(JSON.parse(rescue.payload).tokens.access_token).toBe("ghu_new");
+  });
+
   it("gives no GitHub token when the site's app is gone or changed", async () => {
     const { issueCliConnectorTurnTokens } = await import("./cli-connectors");
     settings.github_connector_client_id = "";
@@ -1245,6 +1298,56 @@ describe("turn tokens", () => {
 });
 
 describe("disconnecting", () => {
+  it("a connection whose revocation failed is hidden, unused, and retried", async () => {
+    const {
+      listCliConnections,
+      issueCliConnectorTurnTokens,
+      startCliConnectorSignIn,
+    } = await import("./cli-connectors");
+    connection.metadata = { description: "@octo", disconnecting: true };
+    listMock.mockImplementation(async ({ kind }) =>
+      kind === "github-cli-connection"
+        ? [
+            {
+              id: connectionId,
+              metadata: connection.metadata,
+              created: new Date(),
+            },
+          ]
+        : [],
+    );
+    await expect(
+      listCliConnections({ account_id: accountId }),
+    ).resolves.toEqual([]);
+    await expect(
+      issueCliConnectorTurnTokens({
+        account_id: accountId,
+        host_id: hostId,
+        agent_id: agentId,
+        source_project_id: projectId,
+        run_id: runId,
+        turn_ref,
+      }),
+    ).resolves.toEqual([]);
+    const fetchImpl = github({
+      [GITHUB_REVOKE]: { status: 204 },
+      "POST https://github.com/login/device/code": {
+        device_code: "d",
+        user_code: "U",
+        verification_uri: "https://github.com/login/device",
+      },
+    });
+    await startCliConnectorSignIn({
+      account_id: accountId,
+      connector: "github",
+    });
+    expect(revokes(fetchImpl)).toHaveLength(1);
+    expect(revokeMock).toHaveBeenCalledWith({
+      id: connectionId,
+      owner_account_id: accountId,
+    });
+  });
+
   it("revokes both Cloudflare tokens, or keeps them for a later attempt", async () => {
     const { disconnectCliConnection } = await import("./cli-connectors");
     const cfConnection = {
@@ -1260,8 +1363,9 @@ describe("disconnecting", () => {
       }),
       metadata: {},
     };
+    connection = cfConnection;
     getByIdMock.mockImplementation(async ({ selector }) =>
-      selector.kind === "cloudflare-cli-connection" ? cfConnection : undefined,
+      selector.kind === "cloudflare-cli-connection" ? connection : undefined,
     );
     let fetchImpl = github({ [CF_REVOKE]: {} });
     await disconnectCliConnection({
@@ -1273,17 +1377,18 @@ describe("disconnecting", () => {
         new URLSearchParams(init.body).get("token"),
       ),
     ).toEqual(["cf-refresh", "cf-access"]);
-    expect(createMock).not.toHaveBeenCalled();
+    expect(revokeMock).toHaveBeenCalledTimes(1);
+    // Revocation fails: the original record stays, cleanup only.
+    connection = { ...cfConnection, metadata: {} };
+    revokeMock.mockClear();
     fetchImpl = github({ [CF_REVOKE]: { status: 503 } });
     await disconnectCliConnection({
       account_id: accountId,
       connection_id: connectionId,
     });
-    const rescue = createMock.mock.calls.at(-1)![0];
-    expect(rescue.selector.kind).toBe("cloudflare-oauth-login");
-    expect(JSON.parse(rescue.payload).exchanged.refresh_token).toBe(
-      "cf-refresh",
-    );
+    expect(revokeMock).not.toHaveBeenCalled();
+    expect(connection.metadata.disconnecting).toBe(true);
+    expect(JSON.parse(connection.payload).refresh_token).toBe("cf-refresh");
   });
 
   it("turns off grants and revokes only a CLI connection", async () => {

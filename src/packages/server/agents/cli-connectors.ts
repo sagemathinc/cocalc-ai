@@ -38,6 +38,7 @@ import {
 import {
   getGithubConnectorConfig,
   GithubReconnectRequired,
+  ProviderRejectedTokens,
   pollGithubDeviceLogin,
   githubLogin,
   refreshGithubConnection,
@@ -171,6 +172,7 @@ export async function listCliConnections({
       kind,
       scope: "account",
     })) {
+      if (row.metadata?.disconnecting) continue;
       result.push({
         connection_id: row.id,
         connector,
@@ -226,35 +228,47 @@ function cleanupLease(now: number) {
 }
 
 /**
- * Durably keep tokens whose revocation could not be confirmed, in a sign-in
- * record of their own, so a later sign-in start retries the revocation.
+ * Tokens whose revocation could not be confirmed, kept (encrypted) for a
+ * later attempt. This kind is never lease-swept: a record goes away only once
+ * its revocation is confirmed.
  */
+function cleanupSelector(
+  account_id: string,
+  connector: CliConnector,
+): ExternalCredentialSelector {
+  return {
+    provider: CLI_CONNECTOR_INFO[connector].provider,
+    kind: `${connector}-token-cleanup`,
+    scope: "account",
+    owner_account_id: account_id,
+  };
+}
+
 async function rescueUnrevokedTokens({
   owner,
   connector,
-  connection,
+  tokens,
   now,
 }: {
   owner: string;
   connector: CliConnector;
-  connection: ProviderConnection;
+  tokens: ProviderTokens;
   now: number;
 }): Promise<void> {
   try {
     await createExternalCredential({
-      selector: pendingSelector(owner, connector),
+      selector: cleanupSelector(owner, connector),
       payload: JSON.stringify({
         version: 1,
-        type: deviceLoginType(connector),
-        client_id: connection.client_id,
-        expires_at: now,
-        interval: 0,
-        next_poll_at: 0,
-        exchanged: connection,
-        exchanged_at: now,
-        cleanup_pending: true,
+        type: "token-cleanup",
+        tokens: {
+          client_id: tokens.client_id,
+          access_token: tokens.access_token,
+          refresh_token: tokens.refresh_token,
+        },
+        at: now,
       }),
-      metadata: { connector, ...cleanupLease(now) },
+      metadata: { connector },
     });
   } catch (err) {
     logger.error("CLI connector tokens could not be revoked or kept", {
@@ -264,6 +278,75 @@ async function rescueUnrevokedTokens({
     });
   }
 }
+
+/** Revoke tokens, or keep them for a later attempt when that fails. */
+async function disposeTokens({
+  owner,
+  connector,
+  tokens,
+  now,
+}: {
+  owner: string;
+  connector: CliConnector;
+  tokens: ProviderTokens;
+  now: number;
+}): Promise<void> {
+  if (!(await revokeProviderConnection(connector, tokens))) {
+    await rescueUnrevokedTokens({ owner, connector, tokens, now });
+  }
+}
+
+/**
+ * Retry revocations left by earlier failures: cleanup records, and
+ * connections a disconnect could not revoke yet.
+ */
+async function retryPendingRevocations({
+  owner,
+  connector,
+}: {
+  owner: string;
+  connector: CliConnector;
+}): Promise<void> {
+  const cleanup = cleanupSelector(owner, connector);
+  for (const row of await listExternalCredentials({
+    owner_account_id: owner,
+    provider: cleanup.provider,
+    kind: cleanup.kind,
+    scope: "account",
+  })) {
+    const record = await getExternalCredentialById({
+      id: row.id,
+      selector: cleanup,
+      touchLastUsed: false,
+    });
+    const tokens = record ? parseJson(record.payload)?.tokens : undefined;
+    if (!tokens) continue;
+    if (await revokeProviderConnection(connector, tokens)) {
+      await revokeExternalCredential({ id: row.id, owner_account_id: owner });
+    }
+  }
+  const connections = selector(owner, connector);
+  for (const row of await listExternalCredentials({
+    owner_account_id: owner,
+    provider: connections.provider,
+    kind: connections.kind,
+    scope: "account",
+  })) {
+    if (!row.metadata?.disconnecting) continue;
+    const record = await getExternalCredentialById({
+      id: row.id,
+      selector: connections,
+      touchLastUsed: false,
+    });
+    const tokens = record ? parseJson(record.payload) : undefined;
+    if (tokens && (await revokeProviderConnection(connector, tokens))) {
+      await revokeExternalCredential({ id: row.id, owner_account_id: owner });
+    }
+  }
+}
+
+// A completion claim left by a stopped hub expires after this.
+const CLAIM_MS = 60_000;
 // How long a reserved sign-in may wait for the provider's device code.
 const STARTING_LEASE_MS = 15 * 60_000;
 
@@ -271,6 +354,12 @@ type ProviderConfig =
   | { connector: "github"; config: GithubConnectorConfig }
   | { connector: "cloudflare"; config: CloudflareConnectorConfig };
 type ProviderConnection = GithubAppConnection | CloudflareConnection;
+/** What revoking needs: the issuing client and whichever tokens exist. */
+type ProviderTokens = {
+  client_id: string;
+  access_token?: string;
+  refresh_token?: string;
+};
 
 /**
  * A pending sign-in. The hub admits at most one provider poll per interval;
@@ -285,6 +374,7 @@ type PendingSignIn = (GithubDeviceLogin | CloudflareAuthLogin) & {
   next_poll_at: number;
   /** The poll or completion admitted to ask the provider. */
   claim?: string;
+  claim_at?: number;
   exchanged?: ProviderConnection;
   exchanged_at?: number;
   /** Not stored as a connection; only revocation remains to be confirmed. */
@@ -326,23 +416,25 @@ function parsePending(
  */
 async function revokeProviderConnection(
   connector: CliConnector,
-  connection: ProviderConnection,
+  connection: ProviderTokens,
 ): Promise<boolean> {
   try {
     if (connector === "github") {
       const config = await getGithubConnectorConfig();
       if (!config || config.client_id !== connection.client_id) return false;
-      await revokeGithubToken({ config, token: connection.access_token });
+      // GitHub revokes a user token by its access token.
+      if (connection.access_token) {
+        await revokeGithubToken({ config, token: connection.access_token });
+      } else if (connection.refresh_token) {
+        return false;
+      }
       return true;
     }
     const config = await getCloudflareConnectorConfig();
     if (!config || config.client_id !== connection.client_id) return false;
     for (const hint of ["refresh_token", "access_token"] as const) {
-      await revokeCloudflareToken({
-        config,
-        token: (connection as CloudflareConnection)[hint],
-        hint,
-      });
+      const token = connection[hint];
+      if (token) await revokeCloudflareToken({ config, token, hint });
     }
     return true;
   } catch {
@@ -461,6 +553,7 @@ export async function startCliConnectorSignIn({
     allow_actor_impersonation: false,
   });
   await recoverExchangedSignIns({ owner, connector, now });
+  await retryPendingRevocations({ owner, connector });
   const sel = pendingSelector(owner, connector);
   const lease = (at: number) => ({
     connector,
@@ -614,7 +707,12 @@ async function runSignIn({
       }
       admission = { kind: "admitted" };
       return {
-        payload: JSON.stringify({ ...pending, ...decision.changes, claim }),
+        payload: JSON.stringify({
+          ...pending,
+          ...decision.changes,
+          claim,
+          claim_at: now,
+        }),
       };
     },
   });
@@ -644,9 +742,16 @@ async function runSignIn({
             return;
           }
           if (!admitProviderRequest(provider.config.client_id, now)) {
-            // The site's shared budget is used up: try again next interval.
+            // The site's shared budget is used up: release the claim so the
+            // same call can be retried shortly.
             exchange = { status: "pending", slow_down: true };
-            return;
+            return {
+              payload: JSON.stringify({
+                ...pending,
+                claim: undefined,
+                claim_at: undefined,
+              }),
+            };
           }
           const result = await ask(provider, pending);
           if (result.status === "pending") {
@@ -678,16 +783,12 @@ async function runSignIn({
         },
       });
     } catch (err) {
-      // Issued tokens that could not be recorded must not stay valid; if
-      // that cannot be confirmed, keep them for a later attempt.
-      if (issued && !(await revokeProviderConnection(connector, issued))) {
-        await rescueUnrevokedTokens({
-          owner,
-          connector,
-          connection: issued,
-          now,
-        });
-      }
+      // Issued tokens that could not be recorded, or that were rejected,
+      // must not stay valid; if that cannot be confirmed, keep them.
+      const tokens =
+        issued ??
+        (err instanceof ProviderRejectedTokens ? err.tokens : undefined);
+      if (tokens) await disposeTokens({ owner, connector, tokens, now });
       throw err;
     }
     if (exchange.status === "pending") return exchange;
@@ -848,8 +949,9 @@ export async function completeCliConnectorSignIn({
       ) {
         return { admitted: false, status: { status: "expired" } };
       }
-      // A second completion while one is under way asks nothing.
-      if (pending.claim) {
+      // A second completion while one is under way asks nothing; a claim
+      // left by a stopped hub expires.
+      if (pending.claim && now - (pending.claim_at ?? 0) < CLAIM_MS) {
         return { admitted: false, status: { status: "pending" } };
       }
       return { admitted: true };
@@ -885,8 +987,10 @@ export async function disconnectCliConnection({
       }),
     ),
   );
-  const connection = found.find(Boolean);
-  if (!connection) throw Error("connection is unavailable");
+  const index = found.findIndex(Boolean);
+  if (index < 0) throw Error("connection is unavailable");
+  const connector = (Object.keys(CLI_CONNECTOR_INFO) as CliConnector[])[index];
+  const connection = found[index]!;
   // Stopping access never needs fresh authentication.
   await getPool().query(
     `UPDATE agent_connector_grants
@@ -894,30 +998,20 @@ export async function disconnectCliConnection({
       WHERE account_id=$1 AND connection_id=$2`,
     [owner, id],
   );
-  await revokeExternalCredential({ id, owner_account_id: owner });
-  // Also invalidate the tokens at the provider. If that cannot be
-  // confirmed, keep them (encrypted, cleanup only) for a later attempt.
-  const tokens =
-    parseGithubConnection(connection.payload) ??
-    parseCloudflareConnection(connection.payload);
-  const connector: CliConnector | undefined = parseGithubConnection(
-    connection.payload,
-  )
-    ? "github"
-    : tokens
-      ? "cloudflare"
-      : undefined;
-  if (
-    tokens &&
-    connector &&
-    !(await revokeProviderConnection(connector, tokens))
-  ) {
-    await rescueUnrevokedTokens({
-      owner,
-      connector,
-      connection: tokens,
-      now: Date.now(),
-    });
+  // The record becomes cleanup-only (never used again, not listed) and stays
+  // until the provider confirms the tokens are revoked; a later sign-in start
+  // retries otherwise.
+  await updateExternalCredentialPayloadLocked({
+    selector: selector(owner, connector),
+    id,
+    update: async (credential) => ({
+      payload: credential.payload,
+      metadata: { ...credential.metadata, disconnecting: true },
+    }),
+  });
+  const tokens = parseJson(connection.payload);
+  if (tokens && (await revokeProviderConnection(connector, tokens))) {
+    await revokeExternalCredential({ id, owner_account_id: owner });
   }
 }
 
@@ -1222,7 +1316,12 @@ async function connectorTurnToken({
     selector: selector(owner, connector),
     id: connection_id,
     update: async (credential) => {
-      if (credential.metadata?.needs_reconnect) return;
+      if (
+        credential.metadata?.needs_reconnect ||
+        credential.metadata?.disconnecting
+      ) {
+        return;
+      }
       try {
         const result = await refresh!(credential.payload);
         if (!result) return;
@@ -1231,7 +1330,10 @@ async function connectorTurnToken({
           ? { payload: JSON.stringify(result.connection) }
           : undefined;
       } catch (err) {
-        if (
+        if (err instanceof ProviderRejectedTokens) {
+          // Rotated tokens CoCalc will not use: revoke them or keep them.
+          await disposeTokens({ owner, connector, tokens: err.tokens, now });
+        } else if (
           !(err instanceof GithubReconnectRequired) &&
           !(err instanceof CloudflareReconnectRequired)
         ) {

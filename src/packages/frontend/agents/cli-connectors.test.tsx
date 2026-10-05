@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { NamedAgentDirectory } from "@cocalc/conat/agents/personal";
 import {
+  RETRY,
   browser,
   CliConnectorAgentModal,
   CliConnectorSection,
@@ -266,6 +267,26 @@ describe("Settings > Connectors section", () => {
     // Only once.
     render(<CliConnectorSection connector="cloudflare" />);
     expect(mockApi.completeCliConnectorSignIn).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a completion the hub deferred", async () => {
+    RETRY.ms = 1;
+    window.history.replaceState(
+      {},
+      "",
+      "/settings/connectors?state=cocalc-cf.login-1.nonce&code=the-code",
+    );
+    mockApi.completeCliConnectorSignIn
+      .mockResolvedValueOnce({ status: "pending", slow_down: true })
+      .mockResolvedValueOnce({
+        status: "connected",
+        connection: connection("conn-3", "me@example.com (R2 storage)"),
+      });
+    render(<CliConnectorSection connector="cloudflare" />);
+    expect(
+      await screen.findByText("Connected me@example.com (R2 storage)."),
+    ).toBeVisible();
+    expect(mockApi.completeCliConnectorSignIn).toHaveBeenCalledTimes(2);
   });
 
   it("says when the user declined at Cloudflare", async () => {

@@ -2167,7 +2167,8 @@ In the Cloudflare dashboard of the account that will own the client, go to
 Administrator, Administrator or OAuth Client Write role), and set:
 
 - **Client name:** your site's name; users see it when they approve.
-- **Response type:** \`code\`. **Grant type:** authorization code.
+- **Response type:** \`code\`. **Grant types:** authorization code and
+  refresh token (CoCalc refreshes users' tokens; without it, sign-ins fail).
 - **Token authentication method:** \`client_secret_basic\`.
 - **Redirect URL:** \`https://<your site>/settings/connectors\`, exactly
   (including any base path your site uses).

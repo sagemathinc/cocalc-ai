@@ -19,7 +19,7 @@ import {
   cloudflareScopes,
   type CloudflareScopePreset,
 } from "@cocalc/util/ai/cli-connectors";
-import { boundedExpiry } from "./cli-connector-github";
+import { boundedExpiry, rejectedTokens } from "./cli-connector-github";
 
 const DASH = "https://dash.cloudflare.com";
 const API = "https://api.cloudflare.com/client/v4";
@@ -233,21 +233,6 @@ function connectionFromTokens(
   };
 }
 
-async function revokeIssued(
-  config: CloudflareConnectorConfig,
-  body: Record<string, any>,
-  fetchImpl: Fetch,
-): Promise<void> {
-  for (const hint of ["refresh_token", "access_token"] as const) {
-    const token = body[hint];
-    if (typeof token === "string" && token) {
-      await revokeCloudflareToken({ config, token, hint, fetchImpl }).catch(
-        () => undefined,
-      );
-    }
-  }
-}
-
 export type CloudflareExchangeResult =
   | { status: "expired" | "denied" }
   | { status: "connected"; connection: CloudflareConnection };
@@ -296,9 +281,7 @@ export async function exchangeCloudflareCode({
       connection: connectionFromTokens(body, login, now),
     };
   } catch (err) {
-    // A token we will not use should not stay valid either.
-    await revokeIssued(config, body, fetchImpl);
-    throw err;
+    throw rejectedTokens(err, body, config.client_id);
   }
 }
 
@@ -358,9 +341,8 @@ export async function refreshCloudflareConnection({
       refreshed: true,
     };
   } catch (err) {
-    // Unusable new tokens are revoked; the connection needs a new sign-in.
-    await revokeIssued(config, body, fetchImpl);
-    throw new CloudflareReconnectRequired(`${(err as Error).message}`);
+    // The connection needs a new sign-in; the caller disposes of the tokens.
+    throw rejectedTokens(err, body, config.client_id, true);
   }
 }
 

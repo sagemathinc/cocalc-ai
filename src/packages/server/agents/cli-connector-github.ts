@@ -236,15 +236,7 @@ export async function pollGithubDeviceLogin({
   try {
     connection = connectionFromTokens(body, config.client_id, now);
   } catch (err) {
-    // A token we will not use should not stay valid either.
-    if (typeof body.access_token === "string") {
-      await revokeGithubToken({
-        config,
-        token: body.access_token,
-        fetchImpl,
-      }).catch(() => undefined);
-    }
-    throw err;
+    throw rejectedTokens(err, body, config.client_id);
   }
   // The caller now owns these tokens: it must store or revoke them.
   return { status: "connected", connection };
@@ -272,6 +264,45 @@ export async function githubLogin(
 }
 
 export class GithubReconnectRequired extends Error {}
+
+/**
+ * The provider issued tokens CoCalc will not use (malformed, or living too
+ * long). They are still valid until revoked, so they go to the caller, which
+ * revokes them or keeps them for a later attempt; never just dropped.
+ */
+export class ProviderRejectedTokens extends Error {
+  constructor(
+    message: string,
+    readonly tokens: {
+      client_id: string;
+      access_token?: string;
+      refresh_token?: string;
+    },
+    /** From a refresh: the connection needs a new sign-in. */
+    readonly reconnect = false,
+  ) {
+    super(message);
+  }
+}
+
+export function rejectedTokens(
+  err: unknown,
+  body: Record<string, any>,
+  client_id: string,
+  reconnect = false,
+): ProviderRejectedTokens {
+  const token = (value: unknown) =>
+    typeof value === "string" && value ? value : undefined;
+  return new ProviderRejectedTokens(
+    `${(err as Error)?.message ?? err}`,
+    {
+      client_id,
+      access_token: token(body.access_token),
+      refresh_token: token(body.refresh_token),
+    },
+    reconnect,
+  );
+}
 
 /**
  * The connection with an access token good for at least the refresh margin,
@@ -314,15 +345,8 @@ export async function refreshGithubConnection({
       refreshed: true,
     };
   } catch (err) {
-    // Unusable new tokens are revoked; the connection needs a new sign-in.
-    if (typeof body.access_token === "string") {
-      await revokeGithubToken({
-        config,
-        token: body.access_token,
-        fetchImpl,
-      }).catch(() => undefined);
-    }
-    throw new GithubReconnectRequired(`${(err as Error).message}`);
+    // The connection needs a new sign-in; the caller disposes of the tokens.
+    throw rejectedTokens(err, body, config.client_id, true);
   }
 }
 

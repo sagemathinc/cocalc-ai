@@ -87,6 +87,9 @@ function takeCloudflareCallback(): CloudflareCallback | undefined {
 }
 
 let cloudflareCallback = takeCloudflareCallback();
+// Between attempts to complete a Cloudflare sign-in the hub deferred
+// (changeable in tests).
+export const RETRY = { ms: 5000 };
 
 /** The pending redirect back from Cloudflare, handed out once. */
 export function consumeCloudflareCallback(): CloudflareCallback | undefined {
@@ -636,32 +639,43 @@ export function CliConnectorSection({
       });
       return;
     }
-    personalAgentApi()
-      .completeCliConnectorSignIn({
-        connector,
-        state: callback.state,
-        code: callback.code,
-      })
-      .then(
-        (result) => {
-          refreshCliConnectors();
-          setReturned(
-            result.status === "connected"
-              ? {
-                  type: "success",
-                  message: `Connected ${result.connection.description}.`,
-                }
-              : {
-                  type: "error",
-                  message:
-                    result.status === "denied"
-                      ? "The sign-in was declined on Cloudflare."
+    // A completion the hub is still working on (or deferred) is retried
+    // with the same code for a while.
+    const completeSignIn = async () => {
+      for (let attempt = 0; ; attempt++) {
+        const result = await personalAgentApi().completeCliConnectorSignIn({
+          connector,
+          state: callback.state,
+          code: callback.code!,
+        });
+        if (result.status !== "pending" || attempt >= 12) return result;
+        await new Promise((resolve) =>
+          setTimeout(resolve, RETRY.ms),
+        );
+      }
+    };
+    completeSignIn().then(
+      (result) => {
+        refreshCliConnectors();
+        setReturned(
+          result.status === "connected"
+            ? {
+                type: "success",
+                message: `Connected ${result.connection.description}.`,
+              }
+            : {
+                type: "error",
+                message:
+                  result.status === "denied"
+                    ? "The sign-in was declined on Cloudflare."
+                    : result.status === "pending"
+                      ? "Cloudflare is busy; connect again in a minute."
                       : "This sign-in expired. Connect again.",
-                },
-          );
-        },
-        (err) => setReturned({ type: "error", message: `${err}` }),
-      );
+              },
+        );
+      },
+      (err) => setReturned({ type: "error", message: `${err}` }),
+    );
   }, [connector]);
   const connections = (data?.connections ?? []).filter(
     (connection) => connection.connector === connector,

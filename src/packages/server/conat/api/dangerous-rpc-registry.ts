@@ -42,6 +42,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "starts a GitHub or Cloudflare sign-in whose tokens agents may later act with",
   },
+  "agent.completeCliConnectorSignIn": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "continues a sign-in started with fresh auth; bound to it by an account-scoped secret nonce and PKCE",
+  },
   "agent.saveCliConnectorGrant": {
     decision: "fresh-auth-required",
     reason:
