@@ -280,6 +280,15 @@ context rather than consuming another cache slot. This is a local daemon limit,
 not a substitute for server-side account and API-key resource limits.
 These file commands do not require the project to be running.
 `project sync forward ...` uses `reflect-sync` for SSH forward sessions.
+`project browser connect` launches Chrome/Chromium on this computer with a
+throwaway profile and makes its DevTools endpoint reachable at
+`127.0.0.1:9222` (`--port`) inside the project, so agents there can drive it
+over the Chrome DevTools Protocol. It runs in the foreground; closing the
+browser or Ctrl-C removes the tunnel and the profile. By default the profile
+lives in RAM (tmpfs on Linux, a RAM disk on macOS) and never touches disk; use
+`--profile-storage disk` where no RAM-backed storage exists. The project-side
+port is bound to loopback only, and the command checks from inside the project
+that the port reaches this browser before reporting it ready.
 Use `project file check` to run a sanity suite (mkdir/put/list/cat/get/rg/fd/rm)
 against the current project context or `--project`.
 Use `project file check --bench --bench-runs <n>` to run repeated checks with
@@ -649,6 +658,7 @@ messages for the record of what happened and the card notice for current status.
 - `project sync forward create`
 - `project sync forward list`
 - `project sync forward terminate`
+- `project browser connect`
 - `project file list`
 - `project file cat`
 - `project file put`
