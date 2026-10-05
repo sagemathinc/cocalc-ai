@@ -328,11 +328,16 @@ export interface AgentApi {
   }): Promise<CliConnectorSetup>;
   /** Start signing in at the provider (fresh auth). */
   startCliConnectorSignIn(
-    opts: AgentHumanAuth & { connector: CliConnector },
+    opts: AgentHumanAuth & {
+      connector: CliConnector;
+      /** Cloudflare: what agents may do (CLOUDFLARE_SCOPE_PRESETS keys). */
+      presets?: string[];
+    },
   ): Promise<CliConnectorSignIn>;
   /** Poll a started sign-in; "connected" stores the connection. */
   pollCliConnectorSignIn(opts: {
     account_id?: string;
+    connector: CliConnector;
     login_id: string;
   }): Promise<CliConnectorSignInStatus>;
   /** Remove a connection and turn it off for every agent. */

@@ -10,6 +10,7 @@ export const EXTERNAL_CREDENTIAL_OPERATION_LEASE_KIND =
   "credential-operation-lease";
 export const EXTERNAL_CREDENTIAL_LEASE_EXPIRY_METADATA_KEY = "lease_expires_at";
 export const GITHUB_DEVICE_LOGIN_KIND = "github-device-login";
+export const CLOUDFLARE_DEVICE_LOGIN_KIND = "cloudflare-device-login";
 
 type PolicySelector = {
   provider: string;
@@ -45,6 +46,13 @@ const POLICIES: readonly ExternalCredentialProviderPolicy[] = [
     // A pending GitHub connector sign-in: gone once its device code expires.
     provider: "github",
     kind: GITHUB_DEVICE_LOGIN_KIND,
+    scope: "account",
+    leaseExpirationMetadataKey: EXTERNAL_CREDENTIAL_LEASE_EXPIRY_METADATA_KEY,
+  },
+  {
+    // A pending Cloudflare connector sign-in, likewise.
+    provider: "cloudflare",
+    kind: CLOUDFLARE_DEVICE_LOGIN_KIND,
     scope: "account",
     leaseExpirationMetadataKey: EXTERNAL_CREDENTIAL_LEASE_EXPIRY_METADATA_KEY,
   },

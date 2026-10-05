@@ -178,6 +178,7 @@ describe("signing in to GitHub", () => {
     );
     expect(started).toEqual(
       expect.objectContaining({
+        connector: "github",
         login_id: connectionId,
         user_code: "ABCD-1234",
         verification_uri: "https://github.com/login/device",
@@ -233,6 +234,7 @@ describe("signing in to GitHub", () => {
     await expect(
       pollCliConnectorSignIn({
         account_id: accountId,
+        connector: "github",
         login_id: connectionId,
         fetchImpl,
       }),
@@ -255,6 +257,7 @@ describe("signing in to GitHub", () => {
     });
     const result = await pollCliConnectorSignIn({
       account_id: accountId,
+      connector: "github",
       login_id: connectionId,
       fetchImpl,
     });
@@ -290,6 +293,7 @@ describe("signing in to GitHub", () => {
     await expect(
       pollCliConnectorSignIn({
         account_id: accountId,
+        connector: "github",
         login_id: connectionId,
         fetchImpl,
       }),
@@ -305,16 +309,173 @@ describe("signing in to GitHub", () => {
     const { pollCliConnectorSignIn } = await import("./cli-connectors");
     getByIdMock.mockResolvedValue(undefined);
     await expect(
-      pollCliConnectorSignIn({ account_id: accountId, login_id: connectionId }),
+      pollCliConnectorSignIn({
+        account_id: accountId,
+        connector: "github",
+        login_id: connectionId,
+      }),
     ).resolves.toEqual({ status: "expired" });
     expect(getByIdMock.mock.calls[0][0].selector.owner_account_id).toBe(
       accountId,
     );
     getByIdMock.mockResolvedValue(pending(Date.now() - 1));
     await expect(
-      pollCliConnectorSignIn({ account_id: accountId, login_id: connectionId }),
+      pollCliConnectorSignIn({
+        account_id: accountId,
+        connector: "github",
+        login_id: connectionId,
+      }),
     ).resolves.toEqual({ status: "expired" });
     expect(createMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("signing in to Cloudflare", () => {
+  it("asks only for the scopes of the chosen presets", async () => {
+    const { startCliConnectorSignIn } = await import("./cli-connectors");
+    const fetchImpl = github({
+      "POST https://dash.cloudflare.com/oauth2/device/auth": {
+        device_code: "cf-dev",
+        user_code: "WXYZ-9876",
+        verification_uri: "https://dash.cloudflare.com/oauth2/device",
+        expires_in: 600,
+        interval: 5,
+      },
+    });
+    const started = await startCliConnectorSignIn({
+      account_id: accountId,
+      session_hash: "s",
+      connector: "cloudflare",
+      presets: ["r2"],
+      fetchImpl,
+    });
+    expect(started.user_code).toBe("WXYZ-9876");
+    expect(freshAuthMock).toHaveBeenCalled();
+    const form = new URLSearchParams(fetchImpl.mock.calls[0][1].body);
+    expect(form.get("client_id")).toBe("cbca97e7-c331-4cdd-8fd8-e25a451b98bf");
+    expect(form.get("scope")!.split(" ").sort()).toEqual(
+      [
+        "account:read",
+        "user:read",
+        "workers-r2.read",
+        "workers-r2.write",
+        "workers-r2-bucket-item.read",
+        "workers-r2-bucket-item.write",
+        "offline_access",
+      ].sort(),
+    );
+    expect(createMock.mock.calls[0][0].selector).toEqual(
+      expect.objectContaining({
+        provider: "cloudflare",
+        kind: "cloudflare-device-login",
+      }),
+    );
+  });
+
+  it("needs at least one known preset, and the site may turn it off", async () => {
+    const { startCliConnectorSignIn, getCliConnectorSetup } =
+      await import("./cli-connectors");
+    for (const presets of [undefined, [], ["everything"]]) {
+      await expect(
+        startCliConnectorSignIn({
+          account_id: accountId,
+          connector: "cloudflare",
+          presets: presets as any,
+        }),
+      ).rejects.toThrow(/Cloudflare/);
+    }
+    settings.cloudflare_connector_enabled = false as any;
+    await expect(
+      startCliConnectorSignIn({
+        account_id: accountId,
+        connector: "cloudflare",
+        presets: ["dns"],
+      }),
+    ).rejects.toThrow("Cloudflare is not set up on this site");
+    expect(
+      (await getCliConnectorSetup({ account_id: accountId })).cloudflare,
+    ).toEqual({ available: false });
+    expect(freshAuthMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a verification page outside dash.cloudflare.com", async () => {
+    const { startCliConnectorSignIn } = await import("./cli-connectors");
+    const fetchImpl = github({
+      "POST https://dash.cloudflare.com/oauth2/device/auth": {
+        device_code: "cf-dev",
+        user_code: "WXYZ-9876",
+        verification_uri: "https://dash.cloudflare.com.evil.example/device",
+      },
+    });
+    await expect(
+      startCliConnectorSignIn({
+        account_id: accountId,
+        connector: "cloudflare",
+        presets: ["dns"],
+        fetchImpl,
+      }),
+    ).rejects.toThrow("unexpected response");
+  });
+
+  it("stores the connection with who and what it allows", async () => {
+    const { pollCliConnectorSignIn } = await import("./cli-connectors");
+    getByIdMock.mockResolvedValue({
+      id: connectionId,
+      payload: JSON.stringify({
+        version: 1,
+        type: "cloudflare-device-login",
+        client_id: "cbca97e7-c331-4cdd-8fd8-e25a451b98bf",
+        device_code: "cf-dev",
+        presets: ["workers", "r2"],
+        expires_at: Date.now() + 600_000,
+      }),
+      metadata: {},
+    });
+    const fetchImpl = github({
+      "POST https://dash.cloudflare.com/oauth2/token": {
+        access_token: "cf-access",
+        expires_in: 3600,
+        refresh_token: "cf-refresh",
+      },
+      "GET https://api.cloudflare.com/client/v4/user": {
+        success: true,
+        result: { email: "me@example.com" },
+      },
+    });
+    const result = await pollCliConnectorSignIn({
+      account_id: accountId,
+      connector: "cloudflare",
+      login_id: connectionId,
+      fetchImpl,
+    });
+    expect(result).toEqual({
+      status: "connected",
+      connection: expect.objectContaining({
+        connector: "cloudflare",
+        description: "me@example.com (Workers & sites, R2 storage)",
+      }),
+    });
+    const saved = createMock.mock.calls[0][0];
+    expect(saved.selector.kind).toBe("cloudflare-cli-connection");
+    expect(JSON.parse(saved.payload)).toEqual(
+      expect.objectContaining({
+        type: "cloudflare-oauth",
+        presets: ["workers", "r2"],
+        refresh_token: "cf-refresh",
+      }),
+    );
+  });
+
+  it("a GitHub sign-in cannot be finished as Cloudflare", async () => {
+    const { pollCliConnectorSignIn } = await import("./cli-connectors");
+    await pollCliConnectorSignIn({
+      account_id: accountId,
+      connector: "cloudflare",
+      login_id: connectionId,
+    });
+    expect(getByIdMock.mock.calls[0][0].selector.kind).toBe(
+      "cloudflare-device-login",
+    );
   });
 });
 
@@ -553,6 +714,44 @@ describe("turn tokens", () => {
     fetchImpl.mockClear();
     await issueCliConnectorTurnTokens({ ...request, fetchImpl });
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("refreshes a Cloudflare token, keeping its refresh token if not rotated", async () => {
+    const { issueCliConnectorTurnTokens } = await import("./cli-connectors");
+    queryMock.mockResolvedValue({
+      rows: [{ ...grant, connector: "cloudflare" }],
+    });
+    connection = {
+      id: connectionId,
+      payload: JSON.stringify({
+        version: 2,
+        type: "cloudflare-oauth",
+        client_id: "cbca97e7-c331-4cdd-8fd8-e25a451b98bf",
+        presets: ["r2"],
+        access_token: "cf-old",
+        access_expires_at: NOW + 60_000,
+        refresh_token: "cf-refresh",
+      }),
+      metadata: { description: "me@example.com (R2 storage)" },
+    };
+    const fetchImpl = github({
+      "POST https://dash.cloudflare.com/oauth2/token": {
+        access_token: "cf-new",
+        expires_in: 3600,
+      },
+    });
+    const tokens = await issueCliConnectorTurnTokens({ ...request, fetchImpl });
+    expect(tokens).toEqual([
+      {
+        connector: "cloudflare",
+        token: "cf-new",
+        expires_at: NOW + HOUR,
+        description: "me@example.com (R2 storage)",
+      },
+    ]);
+    const stored = JSON.parse(connection.payload);
+    expect(stored.access_token).toBe("cf-new");
+    expect(stored.refresh_token).toBe("cf-refresh");
   });
 
   it("gives no GitHub token when the site's app is gone or changed", async () => {

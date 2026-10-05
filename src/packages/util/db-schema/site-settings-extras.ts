@@ -354,6 +354,8 @@ export type SiteSettingsExtrasKeys =
   | "github_connector_client_id"
   | "github_connector_client_secret"
   | "github_connector_app_url"
+  | "cloudflare_connector_enabled"
+  | "cloudflare_connector_client_id"
   | "github_block"
   | "prometheus_metrics"
   | "prometheus_metrics_allowlist"
@@ -1016,6 +1018,25 @@ export const EXTRAS: SettingsExtras = {
       value === "" ||
       /^https:\/\/github\.com\/apps\/[a-z0-9-]+\/?$/.test(value),
     tags: ["AI", "GitHub"],
+    group: "AI & Agents",
+    subgroup: "Agent Connectors",
+  },
+  cloudflare_connector_enabled: {
+    name: "Cloudflare Connector: Enabled",
+    desc: "Let users sign in to Cloudflare so their agents can use cf and wrangler during their turns. Needs no secrets: it uses the OAuth sign-in of Cloudflare's cf CLI with only the scopes each user chooses.",
+    default: "yes",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["AI", "Cloudflare"],
+    group: "AI & Agents",
+    subgroup: "Agent Connectors",
+  },
+  cloudflare_connector_client_id: {
+    name: "Cloudflare Connector: OAuth Client ID",
+    desc: "Optional. Blank uses the public client of Cloudflare's cf CLI. Set this only if your site has its own Cloudflare OAuth client with the device flow enabled.",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["AI", "Cloudflare"],
     group: "AI & Agents",
     subgroup: "Agent Connectors",
   },

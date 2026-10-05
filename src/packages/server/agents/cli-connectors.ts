@@ -42,6 +42,19 @@ import {
   type GithubDeviceLogin,
 } from "./cli-connector-github";
 import {
+  CloudflareReconnectRequired,
+  getCloudflareConnectorConfig,
+  pollCloudflareDeviceLogin,
+  presetLabels,
+  refreshCloudflareConnection,
+  revokeCloudflareToken,
+  startCloudflareDeviceLogin,
+  validPresets,
+  type CloudflareConnection,
+  type CloudflareDeviceLogin,
+} from "./cli-connector-cloudflare";
+import {
+  CLOUDFLARE_DEVICE_LOGIN_KIND,
   EXTERNAL_CREDENTIAL_LEASE_EXPIRY_METADATA_KEY,
   GITHUB_DEVICE_LOGIN_KIND,
 } from "@cocalc/server/external-credentials/provider-policy";
@@ -94,10 +107,25 @@ function parseGithubConnection(
     : undefined;
 }
 
-function pendingSelector(account_id: string): ExternalCredentialSelector {
+function parseCloudflareConnection(
+  payload: string,
+): CloudflareConnection | undefined {
+  const value = parseJson(payload);
+  return value?.version === 2 && value.type === "cloudflare-oauth"
+    ? value
+    : undefined;
+}
+
+function pendingSelector(
+  account_id: string,
+  connector: CliConnector,
+): ExternalCredentialSelector {
   return {
-    provider: "github",
-    kind: GITHUB_DEVICE_LOGIN_KIND,
+    provider: CLI_CONNECTOR_INFO[connector].provider,
+    kind:
+      connector === "github"
+        ? GITHUB_DEVICE_LOGIN_KIND
+        : CLOUDFLARE_DEVICE_LOGIN_KIND,
     scope: "account",
     owner_account_id: account_id,
   };
@@ -113,9 +141,10 @@ export async function getCliConnectorSetup({
 }): Promise<CliConnectorSetup> {
   requireUuid(account_id, "account_id");
   const github = await getGithubConnectorConfig();
+  const cloudflare = await getCloudflareConnectorConfig();
   return {
     github: { available: !!github, app_url: github?.app_url || undefined },
-    cloudflare: { available: false },
+    cloudflare: { available: !!cloudflare },
   };
 }
 
@@ -151,24 +180,33 @@ export async function listCliConnections({
 /**
  * Start signing in to a connector's provider (fresh authentication): the user
  * approves the returned code at the provider, then the browser polls.
+ * Cloudflare requests only the scopes of the chosen presets.
  */
 export async function startCliConnectorSignIn({
   account_id,
   session_hash,
   connector: connectorInput,
+  presets: presetsInput,
   fetchImpl,
 }: {
   account_id?: string;
   session_hash?: string;
   connector: string;
+  presets?: string[];
   fetchImpl?: Fetch;
 }): Promise<CliConnectorSignIn> {
   const owner = requireUuid(account_id, "account_id");
   const connector = requireConnector(connectorInput);
+  const presets =
+    connector === "cloudflare" ? validPresets(presetsInput) : undefined;
   await assertAccountHome(owner);
-  const config =
+  const github =
     connector === "github" ? await getGithubConnectorConfig() : undefined;
-  if (!config) {
+  const cloudflare =
+    connector === "cloudflare"
+      ? await getCloudflareConnectorConfig()
+      : undefined;
+  if (!github && !cloudflare) {
     throw Error(
       `${CLI_CONNECTOR_INFO[connector].label} is not set up on this site`,
     );
@@ -181,9 +219,15 @@ export async function startCliConnectorSignIn({
     require_second_factor: true,
     allow_actor_impersonation: false,
   });
-  const started = await startGithubDeviceLogin({ config, fetchImpl });
+  const started = github
+    ? await startGithubDeviceLogin({ config: github, fetchImpl })
+    : await startCloudflareDeviceLogin({
+        config: cloudflare!,
+        presets: presets!,
+        fetchImpl,
+      });
   const { id } = await createExternalCredential({
-    selector: pendingSelector(owner),
+    selector: pendingSelector(owner, connector),
     payload: JSON.stringify(started.login),
     metadata: {
       connector,
@@ -206,51 +250,92 @@ export async function startCliConnectorSignIn({
 /** Finish a sign-in once the user approved it at the provider. */
 export async function pollCliConnectorSignIn({
   account_id,
+  connector: connectorInput,
   login_id,
   fetchImpl,
 }: {
   account_id?: string;
+  connector: string;
   login_id: string;
   fetchImpl?: Fetch;
 }): Promise<CliConnectorSignInStatus> {
   const owner = requireUuid(account_id, "account_id");
+  const connector = requireConnector(connectorInput);
   const id = requireUuid(login_id, "login_id");
   await assertAccountHome(owner);
   const pending = await getExternalCredentialById({
     id,
-    selector: pendingSelector(owner),
+    selector: pendingSelector(owner, connector),
     touchLastUsed: false,
   });
-  const login = pending
-    ? (parseJson(pending.payload) as GithubDeviceLogin)
-    : undefined;
-  if (!login || login.type !== "github-device-login") {
-    return { status: "expired" };
-  }
-  const config = await getGithubConnectorConfig();
+  const login = pending ? parseJson(pending.payload) : undefined;
   const finish = () =>
     revokeExternalCredential({ id, owner_account_id: owner });
-  if (!config) {
-    await finish();
+  let result:
+    | { status: "pending"; slow_down?: boolean }
+    | { status: "expired" | "denied" }
+    | { status: "connected"; payload: object; description: string };
+  if (connector === "github" && login?.type === "github-device-login") {
+    const config = await getGithubConnectorConfig();
+    const polled = config
+      ? await pollGithubDeviceLogin({
+          config,
+          login: login as GithubDeviceLogin,
+          fetchImpl,
+        })
+      : ({ status: "expired" } as const);
+    result =
+      polled.status === "connected"
+        ? {
+            status: "connected",
+            payload: polled.connection,
+            description: `@${polled.login}`,
+          }
+        : polled;
+  } else if (
+    connector === "cloudflare" &&
+    login?.type === "cloudflare-device-login"
+  ) {
+    const config = await getCloudflareConnectorConfig();
+    const polled = config
+      ? await pollCloudflareDeviceLogin({
+          config,
+          login: login as CloudflareDeviceLogin,
+          fetchImpl,
+        })
+      : ({ status: "expired" } as const);
+    result =
+      polled.status === "connected"
+        ? {
+            status: "connected",
+            payload: polled.connection,
+            description: `${polled.email || "Cloudflare"} (${presetLabels(
+              polled.connection.presets,
+            )})`,
+          }
+        : polled;
+  } else {
     return { status: "expired" };
   }
-  const result = await pollGithubDeviceLogin({ config, login, fetchImpl });
   if (result.status === "pending") return result;
   await finish();
   if (result.status !== "connected") return result;
-  const description = `@${result.login}`;
   const { id: connection_id } = await createExternalCredential({
-    selector: selector(owner, "github"),
-    payload: JSON.stringify(result.connection),
-    metadata: { description, connector: "github", source: "github-app" },
+    selector: selector(owner, connector),
+    payload: JSON.stringify(result.payload),
+    metadata: {
+      description: result.description,
+      connector,
+      source: "device-flow",
+    },
     maxActive: MAX_CONNECTIONS_PER_CONNECTOR,
   });
   return {
     status: "connected",
     connection: {
       connection_id,
-      connector: "github",
-      description,
+      connector,
+      description: result.description,
       created: new Date(),
       last_used: null,
     },
@@ -288,13 +373,25 @@ export async function disconnectCliConnection({
     [owner, id],
   );
   await revokeExternalCredential({ id, owner_account_id: owner });
-  // Also invalidate the token at GitHub, best effort: CoCalc's copy is gone.
+  // Also invalidate the tokens at the provider, best effort: CoCalc's copy
+  // is gone either way.
   const github = parseGithubConnection(connection.payload);
-  const config = github ? await getGithubConnectorConfig() : undefined;
-  if (github && config && github.client_id === config.client_id) {
-    await revokeGithubToken({ config, token: github.access_token }).catch(
-      () => undefined,
-    );
+  const githubConfig = github ? await getGithubConnectorConfig() : undefined;
+  if (github && githubConfig?.client_id === github.client_id) {
+    await revokeGithubToken({
+      config: githubConfig,
+      token: github.access_token,
+    }).catch(() => undefined);
+  }
+  const cloudflare = parseCloudflareConnection(connection.payload);
+  const cloudflareConfig = cloudflare
+    ? await getCloudflareConnectorConfig()
+    : undefined;
+  if (cloudflare && cloudflareConfig?.client_id === cloudflare.client_id) {
+    await revokeCloudflareToken({
+      config: cloudflareConfig,
+      token: cloudflare.refresh_token,
+    }).catch(() => undefined);
   }
 }
 
@@ -528,8 +625,9 @@ export async function issueCliConnectorTurnTokens({
     );
     const tokens: CliConnectorTurnToken[] = [];
     for (const grant of locked) {
-      if (grant.connector !== "github") continue;
-      const token = await githubTurnToken({
+      if (!isCliConnector(grant.connector)) continue;
+      const token = await connectorTurnToken({
+        connector: grant.connector,
         owner,
         connection_id: grant.connection_id!,
         now,
@@ -547,44 +645,78 @@ export async function issueCliConnectorTurnTokens({
   }
 }
 
+type Refreshable = {
+  access_token: string;
+  access_expires_at: number;
+};
+
 /**
- * A GitHub access token for one turn, refreshed under the connection's lock
- * when it is close to expiry. A connection GitHub refuses to refresh is
- * marked for reconnecting and gives no token.
+ * An access token for one turn, refreshed under the connection's lock when
+ * it is close to expiry. A connection the provider refuses to refresh is
+ * marked for signing in again and gives no token.
  */
-async function githubTurnToken({
+async function connectorTurnToken({
+  connector,
   owner,
   connection_id,
   now,
   fetchImpl,
 }: {
+  connector: CliConnector;
   owner: string;
   connection_id: string;
   now: number;
   fetchImpl?: Fetch;
 }): Promise<CliConnectorTurnToken | undefined> {
-  const config = await getGithubConnectorConfig();
-  if (!config) return;
-  let current: GithubAppConnection | undefined;
+  let refresh:
+    | ((
+        payload: string,
+      ) => Promise<{ connection: Refreshable; refreshed: boolean } | undefined>)
+    | undefined;
+  if (connector === "github") {
+    const config = await getGithubConnectorConfig();
+    if (!config) return;
+    refresh = async (payload) => {
+      const connection = parseGithubConnection(payload);
+      return connection
+        ? await refreshGithubConnection({ config, connection, now, fetchImpl })
+        : undefined;
+    };
+  } else {
+    const config = await getCloudflareConnectorConfig();
+    if (!config) return;
+    refresh = async (payload) => {
+      const connection = parseCloudflareConnection(payload);
+      return connection
+        ? await refreshCloudflareConnection({
+            config,
+            connection,
+            now,
+            fetchImpl,
+          })
+        : undefined;
+    };
+  }
+  let current: Refreshable | undefined;
   const updated = await updateExternalCredentialPayloadLocked({
-    selector: selector(owner, "github"),
+    selector: selector(owner, connector),
     id: connection_id,
     update: async (credential) => {
-      const connection = parseGithubConnection(credential.payload);
-      if (!connection || credential.metadata?.needs_reconnect) return;
+      if (credential.metadata?.needs_reconnect) return;
       try {
-        const result = await refreshGithubConnection({
-          config,
-          connection,
-          now,
-          fetchImpl,
-        });
+        const result = await refresh!(credential.payload);
+        if (!result) return;
         current = result.connection;
         return result.refreshed
           ? { payload: JSON.stringify(result.connection) }
           : undefined;
       } catch (err) {
-        if (!(err instanceof GithubReconnectRequired)) throw err;
+        if (
+          !(err instanceof GithubReconnectRequired) &&
+          !(err instanceof CloudflareReconnectRequired)
+        ) {
+          throw err;
+        }
         return {
           payload: credential.payload,
           metadata: { ...credential.metadata, needs_reconnect: true },
@@ -594,7 +726,7 @@ async function githubTurnToken({
   });
   if (!updated || !current) return;
   return {
-    connector: "github",
+    connector,
     token: current.access_token,
     expires_at: current.access_expires_at,
     description: `${updated.metadata?.description ?? ""}`,
