@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isCliConnectorCredentialKind } from "@cocalc/util/ai/cli-connectors";
 import { delay } from "awaiting";
 import type {
   Host,
@@ -2729,7 +2730,7 @@ export async function issueProjectHostAgentAuthToken({
   });
 }
 
-function normalizeExternalCredentialSelector({
+export function normalizeExternalCredentialSelector({
   provider,
   kind,
   scope,
@@ -2755,6 +2756,9 @@ function normalizeExternalCredentialSelector({
   // the account's opt-in and validation.
   if (normalizedProvider === "cocalc" && normalizedKind === "agent-memory")
     throw new Error("agent memory is not available through this API");
+  // Connector tokens reach a project only as per-turn access tokens.
+  if (isCliConnectorCredentialKind(normalizedKind))
+    throw new Error("connector credentials are not available through this API");
   if (
     normalizedScope !== "account" &&
     normalizedScope !== "project" &&

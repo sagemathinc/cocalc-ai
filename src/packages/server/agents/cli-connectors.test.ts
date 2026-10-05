@@ -1095,6 +1095,41 @@ describe("agent grants", () => {
     });
   });
 
+  it("cannot turn on a connection that is being disconnected", async () => {
+    const { saveCliConnectorGrant } = await import("./cli-connectors");
+    getByIdMock.mockResolvedValue({
+      ...connection,
+      metadata: { disconnecting: true },
+    });
+    await expect(
+      saveCliConnectorGrant({
+        ...base,
+        enabled: true,
+        connection_id: connectionId,
+      }),
+    ).rejects.toThrow("connection is unavailable");
+  });
+
+  it("a grant saved while a disconnect started turns itself off", async () => {
+    const { saveCliConnectorGrant } = await import("./cli-connectors");
+    getByIdMock
+      .mockResolvedValueOnce(connection)
+      .mockResolvedValueOnce({
+        ...connection,
+        metadata: { disconnecting: true },
+      });
+    await expect(
+      saveCliConnectorGrant({
+        ...base,
+        enabled: true,
+        connection_id: connectionId,
+      }),
+    ).rejects.toThrow("connection is unavailable");
+    const [sql, params] = queryMock.mock.calls.at(-1)!;
+    expect(sql).toMatch(/SET enabled=false/);
+    expect(params).toEqual([grant.grant_id, connectionId]);
+  });
+
   it("a stale revision fails instead of overwriting", async () => {
     const { saveCliConnectorGrant } = await import("./cli-connectors");
     queryMock.mockResolvedValueOnce({ rows: [] });
@@ -1298,6 +1333,38 @@ describe("turn tokens", () => {
 });
 
 describe("disconnecting", () => {
+  it("revokes the tokens as they are when marked, not a stale read", async () => {
+    const { disconnectCliConnection } = await import("./cli-connectors");
+    // The first read is stale: a turn rotated the tokens meanwhile.
+    const stale = { ...connection, payload: JSON.stringify(githubPayload()) };
+    connection = {
+      ...connection,
+      payload: JSON.stringify({
+        ...githubPayload(),
+        access_token: "ghu_rotated",
+      }),
+    };
+    getByIdMock.mockImplementation(async ({ selector }) =>
+      selector.kind === "github-cli-connection" ? stale : undefined,
+    );
+    const fetchImpl = github({ [GITHUB_REVOKE]: { status: 204 } });
+    await disconnectCliConnection({
+      account_id: accountId,
+      connection_id: connectionId,
+    });
+    expect(revokes(fetchImpl)).toEqual([
+      expect.stringContaining('"access_token":"ghu_rotated"'),
+    ]);
+    expect(connection.metadata.disconnecting).toBe(true);
+    // Marked before the grants go off, so no later refresh rotates them.
+    const grantsOff = queryMock.mock.calls.findIndex(([q]) =>
+      /UPDATE agent_connector_grants/.test(q),
+    );
+    expect(lockedMock.mock.invocationCallOrder[0]).toBeLessThan(
+      queryMock.mock.invocationCallOrder[grantsOff],
+    );
+  });
+
   it("a connection whose revocation failed is hidden, unused, and retried", async () => {
     const {
       listCliConnections,

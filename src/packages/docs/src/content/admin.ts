@@ -2140,8 +2140,11 @@ With a non-admin account:
 - **Rotate the client secret:** generate a new one on GitHub, update the site
   setting, then delete the old secret on GitHub. Existing user connections
   keep working.
-- **A user stops access:** Disconnect in **Settings -> Connectors**, or on
-  GitHub under **Settings -> Applications -> Authorized GitHub Apps**.
+- **A user stops access:** Disconnect in **Settings -> Connectors** turns the
+  connector off for agents at once and revokes the tokens at GitHub. If
+  GitHub cannot be reached, CoCalc keeps the encrypted tokens only to retry
+  that revocation when the user next connects GitHub. Users can also revoke
+  on GitHub under **Settings -> Applications -> Authorized GitHub Apps**.
 - **Turn the connector off for the whole site:** clear the Client ID. To also
   invalidate every user token, revoke them on GitHub by suspending or deleting
   the app.
@@ -2211,8 +2214,10 @@ and ask it to run \`cf whoami\` (installing \`cf\` with
 - **Rotate the client secret:** create a new secret in the client's menu,
   update the site setting, then delete the old secret. Connections keep
   working.
-- **A user stops access:** Disconnect in **Settings -> Connectors**, which also
-  revokes the tokens at Cloudflare.
+- **A user stops access:** Disconnect in **Settings -> Connectors** turns the
+  connector off for agents at once and revokes the tokens at Cloudflare. If
+  Cloudflare cannot be reached, CoCalc keeps the encrypted tokens only to
+  retry that revocation when the user next connects Cloudflare.
 - **Turn the connector off for the whole site:** clear the Client ID. Tokens
   already given to a running turn expire within an hour.
 `;

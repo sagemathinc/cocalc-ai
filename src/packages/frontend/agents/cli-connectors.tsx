@@ -649,9 +649,7 @@ export function CliConnectorSection({
           code: callback.code!,
         });
         if (result.status !== "pending" || attempt >= 12) return result;
-        await new Promise((resolve) =>
-          setTimeout(resolve, RETRY.ms),
-        );
+        await new Promise((resolve) => setTimeout(resolve, RETRY.ms));
       }
     };
     completeSignIn().then(
@@ -706,8 +704,8 @@ export function CliConnectorSection({
         title: `Disconnect ${connection.description}?`,
         content:
           users > 0
-            ? `${users} ${users === 1 ? "agent uses" : "agents use"} it; ${label} turns off for ${users === 1 ? "it" : "them"}. CoCalc deletes its copy of the token; revoke the token at ${label} too if you no longer need it.`
-            : `CoCalc deletes its copy of the token; revoke the token at ${label} too if you no longer need it.`,
+            ? `${users} ${users === 1 ? "agent uses" : "agents use"} it; ${label} turns off for ${users === 1 ? "it" : "them"}. ${label} turns off for agents at once, and CoCalc revokes the sign-in at ${label}. If ${label} cannot be reached, CoCalc keeps the encrypted sign-in only to retry that revocation later.`
+            : `${label} turns off for agents at once, and CoCalc revokes the sign-in at ${label}. If ${label} cannot be reached, CoCalc keeps the encrypted sign-in only to retry that revocation later.`,
         okText: "Disconnect",
         okButtonProps: { danger: true },
         onOk: async () => {

@@ -38,6 +38,26 @@ export const CLI_CONNECTOR_INFO: Record<CliConnector, CliConnectorInfo> = {
   },
 };
 
+/**
+ * Credential kinds that hold connector tokens (connections, pending sign-ins,
+ * cleanup records). Only the connector code may read or write them: never the
+ * generic credential APIs, so refresh tokens cannot leave the hub.
+ */
+export const CLI_CONNECTOR_CREDENTIAL_KINDS: readonly string[] = [
+  "github-cli-connection",
+  "cloudflare-cli-connection",
+  "github-device-login",
+  "cloudflare-oauth-login",
+  "github-token-cleanup",
+  "cloudflare-token-cleanup",
+];
+
+export function isCliConnectorCredentialKind(kind: unknown): boolean {
+  return CLI_CONNECTOR_CREDENTIAL_KINDS.includes(
+    `${kind ?? ""}`.trim().toLowerCase(),
+  );
+}
+
 export function isCliConnector(value: unknown): value is CliConnector {
   return (
     typeof value === "string" &&
@@ -90,13 +110,15 @@ export function cloudflareScopes(presets: readonly string[]): string[] {
  * show to an agent: no control or bidirectional-formatting characters, short.
  */
 export function sanitizeConnectionDescription(value: unknown): string {
-  return `${value ?? ""}`
-    .replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, "")
-    // No brackets: a description cannot close the prompt's block.
-    .replace(/[[\]]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 120);
+  return (
+    `${value ?? ""}`
+      .replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, "")
+      // No brackets: a description cannot close the prompt's block.
+      .replace(/[[\]]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 120)
+  );
 }
 
 /** A token handed to one agent turn; never a refresh token. */

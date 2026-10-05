@@ -990,18 +990,10 @@ export async function disconnectCliConnection({
   const index = found.findIndex(Boolean);
   if (index < 0) throw Error("connection is unavailable");
   const connector = (Object.keys(CLI_CONNECTOR_INFO) as CliConnector[])[index];
-  const connection = found[index]!;
-  // Stopping access never needs fresh authentication.
-  await getPool().query(
-    `UPDATE agent_connector_grants
-        SET enabled=false, connection_id=NULL, revision=revision+1, updated_at=now()
-      WHERE account_id=$1 AND connection_id=$2`,
-    [owner, id],
-  );
   // The record becomes cleanup-only (never used again, not listed) and stays
   // until the provider confirms the tokens are revoked; a later sign-in start
   // retries otherwise.
-  await updateExternalCredentialPayloadLocked({
+  const marked = await updateExternalCredentialPayloadLocked({
     selector: selector(owner, connector),
     id,
     update: async (credential) => ({
@@ -1009,7 +1001,17 @@ export async function disconnectCliConnection({
       metadata: { ...credential.metadata, disconnecting: true },
     }),
   });
-  const tokens = parseJson(connection.payload);
+  // Marked first: from now on no turn refreshes (rotates) these tokens and a
+  // grant enabled meanwhile turns itself off, so the grants go off for good.
+  // Stopping access never needs fresh authentication.
+  await getPool().query(
+    `UPDATE agent_connector_grants
+        SET enabled=false, connection_id=NULL, revision=revision+1, updated_at=now()
+      WHERE account_id=$1 AND connection_id=$2`,
+    [owner, id],
+  );
+  // Revoke the tokens as they were when marked (the last version).
+  const tokens = marked ? parseJson(marked.payload) : undefined;
   if (tokens && (await revokeProviderConnection(connector, tokens))) {
     await revokeExternalCredential({ id, owner_account_id: owner });
   }
@@ -1110,9 +1112,13 @@ export async function saveCliConnectorGrant({
     selector: selector(owner, connector),
     touchLastUsed: false,
   });
-  if (!connection) throw Error("connection is unavailable");
+  // Not one being disconnected (e.g. from another, stale tab).
+  if (!connection || connection.metadata?.disconnecting) {
+    throw Error("connection is unavailable");
+  }
   // The account-scoped lock makes the count and the insert one step, so
   // concurrent first writes cannot exceed the bound.
+  let saved: CliConnectorGrant;
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
@@ -1158,14 +1164,32 @@ export async function saveCliConnectorGrant({
     if (!rows[0]) {
       throw Error("connector settings changed; reload and try again");
     }
+    saved = rows[0];
     await client.query("COMMIT");
-    return rows[0];
   } catch (err) {
     await client.query("ROLLBACK").catch(() => undefined);
     throw err;
   } finally {
     client.release();
   }
+  // A disconnect that started meanwhile marks the connection before turning
+  // its grants off; checking again after saving means one of the two always
+  // leaves this grant off.
+  const after = await getExternalCredentialById({
+    id: connection_id!,
+    selector: selector(owner, connector),
+    touchLastUsed: false,
+  });
+  if (!after || after.metadata?.disconnecting) {
+    await getPool().query(
+      `UPDATE agent_connector_grants
+          SET enabled=false, connection_id=NULL, revision=revision+1, updated_at=now()
+        WHERE grant_id=$1 AND connection_id=$2`,
+      [saved.grant_id, connection_id],
+    );
+    throw Error("connection is unavailable");
+  }
+  return saved;
 }
 
 /**
