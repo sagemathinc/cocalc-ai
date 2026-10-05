@@ -37,6 +37,24 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "approval may create a complete-graph agent prompt/data bridge across projects",
   },
+  "agent.connectCliToken": {
+    decision: "fresh-auth-required",
+    reason:
+      "stores a GitHub or Cloudflare credential that agents may later act with",
+  },
+  "agent.saveCliConnectorGrant": {
+    decision: "fresh-auth-required",
+    reason:
+      "turning a grant on lets an agent act on GitHub or Cloudflare as the account; turning it off needs only ordinary authorization",
+  },
+  "agent.disconnectCliConnection": {
+    decision: "fresh-auth-not-required",
+    reason: "revokes the caller's own stored credential and its grants",
+  },
+  "agent.beginCliConnectorTurn": {
+    decision: "internal-auth-only",
+    reason: INTERNAL_AUTH_ONLY,
+  },
   "agent.authorizeRpcAdmission": {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,

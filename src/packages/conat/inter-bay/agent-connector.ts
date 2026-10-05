@@ -34,6 +34,28 @@ export interface InterBayAgentConnectorApi {
       Parameters<AgentApi["removeCocalcConnectorConfig"]>[0]
     >,
   ): ReturnType<AgentApi["removeCocalcConnectorConfig"]>;
+  listCliConnections(
+    opts: RequiredAccount<
+      NonNullable<Parameters<AgentApi["listCliConnections"]>[0]>
+    >,
+  ): ReturnType<AgentApi["listCliConnections"]>;
+  connectCliToken(
+    opts: RequiredAccount<Parameters<AgentApi["connectCliToken"]>[0]>,
+  ): ReturnType<AgentApi["connectCliToken"]>;
+  disconnectCliConnection(
+    opts: RequiredAccount<Parameters<AgentApi["disconnectCliConnection"]>[0]>,
+  ): ReturnType<AgentApi["disconnectCliConnection"]>;
+  listCliGrants(
+    opts: RequiredAccount<
+      NonNullable<Parameters<AgentApi["listCliConnectorGrants"]>[0]>
+    >,
+  ): ReturnType<AgentApi["listCliConnectorGrants"]>;
+  saveCliGrant(
+    opts: RequiredAccount<Parameters<AgentApi["saveCliConnectorGrant"]>[0]>,
+  ): ReturnType<AgentApi["saveCliConnectorGrant"]>;
+  beginCliTurn(
+    opts: RequiredHost<Parameters<AgentApi["beginCliConnectorTurn"]>[0]>,
+  ): ReturnType<AgentApi["beginCliConnectorTurn"]>;
   begin(
     opts: RequiredHost<Parameters<AgentApi["beginCocalcConnectorTurn"]>[0]>,
   ): ReturnType<AgentApi["beginCocalcConnectorTurn"]>;

@@ -10,6 +10,10 @@
 import { randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import { isValidUUID } from "@cocalc/util/misc";
+import type {
+  CliConnection,
+  CliConnectorGrant,
+} from "@cocalc/conat/hub/api/agent";
 import {
   CLI_CONNECTOR_INFO,
   isCliConnector,
@@ -35,29 +39,6 @@ import { verifyActiveAgentRun } from "./identity-routing";
 const PASTED_TOKEN_DELIVERY_MS = 15 * 60_000;
 const VERIFY_TIMEOUT_MS = 10_000;
 const MAX_CONNECTIONS_PER_CONNECTOR = 10;
-
-export interface CliConnectorGrant {
-  grant_id: string;
-  account_id: string;
-  agent_id: string;
-  source_project_id: string;
-  connector: CliConnector;
-  connection_id: string | null;
-  scope: Record<string, unknown>;
-  revision: number;
-  enabled: boolean;
-  created_at: Date;
-  updated_at: Date;
-}
-
-export interface CliConnection {
-  connection_id: string;
-  connector: CliConnector;
-  /** Who the connection signs in as, e.g. "@octocat" or an account name. */
-  description: string;
-  created: Date;
-  last_used: Date | null;
-}
 
 type ConnectionPayload = { version: 1; type: "token"; token: string };
 
@@ -364,6 +345,8 @@ export async function saveCliConnectorGrant({
  * Tokens for one verified agent turn: one per enabled grant whose connection
  * still exists. Refresh tokens and connection payloads never leave the hub.
  */
+export type { CliConnection, CliConnectorGrant };
+
 export async function issueCliConnectorTurnTokens({
   account_id,
   host_id,

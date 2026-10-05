@@ -23,12 +23,26 @@ import {
   saveCocalcConnectorConfig as saveConfigAtHome,
   removeCocalcConnectorConfig as removeConfigAtHome,
 } from "./cocalc-connector-config";
+import {
+  connectCliToken as connectCliTokenAtHome,
+  disconnectCliConnection as disconnectCliConnectionAtHome,
+  issueCliConnectorTurnTokens,
+  listCliConnections as listCliConnectionsAtHome,
+  listCliConnectorGrants as listCliGrantsAtHome,
+  saveCliConnectorGrant as saveCliGrantAtHome,
+} from "./cli-connectors";
 
 export const agentConnectorControl: InterBayAgentConnectorApi = {
   getConfig: getConfigAtHome,
   listConfigs: listConfigsAtHome,
   saveConfig: saveConfigAtHome,
   removeConfig: removeConfigAtHome,
+  listCliConnections: listCliConnectionsAtHome,
+  connectCliToken: connectCliTokenAtHome,
+  disconnectCliConnection: disconnectCliConnectionAtHome,
+  listCliGrants: listCliGrantsAtHome,
+  saveCliGrant: saveCliGrantAtHome,
+  beginCliTurn: issueCliConnectorTurnTokens,
   begin: beginManagedCocalcConnectorTurn,
   renew: renewManagedCocalcConnectorTurn,
   end: endManagedCocalcConnectorTurn,
@@ -104,3 +118,41 @@ export const endCocalcConnectorTurn: AgentApi["endCocalcConnectorTurn"] =
     const opts = requiredHost(input);
     await (await accountHomeApi(opts.account_id)).end(opts);
   };
+
+export const listCliConnections: AgentApi["listCliConnections"] = async (
+  input,
+) => {
+  const opts = requiredAccount(input ?? {});
+  return await (await accountHomeApi(opts.account_id)).listCliConnections(opts);
+};
+
+export const connectCliToken: AgentApi["connectCliToken"] = async (input) => {
+  const opts = requiredAccount(input);
+  return await (await accountHomeApi(opts.account_id)).connectCliToken(opts);
+};
+
+export const disconnectCliConnection: AgentApi["disconnectCliConnection"] =
+  async (input) => {
+    const opts = requiredAccount(input);
+    await (await accountHomeApi(opts.account_id)).disconnectCliConnection(opts);
+  };
+
+export const listCliConnectorGrants: AgentApi["listCliConnectorGrants"] =
+  async (input) => {
+    const opts = requiredAccount(input ?? {});
+    return await (await accountHomeApi(opts.account_id)).listCliGrants(opts);
+  };
+
+export const saveCliConnectorGrant: AgentApi["saveCliConnectorGrant"] = async (
+  input,
+) => {
+  const opts = requiredAccount(input);
+  return await (await accountHomeApi(opts.account_id)).saveCliGrant(opts);
+};
+
+export const beginCliConnectorTurn: AgentApi["beginCliConnectorTurn"] = async (
+  input,
+) => {
+  const opts = requiredHost(input);
+  return await (await accountHomeApi(opts.account_id)).beginCliTurn(opts);
+};

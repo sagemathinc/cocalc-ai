@@ -16,6 +16,10 @@ import {
 } from "./util";
 import type { ApiKeyScope } from "@cocalc/util/db-schema/api-keys";
 import type {
+  CliConnector,
+  CliConnectorTurnToken,
+} from "@cocalc/util/ai/cli-connectors";
+import type {
   AgentPaymentProvider,
   AgentPaymentTarget,
 } from "@cocalc/util/ai/agent-payment-selection";
@@ -81,6 +85,12 @@ export const agent = {
   endIdentityRun: authFirstRequireHostWithAccountTarget,
   getCocalcConnectorConfig: authFirstRequireAccount,
   listCocalcConnectorConfigs: authFirstRequireAccount,
+  listCliConnections: authFirstRequireAccount,
+  connectCliToken: authFirstRequireAccountWithBoundSession,
+  disconnectCliConnection: authFirstRequireAccount,
+  listCliConnectorGrants: authFirstRequireAccount,
+  saveCliConnectorGrant: authFirstRequireAccountWithBoundSession,
+  beginCliConnectorTurn: authFirstRequireHostWithAccountTarget,
   saveCocalcConnectorConfig: authFirstRequireAccountWithBoundSession,
   removeCocalcConnectorConfig: authFirstRequireAccountWithBoundSession,
   beginCocalcConnectorTurn: authFirstRequireHostWithAccountTarget,
@@ -259,7 +269,63 @@ export interface CocalcConnectorTurnKey {
   config_revision: number;
 }
 
+/** An account's connection to a CLI service (gh, cf); never the token. */
+export interface CliConnection {
+  connection_id: string;
+  connector: CliConnector;
+  /** Who it signs in as, e.g. "@octocat". */
+  description: string;
+  created: Date;
+  last_used: Date | null;
+}
+
+/** Whether one agent may use a CLI connector, and with which connection. */
+export interface CliConnectorGrant {
+  grant_id: string;
+  account_id: string;
+  agent_id: string;
+  source_project_id: string;
+  connector: CliConnector;
+  connection_id: string | null;
+  scope: Record<string, unknown>;
+  revision: number;
+  enabled: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
 export interface AgentApi {
+  /** The signed-in account's CLI connections (GitHub, Cloudflare). */
+  listCliConnections(opts?: { account_id?: string }): Promise<CliConnection[]>;
+  /** Save a pasted token after the provider accepts it (fresh auth). */
+  connectCliToken(
+    opts: AgentHumanAuth & { connector: CliConnector; token: string },
+  ): Promise<CliConnection>;
+  /** Remove a connection and turn it off for every agent. */
+  disconnectCliConnection(opts: {
+    account_id?: string;
+    connection_id: string;
+  }): Promise<void>;
+  listCliConnectorGrants(opts?: {
+    account_id?: string;
+    agent_id?: string;
+    source_project_id?: string;
+  }): Promise<CliConnectorGrant[]>;
+  /** Turn a connector on (fresh auth) or off for one agent. */
+  saveCliConnectorGrant(
+    opts: AgentHumanAuth & {
+      agent_id: string;
+      source_project_id: string;
+      connector: CliConnector;
+      connection_id?: string | null;
+      enabled: boolean;
+      expected_revision?: number;
+    },
+  ): Promise<CliConnectorGrant>;
+  /** Tokens for one verified agent turn (project host only). */
+  beginCliConnectorTurn(
+    opts: CocalcConnectorTurnRequest,
+  ): Promise<CliConnectorTurnToken[]>;
   beginCocalcConnectorTurn(
     opts: CocalcConnectorTurnRequest & { idempotency_key: string },
   ): Promise<CocalcConnectorTurnKey | undefined>;

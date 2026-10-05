@@ -10,6 +10,12 @@ import * as payments from "@cocalc/server/agents/payment-selections";
 export {
   getCocalcConnectorConfig,
   listCocalcConnectorConfigs,
+  listCliConnections,
+  connectCliToken,
+  disconnectCliConnection,
+  listCliConnectorGrants,
+  saveCliConnectorGrant,
+  beginCliConnectorTurn,
   saveCocalcConnectorConfig,
   removeCocalcConnectorConfig,
   beginCocalcConnectorTurn,
