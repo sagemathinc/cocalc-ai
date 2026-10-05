@@ -287,8 +287,10 @@ over the Chrome DevTools Protocol. It runs in the foreground; closing the
 browser or Ctrl-C removes the tunnel and the profile. By default the profile
 lives in RAM (tmpfs on Linux, a RAM disk on macOS) and never touches disk; use
 `--profile-storage disk` where no RAM-backed storage exists. The project-side
-port is bound to loopback only, and the command checks from inside the project
-that the port reaches this browser before reporting it ready.
+port is bound to loopback only, and before reporting ready the command checks,
+over an ssh channel into the project, that the port reaches this browser (it
+fails closed otherwise). If the command itself dies (crash, `kill -9`), a small
+watchdog removes the tunnel, stops the browser and deletes the profile.
 Use `project file check` to run a sanity suite (mkdir/put/list/cat/get/rg/fd/rm)
 against the current project context or `--project`.
 Use `project file check --bench --bench-runs <n>` to run repeated checks with

@@ -25,6 +25,8 @@ export interface ProfileDir {
   // Where the bytes live, for the user: "tmpfs /dev/shm", "RAM disk", ...
   backing: string;
   cleanup: () => Promise<void>;
+  // The same cleanup as data, for a watchdog process.
+  release: { removeDir?: string; detachDevice?: string };
 }
 
 export interface LocalBrowserSystem {
@@ -137,6 +139,27 @@ export function findChrome(
   return found;
 }
 
+const START_URL_PROTOCOLS = new Set(["http:", "https:", "about:", "file:"]);
+
+// The page to open first.  It becomes a positional argument of Chrome, so it
+// must not be something Chrome would parse as a switch (which could, e.g.,
+// move DevTools off loopback or swap the profile).
+export function startUrl(value?: string): string {
+  const url = `${value ?? ""}`.trim() || "about:blank";
+  let protocol: string;
+  try {
+    protocol = new URL(url).protocol;
+  } catch {
+    throw new Error(`--url must be an absolute URL, got '${value}'`);
+  }
+  if (!START_URL_PROTOCOLS.has(protocol)) {
+    throw new Error(
+      `--url must be an http, https, file or about URL, got '${value}'`,
+    );
+  }
+  return url;
+}
+
 export function chromeLaunchArgs({
   profileDir,
   url,
@@ -154,7 +177,9 @@ export function chromeLaunchArgs({
     "--no-default-browser-check",
     `--disk-cache-size=${DISK_CACHE_BYTES}`,
     ...(headless ? ["--headless=new"] : []),
-    url?.trim() || "about:blank",
+    // Chromium stops parsing switches at "--".
+    "--",
+    startUrl(url),
   ];
 }
 
@@ -197,7 +222,13 @@ async function macRamDisk(sys: LocalBrowserSystem): Promise<ProfileDir> {
     writeFileSync(`${volume}/.metadata_never_index`, "");
     const path = `${volume}/profile`;
     mkdirSync(path, { mode: 0o700 });
-    return { path, storage: "memory", backing: "RAM disk", cleanup: detach };
+    return {
+      path,
+      storage: "memory",
+      backing: "RAM disk",
+      cleanup: detach,
+      release: { detachDevice: device },
+    };
   } catch (err) {
     await detach().catch(() => {});
     throw err;
@@ -215,6 +246,7 @@ export async function createProfileDir(
       storage,
       backing: `temporary directory ${tmpdir()}`,
       cleanup: () => removeDir(path),
+      release: { removeDir: path },
     };
   }
   if (sys.platform === "darwin") {
@@ -232,6 +264,7 @@ export async function createProfileDir(
     storage,
     backing: `tmpfs ${base}`,
     cleanup: () => removeDir(path),
+    release: { removeDir: path },
   };
 }
 
@@ -311,4 +344,67 @@ export function devToolsBrowserId(versionJson: string): string | null {
   } catch {
     return null;
   }
+}
+
+// Runs as `node -e` (no separate file, so it also works from the bundled
+// CLI).  Polls the owning CLI process; once it is gone without having
+// stopped the watchdog (crash, SIGKILL), removes the forward, stops the
+// browser and releases the profile.
+const WATCHDOG_SOURCE = `
+const cfg = JSON.parse(process.argv[1]);
+const { spawnSync } = require("node:child_process");
+const { rmSync } = require("node:fs");
+const alive = (pid) => {
+  try { process.kill(pid, 0); return true; }
+  catch (err) { return err.code === "EPERM"; }
+};
+const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const timer = setInterval(() => {
+  if (alive(cfg.owner)) return;
+  clearInterval(timer);
+  const run = (command, args, env) => {
+    try {
+      spawnSync(command, args, { env: { ...process.env, ...env }, stdio: "ignore", timeout: 30000, windowsHide: true });
+    } catch {}
+  };
+  if (cfg.forward) run(cfg.forward.command, cfg.forward.args, cfg.forward.env);
+  if (alive(cfg.browser)) {
+    try { process.kill(cfg.browser, "SIGTERM"); } catch {}
+    for (let i = 0; i < 50 && alive(cfg.browser); i++) sleep(100);
+    if (alive(cfg.browser)) { try { process.kill(cfg.browser, "SIGKILL"); } catch {} }
+  }
+  if (cfg.release.removeDir) {
+    try { rmSync(cfg.release.removeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch {}
+  }
+  if (cfg.release.detachDevice) run("hdiutil", ["detach", cfg.release.detachDevice, "-force"], {});
+}, 1000);
+`;
+
+export interface WatchdogConfig {
+  owner: number;
+  browser: number;
+  release: ProfileDir["release"];
+  // Process that removes the forward, e.g. `reflect forward remove NAME`.
+  forward?: { command: string; args: string[]; env: Record<string, string> };
+}
+
+export function startCleanupWatchdog(config: WatchdogConfig): {
+  pid: number | undefined;
+  stop: () => void;
+} {
+  const child = spawn(
+    process.execPath,
+    ["-e", WATCHDOG_SOURCE, JSON.stringify(config)],
+    { detached: true, stdio: "ignore", windowsHide: true },
+  );
+  child.on("error", () => {});
+  child.unref();
+  return {
+    pid: child.pid,
+    stop: () => {
+      try {
+        child.kill("SIGTERM");
+      } catch {}
+    },
+  };
 }

@@ -21,6 +21,8 @@ import {
   type LaunchedBrowser,
   type ProfileDir,
   type ProfileStorage,
+  startCleanupWatchdog,
+  startUrl,
 } from "../../core/local-browser";
 import {
   localToProjectForwardArgs,
@@ -108,53 +110,70 @@ function parsePort(value: string | undefined): number {
   return port;
 }
 
-// Run `curl` in the project over the managed ssh alias.  code is null when
-// ssh could not be started; 127 means no curl in the project.
-function probeProjectPort(
+// GET /json/version from 127.0.0.1:<port> inside the project through an ssh
+// direct-tcpip channel (ssh -W), so nothing has to be installed there.
+// Resolves to the raw HTTP response, or null if nothing answered.
+function fetchProjectDevToolsVersion(
   alias: string,
   projectPort: number,
-): Promise<{ code: number | null; stdout: string }> {
+  abort: AbortSignal,
+): Promise<string | null> {
   return new Promise((resolve) => {
-    const child = spawn(
-      "ssh",
-      [
-        alias,
-        `curl -sf --max-time 3 http://127.0.0.1:${projectPort}/json/version`,
-      ],
-      { stdio: ["ignore", "pipe", "ignore"] },
-    );
-    let stdout = "";
-    const timer = setTimeout(() => child.kill("SIGKILL"), 20_000);
-    child.stdout.on("data", (chunk) => (stdout += chunk));
-    child.on("error", () => resolve({ code: null, stdout }));
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ code, stdout });
+    if (abort.aborted) return resolve(null);
+    const child = spawn("ssh", ["-W", `127.0.0.1:${projectPort}`, alias], {
+      stdio: ["pipe", "pipe", "ignore"],
     });
+    let response = "";
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.kill();
+      resolve(response || null);
+    };
+    const timer = setTimeout(done, 20_000);
+    abort.addEventListener("abort", done, { once: true });
+    child.stdout.on("data", (chunk) => (response += chunk));
+    child.on("error", done);
+    child.on("close", done);
+    child.stdin.on("error", () => {});
+    child.stdin.write(
+      `GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:${projectPort}\r\nConnection: close\r\n\r\n`,
+    );
   });
 }
 
 // Wait until the project port answers with *this* browser's DevTools id.
+// Fails closed: never reports success without matching the id.
 async function verifyProjectSeesBrowser({
   alias,
   projectPort,
   localPort,
+  abort,
 }: {
   alias: string;
   projectPort: number;
   localPort: number;
-}): Promise<"verified" | "skipped"> {
+  abort: AbortSignal;
+}): Promise<void> {
   const local = await fetch(`http://127.0.0.1:${localPort}/json/version`);
   const localId = devToolsBrowserId(await local.text());
+  if (!localId) {
+    throw new Error("could not read the local browser's DevTools id");
+  }
   const deadline = Date.now() + VERIFY_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    const { code, stdout } = await probeProjectPort(alias, projectPort);
-    if (code === 127) return "skipped"; // no curl in the project
-    // 0: something answered; 22: it answered with an HTTP error, so it is
-    // not a browser.  Anything else (e.g. 7, connection refused) is retried.
-    if (code === 0 || code === 22) {
-      const remoteId = devToolsBrowserId(stdout);
-      if (localId && remoteId === localId) return "verified";
+    if (abort.aborted) throw new Error("verification cancelled");
+    const response = await fetchProjectDevToolsVersion(
+      alias,
+      projectPort,
+      abort,
+    );
+    if (abort.aborted) throw new Error("verification cancelled");
+    if (response != null) {
+      const body = response.slice(response.indexOf("\r\n\r\n") + 4);
+      if (devToolsBrowserId(body) === localId) return;
       throw new Error(
         `port ${projectPort} in the project is already used by another program; choose a different --port`,
       );
@@ -180,6 +199,7 @@ async function runBrowserConnect(
     removeProjectSshConfigBlock,
     projectSshConfigBlockMarkers,
     resolveCloudflaredBinary,
+    reflectSyncCliInvocation,
     runReflectSyncCli,
     listReflectForwards,
     parseCreatedForwardId,
@@ -187,6 +207,7 @@ async function runBrowserConnect(
   } = deps;
   const storage = parseStorage(opts.profileStorage);
   const projectPort = parsePort(opts.port);
+  const url = startUrl(opts.url);
   const sys = defaultLocalBrowserSystem();
   const executable = findChrome(opts.chrome, sys);
   const say = (line: string) => {
@@ -257,8 +278,11 @@ async function runBrowserConnect(
   const name = browserForwardName(projectId, projectPort, process.pid);
   let profile: ProfileDir | null = null;
   let browser: LaunchedBrowser | null = null;
-  let forwardId: number | null = null;
-  let verification: "verified" | "skipped" = "skipped";
+  // Set once creation is attempted: reflect may store the row even when
+  // starting it fails, so cleanup falls back to the (unique) name.
+  let forwardRef: string | null = null;
+  let watchdog: ReturnType<typeof startCleanupWatchdog> | null = null;
+  const verification = new AbortController();
   let endedBy = "browser closed";
   try {
     profile = await createProfileDir(storage, sys);
@@ -267,58 +291,88 @@ async function runBrowserConnect(
       profileDir: profile.path,
       args: chromeLaunchArgs({
         profileDir: profile.path,
-        url: opts.url,
+        url,
         headless: opts.headless,
       }),
     });
-    const created = await runReflectSyncCli(
-      localToProjectForwardArgs({
-        sshTarget: alias,
-        projectPort,
-        localPort: browser.port,
-        name,
-        compress: opts.compress,
-      }),
+    // If this process dies without reaching `finally` (crash, SIGKILL), the
+    // detached browser and reflect's persistent forward would keep giving the
+    // project control of the browser; the watchdog tears both down.
+    watchdog = startCleanupWatchdog({
+      owner: process.pid,
+      browser: browser.child.pid!,
+      release: profile.release,
+      forward: reflectSyncCliInvocation(["forward", "remove", name, "--stop"]),
+    });
+    forwardRef = name;
+    let created;
+    try {
+      created = await runReflectSyncCli(
+        localToProjectForwardArgs({
+          sshTarget: alias,
+          projectPort,
+          localPort: browser.port,
+          name,
+          compress: opts.compress,
+        }),
+      );
+    } catch (err) {
+      // With ExitOnForwardFailure, ssh exits at once when the project side
+      // cannot listen, most often because the port is taken.
+      throw new Error(
+        `could not open port ${projectPort} in the project (is it already in use? try a different --port): ${(err as Error)?.message ?? err}`,
+      );
+    }
+    const forwardId = parseCreatedForwardId(
+      `${created.stdout}\n${created.stderr}`,
     );
-    forwardId = parseCreatedForwardId(`${created.stdout}\n${created.stderr}`);
+    if (forwardId != null) forwardRef = String(forwardId);
     say(`Connecting the browser to project ${projectId}...`);
+    const verifying = verifyProjectSeesBrowser({
+      alias,
+      projectPort,
+      localPort: browser.port,
+      abort: verification.signal,
+    }).then(() => "verified" as const);
+    // It may still settle after the race is decided by a signal or exit.
+    verifying.catch(() => {});
     const verified = await Promise.race([
-      verifyProjectSeesBrowser({
-        alias,
-        projectPort,
-        localPort: browser.port,
-      }),
+      verifying,
       browser.exited.then(() => "closed" as const),
+      stopped,
     ]);
     if (verified === "closed") {
       throw new Error("the browser closed before the project reached it");
     }
-    verification = verified;
-    say(
-      [
-        `Browser ready: agents in the project can use http://127.0.0.1:${projectPort} (Chrome DevTools Protocol).`,
-        verification === "skipped"
-          ? "(Could not verify from the project: curl is not installed there.)"
-          : null,
-        storage === "memory"
-          ? `Profile is in RAM (${profile.backing}) and is discarded on exit.`
-          : `Profile is a temporary directory (${profile.path}), deleted on exit.`,
-        "Close the browser or press Ctrl-C to end the session.",
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    );
-    const signal = await Promise.race([
-      browser.exited.then(() => null),
-      stopped,
-    ]);
-    if (signal) endedBy = signal;
+    if (verified !== "verified") {
+      endedBy = verified;
+    } else {
+      say(
+        [
+          `Browser ready: agents in the project can use http://127.0.0.1:${projectPort} (Chrome DevTools Protocol).`,
+          storage === "memory"
+            ? `Profile is in RAM (${profile.backing}) and is discarded on exit.`
+            : `Profile is a temporary directory (${profile.path}), deleted on exit.`,
+          "Close the browser or press Ctrl-C to end the session.",
+        ].join("\n"),
+      );
+      const signal = await Promise.race([
+        browser.exited.then(() => null),
+        stopped,
+      ]);
+      if (signal) endedBy = signal;
+    }
   } finally {
     for (const signal of signals) process.off(signal, onSignal);
+    verification.abort();
+    watchdog?.stop();
     const steps: Array<() => Promise<unknown>> = [
       () =>
-        forwardId != null
-          ? terminateReflectForwards([String(forwardId)])
+        forwardRef != null
+          ? terminateReflectForwards([forwardRef]).catch((err: unknown) => {
+              // A name with no stored row means creation never got that far.
+              if (forwardRef !== name) throw err;
+            })
           : Promise.resolve(),
       () => browser?.stop() ?? Promise.resolve(),
       () => profile?.cleanup() ?? Promise.resolve(),
@@ -339,7 +393,6 @@ async function runBrowserConnect(
     profile_storage: storage,
     profile_backing: profile?.backing ?? null,
     forward_name: name,
-    verification,
     ended_by: endedBy,
   };
 }
