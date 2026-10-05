@@ -220,7 +220,7 @@ describe("inter-bay fabric routing", () => {
       }
     })();
     const projectSecretsListSub = await serviceClient.subscribe(
-      "bay.bay-1.rpc.project-secrets.list",
+      "bay.bay-1.rpc.project-secrets.list-course-shareable",
       { queue: "0" },
     );
     const projectSecretsListPromise = (async () => {
@@ -308,9 +308,9 @@ describe("inter-bay fabric routing", () => {
         },
       });
     await expect(
-      getInterBayBridge().projectSecrets("bay-1").list({
+      getInterBayBridge().projectSecrets("bay-1").listCourseShareable({
         account_id: "acct-1",
-        project_id: "proj-1",
+        course_project_id: "proj-1",
         epoch: 3,
       }),
     ).resolves.toEqual([
@@ -376,8 +376,8 @@ describe("inter-bay fabric routing", () => {
       ],
     });
     await expect(projectSecretsListPromise).resolves.toEqual({
-      name: "list",
-      args: [{ account_id: "acct-1", project_id: "proj-1", epoch: 3 }],
+      name: "listCourseShareable",
+      args: [{ account_id: "acct-1", course_project_id: "proj-1", epoch: 3 }],
     });
     getInterBayFabricClient().close();
     projectControlSub.close();
