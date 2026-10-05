@@ -37,10 +37,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "approval may create a complete-graph agent prompt/data bridge across projects",
   },
-  "agent.connectCliToken": {
+  "agent.startCliConnectorSignIn": {
     decision: "fresh-auth-required",
     reason:
-      "stores a GitHub or Cloudflare credential that agents may later act with",
+      "starts a GitHub or Cloudflare sign-in whose tokens agents may later act with",
   },
   "agent.saveCliConnectorGrant": {
     decision: "fresh-auth-required",

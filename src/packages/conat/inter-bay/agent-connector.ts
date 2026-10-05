@@ -39,9 +39,17 @@ export interface InterBayAgentConnectorApi {
       NonNullable<Parameters<AgentApi["listCliConnections"]>[0]>
     >,
   ): ReturnType<AgentApi["listCliConnections"]>;
-  connectCliToken(
-    opts: RequiredAccount<Parameters<AgentApi["connectCliToken"]>[0]>,
-  ): ReturnType<AgentApi["connectCliToken"]>;
+  getCliSetup(
+    opts: RequiredAccount<
+      NonNullable<Parameters<AgentApi["getCliConnectorSetup"]>[0]>
+    >,
+  ): ReturnType<AgentApi["getCliConnectorSetup"]>;
+  startCliSignIn(
+    opts: RequiredAccount<Parameters<AgentApi["startCliConnectorSignIn"]>[0]>,
+  ): ReturnType<AgentApi["startCliConnectorSignIn"]>;
+  pollCliSignIn(
+    opts: RequiredAccount<Parameters<AgentApi["pollCliConnectorSignIn"]>[0]>,
+  ): ReturnType<AgentApi["pollCliConnectorSignIn"]>;
   disconnectCliConnection(
     opts: RequiredAccount<Parameters<AgentApi["disconnectCliConnection"]>[0]>,
   ): ReturnType<AgentApi["disconnectCliConnection"]>;

@@ -13,6 +13,9 @@ import { isValidUUID } from "@cocalc/util/misc";
 import type {
   CliConnection,
   CliConnectorGrant,
+  CliConnectorSetup,
+  CliConnectorSignIn,
+  CliConnectorSignInStatus,
 } from "@cocalc/conat/hub/api/agent";
 import {
   CLI_CONNECTOR_INFO,
@@ -25,8 +28,23 @@ import {
   getExternalCredentialById,
   listExternalCredentials,
   revokeExternalCredential,
+  updateExternalCredentialPayloadLocked,
   type ExternalCredentialSelector,
 } from "@cocalc/server/external-credentials/store";
+import {
+  getGithubConnectorConfig,
+  GithubReconnectRequired,
+  pollGithubDeviceLogin,
+  refreshGithubConnection,
+  revokeGithubToken,
+  startGithubDeviceLogin,
+  type GithubAppConnection,
+  type GithubDeviceLogin,
+} from "./cli-connector-github";
+import {
+  EXTERNAL_CREDENTIAL_LEASE_EXPIRY_METADATA_KEY,
+  GITHUB_DEVICE_LOGIN_KIND,
+} from "@cocalc/server/external-credentials/provider-policy";
 import {
   assertAccountHome,
   authorizeConfigChange,
@@ -34,15 +52,10 @@ import {
 import { assertLiveTurn, assertTrustedSource } from "./cocalc-connector-turn";
 import { verifyActiveAgentRun } from "./identity-routing";
 
-// A pasted token has no provider expiry here; hosts renew every minute, so
-// a turn never holds a delivery older than this.
-const PASTED_TOKEN_DELIVERY_MS = 15 * 60_000;
-const VERIFY_TIMEOUT_MS = 10_000;
 const MAX_CONNECTIONS_PER_CONNECTOR = 10;
+const MAX_PENDING_SIGN_INS = 3;
 // Below the list limit, so every grant stays visible and revocable.
 const MAX_GRANTS_PER_ACCOUNT = 500;
-
-type ConnectionPayload = { version: 1; type: "token"; token: string };
 
 function requireUuid(value: unknown, name: string): string {
   if (typeof value !== "string" || !isValidUUID(value)) {
@@ -64,70 +77,46 @@ function selector(
   return { provider, kind, scope: "account", owner_account_id: account_id };
 }
 
-function parsePayload(payload: string): ConnectionPayload {
-  let value: any;
+function parseJson(payload: string): any {
   try {
-    value = JSON.parse(payload);
+    return JSON.parse(payload);
   } catch {
-    throw Error("invalid CLI connection");
+    return undefined;
   }
-  if (
-    value?.version !== 1 ||
-    value.type !== "token" ||
-    typeof value.token !== "string"
-  ) {
-    throw Error("invalid CLI connection");
-  }
-  return value;
 }
 
-function validToken(token: unknown): string {
-  const value = typeof token === "string" ? token.trim() : "";
-  if (value.length < 10 || value.length > 4096 || /\s/.test(value)) {
-    throw Error("That does not look like an API token");
-  }
-  return value;
+function parseGithubConnection(
+  payload: string,
+): GithubAppConnection | undefined {
+  const value = parseJson(payload);
+  return value?.version === 2 && value.type === "github-app"
+    ? value
+    : undefined;
+}
+
+function pendingSelector(account_id: string): ExternalCredentialSelector {
+  return {
+    provider: "github",
+    kind: GITHUB_DEVICE_LOGIN_KIND,
+    scope: "account",
+    owner_account_id: account_id,
+  };
 }
 
 type Fetch = typeof globalThis.fetch;
 
-/** Who a token belongs to, checked with the provider before it is saved. */
-export async function describeToken(
-  connector: CliConnector,
-  token: string,
-  fetchImpl: Fetch = globalThis.fetch,
-): Promise<string> {
-  const signal = AbortSignal.timeout(VERIFY_TIMEOUT_MS);
-  if (connector === "github") {
-    const response = await fetchImpl("https://api.github.com/user", {
-      headers: {
-        authorization: `Bearer ${token}`,
-        accept: "application/vnd.github+json",
-        "user-agent": "CoCalc",
-      },
-      signal,
-    });
-    if (!response.ok) throw Error("GitHub did not accept this token");
-    const user = (await response.json()) as { login?: unknown };
-    if (typeof user.login !== "string" || !user.login) {
-      throw Error("GitHub did not accept this token");
-    }
-    return `@${user.login}`;
-  }
-  const response = await fetchImpl(
-    "https://api.cloudflare.com/client/v4/user/tokens/verify",
-    { headers: { authorization: `Bearer ${token}` }, signal },
-  );
-  const body = (await response.json().catch(() => undefined)) as
-    | { success?: boolean; result?: { status?: string } }
-    | undefined;
-  if (!response.ok || body?.success !== true) {
-    throw Error("Cloudflare did not accept this token");
-  }
-  if (body.result?.status && body.result.status !== "active") {
-    throw Error(`This Cloudflare token is ${body.result.status}`);
-  }
-  return "API token";
+/** Which connectors this site has set up (no secrets). */
+export async function getCliConnectorSetup({
+  account_id,
+}: {
+  account_id?: string;
+}): Promise<CliConnectorSetup> {
+  requireUuid(account_id, "account_id");
+  const github = await getGithubConnectorConfig();
+  return {
+    github: { available: !!github, app_url: github?.app_url || undefined },
+    cloudflare: { available: false },
+  };
 }
 
 export async function listCliConnections({
@@ -152,30 +141,38 @@ export async function listCliConnections({
         description: `${row.metadata?.description ?? ""}`,
         created: row.created,
         last_used: row.last_used,
+        ...(row.metadata?.needs_reconnect ? { needs_reconnect: true } : {}),
       });
     }
   }
   return result;
 }
 
-/** Save a pasted token as a connection, after the provider accepts it. */
-export async function connectCliToken({
+/**
+ * Start signing in to a connector's provider (fresh authentication): the user
+ * approves the returned code at the provider, then the browser polls.
+ */
+export async function startCliConnectorSignIn({
   account_id,
   session_hash,
   connector: connectorInput,
-  token: tokenInput,
   fetchImpl,
 }: {
   account_id?: string;
   session_hash?: string;
   connector: string;
-  token: string;
   fetchImpl?: Fetch;
-}): Promise<CliConnection> {
+}): Promise<CliConnectorSignIn> {
   const owner = requireUuid(account_id, "account_id");
   const connector = requireConnector(connectorInput);
-  const token = validToken(tokenInput);
   await assertAccountHome(owner);
+  const config =
+    connector === "github" ? await getGithubConnectorConfig() : undefined;
+  if (!config) {
+    throw Error(
+      `${CLI_CONNECTOR_INFO[connector].label} is not set up on this site`,
+    );
+  }
   const { requireDangerousSessionAuth } =
     await import("@cocalc/server/conat/api/dangerous-session-auth");
   await requireDangerousSessionAuth({
@@ -184,20 +181,79 @@ export async function connectCliToken({
     require_second_factor: true,
     allow_actor_impersonation: false,
   });
-  const description = await describeToken(connector, token, fetchImpl);
-  const payload: ConnectionPayload = { version: 1, type: "token", token };
+  const started = await startGithubDeviceLogin({ config, fetchImpl });
   const { id } = await createExternalCredential({
-    selector: selector(owner, connector),
-    payload: JSON.stringify(payload),
-    metadata: { description, connector, source: "pasted-token" },
+    selector: pendingSelector(owner),
+    payload: JSON.stringify(started.login),
+    metadata: {
+      connector,
+      [EXTERNAL_CREDENTIAL_LEASE_EXPIRY_METADATA_KEY]: new Date(
+        started.login.expires_at,
+      ).toISOString(),
+    },
+    maxActive: MAX_PENDING_SIGN_INS,
+  });
+  return {
+    login_id: id,
+    connector,
+    user_code: started.user_code,
+    verification_uri: started.verification_uri,
+    interval: started.interval,
+    expires_at: started.login.expires_at,
+  };
+}
+
+/** Finish a sign-in once the user approved it at the provider. */
+export async function pollCliConnectorSignIn({
+  account_id,
+  login_id,
+  fetchImpl,
+}: {
+  account_id?: string;
+  login_id: string;
+  fetchImpl?: Fetch;
+}): Promise<CliConnectorSignInStatus> {
+  const owner = requireUuid(account_id, "account_id");
+  const id = requireUuid(login_id, "login_id");
+  await assertAccountHome(owner);
+  const pending = await getExternalCredentialById({
+    id,
+    selector: pendingSelector(owner),
+    touchLastUsed: false,
+  });
+  const login = pending
+    ? (parseJson(pending.payload) as GithubDeviceLogin)
+    : undefined;
+  if (!login || login.type !== "github-device-login") {
+    return { status: "expired" };
+  }
+  const config = await getGithubConnectorConfig();
+  const finish = () =>
+    revokeExternalCredential({ id, owner_account_id: owner });
+  if (!config) {
+    await finish();
+    return { status: "expired" };
+  }
+  const result = await pollGithubDeviceLogin({ config, login, fetchImpl });
+  if (result.status === "pending") return result;
+  await finish();
+  if (result.status !== "connected") return result;
+  const description = `@${result.login}`;
+  const { id: connection_id } = await createExternalCredential({
+    selector: selector(owner, "github"),
+    payload: JSON.stringify(result.connection),
+    metadata: { description, connector: "github", source: "github-app" },
     maxActive: MAX_CONNECTIONS_PER_CONNECTOR,
   });
   return {
-    connection_id: id,
-    connector,
-    description,
-    created: new Date(),
-    last_used: null,
+    status: "connected",
+    connection: {
+      connection_id,
+      connector: "github",
+      description,
+      created: new Date(),
+      last_used: null,
+    },
   };
 }
 
@@ -222,7 +278,8 @@ export async function disconnectCliConnection({
       }),
     ),
   );
-  if (!found.some(Boolean)) throw Error("connection is unavailable");
+  const connection = found.find(Boolean);
+  if (!connection) throw Error("connection is unavailable");
   // Stopping access never needs fresh authentication.
   await getPool().query(
     `UPDATE agent_connector_grants
@@ -231,6 +288,14 @@ export async function disconnectCliConnection({
     [owner, id],
   );
   await revokeExternalCredential({ id, owner_account_id: owner });
+  // Also invalidate the token at GitHub, best effort: CoCalc's copy is gone.
+  const github = parseGithubConnection(connection.payload);
+  const config = github ? await getGithubConnectorConfig() : undefined;
+  if (github && config && github.client_id === config.client_id) {
+    await revokeGithubToken({ config, token: github.access_token }).catch(
+      () => undefined,
+    );
+  }
 }
 
 export async function listCliConnectorGrants({
@@ -400,6 +465,7 @@ export async function issueCliConnectorTurnTokens({
   run_id,
   turn_ref,
   now = Date.now(),
+  fetchImpl,
 }: {
   account_id?: string;
   host_id?: string;
@@ -413,6 +479,7 @@ export async function issueCliConnectorTurnTokens({
     thread_id: string;
   };
   now?: number;
+  fetchImpl?: Fetch;
 }): Promise<CliConnectorTurnToken[]> {
   const owner = requireUuid(account_id, "account_id");
   const host = requireUuid(host_id, "host_id");
@@ -461,19 +528,14 @@ export async function issueCliConnectorTurnTokens({
     );
     const tokens: CliConnectorTurnToken[] = [];
     for (const grant of locked) {
-      if (!isCliConnector(grant.connector)) continue;
-      const connection = await getExternalCredentialById({
-        id: grant.connection_id!,
-        selector: selector(owner, grant.connector),
+      if (grant.connector !== "github") continue;
+      const token = await githubTurnToken({
+        owner,
+        connection_id: grant.connection_id!,
+        now,
+        fetchImpl,
       });
-      if (!connection) continue;
-      const payload = parsePayload(connection.payload);
-      tokens.push({
-        connector: grant.connector,
-        token: payload.token,
-        expires_at: now + PASTED_TOKEN_DELIVERY_MS,
-        description: `${connection.metadata?.description ?? ""}`,
-      });
+      if (token) tokens.push(token);
     }
     await client.query("COMMIT");
     return tokens;
@@ -483,4 +545,58 @@ export async function issueCliConnectorTurnTokens({
   } finally {
     client.release();
   }
+}
+
+/**
+ * A GitHub access token for one turn, refreshed under the connection's lock
+ * when it is close to expiry. A connection GitHub refuses to refresh is
+ * marked for reconnecting and gives no token.
+ */
+async function githubTurnToken({
+  owner,
+  connection_id,
+  now,
+  fetchImpl,
+}: {
+  owner: string;
+  connection_id: string;
+  now: number;
+  fetchImpl?: Fetch;
+}): Promise<CliConnectorTurnToken | undefined> {
+  const config = await getGithubConnectorConfig();
+  if (!config) return;
+  let current: GithubAppConnection | undefined;
+  const updated = await updateExternalCredentialPayloadLocked({
+    selector: selector(owner, "github"),
+    id: connection_id,
+    update: async (credential) => {
+      const connection = parseGithubConnection(credential.payload);
+      if (!connection || credential.metadata?.needs_reconnect) return;
+      try {
+        const result = await refreshGithubConnection({
+          config,
+          connection,
+          now,
+          fetchImpl,
+        });
+        current = result.connection;
+        return result.refreshed
+          ? { payload: JSON.stringify(result.connection) }
+          : undefined;
+      } catch (err) {
+        if (!(err instanceof GithubReconnectRequired)) throw err;
+        return {
+          payload: credential.payload,
+          metadata: { ...credential.metadata, needs_reconnect: true },
+        };
+      }
+    },
+  });
+  if (!updated || !current) return;
+  return {
+    connector: "github",
+    token: current.access_token,
+    expires_at: current.access_expires_at,
+    description: `${updated.metadata?.description ?? ""}`,
+  };
 }

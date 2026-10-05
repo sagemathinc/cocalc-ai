@@ -295,7 +295,7 @@ describe("hub API argument transforms", () => {
     "agent.resolveAgentNetworkProposal",
     "agent.setPersonalMessagingState",
     "agent.disableIdentity",
-    "agent.connectCliToken",
+    "agent.startCliConnectorSignIn",
     "agent.saveCliConnectorGrant",
   ])("requires a human and binds %s to the actual session", async (name) => {
     const args = await transformArgs({

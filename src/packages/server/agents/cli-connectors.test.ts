@@ -24,6 +24,8 @@ const getByIdMock = jest.fn();
 const listMock = jest.fn();
 const revokeMock = jest.fn();
 const releaseMock = jest.fn();
+const lockedMock = jest.fn();
+let settings: Record<string, string>;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -40,6 +42,10 @@ jest.mock("@cocalc/server/external-credentials/store", () => ({
   getExternalCredentialById: (...a: any[]) => getByIdMock(...a),
   listExternalCredentials: (...a: any[]) => listMock(...a),
   revokeExternalCredential: (...a: any[]) => revokeMock(...a),
+  updateExternalCredentialPayloadLocked: (...a: any[]) => lockedMock(...a),
+}));
+jest.mock("@cocalc/database/settings/server-settings", () => ({
+  getServerSettings: async () => settings,
 }));
 jest.mock("@cocalc/server/conat/api/dangerous-session-auth", () => ({
   requireDangerousSessionAuth: (...a: any[]) => freshAuthMock(...a),
@@ -67,7 +73,7 @@ const grant = {
   account_id: accountId,
   agent_id: agentId,
   source_project_id: projectId,
-  connector: "cloudflare",
+  connector: "github",
   connection_id: connectionId,
   scope: {},
   revision: 1,
@@ -75,11 +81,28 @@ const grant = {
   created_at: new Date(),
   updated_at: new Date(),
 };
-const connection = {
-  id: connectionId,
-  payload: JSON.stringify({ version: 1, type: "token", token: "cf-token-123" }),
-  metadata: { description: "API token" },
-};
+const NOW = 1_000_000;
+const HOUR = 3_600_000;
+const githubPayload = (access_expires_at = NOW + 8 * HOUR) => ({
+  version: 2,
+  type: "github-app",
+  client_id: "Iv23test",
+  access_token: "ghu_access",
+  access_expires_at,
+  refresh_token: "ghr_refresh",
+  refresh_expires_at: NOW + 1000 * HOUR,
+});
+let connection: { id: string; payload: string; metadata: any };
+
+// Answers GitHub endpoints by URL; records every request.
+function github(routes: Record<string, unknown>) {
+  return jest.fn(async (url: string, init?: any) => {
+    const key = `${init?.method ?? "GET"} ${url}`;
+    const body = routes[key];
+    if (body === undefined) throw Error(`unexpected ${key}`);
+    return { ok: true, status: 200, json: async () => body };
+  }) as any;
+}
 
 beforeEach(() => {
   for (const mock of [
@@ -95,26 +118,56 @@ beforeEach(() => {
     listMock,
     revokeMock,
     releaseMock,
+    lockedMock,
   ]) {
     mock.mockReset().mockResolvedValue(undefined);
   }
+  settings = {
+    github_connector_client_id: "Iv23test",
+    github_connector_client_secret: "secret",
+    github_connector_app_url: "https://github.com/apps/cocalc-test",
+  };
+  connection = {
+    id: connectionId,
+    payload: JSON.stringify(githubPayload()),
+    metadata: { description: "@octo" },
+  };
+  // A stored credential updated under its lock, as the real store does.
+  lockedMock.mockImplementation(async ({ update }) => {
+    const next = await update(connection);
+    if (next) {
+      connection = {
+        ...connection,
+        payload: next.payload,
+        metadata: next.metadata ?? connection.metadata,
+      };
+    }
+    return connection;
+  });
   queryMock.mockResolvedValue({ rows: [grant] });
   createMock.mockResolvedValue({ id: connectionId, created: true });
-  getByIdMock.mockResolvedValue(connection);
+  getByIdMock.mockImplementation(async () => connection);
 });
 
-const okFetch = (body: unknown) =>
-  jest.fn(async () => ({ ok: true, json: async () => body })) as any;
+describe("signing in to GitHub", () => {
+  const deviceCode = {
+    device_code: "dev-123",
+    user_code: "ABCD-1234",
+    verification_uri: "https://github.com/login/device",
+    expires_in: 900,
+    interval: 5,
+  };
 
-describe("connecting a pasted token", () => {
-  it("needs fresh auth and the provider's acceptance, and stores who it is", async () => {
-    const { connectCliToken } = await import("./cli-connectors");
-    const result = await connectCliToken({
+  it("starts only with fresh auth, and keeps the device code on the hub", async () => {
+    const { startCliConnectorSignIn } = await import("./cli-connectors");
+    const fetchImpl = github({
+      "POST https://github.com/login/device/code": deviceCode,
+    });
+    const started = await startCliConnectorSignIn({
       account_id: accountId,
       session_hash: "s",
       connector: "github",
-      token: " github_pat_1234567890 ",
-      fetchImpl: okFetch({ login: "octocat" }),
+      fetchImpl,
     });
     expect(freshAuthMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -123,46 +176,144 @@ describe("connecting a pasted token", () => {
         require_second_factor: true,
       }),
     );
-    expect(result.description).toBe("@octocat");
+    expect(started).toEqual(
+      expect.objectContaining({
+        login_id: connectionId,
+        user_code: "ABCD-1234",
+        verification_uri: "https://github.com/login/device",
+      }),
+    );
+    expect(JSON.stringify(started)).not.toContain("dev-123");
     const saved = createMock.mock.calls[0][0];
     expect(saved.selector).toEqual(
       expect.objectContaining({
-        provider: "github",
-        kind: "github-cli-connection",
+        kind: "github-device-login",
         owner_account_id: accountId,
       }),
     );
-    expect(JSON.parse(saved.payload)).toEqual({
+    expect(JSON.parse(saved.payload).device_code).toBe("dev-123");
+    // Abandoned sign-ins expire as leases instead of using up the limit.
+    expect(Date.parse(saved.metadata.lease_expires_at)).toBeGreaterThan(
+      Date.now(),
+    );
+  });
+
+  it("refuses when the site has no GitHub App, or for other connectors", async () => {
+    const { startCliConnectorSignIn } = await import("./cli-connectors");
+    settings.github_connector_client_secret = "";
+    await expect(
+      startCliConnectorSignIn({ account_id: accountId, connector: "github" }),
+    ).rejects.toThrow("GitHub is not set up on this site");
+    await expect(
+      startCliConnectorSignIn({ account_id: accountId, connector: "gitlab" }),
+    ).rejects.toThrow("unknown CLI connector");
+    expect(freshAuthMock).not.toHaveBeenCalled();
+  });
+
+  const pending = (expires_at = Date.now() + 600_000) => ({
+    id: connectionId,
+    payload: JSON.stringify({
       version: 1,
-      type: "token",
-      token: "github_pat_1234567890",
+      type: "github-device-login",
+      client_id: "Iv23test",
+      device_code: "dev-123",
+      expires_at,
+    }),
+    metadata: {},
+  });
+
+  it("waits while the user has not approved yet", async () => {
+    const { pollCliConnectorSignIn } = await import("./cli-connectors");
+    getByIdMock.mockResolvedValue(pending());
+    const fetchImpl = github({
+      "POST https://github.com/login/oauth/access_token": {
+        error: "authorization_pending",
+      },
+    });
+    await expect(
+      pollCliConnectorSignIn({
+        account_id: accountId,
+        login_id: connectionId,
+        fetchImpl,
+      }),
+    ).resolves.toEqual({ status: "pending" });
+    expect(createMock).not.toHaveBeenCalled();
+    expect(revokeMock).not.toHaveBeenCalled();
+  });
+
+  it("stores the expiring tokens as a connection once approved", async () => {
+    const { pollCliConnectorSignIn } = await import("./cli-connectors");
+    getByIdMock.mockResolvedValue(pending());
+    const fetchImpl = github({
+      "POST https://github.com/login/oauth/access_token": {
+        access_token: "ghu_new",
+        expires_in: 28800,
+        refresh_token: "ghr_new",
+        refresh_token_expires_in: 15811200,
+      },
+      "GET https://api.github.com/user": { login: "octocat" },
+    });
+    const result = await pollCliConnectorSignIn({
+      account_id: accountId,
+      login_id: connectionId,
+      fetchImpl,
+    });
+    expect(result).toEqual({
+      status: "connected",
+      connection: expect.objectContaining({ description: "@octocat" }),
+    });
+    const saved = createMock.mock.calls[0][0];
+    expect(saved.selector.kind).toBe("github-cli-connection");
+    expect(JSON.parse(saved.payload)).toEqual(
+      expect.objectContaining({
+        type: "github-app",
+        access_token: "ghu_new",
+        refresh_token: "ghr_new",
+      }),
+    );
+    // The pending sign-in is consumed.
+    expect(revokeMock).toHaveBeenCalledWith({
+      id: connectionId,
+      owner_account_id: accountId,
     });
   });
 
-  it("refuses tokens the provider rejects, and malformed tokens", async () => {
-    const { connectCliToken } = await import("./cli-connectors");
+  it("refuses an app whose tokens do not expire, and revokes that token", async () => {
+    const { pollCliConnectorSignIn } = await import("./cli-connectors");
+    getByIdMock.mockResolvedValue(pending());
+    const fetchImpl = github({
+      "POST https://github.com/login/oauth/access_token": {
+        access_token: "gho_forever",
+      },
+      "DELETE https://api.github.com/applications/Iv23test/token": {},
+    });
     await expect(
-      connectCliToken({
+      pollCliConnectorSignIn({
         account_id: accountId,
-        connector: "cloudflare",
-        token: "cf-token-123456",
-        fetchImpl: okFetch({ success: false }),
+        login_id: connectionId,
+        fetchImpl,
       }),
-    ).rejects.toThrow("Cloudflare did not accept this token");
+    ).rejects.toThrow("Expire user authorization tokens");
+    expect(createMock).not.toHaveBeenCalled();
+    const revoke = fetchImpl.mock.calls.find(
+      ([, init]) => init?.method === "DELETE",
+    );
+    expect(JSON.parse(revoke[1].body)).toEqual({ access_token: "gho_forever" });
+  });
+
+  it("an expired or another account's sign-in gives nothing", async () => {
+    const { pollCliConnectorSignIn } = await import("./cli-connectors");
+    getByIdMock.mockResolvedValue(undefined);
     await expect(
-      connectCliToken({
-        account_id: accountId,
-        connector: "cloudflare",
-        token: "has space in it",
-      }),
-    ).rejects.toThrow("does not look like an API token");
+      pollCliConnectorSignIn({ account_id: accountId, login_id: connectionId }),
+    ).resolves.toEqual({ status: "expired" });
+    expect(getByIdMock.mock.calls[0][0].selector.owner_account_id).toBe(
+      accountId,
+    );
+    getByIdMock.mockResolvedValue(pending(Date.now() - 1));
     await expect(
-      connectCliToken({
-        account_id: accountId,
-        connector: "gitlab",
-        token: "x".repeat(20),
-      }),
-    ).rejects.toThrow("unknown CLI connector");
+      pollCliConnectorSignIn({ account_id: accountId, login_id: connectionId }),
+    ).resolves.toEqual({ status: "expired" });
     expect(createMock).not.toHaveBeenCalled();
   });
 });
@@ -279,7 +430,7 @@ describe("turn tokens", () => {
     source_project_id: projectId,
     run_id: runId,
     turn_ref,
-    now: 1_000,
+    now: NOW,
   };
 
   it("returns nothing, cheaply, when the agent has no connector on", async () => {
@@ -301,10 +452,10 @@ describe("turn tokens", () => {
     );
     expect(tokens).toEqual([
       {
-        connector: "cloudflare",
-        token: "cf-token-123",
-        expires_at: 1_000 + 15 * 60_000,
-        description: "API token",
+        connector: "github",
+        token: "ghu_access",
+        expires_at: NOW + 8 * HOUR,
+        description: "@octo",
       },
     ]);
   });
@@ -336,12 +487,12 @@ describe("turn tokens", () => {
       /FOR SHARE/.test(q) ? { rows: [] } : { rows: [grant] },
     );
     await expect(issueCliConnectorTurnTokens(request)).resolves.toEqual([]);
-    expect(getByIdMock).not.toHaveBeenCalled();
+    expect(lockedMock).not.toHaveBeenCalled();
   });
 
   it("rolls back and releases on failure", async () => {
     const { issueCliConnectorTurnTokens } = await import("./cli-connectors");
-    getByIdMock.mockRejectedValueOnce(Error("decrypt failed"));
+    lockedMock.mockRejectedValueOnce(Error("decrypt failed"));
     await expect(issueCliConnectorTurnTokens(request)).rejects.toThrow(
       "decrypt failed",
     );
@@ -353,18 +504,82 @@ describe("turn tokens", () => {
 
   it("skips a connection that no longer exists", async () => {
     const { issueCliConnectorTurnTokens } = await import("./cli-connectors");
-    getByIdMock.mockResolvedValueOnce(undefined);
+    lockedMock.mockResolvedValueOnce(undefined);
     await expect(issueCliConnectorTurnTokens(request)).resolves.toEqual([]);
+  });
+
+  it("refreshes a token close to expiry, under the connection's lock", async () => {
+    const { issueCliConnectorTurnTokens } = await import("./cli-connectors");
+    connection.payload = JSON.stringify(githubPayload(NOW + 60_000));
+    const fetchImpl = github({
+      "POST https://github.com/login/oauth/access_token": {
+        access_token: "ghu_fresh",
+        expires_in: 28800,
+        refresh_token: "ghr_fresh",
+        refresh_token_expires_in: 15811200,
+      },
+    });
+    const tokens = await issueCliConnectorTurnTokens({ ...request, fetchImpl });
+    expect(tokens).toEqual([
+      expect.objectContaining({
+        token: "ghu_fresh",
+        expires_at: NOW + 8 * HOUR,
+      }),
+    ]);
+    const form = new URLSearchParams(fetchImpl.mock.calls[0][1].body);
+    expect(Object.fromEntries(form)).toEqual({
+      client_id: "Iv23test",
+      client_secret: "secret",
+      grant_type: "refresh_token",
+      refresh_token: "ghr_refresh",
+    });
+    // GitHub rotates refresh tokens; the new one is stored.
+    expect(JSON.parse(connection.payload).refresh_token).toBe("ghr_fresh");
+  });
+
+  it("a refused refresh marks the connection for signing in again", async () => {
+    const { issueCliConnectorTurnTokens } = await import("./cli-connectors");
+    connection.payload = JSON.stringify(githubPayload(NOW + 60_000));
+    const fetchImpl = github({
+      "POST https://github.com/login/oauth/access_token": {
+        error: "bad_refresh_token",
+      },
+    });
+    await expect(
+      issueCliConnectorTurnTokens({ ...request, fetchImpl }),
+    ).resolves.toEqual([]);
+    expect(connection.metadata.needs_reconnect).toBe(true);
+    // And it is not retried on later turns.
+    fetchImpl.mockClear();
+    await issueCliConnectorTurnTokens({ ...request, fetchImpl });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("gives no GitHub token when the site's app is gone or changed", async () => {
+    const { issueCliConnectorTurnTokens } = await import("./cli-connectors");
+    settings.github_connector_client_id = "";
+    await expect(issueCliConnectorTurnTokens(request)).resolves.toEqual([]);
+    settings.github_connector_client_id = "Iv23other";
+    await expect(issueCliConnectorTurnTokens(request)).resolves.toEqual([]);
+    expect(connection.metadata.needs_reconnect).toBe(true);
   });
 });
 
 describe("disconnecting", () => {
   it("turns off grants and revokes only a CLI connection", async () => {
     const { disconnectCliConnection } = await import("./cli-connectors");
+    const fetchMock = jest
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue({ ok: true, status: 204 } as any);
     await disconnectCliConnection({
       account_id: accountId,
       connection_id: connectionId,
     });
+    // GitHub invalidates the token too.
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://api.github.com/applications/Iv23test/token",
+    );
+    fetchMock.mockRestore();
     expect(`${queryMock.mock.calls[0][0]}`).toContain("enabled=false");
     expect(revokeMock).toHaveBeenCalledWith({
       id: connectionId,

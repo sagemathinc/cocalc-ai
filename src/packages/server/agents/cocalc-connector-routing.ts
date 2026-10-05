@@ -24,7 +24,9 @@ import {
   removeCocalcConnectorConfig as removeConfigAtHome,
 } from "./cocalc-connector-config";
 import {
-  connectCliToken as connectCliTokenAtHome,
+  getCliConnectorSetup as getCliSetupAtHome,
+  pollCliConnectorSignIn as pollCliSignInAtHome,
+  startCliConnectorSignIn as startCliSignInAtHome,
   disconnectCliConnection as disconnectCliConnectionAtHome,
   issueCliConnectorTurnTokens,
   listCliConnections as listCliConnectionsAtHome,
@@ -38,7 +40,9 @@ export const agentConnectorControl: InterBayAgentConnectorApi = {
   saveConfig: saveConfigAtHome,
   removeConfig: removeConfigAtHome,
   listCliConnections: listCliConnectionsAtHome,
-  connectCliToken: connectCliTokenAtHome,
+  getCliSetup: getCliSetupAtHome,
+  startCliSignIn: startCliSignInAtHome,
+  pollCliSignIn: pollCliSignInAtHome,
   disconnectCliConnection: disconnectCliConnectionAtHome,
   listCliGrants: listCliGrantsAtHome,
   saveCliGrant: saveCliGrantAtHome,
@@ -126,10 +130,24 @@ export const listCliConnections: AgentApi["listCliConnections"] = async (
   return await (await accountHomeApi(opts.account_id)).listCliConnections(opts);
 };
 
-export const connectCliToken: AgentApi["connectCliToken"] = async (input) => {
-  const opts = requiredAccount(input);
-  return await (await accountHomeApi(opts.account_id)).connectCliToken(opts);
+export const getCliConnectorSetup: AgentApi["getCliConnectorSetup"] = async (
+  input,
+) => {
+  const opts = requiredAccount(input ?? {});
+  return await (await accountHomeApi(opts.account_id)).getCliSetup(opts);
 };
+
+export const startCliConnectorSignIn: AgentApi["startCliConnectorSignIn"] =
+  async (input) => {
+    const opts = requiredAccount(input);
+    return await (await accountHomeApi(opts.account_id)).startCliSignIn(opts);
+  };
+
+export const pollCliConnectorSignIn: AgentApi["pollCliConnectorSignIn"] =
+  async (input) => {
+    const opts = requiredAccount(input);
+    return await (await accountHomeApi(opts.account_id)).pollCliSignIn(opts);
+  };
 
 export const disconnectCliConnection: AgentApi["disconnectCliConnection"] =
   async (input) => {

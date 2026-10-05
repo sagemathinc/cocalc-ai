@@ -86,7 +86,9 @@ export const agent = {
   getCocalcConnectorConfig: authFirstRequireAccount,
   listCocalcConnectorConfigs: authFirstRequireAccount,
   listCliConnections: authFirstRequireAccount,
-  connectCliToken: authFirstRequireAccountWithBoundSession,
+  getCliConnectorSetup: authFirstRequireAccount,
+  startCliConnectorSignIn: authFirstRequireAccountWithBoundSession,
+  pollCliConnectorSignIn: authFirstRequireAccount,
   disconnectCliConnection: authFirstRequireAccount,
   listCliConnectorGrants: authFirstRequireAccount,
   saveCliConnectorGrant: authFirstRequireAccountWithBoundSession,
@@ -277,7 +279,31 @@ export interface CliConnection {
   description: string;
   created: Date;
   last_used: Date | null;
+  /** The provider refused to refresh it; sign in again. */
+  needs_reconnect?: boolean;
 }
+
+/** Which connectors this site has set up. */
+export interface CliConnectorSetup {
+  github: { available: boolean; app_url?: string };
+  cloudflare: { available: boolean };
+}
+
+/** A started sign-in: the user approves user_code at verification_uri. */
+export interface CliConnectorSignIn {
+  login_id: string;
+  connector: CliConnector;
+  user_code: string;
+  verification_uri: string;
+  /** Seconds between polls. */
+  interval: number;
+  expires_at: number;
+}
+
+export type CliConnectorSignInStatus =
+  | { status: "pending"; slow_down?: boolean }
+  | { status: "expired" | "denied" }
+  | { status: "connected"; connection: CliConnection };
 
 /** Whether one agent may use a CLI connector, and with which connection. */
 export interface CliConnectorGrant {
@@ -297,10 +323,18 @@ export interface CliConnectorGrant {
 export interface AgentApi {
   /** The signed-in account's CLI connections (GitHub, Cloudflare). */
   listCliConnections(opts?: { account_id?: string }): Promise<CliConnection[]>;
-  /** Save a pasted token after the provider accepts it (fresh auth). */
-  connectCliToken(
-    opts: AgentHumanAuth & { connector: CliConnector; token: string },
-  ): Promise<CliConnection>;
+  getCliConnectorSetup(opts?: {
+    account_id?: string;
+  }): Promise<CliConnectorSetup>;
+  /** Start signing in at the provider (fresh auth). */
+  startCliConnectorSignIn(
+    opts: AgentHumanAuth & { connector: CliConnector },
+  ): Promise<CliConnectorSignIn>;
+  /** Poll a started sign-in; "connected" stores the connection. */
+  pollCliConnectorSignIn(opts: {
+    account_id?: string;
+    login_id: string;
+  }): Promise<CliConnectorSignInStatus>;
   /** Remove a connection and turn it off for every agent. */
   disconnectCliConnection(opts: {
     account_id?: string;

@@ -18,7 +18,9 @@ export {
 } from "@cocalc/server/agents/cocalc-connector-routing";
 import * as cliConnectors from "@cocalc/server/agents/cocalc-connector-routing";
 export const listCliConnections = cliConnectors.listCliConnections;
-export const connectCliToken = cliConnectors.connectCliToken;
+export const getCliConnectorSetup = cliConnectors.getCliConnectorSetup;
+export const startCliConnectorSignIn = cliConnectors.startCliConnectorSignIn;
+export const pollCliConnectorSignIn = cliConnectors.pollCliConnectorSignIn;
 export const disconnectCliConnection = cliConnectors.disconnectCliConnection;
 export const listCliConnectorGrants = cliConnectors.listCliConnectorGrants;
 export const saveCliConnectorGrant = cliConnectors.saveCliConnectorGrant;
