@@ -10,6 +10,7 @@ import { ApiKeyActionStore } from "@cocalc/server/api/key-action-store";
 import type {
   AccountMembershipPortableState,
   AccountRehomeAcceptRequest,
+  AccountRehomeFinalizeRequest,
   AccountRehomeOperationStage,
   AccountRehomeOperationStatus,
   AccountRehomeOperationSummary,
@@ -1277,13 +1278,17 @@ export async function acceptAccountRehome({
     );
   }
   await ensureAccountRehomeSchema();
+  // The copied row keeps pointing at the source until finalizeAccountRehome:
+  // a bay trusts its own row when it says "homed here", and this bay must not
+  // serve the account before its state has been copied and the cluster
+  // directory points here.
   const accept = async (db: Queryable = getPool()) =>
     await upsertJsonRow({
       table: "accounts",
       row: {
         ...account,
         account_id: accountId,
-        home_bay_id: destBayId,
+        home_bay_id: sourceBayId,
       },
       primaryKey: ["account_id"],
       db,
@@ -1344,6 +1349,43 @@ function assertFinancialEnvelope(
     h.dest_bay_id !== opts.dest_bay_id
   )
     throw Error("Account and financial handoff identities differ");
+}
+
+/**
+ * Rehome cutover on the destination, after the cluster directory points
+ * here: from now on this bay's own row says the account is homed here.
+ */
+export async function finalizeAccountRehome({
+  target_account_id,
+  source_bay_id,
+  dest_bay_id,
+}: AccountRehomeFinalizeRequest): Promise<void> {
+  const accountId = normalizeUuid("target_account_id", target_account_id);
+  const sourceBayId = normalizeBayId("source_bay_id", source_bay_id);
+  const destBayId = normalizeBayId("dest_bay_id", dest_bay_id);
+  const localBayId = getConfiguredBayId();
+  if (destBayId !== localBayId) {
+    throw new Error(
+      `account rehome finalize for ${accountId} reached ${localBayId}, not destination bay ${destBayId}`,
+    );
+  }
+  const { rows } = await getPool().query<{ home_bay_id: string | null }>(
+    `UPDATE accounts
+        SET home_bay_id = CASE
+              WHEN COALESCE(NULLIF(BTRIM(home_bay_id), ''), $3) = $2 THEN $3
+              ELSE home_bay_id
+            END
+      WHERE account_id = $1
+        AND deleted IS NOT TRUE
+      RETURNING home_bay_id`,
+    [accountId, sourceBayId, destBayId],
+  );
+  const home = `${rows[0]?.home_bay_id ?? ""}`.trim() || localBayId;
+  if (home !== destBayId) {
+    throw new Error(
+      `account rehome finalize for ${accountId}: local row is homed on ${rows.length ? home : "nothing (no row)"}, expected ${sourceBayId} or ${destBayId}`,
+    );
+  }
 }
 
 async function assertNoFinancialHandoff(account_id: string) {
@@ -1752,6 +1794,15 @@ export async function runAccountRehomeOperation(
           },
         });
       }
+      await createInterBayAccountLocalClient({
+        client: getInterBayFabricClient(),
+        dest_bay: op.dest_bay_id,
+        timeout: ACCOUNT_REHOME_TIMEOUT_MS,
+      }).finalizeRehome({
+        target_account_id: op.account_id,
+        source_bay_id: op.source_bay_id,
+        dest_bay_id: op.dest_bay_id,
+      });
       await waitForAccountHomeBayReadPath({
         // Use the rehomed account itself for the convergence lookup. The
         // requesting admin may be homed on a different bay, so polling with

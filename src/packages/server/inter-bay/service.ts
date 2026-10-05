@@ -218,6 +218,7 @@ import {
 import {
   acceptAccountRehome,
   copyAccountRehomeState,
+  finalizeAccountRehome,
   getMembershipPortableState,
   getAccountRehomeOperation,
   replaceMembershipPortableState,
@@ -1363,6 +1364,7 @@ async function startAccountLocalService(): Promise<void> {
     rehome: async (opts) => await rehomeAccountOnHomeBay(opts),
     acceptRehome: async (opts) => await acceptAccountRehome(opts),
     copyRehomeState: async (opts) => await copyAccountRehomeState(opts),
+    finalizeRehome: async (opts) => await finalizeAccountRehome(opts),
     activateFinancialRehome: async (opts) =>
       await (
         await import("@cocalc/server/accounts/financial-rehome")

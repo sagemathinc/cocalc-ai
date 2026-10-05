@@ -14,6 +14,7 @@ let listBrowserSessionsForAccountMock: jest.Mock;
 let getLiveBrowserSessionInfoMock: jest.Mock;
 let acceptRehomeMock: jest.Mock;
 let copyRehomeStateMock: jest.Mock;
+let finalizeRehomeMock: jest.Mock;
 let getMembershipPortableStateMock: jest.Mock;
 let replaceMembershipPortableStateMock: jest.Mock;
 let loadAccountPersistStateMock: jest.Mock;
@@ -367,6 +368,7 @@ describe("account rehome", () => {
     getLiveBrowserSessionInfoMock = jest.fn(async () => ({}));
     acceptRehomeMock = jest.fn(async () => undefined);
     copyRehomeStateMock = jest.fn(async () => undefined);
+    finalizeRehomeMock = jest.fn(async () => undefined);
     getMembershipPortableStateMock = jest.fn(async () => ({
       membership_grants: [],
       membership_packages: [],
@@ -380,6 +382,8 @@ describe("account rehome", () => {
     createInterBayAccountLocalClientMock = jest.fn(({ dest_bay }) => ({
       acceptRehome: async (opts: any) => await acceptRehomeMock(opts),
       copyRehomeState: async (opts: any) => await copyRehomeStateMock(opts),
+      finalizeRehome: async (opts: any) =>
+        await finalizeRehomeMock({ dest_bay, ...opts }),
       getRehomeOperation: jest.fn(async () => null),
       reconcileRehome: jest.fn(async () => undefined),
       getMembershipPortableState: async (opts: any) =>
@@ -408,6 +412,20 @@ describe("account rehome", () => {
     });
     expect(clearAccountPersistStateMock).toHaveBeenCalledWith(
       TARGET_ACCOUNT_ID,
+    );
+    // The destination's own row flips to "homed here" only after the
+    // directory points there, and before routing convergence is awaited.
+    expect(finalizeRehomeMock).toHaveBeenCalledWith({
+      dest_bay: "bay-2",
+      target_account_id: TARGET_ACCOUNT_ID,
+      source_bay_id: "bay-1",
+      dest_bay_id: "bay-2",
+    });
+    expect(
+      updateClusterAccountHomeBayMock.mock.invocationCallOrder[0],
+    ).toBeLessThan(finalizeRehomeMock.mock.invocationCallOrder[0]);
+    expect(finalizeRehomeMock.mock.invocationCallOrder[0]).toBeLessThan(
+      resolveAccountHomeBayMock.mock.invocationCallOrder[0],
     );
     expect(result).toEqual({
       op_id: OP_ID,
@@ -1279,11 +1297,50 @@ describe("account rehome", () => {
       dest_bay_id: "bay-1",
       account,
     });
+    // The copied row still points at the source until the cutover.
     expect(
       queryMock.mock.calls.find(([sql]) =>
         sql.includes('INSERT INTO "accounts"'),
       )?.[1],
-    ).toEqual([account]);
+    ).toEqual([{ ...account, home_bay_id: "bay-2" }]);
+  });
+
+  it("finalizes the cutover on the destination only", async () => {
+    queryMock = jest.fn(async () => ({
+      rows: [{ home_bay_id: "bay-1" }],
+      rowCount: 1,
+    }));
+    const { finalizeAccountRehome } = await import("./rehome");
+    await finalizeAccountRehome({
+      target_account_id: TARGET_ACCOUNT_ID,
+      source_bay_id: "bay-2",
+      dest_bay_id: "bay-1",
+    });
+    const [sql, params] = queryMock.mock.calls[0];
+    expect(sql).toContain("UPDATE accounts");
+    expect(params).toEqual([TARGET_ACCOUNT_ID, "bay-2", "bay-1"]);
+
+    // The row is homed somewhere else entirely: refuse.
+    queryMock = jest.fn(async () => ({
+      rows: [{ home_bay_id: "bay-3" }],
+      rowCount: 1,
+    }));
+    await expect(
+      finalizeAccountRehome({
+        target_account_id: TARGET_ACCOUNT_ID,
+        source_bay_id: "bay-2",
+        dest_bay_id: "bay-1",
+      }),
+    ).rejects.toThrow("homed on bay-3");
+
+    // Only the destination bay may finalize.
+    await expect(
+      finalizeAccountRehome({
+        target_account_id: TARGET_ACCOUNT_ID,
+        source_bay_id: "bay-1",
+        dest_bay_id: "bay-2",
+      }),
+    ).rejects.toThrow("not destination bay");
   });
   it("imports key issuance sequences and search debt without resetting them", async () => {
     const key = {

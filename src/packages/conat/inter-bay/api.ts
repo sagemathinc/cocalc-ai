@@ -1009,6 +1009,13 @@ export interface AccountRehomeAcceptRequest {
   financial_handoff?: AccountFinancialHandoff;
 }
 
+/** Makes the destination's account row say "homed here" (rehome cutover). */
+export interface AccountRehomeFinalizeRequest {
+  target_account_id: string;
+  source_bay_id: string;
+  dest_bay_id: string;
+}
+
 export interface AccountPersistFileV1 {
   root: "local" | "archive" | "backup";
   relative_path: string;
@@ -2986,6 +2993,7 @@ export type AccountLocalMethod =
   | "accept-rehome"
   | "copy-rehome-state"
   | "activate-financial-rehome"
+  | "finalize-rehome"
   | "get-rehome-operation"
   | "reconcile-rehome"
   | "create-impersonation-grant"
@@ -4748,6 +4756,7 @@ export interface InterBayAccountLocalApi
   ) => Promise<AccountRehomeResponse>;
   copyRehomeState: (opts: AccountRehomeStateCopyRequest) => Promise<void>;
   activateFinancialRehome: (opts: AccountFinancialActivation) => Promise<void>;
+  finalizeRehome: (opts: AccountRehomeFinalizeRequest) => Promise<void>;
   getRehomeOperation: (opts: {
     op_id: string;
   }) => Promise<AccountRehomeOperationSummary | null>;
@@ -7443,6 +7452,12 @@ export function createInterBayAccountLocalClient({
       method: "activate-financial-rehome",
     }),
   });
+  const finalizeRehomeClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "finalizeRehome">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({ dest_bay, method: "finalize-rehome" }),
+  });
   const getRehomeOperationClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "getRehomeOperation">
   >({
@@ -8923,6 +8938,8 @@ export function createInterBayAccountLocalClient({
       await copyRehomeStateClient.copyRehomeState(opts),
     activateFinancialRehome: async (opts) =>
       await activateFinancialRehomeClient.activateFinancialRehome(opts),
+    finalizeRehome: async (opts) =>
+      await finalizeRehomeClient.finalizeRehome(opts),
     getRehomeOperation: async (opts) =>
       await getRehomeOperationClient.getRehomeOperation(opts),
     reconcileRehome: async (opts) =>
@@ -9511,6 +9528,17 @@ export function createInterBayAccountLocalHandler({
       impl: {
         activateFinancialRehome: async (opts) =>
           await impl.activateFinancialRehome(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "finalizeRehome">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "finalize-rehome",
+      }),
+      impl: {
+        finalizeRehome: async (opts) => await impl.finalizeRehome(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAccountLocalApi, "getRehomeOperation">>({
