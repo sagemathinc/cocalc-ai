@@ -8,10 +8,16 @@ import {
   refreshCliConnectors,
 } from "./cli-connectors";
 
+const SETUP = {
+  github: { available: true, app_url: "https://github.com/apps/cocalc-test" },
+  cloudflare: { available: false },
+};
 const mockApi = {
   listCliConnections: jest.fn(),
   listCliConnectorGrants: jest.fn(),
-  connectCliToken: jest.fn(),
+  getCliConnectorSetup: jest.fn(),
+  startCliConnectorSignIn: jest.fn(),
+  pollCliConnectorSignIn: jest.fn(),
   saveCliConnectorGrant: jest.fn(),
   disconnectCliConnection: jest.fn(),
 };
@@ -83,6 +89,7 @@ beforeEach(() => {
     grant("builder-id", "conn-1"),
     grant("writer-id", "conn-1", false),
   ]);
+  mockApi.getCliConnectorSetup.mockResolvedValue(SETUP);
   refreshCliConnectors();
 });
 
@@ -100,11 +107,25 @@ describe("Settings > Connectors section", () => {
     ).toBeVisible();
   });
 
-  it("connects a pasted token through fresh auth and reloads", async () => {
+  const signIn = {
+    login_id: "login-1",
+    connector: "github",
+    user_code: "ABCD-1234",
+    verification_uri: "https://github.com/login/device",
+    interval: 0.01,
+    expires_at: Date.now() + 600_000,
+  };
+
+  it("signs in with a code approved on GitHub, through fresh auth", async () => {
     mockApi.listCliConnections.mockResolvedValueOnce([]);
     mockApi.listCliConnectorGrants.mockResolvedValueOnce([]);
     refreshCliConnectors();
-    mockApi.connectCliToken.mockResolvedValue(connection("conn-2", "@new"));
+    mockApi.startCliConnectorSignIn.mockResolvedValue(signIn);
+    // The second poll waits until the test approves the sign-in.
+    let approve!: (value: unknown) => void;
+    mockApi.pollCliConnectorSignIn
+      .mockResolvedValueOnce({ status: "pending" })
+      .mockReturnValueOnce(new Promise((resolve) => (approve = resolve)));
     render(<CliConnectorSection connector="github" />);
     expect(
       await screen.findByText("No GitHub account is connected."),
@@ -115,29 +136,35 @@ describe("Settings > Connectors section", () => {
     const dialog = await screen.findByRole("dialog", {
       name: "Connect GitHub",
     });
-    const connect = within(dialog).getByRole("button", { name: "Connect" });
-    expect(connect).toBeDisabled();
-    await userEvent.type(
-      within(dialog).getByLabelText("GitHub token"),
-      "  github_pat_x  ",
-    );
-    await userEvent.click(connect);
-    await waitFor(() =>
-      expect(mockApi.connectCliToken).toHaveBeenCalledWith({
-        connector: "github",
-        token: "github_pat_x",
-      }),
-    );
+    await within(dialog).findByText("ABCD-1234");
+    expect(
+      within(dialog).getByRole("link", { name: "Open GitHub" }),
+    ).toHaveAttribute("href", "https://github.com/login/device");
+    expect(
+      within(dialog).getByRole("link", { name: "choose repositories" }),
+    ).toHaveAttribute("href", "https://github.com/apps/cocalc-test");
+    expect(mockApi.startCliConnectorSignIn).toHaveBeenCalledWith({
+      connector: "github",
+    });
     expect(mockFreshAuth).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(mockApi.pollCliConnectorSignIn).toHaveBeenCalledTimes(2),
+    );
+    expect(mockApi.pollCliConnectorSignIn).toHaveBeenCalledWith({
+      login_id: "login-1",
+    });
+    expect(within(dialog).getByText("ABCD-1234")).toBeVisible();
+    approve({ status: "connected", connection: connection("conn-2", "@new") });
+    await waitFor(() => expect(dialog).not.toBeVisible());
+    // The new account is loaded.
     await waitFor(() =>
       expect(mockApi.listCliConnections).toHaveBeenCalledTimes(2),
     );
   });
 
-  it("shows why a token was refused", async () => {
-    mockApi.connectCliToken.mockRejectedValue(
-      new Error("GitHub did not accept the token"),
-    );
+  it("explains a declined sign-in and can try again", async () => {
+    mockApi.startCliConnectorSignIn.mockResolvedValue(signIn);
+    mockApi.pollCliConnectorSignIn.mockResolvedValue({ status: "denied" });
     render(<CliConnectorSection connector="github" />);
     await userEvent.click(
       await screen.findByRole("button", {
@@ -147,13 +174,36 @@ describe("Settings > Connectors section", () => {
     const dialog = await screen.findByRole("dialog", {
       name: "Connect GitHub",
     });
-    await userEvent.type(within(dialog).getByLabelText("GitHub token"), "bad");
-    await userEvent.click(
-      within(dialog).getByRole("button", { name: "Connect" }),
-    );
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "GitHub did not accept the token",
+      "The sign-in was declined on GitHub.",
     );
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Try again" }),
+    );
+    await waitFor(() =>
+      expect(mockApi.startCliConnectorSignIn).toHaveBeenCalledTimes(2),
+    );
+  });
+
+  it("says when the site has not set the connector up", async () => {
+    mockApi.listCliConnections.mockResolvedValue([]);
+    refreshCliConnectors();
+    render(<CliConnectorSection connector="cloudflare" />);
+    expect(
+      await screen.findByText(/Cloudflare is not set up on this site yet/),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /Connect .* Cloudflare account/ }),
+    ).toBeNull();
+  });
+
+  it("marks a connection that needs a new sign-in", async () => {
+    mockApi.listCliConnections.mockResolvedValue([
+      { ...connection("conn-1", "@octo"), needs_reconnect: true },
+    ]);
+    refreshCliConnectors();
+    render(<CliConnectorSection connector="github" />);
+    expect(await screen.findByText("Sign in again")).toBeVisible();
   });
 
   it("disconnects after confirming, naming the agents that lose it", async () => {
@@ -242,6 +292,7 @@ describe("per-agent dialog", () => {
   it("cannot turn on without a connected account", async () => {
     mockApi.listCliConnections.mockResolvedValue([]);
     mockApi.listCliConnectorGrants.mockResolvedValue([]);
+    mockApi.getCliConnectorSetup.mockResolvedValue(SETUP);
     refreshCliConnectors();
     render(
       <CliConnectorAgentModal

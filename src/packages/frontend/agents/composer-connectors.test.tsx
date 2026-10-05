@@ -30,10 +30,16 @@ jest.mock("@rc-component/util/lib/hooks/useId", () => ({
   },
 }));
 
+const SETUP = {
+  github: { available: true, app_url: "https://github.com/apps/cocalc-test" },
+  cloudflare: { available: false },
+};
 const mockApi = {
   listCliConnections: jest.fn(),
   listCliConnectorGrants: jest.fn(),
-  connectCliToken: jest.fn(),
+  getCliConnectorSetup: jest.fn(),
+  startCliConnectorSignIn: jest.fn(),
+  pollCliConnectorSignIn: jest.fn(),
   saveCliConnectorGrant: jest.fn(),
   disconnectCliConnection: jest.fn(),
   getCocalcConnectorConfig: jest.fn(),
@@ -133,6 +139,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockApi.listCliConnections.mockResolvedValue([]);
   mockApi.listCliConnectorGrants.mockResolvedValue([]);
+  mockApi.getCliConnectorSetup.mockResolvedValue(SETUP);
   refreshCliConnectors();
   mockError = undefined;
   mockDirectory = {

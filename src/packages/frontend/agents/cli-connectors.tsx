@@ -11,7 +11,7 @@ import { DeleteOutlined } from "@ant-design/icons";
 import {
   Alert,
   Button,
-  Input,
+  Tag,
   Modal,
   Radio,
   Space,
@@ -25,6 +25,8 @@ import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import type {
   CliConnection,
   CliConnectorGrant,
+  CliConnectorSetup,
+  CliConnectorSignIn,
 } from "@cocalc/conat/hub/api/agent";
 import {
   CLI_CONNECTOR_INFO,
@@ -35,12 +37,14 @@ import {
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 import { Panel } from "@cocalc/frontend/antd-bootstrap";
+import { Tooltip } from "@cocalc/frontend/components";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { personalAgentApi, useNamedAgents } from "./api";
 
 export interface CliConnectorData {
   connections: CliConnection[];
   grants: CliConnectorGrant[];
+  setup: CliConnectorSetup;
 }
 
 // One shared load for the settings page and every message box.
@@ -58,7 +62,8 @@ function loadCliConnectors(): Promise<CliConnectorData> {
     const pending = Promise.all([
       api.listCliConnections(),
       api.listCliConnectorGrants(),
-    ]).then(([connections, grants]) => ({ connections, grants }));
+      api.getCliConnectorSetup(),
+    ]).then(([connections, grants, setup]) => ({ connections, grants, setup }));
     request = pending;
     // A failed load is retried on the next use.
     pending.catch(() => {
@@ -128,40 +133,16 @@ export function cliConnectorSummary(
   return connection?.description || "On";
 }
 
-const TOKEN_HELP: Record<CliConnector, React.ReactNode> = {
-  github: (
-    <>
-      Create a{" "}
-      <a
-        href="https://github.com/settings/personal-access-tokens/new"
-        target="_blank"
-        rel="noreferrer"
-      >
-        fine-grained personal access token
-      </a>{" "}
-      for the repositories agents should work on, with read and write access to
-      Contents, Pull requests and Issues. Agents can do whatever the token
-      allows.
-    </>
-  ),
-  cloudflare: (
-    <>
-      Create an{" "}
-      <a
-        href="https://dash.cloudflare.com/profile/api-tokens"
-        target="_blank"
-        rel="noreferrer"
-      >
-        API token
-      </a>
-      . The &ldquo;Edit Cloudflare Workers&rdquo; template covers Workers, KV,
-      R2 and Pages; add DNS permissions only if agents should change DNS. Agents
-      can do whatever the token allows.
-    </>
-  ),
-};
+type SignInState =
+  | { step: "starting" }
+  | { step: "waiting"; signIn: CliConnectorSignIn }
+  | { step: "ended"; message: string };
 
-export function ConnectCliTokenModal({
+/**
+ * Sign in to a connector's provider: the user approves a code on the
+ * provider's site while this dialog waits. Only expiring tokens result.
+ */
+export function ConnectCliSignInModal({
   connector,
   open,
   onClose,
@@ -173,71 +154,139 @@ export function ConnectCliTokenModal({
   onConnected?: (connection: CliConnection) => void;
 }) {
   const { label } = CLI_CONNECTOR_INFO[connector];
-  const [token, setToken] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const { data } = useCliConnectors();
+  const appUrl =
+    connector === "github" ? data?.setup.github.app_url : undefined;
+  const [state, setState] = useState<SignInState>({ step: "starting" });
+  const [attempt, setAttempt] = useState(0);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   useEffect(() => {
-    if (!open) {
-      setToken("");
-      setError("");
-    }
-  }, [open]);
-  const connect = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      let connection: CliConnection | undefined;
-      const completed = await runFreshAuthAction(async () => {
-        connection = await personalAgentApi().connectCliToken({
-          connector,
-          token: token.trim(),
+    if (!open) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = (signIn: CliConnectorSignIn, interval: number) => {
+      timer = setTimeout(async () => {
+        if (cancelled) return;
+        try {
+          const result = await personalAgentApi().pollCliConnectorSignIn({
+            login_id: signIn.login_id,
+          });
+          if (cancelled) return;
+          if (result.status === "pending") {
+            poll(signIn, interval + (result.slow_down ? 5 : 0));
+          } else if (result.status === "connected") {
+            refreshCliConnectors();
+            onConnected?.(result.connection);
+            onClose();
+          } else {
+            setState({
+              step: "ended",
+              message:
+                result.status === "denied"
+                  ? `The sign-in was declined on ${label}.`
+                  : "The code expired before it was approved.",
+            });
+          }
+        } catch (err) {
+          if (!cancelled) setState({ step: "ended", message: `${err}` });
+        }
+      }, interval * 1000);
+    };
+    setState({ step: "starting" });
+    void (async () => {
+      try {
+        let signIn: CliConnectorSignIn | undefined;
+        const completed = await runFreshAuthAction(async () => {
+          signIn = await personalAgentApi().startCliConnectorSignIn({
+            connector,
+          });
         });
-      });
-      if (completed && connection) {
-        refreshCliConnectors();
-        onConnected?.(connection);
-        onClose();
+        if (cancelled) return;
+        if (!completed || !signIn) {
+          onClose();
+          return;
+        }
+        setState({ step: "waiting", signIn });
+        poll(signIn, signIn.interval);
+      } catch (err) {
+        if (!cancelled) setState({ step: "ended", message: `${err}` });
       }
-    } catch (err) {
-      setError(`${err}`);
-    } finally {
-      setBusy(false);
-    }
-  };
+    })();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+    // Restart only when opened again or on "Try again".
+  }, [open, attempt]);
   return (
     <>
       <Modal
         open={open}
         title={`Connect ${label}`}
-        okText="Connect"
-        okButtonProps={{ disabled: !token.trim(), loading: busy }}
-        onOk={() => void connect()}
+        footer={
+          state.step === "ended" ? (
+            <Space>
+              <Button onClick={onClose}>Close</Button>
+              <Button type="primary" onClick={() => setAttempt((n) => n + 1)}>
+                Try again
+              </Button>
+            </Space>
+          ) : (
+            <Button onClick={onClose}>Cancel</Button>
+          )
+        }
         onCancel={onClose}
         destroyOnHidden
         modalRender={(node) => <KeyboardBoundary>{node}</KeyboardBoundary>}
       >
-        <Typography.Paragraph>{TOKEN_HELP[connector]}</Typography.Paragraph>
-        <Typography.Paragraph type="secondary">
-          CoCalc checks the token with {label}, stores it encrypted, and gives
-          it only to agents you turn {label} on for, only during their turns.
-        </Typography.Paragraph>
-        <Input.Password
-          aria-label={`${label} token`}
-          placeholder="Paste the token"
-          autoComplete="off"
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          onPressEnter={() => token.trim() && void connect()}
-        />
-        {error && (
-          <Alert
-            role="alert"
-            type="error"
-            showIcon
-            title={error}
-            style={{ marginTop: 12 }}
-          />
+        {state.step === "starting" && (
+          <Spin aria-label={`Starting ${label} sign-in`} />
+        )}
+        {state.step === "waiting" && (
+          <Space direction="vertical" style={{ width: "100%" }}>
+            <Typography.Paragraph>
+              Enter this code on {label} to let your agents use it as you:
+            </Typography.Paragraph>
+            <Typography.Text
+              copyable
+              code
+              aria-label={`${label} sign-in code`}
+              style={{ fontSize: "1.6em", letterSpacing: "0.1em" }}
+            >
+              {state.signIn.user_code}
+            </Typography.Text>
+            <Button
+              type="primary"
+              href={state.signIn.verification_uri}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open {label}
+            </Button>
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              <Spin size="small" /> Waiting for you to approve it&hellip;
+            </Typography.Paragraph>
+            {appUrl && (
+              <Typography.Paragraph
+                type="secondary"
+                style={{ marginBottom: 0 }}
+              >
+                Agents can use only the repositories where you installed this
+                site&apos;s GitHub App:{" "}
+                <a href={appUrl} target="_blank" rel="noreferrer">
+                  choose repositories
+                </a>
+                .
+              </Typography.Paragraph>
+            )}
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              CoCalc keeps the sign-in on its servers and gives agents you turn{" "}
+              {label} on for a short-lived token, only during their turns.
+            </Typography.Paragraph>
+          </Space>
+        )}
+        {state.step === "ended" && (
+          <Alert role="alert" type="error" showIcon title={state.message} />
         )}
       </Modal>
       <FreshAuthModal {...freshAuthModalProps} />
@@ -263,6 +312,7 @@ export function CliConnectorAgentModal({
   const connections = (data?.connections ?? []).filter(
     (connection) => connection.connector === connector,
   );
+  const available = data?.setup[connector].available === true;
   const [enabled, setEnabled] = useState(false);
   const [connectionId, setConnectionId] = useState<string>();
   const [connecting, setConnecting] = useState(false);
@@ -357,7 +407,9 @@ export function CliConnectorAgentModal({
             {enabled &&
               (connections.length === 0 ? (
                 <Typography.Paragraph type="secondary">
-                  Connect a {label} account first.
+                  {available
+                    ? `Connect a ${label} account first.`
+                    : notSetUp(label)}
                 </Typography.Paragraph>
               ) : (
                 <Radio.Group
@@ -371,13 +423,13 @@ export function CliConnectorAgentModal({
                         key={connection.connection_id}
                         value={connection.connection_id}
                       >
-                        {connection.description}
+                        <ConnectionName connection={connection} />
                       </Radio>
                     ))}
                   </Space>
                 </Radio.Group>
               ))}
-            {enabled && (
+            {enabled && available && (
               <Button size="small" onClick={() => setConnecting(true)}>
                 Connect {connections.length > 0 ? "another" : "a"} {label}{" "}
                 account
@@ -389,13 +441,32 @@ export function CliConnectorAgentModal({
           </Space>
         )}
       </Modal>
-      <ConnectCliTokenModal
+      <ConnectCliSignInModal
         connector={connector}
         open={connecting}
         onClose={() => setConnecting(false)}
         onConnected={(connection) => setConnectionId(connection.connection_id)}
       />
       <FreshAuthModal {...freshAuthModalProps} />
+    </>
+  );
+}
+
+function notSetUp(label: string): string {
+  return `${label} is not set up on this site yet. A site administrator can set it up (see the admin docs).`;
+}
+
+function ConnectionName({ connection }: { connection: CliConnection }) {
+  return (
+    <>
+      {connection.description}
+      {connection.needs_reconnect && (
+        <Tooltip title="The provider no longer accepts this sign-in. Connect the account again, then disconnect this one.">
+          <Tag color="warning" style={{ marginLeft: 8 }}>
+            Sign in again
+          </Tag>
+        </Tooltip>
+      )}
     </>
   );
 }
@@ -430,6 +501,9 @@ export function CliConnectorSection({
   const connections = (data?.connections ?? []).filter(
     (connection) => connection.connector === connector,
   );
+  const available = data?.setup[connector].available === true;
+  const appUrl =
+    connector === "github" ? data?.setup.github.app_url : undefined;
   const rows: AgentRow[] = (data?.grants ?? [])
     .filter((grant) => grant.connector === connector && grant.enabled)
     .map((grant) => ({
@@ -503,7 +577,9 @@ export function CliConnectorSection({
           )}
           {connections.length === 0 ? (
             <Typography.Paragraph>
-              No {label} account is connected.
+              {available
+                ? `No ${label} account is connected.`
+                : notSetUp(label)}
             </Typography.Paragraph>
           ) : (
             <Table<CliConnection>
@@ -516,7 +592,9 @@ export function CliConnectorSection({
                 {
                   key: "account",
                   title: "Account",
-                  dataIndex: "description",
+                  render: (_, connection) => (
+                    <ConnectionName connection={connection} />
+                  ),
                 },
                 {
                   key: "agents",
@@ -553,9 +631,19 @@ export function CliConnectorSection({
               ]}
             />
           )}
-          <Button onClick={() => setConnecting(true)}>
-            Connect {connections.length > 0 ? "another" : "a"} {label} account
-          </Button>
+          {available && (
+            <Space wrap>
+              <Button onClick={() => setConnecting(true)}>
+                Connect {connections.length > 0 ? "another" : "a"} {label}{" "}
+                account
+              </Button>
+              {appUrl && (
+                <Button href={appUrl} target="_blank" rel="noreferrer">
+                  Choose repositories
+                </Button>
+              )}
+            </Space>
+          )}
           {rows.some((row) => row.agent) && (
             <Table<AgentRow>
               size="small"
@@ -598,7 +686,7 @@ export function CliConnectorSection({
           )}
         </>
       )}
-      <ConnectCliTokenModal
+      <ConnectCliSignInModal
         connector={connector}
         open={connecting}
         onClose={() => setConnecting(false)}

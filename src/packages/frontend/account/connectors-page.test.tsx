@@ -9,10 +9,16 @@ import { ConnectorsPage as ConnectionsPage } from "./connectors-page";
 import { getVisibleSettingsNavigation } from "./settings-navigation";
 import { refreshCliConnectors } from "@cocalc/frontend/agents/cli-connectors";
 
+const SETUP = {
+  github: { available: true, app_url: "https://github.com/apps/cocalc-test" },
+  cloudflare: { available: false },
+};
 const mockApi = {
   listCliConnections: jest.fn(),
   listCliConnectorGrants: jest.fn(),
-  connectCliToken: jest.fn(),
+  getCliConnectorSetup: jest.fn(),
+  startCliConnectorSignIn: jest.fn(),
+  pollCliConnectorSignIn: jest.fn(),
   saveCliConnectorGrant: jest.fn(),
   disconnectCliConnection: jest.fn(),
   listCocalcConnectorConfigs: jest.fn(),
@@ -120,6 +126,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockApi.listCliConnections.mockResolvedValue([]);
   mockApi.listCliConnectorGrants.mockResolvedValue([]);
+  mockApi.getCliConnectorSetup.mockResolvedValue(SETUP);
   refreshCliConnectors();
   mockAgents = {
     directory: {
