@@ -80,7 +80,7 @@ jobs:
         env:
           MULTIBAY_DIR: /tmp/multibay
           MULTIBAY_KEEP: "1"
-          FUZZ_SEED: ${{ inputs.seed || github.run_number * 100 }}
+          FUZZ_SEED: ${{ inputs.seed || github.run_number }}
           FUZZ_RUNS: ${{ inputs.runs || (github.event_name == 'pull_request' && '2') || '3' }}
           FUZZ_STEPS: ${{ inputs.steps || (github.event_name == 'pull_request' && '20') || '30' }}
           FUZZ_ALLOW: ${{ inputs.allow || 'honest-errors' }}
