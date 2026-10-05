@@ -2602,14 +2602,6 @@ export interface ProjectCollabInviteCopyEmailLinkRequest {
   invite_base_url?: string;
 }
 
-export interface ProjectSetDeletionProtectionRequest {
-  account_id: string;
-  browser_id?: string | null;
-  session_hash?: string | null;
-  project_id: string;
-  enabled: boolean;
-}
-
 export interface ProjectCollabInviteEmailLinkWire {
   invite_id: string;
   invite_url: string;
@@ -5423,9 +5415,6 @@ export interface InterBayProjectCollabInviteApi {
   setProjectsHidden: (
     opts: ProjectSetHiddenRequest,
   ) => Promise<ProjectHiddenResult[]>;
-  setDeletionProtection: (
-    opts: ProjectSetDeletionProtectionRequest,
-  ) => Promise<{ project_id: string; deletion_protection: boolean }>;
   create: (
     opts: ProjectCollabInviteCreateRequest,
   ) => Promise<ProjectCollabInviteCreateResultWire>;
@@ -12932,15 +12921,6 @@ export function createInterBayProjectCollabInviteClient({
       method: "set-projects-hidden",
     }),
   });
-  const setDeletionProtectionClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "setDeletionProtection">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({
-      dest_bay,
-      method: "set-deletion-protection",
-    }),
-  });
   const respondClient = createServiceClient<
     Pick<InterBayProjectCollabInviteApi, "respond">
   >({
@@ -12984,8 +12964,6 @@ export function createInterBayProjectCollabInviteClient({
       await transferProjectOwnershipClient.transferProjectOwnership(opts),
     setProjectsHidden: async (opts) =>
       await setProjectsHiddenClient.setProjectsHidden(opts),
-    setDeletionProtection: async (opts) =>
-      await setDeletionProtectionClient.setDeletionProtection(opts),
     create: async (opts) => await createClient.create(opts),
     inviteWithoutAccount: async (opts) =>
       await inviteWithoutAccountClient.inviteWithoutAccount(opts),
@@ -13422,20 +13400,6 @@ export function createInterBayProjectCollabInviteHandlers({
       }),
       impl: {
         setProjectsHidden: async (opts) => await impl.setProjectsHidden(opts),
-      },
-    }),
-    createServiceHandler<
-      Pick<InterBayProjectCollabInviteApi, "setDeletionProtection">
-    >({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "set-deletion-protection",
-      }),
-      impl: {
-        setDeletionProtection: async (opts) =>
-          await impl.setDeletionProtection(opts),
       },
     }),
     createServiceHandler<Pick<InterBayProjectCollabInviteApi, "respond">>({

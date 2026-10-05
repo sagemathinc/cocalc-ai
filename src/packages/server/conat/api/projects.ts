@@ -5893,18 +5893,8 @@ export async function setProjectDeletionProtection({
   if (typeof enabled !== "boolean") {
     throw new Error("enabled must be a boolean");
   }
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership != null && ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectCollabInvite(ownership.bay_id)
-      .setDeletionProtection({
-        account_id: actor,
-        browser_id,
-        session_hash,
-        project_id,
-        enabled,
-      });
-  }
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes);
+  // its fresh-auth check runs on the caller's home bay.
   return await setLocalProjectDeletionProtection({
     account_id: actor,
     browser_id,
@@ -5914,7 +5904,7 @@ export async function setProjectDeletionProtection({
   });
 }
 
-export async function setLocalProjectDeletionProtection({
+async function setLocalProjectDeletionProtection({
   account_id,
   browser_id,
   session_hash,

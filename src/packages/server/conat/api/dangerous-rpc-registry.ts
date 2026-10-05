@@ -1247,10 +1247,6 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: "local account preference",
   },
-  "projects.setLocalProjectDeletionProtection": {
-    decision: "fresh-auth-required",
-    reason: "owning-bay project deletion protection mutation",
-  },
   "projects.setProjectSecret": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,

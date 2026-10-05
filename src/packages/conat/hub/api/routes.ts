@@ -10,8 +10,10 @@
 // route run where they are received.
 //
 // Only list methods whose authorization and effects all live on the owning
-// bay. A method that also needs account-home state at the edge (e.g., a
-// fresh-auth check against the caller's session) is not routable yet.
+// bay. Fresh-auth checks are fine: they run on the caller's home bay
+// wherever the method runs. Methods that compute other account-home facts at
+// the edge (e.g., admin status) are cross-owner workflows; keep them
+// explicit.
 
 import { isValidUUID } from "@cocalc/util/misc";
 
@@ -33,6 +35,7 @@ const projectFromNestedOpts: HubApiRoute = {
 
 const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "projects.setProjectMetadata": projectFromOpts,
+  "projects.setProjectDeletionProtection": projectFromOpts,
   "projects.setProjectManageUsersOwnerOnly": projectFromOpts,
   "projects.setProjectUserRole": projectFromNestedOpts,
 };
