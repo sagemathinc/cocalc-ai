@@ -110,5 +110,9 @@ export function getInterBayFabricClient(
       Cookie: `${cookieName}=${credential}`,
     },
     rejectUnauthorized: true,
+    // The seed disconnects bay principals whenever it cannot confirm their
+    // credentials; a bay must come back once it can, or the cluster stays
+    // partitioned until restarted.
+    reconnectAfterServerDisconnect: true,
   });
 }

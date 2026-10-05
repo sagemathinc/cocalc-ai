@@ -310,6 +310,12 @@ export const DEFAULT_SOCKETIO_CLIENT_OPTIONS = {
 };
 
 const SOCKETIO_DEFAULT_TIMEOUT = 20_000;
+const SERVER_DISCONNECT_RECONNECT_MIN_MS = process.env.COCALC_TEST_MODE
+  ? 50
+  : 1_000;
+const SERVER_DISCONNECT_RECONNECT_MAX_MS = process.env.COCALC_TEST_MODE
+  ? 500
+  : 30_000;
 const SOCKETIO_DEFAULT_RANDOMIZATION_FACTOR = 0.5;
 
 export type InitialConnectionPolicy = {
@@ -349,6 +355,13 @@ interface Options {
   // normal Socket.IO settings are restored after connecting or after the
   // bounded startup window expires.
   initialConnectionPolicy?: InitialConnectionPolicy;
+  // Reconnect, with jittered backoff, even after the server disconnects this
+  // client or rejects its authentication. Socket.IO never reconnects on its
+  // own after a server-initiated disconnect, so a long-lived internal client
+  // (e.g., the inter-bay fabric) would otherwise stay down until restarted.
+  // The server authenticates every reconnect, so revocation still holds.
+  // Leave this unset for clients that a server disconnects on purpose.
+  reconnectAfterServerDisconnect?: boolean;
 }
 
 export type ClientOptions = Options & {
@@ -668,6 +681,8 @@ export class Client extends EventEmitter {
   private statsLoopResolve?: () => void;
   private initialConnectionPolicyTimer?: ReturnType<typeof setTimeout>;
   private initialConnectionPolicyActive = false;
+  private serverDisconnectReconnectTimer?: ReturnType<typeof setTimeout>;
+  private serverDisconnectReconnectAttempts = 0;
   private initialConnectionSteadyOptions?: {
     timeout: number;
     reconnectionDelay: number;
@@ -696,11 +711,17 @@ export class Client extends EventEmitter {
       }
       options = { ...options, address: process.env.CONAT_SERVER };
     }
-    const { routeSubject, initialConnectionPolicy, ...rest } = options;
+    const {
+      routeSubject,
+      initialConnectionPolicy,
+      reconnectAfterServerDisconnect,
+      ...rest
+    } = options;
     this.routeSubjectFn = routeSubject;
     this.options = {
       ...rest,
       initialConnectionPolicy,
+      reconnectAfterServerDisconnect,
     } as ClientOptions;
     this.setMaxListeners(1000);
     this.recoveryScheduler = new RecoveryScheduler({
@@ -818,6 +839,7 @@ export class Client extends EventEmitter {
     this.conn.on("rpc-raw-response", this.handleRawRpcResponse);
     this.conn.on("connect", async () => {
       this.restoreInitialConnectionPolicy();
+      this.serverDisconnectReconnectAttempts = 0;
       logger.debug(`Conat: Connected to ${this.getAddressForLog()}`);
       if (this.conn.connected) {
         this.setState("connected");
@@ -828,9 +850,19 @@ export class Client extends EventEmitter {
         `Conat: Error connecting to ${this.getAddressForLog()} -- ${err}`,
       );
     });
-    this.conn.on("disconnect", async () => {
+    this.conn.on("connect_error", (err) => {
+      // A rejected connection is final for Socket.IO; an active socket is
+      // still retrying under the normal reconnection policy.
+      if (!this.conn.active) {
+        this.scheduleServerDisconnectReconnect(`connect_error: ${err}`);
+      }
+    });
+    this.conn.on("disconnect", async (reason) => {
       if (this.isClosed()) {
         return;
+      }
+      if (reason === "io server disconnect") {
+        this.scheduleServerDisconnectReconnect(reason);
       }
       this.stats.recv0 = { messages: 0, bytes: 0 }; // reset on disconnect
       this.lastSentRecvStats = { messages: 0, bytes: 0 };
@@ -896,6 +928,34 @@ export class Client extends EventEmitter {
   connect = () => {
     this.startInitialConnectionPolicyTimer();
     this.conn.io.connect();
+  };
+
+  private scheduleServerDisconnectReconnect = (reason: string) => {
+    if (
+      !this.options.reconnectAfterServerDisconnect ||
+      this.isClosed() ||
+      this.serverDisconnectReconnectTimer != null
+    ) {
+      return;
+    }
+    const base = Math.min(
+      SERVER_DISCONNECT_RECONNECT_MAX_MS,
+      SERVER_DISCONNECT_RECONNECT_MIN_MS *
+        2 ** Math.min(this.serverDisconnectReconnectAttempts, 16),
+    );
+    this.serverDisconnectReconnectAttempts += 1;
+    const delay = Math.round(base * (0.5 + Math.random()));
+    logger.debug(
+      `Conat: ${this.getAddressForLog()} ended the connection (${reason}); reconnecting in ${delay}ms`,
+    );
+    this.serverDisconnectReconnectTimer = setTimeout(() => {
+      this.serverDisconnectReconnectTimer = undefined;
+      if (this.isClosed() || this.conn.connected || this.conn.active) {
+        return;
+      }
+      this.conn.connect();
+    }, delay);
+    this.serverDisconnectReconnectTimer.unref?.();
   };
 
   private startInitialConnectionPolicyTimer = () => {
@@ -1291,6 +1351,10 @@ export class Client extends EventEmitter {
     if (this.initialConnectionPolicyTimer != null) {
       clearTimeout(this.initialConnectionPolicyTimer);
       this.initialConnectionPolicyTimer = undefined;
+    }
+    if (this.serverDisconnectReconnectTimer != null) {
+      clearTimeout(this.serverDisconnectReconnectTimer);
+      this.serverDisconnectReconnectTimer = undefined;
     }
     this.recoveryScheduler.close();
     this.heartbeatScheduler.close();

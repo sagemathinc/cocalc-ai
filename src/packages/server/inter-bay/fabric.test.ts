@@ -136,6 +136,18 @@ describe("inter-bay fabric config", () => {
     );
   });
 
+  it("reconnects the fabric client after the seed disconnects it", async () => {
+    process.env.COCALC_CLUSTER_ROLE = "attached";
+    process.env.COCALC_CLUSTER_SEED_CONAT_SERVER = "https://seed-fabric";
+    process.env.COCALC_BAY_CREDENTIAL = "bay-secret";
+    const { connect } = await import("@cocalc/conat/core/client");
+    const { getInterBayFabricClient } = await import("./fabric");
+    getInterBayFabricClient();
+    expect(connect).toHaveBeenCalledWith(
+      expect.objectContaining({ reconnectAfterServerDisconnect: true }),
+    );
+  });
+
   it("fails fast when an attached bay has no seed fabric config", async () => {
     process.env.COCALC_CLUSTER_ROLE = "attached";
     const { getInterBayFabricConfig } = await import("./fabric");

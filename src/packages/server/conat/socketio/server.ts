@@ -66,6 +66,7 @@ import {
   isBayCredentialUserActive,
 } from "@cocalc/server/inter-bay/bay-credentials";
 import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
+import { sweepBayCredentialConnections } from "./bay-credential-sweep";
 
 const logger = getLogger("conat-server");
 const BAY_CREDENTIAL_SWEEP_MS = 5_000;
@@ -76,38 +77,14 @@ function startBayCredentialRevocationSweep(server: ConatServer): void {
   const timer = setInterval(async () => {
     if (running) return;
     running = true;
-    const bayConnections = Object.entries(server.getStatsSnapshot()).filter(
-      ([, stats]) => (stats.user as any)?.bay_credential_id,
-    );
-    if (!bayConnections.length) {
-      running = false;
-      return;
-    }
     try {
-      const checks = await Promise.all(
-        bayConnections.map(async ([id, stats]) => ({
-          id,
-          active: await isBayCredentialUserActive(stats.user as any),
-        })),
-      );
-      const revoked = checks
-        .filter(({ active }) => !active)
-        .map(({ id }) => id);
-      if (revoked.length) {
-        logger.info("disconnecting revoked bay credential connections", {
-          count: revoked.length,
-        });
-        server.disconnectSockets(revoked);
-      }
-    } catch (err) {
-      // Registry availability is part of bay authentication. If it cannot be
-      // checked, disconnect every bay principal rather than extending access.
-      const ids = bayConnections.map(([id]) => id);
-      logger.error(
-        "failed to check bay credential revocations; disconnecting bay connections",
-        { count: ids.length, err },
-      );
-      server.disconnectSockets(ids);
+      await sweepBayCredentialConnections({
+        connections: Object.entries(server.getStatsSnapshot())
+          .filter(([, stats]) => (stats.user as any)?.bay_credential_id)
+          .map(([id, stats]) => [id, stats.user]),
+        isActive: isBayCredentialUserActive,
+        disconnect: (ids) => server.disconnectSockets(ids),
+      });
     } finally {
       running = false;
     }
