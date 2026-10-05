@@ -317,6 +317,27 @@ describe("a project managed from the other bay", () => {
 });
 
 describe("fabric faults", () => {
+  it("answers a change on the owning bay while the other bay is frozen", async () => {
+    // alice (homed on the seed) collaborates on bob's project. With the seed
+    // frozen, bob's rename on the bay that owns the project must still answer
+    // promptly; the new title reaches alice once the seed resumes.
+    const title = "while the seed is frozen";
+    let elapsed;
+    cluster.signal(SEED, "SIGSTOP");
+    try {
+      const start = Date.now();
+      await rename(bob.client, bob.project, title);
+      elapsed = Date.now() - start;
+    } finally {
+      cluster.signal(SEED, "SIGCONT");
+    }
+    assert.ok(elapsed < 5_000, `the rename took ${elapsed}ms`);
+    await eventually(
+      async () => (await listed(alice.client, bob.project))?.title === title,
+      { timeoutMs: 60_000, what: `${title} to reach the seed` },
+    );
+  });
+
   it("recovers after the seed's event loop stalls", async () => {
     cluster.signal(SEED, "SIGSTOP");
     await sleep(8_000);
