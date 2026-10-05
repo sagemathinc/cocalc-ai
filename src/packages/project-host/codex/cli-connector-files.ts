@@ -170,8 +170,28 @@ function validToken(token: string): boolean {
   return !!token && token.length <= 4096 && !/\s/.test(token);
 }
 
-// Makes the token files match exactly the given tokens.
+// Makes the token files match exactly the given tokens. Fails closed: if
+// any write fails, every token file is removed and the error is rethrown.
 export async function syncCliConnectorTokens(
+  hostDir: string,
+  tokens: CliConnectorTurnToken[],
+): Promise<void> {
+  try {
+    await writeCliConnectorTokens(hostDir, tokens);
+  } catch (err) {
+    await clearCliConnectorTokens(hostDir);
+    throw err;
+  }
+}
+
+export async function clearCliConnectorTokens(hostDir: string): Promise<void> {
+  const dir = join(hostDir, CLI_CONNECTOR_DIR);
+  for (const connector of CLI_CONNECTORS) {
+    await fs.rm(join(dir, tokenFile(connector)), { force: true });
+  }
+}
+
+async function writeCliConnectorTokens(
   hostDir: string,
   tokens: CliConnectorTurnToken[],
 ): Promise<void> {

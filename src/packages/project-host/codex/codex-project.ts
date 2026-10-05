@@ -737,8 +737,11 @@ export async function createProjectCliTokenLease({
   ) =>
     queueConnectorOperation(async () => {
       if (closed || !stillCurrent()) tokens = [];
-      cliTokens = tokens;
+      // Fail closed: the prompt names only connectors whose files were all
+      // written; any failure leaves no token files at all.
+      cliTokens = [];
       await syncCliConnectorTokens(hostDir, tokens);
+      cliTokens = tokens;
     });
   const beginCliTurn = async (
     request: Parameters<typeof hubApi.agent.beginCliConnectorTurn>[0],
@@ -763,7 +766,12 @@ export async function createProjectCliTokenLease({
           });
           await setCliTokens([], stillCurrent);
         })
-        .catch(() => undefined)
+        .catch((error) =>
+          logger.error("CLI connector tokens could not be removed", {
+            projectId,
+            err: `${error}`,
+          }),
+        )
         .finally(() => {
           renewalPending = false;
         });

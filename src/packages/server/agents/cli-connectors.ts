@@ -39,6 +39,8 @@ import { verifyActiveAgentRun } from "./identity-routing";
 const PASTED_TOKEN_DELIVERY_MS = 15 * 60_000;
 const VERIFY_TIMEOUT_MS = 10_000;
 const MAX_CONNECTIONS_PER_CONNECTOR = 10;
+// Below the list limit, so every grant stays visible and revocable.
+const MAX_GRANTS_PER_ACCOUNT = 500;
 
 type ConnectionPayload = { version: 1; type: "token"; token: string };
 
@@ -327,6 +329,15 @@ export async function saveCliConnectorGrant({
     touchLastUsed: false,
   });
   if (!connection) throw Error("connection is unavailable");
+  if (expected_revision === undefined) {
+    const { rows: counted } = await getPool().query<{ count: string }>(
+      `SELECT count(*) FROM agent_connector_grants WHERE account_id=$1`,
+      [owner],
+    );
+    if (Number(counted[0]?.count ?? 0) >= MAX_GRANTS_PER_ACCOUNT) {
+      throw Error("too many agents have connector settings");
+    }
+  }
   // A new grant needs no revision; changing one needs the revision the user
   // saw (a missing one never matches).
   const { rows } = await getPool().query<CliConnectorGrant>(

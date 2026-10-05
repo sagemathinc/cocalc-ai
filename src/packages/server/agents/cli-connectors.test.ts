@@ -232,6 +232,27 @@ describe("agent grants", () => {
     expect(params[7]).toBeNull();
   });
 
+  it("bounds how many grants an account can create", async () => {
+    const { saveCliConnectorGrant } = await import("./cli-connectors");
+    queryMock.mockImplementation(async (q: string) =>
+      /count\(\*\)/.test(q) ? { rows: [{ count: "500" }] } : { rows: [grant] },
+    );
+    await expect(
+      saveCliConnectorGrant({
+        ...base,
+        enabled: true,
+        connection_id: connectionId,
+      }),
+    ).rejects.toThrow("too many agents");
+    // Changing an existing grant is not a new row.
+    await saveCliConnectorGrant({
+      ...base,
+      enabled: true,
+      connection_id: connectionId,
+      expected_revision: 1,
+    });
+  });
+
   it("a stale revision fails instead of overwriting", async () => {
     const { saveCliConnectorGrant } = await import("./cli-connectors");
     queryMock.mockResolvedValueOnce({ rows: [] });

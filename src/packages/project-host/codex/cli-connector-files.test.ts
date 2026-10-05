@@ -91,6 +91,16 @@ it("supplies the tokens during a turn and removes them after", async () => {
   expect(await fs.readdir(join(dir, "cli"))).toEqual(["bin"]);
 });
 
+it("fails closed: a failed write leaves no token files", async () => {
+  // A directory where the Cloudflare token goes makes that write fail.
+  await fs.mkdir(join(dir, "cli", "cloudflare-token", "x"), {
+    recursive: true,
+  });
+  await expect(syncCliConnectorTokens(dir, tokens)).rejects.toThrow();
+  await expect(fs.stat(join(dir, "cli", "github-token"))).rejects.toThrow();
+  expect(run("gh").trim()).toBe("gh:unset:");
+});
+
 it("ignores malformed tokens", async () => {
   await syncCliConnectorTokens(dir, [{ ...tokens[0], token: "a b" }]);
   expect(run("gh").trim()).toBe("gh:unset:");
