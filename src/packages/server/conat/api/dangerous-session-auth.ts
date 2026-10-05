@@ -114,6 +114,12 @@ export async function requireDangerousSessionAuth(
       bay_id: home,
     }).requireDangerousSessionAuth({ ...opts, account_id: accountId });
   if (result.ok) return result.session;
+  if ((result.attrs as any)?.code == 409) {
+    // That bay no longer holds the account: re-resolve on the next attempt.
+    const { forgetAccountHome } =
+      await import("@cocalc/server/accounts/home-bay");
+    forgetAccountHome(accountId);
+  }
   throw Object.assign(new Error(result.error), result.attrs);
 }
 

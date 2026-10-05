@@ -13,7 +13,9 @@ const createInterBaySessionAuthClient = jest.fn(() => ({
 }));
 const requireFreshAuthForSessionHash = jest.fn();
 
+const forgetAccountHome = jest.fn();
 jest.mock("@cocalc/server/accounts/home-bay", () => ({
+  forgetAccountHome: (...args) => forgetAccountHome(...args),
   remoteHomeBay: async () =>
     multiBay && homeBay !== "bay-0" ? homeBay : undefined,
   assertAccountHomedHere: async () => {
@@ -109,6 +111,19 @@ describe("requireDangerousSessionAuth", () => {
       message: "recent two-factor verification is required",
       code: "fresh_auth_required",
     });
+    expect(forgetAccountHome).not.toHaveBeenCalled();
+  });
+
+  it("forgets the cached home bay when that bay no longer holds the account", async () => {
+    delegated.mockResolvedValue({
+      ok: false,
+      error: "account is not homed on this bay",
+      attrs: { code: 409 },
+    });
+    await expect(
+      requireDangerousSessionAuth({ account_id: ACCOUNT, session_hash: "s" }),
+    ).rejects.toMatchObject({ code: 409 });
+    expect(forgetAccountHome).toHaveBeenCalledWith(ACCOUNT);
   });
 });
 
