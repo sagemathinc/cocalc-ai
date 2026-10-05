@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { joinTurnContext } from "./harness-context";
 import { artifactPublicationGuidance } from "./publication-guidance";
 import { cocalcAccessGuidance } from "./cocalc-access-guidance";
 import { spawn } from "node:child_process";
@@ -476,9 +477,10 @@ type SpawnedCodexAppServer = {
   handleAppServerRequest?: CodexAppServerRequestHandler;
   runtimeEnv?: Record<string, string>;
   setAgentSessionKey?: (agentSessionKey: string) => Promise<void>;
+  // Resolves to prompt context about the connectors this turn can use.
   beginConnectorTurn?: (
     chat: NonNullable<AcpEvaluateRequest["chat"]>,
-  ) => Promise<void>;
+  ) => Promise<string | void>;
   endConnectorTurn?: () => Promise<void>;
   siteFundedTurn?: CodexSiteFundedTurnRuntime;
   credentialId?: string;
@@ -2930,6 +2932,7 @@ export class CodexAppServerAgent implements AcpAgent {
       currentThreadId = nextThreadId;
     };
 
+    let connectorContext: string | undefined;
     const stopForQuota = (message: string) => {
       if (quotaStopReason) return;
       quotaStopReason = message;
@@ -2979,7 +2982,9 @@ export class CodexAppServerAgent implements AcpAgent {
     };
 
     try {
-      if (request.chat) await spawned.beginConnectorTurn?.(request.chat);
+      if (request.chat)
+        connectorContext =
+          (await spawned.beginConnectorTurn?.(request.chat)) || undefined;
       if (request.mentionReferences != null) {
         const identityPath = spawned.runtimeEnv?.COCALC_AGENT_IDENTITY_FILE;
         // A retained process can straddle a project-tools rollout. Refresh it
@@ -3204,7 +3209,10 @@ export class CodexAppServerAgent implements AcpAgent {
           local_images: request.local_images,
           prompt,
           runtimeEnv: turnEnv,
-          memoryContext: request.agent_memory_context,
+          memoryContext: joinTurnContext(
+            request.agent_memory_context,
+            connectorContext,
+          ),
         }),
       });
 

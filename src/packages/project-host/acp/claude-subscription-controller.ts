@@ -486,6 +486,7 @@ ${skill}
       COCALC_API_URL: resolveProjectRuntimeApiUrl(),
     };
     applyProjectRuntimeCliEnv(cliEnv, accountId);
+    if (cliLease.connectorContainerPath) cliLease.applyCliConnectorEnv(cliEnv);
     toolBridge = await createClaudeProjectToolBridge(
       projectId,
       async (script, cwd, signal, options) => {

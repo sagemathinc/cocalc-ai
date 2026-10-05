@@ -260,6 +260,8 @@ export async function launchHarnessInProject(
     if (connector && cliLease.connectorContainerPath)
       env.COCALC_CONNECTOR_API_KEY_FILE = cliLease.connectorContainerPath;
     applyProjectRuntimeCliEnv(env, accountId);
+    if (connector && cliLease.connectorContainerPath)
+      cliLease.applyCliConnectorEnv(env);
     if (credential.mode === "account-api-key") {
       if (
         profile.version !== 2 ||

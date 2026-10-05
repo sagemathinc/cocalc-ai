@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { harnessPrompt } from "../harness-context";
+import { harnessPrompt, joinTurnContext } from "../harness-context";
 import { artifactPublicationGuidance } from "../publication-guidance";
 
 const CLI = '"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"';
@@ -46,5 +46,13 @@ test("other turns keep ordinary replies unless an artifact is requested", () => 
 test("native harness commands pass through unchanged", () => {
   expect(harnessPrompt({ ...request(true), prompt: "/compact" })).toBe(
     "/compact",
+  );
+});
+
+test("turn context blocks join, skipping empty ones", () => {
+  expect(joinTurnContext(undefined, " ")).toBeUndefined();
+  expect(joinTurnContext("[Agent memory]", undefined)).toBe("[Agent memory]");
+  expect(joinTurnContext("[Agent memory]", "[CLI connectors]")).toBe(
+    "[Agent memory]\n\n[CLI connectors]",
   );
 });

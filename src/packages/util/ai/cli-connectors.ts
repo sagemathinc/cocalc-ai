@@ -99,3 +99,26 @@ export interface CliConnectorTurnToken {
   /** Shown to the agent, e.g. "@octocat" or "Example Inc (Workers & sites)". */
   description: string;
 }
+
+// Prompt context for a turn that has CLI connector tokens.
+export function cliConnectorTurnContext(
+  tokens: readonly Pick<CliConnectorTurnToken, "connector" | "description">[],
+): string | undefined {
+  const lines: string[] = [];
+  for (const connector of CLI_CONNECTORS) {
+    const token = tokens.find((t) => t.connector === connector);
+    if (!token) continue;
+    const who = token.description ? ` (${token.description})` : "";
+    lines.push(
+      connector === "github"
+        ? `- GitHub${who}: \`gh\` and \`git\` over https://github.com are signed in as the user.`
+        : `- Cloudflare${who}: \`cf\` and \`wrangler\` are signed in to the user's Cloudflare account.`,
+    );
+  }
+  if (lines.length == 0) return;
+  return `[CLI connectors]
+The user turned on these connectors for you for this turn:
+${lines.join("\n")}
+They act as the user. Unless the user asked for it, confirm before anything destructive, public or costly (force-pushing or pushing to shared branches, merging, deleting, deploying to production, buying resources). Credentials are supplied automatically; never print, copy or store them.
+[/CLI connectors]`;
+}

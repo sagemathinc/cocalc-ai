@@ -17,7 +17,7 @@ import {
 import { randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import { isQualifiedClaudeCodeProfile } from "@cocalc/util/ai/qualified-harnesses";
-import { harnessPrompt } from "./harness-context";
+import { harnessPrompt, joinTurnContext } from "./harness-context";
 import { takeRateLimit } from "./harness-rate-limit";
 import { assertSameTurnPrincipal } from "./turn-principal";
 import { normalizeCodexAsyncQuestions } from "./codex-attention";
@@ -102,6 +102,7 @@ export class HarnessAgent implements AcpAgent {
     this.interrupted = false;
     // The client whose CoCalc connector credential this turn issued.
     let connectorClient: AcpHarnessClient | undefined;
+    let connectorContext: string | undefined;
     try {
       await this.validateAuthority?.(this.binding);
       // The service preserves the authoritative empty reset marker. Missing
@@ -246,10 +247,17 @@ export class HarnessAgent implements AcpAgent {
         // as this turn (as for Codex); it is revoked in finally. Only the
         // qualified Claude Code harness is trusted with it.
         connectorClient = client;
-        await client.beginConnectorTurn(request.chat);
+        connectorContext =
+          (await client.beginConnectorTurn(request.chat)) || undefined;
       }
       const result = await client.prompt(
-        harnessPrompt(request),
+        harnessPrompt({
+          ...request,
+          agent_memory_context: joinTurnContext(
+            request.agent_memory_context,
+            connectorContext,
+          ),
+        }),
         async (event) => {
           if (event.type === "message") {
             if (!event.text) return;
