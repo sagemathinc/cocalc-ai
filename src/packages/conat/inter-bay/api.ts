@@ -245,7 +245,6 @@ import type {
   ProjectSecretMetadata,
   ProjectSnapshotSchedule,
   CopyProjectSecretsResult,
-  GenerateProjectSshKeySecretResult,
 } from "@cocalc/conat/hub/api/projects";
 import type { ProjectSecretsRuntimeRefreshResult } from "@cocalc/util/project-secrets";
 import type {
@@ -3218,15 +3217,10 @@ export type ProjectCollabInviteMethod =
   | "respond-email"
   | "respond";
 export type ProjectSecretsMethod =
-  | "list"
-  | "refresh-runtime"
   | "validate-course-target"
-  | "set"
-  | "delete"
   | "copy"
   | "export-for-copy"
   | "import-for-copy"
-  | "generate-ssh-key-secret"
   | "list-course-shareable"
   | "get-course-policy"
   | "preview-course-sync"
@@ -3389,16 +3383,6 @@ export interface InterBayProjectSecretsExportResult {
 }
 
 export interface InterBayProjectSecretsApi {
-  list: (opts: {
-    account_id: string;
-    project_id: string;
-    epoch?: number;
-  }) => Promise<ProjectSecretMetadata[]>;
-  refreshRuntime: (opts: {
-    account_id: string;
-    project_id: string;
-    epoch?: number;
-  }) => Promise<ProjectSecretsRuntimeRefreshResult>;
   validateCourseTarget: (opts: {
     project_id: string;
     course_project_id: string;
@@ -3407,22 +3391,6 @@ export interface InterBayProjectSecretsApi {
   }) => Promise<{
     eligible: boolean;
     reason: CourseSecretRecipientPreview["reason"];
-  }>;
-  set: (opts: {
-    account_id: string;
-    project_id: string;
-    name: string;
-    value: string;
-    epoch?: number;
-  }) => Promise<ProjectSecretMetadata>;
-  delete: (opts: {
-    account_id: string;
-    project_id: string;
-    name: string;
-    epoch?: number;
-  }) => Promise<{
-    deleted: boolean;
-    runtime_refresh?: ProjectSecretsRuntimeRefreshResult;
   }>;
   copy: (opts: {
     account_id: string;
@@ -3446,13 +3414,6 @@ export interface InterBayProjectSecretsApi {
     overwrite?: boolean;
     epoch?: number;
   }) => Promise<CopyProjectSecretsResult>;
-  generateSshKeySecret: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    project_id: string;
-    secret_name?: string;
-    epoch?: number;
-  }) => Promise<GenerateProjectSshKeySecretResult>;
   listCourseShareable: (opts: {
     account_id: string;
     course_project_id: string;
@@ -5652,15 +5613,10 @@ const HOST_CONTROL_METHOD_SPECS = [
 type ProjectSecretsName = keyof InterBayProjectSecretsApi;
 
 const PROJECT_SECRETS_METHOD_SPECS = [
-  { name: "list", method: "list" },
-  { name: "refreshRuntime", method: "refresh-runtime" },
   { name: "validateCourseTarget", method: "validate-course-target" },
-  { name: "set", method: "set" },
-  { name: "delete", method: "delete" },
   { name: "copy", method: "copy" },
   { name: "exportForCopy", method: "export-for-copy" },
   { name: "importForCopy", method: "import-for-copy" },
-  { name: "generateSshKeySecret", method: "generate-ssh-key-secret" },
   { name: "listCourseShareable", method: "list-course-shareable" },
   { name: "getCoursePolicy", method: "get-course-policy" },
   { name: "previewCourseSync", method: "preview-course-sync" },

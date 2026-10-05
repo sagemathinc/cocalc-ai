@@ -7,25 +7,19 @@ import type {
   InterBayProjectSecretsApi,
   InterBayProjectSecretsExportResult,
 } from "@cocalc/conat/inter-bay/api";
-import type {
-  CopyProjectSecretsResult,
-  ProjectSecretMetadata,
-} from "@cocalc/conat/hub/api/projects";
+import type { CopyProjectSecretsResult } from "@cocalc/conat/hub/api/projects";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import { resolveProjectBayDirect } from "@cocalc/server/inter-bay/directory";
 import {
   copyProjectSecrets,
-  deleteProjectSecret,
   exportProjectSecretsForCopy,
   installCourseManagedProjectSecrets,
   importProjectSecretsForCopy,
   listCourseShareableSecrets,
-  listProjectSecrets,
   removeCourseManagedProjectSecrets,
   setProjectSecretCourseSharing,
-  setProjectSecret,
   validateCourseSecretTargetAssociation,
 } from "@cocalc/server/projects/project-secrets";
 import {
@@ -41,7 +35,6 @@ import {
   previewCourseSecretSyncLocal,
   startCourseSecretRunLocal,
 } from "@cocalc/server/projects/course-secret-sharing-coordinator";
-import { generateProjectSshKeySecretLocal } from "@cocalc/server/projects/project-secret-ssh-key";
 import { syncProjectSecretsRuntimeOnAssignedHost } from "@cocalc/server/projects/project-secrets-runtime";
 import { requireDangerousProjectMutationAuth } from "@cocalc/server/conat/api/project-dangerous-auth";
 
@@ -87,26 +80,6 @@ async function assertFreshCourseMutation(
   await requireDangerousProjectMutationAuth({ account_id, session_hash });
 }
 
-export async function handleProjectSecretsList({
-  account_id,
-  project_id,
-  epoch,
-}: Parameters<InterBayProjectSecretsApi["list"]>[0]): Promise<
-  ProjectSecretMetadata[]
-> {
-  await assertLocalProjectSecretAccess({ account_id, project_id, epoch });
-  return await listProjectSecrets({ project_id });
-}
-
-export async function handleProjectSecretsRefreshRuntime({
-  account_id,
-  project_id,
-  epoch,
-}: Parameters<InterBayProjectSecretsApi["refreshRuntime"]>[0]) {
-  await assertLocalProjectSecretAccess({ account_id, project_id, epoch });
-  return await syncProjectSecretsRuntimeOnAssignedHost({ project_id });
-}
-
 export async function handleProjectSecretsValidateCourseTarget({
   project_id,
   course_project_id,
@@ -120,58 +93,6 @@ export async function handleProjectSecretsValidateCourseTarget({
     course_path,
   });
   return { eligible: reason === "eligible", reason };
-}
-
-export async function handleProjectSecretsSet({
-  account_id,
-  project_id,
-  name,
-  value,
-  epoch,
-}: Parameters<
-  InterBayProjectSecretsApi["set"]
->[0]): Promise<ProjectSecretMetadata> {
-  await assertLocalProjectSecretAccess({ account_id, project_id, epoch });
-  const result = await setProjectSecret({
-    project_id,
-    name,
-    value,
-    account_id,
-  });
-  await publishProjectDetailInvalidationBestEffort({
-    project_id,
-    fields: ["secrets"],
-  });
-  const runtime_refresh = await syncProjectSecretsRuntimeOnAssignedHost({
-    project_id,
-  });
-  return { ...result, runtime_refresh };
-}
-
-export async function handleProjectSecretsDelete({
-  account_id,
-  project_id,
-  name,
-  epoch,
-}: Parameters<InterBayProjectSecretsApi["delete"]>[0]): Promise<{
-  deleted: boolean;
-  runtime_refresh?: Awaited<
-    ReturnType<typeof syncProjectSecretsRuntimeOnAssignedHost>
-  >;
-}> {
-  await assertLocalProjectSecretAccess({ account_id, project_id, epoch });
-  const deleted = await deleteProjectSecret({ project_id, name, account_id });
-  await publishProjectDetailInvalidationBestEffort({
-    project_id,
-    fields: ["secrets"],
-  });
-  const runtime_refresh = deleted
-    ? await syncProjectSecretsRuntimeOnAssignedHost({ project_id })
-    : undefined;
-  return {
-    deleted,
-    runtime_refresh,
-  };
 }
 
 export async function handleProjectSecretsCopy({
@@ -257,27 +178,6 @@ export async function handleProjectSecretsImportForCopy({
       project_id,
     });
   }
-  return result;
-}
-
-export async function handleProjectSecretsGenerateSshKeySecret({
-  account_id,
-  project_id,
-  secret_name,
-  epoch,
-}: Parameters<InterBayProjectSecretsApi["generateSshKeySecret"]>[0]): Promise<
-  Awaited<ReturnType<InterBayProjectSecretsApi["generateSshKeySecret"]>>
-> {
-  await assertLocalProjectSecretAccess({ account_id, project_id, epoch });
-  const result = await generateProjectSshKeySecretLocal({
-    project_id,
-    account_id,
-    secret_name,
-  });
-  await publishProjectDetailInvalidationBestEffort({
-    project_id,
-    fields: ["secrets"],
-  });
   return result;
 }
 
