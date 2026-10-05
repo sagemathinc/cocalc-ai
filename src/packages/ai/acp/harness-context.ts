@@ -57,9 +57,7 @@ ${request.prompt}`;
 }
 
 // Joins optional blocks of per-turn prompt context.
-export function joinTurnContext(
-  ...parts: unknown[]
-): string | undefined {
+export function joinTurnContext(...parts: unknown[]): string | undefined {
   const text = parts
     .map((part) => (typeof part === "string" ? part.trim() : ""))
     .filter(Boolean)
