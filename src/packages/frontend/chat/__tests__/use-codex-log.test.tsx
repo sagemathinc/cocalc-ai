@@ -584,6 +584,53 @@ describe("useCodexLog", () => {
     );
   });
 
+  it("catches up a running preview whose live update never arrived", async () => {
+    jest.useFakeTimers();
+    const stream = new FakeDstream();
+    dstreamMock.mockResolvedValue(stream);
+    conatMock.mockReturnValue({
+      subscribe: jest.fn(),
+      sync: {
+        akv: () => ({ get: jest.fn(() => new Promise(() => {})) }),
+      },
+    });
+    render(
+      <LiveResponseComponent
+        logKey="log-key-preview-catch-up"
+        liveLogStream="preview-stream-catch-up"
+        liveStreamIsProjection
+        generating
+      />,
+    );
+    await waitFor(() => expect(stream.listenerCount("change")).toBe(1));
+    // Published, but the subscription is not told (seen after reconnects).
+    act(() => {
+      stream.pushSilently({
+        type: "event",
+        seq: 1,
+        time: 10,
+        event: {
+          type: "message",
+          text: "Starting the sleep now.",
+          delta: false,
+        },
+      });
+    });
+    expect(screen.getByTestId("live-response").textContent).toBe("");
+    await act(async () => {
+      jest.advanceTimersByTime(6_000);
+      await Promise.resolve();
+    });
+    expect(stream.recoverNow).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "codex_preview_catch_up" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("live-response").textContent).toBe(
+        "Starting the sleep now.",
+      ),
+    );
+  });
+
   it("preserves a buffered final preview delta when generation ends", async () => {
     jest.useFakeTimers();
     const stream = new FakeDstream();
