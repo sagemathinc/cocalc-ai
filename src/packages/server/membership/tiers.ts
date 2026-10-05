@@ -11,6 +11,7 @@ import {
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
+import { lastKnownSeedRead } from "@cocalc/server/inter-bay/last-known-seed-read";
 import { getMembershipTrialCandidate } from "./trials";
 import { assertNoDueMembershipRenewal } from "@cocalc/server/purchases/membership-subscription-guard";
 
@@ -148,14 +149,23 @@ export async function getSeedMembershipTiers({
       client,
     });
   }
-  return (await getInterBayBridge()
-    .bayOps(seedBayId, { timeout_ms: 15_000 })
-    .getMembershipTiers({
-      includeDisabled,
-      storeVisibleOnly,
-      courseStoreVisibleOnly,
-    })) as MembershipTierRecord[];
+  return await readSeedMembershipTiers(
+    JSON.stringify([includeDisabled, storeVisibleOnly, courseStoreVisibleOnly]),
+    async (timeout_ms) =>
+      (await getInterBayBridge()
+        .bayOps(seedBayId, { timeout_ms })
+        .getMembershipTiers({
+          includeDisabled,
+          storeVisibleOnly,
+          courseStoreVisibleOnly,
+        })) as MembershipTierRecord[],
+  );
 }
+
+// Attached bays keep working with the last tiers they read while the seed is
+// unreachable (see lastKnownSeedRead).
+export const readSeedMembershipTiers =
+  lastKnownSeedRead<MembershipTierRecord[]>("membership-tiers");
 
 export async function getSeedMembershipTierMap({
   includeDisabled = true,

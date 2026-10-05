@@ -134,10 +134,51 @@ export async function getClusterAccountsByIds(
   }).getMany({ account_ids });
 }
 
-async function publicSharePublisherProfileBay(account_id: string) {
+// Which bay an account lives on. An attached bay must not need the seed to
+// serve its own accounts, so its own `accounts` row decides first when that
+// row explicitly says "homed here": a rehome flips the source's row away under
+// the rehome fence, and the destination's row says "homed here" only after the
+// cutover (finalizeAccountRehome). Anything else, including rows without an
+// explicit home bay, asks the cluster directory as before.
+
+/**
+ * True if this is an attached bay of a multibay cluster and its own
+ * `accounts` row says the account is homed here. Never asks the seed.
+ */
+export async function accountHomedHereLocally(
+  account_id: string,
+): Promise<boolean> {
+  if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
+    return false;
+  }
+  const { rows } = await getPool().query<{ home_bay_id: string | null }>(
+    `SELECT home_bay_id FROM accounts
+      WHERE account_id = $1 AND deleted IS NOT TRUE`,
+    [account_id],
+  );
+  const home = `${rows[0]?.home_bay_id ?? ""}`.trim();
+  return home !== "" && home === currentBayId();
+}
+
+/**
+ * The account's home bay, or null if the cluster does not know the account.
+ * Known accounts without a home bay are on this bay, as before.
+ */
+export async function getAccountHomeBayId(
+  account_id: string,
+): Promise<string | null> {
+  if (await accountHomedHereLocally(account_id)) {
+    return currentBayId();
+  }
   const account = await getClusterAccountById(account_id);
-  if (!account) throw Error("account not found");
-  return account.home_bay_id || currentBayId();
+  if (!account) return null;
+  return `${account.home_bay_id ?? ""}`.trim() || currentBayId();
+}
+
+async function publicSharePublisherProfileBay(account_id: string) {
+  const home_bay_id = await getAccountHomeBayId(account_id);
+  if (home_bay_id == null) throw Error("account not found");
+  return home_bay_id;
 }
 
 export async function getClusterPublicSharePublisherProfile(
@@ -485,8 +526,8 @@ export async function createLocalCliLoginSession({
 export async function createClusterCliLoginSession(
   opts: AccountLocalCreateCliLoginSessionRequest,
 ): Promise<AccountLocalCreateCliLoginSessionResult> {
-  const account = await getClusterAccountById(opts.account_id);
-  const home_bay_id = `${account?.home_bay_id ?? ""}`.trim() || currentBayId();
+  const home_bay_id =
+    (await getAccountHomeBayId(opts.account_id)) ?? currentBayId();
   if (home_bay_id === currentBayId()) {
     return await createLocalCliLoginSession(opts);
   }
@@ -503,14 +544,14 @@ export async function assertClusterAccountTrustedForProductAccess({
   account_id: string;
   action: string;
 }): Promise<void> {
-  const account = await getClusterAccountById(account_id);
-  if (!account?.home_bay_id || account.home_bay_id === currentBayId()) {
+  const home_bay_id = (await getAccountHomeBayId(account_id)) ?? currentBayId();
+  if (home_bay_id === currentBayId()) {
     await assertAccountTrustedForProductAccess(account_id, action);
     return;
   }
   await createInterBayAccountLocalClient({
     client: getInterBayFabricClient(),
-    dest_bay: account.home_bay_id,
+    dest_bay: home_bay_id,
   }).assertProductAccessTrust({ account_id, action });
 }
 
@@ -518,12 +559,11 @@ export async function adminVerifyClusterAccountEmailAddress({
   account_id,
   email_address,
 }: AccountLocalAdminVerifyEmailAddressRequest): Promise<AccountLocalAdminVerifyEmailAddressResult> {
-  const account = await getClusterAccountById(account_id);
-  if (!account) {
+  const homeBayId = await getAccountHomeBayId(account_id);
+  if (homeBayId == null) {
     throw Error(`account ${account_id} not found`);
   }
-  const homeBayId = `${account.home_bay_id ?? ""}`.trim();
-  if (!homeBayId || homeBayId === currentBayId()) {
+  if (homeBayId === currentBayId()) {
     return await adminVerifyEmailAddressLocal({ account_id, email_address });
   }
   return await createInterBayAccountLocalClient({
@@ -548,8 +588,7 @@ export async function sendClusterEmailVerification({
   try {
     let targetBay = `${home_bay_id ?? ""}`.trim();
     if (!targetBay) {
-      const account = await getClusterAccountById(normalizedAccountId);
-      targetBay = `${account?.home_bay_id ?? ""}`.trim();
+      targetBay = (await getAccountHomeBayId(normalizedAccountId)) ?? "";
     }
     if (!targetBay || targetBay === currentBayId()) {
       return await sendEmailVerificationLocal(normalizedAccountId, only_verify);
@@ -571,12 +610,11 @@ export async function adminDisableClusterAccountTwoFactor({
 }: {
   account_id: string;
 }): Promise<AccountLocalAdminDisableTwoFactorResult> {
-  const account = await getClusterAccountById(account_id);
-  if (!account) {
+  const homeBayId = await getAccountHomeBayId(account_id);
+  if (homeBayId == null) {
     throw Error(`account ${account_id} not found`);
   }
-  const homeBayId = `${account.home_bay_id ?? ""}`.trim();
-  if (!homeBayId || homeBayId === currentBayId()) {
+  if (homeBayId === currentBayId()) {
     return await adminDisableTwoFactorLocal({ account_id });
   }
   return await createInterBayAccountLocalClient({
@@ -595,12 +633,11 @@ export async function adminGrantClusterAccountAdminRole({
   if (!isValidUUID(normalizedAccountId)) {
     throw new Error("account_id must be a valid uuid");
   }
-  const account = await getClusterAccountById(normalizedAccountId);
-  if (!account) {
+  const homeBayId = await getAccountHomeBayId(normalizedAccountId);
+  if (homeBayId == null) {
     throw Error(`account ${normalizedAccountId} not found`);
   }
-  const homeBayId = `${account.home_bay_id ?? ""}`.trim();
-  if (!homeBayId || homeBayId === currentBayId()) {
+  if (homeBayId === currentBayId()) {
     return await grantAdminRoleLocal({
       account_id: normalizedAccountId,
       actor_account_id,
@@ -629,12 +666,11 @@ export async function adminRevokeClusterAccountAdminRole({
   if (!isValidUUID(normalizedAccountId)) {
     throw new Error("account_id must be a valid uuid");
   }
-  const account = await getClusterAccountById(normalizedAccountId);
-  if (!account) {
+  const homeBayId = await getAccountHomeBayId(normalizedAccountId);
+  if (homeBayId == null) {
     throw Error(`account ${normalizedAccountId} not found`);
   }
-  const homeBayId = `${account.home_bay_id ?? ""}`.trim();
-  if (!homeBayId || homeBayId === currentBayId()) {
+  if (homeBayId === currentBayId()) {
     return await revokeAdminRoleLocal({
       account_id: normalizedAccountId,
       actor_account_id,
@@ -873,12 +909,11 @@ export async function setClusterAccountPasswordFromReset({
   email_address,
   password,
 }: AccountLocalSetPasswordFromResetRequest): Promise<void> {
-  const account = await getClusterAccountById(account_id);
-  if (!account) {
+  const homeBayId = await getAccountHomeBayId(account_id);
+  if (homeBayId == null) {
     throw Error(`account ${account_id} not found`);
   }
-  const homeBayId = `${account.home_bay_id ?? ""}`.trim();
-  if (!homeBayId || homeBayId === currentBayId()) {
+  if (homeBayId === currentBayId()) {
     await setPasswordFromResetLocal({ account_id, email_address, password });
     return;
   }

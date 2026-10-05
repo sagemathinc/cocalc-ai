@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { lastKnownSeedRead } from "@cocalc/server/inter-bay/last-known-seed-read";
 import type { BayInfo } from "@cocalc/conat/hub/api/system";
 import type {
   BayRegistryEntry,
@@ -351,15 +352,22 @@ export async function setBayProjectOwnershipAdmissionLocal({
   return mapRow(rows[0]);
 }
 
+// The ownership policy (draining bays) lives on the seed. While the seed is
+// unreachable, an attached bay applies the policy it last read.
+const readBayRegistryForOwnershipPolicy =
+  lastKnownSeedRead<BayRegistryEntry[]>("bay-registry");
+
 export async function assertBayAcceptsProjectOwnership(
   bay_id: string,
 ): Promise<void> {
   if (!isMultiBayCluster()) {
     return;
   }
-  const entry = (await listClusterBayRegistry()).find(
-    (candidate) => candidate.bay_id === bay_id,
-  );
+  const entry = (
+    await readBayRegistryForOwnershipPolicy("all", () =>
+      listClusterBayRegistry(),
+    )
+  ).find((candidate) => candidate.bay_id === bay_id);
   if (entry?.accepts_project_ownership === false) {
     throw new Error(
       `bay ${bay_id} is not accepting new project ownership${entry.project_ownership_note ? `: ${entry.project_ownership_note}` : ""}`,
