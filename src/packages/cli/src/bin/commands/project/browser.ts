@@ -21,6 +21,8 @@ import {
   type LaunchedBrowser,
   type ProfileDir,
   type ProfileStorage,
+  cleanupThenDisarm,
+  type CleanupWatchdog,
   startCleanupWatchdog,
   startUrl,
 } from "../../core/local-browser";
@@ -321,7 +323,7 @@ async function runBrowserConnect(
   // Set once creation is attempted: reflect may store the row even when
   // starting it fails, so cleanup falls back to the (unique) name.
   let forwardRef: string | null = null;
-  let watchdog: ReturnType<typeof startCleanupWatchdog> | null = null;
+  let watchdog: CleanupWatchdog | null = null;
   const verification = new AbortController();
   let endedBy = "browser closed";
   try {
@@ -405,25 +407,21 @@ async function runBrowserConnect(
   } finally {
     for (const signal of signals) process.off(signal, onSignal);
     verification.abort();
-    watchdog?.stop();
-    const steps: Array<() => Promise<unknown>> = [
-      () =>
-        forwardRef != null
-          ? terminateReflectForwards([forwardRef]).catch((err: unknown) => {
-              // A name with no stored row means creation never got that far.
-              if (forwardRef !== name) throw err;
-            })
-          : Promise.resolve(),
-      () => browser?.stop() ?? Promise.resolve(),
-      () => profile?.cleanup() ?? Promise.resolve(),
-    ];
-    for (const step of steps) {
-      try {
-        await step();
-      } catch (err) {
-        say(`cleanup: ${(err as Error)?.message ?? err}`);
-      }
-    }
+    await cleanupThenDisarm(
+      [
+        () =>
+          forwardRef != null
+            ? terminateReflectForwards([forwardRef]).catch((err: unknown) => {
+                // A name with no stored row means creation never got that far.
+                if (forwardRef !== name) throw err;
+              })
+            : Promise.resolve(),
+        () => browser?.stop() ?? Promise.resolve(),
+        () => profile?.cleanup() ?? Promise.resolve(),
+      ],
+      watchdog,
+      (err) => say(`cleanup: ${(err as Error)?.message ?? err}`),
+    );
   }
   say("Browser session ended; forward and profile removed.");
   return {

@@ -406,10 +406,13 @@ export interface WatchdogConfig {
   forward?: { command: string; args: string[]; env: Record<string, string> };
 }
 
-export function startCleanupWatchdog(config: WatchdogConfig): {
+export interface CleanupWatchdog {
   pid: number | undefined;
-  stop: () => void;
-} {
+  // Disarm: resolves once "stop" has been handed to the pipe (or after 2s).
+  stop: () => Promise<void>;
+}
+
+export function startCleanupWatchdog(config: WatchdogConfig): CleanupWatchdog {
   const child = spawn(
     process.execPath,
     ["-e", WATCHDOG_SOURCE, JSON.stringify(config)],
@@ -422,10 +425,36 @@ export function startCleanupWatchdog(config: WatchdogConfig): {
   child.unref();
   return {
     pid: child.pid,
-    stop: () => {
-      try {
-        child.stdin?.end("stop\n");
-      } catch {}
-    },
+    stop: () =>
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 2000);
+        try {
+          child.stdin?.end("stop\n", () => {
+            clearTimeout(timer);
+            resolve();
+          });
+        } catch {
+          clearTimeout(timer);
+          resolve();
+        }
+      }),
   };
+}
+
+// Run the session's own (idempotent) cleanup steps, and only then disarm the
+// watchdog.  If this process dies anywhere before that, the still-armed
+// watchdog finishes the job.
+export async function cleanupThenDisarm(
+  steps: Array<() => Promise<unknown>>,
+  watchdog: CleanupWatchdog | null,
+  report: (err: unknown) => void,
+): Promise<void> {
+  for (const step of steps) {
+    try {
+      await step();
+    } catch (err) {
+      report(err);
+    }
+  }
+  await watchdog?.stop();
 }

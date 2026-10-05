@@ -288,12 +288,63 @@ test("a stopped watchdog leaves everything alone", async () => {
   });
   try {
     await sleep(500);
-    watchdog.stop();
+    await watchdog.stop();
     await sleep(1500);
     assert.equal(watchdog.pid != null && alive(watchdog.pid), false);
     assert.ok(alive(browser.pid!), "browser left running");
     assert.ok(existsSync(profile), "profile left in place");
   } finally {
+    browser.kill("SIGKILL");
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("the watchdog stays armed while the owner's own cleanup runs", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "browser-watchdog-"));
+  const profile = join(tmp, "profile");
+  const entered = join(tmp, "entered-cleanup");
+  mkdirSync(profile);
+  const browser = idle(`--user-data-dir=${profile}`);
+  const mod = require.resolve("./local-browser");
+  // The "CLI": start the watchdog, then block forever inside cleanup (e.g. a
+  // hung forward removal), which is where it gets SIGKILLed.
+  const owner = spawn(
+    process.execPath,
+    [
+      "-e",
+      `const m = require(${JSON.stringify(mod)});
+       const fs = require("node:fs");
+       const w = m.startCleanupWatchdog(JSON.parse(process.argv[1]));
+       m.cleanupThenDisarm(
+         [() => { fs.writeFileSync(${JSON.stringify(entered)}, ""); return new Promise(() => {}); }],
+         w,
+         () => {},
+       );
+       setInterval(() => {}, 1000);`,
+      JSON.stringify({
+        browser: browser.pid,
+        browserMarker: `--user-data-dir=${profile}`,
+        release: { removeDir: profile },
+      }),
+    ],
+    { stdio: "ignore" },
+  );
+  try {
+    const t0 = Date.now();
+    while (!existsSync(entered) && Date.now() - t0 < 5000) await sleep(50);
+    assert.ok(existsSync(entered), "owner entered cleanup");
+    owner.kill("SIGKILL");
+    const deadline = Date.now() + 10_000;
+    while (
+      Date.now() < deadline &&
+      (existsSync(profile) || alive(browser.pid!))
+    ) {
+      await sleep(100);
+    }
+    assert.equal(alive(browser.pid!), false, "browser revoked");
+    assert.equal(existsSync(profile), false, "profile released");
+  } finally {
+    owner.kill("SIGKILL");
     browser.kill("SIGKILL");
     rmSync(tmp, { recursive: true, force: true });
   }
