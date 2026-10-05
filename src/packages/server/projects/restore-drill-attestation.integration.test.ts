@@ -117,7 +117,7 @@ describe("restore drill operator attestation", () => {
     ).rejects.toThrow("not a successful remote-only project restore");
   });
 
-  it("keeps the drill visible after its operation record is removed", async () => {
+  it("keeps the drill visible after its canary and operation record are removed", async () => {
     const { op_id, project_id } = await seedRestore();
     await recordRestoreDrillAttestation({
       op_id,
@@ -131,6 +131,9 @@ describe("restore drill operator attestation", () => {
       "DELETE FROM long_running_operations WHERE op_id = $1",
       [op_id],
     );
+    await getPool().query("DELETE FROM projects WHERE project_id = $1", [
+      project_id,
+    ]);
     const report = await getPool().query(PROJECT_RESTORE_DRILLS_SQL, [
       project_id,
       30 * 24 * 60 * 60,
@@ -142,6 +145,8 @@ describe("restore drill operator attestation", () => {
         status: "succeeded",
         attestation_passed: true,
         evidence_source: "operator_supplied",
+        current_backup_repo_id: null,
+        current_host_id: null,
       }),
     ]);
     await getPool().query(
