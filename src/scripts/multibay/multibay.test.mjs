@@ -338,6 +338,39 @@ describe("fabric faults", () => {
     );
   });
 
+  it("creates a mention for an account on a frozen bay without waiting for it", async () => {
+    // bob (homed on the attached bay) is a collaborator on alice's seed-owned
+    // project again. With his bay frozen, alice's mention is recorded on the
+    // seed and delivered once his bay resumes.
+    await invite(alice, bob, alice.project);
+    await eventually(() => listed(bob.client, alice.project), {
+      what: "alice's project back in bob's list",
+    });
+    const description = "mentioned while bob's bay is frozen";
+    let elapsed;
+    cluster.signal(ATTACHED, "SIGSTOP");
+    try {
+      const start = Date.now();
+      await alice.client.call("notifications.createMention", {
+        source_project_id: alice.project,
+        source_path: "notes.md",
+        description,
+        target_account_ids: [bob.account_id],
+      });
+      elapsed = Date.now() - start;
+    } finally {
+      cluster.signal(ATTACHED, "SIGCONT");
+    }
+    assert.ok(elapsed < 5_000, `the mention took ${elapsed}ms`);
+    await eventually(
+      async () =>
+        (await bob.client.call("notifications.list", { limit: 50 })).some(
+          (row) => row.summary?.description === description,
+        ),
+      { timeoutMs: 60_000, what: "the mention to reach bob" },
+    );
+  });
+
   it("recovers after the seed's event loop stalls", async () => {
     cluster.signal(SEED, "SIGSTOP");
     await sleep(8_000);
