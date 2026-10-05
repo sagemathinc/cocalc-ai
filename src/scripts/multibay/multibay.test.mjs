@@ -213,6 +213,94 @@ describe("cross-bay collaboration", () => {
   });
 });
 
+describe("a project managed from the other bay", () => {
+  // Every call below is made by an account homed on the bay that does NOT
+  // own the project, so each one crosses the fabric to the owner.
+  let project;
+
+  it("lets a collaborator on the other bay rename it", async () => {
+    project = await createProject(alice.client, "shared");
+    await invite(alice, bob, project);
+    await eventually(() => listed(bob.client, project), {
+      what: "the shared project in bob's list",
+    });
+    await rename(bob.client, project, "renamed by bob");
+    for (const c of [alice.client, bob.client]) {
+      await eventually(
+        async () => (await listed(c, project))?.title === "renamed by bob",
+        { what: "bob's rename in every list" },
+      );
+    }
+  });
+
+  it("transfers ownership to an account on the other bay", async () => {
+    await alice.client.call("projects.transferProjectOwnership", {
+      project_id: project,
+      from_account_id: alice.account_id,
+      to_account_id: bob.account_id,
+    });
+    await eventually(
+      async () =>
+        (await listed(bob.client, project))?.users_summary?.[bob.account_id]
+          ?.group === "owner",
+      { what: "bob to be the owner in his list" },
+    );
+    // Ownership moves; the project stays on its owning bay.
+    assert.equal(await owningBay(project), SEED);
+  });
+
+  it("lets the new owner on the other bay protect it from deletion", async () => {
+    const result = await bob.client.call("projects.setProjectDeletionProtection", {
+      project_id: project,
+      enabled: true,
+    });
+    assert.equal(result.deletion_protection, true);
+    await eventually(
+      async () => (await listed(alice.client, project))?.deletion_protection,
+      { what: "deletion protection in alice's list" },
+    );
+  });
+
+  it("lets the new owner on the other bay change a member's role", async () => {
+    await bob.client.call("projects.setProjectUserRole", {
+      opts: {
+        project_id: project,
+        target_account_id: alice.account_id,
+        role: "viewer",
+      },
+    });
+    await eventually(
+      async () =>
+        (await listed(alice.client, project))?.users_summary?.[
+          alice.account_id
+        ]?.group === "viewer",
+      { what: "alice to be a viewer in her list" },
+    );
+  });
+
+  it("lets the new owner on the other bay restrict member management", async () => {
+    await bob.client.call("projects.setProjectManageUsersOwnerOnly", {
+      project_id: project,
+      manage_users_owner_only: true,
+    });
+    const owner = await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT manage_users_owner_only FROM projects WHERE project_id=$1",
+         [${JSON.stringify(project)}]);
+       return rows[0]?.manage_users_owner_only ?? null;`,
+    );
+    assert.equal(owner, true);
+  });
+
+  it("does not let a viewer on the other bay rename it", async () => {
+    await assert.rejects(rename(alice.client, project, "viewer rename"));
+    assert.equal((await listed(bob.client, project))?.title, "renamed by bob");
+  });
+});
+
 describe("fabric faults", () => {
   it("recovers after the seed's event loop stalls", async () => {
     cluster.signal(SEED, "SIGSTOP");
