@@ -8,6 +8,67 @@ import { Command } from "commander";
 
 import { registerProjectBasicCommands } from "./basic";
 
+test("project create forwards a reserved UUID to the authorized server API", async () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  const calls: any[] = [];
+  const program = new Command();
+  registerProjectBasicCommands(program.command("project"), {
+    withContext: async (_command, _label, fn) =>
+      fn({
+        hub: {
+          projects: {
+            createProject: async (opts) => {
+              calls.push(opts);
+              return id;
+            },
+          },
+        },
+      }),
+    isValidUUID: (value) => value === id,
+    resolveHost: async () => ({ id: "host-id" }),
+  } as any);
+  await program.parseAsync([
+    "node",
+    "test",
+    "project",
+    "create",
+    "Canary",
+    "--project-id",
+    id,
+    "--host",
+    "host-id",
+  ]);
+  assert.deepEqual(calls, [
+    {
+      project_id: id,
+      title: "Canary",
+      host_id: "host-id",
+      rootfs_image: undefined,
+      rootfs_image_id: undefined,
+      start: false,
+    },
+  ]);
+});
+
+test("project create rejects malformed reserved UUIDs before calling the server", async () => {
+  const program = new Command();
+  registerProjectBasicCommands(program.command("project"), {
+    withContext: async (_command, _label, fn) => fn({}),
+    isValidUUID: () => false,
+  } as any);
+  await assert.rejects(
+    program.parseAsync([
+      "node",
+      "test",
+      "project",
+      "create",
+      "--project-id",
+      "not-a-uuid",
+    ]),
+    /--project-id must be a project UUID/,
+  );
+});
+
 test("project list selects the turn key while the primary connection remains agent authenticated", async () => {
   const directory = mkdtempSync(join(tmpdir(), "connector-list-"));
   const keyFile = join(directory, "key");

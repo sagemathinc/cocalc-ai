@@ -436,6 +436,7 @@ export function registerProjectBasicCommands(
   project
     .command("create [name]")
     .description("create a project")
+    .option("--project-id <uuid>", "explicit project UUID (admin only)")
     .option("--host <host>", "host id or name")
     .option("--rootfs-image <image>", "runtime RootFS image to assign")
     .option(
@@ -447,6 +448,7 @@ export function registerProjectBasicCommands(
       async (
         name: string | undefined,
         opts: {
+          projectId?: string;
           host?: string;
           rootfsImage?: string;
           rootfsImageId?: string;
@@ -455,11 +457,15 @@ export function registerProjectBasicCommands(
         command: Command,
       ) => {
         await withContext(command, "project create", async (ctx) => {
+          if (opts.projectId != null && !isValidUUID(opts.projectId)) {
+            throw new Error("--project-id must be a project UUID");
+          }
           const host = opts.host ? await resolveHost(ctx, opts.host) : null;
           const rootfs_image = `${opts.rootfsImage ?? ""}`.trim() || undefined;
           const rootfs_image_id =
             `${opts.rootfsImageId ?? ""}`.trim() || undefined;
           const projectId = await ctx.hub.projects.createProject({
+            ...(opts.projectId != null ? { project_id: opts.projectId } : {}),
             title: name ?? "New Project",
             host_id: host?.id,
             rootfs_image,

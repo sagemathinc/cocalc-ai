@@ -96,6 +96,8 @@ After publication, update both archive and executable SHA-256 pins in
 - `bay-systemd/`: systemd bay runtime scaffold and upgrade workflow, including
   `upgrade-bay-release.sh`.
 - `control-plane-bundle/`: control-plane bundle build helper.
+- `project-restore-drill/`: checkpointed remote-only canary drills that delete
+  successfully verified projects and preserve attestations.
 
 ## Active Dev And QA Workflows
 

@@ -1686,6 +1686,14 @@ After a change, review the evidence for the affected layer:
   \`--path\` and a new \`--dest\`: without \`--path\` the whole backup is
   restored, and without \`--dest\` it is restored in place, over the project's
   current files.
+- For disposable operator canaries, use the repository workflow in
+  \`src/scripts/project-restore-drill/README.md\`. It deletes each successfully
+  verified and attested canary through the normal project deletion API and
+  waits for cleanup before reporting completion. Hashes and immutable drill
+  attestations survive deletion; backup retention follows the normal deletion
+  policy. Failed or uncertain runs remain for inspection, and
+  \`--keep-projects\` explicitly retains successful canaries for debugging.
+  Ordinary restores and the attestation command do not delete projects.
 - For project-level recovery evidence, use the audited \`admin db\` commands.
   They run only on the bay the CLI is connected to (\`--bay\` cannot select
   another bay), so connect to the project's owning bay first:
