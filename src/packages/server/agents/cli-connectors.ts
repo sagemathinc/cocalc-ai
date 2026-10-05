@@ -329,43 +329,61 @@ export async function saveCliConnectorGrant({
     touchLastUsed: false,
   });
   if (!connection) throw Error("connection is unavailable");
-  if (expected_revision === undefined) {
-    const { rows: counted } = await getPool().query<{ count: string }>(
-      `SELECT count(*) FROM agent_connector_grants WHERE account_id=$1`,
+  // The account-scoped lock makes the count and the insert one step, so
+  // concurrent first writes cannot exceed the bound.
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('agent_connector_grants:' || $1, 0))",
       [owner],
     );
-    if (Number(counted[0]?.count ?? 0) >= MAX_GRANTS_PER_ACCOUNT) {
-      throw Error("too many agents have connector settings");
+    if (expected_revision === undefined) {
+      const { rows: counted } = await client.query<{ count: string }>(
+        `SELECT count(*) FROM agent_connector_grants WHERE account_id=$1`,
+        [owner],
+      );
+      if (Number(counted[0]?.count ?? 0) >= MAX_GRANTS_PER_ACCOUNT) {
+        throw Error("too many agents have connector settings");
+      }
     }
+    // A new grant needs no revision; changing one needs the revision the user
+    // saw (a missing one never matches).
+    const { rows } = await client.query<CliConnectorGrant>(
+      `INSERT INTO agent_connector_grants
+         (grant_id,account_id,agent_id,source_project_id,connector,
+          connection_id,scope,revision,enabled,created_at,updated_at)
+       VALUES($1,$2,$3,$4,$5,$6,'{}'::JSONB,1,$7,now(),now())
+       ON CONFLICT (account_id,agent_id,source_project_id,connector) DO UPDATE
+         SET connection_id=EXCLUDED.connection_id,
+             enabled=true,
+             revision=agent_connector_grants.revision+1,
+             updated_at=now()
+       WHERE agent_connector_grants.revision=$8::integer
+       RETURNING grant_id,account_id,agent_id,source_project_id,connector,
+                 connection_id,scope,revision,enabled,created_at,updated_at`,
+      [
+        randomUUID(),
+        owner,
+        agent_id,
+        source_project_id,
+        connector,
+        connection_id,
+        true,
+        expected_revision ?? null,
+      ],
+    );
+    if (!rows[0]) {
+      throw Error("connector settings changed; reload and try again");
+    }
+    await client.query("COMMIT");
+    return rows[0];
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
   }
-  // A new grant needs no revision; changing one needs the revision the user
-  // saw (a missing one never matches).
-  const { rows } = await getPool().query<CliConnectorGrant>(
-    `INSERT INTO agent_connector_grants
-       (grant_id,account_id,agent_id,source_project_id,connector,
-        connection_id,scope,revision,enabled,created_at,updated_at)
-     VALUES($1,$2,$3,$4,$5,$6,'{}'::JSONB,1,$7,now(),now())
-     ON CONFLICT (account_id,agent_id,source_project_id,connector) DO UPDATE
-       SET connection_id=EXCLUDED.connection_id,
-           enabled=true,
-           revision=agent_connector_grants.revision+1,
-           updated_at=now()
-     WHERE agent_connector_grants.revision=$8::integer
-     RETURNING grant_id,account_id,agent_id,source_project_id,connector,
-               connection_id,scope,revision,enabled,created_at,updated_at`,
-    [
-      randomUUID(),
-      owner,
-      agent_id,
-      source_project_id,
-      connector,
-      connection_id,
-      true,
-      expected_revision ?? null,
-    ],
-  );
-  if (!rows[0]) throw Error("connector settings changed; reload and try again");
-  return rows[0];
 }
 
 /**

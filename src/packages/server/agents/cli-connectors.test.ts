@@ -225,7 +225,9 @@ describe("agent grants", () => {
       enabled: true,
       connection_id: connectionId,
     });
-    const [sql, params] = queryMock.mock.calls.at(-1)!;
+    const [sql, params] = queryMock.mock.calls.find(([q]) =>
+      /INSERT INTO agent_connector_grants/.test(q),
+    )!;
     // A missing revision is NULL, which never matches an existing row.
     expect(sql).toContain("WHERE agent_connector_grants.revision=$8::integer");
     expect(sql).not.toMatch(/IS NULL/);
@@ -244,6 +246,13 @@ describe("agent grants", () => {
         connection_id: connectionId,
       }),
     ).rejects.toThrow("too many agents");
+    // The count happens inside the transaction, after the account lock.
+    const sql = queryMock.mock.calls.map(([q]) => `${q}`.trim());
+    const lock = sql.findIndex((q) => /pg_advisory_xact_lock/.test(q));
+    expect(sql[lock - 1]).toBe("BEGIN");
+    expect(sql[lock + 1]).toMatch(/count\(\*\)/);
+    expect(sql).toContain("ROLLBACK");
+    expect(releaseMock).toHaveBeenCalled();
     // Changing an existing grant is not a new row.
     await saveCliConnectorGrant({
       ...base,
