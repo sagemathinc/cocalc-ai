@@ -3,7 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 
-import { useRef, useState } from "react";
+import { lazy, Suspense, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import { ApartmentOutlined, ApiOutlined } from "@ant-design/icons";
 import { Alert, Button, Dropdown, Modal, Spin } from "antd";
@@ -18,11 +18,17 @@ import { lite } from "@cocalc/frontend/lite";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import type { CliConnector } from "@cocalc/util/ai/cli-connectors";
 import {
-  CliConnectorAgentModal,
   agentGrant,
   cliConnectorSummary,
   useCliConnectors,
-} from "./cli-connectors";
+} from "./cli-connectors-store";
+
+// Loaded only when a GitHub or Cloudflare dialog is opened.
+const CliConnectorAgentModal = lazy(() =>
+  import("./cli-connectors").then((module) => ({
+    default: module.CliConnectorAgentModal,
+  })),
+);
 import { CocalcConnector } from "./cocalc-connector";
 import { AgentNetworkTagsEditor } from "./agent-network-tags-editor";
 import { AgentNetworkDetailsModal } from "./agent-network-details-modal";
@@ -353,15 +359,17 @@ function NamedAgentConnectors({
         </Modal>
       )}
       {cliOpen && (
-        <CliConnectorAgentModal
-          agent={agent}
-          connector={cliOpen}
-          open
-          onClose={() => {
-            setCliOpen(undefined);
-            chipRef.current?.focus();
-          }}
-        />
+        <Suspense fallback={null}>
+          <CliConnectorAgentModal
+            agent={agent}
+            connector={cliOpen}
+            open
+            onClose={() => {
+              setCliOpen(undefined);
+              chipRef.current?.focus();
+            }}
+          />
+        </Suspense>
       )}
       <AgentNetworkDetailsModal
         network={networks.find(

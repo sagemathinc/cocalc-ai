@@ -983,7 +983,7 @@ export const EXTRAS: SettingsExtras = {
   },
   agent_connectors_heading: {
     name: "Agent Connectors",
-    desc: "Services agents can use as the user during their turns. See the admin docs page **Set up agent connectors** (/docs/admin/agent-connectors).",
+    desc: "Services agents use as the user. See the admin docs: Set up agent connectors.",
     default: "",
     type: "header",
     tags: ["AI", "GitHub"],
@@ -992,7 +992,7 @@ export const EXTRAS: SettingsExtras = {
   },
   github_connector_client_id: {
     name: "GitHub Connector: App Client ID",
-    desc: "Client ID of this site's GitHub App (it starts with `Iv23`). Not secret. Leave blank to turn the GitHub connector off.",
+    desc: "Client ID of this site's GitHub App. Blank turns the connector off.",
     default: "",
     to_val: to_trimmed_str,
     tags: ["AI", "GitHub"],
@@ -1001,7 +1001,7 @@ export const EXTRAS: SettingsExtras = {
   },
   github_connector_client_secret: {
     name: "GitHub Connector: App Client Secret",
-    desc: "A client secret of the same GitHub App. Only the hub uses it, to refresh users' 8-hour GitHub tokens.",
+    desc: "Client secret of that app; only the hub uses it.",
     default: "",
     password: true,
     to_val: to_trimmed_str,
@@ -1011,7 +1011,7 @@ export const EXTRAS: SettingsExtras = {
   },
   github_connector_app_url: {
     name: "GitHub Connector: App Public Link",
-    desc: "The app's public page, `https://github.com/apps/<name>`. Users install the app on their repositories from there.",
+    desc: "The app's page, https://github.com/apps/<name>.",
     default: "",
     to_val: to_trimmed_str,
     valid: (value: string) =>
@@ -1023,7 +1023,7 @@ export const EXTRAS: SettingsExtras = {
   },
   cloudflare_connector_client_id: {
     name: "Cloudflare Connector: OAuth Client ID",
-    desc: "Client ID of this site's Cloudflare OAuth client, with redirect URL `https://<your site>/settings/connectors`. Leave blank to turn the Cloudflare connector off. See the admin docs page **Set up agent connectors**.",
+    desc: "Client ID of this site's Cloudflare OAuth client. Blank turns the connector off.",
     default: "",
     to_val: to_trimmed_str,
     tags: ["AI", "Cloudflare"],
@@ -1032,7 +1032,7 @@ export const EXTRAS: SettingsExtras = {
   },
   cloudflare_connector_client_secret: {
     name: "Cloudflare Connector: OAuth Client Secret",
-    desc: "The client secret of the same Cloudflare OAuth client. Only the hub uses it, to exchange and refresh users' tokens.",
+    desc: "Client secret of that client; only the hub uses it.",
     default: "",
     password: true,
     to_val: to_trimmed_str,
