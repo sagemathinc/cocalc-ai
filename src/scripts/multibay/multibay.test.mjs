@@ -127,7 +127,15 @@ async function rename(c, project_id, title) {
 
 /** A change made through one bay is visible to an account homed on the other. */
 async function assertCrossBayRename(actor, viewer, project_id, title) {
-  await rename(actor, project_id, title);
+  // Right after a fabric fault a call may time out while the bays reconnect;
+  // what must hold is that the change lands without restarting anything.
+  await eventually(
+    async () => {
+      await rename(actor, project_id, title);
+      return true;
+    },
+    { timeoutMs: 120_000, intervalMs: 1_000, what: `the rename to ${title}` },
+  );
   await eventually(
     async () => (await listed(viewer, project_id))?.title === title,
     {
