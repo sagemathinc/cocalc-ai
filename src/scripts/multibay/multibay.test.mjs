@@ -316,6 +316,92 @@ describe("a project managed from the other bay", () => {
   });
 });
 
+describe("access requests across bays", () => {
+  // The project lives on the seed; its owner (bob) and the requesters are
+  // homed on either bay, so requests and their management cross bays.
+  let project;
+
+  async function request(account) {
+    return await account.client.call("projects.requestProjectAccess", {
+      project_id: project,
+      requested_role: "collaborator",
+      message: `from ${account.home_bay_id}`,
+      source: "api",
+    });
+  }
+
+  it("lets an owner on the other bay approve a request", async () => {
+    project = await createProject(alice.client, "requests");
+    await invite(alice, bob, project);
+    await alice.client.call("projects.transferProjectOwnership", {
+      project_id: project,
+      from_account_id: alice.account_id,
+      to_account_id: bob.account_id,
+    });
+    const erin = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "erin",
+    });
+    erin.client = await client(erin);
+    const { request_id } = await request(erin);
+    const pending = await eventually(
+      async () =>
+        (
+          await bob.client.call("projects.listProjectAccessRequests", {
+            project_id: project,
+            status: "pending",
+          })
+        ).find((row) => row.request_id === request_id),
+      { what: "erin's request in the owner's list" },
+    );
+    assert.equal(pending.requester_account_id, erin.account_id);
+    await bob.client.call("projects.respondProjectAccessRequest", {
+      project_id: project,
+      request_id,
+      action: "approve",
+      role: "collaborator",
+    });
+    await eventually(() => listed(erin.client, project), {
+      what: "the project in erin's list",
+    });
+  });
+
+  it("lets an owner on the other bay block and unblock a requester", async () => {
+    const frank = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "frank",
+    });
+    frank.client = await client(frank);
+    const { request_id } = await request(frank);
+    await bob.client.call("projects.respondProjectAccessRequest", {
+      project_id: project,
+      request_id,
+      action: "block",
+    });
+    const blocked = async () =>
+      (
+        await bob.client.call("projects.listProjectAccessRequestBlocks", {
+          project_id: project,
+        })
+      ).some((row) => row.blocked_account_id === frank.account_id);
+    assert.equal(await blocked(), true);
+    await assert.rejects(request(frank));
+    await bob.client.call("projects.unblockProjectAccessRequester", {
+      project_id: project,
+      blocked_account_id: frank.account_id,
+    });
+    assert.equal(await blocked(), false);
+  });
+
+  it("reports collaborator invite usage to a member on the other bay", async () => {
+    const usage = await bob.client.call(
+      "projects.getProjectCollaboratorInviteUsage",
+      { project_id: project },
+    );
+    assert.ok(usage != null && typeof usage === "object");
+  });
+});
+
 describe("fabric faults", () => {
   it("recovers after the seed's event loop stalls", async () => {
     cluster.signal(SEED, "SIGSTOP");
