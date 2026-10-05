@@ -291,8 +291,10 @@ describe("HostExamPanel", () => {
       />,
     );
 
+    // Standard lists every CPU image (#889), so the teaching image is there
+    // too; the Teaching preset keeps it (and the selected image).
     expect(await screen.findByText("SageMath")).toBeVisible();
-    expect(screen.queryByText("Teaching Python")).not.toBeInTheDocument();
+    expect(screen.getByText("Teaching Python")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Teaching" }));
     expect(await screen.findByText("Teaching Python")).toBeVisible();
     fireEvent.click(screen.getByText("Teaching Python"));
