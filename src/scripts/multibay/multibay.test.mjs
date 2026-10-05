@@ -250,15 +250,31 @@ describe("a project managed from the other bay", () => {
   });
 
   it("lets the new owner on the other bay protect it from deletion", async () => {
-    const result = await bob.client.call("projects.setProjectDeletionProtection", {
-      project_id: project,
-      enabled: true,
-    });
+    const result = await bob.client.call(
+      "projects.setProjectDeletionProtection",
+      {
+        project_id: project,
+        enabled: true,
+      },
+    );
     assert.equal(result.deletion_protection, true);
     await eventually(
       async () => (await listed(alice.client, project))?.deletion_protection,
       { what: "deletion protection in alice's list" },
     );
+  });
+
+  it("lets the new owner on the other bay lift deletion protection (fresh auth)", async () => {
+    // Lifting protection needs a freshly authenticated session, which lives on
+    // the caller's home bay, not on the bay that owns the project.
+    const result = await bob.client.call(
+      "projects.setProjectDeletionProtection",
+      {
+        project_id: project,
+        enabled: false,
+      },
+    );
+    assert.equal(result.deletion_protection, false);
   });
 
   it("lets the new owner on the other bay change a member's role", async () => {
@@ -271,9 +287,8 @@ describe("a project managed from the other bay", () => {
     });
     await eventually(
       async () =>
-        (await listed(alice.client, project))?.users_summary?.[
-          alice.account_id
-        ]?.group === "viewer",
+        (await listed(alice.client, project))?.users_summary?.[alice.account_id]
+          ?.group === "viewer",
       { what: "alice to be a viewer in her list" },
     );
   });
