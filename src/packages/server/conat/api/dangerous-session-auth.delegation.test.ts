@@ -13,14 +13,9 @@ const createInterBaySessionAuthClient = jest.fn(() => ({
 }));
 const requireFreshAuthForSessionHash = jest.fn();
 
-jest.mock("@cocalc/server/cluster-config", () => ({
-  isMultiBayCluster: () => multiBay,
-}));
-jest.mock("@cocalc/server/bay-config", () => ({
-  getConfiguredBayId: () => "bay-0",
-}));
-jest.mock("@cocalc/server/bay-directory", () => ({
-  resolveAccountHomeBay: async () => ({ home_bay_id: homeBay }),
+jest.mock("@cocalc/server/accounts/home-bay", () => ({
+  remoteHomeBay: async () =>
+    multiBay && homeBay !== "bay-0" ? homeBay : undefined,
 }));
 jest.mock("@cocalc/server/inter-bay/fabric", () => ({
   getInterBayFabricClient: () => ({ fabric: true }),

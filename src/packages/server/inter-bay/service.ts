@@ -7,6 +7,8 @@ import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
 import { createInterBayAgentIdentityHandler } from "@cocalc/conat/inter-bay/agent-identities";
 import { createInterBayHubApiHandler } from "@cocalc/conat/inter-bay/hub-api";
 import { createInterBaySessionAuthHandler } from "@cocalc/conat/inter-bay/session-auth";
+import { createInterBayAccountFactsHandler } from "@cocalc/conat/inter-bay/account-facts";
+import { accountFactsHome } from "@cocalc/server/accounts/account-facts-service";
 import { handleDelegatedSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import { handleForwardedHubApiCall } from "@cocalc/server/conat/api/edge-routing";
 import { agentIdentityControl } from "@cocalc/server/agents/identity-control";
@@ -711,6 +713,12 @@ export async function initInterBayServices(): Promise<void> {
       createAgentRpcControlHandler(getConfiguredBayId(), agentRpcControl, {
         client: getInterBayFabricClient({ noCache: true }),
         parallel: true,
+      }),
+      createInterBayAccountFactsHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bay_id: getConfiguredBayId(),
+        parallel: true,
+        impl: accountFactsHome,
       }),
       createInterBaySessionAuthHandler({
         client: getInterBayFabricClient({ noCache: true }),

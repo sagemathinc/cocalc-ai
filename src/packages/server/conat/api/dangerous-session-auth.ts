@@ -117,17 +117,9 @@ export async function requireDangerousSessionAuth(
   throw Object.assign(new Error(result.error), result.attrs);
 }
 
-/** The account's home bay if it is another bay of a multibay cluster. */
 async function remoteHomeBay(account_id: string): Promise<string | undefined> {
-  const { isMultiBayCluster } = await import("@cocalc/server/cluster-config");
-  if (!isMultiBayCluster()) return;
-  const { getConfiguredBayId } = await import("@cocalc/server/bay-config");
-  const { resolveAccountHomeBay } =
-    await import("@cocalc/server/bay-directory");
-  const { home_bay_id } = await resolveAccountHomeBay({ account_id });
-  return home_bay_id && home_bay_id !== getConfiguredBayId()
-    ? home_bay_id
-    : undefined;
+  const { remoteHomeBay } = await import("@cocalc/server/accounts/home-bay");
+  return await remoteHomeBay(account_id);
 }
 
 /** The home bay's side of a delegated check. */

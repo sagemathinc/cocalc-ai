@@ -53,7 +53,24 @@ function emailIsVerified({
   return email_address_verified[email] != null;
 }
 
+/** Product-access trust is account-home state; ask the home bay if needed. */
 export async function getAccountProductAccessTrust(
+  account_id: string,
+): Promise<ProductAccessTrustResult> {
+  const { remoteHomeBay } = await import("./home-bay");
+  const home = await remoteHomeBay(account_id);
+  if (home == null) return await getAccountProductAccessTrustLocal(account_id);
+  const { createInterBayAccountFactsClient } =
+    await import("@cocalc/conat/inter-bay/account-facts");
+  const { getInterBayFabricClient } =
+    await import("@cocalc/server/inter-bay/fabric");
+  return await createInterBayAccountFactsClient({
+    client: getInterBayFabricClient(),
+    bay_id: home,
+  }).productAccessTrust({ account_id });
+}
+
+export async function getAccountProductAccessTrustLocal(
   account_id: string,
 ): Promise<ProductAccessTrustResult> {
   if (!(await emailVerificationRequired())) {
