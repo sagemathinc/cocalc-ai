@@ -410,7 +410,10 @@ import {
   resolveProjectCollabInviteDirectoryDirect,
   upsertProjectCollabInviteDirectoryDirect,
 } from "@cocalc/server/projects/collab-invite-directory";
-import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import {
+  getInterBayFabricClient,
+  getInterBayFabricServiceClient,
+} from "@cocalc/server/inter-bay/fabric";
 import { createBillingAuthorityInterBayService } from "@cocalc/server/purchases/billing-authority/inter-bay";
 import { handleBillingAuthorityTransportRequest } from "@cocalc/server/purchases/billing-authority/service";
 import { applyRemoteNotificationTargetOnHomeBay } from "@cocalc/server/notifications/remote-feed";
@@ -704,64 +707,64 @@ export async function initInterBayServices(): Promise<void> {
         getConfiguredBayId(),
         agentConnectorControl,
         {
-          client: getInterBayFabricClient({ noCache: true }),
+          client: getInterBayFabricServiceClient(),
           parallel: true,
         },
       ),
       createAgentRpcControlHandler(getConfiguredBayId(), agentRpcControl, {
-        client: getInterBayFabricClient({ noCache: true }),
+        client: getInterBayFabricServiceClient(),
         parallel: true,
       }),
       createInterBaySessionAuthHandler({
-        client: getInterBayFabricClient({ noCache: true }),
+        client: getInterBayFabricServiceClient(),
         bay_id: getConfiguredBayId(),
         parallel: true,
         impl: { requireDangerousSessionAuth: handleDelegatedSessionAuth },
       }),
       createInterBayHubApiHandler({
-        client: getInterBayFabricClient({ noCache: true }),
+        client: getInterBayFabricServiceClient(),
         bay_id: getConfiguredBayId(),
         parallel: true,
         impl: { call: handleForwardedHubApiCall },
       }),
       createInterBayAgentIdentityHandler({
-        client: getInterBayFabricClient({ noCache: true }),
+        client: getInterBayFabricServiceClient(),
         bay_id: getConfiguredBayId(),
         parallel: true,
         impl: agentIdentityControl,
       }),
       createAgentPaymentSelectionsHandler({
-        client: getInterBayFabricClient({ noCache: true }),
+        client: getInterBayFabricServiceClient(),
         bay_id: getConfiguredBayId(),
         parallel: true,
         impl: paymentSelectionsHome,
       }),
       createInterBayArtifactCatalogHandler({
-        client: getInterBayFabricClient({ noCache: true }),
+        client: getInterBayFabricServiceClient(),
         bay_id: getConfiguredBayId(),
         parallel: true,
         impl: catalogOwnerControl,
       }),
       createInterBayPeopleHandler({
-        client: getInterBayFabricClient({ noCache: true }),
+        client: getInterBayFabricServiceClient(),
         bay_id: getConfiguredBayId(),
         parallel: true,
         impl: peopleControl,
       }),
       createInterBayPersonalLibraryHandler({
-        client: getInterBayFabricClient({ noCache: true }),
+        client: getInterBayFabricServiceClient(),
         bayId: getConfiguredBayId(),
         parallel: true,
         impl: personalLibraryHomeControl,
       }),
       createInterBayUsernamesHandler({
-        client: getInterBayFabricClient({ noCache: true }),
+        client: getInterBayFabricServiceClient(),
         bayId: getConfiguredBayId(),
         parallel: true,
         impl: usernameSeedControl,
       }),
       createInterBayPersonalUrlAliasesHandler({
-        client: getInterBayFabricClient({ noCache: true }),
+        client: getInterBayFabricServiceClient(),
         bayId: getConfiguredBayId(),
         parallel: true,
         impl: personalUrlAliasHomeControl,
@@ -795,7 +798,7 @@ async function startBayRegistryService(): Promise<void> {
   if (role === "attached") {
     return;
   }
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayBayRegistryApi = {
     register: async (opts) => await registerBayPresenceLocal(opts),
     list: async (opts) => await listBayRegistryLocal(opts),
@@ -810,7 +813,7 @@ async function startBayRegistryService(): Promise<void> {
 }
 
 async function startBayOpsService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const bay_id = getConfiguredBayId();
   const impl: InterBayBayOpsApi = {
     getLoad: async ({ account_id }) =>
@@ -1076,7 +1079,7 @@ async function startAuthTokenService(): Promise<void> {
   if (role === "attached") {
     return;
   }
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayAuthTokenApi = {
     requiresToken: async () => await getRequiresTokensDirect(),
     validate: async ({ token }) =>
@@ -1100,7 +1103,7 @@ async function startAuthTokenService(): Promise<void> {
 }
 
 async function startDirectoryService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayDirectoryApi = {
     resolveProjectBay: async ({ project_id }) =>
       await resolveProjectBayDirect(`${project_id ?? ""}`),
@@ -1160,7 +1163,7 @@ async function startAccountDirectoryService(): Promise<void> {
   if (role === "attached") {
     return;
   }
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayAccountDirectoryApi = {
     get: async ({ account_id }) =>
       await getClusterAccountById(`${account_id ?? ""}`),
@@ -1276,7 +1279,7 @@ async function startAccountDirectoryService(): Promise<void> {
 }
 
 async function startAccountLocalService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayAccountLocalApi = {
     reserveComputeVmFunding: reserveComputeVmFundingLocal,
     lookupComputeVmFunding: lookupComputeVmFundingLocal,
@@ -2335,7 +2338,7 @@ async function startAccountLocalService(): Promise<void> {
 }
 
 async function startAccountProjectFeedService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayAccountProjectFeedApi = {
     upsert: async (event) =>
       await applyAccountProjectFeedUpsertOnHomeBay(event),
@@ -2353,7 +2356,7 @@ async function startAccountProjectFeedService(): Promise<void> {
 }
 
 async function startAccountNotificationFeedService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const bay_id = getConfiguredBayId();
   const impl: InterBayAccountNotificationFeedApi = {
     upsert: async (opts) =>
@@ -2373,7 +2376,7 @@ async function startAccountNotificationFeedService(): Promise<void> {
 }
 
 async function startProjectControlStartService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayProjectControlApi = {
     create: async (request) => await createProjectOnOwningBay(request),
     createStatus: async (request) => await getProjectCreationStatus(request),
@@ -2542,7 +2545,7 @@ async function startProjectControlStartService(): Promise<void> {
 }
 
 async function startProjectReferenceService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayProjectReferenceApi = {
     get: async (opts) => await handleProjectReferenceGet(opts),
   };
@@ -2557,7 +2560,7 @@ async function startProjectReferenceService(): Promise<void> {
 }
 
 async function startProjectDetailsService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayProjectDetailsApi = {
     get: async (opts) => await handleProjectDetailsGet(opts),
   };
@@ -2572,7 +2575,7 @@ async function startProjectDetailsService(): Promise<void> {
 }
 
 async function startProjectSecretsService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayProjectSecretsApi = {
     list: async (opts) => await handleProjectSecretsList(opts),
     refreshRuntime: async (opts) =>
@@ -2628,7 +2631,7 @@ async function startProjectSecretsService(): Promise<void> {
 }
 
 async function startExternalCredentialsService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayExternalCredentialsApi = {
     upsert: async ({ selector, payload, metadata }) =>
       await upsertExternalCredential({ selector, payload, metadata }),
@@ -2731,7 +2734,7 @@ async function startExternalCredentialsService(): Promise<void> {
 }
 
 async function startProjectLroService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayProjectLroApi = {
     publishProgress: async (opts) =>
       await handleProjectLroPublishProgress(opts),
@@ -2755,7 +2758,7 @@ async function startProjectLroService(): Promise<void> {
 }
 
 async function startProjectCollabInviteService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayProjectCollabInviteApi = {
     upsertInbox: async ({ source_bay_id, invite }) => {
       await upsertProjectedCollabInviteDirect({ source_bay_id, invite });
@@ -2889,7 +2892,7 @@ async function startProjectCollabInviteService(): Promise<void> {
 }
 
 async function startHostConnectionService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayHostConnectionApi = {
     getApiRelayTarget: resolveLocalProjectApiRelayTarget,
     getApiRelayHostUrl: resolveLocalApiRelayHostUrl,
@@ -3442,7 +3445,7 @@ async function startHostConnectionService(): Promise<void> {
 }
 
 async function startHostControlService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const getHostClient = async (host_id: string, timeout: number) =>
     await getRoutedHostControlClient({
       host_id,
@@ -3640,7 +3643,7 @@ async function startHostControlService(): Promise<void> {
 }
 
 async function startProjectHostAuthTokenService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayProjectHostAuthTokenApi = {
     issue: async ({
       account_id,
