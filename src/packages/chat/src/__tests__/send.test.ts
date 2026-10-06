@@ -209,3 +209,43 @@ test("missing queue acknowledgement is explicit uncertainty", async () => {
     "submission was not confirmed",
   );
 });
+
+test("a Context cleared line ends session inference; Codex is keyed by the line", () => {
+  const thread = buildThreadConfigRecord({
+    thread_id: "thread",
+    updated_by: "account",
+    agent_kind: "acp",
+    acp_config: { model: "gpt-5.5" },
+  });
+  const row = (date: string, extra: Record<string, unknown>) => ({
+    event: "chat",
+    thread_id: "thread",
+    date,
+    ...extra,
+  });
+  const before = [
+    row("2026-10-04T00:00:00.000Z", {
+      message_id: "a",
+      acp_thread_id: "old-codex-session",
+    }),
+  ];
+  const send = (rows: any[]) =>
+    prepareChatSend({
+      projectId: "project",
+      accountId: "account",
+      path: "a.chat",
+      thread,
+      rows,
+      prompt: "hello",
+    }).request.session_id;
+  expect(send(before)).toBe("old-codex-session");
+  expect(
+    send([
+      ...before,
+      row("2026-10-04T00:01:00.000Z", {
+        message_id: "cleared",
+        acp_context_cleared: true,
+      }),
+    ]),
+  ).toBe("cleared");
+});

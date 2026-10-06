@@ -1769,11 +1769,6 @@ describe("ChatStreamWriter", () => {
         (event) => event.type === "event" && event.event.type === "file",
       ),
     ).toBe(false);
-    expect(
-      previewEvents.some(
-        (event) => event.type === "event" && event.event.type === "thinking",
-      ),
-    ).toBe(false);
     expect(previewEvents).toEqual([
       expect.objectContaining({
         type: "status",
@@ -1786,6 +1781,15 @@ describe("ChatStreamWriter", () => {
         event: expect.objectContaining({
           type: "message",
           text: "Checking the code path.",
+        }),
+      }),
+      // The agent's reasoning is shown inline too (muted).
+      expect.objectContaining({
+        type: "event",
+        seq: 3,
+        event: expect.objectContaining({
+          type: "thinking",
+          text: "The file write completed.",
         }),
       }),
       expect.objectContaining({
@@ -1828,11 +1832,11 @@ describe("ChatStreamWriter", () => {
         time: 2500,
         state: "sent",
       },
+      { kind: "thinking", text: "The file write completed.", time: 3550 },
       {
         kind: "agent",
         text: "The file write completed.",
         time: 3575,
-        state: undefined,
       },
     ]);
     (writer as any).dispose?.(true);
@@ -1958,11 +1962,20 @@ describe("ChatStreamWriter", () => {
         }),
       }),
     ]);
+    // Reasoning streamed within the message is published, but does not
+    // break the message's cumulative text.
     expect(
-      previewEvents.some(
+      previewEvents.filter(
         (event) => event.type === "event" && event.event.type === "thinking",
       ),
-    ).toBe(false);
+    ).toEqual([
+      expect.objectContaining({
+        seq: 2,
+        event: expect.objectContaining({
+          text: "Checking implementation details.",
+        }),
+      }),
+    ]);
     expect(
       previewEvents.some(
         (event) => event.type === "event" && event.event.type === "file",
@@ -3808,7 +3821,7 @@ describe("recoverOrphanedAcpTurns", () => {
     expect(final.acp_interrupted).toBe(true);
     expect(final.acp_interrupted_reason).toBe("server_restart");
     expect(final.history?.[0]?.content).toContain(
-      "Conversation interrupted because CoCalc had to recover the live Codex turn.",
+      "Conversation interrupted because CoCalc had to recover the live agent turn.",
     );
     expect(threadState).toBeTruthy();
     expect((queue.clearAcpPayloads as any).mock.calls.length).toBe(1);

@@ -6,6 +6,7 @@ import {
   runThreadAutomationNow,
   resendCanceledAcpTurn,
   resetAcpApiStateForTests,
+  resubmitAcpTurnAsNew,
   sanitizeSharedCodexConfig,
   sendQueuedAcpTurnImmediately,
 } from "../acp-api";
@@ -1212,5 +1213,39 @@ describe("queued ACP controls", () => {
     expect(actions.deleteMessage).toHaveBeenCalledWith(staleFailureReply);
     expect(actions.sendReply).not.toHaveBeenCalled();
     expect(acpState.get("message:user-msg-missing")).toBe("queue");
+  });
+});
+
+describe("resubmitAcpTurnAsNew", () => {
+  it("sends the original request as a new turn in the same thread", () => {
+    const sendChat = jest.fn(() => "2026-10-04T00:00:00.000Z");
+    const message = {
+      message_id: "user-1",
+      thread_id: "thread-1",
+      history: [{ content: "fix ![shot](/blobs/a.png?uuid=1)" }],
+      acp_prompt: "fix it",
+    } as any;
+    expect(
+      resubmitAcpTurnAsNew({ actions: { sendChat } as any, message }),
+    ).toBe(true);
+    expect(sendChat).toHaveBeenCalledWith({
+      input: "fix ![shot](/blobs/a.png?uuid=1)",
+      acp_prompt: "fix it",
+      reply_thread_id: "thread-1",
+      preserveSelectedThread: true,
+      skipDraftDelete: true,
+    });
+    expect(mockControlAcp).not.toHaveBeenCalled();
+  });
+
+  it("refuses a message without content or thread", () => {
+    const sendChat = jest.fn();
+    expect(
+      resubmitAcpTurnAsNew({
+        actions: { sendChat } as any,
+        message: { thread_id: "t", history: [{ content: " " }] } as any,
+      }),
+    ).toBe(false);
+    expect(sendChat).not.toHaveBeenCalled();
   });
 });

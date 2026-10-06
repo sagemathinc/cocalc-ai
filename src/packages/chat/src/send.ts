@@ -6,6 +6,7 @@ import {
   buildChatMessage,
   buildCodexAcpConfig,
   normalizeCodexMention,
+  messagesSinceContextCleared,
   resolveHarnessSessionId,
   type ChatThreadConfigRecord,
 } from "./index";
@@ -71,7 +72,8 @@ export function prepareChatSend({
   const latest = messages.at(-1);
   const config = runtime ? {} : (thread.acp_config ?? {});
   // Match the browser's recovery of a session whose config has not synced yet.
-  const inferredSession = [...messages]
+  const sinceCleared = messagesSinceContextCleared(messages);
+  const inferredSession = [...sinceCleared.messages]
     .reverse()
     .find(
       (row) =>
@@ -138,7 +140,9 @@ export function prepareChatSend({
     prompt,
     config: acpConfig,
     runtime,
-    session_id: runtime ? sessionId : (sessionId ?? thread.thread_id),
+    session_id: runtime
+      ? sessionId
+      : (sessionId ?? sinceCleared.clearedMessageId ?? thread.thread_id),
     chat,
   };
   return { message, request };

@@ -393,6 +393,29 @@ export class GitReadService {
     );
   }
 
+  // Commits a comparison introduces (reachable from head, not from base),
+  // newest first; undefined when there are more than `limit`.
+  async rangeCommits(
+    target: Extract<ImmutableReviewTarget, { kind: "comparison" }>,
+    limit = 500,
+  ): Promise<string[] | undefined> {
+    requireObject(target.base);
+    requireObject(target.head);
+    const commits = (
+      await this.run(target.repository.projectId, target.repository.locator, [
+        "rev-list",
+        `--max-count=${limit + 1}`,
+        target.head,
+        `^${target.base}`,
+        "--",
+      ])
+    )
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    return commits.length > limit ? undefined : commits;
+  }
+
   private comparisonArgs(
     target: ImmutableReviewTarget,
     flags: string[],

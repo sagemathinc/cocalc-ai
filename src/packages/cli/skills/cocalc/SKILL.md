@@ -110,6 +110,13 @@ build ID so status can be inspected later. Treat `cocalc project build -h` and
 the project service capability response as authoritative if available options
 or supported formats differ from this bundled guidance.
 
+## Write Math As LaTeX
+
+CoCalc renders LaTeX in chat messages, artifacts, Markdown and notebooks,
+including on phones. Write mathematics between `$...$` (inline) or `$$...$$`
+(display), e.g. `$\alpha \equiv 1 \pmod{p}$`. Do not approximate formulas with
+Unicode symbols (α ≡ 1 mod p) or plain-text ASCII.
+
 ## CoCalc Docs First
 
 Use the docs CLI exactly as exposed by `cocalc docs --help`. Do not invent nested

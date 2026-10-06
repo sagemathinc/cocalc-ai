@@ -52,21 +52,24 @@ export function buildCodexTurnNoticeOptions(opts: {
   stable_source_id?: string;
   terminal_state: CodexTurnTerminalState;
   error_text?: string | null;
+  // "Codex", "Claude", ... (default "Agent").
+  agent_label?: string;
 }): CreateCodexTurnNoticeOptions {
   const threadLabel = normalizeThreadLabel(opts.thread_label);
+  const agent = `${opts.agent_label ?? ""}`.trim() || "Agent";
   const severity: NotificationSeverity =
     opts.terminal_state === "error" ? "warning" : "info";
   const title =
     opts.terminal_state === "error"
-      ? "Codex turn ended with an error"
-      : "Codex turn finished";
+      ? `${agent} turn ended with an error`
+      : `${agent} turn finished`;
   const details = normalizeErrorText(opts.error_text);
   const body_markdown =
     opts.terminal_state === "error"
       ? details
-        ? `Codex finished with an error in **${threadLabel}**.\n\n${details}`
-        : `Codex finished with an error in **${threadLabel}**.`
-      : `Codex finished working in **${threadLabel}**.`;
+        ? `${agent} finished with an error in **${threadLabel}**.\n\n${details}`
+        : `${agent} finished with an error in **${threadLabel}**.`
+      : `${agent} finished working in **${threadLabel}**.`;
   return {
     account_id: opts.account_id,
     source_project_id: opts.source_project_id,

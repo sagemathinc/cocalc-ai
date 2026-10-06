@@ -196,7 +196,7 @@ export async function setWorkspaceReadyForReviewNotice(opts: {
     path: opts.chat_path,
     notice: {
       title: "Ready for review",
-      text: "Codex finished in this workspace.",
+      text: "The agent finished in this workspace.",
       level: "success",
       updated_at,
     },

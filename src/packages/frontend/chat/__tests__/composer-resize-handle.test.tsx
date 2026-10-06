@@ -542,6 +542,21 @@ describe("ChatRoomComposer resize handle", () => {
     expect(screen.getByTestId("chat-input-focus-probe")).toBeInTheDocument();
   });
 
+  it("a dragged height is the height, even when the draft is longer", async () => {
+    const user = userEvent.setup();
+    renderComposer({ hasInput: true, input: "a long draft" });
+    jest
+      .spyOn(screen.getByTestId("chat-composer-input"), "getBoundingClientRect")
+      .mockReturnValue({ height: 300 } as DOMRect);
+    const handle = screen.getByRole("separator", { name: "Resize composer" });
+    handle.focus();
+    // Shrinking a tall draft keeps it short; the draft scrolls inside.
+    await user.keyboard("{ArrowDown}");
+    expect(lastChatInputProps.autoGrowMinHeight).toBe(280);
+    expect(lastChatInputProps.autoGrowMaxHeight).toBe(280);
+    expect(handle).toHaveAttribute("aria-valuetext", "280 pixels");
+  });
+
   it("resizing reserves room for the current draft without disabling autosizing", async () => {
     const user = userEvent.setup();
     const { rerender, props } = renderComposer();
@@ -556,7 +571,7 @@ describe("ChatRoomComposer resize handle", () => {
     expect(lastChatInputProps.height).toBeUndefined();
     expect(lastChatInputProps.autoGrow).toBe(true);
     expect(lastChatInputProps.autoGrowMinHeight).toBe(70);
-    expect(handle).toHaveAttribute("aria-valuetext", "At least 70 pixels");
+    expect(handle).toHaveAttribute("aria-valuetext", "70 pixels");
     // Down to about one line, not below.
     await user.keyboard("{ArrowDown}{ArrowDown}");
     expect(lastChatInputProps.autoGrowMinHeight).toBe(32);

@@ -1328,6 +1328,39 @@ test("outbound bound fits maximum images and JSON-escaped text without raising t
   }
 });
 
+test("harness guidance carries pasted images into the running turn", async (t) => {
+  const { agent, request, events } = adapter(t, ["--steering"]);
+  let ready;
+  const started = new Promise((resolve) => (ready = resolve));
+  const run = agent.evaluate({
+    ...request,
+    prompt: "hang",
+    stream: async (event) => {
+      events.push(event);
+      if (event.event?.text === "working") ready();
+    },
+  });
+  await started;
+  assert.deepEqual(
+    await agent.steer("fixture-session", {
+      ...request,
+      prompt: "See [Attached image 1]",
+      image_attachments: [
+        {
+          mimeType: "image/png",
+          data: Buffer.from("fixture").toString("base64"),
+        },
+      ],
+    }),
+    { state: "steered", threadId: "fixture-session" },
+  );
+  await run;
+  assert.equal(
+    events.at(-1).finalResponse,
+    "workingsteered: See [Attached image 1] [1 image]",
+  );
+});
+
 test("harness guidance injects into a running turn and never starts an idle one", async (t) => {
   const { agent, request, events } = adapter(t, ["--steering"]);
   let ready;
@@ -2742,6 +2775,18 @@ test("provider rejection is distinct from ambiguous delivery and is redacted", a
       return true;
     },
   );
+});
+test("an agent process killed mid-turn is reported as killed, not as a generic rejection", async (t) => {
+  const client = await start(t);
+  await client.open();
+  await assert.rejects(client.prompt("killed", async () => {}), (error) => {
+    assert.equal(error.killed, true);
+    assert.equal(error.code, "outcome_unknown");
+    assert.match(error.message, /process was killed \(SIGKILL\)/);
+    assert.match(error.message, /Diagnostic ID: [0-9a-f-]{36}/);
+    assert.doesNotMatch(error.message, /could not process/);
+    return true;
+  });
 });
 test("internal rejection correlates stderr and nested error hints only in operator logs", async (t) => {
   const logger = require("@cocalc/backend/logger").default(

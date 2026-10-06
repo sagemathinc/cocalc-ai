@@ -1,10 +1,14 @@
 import { useEffect, useId, useState } from "react";
-import { Alert, Button, Modal } from "antd";
+import { Alert, Button, Modal, Radio } from "antd";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { agentThreadUrl } from "@cocalc/frontend/chat/agent-thread-url";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import type { AgentIdentity } from "@cocalc/conat/agents/protocol";
 import { personalAgentApi } from "./api";
+
+// "clear": same thread, the agent's context is wiped and a "Context cleared"
+// line drawn; "new-thread": continue in a new thread, keeping the old one.
+export type FreshConversationMode = "clear" | "new-thread";
 
 export function FreshConversationModal({
   name,
@@ -14,9 +18,10 @@ export function FreshConversationModal({
 }: {
   name: string;
   agent?: NamedAgent;
-  onConfirm: () => Promise<void>;
+  onConfirm: (mode: FreshConversationMode) => Promise<void>;
   onClose: () => void;
 }) {
+  const [mode, setMode] = useState<FreshConversationMode>("clear");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [history, setHistory] =
@@ -49,7 +54,7 @@ export function FreshConversationModal({
     setBusy(true);
     setError("");
     try {
-      await onConfirm();
+      await onConfirm(mode);
       onClose();
     } catch (err) {
       setError(`${err}`);
@@ -62,7 +67,7 @@ export function FreshConversationModal({
       open
       title={`Start a fresh conversation with @${name}?`}
       modalRender={(modal) => <KeyboardBoundary>{modal}</KeyboardBoundary>}
-      okText="Start fresh conversation"
+      okText={mode === "clear" ? "Clear context" : "Start new thread"}
       confirmLoading={busy}
       cancelButtonProps={{ disabled: busy }}
       closable={!busy}
@@ -73,9 +78,23 @@ export function FreshConversationModal({
     >
       <p>
         Keep this agent's name, networks, appearance, settings, and files. The
-        previous conversation is preserved, but its messages will not be
-        included in the new context.
+        agent will not remember the conversation so far.
       </p>
+      <Radio.Group
+        disabled={busy}
+        value={mode}
+        onChange={(event) => setMode(event.target.value)}
+        style={{ display: "flex", flexDirection: "column", gap: 8 }}
+      >
+        <Radio value="clear">
+          <strong>Clear context</strong> in this thread. Earlier messages stay
+          visible above a "Context cleared" line.
+        </Radio>
+        <Radio value="new-thread">
+          <strong>Start a new thread</strong>. The previous conversation is kept
+          under Past Threads.
+        </Radio>
+      </Radio.Group>
       <p>
         Finish or cancel running and queued work first. Disable scheduled work
         before continuing.

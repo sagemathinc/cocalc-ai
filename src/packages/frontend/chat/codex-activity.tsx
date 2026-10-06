@@ -776,13 +776,18 @@ function ActivityRow({
       );
     }
     case "reasoning":
+      // The agent's private reasoning, not a reply: say so, so it is not
+      // mistaken for output missing from the transcript.
       return (
         <div data-codex-activity-entry-index={rowIndex}>
-          <ActivityTimestamp time={entry.time} />
+          <Space size={6} align="center" wrap style={{ marginBottom: 4 }}>
+            <Tag style={{ margin: 0 }}>Thinking</Tag>
+            <ActivityTimestamp time={entry.time} />
+          </Space>
           {entry.text ? (
             <StaticMarkdown
               value={entry.text}
-              style={{ fontSize, marginTop: 4 }}
+              style={{ fontSize, marginTop: 4, color: UI_COLORS.secondary }}
               editorTheme={editorTheme}
               inlineCodeLinks={inlineCodeLinks}
               inlineCodeProjectRoot={basePath}

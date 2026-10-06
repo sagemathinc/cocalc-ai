@@ -22,11 +22,11 @@ describe("Codex native notification privacy", () => {
 
     expect(content).toEqual([
       {
-        title: "Codex needs your attention",
+        title: "Agent needs your attention",
         body: "Open CoCalc to view details.",
       },
       {
-        title: "Codex finished",
+        title: "Agent turn finished",
         body: "Open CoCalc to view details.",
       },
     ]);

@@ -258,13 +258,24 @@ async function markCodexTurnToastSeen(opts: {
   await codexTurnToastState.save();
 }
 
+// "Claude", "Codex", ...; "Agent" when the row does not say. (origin_label
+// stays "Codex" for every agent: it identifies the notice type.)
+function agentLabel(summary: Record<string, unknown>): string {
+  return isNonEmptyString(summary.agent_label)
+    ? summary.agent_label.trim()
+    : "Agent";
+}
+
 function codexTurnToastDescription(summary: Record<string, unknown>): string {
   const threadLabel = isNonEmptyString(summary.thread_label)
     ? summary.thread_label.trim()
     : "this chat";
+  const agent = isNonEmptyString(summary.agent_label)
+    ? summary.agent_label.trim()
+    : "The agent";
   return summary.severity === "warning"
-    ? `Codex ended with an error in ${threadLabel}.`
-    : `Codex finished working in ${threadLabel}.`;
+    ? `${agent} ended with an error in ${threadLabel}.`
+    : `${agent} finished working in ${threadLabel}.`;
 }
 
 async function openCodexTurnNoticeTarget(
@@ -368,9 +379,11 @@ export function showLocalCodexTurnCompletionToast(opts: {
   path: string;
   thread_id: string;
   thread_label?: string;
+  agent_label?: string;
   newest_message_date?: string;
   stable_source_id?: string;
 }): void {
+  const agent = `${opts.agent_label ?? ""}`.trim() || "Agent";
   const stableSourceId = `${opts.stable_source_id ?? ""}`.trim();
   const threadLabel = `${opts.thread_label ?? ""}`.trim() || "this chat";
   const messageDate = Number(opts.newest_message_date ?? "");
@@ -384,7 +397,8 @@ export function showLocalCodexTurnCompletionToast(opts: {
       summary: {
         origin_label: "Codex",
         notice_type: "codex_turn_completion",
-        title: "Codex turn finished",
+        title: `${agent} turn finished`,
+        agent_label: agent,
         path: opts.path,
         thread_id: opts.thread_id,
         thread_label: threadLabel,
@@ -511,20 +525,18 @@ export async function showCodexTurnCompletionToastBestEffort(opts: {
   }
   const notification = getAntdNotificationInstance();
   const title = attention
-    ? "Codex needs your attention"
+    ? `${agentLabel(opts.row.summary ?? {})} needs your attention`
     : isNonEmptyString(opts.row.summary?.title)
       ? opts.row.summary.title.trim()
-      : "Codex turn finished";
+      : `${agentLabel(opts.row.summary ?? {})} turn finished`;
   notification[attention ? "warning" : "info"]({
     key: attention
       ? `codex-attention:${deliveryId}`
       : `codex-turn:${deliveryId}`,
     title: agentName ? `${agentName} · ${title}` : title,
     description: attention
-      ? `Open ${agentName ?? "the Codex thread"} to respond.`
-      : agentName
-        ? `Codex finished working in ${agentName}.`
-        : codexTurnToastDescription(opts.row.summary ?? {}),
+      ? `Open ${agentName ?? "the agent thread"} to respond.`
+      : codexTurnToastDescription(opts.row.summary ?? {}),
     duration: attention ? 0 : 6,
     onClick: () => {
       void openCodexTurnNoticeTarget(opts.row).catch((err) => {

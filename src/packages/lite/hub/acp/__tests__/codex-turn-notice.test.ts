@@ -42,6 +42,7 @@ describe("codex turn completion notices", () => {
         thread_label: "Fix tests",
         stable_source_id: "assistant-1",
         terminal_state: "complete",
+        agent_label: "Claude",
       }),
     ).toEqual({
       account_id: "acct-1",
@@ -50,8 +51,8 @@ describe("codex turn completion notices", () => {
       source_fragment_id: "chat=123",
       thread_id: "thread-1",
       thread_label: "Fix tests",
-      title: "Codex turn finished",
-      body_markdown: "Codex finished working in **Fix tests**.",
+      title: "Claude turn finished",
+      body_markdown: "Claude finished working in **Fix tests**.",
       severity: "info",
       stable_source_id: "assistant-1",
     });
@@ -66,9 +67,9 @@ describe("codex turn completion notices", () => {
       terminal_state: "error",
       error_text: "Something broke",
     });
-    expect(result.title).toBe("Codex turn ended with an error");
+    expect(result.title).toBe("Agent turn ended with an error");
     expect(result.severity).toBe("warning");
-    expect(result.body_markdown).toContain("Codex finished with an error");
+    expect(result.body_markdown).toContain("Agent finished with an error");
     expect(result.body_markdown).toContain("Something broke");
   });
 

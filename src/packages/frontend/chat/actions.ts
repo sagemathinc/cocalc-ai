@@ -58,6 +58,8 @@ import {
   addToHistory,
   threadConfigRecordKey,
   resolveHarnessSessionId,
+  CONTEXT_CLEARED_FIELD,
+  messagesSinceContextCleared,
   type ChatThreadAnchor,
   type ChatThreadResolvedMeta,
   type CodexThreadConfig,
@@ -1281,6 +1283,91 @@ export class ChatActions extends Actions<ChatState> {
       });
     }
     return thread_id;
+  };
+
+  // True while the thread has an agent turn running, starting, or queued.
+  hasActiveAgentTurn = (threadKey: string): boolean => {
+    const thread_id = this.normalizeThreadId(threadKey);
+    if (!thread_id) return false;
+    const acpState = this.store?.get("acpState");
+    const active = (state: unknown) =>
+      typeof state === "string" &&
+      ["queue", "sending", "sent", "running"].includes(
+        state.trim().toLowerCase(),
+      );
+    if (active(acpState?.get?.(`thread:${thread_id}`))) return true;
+    for (const message of this.getMessagesInThread(thread_id) ?? []) {
+      const message_id = `${(message as any)?.message_id ?? ""}`.trim();
+      const date = new Date((message as any)?.date ?? NaN).valueOf();
+      if (
+        (message_id && active(acpState?.get?.(`message:${message_id}`))) ||
+        (Number.isFinite(date) && active(acpState?.get?.(`${date}`)))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // Clear the agent's context in place: its next turn starts a new session, and
+  // a "Context cleared" line marks where. Earlier messages stay visible.
+  // Refuses while a turn is active or queued: that turn would finish by saving
+  // its old session id again, so the next message would resume it.
+  clearAgentContext = (threadKey: string): boolean => {
+    if (!this.isSyncdbReady()) {
+      this.warnSyncdbNotReady();
+      return false;
+    }
+    const thread_id = this.normalizeThreadId(threadKey);
+    if (!thread_id) return false;
+    if (this.hasActiveAgentTurn(thread_id)) return false;
+    const metadata = this.getThreadMetadata(threadKey, { threadId: thread_id });
+    if (metadata?.agent_runtime != null) {
+      // The stored empty session id is the harness's explicit reset marker.
+      if (
+        !this.setThreadConfigRecord(
+          threadKey,
+          { agent_session_id: "" },
+          { threadId: thread_id },
+        )
+      )
+        return false;
+    } else if (metadata?.acp_config != null || metadata?.agent_kind === "acp") {
+      // Codex: forget the session; the line's id keys the next one.
+      const config = { ...(this.getCodexConfig(thread_id) ?? {}) };
+      delete config.sessionId;
+      if (
+        !this.setThreadConfigRecord(
+          threadKey,
+          { acp_config: config },
+          { threadId: thread_id },
+        )
+      )
+        return false;
+    } else {
+      return false;
+    }
+    const sender_id = this.redux.getStore("account").get_account_id();
+    const date = nextChatMessageDate(this).toISOString();
+    const threadMessages = this.getMessagesInThread(thread_id) ?? [];
+    const parent =
+      `${(threadMessages[threadMessages.length - 1] as any)?.message_id ?? ""}`.trim();
+    const marker = {
+      event: "chat",
+      sender_id,
+      schema_version: CURRENT_CHAT_MESSAGE_VERSION,
+      history: [{ author_id: sender_id, content: "Context cleared", date }],
+      date,
+      message_id: uuid(),
+      thread_id,
+      parent_message_id: parent || undefined,
+      post_only: true,
+      [CONTEXT_CLEARED_FIELD]: true,
+    } as unknown as ChatMessage;
+    if (!this.setSyncdb(marker)) return false;
+    this.syncdb!.commit();
+    void this.saveSyncdb();
+    return true;
   };
 
   resetThread = (
@@ -3128,9 +3215,10 @@ export class ChatActions extends Actions<ChatState> {
       ? undefined
       : (sourceMetadata.acp_config ?? this.getCodexConfig(sourceThreadId));
     const inferredSourceSessionId = (() => {
-      for (let i = threadMessages.length - 1; i >= 0; i -= 1) {
-        if (isAcpAutomationMessage(threadMessages[i])) continue;
-        const sessionId = field<string>(threadMessages[i], "acp_thread_id");
+      const current = messagesSinceContextCleared(threadMessages).messages;
+      for (let i = current.length - 1; i >= 0; i -= 1) {
+        if (isAcpAutomationMessage(current[i])) continue;
+        const sessionId = field<string>(current[i], "acp_thread_id");
         if (typeof sessionId === "string" && sessionId.trim().length > 0) {
           return sessionId.trim();
         }
