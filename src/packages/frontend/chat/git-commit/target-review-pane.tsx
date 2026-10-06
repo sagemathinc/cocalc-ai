@@ -18,6 +18,7 @@ import {
   importTargetReview,
 } from "../git-target-review-store";
 import { buildGitDiffFindMatches } from "./diff-find";
+import { markCommitsReviewed } from "../git-review-store";
 import type {
   TargetReviewBody,
   TargetReviewRevision,
@@ -54,6 +55,7 @@ export function TargetReviewPane({
   onEditing,
   onLeave,
   onRequestAgentTurn,
+  onCommitsReviewed,
 }: {
   target: ImmutableReviewTarget;
   accountId: string;
@@ -62,6 +64,7 @@ export function TargetReviewPane({
   onEditing: (editing: boolean) => void;
   onLeave: () => void;
   onRequestAgentTurn?: RequestComparisonAgentTurn;
+  onCommitsReviewed?: (commits: string[]) => void;
 }) {
   const scope = reviewTargetKey(target);
   const activeScope = useRef(scope);
@@ -228,6 +231,21 @@ export function TargetReviewPane({
       setDirty(false);
       localStorage.removeItem(key);
       setHeads((await loadTargetReview({ accountId, target })).heads);
+      if (saved.body.reviewed && target.kind === "comparison") {
+        // Reviewing a range reviews the commits in it.
+        const commits = await projectGitReader.rangeCommits(target);
+        if (commits == null)
+          throw Error(
+            "Saved. This range has too many commits to mark each one reviewed.",
+          );
+        await markCommitsReviewed({
+          accountId,
+          commitShas: commits,
+          resolveCommit: (input) =>
+            projectGitReader.resolveCommit(target.repository, input),
+        });
+        if (commits.length) onCommitsReviewed?.(commits);
+      }
     } catch (err) {
       setError(String(err));
     } finally {

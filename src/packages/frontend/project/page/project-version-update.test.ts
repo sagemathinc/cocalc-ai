@@ -1,4 +1,8 @@
-import { projectUpdateStatus } from "./project-version-update";
+import {
+  projectUpdateStatus,
+  UPDATE_QUIET_MS,
+  updateQuietUntil,
+} from "./project-version-update";
 
 // Bundle and tools versions are build times in ms.
 const old = "1791000000000";
@@ -55,5 +59,30 @@ describe("project update status", () => {
         minProject: minProject + 60,
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("update quiet period after a restart", () => {
+  const t = 1_791_266_000_000;
+
+  it("starts when this browser requests the restart", () => {
+    expect(updateQuietUntil({ requestedAt: t })).toBe(t + UPDATE_QUIET_MS);
+  });
+
+  it("starts when the project's current run started, for other tabs too", () => {
+    expect(updateQuietUntil({ startedAt: new Date(t).toISOString() })).toBe(
+      t + UPDATE_QUIET_MS,
+    );
+    expect(updateQuietUntil({ startedAt: new Date(t) })).toBe(
+      t + UPDATE_QUIET_MS,
+    );
+  });
+
+  it("uses the later of the two, and is over without either", () => {
+    expect(
+      updateQuietUntil({ requestedAt: t, startedAt: new Date(t + 5_000) }),
+    ).toBe(t + 5_000 + UPDATE_QUIET_MS);
+    expect(updateQuietUntil({})).toBe(-Infinity);
+    expect(updateQuietUntil({ startedAt: "not a date" })).toBe(-Infinity);
   });
 });

@@ -48,6 +48,41 @@ export function resolveHarnessSessionId(
   return normalizeCodexSessionId(persisted) ?? inferred;
 }
 
+// A "Context cleared" line in an agent thread: turns after it start a new
+// agent session, so no session is inferred from messages before it.
+export const CONTEXT_CLEARED_FIELD = "acp_context_cleared";
+
+type ChatRowLike = { get?: (key: string) => unknown } | Record<string, unknown>;
+
+function rowField(row: ChatRowLike | null | undefined, key: string): unknown {
+  if (row == null) return undefined;
+  return typeof (row as any).get === "function"
+    ? (row as any).get(key)
+    : (row as Record<string, unknown>)[key];
+}
+
+export function isContextClearedMarker(
+  row: ChatRowLike | null | undefined,
+): boolean {
+  return rowField(row, CONTEXT_CLEARED_FIELD) === true;
+}
+
+// The messages since the latest "Context cleared" line (all of them if none),
+// and that line's message id: a fresh session key for a Codex thread.
+export function messagesSinceContextCleared<T extends ChatRowLike>(
+  messages: readonly T[],
+): { messages: readonly T[]; clearedMessageId?: string } {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (!isContextClearedMarker(messages[i])) continue;
+    const id = rowField(messages[i], "message_id");
+    return {
+      messages: messages.slice(i + 1),
+      clearedMessageId: typeof id === "string" && id ? id : undefined,
+    };
+  }
+  return { messages };
+}
+
 export function normalizeCodexMention(model?: string): string | undefined {
   if (!model || model === "codex-agent") return undefined;
   return model;
@@ -603,7 +638,7 @@ export function getLiveResponseBlocks(
     state?: "saved" | "sending" | "sent" | "queued" | "not-sent";
   }>,
 ): Array<{
-  kind: "agent" | "guidance";
+  kind: "agent" | "guidance" | "thinking";
   text: string;
   time?: number;
   state?: "saved" | "sending" | "sent" | "queued" | "not-sent";
@@ -623,6 +658,7 @@ export function getLiveResponseBlocks(
         seq: number;
         strength: "hard" | "soft";
       }
+    | { kind: "thinking"; text: string; time?: number; seq: number }
     | {
         kind: "guidance";
         text: string;
@@ -650,6 +686,21 @@ export function getLiveResponseBlocks(
             delta: evt.event.delta === true,
             seq: evt.seq ?? 0,
             sourceEvent: evt,
+          },
+        ];
+      }
+      if (
+        evt?.type === "event" &&
+        evt.event?.type === "thinking" &&
+        typeof evt.event.text === "string" &&
+        evt.event.text.trim().length > 0
+      ) {
+        return [
+          {
+            kind: "thinking" as const,
+            text: evt.event.text,
+            time: evt.time,
+            seq: evt.seq ?? 0,
           },
         ];
       }
@@ -689,7 +740,7 @@ export function getLiveResponseBlocks(
   });
 
   const blocks: Array<{
-    kind: "agent" | "guidance";
+    kind: "agent" | "guidance" | "thinking";
     text: string;
     time?: number;
     state?: "saved" | "sending" | "sent" | "queued" | "not-sent";
@@ -712,6 +763,27 @@ export function getLiveResponseBlocks(
     if (deferredGuidance == null) return;
     blocks.push(...deferredGuidance.items);
     deferredGuidance = undefined;
+  };
+  // The agent's reasoning, shown in place. It ends the agent message before
+  // it: later text starts a new block.
+  const joinThinking = (a: string, b: string) =>
+    `${a.trimEnd()}\n\n${b.trimStart()}`;
+  const pushThinking = (text: string, time?: number) => {
+    const last = blocks[blocks.length - 1];
+    if (last?.kind === "thinking") {
+      last.text = joinThinking(last.text, text);
+      last.time = time ?? last.time;
+    } else {
+      blocks.push({ kind: "thinking", text, time });
+    }
+    pendingAgentBoundary = { baseText: latestFullText, strength: "hard" };
+  };
+  let pendingThinking: { text: string; time?: number } | undefined;
+  const flushPendingThinking = () => {
+    if (pendingThinking == null) return;
+    const { text, time } = pendingThinking;
+    pendingThinking = undefined;
+    pushThinking(text, time);
   };
 
   for (const item of timeline) {
@@ -736,6 +808,33 @@ export function getLiveResponseBlocks(
         pendingGuidanceSplitBaseText = latestFullText;
         activeSegmentBaseText = undefined;
       }
+      continue;
+    }
+
+    if (item.kind === "thinking") {
+      // Reasoning streamed alongside one message's deltas (Codex) waits for
+      // that message to end, so it never splits it.
+      if (
+        blocks[blocks.length - 1]?.kind === "agent" &&
+        pendingAgentBoundary == null &&
+        latestFullHasDelta
+      ) {
+        pendingThinking = pendingThinking
+          ? {
+              text: joinThinking(pendingThinking.text, item.text),
+              time: item.time,
+            }
+          : { text: item.text, time: item.time };
+        continue;
+      }
+      flushDeferredGuidance();
+      flushPendingThinking();
+      pushThinking(item.text, item.time);
+      continue;
+    }
+
+    if (item.kind === "agent-boundary" && pendingThinking != null) {
+      flushPendingThinking();
       continue;
     }
 
@@ -839,6 +938,7 @@ export function getLiveResponseBlocks(
     pendingGuidanceSplitBaseText = undefined;
   }
   flushDeferredGuidance();
+  flushPendingThinking();
 
   return blocks;
 }
@@ -863,7 +963,7 @@ export function getMountedIntermediateResponseBlocks(
     state?: "saved" | "sending" | "sent" | "queued" | "not-sent";
   }>,
 ): Array<{
-  kind: "agent" | "guidance";
+  kind: "agent" | "guidance" | "thinking";
   text: string;
   time?: number;
   state?: "saved" | "sending" | "sent" | "queued" | "not-sent";
@@ -876,7 +976,7 @@ export function getMountedIntermediateResponseBlocks(
 // block. Never discard that whole block just because it contains the summary.
 // Without message/channel boundaries, prefer duplication to hiding activity.
 export function trimFinalResponseFromActivity<
-  T extends { kind: "agent" | "guidance"; text: string },
+  T extends { kind: "agent" | "guidance" | "thinking"; text: string },
 >(blocks: T[], finalResponse?: string): T[] {
   const final = finalResponse?.trim();
   if (!final) return blocks;

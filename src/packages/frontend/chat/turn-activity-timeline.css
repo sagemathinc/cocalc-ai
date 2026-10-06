@@ -24,3 +24,32 @@
   opacity: 1;
   pointer-events: auto;
 }
+
+/* The agent's reasoning: muted, one line until opened. */
+.cocalc-turn-thinking-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--cocalc-ui-secondary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.cocalc-turn-thinking-label {
+  flex: 0 0 auto;
+  font-style: italic;
+}
+
+.cocalc-turn-thinking-excerpt {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.8;
+}

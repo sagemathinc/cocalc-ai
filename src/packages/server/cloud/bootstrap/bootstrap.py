@@ -4583,6 +4583,8 @@ STATE = Path("/run/cocalc-managed-project-jobs")
 PODMAN = "/opt/cocalc/container-runtime/current/bin/podman"
 UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 JOB = re.compile(r"job-(\d+)-(\d+)-(\d+)-(\d+)-(\d+)-(" + UUID + r")$")
+# The OOM policy of every project process (as the project launcher applies).
+PROJECT_OOM_SCORE_ADJ = "500"
 LEGACY_JOB = re.compile(r"job-\d+-\d+-\d+-\d+-" + UUID + r"$")
 
 @contextmanager
@@ -4912,9 +4914,14 @@ def config_from_stdin():
     finally:
         sel.close()
 
-def prevent_privilege_gain(libc):
-    if libc.prctl(38, 1, 0, 0, 0) != 0:  # PR_SET_NO_NEW_PRIVS
-        raise RuntimeError("unable to disable new privileges")
+def apply_project_oom_policy(pid, proc=Path("/proc")):
+    # A job inherits this supervisor's host-service OOM protection. Without
+    # resetting it, at the project's memory limit the kernel spares a huge job
+    # (e.g. parallel test workers) and kills the project's agent instead.
+    path = proc / str(pid) / "oom_score_adj"
+    path.write_text(PROJECT_OOM_SCORE_ADJ + "\n")
+    if path.read_text().strip() != PROJECT_OOM_SCORE_ADJ:
+        raise RuntimeError("project OOM policy not applied")
 
 def launch_locked(scope, account, args, env, pipes):
     # Child cannot exec (or fork) until its parent has placed it in the scope
@@ -4944,10 +4951,11 @@ def launch_locked(scope, account, args, env, pipes):
             if any(int(line.split()[1], 16) for line in caps
                    if line.startswith(("CapEff:", "CapPrm:", "CapAmb:"))):
                 os._exit(125)
-            # This path only execs into an already-running project. Do not
-            # allow its executable chain to regain privileges; hosts needing
-            # a fresh privileged UID/GID mapping here must fail closed.
-            prevent_privilege_gain(libc)
+            # Do not set PR_SET_NO_NEW_PRIVS: it is inherited through podman
+            # exec, so sudo and other setuid tools would fail in agent commands
+            # although they work in the same project's terminals. The command
+            # runs as the host runtime user, which already execs into project
+            # containers without that flag.
             os.chdir("/")
             # Supplied environment/argv are only used after dropping privileges.
             executable = PODMAN if Path(PODMAN).is_file() else "/usr/bin/podman"
@@ -4960,6 +4968,8 @@ def launch_locked(scope, account, args, env, pipes):
         (scope / "cgroup.procs").write_text(str(child))
         if not member(child, scope):
             raise RuntimeError("launcher containment not confirmed")
+        # Before the child can exec: it and everything it starts get it.
+        apply_project_oom_policy(child)
         os.write(gate_write, b"1")
         return child
     except BaseException:
@@ -5186,8 +5196,11 @@ installed below /usr/local with root ownership.
 
 import ctypes
 import errno
+import json
 import os
 import re
+import select
+import signal
 import stat
 import subprocess
 import sys
@@ -5242,6 +5255,24 @@ RUSTIC_OPTION_KEYS = {
     "secret_access_key",
 }
 ALLOW_LOOPBACK_RUSTIC_REST = "__ALLOW_LOOPBACK_RUSTIC_REST__" == "1"
+# Sparse files make apparent size independent of disk usage, and Rustic reads
+# every hole. Files larger than the limit are not backed up; the decision uses
+# the same apparent size as Rustic, and files exactly at the limit are kept.
+# The caller derives project limits from the disk quota; clamp them so it can
+# neither disable the limit nor make ordinary files ineligible.
+RUSTIC_BACKUP_DEFAULT_MAX_FILE_BYTES = 100 * 1000**3
+RUSTIC_BACKUP_MIN_MAX_FILE_BYTES = 1000**3
+RUSTIC_BACKUP_CEILING_MAX_FILE_BYTES = 1000**4
+OVERSIZED_FILES_MARKER = "COCALC_BACKUP_OVERSIZED_FILES"
+OVERSIZED_FILES_MAX_PATHS = 20
+OVERSIZED_FILES_MAX_RECORD_BYTES = 1024 * 1024
+OVERSIZED_SCAN_MAX_SUBPATHS = 1000
+OVERSIZED_SCAN_MAX_RUNTIME_SECONDS = 10 * 60
+# The unprivileged caller cannot signal this root-owned helper, so its own
+# timeout cannot stop Rustic. Supervise every child here instead.
+RUSTIC_MAX_RUNTIME_SECONDS = 12 * 60 * 60
+RUSTIC_TERMINATE_GRACE_SECONDS = 10
+PR_SET_PDEATHSIG = 1
 SYS_OPENAT2 = 437
 RESOLVE_NO_MAGICLINKS = 0x02
 RESOLVE_NO_SYMLINKS = 0x04
@@ -5381,6 +5412,7 @@ def parse_rustic(argv):
         "--parent",
         "--snapshot",
         "--tag",
+        "--max-file-bytes",
     }
     i = 1
     while i < len(argv):
@@ -5405,7 +5437,7 @@ def parse_rustic(argv):
 
     common = {"root", "path", "profile-root", "profile-path", "tag", "delete", "no-cache"}
     allowed = {
-        "rustic-project-backup": common | {"host", "parent"},
+        "rustic-project-backup": common | {"host", "parent", "max-file-bytes"},
         "rustic-rootfs-backup": common | {"host"},
         "rustic-project-restore": common | {"snapshot"},
         "rustic-rootfs-restore": common | {"snapshot"},
@@ -5444,7 +5476,26 @@ def parse_rustic(argv):
             or any(ord(char) < 32 or ord(char) == 127 for char in tag)
         ):
             fail("invalid Rustic tag")
+    if command == "rustic-rootfs-backup":
+        values["max-file-bytes"] = parse_max_file_bytes(None)
+    elif "max-file-bytes" in values:
+        values["max-file-bytes"] = parse_max_file_bytes(values["max-file-bytes"])
+    else:
+        # Project-host versions that cannot report skipped files do not ask
+        # for a limit; never skip files they would not know about.
+        values["max-file-bytes"] = None
     return command, values
+
+
+def parse_max_file_bytes(value):
+    if value is None:
+        return RUSTIC_BACKUP_DEFAULT_MAX_FILE_BYTES
+    if not re.fullmatch(r"[1-9][0-9]{0,18}", value):
+        fail("invalid max-file-bytes")
+    return min(
+        max(int(value), RUSTIC_BACKUP_MIN_MAX_FILE_BYTES),
+        RUSTIC_BACKUP_CEILING_MAX_FILE_BYTES,
+    )
 
 
 def read_validated_rustic_profile(rootfd, path, allow_loopback_rest=False):
@@ -5568,6 +5619,216 @@ def select_privileged_rustic_binary(candidates=None):
     fail("trusted privileged Rustic binary is unavailable")
 
 
+def raise_on_signal(signum, _frame):
+    fail(f"interrupted by signal {signum}")
+
+
+def parent_death_signal(parent_pid):
+    def setup():
+        # Kill the child if this helper dies before it can clean up.
+        LIBC.prctl(PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0)
+        if os.getppid() != parent_pid:
+            os._exit(1)
+
+    return setup
+
+
+def terminate_process_group(proc):
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        proc.wait(timeout=RUSTIC_TERMINATE_GRACE_SECONDS)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    proc.wait()
+
+
+def run_supervised(args, *, deadline, quiet=False, on_stdout=None, **kwargs):
+    """Run args in its own process group and never leave it running.
+
+    The caller is sudo, which an unprivileged timeout may kill outright. Stop
+    the whole group when the caller disappears, the deadline passes, or this
+    helper is interrupted, and return the exit status otherwise.
+    """
+    caller = os.getppid()
+    if on_stdout is not None:
+        stdout = subprocess.PIPE
+    else:
+        stdout = subprocess.DEVNULL if quiet else None
+    proc = subprocess.Popen(
+        args,
+        stdin=subprocess.DEVNULL,
+        stdout=stdout,
+        stderr=subprocess.DEVNULL if quiet else None,
+        start_new_session=True,
+        preexec_fn=parent_death_signal(os.getpid()),
+        **kwargs,
+    )
+    try:
+        reading = on_stdout is not None
+        while True:
+            if reading:
+                ready, _, _ = select.select([proc.stdout], [], [], 1)
+                if ready:
+                    chunk = os.read(proc.stdout.fileno(), 65536)
+                    if chunk:
+                        on_stdout(chunk)
+                    else:
+                        reading = False
+            else:
+                try:
+                    return proc.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    pass
+            if os.getppid() != caller:
+                fail(f"caller exited; stopped {os.path.basename(args[0])}")
+            if time.monotonic() >= deadline:
+                fail(f"deadline exceeded; stopped {os.path.basename(args[0])}")
+    finally:
+        if proc.returncode is None:
+            terminate_process_group(proc)
+        if proc.stdout is not None:
+            proc.stdout.close()
+
+
+def new_oversized_report(max_file_bytes):
+    return {"max_file_bytes": max_file_bytes, "count": 0, "files": []}
+
+
+def add_oversized_file(report, path, size):
+    report["count"] += 1
+    if len(report["files"]) < OVERSIZED_FILES_MAX_PATHS:
+        report["files"].append({"path": path, "size": size})
+
+
+def scan_oversized_files(
+    datafd, *, max_file_bytes, one_file_system, deadline, report=None, prefix=""
+):
+    """Find regular files Rustic will skip, without reading their contents."""
+    args = ["find", "."]
+    if one_file_system:
+        args.append("-xdev")
+    args += [
+        "(", "-name", ".snapshots", "-prune", ")",
+        "-o",
+        "(", "-type", "f", "-size", f"+{max_file_bytes}c",
+        "-printf", "%s %P\\0", ")",
+    ]
+    if report is None:
+        report = new_oversized_report(max_file_bytes)
+    pending = bytearray()
+
+    def on_stdout(chunk):
+        pending.extend(chunk)
+        while True:
+            end = pending.find(b"\0")
+            if end < 0:
+                break
+            size, _, path = bytes(pending[:end]).partition(b" ")
+            del pending[: end + 1]
+            add_oversized_file(report, prefix + os.fsdecode(path), int(size))
+        if len(pending) > OVERSIZED_FILES_MAX_RECORD_BYTES:
+            fail("oversized file scan produced an unbounded record")
+
+    status = run_supervised(
+        args,
+        deadline=deadline,
+        on_stdout=on_stdout,
+        cwd=f"/proc/self/fd/{datafd}",
+        env={"LANG": "C", "PATH": "/usr/bin:/bin"},
+        pass_fds=(datafd,),
+    )
+    if status != 0 or pending:
+        fail("unable to scan for files larger than the backup limit")
+    return report
+
+
+def run_scan_oversized_files(argv, allowed_roots=ALLOWED_ROOTS):
+    """Print the files a project backup would skip, as JSON on stdout.
+
+    With --subpath, only those project-relative paths are scanned. Each one is
+    opened without following symlinks, so it cannot leave the project.
+    """
+    values = {"subpath": []}
+    i = 1
+    while i < len(argv):
+        option = argv[i]
+        if (
+            option not in ("--root", "--path", "--max-file-bytes", "--subpath")
+            or i + 1 >= len(argv)
+        ):
+            fail(f"invalid scan option: {option}")
+        key = option[2:]
+        if key == "subpath":
+            values["subpath"].append(argv[i + 1])
+        elif key in values:
+            fail(f"duplicate scan option: {option}")
+        else:
+            values[key] = argv[i + 1]
+        i += 2
+    for key in ("root", "path"):
+        if key not in values:
+            fail(f"missing --{key}")
+    validate_relative(values["path"], allow_root=True)
+    if len(values["subpath"]) > OVERSIZED_SCAN_MAX_SUBPATHS:
+        fail("too many scan subpaths")
+    for subpath in values["subpath"]:
+        validate_relative(subpath)
+    max_file_bytes = parse_max_file_bytes(values.get("max-file-bytes"))
+    deadline = time.monotonic() + OVERSIZED_SCAN_MAX_RUNTIME_SECONDS
+    report = new_oversized_report(max_file_bytes)
+    rootfd = open_root(values["root"], allowed_roots)
+    datafd = None
+    try:
+        datafd = openat2(
+            rootfd, values["path"], O_PATH | os.O_DIRECTORY | os.O_CLOEXEC
+        )
+        for subpath in values["subpath"] or [None]:
+            if subpath is None:
+                scan_oversized_files(
+                    datafd,
+                    max_file_bytes=max_file_bytes,
+                    one_file_system=True,
+                    deadline=deadline,
+                    report=report,
+                )
+                continue
+            try:
+                fd = openat2(datafd, subpath, O_PATH | os.O_CLOEXEC)
+            except OSError as err:
+                # A symlink is copied as a link, never as a large file.
+                if err.errno == errno.ELOOP:
+                    continue
+                raise
+            try:
+                info = os.fstat(fd)
+                if stat.S_ISDIR(info.st_mode):
+                    scan_oversized_files(
+                        fd,
+                        max_file_bytes=max_file_bytes,
+                        one_file_system=True,
+                        deadline=deadline,
+                        report=report,
+                        prefix=f"{subpath.rstrip('/')}/",
+                    )
+                elif stat.S_ISREG(info.st_mode) and info.st_size > max_file_bytes:
+                    add_oversized_file(report, subpath, info.st_size)
+            finally:
+                os.close(fd)
+    finally:
+        if datafd is not None:
+            os.close(datafd)
+        os.close(rootfd)
+    print(json.dumps(report, ensure_ascii=True, separators=(",", ":")))
+
+
 def run_rustic(
     argv,
     allowed_roots=ALLOWED_ROOTS,
@@ -5609,17 +5870,17 @@ def run_rustic(
             "USER": "root",
         }
 
+        deadline = time.monotonic() + RUSTIC_MAX_RUNTIME_SECONDS
+
         def invoke(args, *, quiet=False):
-            result = subprocess.run(
+            return run_supervised(
                 [*base, *args],
+                deadline=deadline,
+                quiet=quiet,
                 cwd=f"/proc/self/fd/{datafd}",
                 env=env,
                 pass_fds=(datafd,),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL if quiet else None,
-                stderr=subprocess.DEVNULL if quiet else None,
             )
-            return result.returncode
 
         def ensure_rootfs_repository():
             if invoke(["repoinfo"], quiet=True) == 0:
@@ -5636,10 +5897,31 @@ def run_rustic(
             raise subprocess.CalledProcessError(init_status or 1, base)
 
         if command.endswith("backup"):
+            max_file_bytes = values["max-file-bytes"]
+            oversized = None
+            if max_file_bytes is not None:
+                oversized = scan_oversized_files(
+                    datafd,
+                    max_file_bytes=max_file_bytes,
+                    one_file_system=command == "rustic-project-backup",
+                    deadline=deadline,
+                )
             flags = ["backup"]
             if command == "rustic-project-backup":
                 flags.append("-x")
             flags.extend(["--json", "--no-scan", "--host", values["host"]])
+            if max_file_bytes is not None:
+                flags.extend(["--exclude-larger-than", str(max_file_bytes)])
+            if oversized and oversized["count"]:
+                summary = json.dumps(
+                    oversized, ensure_ascii=True, separators=(",", ":")
+                )
+                if command == "rustic-rootfs-backup":
+                    # An image silently missing files would be broken.
+                    fail(f"RootFS has files larger than the backup limit: {summary}")
+                # The caller reads this line; the snapshot keeps the same record.
+                print(f"{OVERSIZED_FILES_MARKER} {summary}", file=sys.stderr, flush=True)
+                flags.extend(["--description", f"{OVERSIZED_FILES_MARKER} {summary}"])
             for tag in values["tag"]:
                 flags.extend(["--tag", tag])
             if values.get("parent"):
@@ -5935,6 +6217,8 @@ def parse_uint(value, name, maximum=(2**53 - 1)):
 
 
 def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None):
+    if argv and argv[0] == "scan-oversized-files":
+        return run_scan_oversized_files(argv, allowed_roots)
     if argv and argv[0] in RUSTIC_COMMANDS:
         return run_rustic(argv, allowed_roots, rustic_candidates)
     if argv and argv[0] in ANCHORED_COMMANDS:
@@ -6053,6 +6337,10 @@ def main(argv=None, allowed_roots=ALLOWED_ROOTS):
     if os.geteuid() != 0:
         print("cocalc runtime storage path helper must run as root", file=sys.stderr)
         return 1
+    # sudo relays these; turning them into exceptions lets supervised
+    # children be stopped instead of orphaned.
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, raise_on_signal)
     try:
         run(sys.argv[1:] if argv is None else argv, allowed_roots)
         return 0
@@ -9769,6 +10057,7 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
     esac
     tag_args=()
     parent_args=()
+    max_file_args=()
     while [ "$#" -gt 0 ]; do
       case "$1" in
         --tag)
@@ -9776,6 +10065,18 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
             deny "project-rustic-backup-bad-args" "missing-tag-value"
           fi
           tag_args+=("$1" "$2")
+          shift 2
+          ;;
+        --max-file-bytes)
+          if [ "$#" -lt 2 ] || [ "${#max_file_args[@]}" -gt 0 ]; then
+            deny "project-rustic-backup-bad-args" "max-file-bytes"
+          fi
+          case "$2" in
+            ""|*[!0-9]*)
+              deny "project-rustic-backup-bad-max-file-bytes" "$2"
+              ;;
+          esac
+          max_file_args=("$1" "$2")
           shift 2
           ;;
         --parent)
@@ -9811,7 +10112,37 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
       --profile-path "$RUSTIC_PROFILE_REL" \
       --host "$host_name" \
       "${tag_args[@]}" \
-      "${parent_args[@]}"
+      "${parent_args[@]}" \
+      "${max_file_args[@]}"
+    ;;
+  project-oversized-files)
+    if [ "$#" -lt 1 ]; then
+      echo "usage: cocalc-runtime-storage project-oversized-files <src> [--max-file-bytes <n>] [--subpath <path>]..." >&2
+      exit 2
+    fi
+    src="$1"
+    shift
+    scan_args=()
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --max-file-bytes|--subpath)
+          if [ "$#" -lt 2 ]; then
+            deny "project-oversized-files-bad-args" "missing-value"
+          fi
+          scan_args+=("$1" "$2")
+          shift 2
+          ;;
+        *)
+          deny "project-oversized-files-bad-args" "$1"
+          ;;
+      esac
+    done
+    require_allowed_path_parts "$src"
+    exec /usr/local/libexec/cocalc-runtime-storage-path-helper \
+      scan-oversized-files \
+      --root "$ALLOWED_PATH_ROOT" \
+      --path "$ALLOWED_PATH_REL" \
+      "${scan_args[@]}"
     ;;
   project-rustic-restore)
     if [ "$#" -ne 3 ] && [ "$#" -ne 4 ]; then

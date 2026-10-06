@@ -35,6 +35,42 @@
         animation-duration: 280ms;
       }
     </style>
+    <script id="cocalc-page-transition-guard">
+      // A browser skips a cross-document view transition when, for example,
+      // the viewport resizes during a mobile navigation, and rejects the
+      // transition's promises. Nothing awaits them, so mark those handled
+      // instead of reporting a crash for a skipped animation; any other
+      // rejection is rethrown and still reported. Keep the match in step with
+      // isSkippedViewTransition in webapp-error-filter.ts. Register in the
+      // head: pagereveal fires before the first render.
+      (function () {
+        function isSkipped(err) {
+          var name = err && err.name;
+          if (name !== "InvalidStateError" && name !== "AbortError") {
+            return false;
+          }
+          var message = String(err.message || "").toLowerCase();
+          return (
+            message.indexOf("skipping view transition") === 0 ||
+            /^transition was (?:aborted|skipped)\b/.test(message)
+          );
+        }
+        function handleTransition(event) {
+          var transition = event.viewTransition;
+          if (!transition) return;
+          ["ready", "finished", "updateCallbackDone"].forEach(function (key) {
+            var promise = transition[key];
+            if (promise && typeof promise.catch === "function") {
+              promise.catch(function (err) {
+                if (!isSkipped(err)) throw err;
+              });
+            }
+          });
+        }
+        window.addEventListener("pagereveal", handleTransition);
+        window.addEventListener("pageswap", handleTransition);
+      })();
+    </script>
     <style id="cocalc-app-startup-guard">
       html.cocalc-app-starting
         body[data-cocalc-entry="app"]

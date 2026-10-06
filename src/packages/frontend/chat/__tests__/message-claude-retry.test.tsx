@@ -3,12 +3,12 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { IntlProvider } from "react-intl";
 import Message from "../message";
-import { resendCanceledAcpTurn } from "../acp-api";
+import { resubmitAcpTurnAsNew } from "../acp-api";
 
 jest.mock("../git-commit-drawer", () => ({ GitCommitDrawer: () => null }));
 jest.mock("../acp-api", () => ({
   ...jest.requireActual("../acp-api"),
-  resendCanceledAcpTurn: jest.fn(),
+  resubmitAcpTurnAsNew: jest.fn(),
 }));
 jest.mock("../claude-sign-in-recovery", () => ({
   ...jest.requireActual("../claude-sign-in-recovery"),
@@ -40,10 +40,13 @@ jest.mock("@cocalc/frontend/editors/markdown-input/mentionable-users", () => ({
 test.each(["rejected", "false"])(
   "Claude recovery displays a failed %s resubmit from Message inline",
   async (outcome) => {
-    const resend = jest.mocked(resendCanceledAcpTurn);
+    const resend = jest.mocked(resubmitAcpTurnAsNew);
     resend.mockReset();
-    if (outcome === "rejected") resend.mockRejectedValue(Error("offline"));
-    else resend.mockResolvedValue(false);
+    if (outcome === "rejected")
+      resend.mockImplementation(() => {
+        throw Error("offline");
+      });
+    else resend.mockReturnValue(false);
     const parent = {
       message_id: "user-1",
       thread_id: "thread-1",
@@ -95,7 +98,6 @@ test.each(["rejected", "false"])(
     expect(resend).toHaveBeenCalledWith({
       actions,
       message: parent,
-      useCurrentPayment: true,
     });
   },
 );

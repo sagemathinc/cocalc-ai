@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { agentWorkingDirectory } from "./agent-working-directory";
 import { createPortal } from "react-dom";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import {
@@ -254,8 +255,18 @@ type ChatThreadCompletionSnapshot = {
   newestMessageDate?: string;
   stableSourceId?: string;
   threadLabel: string;
+  agentLabel: string;
   notifyOnTurnFinish: boolean;
 };
+
+// The name a turn notification uses for the thread's agent.
+export function threadAgentLabel(metadata?: {
+  agent_runtime?: { kind?: string; profile?: { id?: string } } | null;
+}): string {
+  const runtime = metadata?.agent_runtime;
+  if (runtime?.kind !== "acp") return "Codex";
+  return runtime.profile?.id === "claude-code" ? "Claude" : "Agent";
+}
 
 export function getLatestCodexActivityDate(
   messages: readonly ChatMessage[],
@@ -414,6 +425,7 @@ function buildChatThreadCompletionSnapshots({
       threadLabel:
         `${thread.displayLabel ?? thread.label ?? metadata?.name ?? ""}`.trim() ||
         "this chat",
+      agentLabel: threadAgentLabel(metadata),
       notifyOnTurnFinish: threadNotifyOnTurnFinishEnabled(
         metadata?.acp_config,
         metadata?.codex_completion_notification,
@@ -1848,6 +1860,7 @@ function ChatPanelContent({
           path,
           thread_id: current.threadId,
           thread_label: current.threadLabel,
+          agent_label: current.agentLabel,
           newest_message_date: current.newestMessageDate,
           stable_source_id: current.stableSourceId,
         });
@@ -2697,21 +2710,36 @@ function ChatPanelContent({
     setNewThreadSetup(defaultNewThreadSetup);
   }
 
+  // The working directory of a thread's agent (Codex config or Claude
+  // runtime), where its repository is.
+  const gitWorkingDirectoryForThread = useCallback(
+    (threadKey: string, metadata?: unknown): string | undefined => {
+      const threadId = normalizeThreadKey(threadKey);
+      const meta =
+        metadata ??
+        actions.getThreadMetadata?.(threadKey, {
+          threadId: threadId ?? undefined,
+        });
+      const codexWd = actions.getCodexConfig?.(
+        threadId ?? threadKey,
+      )?.workingDirectory;
+      return (
+        agentWorkingDirectory(meta) ??
+        (typeof codexWd === "string" && codexWd.trim()
+          ? codexWd.trim()
+          : undefined)
+      );
+    },
+    [actions],
+  );
+
   const openGitBrowserForThread = useCallback(
     (threadKey: string) => {
       const threadId = normalizeThreadKey(threadKey);
       const metadata = actions.getThreadMetadata?.(threadKey, {
         threadId,
       });
-      const codexConfig =
-        actions.getCodexConfig?.(threadId ?? threadKey) ??
-        metadata?.acp_config ??
-        undefined;
-      const wd =
-        typeof codexConfig?.workingDirectory === "string" &&
-        codexConfig.workingDirectory.trim()
-          ? codexConfig.workingDirectory.trim()
-          : undefined;
+      const wd = gitWorkingDirectoryForThread(threadKey, metadata);
       setGitBrowserCwd(wd);
       setGitBrowserHistory(undefined);
       setGitBrowserComparison(undefined);
@@ -2721,7 +2749,7 @@ function ChatPanelContent({
       setGitBrowserOpen(true);
       updateGitBrowserRoute({ commit: "HEAD", cwd: wd }, true);
     },
-    [actions, updateGitBrowserRoute],
+    [actions, gitWorkingDirectoryForThread, updateGitBrowserRoute],
   );
 
   const openAutomationModalForThread = useCallback(
@@ -2750,13 +2778,15 @@ function ChatPanelContent({
     }) => {
       const normalizedThreadKey = `${threadKey ?? ""}`.trim();
       if (!normalizedThreadKey) return;
-      setGitBrowserHistory(undefined);
-      setGitBrowserComparison(undefined);
-      setGitBrowserCwd(
+      // An explicit directory wins; otherwise the thread's own working
+      // directory, so the review uses the agent's repository.
+      const cwd =
         typeof cwdOverride === "string" && cwdOverride.length > 0
           ? cwdOverride
-          : undefined,
-      );
+          : gitWorkingDirectoryForThread(normalizedThreadKey);
+      setGitBrowserHistory(undefined);
+      setGitBrowserComparison(undefined);
+      setGitBrowserCwd(cwd);
       setGitBrowserThreadKey(normalizedThreadKey);
       setGitBrowserCommitHash(`${commitHash ?? ""}`.trim() || undefined);
       setGitBrowserCommitSelectionRequestToken((current) => current + 1);
@@ -2764,12 +2794,12 @@ function ChatPanelContent({
       updateGitBrowserRoute(
         {
           commit: commitHash?.trim() || "HEAD",
-          cwd: cwdOverride || undefined,
+          cwd,
         },
         true,
       );
     },
-    [updateGitBrowserRoute],
+    [gitWorkingDirectoryForThread, updateGitBrowserRoute],
   );
 
   const sendGitBrowserAgentPrompt = useCallback(

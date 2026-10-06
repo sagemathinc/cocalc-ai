@@ -9,12 +9,12 @@ export type CodexNativeNotificationContent = Readonly<{
 }>;
 
 const ATTENTION_CONTENT: CodexNativeNotificationContent = Object.freeze({
-  title: "Codex needs your attention",
+  title: "Agent needs your attention",
   body: "Open CoCalc to view details.",
 });
 
 const COMPLETION_CONTENT: CodexNativeNotificationContent = Object.freeze({
-  title: "Codex finished",
+  title: "Agent turn finished",
   body: "Open CoCalc to view details.",
 });
 

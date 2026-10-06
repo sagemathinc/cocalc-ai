@@ -5,6 +5,7 @@
 
 import { projectSubject } from "@cocalc/conat/names";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
+import type { OversizedFilesReport } from "@cocalc/util/consts/backups";
 import type {
   BackupFindPreview,
   BackupFindResult,
@@ -15,6 +16,8 @@ export type { BackupFindPreview, BackupFindResult };
 
 const SERVICE_NAME = "archive-info";
 const BACKUP_SEARCH_TIMEOUT_MS = 2 * 60_000;
+// Scanning is a metadata walk of the whole project or the given paths.
+const OVERSIZED_FILES_TIMEOUT_MS = 10 * 60_000;
 
 export interface BackupSummary {
   id: string;
@@ -53,6 +56,9 @@ interface Api {
     path: string;
     max_bytes?: number;
   }) => Promise<FileTextPreview>;
+  getOversizedFiles: (opts: {
+    paths?: string[];
+  }) => Promise<OversizedFilesReport | null>;
 }
 
 function requireExplicitConatClient(client?: ConatClient): ConatClient {
@@ -159,6 +165,25 @@ export async function getBackupFileText({
   return await requireExplicitConatClient(client)
     .call<Api>(getSubject({ project_id }))
     .getBackupFileText({ id, path, max_bytes });
+}
+
+// Files a backup would skip because they exceed the project's backup file
+// size limit, so moves, archives, and cross-host copies would skip them too.
+// null means the project's host skips nothing.
+export async function getOversizedFiles({
+  client,
+  project_id,
+  paths,
+}: {
+  client?: ConatClient;
+  project_id: string;
+  paths?: string[];
+}): Promise<OversizedFilesReport | null> {
+  return await requireExplicitConatClient(client)
+    .call<Api>(getSubject({ project_id }), {
+      timeout: OVERSIZED_FILES_TIMEOUT_MS,
+    })
+    .getOversizedFiles({ paths });
 }
 
 export async function getSnapshotFileText({

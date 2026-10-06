@@ -798,8 +798,15 @@ describe("ChatLog immediate steer rendering", () => {
       thread_id: "other-thread",
     });
     const view = render(midturnChat(messages));
+    // The other thread's message stays out; answer-1 is in this thread and
+    // arrived during its running turn, so it is shown there, in place.
     expect(screen.getByText("network-1")).toBeInTheDocument();
-    expect(screen.getByText("answer-1")).toBeInTheDocument();
+    expect(screen.queryByText("answer-1")).toBeNull();
+    expect(
+      lastRenderedMessageProps("assistant-1").activitySteers.map(
+        ({ messageId }) => messageId,
+      ),
+    ).toContain("answer-1");
     view.rerender(
       midturnChat(midturnMessages(), {
         threadIndex: new Map([
@@ -809,6 +816,78 @@ describe("ChatLog immediate steer rendering", () => {
     );
     expect(screen.getByText("network-1")).toBeInTheDocument();
     expect(screen.getByText("answer-1")).toBeInTheDocument();
+  });
+
+  it("places a row by time when its parents lead to an earlier, finished turn", () => {
+    // E.g. after a recovery restart: the agent message's parent is the old
+    // turn, but it arrived while the recovery turn was running.
+    const messages = new Map<string, any>([
+      [
+        "1000",
+        {
+          date: 1000,
+          message_id: "user-1",
+          thread_id: "thread-1",
+          sender_id: "acct-1",
+          history: [{ content: "Work" }],
+        },
+      ],
+      [
+        "2000",
+        {
+          date: 2000,
+          message_id: "assistant-1",
+          thread_id: "thread-1",
+          parent_message_id: "user-1",
+          sender_id: "codex",
+          acp_account_id: "codex",
+          generating: false,
+          history: [{ author_id: "codex", date: 2500, content: "Interrupted" }],
+        },
+      ],
+      [
+        "3000",
+        {
+          date: 3000,
+          message_id: "recovery-1",
+          thread_id: "thread-1",
+          parent_message_id: "assistant-1",
+          sender_id: "acct-1",
+          history: [{ content: "Recover" }],
+        },
+      ],
+      [
+        "3001",
+        {
+          date: 3001,
+          message_id: "assistant-2",
+          thread_id: "thread-1",
+          parent_message_id: "recovery-1",
+          sender_id: "codex",
+          acp_account_id: "codex",
+          generating: true,
+          history: [{ content: "Working again" }],
+        },
+      ],
+      [
+        "4000",
+        {
+          date: 4000,
+          message_id: "late-1",
+          thread_id: "thread-1",
+          parent_message_id: "assistant-1",
+          sender_id: "acct-1",
+          history: [{ content: "Arrived mid-turn" }],
+        },
+      ],
+    ]);
+    render(midturnChat(messages));
+    expect(screen.queryByText("late-1")).toBeNull();
+    expect(
+      lastRenderedMessageProps("assistant-2").activitySteers.map(
+        ({ messageId }) => messageId,
+      ),
+    ).toEqual(["late-1"]);
   });
 
   it("uses persisted per-message ACP state when rendering queued controls", () => {

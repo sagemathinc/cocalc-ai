@@ -539,6 +539,7 @@ export async function copyPathBetweenProjects({
   options,
   request_id,
   account_id,
+  allow_oversized_skip,
 }: {
   src: ProjectCopySource;
   src_home?: string;
@@ -547,6 +548,7 @@ export async function copyPathBetweenProjects({
   options?: CopyOptions;
   request_id?: string;
   account_id?: string;
+  allow_oversized_skip?: boolean;
 }): Promise<{
   op_id: string;
   scope_type: "project";
@@ -577,6 +579,7 @@ export async function copyPathBetweenProjects({
       ...(src_home ? { src_home } : {}),
       dests: normalizedDests,
       options,
+      ...(allow_oversized_skip === true ? { allow_oversized_skip: true } : {}),
     },
     ...(request_id
       ? {
@@ -5523,9 +5526,11 @@ export async function stop({
 export async function archiveProject({
   account_id,
   project_id,
+  allow_oversized_skip,
 }: {
   account_id?: string;
   project_id: string;
+  allow_oversized_skip?: boolean;
 }): Promise<void> {
   assertProjectRuntimeCapability("archive");
   await assertCanPerformDestructiveStorageAction({
@@ -5537,6 +5542,7 @@ export async function archiveProject({
     project_id,
     mode: "manual",
     actor_account_id: account_id,
+    allow_oversized_skip: allow_oversized_skip === true,
   });
 }
 
@@ -6440,6 +6446,7 @@ export async function moveProject({
   dest_host_id,
   allow_offline,
   backup_region_cutover,
+  allow_oversized_skip,
 }: {
   account_id: string;
   browser_id?: string | null;
@@ -6449,6 +6456,7 @@ export async function moveProject({
   dest_host_id?: string;
   allow_offline?: boolean;
   backup_region_cutover?: boolean;
+  allow_oversized_skip?: boolean;
 }): Promise<{
   op_id: string;
   scope_type: "project";
@@ -6477,6 +6485,7 @@ export async function moveProject({
       dest_host_id,
       allow_offline,
       backup_region_cutover,
+      allow_oversized_skip,
       epoch: ownership.epoch,
     });
   }
@@ -6512,6 +6521,7 @@ export async function moveProject({
     project_id,
     allow_offline,
     backup_region_cutover,
+    allow_oversized_skip: allow_oversized_skip === true,
     source_host_id: movePrecheck.source_host_id,
     runtime_slot: {
       sponsor_account_id: sponsor.sponsor_account_id,

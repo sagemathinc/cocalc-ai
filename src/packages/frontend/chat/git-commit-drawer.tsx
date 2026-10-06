@@ -500,10 +500,16 @@ export function GitCommitDrawer({
   const accountId = useTypedRedux("account", "account_id");
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const [comparisonLanding, setComparisonLanding] = useState(initialComparison);
+  // Open a requested comparison when the request changes, by value: callers
+  // may pass a fresh but equal object on every render, and reopening then
+  // would undo the user closing it.
+  const initialComparisonKey = initialComparison
+    ? JSON.stringify(initialComparison)
+    : "";
   useEffect(() => {
     setComparisonOpen(!!initialComparison);
     setComparisonLanding(initialComparison);
-  }, [initialComparison, commitSelectionRequestToken]);
+  }, [initialComparisonKey, commitSelectionRequestToken]);
   const editorTheme = useEffectiveEditorThemeForPath(projectId, sourcePath);
   const [localFontSize, setLocalFontSize] = useState(() =>
     clampGitReviewFontSize(fontSize),
@@ -3864,6 +3870,8 @@ export function GitCommitDrawer({
           key={commitSelectionRequestToken}
           initialComparison={comparisonLanding}
           onTargetChange={onComparisonChange}
+          // Reload the commit list's and open commit's review state.
+          onCommitsReviewed={() => setReviewReloadCounter((n) => n + 1)}
           repository={comparisonRepository}
           commit={commit ?? "HEAD"}
           accountId={accountId}

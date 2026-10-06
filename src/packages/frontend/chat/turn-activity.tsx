@@ -68,6 +68,16 @@ export interface TurnActivity {
   artifactsInline: boolean;
 }
 
+// The turn's artifact cards below its message. While it runs they appear in
+// its activity, where they were published; once it is done they are also
+// listed at the bottom, so they are found next to the final response rather
+// than pages back in the activity.
+export function showArtifactCardsBelowMessage(
+  activity: Pick<TurnActivity, "artifactsInline" | "effectiveGenerating">,
+): boolean {
+  return !activity.artifactsInline || !activity.effectiveGenerating;
+}
+
 const NO_LOG: CodexLogResult = {
   events: undefined,
   hasLogRef: false,

@@ -472,6 +472,7 @@ export interface ProjectControlMoveRequest {
   dest_host_id?: string;
   allow_offline?: boolean;
   backup_region_cutover?: boolean;
+  allow_oversized_skip?: boolean;
   epoch?: number;
 }
 

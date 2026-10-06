@@ -229,11 +229,13 @@ async function getPurchasableMembershipTierForPackageKind({
   membership_class,
   client,
   allow_course_tier_for_team = false,
+  allow_instructor_tier_for_team = false,
 }: {
   kind: MembershipPackageKind;
   membership_class: MembershipClass;
   client?: PoolClient;
   allow_course_tier_for_team?: boolean;
+  allow_instructor_tier_for_team?: boolean;
 }): Promise<MembershipTierRecord> {
   if (kind === "site") {
     throw Error(
@@ -252,6 +254,11 @@ async function getPurchasableMembershipTierForPackageKind({
         allow_course_tier_for_team &&
         kind === "team" &&
         tier.course_store_visible === true
+      ) &&
+      !(
+        allow_instructor_tier_for_team &&
+        kind === "team" &&
+        tier.id === "instructor"
       ))
   ) {
     throw Error(
@@ -1712,6 +1719,7 @@ async function getTierSeatQuote({
   expires_at,
   client,
   allow_course_tier_for_team = false,
+  allow_instructor_tier_for_team = false,
 }: {
   product: MembershipPackageProduct;
   membership_class: MembershipClass;
@@ -1720,6 +1728,7 @@ async function getTierSeatQuote({
   expires_at?: Date;
   client?: PoolClient;
   allow_course_tier_for_team?: boolean;
+  allow_instructor_tier_for_team?: boolean;
 }): Promise<MembershipPackageQuote> {
   const kind = normalizePackageKind(product.kind);
   const tier = await getPurchasableMembershipTierForPackageKind({
@@ -1727,6 +1736,7 @@ async function getTierSeatQuote({
     membership_class,
     client,
     allow_course_tier_for_team,
+    allow_instructor_tier_for_team,
   });
   const seat_price = getMembershipPrice(tier, interval);
   const start = starts_at ?? new Date();
@@ -1862,6 +1872,23 @@ async function resolveMembershipPackageQuoteInternal(
   if (!membership_class) {
     throw Error("membership_class is required");
   }
+  const instructorTeam =
+    allow_custom_period && kind === "team" && membership_class === "instructor";
+  if (instructorTeam) {
+    const start = asDate(product.starts_at);
+    const end = asDate(product.expires_at);
+    if (
+      !start ||
+      !end ||
+      !Number.isFinite(start.valueOf()) ||
+      !Number.isFinite(end.valueOf()) ||
+      end <= start
+    ) {
+      throw Error(
+        "Instructor team packages require explicit valid start and expiry dates",
+      );
+    }
+  }
   return await getTierSeatQuote({
     client,
     product: { ...product, kind, seat_count },
@@ -1872,6 +1899,9 @@ async function resolveMembershipPackageQuoteInternal(
     // Only the authenticated admin quote/purchase path permits custom periods.
     // Do not accept this exception from product metadata or public expansion.
     allow_course_tier_for_team: allow_custom_period,
+    // Admin quotes show the reference price; order creation separately requires
+    // a free, zero-cost purchase. Never derive this exception from metadata.
+    allow_instructor_tier_for_team: instructorTeam,
   });
 }
 

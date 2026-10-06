@@ -773,6 +773,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     this.moveOpsManager.dismiss(op_id);
   };
 
+  dismissBackupLro = (op_id?: string) => {
+    this.backupOpsManager.dismiss(op_id);
+  };
+
   isClosed = () => this.state == "closed";
 
   destroy = (): void => {

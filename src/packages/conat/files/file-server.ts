@@ -29,6 +29,7 @@ path, which can corrupt large chat logs if interrupted mid-write.
 */
 
 import { ConatError, type Client } from "@cocalc/conat/core/client";
+import type { OversizedFilesReport } from "@cocalc/util/consts/backups";
 import { type SnapshotCounts } from "@cocalc/util/consts/snapshots";
 import type { ProjectBackupIndexStoreConfig } from "@cocalc/conat/hub/api/hosts";
 import type {
@@ -339,7 +340,25 @@ export interface Fileserver {
     managed_egress_override?: ManagedBackupEgressOverride;
     replace_oldest_at_limit?: boolean;
     freeze_source?: boolean;
-  }) => Promise<{ time: Date; id: string; generation: number | null }>;
+    // Skip files over the backup file size limit and report them as
+    // oversized_files. Only callers that act on that report may set this: an
+    // older caller would treat the backup as complete and could delete the
+    // only copy of the skipped files.
+    skip_oversized_files?: boolean;
+  }) => Promise<{
+    time: Date;
+    id: string;
+    generation: number | null;
+    // Files skipped because they exceed the backup file size limit.
+    oversized_files?: OversizedFilesReport;
+  }>;
+  // Files a backup of the project would skip because they exceed its file
+  // size limit, optionally only beneath the given home-relative paths. null
+  // means the host's backups skip nothing.
+  getOversizedFiles: (opts: {
+    project_id: string;
+    paths?: string[];
+  }) => Promise<OversizedFilesReport | null>;
   // Back up the source project HOME into an externally supplied rustic
   // repository. This is used for admin site-to-site migration; rootfs state
   // must be pruned before the backup is written.

@@ -508,6 +508,18 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           id: message.id,
           error: { code: -32000, message: "secret rejection details" },
         });
+      if (text === "killed") {
+        // As the Claude adapter reports its child being OOM-killed.
+        process.stderr.write("Claude Code process terminated by signal SIGKILL\n");
+        return setTimeout(
+          () =>
+            send({
+              id: message.id,
+              error: { code: -32603, message: "Internal error" },
+            }),
+          50,
+        );
+      }
       if (text === "diagnostic-reject") {
         process.stderr.write(
           "Authorization: Bearer private-stderr; HTTP 503 overloaded\n",
@@ -631,7 +643,14 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           reason: "noRunningTurn",
         });
       result(message.id, { outcome: "injected" });
-      update(`steered: ${message.params.prompt[0].text}`);
+      {
+        const images = message.params.prompt.filter(
+          (block) => block.type === "image",
+        ).length;
+        update(
+          `steered: ${message.params.prompt[0].text}${images ? ` [${images} image]` : ""}`,
+        );
+      }
       result(pendingPrompt, { stopReason: "end_turn" });
       pendingPrompt = undefined;
       return;

@@ -796,6 +796,29 @@ export async function saveReviewRecord(
   return { ...payload, storageSequence: saved.seq };
 }
 
+// Mark each commit reviewed (as reviewing a range covers its commits), keeping
+// its note and comments. Returns the commits whose record changed.
+export async function markCommitsReviewed({
+  accountId,
+  commitShas,
+  resolveCommit,
+}: {
+  accountId: string;
+  commitShas: readonly string[];
+  resolveCommit?: ResolveReviewCommit;
+}): Promise<string[]> {
+  const marked: string[] = [];
+  for (const commitSha of commitShas) {
+    const record =
+      (await loadReviewRecord({ accountId, commitSha, resolveCommit })) ??
+      emptyRecord({ accountId, commitSha });
+    if (record.reviewed) continue;
+    await saveReviewRecord({ ...record, reviewed: true }, { resolveCommit });
+    marked.push(commitSha);
+  }
+  return marked;
+}
+
 export async function exportReviewBundle({
   accountId,
 }: {

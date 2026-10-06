@@ -1,4 +1,4 @@
-import { Suspense, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { Alert, Button, ConfigProvider, Space } from "antd";
 import { Tooltip } from "@cocalc/frontend/components/tip";
 import type { ArtifactRecord } from "@cocalc/chat";
@@ -57,6 +57,18 @@ export function GitHubPRArtifact({
   const [review, setReview] = useState(false);
   // Pin the opened review even if a later publication changes the current PR data.
   const [reviewTarget, setReviewTarget] = useState(pr);
+  const reviewComparison = useMemo(
+    () =>
+      reviewTarget.local
+        ? {
+            commonDirectory: reviewTarget.local.common_directory,
+            mode: "merge-base" as const,
+            base: reviewTarget.base_sha,
+            head: reviewTarget.head_sha,
+          }
+        : undefined,
+    [reviewTarget],
+  );
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -214,12 +226,7 @@ export function GitHubPRArtifact({
               cwdOverride={reviewTarget.local.path}
               inferCommitWorktree={false}
               commitHash={reviewTarget.head_sha}
-              initialComparison={{
-                commonDirectory: reviewTarget.local.common_directory,
-                mode: "merge-base",
-                base: reviewTarget.base_sha,
-                head: reviewTarget.head_sha,
-              }}
+              initialComparison={reviewComparison}
               onRequestAgentTurn={
                 readOnly || !onRequestAgentTurn
                   ? undefined

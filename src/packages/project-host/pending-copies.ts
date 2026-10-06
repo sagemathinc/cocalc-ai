@@ -5,6 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import getLogger from "@cocalc/backend/logger";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import cpExec from "@cocalc/backend/sandbox/cp";
+import { parseOutput } from "@cocalc/backend/sandbox/exec";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { getMasterConatClient } from "./master-status";
 import { getLocalHostId } from "./sqlite/hosts";
@@ -28,6 +29,11 @@ const logger = getLogger("project-host:pending-copies");
 
 const COPY_STAGING_DIR = ".copy-staging";
 const RESTORE_TIMEOUT_MS = 30 * 60 * 1000;
+// The hub hands an 'applying' row to another worker 35 minutes after the claim
+// (STALE_APPLYING_MS in server/projects/copy-db.ts). Every row of a claimed
+// batch, applied one after another, must stop before then, or two workers
+// would write the same destination.
+const CLAIM_BUDGET_MS = 30 * 60 * 1000;
 const RESTORE_SNAPSHOT_NOT_FOUND_RETRY_DELAY_MS = Math.max(
   1,
   Number(process.env.COCALC_COPY_RESTORE_SNAPSHOT_NOT_FOUND_RETRY_DELAY_MS) ||
@@ -92,18 +98,23 @@ async function restoreSnapshotWithRetry({
   row,
   srcPath,
   stagingRel,
+  deadline,
 }: {
   restoreFs: SandboxedFilesystem;
   row: ProjectCopyRow;
   srcPath: string;
   stagingRel: string;
+  deadline: number;
 }): Promise<void> {
   const source = `${row.snapshot_id}${srcPath ? ":" + srcPath : ""}`;
   for (let retry = 0; ; retry += 1) {
     try {
-      await restoreFs.rustic(["restore", source, stagingRel], {
-        timeout: RESTORE_TIMEOUT_MS,
-      });
+      // A failed or killed restore leaves partial files in staging.
+      parseOutput(
+        await restoreFs.rustic(["restore", source, stagingRel], {
+          timeout: Math.min(RESTORE_TIMEOUT_MS, remainingMs(deadline)),
+        }),
+      );
       return;
     } catch (err) {
       if (
@@ -126,7 +137,18 @@ async function restoreSnapshotWithRetry({
   }
 }
 
-async function applyCopyRow(row: ProjectCopyRow): Promise<void> {
+function remainingMs(deadline: number): number {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) {
+    throw new Error("copy did not finish before its claim expired");
+  }
+  return remaining;
+}
+
+async function applyCopyRow(
+  row: ProjectCopyRow,
+  deadline: number,
+): Promise<void> {
   const srcPath = normalizeBackupPath(row.src_path);
   let destPath = normalizeCopyPath(row.dest_path, "dest_path");
   const destHomeRelative = projectRuntimeHomeRelativePath(destPath);
@@ -185,7 +207,13 @@ async function applyCopyRow(row: ProjectCopyRow): Promise<void> {
   });
 
   try {
-    await restoreSnapshotWithRetry({ restoreFs, row, srcPath, stagingRel });
+    await restoreSnapshotWithRetry({
+      restoreFs,
+      row,
+      srcPath,
+      stagingRel,
+      deadline,
+    });
     const stagingAbs = await restoreFs.safeAbsPath(stagingRel);
     if (!(await exists(stagingAbs))) {
       throw new Error(`restore produced no data at ${stagingRel}`);
@@ -201,6 +229,7 @@ async function applyCopyRow(row: ProjectCopyRow): Promise<void> {
           ...row.options,
           recursive: row.options?.recursive ?? true,
           reflink: true,
+          timeout: remainingMs(deadline),
         });
       },
     });
@@ -258,6 +287,8 @@ export async function applyPendingCopies({
   }
 
   let rows: ProjectCopyRow[] = [];
+  // Taken before the claim, so the budget never outlasts the hub's clock.
+  const deadline = Date.now() + CLAIM_BUDGET_MS;
   try {
     rows = await callHub({
       client,
@@ -272,8 +303,17 @@ export async function applyPendingCopies({
   }
 
   for (const row of rows) {
+    if (Date.now() >= deadline) {
+      // Too late to start: leave the row 'applying' so the hub reclaims it
+      // once the claim goes stale, instead of failing it permanently.
+      logger.warn("pending copy not started before its claim expired", {
+        copy_id: row.copy_id,
+        dest_project_id: row.dest_project_id,
+      });
+      continue;
+    }
     try {
-      await applyCopyRow(row);
+      await applyCopyRow(row, deadline);
       await reportCopyStatus(row, "done");
     } catch (err) {
       logger.warn("pending copy failed", {

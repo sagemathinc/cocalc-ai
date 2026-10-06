@@ -701,13 +701,45 @@ describe("response text helpers", () => {
     expect(getLiveResponseMarkdown(events)).toBe(
       "Live Codex output reaches the chat UI through the log.",
     );
+    // Reasoning streamed within the message is shown after it, not inside.
     expect(getLiveResponseBlocks(events)).toEqual([
       {
         kind: "agent",
         text: "Live Codex output reaches the chat UI through the log.",
         time: undefined,
-        state: undefined,
       },
+      {
+        kind: "thinking",
+        text: "thinking chunk\n\nanother reasoning chunk",
+        time: undefined,
+      },
+    ]);
+  });
+
+  test("shows thinking between messages in place", () => {
+    const tool = (seq: number): AcpStreamMessage => ({
+      type: "event",
+      seq,
+      event: {
+        type: "harness",
+        source: "acp",
+        kind: "update",
+        data: { sessionUpdate: "tool_call" },
+      } as any,
+    });
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "Starting the sleep now.", 1, { delta: true }),
+      tool(2),
+      textEvent("thinking", "The image is a banner.", 3),
+      tool(4),
+      textEvent("message", "\n\nThe sleep finished.", 5, { delta: true }),
+    ];
+    expect(
+      getLiveResponseBlocks(events).map(({ kind, text }) => [kind, text]),
+    ).toEqual([
+      ["agent", "Starting the sleep now."],
+      ["thinking", "The image is a banner."],
+      ["agent", "The sleep finished."],
     ]);
   });
 

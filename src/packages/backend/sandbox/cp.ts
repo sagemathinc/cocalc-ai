@@ -9,6 +9,11 @@ import { type CopyOptions } from "@cocalc/conat/files/fs";
 export { type CopyOptions };
 import { exists } from "./install";
 
+// Copying is bounded by the caller's own operation. A short exec default would
+// kill large copies part way through: cloning a file that was just written
+// first waits for btrfs to flush it, which can take many seconds.
+const DEFAULT_CP_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+
 export default async function cp(
   src: string[] | string,
   dest: string,
@@ -71,12 +76,18 @@ export default async function cp(
     opts.push("--reflink=auto");
   }
 
-  const { code, stderr } = await exec({
+  const timeout = options.timeout ?? DEFAULT_CP_TIMEOUT_MS;
+  const { code, stderr, truncated } = await exec({
     cmd: "/usr/bin/cp",
     safety: [...opts, ...args],
-    timeout: options.timeout,
+    timeout,
   });
   if (code) {
-    throw Error(stderr.toString());
+    // A killed cp leaves a partial copy; never report it as success.
+    throw Error(
+      `${stderr.toString().trim() || `cp exited with code ${code}`}${
+        truncated ? ` (stopped after ${timeout} ms)` : ""
+      }`,
+    );
   }
 }

@@ -28,6 +28,7 @@ import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import { parseOutput } from "@cocalc/backend/sandbox/exec";
 import rustic from "@cocalc/backend/sandbox/rustic";
 import { ConatError } from "@cocalc/conat/core/client";
+import type { OversizedFilesReport } from "@cocalc/util/consts/backups";
 import { DEFAULT_BACKUP_COUNTS } from "@cocalc/util/consts/snapshots";
 import { field_cmp } from "@cocalc/util/misc";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
@@ -115,6 +116,7 @@ interface Snapshot {
 
 interface CreatedSnapshot extends Snapshot {
   snapshotGeneration: number;
+  oversized_files?: OversizedFilesReport;
 }
 
 function flattenSnapshotGroups(groups: any): any[] {
@@ -190,6 +192,7 @@ export type RusticBackupRunner = (opts: {
   time: string | Date;
   id: string;
   summary: { [key: string]: string | number };
+  oversized_files?: OversizedFilesReport;
 }>;
 
 export type RusticRestoreRunner = (opts: {
@@ -425,7 +428,7 @@ export class SubvolumeRustic {
               ),
             ).stdout,
           );
-      const { time, id, summary } = backupResult;
+      const { time, id, summary, oversized_files } = backupResult;
       const backupTime = time instanceof Date ? time : new Date(time);
       return {
         time: backupTime,
@@ -433,6 +436,7 @@ export class SubvolumeRustic {
         summary,
         tags: tags ?? [],
         snapshotGeneration,
+        ...(oversized_files ? { oversized_files } : {}),
       };
     } finally {
       this.snapshotsCache = null;

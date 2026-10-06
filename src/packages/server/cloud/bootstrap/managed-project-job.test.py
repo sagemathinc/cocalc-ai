@@ -486,24 +486,11 @@ class ManagedJobTests(unittest.TestCase):
             with mock.patch.object(m.selectors, "DefaultSelector", return_value=selector), mock.patch.object(m.os, "read", return_value=chunk):
                 self.assertEqual(m.lease_connected(), expected)
 
-    def test_no_new_privileges_is_irreversible_in_child_process(self):
-        # Exercise the actual hardening helper without changing the test runner.
-        source = bootstrap.MANAGED_PROJECT_JOB_HELPER.split('if __name__ == "__main__":')[0]
-        source += """
-libc = ctypes.CDLL(None, use_errno=True)
-prevent_privilege_gain(libc)
-assert libc.prctl(39, 0, 0, 0, 0) == 1
-assert libc.prctl(38, 0, 0, 0, 0) != 0
-"""
-        subprocess.run(["/usr/bin/python3", "-I", "-c", source], check=True, timeout=5)
-
-    def test_no_new_privileges_failure_prevents_exec(self):
-        m = helper()
-        libc = mock.MagicMock()
-        libc.prctl.return_value = -1
-        with self.assertRaisesRegex(RuntimeError, "disable new privileges"):
-            m.prevent_privilege_gain(libc)
-        libc.prctl.assert_called_once_with(38, 1, 0, 0, 0)
+    def test_managed_commands_may_use_sudo(self):
+        # PR_SET_NO_NEW_PRIVS is inherited through podman exec and makes sudo
+        # fail in agent commands although it works in the project's terminals.
+        source = bootstrap.MANAGED_PROJECT_JOB_HELPER
+        self.assertIsNone(re.search(r"prctl\(\s*38\b", source))
 
     def test_launcher_migration_is_verified_before_gate_opens(self):
         m = helper()
@@ -513,9 +500,10 @@ assert libc.prctl(38, 0, 0, 0, 0) != 0
         def verify(pid, _scope):
             events.append(("verify", pid))
             return True
-        with mock.patch.object(m.os, "pipe", return_value=(100, 101)), mock.patch.object(m.os, "fork", return_value=123), mock.patch.object(m.os, "close"), mock.patch.object(m.os, "write", side_effect=lambda fd, data: events.append(("gate", data))), mock.patch.object(m, "member", side_effect=verify):
+        with mock.patch.object(m.os, "pipe", return_value=(100, 101)), mock.patch.object(m.os, "fork", return_value=123), mock.patch.object(m.os, "close"), mock.patch.object(m.os, "write", side_effect=lambda fd, data: events.append(("gate", data))), mock.patch.object(m, "member", side_effect=verify), mock.patch.object(m, "apply_project_oom_policy", side_effect=lambda pid: events.append(("oom", pid))):
             self.assertEqual(m.launch_locked(scope, None, None, None, []), 123)
-        self.assertEqual(events, [("migrate", "123"), ("verify", 123), ("gate", b"1")])
+        # The job leaves the supervisor's OOM protection before it may exec.
+        self.assertEqual(events, [("migrate", "123"), ("verify", 123), ("oom", 123), ("gate", b"1")])
 
     def test_failed_migration_never_opens_gate_and_reaps_uncontained_child(self):
         m = helper()
@@ -620,7 +608,7 @@ for line in open('/proc/self/status'):
     if line.startswith(('CapEff:', 'CapPrm:', 'CapAmb:')):
         assert int(line.split()[1], 16) == 0
     if line.startswith('NoNewPrivs:'):
-        assert int(line.split()[1]) == 1
+        assert int(line.split()[1]) == 0, 'sudo must keep working in managed commands'
 os.execv('/bin/bash', ['bash','-c',sys.argv[-1]])
 """)
                 launcher.chmod(0o755)
@@ -742,6 +730,53 @@ if MODE != 'success': time.sleep(60)
             for mode in ("cancel", "deadline", "lease-expiry", "success", "owner-death", "supervisor-crash", "wedged-guard", "project-stop"):
                 with self.subTest(detach=detach, mode=mode):
                     self.exercise(mode, detach)
+
+
+
+class ManagedJobOomPolicyTests(unittest.TestCase):
+    def test_policy_matches_the_project_launcher(self):
+        m = helper()
+        self.assertIn(
+            f'PROJECT_PROCESS_OOM_SCORE_ADJ="{m.PROJECT_OOM_SCORE_ADJ}"',
+            inspect.getsource(bootstrap),
+        )
+
+    def test_policy_is_written_and_verified(self):
+        m = helper()
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = Path(tmp)
+            (proc / "4242").mkdir()
+            (proc / "4242" / "oom_score_adj").write_text("-900\n")
+            m.apply_project_oom_policy(4242, proc)
+            self.assertEqual((proc / "4242" / "oom_score_adj").read_text(), "500\n")
+
+    def test_job_never_runs_without_the_policy(self):
+        m = helper()
+        gate = []
+        with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
+            scope = Path(tmp)
+            (scope / "cgroup.procs").write_text("")
+            patch = lambda name, **kw: stack.enter_context(
+                mock.patch.object(m.os, name, **kw)
+            )
+            patch("fork", return_value=4242)
+            patch("pipe", return_value=(10, 11))
+            patch("close")
+            patch("write", side_effect=lambda fd, data: gate.append(data))
+            kill = patch("kill")
+            patch("waitpid")
+            stack.enter_context(mock.patch.object(m, "member", return_value=True))
+            stack.enter_context(
+                mock.patch.object(
+                    m,
+                    "apply_project_oom_policy",
+                    side_effect=RuntimeError("project OOM policy not applied"),
+                )
+            )
+            with self.assertRaises(RuntimeError):
+                m.launch_locked(scope, None, [], {}, None)
+        self.assertEqual(gate, [])
+        kill.assert_called_once_with(4242, signal.SIGKILL)
 
 
 if __name__ == "__main__":

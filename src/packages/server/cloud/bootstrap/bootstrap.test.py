@@ -116,6 +116,11 @@ def make_cfg(tmpdir: str) -> bootstrap.BootstrapConfig:
     )
 
 
+def make_sparse_file(path: Path, size: int) -> None:
+    with open(path, "wb") as f:
+        f.truncate(size)
+
+
 class RuntimeStoragePathHelperTest(unittest.TestCase):
     def helper_namespace(self):
         namespace = {"__name__": "runtime_storage_path_helper_test"}
@@ -584,18 +589,18 @@ secret_access_key = "secret"
             repoinfo_results = iter((1, 1, 0))
 
             def rustic_run(args, **_kwargs):
+                if args[0] == "find":
+                    return 0
                 calls.append(args)
                 if "repoinfo" in args:
-                    return subprocess.CompletedProcess(
-                        args, next(repoinfo_results), "", ""
-                    )
+                    return next(repoinfo_results)
                 if "init" in args:
                     # Another publisher initialized the repository first.
-                    return subprocess.CompletedProcess(args, 1, "", "")
-                return subprocess.CompletedProcess(args, 0, "", "")
+                    return 1
+                return 0
 
             with (
-                mock.patch.object(namespace["subprocess"], "run", rustic_run),
+                mock.patch.dict(namespace, {"run_supervised": rustic_run}),
                 mock.patch.object(namespace["time"], "sleep") as sleep,
             ):
                 run_rustic(
@@ -624,6 +629,292 @@ secret_access_key = "secret"
             init_call = next(call for call in calls if "init" in call)
             self.assertNotIn("--no-progress", init_call)
             sleep.assert_called_once_with(0.25)
+
+    def write_rustic_fixture(self, root: Path) -> tuple[Path, Path]:
+        (root / "profile.toml").write_text(
+            """[repository]
+repository = "opendal:s3"
+password = "audit-password"
+[repository.options]
+access_key_id = "access"
+bucket = "bucket"
+endpoint = "https://object.invalid"
+region = "auto"
+root = "project-test"
+secret_access_key = "secret"
+""",
+            encoding="utf-8",
+        )
+        invocation = root / "invocation"
+        fake_rustic = root / "rustic"
+        fake_rustic.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            f"printf '%s\\n' \"$@\" > {invocation}\n",
+            encoding="utf-8",
+        )
+        fake_rustic.chmod(0o755)
+        return fake_rustic, invocation
+
+    def rustic_backup_args(self, root: Path, command: str, *extra: str) -> list[str]:
+        return [
+            command,
+            "--root", str(root),
+            "--path", "source",
+            "--profile-root", str(root),
+            "--profile-path", "profile.toml",
+            "--host", "project-test",
+            *extra,
+        ]
+
+    def test_rustic_max_file_bytes_is_validated_and_clamped(self) -> None:
+        namespace = self.helper_namespace()
+        parse_rustic = namespace["parse_rustic"]
+        base = self.rustic_backup_args(Path("/mnt/cocalc"), "rustic-project-backup")
+        # Without an explicit limit, project backups skip nothing.
+        self.assertIsNone(parse_rustic(base)[1]["max-file-bytes"])
+        self.assertEqual(
+            parse_rustic([*base, "--max-file-bytes", "1"])[1]["max-file-bytes"],
+            namespace["RUSTIC_BACKUP_MIN_MAX_FILE_BYTES"],
+        )
+        self.assertEqual(
+            parse_rustic([*base, "--max-file-bytes", "9" * 19])[1]["max-file-bytes"],
+            namespace["RUSTIC_BACKUP_CEILING_MAX_FILE_BYTES"],
+        )
+        self.assertEqual(
+            parse_rustic([*base, "--max-file-bytes", "40000000000"])[1][
+                "max-file-bytes"
+            ],
+            40_000_000_000,
+        )
+        for bad in ("0", "-5", "1e9", "", "9" * 20):
+            with self.assertRaises(ValueError):
+                parse_rustic([*base, "--max-file-bytes", bad])
+        rootfs = self.rustic_backup_args(Path("/mnt/cocalc"), "rustic-rootfs-backup")
+        with self.assertRaises(ValueError):
+            parse_rustic([*rootfs, "--max-file-bytes", "40000000000"])
+
+    def test_rustic_backup_excludes_and_reports_oversized_files(self) -> None:
+        run_rustic = self.helper_namespace()["run_rustic"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "source"
+            (source / "sub").mkdir(parents=True)
+            (source / ".snapshots").mkdir()
+            (source / "small").write_text("hi", encoding="utf-8")
+            limit = 1_000_000_000
+            # Sparse files: apparent size only, no disk usage.
+            make_sparse_file(source / "at-limit", limit)
+            make_sparse_file(source / "sub" / "huge sparse\nname", limit + 1)
+            make_sparse_file(source / ".snapshots" / "ignored", limit * 2)
+            fake_rustic, invocation = self.write_rustic_fixture(root)
+            stderr = io.StringIO()
+            with mock.patch("sys.stderr", stderr):
+                run_rustic(
+                    self.rustic_backup_args(
+                        root, "rustic-project-backup", "--max-file-bytes", str(limit)
+                    ),
+                    allowed_roots={str(root)},
+                    rustic_candidates=[str(fake_rustic)],
+                    profile_run_dir=str(root / "run"),
+                    profile_run_dir_uid=os.getuid(),
+                )
+            args = invocation.read_text(encoding="utf-8").split("\n")
+            self.assertEqual(
+                args[args.index("--exclude-larger-than") + 1], str(limit)
+            )
+            marker, _, payload = stderr.getvalue().strip().partition(" ")
+            self.assertEqual(marker, "COCALC_BACKUP_OVERSIZED_FILES")
+            report = json.loads(payload)
+            self.assertEqual(
+                report,
+                {
+                    "max_file_bytes": limit,
+                    "count": 1,
+                    "files": [{"path": "sub/huge sparse\nname", "size": limit + 1}],
+                },
+            )
+            description = args[args.index("--description") + 1]
+            self.assertTrue(description.startswith("COCALC_BACKUP_OVERSIZED_FILES "))
+
+    def test_rustic_project_backup_without_limit_skips_nothing(self) -> None:
+        run_rustic = self.helper_namespace()["run_rustic"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "source").mkdir()
+            (root / "source" / "small").write_text("hi", encoding="utf-8")
+            make_sparse_file(root / "source" / "huge", 200 * 1000**3)
+            fake_rustic, invocation = self.write_rustic_fixture(root)
+            stderr = io.StringIO()
+            with mock.patch("sys.stderr", stderr):
+                run_rustic(
+                    self.rustic_backup_args(root, "rustic-project-backup"),
+                    allowed_roots={str(root)},
+                    rustic_candidates=[str(fake_rustic)],
+                    profile_run_dir=str(root / "run"),
+                    profile_run_dir_uid=os.getuid(),
+                )
+            args = invocation.read_text(encoding="utf-8").split("\n")
+            self.assertNotIn("--exclude-larger-than", args)
+            self.assertNotIn("--description", args)
+            self.assertEqual(stderr.getvalue(), "")
+
+    def test_rootfs_backup_rejects_oversized_files(self) -> None:
+        run_rustic = self.helper_namespace()["run_rustic"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "source").mkdir()
+            make_sparse_file(root / "source" / "huge", 100 * 1000**3 + 1)
+            fake_rustic, invocation = self.write_rustic_fixture(root)
+            with self.assertRaisesRegex(ValueError, "larger than the backup limit"):
+                run_rustic(
+                    self.rustic_backup_args(root, "rustic-rootfs-backup"),
+                    allowed_roots={str(root)},
+                    rustic_candidates=[str(fake_rustic)],
+                    profile_run_dir=str(root / "run"),
+                    profile_run_dir_uid=os.getuid(),
+                )
+            self.assertFalse(invocation.exists())
+
+    def run_scan(self, root: Path, *extra: str) -> dict:
+        run_scan = self.helper_namespace()["run_scan_oversized_files"]
+        stdout = io.StringIO()
+        with mock.patch("sys.stdout", stdout):
+            run_scan(
+                [
+                    "scan-oversized-files",
+                    "--root", str(root),
+                    "--path", "project",
+                    "--max-file-bytes", "1000000000",
+                    *extra,
+                ],
+                allowed_roots={str(root)},
+            )
+        return json.loads(stdout.getvalue())
+
+    def test_scan_oversized_files_whole_project_and_subpaths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            project = root / "project"
+            (project / "a" / "deep").mkdir(parents=True)
+            (project / "b").mkdir()
+            (project / ".snapshots").mkdir()
+            make_sparse_file(project / "a" / "deep" / "big", 2_000_000_000)
+            make_sparse_file(project / "b" / "big", 3_000_000_000)
+            make_sparse_file(project / "b" / "exact", 1_000_000_000)
+            make_sparse_file(project / ".snapshots" / "big", 3_000_000_000)
+            make_sparse_file(project / "top", 4_000_000_000)
+            (project / "link").symlink_to(project / "top")
+            (project / "a" / "escape").symlink_to("/")
+
+            everything = self.run_scan(root)
+            self.assertEqual(everything["count"], 3)
+            self.assertEqual(
+                sorted(f["path"] for f in everything["files"]),
+                ["a/deep/big", "b/big", "top"],
+            )
+
+            selected = self.run_scan(
+                root, "--subpath", "a", "--subpath", "top", "--subpath", "link"
+            )
+            self.assertEqual(
+                sorted(
+                    (f["path"], f["size"]) for f in selected["files"]
+                ),
+                [("a/deep/big", 2_000_000_000), ("top", 4_000_000_000)],
+            )
+            self.assertEqual(selected["count"], 2)
+
+            with self.assertRaises(ValueError):
+                self.run_scan(root, "--subpath", "../project")
+            # Symlinked directories inside a subpath are never followed.
+            self.assertEqual(
+                self.run_scan(root, "--subpath", "a/escape/etc")["count"], 0
+            )
+            with self.assertRaises(FileNotFoundError):
+                self.run_scan(root, "--subpath", "missing")
+
+    def test_supervised_command_stops_at_deadline(self) -> None:
+        run_supervised = self.helper_namespace()["run_supervised"]
+        started = time.monotonic()
+        with self.assertRaisesRegex(ValueError, "deadline exceeded"):
+            run_supervised(["sleep", "30"], deadline=time.monotonic() + 0.5)
+        self.assertLess(time.monotonic() - started, 5)
+
+    def wait_for_exit(self, pid: int, timeout: float = 15) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+            except FileNotFoundError:
+                return True
+            if state == "Z":
+                return True
+            time.sleep(0.1)
+        return False
+
+    def start_supervisor_child(self, tmp: Path, *, wrap_in_caller: bool):
+        pidfile = tmp / "child.pid"
+        script = tmp / "supervisor.py"
+        script.write_text(
+            "import sys, time\n"
+            f"sys.path.insert(0, {str(Path(bootstrap.__file__).parent)!r})\n"
+            "import bootstrap\n"
+            "ns = {'__name__': 'supervisor'}\n"
+            "exec(bootstrap.RUNTIME_STORAGE_PATH_HELPER, ns)\n"
+            "ns['run_supervised'](\n"
+            f"    ['sh', '-c', 'echo $$ > {pidfile}; exec sleep 60'],\n"
+            "    deadline=time.monotonic() + 60,\n"
+            ")\n",
+            encoding="utf-8",
+        )
+        command = [sys.executable, str(script)]
+        if wrap_in_caller:
+            # Stands in for sudo: the caller the helper must outlive safely.
+            command = ["sh", "-c", f"{sys.executable} {script} & wait"]
+        proc = subprocess.Popen(
+            command,
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        deadline = time.monotonic() + 15
+        while not pidfile.exists() or not pidfile.read_text().strip():
+            if time.monotonic() > deadline:
+                proc.kill()
+                self.fail("supervised child did not start")
+            time.sleep(0.05)
+        return proc, int(pidfile.read_text())
+
+    def test_supervised_command_stops_when_caller_is_killed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            caller, child = self.start_supervisor_child(
+                Path(tmpdir), wrap_in_caller=True
+            )
+            try:
+                os.kill(caller.pid, 9)
+                caller.wait()
+                self.assertTrue(self.wait_for_exit(child))
+            finally:
+                try:
+                    os.killpg(caller.pid, 9)
+                except ProcessLookupError:
+                    pass
+
+    def test_supervised_command_dies_with_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            helper, child = self.start_supervisor_child(
+                Path(tmpdir), wrap_in_caller=False
+            )
+            try:
+                os.kill(helper.pid, 9)
+                helper.wait()
+                self.assertTrue(self.wait_for_exit(child))
+            finally:
+                try:
+                    os.kill(child, 9)
+                except ProcessLookupError:
+                    pass
 
 
 class ProjectHostStartTest(unittest.TestCase):
@@ -3302,6 +3593,8 @@ reconcile_host_service_pid 123
                 script,
             )
             self.assertIn("project-rustic-restore)", script)
+            self.assertIn("        --max-file-bytes)\n", script)
+            self.assertIn('      "${max_file_args[@]}"\n', script)
             self.assertIn(
                 "rustic-project-backup",
                 bootstrap.RUNTIME_STORAGE_PATH_HELPER,

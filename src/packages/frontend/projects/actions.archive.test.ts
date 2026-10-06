@@ -24,6 +24,14 @@ jest.mock("@cocalc/frontend/project/archive-info", () => ({
   getBackups: jest.fn(),
 }));
 
+const checkOversizedFilesMock = jest.fn(async (_opts: any) => ({
+  proceed: true,
+  allow_oversized_skip: false,
+}));
+jest.mock("@cocalc/frontend/project/backups/oversized-files", () => ({
+  checkOversizedFiles: (opts: any) => checkOversizedFilesMock(opts),
+}));
+
 jest.mock("@cocalc/frontend/alerts", () => ({
   alert_message: jest.fn(),
 }));
@@ -553,6 +561,62 @@ describe("ProjectsActions archive flow", () => {
     });
     expect(setState).toHaveBeenCalledWith({
       control_status: "Archiving project...",
+    });
+  });
+
+  it("does nothing when the user declines to lose oversized files", async () => {
+    configureProject({
+      state: "opened",
+      lastEdited: new Date("2026-04-25T15:00:00.000Z"),
+    });
+    checkOversizedFilesMock.mockResolvedValueOnce({
+      proceed: false,
+      allow_oversized_skip: false,
+    });
+    const { actions } = makeActions();
+
+    await actions.archive_project(project_id);
+
+    expect(checkOversizedFilesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ project_id }),
+    );
+    expect(
+      mockedWebappClient.conat_client.hub.projects.stop,
+    ).not.toHaveBeenCalled();
+    expect(
+      mockedWebappClient.conat_client.hub.projects.createBackup,
+    ).not.toHaveBeenCalled();
+    expect(
+      mockedWebappClient.conat_client.hub.projects.archiveProject,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("sends the user's confirmation to lose oversized files", async () => {
+    configureProject({
+      state: "opened",
+      lastEdited: new Date("2026-04-25T15:00:00.000Z"),
+    });
+    getBackupsMock.mockResolvedValue([
+      {
+        id: "backup-1",
+        time: new Date("2026-04-25T15:10:00.000Z"),
+        summary: {},
+      },
+    ] as any);
+    checkOversizedFilesMock.mockResolvedValueOnce({
+      proceed: true,
+      allow_oversized_skip: true,
+    });
+    const { actions } = makeActions();
+
+    await actions.archive_project(project_id);
+
+    expect(
+      mockedWebappClient.conat_client.hub.projects.archiveProject,
+    ).toHaveBeenCalledWith({
+      project_id,
+      timeout: 30000,
+      allow_oversized_skip: true,
     });
   });
 

@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { artifactPublicationGuidance } from "./publication-guidance";
+import {
+  artifactPublicationGuidance,
+  MATH_FORMATTING_GUIDANCE,
+} from "./publication-guidance";
 import { cocalcAccessGuidance } from "./cocalc-access-guidance";
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -91,6 +94,9 @@ export const CODEX_ACP_RECOVERY_ERROR_CODE = {
   modelCapacity: "codex_model_capacity",
   resourceKilled: "codex_resource_killed",
   turnLost: "codex_turn_lost",
+  // A harness agent's (Claude's) process was SIGKILLed, e.g. at the project's
+  // memory limit. Recorded by the host, not the app server.
+  harnessKilled: "acp_harness_killed",
 } as const;
 export type CodexAcpRecoveryErrorCode =
   (typeof CODEX_ACP_RECOVERY_ERROR_CODE)[keyof typeof CODEX_ACP_RECOVERY_ERROR_CODE];
@@ -1775,7 +1781,7 @@ function addRuntimeGuidance(
   const workbench = `\n\n${artifactPublicationGuidance(
     getCoCalcCliCommand(runtimeEnv),
     runtimeEnv?.COCALC_WORKBENCH === "1",
-  )}`;
+  )}\n\n${MATH_FORMATTING_GUIDANCE}`;
   return `${getCoCalcRuntimeGuidanceHeader(getCoCalcCliCommand(runtimeEnv), {
     hasBrowser: !!hasBrowser,
   })}${attribution}${workbench}${memoryContext ? `\n\n${memoryContext}` : ""}\n\n${prompt}`;

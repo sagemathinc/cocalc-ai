@@ -32,9 +32,7 @@ test("keyboard confirmation keeps errors visible and permits an explicit retry",
       name: "Start a fresh conversation with @helper?",
     }),
   ).toBeTruthy();
-  const button = screen.getByRole("button", {
-    name: "Start fresh conversation",
-  });
+  const button = screen.getByRole("button", { name: "Clear context" });
   button.focus();
   await user.keyboard("{Enter}");
   await waitFor(() =>
@@ -47,6 +45,22 @@ test("keyboard confirmation keeps errors visible and permits an explicit retry",
   await user.keyboard("{Enter}");
   await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   expect(onConfirm).toHaveBeenCalledTimes(2);
+  expect(onConfirm).toHaveBeenLastCalledWith("clear");
+});
+
+test("starting a new thread instead is an explicit choice", async () => {
+  const user = userEvent.setup();
+  const onConfirm = jest.fn().mockResolvedValue(undefined);
+  render(
+    <FreshConversationModal
+      name="helper"
+      onConfirm={onConfirm}
+      onClose={jest.fn()}
+    />,
+  );
+  await user.click(screen.getByRole("radio", { name: /Start a new thread/ }));
+  await user.click(screen.getByRole("button", { name: "Start new thread" }));
+  await waitFor(() => expect(onConfirm).toHaveBeenCalledWith("new-thread"));
 });
 
 test("Escape cancels without creating a conversation", async () => {

@@ -217,6 +217,16 @@ export function ArchiveProjectModal({
             kept so the {single ? projectLabelLower : projectsLabelLower} can be
             restored later.
           </InfoRow>
+          <InfoRow icon="camera">
+            The archive keeps the files as of that final backup, a single
+            point-in-time snapshot. Changes made after it, for example by code,
+            collaborators, or agents still writing files, are not kept.
+          </InfoRow>
+          <InfoRow icon="warning">
+            Files larger than the {projectLabelLower}&apos;s disk quota are not
+            backed up, so they are not kept. CoCalc lists any such files and
+            asks before archiving.
+          </InfoRow>
           <InfoRow icon="clock">
             Starting later restores from backup, so it can take longer than
             starting an active {projectLabelLower}.

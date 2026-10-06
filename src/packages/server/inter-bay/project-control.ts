@@ -688,6 +688,7 @@ export async function handleProjectControlMove(
     dest_host_id: req.dest_host_id,
     allow_offline: req.allow_offline,
     backup_region_cutover: req.backup_region_cutover,
+    allow_oversized_skip: req.allow_oversized_skip,
   });
 }
 

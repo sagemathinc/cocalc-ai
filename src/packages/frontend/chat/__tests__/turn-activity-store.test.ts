@@ -49,3 +49,27 @@ test("only added or removed rows change the list; row content updates the turn",
   expect(onRows).toHaveBeenCalledTimes(3);
   expect(store.get("assistant-1")).toBeUndefined();
 });
+
+describe("showArtifactCardsBelowMessage", () => {
+  it("lists a finished turn's artifacts below it even when its activity shows them", () => {
+    const { showArtifactCardsBelowMessage } = require("../turn-activity");
+    expect(
+      showArtifactCardsBelowMessage({
+        artifactsInline: true,
+        effectiveGenerating: true,
+      }),
+    ).toBe(false);
+    expect(
+      showArtifactCardsBelowMessage({
+        artifactsInline: true,
+        effectiveGenerating: false,
+      }),
+    ).toBe(true);
+    expect(
+      showArtifactCardsBelowMessage({
+        artifactsInline: false,
+        effectiveGenerating: true,
+      }),
+    ).toBe(true);
+  });
+});
