@@ -38,6 +38,13 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "projects.setProjectDeletionProtection": projectFromOpts,
   "projects.setProjectManageUsersOwnerOnly": projectFromOpts,
   "projects.setProjectUserRole": projectFromNestedOpts,
+  "projects.getProjectAccessLandingInfo": projectFromOpts,
+  "projects.requestProjectAccess": projectFromOpts,
+  "projects.listProjectAccessRequests": projectFromOpts,
+  "projects.respondProjectAccessRequest": projectFromOpts,
+  "projects.listProjectAccessRequestBlocks": projectFromOpts,
+  "projects.unblockProjectAccessRequester": projectFromOpts,
+  "projects.getProjectCollaboratorInviteUsage": projectFromOpts,
 };
 
 export function getHubApiRoute(name: string): HubApiRoute | undefined {
