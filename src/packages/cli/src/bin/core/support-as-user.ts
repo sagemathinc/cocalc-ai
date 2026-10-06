@@ -7,58 +7,117 @@
 // ticket's user. This is the CLI analogue of opening a support impersonation
 // link in a fresh incognito window: the audited grant is redeemed with plain
 // HTTP (no browser, no site JavaScript), the session cookie only ever lives in
-// memory and a private temporary file, the command runs in a separate CLI
+// memory and is handed to the child over stdin, the command runs in a separate CLI
 // process that cannot fall back to the operator's credentials, and the session
 // is signed out afterwards.
 
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
-// Inspection commands only. `project exec` runs arbitrary code as the user, so
-// operators must keep it to read-only commands (du, ls, ...); everything is
-// still limited to the user's own permissions and the audited grant.
-const ALLOWED_COMMANDS: readonly string[][] = [
-  ["project", "exec"],
-  ["project", "list"],
-  ["project", "status"],
-  ["project", "storage", "show"],
-  ["project", "storage", "breakdown"],
-  ["project", "storage", "history"],
-  ["project", "snapshot", "list"],
-  ["project", "backup", "list"],
-  ["project", "backup", "files"],
-  ["project", "file", "list"],
-  ["project", "file", "cat"],
-  ["project", "file", "rg"],
-  ["project", "file", "fd"],
+// Read-only inspection commands, matched exactly: the argv must start with
+// the command words, and every later token must be one of that command's
+// listed options (with its value) or a positional argument. No root/global
+// options, no "--", and no pass-through options such as rg/fd extra flags
+// (ripgrep --pre and fd --exec run programs). There is deliberately no
+// arbitrary shell (project exec).
+interface AsUserCommand {
+  words: string[];
+  /** option -> number of values it takes */
+  options: Record<string, 0 | 1>;
+  maxPositionals: number;
+}
+
+const PROJECT = { "-w": 1, "--project": 1 } as const;
+
+const ALLOWED_COMMANDS: readonly AsUserCommand[] = [
+  {
+    words: ["project", "list"],
+    options: { "--host": 1, "--prefix": 1, "--limit": 1 },
+    maxPositionals: 0,
+  },
+  { words: ["project", "status"], options: { ...PROJECT }, maxPositionals: 0 },
+  {
+    words: ["project", "storage", "show"],
+    options: { ...PROJECT, "--home": 1 },
+    maxPositionals: 0,
+  },
+  {
+    words: ["project", "storage", "breakdown"],
+    options: { ...PROJECT },
+    maxPositionals: 1,
+  },
+  {
+    words: ["project", "storage", "history"],
+    options: { ...PROJECT, "--window": 1, "--points": 1 },
+    maxPositionals: 0,
+  },
+  {
+    words: ["project", "snapshot", "list"],
+    options: { ...PROJECT },
+    maxPositionals: 0,
+  },
+  {
+    words: ["project", "backup", "list"],
+    options: { ...PROJECT, "--indexed-only": 0, "--limit": 1 },
+    maxPositionals: 0,
+  },
+  {
+    words: ["project", "backup", "files"],
+    options: { ...PROJECT, "--backup-id": 1, "--path": 1 },
+    maxPositionals: 0,
+  },
+  {
+    words: ["project", "file", "list"],
+    options: { ...PROJECT },
+    maxPositionals: 1,
+  },
+  {
+    words: ["project", "file", "cat"],
+    options: { ...PROJECT },
+    maxPositionals: 1,
+  },
+  {
+    words: ["project", "file", "rg"],
+    options: { ...PROJECT, "--timeout": 1, "--max-bytes": 1 },
+    maxPositionals: 2,
+  },
+  {
+    words: ["project", "file", "fd"],
+    options: { ...PROJECT },
+    maxPositionals: 2,
+  },
 ];
 
-const FORBIDDEN_GLOBAL_FLAGS = new Set([
-  "--cookie",
-  "--cookie-file",
-  "--api-key",
-  "--api-key-file",
-  "--bearer",
-  "--hub-password",
-  "--profile",
-  "--api",
-  "--account-id",
-]);
-
 export function allowedAsUserCommand(args: readonly string[]): boolean {
-  if (args.some((arg) => FORBIDDEN_GLOBAL_FLAGS.has(arg.split("=")[0]))) {
-    return false;
-  }
-  const words = args.filter((arg) => !arg.startsWith("-"));
-  return ALLOWED_COMMANDS.some((prefix) =>
-    prefix.every((word, i) => words[i] === word),
+  const spec = ALLOWED_COMMANDS.find(({ words }) =>
+    words.every((word, i) => args[i] === word),
   );
+  if (!spec) return false;
+  let positionals = 0;
+  for (let i = spec.words.length; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--") return false;
+    if (arg.startsWith("-")) {
+      // Values must be separate tokens; "--opt=value" and bundled short
+      // flags are rejected rather than interpreted.
+      const arity = Object.prototype.hasOwnProperty.call(spec.options, arg)
+        ? spec.options[arg]
+        : undefined;
+      if (arity == null) return false;
+      if (arity === 1) {
+        const value = args[i + 1];
+        if (value == null) return false;
+        i += 1;
+      }
+    } else {
+      positionals += 1;
+      if (positionals > spec.maxPositionals) return false;
+    }
+  }
+  return true;
 }
 
 export function allowedAsUserCommandsHelp(): string {
-  return ALLOWED_COMMANDS.map((words) => words.join(" ")).join(", ");
+  return ALLOWED_COMMANDS.map(({ words }) => words.join(" ")).join(", ");
 }
 
 /** Cookie name -> value from Set-Cookie headers (later wins). */
@@ -87,14 +146,17 @@ function hasSession(jar: Map<string, string>): boolean {
   return [...jar.keys()].some((name) => name.endsWith("remember_me"));
 }
 
-// The cross-bay retry is a client-side redirect page. Accept only another
-// https /auth/impersonate URL from it.
-function clientSideImpersonationRedirect(html: string): URL | undefined {
+// The cross-bay retry is a client-side redirect page. Accept only an
+// /auth/impersonate URL on one of the grant's own origins.
+function clientSideImpersonationRedirect(
+  html: string,
+  allowedOrigins: ReadonlySet<string>,
+): URL | undefined {
   const match = html.match(/window\.location\.href\s*=\s*("(?:[^"\\]|\\.)*")/);
   if (!match) return undefined;
   try {
     const url = new URL(JSON.parse(match[1]));
-    if (url.protocol !== "https:" && url.hostname !== "localhost") return;
+    if (!allowedOrigins.has(url.origin)) return;
     if (!url.pathname.endsWith("/auth/impersonate")) return;
     return url;
   } catch {
@@ -109,9 +171,21 @@ function clientSideImpersonationRedirect(html: string): URL | undefined {
 export async function redeemImpersonationUrl(
   url: string,
   fetchImpl: typeof fetch = fetch,
+  /** Origins the redemption may visit, e.g. the grant's and its home bay's. */
+  extraOrigins: readonly string[] = [],
 ): Promise<{ cookie: string; origin: string }> {
   const jar = new Map<string, string>();
   let target: URL | undefined = new URL(url);
+  const allowedOrigins = new Set([
+    target.origin,
+    ...extraOrigins.flatMap((value) => {
+      try {
+        return [new URL(value).origin];
+      } catch {
+        return [];
+      }
+    }),
+  ]);
   target.searchParams.set("confirm", "1");
   for (let hop = 0; target && hop < 3; hop++) {
     const response = await fetchImpl(target, {
@@ -126,7 +200,11 @@ export async function redeemImpersonationUrl(
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
       target = location ? new URL(location, target) : undefined;
-      if (target && !target.pathname.endsWith("/auth/impersonate")) {
+      if (
+        target &&
+        (!allowedOrigins.has(target.origin) ||
+          !target.pathname.endsWith("/auth/impersonate"))
+      ) {
         target = undefined;
       }
       continue;
@@ -139,7 +217,7 @@ export async function redeemImpersonationUrl(
           .slice(0, 300),
       );
     }
-    target = clientSideImpersonationRedirect(body);
+    target = clientSideImpersonationRedirect(body, allowedOrigins);
   }
   throw new Error("impersonation link did not establish a session");
 }
@@ -158,6 +236,7 @@ export async function signOutSession(
         headers: { cookie, "content-type": "application/json" },
         // `all: false` revokes only this session, never the user's others.
         body: JSON.stringify({ all: false }),
+        signal: AbortSignal.timeout(10_000),
       },
     );
     return response.ok;
@@ -176,90 +255,94 @@ export interface AsUserRunResult {
 /** Run one CLI command as the user in a separate process. */
 export async function runCliAsUser({
   api,
-  accountId,
+  expectedAccountId,
   cookie,
   args,
   timeoutMs,
   maxBytes = 1024 * 1024,
 }: {
   api: string;
-  accountId: string;
+  /** The child must be authenticated as exactly this account. */
+  expectedAccountId: string;
   cookie: string;
   args: readonly string[];
   timeoutMs: number;
   maxBytes?: number;
 }): Promise<AsUserRunResult> {
-  const dir = await mkdtemp(join(tmpdir(), "cocalc-as-user-"));
-  const cookieFile = join(dir, "cookie");
-  try {
-    await writeFile(cookieFile, cookie, { mode: 0o600, flag: "wx" });
-    const entry = process.argv[1];
-    const prefix = entry && /\.[cm]?js$/.test(entry) ? [entry] : [];
-    const child = spawn(
-      process.execPath,
-      [
-        ...prefix,
-        "--no-daemon",
-        "--json",
-        "--cookie-file",
-        cookieFile,
-        "--api",
-        api,
-        "--account-id",
-        accountId,
-        ...args,
-      ],
-      {
-        stdio: ["ignore", "pipe", "pipe"],
-        env: Object.fromEntries(
-          Object.entries(process.env).filter(
-            ([key]) =>
-              !/^COCALC_(API_KEY|HUB_PASSWORD|ACCOUNT_ID|AGENT|BEARER|PROJECT_ID|API_URL|AUTH)/.test(
-                key,
-              ),
-          ),
+  const entry = process.argv[1];
+  const prefix = entry && /\.[cm]?js$/.test(entry) ? [entry] : [];
+  // The cookie goes over stdin ("--cookie-file -"): never argv, never disk.
+  // No --account-id: the account comes from the session, and is checked.
+  const child = spawn(
+    process.execPath,
+    [
+      ...prefix,
+      "--no-daemon",
+      "--json",
+      "--cookie-file",
+      "-",
+      "--api",
+      api,
+      ...args,
+    ],
+    {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: Object.fromEntries(
+        Object.entries(process.env).filter(
+          ([key]) =>
+            !/^COCALC_(API_KEY|HUB_PASSWORD|ACCOUNT_ID|AGENT|BEARER|PROJECT_ID|API_URL|AUTH)/.test(
+              key,
+            ),
         ),
-      },
-    );
-    const out: Buffer[] = [];
-    const err: Buffer[] = [];
-    let size = 0;
-    let truncated = false;
-    const take = (target: Buffer[]) => (chunk: Buffer) => {
-      if (size + chunk.length > maxBytes) {
-        truncated = true;
-        chunk = chunk.subarray(0, Math.max(0, maxBytes - size));
-      }
-      size += chunk.length;
-      if (chunk.length) target.push(chunk);
-    };
-    child.stdout.on("data", take(out));
-    child.stderr.on("data", take(err));
-    const exitCode = await new Promise<number | null>((resolve, reject) => {
-      const timer = setTimeout(() => child.kill("SIGTERM"), timeoutMs);
-      child.on("error", (error) => {
-        clearTimeout(timer);
-        reject(error);
-      });
-      child.on("close", (code) => {
-        clearTimeout(timer);
-        resolve(code);
-      });
-    });
-    const text = Buffer.concat(out).toString("utf8");
-    let stdout: unknown = text;
-    try {
-      stdout = JSON.parse(text);
-    } catch {
-      // keep text
+      ),
+    },
+  );
+  child.stdin.end(cookie);
+  const out: Buffer[] = [];
+  const err: Buffer[] = [];
+  let size = 0;
+  let truncated = false;
+  const take = (target: Buffer[]) => (chunk: Buffer) => {
+    if (size + chunk.length > maxBytes) {
+      truncated = true;
+      chunk = chunk.subarray(0, Math.max(0, maxBytes - size));
     }
-    return {
-      exit_code: exitCode,
-      stdout,
-      stderr: Buffer.concat(err).toString("utf8").slice(0, 20_000),
-      truncated,
-    };
-  } finally {
-    await rm(dir, { recursive: true, force: true });
+    size += chunk.length;
+    if (chunk.length) target.push(chunk);
+  };
+  child.stdout.on("data", take(out));
+  child.stderr.on("data", take(err));
+  const exitCode = await new Promise<number | null>((resolve, reject) => {
+    const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve(code);
+    });
+  });
+  const parse = (text: string): any => {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return undefined;
+    }
+  };
+  const stdoutText = Buffer.concat(out).toString("utf8");
+  const stderrText = Buffer.concat(err).toString("utf8");
+  const parsed = parse(stdoutText) ?? parse(stderrText);
+  const actual = parsed?.meta?.account_id;
+  if (actual !== expectedAccountId) {
+    throw new Error(
+      `as-user session was not verified as the requested account (got ${actual ?? "none"}); output withheld`,
+    );
   }
+  return {
+    exit_code: exitCode,
+    stdout: parse(stdoutText) ?? stdoutText,
+    stderr: stderrText.slice(0, 20_000),
+    truncated,
+  };
 }

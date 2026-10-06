@@ -3,7 +3,14 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 
-import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  openSync,
+  readFileSync,
+  readSync,
+} from "node:fs";
 import {
   ENV_AUTH_PROFILE,
   type GlobalAuthOptions,
@@ -35,6 +42,7 @@ export function resolveCookieFileGlobals<
 }
 
 export function readCookieFile(path: string): string {
+  if (path === "-") return readCookieStdin();
   let fd: number;
   try {
     fd = openSync(
@@ -72,4 +80,16 @@ export function readCookieFile(path: string): string {
   } finally {
     closeSync(fd);
   }
+}
+
+// "--cookie-file -": read the cookie from standard input (used by as-user so
+// the credential never touches disk or argv).
+function readCookieStdin(): string {
+  const bytes = readFileSync(0);
+  if (bytes.length > MAX_COOKIE_BYTES) throw new Error("cookie is too large");
+  const cookie = bytes.toString("utf8").trim();
+  if (!cookie || /[\r\n]/.test(cookie)) {
+    throw new Error("standard input must contain one Cookie header value");
+  }
+  return cookie;
 }

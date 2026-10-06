@@ -26,21 +26,54 @@ function response(
   return new Response(body, { status, headers });
 }
 
-test("as-user allows only inspection commands without credential overrides", () => {
-  assert.ok(
-    allowedAsUserCommand(["project", "exec", "-w", "p", "--bash", "du -sh ~"]),
-  );
+test("as-user allows only exact inspection commands with their own options", () => {
   assert.ok(allowedAsUserCommand(["project", "snapshot", "list", "-w", "p"]));
-  assert.ok(allowedAsUserCommand(["project", "file", "cat", "a.txt"]));
-  assert.equal(allowedAsUserCommand(["project", "file", "rm", "x"]), false);
-  assert.equal(allowedAsUserCommand(["project", "snapshot", "restore"]), false);
-  assert.equal(allowedAsUserCommand(["admin", "support", "list"]), false);
-  assert.equal(
-    allowedAsUserCommand(["--profile", "prod", "project", "list"]),
-    false,
+  assert.ok(
+    allowedAsUserCommand([
+      "project",
+      "storage",
+      "breakdown",
+      "-w",
+      "p",
+      ".local",
+    ]),
   );
-  assert.equal(allowedAsUserCommand(["project", "list", "--cookie=x"]), false);
-  assert.equal(allowedAsUserCommand([]), false);
+  assert.ok(
+    allowedAsUserCommand(["project", "file", "cat", "--project", "p", "a.txt"]),
+  );
+  assert.ok(
+    allowedAsUserCommand(["project", "file", "rg", "-w", "p", "TODO", "src"]),
+  );
+  assert.ok(allowedAsUserCommand(["project", "list", "--limit", "5"]));
+});
+
+test("as-user rejects shells, writes and option-operand smuggling", () => {
+  const rejected: string[][] = [
+    // no arbitrary shell
+    ["project", "exec", "-w", "p", "--bash", "du -sh ~"],
+    // root option consuming "project" as its value would run `cocalc exec`
+    ["--output", "project", "exec", "return 1"],
+    ["--json", "project", "list"],
+    // writes and restores
+    ["project", "file", "rm", "x"],
+    ["project", "snapshot", "restore", "-w", "p"],
+    ["admin", "support", "list"],
+    // pass-through options that can run programs (rg --pre, fd --exec)
+    ["project", "file", "rg", "-w", "p", "--rg-option", "--pre=sh", "x"],
+    ["project", "file", "fd", "-w", "p", "--exec", "rm"],
+    // credential/profile overrides, --opt=value, separators, extra operands
+    ["project", "list", "--cookie", "x"],
+    ["project", "list", "--profile", "prod"],
+    ["project", "status", "--project=p"],
+    ["project", "status", "--", "exec"],
+    ["project", "status", "-w"],
+    ["project", "file", "cat", "-w", "p", "a", "b"],
+    ["project", "storage", "show", "--force-sample"],
+    [],
+  ];
+  for (const args of rejected) {
+    assert.equal(allowedAsUserCommand(args), false, JSON.stringify(args));
+  }
 });
 
 test("redeems the confirmation URL with plain HTTP and keeps only cookies", async () => {
@@ -79,6 +112,7 @@ test("follows the cross-bay retry to the home bay only", async () => {
   const result = await redeemImpersonationUrl(
     "https://cocalc.ai/auth/impersonate?grant_id=g",
     fakeFetch,
+    ["https://bay-1.cocalc.ai"],
   );
   assert.equal(seen.length, 2);
   assert.equal(result.origin, "https://bay-1.cocalc.ai");
@@ -90,6 +124,23 @@ test("follows the cross-bay retry to the home bay only", async () => {
     )) as unknown as typeof fetch;
   await assert.rejects(
     redeemImpersonationUrl("https://cocalc.ai/auth/impersonate?g=1", evil),
+    /did not establish a session/,
+  );
+  // An HTTPS /auth/impersonate URL on an unexpected origin is not followed.
+  const otherSite = (async (url: URL) =>
+    url.hostname === "cocalc.ai"
+      ? response(
+          `<script>window.location.href = "https://evil.example/auth/impersonate?x=1";</script>`,
+        )
+      : response("ok", {
+          cookies: ["remember_me=stolen; Path=/"],
+        })) as unknown as typeof fetch;
+  await assert.rejects(
+    redeemImpersonationUrl(
+      "https://cocalc.ai/auth/impersonate?g=1",
+      otherSite,
+      ["https://bay-1.cocalc.ai"],
+    ),
     /did not establish a session/,
   );
 });
@@ -117,6 +168,7 @@ test("signs out only the impersonation session", async () => {
   );
   assert.equal(request!.url, "https://cocalc.ai/api/v2/accounts/sign-out");
   assert.equal(request!.init.body, JSON.stringify({ all: false }));
+  assert.ok(request!.init.signal, "sign-out must be time-bounded");
   assert.deepEqual(request!.init.headers, {
     cookie: "remember_me=s",
     "content-type": "application/json",
