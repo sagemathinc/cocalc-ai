@@ -755,12 +755,15 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
   onFutureDue,
   shadow = false,
   onDispatched,
+  detach = false,
 }: {
   hostId: string;
   projectIds?: string[];
   onFutureDue?: (projectId: string, at: number) => void;
   shadow?: boolean;
   onDispatched?: () => void;
+  /** Return once the work is queued instead of when it finishes. */
+  detach?: boolean;
 }): Promise<boolean> {
   const admission = getStorageAdmissionStatus();
   const sweepRestricted =
@@ -784,9 +787,14 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_PARALLELISM,
     DEFAULT_PARALLELISM,
   );
+  // An explicit shared setting still governs backups unless the backup lane
+  // has its own.
   const configuredBackupParallelism = parsePositiveInteger(
     process.env.COCALC_PROJECT_HOST_BACKUP_PARALLELISM,
-    Math.max(configuredSnapshotParallelism, DEFAULT_BACKUP_PARALLELISM),
+    parsePositiveInteger(
+      process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_PARALLELISM,
+      DEFAULT_BACKUP_PARALLELISM,
+    ),
   );
   const configuredParallelism = Math.max(
     configuredSnapshotParallelism,
@@ -1225,8 +1233,20 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     if (refreshed && refreshed !== row) rememberRowFutureDue(refreshed);
     return refreshed;
   };
+  // Nothing awaits detached work, so log its failures here.
+  const onDetachedError =
+    (kind: "snapshot" | "backup") =>
+    (err: unknown, row: HostProjectMaintenanceSchedule) =>
+      logger.warn("queued maintenance operation failed", {
+        hostId,
+        project_id: row.project_id,
+        kind,
+        err: `${err}`,
+      });
   const snapshotLane = async () => {
     await queues.snapshot.submit({
+      detach,
+      onError: onDetachedError("snapshot"),
       rows: snapshotRows.filter((row) =>
         actionableMaintenance(row, "snapshot", queuedAt),
       ),
@@ -1419,6 +1439,8 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
   };
   const backupLane = async () => {
     await queues.backup.submit({
+      detach,
+      onError: onDetachedError("backup"),
       rows: backupRows.filter((row) =>
         actionableMaintenance(row, "backup", queuedAt),
       ),
@@ -1638,12 +1660,14 @@ export async function runProjectSnapshotBackupMaintenanceSweepOnce({
   onFutureDue,
   shadow = false,
   onDispatched,
+  detach = false,
 }: {
   hostId: string;
   projectIds?: string[];
   onFutureDue?: (projectId: string, at: number) => void;
   shadow?: boolean;
   onDispatched?: () => void;
+  detach?: boolean;
 }) {
   return await runProjectSnapshotBackupMaintenanceSweepUnlocked({
     hostId,
@@ -1651,6 +1675,7 @@ export async function runProjectSnapshotBackupMaintenanceSweepOnce({
     onFutureDue,
     shadow,
     onDispatched,
+    detach,
   });
 }
 
@@ -1780,25 +1805,16 @@ export function startProjectSnapshotBackupMaintenance({
     fullSweepRunning = true;
     const startedAt = Date.now();
     let reconciled = false;
-    let dispatched = false;
     try {
       reconciled = await runProjectSnapshotBackupMaintenanceSweepOnce({
         hostId,
         onFutureDue: rememberFutureDue,
         shadow,
-        // The persistent per-host queues drain the dispatched work. Allow the
-        // next periodic sweep as soon as this one is queued: waiting for a
-        // long backlog to drain kept dispatching from an hours-old inventory
-        // and hid changes made since.
-        onDispatched: () => {
-          dispatched = true;
-          fullSweepRunning = false;
-          logger.info("snapshot/backup full reconciliation dispatched", {
-            hostId,
-            trigger,
-            duration_ms: Date.now() - startedAt,
-          });
-        },
+        // The persistent per-host queues drain the dispatched work, so finish
+        // once it is queued: waiting for a long backlog to drain kept
+        // dispatching from an hours-old inventory and hid changes made since.
+        // Detached, sweeps never overlap and hold no waiters on the backlog.
+        detach: true,
       });
     } catch (err) {
       logger.warn("snapshot/backup maintenance sweep failed", {
@@ -1806,7 +1822,7 @@ export function startProjectSnapshotBackupMaintenance({
         err: `${err}`,
       });
     } finally {
-      if (!dispatched) fullSweepRunning = false;
+      fullSweepRunning = false;
       logger.info("snapshot/backup full reconciliation finished", {
         hostId,
         trigger,

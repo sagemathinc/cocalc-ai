@@ -2571,6 +2571,59 @@ describe("snapshot-backup-maintenance", () => {
     }
   });
 
+  it("follows an explicit shared parallelism setting for backups", async () => {
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_PARALLELISM = "1";
+    listProjectMaintenanceSchedulesMock.mockResolvedValue(
+      ["a", "b"].map(dueBackupRow),
+    );
+    let finishFirst!: () => void;
+    runScheduledBackupMaintenanceMock
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          finishFirst = () => resolve({ created: true });
+        }),
+      )
+      .mockResolvedValue({ created: true });
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+    const sweep = runProjectSnapshotBackupMaintenanceSweepOnce({
+      hostId: "host-1",
+    });
+    await settle(
+      () => runScheduledBackupMaintenanceMock.mock.calls.length >= 1,
+    );
+    await settle(() => false);
+    expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(1);
+    finishFirst();
+    await expect(sweep).resolves.toBe(true);
+    expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns a detached sweep once its work is queued", async () => {
+    listProjectMaintenanceSchedulesMock.mockResolvedValue([
+      dueBackupRow("held"),
+    ]);
+    let finish!: () => void;
+    runScheduledBackupMaintenanceMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = () => resolve({ created: true });
+      }),
+    );
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+    await expect(
+      runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-detached",
+        detach: true,
+      }),
+    ).resolves.toBe(true);
+    await settle(
+      () => runScheduledBackupMaintenanceMock.mock.calls.length >= 1,
+    );
+    expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(1);
+    finish();
+  });
+
   it("re-lists on the next periodic sweep while dispatched work still drains", async () => {
     jest.useFakeTimers();
     process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_INITIAL_DELAY_MS = "0";
