@@ -143,7 +143,13 @@ export type ProjectCopyInsert = ProjectCopyKey & {
 
 const pool = () => getPool();
 
+// Run once per process: the setup includes ALTER TABLE, which takes an ACCESS
+// EXCLUSIVE lock even when nothing changes and queues every later query on the
+// table behind any open transaction (production outage 2026-10-06).
+let copySchemaReady = false;
+
 export async function ensureCopySchema(): Promise<void> {
+  if (copySchemaReady) return;
   await pool().query(`
     CREATE TABLE IF NOT EXISTS project_copies (
       copy_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -222,6 +228,7 @@ export async function ensureCopySchema(): Promise<void> {
   await pool().query(
     "CREATE UNIQUE INDEX IF NOT EXISTS project_copies_op_key_idx ON project_copies(op_id, src_project_id, src_path, dest_project_id, dest_path)",
   );
+  copySchemaReady = true;
 }
 
 async function countActiveSnapshotRefs(snapshot_id: string): Promise<number> {

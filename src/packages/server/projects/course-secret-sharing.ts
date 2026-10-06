@@ -157,9 +157,15 @@ function syncResult(row: any): CourseSecretSyncResult {
   };
 }
 
+// Run once per process: the setup includes ALTER TABLE, which takes an ACCESS
+// EXCLUSIVE lock even when nothing changes and queues every later query on the
+// table behind any open transaction (production outage 2026-10-06).
+let courseSecretSharingSchemaReady = false;
+
 export async function ensureCourseSecretSharingSchema(
   db: Queryable = pool(),
 ): Promise<void> {
+  if (courseSecretSharingSchemaReady) return;
   await db.query(`CREATE TABLE IF NOT EXISTS course_secret_policies (
     policy_id UUID PRIMARY KEY,
     project_id UUID NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
@@ -272,6 +278,8 @@ export async function ensureCourseSecretSharingSchema(
     ALTER TABLE course_secret_audit_events
       DROP CONSTRAINT IF EXISTS course_secret_audit_events_actor_account_id_fkey
   `);
+  // DDL inside a caller's transaction may still roll back.
+  if (db === pool()) courseSecretSharingSchemaReady = true;
 }
 
 async function audit(

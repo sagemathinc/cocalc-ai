@@ -87,9 +87,15 @@ async function getProjectSecretsKey(): Promise<Buffer> {
   return cachedProjectSecretsKey;
 }
 
+// Run once per process: the setup includes ALTER TABLE, which takes an ACCESS
+// EXCLUSIVE lock even when nothing changes and queues every later query on the
+// table behind any open transaction (production outage 2026-10-06).
+let projectSecretsSchemaReady = false;
+
 export async function ensureProjectSecretsSchema(
   db: Queryable = pool(),
 ): Promise<void> {
+  if (projectSecretsSchemaReady) return;
   await db.query(`
     CREATE TABLE IF NOT EXISTS project_secrets (
       project_id UUID NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
@@ -159,6 +165,8 @@ export async function ensureProjectSecretsSchema(
     ALTER TABLE project_secret_managed_sources
       DROP CONSTRAINT IF EXISTS project_secret_managed_sources_installed_by_fkey
   `);
+  // DDL inside a caller's transaction may still roll back.
+  if (db === pool()) projectSecretsSchemaReady = true;
 }
 
 function metadata(row: any): ProjectSecretMetadata {
