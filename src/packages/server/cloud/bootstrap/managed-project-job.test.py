@@ -513,9 +513,10 @@ assert libc.prctl(38, 0, 0, 0, 0) != 0
         def verify(pid, _scope):
             events.append(("verify", pid))
             return True
-        with mock.patch.object(m.os, "pipe", return_value=(100, 101)), mock.patch.object(m.os, "fork", return_value=123), mock.patch.object(m.os, "close"), mock.patch.object(m.os, "write", side_effect=lambda fd, data: events.append(("gate", data))), mock.patch.object(m, "member", side_effect=verify):
+        with mock.patch.object(m.os, "pipe", return_value=(100, 101)), mock.patch.object(m.os, "fork", return_value=123), mock.patch.object(m.os, "close"), mock.patch.object(m.os, "write", side_effect=lambda fd, data: events.append(("gate", data))), mock.patch.object(m, "member", side_effect=verify), mock.patch.object(m, "apply_project_oom_policy", side_effect=lambda pid: events.append(("oom", pid))):
             self.assertEqual(m.launch_locked(scope, None, None, None, []), 123)
-        self.assertEqual(events, [("migrate", "123"), ("verify", 123), ("gate", b"1")])
+        # The job leaves the supervisor's OOM protection before it may exec.
+        self.assertEqual(events, [("migrate", "123"), ("verify", 123), ("oom", 123), ("gate", b"1")])
 
     def test_failed_migration_never_opens_gate_and_reaps_uncontained_child(self):
         m = helper()
@@ -742,6 +743,53 @@ if MODE != 'success': time.sleep(60)
             for mode in ("cancel", "deadline", "lease-expiry", "success", "owner-death", "supervisor-crash", "wedged-guard", "project-stop"):
                 with self.subTest(detach=detach, mode=mode):
                     self.exercise(mode, detach)
+
+
+
+class ManagedJobOomPolicyTests(unittest.TestCase):
+    def test_policy_matches_the_project_launcher(self):
+        m = helper()
+        self.assertIn(
+            f'PROJECT_PROCESS_OOM_SCORE_ADJ="{m.PROJECT_OOM_SCORE_ADJ}"',
+            inspect.getsource(bootstrap),
+        )
+
+    def test_policy_is_written_and_verified(self):
+        m = helper()
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = Path(tmp)
+            (proc / "4242").mkdir()
+            (proc / "4242" / "oom_score_adj").write_text("-900\n")
+            m.apply_project_oom_policy(4242, proc)
+            self.assertEqual((proc / "4242" / "oom_score_adj").read_text(), "500\n")
+
+    def test_job_never_runs_without_the_policy(self):
+        m = helper()
+        gate = []
+        with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
+            scope = Path(tmp)
+            (scope / "cgroup.procs").write_text("")
+            patch = lambda name, **kw: stack.enter_context(
+                mock.patch.object(m.os, name, **kw)
+            )
+            patch("fork", return_value=4242)
+            patch("pipe", return_value=(10, 11))
+            patch("close")
+            patch("write", side_effect=lambda fd, data: gate.append(data))
+            kill = patch("kill")
+            patch("waitpid")
+            stack.enter_context(mock.patch.object(m, "member", return_value=True))
+            stack.enter_context(
+                mock.patch.object(
+                    m,
+                    "apply_project_oom_policy",
+                    side_effect=RuntimeError("project OOM policy not applied"),
+                )
+            )
+            with self.assertRaises(RuntimeError):
+                m.launch_locked(scope, None, [], {}, None)
+        self.assertEqual(gate, [])
+        kill.assert_called_once_with(4242, signal.SIGKILL)
 
 
 if __name__ == "__main__":
