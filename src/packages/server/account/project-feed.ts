@@ -289,6 +289,85 @@ async function forwardRemoteProjectFeedEventsBestEffort(opts: {
   }
 }
 
+// Forwarding to other bays never blocks the caller: a mutation on the owning
+// bay must not wait out a fabric reconnect (or a slow peer) just to refresh
+// another bay's read projection. Each project has its own serial queue so its
+// events reach other bays in order. Forwards waiting behind a stalled send are
+// coalesced, because each one carries a full snapshot of the project: only
+// the newest snapshot is sent, together with every account that may have lost
+// visibility in between.
+type RemoteFeedJob =
+  | {
+      kind: "forward";
+      bay_id: string;
+      payload: ProjectOutboxPayload;
+      previousVisibleAccountIds: Set<string>;
+      ts: number;
+    }
+  | { kind: "run"; run: () => Promise<void> };
+
+const remoteFeedQueues = new Map<string, RemoteFeedJob[]>();
+const remoteFeedDrains = new Map<string, Promise<void>>();
+
+function enqueueRemoteFeedJob(project_id: string, job: RemoteFeedJob): void {
+  const queue = remoteFeedQueues.get(project_id) ?? [];
+  const tail = queue[queue.length - 1];
+  if (job.kind === "forward" && tail?.kind === "forward") {
+    for (const account_id of job.previousVisibleAccountIds) {
+      tail.previousVisibleAccountIds.add(account_id);
+    }
+    if (job.ts >= tail.ts) {
+      tail.payload = job.payload;
+      tail.ts = job.ts;
+      tail.bay_id = job.bay_id;
+    }
+  } else {
+    queue.push(job);
+  }
+  remoteFeedQueues.set(project_id, queue);
+  if (!remoteFeedDrains.has(project_id)) {
+    remoteFeedDrains.set(project_id, drainRemoteFeedQueue(project_id));
+  }
+}
+
+async function drainRemoteFeedQueue(project_id: string): Promise<void> {
+  try {
+    for (;;) {
+      const job = remoteFeedQueues.get(project_id)?.shift();
+      if (job == null) {
+        return;
+      }
+      try {
+        if (job.kind === "forward") {
+          await forwardRemoteProjectFeedEventsBestEffort({
+            bay_id: job.bay_id,
+            payload: job.payload,
+            previousVisibleAccountIds: [...job.previousVisibleAccountIds],
+            event_ts: new Date(job.ts),
+          });
+        } else {
+          await job.run();
+        }
+      } catch (err) {
+        logger.warn("failed to forward project feed events to other bays", {
+          project_id,
+          err: `${err}`,
+        });
+      }
+    }
+  } finally {
+    remoteFeedQueues.delete(project_id);
+    remoteFeedDrains.delete(project_id);
+  }
+}
+
+/** Resolves once every queued forward to other bays has been attempted. */
+export async function flushRemoteProjectFeedForwards(): Promise<void> {
+  while (remoteFeedDrains.size > 0) {
+    await Promise.all([...remoteFeedDrains.values()]);
+  }
+}
+
 export async function publishProjectRemoveFeedEventsBestEffort(opts: {
   project_id: string;
   account_ids: string[];
@@ -329,35 +408,51 @@ export async function publishProjectRemoveFeedEventsBestEffort(opts: {
       .filter((row) => isValidUUID(`${row.account_id ?? ""}`))
       .map((row) => [`${row.account_id}`, `${row.home_bay_id ?? ""}`.trim()]),
   );
-  const fabric = getInterBayFabricClient();
-  const remoteClients = new Map<string, InterBayAccountProjectFeedApi>();
+  const remote: { account_id: string; dest_bay: string }[] = [];
   await Promise.all(
     account_ids.map(async (account_id) => {
-      const event = eventFor(account_id);
       const dest_bay = homeBayByAccountId.get(account_id);
       if (!dest_bay || dest_bay === bay_id) {
-        await publishAccountFeedEventBestEffort({ account_id, event });
-        return;
-      }
-      const client =
-        remoteClients.get(dest_bay) ??
-        createInterBayAccountProjectFeedClient({
-          client: fabric,
-          dest_bay,
-        });
-      remoteClients.set(dest_bay, client);
-      try {
-        await client.remove(event);
-      } catch (err) {
-        logger.warn("failed to forward remote project remove feed event", {
-          project_id: opts.project_id,
+        await publishAccountFeedEventBestEffort({
           account_id,
-          dest_bay,
-          err: `${err}`,
+          event: eventFor(account_id),
         });
+      } else {
+        remote.push({ account_id, dest_bay });
       }
     }),
   );
+  if (remote.length === 0) {
+    return;
+  }
+  enqueueRemoteFeedJob(opts.project_id, {
+    kind: "run",
+    run: async () => {
+      const fabric = getInterBayFabricClient();
+      const remoteClients = new Map<string, InterBayAccountProjectFeedApi>();
+      await Promise.all(
+        remote.map(async ({ account_id, dest_bay }) => {
+          const client =
+            remoteClients.get(dest_bay) ??
+            createInterBayAccountProjectFeedClient({
+              client: fabric,
+              dest_bay,
+            });
+          remoteClients.set(dest_bay, client);
+          try {
+            await client.remove(eventFor(account_id));
+          } catch (err) {
+            logger.warn("failed to forward remote project remove feed event", {
+              project_id: opts.project_id,
+              account_id,
+              dest_bay,
+              err: `${err}`,
+            });
+          }
+        }),
+      );
+    },
+  });
 }
 
 export function enableDbProjectAccountFeedPublishing() {
@@ -448,12 +543,13 @@ export async function publishProjectAccountFeedEventsBestEffort(opts: {
       event,
     });
   }
-  if (payload) {
-    await forwardRemoteProjectFeedEventsBestEffort({
+  if (payload && isMultiBayCluster()) {
+    enqueueRemoteFeedJob(opts.project_id, {
+      kind: "forward",
       bay_id,
       payload,
-      previousVisibleAccountIds,
-      event_ts: latestEvent?.created_at,
+      previousVisibleAccountIds: new Set(previousVisibleAccountIds),
+      ts: eventTimestampMs(latestEvent?.created_at),
     });
   }
   for (const event of collaboratorFeedEvents) {

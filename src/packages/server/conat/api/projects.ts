@@ -4460,17 +4460,9 @@ export async function getProjectCollaboratorInviteUsage({
   if (!account_id) {
     throw new Error("user must be signed in");
   }
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null) {
-    throw new Error(`project ${project_id} not found`);
-  }
-  if (ownership.bay_id === getConfiguredBayId()) {
-    return await getProjectCollaboratorInviteUsageLocal(project_id);
-  }
-  return await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .getUsage({ account_id, project_id });
+  return await getProjectCollaboratorInviteUsageLocal(project_id);
 }
 
 export async function respondCollabInvite({
@@ -4526,16 +4518,11 @@ export async function getProjectAccessLandingInfo({
   account_id,
   project_id,
 }: Parameters<typeof getProjectAccessLandingInfoLocal>[0]) {
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
-    return await getProjectAccessLandingInfoLocal({ account_id, project_id });
-  }
-  return await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .getProjectAccessLandingInfo({
-      account_id: account_id!,
-      project_id,
-    });
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  return await getProjectAccessLandingInfoLocal({
+    account_id,
+    project_id,
+  });
 }
 
 export async function requestProjectAccess({
@@ -4546,27 +4533,15 @@ export async function requestProjectAccess({
   message,
   source,
 }: Parameters<typeof requestProjectAccessLocal>[0]) {
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
-    return await requestProjectAccessLocal({
-      account_id,
-      project_id,
-      requested_role,
-      read_policy,
-      message,
-      source,
-    });
-  }
-  return await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .requestProjectAccess({
-      account_id: account_id!,
-      project_id,
-      requested_role,
-      read_policy,
-      message,
-      source,
-    });
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  return await requestProjectAccessLocal({
+    account_id,
+    project_id,
+    requested_role,
+    read_policy,
+    message,
+    source,
+  });
 }
 
 export async function listProjectAccessRequests({
@@ -4575,23 +4550,13 @@ export async function listProjectAccessRequests({
   status,
   limit,
 }: Parameters<typeof listProjectAccessRequestsLocal>[0]) {
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
-    return await listProjectAccessRequestsLocal({
-      account_id,
-      project_id,
-      status,
-      limit,
-    });
-  }
-  return await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .listProjectAccessRequests({
-      account_id: account_id!,
-      project_id,
-      status,
-      limit,
-    });
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  return await listProjectAccessRequestsLocal({
+    account_id,
+    project_id,
+    status,
+    limit,
+  });
 }
 
 export async function respondProjectAccessRequest({
@@ -4603,29 +4568,16 @@ export async function respondProjectAccessRequest({
   read_policy,
   message,
 }: Parameters<typeof respondProjectAccessRequestLocal>[0]) {
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
-    return await respondProjectAccessRequestLocal({
-      account_id,
-      project_id,
-      request_id,
-      action,
-      role,
-      read_policy,
-      message,
-    });
-  }
-  return await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .respondProjectAccessRequest({
-      account_id: account_id!,
-      project_id,
-      request_id,
-      action,
-      role,
-      read_policy,
-      message,
-    });
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  return await respondProjectAccessRequestLocal({
+    account_id,
+    project_id,
+    request_id,
+    action,
+    role,
+    read_policy,
+    message,
+  });
 }
 
 export async function listProjectAccessRequestBlocks({
@@ -4633,21 +4585,12 @@ export async function listProjectAccessRequestBlocks({
   project_id,
   limit,
 }: Parameters<typeof listProjectAccessRequestBlocksLocal>[0]) {
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
-    return await listProjectAccessRequestBlocksLocal({
-      account_id,
-      project_id,
-      limit,
-    });
-  }
-  return await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .listProjectAccessRequestBlocks({
-      account_id: account_id!,
-      project_id,
-      limit,
-    });
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  return await listProjectAccessRequestBlocksLocal({
+    account_id,
+    project_id,
+    limit,
+  });
 }
 
 export async function unblockProjectAccessRequester({
@@ -4655,21 +4598,12 @@ export async function unblockProjectAccessRequester({
   project_id,
   blocked_account_id,
 }: Parameters<typeof unblockProjectAccessRequesterLocal>[0]) {
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
-    return await unblockProjectAccessRequesterLocal({
-      account_id,
-      project_id,
-      blocked_account_id,
-    });
-  }
-  return await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .unblockProjectAccessRequester({
-      account_id: account_id!,
-      project_id,
-      blocked_account_id,
-    });
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  return await unblockProjectAccessRequesterLocal({
+    account_id,
+    project_id,
+    blocked_account_id,
+  });
 }
 
 export async function copyEmailProjectInviteLink({

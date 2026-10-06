@@ -1,0 +1,101 @@
+name: Multibay fuzz
+
+# Seeded random operations and faults against a real two-bay cluster,
+# checked against a reference model. See
+# src/.agents/multibay-fuzzing-plan-2026-10-05.md.
+#
+# Nightly on main with a new seed each night; on demand with any seed.
+# A failure prints its seed: replay it with workflow_dispatch (seed, runs=1,
+# steps) or locally with FUZZ_SEED=<seed> FUZZ_RUNS=1 FUZZ_STEPS=<steps>.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  # A short run on changes to the fuzzer itself.
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "src/scripts/multibay/**"
+      - ".github/workflows/multibay-fuzz.yml"
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "First seed (default: derived from the run number)"
+        required: false
+        default: ""
+      runs:
+        description: "Number of seeds"
+        required: false
+        default: "3"
+      steps:
+        description: "Steps per seed"
+        required: false
+        default: "30"
+      allow:
+        description: "Invariants to report as warnings (comma-separated; none = strict)"
+        required: false
+        # honest-errors: committed changes answered with 408 while a peer is
+        # frozen, fixed by #909. Remove once it is merged.
+        default: "honest-errors"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.2
+          run_install: false
+
+      - name: Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: src/packages/pnpm-lock.yaml
+
+      - name: PostgreSQL server binaries
+        run: |
+          bindir="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -n 1)"
+          test -x "$bindir/initdb"
+          echo "$bindir" >> "$GITHUB_PATH"
+
+      - name: Build
+        run: cd src && pnpm build
+
+      - name: Model unit tests
+        run: node --test --test-reporter=spec src/scripts/multibay/fuzz/model.test.mjs
+
+      - name: Fuzz
+        env:
+          MULTIBAY_DIR: /tmp/multibay
+          MULTIBAY_KEEP: "1"
+          FUZZ_SEED: ${{ inputs.seed || github.run_number }}
+          FUZZ_RUNS: ${{ inputs.runs || (github.event_name == 'pull_request' && '2') || '3' }}
+          FUZZ_STEPS: ${{ inputs.steps || (github.event_name == 'pull_request' && '20') || '30' }}
+          FUZZ_ALLOW: ${{ inputs.allow || 'honest-errors' }}
+        run: |
+          mkdir -p "$MULTIBAY_DIR"
+          echo "FUZZ_SEED=$FUZZ_SEED FUZZ_RUNS=$FUZZ_RUNS FUZZ_STEPS=$FUZZ_STEPS FUZZ_ALLOW=$FUZZ_ALLOW"
+          node --test --test-reporter=spec src/scripts/multibay/fuzz/cluster-fuzz.test.mjs
+
+      - name: Upload fuzz logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multibay-fuzz-logs
+          path: |
+            /tmp/multibay/*/fuzz-seed-*.json
+            /tmp/multibay/*/bay-*/*.log
+          if-no-files-found: warn
+          retention-days: 14
