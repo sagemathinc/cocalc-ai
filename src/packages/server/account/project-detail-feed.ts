@@ -12,6 +12,15 @@ import { listLiveBrowserSessionAccountIds } from "@cocalc/server/conat/api/brows
 
 const logger = getLogger("server:account:project-detail-feed");
 const ACTIVE_BROWSER_MAX_AGE_MS = 3 * 60_000;
+// The live lookup is a scatter-gather over every conat node that always waits
+// out its full maxWait (2s), so share one lookup across a burst of changes. A
+// browser that connected within this window may miss an invalidation, but it
+// loads fresh project details when it connects anyway.
+const LIVE_ACCOUNTS_CACHE_MS = 5_000;
+
+let liveAccounts:
+  | { started_at: number; ids: Promise<string[] | undefined> }
+  | undefined;
 
 function normalizeFields(fields: string[]): string[] {
   return [
@@ -19,13 +28,27 @@ function normalizeFields(fields: string[]): string[] {
   ];
 }
 
+function cachedLiveBrowserSessionAccountIds(): Promise<string[] | undefined> {
+  const now = Date.now();
+  if (
+    liveAccounts == null ||
+    now - liveAccounts.started_at > LIVE_ACCOUNTS_CACHE_MS
+  ) {
+    liveAccounts = {
+      started_at: now,
+      ids: listLiveBrowserSessionAccountIds({
+        max_age_ms: ACTIVE_BROWSER_MAX_AGE_MS,
+      }).catch(() => undefined),
+    };
+  }
+  return liveAccounts.ids;
+}
+
 async function listActiveCollaboratorAccountIds(
   project_id: string,
 ): Promise<string[]> {
   const active = new Set(
-    (await listLiveBrowserSessionAccountIds({
-      max_age_ms: ACTIVE_BROWSER_MAX_AGE_MS,
-    })) ??
+    (await cachedLiveBrowserSessionAccountIds()) ??
       listRecentBrowserSessionAccountIds({
         max_age_ms: ACTIVE_BROWSER_MAX_AGE_MS,
       }),
@@ -41,7 +64,21 @@ async function listActiveCollaboratorAccountIds(
   return Object.keys(users).filter((account_id) => active.has(account_id));
 }
 
+// Invalidations only tell open browsers to refetch, so the change that caused
+// one never waits for it: this returns at once and publishes in the background.
 export async function publishProjectDetailInvalidationBestEffort(opts: {
+  project_id: string;
+  fields: string[];
+}): Promise<void> {
+  void publishProjectDetailInvalidation(opts).catch((err) =>
+    logger.warn("failed to publish project detail invalidation", {
+      project_id: opts?.project_id,
+      err: `${err}`,
+    }),
+  );
+}
+
+export async function publishProjectDetailInvalidation(opts: {
   project_id: string;
   fields: string[];
 }): Promise<void> {

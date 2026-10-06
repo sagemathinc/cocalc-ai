@@ -13,14 +13,18 @@ const createInterBaySessionAuthClient = jest.fn(() => ({
 }));
 const requireFreshAuthForSessionHash = jest.fn();
 
-jest.mock("@cocalc/server/cluster-config", () => ({
-  isMultiBayCluster: () => multiBay,
-}));
-jest.mock("@cocalc/server/bay-config", () => ({
-  getConfiguredBayId: () => "bay-0",
-}));
-jest.mock("@cocalc/server/bay-directory", () => ({
-  resolveAccountHomeBay: async () => ({ home_bay_id: homeBay }),
+const forgetAccountHome = jest.fn();
+jest.mock("@cocalc/server/accounts/home-bay", () => ({
+  forgetAccountHome: (...args) => forgetAccountHome(...args),
+  remoteHomeBay: async () =>
+    multiBay && homeBay !== "bay-0" ? homeBay : undefined,
+  assertAccountHomedHere: async () => {
+    if (multiBay && homeBay !== "bay-0") {
+      throw Object.assign(new Error("account is not homed on this bay"), {
+        code: 409,
+      });
+    }
+  },
 }));
 jest.mock("@cocalc/server/inter-bay/fabric", () => ({
   getInterBayFabricClient: () => ({ fabric: true }),
@@ -107,6 +111,19 @@ describe("requireDangerousSessionAuth", () => {
       message: "recent two-factor verification is required",
       code: "fresh_auth_required",
     });
+    expect(forgetAccountHome).not.toHaveBeenCalled();
+  });
+
+  it("forgets the cached home bay when that bay no longer holds the account", async () => {
+    delegated.mockResolvedValue({
+      ok: false,
+      error: "account is not homed on this bay",
+      attrs: { code: 409 },
+    });
+    await expect(
+      requireDangerousSessionAuth({ account_id: ACCOUNT, session_hash: "s" }),
+    ).rejects.toMatchObject({ code: 409 });
+    expect(forgetAccountHome).toHaveBeenCalledWith(ACCOUNT);
   });
 });
 

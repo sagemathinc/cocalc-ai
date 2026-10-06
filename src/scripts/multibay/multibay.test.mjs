@@ -316,6 +316,44 @@ describe("a project managed from the other bay", () => {
   });
 });
 
+describe("account-home facts on the owning bay", () => {
+  // Admin status lives on the account's home bay. The owning bay of a
+  // project must ask it, not its own (missing) copy of the account.
+  let carol; // an admin homed on the seed
+
+  it("recognizes an admin homed on the other bay", async () => {
+    carol = await createAccount(cluster, { home_bay_id: SEED, name: "carol" });
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+         [${JSON.stringify(carol.account_id)}]);`,
+    );
+    carol.client = await client(carol);
+    // Owners and admins may change this policy; carol is not a member.
+    await carol.client.call("projects.setProjectManageUsersOwnerOnly", {
+      project_id: bob.project,
+      manage_users_owner_only: true,
+    });
+    await carol.client.call("projects.setProjectManageUsersOwnerOnly", {
+      project_id: bob.project,
+      manage_users_owner_only: false,
+    });
+  });
+
+  it("still refuses a non-admin, non-owner on the other bay", async () => {
+    await assert.rejects(
+      alice.client.call("projects.setProjectManageUsersOwnerOnly", {
+        project_id: bob.project,
+        manage_users_owner_only: true,
+      }),
+      /Only project owners and administrators/,
+    );
+  });
+});
+
 describe("fabric faults", () => {
   it("answers a change on the owning bay while the other bay is frozen", async () => {
     // alice (homed on the seed) collaborates on bob's project. With the seed
@@ -458,6 +496,22 @@ describe("fabric faults", () => {
       bob.client,
       bob.project,
       "after an attached bay restart",
+    );
+  });
+  it("starts an attached bay while the seed's registry is unreadable", async () => {
+    // The bay's fabric handshakes are rejected until the registry answers;
+    // startup must wait for them rather than exit.
+    await cluster.stopBay(ATTACHED);
+    const locked = lockCredentialRegistry(20);
+    await sleep(2_000);
+    cluster.startBay(ATTACHED);
+    await locked;
+    await cluster.waitReady(ATTACHED);
+    await assertCrossBayRename(
+      alice.client,
+      bob.client,
+      bob.project,
+      "after starting during a registry outage",
     );
   });
 });

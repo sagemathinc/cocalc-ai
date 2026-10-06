@@ -114,20 +114,18 @@ export async function requireDangerousSessionAuth(
       bay_id: home,
     }).requireDangerousSessionAuth({ ...opts, account_id: accountId });
   if (result.ok) return result.session;
+  if ((result.attrs as any)?.code == 409) {
+    // That bay no longer holds the account: re-resolve on the next attempt.
+    const { forgetAccountHome } =
+      await import("@cocalc/server/accounts/home-bay");
+    forgetAccountHome(accountId);
+  }
   throw Object.assign(new Error(result.error), result.attrs);
 }
 
-/** The account's home bay if it is another bay of a multibay cluster. */
 async function remoteHomeBay(account_id: string): Promise<string | undefined> {
-  const { isMultiBayCluster } = await import("@cocalc/server/cluster-config");
-  if (!isMultiBayCluster()) return;
-  const { getConfiguredBayId } = await import("@cocalc/server/bay-config");
-  const { resolveAccountHomeBay } =
-    await import("@cocalc/server/bay-directory");
-  const { home_bay_id } = await resolveAccountHomeBay({ account_id });
-  return home_bay_id && home_bay_id !== getConfiguredBayId()
-    ? home_bay_id
-    : undefined;
+  const { remoteHomeBay } = await import("@cocalc/server/accounts/home-bay");
+  return await remoteHomeBay(account_id);
 }
 
 /** The home bay's side of a delegated check. */
@@ -137,10 +135,10 @@ export async function handleDelegatedSessionAuth(
   try {
     const accountId = `${opts.account_id ?? ""}`.trim();
     // Only the home bay holds the session; never delegate a second time.
-    if (accountId && (await remoteHomeBay(accountId)) != null) {
-      throw Object.assign(new Error("account is not homed on this bay"), {
-        code: 409,
-      });
+    if (accountId) {
+      const { assertAccountHomedHere } =
+        await import("@cocalc/server/accounts/home-bay");
+      await assertAccountHomedHere(accountId);
     }
     return { ok: true, session: await requireDangerousSessionAuthLocal(opts) };
   } catch (err) {

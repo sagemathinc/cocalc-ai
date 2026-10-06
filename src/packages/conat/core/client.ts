@@ -823,7 +823,13 @@ export class Client extends EventEmitter {
         () => {
           this.scheduledSyncSubscriptionsTimer = undefined;
           void this.syncSubscriptions();
-          void this.syncRpcServices();
+          // Re-sent on every sign-in, so a failure here (e.g., the socket
+          // dropped again mid-sync) is retried by the next connection.
+          void this.syncRpcServices().catch((err) => {
+            logger.debug(
+              `Conat: failed to sync rpc services with ${this.getAddressForLog()} -- ${err}`,
+            );
+          });
         },
         firstTime ? 3000 : 0,
       );
@@ -1018,9 +1024,16 @@ export class Client extends EventEmitter {
         // A caller may arrive after the failed handshake's info event. Do not
         // wait for another event on that connection; a disconnected client can
         // still wait for a new handshake instead of reusing the old failure.
-        if (this.state === "connected" && this.info?.user?.error) {
+        if (
+          this.state === "connected" &&
+          this.info?.user?.error &&
+          !this.options.reconnectAfterServerDisconnect
+        ) {
           throw Error(`failed to sign in - ${this.info.user.error}`);
         }
+        // A client that reconnects after a rejected handshake (e.g., the
+        // inter-bay fabric while the seed's registry is unavailable) waits
+        // for its next handshake instead, until the caller's timeout.
         const remaining = deadline == null ? timeout : deadline - Date.now();
         if (remaining != null && remaining <= 0) {
           throw new TimeoutError(
@@ -1028,7 +1041,10 @@ export class Client extends EventEmitter {
           );
         }
         await once(this, "info", remaining);
-        if (this.info?.user?.error) {
+        if (
+          this.info?.user?.error &&
+          !this.options.reconnectAfterServerDisconnect
+        ) {
           throw Error(`failed to sign in - ${this.info.user.error}`);
         }
       }

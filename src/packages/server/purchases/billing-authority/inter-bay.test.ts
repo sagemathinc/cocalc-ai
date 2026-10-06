@@ -6,6 +6,7 @@
 const mockCreateClient = jest.fn();
 const mockCreateHandler = jest.fn();
 const mockFabricClient = jest.fn(() => ({ fabric: true }));
+const mockServiceClient = { service: true };
 const mockBayId = jest.fn(() => "seed");
 
 jest.mock("@cocalc/conat/service/typed", () => ({
@@ -14,6 +15,7 @@ jest.mock("@cocalc/conat/service/typed", () => ({
 }));
 jest.mock("@cocalc/server/inter-bay/fabric", () => ({
   getInterBayFabricClient: (...args: unknown[]) => mockFabricClient(...args),
+  getInterBayFabricServiceClient: () => mockServiceClient,
 }));
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => mockBayId(),
@@ -60,9 +62,10 @@ describe("billing authority inter-bay transport", () => {
     const handle = jest.fn();
     mockCreateHandler.mockReturnValue({ close: jest.fn() });
     expect(createBillingAuthorityInterBayService({ handle })).toBeDefined();
-    expect(mockFabricClient).toHaveBeenCalledWith({ noCache: true });
+    // Served over the bay's one shared inter-bay service connection.
     expect(mockCreateHandler).toHaveBeenCalledWith(
       expect.objectContaining({
+        client: mockServiceClient,
         subject: "bay.seed.rpc.billing-authority.transport",
         parallel: true,
         impl: { transport: handle },
