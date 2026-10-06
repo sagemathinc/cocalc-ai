@@ -27,7 +27,10 @@ import {
   getConfiguredClusterRole,
   isMultiBayCluster,
 } from "@cocalc/server/cluster-config";
-import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
+import {
+  getClusterAccountById,
+  localAccountRowIfHomedHere,
+} from "@cocalc/server/inter-bay/accounts";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import {
   resolveHostBay as resolveHostBayAcrossCluster,
@@ -135,6 +138,22 @@ async function getAccountRow(account_id: string): Promise<{
       return local;
     }
     throw new Error(`account '${account_id}' not found`);
+  }
+  // An account homed here is served from this bay's own row (it is the
+  // source of truth), so attached bays do not depend on the seed for it.
+  const homedHere = await localAccountRowIfHomedHere<{
+    account_id: string;
+    email_address?: string | null;
+    display_name?: string | null;
+    first_name?: string | null;
+    last_name?: string | null;
+    home_bay_id?: string | null;
+  }>(
+    account_id,
+    "account_id, email_address, display_name, first_name, last_name, home_bay_id",
+  );
+  if (homedHere?.account_id) {
+    return { ...homedHere, source: "account-row" };
   }
   const global = await getClusterAccountById(account_id);
   if (global?.account_id) {

@@ -7,6 +7,7 @@ let resolveProjectBayMock: jest.Mock;
 let resolveHostBayMock: jest.Mock;
 let projectReferenceGetMock: jest.Mock;
 let hostConnectionGetMock: jest.Mock;
+let localAccountRowIfHomedHereMock: jest.Mock;
 let getClusterAccountByIdMock: jest.Mock;
 let ensureClusterAccountDirectorySchemaMock: jest.Mock;
 
@@ -46,6 +47,8 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
   __esModule: true,
   getClusterAccountById: (...args: any[]) => getClusterAccountByIdMock(...args),
+  localAccountRowIfHomedHere: (...args: any[]) =>
+    localAccountRowIfHomedHereMock(...args),
 }));
 
 jest.mock("@cocalc/server/accounts/cluster-directory", () => ({
@@ -121,6 +124,7 @@ describe("bay-directory", () => {
     projectReferenceGetMock = jest.fn(async () => null);
     hostConnectionGetMock = jest.fn(async () => null);
     getClusterAccountByIdMock = jest.fn(async () => null);
+    localAccountRowIfHomedHereMock = jest.fn(async () => null);
     ensureClusterAccountDirectorySchemaMock = jest.fn(async () => undefined);
   });
 
@@ -286,6 +290,57 @@ describe("bay-directory", () => {
       source: "single-bay-default",
     });
     expect(getClusterAccountByIdMock).not.toHaveBeenCalled();
+  });
+
+  it("serves an account homed on this attached bay from its own row, without the seed", async () => {
+    process.env.COCALC_CLUSTER_ROLE = "attached";
+    process.env.COCALC_BAY_ID = "bay-1";
+    localAccountRowIfHomedHereMock = jest.fn(async () => ({
+      account_id: ACCOUNT_ID,
+      email_address: "local@example.com",
+      display_name: "Local",
+      first_name: "Lo",
+      last_name: "Cal",
+      home_bay_id: "bay-1",
+    }));
+    getClusterAccountByIdMock = jest.fn(async () => {
+      throw new Error("the seed must not be asked");
+    });
+    queryMock = jest.fn(async (sql: string) => {
+      throw new Error(`unexpected second local query: ${sql}`);
+    });
+    const { resolveAccountHomeBay } = await import("./bay-directory");
+    await expect(
+      resolveAccountHomeBay({ account_id: ACCOUNT_ID }),
+    ).resolves.toMatchObject({
+      account_id: ACCOUNT_ID,
+      home_bay_id: "bay-1",
+      source: "account-row",
+    });
+    expect(localAccountRowIfHomedHereMock).toHaveBeenCalledWith(
+      ACCOUNT_ID,
+      expect.stringContaining("home_bay_id"),
+    );
+  });
+
+  it("asks the directory on an attached bay for accounts not homed there", async () => {
+    process.env.COCALC_CLUSTER_ROLE = "attached";
+    process.env.COCALC_BAY_ID = "bay-1";
+    localAccountRowIfHomedHereMock = jest.fn(async () => null);
+    getClusterAccountByIdMock = jest.fn(async () => ({
+      account_id: ACCOUNT_ID,
+      home_bay_id: "bay-2",
+    }));
+    queryMock = jest.fn(async (sql: string) => {
+      throw new Error(`unexpected local account query: ${sql}`);
+    });
+    const { resolveAccountHomeBay } = await import("./bay-directory");
+    await expect(
+      resolveAccountHomeBay({ account_id: ACCOUNT_ID }),
+    ).resolves.toMatchObject({
+      home_bay_id: "bay-2",
+      source: "cluster-directory",
+    });
   });
 
   it("prefers the cluster account directory over stale local account rows in multi-bay mode", async () => {

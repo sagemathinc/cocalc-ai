@@ -11,6 +11,7 @@ import {
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
+import { lastKnownSeedRead } from "@cocalc/server/inter-bay/last-known-seed-read";
 import { getMembershipTrialCandidate } from "./trials";
 import { assertNoDueMembershipRenewal } from "@cocalc/server/purchases/membership-subscription-guard";
 
@@ -133,11 +134,18 @@ export async function getSeedMembershipTiers({
   storeVisibleOnly = false,
   courseStoreVisibleOnly = false,
   client,
+  allowStale = false,
 }: {
   includeDisabled?: boolean;
   storeVisibleOnly?: boolean;
   courseStoreVisibleOnly?: boolean;
   client?: PoolClient;
+  /**
+   * Resolving an account's current limits may use recently read tiers while
+   * the seed is unreachable (bounded; see lastKnownSeedRead). Purchases,
+   * prices and trials must not.
+   */
+  allowStale?: boolean;
 } = {}): Promise<MembershipTierRecord[]> {
   const seedBayId = getConfiguredClusterSeedBayId();
   if (getConfiguredBayId() === seedBayId) {
@@ -148,23 +156,39 @@ export async function getSeedMembershipTiers({
       client,
     });
   }
-  return (await getInterBayBridge()
-    .bayOps(seedBayId, { timeout_ms: 15_000 })
-    .getMembershipTiers({
-      includeDisabled,
-      storeVisibleOnly,
-      courseStoreVisibleOnly,
-    })) as MembershipTierRecord[];
+  return await readSeedMembershipTiers(
+    JSON.stringify([includeDisabled, storeVisibleOnly, courseStoreVisibleOnly]),
+    async (timeout_ms) =>
+      (await getInterBayBridge()
+        .bayOps(seedBayId, { timeout_ms })
+        .getMembershipTiers({
+          includeDisabled,
+          storeVisibleOnly,
+          courseStoreVisibleOnly,
+        })) as MembershipTierRecord[],
+    { allowStale },
+  );
 }
+
+// With allowStale, attached bays keep resolving limits with the tiers they
+// last read while the seed is unreachable, for a bounded time.
+export const readSeedMembershipTiers =
+  lastKnownSeedRead<MembershipTierRecord[]>("membership-tiers");
 
 export async function getSeedMembershipTierMap({
   includeDisabled = true,
   client,
+  allowStale = false,
 }: {
   includeDisabled?: boolean;
   client?: PoolClient;
+  allowStale?: boolean;
 } = {}): Promise<Record<string, MembershipTierRecord>> {
-  const tiers = await getSeedMembershipTiers({ includeDisabled, client });
+  const tiers = await getSeedMembershipTiers({
+    includeDisabled,
+    client,
+    allowStale,
+  });
   return membershipTierMapFromTiers(tiers, { includeDisabled });
 }
 
@@ -172,12 +196,16 @@ export async function getSeedMembershipTierById({
   id,
   includeDisabled = true,
   client,
+  allowStale = false,
 }: {
   id: MembershipClass;
   includeDisabled?: boolean;
   client?: PoolClient;
+  allowStale?: boolean;
 }): Promise<MembershipTierRecord | undefined> {
-  return (await getSeedMembershipTierMap({ includeDisabled, client }))[id];
+  return (
+    await getSeedMembershipTierMap({ includeDisabled, client, allowStale })
+  )[id];
 }
 
 export function membershipTierMapFromTiers(
