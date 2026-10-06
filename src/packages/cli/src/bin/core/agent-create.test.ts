@@ -127,3 +127,31 @@ test("agent create refuses unknown sources and duplicate names", async () => {
     /agent name must be/,
   );
 });
+
+test("agent create reports partial failures after the fork without hiding what exists", async () => {
+  const failingDraft = fakeDeps();
+  failingDraft.deps.setDraft = async () => {
+    throw new Error("akv unavailable");
+  };
+  const result = await createAgentFromCopy(failingDraft.deps as any, {
+    name: "copy",
+    from: "support",
+    draft: "hello",
+  });
+  assert.equal(result.agent_id, "agent-new");
+  assert.equal(result.draft, null);
+  assert.equal(result.draft_verified, false);
+  assert.match((result.warnings as string[])[0], /draft could not be saved/);
+
+  const failingName = fakeDeps();
+  failingName.deps.hub.agent.nameAgent = async () => {
+    throw new Error("name taken");
+  };
+  await assert.rejects(
+    createAgentFromCopy(failingName.deps as any, {
+      name: "copy",
+      from: "support",
+    }),
+    /forked conversation was created \(thread new-thread.*could not be named @copy: Error: name taken/,
+  );
+});

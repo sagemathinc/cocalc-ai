@@ -134,28 +134,45 @@ export async function createAgentFromCopy(
     }
   }
 
-  let identity = await deps.hub.agent.resolveIdentity(target);
-  if (!identity) identity = await deps.hub.agent.registerIdentity(target);
-  if (!identity?.agent_id) throw new Error("unable to register the new agent");
-  await deps.hub.agent.nameAgent({
-    endpoint: { project_id: target.project_id, agent_id: identity.agent_id },
-    name,
-    description: opts.description ?? "",
-    project_title: source.project_title,
-    thread_title: name,
-  });
+  // The fork exists from here on. Report failures with what was created, so
+  // nothing is silently orphaned and a retry is never blind.
+  let identity;
+  try {
+    identity = await deps.hub.agent.resolveIdentity(target);
+    if (!identity) identity = await deps.hub.agent.registerIdentity(target);
+    if (!identity?.agent_id) throw new Error("no agent id was returned");
+    await deps.hub.agent.nameAgent({
+      endpoint: { project_id: target.project_id, agent_id: identity.agent_id },
+      name,
+      description: opts.description ?? "",
+      project_title: source.project_title,
+      thread_title: name,
+    });
+  } catch (err) {
+    throw new Error(
+      `the forked conversation was created (thread ${target.thread_id} in ${target.path}, project ${target.project_id}) but the agent could not be named @${name}: ${err}. It appears in that chat as an unnamed thread; name it from the chat or delete it.`,
+    );
+  }
 
   const draft = `${opts.draft ?? ""}`.trim();
+  let draftSaved = false;
   if (draft) {
-    await deps.setDraft(
-      chatComposerDraftKey({
-        project_id: target.project_id,
-        path: target.path,
-        composerDraftKey: stableDraftKeyFromThreadKey(target.thread_id),
-      }),
-      chatComposerDraftPayload(draft),
-      CHAT_DRAFT_TTL_MS,
-    );
+    try {
+      await deps.setDraft(
+        chatComposerDraftKey({
+          project_id: target.project_id,
+          path: target.path,
+          composerDraftKey: stableDraftKeyFromThreadKey(target.thread_id),
+        }),
+        chatComposerDraftPayload(draft),
+        CHAT_DRAFT_TTL_MS,
+      );
+      draftSaved = true;
+    } catch (err) {
+      warnings.push(
+        `@${name} was created, but the draft could not be saved (${err}); paste it into the composer yourself`,
+      );
+    }
   }
 
   return {
@@ -166,8 +183,8 @@ export async function createAgentFromCopy(
     thread_id: target.thread_id,
     copied_from: source.name,
     session: forked.session,
-    draft: draft ? "unsent draft left in the composer" : null,
-    draft_verified: draft ? true : undefined,
+    draft: draftSaved ? "unsent draft left in the composer" : null,
+    draft_verified: draft ? draftSaved : undefined,
     draft_store: draft ? CHAT_DRAFT_STORE : undefined,
     ...(warnings.length ? { warnings } : {}),
   };
