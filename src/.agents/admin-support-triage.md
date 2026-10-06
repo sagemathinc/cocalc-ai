@@ -180,7 +180,9 @@ cocalc --json admin support reply 12345 --file reply.md --status pending \
 - Statuses:
   - `open`: we still owe work (including after an interim reply);
   - `pending`: waiting on the customer;
-  - `hold`: blocked on a specific internal or external dependency;
+  - `hold`: blocked on a specific internal or external dependency. Our
+    Zendesk account currently rejects it (HTTP 422, and the whole update is
+    rolled back), so use `open` instead;
   - `solved`: the promised work is done and verified.
     Never set `closed`.
 - Re-read the ticket right before committing. If something changed, revise
