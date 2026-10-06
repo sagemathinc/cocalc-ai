@@ -1374,12 +1374,13 @@ async function getCourseInfoForSeatProject({
   ).course;
 }
 
-async function getVerifiedSeatAccountEmails({
+// Verified email addresses of an account, read from its home bay.
+export async function getVerifiedSeatAccountEmails({
   account_id,
   client,
 }: {
   account_id: string;
-  client: PoolClient;
+  client?: PoolClient;
 }): Promise<string[]> {
   const homeBayId = await getHomeBayForAccount(account_id, client);
   const emailAddresses =
@@ -1711,6 +1712,70 @@ async function getCourseSeatQuote({
   };
 }
 
+/** True for a one-seat educator term purchase (tier "available for instructor purchase"). */
+export function isEducatorTermProduct(
+  value: { metadata?: Record<string, unknown> | null } | null | undefined,
+): boolean {
+  return value?.metadata?.educator_term === true;
+}
+
+async function getEducatorTermQuote({
+  product,
+  client,
+}: {
+  product: MembershipPackageProduct;
+  client?: PoolClient;
+}): Promise<MembershipPackageQuote> {
+  const membership_class = `${product.membership_class ?? ""}`.trim();
+  if (!membership_class) {
+    throw Error("membership_class is required");
+  }
+  if (Number(product.seat_count) !== 1) {
+    throw Error("an educator term covers exactly one person");
+  }
+  const tier = await getSeedMembershipTierById({
+    id: membership_class,
+    client,
+  });
+  if (!tier || tier.disabled || tier.instructor_purchase_visible !== true) {
+    throw Error(
+      `membership tier "${membership_class}" is not available for instructor purchase`,
+    );
+  }
+  const seat_price =
+    tier.instructor_term_price == null || tier.instructor_term_price === ""
+      ? NaN
+      : toDecimal(tier.instructor_term_price).toNumber();
+  if (!Number.isFinite(seat_price) || seat_price < 0) {
+    throw Error(
+      `membership tier "${membership_class}" has no instructor term price`,
+    );
+  }
+  const duration_days = Number(tier.instructor_term_days);
+  if (!Number.isInteger(duration_days) || duration_days <= 0) {
+    throw Error(
+      `membership tier "${membership_class}" has no instructor term length`,
+    );
+  }
+  const starts_at = new Date();
+  const expires_at = dayjs(starts_at).add(duration_days, "day").toDate();
+  return {
+    kind: "team",
+    membership_class,
+    seat_count: 1,
+    seat_price,
+    total_price: moneyRound2Up(toDecimal(seat_price)).toNumber(),
+    starts_at,
+    expires_at,
+    metadata: {
+      ...normalizeMetadata(product.metadata),
+      educator_term: true,
+      educator_term_days: duration_days,
+      seat_price,
+    },
+  };
+}
+
 async function getTierSeatQuote({
   product,
   membership_class,
@@ -1794,6 +1859,9 @@ async function resolveMembershipPackageQuoteInternal(
       throw Error("membership package not found");
     }
     assertMembershipPackageCanExpand(existing);
+    if (isEducatorTermProduct(existing)) {
+      throw Error("cannot add seats to an educator term membership");
+    }
     await getPurchasableMembershipTierForPackageKind({
       kind: existing.kind,
       membership_class: existing.membership_class,
@@ -1848,6 +1916,13 @@ async function resolveMembershipPackageQuoteInternal(
             : undefined,
       metadata: normalizeMetadata(existing.metadata),
     };
+  }
+
+  if (isEducatorTermProduct(product)) {
+    if (product.starts_at != null || product.expires_at != null) {
+      throw Error("educator term periods are set by the membership tier");
+    }
+    return await getEducatorTermQuote({ product, client });
   }
 
   const kind = normalizePackageKind(product.kind);

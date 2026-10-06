@@ -7,8 +7,12 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { InstitutePaySection } from "./institute-pay";
 import userEvent from "@testing-library/user-event";
 import {
+  getEducatorOffers,
+  getMembershipPackageQuote,
   getMembershipPackages,
+  isPurchaseAllowed,
   linkCourseMembershipPackage,
+  purchaseMembershipPackages,
 } from "@cocalc/frontend/purchases/api";
 
 jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
@@ -31,10 +35,26 @@ jest.mock("@cocalc/frontend/purchases/api", () => ({
   isPurchaseAllowed: jest.fn(),
   processPaymentIntents: jest.fn(),
   purchaseMembershipPackage: jest.fn(),
+  purchaseMembershipPackages: jest.fn(async () => []),
+  getEducatorOffers: jest.fn(async () => ({
+    eligibility: { eligible: false, reason: "no_offers" },
+    tiers: [],
+  })),
 }));
 
 jest.mock("@cocalc/frontend/purchases/payments", () => () => null);
-jest.mock("@cocalc/frontend/purchases/stripe-payment", () => () => null);
+jest.mock(
+  "@cocalc/frontend/purchases/stripe-payment",
+  () =>
+    ({ metadata, onFinished }) => (
+      <button
+        onClick={() => onFinished(0)}
+        data-metadata={JSON.stringify(metadata)}
+      >
+        Pay now
+      </button>
+    ),
+);
 jest.mock("@cocalc/frontend/purchases/money-statistic", () => () => null);
 
 describe("InstitutePaySection", () => {
@@ -149,5 +169,68 @@ describe("InstitutePaySection", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /manage seats/i }));
     expect(onManageSeats).toHaveBeenCalledTimes(1);
+  });
+  it("adds the instructor's own educator term to the course seat checkout", async () => {
+    (getEducatorOffers as jest.Mock).mockResolvedValue({
+      eligibility: { eligible: true, reason: "academic_domain" },
+      tiers: [
+        {
+          membership_class: "educator",
+          label: "Educator",
+          term_price: 60,
+          term_days: 122,
+        },
+      ],
+    });
+    (getMembershipPackageQuote as jest.Mock).mockImplementation(
+      async (product) =>
+        product.metadata?.educator_term
+          ? { seat_count: 1, seat_price: 60, total_price: 60 }
+          : { seat_count: 25, seat_price: 18, total_price: 450 },
+    );
+    (isPurchaseAllowed as jest.Mock).mockImplementation(async (_s, cost) => ({
+      chargeAmount: cost,
+    }));
+    render(
+      <InstitutePaySection
+        project_id="course-1"
+        enabled
+        selectedTier={{ id: "student", course_price: 18 }}
+        onToggle={jest.fn()}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /buy seats/i }));
+    const addOn = await screen.findByRole("checkbox", {
+      name: /Also buy my own Educator membership for this term/,
+    });
+    fireEvent.click(addOn);
+    const pay = await screen.findByRole("button", { name: "Pay now" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const metadata = JSON.parse(
+      screen.getByRole("button", { name: "Pay now" }).dataset.metadata!,
+    );
+    const products = JSON.parse(metadata.membership_package_products);
+    expect(products).toHaveLength(2);
+    expect(products[1]).toMatchObject({
+      kind: "team",
+      membership_class: "educator",
+      seat_count: 1,
+      metadata: { educator_term: true },
+    });
+    fireEvent.click(pay);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(purchaseMembershipPackages).toHaveBeenCalledWith({
+      products: [
+        expect.objectContaining({
+          kind: "course",
+          course_project_id: "course-1",
+        }),
+        expect.objectContaining({ membership_class: "educator" }),
+      ],
+    });
   });
 });

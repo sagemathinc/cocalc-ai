@@ -20,11 +20,14 @@ import { isValidBillingAccount } from "./billing-account";
 import { isBillingAuthorityEnabled } from "./billing-authority/config";
 import {
   addMembershipPackageSeats,
+  assignMembershipPackageSeat,
   createMembershipPackage,
   getMembershipPackage,
+  isEducatorTermProduct,
   resolveMembershipPackageQuote,
   setMembershipPackagePurchaseId,
 } from "@cocalc/server/membership/packages";
+import { assertEducatorEligible } from "@cocalc/server/membership/educator/eligibility";
 import { refreshAccountBalanceAndPublishBestEffort } from "@cocalc/server/purchases/refresh-balance";
 import { recordMembershipAllocationFact } from "@cocalc/server/membership/allocation-analytics";
 import { lockAccountSpending } from "./lock-account-spending";
@@ -85,6 +88,9 @@ export async function createMembershipPackagePurchase(
   }
 
   const quote = await resolveMembershipPackageQuote(product, client);
+  if (isEducatorTermProduct(quote)) {
+    await assertEducatorEligible({ account_id, client });
+  }
   let package_id = existingPackageId;
   const expandingExistingPackage = !!package_id;
 
@@ -177,6 +183,28 @@ export async function createMembershipPackagePurchase(
   return { package_id, purchase_id };
 }
 
+/**
+ * An educator term is bought by an educator for themselves: once the purchase
+ * has committed, give the buyer the package's single seat. Safe to repeat.
+ */
+export async function assignEducatorTermSeatToBuyer({
+  account_id,
+  package_id,
+  product,
+}: {
+  account_id: string;
+  package_id: string;
+  product: MembershipPackageProduct;
+}): Promise<void> {
+  if (!isEducatorTermProduct(product)) return;
+  await assignMembershipPackageSeat({
+    package_id,
+    account_id,
+    assigned_by_account_id: account_id,
+    metadata: { educator_term: true },
+  });
+}
+
 export default async function purchaseMembershipPackage({
   account_id,
   fulfillment_id,
@@ -227,6 +255,11 @@ export default async function purchaseMembershipPackage({
     if (!suppliedClient) {
       await client.query("COMMIT");
       await refreshAccountBalanceAndPublishBestEffort({ account_id });
+      await assignEducatorTermSeatToBuyer({
+        account_id,
+        package_id: result.package_id,
+        product,
+      });
     }
     return result;
   } catch (err) {
@@ -314,6 +347,13 @@ export async function purchaseMembershipPackages({
     if (!suppliedClient) {
       await client.query("COMMIT");
       await refreshAccountBalanceAndPublishBestEffort({ account_id });
+      for (const [index, product] of products.entries()) {
+        await assignEducatorTermSeatToBuyer({
+          account_id,
+          package_id: results[index].package_id,
+          product,
+        });
+      }
     }
     return results;
   } catch (err) {

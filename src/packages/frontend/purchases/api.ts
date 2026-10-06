@@ -30,6 +30,7 @@ import type {
   SiteLicensePoolRequest,
   TeamLicenseOverview,
   TeamLicenseQuote,
+  EducatorOffers,
 } from "@cocalc/conat/hub/api/purchases";
 import { hoursInInterval } from "@cocalc/util/stripe/timecalcs";
 import { toDecimal, type MoneyValue } from "@cocalc/util/money";
@@ -352,6 +353,10 @@ export interface MembershipChangeQuote {
   discouraged?: boolean;
   reason?: string;
   charge_amount?: MoneyValue;
+}
+
+export async function getEducatorOffers(): Promise<EducatorOffers> {
+  return await (await getPurchasesHubRpc()).getEducatorOffers({});
 }
 
 export async function getMembershipChangeQuote(opts: {

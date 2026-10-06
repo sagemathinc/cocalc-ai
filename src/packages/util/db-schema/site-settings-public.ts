@@ -8,6 +8,7 @@ import {
   publicSignupEmailDomainPolicy,
   SIGNUP_EMAIL_DOMAIN_POLICY_SETTING_KEYS,
 } from "../accounts/signup-email-domain-policy";
+import { EDUCATOR_EMAIL_POLICY_SETTING_KEYS } from "../accounts/educator-email-policy";
 import { hasStripeBillingConfiguration } from "../stripe/billing";
 import { version as FRONTEND_VERSION } from "../smc-version";
 
@@ -49,7 +50,10 @@ export function buildPublicSiteSettings(
   const version: VersionSettings = {};
 
   for (const key of PUBLIC_SITE_SETTINGS_KEYS) {
-    if (SIGNUP_EMAIL_DOMAIN_POLICY_SETTING_KEYS.has(key)) {
+    if (
+      SIGNUP_EMAIL_DOMAIN_POLICY_SETTING_KEYS.has(key) ||
+      EDUCATOR_EMAIL_POLICY_SETTING_KEYS.has(key)
+    ) {
       continue;
     }
     if (!(key in all)) {
