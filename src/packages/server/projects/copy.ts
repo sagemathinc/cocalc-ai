@@ -1448,12 +1448,21 @@ export async function copyProjectFiles({
       detail: { count: localDests.length, paths: srcPaths.length },
     });
     const client = srcProjectClient;
+    // Stop a /usr/bin/cp on the host when this call gives up, instead of
+    // reporting a failure while it keeps writing.
+    const localOptions =
+      timeout_ms > 0
+        ? {
+            ...options,
+            timeout: Math.min(options?.timeout ?? Infinity, timeout_ms),
+          }
+        : options;
     for (const dest of localDests) {
       if (normalizedBasePath == null) {
         await client.cp({
           src: normalizedSrc,
           dest,
-          options,
+          options: localOptions,
           ...(flush_collaborative ? { exact: true } : {}),
         });
         localCount += srcPaths.length;
@@ -1469,7 +1478,7 @@ export async function copyProjectFiles({
               "dest.path",
             ),
           },
-          options,
+          options: localOptions,
           ...(flush_collaborative ? { exact: true } : {}),
         });
         localCount += 1;

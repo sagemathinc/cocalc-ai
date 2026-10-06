@@ -182,6 +182,24 @@ describe("projects.copyProjectFiles", () => {
     expect(createBackupMock).not.toHaveBeenCalled();
   });
 
+  it("stops a same-host cp when the copy call times out", async () => {
+    queryMock = makeProjectQuery({ src: "h1", dest: "h1" });
+    const { copyProjectFiles } = await import("./copy");
+    await copyProjectFiles({
+      account_id: "acct",
+      timeout_ms: 60_000,
+      src: { project_id: "src", path: "/root/a.txt" },
+      dests: [{ project_id: "dest", path: "/root/b.txt" }],
+      options: { recursive: true },
+    });
+
+    expect(cpMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: { recursive: true, timeout: 60_000 },
+      }),
+    );
+  });
+
   it("uses exact replacement for same-host course collection copies", async () => {
     queryMock = makeProjectQuery({ src: "h1", dest: "h1" });
     const { copyProjectFiles } = await import("./copy");
