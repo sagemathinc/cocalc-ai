@@ -116,3 +116,18 @@ export function getInterBayFabricClient(
     reconnectAfterServerDisconnect: true,
   });
 }
+
+let serviceClient: Client | undefined;
+
+/**
+ * The one connection that carries every inter-bay service this bay serves.
+ * A connection per service multiplied a bay's fabric sockets (about 30), so
+ * a shared failure tripped the seed's per-address auth limiter and made
+ * every reconnect storm 30 times larger.
+ */
+export function getInterBayFabricServiceClient(): Client {
+  if (serviceClient == null || serviceClient.state === "closed") {
+    serviceClient = getInterBayFabricClient({ noCache: true });
+  }
+  return serviceClient;
+}

@@ -410,7 +410,99 @@ describe("access requests across bays", () => {
   });
 });
 
+describe("account-home facts on the owning bay", () => {
+  // Admin status lives on the account's home bay. The owning bay of a
+  // project must ask it, not its own (missing) copy of the account.
+  let carol; // an admin homed on the seed
+
+  it("recognizes an admin homed on the other bay", async () => {
+    carol = await createAccount(cluster, { home_bay_id: SEED, name: "carol" });
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+         [${JSON.stringify(carol.account_id)}]);`,
+    );
+    carol.client = await client(carol);
+    // Owners and admins may change this policy; carol is not a member.
+    await carol.client.call("projects.setProjectManageUsersOwnerOnly", {
+      project_id: bob.project,
+      manage_users_owner_only: true,
+    });
+    await carol.client.call("projects.setProjectManageUsersOwnerOnly", {
+      project_id: bob.project,
+      manage_users_owner_only: false,
+    });
+  });
+
+  it("still refuses a non-admin, non-owner on the other bay", async () => {
+    await assert.rejects(
+      alice.client.call("projects.setProjectManageUsersOwnerOnly", {
+        project_id: bob.project,
+        manage_users_owner_only: true,
+      }),
+      /Only project owners and administrators/,
+    );
+  });
+});
+
 describe("fabric faults", () => {
+  it("answers a change on the owning bay while the other bay is frozen", async () => {
+    // alice (homed on the seed) collaborates on bob's project. With the seed
+    // frozen, bob's rename on the bay that owns the project must still answer
+    // promptly; the new title reaches alice once the seed resumes.
+    const title = "while the seed is frozen";
+    let elapsed;
+    cluster.signal(SEED, "SIGSTOP");
+    try {
+      const start = Date.now();
+      await rename(bob.client, bob.project, title);
+      elapsed = Date.now() - start;
+    } finally {
+      cluster.signal(SEED, "SIGCONT");
+    }
+    assert.ok(elapsed < 5_000, `the rename took ${elapsed}ms`);
+    await eventually(
+      async () => (await listed(alice.client, bob.project))?.title === title,
+      { timeoutMs: 60_000, what: `${title} to reach the seed` },
+    );
+  });
+
+  it("creates a mention for an account on a frozen bay without waiting for it", async () => {
+    // bob (homed on the attached bay) is a collaborator on alice's seed-owned
+    // project again. With his bay frozen, alice's mention is recorded on the
+    // seed and delivered once his bay resumes.
+    await invite(alice, bob, alice.project);
+    await eventually(() => listed(bob.client, alice.project), {
+      what: "alice's project back in bob's list",
+    });
+    const description = "mentioned while bob's bay is frozen";
+    let elapsed;
+    cluster.signal(ATTACHED, "SIGSTOP");
+    try {
+      const start = Date.now();
+      await alice.client.call("notifications.createMention", {
+        source_project_id: alice.project,
+        source_path: "notes.md",
+        description,
+        target_account_ids: [bob.account_id],
+      });
+      elapsed = Date.now() - start;
+    } finally {
+      cluster.signal(ATTACHED, "SIGCONT");
+    }
+    assert.ok(elapsed < 5_000, `the mention took ${elapsed}ms`);
+    await eventually(
+      async () =>
+        (await bob.client.call("notifications.list", { limit: 50 })).some(
+          (row) => row.summary?.description === description,
+        ),
+      { timeoutMs: 60_000, what: "the mention to reach bob" },
+    );
+  });
+
   it("recovers after the seed's event loop stalls", async () => {
     cluster.signal(SEED, "SIGSTOP");
     await sleep(8_000);
@@ -456,6 +548,22 @@ describe("fabric faults", () => {
       bob.client,
       bob.project,
       "after an attached bay restart",
+    );
+  });
+  it("starts an attached bay while the seed's registry is unreadable", async () => {
+    // The bay's fabric handshakes are rejected until the registry answers;
+    // startup must wait for them rather than exit.
+    await cluster.stopBay(ATTACHED);
+    const locked = lockCredentialRegistry(20);
+    await sleep(2_000);
+    cluster.startBay(ATTACHED);
+    await locked;
+    await cluster.waitReady(ATTACHED);
+    await assertCrossBayRename(
+      alice.client,
+      bob.client,
+      bob.project,
+      "after starting during a registry outage",
     );
   });
 });

@@ -71,6 +71,30 @@ describe("reconnect after a server-initiated disconnect", () => {
     });
   });
 
+  it("waits through rejected handshakes when signing in for the first time", async () => {
+    // e.g., a bay starting while the seed's registry is unavailable: its
+    // services wait to sign in instead of failing startup.
+    rejectAuth = true;
+    const client = newClient(true);
+    const signedIn = client.waitUntilSignedIn({ timeout: 15_000 });
+    await delay(1_500);
+    rejectAuth = false;
+    await signedIn;
+    expect(client.info?.user?.hub_id).toBe("hub");
+  });
+
+  it("still fails sign-in at once for other clients", async () => {
+    rejectAuth = true;
+    try {
+      const client = newClient();
+      await expect(
+        client.waitUntilSignedIn({ timeout: 10_000 }),
+      ).rejects.toThrow("failed to sign in");
+    } finally {
+      rejectAuth = false;
+    }
+  });
+
   it("leaves other clients disconnected, as before", async () => {
     const client = newClient();
     await client.waitUntilSignedIn({ timeout: 10_000 });

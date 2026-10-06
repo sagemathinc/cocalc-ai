@@ -10,7 +10,10 @@ import {
 } from "@cocalc/conat/service/typed";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
-import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import {
+  getInterBayFabricClient,
+  getInterBayFabricServiceClient,
+} from "@cocalc/server/inter-bay/fabric";
 
 import type {
   BillingAuthorityTransportRequest,
@@ -53,7 +56,7 @@ export function createBillingAuthorityInterBayService({
     return;
   }
   return createServiceHandler<BillingAuthorityInterBayApi>({
-    client: getInterBayFabricClient({ noCache: true }),
+    client: getInterBayFabricServiceClient(),
     service: SERVICE,
     subject: billingAuthoritySubject(seedBayId),
     parallel: true,
