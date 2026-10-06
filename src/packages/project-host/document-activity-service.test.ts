@@ -571,10 +571,15 @@ describe("notebook usage export", () => {
     const { client, markFile } = await service();
     const events = makeStream();
     let ready!: (value: typeof events) => void;
+    let started!: () => void;
+    const initializing = new Promise<void>((resolve) => {
+      started = resolve;
+    });
     dstreamMock.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
           ready = resolve;
+          started();
         }),
     );
     const opts = {
@@ -587,7 +592,7 @@ describe("notebook usage export", () => {
     const first = markFile(opts);
     const second = markFile(opts);
     // Wait for the async store lookup to reach access-stream initialization.
-    while (!ready) await Promise.resolve();
+    await initializing;
     ready(events);
     await first;
     await second;
