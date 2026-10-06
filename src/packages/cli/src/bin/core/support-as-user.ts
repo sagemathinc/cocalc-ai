@@ -260,6 +260,7 @@ export async function runCliAsUser({
   args,
   timeoutMs,
   maxBytes = 1024 * 1024,
+  cliEntry,
 }: {
   api: string;
   /** The child must be authenticated as exactly this account. */
@@ -268,8 +269,10 @@ export async function runCliAsUser({
   args: readonly string[];
   timeoutMs: number;
   maxBytes?: number;
+  /** Tests only: the CLI entry script to run instead of this process's. */
+  cliEntry?: string;
 }): Promise<AsUserRunResult> {
-  const entry = process.argv[1];
+  const entry = cliEntry ?? process.argv[1];
   const prefix = entry && /\.[cm]?js$/.test(entry) ? [entry] : [];
   // The cookie goes over stdin ("--cookie-file -"): never argv, never disk.
   // No --account-id: the account comes from the session, and is checked.

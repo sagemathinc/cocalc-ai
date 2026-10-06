@@ -13,6 +13,7 @@ import { readCookieFile, resolveCookieFileGlobals } from "./cookie-file";
 import {
   allowedAsUserCommand,
   redeemImpersonationUrl,
+  runCliAsUser,
   signOutSession,
 } from "./support-as-user";
 
@@ -195,4 +196,64 @@ test("cookie files must be private and replace every other credential", async ()
     () => resolveCookieFileGlobals({ cookieFile: path, cookie: "x" }),
     /without --cookie/,
   );
+});
+
+// A stand-in CLI: reports whether the cookie arrived on stdin (and not in
+// argv), and claims whichever account the test asks for.
+async function fakeCli(accountId: string | null): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "fake-cli-"));
+  const path = join(dir, "fake-cli.js");
+  await writeFile(
+    path,
+    `const stdin = require("fs").readFileSync(0, "utf8");
+const argv = process.argv.slice(2);
+const cookieIndex = argv.indexOf("--cookie-file");
+console.log(JSON.stringify({
+  ok: true,
+  data: {
+    stdin,
+    cookie_file_arg: argv[cookieIndex + 1],
+    cookie_in_argv: argv.some((a) => a.includes("remember_me=secret")),
+    account_id_flag: argv.includes("--account-id"),
+    args: argv.slice(argv.indexOf("--api") + 2),
+  },
+  meta: { account_id: ${JSON.stringify(accountId)} },
+}));
+`,
+  );
+  return path;
+}
+
+test("runCliAsUser sends the cookie over stdin and verifies the session account", async () => {
+  const result = await runCliAsUser({
+    api: "https://cocalc.ai",
+    expectedAccountId: "subject",
+    cookie: "remember_me=secret",
+    args: ["project", "list"],
+    timeoutMs: 20_000,
+    cliEntry: await fakeCli("subject"),
+  });
+  const data = (result.stdout as any).data;
+  assert.equal(result.exit_code, 0);
+  assert.equal(data.stdin, "remember_me=secret");
+  assert.equal(data.cookie_file_arg, "-");
+  assert.equal(data.cookie_in_argv, false);
+  assert.equal(data.account_id_flag, false);
+  assert.deepEqual(data.args, ["project", "list"]);
+});
+
+test("runCliAsUser withholds output unless the session is the subject", async () => {
+  for (const claimed of ["someone-else", null]) {
+    await assert.rejects(
+      runCliAsUser({
+        api: "https://cocalc.ai",
+        expectedAccountId: "subject",
+        cookie: "remember_me=secret",
+        args: ["project", "list"],
+        timeoutMs: 20_000,
+        cliEntry: await fakeCli(claimed),
+      }),
+      /not verified as the requested account.*output withheld/,
+    );
+  }
 });
