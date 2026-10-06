@@ -62,10 +62,8 @@ import {
   createInterBayProjectControlActiveOpHandler,
   createInterBayProjectControlBackupHandler,
   createInterBayProjectControlCheckStartAdmissionHandler,
-  createInterBayProjectControlClearEntitlementOverrideHandler,
   createInterBayBayDirectoryHandlers,
   createInterBayDirectoryHandlers,
-  createInterBayProjectControlGetEntitlementOverrideHandler,
   createInterBayProjectControlGetRootfsStatesHandler,
   createInterBayProjectControlHardDeleteStatusHandler,
   createInterBayProjectControlHandler,
@@ -425,9 +423,7 @@ import {
   handleProjectControlActiveOperation,
   handleProjectControlBackup,
   handleProjectControlCheckStartAdmission,
-  handleProjectControlClearEntitlementOverride,
   handleProjectControlAcceptRehome,
-  handleProjectControlGetEntitlementOverride,
   handleProjectControlGetRootfsStates,
   handleProjectControlHardDeleteStatus,
   handleProjectControlSetUsageAccount,
@@ -2385,12 +2381,8 @@ async function startProjectControlStartService(): Promise<void> {
     rehome: async (opts) => await handleProjectControlRehome(opts),
     acceptRehome: async (opts) => await handleProjectControlAcceptRehome(opts),
     activeOp: async (opts) => await handleProjectControlActiveOperation(opts),
-    getProjectEntitlementOverride: async (opts) =>
-      await handleProjectControlGetEntitlementOverride(opts),
     setProjectEntitlementOverride: async (opts) =>
       await handleProjectControlSetEntitlementOverride(opts),
-    clearProjectEntitlementOverride: async (opts) =>
-      await handleProjectControlClearEntitlementOverride(opts),
   };
   const bay_id = getConfiguredBayId();
   logger.debug("starting inter-bay listener", {
@@ -2500,19 +2492,7 @@ async function startProjectControlStartService(): Promise<void> {
       parallel: true,
       impl,
     }),
-    createInterBayProjectControlGetEntitlementOverrideHandler({
-      client,
-      bay_id,
-      parallel: true,
-      impl,
-    }),
     createInterBayProjectControlSetEntitlementOverrideHandler({
-      client,
-      bay_id,
-      parallel: true,
-      impl,
-    }),
-    createInterBayProjectControlClearEntitlementOverrideHandler({
       client,
       bay_id,
       parallel: true,

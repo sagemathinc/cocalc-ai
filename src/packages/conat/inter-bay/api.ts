@@ -518,11 +518,6 @@ export interface ProjectControlActiveOperationRequest {
   epoch?: number;
 }
 
-export interface ProjectControlGetEntitlementOverrideRequest {
-  project_id: string;
-  epoch?: number;
-}
-
 export interface ProjectControlSetEntitlementOverrideRequest {
   project_id: string;
   actor_account_id?: string | null;
@@ -531,13 +526,6 @@ export interface ProjectControlSetEntitlementOverrideRequest {
   expires_at?: Date | string | null;
   source?: string | null;
   metadata?: Record<string, unknown>;
-  epoch?: number;
-}
-
-export interface ProjectControlClearEntitlementOverrideRequest {
-  project_id: string;
-  actor_account_id?: string | null;
-  reason: string;
   epoch?: number;
 }
 
@@ -2621,9 +2609,7 @@ export type ProjectControlMethod =
   | "rehome"
   | "accept-rehome"
   | "active-op"
-  | "get-project-entitlement-override"
-  | "set-project-entitlement-override"
-  | "clear-project-entitlement-override";
+  | "set-project-entitlement-override";
 export type DirectoryMethod =
   | "resolve-project-bay"
   | "resolve-host-bay"
@@ -3174,15 +3160,9 @@ export interface InterBayProjectControlApi {
   activeOp: (
     opts: ProjectControlActiveOperationRequest,
   ) => Promise<ProjectActiveOperationSummary | null>;
-  getProjectEntitlementOverride: (
-    opts: ProjectControlGetEntitlementOverrideRequest,
-  ) => Promise<ProjectEntitlementOverride | null>;
   setProjectEntitlementOverride: (
     opts: ProjectControlSetEntitlementOverrideRequest,
   ) => Promise<ProjectEntitlementOverride>;
-  clearProjectEntitlementOverride: (
-    opts: ProjectControlClearEntitlementOverrideRequest,
-  ) => Promise<void>;
 }
 
 export interface InterBayProjectReferenceApi {
@@ -5844,15 +5824,6 @@ export function createInterBayProjectControlClient({
     ...serviceClientOptions({ client, timeout }),
     subject: projectControlSubject({ dest_bay, method: "active-op" }),
   });
-  const getProjectEntitlementOverrideClient = createServiceClient<
-    Pick<InterBayProjectControlApi, "getProjectEntitlementOverride">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectControlSubject({
-      dest_bay,
-      method: "get-project-entitlement-override",
-    }),
-  });
   const setProjectEntitlementOverrideClient = createServiceClient<
     Pick<InterBayProjectControlApi, "setProjectEntitlementOverride">
   >({
@@ -5860,15 +5831,6 @@ export function createInterBayProjectControlClient({
     subject: projectControlSubject({
       dest_bay,
       method: "set-project-entitlement-override",
-    }),
-  });
-  const clearProjectEntitlementOverrideClient = createServiceClient<
-    Pick<InterBayProjectControlApi, "clearProjectEntitlementOverride">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectControlSubject({
-      dest_bay,
-      method: "clear-project-entitlement-override",
     }),
   });
   return {
@@ -5895,16 +5857,8 @@ export function createInterBayProjectControlClient({
     rehome: async (opts) => await rehomeClient.rehome(opts),
     acceptRehome: async (opts) => await acceptRehomeClient.acceptRehome(opts),
     activeOp: async (opts) => await activeOpClient.activeOp(opts),
-    getProjectEntitlementOverride: async (opts) =>
-      await getProjectEntitlementOverrideClient.getProjectEntitlementOverride(
-        opts,
-      ),
     setProjectEntitlementOverride: async (opts) =>
       await setProjectEntitlementOverrideClient.setProjectEntitlementOverride(
-        opts,
-      ),
-    clearProjectEntitlementOverride: async (opts) =>
-      await clearProjectEntitlementOverrideClient.clearProjectEntitlementOverride(
         opts,
       ),
   };
@@ -13093,30 +13047,6 @@ export function createInterBayProjectControlActiveOpHandler({
   });
 }
 
-export function createInterBayProjectControlGetEntitlementOverrideHandler({
-  bay_id,
-  impl,
-  ...options
-}: ServiceHandlerOptions & {
-  bay_id: string;
-  impl: InterBayProjectControlApi;
-}): ConatService {
-  return createServiceHandler<
-    Pick<InterBayProjectControlApi, "getProjectEntitlementOverride">
-  >({
-    ...options,
-    service: "inter-bay-project-control",
-    subject: projectControlSubject({
-      dest_bay: bay_id,
-      method: "get-project-entitlement-override",
-    }),
-    impl: {
-      getProjectEntitlementOverride: async (opts) =>
-        await impl.getProjectEntitlementOverride(opts),
-    },
-  });
-}
-
 export function createInterBayProjectControlSetEntitlementOverrideHandler({
   bay_id,
   impl,
@@ -13137,30 +13067,6 @@ export function createInterBayProjectControlSetEntitlementOverrideHandler({
     impl: {
       setProjectEntitlementOverride: async (opts) =>
         await impl.setProjectEntitlementOverride(opts),
-    },
-  });
-}
-
-export function createInterBayProjectControlClearEntitlementOverrideHandler({
-  bay_id,
-  impl,
-  ...options
-}: ServiceHandlerOptions & {
-  bay_id: string;
-  impl: InterBayProjectControlApi;
-}): ConatService {
-  return createServiceHandler<
-    Pick<InterBayProjectControlApi, "clearProjectEntitlementOverride">
-  >({
-    ...options,
-    service: "inter-bay-project-control",
-    subject: projectControlSubject({
-      dest_bay: bay_id,
-      method: "clear-project-entitlement-override",
-    }),
-    impl: {
-      clearProjectEntitlementOverride: async (opts) =>
-        await impl.clearProjectEntitlementOverride(opts),
     },
   });
 }

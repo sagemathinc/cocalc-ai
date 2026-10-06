@@ -183,6 +183,16 @@ describe("remote project detail reads", () => {
     expect(hubApiRouteKey(sharing, [{ project_id: PROJECT_ID }])).toBe(
       PROJECT_ID,
     );
+    for (const name of [
+      "getAdminProjectEntitlementOverride",
+      "setAdminProjectEntitlementOverride",
+      "clearAdminProjectEntitlementOverride",
+    ]) {
+      expect([name, getHubApiRoute(`projects.${name}`)?.owner]).toEqual([
+        name,
+        "project",
+      ]);
+    }
     // Copying secrets involves two projects: it stays an explicit workflow.
     expect(getHubApiRoute("projects.copyProjectSecrets")).toBeUndefined();
   });

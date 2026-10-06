@@ -96,6 +96,11 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "projects.startCourseSecretCleanup": courseProjectFromOpts,
   "projects.getCourseSecretSyncStatus": courseProjectFromOpts,
   "projects.revokeCourseSecretPolicy": courseProjectFromOpts,
+  // Admin overrides apply where the project is; isAdmin asks the admin's
+  // home bay (#904).
+  "projects.getAdminProjectEntitlementOverride": projectFromOpts,
+  "projects.setAdminProjectEntitlementOverride": projectFromOpts,
+  "projects.clearAdminProjectEntitlementOverride": projectFromOpts,
 };
 
 export function getHubApiRoute(name: string): HubApiRoute | undefined {

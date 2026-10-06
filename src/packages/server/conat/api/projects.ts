@@ -69,6 +69,7 @@ import {
   getProjectRuntimeConfiguration,
 } from "@cocalc/server/launchpad/project-runtime";
 import { resolveProjectCollabInviteDirectory } from "@cocalc/server/projects/collab-invite-directory";
+import { getProjectEntitlementOverrideLocal } from "@cocalc/server/membership/project-entitlement-overrides";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
 import { posix } from "path";
 import type {
@@ -1878,16 +1879,9 @@ export async function getAdminProjectEntitlementOverride({
   if (!(await isAdmin(account_id))) {
     throw new Error("must be an admin");
   }
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null) {
-    throw new Error(`project ${project_id} not found`);
-  }
-  return await getInterBayBridge()
-    .projectControl(ownership.bay_id)
-    .getProjectEntitlementOverride({
-      project_id,
-      epoch: ownership.epoch,
-    });
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  await resolveRequiredProjectBay(project_id);
+  return (await getProjectEntitlementOverrideLocal(project_id)) ?? null;
 }
 
 export async function setAdminProjectEntitlementOverride({
@@ -1922,21 +1916,19 @@ export async function setAdminProjectEntitlementOverride({
   ) {
     throw new Error("disk_quota_mb must be a nonnegative finite number");
   }
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null) {
-    throw new Error(`project ${project_id} not found`);
-  }
-  return await getInterBayBridge()
-    .projectControl(ownership.bay_id)
-    .setProjectEntitlementOverride({
-      project_id,
-      actor_account_id: account_id,
-      disk_quota_mb,
-      reason,
-      expires_at,
-      source: "admin",
-      epoch: ownership.epoch,
-    });
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  await resolveRequiredProjectBay(project_id);
+  // Loaded on use: project-control imports this module.
+  const { setProjectDiskQuotaOverrideOnOwningBay } =
+    await import("@cocalc/server/inter-bay/project-control");
+  return await setProjectDiskQuotaOverrideOnOwningBay({
+    project_id,
+    actor_account_id: account_id,
+    disk_quota_mb,
+    reason,
+    expires_at,
+    source: "admin",
+  });
 }
 
 export async function clearAdminProjectEntitlementOverride({
@@ -1960,18 +1952,16 @@ export async function clearAdminProjectEntitlementOverride({
     browser_id,
     session_hash,
   });
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null) {
-    throw new Error(`project ${project_id} not found`);
-  }
-  await getInterBayBridge()
-    .projectControl(ownership.bay_id)
-    .clearProjectEntitlementOverride({
-      project_id,
-      actor_account_id: account_id,
-      reason,
-      epoch: ownership.epoch,
-    });
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  await resolveRequiredProjectBay(project_id);
+  // Loaded on use: project-control imports this module.
+  const { clearProjectEntitlementOverrideOnOwningBay } =
+    await import("@cocalc/server/inter-bay/project-control");
+  await clearProjectEntitlementOverrideOnOwningBay({
+    project_id,
+    actor_account_id: account_id,
+    reason,
+  });
 }
 
 export async function getProjectRootfs({

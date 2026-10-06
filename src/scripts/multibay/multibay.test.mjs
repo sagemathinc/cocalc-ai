@@ -621,6 +621,56 @@ describe("account-home facts on the owning bay", () => {
   });
 });
 
+describe("admin entitlement overrides across bays", () => {
+  // An admin homed on the seed manages a disk quota override on bob's
+  // project, which lives on the attached bay.
+  let admin;
+
+  it("lets an admin on the other bay set, read and clear an override", async () => {
+    admin = await createAccount(cluster, { home_bay_id: SEED, name: "ivy" });
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+         [${JSON.stringify(admin.account_id)}]);`,
+    );
+    admin.client = await client(admin);
+    const set = await admin.client.call(
+      "projects.setAdminProjectEntitlementOverride",
+      {
+        project_id: bob.project,
+        disk_quota_mb: 12345,
+        reason: "multibay test",
+      },
+    );
+    assert.ok(set);
+    const read = await admin.client.call(
+      "projects.getAdminProjectEntitlementOverride",
+      { project_id: bob.project },
+    );
+    assert.equal(
+      read?.override?.project_defaults?.disk_quota?.value ??
+        read?.project_defaults?.disk_quota?.value,
+      12345,
+    );
+    await admin.client.call("projects.clearAdminProjectEntitlementOverride", {
+      project_id: bob.project,
+      reason: "multibay test done",
+    });
+  });
+
+  it("refuses a non-admin on the other bay", async () => {
+    await assert.rejects(
+      alice.client.call("projects.getAdminProjectEntitlementOverride", {
+        project_id: bob.project,
+      }),
+      /must be an admin/,
+    );
+  });
+});
+
 describe("fabric faults", () => {
   it("answers a change on the owning bay while the other bay is frozen", async () => {
     // alice (homed on the seed) collaborates on bob's project. With the seed
