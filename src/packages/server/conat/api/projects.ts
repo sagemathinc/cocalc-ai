@@ -2604,15 +2604,8 @@ export async function listProjectSecrets({
   account_id?: string;
   project_id: string;
 }): Promise<ProjectSecretMetadata[]> {
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   const actor = requireAccountId(account_id);
-  const ownership = await resolveRequiredProjectBay(project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge().projectSecrets(ownership.bay_id).list({
-      account_id: actor,
-      project_id,
-      epoch: ownership.epoch,
-    });
-  }
   await assertCollab({ account_id: actor, project_id });
   return await listProjectSecretsInDb({ project_id });
 }
@@ -2624,17 +2617,8 @@ export async function refreshProjectSecretsRuntime({
   account_id?: string;
   project_id: string;
 }): Promise<ProjectSecretsRuntimeRefreshResult> {
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   const actor = requireAccountId(account_id);
-  const ownership = await resolveRequiredProjectBay(project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .refreshRuntime({
-        account_id: actor,
-        project_id,
-        epoch: ownership.epoch,
-      });
-  }
   await assertCollab({ account_id: actor, project_id });
   return await syncProjectSecretsRuntimeOnAssignedHost({ project_id });
 }
@@ -3016,20 +3000,8 @@ export async function setProjectSecret({
   name: string;
   value: string;
 }): Promise<ProjectSecretMetadata> {
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   const actor = requireAccountId(account_id);
-  const ownership = await resolveRequiredProjectBay(project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    const result = await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .set({
-        account_id: actor,
-        project_id,
-        name,
-        value,
-        epoch: ownership.epoch,
-      });
-    return result;
-  }
   await assertCollab({ account_id: actor, project_id });
   const result = await setProjectSecretInDb({
     project_id,
@@ -3059,16 +3031,8 @@ export async function deleteProjectSecret({
   deleted: boolean;
   runtime_refresh?: ProjectSecretsRuntimeRefreshResult;
 }> {
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   const actor = requireAccountId(account_id);
-  const ownership = await resolveRequiredProjectBay(project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge().projectSecrets(ownership.bay_id).delete({
-      account_id: actor,
-      project_id,
-      name,
-      epoch: ownership.epoch,
-    });
-  }
   await assertCollab({ account_id: actor, project_id });
   const deleted = await deleteProjectSecretInDb({
     project_id,
@@ -3211,24 +3175,13 @@ export async function generateProjectSshKeySecret({
 }): Promise<GenerateProjectSshKeySecretResult> {
   assertProjectRuntimeCapability("ssh");
   const actor = requireAccountId(account_id);
-  const authSession = await requireDangerousProjectMutationAuth({
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes);
+  // the fresh-auth check runs on the caller's home bay.
+  await requireDangerousProjectMutationAuth({
     account_id: actor,
     browser_id,
     session_hash,
   });
-  const actorSessionHash = authSession?.session_hash ?? session_hash;
-  const ownership = await resolveRequiredProjectBay(project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .generateSshKeySecret({
-        account_id: actor,
-        session_hash: actorSessionHash,
-        project_id,
-        secret_name,
-        epoch: ownership.epoch,
-      });
-  }
   await assertCollab({ account_id: actor, project_id });
   const result = await generateProjectSshKeySecretLocal({
     project_id,

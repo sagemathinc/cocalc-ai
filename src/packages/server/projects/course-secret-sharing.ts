@@ -167,8 +167,8 @@ export async function ensureCourseSecretSharingSchema(
     course_path TEXT NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT FALSE,
     generation BIGINT NOT NULL DEFAULT 1,
-    created_by UUID NOT NULL REFERENCES accounts(account_id),
-    updated_by UUID NOT NULL REFERENCES accounts(account_id),
+    created_by UUID NOT NULL,
+    updated_by UUID NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     revoked_at TIMESTAMPTZ,
@@ -182,8 +182,8 @@ export async function ensureCourseSecretSharingSchema(
     policy_id UUID NOT NULL REFERENCES course_secret_policies(policy_id) ON DELETE CASCADE,
     source_secret_name TEXT NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    created_by UUID NOT NULL REFERENCES accounts(account_id),
-    updated_by UUID NOT NULL REFERENCES accounts(account_id),
+    created_by UUID NOT NULL,
+    updated_by UUID NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     revoked_at TIMESTAMPTZ,
@@ -194,9 +194,9 @@ export async function ensureCourseSecretSharingSchema(
     policy_id UUID NOT NULL REFERENCES course_secret_policies(policy_id) ON DELETE CASCADE,
     target_project_id UUID NOT NULL,
     student_account_id UUID,
-    approved_by UUID NOT NULL REFERENCES accounts(account_id),
+    approved_by UUID NOT NULL,
     approved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    revoked_by UUID REFERENCES accounts(account_id),
+    revoked_by UUID,
     revoked_at TIMESTAMPTZ,
     PRIMARY KEY(policy_id, target_project_id)
   )`);
@@ -205,7 +205,7 @@ export async function ensureCourseSecretSharingSchema(
     project_id UUID NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
     policy_id UUID NOT NULL REFERENCES course_secret_policies(policy_id) ON DELETE CASCADE,
     policy_generation BIGINT NOT NULL,
-    actor_account_id UUID NOT NULL REFERENCES accounts(account_id),
+    actor_account_id UUID NOT NULL,
     mode TEXT NOT NULL CHECK(mode IN ('sync', 'cleanup')),
     status TEXT NOT NULL CHECK(status IN ('pending','running','completed','partial','failed','cancelled')),
     requested_secret_names TEXT[] NOT NULL DEFAULT '{}',
@@ -242,11 +242,36 @@ export async function ensureCourseSecretSharingSchema(
     event_id UUID PRIMARY KEY,
     project_id UUID NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
     policy_id UUID,
-    actor_account_id UUID NOT NULL REFERENCES accounts(account_id),
+    actor_account_id UUID NOT NULL,
     event_type TEXT NOT NULL,
     target_project_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
+  // These rows name the acting account, which may be homed on another bay
+  // and have no local `accounts` row, so they must not reference accounts.
+  await db.query(`
+    ALTER TABLE course_secret_policies
+      DROP CONSTRAINT IF EXISTS course_secret_policies_created_by_fkey,
+      DROP CONSTRAINT IF EXISTS course_secret_policies_updated_by_fkey
+  `);
+  await db.query(`
+    ALTER TABLE course_secret_grants
+      DROP CONSTRAINT IF EXISTS course_secret_grants_created_by_fkey,
+      DROP CONSTRAINT IF EXISTS course_secret_grants_updated_by_fkey
+  `);
+  await db.query(`
+    ALTER TABLE course_secret_recipients
+      DROP CONSTRAINT IF EXISTS course_secret_recipients_approved_by_fkey,
+      DROP CONSTRAINT IF EXISTS course_secret_recipients_revoked_by_fkey
+  `);
+  await db.query(`
+    ALTER TABLE course_secret_sync_runs
+      DROP CONSTRAINT IF EXISTS course_secret_sync_runs_actor_account_id_fkey
+  `);
+  await db.query(`
+    ALTER TABLE course_secret_audit_events
+      DROP CONSTRAINT IF EXISTS course_secret_audit_events_actor_account_id_fkey
+  `);
 }
 
 async function audit(

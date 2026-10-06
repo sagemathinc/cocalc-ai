@@ -168,13 +168,9 @@ describe("project viewer endpoint audit", () => {
       "assertLocalProjectCollaborator",
     ]);
     for (const name of [
-      "handleProjectSecretsList",
-      "handleProjectSecretsSet",
-      "handleProjectSecretsDelete",
       "handleProjectSecretsCopy",
       "handleProjectSecretsExportForCopy",
       "handleProjectSecretsImportForCopy",
-      "handleProjectSecretsGenerateSshKeySecret",
     ]) {
       expectGuard(projectSecrets, name, ["assertLocalProjectSecretAccess"]);
     }

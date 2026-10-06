@@ -446,21 +446,16 @@ import {
 import {
   handleProjectSecretsApproveCourseRecipients,
   handleProjectSecretsCopy,
-  handleProjectSecretsDelete,
   handleProjectSecretsExportForCopy,
-  handleProjectSecretsGenerateSshKeySecret,
   handleProjectSecretsGetCoursePolicy,
   handleProjectSecretsGetCourseSyncStatus,
   handleProjectSecretsImportForCopy,
   handleProjectSecretsInstallCourseManaged,
-  handleProjectSecretsList,
   handleProjectSecretsListCourseShareable,
   handleProjectSecretsPreviewCourseSync,
   handleProjectSecretsRemoveCourseManaged,
-  handleProjectSecretsRefreshRuntime,
   handleProjectSecretsRevokeCoursePolicy,
   handleProjectSecretsRevokeCourseRecipients,
-  handleProjectSecretsSet,
   handleProjectSecretsSetCourseGrants,
   handleProjectSecretsSetCoursePolicy,
   handleProjectSecretsSetCourseSharing,
@@ -2577,20 +2572,13 @@ async function startProjectDetailsService(): Promise<void> {
 async function startProjectSecretsService(): Promise<void> {
   const client = getInterBayFabricServiceClient();
   const impl: InterBayProjectSecretsApi = {
-    list: async (opts) => await handleProjectSecretsList(opts),
-    refreshRuntime: async (opts) =>
-      await handleProjectSecretsRefreshRuntime(opts),
     validateCourseTarget: async (opts) =>
       await handleProjectSecretsValidateCourseTarget(opts),
-    set: async (opts) => await handleProjectSecretsSet(opts),
-    delete: async (opts) => await handleProjectSecretsDelete(opts),
     copy: async (opts) => await handleProjectSecretsCopy(opts),
     exportForCopy: async (opts) =>
       await handleProjectSecretsExportForCopy(opts),
     importForCopy: async (opts) =>
       await handleProjectSecretsImportForCopy(opts),
-    generateSshKeySecret: async (opts) =>
-      await handleProjectSecretsGenerateSshKeySecret(opts),
     listCourseShareable: async (opts) =>
       await handleProjectSecretsListCourseShareable(opts),
     getCoursePolicy: async (opts) =>

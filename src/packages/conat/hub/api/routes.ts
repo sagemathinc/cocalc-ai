@@ -45,6 +45,11 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "projects.listProjectAccessRequestBlocks": projectFromOpts,
   "projects.unblockProjectAccessRequester": projectFromOpts,
   "projects.getProjectCollaboratorInviteUsage": projectFromOpts,
+  "projects.listProjectSecrets": projectFromOpts,
+  "projects.refreshProjectSecretsRuntime": projectFromOpts,
+  "projects.setProjectSecret": projectFromOpts,
+  "projects.deleteProjectSecret": projectFromOpts,
+  "projects.generateProjectSshKeySecret": projectFromOpts,
 };
 
 export function getHubApiRoute(name: string): HubApiRoute | undefined {

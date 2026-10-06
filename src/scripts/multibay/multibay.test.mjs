@@ -324,6 +324,67 @@ describe("a project managed from the other bay", () => {
   });
 });
 
+describe("project secrets across bays", () => {
+  // bob's project lives on the attached bay; alice (a collaborator) is homed
+  // on the seed, so every call below crosses bays.
+  const NAME = "MULTIBAY_TOKEN";
+  const names = async (c) =>
+    (
+      await c.call("projects.listProjectSecrets", { project_id: bob.project })
+    ).map((secret) => secret.name);
+
+  it("lets a collaborator on the other bay set and list a secret", async () => {
+    const set = await alice.client.call("projects.setProjectSecret", {
+      project_id: bob.project,
+      name: NAME,
+      value: "s3cr3t",
+    });
+    assert.equal(set.name, NAME);
+    assert.ok((await names(alice.client)).includes(NAME));
+    assert.ok((await names(bob.client)).includes(NAME));
+    const refresh = await alice.client.call(
+      "projects.refreshProjectSecretsRuntime",
+      { project_id: bob.project },
+    );
+    assert.ok(refresh?.status);
+  });
+
+  it("refuses a non-member on the other bay", async () => {
+    const gina = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "gina",
+    });
+    gina.client = await client(gina);
+    await assert.rejects(names(gina.client));
+    await assert.rejects(
+      gina.client.call("projects.setProjectSecret", {
+        project_id: bob.project,
+        name: NAME,
+        value: "nope",
+      }),
+    );
+    await assert.rejects(
+      gina.client.call("projects.deleteProjectSecret", {
+        project_id: bob.project,
+        name: NAME,
+      }),
+    );
+    assert.ok((await names(bob.client)).includes(NAME));
+  });
+
+  it("lets a collaborator on the other bay delete a secret", async () => {
+    const { deleted } = await alice.client.call(
+      "projects.deleteProjectSecret",
+      {
+        project_id: bob.project,
+        name: NAME,
+      },
+    );
+    assert.equal(deleted, true);
+    assert.ok(!(await names(bob.client)).includes(NAME));
+  });
+});
+
 describe("access requests across bays", () => {
   // The project lives on the seed; its owner (bob) and the requesters are
   // homed on either bay, so requests and their management cross bays.
