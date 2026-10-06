@@ -26,6 +26,15 @@ describe("sandbox cp", () => {
     tempDirs.length = 0;
   });
 
+  it("throws instead of leaving a partial copy when stopped", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cocalc-cp-timeout-"));
+    tempDirs.push(root);
+    await writeFile(join(root, "big"), Buffer.alloc(64 * 1024 * 1024, 1));
+    await expect(
+      cp(join(root, "big"), join(root, "copy"), { timeout: 1 }),
+    ).rejects.toThrow("stopped after 1 ms");
+  });
+
   it("replaces a destination symlink instead of following it", async () => {
     const root = await mkdtemp(join(tmpdir(), "cocalc-cp-symlink-"));
     tempDirs.push(root);

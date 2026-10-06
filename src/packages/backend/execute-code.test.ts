@@ -141,6 +141,18 @@ describe("tests involving bash mode", () => {
   });
 });
 
+describe("commands killed by a signal", () => {
+  it("are not reported as exiting successfully", async () => {
+    const { exit_code } = await executeCode({
+      command: "sh",
+      args: ["-c", "kill -9 $$"],
+      err_on_exit: false,
+      bash: false,
+    });
+    expect(exit_code).toBe(137);
+  });
+});
+
 describe("test timeout", () => {
   it("kills if timeout reached", async () => {
     const t = Date.now();
@@ -514,7 +526,8 @@ describe("await", () => {
     if (s.type !== "async") return;
     expect(s.stderr).toEqual("");
     expect(s.stdout).toEqual("foo\n");
-    expect(s.exit_code).toEqual(0);
+    // Killed by SIGKILL: 128 + 9, never a successful 0.
+    expect(s.exit_code).toEqual(137);
     expect(s.status).toEqual("completed");
   });
 });

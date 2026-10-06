@@ -3,6 +3,8 @@ Test the exec command.
 */
 
 import exec, {
+  exitCode,
+  parseOutput,
   parseAndValidateOptions,
   selectPlatformOptions,
   validate,
@@ -30,6 +32,34 @@ describe("exec works", () => {
     expect(truncated).toBe(false);
     expect(stdout.toString()).toEqual("a.txt\n");
     expect(stderr.toString()).toEqual("");
+  });
+});
+
+describe("exec reports killed commands as failures", () => {
+  it("reports a signal as 128 + its number", async () => {
+    const { code } = await exec({
+      cmd: "/bin/sh",
+      safety: ["-c", "kill -9 $$"],
+    });
+    expect(code).toBe(137);
+  });
+
+  it("reports a timed-out command as a failure", async () => {
+    const output = await exec({
+      cmd: "/bin/sleep",
+      safety: ["10"],
+      timeout: 100,
+    });
+    expect(output.code).toBe(143);
+    expect(output.truncated).toBe(true);
+    expect(() => parseOutput(output)).toThrow("exited with code 143");
+  });
+
+  it("maps exit statuses", () => {
+    expect(exitCode(0, null)).toBe(0);
+    expect(exitCode(3, null)).toBe(3);
+    expect(exitCode(null, "SIGTERM")).toBe(143);
+    expect(exitCode(null, null)).toBe(1);
   });
 });
 

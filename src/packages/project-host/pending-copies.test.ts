@@ -44,8 +44,14 @@ jest.mock("@cocalc/backend/sandbox", () => ({
       return path.join(this.root, p.replace(/^\/+/, ""));
     }
 
-    async rustic(args: string[]): Promise<void> {
-      return await mockRustic(args, this.root);
+    async rustic(args: string[]) {
+      return (
+        (await mockRustic(args, this.root)) ?? {
+          stdout: Buffer.from(""),
+          stderr: Buffer.from(""),
+          code: 0,
+        }
+      );
     }
   },
 }));
@@ -174,6 +180,27 @@ describe("project-host pending copies", () => {
     await expect(readFile(path.join(projectRoot, "foo"), "utf8")).resolves.toBe(
       "notebook payload",
     );
+  });
+
+  it("fails the copy when the restore is killed part way", async () => {
+    mockRustic.mockImplementationOnce(async (args: string[], root: string) => {
+      const dest = path.join(root, args[2].replace(/^\/+/, ""));
+      await mkdir(path.dirname(dest), { recursive: true });
+      await writeFile(dest, "partial");
+      return { stdout: Buffer.from(""), stderr: Buffer.from(""), code: 143 };
+    });
+
+    const { applyPendingCopies } = await import("./pending-copies");
+    await applyPendingCopies({ limit: 1 });
+
+    expect(mockCpExec).not.toHaveBeenCalled();
+    expect(mockStatusUpdates).toEqual([
+      expect.objectContaining({
+        copy_id: "copy-1",
+        status: "failed",
+        last_error: expect.stringContaining("exited with code 143"),
+      }),
+    ]);
   });
 
   it("skips an exact no-clobber copy before restoring its snapshot", async () => {

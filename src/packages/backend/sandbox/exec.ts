@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { platform } from "node:os";
+import { constants as osConstants, platform } from "node:os";
 import { type ExecOutput } from "@cocalc/conat/files/fs";
 export { type ExecOutput };
 import getLogger from "@cocalc/backend/logger";
@@ -159,7 +159,7 @@ export default async function exec({
       reject(err);
     });
 
-    child.once("close", (code) => {
+    child.once("close", (code, signal) => {
       if (timeoutHandle) {
         clearTimeout(timeoutHandle);
       }
@@ -173,11 +173,23 @@ export default async function exec({
       resolve({
         stdout: Buffer.concat(stdoutChunks),
         stderr: Buffer.concat(stderrChunks),
-        code,
+        code: exitCode(code, signal),
         truncated,
       });
     });
   });
+}
+
+// A child killed by a signal (including our own timeout) has a null exit code,
+// which callers checking `if (code)` would treat as success. Report it the way
+// a shell does, as 128 + the signal number.
+export function exitCode(
+  code: number | null,
+  signal: NodeJS.Signals | null,
+): number {
+  if (code != null) return code;
+  const number = signal ? osConstants.signals[signal] : undefined;
+  return number ? 128 + number : 1;
 }
 
 function feedLines(
@@ -365,7 +377,9 @@ async function getUserIds(
 // instead throw an error with message stderr.
 export function parseOutput({ stdout, stderr, code, truncated }: ExecOutput) {
   if (code) {
-    throw new Error(Buffer.from(stderr).toString());
+    throw new Error(
+      Buffer.from(stderr).toString().trim() || `exited with code ${code}`,
+    );
   }
   return {
     stdout: Buffer.from(stdout).toString(),
