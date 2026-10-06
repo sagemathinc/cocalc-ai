@@ -60,8 +60,37 @@ async function ownerBay(
   if (key == null) return;
   switch (route.owner) {
     case "project":
-      return (await resolveProjectBay(key))?.bay_id;
+      return typeof key === "string"
+        ? (await resolveProjectBay(key))?.bay_id
+        : undefined;
+    case "collab-invite":
+      return typeof key === "object"
+        ? await collabInviteOwnerBay(key)
+        : undefined;
   }
+}
+
+async function collabInviteOwnerBay({
+  invite_id,
+  token,
+}: {
+  invite_id?: string;
+  token?: string;
+}): Promise<string | undefined> {
+  // Loaded on use: these modules are large and import much of the server.
+  const { hashProjectCollabInviteToken } =
+    await import("@cocalc/server/projects/collaborators");
+  const { resolveProjectCollabInviteDirectory } =
+    await import("@cocalc/server/projects/collab-invite-directory");
+  const token_hash = token
+    ? await hashProjectCollabInviteToken(token)
+    : undefined;
+  const entry = await resolveProjectCollabInviteDirectory({
+    ...(invite_id ? { invite_id } : {}),
+    ...(token_hash ? { token_hash } : {}),
+  });
+  // An unknown invite runs where it was received, which reports it as missing.
+  return entry?.owning_bay_id ?? undefined;
 }
 
 type ForwardedResult =

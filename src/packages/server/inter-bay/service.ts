@@ -581,16 +581,8 @@ import {
 } from "@cocalc/server/purchases/monthly-collection";
 import { listCourseFundingSourcesOnBay } from "@cocalc/server/compute/funding/sources";
 import {
-  copyEmailProjectInviteLink,
-  createCollabInvite,
-  inviteCollaboratorWithoutAccount,
-  listCollabInvites,
-  previewEmailProjectInvite,
-  redeemEmailProjectInvite,
-  removeCollaborator,
   repairAcceptedCourseStudentInviteAccountsLocal,
   respondCollabInviteCanonical,
-  respondEmailProjectInvite,
 } from "@cocalc/server/projects/collaborators";
 import { ensureCourseManagerAccessLocal } from "@cocalc/server/projects/course/ensure-manager-access";
 import {
@@ -2756,53 +2748,6 @@ async function startProjectCollabInviteService(): Promise<void> {
     deleteInbox: async ({ invite_id }) => {
       await deleteProjectedCollabInviteDirect(invite_id);
     },
-    create: async ({ trusted_product_access_checked, ...opts }) => {
-      const result = await createCollabInvite(opts, {
-        trustedProductAccessChecked: trusted_product_access_checked === true,
-      });
-      return {
-        created: result.created,
-        invite: collabInviteToWire(result.invite),
-      };
-    },
-    inviteWithoutAccount: async (opts) => {
-      const result = await inviteCollaboratorWithoutAccount(opts);
-      return {
-        email_sent: result.email_sent,
-        email_available: result.email_available,
-        manual_delivery_required: result.manual_delivery_required,
-        email_blocked_reason: result.email_blocked_reason,
-        invites: result.invites.map((invite) => collabInviteToWire(invite)),
-      };
-    },
-    copyEmailLink: async (opts) => {
-      const result = await copyEmailProjectInviteLink(opts);
-      return {
-        invite_id: result.invite_id,
-        invite_url: result.invite_url,
-        expires: result.expires ? new Date(result.expires).toISOString() : null,
-      };
-    },
-    redeemEmail: async ({ trusted_product_access_checked, ...opts }) =>
-      collabInviteToWire(
-        await redeemEmailProjectInvite({
-          ...opts,
-          trustedProductAccessChecked: !!trusted_product_access_checked,
-        }),
-      ),
-    previewEmail: async (opts) =>
-      collabInviteToWire(await previewEmailProjectInvite(opts)),
-    respondEmail: async ({ trusted_product_access_checked, ...opts }) =>
-      collabInviteToWire(
-        await respondEmailProjectInvite({
-          ...opts,
-          trustedProductAccessChecked: !!trusted_product_access_checked,
-        }),
-      ),
-    list: async (opts) =>
-      (await listCollabInvites(opts)).map((invite) =>
-        collabInviteToWire(invite),
-      ),
     repairAcceptedCourseStudentInviteAccounts: async (opts) =>
       await repairAcceptedCourseStudentInviteAccountsLocal({
         ...opts,
@@ -2823,9 +2768,6 @@ async function startProjectCollabInviteService(): Promise<void> {
       await getCourseReconfigureOperationLocal(opts),
     cancelCourseReconfigureOperation: async (opts) =>
       await cancelCourseReconfigureOperationLocal(opts),
-    removeCollaborator: async (opts) => {
-      await removeCollaborator(opts);
-    },
     leaveOrDeleteProjects: async ({ account_id, project_ids }) =>
       await leaveOrDeleteProjectsForAccount({
         account_id,

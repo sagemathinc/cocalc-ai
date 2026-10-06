@@ -471,6 +471,73 @@ describe("access requests across bays", () => {
   });
 });
 
+describe("email invites across bays", () => {
+  // bob's project lives on the attached bay; alice, a collaborator homed on
+  // the seed, invites gina by email. gina is homed on the seed and accepts
+  // through the link token alone, so each call is routed to the owning bay.
+  let project;
+  let gina;
+  let token;
+
+  it("lets a collaborator on the other bay invite by email and copy the link", async () => {
+    project = await createProject(bob.client, "email invites");
+    await invite(bob, alice, project);
+    gina = await createAccount(cluster, { home_bay_id: SEED, name: "gina" });
+    gina.client = await client(gina);
+    const sent = await alice.client.call(
+      "projects.inviteCollaboratorWithoutAccount",
+      {
+        opts: {
+          project_id: project,
+          title: "email invites",
+          link2proj: "",
+          to: gina.email_address,
+          email: "",
+          send_email: false,
+          invite_base_url: "https://multibay.test",
+        },
+      },
+    );
+    const invite_id = sent.invites[0]?.invite_id;
+    assert.ok(invite_id, "an invite was created");
+    const { invite_url } = await alice.client.call(
+      "projects.copyEmailProjectInviteLink",
+      { invite_id, invite_base_url: "https://multibay.test" },
+    );
+    token = decodeURIComponent(invite_url.split("/invites/")[1] ?? "");
+    assert.ok(token, `a token in ${invite_url}`);
+    const outbound = await alice.client.call("projects.listCollabInvites", {
+      project_id: project,
+      status: "pending",
+    });
+    assert.ok(outbound.some((row) => row.invite_id === invite_id));
+  });
+
+  it("lets the invitee preview and accept with only the link token", async () => {
+    const preview = await gina.client.call(
+      "projects.previewEmailProjectInvite",
+      { token },
+    );
+    assert.equal(preview.project_id, project);
+    await gina.client.call("projects.respondEmailProjectInvite", {
+      token,
+      action: "accept",
+    });
+    await eventually(() => listed(gina.client, project), {
+      what: "the project in gina's list",
+    });
+  });
+
+  it("lets the owner remove the new collaborator", async () => {
+    await bob.client.call("projects.removeCollaborator", {
+      opts: { project_id: project, account_id: gina.account_id },
+    });
+    await eventually(async () => !(await listed(gina.client, project)), {
+      what: "the project gone from gina's list",
+    });
+  });
+});
+
 describe("account-home facts on the owning bay", () => {
   // Admin status lives on the account's home bay. The owning bay of a
   // project must ask it, not its own (missing) copy of the account.
