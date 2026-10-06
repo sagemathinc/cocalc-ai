@@ -500,3 +500,25 @@ describe("saveRootfsImage", () => {
 });
 
 export {};
+
+describe("rootfsTagsForAccount", () => {
+  it("lets only admins set onboarding tags; others keep their other tags", async () => {
+    const { rootfsTagsForAccount } = await import("./catalog");
+    const tags = [
+      "python",
+      "onboarding:default",
+      "Onboarding:Jupyter-Python",
+      " onboarding:sage ",
+      "teaching",
+    ];
+    expect(rootfsTagsForAccount(tags, false)).toEqual(["python", "teaching"]);
+    expect(rootfsTagsForAccount(tags, true)).toEqual([
+      "python",
+      "onboarding:default",
+      "Onboarding:Jupyter-Python",
+      "onboarding:sage",
+      "teaching",
+    ]);
+    expect(rootfsTagsForAccount(undefined, false)).toEqual([]);
+  });
+});
