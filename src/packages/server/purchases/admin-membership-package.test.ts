@@ -13,13 +13,20 @@ import {
   legacyAdminMembershipPackageRequestHash,
   adminMembershipPackageInvoiceId,
 } from "./admin-membership-package-identity";
-import adminCreateMembershipPackagePurchase from "./admin-membership-package";
-import { createTestAccount, createTestMembershipTier } from "./test-data";
+import adminCreateMembershipPackagePurchase, {
+  adminGetMembershipPackageQuote,
+} from "./admin-membership-package";
+import {
+  createTestAccount,
+  createTestMembershipTier,
+  createTestMembershipPackage,
+} from "./test-data";
 import type { AdminMembershipPackagePurchaseOptions } from "./admin-membership-package";
 import { bindAdminMembershipPayment } from "./admin-membership-orders";
 import { processPaymentIntent } from "./stripe/process-payment-intents";
 import getSpendableBalance from "./get-spendable-balance";
 import getBalance from "./get-balance";
+import purchaseMembershipPackage from "./membership-package";
 import createCredit from "./create-credit";
 import {
   withFundingAccountTransaction,
@@ -27,6 +34,7 @@ import {
 } from "../compute/funding/backing";
 import {
   assignMembershipPackageSeat,
+  resolveMembershipPackageQuote,
   revokeMembershipPackageSeat,
 } from "@cocalc/server/membership/packages";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
@@ -85,6 +93,279 @@ describe("admin membership package purchase", () => {
   beforeEach(() => {
     mockCreatePaymentIntent.mockReset();
     mockGetStripe.mockReset();
+  });
+
+  it("creates an audited free Instructor package with fixed expiry, assignable seats and safe retries", async () => {
+    const admin_account_id = uuid();
+    const user_account_id = uuid();
+    const recipient = uuid();
+    const otherRecipient = uuid();
+    for (const id of [
+      admin_account_id,
+      user_account_id,
+      recipient,
+      otherRecipient,
+    ]) {
+      await createTestAccount(id);
+    }
+    await getPool().query(
+      "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+      [admin_account_id],
+    );
+    await createTestMembershipTier({
+      id: "instructor",
+      priority: 40,
+      team_visible: false,
+      course_store_visible: false,
+      price_monthly: 30,
+    });
+    const existingId = await createTestMembershipPackage({
+      owner_account_id: user_account_id,
+      kind: "team",
+      membership_class: membershipClass,
+      seat_count: 3,
+    });
+    const before = (
+      await getPool().query("SELECT * FROM membership_packages WHERE id=$1", [
+        existingId,
+      ])
+    ).rows;
+    const starts_at = new Date(Date.now() - 1000);
+    const expires_at = new Date(Date.now() + 45 * 86400000);
+    const options: AdminMembershipPackagePurchaseOptions = {
+      admin_account_id,
+      user_account_id,
+      product: {
+        type: "membership-package",
+        kind: "team",
+        membership_class: "instructor",
+        seat_count: 1,
+        interval: "month",
+        starts_at,
+        expires_at,
+      },
+      price: 0,
+      source: "free",
+      reason: "complimentary instructor training",
+      idempotency_key: uuid(),
+    };
+    const quote = await adminGetMembershipPackageQuote(options);
+    expect(quote).toMatchObject({
+      membership_class: "instructor",
+      seat_count: 1,
+      starts_at,
+      expires_at,
+      total_price: 30,
+    });
+    await expect(
+      adminGetMembershipPackageQuote({
+        ...options,
+        admin_account_id: user_account_id,
+      }),
+    ).rejects.toThrow("must be an admin");
+    await expect(
+      adminCreateMembershipPackagePurchase({
+        ...options,
+        admin_account_id: user_account_id,
+      }),
+    ).rejects.toThrow("must be an admin");
+    const created = await adminCreateMembershipPackagePurchase(options);
+    expect(created).toMatchObject({
+      price: 0,
+      starts_at,
+      expires_at,
+      existing: false,
+    });
+    expect(created.credit_id).toBeUndefined();
+    expect(await adminCreateMembershipPackagePurchase(options)).toMatchObject({
+      package_id: created.package_id,
+      purchase_id: created.purchase_id,
+      existing: true,
+    });
+    await expect(
+      adminCreateMembershipPackagePurchase({
+        ...options,
+        product: { ...options.product, seat_count: 2 },
+      }),
+    ).rejects.toThrow();
+    await assignMembershipPackageSeat({
+      package_id: created.package_id,
+      assigned_by_account_id: user_account_id,
+      account_id: recipient,
+    });
+    const membership = await resolveMembershipForAccount(recipient);
+    expect(membership.class).toBe("instructor");
+    expect(new Date(membership.expires!).valueOf()).toBe(expires_at.valueOf());
+    await expect(
+      assignMembershipPackageSeat({
+        package_id: created.package_id,
+        assigned_by_account_id: user_account_id,
+        account_id: otherRecipient,
+      }),
+    ).rejects.toThrow("no seats available");
+    await expect(
+      resolveMembershipPackageQuote({
+        type: "membership-package",
+        kind: "team",
+        package_id: created.package_id,
+        seat_count: 1,
+      }),
+    ).rejects.toThrow("not available for team packages");
+    expect(
+      (
+        await getPool().query("SELECT * FROM membership_packages WHERE id=$1", [
+          existingId,
+        ])
+      ).rows,
+    ).toEqual(before);
+    expect(
+      (
+        await getPool().query(
+          "SELECT id FROM team_licenses WHERE owner_account_id=$1",
+          [user_account_id],
+        )
+      ).rows,
+    ).toHaveLength(0);
+    expect(
+      (
+        await getPool().query(
+          "SELECT cost::float8 AS cost FROM purchases WHERE account_id=$1",
+          [user_account_id],
+        )
+      ).rows,
+    ).toEqual([{ cost: 0 }]);
+    expect(
+      (
+        await getPool().query(
+          "SELECT metadata FROM account_admin_audit_log WHERE account_id=$1 AND action='membership-package-purchase'",
+          [user_account_id],
+        )
+      ).rows,
+    ).toHaveLength(1);
+    expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+    expect(mockGetStripe).not.toHaveBeenCalled();
+  });
+
+  it("rejects paid, public, disabled, unknown and non-fixed-term Instructor package requests without side effects", async () => {
+    const admin_account_id = uuid();
+    const user_account_id = uuid();
+    await createTestAccount(admin_account_id);
+    await createTestAccount(user_account_id);
+    await getPool().query(
+      "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+      [admin_account_id],
+    );
+    await createTestMembershipTier({
+      id: "instructor",
+      team_visible: false,
+      course_store_visible: false,
+    });
+    const options: AdminMembershipPackagePurchaseOptions = {
+      admin_account_id,
+      user_account_id,
+      product: {
+        type: "membership-package",
+        kind: "team",
+        membership_class: "instructor",
+        seat_count: 2,
+        interval: "month",
+        starts_at: new Date(),
+        expires_at: new Date(Date.now() + 86400000),
+      },
+      price: 0,
+      source: "free",
+      reason: "synthetic instructor request",
+      idempotency_key: uuid(),
+    };
+    for (const payment of [
+      { source: "card" as const, price: 0 },
+      { source: "credit" as const, price: 0 },
+      { source: "card" as const, price: 10 },
+      { source: "free" as const, price: 10 },
+    ]) {
+      await expect(
+        adminCreateMembershipPackagePurchase({ ...options, ...payment }),
+      ).rejects.toThrow("complimentary zero-cost");
+    }
+    for (const dates of [
+      { starts_at: undefined },
+      { expires_at: undefined },
+      { expires_at: options.product.starts_at },
+      { expires_at: "invalid" },
+    ]) {
+      await expect(
+        adminCreateMembershipPackagePurchase({
+          ...options,
+          product: { ...options.product, ...dates },
+        }),
+      ).rejects.toThrow();
+    }
+    await expect(
+      resolveMembershipPackageQuote({
+        ...options.product,
+        starts_at: undefined,
+        expires_at: undefined,
+        metadata: { allow_instructor_tier_for_team: true },
+      }),
+    ).rejects.toThrow("not available for team packages");
+    await expect(
+      purchaseMembershipPackage({
+        account_id: user_account_id,
+        amount: 0,
+        product: {
+          ...options.product,
+          starts_at: undefined,
+          expires_at: undefined,
+        },
+      }),
+    ).rejects.toThrow("not available for team packages");
+    for (const seat_count of [0, -1, 1.5]) {
+      await expect(
+        adminCreateMembershipPackagePurchase({
+          ...options,
+          product: { ...options.product, seat_count },
+        }),
+      ).rejects.toThrow("seat_count");
+    }
+    const hiddenTier = `hidden-${uuid()}`;
+    await createTestMembershipTier({
+      id: hiddenTier,
+      team_visible: false,
+      course_store_visible: false,
+    });
+    for (const tier of ["instructor", `unknown-${uuid()}`, hiddenTier]) {
+      await getPool().query(
+        "UPDATE membership_tiers SET disabled=true WHERE id='instructor'",
+      );
+      await expect(
+        adminCreateMembershipPackagePurchase({
+          ...options,
+          product: { ...options.product, membership_class: tier },
+        }),
+      ).rejects.toThrow("not available for team packages");
+    }
+    await createTestMembershipTier({
+      id: "instructor",
+      team_visible: false,
+      course_store_visible: false,
+    });
+    expect(
+      (
+        await getPool().query(
+          "SELECT id FROM membership_packages WHERE owner_account_id=$1",
+          [user_account_id],
+        )
+      ).rows,
+    ).toHaveLength(0);
+    expect(
+      (
+        await getPool().query("SELECT id FROM purchases WHERE account_id=$1", [
+          user_account_id,
+        ])
+      ).rows,
+    ).toHaveLength(0);
+    expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+    expect(mockGetStripe).not.toHaveBeenCalled();
   });
 
   it("creates a free fixed-term Student team package the owner can assign without renewal", async () => {
