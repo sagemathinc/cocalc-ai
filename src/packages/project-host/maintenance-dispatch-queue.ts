@@ -12,6 +12,8 @@ interface Work {
   due: (row: Row) => string | null | undefined;
   run: (row: Row, opts: { afterRunning: boolean }) => Promise<void>;
   waiters: { resolve: () => void; reject: (err: unknown) => void }[];
+  // Reports a failure that no waiter observes (detached submissions).
+  onError?: (err: unknown, row: Row) => void;
   // Submitted while an operation for the same project was running, so the row
   // predates that operation's result and must be re-read before use.
   afterRunning?: boolean;
@@ -42,40 +44,58 @@ export class MaintenanceDispatchQueue {
     parallelism,
     due,
     run,
+    detach = false,
+    onError,
   }: {
     rows: Row[];
     observedAt: number;
     parallelism: number;
     due: Work["due"];
     run: Work["run"];
+    /**
+     * Queue the rows without waiting for them. Repeated sweeps over a long
+     * backlog would otherwise each hold a waiter on every pending row.
+     */
+    detach?: boolean;
+    onError?: Work["onError"];
   }): Promise<void> {
     this.concurrency = Math.max(1, parallelism);
+    const enqueue = (row: Row, waiter?: Work["waiters"][number]) => {
+      const waiters = waiter ? [waiter] : [];
+      const running = this.active.get(row.project_id);
+      const pending = this.pending.get(row.project_id);
+      if (running && running.observedAt >= observedAt && !pending) {
+        running.waiters.push(...waiters);
+        return;
+      }
+      if (pending) {
+        if (observedAt >= pending.observedAt) {
+          Object.assign(pending, { row, observedAt, due, run, onError });
+        }
+        if (running) pending.afterRunning = true;
+        pending.waiters.push(...waiters);
+      } else {
+        this.pending.set(row.project_id, {
+          row,
+          observedAt,
+          due,
+          run,
+          waiters,
+          onError,
+          afterRunning: running != null,
+        });
+      }
+    };
+    if (detach) {
+      for (const row of rows) enqueue(row);
+      this.pump();
+      return Promise.resolve();
+    }
     const completions = rows.map(
       (row) =>
-        new Promise<void>((resolve, reject) => {
-          const running = this.active.get(row.project_id);
-          const pending = this.pending.get(row.project_id);
-          if (running && running.observedAt >= observedAt && !pending) {
-            running.waiters.push({ resolve, reject });
-            return;
-          }
-          if (pending) {
-            if (observedAt >= pending.observedAt) {
-              Object.assign(pending, { row, observedAt, due, run });
-            }
-            if (running) pending.afterRunning = true;
-            pending.waiters.push({ resolve, reject });
-          } else {
-            this.pending.set(row.project_id, {
-              row,
-              observedAt,
-              due,
-              run,
-              waiters: [{ resolve, reject }],
-              afterRunning: running != null,
-            });
-          }
-        }),
+        new Promise<void>((resolve, reject) =>
+          enqueue(row, { resolve, reject }),
+        ),
     );
     this.pump();
     return Promise.all(completions).then(() => {});
@@ -144,6 +164,7 @@ export class MaintenanceDispatchQueue {
       this.paidSinceFree = 0;
     }
     this.pump();
+    if (failure && !work.waiters.length) work.onError?.(failure.err, work.row);
     for (const waiter of work.waiters) {
       if (failure) waiter.reject(failure.err);
       else waiter.resolve();

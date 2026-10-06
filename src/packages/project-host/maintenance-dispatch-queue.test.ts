@@ -252,3 +252,58 @@ it("marks work submitted while the same project runs for a fresh read", async ()
     { project_id: "a", afterRunning: true },
   ]);
 });
+
+it("returns detached submissions once queued without holding waiters", async () => {
+  const queue = new MaintenanceDispatchQueue();
+  const held = gate();
+  const started: string[] = [];
+  const run = async (row: HostProjectMaintenanceSchedule) => {
+    started.push(row.project_id);
+    await held.promise;
+  };
+  // Repeated sweeps over the same backlog, as while a long backup runs.
+  for (let observedAt = 1; observedAt <= 5; observedAt++) {
+    await queue.submit({
+      rows: [row("a"), row("b")],
+      observedAt,
+      parallelism: 1,
+      due,
+      run,
+      detach: true,
+    });
+  }
+  await flush();
+  expect(started).toEqual(["a"]);
+  const internal = queue as unknown as {
+    active: Map<string, { waiters: unknown[] }>;
+    pending: Map<string, { waiters: unknown[] }>;
+  };
+  expect(internal.active.get("a")?.waiters).toEqual([]);
+  expect(internal.pending.get("b")?.waiters).toEqual([]);
+  held.release();
+  await flush();
+  await flush();
+  // The newer row for "a" still runs once after the operation it queued behind.
+  expect([...started].sort()).toEqual(["a", "a", "b"]);
+});
+
+it("reports failures of detached work to onError", async () => {
+  const queue = new MaintenanceDispatchQueue();
+  const onError = jest.fn();
+  await queue.submit({
+    rows: [row("a")],
+    observedAt: 1,
+    parallelism: 1,
+    due,
+    run: async () => {
+      throw new Error("boom");
+    },
+    detach: true,
+    onError,
+  });
+  await flush();
+  expect(onError).toHaveBeenCalledWith(
+    expect.objectContaining({ message: "boom" }),
+    expect.objectContaining({ project_id: "a" }),
+  );
+});
