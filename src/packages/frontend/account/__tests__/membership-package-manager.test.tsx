@@ -128,6 +128,7 @@ jest.mock("@cocalc/frontend/components/time-ago", () => ({
 
 jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
   FreshAuthModal: () => <div data-testid="fresh-auth-modal" />,
+  isFreshAuthRequiredError: () => false,
   useFreshAuthAction: () => ({
     freshAuthModalProps: {},
     runFreshAuthAction,
@@ -892,6 +893,65 @@ describe("membership package managers", () => {
         target_email_address: "newuser@example.com",
       });
     });
+  });
+
+  it("assigns seats to a pasted email list, skipping existing seats", async () => {
+    getTeamLicense.mockResolvedValue(
+      makeTeamLicenseOverview([
+        makeTeamPackage({
+          seat_count: 5,
+          active_assignment_count: 1,
+          available_seat_count: 4,
+          assignments: [
+            {
+              id: "assignment-1",
+              package_id: "team-1",
+              email_address: "existing@example.edu",
+              assigned_at: new Date(),
+            },
+          ],
+        }),
+      ]),
+    );
+    assignMembershipPackageSeat.mockImplementation(async (opts) => {
+      if (opts.target_email_address === "bad@example.edu") {
+        throw new Error("seat limit reached");
+      }
+      return { id: "a", package_id: "team-1", assigned_at: new Date() };
+    });
+
+    render(<TeamPackageManager tiers={TIERS} />);
+    await waitFor(() => {
+      expect(screen.getAllByText("Assign seat").length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByText("Assign seat")[0]);
+    fireEvent.click(await screen.findByText("Email list"));
+    fireEvent.change(screen.getByLabelText("Email addresses"), {
+      target: {
+        value:
+          "ta1@example.edu\nEXISTING@example.edu, bad@example.edu; ta1@example.edu",
+      },
+    });
+    expect(screen.getByRole("status").textContent).toMatch(
+      /2 seats will be assigned; 1 already have a seat; 1 listed more than once/,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Assign 2 seats" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Assigned 1 seat; 1 failed and remain in the list/),
+      ).toBeTruthy();
+    });
+    expect(assignMembershipPackageSeat.mock.calls.map(([o]) => o)).toEqual([
+      { package_id: "team-1", target_email_address: "ta1@example.edu" },
+      { package_id: "team-1", target_email_address: "bad@example.edu" },
+    ]);
+    expect(
+      screen.getByText(/bad@example.edu: Error: seat limit reached/),
+    ).toBeTruthy();
+    expect(
+      (screen.getByLabelText("Email addresses") as HTMLTextAreaElement).value,
+    ).toBe("bad@example.edu");
   });
 
   it("provisions an admin site license without a user-selected bay", async () => {
