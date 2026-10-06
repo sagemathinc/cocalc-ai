@@ -422,7 +422,7 @@ describe("course secrets across bays", () => {
       course_project_id: bob.project,
       ...course,
     });
-    assert.equal(policy?.enabled, true);
+    assert.equal(policy?.policy?.enabled, true);
     await alice.client.call("projects.revokeCourseSecretPolicy", {
       course_project_id: bob.project,
       ...course,
