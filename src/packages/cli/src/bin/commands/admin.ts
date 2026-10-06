@@ -1975,9 +1975,9 @@ Merge comments are private unless their corresponding --*-comment-public flag is
     );
 
   adminSupport
-    .command("attachment <ticket-id> <attachment-id>")
+    .command("attachment <ticket-id> <attachment-id-or-blob-uuid>")
     .description(
-      "download an untrusted Zendesk PDF, DOCX, or image (fresh admin auth required)",
+      "download an untrusted PDF, DOCX, or image from a Zendesk attachment id or a support-form blob uuid listed under documents (fresh admin auth required)",
     )
     .option(
       "--output <path>",
@@ -1999,12 +1999,18 @@ Merge comments are private unless their corresponding --*-comment-public flag is
             fallback: 0,
             max: Number.MAX_SAFE_INTEGER,
           });
-          const attachment_id = parsePositiveIntegerOption({
-            name: "attachment-id",
-            value: attachmentId,
-            fallback: 0,
-            max: Number.MAX_SAFE_INTEGER,
-          });
+          const blob_uuid = isValidUUID(attachmentId.trim())
+            ? attachmentId.trim().toLowerCase()
+            : undefined;
+          const attachment_id =
+            blob_uuid != null
+              ? undefined
+              : parsePositiveIntegerOption({
+                  name: "attachment-id",
+                  value: attachmentId,
+                  fallback: 0,
+                  max: Number.MAX_SAFE_INTEGER,
+                });
           const max_bytes = parsePositiveIntegerOption({
             name: "--max-bytes",
             value: opts.maxBytes,
@@ -2013,7 +2019,7 @@ Merge comments are private unless their corresponding --*-comment-public flag is
           });
           const result = await ctx.hub.adminSupport.getAttachment({
             ticket_id,
-            attachment_id,
+            ...(blob_uuid != null ? { blob_uuid } : { attachment_id }),
             max_bytes,
             reason: opts.reason,
           });
@@ -2021,6 +2027,7 @@ Merge comments are private unless their corresponding --*-comment-public flag is
           if (
             result.ticket_id !== ticket_id ||
             result.attachment_id !== attachment_id ||
+            result.blob_uuid !== blob_uuid ||
             data.length > max_bytes ||
             data.length !== result.size ||
             createHash("sha256").update(data).digest("hex") !== result.sha256
@@ -2029,7 +2036,10 @@ Merge comments are private unless their corresponding --*-comment-public flag is
               "downloaded support attachment failed integrity checks",
             );
           // Do not use a remote filename as a path, even from our own server.
-          const prefix = `ticket-${ticket_id}-attachment-${attachment_id}`;
+          const prefix =
+            blob_uuid != null
+              ? `ticket-${ticket_id}-blob-${blob_uuid}`
+              : `ticket-${ticket_id}-attachment-${attachment_id}`;
           if (
             !new RegExp(
               `^${prefix}\\.(pdf|docx|avif|bmp|gif|jpg|png|webp|ico)$`,

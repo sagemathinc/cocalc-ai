@@ -15,6 +15,7 @@ import getLogger from "@cocalc/backend/logger";
 import type {
   AdminSupportCategory,
   AdminSupportAttachmentReference,
+  AdminSupportBlobDocumentReference,
   AdminSupportGetAttachmentRequest,
   AdminSupportGetAttachmentResponse,
   AdminSupportGetImageRequest,
@@ -60,6 +61,7 @@ import siteURL from "@cocalc/database/settings/site-url";
 import centralLog from "@cocalc/database/postgres/central-log";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { detectRasterImage } from "@cocalc/server/blobs/media";
+import { readBlobFromDatabase } from "@cocalc/server/blobs/read";
 import getZendeskClient from "@cocalc/server/support/zendesk-client";
 import { isValidUUID, uuid } from "@cocalc/util/misc";
 
@@ -641,10 +643,22 @@ function stripTrailingUrlPunctuation(value: string): string {
   return value.replace(/[.,;:!?)\]}]+$/, "");
 }
 
-export function extractSupportImages(
+const SUPPORT_BLOB_DOCUMENT_EXTENSIONS = new Map([
+  [".pdf", "application/pdf"],
+  [
+    ".docx",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ],
+]);
+
+// Find validated /blobs/<name>?uuid=<uuid> links to the configured site whose
+// filename extension is in `extensions`.
+function extractSupportBlobLinks(
   value: unknown,
   configuredSiteUrl: string,
-): AdminSupportImageReference[] {
+  extensions: { has(ext: string): boolean },
+  max: number,
+): { filename: string; uuid: string; url: string }[] {
   let base: URL;
   try {
     base = new URL(configuredSiteUrl);
@@ -657,12 +671,15 @@ export function extractSupportImages(
   base.search = "";
   const basePath = base.pathname.replace(/\/+$/, "");
   const blobPrefix = `${basePath}/blobs/`.replace(/^\/\//, "/");
-  const images = new Map<string, AdminSupportImageReference>();
+  const links = new Map<
+    string,
+    { filename: string; uuid: string; url: string }
+  >();
   const text = `${value ?? ""}`;
   const candidates =
     text.match(/(?:https?:\/\/[^\s<>"']+|\/blobs\/[^\s<>"']+)/gi) ?? [];
   for (const raw of candidates) {
-    if (images.size >= MAX_IMAGES_PER_COMMENT) break;
+    if (links.size >= max) break;
     const candidate = stripTrailingUrlPunctuation(raw);
     let url: URL;
     try {
@@ -685,7 +702,7 @@ export function extractSupportImages(
       !filename ||
       filename.length > 255 ||
       /[\u0000-\u001f\u007f/\\]/.test(filename) ||
-      !SAFE_SUPPORT_IMAGE_EXTENSIONS.has(supportImageExtension(filename))
+      !extensions.has(supportImageExtension(filename))
     ) {
       continue;
     }
@@ -696,15 +713,48 @@ export function extractSupportImages(
       base.origin,
     );
     safeUrl.searchParams.set("uuid", uuid);
-    if (!images.has(uuid)) {
-      images.set(uuid, {
-        filename,
-        source: "cocalc_blob",
-        url: safeUrl.toString(),
-      });
+    if (!links.has(uuid)) {
+      links.set(uuid, { filename, uuid, url: safeUrl.toString() });
     }
   }
-  return [...images.values()];
+  return [...links.values()];
+}
+
+export function extractSupportImages(
+  value: unknown,
+  configuredSiteUrl: string,
+): AdminSupportImageReference[] {
+  return extractSupportBlobLinks(
+    value,
+    configuredSiteUrl,
+    SAFE_SUPPORT_IMAGE_EXTENSIONS,
+    MAX_IMAGES_PER_COMMENT,
+  ).map(({ filename, url }) => ({ filename, source: "cocalc_blob", url }));
+}
+
+/**
+ * PDF/DOCX files uploaded through the CoCalc support form. Unlike images we
+ * return no URL: these must be fetched through the fresh-auth attachment
+ * endpoint, which re-validates that the blob belongs to the ticket.
+ */
+export function extractSupportBlobDocuments(
+  value: unknown,
+  configuredSiteUrl: string,
+): AdminSupportBlobDocumentReference[] {
+  return extractSupportBlobLinks(
+    value,
+    configuredSiteUrl,
+    SUPPORT_BLOB_DOCUMENT_EXTENSIONS,
+    MAX_IMAGES_PER_COMMENT,
+  ).map(({ filename, uuid }) => {
+    const ext = supportImageExtension(filename);
+    return {
+      source: "cocalc_blob",
+      blob_uuid: uuid,
+      filename: `cocalc-blob-${uuid}${ext}`,
+      content_type: SUPPORT_BLOB_DOCUMENT_EXTENSIONS.get(ext)!,
+    };
+  });
 }
 
 function normalizedImageContentType(value: unknown): string | undefined {
@@ -913,6 +963,7 @@ function normalizeTicketComment(
     ...extractSupportImages(imageBody, configuredSiteUrl),
     ...zendeskAttachmentImages(attachments),
   ].slice(0, MAX_IMAGES_PER_COMMENT);
+  const documents = extractSupportBlobDocuments(imageBody, configuredSiteUrl);
   return {
     id: Number(comment.id),
     author:
@@ -927,6 +978,7 @@ function normalizeTicketComment(
       .map(attachmentReference)
       .filter((ref): ref is AdminSupportAttachmentReference => ref != null)
       .slice(0, MAX_IMAGES_PER_COMMENT),
+    ...(documents.length > 0 ? { documents } : {}),
     attachment_count: attachments.length,
     attachment_bytes: attachments.reduce(
       (sum, attachment) => sum + (Number(attachment?.size) || 0),
@@ -1133,6 +1185,7 @@ async function recordAudit({
   resultStatus,
   sourceTicketId,
   attachmentId,
+  blobUuid,
 }: {
   auditId: string;
   accountId: string;
@@ -1167,6 +1220,7 @@ async function recordAudit({
   resultStatus?: string;
   sourceTicketId?: number;
   attachmentId?: number;
+  blobUuid?: string;
 }): Promise<void> {
   try {
     await centralLog({
@@ -1178,6 +1232,7 @@ async function recordAudit({
         reason,
         ticket_id: ticketId ?? null,
         attachment_id: attachmentId ?? null,
+        ...(blobUuid ? { blob_uuid: blobUuid } : {}),
         source_ticket_id: sourceTicketId ?? null,
         since_minutes: sinceMinutes ?? null,
         statuses: statuses ?? null,
@@ -1459,6 +1514,10 @@ export async function show(
         Math.min(MAX_DESCRIPTION_CHARS, Math.floor(maxBytes / 2)),
       ),
       images: extractSupportImages(ticket.description, configuredSiteUrl),
+      documents: extractSupportBlobDocuments(
+        ticket.description,
+        configuredSiteUrl,
+      ),
     };
     const comments = rawComments
       .sort(
@@ -1525,6 +1584,16 @@ function allowedZendeskAttachmentHost(
     normalized === `${subdomain.toLowerCase()}.zendesk.com` ||
     normalized.endsWith(".zdusercontent.com")
   );
+}
+
+// Only identify the container. PDFs/Office files can contain active content:
+// never parse, extract, render, or execute them in this service.
+function documentSignatureMatches(contentType: string, data: Buffer): boolean {
+  return contentType === "application/pdf"
+    ? /^%PDF-(?:1\.[0-9]|2\.0)[\r\n]/.test(
+        data.subarray(0, 10).toString("ascii"),
+      )
+    : data.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
 }
 
 async function fetchZendeskAttachment({
@@ -1629,16 +1698,8 @@ async function fetchZendeskAttachment({
       }
       if (size === 0) throw new Error("Zendesk attachment was empty");
       const data = Buffer.concat(chunks, size);
-      // Only identify the container. PDFs/Office files can contain active
-      // content: never parse, extract, render, or execute them in this service.
       if (!imagesOnly && !SUPPORT_IMAGE_MIME_EXTENSIONS.has(configuredType)) {
-        const matches =
-          configuredType === "application/pdf"
-            ? /^%PDF-(?:1\.[0-9]|2\.0)[\r\n]/.test(
-                data.subarray(0, 10).toString("ascii"),
-              )
-            : data.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
-        if (!matches) {
+        if (!documentSignatureMatches(configuredType, data)) {
           throw new Error(
             "Zendesk attachment content does not match its declared document type",
           );
@@ -1668,7 +1729,120 @@ export async function getImage(
 export async function getAttachment(
   opts: AdminSupportGetAttachmentRequest & AuthOpts,
 ): Promise<AdminSupportGetAttachmentResponse> {
-  return downloadTicketAttachment(opts, false);
+  const hasBlob = `${opts.blob_uuid ?? ""}`.trim() !== "";
+  if (hasBlob && opts.attachment_id != null) {
+    throw new Error("specify attachment_id or blob_uuid, not both");
+  }
+  if (hasBlob) {
+    return downloadTicketBlobDocument(opts);
+  }
+  return downloadTicketAttachment(
+    { ...opts, attachment_id: opts.attachment_id as number },
+    false,
+  );
+}
+
+async function downloadTicketBlobDocument(
+  opts: AdminSupportGetAttachmentRequest & AuthOpts,
+): Promise<AdminSupportGetAttachmentResponse> {
+  const started = Date.now();
+  const auditId = uuid();
+  const accountId = await requireFreshAdmin(opts);
+  const reason = requiredReason(opts.reason);
+  const ticketId = positiveTicketId(opts.ticket_id);
+  const blobUuid = `${opts.blob_uuid ?? ""}`.trim().toLowerCase();
+  const maxBytes = positiveInt({
+    value: opts.max_bytes,
+    fallback: DEFAULT_MAX_IMAGE_BYTES,
+    max: MAX_MAX_IMAGE_BYTES,
+  });
+  try {
+    if (!isValidUUID(blobUuid)) {
+      throw new Error("blob_uuid must be a UUID");
+    }
+    const [{ ticket, comments }, configuredSiteUrl] = await Promise.all([
+      withZendeskReadSlot(
+        () => loadTicket(ticketId),
+        "Zendesk ticket and comments read",
+      ),
+      siteURL(),
+    ]);
+    // The blob must be linked from this ticket; blob UUIDs are capabilities
+    // and this endpoint must not become a way to read arbitrary blobs.
+    let commentId: number | undefined;
+    let reference: AdminSupportBlobDocumentReference | undefined;
+    for (const comment of comments) {
+      const body = `${comment.plain_body || comment.body || ""}\n${comment.html_body ?? ""}`;
+      reference = extractSupportBlobDocuments(body, configuredSiteUrl).find(
+        (doc) => doc.blob_uuid === blobUuid,
+      );
+      if (reference) {
+        commentId = Number(comment.id);
+        break;
+      }
+    }
+    if (!reference) {
+      reference = extractSupportBlobDocuments(
+        ticket.description,
+        configuredSiteUrl,
+      ).find((doc) => doc.blob_uuid === blobUuid);
+      commentId = reference ? 0 : undefined;
+    }
+    if (!reference || commentId == null) {
+      throw new Error(
+        `blob ${blobUuid} is not a PDF or DOCX linked from ticket ${ticketId}`,
+      );
+    }
+    const data = await readBlobFromDatabase(blobUuid);
+    if (data == null || data.length === 0) {
+      throw new Error("support blob was not found or was empty");
+    }
+    if (data.length > maxBytes) {
+      throw new Error(
+        `support blob is ${data.length} bytes; maximum is ${maxBytes}`,
+      );
+    }
+    if (!documentSignatureMatches(reference.content_type, data)) {
+      throw new Error(
+        "support blob content does not match its declared document type",
+      );
+    }
+    const result: AdminSupportGetAttachmentResponse = {
+      audit_id: auditId,
+      ticket_id: ticketId,
+      comment_id: commentId,
+      blob_uuid: blobUuid,
+      filename: `ticket-${ticketId}-blob-${blobUuid}${SUPPORT_ATTACHMENT_MIME_EXTENSIONS.get(reference.content_type)}`,
+      content_type: reference.content_type,
+      size: data.length,
+      sha256: sha256(data),
+      data_base64: data.toString("base64"),
+    };
+    await recordAudit({
+      auditId,
+      accountId,
+      mode: "get_attachment",
+      reason,
+      ticketId,
+      blobUuid,
+      resultCount: 1,
+      resultBytes: result.size,
+      durationMs: Date.now() - started,
+    });
+    return result;
+  } catch (error) {
+    await recordAudit({
+      auditId,
+      accountId,
+      mode: "get_attachment",
+      reason,
+      ticketId,
+      blobUuid,
+      durationMs: Date.now() - started,
+      error,
+    });
+    throw error;
+  }
 }
 
 async function downloadTicketAttachment(
