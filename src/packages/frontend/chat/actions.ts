@@ -1285,8 +1285,34 @@ export class ChatActions extends Actions<ChatState> {
     return thread_id;
   };
 
+  // True while the thread has an agent turn running, starting, or queued.
+  hasActiveAgentTurn = (threadKey: string): boolean => {
+    const thread_id = this.normalizeThreadId(threadKey);
+    if (!thread_id) return false;
+    const acpState = this.store?.get("acpState");
+    const active = (state: unknown) =>
+      typeof state === "string" &&
+      ["queue", "sending", "sent", "running"].includes(
+        state.trim().toLowerCase(),
+      );
+    if (active(acpState?.get?.(`thread:${thread_id}`))) return true;
+    for (const message of this.getMessagesInThread(thread_id) ?? []) {
+      const message_id = `${(message as any)?.message_id ?? ""}`.trim();
+      const date = new Date((message as any)?.date ?? NaN).valueOf();
+      if (
+        (message_id && active(acpState?.get?.(`message:${message_id}`))) ||
+        (Number.isFinite(date) && active(acpState?.get?.(`${date}`)))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   // Clear the agent's context in place: its next turn starts a new session, and
   // a "Context cleared" line marks where. Earlier messages stay visible.
+  // Refuses while a turn is active or queued: that turn would finish by saving
+  // its old session id again, so the next message would resume it.
   clearAgentContext = (threadKey: string): boolean => {
     if (!this.isSyncdbReady()) {
       this.warnSyncdbNotReady();
@@ -1294,6 +1320,7 @@ export class ChatActions extends Actions<ChatState> {
     }
     const thread_id = this.normalizeThreadId(threadKey);
     if (!thread_id) return false;
+    if (this.hasActiveAgentTurn(thread_id)) return false;
     const metadata = this.getThreadMetadata(threadKey, { threadId: thread_id });
     if (metadata?.agent_runtime != null) {
       // The stored empty session id is the harness's explicit reset marker.

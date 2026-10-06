@@ -1222,8 +1222,7 @@ function NewAgentPanel({
           project_title:
             projectTitleOverride ??
             (projectMap?.getIn([created.projectId, "title"]) as
-              | string
-              | undefined),
+              string | undefined),
           thread_title: candidate,
         });
       };
@@ -3461,8 +3460,7 @@ export function MyAgentsWorkspacePage({
   const { directory: networkDirectory, error: networkError } =
     useAgentNetworks();
   const accountId = useTypedRedux("account", "account_id") as
-    | string
-    | undefined;
+    string | undefined;
   const searchNavigation = useNavigationIntent(
     active && !contentOpen,
     accountId,
@@ -3527,8 +3525,7 @@ export function MyAgentsWorkspacePage({
     setMobileList(false);
   }
   const activeAgentId = useTypedRedux("page", "active_agent_id") as
-    | string
-    | undefined;
+    string | undefined;
   const [creating, setCreating] = useState(activeAgentId === "new");
   const [creatingSourceAgentId, setCreatingSourceAgentId] = useState<string>();
   const [copyingAgent, setCopyingAgent] = useState<NamedAgent>();
@@ -3924,6 +3921,10 @@ export function MyAgentsWorkspacePage({
           workbenchEnabled: true,
         });
       await waitForChatReady(chatActions);
+      if (chatActions.hasActiveAgentTurn(agent.thread_id))
+        throw new Error(
+          "This agent is still working. Stop it or wait for its current and queued messages to finish, then clear its context.",
+        );
       if (!chatActions.clearAgentContext(agent.thread_id))
         throw new Error("Unable to clear this agent's context");
       await chatActions.syncdb?.save();
@@ -4385,8 +4386,7 @@ export function MyAgentsWorkspacePage({
     const projectTitle = agentProjectTitle(
       agent,
       liveProjects?.getIn([agent.endpoint.project_id, "title"]) as
-        | string
-        | undefined,
+        string | undefined,
     );
     // Only one sidebar entry is current: Projects, the Library or an agent.
     const active =
