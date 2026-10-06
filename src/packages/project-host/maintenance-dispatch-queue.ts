@@ -10,8 +10,11 @@ interface Work {
   row: Row;
   observedAt: number;
   due: (row: Row) => string | null | undefined;
-  run: (row: Row) => Promise<void>;
+  run: (row: Row, opts: { afterRunning: boolean }) => Promise<void>;
   waiters: { resolve: () => void; reject: (err: unknown) => void }[];
+  // Submitted while an operation for the same project was running, so the row
+  // predates that operation's result and must be re-read before use.
+  afterRunning?: boolean;
 }
 
 // One queue per host/lane. Arrivals join between operations, never by starting
@@ -60,6 +63,7 @@ export class MaintenanceDispatchQueue {
             if (observedAt >= pending.observedAt) {
               Object.assign(pending, { row, observedAt, due, run });
             }
+            if (running) pending.afterRunning = true;
             pending.waiters.push({ resolve, reject });
           } else {
             this.pending.set(row.project_id, {
@@ -68,6 +72,7 @@ export class MaintenanceDispatchQueue {
               due,
               run,
               waiters: [{ resolve, reject }],
+              afterRunning: running != null,
             });
           }
         }),
@@ -121,7 +126,9 @@ export class MaintenanceDispatchQueue {
       if (!work) break;
       this.active.set(work.row.project_id, work);
       void Promise.resolve()
-        .then(() => work.run(work.row))
+        .then(() =>
+          work.run(work.row, { afterRunning: work.afterRunning === true }),
+        )
         .then(
           () => this.finish(work),
           (err) => this.finish(work, { err }),
