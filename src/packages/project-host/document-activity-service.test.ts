@@ -238,3 +238,361 @@ describe("project document activity service", () => {
     );
   });
 });
+
+describe("notebook usage export", () => {
+  const teacher = "00000000-0000-4000-8000-000000000001";
+  const student = "00000000-0000-4000-8000-000000000002";
+  const project_id = "11111111-1111-4111-8111-111111111111";
+  const path = "lectures/example.ipynb";
+  const patchName = "patchflow/lectures/.example.ipynb.sage-jupyter2";
+  const editTime = "2026-10-01T10:00:00.000Z";
+  let streams: Map<string, ReturnType<typeof makeStream>>;
+
+  beforeEach(() => {
+    jest.resetModules();
+    jest.resetAllMocks();
+    streams = new Map();
+    dkvMock.mockResolvedValue(makeStore());
+    dstreamMock.mockImplementation(async ({ project_id, name }) => {
+      const key = `${project_id}:${name}`;
+      if (!streams.has(key)) streams.set(key, makeStream());
+      return streams.get(key);
+    });
+    getRowMock.mockReturnValue({
+      users: {
+        [teacher]: { group: "owner" },
+        [student]: { group: "collaborator" },
+      },
+    });
+  });
+
+  async function service() {
+    const api = await import("@cocalc/conat/project/document-activity");
+    const { initProjectDocumentActivityService } =
+      await import("./document-activity-service");
+    let handlers: Record<string, any>;
+    const client = {
+      service: jest.fn(async (_subject, methods) => {
+        handlers = methods;
+        return { close: jest.fn() };
+      }),
+      request: jest.fn(async (subject, [name, args]) => ({
+        data: await handlers[name].apply({ subject }, args),
+      })),
+    } as any;
+    await initProjectDocumentActivityService(client);
+    return { ...api, client };
+  }
+
+  it("records visible-path access and exports the notebook sync document's edits", async () => {
+    const { client, markFile, getFileUseTimes } = await service();
+    streams.set(`${project_id}:${patchName}`, makeStream([{ time: editTime }]));
+    await markFile({
+      client,
+      account_id: student,
+      project_id,
+      path,
+      action: "open",
+    });
+    await markFile({
+      client,
+      account_id: student,
+      project_id,
+      path,
+      action: "edit",
+    });
+    await markFile({
+      client,
+      account_id: teacher,
+      project_id,
+      path,
+      action: "open",
+    });
+    await markFile({
+      client,
+      account_id: student,
+      project_id,
+      path: "other.ipynb",
+      action: "open",
+    });
+    await markFile({
+      client,
+      account_id: student,
+      project_id: "22222222-2222-4222-8222-222222222222",
+      path,
+      action: "open",
+    });
+    const result = await getFileUseTimes({
+      client,
+      account_id: teacher,
+      project_id,
+      path,
+      target_account_id: student,
+      access_times: true,
+      edit_times: true,
+    });
+    expect(result.target_account_id).toBe(student);
+    expect(result.access_times).toHaveLength(2);
+    expect(result.access_times!.every(Number.isFinite)).toBe(true);
+    expect(result.edit_times).toEqual([Date.parse(editTime)]);
+    expect(dstreamMock).toHaveBeenCalledWith(
+      expect.objectContaining({ client, project_id, name: patchName }),
+    );
+    expect(
+      streams.get(`${project_id}:${patchName}`)!.close,
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      streams.get(`${project_id}:project-document-activity-events`)!.close,
+    ).not.toHaveBeenCalled();
+    const limited = await getFileUseTimes({
+      client,
+      account_id: teacher,
+      project_id,
+      path,
+      target_account_id: student,
+      access_times: true,
+      edit_times: false,
+      limit: 1,
+    });
+    expect(limited.access_times).toHaveLength(1);
+    expect(limited.edit_times).toBeUndefined();
+  });
+
+  it.each([
+    ["example.ipynb", "patchflow/.example.ipynb.sage-jupyter2"],
+    ["lectures/.example.ipynb.sage-jupyter2", patchName],
+    ["notes.txt", "patchflow/notes.txt"],
+  ])(
+    "resolves edit storage for %s without double wrapping",
+    async (path, name) => {
+      const { client, getFileUseTimes } = await service();
+      streams.set(`${project_id}:${name}`, makeStream([{ time: editTime }]));
+      const result = await getFileUseTimes({
+        client,
+        account_id: teacher,
+        project_id,
+        path,
+        access_times: false,
+        edit_times: true,
+      });
+      expect(result.edit_times).toEqual([Date.parse(editTime)]);
+      expect(result.access_times).toBeUndefined();
+      expect(dstreamMock).toHaveBeenCalledTimes(1);
+      expect(dstreamMock).toHaveBeenCalledWith(
+        expect.objectContaining({ name }),
+      );
+    },
+  );
+
+  it("does not invent history for an unrecorded file", async () => {
+    const { client, getFileUseTimes } = await service();
+    const result = await getFileUseTimes({
+      client,
+      account_id: teacher,
+      project_id,
+      path,
+      access_times: true,
+      edit_times: true,
+    });
+    expect(result.access_times).toEqual([]);
+    expect(result.edit_times).toEqual([]);
+  });
+
+  it("does not relabel document-wide patch times as target-account edits", async () => {
+    const { client, getFileUseTimes } = await service();
+    streams.set(`${project_id}:${patchName}`, makeStream([{ time: editTime }]));
+    const first = await getFileUseTimes({
+      client,
+      account_id: teacher,
+      project_id,
+      path,
+      target_account_id: student,
+      edit_times: true,
+    });
+    const second = await getFileUseTimes({
+      client,
+      account_id: teacher,
+      project_id,
+      path,
+      target_account_id: teacher,
+      edit_times: true,
+    });
+    expect(first.edit_times).toEqual([Date.parse(editTime)]);
+    expect(second.edit_times).toEqual(first.edit_times);
+  });
+
+  it("propagates patch-open failures instead of reporting empty history", async () => {
+    const { client, getFileUseTimes } = await service();
+    dstreamMock.mockRejectedValueOnce(new Error("storage unavailable"));
+    await expect(
+      getFileUseTimes({
+        client,
+        account_id: teacher,
+        project_id,
+        path,
+        access_times: false,
+        edit_times: true,
+      }),
+    ).rejects.toThrow("storage unavailable");
+  });
+
+  it("closes the patch reader even if reading timestamps fails", async () => {
+    const { client, getFileUseTimes } = await service();
+    const patches = makeStream();
+    patches.times.mockImplementation(() => {
+      throw new Error("history unavailable");
+    });
+    streams.set(`${project_id}:${patchName}`, patches);
+    await expect(
+      getFileUseTimes({
+        client,
+        account_id: teacher,
+        project_id,
+        path,
+        access_times: false,
+        edit_times: true,
+      }),
+    ).rejects.toThrow("history unavailable");
+    expect(patches.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains the collaborator check before opening any storage", async () => {
+    const { client, getFileUseTimes } = await service();
+    getRowMock.mockReturnValue({ users: {} });
+    await expect(
+      getFileUseTimes({
+        client,
+        account_id: teacher,
+        project_id,
+        path,
+        edit_times: true,
+      }),
+    ).rejects.toThrow("is not a collaborator");
+    expect(dstreamMock).not.toHaveBeenCalled();
+    expect(dkvMock).not.toHaveBeenCalled();
+  });
+
+  it("recovers recording after a failed recent-store initialization", async () => {
+    const { client, markFile, getFileUseTimes } = await service();
+    dkvMock.mockRejectedValueOnce(new Error("store unavailable"));
+    const opts = {
+      client,
+      account_id: student,
+      project_id,
+      path,
+      action: "open" as const,
+    };
+    await expect(markFile(opts)).rejects.toThrow("store unavailable");
+    await expect(markFile(opts)).resolves.toBeUndefined();
+    const result = await getFileUseTimes({
+      client,
+      account_id: teacher,
+      project_id,
+      path,
+      target_account_id: student,
+    });
+    expect(result.access_times).toHaveLength(1);
+    expect(dkvMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("recovers recording after a failed access-stream initialization without waiting for throttle", async () => {
+    const { client, markFile, getFileUseTimes } = await service();
+    dstreamMock.mockRejectedValueOnce(new Error("stream unavailable"));
+    const opts = {
+      client,
+      account_id: student,
+      project_id,
+      path,
+      action: "open" as const,
+    };
+    await expect(markFile(opts)).rejects.toThrow("stream unavailable");
+    await expect(markFile(opts)).resolves.toBeUndefined();
+    const result = await getFileUseTimes({
+      client,
+      account_id: teacher,
+      project_id,
+      path,
+      target_account_id: student,
+    });
+    expect(result.access_times).toHaveLength(1);
+    expect(dstreamMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("closes a stream whose setup failed, then retries on the next export", async () => {
+    const { client, getFileUseTimes } = await service();
+    const failed = makeStream();
+    failed.config.mockRejectedValueOnce(new Error("config unavailable"));
+    dstreamMock.mockResolvedValueOnce(failed);
+    const opts = {
+      client,
+      account_id: teacher,
+      project_id,
+      path,
+      access_times: true,
+      edit_times: false,
+    };
+    await expect(getFileUseTimes(opts)).rejects.toThrow("config unavailable");
+    expect(failed.close).toHaveBeenCalledTimes(1);
+    await expect(getFileUseTimes(opts)).resolves.toMatchObject({
+      access_times: [],
+    });
+    expect(dstreamMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not throttle a failed publish and still throttles successful duplicates", async () => {
+    const { client, markFile, getFileUseTimes } = await service();
+    const events = makeStream();
+    events.publish.mockImplementationOnce(() => {
+      throw new Error("publish unavailable");
+    });
+    streams.set(`${project_id}:project-document-activity-events`, events);
+    const opts = {
+      client,
+      account_id: student,
+      project_id,
+      path,
+      action: "open" as const,
+    };
+    await expect(markFile(opts)).rejects.toThrow("publish unavailable");
+    await markFile(opts);
+    await markFile(opts);
+    const result = await getFileUseTimes({
+      client,
+      account_id: teacher,
+      project_id,
+      path,
+      target_account_id: student,
+    });
+    expect(result.access_times).toHaveLength(1);
+    expect(events.publish).toHaveBeenCalledTimes(2);
+  });
+
+  it("shares stream initialization and throttles concurrent duplicate marks", async () => {
+    const { client, markFile } = await service();
+    const events = makeStream();
+    let ready!: (value: typeof events) => void;
+    dstreamMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          ready = resolve;
+        }),
+    );
+    const opts = {
+      client,
+      account_id: student,
+      project_id,
+      path,
+      action: "open" as const,
+    };
+    const first = markFile(opts);
+    const second = markFile(opts);
+    // Wait for the async store lookup to reach access-stream initialization.
+    while (!ready) await Promise.resolve();
+    ready(events);
+    await first;
+    await second;
+    expect(dkvMock).toHaveBeenCalledTimes(1);
+    expect(dstreamMock).toHaveBeenCalledTimes(1);
+    expect(events.publish).toHaveBeenCalledTimes(1);
+  });
+});
