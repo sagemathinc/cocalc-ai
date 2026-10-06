@@ -390,7 +390,7 @@ describe("course secrets across bays", () => {
   // collaborator homed on the seed, manages its course secret policy.
   const NAME = "COURSE_TOKEN";
   const course = {
-    course_id: "multibay-course",
+    course_id: "c0c0c0c0-0000-4000-8000-00000000c0c0",
     course_path: "multibay.course",
   };
 
