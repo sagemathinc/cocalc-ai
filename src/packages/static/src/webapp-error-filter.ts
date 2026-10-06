@@ -60,16 +60,16 @@ function rejectionName(reason: unknown): string {
 // Browsers reject a view transition's promises when they skip or abort its
 // animation, e.g. "Skipping view transition because viewport size changed"
 // (Safari) or "Transition was aborted because of invalid state" (Chrome).
+// Require the DOMException name the browser uses: strings and plain objects
+// that merely mention a view transition are still reported.
 function isSkippedViewTransition(reason: unknown, message: string): boolean {
   const name = rejectionName(reason);
-  if (name && name !== "InvalidStateError" && name !== "AbortError") {
+  if (name !== "InvalidStateError" && name !== "AbortError") {
     return false;
   }
   return (
-    message.includes("view transition") ||
-    /^(?:(?:invalidstateerror|aborterror): )?transition was (?:aborted|skipped)/.test(
-      message,
-    )
+    message.startsWith("skipping view transition") ||
+    /^transition was (?:aborted|skipped)\b/.test(message)
   );
 }
 

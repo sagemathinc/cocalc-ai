@@ -105,13 +105,18 @@ describe("isIgnorableUnhandledRejection", () => {
     expect(isIgnorableUnhandledRejection(reason)).toBe(true);
   });
 
-  it("still reports other errors that mention view transitions", () => {
-    expect(
-      isIgnorableUnhandledRejection(
-        new TypeError("view transition handler is not a function"),
-      ),
-    ).toBe(false);
-  });
+  test.each([
+    new TypeError("view transition handler is not a function"),
+    "Skipping view transition because viewport size changed.",
+    { message: "view transition handler failed" },
+    { message: "Transition was aborted because of invalid state." },
+    new DOMException("Failed to start a view transition", "InvalidStateError"),
+  ])(
+    "still reports other errors that mention view transitions %p",
+    (reason) => {
+      expect(isIgnorableUnhandledRejection(reason)).toBe(false);
+    },
+  );
 
   test.each([
     new Error("permission denied"),
