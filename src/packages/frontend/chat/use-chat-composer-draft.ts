@@ -13,8 +13,12 @@ import { getLogger } from "@cocalc/conat/logger";
 
 const logger = getLogger("chat:composer-drafts");
 
-export const CHAT_DRAFT_STORE = "chat-composer-drafts-v1";
-export const CHAT_DRAFT_TTL_MS = 1000 * 60 * 60 * 24 * 14;
+import {
+  CHAT_DRAFT_STORE,
+  CHAT_DRAFT_TTL_MS,
+  chatComposerDraftKey,
+} from "@cocalc/chat";
+export { CHAT_DRAFT_STORE, CHAT_DRAFT_TTL_MS };
 const MAX_LOCAL_DRAFT_CHARS = 200_000;
 const MAX_SHADOW_ENTRIES = 500;
 const LOCAL_WRITE_DEBOUNCE_MS = 350;
@@ -37,8 +41,7 @@ interface UseChatComposerDraftResult {
 }
 
 function storageKey(opts: UseChatComposerDraftOptions): string {
-  const base = `${opts.project_id}:${opts.path}:${opts.composerDraftKey}`;
-  return opts.suffix ? `${base}:${opts.suffix}` : base;
+  return chatComposerDraftKey(opts);
 }
 
 function identity(opts: UseChatComposerDraftOptions): string {
