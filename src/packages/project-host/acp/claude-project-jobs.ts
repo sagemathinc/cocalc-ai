@@ -29,6 +29,8 @@ interface Job {
   started: number;
   finished?: number;
   cleanupUnconfirmed?: boolean;
+  // The runtime proved this job's processes are gone (possibly late).
+  cleanupProven?: boolean;
   deadline: number;
   output: {
     seq: number;
@@ -46,9 +48,10 @@ const DEFAULT_WAIT = 10_000;
 const MAX_TIMEOUT = 86_400_000;
 const RETENTION = 600_000;
 const OUTPUT_BYTES = 1024 * 1024;
-// Says who can recover and how: an agent cannot, and retrying does not help.
+// Says what happens next: the runtime keeps checking, and tools reopen on its
+// proof; only a job it can never account for needs a project restart.
 const CLEANUP_UNCONFIRMED =
-  "Project job cleanup is unconfirmed, so this agent session cannot start more project tools. Only the user can recover: ask them to restart the project (project Settings, Restart). Waiting or retrying will not help.";
+  "Project job cleanup is unconfirmed, so this agent session cannot start more project tools until the runtime confirms that the job's processes are gone. It rechecks automatically about every 30 seconds, so try again in a minute. If this lasts more than a few minutes, ask the user to restart the project (project Settings, Restart).";
 const PAGE_BYTES = 64 * 1024;
 let activeJobs = 0;
 
@@ -94,16 +97,30 @@ export class ClaudeProjectJobs {
   private paused = false;
   private closed = false;
   private cleanupBlocked = false;
+  // Jobs whose cleanup is unproven; tools reopen once this is empty.
+  private unproven = new Set<Job>();
   constructor(private execute: ProjectJobExecutor) {}
 
   private wake(job: Job) {
     for (const resolve of [...job.changed]) resolve();
   }
   private blockCleanup(job: Job) {
-    job.cleanupUnconfirmed = true;
-    this.cleanupBlocked = true;
     if (job.status === "running") job.status = "failed";
+    // A proof that arrived before the result already settles this job.
+    if (job.cleanupProven) return;
+    job.cleanupUnconfirmed = true;
+    this.unproven.add(job);
+    this.cleanupBlocked = true;
     for (const other of this.jobs.values()) this.stop(other, "canceled");
+  }
+  private cleanupProven(job: Job) {
+    job.cleanupProven = true;
+    this.unproven.delete(job);
+    // The root-owned supervisor attests that each fenced job's scope is gone,
+    // so no execution authority is unaccounted for: reopen. A job that never
+    // gets a proof keeps the controller fenced. Closing is separate and final.
+    if (this.cleanupBlocked && this.unproven.size === 0)
+      this.cleanupBlocked = false;
   }
   private prune() {
     for (const [id, job] of this.jobs)
@@ -128,7 +145,7 @@ export class ClaudeProjectJobs {
   }
   private append(job: Job, stream: "stdout" | "stderr", data: string) {
     // Bound both bytes and object count, including pathological one-byte output.
-    for (let i = 0; i < data.length; ) {
+    for (let i = 0; i < data.length;) {
       let end = Math.min(i + 4096, data.length);
       if (end < data.length && /[\uD800-\uDBFF]/.test(data[end - 1])) end--;
       const part = data.slice(i, end);
@@ -292,7 +309,10 @@ export class ClaudeProjectJobs {
         executionStarted = true;
         return this.execute(script, cwd, job.abort.signal, {
           ...options,
-          onCleanupConfirmed: reservation.confirmCleanup,
+          onCleanupConfirmed: () => {
+            reservation.confirmCleanup();
+            this.cleanupProven(job);
+          },
         });
       })
       .then((result) => {

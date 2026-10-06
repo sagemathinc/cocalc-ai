@@ -329,7 +329,7 @@ test("an executor rejection is not evidence that its processes were cleaned up",
   confirmCleanup!();
 });
 
-test("confirmed recovery releases capacity without reopening a fenced controller", async () => {
+test("confirmed recovery releases capacity and reopens the controller", async () => {
   const { jobs, runs } = fixture();
   const first = await jobs.start({
     script: "lost transport",
@@ -343,6 +343,10 @@ test("confirmed recovery releases capacity without reopening a fenced controller
   });
   await new Promise((resolve) => setImmediate(resolve));
   await jobs.cancel({ job_id: first.job_id });
+  jobs.resume();
+  await expect(jobs.start({ script: "still fenced" })).rejects.toThrow(
+    "cleanup is unconfirmed",
+  );
   runs[0].confirmCleanup();
   expect(
     await jobs.wait({ job_id: first.job_id, yield_time_ms: 0 }),
@@ -352,10 +356,29 @@ test("confirmed recovery releases capacity without reopening a fenced controller
     cleanup_error: undefined,
     finished_at: expect.any(Number),
   });
+  // The supervisor proved the job's processes are gone: work may resume.
+  const next = await jobs.start({ script: "reopened", yield_time_ms: 0 });
+  expect(next.status).toBe("running");
+  runs[1].finish({ code: 0, stdout: "", stderr: "", cleanupConfirmed: true });
+  await jobs.close();
+});
+
+test("a proof for one fenced job does not reopen while another is unproven", async () => {
+  const { jobs, runs } = fixture();
+  await jobs.start({ script: "a", yield_time_ms: 0 });
+  await jobs.start({ script: "b", yield_time_ms: 0 });
+  for (const run of runs)
+    run.finish({ code: null, stdout: "", stderr: "", cleanupConfirmed: false });
+  await new Promise((resolve) => setImmediate(resolve));
+  runs[0].confirmCleanup();
   jobs.resume();
-  await expect(jobs.start({ script: "still fenced" })).rejects.toThrow(
+  await expect(jobs.start({ script: "c" })).rejects.toThrow(
     "cleanup is unconfirmed",
   );
+  runs[1].confirmCleanup();
+  const next = await jobs.start({ script: "d", yield_time_ms: 0 });
+  expect(next.status).toBe("running");
+  runs[2].finish({ code: 0, stdout: "", stderr: "", cleanupConfirmed: true });
   await jobs.close();
 });
 
@@ -434,7 +457,7 @@ test("cancel reports the outcome instead of replaying old output", async () => {
   }
 });
 
-test("unconfirmed cleanup says who can recover and how", async () => {
+test("unconfirmed cleanup says what happens next and when to restart", async () => {
   const execute = jest.fn(async () => ({
     code: 1,
     stdout: "",
@@ -445,7 +468,7 @@ test("unconfirmed cleanup says who can recover and how", async () => {
   try {
     await jobs.start({ script: "grep", yield_time_ms: 1000 });
     await expect(jobs.start({ script: "echo alive" })).rejects.toThrow(
-      /Only the user can recover: ask them to restart the project/,
+      /rechecks automatically.*ask the user to restart the project/,
     );
   } finally {
     await jobs.close();
