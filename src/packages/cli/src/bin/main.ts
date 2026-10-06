@@ -38,6 +38,7 @@ import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-h
 import type { ProjectHostApiKeyBinding } from "@cocalc/conat/auth/project-host-token";
 import { apiKeyViewerFsSubject } from "@cocalc/conat/auth/project-host-api-key-subject";
 import { resolveApiKeyFileGlobals } from "./core/api-key-file";
+import { resolveCookieFileGlobals } from "./core/cookie-file";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import type { HubApi } from "@cocalc/conat/hub/api";
 import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
@@ -311,6 +312,7 @@ type GlobalOptions = GlobalAuthOptions & {
   managedConnector?: ManagedConnectorCredential;
   authProjectId?: string;
   apiKeyFile?: string;
+  cookieFile?: string;
   json?: boolean;
   output?: "table" | "json" | "yaml";
   quiet?: boolean;
@@ -1511,6 +1513,9 @@ async function contextForGlobals(
   options: CommandContextOptions = {},
 ): Promise<CommandContext> {
   const config = loadAuthConfig();
+  // A cookie file replaces every other credential source, including the
+  // selected profile, so resolve it before profiles are applied.
+  globals = resolveCookieFileGlobals(globals);
   const applied = applyAuthProfile(globals, config);
   const preferApiTransport = applied.fromProfile || !!globals.api?.trim();
   let effectiveGlobals = resolveApiKeyFileGlobals(
@@ -3123,6 +3128,10 @@ program
   .option("--api-key <key>", "account api key (also read from COCALC_API_KEY)")
   .option("--api-key-file <path>", "read an account API key from a file")
   .option("--cookie <cookie>", "raw Cookie header value")
+  .option(
+    "--cookie-file <path>",
+    "read the Cookie header value from a private file (replaces all other credentials)",
+  )
   .option("--bearer <token>", "bearer token for conat authorization")
   .option(
     "--disable-env-auth-defaults",
