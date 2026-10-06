@@ -4914,10 +4914,6 @@ def config_from_stdin():
     finally:
         sel.close()
 
-def prevent_privilege_gain(libc):
-    if libc.prctl(38, 1, 0, 0, 0) != 0:  # PR_SET_NO_NEW_PRIVS
-        raise RuntimeError("unable to disable new privileges")
-
 def apply_project_oom_policy(pid, proc=Path("/proc")):
     # A job inherits this supervisor's host-service OOM protection. Without
     # resetting it, at the project's memory limit the kernel spares a huge job
@@ -4955,10 +4951,11 @@ def launch_locked(scope, account, args, env, pipes):
             if any(int(line.split()[1], 16) for line in caps
                    if line.startswith(("CapEff:", "CapPrm:", "CapAmb:"))):
                 os._exit(125)
-            # This path only execs into an already-running project. Do not
-            # allow its executable chain to regain privileges; hosts needing
-            # a fresh privileged UID/GID mapping here must fail closed.
-            prevent_privilege_gain(libc)
+            # Do not set PR_SET_NO_NEW_PRIVS: it is inherited through podman
+            # exec, so sudo and other setuid tools would fail in agent commands
+            # although they work in the same project's terminals. The command
+            # runs as the host runtime user, which already execs into project
+            # containers without that flag.
             os.chdir("/")
             # Supplied environment/argv are only used after dropping privileges.
             executable = PODMAN if Path(PODMAN).is_file() else "/usr/bin/podman"

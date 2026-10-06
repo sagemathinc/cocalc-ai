@@ -486,24 +486,11 @@ class ManagedJobTests(unittest.TestCase):
             with mock.patch.object(m.selectors, "DefaultSelector", return_value=selector), mock.patch.object(m.os, "read", return_value=chunk):
                 self.assertEqual(m.lease_connected(), expected)
 
-    def test_no_new_privileges_is_irreversible_in_child_process(self):
-        # Exercise the actual hardening helper without changing the test runner.
-        source = bootstrap.MANAGED_PROJECT_JOB_HELPER.split('if __name__ == "__main__":')[0]
-        source += """
-libc = ctypes.CDLL(None, use_errno=True)
-prevent_privilege_gain(libc)
-assert libc.prctl(39, 0, 0, 0, 0) == 1
-assert libc.prctl(38, 0, 0, 0, 0) != 0
-"""
-        subprocess.run(["/usr/bin/python3", "-I", "-c", source], check=True, timeout=5)
-
-    def test_no_new_privileges_failure_prevents_exec(self):
-        m = helper()
-        libc = mock.MagicMock()
-        libc.prctl.return_value = -1
-        with self.assertRaisesRegex(RuntimeError, "disable new privileges"):
-            m.prevent_privilege_gain(libc)
-        libc.prctl.assert_called_once_with(38, 1, 0, 0, 0)
+    def test_managed_commands_may_use_sudo(self):
+        # PR_SET_NO_NEW_PRIVS is inherited through podman exec and makes sudo
+        # fail in agent commands although it works in the project's terminals.
+        source = bootstrap.MANAGED_PROJECT_JOB_HELPER
+        self.assertIsNone(re.search(r"prctl\(\s*38\b", source))
 
     def test_launcher_migration_is_verified_before_gate_opens(self):
         m = helper()
@@ -621,7 +608,7 @@ for line in open('/proc/self/status'):
     if line.startswith(('CapEff:', 'CapPrm:', 'CapAmb:')):
         assert int(line.split()[1], 16) == 0
     if line.startswith('NoNewPrivs:'):
-        assert int(line.split()[1]) == 1
+        assert int(line.split()[1]) == 0, 'sudo must keep working in managed commands'
 os.execv('/bin/bash', ['bash','-c',sys.argv[-1]])
 """)
                 launcher.chmod(0o755)
