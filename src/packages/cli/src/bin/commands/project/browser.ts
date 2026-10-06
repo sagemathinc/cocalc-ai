@@ -4,9 +4,9 @@
  *
  * Runs in the foreground on the user's computer.  Chrome gets a throwaway
  * profile (in RAM by default) and DevTools on a free loopback port; a
- * reflect-sync reverse forward makes that port reachable at
+ * reverse ssh tunnel owned by this process makes that port reachable at
  * 127.0.0.1:<port> inside the project, and only there.  Closing the browser
- * or Ctrl-C removes the forward and the profile.
+ * or Ctrl-C ends the tunnel and removes the profile.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { Command } from "commander";
@@ -27,9 +27,10 @@ import {
   startUrl,
 } from "../../core/local-browser";
 import {
-  localToProjectForwardArgs,
-  reflectSupportsRemoteBind,
-} from "../../core/reflect-forward-args";
+  reverseTunnelSshArgs,
+  startReverseTunnel,
+  type ReverseTunnel,
+} from "../../core/reverse-tunnel";
 import type { ProjectCommandDeps } from "../project";
 import {
   ensureManagedProjectSshConfigEntry,
@@ -45,7 +46,6 @@ const TRUST_WARNING = [
   "read. Only connect projects you trust.",
 ].join("\n");
 
-const FORWARD_NAME = /^cocalc-browser-([0-9a-f]{8})-(\d+)-(\d+)$/i;
 const VERIFY_TIMEOUT_MS = 45_000;
 
 type ConnectOptions = {
@@ -60,50 +60,6 @@ type ConnectOptions = {
   keyPath?: string;
   installKey?: boolean;
 };
-
-export function browserForwardName(
-  projectId: string,
-  projectPort: number,
-  pid: number,
-): string {
-  return `cocalc-browser-${projectId.slice(0, 8)}-${projectPort}-${pid}`;
-}
-
-function pidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException)?.code === "EPERM";
-  }
-}
-
-// Forwards left by an earlier `connect` for the same project port.  Those
-// whose process is gone are stale (it crashed); a live one owns the port.
-export function existingBrowserForwards(
-  rows: Array<{ id: number; name?: string | null }>,
-  projectId: string,
-  projectPort: number,
-  isAlive: (pid: number) => boolean = pidAlive,
-): { stale: number[]; ownerPid: number | null } {
-  const stale: number[] = [];
-  let ownerPid: number | null = null;
-  for (const row of rows) {
-    const match = `${row.name ?? ""}`.match(FORWARD_NAME);
-    if (!match) continue;
-    if (match[1].toLowerCase() !== projectId.slice(0, 8).toLowerCase()) {
-      continue;
-    }
-    if (Number(match[2]) !== projectPort) continue;
-    const pid = Number(match[3]);
-    if (pid !== process.pid && isAlive(pid)) {
-      ownerPid = pid;
-    } else {
-      stale.push(row.id);
-    }
-  }
-  return { stale, ownerPid };
-}
 
 function parseStorage(value: string | undefined): ProfileStorage {
   const storage = `${value ?? "memory"}`.trim().toLowerCase();
@@ -239,11 +195,6 @@ async function runBrowserConnect(
     removeProjectSshConfigBlock,
     projectSshConfigBlockMarkers,
     resolveCloudflaredBinary,
-    reflectSyncCliInvocation,
-    runReflectSyncCli,
-    listReflectForwards,
-    parseCreatedForwardId,
-    terminateReflectForwards,
   } = deps;
   const storage = parseStorage(opts.profileStorage);
   const projectPort = parsePort(opts.port);
@@ -257,15 +208,6 @@ async function runBrowserConnect(
   };
 
   say(TRUST_WARNING);
-
-  // Without --remote-bind the forwarded DevTools port would listen on every
-  // interface of the project; refuse rather than fall back.
-  const help = await runReflectSyncCli(["forward", "create", "--help"]);
-  if (!reflectSupportsRemoteBind(`${help.stdout}\n${help.stderr}`)) {
-    throw new Error(
-      "the installed reflect-sync cannot restrict the project-side port to 127.0.0.1 (needs `forward create --remote-bind`); upgrade @cocalc/cli",
-    );
-  }
 
   const route = await resolveProjectSshConnection(ctx, opts.project, {
     direct: !!opts.direct,
@@ -299,30 +241,15 @@ async function runBrowserConnect(
     projectSshConfigBlockMarkers,
   });
 
-  const existing = existingBrowserForwards(
-    await listReflectForwards(),
-    projectId,
-    projectPort,
-  );
-  if (existing.ownerPid != null) {
-    throw new Error(
-      `another 'cocalc project browser connect' (pid ${existing.ownerPid}) already uses project port ${projectPort}; close that browser or choose a different --port`,
-    );
-  }
-  await terminateReflectForwards(existing.stale.map(String));
-
   let stopRequested: (signal: string) => void = () => {};
   const stopped = new Promise<string>((resolve) => (stopRequested = resolve));
   const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
   const onSignal = (signal: NodeJS.Signals) => stopRequested(signal);
   for (const signal of signals) process.on(signal, onSignal);
 
-  const name = browserForwardName(projectId, projectPort, process.pid);
   let profile: ProfileDir | null = null;
   let browser: LaunchedBrowser | null = null;
-  // Set once creation is attempted: reflect may store the row even when
-  // starting it fails, so cleanup falls back to the (unique) name.
-  let forwardRef: string | null = null;
+  let tunnel: ReverseTunnel | null = null;
   let watchdog: CleanupWatchdog | null = null;
   const verification = new AbortController();
   let endedBy = "browser closed";
@@ -339,37 +266,26 @@ async function runBrowserConnect(
       }),
     });
     // If this process dies without reaching `finally` (crash, SIGKILL), the
-    // detached browser and reflect's persistent forward would keep giving the
-    // project control of the browser; the watchdog tears both down.
+    // detached browser would outlive it; the watchdog stops it and releases
+    // the profile.  The tunnel needs no help: its lifetime pipe closes.
     watchdog = startCleanupWatchdog({
       browser: browser.child.pid!,
       browserMarker: `--user-data-dir=${profile.path}`,
       release: profile.release,
-      forward: reflectSyncCliInvocation(["forward", "remove", name, "--stop"]),
     });
-    forwardRef = name;
-    let created;
-    try {
-      created = await runReflectSyncCli(
-        localToProjectForwardArgs({
-          sshTarget: alias,
-          projectPort,
-          localPort: browser.port,
-          name,
-          compress: opts.compress,
-        }),
-      );
-    } catch (err) {
-      // With ExitOnForwardFailure, ssh exits at once when the project side
-      // cannot listen, most often because the port is taken.
-      throw new Error(
-        `could not open port ${projectPort} in the project (is it already in use? try a different --port): ${(err as Error)?.message ?? err}`,
-      );
-    }
-    const forwardId = parseCreatedForwardId(
-      `${created.stdout}\n${created.stderr}`,
-    );
-    if (forwardId != null) forwardRef = String(forwardId);
+    tunnel = startReverseTunnel({
+      args: reverseTunnelSshArgs({
+        alias,
+        projectPort,
+        localPort: browser.port,
+        compress: opts.compress,
+      }),
+      onStatus: say,
+    });
+    const tunnelFailed = tunnel.failed.then((err) => {
+      throw err;
+    });
+    tunnelFailed.catch(() => {});
     say(`Connecting the browser to project ${projectId}...`);
     const verifying = verifyProjectSeesBrowser({
       alias,
@@ -382,6 +298,7 @@ async function runBrowserConnect(
     const verified = await Promise.race([
       verifying,
       browser.exited.then(() => "closed" as const),
+      tunnelFailed,
       stopped,
     ]);
     if (verified === "closed") {
@@ -401,6 +318,7 @@ async function runBrowserConnect(
       );
       const signal = await Promise.race([
         browser.exited.then(() => null),
+        tunnelFailed,
         stopped,
       ]);
       if (signal) endedBy = signal;
@@ -410,13 +328,7 @@ async function runBrowserConnect(
     verification.abort();
     cleanedUp = await cleanupThenDisarm(
       [
-        () =>
-          forwardRef != null
-            ? terminateReflectForwards([forwardRef]).catch((err: unknown) => {
-                // A name with no stored row means creation never got that far.
-                if (forwardRef !== name) throw err;
-              })
-            : Promise.resolve(),
+        () => tunnel?.stop() ?? Promise.resolve(),
         () => browser?.stop() ?? Promise.resolve(),
         () => profile?.cleanup() ?? Promise.resolve(),
       ],
@@ -426,7 +338,7 @@ async function runBrowserConnect(
   }
   say(
     cleanedUp
-      ? "Browser session ended; forward and profile removed."
+      ? "Browser session ended; tunnel closed and profile removed."
       : "Browser session ended; cleanup failed and was handed to the watchdog.",
   );
   return {
@@ -435,7 +347,6 @@ async function runBrowserConnect(
     browser: executable,
     profile_storage: storage,
     profile_backing: profile?.backing ?? null,
-    forward_name: name,
     ended_by: endedBy,
   };
 }

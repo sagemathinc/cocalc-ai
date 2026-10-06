@@ -555,49 +555,39 @@ export function createProjectSyncOps<Ctx, Project extends ProjectLike>(
     }
   }
 
-  // The exact process runReflectSyncCli starts for `args` (without the
-  // version adapter), for callers that must run reflect-sync later on their
-  // own, e.g. a cleanup watchdog that outlives this CLI process.
-  function reflectSyncCliInvocation(args: string[]): {
-    command: string;
-    args: string[];
-    env: Record<string, string>;
-  } {
-    const authConfigPathValue = authConfigPath();
-    const reflectHome = reflectSyncHomeDir(authConfigPathValue);
-    mkdirSync(reflectHome, { recursive: true, mode: 0o700 });
-    return {
-      command: process.execPath,
-      args: [
-        resolveReflectSyncCliEntry(),
-        "--log-level",
-        "error",
-        "--session-db",
-        reflectSyncSessionDbPath(authConfigPathValue),
-        ...args,
-      ],
-      env: { REFLECT_HOME: reflectHome },
-    };
-  }
-
   async function runReflectSyncCli(
     args: string[],
   ): Promise<CommandCaptureResult> {
+    const authConfigPathValue = authConfigPath();
+    const reflectHome = reflectSyncHomeDir(authConfigPathValue);
+    mkdirSync(reflectHome, { recursive: true, mode: 0o700 });
+    const cliEntry = resolveReflectSyncCliEntry();
     if (args[0] === "forward" && args[1] === "remove") {
       const version = await runCommandCapture(
         process.execPath,
-        [resolveReflectSyncCliEntry(), "--version"],
+        [cliEntry, "--version"],
         { env: process.env },
       );
       if (version.code !== 0)
         throw Error("Unable to establish the installed Reflect CLI version");
       args = reflectCliArgs(args, version.stdout);
     }
-    const invocation = reflectSyncCliInvocation(args);
     const result = await runCommandCapture(
-      invocation.command,
-      invocation.args,
-      { env: { ...process.env, ...invocation.env } },
+      process.execPath,
+      [
+        cliEntry,
+        "--log-level",
+        "error",
+        "--session-db",
+        reflectSyncSessionDbPath(authConfigPathValue),
+        ...args,
+      ],
+      {
+        env: {
+          ...process.env,
+          REFLECT_HOME: reflectHome,
+        },
+      },
     );
     if (result.code !== 0) {
       const message = result.stderr.trim() || result.stdout.trim();
@@ -634,7 +624,6 @@ export function createProjectSyncOps<Ctx, Project extends ProjectLike>(
     resolveProjectSshTarget,
     resolveProjectSshConnection,
     runCommandCapture,
-    reflectSyncCliInvocation,
     runReflectSyncCli,
     listReflectForwards,
     parseCreatedForwardId,

@@ -289,8 +289,10 @@ lives in RAM (tmpfs on Linux, a RAM disk on macOS) and never touches disk; use
 `--profile-storage disk` where no RAM-backed storage exists. The project-side
 port is bound to loopback only, and before reporting ready the command checks,
 over an ssh channel into the project, that the port reaches this browser (it
-fails closed otherwise). If the command itself dies (crash, `kill -9`), a small
-watchdog removes the tunnel, stops the browser and deletes the profile.
+fails closed otherwise). The tunnel is a plain `ssh -R` owned by the command
+(no reflect-sync daemon) and reconnects if the connection drops. If the command
+itself dies (crash, `kill -9`), the tunnel goes down with it and a small
+watchdog stops the browser and deletes the profile.
 **Trust boundary:** DevTools is full control of a browser running as your
 local user. Anything in the project (its agents and its collaborators'
 processes) can drive it, including opening `file://` paths on your computer

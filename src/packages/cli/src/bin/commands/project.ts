@@ -60,7 +60,6 @@ export type ProjectCommandDeps = {
   syncKeyPublicPath: any;
   readSyncPublicKey: any;
   resolveProjectSshTarget: any;
-  reflectSyncCliInvocation: any;
   runReflectSyncCli: any;
   parseCreatedForwardId: any;
   listReflectForwards: any;
