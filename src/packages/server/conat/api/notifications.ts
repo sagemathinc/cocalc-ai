@@ -55,6 +55,7 @@ import {
   publishProjectedNotificationFeedUpdatesBestEffort,
 } from "@cocalc/server/notifications/feed";
 import { forwardRemoteNotificationTargetsBestEffort } from "@cocalc/server/notifications/remote-feed";
+import getLogger from "@cocalc/backend/logger";
 import {
   getCodexFreshAuthActionStatus as getAuthoritativeFreshAuthStatus,
   normalizeCodexFreshAuthAttentionContext,
@@ -67,6 +68,8 @@ import {
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+
+const logger = getLogger("server:conat:api:notifications");
 
 const MAX_MENTION_TARGETS = 25;
 const MENTION_RATE_LIMIT_WINDOW_MINUTES = 60;
@@ -268,11 +271,20 @@ async function createNotificationResult(opts: {
     .filter((outbox) => outbox.target_home_bay_id !== opts.source_bay_id)
     .map((outbox) => outbox.outbox_id);
   if (remoteOutboxIds.length > 0) {
-    await forwardRemoteNotificationTargetsBestEffort({
+    // The targets are durably queued in notification_target_outbox, and the
+    // notification projection maintenance loop retries anything unsent. This
+    // immediate attempt only saves latency, so a slow or unreachable target
+    // bay must not hold up (or time out) the caller.
+    void forwardRemoteNotificationTargetsBestEffort({
       bay_id: opts.source_bay_id,
       outbox_ids: remoteOutboxIds,
       limit: remoteOutboxIds.length,
-    });
+    }).catch((err) =>
+      logger.warn("failed to forward remote notification targets", {
+        source_bay_id: opts.source_bay_id,
+        err: `${err}`,
+      }),
+    );
   }
   return {
     event_id: graph.event.event_id,
