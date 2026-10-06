@@ -922,7 +922,7 @@ export const site_settings_conf: SiteSettings = {
   },
   verify_emails: {
     name: "Verify email addresses",
-    desc: "Require users to verify their email address, show verification prompts, and send verification tokens. Email sending must also be enabled.",
+    desc: "Require users to verify their email address before using features that need a trusted account, and show verification prompts. Email sending must also be enabled. Verification emails are still sent when an address is set or changed while this is off, so addresses can be verified later.",
     default: "no",
     show: is_email_enabled,
     valid: only_booleans,
