@@ -77,6 +77,19 @@ describe("educator eligibility", () => {
     });
   });
 
+  it("denies the whole account if any verified address is denied", () => {
+    expect(
+      evaluate(["blocked@gmail.com", "prof@ucla.edu"], "", "blocked@gmail.com"),
+    ).toMatchObject({
+      eligible: false,
+      reason: "denied",
+      email_address: "blocked@gmail.com",
+    });
+    expect(
+      evaluate(["prof@ucla.edu", "x@denied.org"], "x@denied.org", "denied.org"),
+    ).toMatchObject({ eligible: false, reason: "denied" });
+  });
+
   it("never exposes the allow and deny lists in public site settings", () => {
     const { configuration } = buildPublicSiteSettings({
       educator_email_allow_list: "secret-person@gmail.com",

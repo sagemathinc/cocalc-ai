@@ -155,6 +155,21 @@ export async function createMembershipPackagePurchase(
     );
   }
 
+  // An educator buys a term for themselves. Give them the seat in the same
+  // transaction as the charge, so a failure can never leave a paid package
+  // without its seat (and a retry can never charge twice).
+  if (isEducatorTermProduct(quote) && !expandingExistingPackage) {
+    await assignMembershipPackageSeat(
+      {
+        package_id,
+        account_id,
+        assigned_by_account_id: account_id,
+        metadata: { educator_term: true },
+      },
+      client,
+    );
+  }
+
   if (quote.kind === "course") {
     if (!quote.starts_at || !quote.expires_at) {
       throw Error("course membership period is required");
@@ -181,28 +196,6 @@ export async function createMembershipPackagePurchase(
   }
 
   return { package_id, purchase_id };
-}
-
-/**
- * An educator term is bought by an educator for themselves: once the purchase
- * has committed, give the buyer the package's single seat. Safe to repeat.
- */
-export async function assignEducatorTermSeatToBuyer({
-  account_id,
-  package_id,
-  product,
-}: {
-  account_id: string;
-  package_id: string;
-  product: MembershipPackageProduct;
-}): Promise<void> {
-  if (!isEducatorTermProduct(product)) return;
-  await assignMembershipPackageSeat({
-    package_id,
-    account_id,
-    assigned_by_account_id: account_id,
-    metadata: { educator_term: true },
-  });
 }
 
 export default async function purchaseMembershipPackage({
@@ -255,11 +248,6 @@ export default async function purchaseMembershipPackage({
     if (!suppliedClient) {
       await client.query("COMMIT");
       await refreshAccountBalanceAndPublishBestEffort({ account_id });
-      await assignEducatorTermSeatToBuyer({
-        account_id,
-        package_id: result.package_id,
-        product,
-      });
     }
     return result;
   } catch (err) {
@@ -347,13 +335,6 @@ export async function purchaseMembershipPackages({
     if (!suppliedClient) {
       await client.query("COMMIT");
       await refreshAccountBalanceAndPublishBestEffort({ account_id });
-      for (const [index, product] of products.entries()) {
-        await assignEducatorTermSeatToBuyer({
-          account_id,
-          package_id: results[index].package_id,
-          product,
-        });
-      }
     }
     return results;
   } catch (err) {

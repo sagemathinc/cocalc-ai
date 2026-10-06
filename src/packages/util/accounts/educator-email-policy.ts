@@ -8,7 +8,8 @@ Who may buy membership tiers marked "available for instructor purchase"
 (educational offers). An account qualifies through one of its verified email
 addresses:
 
-1. the admin deny list (exact address or domain) always wins;
+1. the admin deny list (exact address or domain) always wins: one denied
+   verified address disqualifies the whole account;
 2. the admin allow list (exact address or domain) qualifies, which is also how
    support approves an individual educator by hand;
 3. otherwise the address must be on a recognized academic domain.
@@ -104,12 +105,14 @@ export function evaluateEducatorEligibility({
   if (emails.length === 0) {
     return { eligible: false, reason: "no_verified_email" };
   }
+  // The deny list applies to the whole account: one denied verified address
+  // disqualifies it, even if another address would qualify.
+  const denied = emails.find((email) => matches(email, deny));
+  if (denied) {
+    return { eligible: false, reason: "denied", email_address: denied };
+  }
   let fallback: EducatorEligibility | undefined;
   for (const email of emails) {
-    if (matches(email, deny)) {
-      fallback ??= { eligible: false, reason: "denied", email_address: email };
-      continue;
-    }
     const allowed = matches(email, allow);
     if (allowed) {
       return {

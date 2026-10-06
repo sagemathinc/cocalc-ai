@@ -282,16 +282,6 @@ async function assignDirectStudentCoursePackage({
   package_id: string;
   product: MembershipPackageProduct;
 }) {
-  if (product.metadata?.educator_term === true) {
-    // An educator term is bought by the educator for themselves.
-    await assignMembershipPackageSeat({
-      package_id,
-      account_id,
-      assigned_by_account_id: account_id,
-      metadata: { educator_term: true },
-    });
-    return;
-  }
   if (!isDirectStudentCourseProduct(product)) {
     return;
   }

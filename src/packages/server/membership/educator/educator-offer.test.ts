@@ -235,4 +235,45 @@ describe("educator offers", () => {
       resolveMembershipPackageQuote({ ...product, package_id }),
     ).rejects.toThrow("cannot add seats to an educator term");
   });
+
+  it("rolls back the whole purchase if seat assignment fails, so a retry charges once", async () => {
+    const tier = await createEducatorTier({ instructor_term_price: 0 });
+    const product = {
+      type: "membership-package" as const,
+      kind: "team" as const,
+      membership_class: tier,
+      seat_count: 1,
+      metadata: { educator_term: true },
+    };
+    const prof = await accountWithVerifiedEmail(`p-${uuid()}@ucla.edu`);
+    const packages = jest.requireActual("@cocalc/server/membership/packages");
+    const spy = jest
+      .spyOn(packages, "assignMembershipPackageSeat")
+      .mockRejectedValueOnce(new Error("transient seat failure"));
+    try {
+      await expect(
+        purchaseMembershipPackage({ account_id: prof, product }),
+      ).rejects.toThrow("transient seat failure");
+    } finally {
+      spy.mockRestore();
+    }
+    const count = async () => {
+      const { rows } = await getPool().query(
+        `SELECT
+           (SELECT COUNT(*) FROM membership_packages WHERE owner_account_id=$1)::int AS packages,
+           (SELECT COUNT(*) FROM purchases WHERE account_id=$1)::int AS purchases`,
+        [prof],
+      );
+      return rows[0];
+    };
+    expect(await count()).toEqual({ packages: 0, purchases: 0 });
+
+    const { package_id } = await purchaseMembershipPackage({
+      account_id: prof,
+      product,
+    });
+    expect(await count()).toEqual({ packages: 1, purchases: 1 });
+    const assignments = await listMembershipPackageAssignments({ package_id });
+    expect(assignments.map((a) => a.account_id)).toEqual([prof]);
+  });
 });
