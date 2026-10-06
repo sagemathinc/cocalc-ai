@@ -94,6 +94,7 @@ it("coalesces pending rows using the newest inventory and completes all submitte
   expect(fresh).toHaveBeenCalledTimes(1);
   expect(fresh).toHaveBeenCalledWith(
     expect.objectContaining({ storage_service_class: "paying" }),
+    { afterRunning: false },
   );
 });
 
@@ -214,4 +215,40 @@ it("shares the configured concurrency across overlapping submissions", async () 
   held.release();
   await Promise.all([first, second]);
   expect(peak).toBe(2);
+});
+
+it("marks work submitted while the same project runs for a fresh read", async () => {
+  const queue = new MaintenanceDispatchQueue();
+  const held = gate();
+  const calls: { project_id: string; afterRunning: boolean }[] = [];
+  const run = async (
+    row: HostProjectMaintenanceSchedule,
+    { afterRunning }: { afterRunning: boolean },
+  ) => {
+    calls.push({ project_id: row.project_id, afterRunning });
+    if (calls.length === 1) await held.promise;
+  };
+  const first = queue.submit({
+    rows: [row("a")],
+    observedAt: 1,
+    parallelism: 2,
+    due,
+    run,
+  });
+  await flush();
+  const later = queue.submit({
+    rows: [row("a"), row("b")],
+    observedAt: 2,
+    parallelism: 2,
+    due,
+    run,
+  });
+  await flush();
+  held.release();
+  await Promise.all([first, later]);
+  expect(calls).toEqual([
+    { project_id: "a", afterRunning: false },
+    { project_id: "b", afterRunning: false },
+    { project_id: "a", afterRunning: true },
+  ]);
 });

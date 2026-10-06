@@ -1193,11 +1193,17 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       );
     },
   );
-  const refreshQueuedRow = async (row: HostProjectMaintenanceSchedule) => {
+  const refreshQueuedRow = async (
+    row: HostProjectMaintenanceSchedule,
+    { afterRunning }: { afterRunning: boolean },
+  ) => {
     const refreshed = await (usedOwnershipLease
       ? Promise.resolve(row)
       : queues.refresh.get({
           row,
+          // Queued behind this project's previous operation: the cached row
+          // still shows the work that operation just did as due.
+          fresh: afterRunning,
           pendingProjectIds: () => [
             ...queues.snapshot.pendingProjectIds(100),
             ...queues.backup.pendingProjectIds(100),
@@ -1233,8 +1239,8 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         );
         return at == null ? null : new Date(at).toISOString();
       },
-      run: async (candidate) => {
-        const row = await refreshQueuedRow(candidate);
+      run: async (candidate, opts) => {
+        const row = await refreshQueuedRow(candidate, opts);
         if (!row) return;
         const project_id = row.project_id;
         const schedule = mergeSchedule(DEFAULT_SNAPSHOT_COUNTS, row.snapshots);
@@ -1419,8 +1425,8 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       observedAt: listingVersion,
       parallelism: backupParallelism,
       due: (row) => row.backup_due_since,
-      run: async (candidate) => {
-        const row = await refreshQueuedRow(candidate);
+      run: async (candidate, opts) => {
+        const row = await refreshQueuedRow(candidate, opts);
         if (!row) return;
         const project_id = row.project_id;
         const schedule = mergeSchedule(DEFAULT_BACKUP_COUNTS, row.backups);

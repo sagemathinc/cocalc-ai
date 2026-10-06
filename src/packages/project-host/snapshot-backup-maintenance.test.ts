@@ -2595,4 +2595,52 @@ describe("snapshot-backup-maintenance", () => {
     expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(1);
     stop();
   });
+
+  it("re-reads a backup queued behind the same project's running backup", async () => {
+    jest.useFakeTimers();
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_INITIAL_DELAY_MS = "0";
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_SWEEP_MS = "1000";
+    let backedUp = false;
+    listProjectMaintenanceSchedulesMock.mockImplementation(async () => [
+      backedUp
+        ? {
+            ...dueBackupRow("again"),
+            backup_due_since: null,
+            last_backup: new Date().toISOString(),
+          }
+        : dueBackupRow("again"),
+    ]);
+    let finish!: () => void;
+    runScheduledBackupMaintenanceMock
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          finish = () => resolve({ created: true });
+        }),
+      )
+      .mockResolvedValue({ created: true });
+    const { startProjectSnapshotBackupMaintenance } =
+      await import("./snapshot-backup-maintenance");
+    const stop = startProjectSnapshotBackupMaintenance({
+      // Earlier tests leave operations running in host-1's queues.
+      hostId: "host-requeue",
+    });
+
+    await jest.advanceTimersByTimeAsync(0);
+    expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(1);
+    // The next sweep still lists the project as due and queues it behind the
+    // running backup.
+    await jest.advanceTimersByTimeAsync(1000);
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledTimes(2);
+
+    backedUp = true;
+    finish();
+    await jest.advanceTimersByTimeAsync(0);
+    // Within the shared refresh window the cached row still says due; the
+    // queued copy must re-read it instead of backing up again.
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ project_ids: ["again"] }),
+    );
+    expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(1);
+    stop();
+  });
 });
