@@ -12,6 +12,7 @@ import { type CopyOptions } from "@cocalc/conat/files/fs";
 import type { FilesystemClient } from "@cocalc/conat/files/fs";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
 import { createBackup as createBackupLro } from "@cocalc/server/conat/api/project-backups";
+import { assertOversizedFilesAllowed } from "@cocalc/server/projects/oversized-files";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import { waitForDurableLroCompletion } from "@cocalc/server/lro/wait";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
@@ -1018,6 +1019,7 @@ export async function copyProjectFiles({
   queue_mode = "upsert",
   timeout_ms = COPY_FILES_TIMEOUT_MS,
   shouldAbort,
+  allow_oversized_skip,
 }: {
   src: CopySource;
   src_home?: string;
@@ -1033,6 +1035,9 @@ export async function copyProjectFiles({
   queue_mode?: QueueMode;
   timeout_ms?: number;
   shouldAbort?: () => Promise<boolean>;
+  // The user confirmed that files over the source project's backup file
+  // size limit may be left out of copies to other hosts.
+  allow_oversized_skip?: boolean;
 }): Promise<{
   queued: number;
   local: number;
@@ -1209,6 +1214,17 @@ export async function copyProjectFiles({
   }
 
   if (remoteDests.length && !skip_queue && fastRemoteCount === 0) {
+    if (!snapshot_id) {
+      // Copies to other hosts restore from a backup, which leaves out files
+      // over the backup file size limit.
+      await assertOversizedFilesAllowed({
+        project_id: src.project_id,
+        account_id,
+        paths: backupSrcPaths,
+        action: "copy these files to a project on another host",
+        allow_oversized_skip,
+      });
+    }
     report(progress, {
       step: "backup",
       detail: { paths: srcPaths.length, destinations: remoteDests.length },

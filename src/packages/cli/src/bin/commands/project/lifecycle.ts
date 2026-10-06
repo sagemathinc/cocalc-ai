@@ -7,6 +7,10 @@
 import { URL } from "node:url";
 import { Command } from "commander";
 import * as archiveInfo from "@cocalc/conat/project/archive-info";
+import {
+  hasOversizedFiles,
+  oversizedFilesMessage,
+} from "@cocalc/util/consts/backups";
 
 import type { ProjectCommandDeps } from "../project";
 import { apiKeyForProject } from "../../core/managed-connector-auth";
@@ -236,10 +240,25 @@ export function registerProjectLifecycleCommands(
     .description(
       "archive a project, creating a final backup first when the latest backup is stale",
     )
+    .addHelpText(
+      "after",
+      "\nThe archive keeps the files as of the final backup, a point-in-time snapshot;\nchanges made after it (by running code, collaborators, or agents) are not kept.\nFiles larger than the project's disk quota are not backed up, so archiving is\nrefused while any exist unless --allow-oversized-skip is given.",
+    )
     .option("-w, --project <project>", "project id or name")
     .option("--wait", "show progress while archiving")
+    .option(
+      "--allow-oversized-skip",
+      "archive even if files over the backup file size limit cannot be included; those files are deleted",
+    )
     .action(
-      async (opts: { project?: string; wait?: boolean }, command: Command) => {
+      async (
+        opts: {
+          project?: string;
+          wait?: boolean;
+          allowOversizedSkip?: boolean;
+        },
+        command: Command,
+      ) => {
         await withContext(command, "project archive", async (ctx) => {
           const { project: ws, client } = await resolveProjectConatClient(
             ctx,
@@ -252,6 +271,17 @@ export function registerProjectLifecycleCommands(
               })
             : undefined;
 
+          if (!opts.allowOversizedSkip) {
+            // Refuse before stopping the project or creating a backup.
+            const oversized = await archiveInfo
+              .getOversizedFiles({ client, project_id: ws.project_id })
+              .catch(() => null);
+            if (hasOversizedFiles(oversized)) {
+              throw new Error(
+                `${oversizedFilesMessage("archive this project", oversized)} Pass --allow-oversized-skip to archive anyway.`,
+              );
+            }
+          }
           progress?.({
             step: "checking-backups",
             status: "running",
@@ -364,6 +394,7 @@ export function registerProjectLifecycleCommands(
           await ctx.hub.projects.archiveProject({
             project_id: ws.project_id,
             timeout: Math.max(ctx.rpcTimeoutMs, 30_000),
+            ...(opts.allowOversizedSkip ? { allow_oversized_skip: true } : {}),
           });
           progress?.({
             step: "archived",

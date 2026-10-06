@@ -466,7 +466,8 @@ async function restoreManagedRootfsRustic({
   await executeCode({
     verbose: false,
     err_on_exit: true,
-    timeout: 30 * 60 * 1000,
+    // executeCode timeouts are in seconds.
+    timeout: 30 * 60,
     command: "sudo",
     args: [
       "-n",

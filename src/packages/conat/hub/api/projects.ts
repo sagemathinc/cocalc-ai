@@ -1385,6 +1385,9 @@ export interface Projects {
     options?: CopyOptions;
     request_id?: string;
     timeout?: number;
+    // The user confirmed that files over the source project's backup file
+    // size limit may be left out of copies to projects on other hosts.
+    allow_oversized_skip?: boolean;
   }) => Promise<{
     op_id: string;
     scope_type: "project";
@@ -2332,6 +2335,9 @@ export interface Projects {
     account_id?: string;
     project_id: string;
     timeout?: number;
+    // The user confirmed that files over the backup file size limit, which
+    // the archive cannot include, may be lost.
+    allow_oversized_skip?: boolean;
   }) => Promise<void>;
   getProjectState: (opts: {
     account_id?: string;
@@ -2444,6 +2450,9 @@ export interface Projects {
     dest_host_id?: string;
     allow_offline?: boolean;
     backup_region_cutover?: boolean;
+    // The user confirmed that files over the backup file size limit may be
+    // left out. Without it, a move that would leave files out is refused.
+    allow_oversized_skip?: boolean;
   }) => Promise<{
     op_id: string;
     scope_type: "project";

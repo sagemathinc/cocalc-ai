@@ -104,6 +104,7 @@ async function handleCopyOp(op: LroSummary): Promise<void> {
   const src_home = input.src_home;
   const src_read_policy = input.src_read_policy;
   const flush_collaborative = input.flush_collaborative === true;
+  const allow_oversized_skip = input.allow_oversized_skip === true;
   const account_id = op.created_by ?? input.account_id;
 
   if (!account_id || !src || !dests.length) {
@@ -199,6 +200,7 @@ async function handleCopyOp(op: LroSummary): Promise<void> {
       flush_collaborative,
       queue_mode,
       shouldAbort,
+      allow_oversized_skip,
     });
 
     const audit = {

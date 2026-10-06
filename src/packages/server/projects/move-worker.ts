@@ -385,6 +385,7 @@ async function handleMoveOp(op: LroSummary): Promise<void> {
         account_id,
         allow_offline: input.allow_offline,
         backup_region_cutover: !!input.backup_region_cutover,
+        allow_oversized_skip: input.allow_oversized_skip === true,
       },
       { progress, shouldCancel: shouldAbort, op_id },
     );

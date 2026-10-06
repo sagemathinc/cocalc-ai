@@ -33,6 +33,40 @@ describe("shouldDisplayBackupOp", () => {
     ).toBe(true);
   });
 
+  it("keeps succeeded backups that skipped files visible until dismissed", () => {
+    const result = {
+      oversized_files: {
+        max_file_bytes: 10_000_000_000,
+        count: 1,
+        files: [{ path: "huge.img", size: 1_000_000_000_000 }],
+      },
+    };
+    expect(
+      shouldDisplayBackupOp(
+        makeOp({
+          summary: {
+            status: "succeeded",
+            result,
+            dismissed_at: null,
+            dismissed_by: null,
+          },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      shouldDisplayBackupOp(
+        makeOp({
+          summary: {
+            status: "succeeded",
+            result,
+            dismissed_at: new Date(),
+            dismissed_by: "account",
+          },
+        }),
+      ),
+    ).toBe(false);
+  });
+
   it("hides succeeded backups", () => {
     expect(
       shouldDisplayBackupOp(
