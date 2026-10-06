@@ -155,6 +155,38 @@ describe("remote project detail reads", () => {
     });
   });
 
+  it("leaves course secret APIs to edge routing", async () => {
+    // These run on the course project's owning bay; see edge-routing.test.ts
+    // and the two-bay suite.
+    const { getHubApiRoute, hubApiRouteKey } =
+      await import("@cocalc/conat/hub/api/routes");
+    for (const name of [
+      "listCourseShareableSecrets",
+      "getCourseSecretPolicy",
+      "previewCourseSecretSync",
+      "setCourseSecretPolicy",
+      "setCourseSecretGrants",
+      "approveCourseSecretRecipients",
+      "revokeCourseSecretRecipients",
+      "startCourseSecretSync",
+      "startCourseSecretCleanup",
+      "getCourseSecretSyncStatus",
+      "revokeCourseSecretPolicy",
+    ]) {
+      const route = getHubApiRoute(`projects.${name}`);
+      expect([name, route?.owner]).toEqual([name, "project"]);
+      expect(hubApiRouteKey(route!, [{ course_project_id: PROJECT_ID }])).toBe(
+        PROJECT_ID,
+      );
+    }
+    const sharing = getHubApiRoute("projects.setProjectSecretCourseSharing")!;
+    expect(hubApiRouteKey(sharing, [{ project_id: PROJECT_ID }])).toBe(
+      PROJECT_ID,
+    );
+    // Copying secrets involves two projects: it stays an explicit workflow.
+    expect(getHubApiRoute("projects.copyProjectSecrets")).toBeUndefined();
+  });
+
   it("leaves collaborator invite APIs to edge routing", async () => {
     // These run on the bay that owns the project (or the email invite, found
     // in the invite directory); see edge-routing.test.ts and the two-bay suite.

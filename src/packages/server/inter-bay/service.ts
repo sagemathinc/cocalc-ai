@@ -445,23 +445,11 @@ import {
   handleProjectControlStop,
 } from "@cocalc/server/inter-bay/project-control";
 import {
-  handleProjectSecretsApproveCourseRecipients,
   handleProjectSecretsCopy,
   handleProjectSecretsExportForCopy,
-  handleProjectSecretsGetCoursePolicy,
-  handleProjectSecretsGetCourseSyncStatus,
   handleProjectSecretsImportForCopy,
   handleProjectSecretsInstallCourseManaged,
-  handleProjectSecretsListCourseShareable,
-  handleProjectSecretsPreviewCourseSync,
   handleProjectSecretsRemoveCourseManaged,
-  handleProjectSecretsRevokeCoursePolicy,
-  handleProjectSecretsRevokeCourseRecipients,
-  handleProjectSecretsSetCourseGrants,
-  handleProjectSecretsSetCoursePolicy,
-  handleProjectSecretsSetCourseSharing,
-  handleProjectSecretsStartCourseCleanup,
-  handleProjectSecretsStartCourseSync,
   handleProjectSecretsValidateCourseTarget,
 } from "@cocalc/server/inter-bay/project-secrets";
 import {
@@ -2573,30 +2561,6 @@ async function startProjectSecretsService(): Promise<void> {
       await handleProjectSecretsExportForCopy(opts),
     importForCopy: async (opts) =>
       await handleProjectSecretsImportForCopy(opts),
-    listCourseShareable: async (opts) =>
-      await handleProjectSecretsListCourseShareable(opts),
-    getCoursePolicy: async (opts) =>
-      await handleProjectSecretsGetCoursePolicy(opts),
-    previewCourseSync: async (opts) =>
-      await handleProjectSecretsPreviewCourseSync(opts),
-    setCourseSharing: async (opts) =>
-      await handleProjectSecretsSetCourseSharing(opts),
-    setCoursePolicy: async (opts) =>
-      await handleProjectSecretsSetCoursePolicy(opts),
-    setCourseGrants: async (opts) =>
-      await handleProjectSecretsSetCourseGrants(opts),
-    approveCourseRecipients: async (opts) =>
-      await handleProjectSecretsApproveCourseRecipients(opts),
-    revokeCourseRecipients: async (opts) =>
-      await handleProjectSecretsRevokeCourseRecipients(opts),
-    startCourseSync: async (opts) =>
-      await handleProjectSecretsStartCourseSync(opts),
-    startCourseCleanup: async (opts) =>
-      await handleProjectSecretsStartCourseCleanup(opts),
-    getCourseSyncStatus: async (opts) =>
-      await handleProjectSecretsGetCourseSyncStatus(opts),
-    revokeCoursePolicy: async (opts) =>
-      await handleProjectSecretsRevokeCoursePolicy(opts),
     installCourseManaged: async (opts) =>
       await handleProjectSecretsInstallCourseManaged(opts),
     removeCourseManaged: async (opts) =>

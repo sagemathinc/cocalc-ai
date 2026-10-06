@@ -2632,16 +2632,7 @@ export async function listCourseShareableSecrets({
   course_project_id: string;
 }): Promise<ProjectSecretMetadata[]> {
   const actor = requireAccountId(account_id);
-  const ownership = await resolveRequiredProjectBay(course_project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .listCourseShareable({
-        account_id: actor,
-        course_project_id,
-        epoch: ownership.epoch,
-      });
-  }
+  // Routed to the course project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollab({ account_id: actor, project_id: course_project_id });
   return await listCourseShareableSecretsInDb({
     project_id: course_project_id,
@@ -2660,18 +2651,7 @@ export async function getCourseSecretPolicy({
   course_path: string;
 }): Promise<CourseSecretPolicyState | null> {
   const actor = requireAccountId(account_id);
-  const ownership = await resolveRequiredProjectBay(course_project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .getCoursePolicy({
-        account_id: actor,
-        course_project_id,
-        course_id,
-        course_path,
-        epoch: ownership.epoch,
-      });
-  }
+  // Routed to the course project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollab({ account_id: actor, project_id: course_project_id });
   return await getCourseSecretPolicyStateInDb({
     course_project_id,
@@ -2694,19 +2674,7 @@ export async function previewCourseSecretSync({
   target_project_ids: string[];
 }): Promise<CourseSecretSyncPreview> {
   const actor = requireAccountId(account_id);
-  const ownership = await resolveRequiredProjectBay(course_project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .previewCourseSync({
-        account_id: actor,
-        course_project_id,
-        course_id,
-        course_path,
-        target_project_ids,
-        epoch: ownership.epoch,
-      });
-  }
+  // Routed to the course project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollab({ account_id: actor, project_id: course_project_id });
   return await previewCourseSecretSyncLocal({
     course_project_id,
@@ -2754,19 +2722,7 @@ export async function setProjectSecretCourseSharing({
     browser_id,
     session_hash,
   });
-  const ownership = await resolveRequiredProjectBay(project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .setCourseSharing({
-        account_id: auth.actor,
-        session_hash: auth.session_hash,
-        project_id,
-        name,
-        allow,
-        epoch: ownership.epoch,
-      });
-  }
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollab({ account_id: auth.actor, project_id });
   const result = await setProjectSecretCourseSharingInDb({
     project_id,
@@ -2794,17 +2750,7 @@ export async function setCourseSecretPolicy(
   opts: CoursePolicyMutationAuth & { enabled: boolean },
 ): Promise<CourseSecretPolicyState> {
   const auth = await freshCourseSecretMutation(opts);
-  const ownership = await resolveRequiredProjectBay(opts.course_project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .setCoursePolicy({
-        ...opts,
-        account_id: auth.actor,
-        session_hash: auth.session_hash,
-        epoch: ownership.epoch,
-      });
-  }
+  // Routed to the course project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollab({
     account_id: auth.actor,
     project_id: opts.course_project_id,
@@ -2819,17 +2765,7 @@ export async function setCourseSecretGrants(
   opts: CoursePolicyMutationAuth & { names: string[] },
 ): Promise<CourseSecretPolicyState> {
   const auth = await freshCourseSecretMutation(opts);
-  const ownership = await resolveRequiredProjectBay(opts.course_project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .setCourseGrants({
-        ...opts,
-        account_id: auth.actor,
-        session_hash: auth.session_hash,
-        epoch: ownership.epoch,
-      });
-  }
+  // Routed to the course project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollab({
     account_id: auth.actor,
     project_id: opts.course_project_id,
@@ -2846,17 +2782,7 @@ export async function approveCourseSecretRecipients(
   },
 ): Promise<CourseSecretPolicyState> {
   const auth = await freshCourseSecretMutation(opts);
-  const ownership = await resolveRequiredProjectBay(opts.course_project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .approveCourseRecipients({
-        ...opts,
-        account_id: auth.actor,
-        session_hash: auth.session_hash,
-        epoch: ownership.epoch,
-      });
-  }
+  // Routed to the course project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollab({
     account_id: auth.actor,
     project_id: opts.course_project_id,
@@ -2871,17 +2797,7 @@ export async function revokeCourseSecretRecipients(
   opts: CoursePolicyMutationAuth & { target_project_ids: string[] },
 ): Promise<CourseSecretPolicyState> {
   const auth = await freshCourseSecretMutation(opts);
-  const ownership = await resolveRequiredProjectBay(opts.course_project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .revokeCourseRecipients({
-        ...opts,
-        account_id: auth.actor,
-        session_hash: auth.session_hash,
-        epoch: ownership.epoch,
-      });
-  }
+  // Routed to the course project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollab({
     account_id: auth.actor,
     project_id: opts.course_project_id,
@@ -2897,19 +2813,7 @@ async function startCourseSecretOperation(
   mode: "sync" | "cleanup",
 ): Promise<CourseSecretSyncRun> {
   const auth = await freshCourseSecretMutation(opts);
-  const ownership = await resolveRequiredProjectBay(opts.course_project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    const client = getInterBayBridge().projectSecrets(ownership.bay_id);
-    const routed = {
-      ...opts,
-      account_id: auth.actor,
-      session_hash: auth.session_hash,
-      epoch: ownership.epoch,
-    };
-    return mode === "sync"
-      ? await client.startCourseSync(routed)
-      : await client.startCourseCleanup(routed);
-  }
+  // Routed to the course project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollab({
     account_id: auth.actor,
     project_id: opts.course_project_id,
@@ -2945,18 +2849,7 @@ export async function getCourseSecretSyncStatus({
   run_id?: string;
 }): Promise<CourseSecretSyncStatusResult | null> {
   const actor = requireAccountId(account_id);
-  const ownership = await resolveRequiredProjectBay(course_project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .getCourseSyncStatus({
-        account_id: actor,
-        course_project_id,
-        course_id,
-        run_id,
-        epoch: ownership.epoch,
-      });
-  }
+  // Routed to the course project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollab({ account_id: actor, project_id: course_project_id });
   return await getCourseSecretRunStatusInDb({
     course_project_id,
@@ -2969,17 +2862,7 @@ export async function revokeCourseSecretPolicy(
   opts: CoursePolicyMutationAuth,
 ): Promise<CourseSecretPolicyState> {
   const auth = await freshCourseSecretMutation(opts);
-  const ownership = await resolveRequiredProjectBay(opts.course_project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .revokeCoursePolicy({
-        ...opts,
-        account_id: auth.actor,
-        session_hash: auth.session_hash,
-        epoch: ownership.epoch,
-      });
-  }
+  // Routed to the course project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollab({
     account_id: auth.actor,
     project_id: opts.course_project_id,

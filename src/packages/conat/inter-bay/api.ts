@@ -230,12 +230,7 @@ import type {
   ProjectRootfsConfig,
   ProjectRootfsPublishConfig,
   ProjectRunQuota,
-  CourseSecretPolicyState,
   CourseSecretRecipientPreview,
-  CourseSecretSyncPreview,
-  CourseSecretSyncRun,
-  CourseSecretSyncStatusResult,
-  ProjectSecretMetadata,
   ProjectSnapshotSchedule,
   CopyProjectSecretsResult,
 } from "@cocalc/conat/hub/api/projects";
@@ -3054,18 +3049,6 @@ export type ProjectSecretsMethod =
   | "copy"
   | "export-for-copy"
   | "import-for-copy"
-  | "list-course-shareable"
-  | "get-course-policy"
-  | "preview-course-sync"
-  | "set-course-sharing"
-  | "set-course-policy"
-  | "set-course-grants"
-  | "approve-course-recipients"
-  | "revoke-course-recipients"
-  | "start-course-sync"
-  | "start-course-cleanup"
-  | "get-course-sync-status"
-  | "revoke-course-policy"
   | "install-course-managed"
   | "remove-course-managed";
 export type ExternalCredentialMethod =
@@ -3247,104 +3230,6 @@ export interface InterBayProjectSecretsApi {
     overwrite?: boolean;
     epoch?: number;
   }) => Promise<CopyProjectSecretsResult>;
-  listCourseShareable: (opts: {
-    account_id: string;
-    course_project_id: string;
-    epoch?: number;
-  }) => Promise<ProjectSecretMetadata[]>;
-  getCoursePolicy: (opts: {
-    account_id: string;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    epoch?: number;
-  }) => Promise<CourseSecretPolicyState | null>;
-  previewCourseSync: (opts: {
-    account_id: string;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    target_project_ids: string[];
-    epoch?: number;
-  }) => Promise<CourseSecretSyncPreview>;
-  setCourseSharing: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    project_id: string;
-    name: string;
-    allow: boolean;
-    epoch?: number;
-  }) => Promise<ProjectSecretMetadata>;
-  setCoursePolicy: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    enabled: boolean;
-    epoch?: number;
-  }) => Promise<CourseSecretPolicyState>;
-  setCourseGrants: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    names: string[];
-    epoch?: number;
-  }) => Promise<CourseSecretPolicyState>;
-  approveCourseRecipients: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    recipients: Array<{
-      target_project_id: string;
-      student_account_id?: string | null;
-    }>;
-    epoch?: number;
-  }) => Promise<CourseSecretPolicyState>;
-  revokeCourseRecipients: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    target_project_ids: string[];
-    epoch?: number;
-  }) => Promise<CourseSecretPolicyState>;
-  startCourseSync: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    epoch?: number;
-  }) => Promise<CourseSecretSyncRun>;
-  startCourseCleanup: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    epoch?: number;
-  }) => Promise<CourseSecretSyncRun>;
-  getCourseSyncStatus: (opts: {
-    account_id: string;
-    course_project_id: string;
-    course_id: string;
-    run_id?: string;
-    epoch?: number;
-  }) => Promise<CourseSecretSyncStatusResult | null>;
-  revokeCoursePolicy: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    epoch?: number;
-  }) => Promise<CourseSecretPolicyState>;
   installCourseManaged: (opts: {
     project_id: string;
     course_project_id: string;
@@ -5404,18 +5289,6 @@ const PROJECT_SECRETS_METHOD_SPECS = [
   { name: "copy", method: "copy" },
   { name: "exportForCopy", method: "export-for-copy" },
   { name: "importForCopy", method: "import-for-copy" },
-  { name: "listCourseShareable", method: "list-course-shareable" },
-  { name: "getCoursePolicy", method: "get-course-policy" },
-  { name: "previewCourseSync", method: "preview-course-sync" },
-  { name: "setCourseSharing", method: "set-course-sharing" },
-  { name: "setCoursePolicy", method: "set-course-policy" },
-  { name: "setCourseGrants", method: "set-course-grants" },
-  { name: "approveCourseRecipients", method: "approve-course-recipients" },
-  { name: "revokeCourseRecipients", method: "revoke-course-recipients" },
-  { name: "startCourseSync", method: "start-course-sync" },
-  { name: "startCourseCleanup", method: "start-course-cleanup" },
-  { name: "getCourseSyncStatus", method: "get-course-sync-status" },
-  { name: "revokeCoursePolicy", method: "revoke-course-policy" },
   { name: "installCourseManaged", method: "install-course-managed" },
   { name: "removeCourseManaged", method: "remove-course-managed" },
 ] as const satisfies ReadonlyArray<{

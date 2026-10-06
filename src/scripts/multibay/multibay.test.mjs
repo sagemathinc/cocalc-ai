@@ -385,6 +385,51 @@ describe("project secrets across bays", () => {
   });
 });
 
+describe("course secrets across bays", () => {
+  // bob's project, on the attached bay, acts as the course project; alice, a
+  // collaborator homed on the seed, manages its course secret policy.
+  const NAME = "COURSE_TOKEN";
+  const course = {
+    course_id: "multibay-course",
+    course_path: "multibay.course",
+  };
+
+  it("lets a collaborator on the other bay share a secret with the course", async () => {
+    await alice.client.call("projects.setProjectSecret", {
+      project_id: bob.project,
+      name: NAME,
+      value: "for-students",
+    });
+    await alice.client.call("projects.setProjectSecretCourseSharing", {
+      project_id: bob.project,
+      name: NAME,
+      allow: true,
+    });
+    const shareable = await alice.client.call(
+      "projects.listCourseShareableSecrets",
+      { course_project_id: bob.project },
+    );
+    assert.ok(shareable.some((secret) => secret.name === NAME));
+  });
+
+  it("lets a collaborator on the other bay enable and revoke the course policy", async () => {
+    await alice.client.call("projects.setCourseSecretPolicy", {
+      course_project_id: bob.project,
+      ...course,
+      enabled: true,
+    });
+    const policy = await alice.client.call("projects.getCourseSecretPolicy", {
+      course_project_id: bob.project,
+      ...course,
+    });
+    assert.equal(policy?.enabled, true);
+    await alice.client.call("projects.revokeCourseSecretPolicy", {
+      course_project_id: bob.project,
+      ...course,
+    });
+  });
+});
+
 describe("access requests across bays", () => {
   // The project lives on the seed; its owner (bob) and the requesters are
   // homed on either bay, so requests and their management cross bays.

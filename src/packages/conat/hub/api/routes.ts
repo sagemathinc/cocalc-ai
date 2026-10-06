@@ -42,6 +42,11 @@ const projectFromNestedOpts: HubApiRoute = {
   key: (args) => args?.[0]?.opts?.project_id,
 };
 
+const courseProjectFromOpts: HubApiRoute = {
+  owner: "project",
+  key: (args) => args?.[0]?.course_project_id,
+};
+
 const collabInviteFromOpts: HubApiRoute = {
   owner: "collab-invite",
   key: (args) => ({
@@ -78,6 +83,19 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "projects.redeemEmailProjectInvite": collabInviteFromOpts,
   "projects.previewEmailProjectInvite": collabInviteFromOpts,
   "projects.respondEmailProjectInvite": collabInviteFromOpts,
+  // Course secrets live on the course project's owning bay.
+  "projects.listCourseShareableSecrets": courseProjectFromOpts,
+  "projects.getCourseSecretPolicy": courseProjectFromOpts,
+  "projects.previewCourseSecretSync": courseProjectFromOpts,
+  "projects.setProjectSecretCourseSharing": projectFromOpts,
+  "projects.setCourseSecretPolicy": courseProjectFromOpts,
+  "projects.setCourseSecretGrants": courseProjectFromOpts,
+  "projects.approveCourseSecretRecipients": courseProjectFromOpts,
+  "projects.revokeCourseSecretRecipients": courseProjectFromOpts,
+  "projects.startCourseSecretSync": courseProjectFromOpts,
+  "projects.startCourseSecretCleanup": courseProjectFromOpts,
+  "projects.getCourseSecretSyncStatus": courseProjectFromOpts,
+  "projects.revokeCourseSecretPolicy": courseProjectFromOpts,
 };
 
 export function getHubApiRoute(name: string): HubApiRoute | undefined {
