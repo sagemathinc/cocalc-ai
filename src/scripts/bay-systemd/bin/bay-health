@@ -138,6 +138,37 @@ PY
   exit $?
 fi
 
+frontdoor_isolated_workers() {
+  local deadline=$((SECONDS + COCALC_BAY_HEALTH_TIMEOUT_S))
+  local body
+  while true; do
+    if body="$(curl --fail --silent --show-error \
+        --max-time "${COCALC_BAY_HEALTH_TIMEOUT_S}" "$(frontdoor_url)" 2>/dev/null)" \
+      && python3 -c '
+import json, sys
+try:
+    workers = json.loads(sys.argv[1])["workers"]
+    if not isinstance(workers, list):
+        raise ValueError("workers is not a list")
+except Exception as err:
+    print(f"invalid frontdoor health response: {err}", file=sys.stderr)
+    raise SystemExit(1)
+print(",".join(
+    str(w["id"]) for w in workers
+    if isinstance(w, dict) and isinstance(w.get("id"), int)
+    and isinstance(w.get("app_probe"), dict) and w["app_probe"].get("isolated") is True
+))
+' "$body"; then
+      return 0
+    fi
+    if ((SECONDS >= deadline)); then
+      bay_log "frontdoor is unhealthy"
+      return 1
+    fi
+    sleep 1
+  done
+}
+
 postgres_ok=true
 persist_ok=true
 router_ok=true
@@ -152,25 +183,13 @@ if ! "$router_only"; then
   if ! http_check "$(persist_url)"; then
     persist_ok=false
   fi
-  if ! "${SCRIPT_DIR}/bay-frontdoor-health" >/dev/null 2>&1; then
+  # Fetch frontdoor health once and derive both readiness and app-probe
+  # isolation from that one response. A worker can pass /ready while the
+  # frontdoor has isolated it; only workers the frontdoor routes to count.
+  # Unreadable or malformed health data fails closed.
+  if ! isolated_workers="$(frontdoor_isolated_workers)"; then
     frontdoor_ok=false
-  else
-    # A worker can pass /ready while the frontdoor has isolated it for failing
-    # application probes. Count only workers the frontdoor will route to.
-    isolated_workers="$(
-      curl --silent --max-time "${COCALC_BAY_HEALTH_TIMEOUT_S}" \
-        "$(frontdoor_url)" 2>/dev/null | python3 -c '
-import json, sys
-try:
-    workers = json.load(sys.stdin).get("workers", [])
-except Exception:
-    workers = []
-print(",".join(
-    str(w["id"]) for w in workers
-    if isinstance(w.get("id"), int) and (w.get("app_probe") or {}).get("isolated") is True
-))
-' 2>/dev/null || true
-    )"
+    isolated_workers=""
   fi
 fi
 
