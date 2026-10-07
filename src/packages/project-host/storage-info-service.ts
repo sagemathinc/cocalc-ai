@@ -984,7 +984,14 @@ async function getStorageOverviewImpl({
       fallback_bytes: 0,
     }).catch((err) => {
       const text = `${err ?? ""}`.toLowerCase();
-      if (text.includes("no such file") || text.includes("not found")) {
+      // Optional detail: a missing or unreadable environment tree (e.g.
+      // root-owned overlay work dirs) must not fail the whole overview.
+      if (
+        text.includes("no such file") ||
+        text.includes("not found") ||
+        text.includes("eacces") ||
+        text.includes("permission denied")
+      ) {
         return null;
       }
       throw err;
