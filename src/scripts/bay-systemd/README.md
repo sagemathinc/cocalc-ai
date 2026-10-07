@@ -55,6 +55,16 @@ when the `syslog` user cannot write `/dev/console`. Use
 `--skip-system-logging` only if the VM has an externally managed logging
 policy.
 
+Bay services (hub workers, router, persist and so on) log errors and warnings to
+journald: each release sets `DEBUG=cocalc:error:*,cocalc:warn:*`,
+`DEBUG_CONSOLE=yes` and an empty `DEBUG_FILE` in `bay.env`. The logger writes
+nothing when `DEBUG` is unset. When `NODE_ENV` is not `production`, which bay
+services do not set, it would also append to an unrotated `$LOGS/log` file
+unless `DEBUG_FILE` is empty. To change the level, for example to add
+`cocalc:info:server:projects:*` while investigating, set `DEBUG` in
+`bay-local.env` and restart the affected units. A release warns if the journald
+cap is missing.
+
 2. Install the shared site master key before starting bay services:
 
 ```sh

@@ -1121,6 +1121,10 @@ COCALC_BAY_HUB_DIAGNOSTIC_DIR=/var/log/cocalc-bay/hub-watchdog-incidents
 COCALC_BAY_HUB_DIAGNOSTIC_RETENTION_DAYS=14
 COCALC_BAY_HUB_DIAGNOSTIC_MAX_FILES=100
 
+DEBUG=cocalc:error:*,cocalc:warn:*
+DEBUG_CONSOLE=yes
+DEBUG_FILE=
+
 COCALC_BAY_MIN_HEALTHY_WORKERS=1
 COCALC_BAY_HEALTH_TIMEOUT_S=15
 COCALC_BAY_WORKER_START_TIMEOUT_S=90
@@ -1168,6 +1172,13 @@ EOF
   set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_HUB_DIAGNOSTIC_DIR" "/var/log/cocalc-bay/hub-watchdog-incidents"
   set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_HUB_DIAGNOSTIC_RETENTION_DAYS" "14"
   set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_HUB_DIAGNOSTIC_MAX_FILES" "100"
+  # Bay services log errors and warnings to journald, which
+  # bay-bootstrap-host.sh caps. Without DEBUG the logger writes nothing at all;
+  # without NODE_ENV=production it would also append to an unrotated $LOGS/log,
+  # so pin it to the console. Override DEBUG in bay-local.env.
+  set_env_var "${ENV_DIR}/bay.env" "DEBUG" "cocalc:error:*,cocalc:warn:*"
+  set_env_var "${ENV_DIR}/bay.env" "DEBUG_CONSOLE" "yes"
+  set_env_var "${ENV_DIR}/bay.env" "DEBUG_FILE" ""
   set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_POSTGRES_MAX_WAL_SIZE" "8GB"
   set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_POSTGRES_SHARED_BUFFERS" "1GB"
   set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_POSTGRES_EFFECTIVE_CACHE_SIZE" "8GB"
@@ -1225,6 +1236,9 @@ EOF
     fi
   fi
 
+  if [[ ! -e /etc/systemd/journald.conf.d/99-cocalc-bay.conf ]]; then
+    echo "WARNING: journald has no CoCalc size cap on this VM; bay logs are unbounded until bay-bootstrap-host.sh installs /etc/systemd/journald.conf.d/99-cocalc-bay.conf" >&2
+  fi
   run systemctl enable cocalc-bay.target
   run systemctl enable cocalc-bay-frontdoor.service
   run systemctl enable cocalc-bay-cloudflared.service
