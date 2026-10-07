@@ -207,10 +207,55 @@ describe("runtime slot admission", () => {
       project_id: "project-1",
       owning_bay_id: "bay-0",
     });
-    expect(result.limit).toBe(1);
+    // Star has no per-account limit; only the machine-wide cap applies.
+    expect(result.limit).toBeUndefined();
     expect(result.current).toBe(1);
     expect(queryMock).toHaveBeenCalledWith("COMMIT");
   });
+
+  it("does not apply per-account membership limits on Star", async () => {
+    process.env.COCALC_SETUP_PROFILE = "star";
+    process.env.COCALC_STAR_MAX_RUNNING_PROJECTS = "10";
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [], rowCount: null };
+      }
+      if (sql.includes("pg_advisory_xact_lock")) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("UPDATE project_runtime_slots")) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("SELECT sponsor_account_id")) {
+        // Already at the membership limit of 1 with another project.
+        return { rows: [makeSlot("other-project")], rowCount: 1 };
+      }
+      if (sql.includes("COUNT(DISTINCT project_id)")) {
+        return {
+          rows: [{ count: 1, includes_project: false }],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("SELECT banned FROM accounts")) {
+        return { rows: [{ banned: false }], rowCount: 1 };
+      }
+      if (sql.includes("INSERT INTO project_runtime_slots")) {
+        return { rows: [makeSlot("project-1")], rowCount: 1 };
+      }
+      throw new Error(`unexpected SQL: ${sql}`);
+    });
+
+    const { reserveProjectRuntimeSlotLocal } = await import("./runtime-slots");
+    const result = await reserveProjectRuntimeSlotLocal({
+      sponsor_account_id: "sponsor",
+      project_id: "project-1",
+      owning_bay_id: "bay-0",
+    });
+    expect(result.limit).toBeUndefined();
+    expect(result.current).toBe(2);
+    expect(queryMock).toHaveBeenCalledWith("COMMIT");
+  });
+
   it("denies runtime slot reservation for banned sponsors", async () => {
     queryMock.mockImplementation(async (sql: string) => {
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {

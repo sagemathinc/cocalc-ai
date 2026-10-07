@@ -155,6 +155,21 @@ function getStarGlobalRunningProjectLimit(): number | undefined {
   );
 }
 
+// Per-account running-project limits come from membership tiers, an
+// anti-abuse and pricing measure for public sites. A CoCalc Star server only
+// admits invited users and is bounded by its machine-wide cap instead.
+function sponsoredRunningProjectLimit(
+  membership: Parameters<typeof getEffectiveMembershipUsageLimits>[0],
+): number | undefined {
+  if (isStarSetupProfile()) {
+    return undefined;
+  }
+  return normalizePositiveInteger(
+    getEffectiveMembershipUsageLimits(membership)
+      .max_sponsored_running_projects,
+  );
+}
+
 function expirationDate(ttl_ms: number | undefined): Date {
   return new Date(Date.now() + (ttl_ms ?? DEFAULT_RUNTIME_SLOT_TTL_MS));
 }
@@ -315,10 +330,7 @@ export async function getProjectRuntimeSlotDenialLocal({
   await assertStarGlobalRunningProjectCapacity(pool, project_id);
   const activeSlots = await loadActiveSlotsForSponsor(pool, sponsor_account_id);
   const membership = await resolveMembershipForAccount(sponsor_account_id);
-  const limit = normalizePositiveInteger(
-    getEffectiveMembershipUsageLimits(membership)
-      .max_sponsored_running_projects,
-  );
+  const limit = sponsoredRunningProjectLimit(membership);
   return runtimeSponsorSlotDenialFromActiveSlots({
     sponsor_account_id,
     project_id,
@@ -345,10 +357,7 @@ async function reserveProjectRuntimeSlotInTransaction(
   );
   const current = existingSlot ? activeSlots.length : activeSlots.length + 1;
   const membership = await resolveMembershipForAccount(opts.sponsor_account_id);
-  const limit = normalizePositiveInteger(
-    getEffectiveMembershipUsageLimits(membership)
-      .max_sponsored_running_projects,
-  );
+  const limit = sponsoredRunningProjectLimit(membership);
 
   if (!existingSlot && limit != null && activeSlots.length >= limit) {
     const denial = runtimeSponsorSlotDenialFromActiveSlots({
@@ -687,10 +696,7 @@ export async function getProjectRuntimeSlotDenial({
     remote.listProjectRuntimeSlots({ sponsor_account_id }),
     remote.getMembership({ account_id: sponsor_account_id }),
   ]);
-  const limit = normalizePositiveInteger(
-    getEffectiveMembershipUsageLimits(membership)
-      .max_sponsored_running_projects,
-  );
+  const limit = sponsoredRunningProjectLimit(membership);
   return runtimeSponsorSlotDenialFromActiveSlots({
     sponsor_account_id,
     project_id,

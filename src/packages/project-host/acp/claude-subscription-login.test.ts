@@ -70,6 +70,29 @@ test("reconnect validates the credential and replaces its token in place", async
   }
 });
 
+test("a new sign-in replaces an abandoned pending one", async () => {
+  const publish = jest.fn(async () => credentialId);
+  const service = new ClaudeSubscriptionLoginService({
+    cliPath: process.execPath,
+    argsPrefix: [fixture],
+    publish,
+  });
+  try {
+    const first = await service.start(projectId, accountId);
+    await verificationUrl(service, first.id);
+    const second = await service.start(projectId, accountId);
+    expect(second.id).not.toBe(first.id);
+    expect(service.status(first.id, projectId, accountId).state).toBe(
+      "canceled",
+    );
+    await verificationUrl(service, second.id);
+    service.submitCode(second.id, projectId, accountId, "fixture-code");
+    await waitFor(service, second.id, "completed");
+  } finally {
+    await service.close();
+  }
+});
+
 test("reconnect rejects unavailable credentials before starting sign-in", async () => {
   const publish = jest.fn();
   const service = new ClaudeSubscriptionLoginService({

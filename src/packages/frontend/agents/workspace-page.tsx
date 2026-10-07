@@ -1222,7 +1222,8 @@ function NewAgentPanel({
           project_title:
             projectTitleOverride ??
             (projectMap?.getIn([created.projectId, "title"]) as
-              string | undefined),
+              | string
+              | undefined),
           thread_title: candidate,
         });
       };
@@ -1603,6 +1604,15 @@ function NewAgentPanel({
         : option.description,
     }));
   });
+  // Without a connected ChatGPT plan, offer to sign in right here: on a site
+  // without CoCalc-funded AI (e.g. CoCalc Star) that is the way to use Codex.
+  const chatGPTSignInAvailable =
+    !lite &&
+    paymentSource != null &&
+    subscriptions.length === 0 &&
+    !paymentSource.hasSubscription;
+  const paymentUnconfigured =
+    chatGPTSignInAvailable && paymentSource?.source === "none";
   const selectedPaymentValue =
     paymentPreference === "subscription" && config.credentialId
       ? `subscription:${config.credentialId}`
@@ -2007,44 +2017,69 @@ function NewAgentPanel({
                   </ComposerPillButton>
                 </Dropdown>
                 <Text type="secondary">·</Text>
-                <Dropdown
-                  menu={{
-                    items: paymentOptions.map(({ value, label, disabled }) => ({
-                      key: value,
-                      label,
-                      disabled,
-                    })),
-                    selectedKeys: [selectedPaymentValue],
-                    onClick: ({ key }) => {
-                      if (key.startsWith("subscription:")) {
-                        setConfig((current) => ({
-                          ...current,
-                          paymentSource: "subscription",
-                          credentialId: key.slice("subscription:".length),
-                        }));
-                      } else {
-                        setConfig((current) => ({
-                          ...current,
-                          paymentSource: key as CodexPaymentSourcePreference,
-                          credentialId: undefined,
-                        }));
-                      }
-                    },
-                  }}
-                  trigger={["click"]}
-                >
-                  <ComposerPillButton
-                    aria-label={`Change payment source. Current source: ${selectedPaymentLabel}`}
-                    disabled={busy || !!pending || paymentSourceLoading}
-                    style={{
-                      maxWidth: 120,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
+                {paymentUnconfigured ? (
+                  <Button
+                    size="small"
+                    disabled={busy || !!pending}
+                    onClick={() => setSignInOpen(true)}
                   >
-                    {selectedPaymentLabel}
-                  </ComposerPillButton>
-                </Dropdown>
+                    Sign in with ChatGPT
+                  </Button>
+                ) : (
+                  <Dropdown
+                    menu={{
+                      items: [
+                        ...paymentOptions.map(({ value, label, disabled }) => ({
+                          key: value,
+                          label,
+                          disabled,
+                        })),
+                        ...(chatGPTSignInAvailable
+                          ? [
+                              { type: "divider" as const },
+                              {
+                                key: SIGN_IN_WITH_CHATGPT_KEY,
+                                label: "Sign in with ChatGPT…",
+                              },
+                            ]
+                          : []),
+                      ],
+                      selectedKeys: [selectedPaymentValue],
+                      onClick: ({ key }) => {
+                        if (key === SIGN_IN_WITH_CHATGPT_KEY) {
+                          setSignInOpen(true);
+                          return;
+                        }
+                        if (key.startsWith("subscription:")) {
+                          setConfig((current) => ({
+                            ...current,
+                            paymentSource: "subscription",
+                            credentialId: key.slice("subscription:".length),
+                          }));
+                        } else {
+                          setConfig((current) => ({
+                            ...current,
+                            paymentSource: key as CodexPaymentSourcePreference,
+                            credentialId: undefined,
+                          }));
+                        }
+                      },
+                    }}
+                    trigger={["click"]}
+                  >
+                    <ComposerPillButton
+                      aria-label={`Change payment source. Current source: ${selectedPaymentLabel}`}
+                      disabled={busy || !!pending || paymentSourceLoading}
+                      style={{
+                        maxWidth: 120,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {selectedPaymentLabel}
+                    </ComposerPillButton>
+                  </Dropdown>
+                )}
               </span>
             )}
             {runtimeKind === "codex-native" && (
@@ -2254,6 +2289,8 @@ function NewAgentPanel({
     </div>
   );
 }
+
+const SIGN_IN_WITH_CHATGPT_KEY = "__sign-in-with-chatgpt";
 
 function AgentProjectContext({
   showEditorControls,
@@ -3460,7 +3497,8 @@ export function MyAgentsWorkspacePage({
   const { directory: networkDirectory, error: networkError } =
     useAgentNetworks();
   const accountId = useTypedRedux("account", "account_id") as
-    string | undefined;
+    | string
+    | undefined;
   const searchNavigation = useNavigationIntent(
     active && !contentOpen,
     accountId,
@@ -3525,7 +3563,8 @@ export function MyAgentsWorkspacePage({
     setMobileList(false);
   }
   const activeAgentId = useTypedRedux("page", "active_agent_id") as
-    string | undefined;
+    | string
+    | undefined;
   const [creating, setCreating] = useState(activeAgentId === "new");
   const [creatingSourceAgentId, setCreatingSourceAgentId] = useState<string>();
   const [copyingAgent, setCopyingAgent] = useState<NamedAgent>();
@@ -4386,7 +4425,8 @@ export function MyAgentsWorkspacePage({
     const projectTitle = agentProjectTitle(
       agent,
       liveProjects?.getIn([agent.endpoint.project_id, "title"]) as
-        string | undefined,
+        | string
+        | undefined,
     );
     // Only one sidebar entry is current: Projects, the Library or an agent.
     const active =

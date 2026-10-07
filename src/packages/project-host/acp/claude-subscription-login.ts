@@ -174,14 +174,18 @@ export class ClaudeSubscriptionLoginService {
         credentialId,
       });
     }
-    if (
-      [...this.sessions.values()].some(
-        (session) =>
-          session.accountId === accountId &&
-          (session.state === "pending" || session.state === "verifying"),
-      )
-    )
+    const existing = [...this.sessions.values()].filter(
+      (session) => session.accountId === accountId,
+    );
+    if (existing.some((session) => session.state === "verifying"))
       throw Error("Claude sign-in is already in progress for this account");
+    // A pending sign-in only waits for its code. The user abandoned it (e.g.
+    // closed the dialog) and cannot get back to it, so a new sign-in replaces
+    // it instead of being refused until it times out.
+    for (const session of existing) {
+      if (session.state === "pending")
+        this.cancel(session.id, session.projectId, accountId);
+    }
     const home = await mkdtemp(join(tmpdir(), CLAUDE_LOGIN_PREFIX));
     const id = randomUUID();
     let child: ChildProcess;

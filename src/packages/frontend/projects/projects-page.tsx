@@ -135,6 +135,10 @@ export const ProjectsPage: React.FC = () => {
   const user_map = useTypedRedux("users", "user_map");
   const activeTopTab = useTypedRedux("page", "active_top_tab");
   const accountId = useTypedRedux("account", "account_id");
+  // Agent-first onboarding needs AI that works right away. A site without
+  // its own OpenAI integration (e.g. CoCalc Star, where users bring their own
+  // ChatGPT or Claude subscription) starts new users on their projects.
+  const siteProvidesAI = !!useTypedRedux("customize", "openai_enabled");
   const accountCreated = useTypedRedux("account", "created");
   const otherSettings = useTypedRedux("account", "other_settings");
   const legacyMigrationEnabled = !!useTypedRedux(
@@ -292,6 +296,7 @@ export const ProjectsPage: React.FC = () => {
     inviteState.loaded &&
     !inviteState.error &&
     project_map != null &&
+    siteProvidesAI &&
     !otherSettings?.get("openai_disabled") &&
     !(
       savedFirstRunOnboarding?.status === "in_progress" &&
