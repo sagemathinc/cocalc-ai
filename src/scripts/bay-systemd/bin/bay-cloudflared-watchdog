@@ -116,8 +116,12 @@ if [[ "$newest" != "-" ]]; then
 fi
 
 reason=""
+# Strikes only accumulate while the same degradation persists; e.g. failures
+# dominated by a different connection in each check are not one bad edge.
+key=""
 if ((ready == 0)); then
   reason="no ready tunnel connections"
+  key="no-ready"
 elif ((ready >= 2 && \
     top_failures >= COCALC_BAY_CLOUDFLARED_WATCHDOG_MIN_FAILURES && \
     top_failures * 100 >= total * COCALC_BAY_CLOUDFLARED_WATCHDOG_CONCENTRATION_PCT)); then
@@ -125,6 +129,7 @@ elif ((ready >= 2 && \
   # a restart would not help. Failures pinned to one connection mean that
   # connection's edge path is broken.
   reason="tunnel connIndex=${top_conn} failed ${top_failures} of ${total} proxied requests since $(date -u -d "@${since}" +%H:%M:%SZ) (${ready} ready connections)"
+  key="conn:${top_conn}"
 fi
 
 if [[ -z "$reason" ]]; then
@@ -135,6 +140,7 @@ fi
 # Restarting the tunnel cannot fix a broken origin and would drop every
 # websocket, so leave origin failures to the hub watchdog and front door.
 if ! http_check "$(frontdoor_url)"; then
+  rm -f "$failure_file"
   bay_log "cloudflared watchdog will not restart ${UNIT}: frontdoor is unhealthy (${reason})"
   exit 0
 fi
@@ -146,12 +152,16 @@ if [[ "$last_restart" =~ ^[0-9]+$ ]] && \
   exit 0
 fi
 
-failures="$(cat "$failure_file" 2>/dev/null || printf '0')"
-if [[ ! "$failures" =~ ^[0-9]+$ ]]; then
+previous_key=""
+failures=0
+if [[ -f "$failure_file" ]]; then
+  read -r previous_key failures < "$failure_file" || true
+fi
+if [[ "$previous_key" != "$key" || ! "$failures" =~ ^[0-9]+$ ]]; then
   failures=0
 fi
 failures=$((failures + 1))
-printf '%s\n' "$failures" > "$failure_file"
+printf '%s %s\n' "$key" "$failures" > "$failure_file"
 if ((failures < COCALC_BAY_CLOUDFLARED_WATCHDOG_FAILURE_THRESHOLD)); then
   bay_log "cloudflared watchdog observed degraded tunnel (${failures}/${COCALC_BAY_CLOUDFLARED_WATCHDOG_FAILURE_THRESHOLD}): ${reason}"
   exit 0

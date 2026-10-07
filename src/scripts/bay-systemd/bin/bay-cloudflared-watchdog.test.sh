@@ -135,6 +135,36 @@ export FAKE_FAILURE_TS="$(date +%s).250000" FAKE_FAILURES="0:120"
 for _ in 1 2 3 4; do run_watchdog; done
 [[ "$(restart_count)" == "0" ]] || fail "restarted after re-reading one stale burst"
 
+# Strikes belong to one degradation: a different dominant connection in each
+# check, or switching from one connection to no-ready, starts over.
+reset_state
+for conn in 0 1 2 3; do
+  export FAKE_FAILURES="${conn}:120"
+  run_watchdog
+done
+[[ "$(restart_count)" == "0" ]] || fail "restarted when the failing connection rotated"
+reset_state
+export FAKE_FAILURES="0:120"
+run_watchdog
+run_watchdog
+export FAKE_READY=0 FAKE_FAILURES=""
+run_watchdog
+[[ "$(restart_count)" == "0" ]] || fail "no-ready check inherited per-connection strikes"
+run_watchdog
+run_watchdog
+[[ "$(restart_count)" == "1" ]] || fail "did not restart after three no-ready checks"
+
+# A check where the origin is unhealthy breaks the run of strikes.
+reset_state
+export FAKE_FAILURES="0:120"
+run_watchdog
+run_watchdog
+export FAKE_FRONTDOOR_HEALTHY=0
+run_watchdog
+export FAKE_FRONTDOOR_HEALTHY=1
+run_watchdog
+[[ "$(restart_count)" == "0" ]] || fail "strikes survived a check with an unhealthy frontdoor"
+
 # Failures spread across connections point at the origin or clients.
 reset_state
 export FAKE_FAILURES="0:40 1:40 2:40 3:40"
