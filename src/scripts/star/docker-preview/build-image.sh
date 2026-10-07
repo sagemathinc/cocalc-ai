@@ -201,6 +201,7 @@ make_context() {
   cp "$SCRIPT_DIR/cocalc-star-docker-init.sh" "$context/cocalc-star-docker-init.sh"
   cp "$SCRIPT_DIR/cocalc-star-docker-entrypoint.sh" "$context/cocalc-star-docker-entrypoint.sh"
   cp "$SCRIPT_DIR/cocalc-star-docker-init.service" "$context/cocalc-star-docker-init.service"
+  cp "$SCRIPT_DIR/cocalc-star-podman.apparmor" "$context/cocalc-star-podman.apparmor"
   cp "$RELEASE_ARTIFACT" "$context/cocalc-star-release.tar.gz"
   if [[ -n "$rootfs_cache" ]]; then
     cp "$rootfs_cache" "$context/cocalc-star-rootfs-cache.tar.gz"

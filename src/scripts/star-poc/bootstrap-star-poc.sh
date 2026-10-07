@@ -183,7 +183,7 @@ install_packages() {
   apt_get install -y \
     bash ca-certificates curl git jq openssl build-essential python3 \
     podman btrfs-progs uidmap slirp4netns passt catatonit fuse-overlayfs \
-    caddy xz-utils rsync sudo postgresql postgresql-client libpq-dev
+    caddy xz-utils rsync sudo postgresql postgresql-client libpq-dev nftables
   systemctl disable --now postgresql >/dev/null 2>&1 || true
 }
 

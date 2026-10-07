@@ -82,6 +82,25 @@ persist_state() {
   persist_dir /var/lib/caddy "${STATE_DIR}/caddy" caddy:caddy
 }
 
+load_apparmor_profile() {
+  # AppArmor policy is global to the host kernel and does not survive a host
+  # reboot, so load it on every boot. Hosts without AppArmor do not restrict
+  # user namespaces this way and need nothing.
+  local profile=/etc/apparmor.d/cocalc-star-podman
+  if [ ! -d /sys/kernel/security/apparmor ]; then
+    return 0
+  fi
+  if ! command -v apparmor_parser >/dev/null 2>&1 || [ ! -f "$profile" ]; then
+    log "warning: cannot load ${profile}; project containers may fail on hosts that restrict user namespaces"
+    return 0
+  fi
+  if apparmor_parser -r -W "$profile" 2>/dev/null; then
+    log "loaded AppArmor profile for the managed Podman runtime"
+  else
+    log "warning: failed to load ${profile}; project containers may fail on hosts that restrict user namespaces"
+  fi
+}
+
 star_installed() {
   [ -x "$STAR_SH" ] &&
     [ -f /etc/cocalc/star/config.env ] &&
@@ -177,6 +196,7 @@ print_access() {
 main() {
   /usr/local/sbin/cocalc-star-docker-preflight
   persist_state
+  load_apparmor_profile
 
   if star_installed; then
     log "CoCalc Star ${IMAGE_RELEASE_ID} is installed; starting services"

@@ -18,6 +18,7 @@ STOPSIGNAL SIGRTMIN+3
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
+    apparmor \
     bash \
     btrfs-progs \
     build-essential \
@@ -33,7 +34,9 @@ RUN apt-get update \
     iptables \
     jq \
     libatomic1 \
+    libcap2-bin \
     libpq-dev \
+    nftables \
     openssh-server \
     openssl \
     passt \
@@ -42,6 +45,7 @@ RUN apt-get update \
     postgresql-client \
     procps \
     python3 \
+    ripgrep \
     rsync \
     slirp4netns \
     sudo \
@@ -57,7 +61,11 @@ RUN apt-get update \
 RUN groupadd --gid 1001 cocalc-star \
   && useradd --uid 1001 --gid 1001 --create-home --shell /bin/bash cocalc-star
 
+# apparmor.service and nftables.service would load or flush host-global
+# kernel policy; Star manages the pieces it needs itself.
 RUN systemctl mask \
+    apparmor.service \
+    nftables.service \
     dev-hugepages.mount \
     sys-fs-fuse-connections.mount \
     systemd-remount-fs.service \
@@ -75,6 +83,7 @@ COPY cocalc-star-docker-preflight.sh /usr/local/sbin/cocalc-star-docker-prefligh
 COPY cocalc-star-docker-init.sh /usr/local/sbin/cocalc-star-docker-init
 COPY cocalc-star-docker-entrypoint.sh /usr/local/sbin/cocalc-star-docker-entrypoint
 COPY cocalc-star-docker-init.service /etc/systemd/system/cocalc-star-docker-init.service
+COPY cocalc-star-podman.apparmor /etc/apparmor.d/cocalc-star-podman
 
 RUN chmod 0755 \
     /usr/local/sbin/cocalc-star-docker-preflight \
