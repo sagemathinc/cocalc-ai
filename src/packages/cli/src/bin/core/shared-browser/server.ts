@@ -625,9 +625,10 @@ export class SharedBrowserServer {
     res: http.ServerResponse,
   ): void {
     const path = new URL(req.url ?? "/", "http://x").pathname;
+    // Paths are matched by suffix: proxies may or may not strip their prefix.
     if (
       req.method === "GET" &&
-      (path === "/" || path.endsWith("/index.html"))
+      (path.endsWith("/") || path.endsWith("/index.html"))
     ) {
       res.writeHead(200, {
         "content-type": "text/html; charset=utf-8",
