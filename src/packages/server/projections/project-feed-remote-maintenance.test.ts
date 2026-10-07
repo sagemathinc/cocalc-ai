@@ -232,24 +232,34 @@ describe("runProjectFeedRemotePass", () => {
     );
   });
 
-  it("does not claim a project another process has leased", async () => {
+  it("skips a project another process is forwarding, until it lets go", async () => {
     await appendEvent({ users: { [ALICE]: { group: "owner" } }, title: "A" });
-    await getPool().query(
-      "UPDATE project_events_outbox SET remote_feed_next_attempt_at = NOW() + INTERVAL '5 minutes'",
-    );
-    await appendEvent({ users: { [ALICE]: { group: "owner" } }, title: "B" });
     await appendEvent({
       project_id: OTHER_PROJECT_ID,
       users: { [ALICE]: { group: "owner" } },
       title: "other",
     });
-
-    const result = await runProjectFeedRemotePass({ bay_id: "bay-0" });
-
-    expect(result).toMatchObject({ projects: 1, forwarded_projects: 1 });
-    expect(forwardRemoteProjectFeedEvents).toHaveBeenCalledTimes(1);
-    expect(forwardRemoteProjectFeedEvents.mock.calls[0][0].payload.title).toBe(
-      "other",
+    const other = await getPool().connect();
+    const key = `project-feed-remote:${PROJECT_ID}`;
+    await other.query("SELECT pg_try_advisory_lock(hashtext($1))", [key]);
+    try {
+      const result = await runProjectFeedRemotePass({ bay_id: "bay-0" });
+      expect(result).toMatchObject({ projects: 1, forwarded_projects: 1 });
+      expect(forwardRemoteProjectFeedEvents).toHaveBeenCalledTimes(1);
+      expect(
+        forwardRemoteProjectFeedEvents.mock.calls[0][0].payload.title,
+      ).toBe("other");
+    } finally {
+      // A hub that dies mid-forward loses its connection, which releases the
+      // lock the same way.
+      await other.query("SELECT pg_advisory_unlock(hashtext($1))", [key]);
+      other.release();
+    }
+    await expect(
+      runProjectFeedRemotePass({ bay_id: "bay-0" }),
+    ).resolves.toMatchObject({ projects: 1, forwarded_projects: 1 });
+    expect(forwardRemoteProjectFeedEvents.mock.calls[1][0].payload.title).toBe(
+      "A",
     );
   });
 

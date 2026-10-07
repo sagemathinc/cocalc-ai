@@ -17,7 +17,7 @@
 // newest one.
 
 import getLogger from "@cocalc/backend/logger";
-import getPool from "@cocalc/database/pool";
+import getPool, { type PoolClient } from "@cocalc/database/pool";
 import type { ProjectOutboxPayload } from "@cocalc/database/postgres/project-events-outbox";
 import {
   forwardRemoteProjectFeedEvents,
@@ -54,9 +54,6 @@ const PROJECTS_PER_TICK = clampInt(
   1,
   10_000,
 );
-// A claimed project is not offered to another hub process for this long; it
-// must outlast a forward to every collaborator (each call has its own timeout).
-const LEASE_MS = 5 * 60_000;
 const MIN_BACKOFF_MS = 2_000;
 const MAX_BACKOFF_MS = 5 * 60_000;
 
@@ -83,50 +80,56 @@ export interface ProjectFeedRemotePassResult {
   events: number;
 }
 
+function projectLockKey(project_id: string): string {
+  return `project-feed-remote:${project_id}`;
+}
+
 /**
- * Claim one project's pending events, but only if none of them is leased or
- * backing off, so at most one hub process forwards a project at a time and
- * its snapshots can never overtake each other.
+ * Load one project's pending events while holding its session lock, unless
+ * one of them is backing off, so its snapshots can never overtake each other.
+ * The lock is held by `client` until the forward finishes; if the hub dies it
+ * goes with the connection, so another process can retry right away.
  */
-async function claimProject(
+async function loadProjectEvents(
+  client: PoolClient,
   project_id: string,
 ): Promise<ClaimedEvent[] | null> {
+  const { rows } = await client.query<ClaimedEvent & { backing_off: boolean }>(
+    `SELECT event_id, project_id, created_at, payload_json,
+            remote_feed_attempts,
+            COALESCE(remote_feed_next_attempt_at > NOW(), FALSE) AS backing_off
+       FROM project_events_outbox
+      WHERE project_id = $1
+        AND remote_feed_pending
+      ORDER BY created_at ASC, event_id ASC`,
+    [project_id],
+  );
+  if (rows.length === 0 || rows.some((row) => row.backing_off)) return null;
+  return rows;
+}
+
+async function withProjectLock<T>(
+  project_id: string,
+  fn: (client: PoolClient) => Promise<T>,
+): Promise<T | undefined> {
   const client = await getPool().connect();
+  let locked = false;
   try {
-    await client.query("BEGIN");
-    const { rows: lock } = await client.query<{ locked: boolean }>(
-      "SELECT pg_try_advisory_xact_lock(hashtext($1)) AS locked",
-      [`project-feed-remote:${project_id}`],
+    const { rows } = await client.query<{ locked: boolean }>(
+      "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
+      [projectLockKey(project_id)],
     );
-    if (lock[0]?.locked !== true) {
-      await client.query("ROLLBACK");
-      return null;
-    }
-    const { rows } = await client.query<ClaimedEvent>(
-      `UPDATE project_events_outbox
-          SET remote_feed_next_attempt_at = NOW() + ($2::BIGINT * INTERVAL '1 millisecond')
-        WHERE project_id = $1
-          AND remote_feed_pending
-          AND NOT EXISTS (
-            SELECT 1 FROM project_events_outbox busy
-             WHERE busy.project_id = $1
-               AND busy.remote_feed_pending
-               AND busy.remote_feed_next_attempt_at > NOW())
-        RETURNING event_id, project_id, created_at, payload_json,
-                  remote_feed_attempts`,
-      [project_id, LEASE_MS],
-    );
-    await client.query("COMMIT");
-    rows.sort(
-      (a, b) =>
-        a.created_at.getTime() - b.created_at.getTime() ||
-        a.event_id.localeCompare(b.event_id),
-    );
-    return rows.length > 0 ? rows : null;
-  } catch (err) {
-    await client.query("ROLLBACK").catch(() => undefined);
-    throw err;
+    locked = rows[0]?.locked === true;
+    if (!locked) return undefined;
+    return await fn(client);
   } finally {
+    if (locked) {
+      await client
+        .query("SELECT pg_advisory_unlock(hashtext($1))", [
+          projectLockKey(project_id),
+        ])
+        .catch(() => undefined);
+    }
     client.release();
   }
 }
@@ -214,27 +217,29 @@ export async function runProjectFeedRemotePass(opts?: {
     [opts?.limit ?? PROJECTS_PER_TICK],
   );
   for (const { project_id } of rows) {
-    const events = await claimProject(project_id);
-    if (events == null) continue;
-    result.projects += 1;
-    result.events += events.length;
-    try {
-      await forwardProject(bay_id, events);
-      await finishProject(events);
-      result.forwarded_projects += 1;
-    } catch (err) {
-      result.failed_projects += 1;
-      logger.warn(
-        "forwarding project changes to other bays failed; will retry",
-        {
-          project_id,
-          events: events.length,
-          attempts: events[events.length - 1].remote_feed_attempts + 1,
-          err: `${err}`,
-        },
-      );
-      await finishProject(events, err);
-    }
+    await withProjectLock(project_id, async (client) => {
+      const events = await loadProjectEvents(client, project_id);
+      if (events == null) return;
+      result.projects += 1;
+      result.events += events.length;
+      try {
+        await forwardProject(bay_id, events);
+        await finishProject(events);
+        result.forwarded_projects += 1;
+      } catch (err) {
+        result.failed_projects += 1;
+        logger.warn(
+          "forwarding project changes to other bays failed; will retry",
+          {
+            project_id,
+            events: events.length,
+            attempts: events[events.length - 1].remote_feed_attempts + 1,
+            err: `${err}`,
+          },
+        );
+        await finishProject(events, err);
+      }
+    });
   }
   return result;
 }
