@@ -233,14 +233,15 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     e.preventDefault();
     const printable = e.key.length === 1 && !e.ctrlKey && !e.metaKey;
     const text = printable ? e.key : e.key === "Enter" ? "\r" : undefined;
-    const keyCode = SPECIAL[e.key] || (e.key.length === 1 ? e.key.toUpperCase().charCodeAt(0) : e.keyCode);
+    // The browser's own key code is the Windows virtual key code CDP wants.
+    // (A character's code is not: "(" is 40, which is ArrowDown.)
+    const keyCode = e.keyCode || SPECIAL[e.key] || (/^[a-z0-9]$/i.test(e.key) ? e.key.toUpperCase().charCodeAt(0) : 0);
     send({ type: "key", event: event === "keyDown" ? (text ? "keyDown" : "rawKeyDown") : "keyUp", key: e.key, code: e.code, text: event === "keyDown" ? text : undefined, keyCode, modifiers: mods(e) });
   }
   canvas.addEventListener("keydown", (e) => key("keyDown", e));
   canvas.addEventListener("keyup", (e) => key("keyUp", e));
-  canvas.addEventListener("paste", (e) => { if (!human()) return; e.preventDefault(); send({ type: "text", text: e.clipboardData.getData("text") }); });
   canvas.addEventListener("compositionend", (e) => { if (human() && e.data) send({ type: "text", text: e.data }); });
-  // A canvas receives paste only when it has a contenteditable sibling focus; use document.
+  // One paste listener only: a paste on the canvas also bubbles to the document.
   document.addEventListener("paste", (e) => { if (document.activeElement !== canvas || !human()) return; e.preventDefault(); send({ type: "text", text: e.clipboardData.getData("text") }); });
 
   $("url").addEventListener("keydown", (e) => { if (e.key === "Enter") { send({ type: "navigate", url: $("url").value }); canvas.focus(); } });
