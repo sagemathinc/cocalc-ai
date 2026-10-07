@@ -33,6 +33,12 @@ const MAX_BATCHES_PER_TICK = clampInt(
   1,
   1_000,
 );
+const PUBLISH_CHUNK_SIZE = clampInt(
+  process.env.COCALC_ACCOUNT_COLLABORATOR_INDEX_PROJECTOR_PUBLISH_CHUNK_SIZE,
+  100,
+  1,
+  10_000,
+);
 
 let timer: NodeJS.Timeout | undefined;
 let running = false;
@@ -44,7 +50,7 @@ let lastSuccessAt: Date | null = null;
 let lastErrorAt: Date | null = null;
 let lastError: string | null = null;
 let consecutiveFailures = 0;
-let lastResult: AccountCollaboratorIndexProjectionPassResult | null = null;
+let lastResult: AccountCollaboratorIndexProjectionPassSummary | null = null;
 
 export interface AccountCollaboratorIndexProjectionPassResult {
   bay_id: string;
@@ -56,6 +62,13 @@ export interface AccountCollaboratorIndexProjectionPassResult {
   feed_events: AccountFeedEvent[];
   event_types: Record<string, number>;
 }
+
+// Status and logs carry counts only. The full feed event list can be large and
+// is published, never retained or serialized.
+export type AccountCollaboratorIndexProjectionPassSummary = Omit<
+  AccountCollaboratorIndexProjectionPassResult,
+  "feed_events"
+> & { feed_event_count: number };
 
 export interface RunAccountCollaboratorIndexProjectionPassOptions {
   bay_id?: string;
@@ -79,12 +92,13 @@ export interface AccountCollaboratorIndexProjectionMaintenanceStatus {
   last_error_at: string | null;
   last_error: string | null;
   consecutive_failures: number;
-  last_result: AccountCollaboratorIndexProjectionPassResult | null;
+  last_result: AccountCollaboratorIndexProjectionPassSummary | null;
 }
 
 export interface RunAccountCollaboratorIndexProjectionMaintenanceTickOptions extends RunAccountCollaboratorIndexProjectionPassOptions {
   pass_runner?: typeof runAccountCollaboratorIndexProjectionPass;
   publisher?: typeof publishAccountFeedEventBestEffort;
+  publish_chunk_size?: number;
 }
 
 function clampInt(
@@ -100,6 +114,43 @@ function clampInt(
 
 function isoOrNull(value: Date | null): string | null {
   return value?.toISOString() ?? null;
+}
+
+export function summarizeAccountCollaboratorIndexProjectionPass(
+  result: AccountCollaboratorIndexProjectionPassResult,
+): AccountCollaboratorIndexProjectionPassSummary {
+  const { feed_events, ...summary } = result;
+  return { ...summary, feed_event_count: feed_events.length };
+}
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+// Publish in bounded chunks and yield between them so a large pass cannot
+// monopolize the event loop of the worker that also serves HTTP traffic.
+export async function publishAccountCollaboratorFeedEvents(
+  feed_events: AccountFeedEvent[],
+  opts?: {
+    publisher?: typeof publishAccountFeedEventBestEffort;
+    chunk_size?: number;
+  },
+): Promise<void> {
+  const publisher = opts?.publisher ?? publishAccountFeedEventBestEffort;
+  const chunk_size = Math.max(1, opts?.chunk_size ?? PUBLISH_CHUNK_SIZE);
+  for (let i = 0; i < feed_events.length; i += chunk_size) {
+    if (i > 0) {
+      await yieldToEventLoop();
+    }
+    await Promise.all(
+      feed_events.slice(i, i + chunk_size).map((event) =>
+        publisher({
+          account_id: event.account_id,
+          event,
+        }),
+      ),
+    );
+  }
 }
 
 export async function runAccountCollaboratorIndexProjectionPass(
@@ -183,17 +234,24 @@ export async function runAccountCollaboratorIndexProjectionMaintenanceTick(
     lastErrorAt = null;
     lastError = null;
     consecutiveFailures = 0;
-    lastResult = result;
+    const summary = summarizeAccountCollaboratorIndexProjectionPass(result);
+    lastResult = summary;
     if (result.scanned_events > 0 || result.applied_events > 0) {
       logger.info(
         "account collaborator index projector tick applied events",
-        result,
+        summary,
       );
     }
-    for (const event of result.feed_events) {
-      void publisher({
-        account_id: event.account_id,
-        event,
+    try {
+      await publishAccountCollaboratorFeedEvents(result.feed_events, {
+        publisher,
+        chunk_size: opts?.publish_chunk_size,
+      });
+    } catch (err) {
+      // The projection already committed; feed delivery is best effort.
+      logger.warn("account collaborator index feed publish failed", {
+        feed_event_count: result.feed_events.length,
+        err: `${err}`,
       });
     }
     return result;

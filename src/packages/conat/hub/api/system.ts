@@ -2040,6 +2040,7 @@ export interface AccountCollaboratorIndexProjectionPassSummary {
   inserted_rows: number;
   deleted_rows: number;
   event_types: Record<string, number>;
+  feed_event_count?: number;
 }
 
 export interface AccountCollaboratorIndexProjectionMaintenanceStatus {
