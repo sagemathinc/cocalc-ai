@@ -39,6 +39,16 @@ const PUBLISH_CHUNK_SIZE = clampInt(
   1,
   10_000,
 );
+// Upper bound on feed publishing per tick. The production publisher swallows
+// failures and can wait for a request timeout per event, so without a budget an
+// unreachable feed store could hold `running` and skip projector ticks for
+// hours. Events past the budget are dropped, as failed publishes always were.
+const PUBLISH_BUDGET_MS = clampInt(
+  process.env.COCALC_ACCOUNT_COLLABORATOR_INDEX_PROJECTOR_PUBLISH_BUDGET_MS,
+  10_000,
+  100,
+  10 * 60_000,
+);
 
 let timer: NodeJS.Timeout | undefined;
 let running = false;
@@ -68,7 +78,18 @@ export interface AccountCollaboratorIndexProjectionPassResult {
 export type AccountCollaboratorIndexProjectionPassSummary = Omit<
   AccountCollaboratorIndexProjectionPassResult,
   "feed_events"
-> & { feed_event_count: number };
+> & {
+  feed_event_count: number;
+  feed_events_skipped?: number;
+  publish_duration_ms?: number;
+};
+
+export interface PublishAccountCollaboratorFeedEventsResult {
+  attempted: number;
+  skipped: number;
+  failed: number;
+  timed_out: boolean;
+}
 
 export interface RunAccountCollaboratorIndexProjectionPassOptions {
   bay_id?: string;
@@ -99,6 +120,7 @@ export interface RunAccountCollaboratorIndexProjectionMaintenanceTickOptions ext
   pass_runner?: typeof runAccountCollaboratorIndexProjectionPass;
   publisher?: typeof publishAccountFeedEventBestEffort;
   publish_chunk_size?: number;
+  publish_budget_ms?: number;
 }
 
 function clampInt(
@@ -128,29 +150,65 @@ function yieldToEventLoop(): Promise<void> {
 }
 
 // Publish in bounded chunks and yield between them so a large pass cannot
-// monopolize the event loop of the worker that also serves HTTP traffic.
+// monopolize the event loop of the worker that also serves HTTP traffic. Stop
+// at the time budget; publishes already in flight finish in the background.
 export async function publishAccountCollaboratorFeedEvents(
   feed_events: AccountFeedEvent[],
   opts?: {
     publisher?: typeof publishAccountFeedEventBestEffort;
     chunk_size?: number;
+    budget_ms?: number;
   },
-): Promise<void> {
+): Promise<PublishAccountCollaboratorFeedEventsResult> {
   const publisher = opts?.publisher ?? publishAccountFeedEventBestEffort;
   const chunk_size = Math.max(1, opts?.chunk_size ?? PUBLISH_CHUNK_SIZE);
+  const deadline =
+    Date.now() + Math.max(0, opts?.budget_ms ?? PUBLISH_BUDGET_MS);
+  const result: PublishAccountCollaboratorFeedEventsResult = {
+    attempted: 0,
+    skipped: 0,
+    failed: 0,
+    timed_out: false,
+  };
   for (let i = 0; i < feed_events.length; i += chunk_size) {
     if (i > 0) {
       await yieldToEventLoop();
     }
-    await Promise.all(
-      feed_events.slice(i, i + chunk_size).map((event) =>
-        publisher({
-          account_id: event.account_id,
-          event,
-        }),
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      result.timed_out = true;
+      result.skipped = feed_events.length - i;
+      break;
+    }
+    const chunk = feed_events.slice(i, i + chunk_size);
+    result.attempted += chunk.length;
+    const settled = Promise.all(
+      chunk.map((event) =>
+        Promise.resolve()
+          .then(() =>
+            publisher({
+              account_id: event.account_id,
+              event,
+            }),
+          )
+          .catch(() => {
+            result.failed += 1;
+          }),
       ),
     );
+    let timer: NodeJS.Timeout | undefined;
+    const expired = new Promise<"expired">((resolve) => {
+      timer = setTimeout(() => resolve("expired"), remaining);
+    });
+    const outcome = await Promise.race([settled, expired]);
+    clearTimeout(timer);
+    if (outcome === "expired") {
+      result.timed_out = true;
+      result.skipped = feed_events.length - (i + chunk.length);
+      break;
+    }
   }
+  return result;
 }
 
 export async function runAccountCollaboratorIndexProjectionPass(
@@ -227,31 +285,37 @@ export async function runAccountCollaboratorIndexProjectionMaintenanceTick(
   lastTickStartedAt = started;
   try {
     const result = await pass_runner(opts);
-    const finished = new Date();
-    lastTickFinishedAt = finished;
-    lastTickDurationMs = Math.max(0, finished.getTime() - started.getTime());
-    lastSuccessAt = finished;
+    lastSuccessAt = new Date();
     lastErrorAt = null;
     lastError = null;
     consecutiveFailures = 0;
     const summary = summarizeAccountCollaboratorIndexProjectionPass(result);
     lastResult = summary;
+    // The projection is committed; feed delivery is best effort and bounded.
+    const publishStarted = Date.now();
+    const published = await publishAccountCollaboratorFeedEvents(
+      result.feed_events,
+      {
+        publisher,
+        chunk_size: opts?.publish_chunk_size,
+        budget_ms: opts?.publish_budget_ms,
+      },
+    );
+    summary.publish_duration_ms = Date.now() - publishStarted;
+    summary.feed_events_skipped = published.skipped;
+    const finished = new Date();
+    lastTickFinishedAt = finished;
+    lastTickDurationMs = Math.max(0, finished.getTime() - started.getTime());
     if (result.scanned_events > 0 || result.applied_events > 0) {
       logger.info(
         "account collaborator index projector tick applied events",
         summary,
       );
     }
-    try {
-      await publishAccountCollaboratorFeedEvents(result.feed_events, {
-        publisher,
-        chunk_size: opts?.publish_chunk_size,
-      });
-    } catch (err) {
-      // The projection already committed; feed delivery is best effort.
-      logger.warn("account collaborator index feed publish failed", {
+    if (published.timed_out || published.failed > 0) {
+      logger.warn("account collaborator index feed publish incomplete", {
         feed_event_count: result.feed_events.length,
-        err: `${err}`,
+        ...published,
       });
     }
     return result;

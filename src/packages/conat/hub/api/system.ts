@@ -2041,6 +2041,8 @@ export interface AccountCollaboratorIndexProjectionPassSummary {
   deleted_rows: number;
   event_types: Record<string, number>;
   feed_event_count?: number;
+  feed_events_skipped?: number;
+  publish_duration_ms?: number;
 }
 
 export interface AccountCollaboratorIndexProjectionMaintenanceStatus {
