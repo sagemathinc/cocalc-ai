@@ -73,6 +73,9 @@ for (const [network, prefix] of [
   ["192.168.0.0", 16],
   ["198.18.0.0", 15],
   ["198.51.100.0", 24],
+  // Google Private/Restricted API VIPs, which reach VPC-private services.
+  ["199.36.153.4", 30],
+  ["199.36.153.8", 30],
   ["203.0.113.0", 24],
   ["224.0.0.0", 4],
   ["240.0.0.0", 4],
