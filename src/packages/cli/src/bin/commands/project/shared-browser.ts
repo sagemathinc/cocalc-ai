@@ -6,7 +6,10 @@
  */
 import { Command } from "commander";
 
-import { SHARED_BROWSER_APP_ID } from "../../core/shared-browser/service";
+import {
+  findSharedBrowserChrome,
+  SHARED_BROWSER_APP_ID,
+} from "../../core/shared-browser/service";
 import type { SharedBrowserState } from "../../core/shared-browser/server";
 import type { ProjectCommandDeps } from "../project";
 
@@ -126,6 +129,9 @@ export function registerSharedBrowserCommands(
           ctx,
           opts.project,
         );
+        // Fail early with an install hint instead of a startup timeout.
+        if (process.env.COCALC_PROJECT_ID === project.project_id)
+          findSharedBrowserChrome(undefined);
         await api.apps.upsertAppSpec(
           sharedBrowserAppSpec(serveCommand(project.project_id)),
         );

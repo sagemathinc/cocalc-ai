@@ -15,6 +15,21 @@ import { SharedBrowserServer } from "./server";
 
 export const SHARED_BROWSER_APP_ID = "cocalc-browser";
 
+export const INSTALL_CHROMIUM_HINT =
+  "Chromium is not installed in this project. Install it with: cocalc rootfs recipe run cocalc/chromium --here";
+
+export function findSharedBrowserChrome(
+  chrome: string | undefined,
+  sys = defaultLocalBrowserSystem(),
+): string {
+  try {
+    return findChrome(chrome, sys);
+  } catch (err) {
+    if (chrome || sys.env.COCALC_CHROME) throw err;
+    throw new Error(INSTALL_CHROMIUM_HINT);
+  }
+}
+
 // As Puppeteer and Playwright do: without these, headless Chromium may stop
 // producing frames or acknowledging input for a page it considers hidden.
 const NO_THROTTLING = [
@@ -62,7 +77,7 @@ export async function runSharedBrowserService({
   log?: (message: string) => void;
 }): Promise<void> {
   const sys = defaultLocalBrowserSystem();
-  const executable = findChrome(chrome, sys);
+  const executable = findSharedBrowserChrome(chrome, sys);
   const profile = await createProfileDir(profileStorage, sys);
   const browser = await launchBrowser({
     executable,
