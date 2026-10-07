@@ -4,6 +4,7 @@
  */
 
 import TTL from "@isaacs/ttlcache";
+import { posix } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import type { Client } from "@cocalc/conat/core/client";
 import {
@@ -384,17 +385,18 @@ export async function handleListRecentRequest(
 
 // Browsers record document activity and open sync documents with absolute
 // paths ("/home/user/lectures/a.ipynb"), while callers such as the course
-// file-use export ask with home-relative paths ("lectures/a.ipynb"). Match
-// both spellings of the same file.
+// file-use export ask with home-relative paths ("lectures/a.ipynb"). Return
+// the spellings of the same file, canonical absolute first.
 export function fileUsePathVariants(path: string): string[] {
   const home = DEFAULT_PROJECT_RUNTIME_HOME;
-  const variants = new Set([path]);
-  if (path.startsWith(`${home}/`)) {
-    variants.add(path.slice(home.length + 1));
-  } else if (!path.startsWith("/")) {
-    variants.add(`${home}/${path.replace(/^\.\//, "")}`);
+  const normalized = posix.normalize(path);
+  if (normalized.startsWith(`${home}/`)) {
+    return [normalized, normalized.slice(home.length + 1)];
   }
-  return [...variants];
+  if (normalized.startsWith("/")) {
+    return [normalized];
+  }
+  return [posix.join(home, normalized), normalized];
 }
 
 export async function handleGetFileUseTimesRequest(
@@ -450,7 +452,9 @@ export async function handleGetFileUseTimesRequest(
   if (opts?.edit_times) {
     // Notebook patches belong to the syncdb, but access events use the visible
     // filename above. Patch times are document-wide, not per-account edits.
-    const editTimes = new Set<number>();
+    // Read the canonical (absolute) history first; only fall back to the
+    // other spelling when it has none, so the normal case opens one stream.
+    resp.edit_times = [];
     for (const variant of paths) {
       const editPath = variant.endsWith(".ipynb")
         ? syncdbPath(variant)
@@ -462,16 +466,20 @@ export async function handleGetFileUseTimesRequest(
         noInventory: true,
         client,
       });
+      let times: number[];
       try {
-        for (const t of patchStream.times()) {
-          const ms = t?.valueOf();
-          if (ms != null) editTimes.add(ms);
-        }
+        times = patchStream
+          .times()
+          .map((t) => t?.valueOf())
+          .filter((ms): ms is number => ms != null);
       } finally {
         patchStream.close();
       }
+      if (times.length > 0) {
+        resp.edit_times = [...new Set(times)].sort((a, b) => a - b);
+        break;
+      }
     }
-    resp.edit_times = [...editTimes].sort((a, b) => a - b);
   }
 
   return resp;

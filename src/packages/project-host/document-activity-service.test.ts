@@ -425,26 +425,28 @@ describe("notebook usage export", () => {
     expect(viaAbsolute.edit_times).toEqual([Date.parse(editTime)]);
   });
 
-  it("merges edit times recorded under both spellings without duplicates", async () => {
+  it("reads only the canonical absolute history when it exists", async () => {
     const { client, getFileUseTimes } = await service();
-    const later = "2026-10-02T10:00:00.000Z";
+    const absoluteName =
+      "patchflow//home/user/lectures/.example.ipynb.sage-jupyter2";
     streams.set(`${project_id}:${patchName}`, makeStream([{ time: editTime }]));
     streams.set(
-      `${project_id}:patchflow//home/user/lectures/.example.ipynb.sage-jupyter2`,
-      makeStream([{ time: later }, { time: editTime }]),
+      `${project_id}:${absoluteName}`,
+      makeStream([{ time: editTime }, { time: editTime }]),
     );
     const result = await getFileUseTimes({
       client,
       account_id: teacher,
       project_id,
-      path,
+      path: "./lectures//example.ipynb",
       edit_times: true,
       access_times: false,
     });
-    expect(result.edit_times).toEqual([
-      Date.parse(editTime),
-      Date.parse(later),
-    ]);
+    expect(result.edit_times).toEqual([Date.parse(editTime)]);
+    expect(dstreamMock).toHaveBeenCalledTimes(1);
+    expect(dstreamMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: absoluteName }),
+    );
   });
 
   it("does not invent history for an unrecorded file", async () => {
