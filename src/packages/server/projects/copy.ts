@@ -86,8 +86,10 @@ const COPY_STEP_DEFAULT_TIMEOUT_MS = {
   probe: 30_000,
   flush: 10 * 60_000,
   archive: 10 * 60_000,
-  apply: 10 * 60_000,
+  // Base for one host's apply call; see copyApplyTimeout.
+  apply: 5 * 60_000,
 } as const;
+const COPY_APPLY_PER_DEST_DEFAULT_TIMEOUT_MS = 60_000;
 
 type CopyRemoteStep = keyof typeof COPY_STEP_DEFAULT_TIMEOUT_MS;
 
@@ -100,6 +102,20 @@ export function copyStepTimeout(
     COPY_STEP_DEFAULT_TIMEOUT_MS[step],
   );
   return timeout_ms > 0 ? Math.min(stepTimeout, timeout_ms) : stepTimeout;
+}
+
+// A host applies the archive to all of its destinations sequentially in one
+// call, so a class with many students on one host needs proportionally more
+// time. Timing out early would report failure while the host keeps writing.
+export function copyApplyTimeout(destinations: number, timeout_ms: number) {
+  const perDest = positiveIntegerEnv(
+    "COCALC_COPY_APPLY_PER_DEST_TIMEOUT_MS",
+    COPY_APPLY_PER_DEST_DEFAULT_TIMEOUT_MS,
+  );
+  return Math.min(
+    copyStepTimeout("apply", 0) + perDest * Math.max(1, destinations),
+    timeout_ms > 0 ? timeout_ms : Infinity,
+  );
 }
 
 // Name the step and host in the error: it is what ends up in the operation's
@@ -693,7 +709,7 @@ async function tryFastRemoteCopyArchive({
       host_id,
       await getProjectFileServerClient({
         project_id: group[0].project_id,
-        timeout: copyStepTimeout("apply", timeout_ms),
+        timeout: copyApplyTimeout(group.length, timeout_ms),
       }),
     );
   }

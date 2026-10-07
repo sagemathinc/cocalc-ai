@@ -539,11 +539,20 @@ describe("projects.copyProjectFiles", () => {
     expect(timeouts).toEqual(
       expect.arrayContaining([
         ["dest", 30_000],
-        ["dest", 10 * 60_000],
+        ["dest", 6 * 60_000],
         ["src", 10 * 60_000],
       ]),
     );
     expect(upsertMock).not.toHaveBeenCalled();
+  });
+
+  it("scales the apply deadline with the destinations on a host", async () => {
+    const { copyApplyTimeout } = await import("./copy");
+    expect(copyApplyTimeout(1, 30 * 60_000)).toBe(6 * 60_000);
+    expect(copyApplyTimeout(10, 30 * 60_000)).toBe(15 * 60_000);
+    // never longer than the operation's own deadline
+    expect(copyApplyTimeout(50, 30 * 60_000)).toBe(30 * 60_000);
+    expect(copyApplyTimeout(50, 0)).toBe(55 * 60_000);
   });
 
   it("falls back to the queued backup path when the bounded archive is too large", async () => {

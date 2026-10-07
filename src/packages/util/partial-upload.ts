@@ -7,12 +7,15 @@
 // when it completes, so such names only exist while an upload is in flight.
 export const PARTIAL_UPLOAD_MARKER = ".partialupload-";
 
+// Matches exactly the ids the uploader uses (randomId() in
+// @cocalc/conat/names: 10 characters from its alphabet), so ordinary files
+// such as "notes.partialupload-final" are never mistaken for uploads.
+const PARTIAL_UPLOAD_NAME = /.\.partialupload-[2-9A-HJ-NP-Z]{10}$/;
+
 export function partialUploadPath(path: string, id: string): string {
   return `${path}${PARTIAL_UPLOAD_MARKER}${id}`;
 }
 
 export function isPartialUploadName(name: string): boolean {
-  const base = name.slice(name.lastIndexOf("/") + 1);
-  const i = base.lastIndexOf(PARTIAL_UPLOAD_MARKER);
-  return i > 0 && i + PARTIAL_UPLOAD_MARKER.length < base.length;
+  return PARTIAL_UPLOAD_NAME.test(name.slice(name.lastIndexOf("/") + 1));
 }

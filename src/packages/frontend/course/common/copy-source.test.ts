@@ -53,6 +53,16 @@ describe("courseDirectoryCopySource", () => {
     });
   });
 
+  it("refuses to copy a directory whose only content is still uploading", async () => {
+    directoryListing.mockResolvedValue({
+      files: [{ name: "DUE_DATE.txt.partialupload-7SFX86A7J5" }],
+    });
+
+    await expect(
+      courseDirectoryCopySource({ project_id: "project-1", path: "Lab 2" }),
+    ).rejects.toThrow('A file is still being uploaded to "Lab 2"');
+  });
+
   it("keeps single-path copy semantics for empty directories", async () => {
     directoryListing.mockResolvedValue({ files: [] });
 
