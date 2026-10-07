@@ -54,6 +54,17 @@ use_node_26() {
   fi
 }
 
+# Run ncc outside src, like scripts/control-plane-bundle/build-bundle.sh.
+# Inside a package, ncc/ts-loader picks up that package's tsconfig and
+# type-checks workspace sources resolved through the bundler resolver, which
+# fails with TS6059 rootDir errors. The helpers should consume built JS.
+star_ncc_build() {
+  (
+    cd "$REPO_ROOT"
+    "$SRC_ROOT/scripts/ncc.sh" build --no-cache "$@"
+  )
+}
+
 clean_generated_bundle_workspaces() {
   rm -rf \
     packages/cli/build/bundle \
@@ -155,19 +166,19 @@ build_star_helper_bundles() {
       "$STAR_HELPER_BUILD_DIR/seed-star-poc" \
       "$STAR_HELPER_BUILD_DIR/ensure-rootfs-cache" \
       "$STAR_HELPER_BUILD_DIR/publish-default-rootfs"
-    pnpm --filter @cocalc/launchpad exec "$SRC_ROOT/scripts/ncc.sh" build \
+    star_ncc_build \
       "$SRC_ROOT/packages/server/build/star-helper-entrypoints/seed-star-poc.cjs" \
       -o "$STAR_HELPER_BUILD_DIR/seed-star-poc" \
       --external bufferutil \
       --external utf-8-validate \
       --license licenses.txt
-    pnpm --filter @cocalc/launchpad exec "$SRC_ROOT/scripts/ncc.sh" build \
+    star_ncc_build \
       "$SRC_ROOT/packages/server/build/star-helper-entrypoints/publish-default-rootfs.cjs" \
       -o "$STAR_HELPER_BUILD_DIR/publish-default-rootfs" \
       --external bufferutil \
       --external utf-8-validate \
       --license licenses.txt
-    pnpm --filter @cocalc/project-host exec "$SRC_ROOT/scripts/ncc.sh" build \
+    star_ncc_build \
       "$SRC_ROOT/packages/project-host/build/star-helper-entrypoints/ensure-rootfs-cache.cjs" \
       -o "$STAR_HELPER_BUILD_DIR/ensure-rootfs-cache" \
       --external bufferutil \
@@ -254,7 +265,7 @@ fs.writeFileSync(entry, lines.join("\n"));
 console.error(`[star-runtime-build] generated ${entry} with ${files.length} routes`);
 NODE
     rm -rf "$out_dir"
-    pnpm --filter @cocalc/launchpad exec "$SRC_ROOT/scripts/ncc.sh" build \
+    star_ncc_build \
       "$entry" \
       -o "$out_dir" \
       --external bufferutil \
