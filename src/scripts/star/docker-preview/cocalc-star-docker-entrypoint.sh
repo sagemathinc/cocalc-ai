@@ -19,6 +19,7 @@ if [ -d /sys/kernel/security ] && ! mountpoint -q /sys/kernel/security; then
 fi
 
 export COCALC_STAR_DOCKER_TEE_STDOUT="${COCALC_STAR_DOCKER_TEE_STDOUT:-0}"
-tail -n +1 -F "$LOG_FILE" &
+# Only forward new lines: Docker already kept the output of earlier boots.
+tail -n 0 -F "$LOG_FILE" &
 
 exec /sbin/init "$@"

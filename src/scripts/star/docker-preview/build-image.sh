@@ -65,14 +65,12 @@ Environment:
   COCALC_STAR_DOCKER_CACHE_ALLOW_DEGRADED=1
   COCALC_STAR_DOCKER_CONTEXT_ROOT
 
-The generated image expects rootful Docker and systemd support at runtime, e.g.
+The generated image expects rootful Docker with cgroup v2 at runtime, e.g.
 
-  docker run --privileged --cgroupns=host \\
-    --security-opt seccomp=unconfined \\
-    --tmpfs /run --tmpfs /run/lock \\
-    -v /sys/fs/cgroup:/sys/fs/cgroup:rw \\
-    -v cocalc-star-data:/var/lib/cocalc \\
-    -p 8170:80 cocalc/star:preview
+  docker run -d --name cocalc-star --restart unless-stopped \
+    --privileged --cgroupns=host \
+    -v cocalc-star:/var/lib/cocalc \
+    -p 8170:80 -e COCALC_STAR_HTTP_PORT=8170 cocalc/star:preview
 EOF
 }
 
