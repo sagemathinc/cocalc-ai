@@ -118,6 +118,7 @@ import {
   isRetryableDisposablePitrWalFailure,
   newDisposableRestoreWorkerIdentity,
   runDisposableGcpRestoreWorker,
+  workerStageSeconds,
   type DisposableGcpRestoreResult,
   type DisposableRestoreWorkerResult,
 } from "./disposable-gcp";
@@ -366,6 +367,9 @@ const DEFAULT_BAY_BACKUP_RETRY_MAX_MS = 6 * 60 * 60 * 1000;
 const WAL_SEGMENT_SIZE = 16n * 1024n * 1024n;
 const XLOG_SEGMENTS_PER_XLOG_ID = (1n << 32n) / WAL_SEGMENT_SIZE;
 const NEW_BACKUP_HEALTH_INTERVAL_MS = 5 * 60_000;
+// The worker parallelizes WAL prefetch and SQLite checks across its vCPUs; for
+// about an hour per drill, eight cost little more than four.
+const DISPOSABLE_RESTORE_MACHINE_TYPE = "n2-standard-8";
 
 class BayBackupAlreadyRunningError extends Error {
   constructor(bay_id: string) {
@@ -6064,7 +6068,7 @@ async function runPgBackRestDisposableGcpRestoreTest({
   );
   const machineType =
     `${process.env.COCALC_BAY_RESTORE_DRILL_GCP_MACHINE_TYPE ?? ""}`.trim() ||
-    "n2-standard-4";
+    DISPOSABLE_RESTORE_MACHINE_TYPE;
   const statusPath =
     `${process.env.COCALC_BAY_PGBACKREST_RESTORE_STATUS_FILE ?? ""}`.trim() ||
     join(
@@ -6266,6 +6270,7 @@ async function runPgBackRestDisposableGcpRestoreTest({
       worker_machine_type: workerRun.machine_type,
       worker_boot_disk_gb: workerRun.boot_disk_gb,
       worker_cleanup: workerRun.cleanup,
+      worker_stage_seconds: workerStageSeconds(workerRun.worker),
       conat_database_count: conat.database_count,
       conat_database_bytes: conat.database_bytes,
       conat_quick_check_passed: conat.quick_check_passed,
@@ -6380,7 +6385,7 @@ async function runDisposableGcpBayRestoreTest({
     const identity = newDisposableRestoreWorkerIdentity();
     const machineType =
       `${process.env.COCALC_BAY_RESTORE_DRILL_GCP_MACHINE_TYPE ?? ""}`.trim() ||
-      "n2-standard-4";
+      DISPOSABLE_RESTORE_MACHINE_TYPE;
     workerRun = await runDisposableGcpRestoreWorker({
       service_account_json: serviceAccountJson,
       zone,

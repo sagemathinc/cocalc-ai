@@ -1869,6 +1869,8 @@ export interface BayRestoreTestRunResult extends BayInfo {
   worker_machine_type?: string | null;
   worker_boot_disk_gb?: number | null;
   worker_cleanup?: "deleted" | "already-deleted" | null;
+  /** Seconds the disposable worker spent in each stage. */
+  worker_stage_seconds?: Record<string, number> | null;
   conat_database_count?: number | null;
   conat_database_bytes?: number | null;
   conat_quick_check_passed?: number | null;
