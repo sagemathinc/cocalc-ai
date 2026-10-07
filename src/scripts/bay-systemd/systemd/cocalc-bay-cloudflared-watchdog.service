@@ -1,0 +1,11 @@
+[Unit]
+Description=CoCalc Bay Cloudflare Tunnel Watchdog
+After=cocalc-bay-cloudflared.service cocalc-bay-frontdoor.service
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/opt/cocalc/bay/current/bin/bay-cloudflared-watchdog
+TimeoutStartSec=150
+StandardOutput=journal
+StandardError=journal
