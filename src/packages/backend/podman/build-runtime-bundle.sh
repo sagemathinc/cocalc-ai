@@ -106,6 +106,12 @@ if [[ "${1:-}" != "--inner" || "${COCALC_RUNTIME_BUILD_INNER:-}" != "1" ]]; then
   exit 2
 fi
 
+# Hand the build tree back even when a step fails, so the host-side cleanup
+# can always remove it.
+if [[ -n "${WORK_OWNER:-}" ]]; then
+  trap 'chown -R "$WORK_OWNER" /work' EXIT
+fi
+
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends \
@@ -208,7 +214,3 @@ done
 
 tar --sort=name --mtime='UTC 2020-01-01' --owner=0 --group=0 --numeric-owner \
   -C /work/stage -cJf "/work/container-runtime-linux-$ARCH.tar.xz" container-runtime
-
-if [[ -n "${WORK_OWNER:-}" ]]; then
-  chown -R "$WORK_OWNER" /work
-fi

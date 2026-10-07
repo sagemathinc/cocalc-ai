@@ -75,6 +75,13 @@ persist_dir() {
 
 persist_state() {
   mkdir -p "$STATE_DIR"
+  # Images before this layout kept configuration and certificates in the
+  # container filesystem. Once that container is removed they are gone; the
+  # README documents copying them into the volume before upgrading.
+  if [ -d /var/lib/cocalc/star/launchpad ] && [ ! -d "${STATE_DIR}/etc-cocalc-star" ]; then
+    log "warning: this volume was created by an older image that kept Star configuration and TLS certificates outside the volume"
+    log "warning: set COCALC_STAR_DOMAIN to restore HTTPS; a new certificate will be requested once"
+  fi
   # Star configuration, including the public URL chosen by `star.sh https`.
   persist_dir /etc/cocalc/star "${STATE_DIR}/etc-cocalc-star"
   # Caddy's ACME account and TLS certificates; without this every upgrade

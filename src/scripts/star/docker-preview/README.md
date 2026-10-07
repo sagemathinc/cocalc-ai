@@ -70,6 +70,20 @@ projects are stopped by the upgrade; users can start them again immediately.
 
 To roll back, run the previous image tag with the same volume.
 
+Images published before October 2026 kept the Star configuration and TLS
+certificates inside the container rather than the volume. When upgrading from
+one of those, copy that state into the volume first, while the old container
+still exists:
+
+```sh
+docker exec cocalc-star sh -c 'mkdir -p /var/lib/cocalc/star-docker &&
+  cp -a /etc/cocalc/star /var/lib/cocalc/star-docker/etc-cocalc-star &&
+  cp -a /var/lib/caddy /var/lib/cocalc/star-docker/caddy'
+```
+
+Otherwise pass `COCALC_STAR_DOMAIN` again; HTTPS is restored and a new
+certificate is requested once.
+
 ## Back up
 
 Everything is in the `cocalc-star` volume. Stop the container for a
