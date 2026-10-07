@@ -77,26 +77,34 @@ it("is ready after a first use inside a committed transaction", async () => {
 (isPgliteEnabled() ? it.skip : it)(
   "orders a transaction's setup after the background setup started by another",
   async () => {
+    // The test pool has two connections: release each one when done, so the
+    // background setup can get one.
     const first = await getPool().connect();
     const second = await getPool().connect();
+    let firstReleased = false;
     try {
       await first.query("BEGIN");
       // Starts the background pool setup, which must wait for this commit.
       await ensureCourseSecretSharingSchema(first);
       await second.query("BEGIN");
-      // Not ready yet, so this sets up inside its own transaction too, racing
-      // the background setup for the same tables once `first` commits.
+      // Not ready yet, so this sets up inside its own transaction too. Its
+      // CREATE ... IF NOT EXISTS would wait for the uncommitted tables of
+      // `first` and then fail with a pg_type unique violation.
       const inSecond = ensureCourseSecretSharingSchema(second);
       await new Promise((resolve) => setTimeout(resolve, 300));
       await first.query("COMMIT");
+      first.release();
+      firstReleased = true;
       await inSecond;
       await second.query("COMMIT");
-      await ensureCourseSecretSharingSchema();
     } finally {
-      await first.query("ROLLBACK").catch(() => {});
       await second.query("ROLLBACK").catch(() => {});
-      first.release();
       second.release();
+      if (!firstReleased) {
+        await first.query("ROLLBACK").catch(() => {});
+        first.release();
+      }
     }
+    await ensureCourseSecretSharingSchema();
   },
 );
