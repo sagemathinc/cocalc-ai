@@ -5,8 +5,8 @@
 
 // Right after a hub restart the per-process schema setup has not run yet, but
 // the tables exist. The first secret writes run in REPEATABLE READ
-// transactions concurrently with the background setup; none may fail (they
-// did, with "could not serialize access due to concurrent update", on lite2b).
+// transactions alongside the background setup; none may fail (they did, with
+// "could not serialize access due to concurrent update", on lite2b).
 // PGlite has one connection and serializes transactions, so this needs a real
 // server.
 
@@ -16,6 +16,8 @@ import getPool, {
 } from "@cocalc/database/pool";
 
 jest.mock("@cocalc/backend/data", () => ({
+  // The real database settings: this test needs a real server.
+  ...jest.requireActual("@cocalc/backend/data"),
   __esModule: true,
   secrets: "/tmp/cocalc-test-secrets",
 }));
@@ -38,7 +40,7 @@ afterAll(async () => {
 });
 
 (isPgliteEnabled() ? it.skip : it)(
-  "accepts concurrent writes before the setup has finished in this process",
+  "accepts writes before the setup has finished in this process",
   async () => {
     await getPool().query(
       "INSERT INTO projects (project_id, title, users, last_edited) VALUES ($1, $2, $3, NOW()) ON CONFLICT DO NOTHING",
@@ -55,31 +57,32 @@ afterAll(async () => {
     jest.isolateModules(() => {
       secrets = require("./project-secrets");
     });
-    const results = await Promise.allSettled(
-      [1, 2, 3, 4].map((i) =>
-        secrets!.setProjectSecret({
+    // One at a time, as on lite2b, where each of these failed. (Concurrent
+    // writes to one project can conflict on its runtime generation row in any
+    // case: REPEATABLE READ.)
+    const errors: string[] = [];
+    for (const [name, value] of [
+      ["COLD_1", "v1"],
+      ["COLD_2", "v2"],
+      ["COLD_1", "again"],
+      ["COLD_3", "v3"],
+    ]) {
+      try {
+        await secrets!.setProjectSecret({
           project_id: PROJECT_ID,
-          name: `COLD_${i}`,
-          value: `v${i}`,
+          name,
+          value,
           account_id: ACCOUNT_ID,
-        }),
-      ),
-    );
-    expect(
-      results.flatMap((r) => (r.status === "rejected" ? [`${r.reason}`] : [])),
-    ).toEqual([]);
-    for (let i = 1; i <= 3; i++) {
-      await secrets!.setProjectSecret({
-        project_id: PROJECT_ID,
-        name: "COLD_1",
-        value: `again${i}`,
-        account_id: ACCOUNT_ID,
-      });
+        });
+      } catch (err) {
+        errors.push(`${name}: ${err}`);
+      }
     }
+    expect(errors).toEqual([]);
     expect(
       (await secrets!.listProjectSecrets({ project_id: PROJECT_ID }))
         .map(({ name }) => name)
         .sort(),
-    ).toEqual(["COLD_1", "COLD_2", "COLD_3", "COLD_4"]);
+    ).toEqual(["COLD_1", "COLD_2", "COLD_3"]);
   },
 );

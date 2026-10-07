@@ -37,6 +37,16 @@ function pool(): Queryable {
 }
 
 async function transaction<T>(fn: (db: Queryable) => Promise<T>): Promise<T> {
+  // Finish the one-time setup before the transaction begins (see below).
+  if (!courseSecretSharingSchemaReady) {
+    await courseSecretSharingSchemaSetupOnPool();
+  }
+  return await runInTransaction(fn);
+}
+
+async function runInTransaction<T>(
+  fn: (db: Queryable) => Promise<T>,
+): Promise<T> {
   const client = await (getPool() as any).connect();
   try {
     await client.query("BEGIN");
@@ -161,11 +171,19 @@ function syncResult(row: any): CourseSecretSyncResult {
 // EXCLUSIVE lock even when nothing changes and queues every later query on the
 // table behind any open transaction (production outage 2026-10-06).
 let courseSecretSharingSchemaReady = false;
+const COURSE_SECRET_SHARING_TABLES = [
+  "course_secret_policies",
+  "course_secret_grants",
+  "course_secret_recipients",
+  "course_secret_sync_runs",
+  "course_secret_sync_results",
+  "course_secret_audit_events",
+];
 let courseSecretSharingSchemaSetup: Promise<void> | undefined;
 
 function courseSecretSharingSchemaSetupOnPool(): Promise<void> {
   // Shared by concurrent callers; retried after a failure.
-  courseSecretSharingSchemaSetup ??= transaction(
+  courseSecretSharingSchemaSetup ??= runInTransaction(
     createCourseSecretSharingSchema,
   ).then(
     () => {
@@ -184,12 +202,18 @@ export async function ensureCourseSecretSharingSchema(
 ): Promise<void> {
   if (courseSecretSharingSchemaReady) return;
   if (db === pool()) return await courseSecretSharingSchemaSetupOnPool();
-  // Inside a caller's transaction: create what it needs there (that may still
-  // roll back), and finish the setup on the pool once the caller's locks are
-  // released. Never wait for it here: the caller's transaction may hold locks
-  // on these tables. The advisory lock orders the two setups.
-  await createCourseSecretSharingSchema(db);
-  void courseSecretSharingSchemaSetupOnPool().catch(() => {});
+  // Inside another module's transaction (this module's own finish the setup
+  // before they begin). Only a new database lacks the tables: create them
+  // there (that may still roll back). Never start or wait for the full setup
+  // here: the transaction may hold locks that it needs.
+  const { rows } = await db.query(
+    `SELECT ${COURSE_SECRET_SHARING_TABLES.map(
+      (table) => `to_regclass('${table}') IS NOT NULL`,
+    ).join(" AND ")} AS exists`,
+  );
+  if (!rows[0]?.exists) {
+    await createCourseSecretSharingSchema(db);
+  }
 }
 
 async function createCourseSecretSharingSchema(db: Queryable): Promise<void> {
