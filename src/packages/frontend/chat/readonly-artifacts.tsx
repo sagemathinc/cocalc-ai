@@ -173,6 +173,7 @@ export function ReadonlyArtifactCards({
                         actions: current.actions,
                         github_pr: current.github_pr,
                         commit: current.commit,
+                        app: current.app,
                         theme: current.theme,
                       }}
                     />

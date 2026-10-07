@@ -258,6 +258,8 @@ export interface ArtifactPayload {
   markdown: string;
   /** Choose at most one object type; omit all for a Markdown document. */
   file?: { path: string };
+  /** A project app shown live in the card, e.g. { id: "cocalc-browser" }. */
+  app?: { id: string };
   actions?: ArtifactAction[];
   github_pr?: ArtifactGitHubPR;
 }
@@ -268,8 +270,9 @@ export interface ArtifactObject {
   thread_id: string;
   title: string;
   input: string;
-  kind: "markdown" | "file" | "actions" | "github-pr" | "commit";
+  kind: "markdown" | "file" | "actions" | "github-pr" | "commit" | "app";
   file?: { path: string };
+  app?: { id: string };
   actions?: ArtifactAction[];
   github_pr?: ArtifactGitHubPR;
 }

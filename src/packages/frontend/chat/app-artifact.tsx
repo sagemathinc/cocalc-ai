@@ -1,0 +1,101 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+// An artifact that shows a project app live (e.g. the shared browser an
+// agent and a human use together), through the project's authenticated app
+// proxy.  Opening the card starts the app if it is not running.
+
+import { Alert, Button, Flex, Spin } from "antd";
+import { useEffect, useState } from "react";
+import type { ArtifactApp } from "@cocalc/chat";
+import type { AppSpec } from "@cocalc/conat/project/api/apps";
+import { getProjectAppOpenUrl } from "@cocalc/frontend/project/app-server-open";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
+
+export function AppArtifact({
+  projectId,
+  app,
+  title,
+}: {
+  projectId: string;
+  app: ArtifactApp;
+  title: string;
+}) {
+  const [src, setSrc] = useState<string>();
+  const [error, setError] = useState<string>();
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    let canceled = false;
+    setSrc(undefined);
+    setError(undefined);
+    void (async () => {
+      const api = webapp_client.conat_client.projectApi({
+        project_id: projectId,
+      });
+      let spec: AppSpec;
+      try {
+        spec = await api.apps.getAppSpec(app.id);
+      } catch {
+        throw Error(
+          `The app "${app.id}" is not set up in this project (it may have been removed).`,
+        );
+      }
+      const status = await api.apps.ensureRunning(app.id, {
+        timeout: 60_000,
+        interval: 500,
+      });
+      const url = await getProjectAppOpenUrl({
+        getSpec: async () => spec,
+        project_id: projectId,
+        spec,
+        status,
+      });
+      if (!url) throw Error(`The app "${app.id}" started but has no URL.`);
+      if (!canceled) setSrc(url);
+    })().catch((err) => {
+      if (!canceled) setError(`${err?.message ?? err}`);
+    });
+    return () => {
+      canceled = true;
+    };
+  }, [projectId, app.id, attempt]);
+
+  if (error)
+    return (
+      <Flex
+        align="center"
+        justify="center"
+        style={{ height: "100%", padding: 24 }}
+      >
+        <Alert
+          type="warning"
+          showIcon
+          title={`Could not open ${title}`}
+          description={error}
+          action={
+            <Button onClick={() => setAttempt((n) => n + 1)}>Retry</Button>
+          }
+        />
+      </Flex>
+    );
+  if (!src)
+    return (
+      <Flex align="center" justify="center" style={{ height: "100%" }}>
+        <Spin tip={`Starting ${title}...`}>
+          <div style={{ width: 200, height: 80 }} />
+        </Spin>
+      </Flex>
+    );
+  return (
+    <iframe
+      src={src}
+      title={title}
+      // The app is the project's own code behind CoCalc's app proxy.
+      allow="clipboard-read; clipboard-write"
+      style={{ border: 0, width: "100%", height: "100%", display: "block" }}
+    />
+  );
+}

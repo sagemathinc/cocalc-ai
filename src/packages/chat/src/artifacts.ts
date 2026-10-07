@@ -5,8 +5,11 @@ import { validateArtifactTheme } from "./artifact-appearance";
 import type { EntityTheme } from "./artifact-appearance";
 import { validateArtifactCommit } from "./artifact-commit";
 import type { ArtifactCommit } from "./artifact-commit";
+import { validateArtifactApp } from "./artifact-app";
+import type { ArtifactApp } from "./artifact-app";
 export * from "./artifact-appearance";
 export * from "./artifact-commit";
+export * from "./artifact-app";
 export * from "./artifact-github";
 import {
   validateProposedActions,
@@ -72,9 +75,10 @@ export interface ArtifactRecord extends ArtifactTarget {
   sender_id: string;
   date: string;
   schema_version: 1;
-  kind: "markdown" | "file" | "github-pr" | "actions" | "commit";
+  kind: "markdown" | "file" | "github-pr" | "actions" | "commit" | "app";
   theme?: EntityTheme;
   commit?: ArtifactCommit;
+  app?: ArtifactApp;
   actions?: ProposedAction[];
   github_pr?: ArtifactGitHubPR;
   file?: ArtifactFile;
@@ -93,6 +97,7 @@ export interface ArtifactPublication extends ArtifactTarget {
   snapshot: {
     theme?: EntityTheme;
     commit?: ArtifactCommit;
+    app?: ArtifactApp;
     title: string;
     markdown: string;
     file?: ArtifactFile;
@@ -221,7 +226,9 @@ export function validateArtifact(value: unknown): ArtifactRecord {
   if (
     row?.event !== "chat-artifact" ||
     row.schema_version !== 1 ||
-    !["markdown", "file", "github-pr", "actions", "commit"].includes(row.kind)
+    !["markdown", "file", "github-pr", "actions", "commit", "app"].includes(
+      row.kind,
+    )
   ) {
     throw Error("unsupported or missing artifact");
   }
@@ -246,6 +253,7 @@ export function validateArtifact(value: unknown): ArtifactRecord {
       ? { github_pr: validateArtifactGitHubPR(row.github_pr) }
       : {}),
     ...(row.kind === "file" ? { file: validateArtifactFile(row.file) } : {}),
+    ...(row.kind === "app" ? { app: validateArtifactApp(row.app) } : {}),
     title: text(row.title, "title", 256),
     input: text(row.input, "Markdown", ARTIFACT_TEXT_LIMIT),
   };
@@ -265,6 +273,7 @@ export function validateArtifactPublication(
       row.snapshot?.github_pr,
       row.snapshot?.actions,
       row.snapshot?.commit,
+      row.snapshot?.app,
     ].filter((x) => x !== undefined).length > 1
   )
     throw Error("artifact publication cannot mix object types");
@@ -303,6 +312,9 @@ export function validateArtifactPublication(
       ...(row.snapshot?.file === undefined
         ? {}
         : { file: validateArtifactFile(row.snapshot.file) }),
+      ...(row.snapshot?.app === undefined
+        ? {}
+        : { app: validateArtifactApp(row.snapshot.app) }),
     },
   });
 }
@@ -320,6 +332,8 @@ export function artifactBase(record: ArtifactRecord): string {
     return JSON.stringify([record.title, record.input, record.actions]);
   if (record.kind === "github-pr")
     return JSON.stringify([record.title, record.input, record.github_pr]);
+  if (record.kind === "app")
+    return JSON.stringify([record.title, record.input, record.app]);
   return JSON.stringify(
     record.kind === "file"
       ? [record.title, record.input, record.file]
@@ -335,6 +349,7 @@ export function readArtifact(store: ArtifactStore, target: ArtifactTarget) {
 export interface PublishArtifactInput extends ArtifactTarget {
   theme?: EntityTheme;
   commit?: ArtifactCommit;
+  app?: ArtifactApp;
   actions?: ProposedAction[];
   operation_id: string;
   message_id: string;
@@ -365,7 +380,7 @@ export function publishArtifact(
         ? validateArtifact(current).theme
         : undefined);
   if (
-    [input.file, input.github_pr, input.actions, input.commit].filter(
+    [input.file, input.github_pr, input.actions, input.commit, input.app].filter(
       (x) => x !== undefined,
     ).length > 1
   )
@@ -375,7 +390,9 @@ export function publishArtifact(
     artifact_id: input.artifact_id,
     schema_version: 1,
     kind:
-      input.commit !== undefined
+      input.app !== undefined
+        ? "app"
+        : input.commit !== undefined
         ? "commit"
         : input.actions !== undefined
           ? "actions"
@@ -386,6 +403,7 @@ export function publishArtifact(
               : "file",
     github_pr: input.github_pr,
     commit: input.commit,
+    app: input.app,
     theme,
     actions: input.actions,
     file: input.file,
@@ -404,6 +422,7 @@ export function publishArtifact(
       markdown: artifact.input,
       ...(artifact.theme ? { theme: artifact.theme } : {}),
       ...(artifact.commit ? { commit: artifact.commit } : {}),
+      ...(artifact.app ? { app: artifact.app } : {}),
       ...(artifact.file ? { file: artifact.file } : {}),
       ...(artifact.github_pr ? { github_pr: artifact.github_pr } : {}),
       ...(artifact.actions ? { actions: artifact.actions } : {}),

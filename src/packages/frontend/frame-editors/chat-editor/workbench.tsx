@@ -44,6 +44,7 @@ import { GitHubPRArtifact } from "./github-pr-artifact";
 import { ActionListArtifact } from "./action-list-artifact";
 import { CommitArtifact } from "./commit-artifact";
 import { ArtifactIdentity } from "@cocalc/frontend/chat/artifact-card";
+import { AppArtifact } from "@cocalc/frontend/chat/app-artifact";
 import { ArtifactNameControl } from "@cocalc/frontend/agents/artifact-name-control";
 import { path_split, set } from "@cocalc/util/misc";
 const AppearanceEditor = lazyWithRetry(
@@ -176,11 +177,13 @@ function ResolvedWorkbenchSurface(props: WorkbenchProps) {
                 title={record.title}
                 theme={theme}
                 icon={
-                  record.kind === "github-pr" || record.kind === "commit"
-                    ? "git"
-                    : record.kind === "actions"
-                      ? "tasks"
-                      : "file"
+                  record.kind === "app"
+                    ? "global"
+                    : record.kind === "github-pr" || record.kind === "commit"
+                      ? "git"
+                      : record.kind === "actions"
+                        ? "tasks"
+                        : "file"
                 }
               />
             ) : (
@@ -397,9 +400,11 @@ function WorkbenchDocument({
         github_pr: pub.snapshot.github_pr,
         file: pub.snapshot.file,
         commit: pub.snapshot.commit,
+        app: pub.snapshot.app,
         theme: pub.snapshot.theme,
       };
       if (pub.snapshot.commit) artifact.kind = "commit";
+      if (pub.snapshot.app) artifact.kind = "app";
     }
   } catch {
     return <Alert type="warning" title="Artifact unavailable" />;
@@ -498,6 +503,15 @@ function WorkbenchDocument({
           localComments={!source}
         />
       </ContextualReply>
+    );
+  if (artifact.kind === "app" && artifact.app)
+    return (
+      <AppArtifact
+        key={`${artifact.thread_id}:${artifact.artifact_id}`}
+        projectId={project_id}
+        app={artifact.app}
+        title={artifact.title}
+      />
     );
   if (artifact.kind === "commit")
     return (

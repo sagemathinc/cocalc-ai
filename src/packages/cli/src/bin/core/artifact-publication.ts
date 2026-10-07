@@ -35,6 +35,7 @@ export function prepareArtifactPublication({
         "actions",
         "github_pr",
         "commit",
+        "app",
         "theme",
         "base",
       ].includes(key)

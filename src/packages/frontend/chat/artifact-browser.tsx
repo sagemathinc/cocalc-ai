@@ -68,7 +68,7 @@ export async function showConversation(
   }
 }
 
-const kinds = ["markdown", "file", "actions", "github-pr", "commit"];
+const kinds = ["markdown", "file", "actions", "github-pr", "commit", "app"];
 
 export function ArtifactResults({
   actions,

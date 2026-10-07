@@ -41,15 +41,17 @@ export function artifactCatalog(syncdb: any): ArtifactCatalogEntry[] {
       const data = current ?? publication.snapshot;
       const kind =
         current?.kind ??
-        (data.file
-          ? "file"
-          : data.commit
-            ? "commit"
-            : data.github_pr
-              ? "github-pr"
-              : data.actions
-                ? "actions"
-                : "markdown");
+        (data.app
+          ? "app"
+          : data.file
+            ? "file"
+            : data.commit
+              ? "commit"
+              : data.github_pr
+                ? "github-pr"
+                : data.actions
+                  ? "actions"
+                  : "markdown");
       const title = data.theme?.title || data.title;
       entries.set(key, {
         publication,
@@ -62,7 +64,12 @@ export function artifactCatalog(syncdb: any): ArtifactCatalogEntry[] {
           data.theme?.description,
           current?.input ?? publication.snapshot.markdown,
           JSON.stringify(
-            data.file ?? data.commit ?? data.github_pr ?? data.actions ?? "",
+            data.file ??
+              data.commit ??
+              data.github_pr ??
+              data.actions ??
+              data.app ??
+              "",
           ),
         ]
           .join("\n")

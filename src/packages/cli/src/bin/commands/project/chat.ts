@@ -94,7 +94,7 @@ export function registerProjectChatCommands(
     )
     .option(
       "--file <path>",
-      "publication JSON: title, markdown, optional file/actions/github_pr/commit/theme; - for stdin",
+      "publication JSON: title, markdown, optional file/actions/github_pr/commit/app/theme; - for stdin",
     )
     .option(
       "--title <title>",
@@ -234,7 +234,7 @@ export function registerProjectChatCommands(
       )
       .option(
         "--file <path>",
-        "JSON publication payload (Markdown, or one of file, actions, github_pr, commit; optional theme); - for stdin. See exec-api for payload types",
+        "JSON publication payload (Markdown, or one of file, actions, github_pr, commit, app; optional theme); - for stdin. See exec-api for payload types",
       )
       .option("--experimental", "opt into prototype artifact writes")
       .action(async (opts, command: Command) => {
