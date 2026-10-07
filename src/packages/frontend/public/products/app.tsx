@@ -918,7 +918,7 @@ function CocalcStarPage() {
       title: "How it runs",
     },
     {
-      body: "Free. Upgrades are a new image, and removing the container and volume removes everything.",
+      body: "Free. Upgrades are a new image, and removing the container and volume removes all of its data.",
       icon: "cloud",
       title: "Easy to try, easy to undo",
     },
@@ -998,12 +998,13 @@ function CocalcStarPage() {
         </ProductDetailCard>
         <ProductDetailCard icon="star" title="Remove it completely">
           <Paragraph style={{ margin: 0 }}>
-            Nothing is installed outside Docker. This deletes CoCalc Star and
+            Star writes no files outside Docker. This deletes CoCalc Star and
             all of its data:
           </Paragraph>
           <CodeBlock ariaLabel="Remove commands" code={removeCommands} />
           <ProductNotesList
             items={[
+              "On Linux hosts with AppArmor, a small kernel profile for Star's bundled container runtime stays loaded until the host restarts; the setup guide shows how to unload it sooner.",
               "Star is one machine: it is not a high-availability or scale-out deployment.",
               "Use Launchpad or Rocket when private deployment or institutional rollout is the real decision.",
             ]}

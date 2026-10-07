@@ -47,11 +47,17 @@ command -v git >/dev/null 2>&1 || die "git is required"
 command -v tar >/dev/null 2>&1 || die "tar is required"
 
 use_node_26() {
+  # Prefer nvm's Node 26, but accept a Node 26 already on PATH (e.g. from
+  # actions/setup-node on a CI runner that also ships nvm without Node 26).
   if [ -s "$HOME/.nvm/nvm.sh" ]; then
     # shellcheck disable=SC1091
     source "$HOME/.nvm/nvm.sh"
-    nvm use 26 >/dev/null
+    nvm use 26 >/dev/null 2>&1 || true
   fi
+  case "$(node --version 2>/dev/null)" in
+    v26.*) ;;
+    *) die "Node.js 26 is required; found $(node --version 2>/dev/null || echo none)" ;;
+  esac
 }
 
 # Run ncc outside src, like scripts/control-plane-bundle/build-bundle.sh.

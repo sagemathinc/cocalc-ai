@@ -134,7 +134,11 @@ async function main() {
       baseUrl: process.env.STAR_BASE_URL ?? "http://127.0.0.1:9100",
     });
     console.log(
-      JSON.stringify({ ok: true, admin_url: url, expires: expires.toISOString() }),
+      JSON.stringify({
+        ok: true,
+        admin_url: url,
+        expires: expires.toISOString(),
+      }),
     );
     return;
   }

@@ -65,10 +65,12 @@ if [[ "${1:-}" != "--inner" ]]; then
   chmod 755 "$TMP/build.sh"
 
   # Rootful Docker leaves the build tree owned by root, which the host-side
-  # cleanup cannot remove. Rootless podman already maps container root to the
-  # invoking user, where a chown would map to a subordinate UID instead.
+  # cleanup cannot remove. Rootless podman and rootless Docker already map
+  # container root to the invoking user, where a chown would map to a
+  # subordinate UID instead.
   WORK_OWNER=""
-  if [[ "$ENGINE" == "docker" ]]; then
+  if [[ "$ENGINE" == "docker" ]] &&
+    ! docker info --format '{{.SecurityOptions}}' 2>/dev/null | grep -q rootless; then
     WORK_OWNER="$(id -u):$(id -g)"
   fi
 

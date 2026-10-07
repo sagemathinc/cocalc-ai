@@ -319,7 +319,7 @@ describe("PublicApp", () => {
       expect(canonicalHref()).toBe("https://cocalc.ai/products/cocalc-star"),
     );
     expect(headMeta('meta[name="description"]')).toContain(
-      "single-VM appliance",
+      "one Docker container",
     );
 
     rerender(

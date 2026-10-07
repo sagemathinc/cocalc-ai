@@ -10,7 +10,8 @@ where each project runs in its own rootless Podman container.
 
 ## Requirements
 
-- A Linux host with Docker and cgroup v2 (any current distribution).
+- Docker: Docker Desktop on macOS or Windows, or Docker Engine with cgroup v2
+  on Linux.
 - 4 or more CPUs, 16 GB of RAM, and 50 GB or more of free disk space for the
   volume (projects are stored in a 40 GB sparse btrfs image by default).
 - For a public server: a DNS name pointing at the host and inbound TCP port 443
@@ -50,7 +51,14 @@ docker logs -f cocalc-star
 The link is printed again at any time by:
 
 ```sh
-docker exec cocalc-star /opt/cocalc-star/source/src/scripts/star/star.sh bootstrap-link
+docker exec cocalc-star star bootstrap-link
+```
+
+If it was already used, or the admin lost access, create a new single-use
+admin link (valid for 24 hours):
+
+```sh
+docker exec cocalc-star star admin-link
 ```
 
 ## Upgrade
@@ -110,16 +118,21 @@ docker start cocalc-star
 ## Troubleshooting
 
 ```sh
-docker exec cocalc-star /opt/cocalc-star/source/src/scripts/star/star.sh status
-docker exec cocalc-star /opt/cocalc-star/source/src/scripts/star/star.sh doctor
-docker exec cocalc-star /opt/cocalc-star/source/src/scripts/star/star.sh smoke
+docker exec cocalc-star star status
+docker exec cocalc-star star doctor
+docker exec cocalc-star star smoke
 docker exec cocalc-star journalctl -u cocalc-star-hub -n 200
 ```
 
 On hosts that restrict unprivileged user namespaces with AppArmor (Ubuntu
 23.10 and later), the container loads a profile named `cocalc-star-podman`
 into the host kernel that gives Star's managed Podman the same permission the
-distribution grants `/usr/bin/podman`.
+distribution grants `/usr/bin/podman`. The profile stays loaded until the
+host restarts, even after the container is removed. To unload it sooner:
+
+```sh
+echo -n cocalc-star-podman | sudo tee /sys/kernel/security/apparmor/.remove
+```
 
 ## Building the image
 

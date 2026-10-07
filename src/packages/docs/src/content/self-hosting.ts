@@ -13,7 +13,7 @@ macOS and Windows, or Docker Engine on Linux.
 
 All of its state (accounts, projects, settings, certificates) lives in one
 Docker volume. Upgrading means running a newer image with the same volume;
-removing the container and the volume removes everything.
+removing the container and the volume removes all of its data.
 
 ## Quick start on your own computer
 
@@ -93,13 +93,21 @@ fresh volume before relying on it.
 
 ## Remove CoCalc Star
 
-Nothing is installed outside Docker. This deletes CoCalc Star and all of its
-data:
+This deletes CoCalc Star and all of its data:
 
 ~~~sh
 docker rm -f cocalc-star
 docker volume rm cocalc-star
 docker rmi sagemathinc/star
+~~~
+
+Star writes no files outside Docker. One thing outlives the container on
+Linux hosts that use AppArmor (for example Ubuntu): the \`cocalc-star-podman\`
+profile described below stays loaded in the kernel until the host restarts.
+It only applies to Star's bundled Podman. To unload it right away:
+
+~~~sh
+echo -n cocalc-star-podman | sudo tee /sys/kernel/security/apparmor/.remove
 ~~~
 
 ## Why the container is privileged
