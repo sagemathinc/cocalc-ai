@@ -3,8 +3,12 @@ import { randomUUID } from "node:crypto";
 import { prepareArtifactPublication } from "./artifact-publication";
 
 import {
+  buildForkedThread,
   buildThreadConfigRecord,
+  CHAT_SCHEMA_V2,
   deriveAcpLogRefs,
+  planThreadFork,
+  threadConfigRecordKey,
   publishArtifact,
   readArtifact,
   validateArtifact,
@@ -20,6 +24,11 @@ import {
   type ImmerDB,
 } from "@cocalc/chat/server";
 import { akv } from "@cocalc/conat/sync/akv";
+import { controlAcp, forkAcpSession } from "@cocalc/conat/ai/acp/client";
+import type {
+  AcpHarnessCredential,
+  AcpHarnessRuntime,
+} from "@cocalc/util/ai/runtime";
 import { humanChatAutomation } from "./chat-automation";
 import type {
   AcpAutomationConfig,
@@ -483,6 +492,134 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
     });
   }
 
+  /**
+   * Fork an agent thread in the same .chat document, like "Copy agent" in
+   * the browser: the agent session is forked so the new thread keeps the
+   * conversation context but continues independently.
+   */
+  async function projectChatThreadForkData({
+    ctx,
+    projectIdentifier,
+    path,
+    sourceThreadId,
+    title,
+    sourceTitle,
+    resolveHarnessCredential,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    sourceThreadId: string;
+    title: string;
+    sourceTitle?: string;
+    /** This account's Claude credential choice for the source thread. */
+    resolveHarnessCredential?: (
+      runtime: AcpHarnessRuntime,
+    ) => Promise<AcpHarnessCredential | undefined>;
+    cwd?: string;
+  }): Promise<{
+    project_id: string;
+    path: string;
+    thread_id: string;
+    forked_from_thread_id: string;
+    session: "harness" | "codex" | "none";
+    copy_payment_selection: boolean;
+    harness_credential?: AcpHarnessCredential;
+  }> {
+    const accountId = `${(ctx as any).accountId ?? ""}`.trim();
+    if (!accountId) throw new Error("forking a thread requires an account");
+    return await withProjectChatFile({
+      deps,
+      ctx,
+      projectIdentifier,
+      chatPath: path,
+      cwd,
+      fn: async ({ project, client, rows, syncdb }) => {
+        const threadId = `${sourceThreadId ?? ""}`.trim();
+        const config = getThreadConfigRecord(rows, threadId);
+        const messages = listChatRowsForThread(rows, threadId).sort(
+          (a, b) => new Date(a.date).valueOf() - new Date(b.date).valueOf(),
+        );
+        if (!config && messages.length === 0) {
+          throw new Error(`thread '${threadId}' not found in ${path}`);
+        }
+        const source = { threadId, config, messages };
+        const plan = planThreadFork({ source, isAI: true });
+        let forkedSessionId: string | undefined;
+        let harnessCredential: AcpHarnessCredential | undefined;
+        if (plan.kind === "harness") {
+          harnessCredential = await resolveHarnessCredential?.(plan.runtime);
+          const result = await controlAcp(
+            {
+              project_id: project.project_id,
+              account_id: accountId,
+              path,
+              thread_id: threadId,
+              user_message_id: threadId,
+              action: "fork_harness_v1",
+              expected_session_id: plan.sessionId,
+              expected_runtime: plan.runtime,
+              harness_credential: harnessCredential,
+            },
+            client,
+          );
+          if (!result.ok) {
+            throw new Error(
+              "The harness did not return an independent copied session",
+            );
+          }
+          forkedSessionId = result.forked_session_id;
+        } else if (plan.kind === "codex") {
+          forkedSessionId = (
+            await forkAcpSession(
+              {
+                project_id: project.project_id,
+                account_id: accountId,
+                sessionId: plan.sessionId,
+              },
+              client,
+            )
+          ).sessionId;
+        }
+        const forked = buildForkedThread({
+          source,
+          plan,
+          forkedSessionId,
+          title,
+          sourceTitle,
+          isAI: true,
+          senderId: accountId,
+          now: new Date(),
+          messageId: randomUUID(),
+          threadId: randomUUID(),
+        });
+        syncdb.set(forked.rootMessage);
+        syncdb.set({
+          ...threadConfigRecordKey(forked.threadId),
+          updated_at: new Date().toISOString(),
+          updated_by: accountId,
+          schema_version: CHAT_SCHEMA_V2,
+          ...forked.configPatch,
+        });
+        syncdb.commit();
+        await syncdb.save();
+        await syncdb.save_to_disk();
+        return {
+          project_id: project.project_id,
+          path,
+          thread_id: forked.threadId,
+          forked_from_thread_id: threadId,
+          session: plan.kind === "copy" ? "none" : plan.kind,
+          copy_payment_selection: forked.copyPaymentSelection,
+          ...(harnessCredential
+            ? { harness_credential: harnessCredential }
+            : {}),
+        };
+      },
+    });
+  }
+
   async function projectChatThreadStatusData({
     ctx,
     projectIdentifier,
@@ -668,6 +805,7 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
     projectChatSendData,
     projectChatArtifactData,
     projectChatThreadCreateData,
+    projectChatThreadForkData,
     projectChatThreadStatusData,
     projectChatAutomationData,
     projectChatActivityData,
