@@ -134,12 +134,16 @@ doctor() {
   }
 
   check() {
-    local desc="$1"
+    local desc="$1" output
     shift
-    if "$@" >/dev/null 2>&1; then
+    if output="$("$@" 2>&1)"; then
       ok "$desc"
     else
       fail "$desc"
+      # Show why, without the noise of a full log.
+      if [ -n "$output" ]; then
+        printf '%s\n' "$output" | grep -v 'level=warning' | tail -n 5 | sed 's/^/         /' >&2
+      fi
     fi
   }
 

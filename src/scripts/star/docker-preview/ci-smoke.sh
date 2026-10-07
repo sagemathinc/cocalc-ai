@@ -38,6 +38,13 @@ log() {
 }
 
 dump_diagnostics() {
+  log "--- init log ---"
+  $DOCKER exec "$NAME" grep 'star-docker-init\]' /var/log/cocalc-star-docker-init.log 2>&1 | tail -20 || true
+  log "--- container root propagation, AppArmor ---"
+  $DOCKER exec "$NAME" findmnt -no PROPAGATION / 2>&1 || true
+  $DOCKER exec "$NAME" grep cocalc-star-podman /sys/kernel/security/apparmor/profiles 2>&1 || true
+  sysctl kernel.apparmor_restrict_unprivileged_userns 2>&1 || true
+  sudo -n dmesg 2>/dev/null | grep -i 'apparmor="DENIED"' | tail -5 || true
   log "--- docker logs ---"
   $DOCKER logs --tail 300 "$NAME" 2>&1 || true
   log "--- failed units ---"
@@ -72,8 +79,10 @@ run_container() {
 # The init service reports ready once per boot; count the "is ready" lines in
 # the persistent init log to detect this boot's completion.
 ready_count() {
-  $DOCKER exec "$NAME" grep -c '\[star-docker-init\] CoCalc Star .* is ready' \
-    /var/log/cocalc-star-docker-init.log 2>/dev/null || printf '0\n'
+  local count
+  count="$($DOCKER exec "$NAME" grep -c '\[star-docker-init\] CoCalc Star .* is ready' \
+    /var/log/cocalc-star-docker-init.log 2>/dev/null || true)"
+  printf '%s\n' "${count:-0}"
 }
 
 wait_ready() {
