@@ -9,56 +9,72 @@ jest.mock("@cocalc/database/pool", () => ({
 }));
 
 import type { MembershipResolution } from "@cocalc/conat/hub/api/purchases";
-import { applySetupProfileMembershipLimits } from "./resolve";
+import { TIER_TEMPLATES } from "@cocalc/util/membership-tier-templates";
+import { normalizeMembershipEffectiveLimits } from "./effective-limits";
+import {
+  applySetupProfileMembershipLimits,
+  STAR_GENEROUS_USAGE_LIMITS,
+  STAR_RETAINED_USAGE_LIMITS,
+  STAR_UNLIMITED_USAGE_LIMITS,
+} from "./resolve";
+
+const classified = [
+  ...STAR_UNLIMITED_USAGE_LIMITS,
+  ...STAR_GENEROUS_USAGE_LIMITS,
+  ...STAR_RETAINED_USAGE_LIMITS,
+] as string[];
 
 function freeMembership(): MembershipResolution {
-  const usage_limits = {
-    max_projects: 5,
-    max_sponsored_running_projects: 1,
-    total_storage_soft_bytes: 1,
-    total_storage_hard_bytes: 2,
-    egress_5h_bytes: 3,
-    egress_7d_bytes: 4,
-    cpu_5h_seconds: 5,
-    cpu_7d_seconds: 6,
-    browser_idle_timeout_seconds: 7,
-    max_snapshots_per_project: 8,
-    max_named_agents: 9,
-    shared_compute_priority: 0,
-  };
+  const usage_limits = structuredClone(TIER_TEMPLATES.free.usage_limits);
   return {
     class: "free",
     source: "free",
     entitlements: { usage_limits },
-    effective_limits: { ...usage_limits },
+    effective_limits: normalizeMembershipEffectiveLimits(usage_limits),
   } as MembershipResolution;
 }
 
 describe("applySetupProfileMembershipLimits", () => {
-  it("removes per-account usage limits on CoCalc Star", () => {
+  it("classifies every usage limit exactly once", () => {
+    expect(new Set(classified).size).toBe(classified.length);
+    const known = new Set([
+      ...Object.keys(normalizeMembershipEffectiveLimits({})),
+      ...Object.values(TIER_TEMPLATES).flatMap((tier) =>
+        Object.keys(tier.usage_limits ?? {}),
+      ),
+    ]);
+    expect([...known].filter((key) => !classified.includes(key))).toEqual([]);
+    expect(classified.filter((key) => !known.has(key))).toEqual([]);
+  });
+
+  it("lifts the free tier's per-account limits on CoCalc Star", () => {
     const membership = freeMembership();
     const star = applySetupProfileMembershipLimits(membership, "star");
+    const admin = TIER_TEMPLATES.admin.usage_limits as Record<string, unknown>;
+    const free = TIER_TEMPLATES.free.usage_limits as Record<string, unknown>;
     for (const limits of [
       star.effective_limits,
       star.entitlements.usage_limits,
     ] as Record<string, unknown>[]) {
-      expect(limits).not.toHaveProperty("max_projects");
-      expect(limits).not.toHaveProperty("max_sponsored_running_projects");
-      expect(limits).not.toHaveProperty("total_storage_hard_bytes");
-      expect(limits).not.toHaveProperty("egress_7d_bytes");
-      expect(limits).not.toHaveProperty("cpu_5h_seconds");
-      expect(limits).not.toHaveProperty("browser_idle_timeout_seconds");
-      // Per-project and agent settings keep their values.
-      expect(limits).toMatchObject({
-        max_snapshots_per_project: 8,
-        max_named_agents: 9,
-        shared_compute_priority: 0,
-      });
+      for (const key of STAR_UNLIMITED_USAGE_LIMITS) {
+        expect(limits[key]).toBeUndefined();
+      }
+      for (const key of STAR_GENEROUS_USAGE_LIMITS) {
+        expect(limits[key]).toEqual(admin[key]);
+      }
+      for (const key of STAR_RETAINED_USAGE_LIMITS) {
+        if (key in free) expect(limits[key]).toEqual(free[key]);
+      }
     }
+    expect(star.effective_limits?.rootfs_oci_images).toBe(true);
     expect(star.class).toBe("free");
     // The resolved membership itself is not mutated.
-    expect(membership.effective_limits?.max_projects).toBe(5);
-    expect(membership.entitlements.usage_limits?.max_projects).toBe(5);
+    expect(membership.effective_limits?.max_projects).toBe(
+      TIER_TEMPLATES.free.usage_limits.max_projects,
+    );
+    expect(membership.entitlements.usage_limits?.max_projects).toBe(
+      TIER_TEMPLATES.free.usage_limits.max_projects,
+    );
   });
 
   it("keeps membership limits on every other site", () => {
