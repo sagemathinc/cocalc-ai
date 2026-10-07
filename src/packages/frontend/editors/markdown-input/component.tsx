@@ -258,6 +258,13 @@ export function MarkdownInput(props: Props) {
     onFontSizeChangeRef.current = onFontSizeChange;
   }, [onFontSizeChange]);
 
+  // CodeMirror's blur/focus handlers are registered once at mount, so they
+  // must call the latest callbacks, not the ones captured on first render.
+  const onBlurRef = useRef<typeof onBlur>(onBlur);
+  onBlurRef.current = onBlur;
+  const onFocusRef = useRef<typeof onFocus>(onFocus);
+  onFocusRef.current = onFocus;
+
   const [mentions, set_mentions] = useState<undefined | Item[]>(undefined);
   const [mentions_offset, set_mentions_offset] = useState<
     undefined | { left: number; top: number }
@@ -630,6 +637,9 @@ export function MarkdownInput(props: Props) {
 
   useEffect(() => {
     let cancelled = false;
+    const handleBlur = (editor: CodeMirror.Editor) =>
+      onBlurRef.current?.(editor.getValue());
+    const handleFocus = () => onFocusRef.current?.();
     let preventWindowCursorScroll:
       | ((
           editor: CodeMirror.Editor,
@@ -777,12 +787,8 @@ export function MarkdownInput(props: Props) {
         });
       }
 
-      if (onBlur != null) {
-        cm.current.on("blur", (editor) => onBlur(editor.getValue()));
-      }
-      if (onFocus != null) {
-        cm.current.on("focus", onFocus);
-      }
+      cm.current.on("blur", handleBlur);
+      cm.current.on("focus", handleFocus);
 
       preventWindowCursorScroll = (
         _editor: CodeMirror.Editor,
@@ -994,12 +1000,8 @@ export function MarkdownInput(props: Props) {
       }
       cm.current.off("change", saveValue);
       cm.current.off("paste", handle_paste_event as any);
-      if (onBlur) {
-        cm.current.off("blur", onBlur as any);
-      }
-      if (onFocus) {
-        cm.current.off("focus", onFocus as any);
-      }
+      cm.current.off("blur", handleBlur);
+      cm.current.off("focus", handleFocus);
       if (preventWindowCursorScroll != null) {
         cm.current.off("scrollCursorIntoView", preventWindowCursorScroll);
       }
