@@ -317,6 +317,7 @@ import {
   suggestedAgentProjectTitle,
 } from "./new-agent-defaults";
 import { assertCodexFundingModelReady } from "@cocalc/frontend/chat/codex-submit-preflight";
+import { NewAgentCodexPaymentControl } from "./new-agent-codex-payment";
 import { MembershipDetailsModal } from "@cocalc/frontend/project/start-button";
 import { showCodexProjectStartFailure } from "@cocalc/frontend/chat/codex-project-start-failure";
 import { getProjectStartPolicyBlockFromError } from "@cocalc/frontend/projects/runtime-start-policy";
@@ -2017,69 +2018,31 @@ function NewAgentPanel({
                   </ComposerPillButton>
                 </Dropdown>
                 <Text type="secondary">·</Text>
-                {paymentUnconfigured ? (
-                  <Button
-                    size="small"
-                    disabled={busy || !!pending}
-                    onClick={() => setSignInOpen(true)}
-                  >
-                    Sign in with ChatGPT
-                  </Button>
-                ) : (
-                  <Dropdown
-                    menu={{
-                      items: [
-                        ...paymentOptions.map(({ value, label, disabled }) => ({
-                          key: value,
-                          label,
-                          disabled,
-                        })),
-                        ...(chatGPTSignInAvailable
-                          ? [
-                              { type: "divider" as const },
-                              {
-                                key: SIGN_IN_WITH_CHATGPT_KEY,
-                                label: "Sign in with ChatGPT…",
-                              },
-                            ]
-                          : []),
-                      ],
-                      selectedKeys: [selectedPaymentValue],
-                      onClick: ({ key }) => {
-                        if (key === SIGN_IN_WITH_CHATGPT_KEY) {
-                          setSignInOpen(true);
-                          return;
-                        }
-                        if (key.startsWith("subscription:")) {
-                          setConfig((current) => ({
-                            ...current,
-                            paymentSource: "subscription",
-                            credentialId: key.slice("subscription:".length),
-                          }));
-                        } else {
-                          setConfig((current) => ({
-                            ...current,
-                            paymentSource: key as CodexPaymentSourcePreference,
-                            credentialId: undefined,
-                          }));
-                        }
-                      },
-                    }}
-                    trigger={["click"]}
-                  >
-                    <ComposerPillButton
-                      aria-label={`Change payment source. Current source: ${selectedPaymentLabel}`}
-                      disabled={busy || !!pending || paymentSourceLoading}
-                      style={{
-                        maxWidth: 120,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {selectedPaymentLabel}
-                    </ComposerPillButton>
-                  </Dropdown>
-                )}
+                <NewAgentCodexPaymentControl
+                  options={paymentOptions}
+                  selectedValue={selectedPaymentValue}
+                  selectedLabel={selectedPaymentLabel}
+                  signInAvailable={chatGPTSignInAvailable}
+                  unconfigured={paymentUnconfigured}
+                  disabled={busy || !!pending}
+                  loading={!!paymentSourceLoading}
+                  onSignIn={() => setSignInOpen(true)}
+                  onSelect={(key) => {
+                    if (key.startsWith("subscription:")) {
+                      setConfig((current) => ({
+                        ...current,
+                        paymentSource: "subscription",
+                        credentialId: key.slice("subscription:".length),
+                      }));
+                    } else {
+                      setConfig((current) => ({
+                        ...current,
+                        paymentSource: key as CodexPaymentSourcePreference,
+                        credentialId: undefined,
+                      }));
+                    }
+                  }}
+                />
               </span>
             )}
             {runtimeKind === "codex-native" && (
@@ -2289,8 +2252,6 @@ function NewAgentPanel({
     </div>
   );
 }
-
-const SIGN_IN_WITH_CHATGPT_KEY = "__sign-in-with-chatgpt";
 
 function AgentProjectContext({
   showEditorControls,
