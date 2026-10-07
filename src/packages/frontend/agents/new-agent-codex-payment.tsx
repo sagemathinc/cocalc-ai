@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Dropdown } from "antd";
+import { Button, Dropdown, Space } from "antd";
 
 import { ComposerPillButton } from "@cocalc/frontend/chat/composer-codex-controls";
 
@@ -16,8 +16,9 @@ export interface NewAgentCodexPaymentOption {
 }
 
 // Codex payment source for a new agent. Without a connected ChatGPT plan it
-// offers to sign in right here; when no payment source works at all (e.g. on
-// a CoCalc Star server, which provides no AI itself) that is the only control.
+// offers to sign in right here. When no payment source works at all (e.g. on
+// a CoCalc Star server, which provides no AI itself) it offers signing in
+// with either ChatGPT or Claude: neither provider is a prerequisite.
 export function NewAgentCodexPaymentControl({
   options,
   selectedValue,
@@ -28,6 +29,7 @@ export function NewAgentCodexPaymentControl({
   loading,
   onSelect,
   onSignIn,
+  onUseClaude,
 }: {
   options: NewAgentCodexPaymentOption[];
   selectedValue: string;
@@ -38,12 +40,25 @@ export function NewAgentCodexPaymentControl({
   loading: boolean;
   onSelect: (value: string) => void;
   onSignIn: () => void;
+  // Switches the new agent to Claude, whose controls offer its own sign-in.
+  onUseClaude?: () => void;
 }) {
   if (unconfigured) {
     return (
-      <Button size="small" disabled={disabled || loading} onClick={onSignIn}>
-        Sign in with ChatGPT
-      </Button>
+      <Space size={4} wrap>
+        <Button size="small" disabled={disabled || loading} onClick={onSignIn}>
+          Sign in with ChatGPT
+        </Button>
+        {onUseClaude && (
+          <Button
+            size="small"
+            disabled={disabled || loading}
+            onClick={onUseClaude}
+          >
+            Sign in with Claude
+          </Button>
+        )}
+      </Space>
     );
   }
   return (
@@ -58,7 +73,10 @@ export function NewAgentCodexPaymentControl({
           ...(signInAvailable
             ? [
                 { type: "divider" as const },
-                { key: SIGN_IN_WITH_CHATGPT_KEY, label: "Sign in with ChatGPT…" },
+                {
+                  key: SIGN_IN_WITH_CHATGPT_KEY,
+                  label: "Sign in with ChatGPT…",
+                },
               ]
             : []),
         ],

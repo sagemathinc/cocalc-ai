@@ -618,6 +618,9 @@ function NewAgentPanel({
       return "acp";
     }
   });
+  // Whether the runtime came from the source agent or the user's choice,
+  // rather than the Codex default.
+  const runtimeChosen = useRef(sourceRuntime != null);
   const [harnessSettings, setHarnessSettings] =
     useState<HarnessSessionSettings>(() => {
       try {
@@ -1614,6 +1617,63 @@ function NewAgentPanel({
     !paymentSource.hasSubscription;
   const paymentUnconfigured =
     chatGPTSignInAvailable && paymentSource?.source === "none";
+  // Codex is only the default runtime: someone who already connected Claude,
+  // but has no way to pay for Codex, starts with Claude.
+  useEffect(() => {
+    if (
+      !paymentUnconfigured ||
+      runtimeChosen.current ||
+      runtimeKind !== "codex-native"
+    )
+      return;
+    let disposed = false;
+    void webapp_client.conat_client.hub.system
+      .listExternalCredentials({ provider: "anthropic", scope: "account" })
+      .then((rows) => {
+        if (disposed || runtimeChosen.current) return;
+        if (
+          rows.some(
+            (row) =>
+              !row.revoked &&
+              (row.kind === "anthropic-api-key" ||
+                row.kind === CLAUDE_SUBSCRIPTION_KIND),
+          )
+        )
+          setRuntimeKind("claude-code");
+      })
+      .catch(() => {
+        /* Keep the Codex default. */
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [paymentUnconfigured, runtimeKind, boundAccount.accountId]);
+
+  function chooseRuntime(kind: NewAgentRuntimeKind) {
+    runtimeChosen.current = true;
+    setRuntimeKind(kind);
+  }
+
+  // Claude signs in through a project, so someone without any project gets
+  // their workspace now rather than when the agent is created.
+  async function switchToClaude() {
+    chooseRuntime("claude-code");
+    if (
+      projectId ||
+      !projectMap ||
+      emailVerificationRequired ||
+      automaticProjectPromise.current
+    )
+      return;
+    setBusy(true);
+    try {
+      await ensureAutomaticProject(firstRequest, false);
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setBusy(false);
+    }
+  }
   const selectedPaymentValue =
     paymentPreference === "subscription" && config.credentialId
       ? `subscription:${config.credentialId}`
@@ -1928,7 +1988,7 @@ function NewAgentPanel({
             <NewAgentRuntimeSelect
               value={runtimeKind}
               disabled={busy || !!pending}
-              onChange={setRuntimeKind}
+              onChange={chooseRuntime}
             />
             {runtimeKind === "codex-native" && (
               <span
@@ -2027,6 +2087,7 @@ function NewAgentPanel({
                   disabled={busy || !!pending}
                   loading={!!paymentSourceLoading}
                   onSignIn={() => setSignInOpen(true)}
+                  onUseClaude={() => void switchToClaude()}
                   onSelect={(key) => {
                     if (key.startsWith("subscription:")) {
                       setConfig((current) => ({

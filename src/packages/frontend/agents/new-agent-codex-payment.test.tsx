@@ -39,14 +39,47 @@ describe("NewAgentCodexPaymentControl", () => {
     expect(
       screen.queryByRole("button", { name: /Change payment source/ }),
     ).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Sign in with ChatGPT" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Sign in with ChatGPT" }),
+    );
     expect(onSignIn).toHaveBeenCalledTimes(1);
   });
 
+  it("offers Claude as an equal alternative when no payment source works", () => {
+    const onUseClaude = jest.fn();
+    const { onSignIn } = renderControl({ unconfigured: true, onUseClaude });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Sign in with Claude" }),
+    );
+    expect(onUseClaude).toHaveBeenCalledTimes(1);
+    expect(onSignIn).not.toHaveBeenCalled();
+  });
+
+  it("offers no Claude sign-in where switching runtimes is not possible", () => {
+    renderControl({ unconfigured: true });
+    expect(
+      screen.queryByRole("button", { name: "Sign in with Claude" }),
+    ).toBeNull();
+  });
+
+  it("offers no Claude sign-in while a payment source works", () => {
+    renderControl({ onUseClaude: jest.fn() });
+    expect(
+      screen.queryByRole("button", { name: "Sign in with Claude" }),
+    ).toBeNull();
+  });
+
   it("disables the sign-in button while the payment source is loading", () => {
-    const { onSignIn } = renderControl({ unconfigured: true, loading: true });
+    const { onSignIn } = renderControl({
+      unconfigured: true,
+      loading: true,
+      onUseClaude: jest.fn(),
+    });
     const button = screen.getByRole("button", { name: "Sign in with ChatGPT" });
     expect(button).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Sign in with Claude" }),
+    ).toBeDisabled();
     fireEvent.click(button);
     expect(onSignIn).not.toHaveBeenCalled();
   });
