@@ -841,13 +841,12 @@ export function useCodexLog({
                 return;
               catchingUp = true;
               lastCatchUpAt = now;
-              // Resumes after the last received message; normally finds nothing.
+              // Fetches anything after the last received message over the
+              // existing connection; normally finds nothing. Never a forced
+              // recovery: that re-subscribed every few seconds and showed
+              // "Stream reconnecting" whenever the agent was quiet.
               void stream
-                .recoverNow({
-                  force: true,
-                  priority: "background",
-                  reason: "codex_preview_catch_up",
-                })
+                .catchUp()
                 .then(() => {
                   if (stopped || liveStreamRef.current !== stream) return;
                   flushBufferedLiveLog();
