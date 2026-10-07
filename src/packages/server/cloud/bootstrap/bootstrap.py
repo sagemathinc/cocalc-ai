@@ -7962,9 +7962,43 @@ configure_project_network_table() {
   fi
 }
 
+# Per-project network policy (metadata block, egress rate limits, disabled
+# network) identifies a project's traffic with the nftables `socket cgroupv2`
+# match. Some kernels lack it (e.g. Docker Desktop's LinuxKit VM has no
+# nft_socket). Detect that once per boot; on such kernels the policy is off.
+# It is an anti-abuse measure for public sites with untrusted accounts, which
+# do not run on such hosts.
+PROJECT_NETWORK_CAPABILITY_FILE="/run/cocalc-project-network-capability"
+
+project_network_cgroup_match_supported() {
+  local cached probe_table pool_path result="unsupported"
+  cached="$(cat "$PROJECT_NETWORK_CAPABILITY_FILE" 2>/dev/null || true)"
+  case "$cached" in
+    supported) return 0 ;;
+    unsupported) return 1 ;;
+  esac
+  require_project_network_tools
+  configure_project_pool_hierarchy
+  pool_path="$(project_network_pool_cgroup_path)"
+  [ -d "/sys/fs/cgroup/${pool_path}" ] || return 0
+  probe_table="cocalc_capability_probe_$$"
+  if printf 'add table inet %s\\nadd chain inet %s probe { type filter hook output priority filter; policy accept; }\\nadd rule inet %s probe socket cgroupv2 level %s "%s" counter\\n' \\
+    "$probe_table" "$probe_table" "$probe_table" \\
+    "$(awk -F/ '{print NF}' <<< "$pool_path")" "$pool_path" |
+    run_project_network_nft -f - 2>/dev/null; then
+    result="supported"
+  fi
+  run_project_network_nft delete table inet "$probe_table" >/dev/null 2>&1 || true
+  printf '%s\\n' "$result" > "$PROJECT_NETWORK_CAPABILITY_FILE"
+  [ "$result" = "supported" ]
+}
+
 ensure_project_network_rule() {
   local project_id="$1"
   is_project_uuid "$project_id" || deny "project-id-invalid" "$project_id"
+  if ! project_network_cgroup_match_supported; then
+    return 0
+  fi
   # Listing a cgroup/socket rule chain can take many seconds on a busy host.
   # Project creation must not depend on that read path: append containment
   # rules atomically, then let the periodic full reconciliation remove any
@@ -8066,7 +8100,10 @@ verify_project_network_limits() {
   is_project_uuid "$project_id" || deny "project-id-invalid" "$project_id"
   require_project_network_tools
   marker="$(project_network_rule_marker "$project_id")"
-  if ! rules="$(run_project_network_nft list chain inet "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" 2>/dev/null)"; then
+  policy="$(project_network_policy "$project_id")"
+  if ! project_network_cgroup_match_supported; then
+    rules=""
+  elif ! rules="$(run_project_network_nft list chain inet "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" 2>/dev/null)"; then
     echo "project network nftables chain is missing" >&2
     return 1
   fi
@@ -8080,19 +8117,22 @@ verify_project_network_limits() {
   disabled_local_count="$(grep -Fc "comment \\\"${marker}-disabled-local\\\"" <<< "$rules" || true)"
   disabled_established_count="$(grep -Fc "comment \\\"${marker}-disabled-established\\\"" <<< "$rules" || true)"
   disabled_reject_count="$(grep -Fc "comment \\\"${marker}-disabled-reject\\\"" <<< "$rules" || true)"
-  policy="$(project_network_policy "$project_id")"
-  if [ "$metadata_ipv4_count" -ne 1 ] || [ "$metadata_ipv6_count" -ne 1 ] || [ "$startup_established_count" -ne 1 ] || [ "$startup_deny_count" -ne 1 ]; then
-    echo "project shared network rules are missing or duplicated: metadata_ipv4=${metadata_ipv4_count} metadata_ipv6=${metadata_ipv6_count} startup_established=${startup_established_count} startup_deny=${startup_deny_count}" >&2
-    return 1
-  fi
-  if [ "$policy" = "disabled" ]; then
-    if [ "$tcp_count" -ne 0 ] || [ "$udp_count" -ne 0 ] || [ "$disabled_dns_count" -ne 1 ] || [ "$disabled_local_count" -ne 1 ] || [ "$disabled_established_count" -ne 1 ] || [ "$disabled_reject_count" -ne 1 ]; then
-      echo "disabled project network rules are missing or duplicated: dns=${disabled_dns_count} local=${disabled_local_count} established=${disabled_established_count} reject=${disabled_reject_count} tcp=${tcp_count} udp=${udp_count}" >&2
+  # Without socket cgroup matching (see project_network_cgroup_match_supported)
+  # no rules are installed, so only the pasta limits below are verified.
+  if project_network_cgroup_match_supported; then
+    if [ "$metadata_ipv4_count" -ne 1 ] || [ "$metadata_ipv6_count" -ne 1 ] || [ "$startup_established_count" -ne 1 ] || [ "$startup_deny_count" -ne 1 ]; then
+      echo "project shared network rules are missing or duplicated: metadata_ipv4=${metadata_ipv4_count} metadata_ipv6=${metadata_ipv6_count} startup_established=${startup_established_count} startup_deny=${startup_deny_count}" >&2
       return 1
     fi
-  elif [ "$tcp_count" -ne 1 ] || [ "$udp_count" -ne 1 ] || [ "$disabled_dns_count" -ne 0 ] || [ "$disabled_local_count" -ne 0 ] || [ "$disabled_established_count" -ne 0 ] || [ "$disabled_reject_count" -ne 0 ]; then
-    echo "normal project network rules are missing or duplicated: tcp=${tcp_count} udp=${udp_count} dns=${disabled_dns_count} local=${disabled_local_count} established=${disabled_established_count} reject=${disabled_reject_count}" >&2
-    return 1
+    if [ "$policy" = "disabled" ]; then
+      if [ "$tcp_count" -ne 0 ] || [ "$udp_count" -ne 0 ] || [ "$disabled_dns_count" -ne 1 ] || [ "$disabled_local_count" -ne 1 ] || [ "$disabled_established_count" -ne 1 ] || [ "$disabled_reject_count" -ne 1 ]; then
+        echo "disabled project network rules are missing or duplicated: dns=${disabled_dns_count} local=${disabled_local_count} established=${disabled_established_count} reject=${disabled_reject_count} tcp=${tcp_count} udp=${udp_count}" >&2
+        return 1
+      fi
+    elif [ "$tcp_count" -ne 1 ] || [ "$udp_count" -ne 1 ] || [ "$disabled_dns_count" -ne 0 ] || [ "$disabled_local_count" -ne 0 ] || [ "$disabled_established_count" -ne 0 ] || [ "$disabled_reject_count" -ne 0 ]; then
+      echo "normal project network rules are missing or duplicated: tcp=${tcp_count} udp=${udp_count} dns=${disabled_dns_count} local=${disabled_local_count} established=${disabled_established_count} reject=${disabled_reject_count}" >&2
+      return 1
+    fi
   fi
   while IFS= read -r pid; do
     [ -n "$pid" ] || continue
@@ -8150,17 +8190,27 @@ apply_project_network_process_limits() {
 }
 
 reconcile_project_network_limits() {
-  local attempt snapshot rules
+  local attempt snapshot rules applied
   # During early boot, systemd may still be settling the cgroup v2 tree. nft
   # resolves socket cgroup paths while parsing the batch and rejects rules
   # whose paths are not visible yet. Recreate the hierarchy on every attempt
   # and give it time to become stable instead of aborting host bootstrap.
   for attempt in $(seq 1 "$PROJECT_NETWORK_BOOT_RECONCILE_ATTEMPTS"); do
     configure_project_pool_hierarchy
-    configure_project_network_table
-    snapshot="$(run_project_network_nft -a list chain inet "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN")"
-    rules="$(render_project_network_rules "$snapshot")"
-    if printf '%s\\n' "$rules" | run_project_network_nft -f -; then
+    applied=0
+    if project_network_cgroup_match_supported; then
+      configure_project_network_table
+      snapshot="$(run_project_network_nft -a list chain inet "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN")"
+      rules="$(render_project_network_rules "$snapshot")"
+      if printf '%s\\n' "$rules" | run_project_network_nft -f -; then
+        applied=1
+      fi
+    else
+      # Without socket cgroup matching there are no rules to reconcile; the
+      # pasta process limits still apply.
+      applied=1
+    fi
+    if [ "$applied" = 1 ]; then
       apply_project_network_process_limits
       return 0
     fi

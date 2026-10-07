@@ -3463,6 +3463,83 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             "disabled",
         )
 
+    def test_storage_wrapper_project_network_policy_is_off_without_socket_cgroup_match(
+        self,
+    ) -> None:
+        # Kernels without nftables socket cgroupv2 matching (Docker Desktop's
+        # LinuxKit VM) cannot express per-project rules; the policy is off
+        # there instead of blocking every project start.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(
+                make_cfg(tmpdir),
+                container_runtime_bundle=bootstrap.BundleSpec(
+                    "", None, "", "", "", ""
+                ),
+            )
+            captured: dict[str, str] = {}
+            original_text_write_atomic = bootstrap.text_write_atomic
+            original_chmod = bootstrap.os.chmod
+            original_chown = bootstrap.os.chown
+
+            def capture_write(path, data, **_kwargs):
+                captured[str(path)] = data
+                return len(data)
+
+            try:
+                bootstrap.text_write_atomic = capture_write
+                bootstrap.os.chmod = lambda *_args, **_kwargs: None
+                bootstrap.os.chown = lambda *_args, **_kwargs: None
+                bootstrap.install_privileged_wrappers(cfg)
+            finally:
+                bootstrap.text_write_atomic = original_text_write_atomic
+                bootstrap.os.chmod = original_chmod
+                bootstrap.os.chown = original_chown
+
+            script = captured["/usr/local/sbin/cocalc-runtime-storage"]
+
+            def body(name: str) -> str:
+                return (
+                    f"{name}() {{"
+                    + script.split(f"\n{name}() {{", 1)[1].split("\n}\n", 1)[0]
+                    + "\n}\n"
+                )
+
+            nft_log = Path(tmpdir) / "nft.log"
+            limits_log = Path(tmpdir) / "limits.log"
+            harness = "\n".join(
+                [
+                    "set -euo pipefail",
+                    'deny() { echo "DENY $*" >&2; exit 3; }',
+                    "is_project_uuid() { return 0; }",
+                    "require_project_network_tools() { :; }",
+                    "configure_project_pool_hierarchy() { :; }",
+                    "project_network_cgroup_match_supported() { return 1; }",
+                    "project_network_rule_marker() { echo marker; }",
+                    "project_network_policy() { echo disabled; }",
+                    f"run_project_network_nft() {{ echo \"$*\" >> '{nft_log}'; return 1; }}",
+                    "find_pasta_pids_for_project() { echo $$; }",
+                    f"apply_project_network_process_limits() {{ echo applied >> '{limits_log}'; }}",
+                    'PROJECT_PASTA_NOFILE_LIMIT="$(awk \'$1 == "Max" && $2 == "open" && $3 == "files" {print $4}\' /proc/$$/limits)"',
+                    'PROJECT_NETWORK_BOOT_RECONCILE_ATTEMPTS=1',
+                    'PROJECT_NETWORK_BOOT_RECONCILE_DELAY_SECONDS=0',
+                    body("ensure_project_network_rule"),
+                    body("verify_project_network_limits"),
+                    body("reconcile_project_network_limits"),
+                    "ensure_project_network_rule 11111111-1111-4111-8111-111111111111",
+                    "reconcile_project_network_limits",
+                    "echo ok",
+                ]
+            )
+            result = subprocess.run(
+                ["bash", "-c", harness], capture_output=True, text=True
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("ok", result.stdout)
+            self.assertFalse(nft_log.exists(), "no nft rules without socket matching")
+            self.assertEqual(limits_log.read_text(), "applied\n")
+            self.assertIn("project_network_cgroup_match_supported() {", script)
+            self.assertNotIn("project-network-policy-unenforceable", script)
+
     def test_storage_wrapper_uses_xattr_overlay_mounts_and_project_rustic_commands(
         self,
     ) -> None:

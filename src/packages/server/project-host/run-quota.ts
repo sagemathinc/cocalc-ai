@@ -76,14 +76,32 @@ export function applyHostRuntimePolicy({
   return quota;
 }
 
+// Blocking project network access is an anti-abuse measure for public sites
+// with untrusted free accounts. A CoCalc Star server only admits users it
+// invited (signup requires a registration token), so its projects always have
+// network access.
+export function applySetupProfileNetworkPolicy(
+  quota: Quota,
+  setupProfile: string | undefined = process.env.COCALC_SETUP_PROFILE,
+): Quota {
+  if (`${setupProfile ?? ""}`.trim() === "star") {
+    quota.network = true;
+  }
+  return quota;
+}
+
 export async function applyHostRuntimePolicyToRunQuota(
   run_quota: Quota | null | undefined,
   host_id?: string | null,
 ): Promise<Quota> {
-  if (!host_id) return run_quota ? { ...run_quota } : {};
+  if (!host_id) {
+    return applySetupProfileNetworkPolicy(run_quota ? { ...run_quota } : {});
+  }
   const { rows } = await getPool().query(
     "SELECT tier, metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
     [host_id],
   );
-  return applyHostRuntimePolicy({ run_quota, host: rows[0] });
+  return applySetupProfileNetworkPolicy(
+    applyHostRuntimePolicy({ run_quota, host: rows[0] }),
+  );
 }

@@ -126,6 +126,10 @@ Use Star for a lab, course, GPU box, agent sandbox, or small team that wants
 collaborators in the same browser-based CoCalc workspace on hardware they
 control. Star is one machine: it is not high availability or scale-out.
 
+Star is for people you invite: signing up requires a registration link. Every
+project has internet access; Star does not include the network restrictions
+that public CoCalc sites apply to free accounts.
+
 ## Product boundaries
 
 - Use CoCalc Plus for a local single-user install.

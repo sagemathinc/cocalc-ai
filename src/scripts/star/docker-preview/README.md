@@ -104,6 +104,13 @@ docker run --rm -v cocalc-star:/data -v "$PWD":/backup ubuntu \
 docker start cocalc-star
 ```
 
+## Who can use it
+
+Star is for people you invite: signing up requires a registration link, which
+you can share from the admin settings or with `star admin-link`. Every project
+has internet access; Star does not include the network restrictions that public
+CoCalc sites apply to free accounts.
+
 ## Settings
 
 | Variable                 | Default     | Meaning                                                             |
