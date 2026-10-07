@@ -227,6 +227,35 @@ test("wait batches intermittent output until its interval expires", async () => 
   }
 });
 
+test("waits accept up to two minutes and end early when guidance arrives", async () => {
+  const { jobs, runs } = fixture();
+  try {
+    const job = await jobs.start({ script: "build", yield_time_ms: 0 });
+    await expect(
+      jobs.wait({ job_id: job.job_id, yield_time_ms: 120_001 }),
+    ).rejects.toThrow("between 0 and 120000");
+    runs[0].output("stdout", "compiling\n");
+    const waiting = jobs.wait({ job_id: job.job_id, yield_time_ms: 120_000 });
+    jobs.releaseWaits();
+    expect(await waiting).toMatchObject({
+      status: "running",
+      stdout: "compiling\n",
+    });
+    expect(runs[0].signal.aborted).toBe(false);
+    // A release ends only the waits pending at that moment.
+    let returned = false;
+    const later = jobs
+      .wait({ job_id: job.job_id, cursor: 1, yield_time_ms: 120_000 })
+      .then(() => (returned = true));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(returned).toBe(false);
+    runs[0].finish({ code: 0, stdout: "", stderr: "" });
+    await later;
+  } finally {
+    await jobs.close();
+  }
+});
+
 test("a full output page ends a wait early without restarting the command", async () => {
   const { jobs, runs } = fixture();
   try {

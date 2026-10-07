@@ -170,6 +170,13 @@ services have a separate lifecycle and may require separate cleanup.
   from the Anthropic credential; CLI actions remain limited by its authority.
 - Subscription project commands are managed jobs. A short tool wait does not
   kill a running build. See the execution lifecycle below.
+- In subscription mode Claude can search the web (Claude's WebSearch, run by
+  Anthropic) and keep a task list, shown as a checklist in the activity log.
+  Fetching a specific web page (WebFetch) is available only in projects with
+  internet access. Claude Code's own file-based auto-memory is off; use CoCalc
+  agent memory instead.
+- Guidance you send while Claude works is delivered at its next step, the same
+  as in the Claude Code CLI. It does not cut off the current reply or tool call.
 - Live guidance requires adapter support; other messages queue. Automations
   and goal workflows are not yet supported by this integration.
 - A background subprocess finishing does not automatically wake a completed
@@ -216,9 +223,11 @@ cursor to read more output. Continue until the job has finished and
 \`has_more\` is false. \`project_exec_cancel\` stops a job and waits for
 cleanup; \`project_exec_list\` lists this controller's jobs.
 
-\`yield_time_ms\` is the maximum wait for one tool response (0-30 seconds,
+\`yield_time_ms\` is the maximum wait for one tool response (0-120 seconds,
 10 seconds by default). Output is batched until that interval expires, a page
 fills, or the job finishes, rather than returning for each output chunk.
+Guidance you send while Claude is waiting ends the wait early, so Claude reads
+it at once.
 It is independent of \`timeout_ms\`, the command deadline: one hour by
 default, configurable up to 24 hours. Four jobs can run concurrently per
 controller. Output is paginated and bounded; \`output_truncated\` explicitly

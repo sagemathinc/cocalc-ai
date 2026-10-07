@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { harnessPrompt } from "../harness-context";
+import { harnessPrompt, harnessSessionGuidance } from "../harness-context";
 import { artifactPublicationGuidance } from "../publication-guidance";
 
 const CLI = '"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"';
@@ -22,25 +22,40 @@ function request(workbench?: boolean) {
   } as any;
 }
 
-test("a workbench turn asks Claude to publish deliverables", () => {
-  const prompt = harnessPrompt(request(true));
-  expect(prompt).toContain(artifactPublicationGuidance(CLI, true));
-  // The retained process never sees this turn's COCALC_WORKBENCH.
-  expect(prompt).toContain(
-    `COCALC_WORKBENCH=1 ${CLI} project chat artifact publish`,
-  );
-  expect(prompt).not.toContain("no workbench-enabled surface");
-  expect(prompt).toContain('"message_date":"2026-09-30T00:00:00.000Z"');
-  expect(prompt.endsWith("Write a script that prints primes.")).toBe(true);
+test("session guidance carries both publication modes once", () => {
+  for (const subscription of [true, false]) {
+    const guidance = harnessSessionGuidance(subscription);
+    expect(guidance).toContain(artifactPublicationGuidance(CLI, true));
+    expect(guidance).toContain(artifactPublicationGuidance(CLI, false));
+    // The retained process never sees a turn's COCALC_WORKBENCH.
+    expect(guidance).toContain(
+      `COCALC_WORKBENCH=1 ${CLI} project chat artifact publish`,
+    );
+    expect(guidance.includes("request_user_input_async")).toBe(subscription);
+  }
 });
 
-test("other turns keep ordinary replies unless an artifact is requested", () => {
+test("a turn carries only its changing values", () => {
+  const prompt = harnessPrompt(request(true));
+  expect(prompt).toContain("Workbench is enabled for this turn.");
+  expect(prompt).toContain('"message_date":"2026-09-30T00:00:00.000Z"');
+  expect(prompt.endsWith("Write a script that prints primes.")).toBe(true);
+  // Static guidance lives in the system prompt, not in every user message.
+  expect(prompt).not.toContain(artifactPublicationGuidance(CLI, true));
+  expect(prompt.length).toBeLessThan(600);
   for (const workbench of [false, undefined]) {
-    const prompt = harnessPrompt(request(workbench));
-    expect(prompt).toContain(artifactPublicationGuidance(CLI, false));
-    expect(prompt).not.toContain("Workbench is enabled for this turn");
-    expect(prompt).not.toContain("COCALC_WORKBENCH=1");
+    expect(harnessPrompt(request(workbench))).toContain(
+      "Workbench is not enabled for this turn.",
+    );
   }
+});
+
+test("a turn carries the current memory list", () => {
+  const prompt = harnessPrompt({
+    ...request(),
+    agent_memory_context: "[Agent memory]\n- a-note: a fact",
+  });
+  expect(prompt).toContain("- a-note: a fact\n[/CoCalc turn context]");
 });
 
 test("native harness commands pass through unchanged", () => {
