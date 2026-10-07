@@ -52,6 +52,11 @@ RUN apt-get update \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 
+# The Star runtime user owns data in the /var/lib/cocalc volume, so its ids
+# must not depend on which users a future base image happens to create.
+RUN groupadd --gid 1001 cocalc-star \
+  && useradd --uid 1001 --gid 1001 --create-home --shell /bin/bash cocalc-star
+
 RUN systemctl mask \
     dev-hugepages.mount \
     sys-fs-fuse-connections.mount \
@@ -75,11 +80,12 @@ RUN chmod 0755 \
     /usr/local/sbin/cocalc-star-docker-preflight \
     /usr/local/sbin/cocalc-star-docker-init \
     /usr/local/sbin/cocalc-star-docker-entrypoint \
+  && printf '%s\n' "${COCALC_STAR_RELEASE_ID}" >/usr/local/share/cocalc-star-docker/release-id \
   && mkdir -p /var/lib/cocalc /opt/cocalc-star /mnt/cocalc /run/systemd \
   && systemctl enable cocalc-star-docker-init.service
 
 VOLUME ["/var/lib/cocalc"]
 
-EXPOSE 80 9100
+EXPOSE 80 443
 
 CMD ["/usr/local/sbin/cocalc-star-docker-entrypoint"]
