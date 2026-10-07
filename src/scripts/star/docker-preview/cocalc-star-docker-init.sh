@@ -184,8 +184,16 @@ reconcile_projects() {
   # Project containers do not survive a container restart; projects the
   # database still considers running must be marked stopped so users can
   # start them again.
-  "$STAR_SH" reconcile-runtime-state >/dev/null 2>&1 ||
-    log "warning: project runtime reconciliation failed; see '${STAR_SH} doctor'"
+  # The hub starts the local database, so retry while it comes up.
+  local output attempt
+  for attempt in $(seq 1 24); do
+    if output="$("$STAR_SH" reconcile-runtime-state 2>&1)"; then
+      return 0
+    fi
+    sleep 5
+  done
+  log "warning: project runtime reconciliation failed:"
+  printf '%s\n' "$output" | tail -n 20
 }
 
 print_access() {
