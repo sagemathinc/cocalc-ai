@@ -104,10 +104,11 @@ wait_ready() {
 }
 
 check() {
-  log "doctor"
-  $DOCKER exec "$NAME" "$STAR_SH" doctor
   log "smoke"
   $DOCKER exec "$NAME" "$STAR_SH" smoke
+  # After smoke, so the RootFS cache is prepared and every doctor check runs.
+  log "doctor"
+  $DOCKER exec "$NAME" "$STAR_SH" doctor
   log "HTTP on the published port"
   curl -fsS -o /dev/null "http://127.0.0.1:${PORT}/"
 }
