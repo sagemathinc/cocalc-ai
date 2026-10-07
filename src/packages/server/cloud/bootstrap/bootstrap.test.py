@@ -3504,40 +3504,79 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                     + "\n}\n"
                 )
 
-            nft_log = Path(tmpdir) / "nft.log"
-            limits_log = Path(tmpdir) / "limits.log"
-            harness = "\n".join(
-                [
-                    "set -euo pipefail",
-                    'deny() { echo "DENY $*" >&2; exit 3; }',
-                    "is_project_uuid() { return 0; }",
-                    "require_project_network_tools() { :; }",
-                    "configure_project_pool_hierarchy() { :; }",
-                    "project_network_cgroup_match_supported() { return 1; }",
-                    "project_network_rule_marker() { echo marker; }",
-                    "project_network_policy() { echo disabled; }",
-                    f"run_project_network_nft() {{ echo \"$*\" >> '{nft_log}'; return 1; }}",
-                    "find_pasta_pids_for_project() { echo $$; }",
-                    f"apply_project_network_process_limits() {{ echo applied >> '{limits_log}'; }}",
-                    'PROJECT_PASTA_NOFILE_LIMIT="$(awk \'$1 == "Max" && $2 == "open" && $3 == "files" {print $4}\' /proc/$$/limits)"',
-                    'PROJECT_NETWORK_BOOT_RECONCILE_ATTEMPTS=1',
-                    'PROJECT_NETWORK_BOOT_RECONCILE_DELAY_SECONDS=0',
-                    body("ensure_project_network_rule"),
-                    body("verify_project_network_limits"),
-                    body("reconcile_project_network_limits"),
-                    "ensure_project_network_rule 11111111-1111-4111-8111-111111111111",
+            functions = "".join(
+                body(name)
+                for name in (
+                    "project_network_policy_unenforceable",
+                    "ensure_project_network_rule",
                     "reconcile_project_network_limits",
-                    "echo ok",
-                ]
+                )
             )
-            result = subprocess.run(
-                ["bash", "-c", harness], capture_output=True, text=True
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("ok", result.stdout)
-            self.assertFalse(nft_log.exists(), "no nft rules without socket matching")
-            self.assertEqual(limits_log.read_text(), "applied\n")
-            self.assertIn("project_network_cgroup_match_supported() {", script)
+
+            def run_probe(mode: str) -> tuple[str, Path]:
+                work = Path(tmpdir) / mode
+                (work / "pool").mkdir(parents=True)
+                harness = "\n".join(
+                    [
+                        "set -euo pipefail",
+                        'deny() { echo "DENY $*" >&2; exit 3; }',
+                        "is_project_uuid() { return 0; }",
+                        "require_project_network_tools() { :; }",
+                        "configure_project_pool_hierarchy() { :; }",
+                        "configure_project_network_table() { :; }",
+                        "project_network_pool_cgroup_path() { echo cocalc-project-pool; }",
+                        "emit_project_network_rules() { echo 'add rule project'; }",
+                        "emit_project_metadata_rules() { :; }",
+                        "emit_project_startup_network_rules() { :; }",
+                        "render_project_network_rules() { echo 'add rule project'; }",
+                        "project_network_policy() { echo disabled; }",
+                        f"apply_project_network_process_limits() {{ echo applied >> '{work}/limits.log'; }}",
+                        f"PROJECT_POOL_CGROUP_DEFAULT='{work}/pool'",
+                        f"PROJECT_NETWORK_CAPABILITY_FILE='{work}/capability'",
+                        "PROJECT_NETWORK_TABLE=t PROJECT_NETWORK_CHAIN=c",
+                        "PROJECT_NETWORK_BOOT_RECONCILE_ATTEMPTS=1",
+                        "PROJECT_NETWORK_BOOT_RECONCILE_DELAY_SECONDS=0",
+                        f"MODE={mode}",
+                        "run_project_network_nft() {",
+                        '  local input=""',
+                        '  if [ "${1:-}" = -f ]; then input="$(cat)"; fi',
+                        f'  printf "%s\\n" "$* $input" >> \'{work}/nft.log\'',
+                        '  if grep -q "socket cgroupv2" <<< "$input"; then',
+                        '    case "$MODE" in',
+                        '      enoent) echo "Error: Could not process rule: No such file or directory" >&2; return 1 ;;',
+                        "      timeout) return 124 ;;",
+                        "    esac",
+                        "  fi",
+                        "  return 0",
+                        "}",
+                        functions,
+                        "if project_network_policy_unenforceable; then echo UNENFORCEABLE; else echo ENFORCED; fi",
+                        'cat "$PROJECT_NETWORK_CAPABILITY_FILE" 2>/dev/null || echo NOCACHE',
+                        'if [ "$MODE" = enoent ]; then',
+                        "  ensure_project_network_rule 11111111-1111-4111-8111-111111111111",
+                        "  reconcile_project_network_limits",
+                        "fi",
+                    ]
+                )
+                result = subprocess.run(
+                    ["bash", "-c", harness], capture_output=True, text=True
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                return result.stdout, work
+
+            # The kernel lacks the expressions: policy off, cached, and project
+            # starts install no rules; the pasta limits still apply.
+            out, work = run_probe("enoent")
+            self.assertEqual(out, "UNENFORCEABLE\nunsupported\n")
+            self.assertNotIn("add rule project", (work / "nft.log").read_text())
+            self.assertEqual((work / "limits.log").read_text(), "applied\n")
+            # An operational failure (timeout) keeps enforcing and is not cached.
+            out, _ = run_probe("timeout")
+            self.assertEqual(out, "ENFORCED\nNOCACHE\n")
+            # A kernel with both expressions enforces the policy.
+            out, work = run_probe("supported")
+            self.assertEqual(out, "ENFORCED\nsupported\n")
+            self.assertIn("fib daddr type local", (work / "nft.log").read_text())
             self.assertNotIn("project-network-policy-unenforceable", script)
 
     def test_storage_wrapper_uses_xattr_overlay_mounts_and_project_rustic_commands(

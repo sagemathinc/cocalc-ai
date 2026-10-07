@@ -283,6 +283,26 @@ main() {
     log "stopping reused project before validation"
     cocalc_cli --timeout 5m --rpc-timeout 1m project stop -w "$project_id" --wait >"${STATE_DIR}/project-stop.json"
   else
+    # Stop projects left running by earlier runs: users without admin rights
+    # may run only a limited number of projects at once.
+    local running_project
+    cocalc_cli --timeout 2m --rpc-timeout 1m project list >"${STATE_DIR}/project-list.json" 2>/dev/null || true
+    while IFS= read -r running_project; do
+      [ -n "$running_project" ] || continue
+      log "stopping project ${running_project} from an earlier smoke run"
+      cocalc_cli --timeout 5m --rpc-timeout 1m project stop -w "$running_project" --wait \
+        >"${STATE_DIR}/project-stop.json" 2>&1 || true
+    done < <(
+      node -e '
+        const fs = require("fs");
+        try {
+          const list = JSON.parse(fs.readFileSync(process.argv[1], "utf8")).data ?? [];
+          for (const p of list) {
+            if (["running", "starting"].includes(p.state)) console.log(p.project_id);
+          }
+        } catch {}
+      ' "${STATE_DIR}/project-list.json"
+    )
     log "creating project"
     create_args=(project create)
     if [ -n "$STAR_SMOKE_ROOTFS_IMAGE" ]; then

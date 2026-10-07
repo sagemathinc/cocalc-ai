@@ -7431,6 +7431,9 @@ project_pool_hierarchy_ready() {
   [ -d "$(project_legacy_cgroup)" ] || return 1
   [ -r "${PROJECT_POOL_CGROUP_DEFAULT}/cgroup.subtree_control" ] || return 1
   for controller in cpu memory pids io; do
+    if [ "$controller" = io ] && ! grep -qw io /sys/fs/cgroup/cgroup.controllers; then
+      continue
+    fi
     grep -qw "$controller" "${PROJECT_POOL_CGROUP_DEFAULT}/cgroup.subtree_control" || return 1
   done
   return 0
@@ -7964,39 +7967,59 @@ configure_project_network_table() {
 
 # Per-project network policy (metadata block, egress rate limits, disabled
 # network) identifies a project's traffic with the nftables `socket cgroupv2`
-# match. Some kernels lack it (e.g. Docker Desktop's LinuxKit VM has no
-# nft_socket). Detect that once per boot; on such kernels the policy is off.
-# It is an anti-abuse measure for public sites with untrusted accounts, which
-# do not run on such hosts.
+# match, and the disabled policy also needs `fib daddr type local`. Some
+# kernels lack these expressions (e.g. Docker Desktop's LinuxKit VM has neither
+# nft_socket nor nft_fib_inet). On such kernels the policy is off: it is an
+# anti-abuse measure for public sites with untrusted accounts, which do not run
+# on such hosts. Only a deterministic "expression unavailable" result counts;
+# any other nft failure leaves the policy enforced and is retried later.
 PROJECT_NETWORK_CAPABILITY_FILE="/run/cocalc-project-network-capability"
 
-project_network_cgroup_match_supported() {
-  local cached probe_table pool_path result="unsupported"
+project_network_policy_unenforceable() {
+  local cached probe_table pool_path level output status=0
   cached="$(cat "$PROJECT_NETWORK_CAPABILITY_FILE" 2>/dev/null || true)"
   case "$cached" in
-    supported) return 0 ;;
-    unsupported) return 1 ;;
+    supported) return 1 ;;
+    unsupported) return 0 ;;
   esac
   require_project_network_tools
   configure_project_pool_hierarchy
+  [ -d "$PROJECT_POOL_CGROUP_DEFAULT" ] || return 1
   pool_path="$(project_network_pool_cgroup_path)"
-  [ -d "/sys/fs/cgroup/${pool_path}" ] || return 0
-  probe_table="cocalc_capability_probe_$$"
-  if printf 'add table inet %s\\nadd chain inet %s probe { type filter hook output priority filter; policy accept; }\\nadd rule inet %s probe socket cgroupv2 level %s "%s" counter\\n' \\
-    "$probe_table" "$probe_table" "$probe_table" \\
-    "$(awk -F/ '{print NF}' <<< "$pool_path")" "$pool_path" |
-    run_project_network_nft -f - 2>/dev/null; then
-    result="supported"
+  level="$(awk -F/ '{print NF}' <<< "$pool_path")"
+  probe_table="cocalc_capability_probe_$$_${RANDOM}"
+  # A control rule proves that nft works at all, so that a failure below can
+  # only come from the expressions being probed.
+  if ! printf 'add table inet %s\\nadd chain inet %s probe { type filter hook output priority filter; policy accept; }\\nadd rule inet %s probe meta l4proto tcp counter\\n' \\
+    "$probe_table" "$probe_table" "$probe_table" |
+    run_project_network_nft -f - >/dev/null 2>&1; then
+    run_project_network_nft delete table inet "$probe_table" >/dev/null 2>&1 || true
+    return 1
   fi
+  output="$(
+    printf 'add rule inet %s probe socket cgroupv2 level %s "%s" counter\\nadd rule inet %s probe fib daddr type local counter\\n' \\
+      "$probe_table" "$level" "$pool_path" "$probe_table" |
+      run_project_network_nft -f - 2>&1
+  )" || status=$?
   run_project_network_nft delete table inet "$probe_table" >/dev/null 2>&1 || true
-  printf '%s\\n' "$result" > "$PROJECT_NETWORK_CAPABILITY_FILE"
-  [ "$result" = "supported" ]
+  if [ "$status" -eq 0 ]; then
+    printf 'supported\\n' > "$PROJECT_NETWORK_CAPABILITY_FILE"
+    return 1
+  fi
+  # The kernel rejects an expression whose module it lacks with ENOENT. The
+  # pool cgroup path exists (checked above), so that is the only cause here.
+  if [ "$status" -eq 1 ] &&
+    grep -q 'Could not process rule: No such file or directory' <<< "$output"; then
+    printf 'unsupported\\n' > "$PROJECT_NETWORK_CAPABILITY_FILE"
+    return 0
+  fi
+  return 1
 }
 
 ensure_project_network_rule() {
   local project_id="$1"
   is_project_uuid "$project_id" || deny "project-id-invalid" "$project_id"
-  if ! project_network_cgroup_match_supported; then
+  if project_network_policy_unenforceable; then
     return 0
   fi
   # Listing a cgroup/socket rule chain can take many seconds on a busy host.
@@ -8096,12 +8119,14 @@ project_cgroup_has_processes() {
 }
 
 verify_project_network_limits() {
-  local project_id="$1" marker rules metadata_ipv4_count metadata_ipv6_count startup_established_count startup_deny_count tcp_count udp_count disabled_dns_count disabled_local_count disabled_established_count disabled_reject_count policy pid found=0 limits
+  local project_id="$1" unenforceable marker rules metadata_ipv4_count metadata_ipv6_count startup_established_count startup_deny_count tcp_count udp_count disabled_dns_count disabled_local_count disabled_established_count disabled_reject_count policy pid found=0 limits
   is_project_uuid "$project_id" || deny "project-id-invalid" "$project_id"
   require_project_network_tools
   marker="$(project_network_rule_marker "$project_id")"
   policy="$(project_network_policy "$project_id")"
-  if ! project_network_cgroup_match_supported; then
+  unenforceable=0
+  if project_network_policy_unenforceable; then
+    unenforceable=1
     rules=""
   elif ! rules="$(run_project_network_nft list chain inet "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" 2>/dev/null)"; then
     echo "project network nftables chain is missing" >&2
@@ -8117,9 +8142,10 @@ verify_project_network_limits() {
   disabled_local_count="$(grep -Fc "comment \\\"${marker}-disabled-local\\\"" <<< "$rules" || true)"
   disabled_established_count="$(grep -Fc "comment \\\"${marker}-disabled-established\\\"" <<< "$rules" || true)"
   disabled_reject_count="$(grep -Fc "comment \\\"${marker}-disabled-reject\\\"" <<< "$rules" || true)"
-  # Without socket cgroup matching (see project_network_cgroup_match_supported)
-  # no rules are installed, so only the pasta limits below are verified.
-  if project_network_cgroup_match_supported; then
+  # Where the kernel cannot express the rules (see
+  # project_network_policy_unenforceable) none are installed, so only the
+  # pasta limits below are verified.
+  if [ "$unenforceable" -eq 0 ]; then
     if [ "$metadata_ipv4_count" -ne 1 ] || [ "$metadata_ipv6_count" -ne 1 ] || [ "$startup_established_count" -ne 1 ] || [ "$startup_deny_count" -ne 1 ]; then
       echo "project shared network rules are missing or duplicated: metadata_ipv4=${metadata_ipv4_count} metadata_ipv6=${metadata_ipv6_count} startup_established=${startup_established_count} startup_deny=${startup_deny_count}" >&2
       return 1
@@ -8198,7 +8224,7 @@ reconcile_project_network_limits() {
   for attempt in $(seq 1 "$PROJECT_NETWORK_BOOT_RECONCILE_ATTEMPTS"); do
     configure_project_pool_hierarchy
     applied=0
-    if project_network_cgroup_match_supported; then
+    if ! project_network_policy_unenforceable; then
       configure_project_network_table
       snapshot="$(run_project_network_nft -a list chain inet "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN")"
       rules="$(render_project_network_rules "$snapshot")"
@@ -8206,8 +8232,8 @@ reconcile_project_network_limits() {
         applied=1
       fi
     else
-      # Without socket cgroup matching there are no rules to reconcile; the
-      # pasta process limits still apply.
+      # The kernel cannot express the rules; the pasta process limits still
+      # apply.
       applied=1
     fi
     if [ "$applied" = 1 ]; then
