@@ -3440,7 +3440,13 @@ async function listClaimableMembershipPackagesAcrossCluster({
       site_only,
       verified_email_addresses,
     });
-    addClaimables(seedRows, seedBayId, (row) => row.kind === "site");
+    // The seed owns every site license, and is also an ordinary bay owning
+    // team and course packages (the loop below skips it).
+    addClaimables(
+      seedRows,
+      seedBayId,
+      (row) => !site_only || row.kind === "site",
+    );
   }
   if (site_only) {
     return sortClaimableMembershipPackages(Array.from(claimables.values()));
