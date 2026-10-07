@@ -16,6 +16,8 @@ import getPool, {
 } from "@cocalc/database/pool";
 
 jest.mock("@cocalc/backend/data", () => ({
+  // The real database settings: this test needs a real server.
+  ...jest.requireActual("@cocalc/backend/data"),
   __esModule: true,
   secrets: "/tmp/cocalc-test-secrets",
 }));
