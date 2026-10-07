@@ -520,7 +520,7 @@ export class CoreStream<T = any> extends EventEmitter {
     if (this.isClosed()) {
       return;
     }
-    await this.persistClient?.catchUp(opts);
+    await this.persistClient?.catchUp({ ...opts, after: this.lastSeq });
   };
 
   recoverNow = async (

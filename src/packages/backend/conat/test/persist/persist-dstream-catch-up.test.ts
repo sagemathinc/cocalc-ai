@@ -49,6 +49,20 @@ describe("dstream catchUp", () => {
     expect(b.getAll()).toEqual(["one", "two"]);
   });
 
+  it("does not replay what a freshly opened reader already has", async () => {
+    // This reader gets "one" and "two" from its bootstrap read, not from the
+    // changefeed.
+    const c = await connect().sync.dstream({ name, noCache: true });
+    expect(c.getAll()).toEqual(["one", "two"]);
+    const changes: unknown[] = [];
+    c.on("change", (mesg) => changes.push(mesg));
+    await c.catchUp();
+    await delay(50);
+    expect(changes).toEqual([]);
+    expect(c.getAll()).toEqual(["one", "two"]);
+    c.close();
+  });
+
   it("does nothing on a closed stream", async () => {
     b.close();
     await expect(b.catchUp()).resolves.toBeUndefined();

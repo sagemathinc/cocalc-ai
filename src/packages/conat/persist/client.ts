@@ -487,7 +487,13 @@ class PersistStreamClient extends EventEmitter {
    */
   catchUp = async ({
     timeout = RECOVERY_ATTEMPT_TIMEOUT,
-  }: { timeout?: number } = {}): Promise<void> => {
+    after,
+  }: {
+    timeout?: number;
+    /** Last seq the caller already has, e.g. from its bootstrap read, which
+     * does not pass through this client's changefeed. */
+    after?: number;
+  } = {}): Promise<void> => {
     if (
       this.isClosed() ||
       this.state != "ready" ||
@@ -501,6 +507,11 @@ class PersistStreamClient extends EventEmitter {
       this.socket.state === "disconnected"
     ) {
       return;
+    }
+    if (after != null && after > (this.lastSeq ?? 0)) {
+      // Without this the first catch-up after a bootstrap would replay the
+      // whole retained stream.
+      this.lastSeq = after;
     }
     // Live updates that arrive meanwhile are held and emitted after the
     // fetched ones, exactly as during recovery.
