@@ -78,10 +78,12 @@
     "commander": "^14.0.1",
     "playwright-core": "^1.57.0",
     "reflect-sync": "0.15.1",
+    "ws": "^8.21.0",
     "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.10",
+    "@types/ws": "^8.18.1",
     "@vercel/ncc": "^0.38.4"
   },
   "repository": {

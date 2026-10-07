@@ -31,6 +31,7 @@ import {
   startReverseTunnel,
   type ReverseTunnel,
 } from "../../core/reverse-tunnel";
+import { runSharedBrowserService } from "../../core/shared-browser/service";
 import type { ProjectCommandDeps } from "../project";
 import {
   ensureManagedProjectSshConfigEntry,
@@ -69,9 +70,9 @@ function parseStorage(value: string | undefined): ProfileStorage {
   return storage;
 }
 
-function parsePort(value: string | undefined): number {
+function parsePort(value: string | undefined, allowZero = false): number {
   const port = Number(value ?? 9222);
-  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+  if (!Number.isInteger(port) || port < (allowZero ? 0 : 1) || port > 65535) {
     throw new Error("--port must be an integer between 1 and 65535");
   }
   return port;
@@ -404,4 +405,33 @@ export function registerProjectBrowserCommands(
         runBrowserConnect(ctx, deps, opts),
       );
     });
+
+  browser
+    .command("serve")
+    .description(
+      "run the shared browser service in this project (`start` runs it for you as a project app)",
+    )
+    .option("--port <port>", "viewer and API port (default: $PORT)")
+    .option("--cdp-port <port>", "loopback port for agents' CDP", "9222")
+    .option("--chrome <path>", "browser executable")
+    .option(
+      "--profile-storage <where>",
+      "disk (default: a temporary directory under /tmp) or memory (/dev/shm, often too small in containers); either way deleted on exit",
+      "disk",
+    )
+    .action(
+      async (opts: {
+        port?: string;
+        cdpPort: string;
+        chrome?: string;
+        profileStorage?: string;
+      }) => {
+        await runSharedBrowserService({
+          port: parsePort(opts.port ?? process.env.PORT ?? "0", true),
+          cdpPort: parsePort(opts.cdpPort),
+          chrome: opts.chrome,
+          profileStorage: parseStorage(opts.profileStorage),
+        });
+      },
+    );
 }
