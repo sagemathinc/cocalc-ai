@@ -14,7 +14,7 @@ source "${SCRIPT_DIR}/lib.sh"
 : "${COCALC_BAY_CLOUDFLARED_WATCHDOG_ENABLED:=1}"
 : "${COCALC_BAY_CLOUDFLARED_METRICS_URL:=http://127.0.0.1:20241}"
 : "${COCALC_BAY_CLOUDFLARED_WATCHDOG_WINDOW_S:=60}"
-: "${COCALC_BAY_CLOUDFLARED_WATCHDOG_MIN_FAILURES:=30}"
+: "${COCALC_BAY_CLOUDFLARED_WATCHDOG_MIN_FAILURES:=20}"
 : "${COCALC_BAY_CLOUDFLARED_WATCHDOG_CONCENTRATION_PCT:=80}"
 : "${COCALC_BAY_CLOUDFLARED_WATCHDOG_FAILURE_THRESHOLD:=3}"
 : "${COCALC_BAY_CLOUDFLARED_WATCHDOG_RESTART_TIMEOUT_S:=60}"
@@ -31,6 +31,7 @@ mkdir -p "$STATE_DIR"
 chmod 0750 "$STATE_DIR"
 failure_file="${STATE_DIR}/failures"
 restart_file="${STATE_DIR}/last-restart"
+last_seen_file="${STATE_DIR}/last-journal-timestamp"
 
 exec 9>"${STATE_DIR}/watchdog.lock"
 if ! flock -n 9; then
@@ -77,23 +78,42 @@ if [[ -n "$active_since" ]] && active_epoch="$(date -d "$active_since" +%s 2>/de
     ((active_epoch > since)); then
   since="$active_epoch"
 fi
+# Each journal line counts toward at most one check: a strike needs new
+# failures, so one short burst cannot be re-read into several strikes.
+last_seen="$(cat "$last_seen_file" 2>/dev/null || printf '0')"
+if [[ ! "$last_seen" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+  last_seen=0
+fi
+if ((${last_seen%.*} > since)); then
+  since="${last_seen%.*}"
+fi
 
-# Output: "<total failures> <connIndex with most failures> <its failures>".
-read -r total top_conn top_failures < <(
-  journalctl --unit "$UNIT" --since "@${since}" --output cat --no-pager 2>/dev/null | \
-    awk '
-      /Request failed/ && match($0, /connIndex=[0-9]+/) {
-        conn = substr($0, RSTART + 10, RLENGTH - 10)
-        count[conn]++
-        total++
+# Output: "<total failures> <connIndex with most failures> <its failures>
+# <timestamp of the newest journal line read>".
+read -r total top_conn top_failures newest < <(
+  journalctl --unit "$UNIT" --since "@${since}" --output short-unix --no-pager 2>/dev/null | \
+    awk -v since="$since" -v last_seen="$last_seen" '
+      BEGIN { after = since + 0; if (last_seen + 0 > after) after = last_seen + 0; newest = 0 }
+      $1 ~ /^[0-9]+(\.[0-9]+)?$/ {
+        t = $1 + 0
+        if (t <= after) next
+        if (t > newest) { newest = t; newest_text = $1 }
+        if (/Request failed/ && match($0, /connIndex=[0-9]+/)) {
+          conn = substr($0, RSTART + 10, RLENGTH - 10)
+          count[conn]++
+          total++
+        }
       }
       END {
         top = "-"; best = 0
         for (conn in count) if (count[conn] > best) { best = count[conn]; top = conn }
-        printf "%d %s %d\n", total, top, best
+        printf "%d %s %d %s\n", total, top, best, (newest > 0 ? newest_text : "-")
       }
     '
 )
+if [[ "$newest" != "-" ]]; then
+  printf '%s\n' "$newest" > "$last_seen_file"
+fi
 
 reason=""
 if ((ready == 0)); then

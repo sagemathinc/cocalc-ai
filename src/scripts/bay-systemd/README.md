@@ -412,9 +412,9 @@ cancels every stream: cloudflared logs `Request failed ... canceled by remote`
 for one `connIndex`, and only part of the public traffic hangs. The watchdog
 restarts `cocalc-bay-cloudflared.service` in either of two cases:
 
-- in three consecutive checks, at least 80% of the failed requests in the last
-  minute come from one connection (and at least 30 of them), with two or more
-  connections ready;
+- in three consecutive checks, each with new failures since the previous
+  check, at least 80% of those failures come from one connection (and at least
+  20 of them), with two or more connections ready;
 - no tunnel connection is ready.
 
 In both cases the local frontdoor must be healthy. Failures spread over all

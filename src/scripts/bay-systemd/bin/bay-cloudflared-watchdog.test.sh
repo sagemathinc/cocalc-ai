@@ -44,11 +44,23 @@ cat > "${FAKE_BIN}/journalctl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$WATCHDOG_JOURNALCTL_LOG"
+since=0
+while (($#)); do
+  case "$1" in
+    --since) since="${2#@}"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+# Failures are logged now unless a test pins them to an earlier burst.
+ts="${FAKE_FAILURE_TS:-$(date +%s.%N)}"
+if ((${ts%.*} < since)); then
+  exit 0
+fi
 emit() {
   local conn="$1" count="$2" i
   for ((i = 0; i < count; i++)); do
-    printf '2026-10-07T20:27:31Z ERR  error="stream %s canceled by remote with error code 0" connIndex=%s event=1 ingressRule=0\n' "$i" "$conn"
-    printf '2026-10-07T20:27:31Z ERR Request failed error="stream %s canceled by remote with error code 0" connIndex=%s dest=https://cocalc.ai/customize event=0\n' "$i" "$conn"
+    printf '%s prod-bay-0 bay-cloudflared[1]: 2026-10-07T20:27:31Z ERR  error="stream %s canceled by remote with error code 0" connIndex=%s event=1 ingressRule=0\n' "$ts" "$i" "$conn"
+    printf '%s prod-bay-0 bay-cloudflared[1]: 2026-10-07T20:27:31Z ERR Request failed error="stream %s canceled by remote with error code 0" connIndex=%s dest=https://cocalc.ai/customize event=0\n' "$ts" "$i" "$conn"
   done
 }
 for spec in ${FAKE_FAILURES:-}; do
@@ -72,7 +84,7 @@ export COCALC_BAY_TOPOLOGY_ENV_FILE="${TMP}/missing-topology.env"
 export COCALC_BAY_SECRETS_ENV_FILE="${TMP}/missing-secrets.env"
 export COCALC_BAY_RUN_DIR="${TMP}/run"
 export COCALC_BAY_CLOUDFLARED_WATCHDOG_FAILURE_THRESHOLD=3
-export COCALC_BAY_CLOUDFLARED_WATCHDOG_MIN_FAILURES=30
+export COCALC_BAY_CLOUDFLARED_WATCHDOG_MIN_FAILURES=20
 export COCALC_BAY_CLOUDFLARED_WATCHDOG_READY_TIMEOUT_S=0
 export WATCHDOG_SYSTEMCTL_LOG="${TMP}/systemctl.log"
 export WATCHDOG_JOURNALCTL_LOG="${TMP}/journalctl.log"
@@ -88,6 +100,7 @@ reset_state() {
   rm -rf "$COCALC_BAY_RUN_DIR"
   export COCALC_BAY_CLOUDFLARED_WATCHDOG_FAILURE_THRESHOLD=3
   export FAKE_READY=4 FAKE_FRONTDOOR_HEALTHY=1 FAKE_UNIT_ACTIVE=1
+  unset FAKE_FAILURE_TS
 }
 
 restart_count() {
@@ -114,6 +127,13 @@ grep -q 'edges: 0=dfw08 1=dfw15' "$STDERR_LOG" || fail "restart log missing edge
 grep -q -- '--since @' "$WATCHDOG_JOURNALCTL_LOG" || fail "journal query is not time bounded"
 for _ in 1 2 3 4; do run_watchdog; done
 [[ "$(restart_count)" == "1" ]] || fail "restarted again during cooldown"
+
+# One short burst stays in the journal window for several checks, but each
+# line is evidence for only one check.
+reset_state
+export FAKE_FAILURE_TS="$(date +%s).250000" FAKE_FAILURES="0:120"
+for _ in 1 2 3 4; do run_watchdog; done
+[[ "$(restart_count)" == "0" ]] || fail "restarted after re-reading one stale burst"
 
 # Failures spread across connections point at the origin or clients.
 reset_state
