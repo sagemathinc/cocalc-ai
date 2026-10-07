@@ -9,8 +9,12 @@
 // use is inside a caller's transaction. Each test file gets fresh modules, so
 // these setups have not run yet.
 
-import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
+import getPool, {
+  initEphemeralDatabase,
+  isPgliteEnabled,
+} from "@cocalc/database/pool";
 import { ensureCopySchema } from "./copy-db";
+import { ensureCourseSecretSharingSchema } from "./course-secret-sharing";
 import { ensureProjectSecretsSchema } from "./project-secrets";
 
 beforeAll(async () => {
@@ -67,3 +71,32 @@ it("is ready after a first use inside a committed transaction", async () => {
     spy.mockRestore();
   }
 });
+
+// PGlite has one connection and serializes transactions, so the race needs a
+// real server.
+(isPgliteEnabled() ? it.skip : it)(
+  "orders a transaction's setup after the background setup started by another",
+  async () => {
+    const first = await getPool().connect();
+    const second = await getPool().connect();
+    try {
+      await first.query("BEGIN");
+      // Starts the background pool setup, which must wait for this commit.
+      await ensureCourseSecretSharingSchema(first);
+      await second.query("BEGIN");
+      // Not ready yet, so this sets up inside its own transaction too, racing
+      // the background setup for the same tables once `first` commits.
+      const inSecond = ensureCourseSecretSharingSchema(second);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await first.query("COMMIT");
+      await inSecond;
+      await second.query("COMMIT");
+      await ensureCourseSecretSharingSchema();
+    } finally {
+      await first.query("ROLLBACK").catch(() => {});
+      await second.query("ROLLBACK").catch(() => {});
+      first.release();
+      second.release();
+    }
+  },
+);

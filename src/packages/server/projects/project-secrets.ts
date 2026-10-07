@@ -95,7 +95,9 @@ let projectSecretsSchemaSetup: Promise<void> | undefined;
 
 function projectSecretsSchemaSetupOnPool(): Promise<void> {
   // Shared by concurrent callers; retried after a failure.
-  projectSecretsSchemaSetup ??= createProjectSecretsSchema(pool()).then(
+  projectSecretsSchemaSetup ??= withTransaction(
+    createProjectSecretsSchema,
+  ).then(
     () => {
       projectSecretsSchemaReady = true;
     },
@@ -115,12 +117,18 @@ export async function ensureProjectSecretsSchema(
   // Inside a caller's transaction: create what it needs there (that may still
   // roll back), and finish the setup on the pool once the caller's locks are
   // released. Never wait for it here: the caller's transaction may hold locks
-  // on these tables.
+  // on these tables. The advisory lock orders the two setups.
   await createProjectSecretsSchema(db);
   void projectSecretsSchemaSetupOnPool().catch(() => {});
 }
 
 async function createProjectSecretsSchema(db: Queryable): Promise<void> {
+  // Serialize setups (this process's pool setup, callers' transactions and
+  // other processes): concurrent CREATE ... IF NOT EXISTS of the same table
+  // fails with a unique violation in pg_type. Held until the transaction ends.
+  await db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+    "cocalc:project-secrets-schema",
+  ]);
   await db.query(`
     CREATE TABLE IF NOT EXISTS project_secrets (
       project_id UUID NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,

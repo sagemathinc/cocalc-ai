@@ -165,8 +165,8 @@ let courseSecretSharingSchemaSetup: Promise<void> | undefined;
 
 function courseSecretSharingSchemaSetupOnPool(): Promise<void> {
   // Shared by concurrent callers; retried after a failure.
-  courseSecretSharingSchemaSetup ??= createCourseSecretSharingSchema(
-    pool(),
+  courseSecretSharingSchemaSetup ??= transaction(
+    createCourseSecretSharingSchema,
   ).then(
     () => {
       courseSecretSharingSchemaReady = true;
@@ -187,12 +187,18 @@ export async function ensureCourseSecretSharingSchema(
   // Inside a caller's transaction: create what it needs there (that may still
   // roll back), and finish the setup on the pool once the caller's locks are
   // released. Never wait for it here: the caller's transaction may hold locks
-  // on these tables.
+  // on these tables. The advisory lock orders the two setups.
   await createCourseSecretSharingSchema(db);
   void courseSecretSharingSchemaSetupOnPool().catch(() => {});
 }
 
 async function createCourseSecretSharingSchema(db: Queryable): Promise<void> {
+  // Serialize setups (this process's pool setup, callers' transactions and
+  // other processes): concurrent CREATE ... IF NOT EXISTS of the same table
+  // fails with a unique violation in pg_type. Held until the transaction ends.
+  await db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+    "cocalc:course-secret-sharing-schema",
+  ]);
   await db.query(`CREATE TABLE IF NOT EXISTS course_secret_policies (
     policy_id UUID PRIMARY KEY,
     project_id UUID NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
