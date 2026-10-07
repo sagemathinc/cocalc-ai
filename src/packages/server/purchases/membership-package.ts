@@ -165,6 +165,7 @@ export async function createMembershipPackagePurchase(
         account_id,
         assigned_by_account_id: account_id,
         metadata: { educator_term: true },
+        educator_term_initial_assignment: true,
       },
       client,
     );

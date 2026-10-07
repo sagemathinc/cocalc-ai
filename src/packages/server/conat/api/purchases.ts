@@ -2156,6 +2156,7 @@ export async function revokeMembershipPackageSeat({
       package_id,
       account_id: target_account_id,
       email_address: target_email_address,
+      trusted_admin: isAdminActor,
     }),
   };
 }

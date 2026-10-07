@@ -12,8 +12,10 @@ import {
 } from "@cocalc/server/purchases/test-data";
 import { computeMembershipChange } from "@cocalc/server/membership/tiers";
 import {
+  assignMembershipPackageSeat,
   listMembershipPackageAssignments,
   resolveMembershipPackageQuote,
+  revokeMembershipPackageSeat,
 } from "@cocalc/server/membership/packages";
 import purchaseMembershipPackage from "@cocalc/server/purchases/membership-package";
 
@@ -275,5 +277,73 @@ describe("educator offers", () => {
     expect(await count()).toEqual({ packages: 1, purchases: 1 });
     const assignments = await listMembershipPackageAssignments({ package_id });
     expect(assignments.map((a) => a.account_id)).toEqual([prof]);
+  });
+
+  it("never lets the owner transfer or revoke the term's seat", async () => {
+    const tier = await createEducatorTier({ instructor_term_price: 0 });
+    const prof = await accountWithVerifiedEmail(`p-${uuid()}@ucla.edu`);
+    const { package_id } = await purchaseMembershipPackage({
+      account_id: prof,
+      product: {
+        type: "membership-package" as const,
+        kind: "team" as const,
+        membership_class: tier,
+        seat_count: 1,
+        metadata: { educator_term: true },
+      },
+    });
+    const friendEmail = `f-${uuid()}@example.com`;
+    const friend = await accountWithVerifiedEmail(friendEmail);
+    const profEmail = (
+      await getPool().query(
+        "SELECT email_address FROM accounts WHERE account_id=$1",
+        [prof],
+      )
+    ).rows[0].email_address;
+
+    for (const target of [{ account_id: prof }, { email_address: profEmail }]) {
+      await expect(
+        revokeMembershipPackageSeat({ package_id, ...target }),
+      ).rejects.toThrow("cannot be revoked by the owner");
+    }
+    for (const target of [
+      { account_id: friend },
+      { email_address: friendEmail },
+    ]) {
+      await expect(
+        assignMembershipPackageSeat({
+          package_id,
+          ...target,
+          assigned_by_account_id: prof,
+          metadata: { educator_term: true },
+        }),
+      ).rejects.toThrow("cannot be reassigned");
+    }
+    expect(
+      (await listMembershipPackageAssignments({ package_id })).map(
+        (a) => a.account_id,
+      ),
+    ).toEqual([prof]);
+
+    // An admin may still revoke it, but the seat can never be handed out
+    // again, not even through the purchase-only initial assignment.
+    expect(
+      await revokeMembershipPackageSeat({
+        package_id,
+        account_id: prof,
+        trusted_admin: true,
+      }),
+    ).toBe(true);
+    for (const account_id of [prof, friend]) {
+      await expect(
+        assignMembershipPackageSeat({
+          package_id,
+          account_id,
+          assigned_by_account_id: prof,
+          educator_term_initial_assignment: true,
+        }),
+      ).rejects.toThrow("cannot be reassigned");
+    }
+    expect(await listMembershipPackageAssignments({ package_id })).toEqual([]);
   });
 });

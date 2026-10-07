@@ -2726,6 +2726,7 @@ export async function assignMembershipPackageSeat(
     assigned_by_account_id,
     trusted_admin = false,
     metadata,
+    educator_term_initial_assignment = false,
   }: {
     package_id: string;
     account_id?: string;
@@ -2733,6 +2734,9 @@ export async function assignMembershipPackageSeat(
     assigned_by_account_id: string;
     trusted_admin?: boolean;
     metadata?: Record<string, unknown> | null;
+    // Internal only (never exposed through an API): the purchase transaction
+    // giving an educator term buyer their own seat.
+    educator_term_initial_assignment?: boolean;
   },
   client?: PoolClient,
 ): Promise<MembershipPackageAssignment> {
@@ -2747,6 +2751,23 @@ export async function assignMembershipPackageSeat(
       const normalizedEmailAddress = normalizeEmailAddress(email_address);
       if (!normalizedAccountId && !normalizedEmailAddress) {
         throw Error("account_id or email_address required");
+      }
+      if (isEducatorTermProduct(pkg)) {
+        // An educator term is a personal, fixed-term membership: its one seat
+        // goes to the buyer when it is purchased and can never be reassigned.
+        const everAssigned = await listMembershipPackageAssignments({
+          package_id,
+          include_revoked: true,
+          client: dbClient,
+        });
+        if (
+          !educator_term_initial_assignment ||
+          normalizedEmailAddress ||
+          normalizedAccountId !== pkg.owner_account_id ||
+          everAssigned.length > 0
+        ) {
+          throw Error("educator term memberships cannot be reassigned");
+        }
       }
       const requestedCourseValidation = await assertValidCourseSeatProject({
         pkg,
@@ -2940,10 +2961,12 @@ export async function revokeMembershipPackageSeat(
     package_id,
     account_id,
     email_address,
+    trusted_admin = false,
   }: {
     package_id: string;
     account_id?: string;
     email_address?: string;
+    trusted_admin?: boolean;
   },
   client?: PoolClient,
 ): Promise<boolean> {
@@ -2952,6 +2975,9 @@ export async function revokeMembershipPackageSeat(
     action: "revoke membership package seat",
     client,
     fn: async ({ client: dbClient, pkg }) => {
+      if (isEducatorTermProduct(pkg) && !trusted_admin) {
+        throw Error("educator term memberships cannot be revoked by the owner");
+      }
       const pool = getQueryClient(dbClient);
       const normalizedAccountId = `${account_id ?? ""}`.trim() || undefined;
       const normalizedEmailAddress = normalizeEmailAddress(email_address);
