@@ -1,98 +1,137 @@
-# CoCalc Star Docker Preview
+# CoCalc Star in Docker
 
-This is a privileged Docker-based preview appliance for CoCalc Star. It is for
-local evaluation and release validation, not for hardened multi-tenant
-production hosting.
+CoCalc Star is a complete single-server CoCalc. The Docker image is the
+easiest way to install and upgrade it: everything runs in one container, and
+all of your data lives in one Docker volume.
 
-The Docker layer is intentionally a thin packaging wrapper. The first preview
-boots the current single-hub Star runtime, but the customer-facing workflow
-should not depend on that internal layout. Keep this wrapper replaceable by the
-Rocket/bay-style multi-worker systemd runtime as Star moves toward the same
-scalable process layout used by full Rocket deployments.
+Docker is used here only to distribute the software. The container runs
+privileged; the isolation boundary between users is inside the container,
+where each project runs in its own rootless Podman container.
 
-In particular, avoid making image tags, volumes, environment variables, or docs
-promise "one hub process" semantics. The intended transition path is that a
-customer can keep using the same Docker preview shape while the container
-internals evolve from the current compact Star deployment to multiple Node.js
-processes and service units.
+## Requirements
 
-Build the image from a CoCalc source checkout:
+- A Linux host with Docker and cgroup v2 (any current distribution).
+- 4 or more CPUs, 16 GB of RAM, and 50 GB or more of free disk space for the
+  volume (projects are stored in a 40 GB sparse btrfs image by default).
+- For a public server: a DNS name pointing at the host and inbound TCP port 443
+  open. Port 80 is optional.
 
-```sh
-src/scripts/star/docker-preview/build-image.sh --tag cocalc/star:preview
-```
+## Install
 
-The default build does a slow builder-container pass that precomputes the
-default RootFS cache and embeds it in the final Docker image. This makes
-`docker run` much faster because first boot only initializes local state,
-publishes the already-cached RootFS, starts services, and prints signup URLs.
-
-Reuse an existing RootFS cache artifact:
+On a server with a DNS name (HTTPS certificates are obtained automatically):
 
 ```sh
-src/scripts/star/docker-preview/build-image.sh \
-  --tag cocalc/star:preview \
-  --rootfs-cache dist/star/docker-preview/cocalc-star-rootfs-cache-....tar.gz
+docker run -d --name cocalc-star --restart unless-stopped \
+  --privileged --cgroupns=host \
+  -v cocalc-star:/var/lib/cocalc \
+  -p 443:443 -p 80:80 \
+  -e COCALC_STAR_DOMAIN=star.example.com \
+  sagemathinc/star
 ```
 
-Skip embedding the RootFS cache for development:
+To try it on your own computer instead, omit the domain and open
+<http://localhost:8170>:
 
 ```sh
-src/scripts/star/docker-preview/build-image.sh \
-  --tag cocalc/star:preview \
-  --skip-rootfs-cache
+docker run -d --name cocalc-star --restart unless-stopped \
+  --privileged --cgroupns=host \
+  -v cocalc-star:/var/lib/cocalc \
+  -p 8170:80 -e COCALC_STAR_HTTP_PORT=8170 \
+  sagemathinc/star
 ```
 
-Run it on a Linux Docker host with systemd and cgroup v2:
+First boot takes a few minutes. Follow it and get the link for creating the
+first admin account with:
 
 ```sh
-docker run --privileged --cgroupns=host \
-  --security-opt seccomp=unconfined \
-  --tmpfs /run --tmpfs /run/lock \
-  -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
-  -v cocalc-star-data:/var/lib/cocalc \
-  -p 8170:80 \
-  cocalc/star:preview
+docker logs -f cocalc-star
 ```
 
-The container prints first-boot status and the admin signup URL to Docker
-stdout. Open `http://localhost:8170` after the first-boot installer prints the
-bootstrap URL. The persistent data volume is `/var/lib/cocalc`; it contains the
-Star database, project data image, rootfs cache, secrets, and bootstrap state.
-
-Useful commands:
+The link is printed again at any time by:
 
 ```sh
-docker exec -it <container> /opt/cocalc-star/source/src/scripts/star/star.sh status
-docker exec -it <container> /opt/cocalc-star/source/src/scripts/star/star.sh doctor
-docker exec -it <container> /opt/cocalc-star/source/src/scripts/star/star.sh smoke
-docker exec -it <container> /opt/cocalc-star/source/src/scripts/star/star.sh bootstrap-link
+docker exec cocalc-star /opt/cocalc-star/source/src/scripts/star/star.sh bootstrap-link
 ```
 
-Runtime environment knobs:
+## Upgrade
+
+Pull the new image and replace the container. The volume keeps all accounts,
+projects, settings and certificates:
 
 ```sh
-COCALC_STAR_HOSTNAME=localhost
-COCALC_STAR_HTTP_PORT=8170
-COCALC_STAR_ACCESS_URL=http://localhost:8170
-COCALC_STAR_DOCKER_ALLOW_DEGRADED=1
-COCALC_STAR_BTRFS_SIZE=40G
-COCALC_STAR_BUILD_DEFAULT_ROOTFS=1
-COCALC_STAR_DEFAULT_ROOTFS_BASE_IMAGE=docker.io/buildpack-deps:26.04
+docker pull sagemathinc/star
+docker rm -f cocalc-star
+docker run -d --name cocalc-star ...   # the same command you installed with
 ```
 
-Stop and restart with the same volume to preserve state:
+On start, the container detects the new release, reinstalls it over the
+existing volume and logs `upgrading CoCalc Star from <old> to <new>`. Running
+projects are stopped by the upgrade; users can start them again immediately.
+
+To roll back, run the previous image tag with the same volume.
+
+## Back up
+
+Everything is in the `cocalc-star` volume. Stop the container for a
+consistent copy:
 
 ```sh
-docker stop <container>
-docker run ... -v cocalc-star-data:/var/lib/cocalc cocalc/star:preview
+docker stop cocalc-star
+docker run --rm -v cocalc-star:/data -v "$PWD":/backup ubuntu \
+  tar -C /data -czf /backup/cocalc-star-backup.tar.gz .
+docker start cocalc-star
 ```
 
-Remove all preview data only after exporting anything you need:
+## Settings
+
+| Variable                 | Default     | Meaning                                                             |
+| ------------------------ | ----------- | ------------------------------------------------------------------- |
+| `COCALC_STAR_DOMAIN`     |             | Public DNS name; enables HTTPS with automatic certificates.         |
+| `COCALC_STAR_ACME_EMAIL` |             | Contact email for the certificate authority.                        |
+| `COCALC_STAR_HOSTNAME`   | `localhost` | Host name used in links when no domain is set.                      |
+| `COCALC_STAR_HTTP_PORT`  | `80`        | Host port mapped to the container's port 80, used in printed links. |
+| `COCALC_STAR_ACCESS_URL` |             | Override the URL printed in links entirely.                         |
+| `COCALC_STAR_BTRFS_SIZE` | `40G`       | Size of the project storage image, set on first boot.               |
+
+## Troubleshooting
 
 ```sh
-docker volume rm cocalc-star-data
+docker exec cocalc-star /opt/cocalc-star/source/src/scripts/star/star.sh status
+docker exec cocalc-star /opt/cocalc-star/source/src/scripts/star/star.sh doctor
+docker exec cocalc-star /opt/cocalc-star/source/src/scripts/star/star.sh smoke
+docker exec cocalc-star journalctl -u cocalc-star-hub -n 200
 ```
+
+On hosts that restrict unprivileged user namespaces with AppArmor (Ubuntu
+23.10 and later), the container loads a profile named `cocalc-star-podman`
+into the host kernel that gives Star's managed Podman the same permission the
+distribution grants `/usr/bin/podman`.
+
+## Building the image
+
+The Docker layer is intentionally a thin packaging wrapper around the normal
+Star release artifact, so the container internals can evolve (for example to
+the multi-process Rocket/bay layout) without changing the volume, ports or
+environment variables documented above.
+
+Build an image from a CoCalc source checkout on a Linux host with Docker,
+Node.js 26 (via nvm) and pnpm 11:
+
+```sh
+src/scripts/star/docker-preview/build-image.sh --tag cocalc/star:dev
+```
+
+This builds the runtime release artifact, then runs a builder container that
+precomputes the default RootFS cache and embeds it in the image, so first boot
+only initializes local state. Useful options:
+
+- `--rootfs-cache <tgz>` reuses a RootFS cache artifact from an earlier build.
+- `--skip-runtime-build` packages the already-built workspace.
+- `--skip-rootfs-cache` builds the RootFS on first boot instead (slow; for
+  development only).
+
+Set `COCALC_STAR_CONTAINER_RUNTIME_TARBALL` to reuse a managed Podman runtime
+archive and skip compiling it.
 
 ## Native multi-architecture Docker Hub releases
 
