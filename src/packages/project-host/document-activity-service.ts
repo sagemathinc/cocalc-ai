@@ -18,6 +18,7 @@ import { isProjectCollaboratorGroup } from "@cocalc/conat/auth/subject-policy";
 import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import { isValidUUID } from "@cocalc/util/misc";
 import { syncdbPath } from "@cocalc/util/jupyter/names";
+import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 
 const logger = getLogger("project-host:document-activity");
 
@@ -381,6 +382,21 @@ export async function handleListRecentRequest(
   return rows.slice(0, normalizeLimit(opts?.limit));
 }
 
+// Browsers record document activity and open sync documents with absolute
+// paths ("/home/user/lectures/a.ipynb"), while callers such as the course
+// file-use export ask with home-relative paths ("lectures/a.ipynb"). Match
+// both spellings of the same file.
+export function fileUsePathVariants(path: string): string[] {
+  const home = DEFAULT_PROJECT_RUNTIME_HOME;
+  const variants = new Set([path]);
+  if (path.startsWith(`${home}/`)) {
+    variants.add(path.slice(home.length + 1));
+  } else if (!path.startsWith("/")) {
+    variants.add(`${home}/${path.replace(/^\.\//, "")}`);
+  }
+  return [...variants];
+}
+
 export async function handleGetFileUseTimesRequest(
   this: { subject?: string },
   opts: {
@@ -405,6 +421,7 @@ export async function handleGetFileUseTimesRequest(
     : account_id;
   const limit = Math.max(1, Math.min(10_000, Math.floor(opts?.limit ?? 1000)));
   const resp: FileUseTimesResponse = { target_account_id };
+  const paths = fileUsePathVariants(path);
 
   if (opts?.access_times ?? true) {
     const stream = await getAccessStream({ client, project_id });
@@ -412,7 +429,10 @@ export async function handleGetFileUseTimesRequest(
     const messages = stream.getAll();
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       const event = messages[i];
-      if (event?.path !== path || event?.account_id !== target_account_id) {
+      if (
+        !paths.includes(event?.path) ||
+        event?.account_id !== target_account_id
+      ) {
         continue;
       }
       const when = Date.parse(`${event.time ?? ""}`);
@@ -430,19 +450,28 @@ export async function handleGetFileUseTimesRequest(
   if (opts?.edit_times) {
     // Notebook patches belong to the syncdb, but access events use the visible
     // filename above. Patch times are document-wide, not per-account edits.
-    const editPath = path.endsWith(".ipynb") ? syncdbPath(path) : path;
-    const patchStream = await dstream({
-      project_id,
-      name: patchesStreamName({ path: editPath }),
-      noAutosave: true,
-      noInventory: true,
-      client,
-    });
-    try {
-      resp.edit_times = patchStream.times().map((x) => x?.valueOf());
-    } finally {
-      patchStream.close();
+    const editTimes = new Set<number>();
+    for (const variant of paths) {
+      const editPath = variant.endsWith(".ipynb")
+        ? syncdbPath(variant)
+        : variant;
+      const patchStream = await dstream({
+        project_id,
+        name: patchesStreamName({ path: editPath }),
+        noAutosave: true,
+        noInventory: true,
+        client,
+      });
+      try {
+        for (const t of patchStream.times()) {
+          const ms = t?.valueOf();
+          if (ms != null) editTimes.add(ms);
+        }
+      } finally {
+        patchStream.close();
+      }
     }
+    resp.edit_times = [...editTimes].sort((a, b) => a - b);
   }
 
   return resp;

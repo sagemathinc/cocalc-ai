@@ -377,12 +377,75 @@ describe("notebook usage export", () => {
       });
       expect(result.edit_times).toEqual([Date.parse(editTime)]);
       expect(result.access_times).toBeUndefined();
-      expect(dstreamMock).toHaveBeenCalledTimes(1);
+      // The home-relative and absolute spellings are both read.
+      expect(dstreamMock).toHaveBeenCalledTimes(2);
       expect(dstreamMock).toHaveBeenCalledWith(
         expect.objectContaining({ name }),
       );
     },
   );
+
+  it("matches browser-recorded absolute paths when asked with relative ones", async () => {
+    // Browsers record activity and open notebooks as /home/user/...; the
+    // course export asks with home-relative paths (support #20952/#20955).
+    const { client, markFile, getFileUseTimes } = await service();
+    const absolute = `/home/user/${path}`;
+    streams.set(
+      `${project_id}:patchflow//home/user/lectures/.example.ipynb.sage-jupyter2`,
+      makeStream([{ time: editTime }]),
+    );
+    await markFile({
+      client,
+      account_id: student,
+      project_id,
+      path: absolute,
+      action: "open",
+    });
+    const relative = await getFileUseTimes({
+      client,
+      account_id: teacher,
+      project_id,
+      path,
+      target_account_id: student,
+      access_times: true,
+      edit_times: true,
+    });
+    expect(relative.access_times).toHaveLength(1);
+    expect(relative.edit_times).toEqual([Date.parse(editTime)]);
+    const viaAbsolute = await getFileUseTimes({
+      client,
+      account_id: teacher,
+      project_id,
+      path: absolute,
+      target_account_id: student,
+      access_times: true,
+      edit_times: true,
+    });
+    expect(viaAbsolute.access_times).toHaveLength(1);
+    expect(viaAbsolute.edit_times).toEqual([Date.parse(editTime)]);
+  });
+
+  it("merges edit times recorded under both spellings without duplicates", async () => {
+    const { client, getFileUseTimes } = await service();
+    const later = "2026-10-02T10:00:00.000Z";
+    streams.set(`${project_id}:${patchName}`, makeStream([{ time: editTime }]));
+    streams.set(
+      `${project_id}:patchflow//home/user/lectures/.example.ipynb.sage-jupyter2`,
+      makeStream([{ time: later }, { time: editTime }]),
+    );
+    const result = await getFileUseTimes({
+      client,
+      account_id: teacher,
+      project_id,
+      path,
+      edit_times: true,
+      access_times: false,
+    });
+    expect(result.edit_times).toEqual([
+      Date.parse(editTime),
+      Date.parse(later),
+    ]);
+  });
 
   it("does not invent history for an unrecorded file", async () => {
     const { client, getFileUseTimes } = await service();
