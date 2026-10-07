@@ -24,10 +24,13 @@ function retainRecovery(recovery: Recovery) {
   // It outlives controllers and never retains scripts, credentials or output.
   recoveryTimer = setInterval(() => void recover(), 30_000);
   recoveryTimer.unref();
+  // Most leftovers exit within seconds of being killed: check once soon, so a
+  // fenced agent session reopens quickly instead of after a full interval.
+  setTimeout(() => void recover(), 5_000).unref();
 }
 
 async function recover(): Promise<void> {
-  if (recovering) return;
+  if (recovering || recoveries.size === 0) return;
   recovering = true;
   const batch = [...recoveries.values()].slice(0, 64);
   // Rotate unresolved entries so a busy scope cannot starve later recoveries.
