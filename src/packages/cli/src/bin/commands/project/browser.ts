@@ -194,7 +194,7 @@ async function runBrowserConnect(
     normalizeProjectSshHostAlias,
     removeProjectSshConfigBlock,
     projectSshConfigBlockMarkers,
-    resolveCloudflaredBinary,
+    ensureCloudflaredBinary,
   } = deps;
   const storage = parseStorage(opts.profileStorage);
   const projectPort = parsePort(opts.port);
@@ -235,8 +235,10 @@ async function runBrowserConnect(
       ssh_port: route.ssh_port,
     },
     keyPath,
+    // Like `project ssh`: use cloudflared from PATH, or the copy the CLI
+    // keeps in its data dir, downloading it on first use.
     cloudflaredBinary:
-      route.transport !== "direct" ? resolveCloudflaredBinary() : null,
+      route.transport !== "direct" ? await ensureCloudflaredBinary() : null,
     removeProjectSshConfigBlock,
     projectSshConfigBlockMarkers,
   });
