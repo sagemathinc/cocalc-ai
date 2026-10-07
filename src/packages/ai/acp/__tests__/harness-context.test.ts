@@ -46,11 +46,20 @@ test("a turn carries only its changing values", () => {
   expect(prompt.endsWith("Write a script that prints primes.")).toBe(true);
   // Static guidance lives in the system prompt, not in every user message.
   expect(prompt).not.toContain(artifactPublicationGuidance(CLI, true));
-  expect(prompt.length).toBeLessThan(600);
+  expect(prompt.length).toBeLessThan(1200);
+  // Except what a turn must never lose: math formatting and how to publish
+  // from a shell that does not carry the turn's COCALC_WORKBENCH.
+  expect(prompt).toContain("Write mathematics as LaTeX");
+  expect(prompt).toContain(
+    `COCALC_WORKBENCH=1 ${CLI} project chat artifact publish --project `,
+  );
+  expect(prompt).toContain("--message-date 2026-09-30T00:00:00.000Z");
   for (const workbench of [false, undefined]) {
-    expect(harnessPrompt(request(workbench))).toContain(
-      "Workbench is not enabled for this turn.",
-    );
+    const other = harnessPrompt(request(workbench));
+    expect(other).toContain("Workbench is not enabled for this turn.");
+    expect(other).toContain("Write mathematics as LaTeX");
+    expect(other).not.toContain("COCALC_WORKBENCH=1");
+    expect(other).toContain("--experimental");
   }
 });
 

@@ -43,6 +43,30 @@ export function harnessHasSessionGuidance(profile: {
   return profile.version === 2 && profile.id === "claude-code";
 }
 
+/**
+ * The few rules a turn must never lose, even if its session was opened before
+ * the session guidance existed or the guidance did not reach the system
+ * prompt: math formatting, and how to publish from this turn's shell, which
+ * never carries the turn's COCALC_WORKBENCH (found on lite2b, Oct 7 2026).
+ */
+function turnEssentials(
+  workbench: boolean,
+  context: {
+    project_id?: string;
+    path?: string;
+    thread_id?: string;
+    message_date?: string;
+  },
+): string {
+  const publish = `${COCALC_CLI} project chat artifact publish --project ${context.project_id} --path ${JSON.stringify(context.path)} --thread-id ${context.thread_id} --message-date ${context.message_date}`;
+  return [
+    MATH_FORMATTING_GUIDANCE,
+    workbench
+      ? `To publish an artifact, run: COCALC_WORKBENCH=1 ${publish} --source <file> (set COCALC_WORKBENCH=1 on the command itself; your shell does not carry per-turn values).`
+      : `This turn is not workbench-enabled: publish an artifact only if the user explicitly asks, with: ${publish} --experimental --source <file>.`,
+  ].join("\n");
+}
+
 /** Retained harness processes cannot receive updated per-turn environment values. */
 export function harnessPrompt(
   request: Pick<
@@ -63,7 +87,8 @@ export function harnessPrompt(
     return request.prompt;
   return `${inlineSessionGuidance ? `${harnessSessionGuidance(false)}\n` : ""}[CoCalc turn context]
 ${request.runtime ? `Project working directory for this turn: ${JSON.stringify(request.runtime.profile.cwd)}. Use this directory for project commands unless the task requires another directory.\n` : ""}Workbench is ${request.chat?.workbench ? "enabled" : "not enabled"} for this turn.
-Publication context: ${JSON.stringify(context)}${request.agent_memory_context ? `\n${request.agent_memory_context}` : ""}
+Publication context: ${JSON.stringify(context)}
+${turnEssentials(request.chat?.workbench === true, context)}${request.agent_memory_context ? `\n${request.agent_memory_context}` : ""}
 [/CoCalc turn context]
 
 ${request.prompt}`;
