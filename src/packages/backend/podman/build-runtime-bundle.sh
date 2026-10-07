@@ -64,9 +64,18 @@ if [[ "${1:-}" != "--inner" ]]; then
   cp "$0" "$TMP/build.sh"
   chmod 755 "$TMP/build.sh"
 
+  # Rootful Docker leaves the build tree owned by root, which the host-side
+  # cleanup cannot remove. Rootless podman already maps container root to the
+  # invoking user, where a chown would map to a subordinate UID instead.
+  WORK_OWNER=""
+  if [[ "$ENGINE" == "docker" ]]; then
+    WORK_OWNER="$(id -u):$(id -g)"
+  fi
+
   "$ENGINE" run --rm \
     --platform "linux/$ARCH" \
     -e COCALC_RUNTIME_BUILD_INNER=1 \
+    -e WORK_OWNER="$WORK_OWNER" \
     -e PODMAN_VERSION="$PODMAN_VERSION" \
     -e CONMON_VERSION="$CONMON_VERSION" \
     -e CRUN_VERSION="$CRUN_VERSION" \
@@ -199,3 +208,7 @@ done
 
 tar --sort=name --mtime='UTC 2020-01-01' --owner=0 --group=0 --numeric-owner \
   -C /work/stage -cJf "/work/container-runtime-linux-$ARCH.tar.xz" container-runtime
+
+if [[ -n "${WORK_OWNER:-}" ]]; then
+  chown -R "$WORK_OWNER" /work
+fi
