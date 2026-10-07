@@ -607,6 +607,43 @@ async function getMembershipDetailsUsageStatus({
   }
 }
 
+// CoCalc Star is a self-hosted server without billing: membership tiers do
+// not limit what one account may do there, only the machine-wide cap on
+// running projects does. Per-project settings such as snapshot retention keep
+// their defaults.
+const STAR_UNLIMITED_USAGE_LIMITS = [
+  "max_projects",
+  "max_sponsored_running_projects",
+  "total_storage_soft_bytes",
+  "total_storage_hard_bytes",
+  "egress_5h_bytes",
+  "egress_7d_bytes",
+  "cpu_5h_seconds",
+  "cpu_7d_seconds",
+  "browser_idle_timeout_seconds",
+] as const;
+
+export function applySetupProfileMembershipLimits(
+  membership: MembershipResolution,
+  setupProfile: string | undefined = process.env.COCALC_SETUP_PROFILE,
+): MembershipResolution {
+  if (`${setupProfile ?? ""}`.trim() !== "star") return membership;
+  function unlimited<T extends object | undefined>(limits: T): T {
+    if (limits == null) return limits;
+    const next = { ...limits };
+    for (const key of STAR_UNLIMITED_USAGE_LIMITS) delete next[key];
+    return next;
+  }
+  return {
+    ...membership,
+    entitlements: membership.entitlements && {
+      ...membership.entitlements,
+      usage_limits: unlimited(membership.entitlements.usage_limits),
+    },
+    effective_limits: unlimited(membership.effective_limits),
+  };
+}
+
 export async function resolveMembershipDetailsForAccount(
   account_id: string,
   opts?: {
@@ -616,10 +653,12 @@ export async function resolveMembershipDetailsForAccount(
   const { candidates, selected } =
     await buildMembershipResolutionForAccount(account_id);
   const override = await getActiveAccountEntitlementOverride(account_id);
-  const effectiveSelected = applyAccountEntitlementOverride({
-    membership: selected,
-    override,
-  });
+  const effectiveSelected = applySetupProfileMembershipLimits(
+    applyAccountEntitlementOverride({
+      membership: selected,
+      override,
+    }),
+  );
   const usage_status = await getMembershipDetailsUsageStatus({
     account_id,
     resolution: effectiveSelected,
@@ -651,5 +690,7 @@ export async function resolveMembershipForAccount(
     account_id,
     options?.client,
   );
-  return applyAccountEntitlementOverride({ membership: selected, override });
+  return applySetupProfileMembershipLimits(
+    applyAccountEntitlementOverride({ membership: selected, override }),
+  );
 }

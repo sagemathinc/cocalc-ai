@@ -840,7 +840,11 @@ bootstrap_link() {
   }
   url="$(json_string_field "$result" bootstrap_url)"
   [ -n "$url" ] || {
-    log "the first-admin link was already used; run '$0 admin-link' to create a new admin link"
+    local admin_link_command="$0 admin-link"
+    if [ -e /.dockerenv ]; then
+      admin_link_command="docker exec cocalc-star star admin-link"
+    fi
+    log "the first-admin link was already used; run '$admin_link_command' to create a new admin link"
     exit 1
   }
   print_access_instructions "$url"
