@@ -73,6 +73,27 @@ const upstreamTimeoutMs = intEnv(
   "COCALC_BAY_FRONTDOOR_UPSTREAM_TIMEOUT_MS",
   15000,
 );
+// The readiness probe only proves the worker's HTTP listener and Conat
+// routing. A worker can pass it while every real application request hangs,
+// so the frontdoor also issues its own request to a representative
+// application route. Set the path to "off" to disable.
+const appProbePathSetting = env(
+  "COCALC_BAY_FRONTDOOR_APP_PROBE_PATH",
+  "/customize",
+);
+const appProbePath = appProbePathSetting === "off" ? "" : appProbePathSetting;
+const appProbeIntervalMs = intEnv(
+  "COCALC_BAY_FRONTDOOR_APP_PROBE_INTERVAL_MS",
+  5000,
+);
+const appProbeTimeoutMs = intEnv(
+  "COCALC_BAY_FRONTDOOR_APP_PROBE_TIMEOUT_MS",
+  5000,
+);
+const appProbeUnhealthyThreshold = intEnv(
+  "COCALC_BAY_FRONTDOOR_APP_PROBE_UNHEALTHY_THRESHOLD",
+  3,
+);
 
 let nextWorkerOffset = 0;
 const workers = Array.from({ length: workerCount }, (_, index) => ({
@@ -86,6 +107,10 @@ const workers = Array.from({ length: workerCount }, (_, index) => ({
   applicationTimeouts: [],
   lastApplicationTimeout: 0,
   lastApplicationTimeoutError: "",
+  appProbeFailures: 0,
+  appProbeLastOk: 0,
+  appProbeLastError: "",
+  appProbeIsolated: false,
   upgrades: new Set(),
 }));
 
@@ -266,6 +291,134 @@ function checkWorker(worker) {
   });
 }
 
+// Frontdoor-generated application probes are independent of client behavior,
+// unlike proxied application timeouts, which stay observational.
+function checkWorkerApplication(worker) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok, error = "") => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      recordWorkerAppProbe(worker, ok, error);
+      resolve();
+    };
+    const req = http.request(
+      {
+        hostname: worker.host,
+        port: worker.port,
+        path: appProbePath,
+        method: "GET",
+        headers: { "x-cocalc-bay-frontdoor-probe": "1" },
+        timeout: appProbeTimeoutMs,
+      },
+      (res) => {
+        const status = res.statusCode;
+        res.resume();
+        res.once("end", () => {
+          if (status != null && status >= 200 && status < 400) {
+            finish(true);
+          } else {
+            finish(false, `app probe status ${status}`);
+          }
+        });
+        res.once("error", (err) => finish(false, err.message));
+      },
+    );
+    req.on("timeout", () => {
+      req.destroy(new Error(`app probe timeout after ${appProbeTimeoutMs}ms`));
+    });
+    req.on("error", (err) => finish(false, err.message));
+    req.end();
+  });
+}
+
+function recordWorkerAppProbe(worker, ok, error = "", now = Date.now()) {
+  if (ok) {
+    worker.appProbeFailures = 0;
+    worker.appProbeLastOk = now;
+    worker.appProbeLastError = "";
+  } else {
+    worker.appProbeFailures += 1;
+    worker.appProbeLastError = error;
+  }
+}
+
+// Isolate a worker only when it repeatedly fails the application probe while
+// a strict majority of the other ready workers pass it. A shared dependency
+// (database, settings) slows every worker at once; it must never shrink the
+// routable pool, and a single worker is never isolated.
+function computeAppProbeIsolation(
+  candidates,
+  {
+    drained = new Set(),
+    threshold = appProbeUnhealthyThreshold,
+    minHealthy = minHealthyWorkers,
+  } = {},
+) {
+  const ready = candidates.filter(
+    (worker) => worker.healthy && !drained.has(worker.id),
+  );
+  const failing = ready.filter(
+    (worker) => (worker.appProbeFailures ?? 0) >= threshold,
+  );
+  const passing = ready.filter(
+    (worker) => (worker.appProbeFailures ?? 0) === 0,
+  );
+  const isolated = new Set();
+  if (
+    failing.length > 0 &&
+    passing.length > failing.length &&
+    passing.length >= Math.max(1, minHealthy)
+  ) {
+    for (const worker of failing) {
+      isolated.add(worker.id);
+    }
+  }
+  return isolated;
+}
+
+function applyAppProbeIsolation() {
+  const isolated = computeAppProbeIsolation(workers, {
+    drained: drainedWorkerIds(),
+  });
+  for (const worker of workers) {
+    const next = isolated.has(worker.id);
+    if (next && !worker.appProbeIsolated) {
+      worker.appProbeIsolated = true;
+      log("worker isolated after failing application probes", {
+        worker_id: worker.id,
+        consecutive_failures: worker.appProbeFailures,
+        path: appProbePath,
+        error: worker.appProbeLastError,
+      });
+      evictWorkerUpgrades(worker);
+    } else if (!next && worker.appProbeIsolated) {
+      worker.appProbeIsolated = false;
+      log("worker passed application probes again", { worker_id: worker.id });
+    }
+  }
+}
+
+let appProbeInFlight;
+function scheduleAppProbe() {
+  if (!appProbePath || appProbeInFlight != null) {
+    return appProbeInFlight;
+  }
+  appProbeInFlight = Promise.all(workers.map(checkWorkerApplication))
+    .then(applyAppProbeIsolation)
+    .catch((err) => log("application probe failed", { error: err.message }))
+    .finally(() => {
+      appProbeInFlight = undefined;
+    });
+  return appProbeInFlight;
+}
+
+function isRoutable(worker) {
+  return worker.healthy && !worker.appProbeIsolated;
+}
+
 async function refreshHealth() {
   await Promise.all(workers.map(checkWorker));
 }
@@ -285,7 +438,9 @@ function scheduleHealthRefresh() {
 
 function healthyWorkers() {
   const drained = drainedWorkerIds();
-  return workers.filter((worker) => worker.healthy && !drained.has(worker.id));
+  return workers.filter(
+    (worker) => isRoutable(worker) && !drained.has(worker.id),
+  );
 }
 
 function workerById(id) {
@@ -293,7 +448,9 @@ function workerById(id) {
 }
 
 function isAvailable(worker) {
-  return worker != null && worker.healthy && !drainedWorkerIds().has(worker.id);
+  return (
+    worker != null && isRoutable(worker) && !drainedWorkerIds().has(worker.id)
+  );
 }
 
 function parseCookies(header) {
@@ -561,7 +718,10 @@ function writeHealth(res) {
       workers: workers.map((worker) => ({
         id: worker.id,
         port: worker.port,
-        healthy: worker.healthy,
+        // Routable: ready and not isolated by application probes. The hub
+        // watchdog restarts workers that stay unhealthy here.
+        healthy: isRoutable(worker),
+        ready: worker.healthy,
         drained: drained.has(worker.id),
         consecutive_failures: worker.consecutiveFailures,
         active_upgrades: worker.upgrades.size,
@@ -575,6 +735,17 @@ function writeHealth(res) {
           worker.lastApplicationTimeoutError || null,
         last_ok: worker.lastOk ? new Date(worker.lastOk).toISOString() : null,
         last_error: worker.lastError || null,
+        app_probe: appProbePath
+          ? {
+              path: appProbePath,
+              isolated: worker.appProbeIsolated,
+              consecutive_failures: worker.appProbeFailures,
+              last_ok: worker.appProbeLastOk
+                ? new Date(worker.appProbeLastOk).toISOString()
+                : null,
+              last_error: worker.appProbeLastError || null,
+            }
+          : null,
       })),
       affinity: {
         cookie: affinityCookieName,
@@ -726,12 +897,18 @@ function start() {
       workerHealthPath,
       unhealthyThreshold,
       applicationTimeoutWindowMs,
+      appProbePath,
+      appProbeIntervalMs,
+      appProbeUnhealthyThreshold,
       publicIngressMode,
     });
     await scheduleHealthRefresh();
   });
 
   setInterval(scheduleHealthRefresh, healthIntervalMs).unref();
+  if (appProbePath) {
+    setInterval(scheduleAppProbe, appProbeIntervalMs).unref();
+  }
 }
 
 if (require.main === module) {
@@ -739,6 +916,8 @@ if (require.main === module) {
 }
 
 module.exports = {
+  checkWorkerApplication,
+  computeAppProbeIsolation,
   evictWorkerUpgrades,
   formatHealthError,
   isContentAddressedStaticRequest,
@@ -747,6 +926,7 @@ module.exports = {
   isTopLevelDocumentNavigation,
   prepareResponseHeaders,
   proxyRequestHeaders,
+  recordWorkerAppProbe,
   recordWorkerApplicationTimeout,
   recordWorkerHealth,
   recentApplicationTimeouts,
