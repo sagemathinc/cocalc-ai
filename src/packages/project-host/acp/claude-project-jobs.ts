@@ -111,7 +111,13 @@ export class ClaudeProjectJobs {
     job.cleanupUnconfirmed = true;
     this.unproven.add(job);
     this.cleanupBlocked = true;
-    for (const other of this.jobs.values()) this.stop(other, "canceled");
+    for (const other of this.jobs.values()) {
+      // A canceled peer may still be executing until its own result or proof
+      // arrives: keep the fence until then too.
+      if (other.finished === undefined && !other.cleanupProven)
+        this.unproven.add(other);
+      this.stop(other, "canceled");
+    }
   }
   private cleanupProven(job: Job) {
     job.cleanupProven = true;
@@ -320,6 +326,9 @@ export class ClaudeProjectJobs {
           // Stop the other jobs too; never grant more work after losing the
           // ability to account for execution authority in this controller.
           this.blockCleanup(job);
+        } else {
+          // Confirmed at exit: this job no longer holds a fence open.
+          this.cleanupProven(job);
         }
         if (!job.transient) {
           if (result.stdout) this.append(job, "stdout", result.stdout);

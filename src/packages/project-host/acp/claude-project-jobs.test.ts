@@ -474,3 +474,42 @@ test("unconfirmed cleanup says what happens next and when to restart", async () 
     await jobs.close();
   }
 });
+
+test("a peer canceled by a fence keeps it until the peer is accounted for", async () => {
+  // Executors that, like a real one, may keep running after an abort.
+  const runs: {
+    finish: (result: SandboxExecResult) => void;
+    confirmCleanup: () => void;
+  }[] = [];
+  const execute: ProjectJobExecutor = (_s, _c, _signal, options) =>
+    new Promise((resolve) =>
+      runs.push({
+        finish: resolve,
+        confirmCleanup: options.onCleanupConfirmed,
+      }),
+    );
+  const jobs = new ClaudeProjectJobs(execute);
+  await jobs.start({ script: "a", yield_time_ms: 0 });
+  await jobs.start({ script: "b", yield_time_ms: 0 });
+  // a returns without a cleanup proof; b is canceled but has not returned.
+  runs[0].finish({
+    code: null,
+    stdout: "",
+    stderr: "",
+    cleanupConfirmed: false,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  // a's late proof alone must not reopen: b may still be executing.
+  runs[0].confirmCleanup();
+  jobs.resume();
+  await expect(jobs.start({ script: "c" })).rejects.toThrow(
+    "cleanup is unconfirmed",
+  );
+  // b settles with confirmed cleanup: now nothing is unaccounted for.
+  runs[1].finish({ code: 130, stdout: "", stderr: "", cleanupConfirmed: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  const next = await jobs.start({ script: "d", yield_time_ms: 0 });
+  expect(next.status).toBe("running");
+  runs[2].finish({ code: 0, stdout: "", stderr: "", cleanupConfirmed: true });
+  await jobs.close();
+});
