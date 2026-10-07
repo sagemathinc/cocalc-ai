@@ -65,12 +65,33 @@ export function updateHarnessPlan(
   return plan.current;
 }
 
+const STATUS_TEXT: Record<HarnessPlanStatus, string> = {
+  pending: "Pending",
+  in_progress: "In progress",
+  completed: "Done",
+};
+
+// Read by screen readers only; the icon shows the status visually.
+const VISUALLY_HIDDEN = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  margin: -1,
+  padding: 0,
+  overflow: "hidden",
+  clip: "rect(0 0 0 0)",
+  whiteSpace: "nowrap",
+  border: 0,
+} as const;
+
 function StatusIcon({ status }: { status: HarnessPlanStatus }) {
   if (status === "completed")
-    return <CheckSquareOutlined style={{ color: UI_COLORS.success }} />;
+    return (
+      <CheckSquareOutlined aria-hidden style={{ color: UI_COLORS.success }} />
+    );
   if (status === "in_progress")
-    return <CaretRightOutlined style={{ color: UI_COLORS.info }} />;
-  return <BorderOutlined style={{ color: UI_COLORS.secondary }} />;
+    return <CaretRightOutlined aria-hidden style={{ color: UI_COLORS.info }} />;
+  return <BorderOutlined aria-hidden style={{ color: UI_COLORS.secondary }} />;
 }
 
 export function HarnessPlanRow({
@@ -107,6 +128,7 @@ export function HarnessPlanRow({
             }}
           >
             <StatusIcon status={item.status} />
+            <span style={VISUALLY_HIDDEN}>{STATUS_TEXT[item.status]}: </span>
             <span
               style={
                 item.status === "completed"

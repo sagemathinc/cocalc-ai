@@ -38,6 +38,10 @@ test("one checklist shows the latest task list where it last changed", () => {
   render(<HarnessPlanRow entry={state.current!} />);
   expect(screen.getByText("1 of 2 done")).toBeTruthy();
   expect(screen.getByText("Summarize it")).toBeTruthy();
+  // Each task's status is text, not only an icon.
+  expect(
+    screen.getAllByRole("listitem").map((item) => item.textContent),
+  ).toEqual(["Done: Find the paper", "In progress: Summarize it"]);
 });
 
 test("other harness updates are not plans", () => {
