@@ -143,6 +143,7 @@ persist_ok=true
 router_ok=true
 frontdoor_ok=true
 healthy_workers=0
+isolated_workers=""
 
 if ! "$router_only"; then
   if ! "${SCRIPT_DIR}/bay-postgres-check" >/dev/null 2>&1; then
@@ -153,6 +154,23 @@ if ! "$router_only"; then
   fi
   if ! "${SCRIPT_DIR}/bay-frontdoor-health" >/dev/null 2>&1; then
     frontdoor_ok=false
+  else
+    # A worker can pass /ready while the frontdoor has isolated it for failing
+    # application probes. Count only workers the frontdoor will route to.
+    isolated_workers="$(
+      curl --silent --max-time "${COCALC_BAY_HEALTH_TIMEOUT_S}" \
+        "$(frontdoor_url)" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    workers = json.load(sys.stdin).get("workers", [])
+except Exception:
+    workers = []
+print(",".join(
+    str(w["id"]) for w in workers
+    if isinstance(w.get("id"), int) and (w.get("app_probe") or {}).get("isolated") is True
+))
+' 2>/dev/null || true
+    )"
   fi
 fi
 
@@ -162,6 +180,9 @@ fi
 
 if ! "$router_only"; then
   for worker_id in $(seq 1 "$COCALC_BAY_WORKER_COUNT"); do
+    if [[ ",${isolated_workers}," == *",${worker_id},"* ]]; then
+      continue
+    fi
     if "${SCRIPT_DIR}/bay-worker-health" "$worker_id" >/dev/null 2>&1; then
       healthy_workers=$((healthy_workers + 1))
     fi
@@ -180,8 +201,8 @@ if "$postgres_ok" && "$persist_ok" && "$router_ok" && "$frontdoor_ok" \
   ok=true
 fi
 
-printf '{"ok":%s,"postgres_ok":%s,"persist_ok":%s,"router_ok":%s,"frontdoor_ok":%s,"healthy_workers":%s,"min_healthy_workers":%s}\n' \
+printf '{"ok":%s,"postgres_ok":%s,"persist_ok":%s,"router_ok":%s,"frontdoor_ok":%s,"healthy_workers":%s,"min_healthy_workers":%s,"isolated_workers":[%s]}\n' \
   "$ok" "$postgres_ok" "$persist_ok" "$router_ok" "$frontdoor_ok" "$healthy_workers" \
-  "$COCALC_BAY_MIN_HEALTHY_WORKERS"
+  "$COCALC_BAY_MIN_HEALTHY_WORKERS" "$isolated_workers"
 
 "$ok"

@@ -348,7 +348,10 @@ function recordWorkerAppProbe(worker, ok, error = "", now = Date.now()) {
 // Isolate a worker only when it repeatedly fails the application probe while
 // a strict majority of the other ready workers pass it. A shared dependency
 // (database, settings) slows every worker at once; it must never shrink the
-// routable pool, and a single worker is never isolated.
+// routable pool, and a single worker is never isolated. With exactly two
+// workers a 1-1 split cannot distinguish a wedged worker from a shared
+// slowdown, so two-worker bays rely on the readiness probe and the watchdog
+// alone; this is intentional.
 function computeAppProbeIsolation(
   candidates,
   {
@@ -379,12 +382,22 @@ function computeAppProbeIsolation(
   return isolated;
 }
 
+// Isolation ends only when the worker passes an application probe. Draining
+// it or a failed readiness probe drops it from the majority calculation, but
+// must not re-admit an app-wedged worker as soon as it is undrained.
+function nextAppProbeIsolation(worker, isolated) {
+  return (
+    isolated.has(worker.id) ||
+    (worker.appProbeIsolated === true && (worker.appProbeFailures ?? 0) > 0)
+  );
+}
+
 function applyAppProbeIsolation() {
   const isolated = computeAppProbeIsolation(workers, {
     drained: drainedWorkerIds(),
   });
   for (const worker of workers) {
-    const next = isolated.has(worker.id);
+    const next = nextAppProbeIsolation(worker, isolated);
     if (next && !worker.appProbeIsolated) {
       worker.appProbeIsolated = true;
       log("worker isolated after failing application probes", {
@@ -924,6 +937,7 @@ module.exports = {
   isImmutableStaticStatus,
   isPubliclyCacheable,
   isTopLevelDocumentNavigation,
+  nextAppProbeIsolation,
   prepareResponseHeaders,
   proxyRequestHeaders,
   recordWorkerAppProbe,

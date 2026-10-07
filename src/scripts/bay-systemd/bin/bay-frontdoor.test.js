@@ -20,6 +20,7 @@ const {
   isImmutableStaticStatus,
   isPubliclyCacheable,
   isTopLevelDocumentNavigation,
+  nextAppProbeIsolation,
   prepareResponseHeaders,
   proxyRequestHeaders,
   recordWorkerAppProbe,
@@ -552,4 +553,45 @@ test("application probe treats server errors as failures", async () => {
       assert.equal(worker.appProbeLastError, "app probe status 500");
     },
   );
+});
+
+test("isolation persists through drain and readiness loss until a probe passes", () => {
+  const workers = [
+    probeWorker(1, { appProbeFailures: 3 }),
+    probeWorker(2),
+    probeWorker(3),
+  ];
+  const [wedged] = workers;
+  wedged.appProbeIsolated = nextAppProbeIsolation(
+    wedged,
+    computeAppProbeIsolation(workers),
+  );
+  assert.equal(wedged.appProbeIsolated, true);
+
+  // Drained during a watchdog restart: no longer counted, still isolated.
+  const whileDrained = computeAppProbeIsolation(workers, {
+    drained: new Set([1]),
+  });
+  assert.equal(whileDrained.has(1), false);
+  assert.equal(nextAppProbeIsolation(wedged, whileDrained), true);
+
+  // Readiness lost: same.
+  wedged.healthy = false;
+  assert.equal(
+    nextAppProbeIsolation(wedged, computeAppProbeIsolation(workers)),
+    true,
+  );
+
+  // Only a passing application probe re-admits it.
+  wedged.healthy = true;
+  recordWorkerAppProbe(wedged, true, "", 10_000);
+  assert.equal(
+    nextAppProbeIsolation(wedged, computeAppProbeIsolation(workers)),
+    false,
+  );
+});
+
+test("a never-isolated worker is not isolated by stale failures alone", () => {
+  const worker = probeWorker(1, { appProbeFailures: 5 });
+  assert.equal(nextAppProbeIsolation(worker, new Set()), false);
 });
