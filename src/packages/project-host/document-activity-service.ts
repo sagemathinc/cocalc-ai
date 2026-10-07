@@ -19,7 +19,10 @@ import { isProjectCollaboratorGroup } from "@cocalc/conat/auth/subject-policy";
 import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import { isValidUUID } from "@cocalc/util/misc";
 import { syncdbPath } from "@cocalc/util/jupyter/names";
-import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
+import {
+  DEFAULT_PROJECT_RUNTIME_HOME,
+  PROJECT_RUNTIME_HOME_ALIASES,
+} from "@cocalc/util/project-runtime";
 
 const logger = getLogger("project-host:document-activity");
 
@@ -388,15 +391,32 @@ export async function handleListRecentRequest(
 // file-use export ask with home-relative paths ("lectures/a.ipynb"). Return
 // the spellings of the same file, canonical absolute first.
 export function fileUsePathVariants(path: string): string[] {
-  const home = DEFAULT_PROJECT_RUNTIME_HOME;
   const normalized = posix.normalize(path);
-  if (normalized.startsWith(`${home}/`)) {
-    return [normalized, normalized.slice(home.length + 1)];
+  // Home-relative form of the path, if it is under any known runtime home.
+  let relative: string | undefined;
+  if (!normalized.startsWith("/")) {
+    relative = normalized;
+  } else {
+    for (const home of PROJECT_RUNTIME_HOME_ALIASES) {
+      if (normalized.startsWith(`${home}/`)) {
+        relative = normalized.slice(home.length + 1);
+        break;
+      }
+    }
   }
-  if (normalized.startsWith("/")) {
+  if (relative == null) {
     return [normalized];
   }
-  return [posix.join(home, normalized), normalized];
+  // Canonical current home first, then the relative spelling, then legacy
+  // homes (e.g. /root), so the normal case needs a single patch stream.
+  const variants = [
+    posix.join(DEFAULT_PROJECT_RUNTIME_HOME, relative),
+    relative,
+    ...PROJECT_RUNTIME_HOME_ALIASES.filter(
+      (home) => home !== DEFAULT_PROJECT_RUNTIME_HOME,
+    ).map((home) => posix.join(home, relative!)),
+  ];
+  return [...new Set(variants)];
 }
 
 export async function handleGetFileUseTimesRequest(
