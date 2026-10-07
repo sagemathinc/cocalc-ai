@@ -88,7 +88,10 @@ test("no billing worker unless billing authority is enabled on the seed", () => 
   ]) {
     const result = run(ctx, env, "start_billing_worker");
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(fs.existsSync(path.join(ctx.dir, "billing-worker.pid")), false);
+    assert.equal(
+      fs.existsSync(path.join(ctx.dir, "billing-worker.pid")),
+      false,
+    );
   }
 });
 
