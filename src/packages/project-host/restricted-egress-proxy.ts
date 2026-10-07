@@ -140,10 +140,13 @@ function connectTarget(rawTarget: string): {
 } | null {
   try {
     const parsed = new URL(`http://${rawTarget}`);
+    // One trailing dot (an absolute name) is the same host; anything else
+    // with empty labels could slip past exact allow/deny matches.
     const hostname = parsed.hostname.toLowerCase().replace(/\.$/, "");
     const port = Number(parsed.port || 80);
     if (
       !hostname ||
+      hostname.split(".").some((label) => label === "") ||
       parsed.username ||
       parsed.password ||
       parsed.pathname !== "/" ||

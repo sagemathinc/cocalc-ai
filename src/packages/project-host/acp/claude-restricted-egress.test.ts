@@ -71,9 +71,27 @@ test("projects with internet access get no proxy", async () => {
   );
 });
 
-test("projects without internet access reach Anthropic and public hosts, never local networks", async () => {
+test("a harness inside the project reaches only Anthropic", async () => {
   mockGetProject.mockReturnValue({ run_quota: { network: false } });
+  // The project-side harness (harness-launcher) runs Claude Code with shell
+  // tools: a public host would give project commands internet access.
   const egress = await startClaudeRestrictedEgress({ projectId });
+  try {
+    for (const target of ["example.com:443", "github.com:443"])
+      await expect(
+        connectStatus(egress!.env.HTTPS_PROXY, target),
+      ).resolves.toContain("403");
+  } finally {
+    egress?.close();
+  }
+});
+
+test("the subscription controller reaches Anthropic and public hosts, never local networks", async () => {
+  mockGetProject.mockReturnValue({ run_quota: { network: false } });
+  const egress = await startClaudeRestrictedEgress({
+    projectId,
+    publicHosts: true,
+  });
   try {
     const proxyUrl = egress!.env.HTTPS_PROXY;
     expect(egress!.env.https_proxy).toBe(proxyUrl);
@@ -86,6 +104,8 @@ test("projects without internet access reach Anthropic and public hosts, never l
       "10.0.0.1:443",
       "169.254.169.254:443",
       "github.com:80",
+      "mcp-proxy.anthropic.com..:443",
+      "example..com:443",
     ])
       await expect(connectStatus(proxyUrl, target)).resolves.toContain("403");
     await expect(

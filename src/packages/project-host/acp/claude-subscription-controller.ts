@@ -535,6 +535,8 @@ ${skill}
         projectId,
         host,
         claudeAiConnectors: claudeAiConnectors !== false,
+        // WebFetch: this controller has no shell or file tools.
+        publicHosts: true,
       });
     }
     const owner = await harnessOwner();
