@@ -188,12 +188,13 @@ export type RusticBackupRunner = (opts: {
   tags?: string[];
   parent?: string;
   progress?: (update: RusticProgressUpdate) => void;
+  // null: the runner is unavailable on this host; back up unprivileged.
 }) => Promise<{
   time: string | Date;
   id: string;
   summary: { [key: string]: string | number };
   oversized_files?: OversizedFilesReport;
-}>;
+} | null>;
 
 export type RusticRestoreRunner = (opts: {
   snapshot: string;
@@ -394,7 +395,7 @@ export class SubvolumeRustic {
       // already includes persistent metadata under ~/.local/share/cocalc/persist.
       logger.debug(`backup: backing up ${tempSnapshot} using rustic`);
       const backupFs = this.backupSnapshotFs(snapshotPath);
-      const backupResult = runner
+      const viaRunner = runner
         ? await runner({
             src: snapshotPath,
             host: this.subvolume.name,
@@ -403,7 +404,10 @@ export class SubvolumeRustic {
             parent,
             progress,
           })
-        : JSON.parse(
+        : null;
+      const backupResult =
+        viaRunner ??
+        JSON.parse(
             parseOutput(
               await backupFs.rustic(
                 [
@@ -732,16 +736,18 @@ export class SubvolumeRustic {
       timeout,
       tags,
       progress,
+      runner,
       existingSnapshotNames: _existingSnapshotNames,
     }: {
       timeout?: number;
       limit?: number;
       tags?: string[];
       progress?: (update: RusticProgressUpdate) => void;
+      runner?: RusticBackupRunner;
       existingSnapshotNames?: string[];
     } = {},
   ) => {
-    return await this.backup({ limit, timeout, tags, progress });
+    return await this.backup({ limit, timeout, tags, progress, runner });
   };
 
   readdir = async (): Promise<string[]> => {
