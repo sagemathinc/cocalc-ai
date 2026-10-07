@@ -39,6 +39,10 @@ const proxy = new RestrictedEgressProxy({
 
 // Local names must never go through the proxy (e.g. COCALC_API_URL).
 const NO_PROXY = "localhost,127.0.0.1,::1,host.containers.internal";
+// The public-host controller needs no host services, so nothing but its own
+// loopback bypasses the proxy: WebFetch to host.containers.internal or any
+// plain-HTTP URL must meet the proxy's checks (plain HTTP is refused there).
+const CONTROLLER_NO_PROXY = "localhost,127.0.0.1,::1";
 
 export interface ClaudeRestrictedEgress {
   env: Record<string, string>;
@@ -94,12 +98,21 @@ export async function startClaudeRestrictedEgress({
     deniedHosts: claudeAiConnectors ? new Set() : new Set([CONNECTOR_HOST]),
   });
   return {
-    env: {
-      HTTPS_PROXY: session.proxyUrl,
-      https_proxy: session.proxyUrl,
-      NO_PROXY,
-      no_proxy: NO_PROXY,
-    },
+    env: publicHosts
+      ? {
+          HTTPS_PROXY: session.proxyUrl,
+          https_proxy: session.proxyUrl,
+          HTTP_PROXY: session.proxyUrl,
+          http_proxy: session.proxyUrl,
+          NO_PROXY: CONTROLLER_NO_PROXY,
+          no_proxy: CONTROLLER_NO_PROXY,
+        }
+      : {
+          HTTPS_PROXY: session.proxyUrl,
+          https_proxy: session.proxyUrl,
+          NO_PROXY,
+          no_proxy: NO_PROXY,
+        },
     close: session.close,
   };
 }
