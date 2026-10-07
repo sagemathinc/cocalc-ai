@@ -62,6 +62,10 @@ import centralLog from "@cocalc/database/postgres/central-log";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { detectRasterImage } from "@cocalc/server/blobs/media";
 import { readBlobFromDatabase } from "@cocalc/server/blobs/read";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
+import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import getZendeskClient from "@cocalc/server/support/zendesk-client";
 import { isValidUUID, uuid } from "@cocalc/util/misc";
 
@@ -391,11 +395,7 @@ type MutationLedgerRow = {
   payload_hash: string;
   audit_id: string;
   status:
-    | "reserved"
-    | "remote_started"
-    | "succeeded"
-    | "rejected"
-    | "indeterminate";
+    "reserved" | "remote_started" | "succeeded" | "rejected" | "indeterminate";
   safe_response?: unknown;
   error?: string | null;
   updated_at?: string | Date;
@@ -676,8 +676,12 @@ function extractSupportBlobLinks(
     { filename: string; uuid: string; url: string }
   >();
   const text = `${value ?? ""}`;
+  // Relative links carry the site's base path, e.g. /cocalc/blobs/report.pdf.
+  const relative = blobPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const candidates =
-    text.match(/(?:https?:\/\/[^\s<>"']+|\/blobs\/[^\s<>"']+)/gi) ?? [];
+    text.match(
+      new RegExp(`(?:https?://[^\\s<>"']+|${relative}[^\\s<>"']+)`, "gi"),
+    ) ?? [];
   for (const raw of candidates) {
     if (links.size >= max) break;
     const candidate = stripTrailingUrlPunctuation(raw);
@@ -1793,7 +1797,7 @@ async function downloadTicketBlobDocument(
         `blob ${blobUuid} is not a PDF or DOCX linked from ticket ${ticketId}`,
       );
     }
-    const data = await readBlobFromDatabase(blobUuid);
+    const data = await readClusterBlob(blobUuid);
     if (data == null || data.length === 0) {
       throw new Error("support blob was not found or was empty");
     }
@@ -3289,4 +3293,19 @@ export async function spam(
     });
     throw error;
   }
+}
+
+// Blobs are stored on the cluster seed (uploads are routed there), so read
+// them there from any bay.
+async function readClusterBlob(uuid: string): Promise<Buffer | undefined> {
+  const seedBayId = getConfiguredClusterSeedBayId();
+  if (getConfiguredBayId() === seedBayId) {
+    return await readBlobFromDatabase(uuid);
+  }
+  const { data } = await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: seedBayId,
+    timeout: 60_000,
+  }).getBlob({ uuid });
+  return data == null ? undefined : Buffer.from(data);
 }

@@ -58,6 +58,26 @@ jest.mock("@cocalc/server/blobs/read", () => ({
   readBlobFromDatabase: jest.fn(),
 }));
 
+const mockBayId = jest.fn(() => "bay-0");
+const mockSeedGetBlob = jest.fn();
+jest.mock("@cocalc/server/bay-config", () => ({
+  ...jest.requireActual("@cocalc/server/bay-config"),
+  getConfiguredBayId: () => mockBayId(),
+}));
+jest.mock("@cocalc/server/cluster-config", () => ({
+  ...jest.requireActual("@cocalc/server/cluster-config"),
+  getConfiguredClusterSeedBayId: () => "bay-0",
+}));
+jest.mock("@cocalc/server/inter-bay/fabric", () => ({
+  getInterBayFabricClient: () => ({}),
+}));
+jest.mock("@cocalc/conat/inter-bay/api", () => ({
+  ...jest.requireActual("@cocalc/conat/inter-bay/api"),
+  createInterBayAccountLocalClient: ({ dest_bay }: { dest_bay: string }) => ({
+    getBlob: (opts: { uuid: string }) => mockSeedGetBlob(dest_bay, opts),
+  }),
+}));
+
 jest.mock("./dangerous-session-auth", () => ({
   requireDangerousSessionAuth: jest.fn(),
 }));
@@ -201,6 +221,18 @@ describe("admin support API", () => {
         url: `https://cocalc.ai/blobs/paste%20one.png?uuid=${IMAGE_UUID}`,
       },
     ]);
+  });
+
+  it("extracts relative support-form links under the site's base path", () => {
+    const docs = extractSupportBlobDocuments(
+      [
+        `/cocalc/blobs/report.pdf?uuid=${DOC_UUID}`,
+        // Without the base path this is not one of the site's blob links.
+        `/blobs/other.pdf?uuid=${IMAGE_UUID}`,
+      ].join("\n"),
+      "https://example.org/cocalc",
+    );
+    expect(docs.map((doc) => doc.blob_uuid)).toEqual([DOC_UUID]);
   });
 
   it("extracts support-form PDF/DOCX blobs without URLs or customer filenames", () => {
@@ -748,6 +780,21 @@ describe("admin support API", () => {
       };
       mockGetZendeskClient.mockResolvedValue(client);
       mockReadBlob.mockResolvedValue(pdf);
+    });
+
+    it("reads the blob from the cluster seed when served by another bay", async () => {
+      mockBayId.mockReturnValue("bay-1");
+      mockSeedGetBlob.mockResolvedValue({ data: new Uint8Array(pdf) });
+      try {
+        const result = await getAttachment(opts);
+        expect(mockSeedGetBlob).toHaveBeenCalledWith("bay-0", {
+          uuid: DOC_UUID,
+        });
+        expect(mockReadBlob).not.toHaveBeenCalled();
+        expect(result.data_base64).toBe(pdf.toString("base64"));
+      } finally {
+        mockBayId.mockReturnValue("bay-0");
+      }
     });
 
     it("lists the document in show output with no blob URL", async () => {
