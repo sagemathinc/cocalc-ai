@@ -840,7 +840,11 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     project_is_running = false;
   }
 
-  if (shouldShowWrongAccountListingError(displayListingError)) {
+  if (
+    shouldShowWrongAccountListingError(displayListingError, {
+      archived: project_is_archived,
+    })
+  ) {
     return (
       <div style={{ margin: "30px auto", textAlign: "center" }}>
         <ShowError
