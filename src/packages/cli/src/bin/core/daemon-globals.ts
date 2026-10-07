@@ -43,6 +43,8 @@ export function shouldUseFileOpsDaemon(
 ): boolean {
   if (env.COCALC_CLI_DAEMON_MODE === "1") return false;
   if (globals.daemon === false) return false;
+  // Never let a cached daemon connection stand in for a cookie-file session.
+  if ((globals as { cookieFile?: string }).cookieFile) return false;
   return globals.noDaemon !== true;
 }
 

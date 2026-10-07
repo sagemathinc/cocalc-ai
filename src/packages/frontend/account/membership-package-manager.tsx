@@ -18,6 +18,7 @@ import {
   Popconfirm,
   Progress,
   Radio,
+  Segmented,
   Select,
   Space,
   Spin,
@@ -37,9 +38,14 @@ import {
 } from "react";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  BulkSeatEmailAssign,
+  type BulkSeatAssignResult,
+} from "./bulk-seat-assign";
 import { CustomerSelector } from "@cocalc/frontend/admin/customers/selector";
 import {
   FreshAuthModal,
+  isFreshAuthRequiredError,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 import { Icon, Loading, Tooltip } from "@cocalc/frontend/components";
@@ -5880,6 +5886,14 @@ function AssignMembershipSeatModal({
   const [searchError, setSearchError] = useState<string>("");
   const [selectedTarget, setSelectedTarget] = useState<string>("");
   const [assigning, setAssigning] = useState<boolean>(false);
+  const [mode, setMode] = useState<"one" | "list">("one");
+  // Addresses assigned from the email list while this dialog is open. The
+  // package snapshot is only refreshed on close, so later batches are planned
+  // against the snapshot plus these.
+  const [listAssigned, setListAssigned] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const assignedFromList = listAssigned.size > 0;
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const seatName =
     seatLabel ??
@@ -5914,7 +5928,62 @@ function AssignMembershipSeatModal({
     setSearchError("");
     setSelectedTarget("");
     setAssigning(false);
+    setMode("one");
+    setListAssigned(new Set());
   }, [open, membershipPackage?.id]);
+  const listAlreadyAssigned = useMemo(
+    () => new Set([...activeEmailAddresses, ...listAssigned]),
+    [activeEmailAddresses, listAssigned],
+  );
+
+  async function assignEmails(emails: string[]): Promise<BulkSeatAssignResult> {
+    const result: BulkSeatAssignResult = { assigned: [], failed: [] };
+    if (!membershipPackage) return result;
+    // A fresh-auth prompt re-runs the whole action, so remember what was
+    // already attempted and never assign the same address twice.
+    const attempted = new Set<string>();
+    const completed = await runFreshAuthAction(async () => {
+      for (const email of emails) {
+        if (attempted.has(email)) continue;
+        try {
+          await assignMembershipPackageSeat({
+            package_id: membershipPackage.id,
+            target_email_address: email,
+          });
+          result.assigned.push(email);
+        } catch (err) {
+          if (isFreshAuthRequiredError(err)) throw err;
+          result.failed.push({ email, error: `${err}` });
+        }
+        attempted.add(email);
+      }
+    });
+    if (!completed) {
+      for (const email of emails) {
+        if (!attempted.has(email)) {
+          result.failed.push({ email, error: "not attempted" });
+        }
+      }
+    }
+    if (result.assigned.length > 0) {
+      setListAssigned(
+        (current) =>
+          new Set([
+            ...current,
+            ...result.assigned.map((email) => email.toLowerCase()),
+          ]),
+      );
+    }
+    return result;
+  }
+
+  function close() {
+    if (assignedFromList) {
+      void onAssigned();
+    } else {
+      onClose();
+    }
+  }
 
   async function runSearch() {
     const trimmed = query.trim();
@@ -5996,103 +6065,142 @@ function AssignMembershipSeatModal({
   return (
     <Modal
       open={open}
-      onCancel={onClose}
+      onCancel={close}
       onOk={assign}
       okText="Assign seat"
       okButtonProps={{ disabled: !selectedTarget, loading: assigning }}
+      {...(mode === "list"
+        ? {
+            footer: (
+              <Button onClick={close}>
+                {assignedFromList ? "Done" : "Close"}
+              </Button>
+            ),
+          }
+        : {})}
       destroyOnHidden
-      title={`Assign ${seatName} seat`}
+      title={
+        mode === "list" ? `Assign ${seatName} seats` : `Assign ${seatName} seat`
+      }
     >
       <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-        {membershipPackage ? (
-          <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            Search related existing accounts or enter an email address to
-            reserve a {seatName} seat. Reserved email seats appear as claimable
-            memberships once that user verifies the address on their account.
-          </Paragraph>
-        ) : null}
-        {searchError ? (
-          <Alert
-            type="error"
-            title={searchError}
-            closable
-            onClose={() => setSearchError("")}
-          />
-        ) : null}
-        <Input.Search
-          placeholder="Search by name or enter an email address"
-          value={query}
-          enterButton="Search"
-          loading={searching}
-          onChange={(e) => setQuery(e.target.value)}
-          onSearch={() => {
-            void runSearch();
-          }}
+        <Segmented
+          aria-label="How to choose people"
+          value={mode}
+          onChange={(value) => setMode(value as "one" | "list")}
+          options={[
+            { label: "One person", value: "one" },
+            { label: "Email list", value: "list" },
+          ]}
         />
-        {searching ? <Spin /> : null}
-        {results.length > 0 ? (
-          <Radio.Group
-            value={selectedTarget}
-            onChange={(e) => setSelectedTarget(e.target.value)}
-            style={{ width: "100%" }}
-          >
-            <Space
-              orientation="vertical"
-              size="small"
-              style={{ width: "100%" }}
-            >
-              {results.map((result) => {
-                const fullName = displayNameFromAccount(result);
-                return (
-                  <Radio
-                    key={result.account_id}
-                    value={`account:${result.account_id}`}
-                    style={{ width: "100%" }}
-                  >
-                    <Space orientation="vertical" size={0}>
-                      <Text>{fullName || result.account_id}</Text>
-                      <Text type="secondary">
-                        {result.email_address || result.account_id}
-                      </Text>
-                    </Space>
-                  </Radio>
-                );
-              })}
-            </Space>
-          </Radio.Group>
-        ) : null}
-        {!searching &&
-        query.trim() &&
-        results.length === 0 &&
-        !searchError &&
-        isValidEmailAddress(query.trim().toLowerCase()) &&
-        !activeEmailAddresses.has(query.trim().toLowerCase()) ? (
-          <Radio.Group
-            value={selectedTarget}
-            onChange={(e) => setSelectedTarget(e.target.value)}
-            style={{ width: "100%" }}
-          >
-            <Radio value={`email:${query.trim().toLowerCase()}`}>
-              <Space orientation="vertical" size={0}>
-                <Text>{query.trim().toLowerCase()}</Text>
-                <Text type="secondary">
-                  Reserve this seat by email until the user verifies it
-                </Text>
-              </Space>
-            </Radio>
-          </Radio.Group>
-        ) : null}
-        {!searching && query.trim() && results.length === 0 && !searchError ? (
-          <Alert
-            type="info"
-            showIcon
-            title="No matching existing account found"
-            description={
-              isValidEmailAddress(query.trim().toLowerCase())
-                ? "You can still reserve the seat by email above."
-                : "Search by name or enter an email address."
-            }
+        {mode === "list" && membershipPackage ? (
+          <BulkSeatEmailAssign
+            seatName={seatName}
+            availableSeats={Math.max(
+              0,
+              membershipPackage.available_seat_count - listAssigned.size,
+            )}
+            alreadyAssigned={listAlreadyAssigned}
+            assignEmails={assignEmails}
           />
+        ) : null}
+        {mode === "one" ? (
+          <>
+            {membershipPackage ? (
+              <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+                Search related existing accounts or enter an email address to
+                reserve a {seatName} seat. Reserved email seats appear as
+                claimable memberships once that user verifies the address on
+                their account.
+              </Paragraph>
+            ) : null}
+            {searchError ? (
+              <Alert
+                type="error"
+                title={searchError}
+                closable
+                onClose={() => setSearchError("")}
+              />
+            ) : null}
+            <Input.Search
+              placeholder="Search by name or enter an email address"
+              value={query}
+              enterButton="Search"
+              loading={searching}
+              onChange={(e) => setQuery(e.target.value)}
+              onSearch={() => {
+                void runSearch();
+              }}
+            />
+            {searching ? <Spin /> : null}
+            {results.length > 0 ? (
+              <Radio.Group
+                value={selectedTarget}
+                onChange={(e) => setSelectedTarget(e.target.value)}
+                style={{ width: "100%" }}
+              >
+                <Space
+                  orientation="vertical"
+                  size="small"
+                  style={{ width: "100%" }}
+                >
+                  {results.map((result) => {
+                    const fullName = displayNameFromAccount(result);
+                    return (
+                      <Radio
+                        key={result.account_id}
+                        value={`account:${result.account_id}`}
+                        style={{ width: "100%" }}
+                      >
+                        <Space orientation="vertical" size={0}>
+                          <Text>{fullName || result.account_id}</Text>
+                          <Text type="secondary">
+                            {result.email_address || result.account_id}
+                          </Text>
+                        </Space>
+                      </Radio>
+                    );
+                  })}
+                </Space>
+              </Radio.Group>
+            ) : null}
+            {!searching &&
+            query.trim() &&
+            results.length === 0 &&
+            !searchError &&
+            isValidEmailAddress(query.trim().toLowerCase()) &&
+            !activeEmailAddresses.has(query.trim().toLowerCase()) ? (
+              <Radio.Group
+                value={selectedTarget}
+                onChange={(e) => setSelectedTarget(e.target.value)}
+                style={{ width: "100%" }}
+              >
+                <Radio value={`email:${query.trim().toLowerCase()}`}>
+                  <Space orientation="vertical" size={0}>
+                    <Text>{query.trim().toLowerCase()}</Text>
+                    <Text type="secondary">
+                      Reserve this seat by email until the user verifies it
+                    </Text>
+                  </Space>
+                </Radio>
+              </Radio.Group>
+            ) : null}
+            {!searching &&
+            query.trim() &&
+            results.length === 0 &&
+            !searchError ? (
+              <Alert
+                type="info"
+                showIcon
+                title="No matching existing account found"
+                description={
+                  isValidEmailAddress(query.trim().toLowerCase())
+                    ? "You can still reserve the seat by email above."
+                    : "Search by name or enter an email address."
+                }
+              />
+            ) : null}
+          </>
         ) : null}
       </Space>
       <FreshAuthModal {...freshAuthModalProps} />

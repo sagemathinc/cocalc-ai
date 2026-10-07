@@ -143,7 +143,21 @@ export type ProjectCopyInsert = ProjectCopyKey & {
 
 const pool = () => getPool();
 
+// Run once per process: the setup includes ALTER TABLE, which takes an ACCESS
+// EXCLUSIVE lock even when nothing changes and queues every later query on the
+// table behind any open transaction (production outage 2026-10-06).
+let copySchemaReady: Promise<void> | undefined;
+
 export async function ensureCopySchema(): Promise<void> {
+  // Share one setup among concurrent callers; retry after a failure.
+  copySchemaReady ??= createCopySchema().catch((err) => {
+    copySchemaReady = undefined;
+    throw err;
+  });
+  await copySchemaReady;
+}
+
+async function createCopySchema(): Promise<void> {
   await pool().query(`
     CREATE TABLE IF NOT EXISTS project_copies (
       copy_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

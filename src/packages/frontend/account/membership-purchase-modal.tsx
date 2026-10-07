@@ -66,6 +66,7 @@ const MEMBERSHIP_FINALIZATION_TIMEOUT_MS = 30_000;
 const MEMBERSHIP_FINALIZATION_POLL_MS = 1_000;
 
 interface MembershipTier extends MembershipPricingTier {
+  instructor_purchase_visible?: boolean;
   id: string;
   label?: string;
   store_visible?: boolean;
@@ -281,9 +282,17 @@ function MembershipPurchaseModalInner({
 
   const availableTiers = useMemo(() => {
     return sortMembershipTiersByDisplayOrder(
-      tiers.filter((tier) => tier.store_visible && !tier.disabled),
+      tiers.filter(
+        (tier) =>
+          !tier.disabled &&
+          (tier.store_visible ||
+            // Educational offer opened explicitly from the educator card;
+            // the server checks eligibility when quoting.
+            (tier.instructor_purchase_visible === true &&
+              tier.id === initialTargetClass)),
+      ),
     );
-  }, [tiers]);
+  }, [tiers, initialTargetClass]);
   const visibleTiers = useMemo(
     () => filterMembershipTiersForBillingInterval(availableTiers, interval),
     [availableTiers, interval],

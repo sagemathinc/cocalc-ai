@@ -399,3 +399,20 @@ test("restricted egress environment reaches only the controller process", () => 
   // Still its own network, not the project's.
   expect(args).toContain("--network=slirp4netns");
 });
+
+test("Claude Code's own file memory is off; CoCalc agent memory is used", () => {
+  const args = claudeSubscriptionContainerArgs({
+    name: "memory",
+    projectId: "project",
+    owner: "owner",
+    home: "/auth",
+    rootfs: "/rootfs",
+    claudeCodeDir: "/tools/v1/claude-code",
+    nodeMounts: {},
+    uid: 1000,
+    gid: 1000,
+  });
+  const memory = args.indexOf("CLAUDE_CODE_DISABLE_AUTO_MEMORY=1");
+  expect(args[memory - 1]).toBe("--env");
+  expect(memory).toBeLessThan(args.indexOf("--rootfs"));
+});

@@ -37,6 +37,16 @@ function pool(): Queryable {
 }
 
 async function transaction<T>(fn: (db: Queryable) => Promise<T>): Promise<T> {
+  // Finish the one-time setup before the transaction begins (see below).
+  if (!courseSecretSharingSchemaReady) {
+    await courseSecretSharingSchemaSetupOnPool();
+  }
+  return await runInTransaction(fn);
+}
+
+async function runInTransaction<T>(
+  fn: (db: Queryable) => Promise<T>,
+): Promise<T> {
   const client = await (getPool() as any).connect();
   try {
     await client.query("BEGIN");
@@ -157,9 +167,62 @@ function syncResult(row: any): CourseSecretSyncResult {
   };
 }
 
+// Run once per process: the setup includes ALTER TABLE, which takes an ACCESS
+// EXCLUSIVE lock even when nothing changes and queues every later query on the
+// table behind any open transaction (production outage 2026-10-06).
+let courseSecretSharingSchemaReady = false;
+const COURSE_SECRET_SHARING_TABLES = [
+  "course_secret_policies",
+  "course_secret_grants",
+  "course_secret_recipients",
+  "course_secret_sync_runs",
+  "course_secret_sync_results",
+  "course_secret_audit_events",
+];
+let courseSecretSharingSchemaSetup: Promise<void> | undefined;
+
+function courseSecretSharingSchemaSetupOnPool(): Promise<void> {
+  // Shared by concurrent callers; retried after a failure.
+  courseSecretSharingSchemaSetup ??= runInTransaction(
+    createCourseSecretSharingSchema,
+  ).then(
+    () => {
+      courseSecretSharingSchemaReady = true;
+    },
+    (err) => {
+      courseSecretSharingSchemaSetup = undefined;
+      throw err;
+    },
+  );
+  return courseSecretSharingSchemaSetup;
+}
+
 export async function ensureCourseSecretSharingSchema(
   db: Queryable = pool(),
 ): Promise<void> {
+  if (courseSecretSharingSchemaReady) return;
+  if (db === pool()) return await courseSecretSharingSchemaSetupOnPool();
+  // Inside another module's transaction (this module's own finish the setup
+  // before they begin). Only a new database lacks the tables: create them
+  // there (that may still roll back). Never start or wait for the full setup
+  // here: the transaction may hold locks that it needs.
+  const { rows } = await db.query(
+    `SELECT ${COURSE_SECRET_SHARING_TABLES.map(
+      (table) => `to_regclass('${table}') IS NOT NULL`,
+    ).join(" AND ")} AS exists`,
+  );
+  if (!rows[0]?.exists) {
+    await createCourseSecretSharingSchema(db);
+  }
+}
+
+async function createCourseSecretSharingSchema(db: Queryable): Promise<void> {
+  // Serialize setups (this process's pool setup, callers' transactions and
+  // other processes): concurrent CREATE ... IF NOT EXISTS of the same table
+  // fails with a unique violation in pg_type. Held until the transaction ends.
+  await db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+    "cocalc:course-secret-sharing-schema",
+  ]);
   await db.query(`CREATE TABLE IF NOT EXISTS course_secret_policies (
     policy_id UUID PRIMARY KEY,
     project_id UUID NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,

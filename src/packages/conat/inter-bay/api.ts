@@ -2252,6 +2252,9 @@ export interface MembershipTierCatalogRecord {
   course_price?: number;
   course_duration_days?: number;
   course_grace_days?: number;
+  instructor_purchase_visible?: boolean;
+  instructor_term_price?: number | string | null;
+  instructor_term_days?: number | null;
   project_defaults?: Record<string, unknown>;
   ai_limits?: Record<string, unknown>;
   features?: Record<string, unknown>;

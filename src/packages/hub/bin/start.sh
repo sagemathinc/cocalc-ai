@@ -58,4 +58,11 @@ case "$MODE" in
     ;;
 esac
 
+if [ "${COCALC_HUB_BILLING_WORKER:-0}" = "1" ]; then
+  # Only the singleton billing executor (scripts/dev/hub-daemon.sh starts it
+  # under its lock), connected to the seed hub's Conat server.
+  export CONAT_SERVER="${COCALC_BILLING_WORKER_CONAT_SERVER:?COCALC_BILLING_WORKER_CONAT_SERVER is required}"
+  exec cocalc-hub-server --billing-worker --hostname="${HOST:=localhost}"
+fi
+
 cocalc-hub-server --all --hostname="${HOST:=localhost}"

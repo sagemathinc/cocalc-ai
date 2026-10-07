@@ -15,6 +15,7 @@ describe("membership tier templates", () => {
     ).toEqual({
       admin: 1000,
       basic: 250,
+      educator: 1000,
       free: 100,
       instructor: 1000,
       standard: 250,
@@ -32,6 +33,19 @@ describe("membership tier templates", () => {
       }).usage_limits,
     ).toMatchObject({ max_named_agents: 5 });
   });
+  it("ships an educator template with default prices but no live offer", () => {
+    expect(TIER_TEMPLATES.educator).toMatchObject({
+      price_monthly: 25,
+      price_yearly: 225,
+      instructor_term_price: 60,
+      instructor_term_days: 122,
+      instructor_purchase_visible: false,
+      store_visible: false,
+    });
+    expect(TIER_TEMPLATES.educator.usage_limits).toEqual(
+      TIER_TEMPLATES.instructor.usage_limits,
+    );
+  });
   it("defines the exported preset catalog", () => {
     expect(Object.keys(TIER_TEMPLATES)).toEqual([
       "admin",
@@ -41,6 +55,7 @@ describe("membership tier templates", () => {
       "standard",
       "pro",
       "student",
+      "educator",
     ]);
     expect(TIER_TEMPLATES).not.toHaveProperty("member");
     expect(TIER_TEMPLATES).not.toHaveProperty("researcher");

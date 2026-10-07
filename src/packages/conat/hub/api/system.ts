@@ -2443,6 +2443,8 @@ export interface System {
     reason: string;
     support_ticket_id?: number;
     consent_reference?: string;
+    /** Shorter session lifetime (60 s to 12 h), e.g. for one CLI command. */
+    session_ttl_seconds?: number;
     lang_temp?: string | null;
   }) => Promise<{
     grant_id: string;

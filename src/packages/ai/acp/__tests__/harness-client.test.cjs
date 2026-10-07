@@ -14,7 +14,10 @@ const {
 } = require("../../dist/acp/harness-client.js");
 const { parseAcpHarnessProfile } = require("@cocalc/util/ai/runtime");
 const { HarnessAgent } = require("../../dist/acp/harness-agent.js");
-const { harnessPrompt } = require("../../dist/acp/harness-context.js");
+const {
+  harnessPrompt,
+  harnessSessionGuidance,
+} = require("../../dist/acp/harness-context.js");
 const { harnessQuestionForm } = require("../../dist/acp/harness-questions.js");
 const { PassThrough, Writable } = require("node:stream");
 const {
@@ -555,6 +558,36 @@ test("subscription waits for delayed identity before sending a prompt or enablin
   assert.equal((await result).stopReason, "end_turn");
   assert.equal(resumed, true);
   assert.ok(events.some((event) => event.type === "message"));
+});
+
+test("injected guidance ends pending project job waits", async (t) => {
+  let released = 0;
+  const client = await start(
+    t,
+    ["--steering"],
+    undefined,
+    [],
+    undefined,
+    undefined,
+    {
+      releaseToolWaits: () => {
+        released++;
+      },
+    },
+  );
+  await client.open();
+  let ready;
+  const started = new Promise((resolve) => (ready = resolve));
+  const result = client.prompt("hang", async (event) => {
+    if (event.type === "message" && event.text === "working") ready();
+  });
+  await started;
+  assert.equal(released, 0);
+  assert.equal(await client.steer("use the safer path"), "injected");
+  assert.equal(released, 1);
+  await result;
+  assert.equal(await client.steer("too late"), "idle");
+  assert.equal(released, 1);
 });
 
 for (const action of ["cancel", "dispose"]) {
@@ -1768,45 +1801,31 @@ test("harness context preserves user input and does not invent missing attributi
     prompt.includes(JSON.stringify({ project_id: "project", ...request.chat })),
   );
   assert.ok(
-    prompt.includes('"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"'),
-  );
-  assert.ok(prompt.includes("not an authorization grant"));
-  assert.ok(prompt.includes("cannot wake a completed turn"));
-  assert.ok(prompt.includes("/home/user/.claude/skills/cocalc/SKILL.md"));
-  const subscriptionPrompt = harnessPrompt({
-    ...request,
-    runtime: { profile: { cwd: "/home/user/work" } },
-    harness_credential: { mode: "account-subscription" },
-  });
-  assert.ok(
-    subscriptionPrompt.includes(
-      'Project working directory for this turn: "/home/user/work"',
-    ),
-  );
-  for (const text of [
-    "managed jobs",
-    "yield_time_ms",
-    "timeout_ms",
-    "request_id",
-    "project_exec_wait",
-    "cocalc_project_",
-    "setsid",
-  ]) {
-    assert.ok(subscriptionPrompt.includes(text), text);
-  }
-  assert.ok(!subscriptionPrompt.includes("cocalc_project project_exec"));
-  assert.ok(
-    subscriptionPrompt.includes(
-      "project_exec tool on the currently advertised cocalc_project_* server",
-    ),
-  );
-  assert.ok(!prompt.includes("Project commands are managed jobs"));
-  assert.ok(
-    !harnessPrompt({
+    harnessPrompt({
       ...request,
-      harness_credential: { mode: "account-subscription" },
-    }).includes("/home/user/.claude/skills/cocalc/SKILL.md"),
+      runtime: { profile: { cwd: "/home/user/work" } },
+    }).includes('Project working directory for this turn: "/home/user/work"'),
   );
+  // Static guidance is in the session's system prompt, once.
+  const project = harnessSessionGuidance(false);
+  const subscription = harnessSessionGuidance(true);
+  for (const guidance of [project, subscription]) {
+    assert.ok(
+      guidance.includes(
+        '"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"',
+      ),
+    );
+    assert.ok(guidance.includes("not an authorization grant"));
+    assert.ok(guidance.includes("cannot wake a completed turn"));
+    assert.ok(!prompt.includes("cannot wake a completed turn"));
+  }
+  assert.ok(project.includes("/home/user/.claude/skills/cocalc/SKILL.md"));
+  assert.ok(
+    !subscription.includes("/home/user/.claude/skills/cocalc/SKILL.md"),
+  );
+  assert.ok(subscription.includes("request_user_input_async"));
+  assert.ok(subscription.includes("project_read_image"));
+  assert.ok(!project.includes("request_user_input_async"));
   assert.equal(harnessPrompt({ ...request, prompt: "/compact" }), "/compact");
   assert.equal(harnessPrompt({ ...request, chat: undefined }), request.prompt);
   assert.equal(
@@ -2779,14 +2798,17 @@ test("provider rejection is distinct from ambiguous delivery and is redacted", a
 test("an agent process killed mid-turn is reported as killed, not as a generic rejection", async (t) => {
   const client = await start(t);
   await client.open();
-  await assert.rejects(client.prompt("killed", async () => {}), (error) => {
-    assert.equal(error.killed, true);
-    assert.equal(error.code, "outcome_unknown");
-    assert.match(error.message, /process was killed \(SIGKILL\)/);
-    assert.match(error.message, /Diagnostic ID: [0-9a-f-]{36}/);
-    assert.doesNotMatch(error.message, /could not process/);
-    return true;
-  });
+  await assert.rejects(
+    client.prompt("killed", async () => {}),
+    (error) => {
+      assert.equal(error.killed, true);
+      assert.equal(error.code, "outcome_unknown");
+      assert.match(error.message, /process was killed \(SIGKILL\)/);
+      assert.match(error.message, /Diagnostic ID: [0-9a-f-]{36}/);
+      assert.doesNotMatch(error.message, /could not process/);
+      return true;
+    },
+  );
 });
 test("internal rejection correlates stderr and nested error hints only in operator logs", async (t) => {
   const logger = require("@cocalc/backend/logger").default(
