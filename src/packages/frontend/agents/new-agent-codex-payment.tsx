@@ -105,3 +105,56 @@ export function NewAgentCodexPaymentControl({
     </Dropdown>
   );
 }
+
+// Codex payment status is account-level, so someone with no project yet
+// (projects loaded, none selected) still learns whether Codex can be paid for.
+export function newAgentPaymentSourceEnabled({
+  codex,
+  projectId,
+  projectsLoaded,
+}: {
+  codex: boolean;
+  projectId?: string;
+  projectsLoaded: boolean;
+}): boolean {
+  return codex && (!!projectId || projectsLoaded);
+}
+
+// Codex is only the default runtime: someone who already connected Claude,
+// but cannot pay for Codex, starts with Claude. Never during the first-run
+// flow, which prepares a Codex agent in the background and shows no runtime
+// choice, and never over a source agent's runtime or the user's own choice.
+export function shouldDefaultToClaude({
+  firstRun,
+  codexUnconfigured,
+  runtimeChosen,
+  claudeConnected,
+}: {
+  firstRun: boolean;
+  codexUnconfigured: boolean;
+  runtimeChosen: boolean;
+  claudeConnected: boolean;
+}): boolean {
+  return !firstRun && codexUnconfigured && !runtimeChosen && claudeConnected;
+}
+
+// Claude signs in through a project, so choosing Claude without any project
+// prepares the workspace the agent would otherwise get on submit.
+export function shouldPrepareProjectForClaude({
+  projectId,
+  projectsLoaded,
+  emailVerificationRequired,
+  projectPending,
+}: {
+  projectId?: string;
+  projectsLoaded: boolean;
+  emailVerificationRequired: boolean;
+  projectPending: boolean;
+}): boolean {
+  return (
+    !projectId &&
+    projectsLoaded &&
+    !emailVerificationRequired &&
+    !projectPending
+  );
+}

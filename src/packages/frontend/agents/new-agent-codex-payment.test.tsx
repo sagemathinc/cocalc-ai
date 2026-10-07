@@ -5,7 +5,12 @@
 
 import { fireEvent, render, screen } from "@testing-library/react";
 
-import { NewAgentCodexPaymentControl } from "./new-agent-codex-payment";
+import {
+  NewAgentCodexPaymentControl,
+  newAgentPaymentSourceEnabled,
+  shouldDefaultToClaude,
+  shouldPrepareProjectForClaude,
+} from "./new-agent-codex-payment";
 
 function renderControl(
   props: Partial<Parameters<typeof NewAgentCodexPaymentControl>[0]> = {},
@@ -111,5 +116,73 @@ describe("NewAgentCodexPaymentControl", () => {
     );
     await screen.findByText("Auto");
     expect(screen.queryByText("Sign in with ChatGPT…")).toBeNull();
+  });
+});
+
+describe("new-agent provider choice without a project", () => {
+  it("loads the account's Codex payment status before any project exists", () => {
+    expect(
+      newAgentPaymentSourceEnabled({ codex: true, projectsLoaded: true }),
+    ).toBe(true);
+    expect(
+      newAgentPaymentSourceEnabled({ codex: true, projectsLoaded: false }),
+    ).toBe(false);
+    expect(
+      newAgentPaymentSourceEnabled({
+        codex: true,
+        projectId: "p",
+        projectsLoaded: false,
+      }),
+    ).toBe(true);
+    expect(
+      newAgentPaymentSourceEnabled({
+        codex: false,
+        projectId: "p",
+        projectsLoaded: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("prepares a workspace for Claude only when there is none", () => {
+    const base = {
+      projectsLoaded: true,
+      emailVerificationRequired: false,
+      projectPending: false,
+    };
+    expect(shouldPrepareProjectForClaude(base)).toBe(true);
+    expect(shouldPrepareProjectForClaude({ ...base, projectId: "p" })).toBe(
+      false,
+    );
+    expect(
+      shouldPrepareProjectForClaude({ ...base, projectsLoaded: false }),
+    ).toBe(false);
+    expect(
+      shouldPrepareProjectForClaude({
+        ...base,
+        emailVerificationRequired: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldPrepareProjectForClaude({ ...base, projectPending: true }),
+    ).toBe(false);
+  });
+
+  it("defaults to Claude only for a connected Claude user who cannot pay for Codex", () => {
+    const base = {
+      firstRun: false,
+      codexUnconfigured: true,
+      runtimeChosen: false,
+      claudeConnected: true,
+    };
+    expect(shouldDefaultToClaude(base)).toBe(true);
+    // The first-run flow prepares a Codex agent in the background.
+    expect(shouldDefaultToClaude({ ...base, firstRun: true })).toBe(false);
+    expect(shouldDefaultToClaude({ ...base, codexUnconfigured: false })).toBe(
+      false,
+    );
+    expect(shouldDefaultToClaude({ ...base, runtimeChosen: true })).toBe(false);
+    expect(shouldDefaultToClaude({ ...base, claudeConnected: false })).toBe(
+      false,
+    );
   });
 });

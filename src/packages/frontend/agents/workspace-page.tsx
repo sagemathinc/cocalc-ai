@@ -317,7 +317,12 @@ import {
   suggestedAgentProjectTitle,
 } from "./new-agent-defaults";
 import { assertCodexFundingModelReady } from "@cocalc/frontend/chat/codex-submit-preflight";
-import { NewAgentCodexPaymentControl } from "./new-agent-codex-payment";
+import {
+  NewAgentCodexPaymentControl,
+  newAgentPaymentSourceEnabled,
+  shouldDefaultToClaude,
+  shouldPrepareProjectForClaude,
+} from "./new-agent-codex-payment";
 import { MembershipDetailsModal } from "@cocalc/frontend/project/start-button";
 import { showCodexProjectStartFailure } from "@cocalc/frontend/chat/codex-project-start-failure";
 import { getProjectStartPolicyBlockFromError } from "@cocalc/frontend/projects/runtime-start-policy";
@@ -715,6 +720,9 @@ function NewAgentPanel({
     Promise<{ projectId: string; title: string }> | undefined
   >(undefined);
   const automaticProjectAttempted = useRef(false);
+  // An automatic project created before the request (for Claude's sign-in),
+  // which is named from the request on submit.
+  const projectBeforeRequest = useRef<string | undefined>(undefined);
   const automaticProjectCreated = useRef<
     { projectId: string; title: string } | undefined
   >(
@@ -816,7 +824,11 @@ function NewAgentPanel({
   } = useCodexPaymentSource({
     projectId,
     preference: paymentPreference,
-    enabled: !!projectId && runtimeKind === "codex-native",
+    enabled: newAgentPaymentSourceEnabled({
+      codex: runtimeKind === "codex-native",
+      projectId,
+      projectsLoaded: !!projectMap,
+    }),
     credentialId:
       paymentPreference === "subscription" ? config.credentialId : undefined,
   } as Parameters<typeof useCodexPaymentSource>[0] & {
@@ -1302,10 +1314,11 @@ function NewAgentPanel({
         targetProjectId = createdProject.projectId;
       }
       if (
-        isFirstRun &&
+        (isFirstRun || projectBeforeRequest.current === targetProjectId) &&
         request &&
         automaticProjectCreated.current?.projectId === targetProjectId
       ) {
+        projectBeforeRequest.current = undefined;
         const finalTitle = suggestedAgentProjectTitle(request);
         if (finalTitle !== automaticProjectCreated.current.title) {
           void redux
@@ -1617,26 +1630,29 @@ function NewAgentPanel({
     !paymentSource.hasSubscription;
   const paymentUnconfigured =
     chatGPTSignInAvailable && paymentSource?.source === "none";
-  // Codex is only the default runtime: someone who already connected Claude,
-  // but has no way to pay for Codex, starts with Claude.
   useEffect(() => {
-    if (
-      !paymentUnconfigured ||
-      runtimeChosen.current ||
-      runtimeKind !== "codex-native"
-    )
-      return;
+    const candidate = (claudeConnected: boolean) =>
+      runtimeKind === "codex-native" &&
+      shouldDefaultToClaude({
+        firstRun: isFirstRun,
+        codexUnconfigured: paymentUnconfigured,
+        runtimeChosen: runtimeChosen.current,
+        claudeConnected,
+      });
+    if (!candidate(true)) return;
     let disposed = false;
     void webapp_client.conat_client.hub.system
       .listExternalCredentials({ provider: "anthropic", scope: "account" })
       .then((rows) => {
-        if (disposed || runtimeChosen.current) return;
+        if (disposed) return;
         if (
-          rows.some(
-            (row) =>
-              !row.revoked &&
-              (row.kind === "anthropic-api-key" ||
-                row.kind === CLAUDE_SUBSCRIPTION_KIND),
+          candidate(
+            rows.some(
+              (row) =>
+                !row.revoked &&
+                (row.kind === "anthropic-api-key" ||
+                  row.kind === CLAUDE_SUBSCRIPTION_KIND),
+            ),
           )
         )
           setRuntimeKind("claude-code");
@@ -1647,27 +1663,30 @@ function NewAgentPanel({
     return () => {
       disposed = true;
     };
-  }, [paymentUnconfigured, runtimeKind, boundAccount.accountId]);
+  }, [isFirstRun, paymentUnconfigured, runtimeKind, boundAccount.accountId]);
 
   function chooseRuntime(kind: NewAgentRuntimeKind) {
     runtimeChosen.current = true;
     setRuntimeKind(kind);
+    if (kind === "claude-code") void prepareProjectForClaude();
   }
 
   // Claude signs in through a project, so someone without any project gets
   // their workspace now rather than when the agent is created.
-  async function switchToClaude() {
-    chooseRuntime("claude-code");
+  async function prepareProjectForClaude() {
     if (
-      projectId ||
-      !projectMap ||
-      emailVerificationRequired ||
-      automaticProjectPromise.current
+      !shouldPrepareProjectForClaude({
+        projectId,
+        projectsLoaded: !!projectMap,
+        emailVerificationRequired: !!emailVerificationRequired,
+        projectPending: !!automaticProjectPromise.current,
+      })
     )
       return;
     setBusy(true);
     try {
-      await ensureAutomaticProject(firstRequest, false);
+      const created = await ensureAutomaticProject(firstRequest, false);
+      projectBeforeRequest.current = created.projectId;
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -2087,7 +2106,7 @@ function NewAgentPanel({
                   disabled={busy || !!pending}
                   loading={!!paymentSourceLoading}
                   onSignIn={() => setSignInOpen(true)}
-                  onUseClaude={() => void switchToClaude()}
+                  onUseClaude={() => chooseRuntime("claude-code")}
                   onSelect={(key) => {
                     if (key.startsWith("subscription:")) {
                       setConfig((current) => ({
