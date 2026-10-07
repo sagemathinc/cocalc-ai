@@ -366,7 +366,7 @@ install_node() {
     return
   fi
   as_star_user 'curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash'
-  as_star_user 'source "$HOME/.nvm/nvm.sh" && nvm install 26 && nvm alias default 26 && if command -v corepack >/dev/null 2>&1; then corepack enable; else npm install -g pnpm@10.33.0; fi'
+  as_star_user 'source "$HOME/.nvm/nvm.sh" && nvm install 26 && nvm alias default 26 && if command -v corepack >/dev/null 2>&1; then corepack enable; else npm install -g pnpm@11.25.0; fi'
 }
 
 ensure_exact_subid_file() {
@@ -417,7 +417,7 @@ build_source() {
     log "skipping build because STAR_BUILD=0"
     return
   fi
-  as_star_user "cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 && export COCALC_SETUP_PROFILE=star && if command -v corepack >/dev/null 2>&1; then corepack enable; fi && if ! command -v pnpm >/dev/null 2>&1; then npm install -g pnpm@10.33.0; fi && ./workspaces.py install && pnpm --filter @cocalc/app-notebook build && ./workspaces.py build --dev && pnpm python-api"
+  as_star_user "cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 && export COCALC_SETUP_PROFILE=star && if command -v corepack >/dev/null 2>&1; then corepack enable; fi && if ! command -v pnpm >/dev/null 2>&1; then npm install -g pnpm@11.25.0; fi && ./workspaces.py install && pnpm --filter @cocalc/app-notebook build && ./workspaces.py build --dev && pnpm python-api"
   as_star_user "cd '$SRC_ROOT/packages/project' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 && pnpm build:bundle"
 }
 

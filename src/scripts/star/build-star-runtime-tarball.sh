@@ -77,8 +77,10 @@ build_runtime() {
     if command -v corepack >/dev/null 2>&1; then
       corepack enable
     fi
-    if ! command -v pnpm >/dev/null 2>&1; then
-      npm install -g pnpm@10.33.0
+    # The workspace and pinned third-party sources (e.g. reflect) need pnpm 11;
+    # pnpm 10 tries to self-switch and fails on some filesystems.
+    if ! pnpm --version 2>/dev/null | grep -q "^1[1-9]\."; then
+      npm install -g pnpm@11.25.0
     fi
     clean_generated_bundle_workspaces
     ./workspaces.py install
