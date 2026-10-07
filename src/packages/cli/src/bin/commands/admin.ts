@@ -4346,7 +4346,7 @@ with "project list" first.
             // even if this process crashes before signing out.
             session_ttl_seconds: timeoutSeconds + 60,
           });
-          const { cookie, origin: api } = await redeemImpersonationUrl(
+          const { cookie, api } = await redeemImpersonationUrl(
             grant.url,
             fetch,
             grant.home_bay_url ? [grant.home_bay_url] : [],

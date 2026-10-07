@@ -164,16 +164,27 @@ function clientSideImpersonationRedirect(
   }
 }
 
+// The server mounts /auth/impersonate under its basePath, so the API base URL
+// of the bay that issued the session is that URL without the suffix.
+function apiBaseUrl(url: URL): string {
+  const suffix = "/auth/impersonate";
+  const path = url.pathname.endsWith(suffix)
+    ? url.pathname.slice(0, -suffix.length)
+    : "";
+  return `${url.origin}${path}`;
+}
+
 /**
  * Redeem an impersonation link without a browser. Returns the Cookie header
- * and the origin that issued the session (the subject's home bay).
+ * and the API base URL (including any basePath) of the bay that issued the
+ * session (the subject's home bay).
  */
 export async function redeemImpersonationUrl(
   url: string,
   fetchImpl: typeof fetch = fetch,
   /** Origins the redemption may visit, e.g. the grant's and its home bay's. */
   extraOrigins: readonly string[] = [],
-): Promise<{ cookie: string; origin: string }> {
+): Promise<{ cookie: string; api: string }> {
   const jar = new Map<string, string>();
   let target: URL | undefined = new URL(url);
   const allowedOrigins = new Set([
@@ -195,7 +206,7 @@ export async function redeemImpersonationUrl(
     collectCookies(response.headers, jar);
     const body = await response.text();
     if (hasSession(jar)) {
-      return { cookie: cookieHeader(jar), origin: target.origin };
+      return { cookie: cookieHeader(jar), api: apiBaseUrl(target) };
     }
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");

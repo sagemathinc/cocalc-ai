@@ -88,13 +88,43 @@ test("redeems the confirmation URL with plain HTTP and keeps only cookies", asyn
       ],
     });
   }) as unknown as typeof fetch;
-  const { cookie, origin } = await redeemImpersonationUrl(
+  const { cookie, api } = await redeemImpersonationUrl(
     "https://cocalc.ai/auth/impersonate?grant_id=g&account_id=a",
     fakeFetch,
   );
   assert.equal(new URL(seen[0]).searchParams.get("confirm"), "1");
   assert.equal(cookie, "account_id=acct; remember_me=secret-session");
-  assert.equal(origin, "https://cocalc.ai");
+  assert.equal(api, "https://cocalc.ai");
+});
+
+test("keeps the basePath of the bay that issued the session", async () => {
+  const seen: string[] = [];
+  const fakeFetch = (async (url: URL) => {
+    seen.push(url.toString());
+    if (url.hostname === "cocalc.ai") {
+      return response(
+        `<script>window.location.href = ${JSON.stringify("https://bay-1.cocalc.ai/base/auth/impersonate?retry_token=t")};</script>`,
+      );
+    }
+    return response("ok", { cookies: ["remember_me=s; Path=/base"] });
+  }) as unknown as typeof fetch;
+  const { api } = await redeemImpersonationUrl(
+    "https://cocalc.ai/base/auth/impersonate?grant_id=g",
+    fakeFetch,
+    ["https://bay-1.cocalc.ai/base"],
+  );
+  assert.equal(seen.length, 2);
+  assert.equal(api, "https://bay-1.cocalc.ai/base");
+
+  const signOuts: string[] = [];
+  const signOutFetch = (async (url: URL) => {
+    signOuts.push(url.toString());
+    return response("{}");
+  }) as unknown as typeof fetch;
+  assert.equal(await signOutSession(api, "remember_me=s", signOutFetch), true);
+  assert.deepEqual(signOuts, [
+    "https://bay-1.cocalc.ai/base/api/v2/accounts/sign-out",
+  ]);
 });
 
 test("follows the cross-bay retry to the home bay only", async () => {
@@ -116,7 +146,7 @@ test("follows the cross-bay retry to the home bay only", async () => {
     ["https://bay-1.cocalc.ai"],
   );
   assert.equal(seen.length, 2);
-  assert.equal(result.origin, "https://bay-1.cocalc.ai");
+  assert.equal(result.api, "https://bay-1.cocalc.ai");
   assert.equal(result.cookie, "cocalc_ai_remember_me=bay1-session");
 
   const evil = (async () =>
