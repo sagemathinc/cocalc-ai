@@ -106,9 +106,19 @@ wait_ready() {
 check() {
   log "smoke"
   $DOCKER exec "$NAME" "$STAR_SH" smoke
-  # After smoke, so the RootFS cache is prepared and every doctor check runs.
+  # After smoke, so a RootFS cache entry is prepared and every doctor check
+  # runs; fail if doctor skipped any.
   log "doctor"
-  $DOCKER exec "$NAME" "$STAR_SH" doctor
+  local doctor_output
+  doctor_output="$($DOCKER exec "$NAME" "$STAR_SH" doctor 2>&1)" || {
+    printf '%s\n' "$doctor_output"
+    return 1
+  }
+  printf '%s\n' "$doctor_output"
+  if printf '%s\n' "$doctor_output" | grep -q '^skip'; then
+    log "doctor skipped checks after smoke"
+    return 1
+  fi
   log "HTTP on the published port"
   curl -fsS -o /dev/null "http://127.0.0.1:${PORT}/"
 }

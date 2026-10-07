@@ -259,11 +259,16 @@ doctor() {
     check "cached rootfs has project secrets mountpoint" test -d "${rootfs_path}/run/secrets/cocalc"
     check "cached rootfs has project tools mountpoint" test -d "${rootfs_path}/opt/cocalc/bin2"
     check "cached rootfs has project source mountpoint" test -d "${rootfs_path}/opt/cocalc/src"
-    if [ ! -e "${rootfs_path}/run/.containerenv" ]; then
-      # A fresh install's cache is prepared for rootless use (ownership
-      # remapping, runtime files) by the first project start.
-      printf 'skip   rootless podman checks: cached rootfs is prepared on the first project start\n'
+    # Only cache entries that were prepared for rootless use (ownership
+    # remapped, runtime files such as run/.containerenv written) can run under
+    # rootless Podman; a freshly unpacked entry is prepared when first used.
+    local prepared_rootfs
+    prepared_rootfs="$(find "$rootfs_cache_dir" -mindepth 3 -maxdepth 3 -path '*/run/.containerenv' ! -path "$rootfs_cache_dir/.*" 2>/dev/null | sort | head -1 || true)"
+    prepared_rootfs="${prepared_rootfs%/run/.containerenv}"
+    if [ -z "$prepared_rootfs" ]; then
+      printf 'skip   rootless podman checks: no cached rootfs has been prepared yet\n'
     else
+      rootfs_path="$prepared_rootfs"
       check "rootless podman can run cached rootfs" as_star_user podman run --rm --runtime "$runtime_crun" --userns=keep-id:uid=2001,gid=2001 --user 0:0 --rootfs "$rootfs_path" /bin/true
       check "cached rootfs preserves root-owned sudo files" as_star_user podman run --rm --runtime "$runtime_crun" --userns=keep-id:uid=2001,gid=2001 --user 0:0 --rootfs "$rootfs_path" /bin/bash -lc 'test "$(stat -c %u /etc/sudo.conf)" = 0 && test "$(stat -c %u /etc/sudoers)" = 0 && test "$(stat -c %u /etc/sudoers.d)" = 0 && test -z "$(find /etc/sudoers.d -mindepth 1 -maxdepth 1 ! -uid 0 -print -quit)" && test "$(stat -Lc %u /usr/bin/sudo)" = 0 && test -u /usr/bin/sudo'
     fi

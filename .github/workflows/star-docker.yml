@@ -109,12 +109,16 @@ jobs:
         run: src/scripts/star/docker-preview/ci-smoke.sh "$IMAGE"
 
       - name: Test upgrading from the current latest image
-        # Informational until latest is an image built by this workflow.
-        continue-on-error: true
         run: |
-          if docker pull "$REPOSITORY:latest"; then
+          # Images older than this workflow cannot be driven by ci-smoke.sh;
+          # they lack the release-id file, so skip them.
+          if docker pull "$REPOSITORY:latest" &&
+            docker run --rm --entrypoint cat "$REPOSITORY:latest" \
+              /usr/local/share/cocalc-star-docker/release-id; then
             src/scripts/star/docker-preview/ci-smoke.sh "$IMAGE" \
               --upgrade-from "$REPOSITORY:latest"
+          else
+            echo "latest is not an image built by this workflow; skipping the upgrade test"
           fi
 
       # Every run keeps its tested images for a few days, so an unpublished
