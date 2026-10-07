@@ -5,7 +5,7 @@
  */
 
 // Patches applied by sea/install-claude-code.sh to the pinned claude-agent-acp
-// 0.85.1. Both bugs are unchanged upstream through 0.86.0. Upstream: report as
+// 0.85.1. All are unchanged upstream through 0.86.0. Upstream: report as
 // adapter bugs.
 //
 // rate-limit: The adapter forwards Claude's rate_limit_event (subscription
@@ -14,6 +14,15 @@
 // conversation is with the first response's headers, before any assistant
 // message, so it was dropped and CoCalc never learned the usage. Forward it at
 // once, with the last known context usage.
+//
+// steer-next: The adapter delivers guidance (steers) with priority "now",
+// which aborts Claude's current generation: a partly written answer or tool
+// call is thrown away and Claude starts over. Claude Code itself queues
+// messages typed while it works with priority "next", which waits for the
+// current step to finish. Use "next" so CoCalc guidance behaves the same way.
+// Verified live with Claude Code 2.1.286: "now" cut a streamed answer off and
+// Claude rewrote it from scratch; "next" let it finish, then followed the
+// guidance.
 //
 // steer-stranded-tool: A message delivered into a running turn (a steer, e.g.
 // the answer to an async question) aborts the in-flight generation cycle. A
@@ -127,6 +136,16 @@ const PATCHES = [
                 }
                 const unfinished = pending.filter((id) => !stranded.includes(id));
                 if (unfinished.length > 0) {`,
+  },
+  {
+    name: "steer delivery priority",
+    original: `        userMessage.priority =
+            (session.pendingUserInputCount ?? 0) > 0 ? STEER_PRIORITY_LATER : STEER_PRIORITY_NOW;`,
+    patched: `        // CoCalc patch: deliver guidance at the next step boundary, as Claude Code
+        // does for messages typed while it works, instead of aborting the current
+        // generation. A pending permission prompt still defers it further.
+        userMessage.priority =
+            (session.pendingUserInputCount ?? 0) > 0 ? STEER_PRIORITY_LATER : "next";`,
   },
 ];
 

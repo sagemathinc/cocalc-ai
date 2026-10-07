@@ -6,6 +6,7 @@ const byName = (name) => PATCHES.find((patch) => patch.name.startsWith(name));
 const rateLimit = byName("rate_limit_event");
 const recording = byName("assistant message");
 const endOfTurn = byName("end-of-turn");
+const steerPriority = byName("steer delivery");
 
 const before = PATCHES.map(({ original }) => original).join("\n// ...\n");
 
@@ -26,6 +27,20 @@ test("is idempotent and refuses an unknown adapter version", () => {
       /not found exactly once/,
     );
   }
+});
+
+test("delivers guidance at the next step instead of aborting Claude", () => {
+  const priority = (pendingUserInputCount) =>
+    new Function(
+      "session",
+      "STEER_PRIORITY_LATER",
+      "STEER_PRIORITY_NOW",
+      `const userMessage = {};\n${steerPriority.patched}\nreturn userMessage.priority;`,
+    )({ pendingUserInputCount }, "later", "now");
+  assert.equal(priority(0), "next");
+  assert.equal(priority(undefined), "next");
+  // A pending permission prompt still defers guidance until it settles.
+  assert.equal(priority(1), "later");
 });
 
 const AsyncFunction = (async () => {}).constructor;
