@@ -5,6 +5,7 @@
 
 import {
   getAccountCollaboratorIndexProjectionMaintenanceStatus,
+  publishAccountCollaboratorFeedEvents,
   resetAccountCollaboratorIndexProjectionMaintenanceStateForTests,
   runAccountCollaboratorIndexProjectionMaintenanceTick,
   runAccountCollaboratorIndexProjectionPass,
@@ -151,23 +152,9 @@ describe("runAccountCollaboratorIndexProjectionPass", () => {
       applied_events: 2,
       inserted_rows: 4,
       deleted_rows: 1,
-      feed_events: [
-        {
-          type: "collaborator.upsert" as const,
-          ts: 1,
-          account_id: "acct-1",
-          collaborator: {
-            account_id: "acct-2",
-            first_name: "Collab",
-            last_name: "Two",
-            name: "Collab Two",
-            last_active: null,
-            profile: null,
-            common_project_count: 3,
-            updated_at: null,
-          },
-        },
-      ],
+      feed_event_count: 1,
+      feed_events_skipped: 0,
+      publish_duration_ms: expect.any(Number),
       event_types: {
         "project.membership_changed": 2,
       },
@@ -198,5 +185,186 @@ describe("runAccountCollaboratorIndexProjectionPass", () => {
     expect(status.last_error_at).not.toBeNull();
     expect(status.last_error).toContain("collaborator projection tick failed");
     expect(status.consecutive_failures).toBe(1);
+  });
+});
+
+function upsertEvent(i: number) {
+  return {
+    type: "collaborator.upsert" as const,
+    ts: i,
+    account_id: `acct-${i}`,
+    collaborator: {
+      account_id: `peer-${i}`,
+      first_name: null,
+      last_name: null,
+      name: null,
+      last_active: null,
+      profile: null,
+      common_project_count: 1,
+      updated_at: null,
+    },
+  };
+}
+
+describe("account collaborator feed publishing", () => {
+  beforeEach(() => {
+    resetAccountCollaboratorIndexProjectionMaintenanceStateForTests();
+  });
+
+  it("publishes in bounded chunks and yields between them", async () => {
+    const events = Array.from({ length: 7 }, (_, i) => upsertEvent(i));
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const order: string[] = [];
+    const publisher = jest.fn(async ({ account_id }) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      order.push(account_id);
+      await Promise.resolve();
+      inFlight -= 1;
+    });
+    let immediates = 0;
+    const realSetImmediate = global.setImmediate;
+    const spy = jest.spyOn(global, "setImmediate").mockImplementation(((
+      fn: (...args: any[]) => void,
+    ) => {
+      immediates += 1;
+      return realSetImmediate(fn);
+    }) as any);
+    try {
+      await publishAccountCollaboratorFeedEvents(events, {
+        publisher,
+        chunk_size: 3,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(publisher).toHaveBeenCalledTimes(7);
+    expect(order).toEqual(events.map((event) => event.account_id));
+    expect(maxInFlight).toBeLessThanOrEqual(3);
+    expect(immediates).toBe(2);
+  });
+
+  it("keeps feed events out of status and still publishes all of them", async () => {
+    const feed_events = Array.from({ length: 250 }, (_, i) => upsertEvent(i));
+    const publisher = jest.fn(async () => undefined);
+    const result = await runAccountCollaboratorIndexProjectionMaintenanceTick({
+      pass_runner: jest.fn(async () => ({
+        bay_id: "bay-7",
+        batches: 1,
+        scanned_events: 1,
+        applied_events: 1,
+        inserted_rows: 250,
+        deleted_rows: 250,
+        feed_events,
+        event_types: { "project.membership_changed": 1 },
+      })),
+      publisher,
+      publish_chunk_size: 100,
+    });
+    expect(result?.feed_events).toHaveLength(250);
+    expect(publisher).toHaveBeenCalledTimes(250);
+    const status = getAccountCollaboratorIndexProjectionMaintenanceStatus();
+    expect(status.last_result).not.toHaveProperty("feed_events");
+    expect(status.last_result?.feed_event_count).toBe(250);
+  });
+
+  it("does not fail a committed tick when feed publishing throws", async () => {
+    await expect(
+      runAccountCollaboratorIndexProjectionMaintenanceTick({
+        pass_runner: jest.fn(async () => ({
+          bay_id: "bay-7",
+          batches: 1,
+          scanned_events: 1,
+          applied_events: 1,
+          inserted_rows: 1,
+          deleted_rows: 0,
+          feed_events: [upsertEvent(1)],
+          event_types: { "project.membership_changed": 1 },
+        })),
+        publisher: jest.fn(async () => {
+          throw new Error("conat down");
+        }),
+      }),
+    ).resolves.not.toBeNull();
+    const status = getAccountCollaboratorIndexProjectionMaintenanceStatus();
+    expect(status.last_error).toBeNull();
+    expect(status.consecutive_failures).toBe(0);
+    expect(status.running).toBe(false);
+  });
+});
+
+describe("account collaborator feed publish budget", () => {
+  beforeEach(() => {
+    resetAccountCollaboratorIndexProjectionMaintenanceStateForTests();
+  });
+
+  it("stops at the budget when publishes never settle", async () => {
+    const events = Array.from({ length: 1_000 }, (_, i) => upsertEvent(i));
+    const publisher = jest.fn(() => new Promise<void>(() => {}));
+    const started = Date.now();
+    const result = await publishAccountCollaboratorFeedEvents(events, {
+      publisher,
+      chunk_size: 100,
+      budget_ms: 50,
+    });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(result).toEqual({
+      attempted: 100,
+      skipped: 900,
+      failed: 0,
+      timed_out: true,
+    });
+    expect(publisher).toHaveBeenCalledTimes(100);
+  });
+
+  it("counts failed publishes without stopping", async () => {
+    const events = Array.from({ length: 5 }, (_, i) => upsertEvent(i));
+    const publisher = jest.fn(async ({ account_id }) => {
+      if (account_id === "acct-2") throw new Error("nope");
+    });
+    await expect(
+      publishAccountCollaboratorFeedEvents(events, {
+        publisher,
+        chunk_size: 2,
+        budget_ms: 5_000,
+      }),
+    ).resolves.toEqual({
+      attempted: 5,
+      skipped: 0,
+      failed: 1,
+      timed_out: false,
+    });
+  });
+
+  it("a hung feed store cannot hold the projector past the budget", async () => {
+    const tick = runAccountCollaboratorIndexProjectionMaintenanceTick({
+      pass_runner: jest.fn(async () => ({
+        bay_id: "bay-7",
+        batches: 1,
+        scanned_events: 1,
+        applied_events: 1,
+        inserted_rows: 300,
+        deleted_rows: 300,
+        feed_events: Array.from({ length: 300 }, (_, i) => upsertEvent(i)),
+        event_types: { "project.membership_changed": 1 },
+      })),
+      publisher: jest.fn(() => new Promise<void>(() => {})),
+      publish_chunk_size: 100,
+      publish_budget_ms: 50,
+    });
+    await expect(tick).resolves.not.toBeNull();
+    const status = getAccountCollaboratorIndexProjectionMaintenanceStatus();
+    expect(status.running).toBe(false);
+    expect(status.last_error).toBeNull();
+    expect(status.last_result).toMatchObject({
+      feed_event_count: 300,
+      feed_events_skipped: 200,
+    });
+    // Tick timing includes the publish phase.
+    expect(status.last_tick_duration_ms).toBeGreaterThanOrEqual(
+      status.last_result?.publish_duration_ms ?? 0,
+    );
+    expect(status.last_result?.publish_duration_ms).toBeGreaterThanOrEqual(45);
   });
 });

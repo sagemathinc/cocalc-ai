@@ -204,17 +204,36 @@ async function collaboratorRowsForAccount(
   }));
 }
 
-function collaboratorFeedEventsForAccount(opts: {
+// replaceAccountCollaboratorIndexRows rewrites every peer row and stamps
+// updated_at, so compare only the fields clients render.
+function collaboratorRowContentKey(row: AccountFeedCollaboratorRow): string {
+  return JSON.stringify([
+    row.common_project_count,
+    row.display_name ?? null,
+    row.first_name ?? null,
+    row.last_name ?? null,
+    row.name ?? null,
+    row.last_active ?? null,
+    row.profile ?? null,
+  ]);
+}
+
+// Emit only real changes. A membership change on a project with n
+// participants touches n accounts with n peers each; publishing every peer row
+// produced n^2 feed events per outbox event and stalled the primary hub worker.
+export function collaboratorFeedEventsForAccount(opts: {
   account_id: string;
   previous_rows: AccountFeedCollaboratorRow[];
   current_rows: AccountFeedCollaboratorRow[];
   event_ts?: string | Date | number | null;
 }): AccountFeedEvent[] {
-  const previousIds = new Set(opts.previous_rows.map((row) => row.account_id));
+  const previousById = new Map(
+    opts.previous_rows.map((row) => [row.account_id, row]),
+  );
   const currentIds = new Set(opts.current_rows.map((row) => row.account_id));
   const events: AccountFeedEvent[] = [];
   const ts = eventTimestampMs(opts.event_ts);
-  for (const collaborator_account_id of previousIds) {
+  for (const collaborator_account_id of previousById.keys()) {
     if (currentIds.has(collaborator_account_id)) continue;
     events.push({
       type: "collaborator.remove",
@@ -225,6 +244,14 @@ function collaboratorFeedEventsForAccount(opts: {
     });
   }
   for (const collaborator of opts.current_rows) {
+    const previous = previousById.get(collaborator.account_id);
+    if (
+      previous != null &&
+      collaboratorRowContentKey(previous) ===
+        collaboratorRowContentKey(collaborator)
+    ) {
+      continue;
+    }
     events.push({
       type: "collaborator.upsert",
       ts,
