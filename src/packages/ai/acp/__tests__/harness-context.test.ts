@@ -3,7 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { harnessPrompt, harnessSessionGuidance } from "../harness-context";
+import {
+  harnessHasSessionGuidance,
+  harnessPrompt,
+  harnessSessionGuidance,
+} from "../harness-context";
 import { artifactPublicationGuidance } from "../publication-guidance";
 
 const CLI = '"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"';
@@ -62,4 +66,15 @@ test("native harness commands pass through unchanged", () => {
   expect(harnessPrompt({ ...request(true), prompt: "/compact" })).toBe(
     "/compact",
   );
+});
+
+test("custom ACP harnesses that may ignore _meta keep the guidance inline", () => {
+  expect(harnessHasSessionGuidance({ version: 2, id: "claude-code" })).toBe(
+    true,
+  );
+  expect(harnessHasSessionGuidance({ version: 1, id: "custom" })).toBe(false);
+  const prompt = harnessPrompt(request(true), { inlineSessionGuidance: true });
+  expect(prompt.startsWith(harnessSessionGuidance(false))).toBe(true);
+  expect(prompt).toContain("[CoCalc turn context]");
+  expect(prompt.endsWith("Write a script that prints primes.")).toBe(true);
 });

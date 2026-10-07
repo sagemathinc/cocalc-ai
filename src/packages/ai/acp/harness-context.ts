@@ -32,12 +32,24 @@ When the turn context says workbench is not enabled: ${artifactPublicationGuidan
 [/CoCalc session guidance]`;
 }
 
+/**
+ * Only Claude Code reads `_meta.systemPrompt`. Other (custom) ACP harnesses
+ * may ignore unknown metadata, so they keep the session guidance inline.
+ */
+export function harnessHasSessionGuidance(profile: {
+  version?: number;
+  id?: string;
+}): boolean {
+  return profile.version === 2 && profile.id === "claude-code";
+}
+
 /** Retained harness processes cannot receive updated per-turn environment values. */
 export function harnessPrompt(
   request: Pick<
     AcpEvaluateRequest,
     "prompt" | "project_id" | "chat" | "runtime" | "agent_memory_context"
   >,
+  { inlineSessionGuidance = false }: { inlineSessionGuidance?: boolean } = {},
 ): string {
   // Leave native harness commands intact, as on the Codex path.
   if (/^\s*\/\w+/.test(request.prompt)) return request.prompt;
@@ -49,7 +61,7 @@ export function harnessPrompt(
   };
   if (!context.path || !context.thread_id || !context.message_date)
     return request.prompt;
-  return `[CoCalc turn context]
+  return `${inlineSessionGuidance ? `${harnessSessionGuidance(false)}\n` : ""}[CoCalc turn context]
 ${request.runtime ? `Project working directory for this turn: ${JSON.stringify(request.runtime.profile.cwd)}. Use this directory for project commands unless the task requires another directory.\n` : ""}Workbench is ${request.chat?.workbench ? "enabled" : "not enabled"} for this turn.
 Publication context: ${JSON.stringify(context)}${request.agent_memory_context ? `\n${request.agent_memory_context}` : ""}
 [/CoCalc turn context]

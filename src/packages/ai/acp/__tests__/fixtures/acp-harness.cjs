@@ -349,9 +349,12 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     case "session/prompt": {
       const rawText = message.params.prompt[0].text;
       const contextEnd = "[/CoCalc turn context]\n\n";
-      const contextualText = rawText.startsWith("[CoCalc turn context]\n")
-        ? rawText.slice(rawText.indexOf(contextEnd) + contextEnd.length)
-        : rawText;
+      const contextualText =
+        /^(\[CoCalc session guidance\][^]*?\n)?\[CoCalc turn context\]\n/.test(
+          rawText,
+        )
+          ? rawText.slice(rawText.indexOf(contextEnd) + contextEnd.length)
+          : rawText;
       const text = contextualText.replace(
         /^System note: this message was queued for [^\n]+ while another turn was active, and is being sent automatically now\.\n\n/,
         "",

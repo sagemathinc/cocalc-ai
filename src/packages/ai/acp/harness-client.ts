@@ -18,7 +18,10 @@ import type {
 } from "@cocalc/conat/ai/acp/types";
 import type { AcpImageAttachment } from "./types";
 import { harnessQuestionForm } from "./harness-questions";
-import { harnessSessionGuidance } from "./harness-context";
+import {
+  harnessHasSessionGuidance,
+  harnessSessionGuidance,
+} from "./harness-context";
 import type { Readable, Writable } from "node:stream";
 import {
   parseAcpHarnessCredential,
@@ -811,14 +814,18 @@ export class AcpHarnessClient {
           : this.binding.credential.mode === "account-api-key"
             ? {
                 _meta: claudeAccountApiKeySessionMeta(
-                  harnessSessionGuidance(false),
+                  harnessHasSessionGuidance(this.binding.profile)
+                    ? harnessSessionGuidance(false)
+                    : undefined,
                 ),
               }
-            : {
-                _meta: {
-                  systemPrompt: { append: harnessSessionGuidance(false) },
-                },
-              }),
+            : harnessHasSessionGuidance(this.binding.profile)
+              ? {
+                  _meta: {
+                    systemPrompt: { append: harnessSessionGuidance(false) },
+                  },
+                }
+              : {}),
       };
       if (sessionId) {
         if (!this.info.agentCapabilities?.loadSession)
