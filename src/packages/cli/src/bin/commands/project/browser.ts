@@ -32,6 +32,7 @@ import {
   type ReverseTunnel,
 } from "../../core/reverse-tunnel";
 import { runSharedBrowserService } from "../../core/shared-browser/service";
+import { registerSharedBrowserCommands } from "./shared-browser";
 import type { ProjectCommandDeps } from "../project";
 import {
   ensureManagedProjectSshConfigEntry,
@@ -362,7 +363,7 @@ export function registerProjectBrowserCommands(
   const browser = project
     .command("browser")
     .description(
-      "a browser on this computer that agents in the project can drive",
+      "browsers shared by agents and humans: a shared browser in the project (start) or a browser on this computer (connect)",
     );
 
   browser
@@ -405,6 +406,8 @@ export function registerProjectBrowserCommands(
         runBrowserConnect(ctx, deps, opts),
       );
     });
+
+  registerSharedBrowserCommands(browser, deps);
 
   browser
     .command("serve")

@@ -858,9 +858,16 @@ export function normalizeUrl(input: string): string | null {
   const text = input.trim();
   if (!text) return null;
   if (/^(https?|about|data):/i.test(text)) return text;
-  if (/^[a-z][a-z0-9+.-]*:/i.test(text)) return null; // e.g. file:, javascript:
-  if (/^[^\s/]+\.[^\s/]+/.test(text) || /^localhost(:\d+)?(\/|$)/.test(text))
-    return `${/^localhost|^127\.|^\[::1\]/.test(text) ? "http" : "https"}://${text}`;
+  // Local addresses, possibly with a port (checked before the scheme rule,
+  // since "localhost:8080" looks like a scheme).
+  if (/^(localhost|127(\.\d{1,3}){3}|\[::1\])(:\d+)?(\/|$)/i.test(text))
+    return `http://${text}`;
+  if (
+    /^[a-z][a-z0-9+.-]*:/i.test(text) &&
+    !/^[^\s/:]+\.[^\s/:]+:\d+/.test(text)
+  )
+    return null; // e.g. file:, javascript:
+  if (/^[^\s/]+\.[^\s/]+/.test(text)) return `https://${text}`;
   return `https://duckduckgo.com/?q=${encodeURIComponent(text)}`;
 }
 
