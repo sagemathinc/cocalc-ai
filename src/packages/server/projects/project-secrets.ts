@@ -96,7 +96,11 @@ let projectSecretsSchemaSetup: Promise<void> | undefined;
 function projectSecretsSchemaSetupOnPool(): Promise<void> {
   // Shared by concurrent callers; retried after a failure.
   projectSecretsSchemaSetup ??= withTransaction(
-    createProjectSecretsSchema,
+    (db) => createProjectSecretsSchema(db, { backfill: true }),
+    // Read committed: the advisory lock may wait for other setups, and a
+    // snapshot taken before that wait would make the backfill fail with a
+    // serialization error.
+    "READ COMMITTED",
   ).then(
     () => {
       projectSecretsSchemaReady = true;
@@ -114,15 +118,26 @@ export async function ensureProjectSecretsSchema(
 ): Promise<void> {
   if (projectSecretsSchemaReady) return;
   if (db === pool()) return await projectSecretsSchemaSetupOnPool();
-  // Inside a caller's transaction: create what it needs there (that may still
-  // roll back), and finish the setup on the pool once the caller's locks are
-  // released. Never wait for it here: the caller's transaction may hold locks
-  // on these tables. The advisory lock orders the two setups.
-  await createProjectSecretsSchema(db);
+  // Inside a caller's transaction: if the tables are missing (a new
+  // database), create them there (that may still roll back). Either way finish
+  // the setup on the pool once the caller's locks are released. Never wait for
+  // it here: the caller's transaction may hold locks on these tables. The
+  // advisory lock orders the two setups.
+  const { rows } = await db.query(
+    `SELECT to_regclass('project_secrets') IS NOT NULL
+        AND to_regclass('project_secrets_runtime_state') IS NOT NULL
+        AND to_regclass('project_secret_managed_sources') IS NOT NULL AS exists`,
+  );
+  if (!rows[0]?.exists) {
+    await createProjectSecretsSchema(db, { backfill: false });
+  }
   void projectSecretsSchemaSetupOnPool().catch(() => {});
 }
 
-async function createProjectSecretsSchema(db: Queryable): Promise<void> {
+async function createProjectSecretsSchema(
+  db: Queryable,
+  { backfill }: { backfill: boolean },
+): Promise<void> {
   // Serialize setups (this process's pool setup, callers' transactions and
   // other processes): concurrent CREATE ... IF NOT EXISTS of the same table
   // fails with a unique violation in pg_type. Held until the transaction ends.
@@ -163,11 +178,15 @@ async function createProjectSecretsSchema(db: Queryable): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
-  await db.query(`
-    INSERT INTO project_secrets_runtime_state(project_id, generation, updated_at)
-    SELECT DISTINCT project_id, 1, NOW() FROM project_secrets
-    ON CONFLICT (project_id) DO NOTHING
-  `);
+  if (backfill) {
+    // Data, not schema: only in the pool setup. Tables that a caller's
+    // transaction has just created are empty.
+    await db.query(`
+      INSERT INTO project_secrets_runtime_state(project_id, generation, updated_at)
+      SELECT DISTINCT project_id, 1, NOW() FROM project_secrets
+      ON CONFLICT (project_id) DO NOTHING
+    `);
+  }
   await db.query(`
     CREATE TABLE IF NOT EXISTS project_secret_managed_sources (
       project_id UUID NOT NULL,
@@ -221,10 +240,11 @@ function encryptedValue(value: any): EncryptedProjectSecretValue {
 
 async function withTransaction<T>(
   fn: (client: Queryable) => Promise<T>,
+  isolation: "REPEATABLE READ" | "READ COMMITTED" = "REPEATABLE READ",
 ): Promise<T> {
   const client = await (getPool() as any).connect();
   try {
-    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
+    await client.query(`BEGIN ISOLATION LEVEL ${isolation}`);
     const result = await fn(client);
     await client.query("COMMIT");
     return result;
