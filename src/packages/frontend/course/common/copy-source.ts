@@ -4,6 +4,7 @@
  */
 
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { isPartialUploadName } from "@cocalc/util/partial-upload";
 
 export type CourseDirectoryCopySource = {
   project_id: string;
@@ -32,8 +33,13 @@ export async function courseDirectoryCopySource({
       path,
       hidden: false,
     });
+    // In-flight uploads vanish (renamed) before the copy reads them, which
+    // used to fail the whole distribution.
     const childPaths = files
-      .filter((entry) => !entry.name.startsWith("."))
+      .filter(
+        (entry) =>
+          !entry.name.startsWith(".") && !isPartialUploadName(entry.name),
+      )
       .map((entry) => joinPath(path, entry.name));
     if (childPaths.length) {
       return { project_id, base_path: path, path: childPaths };
