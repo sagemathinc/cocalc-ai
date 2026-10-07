@@ -79,6 +79,14 @@ export async function createAgentFromCopy(
   if (findNamedAgent(agents, name)) {
     throw new Error(`you already have an agent named @${name}`);
   }
+  // Check capacity before forking, so the common failure never leaves an
+  // unnamed fork behind (a concurrent create can still race; see below).
+  const usage = directory?.usage;
+  if (usage && usage.active >= usage.limit) {
+    throw new Error(
+      `you already have ${usage.active} of ${usage.limit} named agents; remove one first ("cocalc agent remove NAME")`,
+    );
+  }
   const source = findNamedAgent(agents, opts.from);
   if (!source) {
     throw new Error(

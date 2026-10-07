@@ -128,6 +128,20 @@ test("agent create refuses unknown sources and duplicate names", async () => {
   );
 });
 
+test("agent create checks the named-agent limit before forking", async () => {
+  const { deps, calls } = fakeDeps();
+  const list = deps.hub.agent.listNamedAgents;
+  deps.hub.agent.listNamedAgents = async () => ({
+    ...(await list()),
+    usage: { active: 3, limit: 3 },
+  });
+  await assert.rejects(
+    createAgentFromCopy(deps as any, { name: "copy", from: "support" }),
+    /3 of 3 named agents/,
+  );
+  assert.equal(calls.fork, undefined);
+});
+
 test("agent create reports partial failures after the fork without hiding what exists", async () => {
   const failingDraft = fakeDeps();
   failingDraft.deps.setDraft = async () => {
