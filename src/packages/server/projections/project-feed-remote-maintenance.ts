@@ -54,6 +54,12 @@ const PROJECTS_PER_TICK = clampInt(
   1,
   10_000,
 );
+const CONCURRENCY = clampInt(
+  process.env.COCALC_PROJECT_FEED_REMOTE_CONCURRENCY,
+  8,
+  1,
+  64,
+);
 const MIN_BACKOFF_MS = 2_000;
 const MAX_BACKOFF_MS = 5 * 60_000;
 
@@ -193,6 +199,69 @@ async function forwardProject(
   });
 }
 
+type ProjectOutcome =
+  { outcome: "forwarded" | "failed"; events: number } | { outcome: "skipped" };
+
+async function forwardOneProject(
+  bay_id: string,
+  project_id: string,
+): Promise<ProjectOutcome> {
+  const outcome = await withProjectLock(
+    project_id,
+    async (client): Promise<ProjectOutcome> => {
+      const events = await loadProjectEvents(client, project_id);
+      if (events == null) return { outcome: "skipped" };
+      try {
+        await forwardProject(bay_id, events);
+        await finishProject(events);
+        return { outcome: "forwarded", events: events.length };
+      } catch (err) {
+        logger.warn(
+          "forwarding project changes to other bays failed; will retry",
+          {
+            project_id,
+            events: events.length,
+            attempts: events[events.length - 1].remote_feed_attempts + 1,
+            err: `${err}`,
+          },
+        );
+        await finishProject(events, err);
+        return { outcome: "failed", events: events.length };
+      }
+    },
+  );
+  return outcome ?? { outcome: "skipped" };
+}
+
+// One forward per project at a time in this process. A change that arrives
+// while its project is being forwarded is picked up as soon as that ends.
+const inFlight = new Map<string, Promise<ProjectOutcome>>();
+const dirty = new Set<string>();
+
+function driveProject(
+  bay_id: string,
+  project_id: string,
+): Promise<ProjectOutcome> {
+  const current = inFlight.get(project_id);
+  if (current != null) {
+    dirty.add(project_id);
+    return current.then(() => ({ outcome: "skipped" }) as ProjectOutcome);
+  }
+  const run = (async () => {
+    let outcome: ProjectOutcome;
+    do {
+      dirty.delete(project_id);
+      outcome = await forwardOneProject(bay_id, project_id);
+    } while (dirty.has(project_id) && outcome.outcome === "forwarded");
+    return outcome;
+  })().finally(() => {
+    inFlight.delete(project_id);
+    dirty.delete(project_id);
+  });
+  inFlight.set(project_id, run);
+  return run;
+}
+
 export async function runProjectFeedRemotePass(opts?: {
   bay_id?: string;
   limit?: number;
@@ -216,52 +285,40 @@ export async function runProjectFeedRemotePass(opts?: {
       LIMIT $1`,
     [opts?.limit ?? PROJECTS_PER_TICK],
   );
-  for (const { project_id } of rows) {
-    await withProjectLock(project_id, async (client) => {
-      const events = await loadProjectEvents(client, project_id);
-      if (events == null) return;
+  // Projects are independent, so a slow bay holds up only its own projects.
+  const queue = rows.map((row) => row.project_id);
+  const worker = async () => {
+    for (;;) {
+      const project_id = queue.shift();
+      if (project_id == null) return;
+      const outcome = await driveProject(bay_id, project_id);
+      if (outcome.outcome === "skipped") continue;
       result.projects += 1;
-      result.events += events.length;
-      try {
-        await forwardProject(bay_id, events);
-        await finishProject(events);
+      result.events += outcome.events;
+      if (outcome.outcome === "forwarded") {
         result.forwarded_projects += 1;
-      } catch (err) {
+      } else {
         result.failed_projects += 1;
-        logger.warn(
-          "forwarding project changes to other bays failed; will retry",
-          {
-            project_id,
-            events: events.length,
-            attempts: events[events.length - 1].remote_feed_attempts + 1,
-            err: `${err}`,
-          },
-        );
-        await finishProject(events, err);
       }
-    });
-  }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker),
+  );
   return result;
 }
 
 let timer: NodeJS.Timeout | undefined;
 let running = false;
-let rerun = false;
 
 async function tick(): Promise<void> {
-  if (running) {
-    rerun = true;
-    return;
-  }
+  if (running) return;
   running = true;
   try {
-    do {
-      rerun = false;
-      const result = await runProjectFeedRemotePass();
-      if (result.failed_projects > 0) {
-        logger.info("project feed forwarding pass", result);
-      }
-    } while (rerun);
+    const result = await runProjectFeedRemotePass();
+    if (result.failed_projects > 0) {
+      logger.info("project feed forwarding pass", result);
+    }
   } catch (err) {
     logger.warn("project feed forwarding pass failed", { err: `${err}` });
   } finally {
@@ -269,10 +326,15 @@ async function tick(): Promise<void> {
   }
 }
 
-/** Forward soon: called right after a project change on this bay. */
-export function kickProjectFeedRemoteDrain(): void {
+/** Forward a project's changes now: called right after a change on this bay. */
+export function kickProjectFeedRemoteDrain(project_id: string): void {
   if (!timer) return;
-  void tick();
+  driveProject(getConfiguredBayId(), project_id).catch((err) =>
+    logger.warn("project feed forwarding failed", {
+      project_id,
+      err: `${err}`,
+    }),
+  );
 }
 
 export function startProjectFeedRemoteMaintenance(): void {
@@ -285,6 +347,7 @@ export function startProjectFeedRemoteMaintenance(): void {
   logger.info("project feed forwarding to other bays started", {
     interval_ms: INTERVAL_MS,
     projects_per_tick: PROJECTS_PER_TICK,
+    concurrency: CONCURRENCY,
   });
 }
 

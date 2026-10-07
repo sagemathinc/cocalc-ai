@@ -67,6 +67,13 @@ async function outboxRows() {
   return rows;
 }
 
+async function waitFor(check: () => boolean): Promise<void> {
+  for (let i = 0; i < 200 && !check(); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  expect(check()).toBe(true);
+}
+
 describe("runProjectFeedRemotePass", () => {
   beforeAll(async () => {
     await initEphemeralDatabase({});
@@ -261,6 +268,60 @@ describe("runProjectFeedRemotePass", () => {
     expect(forwardRemoteProjectFeedEvents.mock.calls[1][0].payload.title).toBe(
       "A",
     );
+  });
+
+  it("does not let a slow project hold up another", async () => {
+    await appendEvent({
+      users: { [ALICE]: { group: "owner" } },
+      title: "slow",
+    });
+    await appendEvent({
+      project_id: OTHER_PROJECT_ID,
+      users: { [ALICE]: { group: "owner" } },
+      title: "fast",
+    });
+    let release!: () => void;
+    const slow = new Promise<void>((resolve) => (release = resolve));
+    const forwarded: string[] = [];
+    forwardRemoteProjectFeedEvents.mockImplementation(async ({ payload }) => {
+      if (payload.title === "slow") await slow;
+      forwarded.push(payload.title);
+    });
+
+    const pass = runProjectFeedRemotePass({ bay_id: "bay-0" });
+    await waitFor(() => forwarded.includes("fast"));
+    expect(forwarded).toEqual(["fast"]);
+    release();
+    await expect(pass).resolves.toMatchObject({
+      projects: 2,
+      forwarded_projects: 2,
+    });
+  });
+
+  it("forwards a change made while its project is being forwarded", async () => {
+    await appendEvent({ users: { [ALICE]: { group: "owner" } }, title: "A" });
+    let release!: () => void;
+    const slow = new Promise<void>((resolve) => (release = resolve));
+    forwardRemoteProjectFeedEvents.mockImplementationOnce(async () => {
+      await slow;
+    });
+
+    const pass = runProjectFeedRemotePass({ bay_id: "bay-0" });
+    await waitFor(() => forwardRemoteProjectFeedEvents.mock.calls.length > 0);
+    await appendEvent({ users: { [ALICE]: { group: "owner" } }, title: "B" });
+    // Same as the kick after a local change, which is ignored while the
+    // loop is stopped, so drive a second pass instead.
+    const second = runProjectFeedRemotePass({ bay_id: "bay-0" });
+    release();
+    await Promise.all([pass, second]);
+
+    expect(forwardRemoteProjectFeedEvents).toHaveBeenCalledTimes(2);
+    expect(forwardRemoteProjectFeedEvents.mock.calls[1][0].payload.title).toBe(
+      "B",
+    );
+    expect(
+      (await outboxRows()).every((row) => row.remote_feed_pending === false),
+    ).toBe(true);
   });
 
   it("caps backoff", () => {

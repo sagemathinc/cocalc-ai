@@ -487,10 +487,10 @@ export async function publishProjectRemoveFeedEventsBestEffort(opts: {
 }
 
 // Set by the durable forwarding loop (projections/project-feed-remote-maintenance).
-let remoteDrainKick: (() => void) | undefined;
+let remoteDrainKick: ((project_id: string) => void) | undefined;
 
 export function setRemoteProjectFeedDrainKick(
-  kick: (() => void) | undefined,
+  kick: ((project_id: string) => void) | undefined,
 ): void {
   remoteDrainKick = kick;
 }
@@ -591,7 +591,7 @@ export async function publishProjectAccountFeedEventsBestEffort(opts: {
       latestEvent?.remote_feed_published_at != null;
     if (durable && remoteDrainKick) {
       // The outbox row is the durable record; forward it now.
-      remoteDrainKick();
+      remoteDrainKick(opts.project_id);
     } else {
       // No pending outbox row (e.g. an event written before this bay
       // enabled durable forwarding): forward once, best effort.
