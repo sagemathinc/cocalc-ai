@@ -118,6 +118,8 @@ export type SiteSettingsKeys =
   | "signup_email_domain_policy_mode"
   | "signup_email_domain_allow_list"
   | "signup_email_domain_deny_list"
+  | "educator_email_allow_list"
+  | "educator_email_deny_list"
   | "signup_email_domain_public_message"
   | "signup_email_domain_show_allowed_domains"
   | "public_signup_without_registration_token"
@@ -1047,6 +1049,26 @@ export const site_settings_conf: SiteSettings = {
     tags: ["Commercialization"],
     group: "Billing & Commerce",
     subgroup: "Accounts Receivable",
+  },
+  educator_email_allow_list: {
+    name: "Educator email allow list",
+    desc: "Verified email addresses (jane@example.org) or domains (example.org, *.example.org) that qualify for membership tiers marked 'available for instructor purchase', in addition to recognized academic domains. Add an individual address here to approve an educator by hand. Comma, whitespace, or newline separated. Never exposed publicly.",
+    default: "",
+    clearable: true,
+    multiline: 4,
+    group: "Billing & Commerce",
+    subgroup: "Educator Offers",
+    tags: ["Commercialization", "Email"],
+  },
+  educator_email_deny_list: {
+    name: "Educator email deny list",
+    desc: "Verified email addresses or domains that never qualify for membership tiers marked 'available for instructor purchase', even when the domain is recognized as academic. Takes precedence over the allow list. Never exposed publicly.",
+    default: "",
+    clearable: true,
+    multiline: 4,
+    group: "Billing & Commerce",
+    subgroup: "Educator Offers",
+    tags: ["Commercialization", "Email"],
   },
   crm_visible: {
     name: "Show customer relationship management",

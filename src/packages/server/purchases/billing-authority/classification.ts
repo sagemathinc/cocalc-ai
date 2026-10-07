@@ -24,6 +24,7 @@ const PURCHASE_READ_METHODS = new Set([
   "getBalance",
   "getClaimableMembershipPackages",
   "getComputeRevenueSeries",
+  "getEducatorOffers",
   "getManagedCpuAdminHistory",
   "getManagedCpuAdminOverview",
   "getManagedEgressAdminHistory",
