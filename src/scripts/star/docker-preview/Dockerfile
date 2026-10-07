@@ -97,6 +97,7 @@ RUN chmod 0755 \
     /usr/local/sbin/cocalc-star-docker-init \
     /usr/local/sbin/cocalc-star-docker-entrypoint \
   && printf '%s\n' "${COCALC_STAR_RELEASE_ID}" >/usr/local/share/cocalc-star-docker/release-id \
+  && ln -s /opt/cocalc-star/source/src/scripts/star/star.sh /usr/local/bin/star \
   && mkdir -p /var/lib/cocalc /opt/cocalc-star /mnt/cocalc /run/systemd \
   && systemctl enable cocalc-star-docker-init.service
 
