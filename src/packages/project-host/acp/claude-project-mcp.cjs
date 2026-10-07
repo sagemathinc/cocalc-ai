@@ -27,9 +27,9 @@ const tools = [
         yield_time_ms: {
           type: "integer",
           minimum: 0,
-          maximum: 30000,
+          maximum: 120000,
           description:
-            "How long this tool waits, not a job deadline; default 10000 ms",
+            "How long this tool waits, not a job deadline; default 10000 ms, maximum 120000 ms",
         },
         timeout_ms: {
           type: "integer",
@@ -51,13 +51,13 @@ const tools = [
   {
     name: "project_exec_wait",
     description:
-      "Read/poll a project job. Waits until completion, a full output page, or yield_time_ms (default 10000 ms), not just the first output chunk. Pass its next_cursor as cursor for incremental output. Repeating a cursor replays retained output. Continue while status is running or has_more is true. cleanup_pending with cleanup_error means runtime cleanup is unconfirmed: do not claim cancellation succeeded or retry execution; report the runtime failure. output_truncated means older output was evicted: redirect verbose logs to a project file when full history is needed. Polling never restarts a command. Completed jobs are retained for up to 10 minutes (at most 32 jobs).",
+      "Read/poll a project job. Waits until completion, a full output page, or yield_time_ms (default 10000 ms, maximum 120000 ms), not just the first output chunk. New user guidance ends a wait early. Pass its next_cursor as cursor for incremental output. Repeating a cursor replays retained output. Continue while status is running or has_more is true. cleanup_pending with cleanup_error means runtime cleanup is unconfirmed: do not claim cancellation succeeded or retry execution; report the runtime failure. output_truncated means older output was evicted: redirect verbose logs to a project file when full history is needed. Polling never restarts a command. Completed jobs are retained for up to 10 minutes (at most 32 jobs).",
     inputSchema: {
       type: "object",
       properties: {
         job_id: { type: "string" },
         cursor: { type: "integer", minimum: 0 },
-        yield_time_ms: { type: "integer", minimum: 0, maximum: 30000 },
+        yield_time_ms: { type: "integer", minimum: 0, maximum: 120000 },
       },
       required: ["job_id"],
       additionalProperties: false,

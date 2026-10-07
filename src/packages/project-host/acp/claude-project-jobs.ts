@@ -45,6 +45,8 @@ interface Job {
 }
 const DEFAULT_TIMEOUT = 3_600_000;
 const DEFAULT_WAIT = 10_000;
+// Below the bridge's 150 s idle socket timeout. Guidance ends a wait early.
+export const MAX_WAIT = 120_000;
 const MAX_TIMEOUT = 86_400_000;
 const RETENTION = 600_000;
 const OUTPUT_BYTES = 1024 * 1024;
@@ -99,6 +101,7 @@ export class ClaudeProjectJobs {
   private cleanupBlocked = false;
   // Jobs whose cleanup is unproven; tools reopen once this is empty.
   private unproven = new Set<Job>();
+  private waits = new Set<() => void>();
   constructor(private execute: ProjectJobExecutor) {}
 
   private wake(job: Job) {
@@ -178,7 +181,7 @@ export class ClaudeProjectJobs {
       throw Error("Invalid project command");
     const timeoutMs = integer(args.timeout_ms, DEFAULT_TIMEOUT, MAX_TIMEOUT);
     if (!timeoutMs) throw Error("Command timeout must be positive");
-    const waitMs = integer(args.yield_time_ms, DEFAULT_WAIT, 30_000);
+    const waitMs = integer(args.yield_time_ms, DEFAULT_WAIT, MAX_WAIT);
     const fingerprint = createHash("sha256")
       .update(JSON.stringify([script, cwd, timeoutMs]))
       .digest("hex");
@@ -360,7 +363,7 @@ export class ClaudeProjectJobs {
     const job = this.get(args.job_id);
     const cursor = integer(args.cursor, 0, Number.MAX_SAFE_INTEGER);
     if (cursor > job.next) throw Error("Output cursor is ahead of this job");
-    const waitMs = integer(args.yield_time_ms, DEFAULT_WAIT, 30_000);
+    const waitMs = integer(args.yield_time_ms, DEFAULT_WAIT, MAX_WAIT);
     const ready = () => {
       if (job.status !== "running" || cursor < (job.output[0]?.seq ?? job.next))
         return true;
@@ -377,6 +380,7 @@ export class ClaudeProjectJobs {
         const done = () => {
           clearTimeout(timer);
           job.changed.delete(changed);
+          this.waits.delete(done);
           resolve();
         };
         const changed = () => {
@@ -384,6 +388,7 @@ export class ClaudeProjectJobs {
         };
         const timer = setTimeout(done, waitMs);
         job.changed.add(changed);
+        this.waits.add(done);
       });
     }
     const first = job.output[0]?.seq ?? job.next;
@@ -463,6 +468,10 @@ export class ClaudeProjectJobs {
   }
   resume() {
     if (!this.closed) this.paused = false;
+  }
+  /** Return every pending wait now, with whatever output is available. */
+  releaseWaits() {
+    for (const done of [...this.waits]) done();
   }
   async close() {
     this.closed = true;

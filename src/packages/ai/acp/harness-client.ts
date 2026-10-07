@@ -18,6 +18,10 @@ import type {
 } from "@cocalc/conat/ai/acp/types";
 import type { AcpImageAttachment } from "./types";
 import { harnessQuestionForm } from "./harness-questions";
+import {
+  harnessHasSessionGuidance,
+  harnessSessionGuidance,
+} from "./harness-context";
 import type { Readable, Writable } from "node:stream";
 import {
   parseAcpHarnessCredential,
@@ -73,6 +77,8 @@ export interface HarnessProcess {
   closed: Promise<void>;
   cancelTools?(): Promise<void>;
   resumeTools?(): void;
+  /** End pending project job waits early so queued guidance is delivered. */
+  releaseToolWaits?(): void;
   /** Trusted tool bridge callback, scoped to this process's admitted conversation. */
   setAsyncQuestionHandler?(handler: HarnessAsyncQuestionHandler): void;
   /**
@@ -137,8 +143,13 @@ type RequestMethod = keyof typeof REQUEST_ACTIONS;
 
 const CLAUDE_AUTH_STATUS_METHOD = "_auth/status_update";
 
-export function claudeAccountApiKeySessionMeta(): Record<string, unknown> {
+export function claudeAccountApiKeySessionMeta(
+  systemPromptAppend?: string,
+): Record<string, unknown> {
   return {
+    ...(systemPromptAppend
+      ? { systemPrompt: { append: systemPromptAppend } }
+      : {}),
     claudeCode: {
       options: {
         // The pinned adapter resets Bedrock/Vertex when pinning a provider,
@@ -149,8 +160,25 @@ export function claudeAccountApiKeySessionMeta(): Record<string, unknown> {
   };
 }
 
+/**
+ * Built-in Claude Code tools the isolated controller may use. None of them
+ * touch the controller filesystem or run commands. WebSearch runs on
+ * Anthropic's side; WebFetch downloads pages from the controller (through the
+ * public-host egress proxy in projects without internet access). The Task*
+ * tools keep Claude's task list, which the adapter reports as ACP plan updates.
+ */
+export const CLAUDE_CONTROLLER_TOOLS = [
+  "WebSearch",
+  "WebFetch",
+  "TaskCreate",
+  "TaskUpdate",
+  "TaskList",
+  "TaskGet",
+] as const;
+
 export function claudeSubscriptionSessionMeta(
   systemPromptAppend?: string,
+  options: { projectToolServerName?: string } = {},
 ): Record<string, unknown> {
   return {
     ...(systemPromptAppend
@@ -158,7 +186,16 @@ export function claudeSubscriptionSessionMeta(
       : {}),
     claudeCode: {
       options: {
-        tools: [],
+        tools: [...CLAUDE_CONTROLLER_TOOLS],
+        // CoCalc approves every call to these anyway. Pre-approving them
+        // saves a permission round trip and a persisted event per call.
+        allowedTools: [
+          "WebSearch",
+          "WebFetch",
+          ...(options.projectToolServerName
+            ? [`mcp__${options.projectToolServerName}`]
+            : []),
+        ],
         settingSources: [],
         skills: [],
         plugins: [],
@@ -740,6 +777,8 @@ export class AcpHarnessClient {
       throw Error("ACP session is already open or opening");
     this.opening = true;
     try {
+      const projectToolServerName =
+        this.process.projectToolServerName ?? "cocalc_project";
       const params = {
         cwd:
           this.sessionPolicy === "claude-subscription-controller"
@@ -749,7 +788,7 @@ export class AcpHarnessClient {
           this.sessionPolicy === "claude-subscription-controller"
             ? [
                 {
-                  name: this.process.projectToolServerName ?? "cocalc_project",
+                  name: projectToolServerName,
                   command: "/opt/cocalc/bin/node",
                   args: ["/run/cocalc/agent-tools/bridge.cjs"],
                   env: [],
@@ -759,12 +798,27 @@ export class AcpHarnessClient {
         ...(this.sessionPolicy === "claude-subscription-controller"
           ? {
               _meta: claudeSubscriptionSessionMeta(
-                this.process.systemPromptAppend,
+                [this.process.systemPromptAppend, harnessSessionGuidance(true)]
+                  .filter(Boolean)
+                  .join("\n\n"),
+                { projectToolServerName },
               ),
             }
           : this.binding.credential.mode === "account-api-key"
-            ? { _meta: claudeAccountApiKeySessionMeta() }
-            : {}),
+            ? {
+                _meta: claudeAccountApiKeySessionMeta(
+                  harnessHasSessionGuidance(this.binding.profile)
+                    ? harnessSessionGuidance(false)
+                    : undefined,
+                ),
+              }
+            : harnessHasSessionGuidance(this.binding.profile)
+              ? {
+                  _meta: {
+                    systemPrompt: { append: harnessSessionGuidance(false) },
+                  },
+                }
+              : {}),
       };
       if (sessionId) {
         if (!this.info.agentCapabilities?.loadSession)
@@ -956,7 +1010,11 @@ export class AcpHarnessClient {
       "session/steering",
       true,
     )) as { outcome?: string };
-    if (response.outcome === "injected") return "injected";
+    if (response.outcome === "injected") {
+      // Claude reads guidance at its next step, which a long job wait delays.
+      this.process.releaseToolWaits?.();
+      return "injected";
+    }
     if (response.outcome === "promptRequired") return "idle";
     throw new HarnessError("outcome_unknown", "Unexpected ACP guidance result");
   }
