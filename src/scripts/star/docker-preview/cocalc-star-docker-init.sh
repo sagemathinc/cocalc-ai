@@ -108,6 +108,24 @@ load_apparmor_profile() {
   fi
 }
 
+# The installer removes a release that failed to install, so record why it
+# failed in `docker logs` while the evidence still exists.
+print_failure_diagnostics() {
+  local f
+  log "--- diagnostics ---"
+  f="$(ls -t /mnt/cocalc/data/log-history/project-host-*.log 2>/dev/null | head -1 || true)"
+  if [ -n "$f" ]; then
+    log "project host log ($f):"
+    grep -i -E 'error|fail|quarantin|denied|not permitted' "$f" | tail -n 30 | cut -c1-400 || true
+    tail -n 15 "$f" | cut -c1-400 || true
+  fi
+  for unit in cocalc-star-hub cocalc-star-project-host; do
+    log "journal: $unit"
+    journalctl -u "$unit" -n 20 --no-pager -o cat 2>/dev/null | cut -c1-400 || true
+  done
+  log "--- end of diagnostics ---"
+}
+
 star_installed() {
   [ -x "$STAR_SH" ] &&
     [ -f /etc/cocalc/star/config.env ] &&
@@ -159,7 +177,10 @@ run_install() {
   export STAR_SSH_TARGET="${COCALC_STAR_SSH_TARGET:-}"
 
   log "installing Star runtime as STAR_USER=${STAR_USER}"
-  "${release_dir}/install.sh"
+  if ! "${release_dir}/install.sh"; then
+    print_failure_diagnostics
+    die "installing CoCalc Star failed; see the diagnostics above"
+  fi
 
   printf '%s\n' "$IMAGE_RELEASE_ID" >"$INSTALL_MARKER"
   printf '%s\n' "$IMAGE_RELEASE_ID" >"$CONTAINER_MARKER"
