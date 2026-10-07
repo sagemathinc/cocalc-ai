@@ -288,6 +288,79 @@ test("startup script rejects an invalid PITR target", () => {
   ).toThrow("invalid disposable PITR target 'not-a-timestamp'");
 });
 
+test("PITR watchdog tolerates timeline probes and still detects stalled WAL segments", () => {
+  const [, workerSource] = decodedStartupBlocks(
+    buildDisposableRestoreStartupScript(pgBackRestConfig()),
+  );
+  // Execute the actual generated recovery-loop block with a controlled clock
+  // and archive state, without running a restore or touching credentials.
+  const checked = spawnSync(
+    "python3",
+    [
+      "-c",
+      `
+import ast
+import re
+import sys
+
+tree = ast.parse(sys.stdin.read())
+watchdog = next(
+    node for node in ast.walk(tree)
+    if isinstance(node, ast.If) and any(
+        isinstance(statement, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "archive_state"
+            for target in statement.targets
+        ) for statement in node.body
+    )
+)
+code = compile(ast.Module(body=[watchdog], type_ignores=[]), "<watchdog>", "exec")
+wal = "00000001000003C700000041"
+next_wal = "00000001000003C700000042"
+
+class Clock:
+    value = 0
+    def time(self):
+        return self.value
+
+def run(updates, expected_stall=None):
+    clock = Clock()
+    archive = {}
+    scope = dict(
+        CONFIG={"restore_mode": "pitr"}, REPOSITORY_TYPE="pgbackrest",
+        time=clock, re=re, next_archive_get_check=0, container="synthetic",
+        archive_get_state=lambda _: archive, stalled_wal_segment=None,
+        stalled_wal_since=None, WAL_REPLAY_STALL_TIMEOUT_SECONDS=600,
+    )
+    try:
+        for at, segment, status in updates:
+            clock.value = at
+            archive.update(segment=segment, status=status, attempt="3", exit_code="1")
+            exec(code, scope)
+    except RuntimeError as error:
+        assert expected_stall is not None, str(error)
+        assert ("WAL replay stalled on segment " + expected_stall + " for ") in str(error), str(error)
+    else:
+        assert expected_stall is None, "stalled WAL was not detected"
+
+for history in ["00000001.history", "00000002.history"]:
+    run([(0, history, "failed"), (609, history, "failed"), (1200, history, "failed")])
+    # A history probe also clears the timer for the preceding WAL request.
+    run([(0, wal, "failed"), (500, history, "failed"), (700, wal, "failed"), (1200, wal, "failed")])
+
+run([(0, wal, "failed"), (590, wal, "failed")])
+run([(0, wal, "failed"), (609, wal, "failed")], expected_stall=wal)
+run([(0, wal, "running"), (609, wal, "running")], expected_stall=wal)
+run([(0, wal, "failed"), (500, wal, "succeeded"), (700, wal, "failed"), (1200, wal, "failed")])
+run([(0, wal, "failed"), (500, next_wal, "failed"), (700, next_wal, "failed")])
+run([(0, wal, "failed"), (500, next_wal, "failed"), (1109, next_wal, "failed")], expected_stall=next_wal)
+`,
+    ],
+    { input: workerSource, encoding: "utf8" },
+  );
+  expect(checked.stderr).toBe("");
+  expect(checked.status).toBe(0);
+});
+
 test("only a diagnosed PITR WAL stall is eligible for a fresh worker retry", () => {
   const worker = passedWorker();
   expect(
@@ -299,6 +372,15 @@ test("only a diagnosed PITR WAL stall is eligible for a fresh worker retry", () 
         "WAL replay stalled on segment 00000001000003C700000041 for 600 seconds",
     }),
   ).toBe(true);
+  expect(
+    isRetryableDisposablePitrWalFailure({
+      ...worker,
+      status: "failed",
+      stage: "postgres-pitr",
+      error:
+        "WAL replay stalled on segment 00000001.history for 609 seconds; archive-get status=failed attempt=3 exit_code=1",
+    }),
+  ).toBe(false);
   expect(
     isRetryableDisposablePitrWalFailure({
       ...worker,
