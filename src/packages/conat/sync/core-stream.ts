@@ -515,6 +515,14 @@ export class CoreStream<T = any> extends EventEmitter {
     }
   };
 
+  /** Cheap fetch of missed updates; see PersistStreamClient.catchUp. */
+  catchUp = async (opts: { timeout?: number } = {}): Promise<void> => {
+    if (this.isClosed()) {
+      return;
+    }
+    await this.persistClient?.catchUp(opts);
+  };
+
   recoverNow = async (
     opts: {
       epoch?: number;
