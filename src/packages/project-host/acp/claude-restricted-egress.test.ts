@@ -206,9 +206,12 @@ test("an env-proxy HTTP client in the controller cannot reach host services", as
         (error, out) => (error ? reject(error) : resolve(out)),
       ),
     );
-    // Plain HTTP is refused by the proxy (405); HTTPS to an IP literal is
-    // refused at CONNECT. Neither reaches the host service.
-    expect(JSON.parse(stdout)).toEqual([405, "failed"]);
+    // Plain HTTP is refused by the proxy (405; some Node versions report
+    // that as a failed fetch); HTTPS to an IP literal is refused at CONNECT.
+    // Neither reaches the host service.
+    const [plain, tls] = JSON.parse(stdout);
+    expect([405, "failed"]).toContain(plain);
+    expect(tls).toBe("failed");
     expect(hits).toEqual([]);
   } finally {
     egress?.close();
