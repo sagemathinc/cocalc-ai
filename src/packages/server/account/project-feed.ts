@@ -13,6 +13,7 @@ import {
 import { computeAccountProjectFeedEvents } from "@cocalc/database/postgres/account-project-index-projector";
 import {
   loadProjectOutboxPayload,
+  setProjectOutboxRemoteFeedEnabled,
   type ProjectOutboxPayload,
   type ProjectOutboxEventRow,
 } from "@cocalc/database/postgres/project-events-outbox";
@@ -56,7 +57,7 @@ function eventTimestampMs(value: unknown): number {
   return parseDate(value)?.getTime() ?? Date.now();
 }
 
-function visibleAccountIdsFromUsers(
+export function visibleAccountIdsFromUsers(
   users_summary: Record<string, any>,
 ): string[] {
   return Object.entries(users_summary ?? {})
@@ -105,7 +106,9 @@ async function loadLatestProjectOutboxEvent(opts: {
        created_at,
        published_at,
        collaborator_index_pending,
-       collaborator_index_published_at
+       collaborator_index_published_at,
+       remote_feed_pending,
+       remote_feed_published_at
      FROM project_events_outbox
      WHERE project_id = $1
      ORDER BY created_at DESC, event_id DESC
@@ -117,7 +120,7 @@ async function loadLatestProjectOutboxEvent(opts: {
 
 async function loadPreviousVisibleAccountIds(opts: {
   db: Queryable;
-  event: ProjectOutboxEventRow;
+  event: Pick<ProjectOutboxEventRow, "project_id" | "event_id" | "created_at">;
 }): Promise<string[]> {
   const { rows } = await opts.db.query(
     `SELECT payload_json
@@ -130,6 +133,14 @@ async function loadPreviousVisibleAccountIds(opts: {
     [opts.event.project_id, opts.event.event_id, opts.event.created_at],
   );
   return visibleAccountIdsFromUsers(rows[0]?.payload_json?.users_summary ?? {});
+}
+
+/** Accounts that could see the project just before `event`. */
+export async function previousVisibleAccountIdsBefore(opts: {
+  db: Queryable;
+  event: Pick<ProjectOutboxEventRow, "project_id" | "event_id" | "created_at">;
+}): Promise<string[]> {
+  return await loadPreviousVisibleAccountIds(opts);
 }
 
 function sortKeyForFeedProject(opts: {
@@ -221,7 +232,26 @@ export async function applyAccountProjectFeedRemoveOnHomeBay(
   });
 }
 
-async function forwardRemoteProjectFeedEventsBestEffort(opts: {
+async function forwardRemoteProjectFeedEventsBestEffort(
+  opts: Parameters<typeof forwardRemoteProjectFeedEvents>[0],
+): Promise<void> {
+  try {
+    await forwardRemoteProjectFeedEvents(opts);
+  } catch (err) {
+    logger.warn("failed to forward remote project feed events", {
+      project_id: opts.payload.project_id,
+      err: `${err}`,
+    });
+  }
+}
+
+/**
+ * Send a project's state to every other bay where an affected collaborator
+ * is homed: an upsert for those who can see it, a removal for those who
+ * could see it before. Tries every account, then throws if any failed, so a
+ * durable caller retries instead of losing an update.
+ */
+export async function forwardRemoteProjectFeedEvents(opts: {
   bay_id: string;
   payload: ProjectOutboxPayload;
   previousVisibleAccountIds: string[];
@@ -247,6 +277,7 @@ async function forwardRemoteProjectFeedEventsBestEffort(opts: {
   const fabric = getInterBayFabricClient();
   const remoteClients = new Map<string, InterBayAccountProjectFeedApi>();
   const ts = eventTimestampMs(opts.event_ts);
+  const failures: string[] = [];
   for (const account_id of impacted) {
     const dest_bay = byAccountId.get(account_id);
     if (!dest_bay || dest_bay === opts.bay_id) {
@@ -279,13 +310,13 @@ async function forwardRemoteProjectFeedEventsBestEffort(opts: {
         });
       }
     } catch (err) {
-      logger.warn("failed to forward remote project feed event", {
-        project_id: opts.payload.project_id,
-        account_id,
-        dest_bay,
-        err: `${err}`,
-      });
+      failures.push(`${account_id}@${dest_bay}: ${err}`);
     }
+  }
+  if (failures.length > 0) {
+    throw new Error(
+      `failed to forward project ${opts.payload.project_id} to ${failures.length} account(s): ${failures.slice(0, 3).join("; ")}`,
+    );
   }
 }
 
@@ -455,9 +486,20 @@ export async function publishProjectRemoveFeedEventsBestEffort(opts: {
   });
 }
 
+// Set by the durable forwarding loop (projections/project-feed-remote-maintenance).
+let remoteDrainKick: (() => void) | undefined;
+
+export function setRemoteProjectFeedDrainKick(
+  kick: (() => void) | undefined,
+): void {
+  remoteDrainKick = kick;
+}
+
 export function enableDbProjectAccountFeedPublishing() {
   db().publishProjectAccountFeedEventsBestEffort =
     publishProjectAccountFeedEventsBestEffort;
+  // Mark new outbox events for durable delivery to other bays.
+  setProjectOutboxRemoteFeedEnabled(isMultiBayCluster());
 }
 
 export async function publishProjectAccountFeedEventsBestEffort(opts: {
@@ -544,13 +586,23 @@ export async function publishProjectAccountFeedEventsBestEffort(opts: {
     });
   }
   if (payload && isMultiBayCluster()) {
-    enqueueRemoteFeedJob(opts.project_id, {
-      kind: "forward",
-      bay_id,
-      payload,
-      previousVisibleAccountIds: new Set(previousVisibleAccountIds),
-      ts: eventTimestampMs(latestEvent?.created_at),
-    });
+    const durable =
+      latestEvent?.remote_feed_pending === true ||
+      latestEvent?.remote_feed_published_at != null;
+    if (durable && remoteDrainKick) {
+      // The outbox row is the durable record; forward it now.
+      remoteDrainKick();
+    } else {
+      // No pending outbox row (e.g. an event written before this bay
+      // enabled durable forwarding): forward once, best effort.
+      enqueueRemoteFeedJob(opts.project_id, {
+        kind: "forward",
+        bay_id,
+        payload,
+        previousVisibleAccountIds: new Set(previousVisibleAccountIds),
+        ts: eventTimestampMs(latestEvent?.created_at),
+      });
+    }
   }
   for (const event of collaboratorFeedEvents) {
     await publishAccountFeedEventBestEffort({

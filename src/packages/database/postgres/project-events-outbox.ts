@@ -50,6 +50,8 @@ export interface ProjectOutboxEventRow {
   published_at: Date | null;
   collaborator_index_pending: boolean;
   collaborator_index_published_at: Date | null;
+  remote_feed_pending?: boolean;
+  remote_feed_published_at?: Date | null;
 }
 
 type Queryable = {
@@ -165,6 +167,17 @@ export async function loadProjectOutboxPayload(opts: {
   };
 }
 
+// On a multi-bay cluster, collaborators homed on other bays see a project
+// through their home bay's project list, so each event must also be forwarded
+// there. The event row records that durably, in the same transaction as the
+// change; a background drain on the owning bay delivers it. Single-bay sites
+// never set this.
+let remoteFeedEnabled = false;
+
+export function setProjectOutboxRemoteFeedEnabled(enabled: boolean): void {
+  remoteFeedEnabled = enabled;
+}
+
 export async function appendProjectOutboxEvent(opts: {
   event_type: ProjectOutboxEventType;
   payload: ProjectOutboxPayload;
@@ -176,9 +189,9 @@ export async function appendProjectOutboxEvent(opts: {
   const result = await db.query(
     `INSERT INTO project_events_outbox
        (event_id, project_id, owning_bay_id, event_type, payload_json, created_at, published_at,
-        collaborator_index_pending, collaborator_index_published_at)
+        collaborator_index_pending, collaborator_index_published_at, remote_feed_pending)
      VALUES
-       (gen_random_uuid(), $1, $2, $3, $4::JSONB, NOW(), NULL, $5, NULL)
+       (gen_random_uuid(), $1, $2, $3, $4::JSONB, NOW(), NULL, $5, NULL, $6)
      RETURNING event_id`,
     [
       opts.payload.project_id,
@@ -186,6 +199,7 @@ export async function appendProjectOutboxEvent(opts: {
       opts.event_type,
       JSON.stringify(opts.payload),
       collaborator_index_pending,
+      remoteFeedEnabled,
     ],
   );
   const { rows } = result as { rows: Array<{ event_id: string }> };
