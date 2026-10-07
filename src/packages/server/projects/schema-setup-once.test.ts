@@ -9,12 +9,8 @@
 // use is inside a caller's transaction. Each test file gets fresh modules, so
 // these setups have not run yet.
 
-import getPool, {
-  initEphemeralDatabase,
-  isPgliteEnabled,
-} from "@cocalc/database/pool";
+import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { ensureCopySchema } from "./copy-db";
-import { ensureCourseSecretSharingSchema } from "./course-secret-sharing";
 import { ensureProjectSecretsSchema } from "./project-secrets";
 
 beforeAll(async () => {
@@ -51,60 +47,32 @@ it("shares one setup among concurrent cold-start callers", async () => {
   }
 });
 
-it("is ready after a first use inside a committed transaction", async () => {
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
-    await ensureProjectSecretsSchema(client);
-    await client.query("COMMIT");
-  } finally {
-    client.release();
-  }
-  // The pool setup finishes in the background once the caller's locks are
-  // gone, without another caller having to trigger it.
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  const spy = jest.spyOn(getPool(), "query");
+it("inside another transaction, only creates missing tables", async () => {
+  const run = async (check: (statements: string[]) => void) => {
+    const client = await getPool().connect();
+    const spy = jest.spyOn(client, "query");
+    try {
+      await client.query("BEGIN");
+      await ensureProjectSecretsSchema(client);
+      await client.query("COMMIT");
+      check(ddl(spy));
+    } finally {
+      spy.mockRestore();
+      client.release();
+    }
+  };
+  // On a new database the transaction creates the tables it needs.
+  await run(() => {});
+  // They exist: no DDL (above all no ALTER TABLE) inside the transaction, and
+  // the full setup is not started alongside it.
+  await run((statements) => expect(statements).toEqual([]));
+  // The full setup runs once on the pool, before this module's transactions.
+  const spy = jest.spyOn(getPool(), "connect");
   try {
     await ensureProjectSecretsSchema();
-    expect(ddl(spy)).toEqual([]);
+    await ensureProjectSecretsSchema();
+    expect(spy).toHaveBeenCalledTimes(1);
   } finally {
     spy.mockRestore();
   }
 });
-
-// PGlite has one connection and serializes transactions, so the race needs a
-// real server.
-(isPgliteEnabled() ? it.skip : it)(
-  "orders a transaction's setup after the background setup started by another",
-  async () => {
-    // The test pool has two connections: release each one when done, so the
-    // background setup can get one.
-    const first = await getPool().connect();
-    const second = await getPool().connect();
-    let firstReleased = false;
-    try {
-      await first.query("BEGIN");
-      // Starts the background pool setup, which must wait for this commit.
-      await ensureCourseSecretSharingSchema(first);
-      await second.query("BEGIN");
-      // Not ready yet, so this sets up inside its own transaction too. Its
-      // CREATE ... IF NOT EXISTS would wait for the uncommitted tables of
-      // `first` and then fail with a pg_type unique violation.
-      const inSecond = ensureCourseSecretSharingSchema(second);
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      await first.query("COMMIT");
-      first.release();
-      firstReleased = true;
-      await inSecond;
-      await second.query("COMMIT");
-    } finally {
-      await second.query("ROLLBACK").catch(() => {});
-      second.release();
-      if (!firstReleased) {
-        await first.query("ROLLBACK").catch(() => {});
-        first.release();
-      }
-    }
-    await ensureCourseSecretSharingSchema();
-  },
-);
