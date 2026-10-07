@@ -952,6 +952,57 @@ describe("membership package managers", () => {
     expect(
       (screen.getByLabelText("Email addresses") as HTMLTextAreaElement).value,
     ).toBe("bad@example.edu");
+
+    // A second batch is planned against the seats used by the first one.
+    fireEvent.change(screen.getByLabelText("Email addresses"), {
+      target: {
+        value:
+          "ta1@example.edu, ta2@example.edu, ta3@example.edu, ta4@example.edu, ta5@example.edu",
+      },
+    });
+    expect(screen.getByRole("status").textContent).toMatch(
+      /3 seats will be assigned; 1 already have a seat; 1 do not fit \(3 free seats/,
+    );
+  });
+
+  it("supports the email-list mode from the keyboard and restores focus", async () => {
+    const user = userEvent.setup();
+    getTeamLicense.mockResolvedValue(
+      makeTeamLicenseOverview([
+        makeTeamPackage({
+          seat_count: 5,
+          active_assignment_count: 0,
+          available_seat_count: 5,
+          assignments: [],
+        }),
+      ]),
+    );
+    render(<TeamPackageManager tiers={TIERS} />);
+    await waitFor(() => {
+      expect(screen.getAllByText("Assign seat").length).toBeGreaterThan(0);
+    });
+    const trigger = screen
+      .getAllByText("Assign seat")[0]
+      .closest("button") as HTMLButtonElement;
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    const dialog = await screen.findByRole("dialog");
+    const listOption = within(dialog).getByRole("radio", {
+      name: "Email list",
+    });
+    listOption.focus();
+    await user.keyboard(" ");
+    const textarea = await within(dialog).findByLabelText("Email addresses");
+    await user.click(textarea);
+    await user.keyboard("ta1@example.edu");
+    await user.tab();
+    expect(
+      within(dialog).getByRole("button", { name: "Assign 1 seat" }),
+    ).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(trigger).toHaveFocus());
   });
 
   it("provisions an admin site license without a user-selected bay", async () => {

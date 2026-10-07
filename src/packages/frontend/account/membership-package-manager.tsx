@@ -5887,7 +5887,13 @@ function AssignMembershipSeatModal({
   const [selectedTarget, setSelectedTarget] = useState<string>("");
   const [assigning, setAssigning] = useState<boolean>(false);
   const [mode, setMode] = useState<"one" | "list">("one");
-  const [assignedFromList, setAssignedFromList] = useState<boolean>(false);
+  // Addresses assigned from the email list while this dialog is open. The
+  // package snapshot is only refreshed on close, so later batches are planned
+  // against the snapshot plus these.
+  const [listAssigned, setListAssigned] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const assignedFromList = listAssigned.size > 0;
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const seatName =
     seatLabel ??
@@ -5923,8 +5929,12 @@ function AssignMembershipSeatModal({
     setSelectedTarget("");
     setAssigning(false);
     setMode("one");
-    setAssignedFromList(false);
+    setListAssigned(new Set());
   }, [open, membershipPackage?.id]);
+  const listAlreadyAssigned = useMemo(
+    () => new Set([...activeEmailAddresses, ...listAssigned]),
+    [activeEmailAddresses, listAssigned],
+  );
 
   async function assignEmails(emails: string[]): Promise<BulkSeatAssignResult> {
     const result: BulkSeatAssignResult = { assigned: [], failed: [] };
@@ -5955,7 +5965,15 @@ function AssignMembershipSeatModal({
         }
       }
     }
-    if (result.assigned.length > 0) setAssignedFromList(true);
+    if (result.assigned.length > 0) {
+      setListAssigned(
+        (current) =>
+          new Set([
+            ...current,
+            ...result.assigned.map((email) => email.toLowerCase()),
+          ]),
+      );
+    }
     return result;
   }
 
@@ -6078,8 +6096,11 @@ function AssignMembershipSeatModal({
         {mode === "list" && membershipPackage ? (
           <BulkSeatEmailAssign
             seatName={seatName}
-            availableSeats={membershipPackage.available_seat_count}
-            alreadyAssigned={activeEmailAddresses}
+            availableSeats={Math.max(
+              0,
+              membershipPackage.available_seat_count - listAssigned.size,
+            )}
+            alreadyAssigned={listAlreadyAssigned}
             assignEmails={assignEmails}
           />
         ) : null}
