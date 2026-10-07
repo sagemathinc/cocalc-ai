@@ -5,7 +5,8 @@
 
 import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage } from "node:http";
-import { connect, type Socket } from "node:net";
+import { lookup } from "node:dns/promises";
+import { BlockList, connect, isIP, type Socket } from "node:net";
 import getLogger from "@cocalc/backend/logger";
 import { readClientHelloServerName } from "./tls-client-hello";
 
@@ -27,6 +28,9 @@ type Session = {
   activeTunnels: number;
   closed: boolean;
   allowedHosts: ReadonlySet<string>;
+  // Also any public host (see isPublicAddress), except deniedHosts.
+  publicHosts: boolean;
+  deniedHosts: ReadonlySet<string>;
 };
 
 export type RestrictedEgressProxySession = {
@@ -41,10 +45,64 @@ export interface RestrictedEgressProxyOptions {
   username: string;
   // Exact host names (TLS on port 443 only). Keep these deliberately narrow.
   allowedHosts: ReadonlySet<string>;
+  // Whether a session may also open tunnels to any public host. Without it,
+  // the allowlist above is absolute.
+  allowPublicHostSessions?: boolean;
   maxConnections?: number;
   setupTimeoutMs?: number;
-  // Tests substitute a local upstream.
+  // Tests substitute a local upstream and name resolution.
   connectUpstream?: (port: number, hostname: string) => Socket;
+  resolveHost?: (hostname: string) => Promise<string[]>;
+}
+
+// Everything that is not ordinary public unicast: this host and its private
+// networks, cloud metadata (169.254.169.254), shared CGNAT space, multicast,
+// documentation and benchmarking ranges, and IPv6 equivalents. IPv6 is further
+// limited to global unicast (2000::/3) below.
+const NON_PUBLIC = new BlockList();
+for (const [network, prefix] of [
+  ["0.0.0.0", 8],
+  ["10.0.0.0", 8],
+  ["100.64.0.0", 10],
+  ["127.0.0.0", 8],
+  ["169.254.0.0", 16],
+  ["172.16.0.0", 12],
+  ["192.0.0.0", 24],
+  ["192.0.2.0", 24],
+  ["192.88.99.0", 24],
+  ["192.168.0.0", 16],
+  ["198.18.0.0", 15],
+  ["198.51.100.0", 24],
+  ["203.0.113.0", 24],
+  ["224.0.0.0", 4],
+  ["240.0.0.0", 4],
+] as const)
+  NON_PUBLIC.addSubnet(network, prefix, "ipv4");
+for (const [network, prefix] of [
+  ["2001::", 32], // Teredo
+  ["2001:db8::", 32], // documentation
+  ["2002::", 16], // 6to4 can embed any IPv4 address
+] as const)
+  NON_PUBLIC.addSubnet(network, prefix, "ipv6");
+const GLOBAL_UNICAST_V6 = new BlockList();
+GLOBAL_UNICAST_V6.addSubnet("2000::", 3, "ipv6");
+
+export function isPublicAddress(address: string): boolean {
+  const family = isIP(address);
+  if (family === 4) return !NON_PUBLIC.check(address, "ipv4");
+  if (family !== 6) return false;
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address);
+  if (mapped) return isPublicAddress(mapped[1]);
+  return (
+    GLOBAL_UNICAST_V6.check(address, "ipv6") &&
+    !NON_PUBLIC.check(address, "ipv6")
+  );
+}
+
+async function resolveHost(hostname: string): Promise<string[]> {
+  return (await lookup(hostname, { all: true, verbatim: true })).map(
+    ({ address }) => address,
+  );
 }
 
 function closeSocket(socket: Socket): void {
@@ -188,11 +246,19 @@ export class RestrictedEgressProxy {
   async startSession({
     host = "host.containers.internal",
     allowedHosts = this.options.allowedHosts,
+    publicHosts = false,
+    deniedHosts = new Set(),
   }: {
     host?: string;
     // A session may narrow, but never expand, the proxy allowlist.
     allowedHosts?: ReadonlySet<string>;
+    // Only on a proxy constructed with allowPublicHostSessions.
+    publicHosts?: boolean;
+    // Never reachable through publicHosts.
+    deniedHosts?: ReadonlySet<string>;
   } = {}): Promise<RestrictedEgressProxySession> {
+    if (publicHosts && !this.options.allowPublicHostSessions)
+      throw Error("This egress proxy does not permit public host sessions");
     const port = await this.ensureListening();
     const token = randomBytes(32).toString("base64url");
     const session: Session = {
@@ -201,6 +267,8 @@ export class RestrictedEgressProxy {
       activeTunnels: 0,
       closed: false,
       allowedHosts: new Set(allowedHosts),
+      publicHosts,
+      deniedHosts: new Set(deniedHosts),
     };
     this.sessions.set(token, session);
     return {
@@ -217,6 +285,9 @@ export class RestrictedEgressProxy {
 
   /** Bound raw connections before any request parsing or authentication. */
   private admitConnection(socket: Socket): void {
+    // A peer may reset at any point, including while a public host resolves
+    // or after a rejection; that must close the socket, not the process.
+    socket.on("error", () => closeSocket(socket));
     if (
       this.connections.size >= (this.options.maxConnections ?? MAX_CONNECTIONS)
     ) {
@@ -285,10 +356,16 @@ export class RestrictedEgressProxy {
       return;
     }
     const target = connectTarget(request.url ?? "");
+    const listed =
+      !!target &&
+      this.isAllowedTarget(request.url ?? "") &&
+      session.allowedHosts.has(target.hostname);
     if (
       !target ||
-      !this.isAllowedTarget(request.url ?? "") ||
-      !session.allowedHosts.has(target.hostname)
+      (!listed &&
+        (!session.publicHosts ||
+          session.deniedHosts.has(target.hostname) ||
+          isIP(target.hostname) !== 0))
     ) {
       rejectConnect(client, 403, "Forbidden");
       return;
@@ -297,12 +374,49 @@ export class RestrictedEgressProxy {
       rejectConnect(client, 429, "Too Many Requests");
       return;
     }
+    if (listed) {
+      this.openTunnel(session, client, head, target, target.hostname);
+      return;
+    }
+    // Resolve here and connect to the vetted address, so a later DNS answer
+    // cannot redirect the tunnel to this host's own or private networks.
+    session.activeTunnels += 1;
+    (this.options.resolveHost ?? resolveHost)(target.hostname)
+      .then(
+        (addresses) =>
+          addresses.length > 0 && addresses.every(isPublicAddress)
+            ? addresses[0]
+            : undefined,
+        () => undefined,
+      )
+      .then((address) => {
+        session.activeTunnels = Math.max(0, session.activeTunnels - 1);
+        if (session.closed || client.destroyed) {
+          closeSocket(client);
+        } else if (!address) {
+          rejectConnect(client, 403, "Forbidden");
+        } else {
+          this.openTunnel(session, client, head, target, address);
+        }
+      });
+  }
 
+  private openTunnel(
+    session: Session,
+    client: Socket,
+    head: Buffer,
+    target: { hostname: string; port: number },
+    address: string,
+  ): void {
+    if (session.activeTunnels >= MAX_TUNNELS_PER_SESSION) {
+      rejectConnect(client, 429, "Too Many Requests");
+      return;
+    }
     session.activeTunnels += 1;
     session.sockets.add(client);
     const upstream = (this.options.connectUpstream ?? connect)(
       target.port,
-      target.hostname,
+      address,
     );
     session.sockets.add(upstream);
     let released = false;

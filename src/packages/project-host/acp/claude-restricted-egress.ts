@@ -31,6 +31,10 @@ const proxy = new RestrictedEgressProxy({
   name: "Claude",
   username: "cocalc-claude",
   allowedHosts: CONNECTOR_HOSTS,
+  // Claude's WebFetch: "no internet" exists to stop abuse by project code
+  // (mining, spam, relays). The controller runs only Claude Code, with no shell
+  // or file tools, and project code never sees this proxy credential.
+  allowPublicHostSessions: true,
 });
 
 // Local names must never go through the proxy (e.g. COCALC_API_URL).
@@ -62,7 +66,8 @@ export function projectNeedsRestrictedClaudeEgress(projectId: string): boolean {
 
 /**
  * For a project without internet access, start a proxy session that lets
- * Claude Code reach only Anthropic, and return the environment that selects it.
+ * Claude Code reach Anthropic and, for WebFetch, public web hosts (never this
+ * host's own or private networks), and return the environment that selects it.
  * `host` is how the Claude container reaches the project host.
  */
 export async function startClaudeRestrictedEgress({
@@ -80,6 +85,8 @@ export async function startClaudeRestrictedEgress({
     allowedHosts: claudeAiConnectors
       ? CONNECTOR_HOSTS
       : ALLOWED_ANTHROPIC_HOSTS,
+    publicHosts: true,
+    deniedHosts: claudeAiConnectors ? new Set() : new Set([CONNECTOR_HOST]),
   });
   return {
     env: {

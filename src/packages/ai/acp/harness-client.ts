@@ -70,8 +70,6 @@ export interface HarnessProcess {
   /** Trusted launcher-owned instructions, never a user-supplied session option. */
   systemPromptAppend?: string;
   projectToolServerName?: string;
-  /** Launcher decision: may the controller fetch arbitrary URLs itself? */
-  webFetch?: boolean;
   stdout: Readable;
   stdin: Writable;
   stderr: Readable;
@@ -165,12 +163,13 @@ export function claudeAccountApiKeySessionMeta(
 /**
  * Built-in Claude Code tools the isolated controller may use. None of them
  * touch the controller filesystem or run commands. WebSearch runs on
- * Anthropic's side. The Task* tools keep Claude's task list, which the
- * adapter reports as ACP plan updates. WebFetch downloads from the controller
- * itself, so only a launcher that knows the project has internet enables it.
+ * Anthropic's side; WebFetch downloads pages from the controller (through the
+ * public-host egress proxy in projects without internet access). The Task*
+ * tools keep Claude's task list, which the adapter reports as ACP plan updates.
  */
 export const CLAUDE_CONTROLLER_TOOLS = [
   "WebSearch",
+  "WebFetch",
   "TaskCreate",
   "TaskUpdate",
   "TaskList",
@@ -179,23 +178,20 @@ export const CLAUDE_CONTROLLER_TOOLS = [
 
 export function claudeSubscriptionSessionMeta(
   systemPromptAppend?: string,
-  options: { projectToolServerName?: string; webFetch?: boolean } = {},
+  options: { projectToolServerName?: string } = {},
 ): Record<string, unknown> {
-  const web = options.webFetch ? ["WebSearch", "WebFetch"] : ["WebSearch"];
   return {
     ...(systemPromptAppend
       ? { systemPrompt: { append: systemPromptAppend } }
       : {}),
     claudeCode: {
       options: {
-        tools: [
-          ...CLAUDE_CONTROLLER_TOOLS,
-          ...(options.webFetch ? ["WebFetch"] : []),
-        ],
+        tools: [...CLAUDE_CONTROLLER_TOOLS],
         // CoCalc approves every call to these anyway. Pre-approving them
         // saves a permission round trip and a persisted event per call.
         allowedTools: [
-          ...web,
+          "WebSearch",
+          "WebFetch",
           ...(options.projectToolServerName
             ? [`mcp__${options.projectToolServerName}`]
             : []),
@@ -805,10 +801,7 @@ export class AcpHarnessClient {
                 [this.process.systemPromptAppend, harnessSessionGuidance(true)]
                   .filter(Boolean)
                   .join("\n\n"),
-                {
-                  projectToolServerName,
-                  webFetch: this.process.webFetch,
-                },
+                { projectToolServerName },
               ),
             }
           : this.binding.credential.mode === "account-api-key"

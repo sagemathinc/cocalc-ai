@@ -221,6 +221,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           JSON.stringify(options.tools) !==
             JSON.stringify([
               "WebSearch",
+              "WebFetch",
               "TaskCreate",
               "TaskUpdate",
               "TaskList",
@@ -229,6 +230,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           JSON.stringify(options.allowedTools) !==
             JSON.stringify([
               "WebSearch",
+              "WebFetch",
               `mcp__${message.params.mcpServers[0]?.name}`,
             ]) ||
           !Array.isArray(options.settingSources) ||

@@ -337,13 +337,10 @@ export async function launchClaudeSubscriptionController(
   const claudeAiConnectors = token ? false : credential.claudeAiConnectors;
   await ensureProjectContainerRunning({ projectId, accountId });
   const skill = await getBuiltinClaudeSkillText();
-  // WebFetch downloads from the controller, so it would bypass the network
-  // containment of a project without internet access.
-  const webFetch = !projectNeedsRestrictedClaudeEgress(projectId);
   const systemPromptAppend = `The CoCalc skill is preloaded below as session instructions, not as a separate Skill tool. Follow it for CoCalc workflows.
 This is an isolated subscription controller. Its working directory ${CONTROLLER_WORKSPACE} is an empty scratch area, not the project: ignore any environment note that calls it the primary working directory. Run ALL project filesystem and CLI operations through the mcp__${CLAUDE_PROJECT_MCP_NAME}__project_exec tool, not in the controller. The other project tools on that server have the same mcp__${CLAUDE_PROJECT_MCP_NAME}__ prefix (project_exec_wait, project_read_file, project_write_file, project_edit_file, project_read_image, request_user_input_async and more). Read applicable project CLAUDE.md instructions through them before editing. Skill reference files are available in the project at /home/user/.claude/skills/cocalc/.
 Current project tool server: ${CLAUDE_PROJECT_MCP_NAME}.
-You also have WebSearch${webFetch ? " and WebFetch" : ""} for current information from the web${webFetch ? "" : " (this project has no internet access, so WebFetch is unavailable)"}, and task list tools for tracking multi-step work, which CoCalc shows to the user as a checklist.
+You also have WebSearch and WebFetch for current information from the web, and task list tools for tracking multi-step work, which CoCalc shows to the user as a checklist.
 ${CLAUDE_PROJECT_JOB_GUIDANCE}
 Use the exact installed CLI command: "/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js".
 The project_exec environment contains the runtime-issued CoCalc agent identity for registered agents. Message other agents there, not in this isolated controller: \`"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js" agent destinations\` lists who you can message and \`... agent send NAME --stdin\` sends one message (see the skill's Agent Messaging section and \`agent --help\`). Never substitute account credentials if agent identity or network access is unavailable.
@@ -591,7 +588,6 @@ ${skill}
     return {
       systemPromptAppend,
       projectToolServerName: CLAUDE_PROJECT_MCP_NAME,
-      webFetch,
       releaseToolWaits: toolBridge
         ? () => toolBridge!.releaseWaits()
         : undefined,

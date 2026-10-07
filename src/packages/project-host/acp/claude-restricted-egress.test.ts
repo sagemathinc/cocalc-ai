@@ -71,7 +71,7 @@ test("projects with internet access get no proxy", async () => {
   );
 });
 
-test("projects without internet access reach only Anthropic through the proxy", async () => {
+test("projects without internet access reach Anthropic and public hosts, never local networks", async () => {
   mockGetProject.mockReturnValue({ run_quota: { network: false } });
   const egress = await startClaudeRestrictedEgress({ projectId });
   try {
@@ -81,9 +81,13 @@ test("projects without internet access reach only Anthropic through the proxy", 
     expect(new URL(proxyUrl).username).toBe("cocalc-claude");
     // The CoCalc API stays direct.
     expect(egress!.env.NO_PROXY).toContain("host.containers.internal");
-    await expect(connectStatus(proxyUrl, "github.com:443")).resolves.toContain(
-      "403",
-    );
+    for (const target of [
+      "localhost:443",
+      "10.0.0.1:443",
+      "169.254.169.254:443",
+      "github.com:80",
+    ])
+      await expect(connectStatus(proxyUrl, target)).resolves.toContain("403");
     await expect(
       connectStatus(proxyUrl, "mcp-proxy.anthropic.com:443"),
     ).resolves.toContain("403");

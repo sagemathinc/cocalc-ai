@@ -170,11 +170,12 @@ services have a separate lifecycle and may require separate cleanup.
   from the Anthropic credential; CLI actions remain limited by its authority.
 - Subscription project commands are managed jobs. A short tool wait does not
   kill a running build. See the execution lifecycle below.
-- In subscription mode Claude can search the web (Claude's WebSearch, run by
-  Anthropic) and keep a task list, shown as a checklist in the activity log.
-  Fetching a specific web page (WebFetch) is available only in projects with
-  internet access. Claude Code's own file-based auto-memory is off; use CoCalc
-  agent memory instead.
+- In subscription mode Claude can search the web (WebSearch, run by
+  Anthropic), read web pages (WebFetch) and keep a task list, shown as a
+  checklist in the activity log. WebFetch also works in projects without
+  internet access: Claude's controller reaches public web hosts through a
+  host proxy, while project commands stay offline. Claude Code's own
+  file-based auto-memory is off; use CoCalc agent memory instead.
 - Guidance you send while Claude works is delivered at its next step, the same
   as in the Claude Code CLI. It does not cut off the current reply or tool call.
 - Live guidance requires adapter support; other messages queue. Automations
