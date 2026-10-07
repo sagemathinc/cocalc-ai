@@ -61,6 +61,13 @@ RUN apt-get update \
 RUN groupadd --gid 1001 cocalc-star \
   && useradd --uid 1001 --gid 1001 --create-home --shell /bin/bash cocalc-star
 
+# Node.js for the Star services, installed the same way the Star installer
+# does, so first boot and upgrades need no download.
+USER cocalc-star
+RUN curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash \
+  && bash -c 'source "$HOME/.nvm/nvm.sh" && nvm install 26 && nvm alias default 26 && nvm cache clear'
+USER root
+
 # apparmor.service and nftables.service would load or flush host-global
 # kernel policy; Star manages the pieces it needs itself.
 RUN systemctl mask \

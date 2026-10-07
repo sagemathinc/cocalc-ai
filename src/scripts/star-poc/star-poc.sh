@@ -52,6 +52,8 @@ Commands:
                          Mark hub-side running project state stopped when the
                          corresponding project container is not running.
   bootstrap-link         Print the bootstrap registration link, if still present.
+  admin-link             Create a new single-use link for creating an admin
+                         account (valid for 24 hours).
   https --domain <name>  Configure Caddy automatic HTTPS for a public domain.
   uninstall              Stop and remove Star service hooks; preserve data by default.
 
@@ -820,10 +822,34 @@ bootstrap_link() {
   }
   url="$(json_string_field "$result" bootstrap_url)"
   [ -n "$url" ] || {
-    log "bootstrap link is not present in $result"
+    log "the first-admin link was already used; run '$0 admin-link' to create a new admin link"
     exit 1
   }
   print_access_instructions "$url"
+}
+
+admin_link() {
+  local script="scripts/star-poc/seed-star-poc.cjs" output url base
+  if [ -f "$SRC_ROOT/scripts/star-poc/build/seed-star-poc/index.cjs" ]; then
+    script="scripts/star-poc/build/seed-star-poc/index.cjs"
+  fi
+  output="$(
+    sudo -Hiu "$STAR_USER" bash -c "set -a && source /etc/cocalc/star/hub.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && NODE_PATH='$SRC_ROOT/packages/node_modules' STAR_SEED_MODE=admin-link STAR_BASE_URL='$STAR_BASE_URL' node '$script'"
+  )" || {
+    log "failed to create an admin link"
+    exit 1
+  }
+  url="$(printf '%s\n' "$output" | tail -n 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["admin_url"])')"
+  base="${STAR_ACCESS_URL:-${STAR_PUBLIC_URL:-}}"
+  if [ -n "$base" ]; then
+    url="$(url_with_base "$url" "$base")"
+  fi
+  cat <<EOF
+
+Open this URL within 24 hours to create an admin account (single use):
+  ${url}
+
+EOF
 }
 
 access() {
@@ -1294,6 +1320,9 @@ case "${1:-}" in
     ;;
   bootstrap-link)
     bootstrap_link
+    ;;
+  admin-link)
+    admin_link
     ;;
   https)
     shift

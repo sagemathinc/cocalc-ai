@@ -120,14 +120,16 @@ ensure_account() {
 
   if [ ! -f "${STATE_DIR}/signed-up" ]; then
     require_file "$BOOTSTRAP_RESULT"
-    local bootstrap_url token body status
-    bootstrap_url="$(json_field "$BOOTSTRAP_RESULT" bootstrap_url || true)"
-    [ -n "$bootstrap_url" ] || die "bootstrap URL is already consumed and no smoke account state exists"
+    # Sign up as an ordinary user through the invite link. The first-admin
+    # link belongs to whoever installed Star; a smoke run must not use it.
+    local invite_url token body status
+    invite_url="$(json_field "$BOOTSTRAP_RESULT" invite_url || true)"
+    [ -n "$invite_url" ] || die "invite URL is missing from $BOOTSTRAP_RESULT"
     token="$(
       node -e 'process.stdout.write(new URL(process.argv[1]).searchParams.get("registrationToken") ?? "")' \
-        "$bootstrap_url"
+        "$invite_url"
     )"
-    [ -n "$token" ] || die "bootstrap URL did not contain token"
+    [ -n "$token" ] || die "invite URL did not contain token"
     body="$(
       jq -nc \
         --arg email "$email" \
@@ -135,7 +137,7 @@ ensure_account() {
         --arg token "$token" \
         '{email:$email,password:$password,firstName:"Star",lastName:"Smoke",terms:true,registrationToken:$token}'
     )"
-    log "creating smoke admin account"
+    log "creating smoke account"
     status="$(
       curl -sS -o "${STATE_DIR}/signup.json" -w '%{http_code}' \
         -H 'content-type: application/json' \

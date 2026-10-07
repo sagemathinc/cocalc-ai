@@ -178,12 +178,22 @@ require_root() {
 }
 
 install_packages() {
-  export DEBIAN_FRONTEND=noninteractive
-  apt_get update
-  apt_get install -y \
-    bash ca-certificates curl git jq openssl build-essential python3 \
-    podman btrfs-progs uidmap slirp4netns passt catatonit fuse-overlayfs \
+  local -a packages=(
+    bash ca-certificates curl git jq openssl build-essential python3
+    podman btrfs-progs uidmap slirp4netns passt catatonit fuse-overlayfs
     caddy xz-utils rsync sudo postgresql postgresql-client libpq-dev nftables
+  )
+  export DEBIAN_FRONTEND=noninteractive
+  # Skip apt entirely when everything is present (e.g. the Docker image), so
+  # reinstalls and upgrades work offline.
+  if ! dpkg-query -W -f='${Status}\n' "${packages[@]}" 2>/dev/null |
+    grep -qv '^install ok installed$' &&
+    [ "$(dpkg-query -W -f='${Status}\n' "${packages[@]}" 2>/dev/null | wc -l)" -eq "${#packages[@]}" ]; then
+    log "required packages are already installed"
+  else
+    apt_get update
+    apt_get install -y "${packages[@]}"
+  fi
   systemctl disable --now postgresql >/dev/null 2>&1 || true
 }
 

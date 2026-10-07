@@ -127,6 +127,18 @@ async function main() {
     requireBootstrapAdmin();
   const { createProjectHostMasterConatToken } = requireBootstrapToken();
 
+  if (process.env.STAR_SEED_MODE === "admin-link") {
+    // `star.sh admin-link`: only issue a new admin registration link.
+    const { createAdminRegistrationLink } = requireBootstrapAdmin();
+    const { url, expires } = await createAdminRegistrationLink({
+      baseUrl: process.env.STAR_BASE_URL ?? "http://127.0.0.1:9100",
+    });
+    console.log(
+      JSON.stringify({ ok: true, admin_url: url, expires: expires.toISOString() }),
+    );
+    return;
+  }
+
   await syncSchema();
 
   const pool = getPool();

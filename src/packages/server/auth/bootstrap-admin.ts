@@ -273,6 +273,35 @@ export async function ensureBootstrapAdminToken(
   return url;
 }
 
+// Operator recovery for a self-hosted server: a new single-use link that
+// creates an admin account, even when admins already exist (e.g. the first
+// admin link was used by someone else or the admin lost access). Only callable
+// with direct database access, i.e. by whoever administers the host.
+export async function createAdminRegistrationLink(
+  opts: { baseUrl?: string } = {},
+): Promise<{ url: string; expires: Date }> {
+  const token = secure_random_token(32);
+  const storedToken = await encryptRegistrationTokenValue(token);
+  const expires = new Date(Date.now() + BOOTSTRAP_TTL_MS);
+  await getPool().query(
+    `INSERT INTO registration_tokens
+        (token, descr, expires, "limit", disabled, customize)
+      VALUES ($1, $2, $3, $4, $5, $6)`,
+    [
+      storedToken,
+      "Admin account (operator link)",
+      expires,
+      1,
+      false,
+      { make_admin: true, operator_admin_link: true },
+    ],
+  );
+  logger.info("operator admin registration link created", {
+    expires: expires.toISOString(),
+  });
+  return { url: await formatRegistrationLink(token, opts.baseUrl), expires };
+}
+
 export async function ensureStarInviteRegistrationToken(
   opts: { baseUrl?: string } = {},
 ): Promise<string> {
