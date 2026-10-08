@@ -6669,9 +6669,9 @@ class BootstrapModesTest(unittest.TestCase):
         ).split()
         cases = [
             # restart_if_changed, fingerprints (before, after), running, restarted
-            (True, ["a", "a"], True, False),
-            (True, ["a", "b"], True, True),
-            (True, ["a", "a"], False, True),
+            (True, [{"env": "a"}, {"env": "a"}], True, False),
+            (True, [{"env": "a"}, {"env": "b"}], True, True),
+            (True, [{"env": "a"}, {"env": "a"}], False, True),
             (False, [], True, True),
         ]
         for restart_if_changed, fingerprints, running, expected in cases:
@@ -6729,10 +6729,15 @@ class BootstrapModesTest(unittest.TestCase):
                 self.assertEqual(first, bootstrap.project_host_restart_fingerprint(cfg))
                 (bin_dir / "ctl").write_text("v2")
                 second = bootstrap.project_host_restart_fingerprint(cfg)
-                self.assertNotEqual(first, second)
+                self.assertEqual(
+                    bootstrap.changed_fingerprint_parts(first, second), ["bin:ctl"]
+                )
                 env_path.write_text("A=2\n")
-                self.assertNotEqual(
-                    second, bootstrap.project_host_restart_fingerprint(cfg)
+                self.assertEqual(
+                    bootstrap.changed_fingerprint_parts(
+                        second, bootstrap.project_host_restart_fingerprint(cfg)
+                    ),
+                    ["env"],
                 )
 
     def test_podman_boot_preparation_restores_project_io_policy(self) -> None:

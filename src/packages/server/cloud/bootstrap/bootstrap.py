@@ -13989,58 +13989,68 @@ exit 0
     os.chmod("/etc/cron.d/cocalc-nvidia-cdi", 0o644)
 
 
-def project_host_restart_fingerprint(cfg: BootstrapConfig) -> str:
-    """Digest of what a running project-host stack loaded at startup.
+def project_host_restart_fingerprint(cfg: BootstrapConfig) -> dict[str, str]:
+    """Digests of what a running project-host stack loaded at startup.
 
     The boot-time reconcile rewrites everything; it must only restart the
     stack (which systemd already started at boot) when one of these changed.
+    Keys name the component so a restart can say why; values are digests.
     """
-    digest = hashlib.sha256()
+    parts: dict[str, str] = {}
 
-    def add(label: str, value: str) -> None:
-        digest.update(f"{label}\0{value}\0".encode("utf-8", "surrogateescape"))
+    def digest_bytes(data: bytes) -> str:
+        return hashlib.sha256(data).hexdigest()
 
-    def add_file(path: Path | str) -> None:
+    def add_file(key: str, path: Path | str) -> None:
         try:
-            data = Path(path).read_bytes()
+            parts[key] = digest_bytes(Path(path).read_bytes())
         except FileNotFoundError:
-            add(str(path), "missing")
-            return
+            parts[key] = "missing"
         except OSError as exc:
             # Unknown is a change: never skip a restart on a read failure.
-            add(str(path), f"unreadable:{os.urandom(8).hex()}:{exc.errno}")
-            return
-        add(str(path), hashlib.sha256(data).hexdigest())
+            parts[key] = f"unreadable:{os.urandom(8).hex()}:{exc.errno}"
 
-    for bundle in (
-        cfg.project_host_bundle,
-        cfg.project_bundle,
-        cfg.tools_bundle,
-        cfg.container_runtime_bundle,
+    for name, bundle in (
+        ("project_host_bundle", cfg.project_host_bundle),
+        ("project_bundle", cfg.project_bundle),
+        ("tools_bundle", cfg.tools_bundle),
+        ("container_runtime_bundle", cfg.container_runtime_bundle),
     ):
-        if bundle is None:
-            continue
-        add("bundle", os.path.realpath(bundle.current) if bundle.current else "")
-    add("node", f"{cfg.node_version}")
+        if bundle is not None:
+            parts[f"bundle:{name}"] = (
+                os.path.realpath(bundle.current) if bundle.current else ""
+            )
+    parts["node"] = f"{cfg.node_version}"
     bin_dir = project_host_runtime_root(cfg) / "bin"
     try:
         for entry in sorted(bin_dir.iterdir()):
             if entry.is_file():
-                add_file(entry)
+                add_file(f"bin:{entry.name}", entry)
     except FileNotFoundError:
-        add(str(bin_dir), "missing")
+        parts["bin"] = "missing"
     env_path = Path(cfg.env_file)
-    add_file(env_path)
-    add_file(env_path.with_name(
-        env_path.name[:-4] + ".local.env"
-        if env_path.name.endswith(".env")
-        else "project-host.local.env"
-    ))
-    add_file("/mnt/cocalc/data/secrets/master-conat-token")
+    add_file("env", env_path)
+    add_file(
+        "local_env",
+        env_path.with_name(
+            env_path.name[:-4] + ".local.env"
+            if env_path.name.endswith(".env")
+            else "project-host.local.env"
+        ),
+    )
+    add_file("master_conat_token", "/mnt/cocalc/data/secrets/master-conat-token")
     containers = Path(runtime_home(cfg)) / ".config" / "containers"
-    add_file(containers / "storage.conf")
-    add_file(containers / "containers.conf")
-    return digest.hexdigest()
+    add_file("podman:storage.conf", containers / "storage.conf")
+    add_file("podman:containers.conf", containers / "containers.conf")
+    return parts
+
+
+def changed_fingerprint_parts(
+    before: dict[str, str], after: dict[str, str]
+) -> list[str]:
+    return sorted(
+        key for key in set(before) | set(after) if before.get(key) != after.get(key)
+    )
 
 
 def project_host_running(cfg: BootstrapConfig) -> bool:
@@ -14234,17 +14244,28 @@ def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int
         configure_cloudflared_with_options(cfg, install_package=False)
         configure_critical_service_oom_protection(cfg)
         configure_autostart(cfg)
-        if (
-            fingerprint_before is not None
-            and project_host_restart_fingerprint(cfg) == fingerprint_before
-            and project_host_running(cfg)
-        ):
-            log_line(
-                cfg,
-                "bootstrap: project-host software unchanged and running; "
-                "leaving the running stack alone",
+        keep_running = False
+        if fingerprint_before is not None:
+            changed = changed_fingerprint_parts(
+                fingerprint_before, project_host_restart_fingerprint(cfg)
             )
-        else:
+            if changed:
+                log_line(
+                    cfg,
+                    "bootstrap: project-host software changed ("
+                    + ", ".join(changed)
+                    + "); restarting the stack",
+                )
+            elif not project_host_running(cfg):
+                log_line(cfg, "bootstrap: project-host not running; starting it")
+            else:
+                keep_running = True
+                log_line(
+                    cfg,
+                    "bootstrap: project-host software unchanged and running; "
+                    "leaving the running stack alone",
+                )
+        if not keep_running:
             report_bootstrap_status(
                 cfg, "running", "Restarting project-host services"
             )
