@@ -140,6 +140,24 @@ find_createdb() {
   find /usr/lib/postgresql -path '*/bin/createdb' 2>/dev/null | sort | tail -n1
 }
 
+# Bay services log errors and warnings to journald, which bay-bootstrap-host.sh
+# caps. Without DEBUG the logger writes nothing at all; without
+# NODE_ENV=production it would also append to an unrotated $LOGS/log, so pin it
+# to the console. Override DEBUG in bay-local.env. Called by both full and
+# hub-only releases, since both restart the services that read it.
+configure_bay_logging_env() {
+  local env_file="${ENV_DIR}/bay.env"
+  if [[ ! -e "$env_file" ]]; then
+    return 0
+  fi
+  set_env_var "$env_file" "DEBUG" "cocalc:error:*,cocalc:warn:*"
+  set_env_var "$env_file" "DEBUG_CONSOLE" "yes"
+  set_env_var "$env_file" "DEBUG_FILE" ""
+  if [[ ! -e "${JOURNALD_CAP_FILE:-/etc/systemd/journald.conf.d/99-cocalc-bay.conf}" ]]; then
+    echo "WARNING: journald has no CoCalc size cap on this VM; bay logs are unbounded until bay-bootstrap-host.sh installs /etc/systemd/journald.conf.d/99-cocalc-bay.conf" >&2
+  fi
+}
+
 render_if_missing_or_forced() {
   local target="$1"
   local example="${2:-}"
@@ -987,6 +1005,7 @@ EOF
   fi
 
   if [[ -n "$HUB_BUNDLE_PATH" ]]; then
+    configure_bay_logging_env
     INSTALL_CMD=(
       "${TARGET_RELEASE}/scripts/bay-systemd/install-scaffold.sh"
       "--overlay"
@@ -1121,6 +1140,10 @@ COCALC_BAY_HUB_DIAGNOSTIC_DIR=/var/log/cocalc-bay/hub-watchdog-incidents
 COCALC_BAY_HUB_DIAGNOSTIC_RETENTION_DAYS=14
 COCALC_BAY_HUB_DIAGNOSTIC_MAX_FILES=100
 
+DEBUG=cocalc:error:*,cocalc:warn:*
+DEBUG_CONSOLE=yes
+DEBUG_FILE=
+
 COCALC_BAY_MIN_HEALTHY_WORKERS=1
 COCALC_BAY_HEALTH_TIMEOUT_S=15
 COCALC_BAY_WORKER_START_TIMEOUT_S=90
@@ -1168,6 +1191,7 @@ EOF
   set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_HUB_DIAGNOSTIC_DIR" "/var/log/cocalc-bay/hub-watchdog-incidents"
   set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_HUB_DIAGNOSTIC_RETENTION_DAYS" "14"
   set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_HUB_DIAGNOSTIC_MAX_FILES" "100"
+  configure_bay_logging_env
   set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_POSTGRES_MAX_WAL_SIZE" "8GB"
   set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_POSTGRES_SHARED_BUFFERS" "1GB"
   set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_POSTGRES_EFFECTIVE_CACHE_SIZE" "8GB"
