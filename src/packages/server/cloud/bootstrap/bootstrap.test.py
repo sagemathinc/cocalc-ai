@@ -6732,12 +6732,32 @@ class BootstrapModesTest(unittest.TestCase):
                 self.assertEqual(
                     bootstrap.changed_fingerprint_parts(first, second), ["bin:ctl"]
                 )
-                env_path.write_text("A=2\n")
+                env_path.write_text(
+                    "A=1\nPROJECT_HOST_CLOUD_PROVIDER=gcp\n"
+                    "PROJECT_HOST_SSH_SERVER=203.0.113.7:2222\n"
+                )
+                gcp = bootstrap.project_host_restart_fingerprint(cfg)
+                # A new ephemeral GCP IP alone is not a reason to restart.
+                env_path.write_text(
+                    "A=1\nPROJECT_HOST_CLOUD_PROVIDER=gcp\n"
+                    "PROJECT_HOST_SSH_SERVER=198.51.100.9:2222\n"
+                )
+                self.assertEqual(
+                    bootstrap.changed_fingerprint_parts(
+                        gcp, bootstrap.project_host_restart_fingerprint(cfg)
+                    ),
+                    [],
+                )
+                second = bootstrap.project_host_restart_fingerprint(cfg)
+                env_path.write_text(
+                    "A=2\nPROJECT_HOST_CLOUD_PROVIDER=gcp\n"
+                    "PROJECT_HOST_SSH_SERVER=198.51.100.9:2222\n"
+                )
                 self.assertEqual(
                     bootstrap.changed_fingerprint_parts(
                         second, bootstrap.project_host_restart_fingerprint(cfg)
                     ),
-                    ["env"],
+                    ["env:A"],
                 )
 
     def test_podman_boot_preparation_restores_project_io_policy(self) -> None:

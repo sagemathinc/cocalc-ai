@@ -14029,15 +14029,27 @@ def project_host_restart_fingerprint(cfg: BootstrapConfig) -> dict[str, str]:
     except FileNotFoundError:
         parts["bin"] = "missing"
     env_path = Path(cfg.env_file)
-    add_file("env", env_path)
-    add_file(
-        "local_env",
-        env_path.with_name(
-            env_path.name[:-4] + ".local.env"
-            if env_path.name.endswith(".env")
-            else "project-host.local.env"
-        ),
+    local_env_path = env_path.with_name(
+        env_path.name[:-4] + ".local.env"
+        if env_path.name.endswith(".env")
+        else "project-host.local.env"
     )
+    # Per key, so a restart names the setting that changed (never its value).
+    for label, path in (("env", env_path), ("local_env", local_env_path)):
+        try:
+            env = read_env_assignments(path)
+            for key, value in env.items():
+                # A GCP Spot VM gets a new ephemeral IP on every start, so this
+                # changes on every boot. The control plane takes the endpoint
+                # from the provider for GCP, so it is not worth a restart.
+                if (
+                    key == "PROJECT_HOST_SSH_SERVER"
+                    and env.get("PROJECT_HOST_CLOUD_PROVIDER") == "gcp"
+                ):
+                    continue
+                parts[f"{label}:{key}"] = digest_bytes(value.encode())
+        except Exception as exc:
+            parts[label] = f"unreadable:{os.urandom(8).hex()}:{type(exc).__name__}"
     add_file("master_conat_token", "/mnt/cocalc/data/secrets/master-conat-token")
     containers = Path(runtime_home(cfg)) / ".config" / "containers"
     add_file("podman:storage.conf", containers / "storage.conf")
