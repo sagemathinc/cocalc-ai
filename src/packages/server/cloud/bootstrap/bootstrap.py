@@ -1674,6 +1674,9 @@ class BootstrapConfig:
     bootstrap_done_paths: list[str]
     container_runtime_bundle: BundleSpec | None = None
     allow_loopback_rustic_rest: bool = False
+    # Standalone (CoCalc Star) hosts only: run without the per-project network
+    # policy when the kernel cannot express it, instead of refusing projects.
+    allow_unenforceable_project_network: bool = False
 
 
 @dataclass(frozen=True)
@@ -1685,6 +1688,9 @@ class PrivilegedWrapperConfig:
     project_io_policy: dict[str, Any]
     container_runtime_bundle: BundleSpec | None = None
     allow_loopback_rustic_rest: bool = False
+    # Standalone (CoCalc Star) hosts only: run without the per-project network
+    # policy when the kernel cannot express it, instead of refusing projects.
+    allow_unenforceable_project_network: bool = False
 
 
 def _require(condition: bool, message: str) -> None:
@@ -1799,6 +1805,7 @@ def standalone_privileged_wrapper_config(
         project_io_capacity=capacity,
         project_io_policy=build_project_io_policy(capacity),
         allow_loopback_rustic_rest=True,
+        allow_unenforceable_project_network=True,
     )
 
 
@@ -8016,22 +8023,36 @@ configure_project_network_table() {
 # network) identifies a project's traffic with the nftables `socket cgroupv2`
 # match, and the disabled policy also needs `fib daddr type local`. Some
 # kernels lack these expressions (e.g. Docker Desktop's LinuxKit VM has neither
-# nft_socket nor nft_fib_inet). On such kernels the policy is off: it is an
-# anti-abuse measure for public sites with untrusted accounts, which do not run
-# on such hosts. Only a deterministic "expression unavailable" result counts;
-# any other nft failure leaves the policy enforced and is retried later.
+# nft_socket nor nft_fib_inet). Only a deterministic "expression unavailable"
+# result counts; any other nft failure leaves the policy enforced and is
+# retried later. The result is cached for this boot and kernel only.
 PROJECT_NETWORK_CAPABILITY_FILE="/run/cocalc-project-network-capability"
+PROJECT_NETWORK_DEGRADED_FILE="/run/cocalc-project-network-degraded"
+# The policy is an anti-abuse measure for public sites with untrusted accounts.
+# Only a host installed with the standalone (CoCalc Star) profile may run
+# without it on such a kernel; everywhere else project starts and network
+# reconciliation fail closed.
+PROJECT_NETWORK_UNENFORCEABLE_ALLOWED="__ALLOW_UNENFORCEABLE_PROJECT_NETWORK__"
 
-project_network_policy_unenforceable() {
-  local cached probe_table pool_path level output status=0
+project_network_kernel_identity() {
+  printf '%s %s' "$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)" "$(uname -r)"
+}
+
+# Prints supported, unsupported or unknown.
+project_network_capability() {
+  local identity cached probe_table pool_path level output status=0
+  identity="$(project_network_kernel_identity)"
   cached="$(cat "$PROJECT_NETWORK_CAPABILITY_FILE" 2>/dev/null || true)"
   case "$cached" in
-    supported) return 1 ;;
-    unsupported) return 0 ;;
+    "supported $identity") echo supported; return 0 ;;
+    "unsupported $identity") echo unsupported; return 0 ;;
   esac
   require_project_network_tools
   configure_project_pool_hierarchy
-  [ -d "$PROJECT_POOL_CGROUP_DEFAULT" ] || return 1
+  if [ ! -d "$PROJECT_POOL_CGROUP_DEFAULT" ]; then
+    echo unknown
+    return 0
+  fi
   pool_path="$(project_network_pool_cgroup_path)"
   level="$(awk -F/ '{print NF}' <<< "$pool_path")"
   probe_table="cocalc_capability_probe_$$_${RANDOM}"
@@ -8041,7 +8062,8 @@ project_network_policy_unenforceable() {
     "$probe_table" "$probe_table" "$probe_table" |
     run_project_network_nft -f - >/dev/null 2>&1; then
     run_project_network_nft delete table inet "$probe_table" >/dev/null 2>&1 || true
-    return 1
+    echo unknown
+    return 0
   fi
   output="$(
     printf 'add rule inet %s probe socket cgroupv2 level %s "%s" counter\\nadd rule inet %s probe fib daddr type local counter\\n' \\
@@ -8050,17 +8072,46 @@ project_network_policy_unenforceable() {
   )" || status=$?
   run_project_network_nft delete table inet "$probe_table" >/dev/null 2>&1 || true
   if [ "$status" -eq 0 ]; then
-    printf 'supported\\n' > "$PROJECT_NETWORK_CAPABILITY_FILE"
-    return 1
+    printf 'supported %s\\n' "$identity" > "$PROJECT_NETWORK_CAPABILITY_FILE"
+    echo supported
+    return 0
   fi
   # The kernel rejects an expression whose module it lacks with ENOENT. The
   # pool cgroup path exists (checked above), so that is the only cause here.
   if [ "$status" -eq 1 ] &&
     grep -q 'Could not process rule: No such file or directory' <<< "$output"; then
-    printf 'unsupported\\n' > "$PROJECT_NETWORK_CAPABILITY_FILE"
+    printf 'unsupported %s\\n' "$identity" > "$PROJECT_NETWORK_CAPABILITY_FILE"
+    echo unsupported
     return 0
   fi
-  return 1
+  echo unknown
+}
+
+# Reported once per boot, kernel and outcome, to the journal and stderr.
+report_project_network_degraded() {
+  local state="$1" message="$2" marker
+  marker="${state} $(project_network_kernel_identity)"
+  if [ "$(cat "$PROJECT_NETWORK_DEGRADED_FILE" 2>/dev/null || true)" != "$marker" ]; then
+    printf '%s\\n' "$marker" > "$PROJECT_NETWORK_DEGRADED_FILE" || true
+    logger -t cocalc-runtime-storage -p user.warning "$message" || true
+    echo "WARNING: $message" >&2
+  fi
+}
+
+# Succeeds when the policy is unenforceable and this host may run without it;
+# refuses (deny) when it is unenforceable anywhere else.
+project_network_policy_unenforceable() {
+  local capability
+  capability="$(project_network_capability)"
+  [ "$capability" = unsupported ] || return 1
+  if [ "$PROJECT_NETWORK_UNENFORCEABLE_ALLOWED" != 1 ]; then
+    report_project_network_degraded blocked \\
+      "project network policy cannot be enforced: this kernel lacks the nftables socket cgroupv2 or fib expressions; project starts are refused"
+    deny "project-network-policy-unenforceable" "kernel lacks nftables socket cgroupv2 or fib expressions"
+  fi
+  report_project_network_degraded off \\
+    "project network policy is OFF: this kernel lacks the nftables socket cgroupv2 or fib expressions (allowed on this standalone host)"
+  return 0
 }
 
 ensure_project_network_rule() {
@@ -10748,6 +10799,10 @@ esac
         "__PROJECT_POOL_CGROUP__", DEFAULT_PROJECT_POOL_CGROUP
     )
     storage_wrapper = storage_wrapper.replace("__RUNTIME_USER__", cfg.ssh_user)
+    storage_wrapper = storage_wrapper.replace(
+        "__ALLOW_UNENFORCEABLE_PROJECT_NETWORK__",
+        "1" if cfg.allow_unenforceable_project_network else "0",
+    )
     storage_wrapper = storage_wrapper.replace(
         "__CONTAINER_RUNTIME_REQUIRED__",
         "1" if cfg.container_runtime_bundle is not None else "0",

@@ -20,6 +20,25 @@ from unittest import mock
 import bootstrap
 
 
+def bootstrap_storage_wrapper_for(cfg) -> str:
+    """The cocalc-runtime-storage script install_privileged_wrappers writes."""
+    captured: dict[str, str] = {}
+    original = (bootstrap.text_write_atomic, bootstrap.os.chmod, bootstrap.os.chown)
+
+    def capture_write(path, data, **_kwargs):
+        captured[str(path)] = data
+        return len(data)
+
+    try:
+        bootstrap.text_write_atomic = capture_write
+        bootstrap.os.chmod = lambda *_args, **_kwargs: None
+        bootstrap.os.chown = lambda *_args, **_kwargs: None
+        bootstrap.install_privileged_wrappers(cfg)
+    finally:
+        bootstrap.text_write_atomic, bootstrap.os.chmod, bootstrap.os.chown = original
+    return captured["/usr/local/sbin/cocalc-runtime-storage"]
+
+
 def make_cfg(tmpdir: str) -> bootstrap.BootstrapConfig:
     base = Path(tmpdir)
     return bootstrap.BootstrapConfig(
@@ -3492,8 +3511,8 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
         self,
     ) -> None:
         # Kernels without nftables socket cgroupv2 matching (Docker Desktop's
-        # LinuxKit VM) cannot express per-project rules; the policy is off
-        # there instead of blocking every project start.
+        # LinuxKit VM) cannot express per-project rules. A standalone (CoCalc
+        # Star) host runs without the policy; any other host fails closed.
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = replace(
                 make_cfg(tmpdir),
@@ -3532,14 +3551,19 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             functions = "".join(
                 body(name)
                 for name in (
+                    "project_network_kernel_identity",
+                    "project_network_capability",
+                    "report_project_network_degraded",
                     "project_network_policy_unenforceable",
                     "ensure_project_network_rule",
                     "reconcile_project_network_limits",
                 )
             )
 
-            def run_probe(mode: str) -> tuple[str, Path]:
-                work = Path(tmpdir) / mode
+            def run_probe(
+                mode: str, allowed: bool = True, label: str = ""
+            ) -> tuple[str, Path, subprocess.CompletedProcess]:
+                work = Path(tmpdir) / (label or mode)
                 (work / "pool").mkdir(parents=True)
                 harness = "\n".join(
                     [
@@ -3558,6 +3582,9 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                         f"apply_project_network_process_limits() {{ echo applied >> '{work}/limits.log'; }}",
                         f"PROJECT_POOL_CGROUP_DEFAULT='{work}/pool'",
                         f"PROJECT_NETWORK_CAPABILITY_FILE='{work}/capability'",
+                        f"PROJECT_NETWORK_DEGRADED_FILE='{work}/degraded'",
+                        f"PROJECT_NETWORK_UNENFORCEABLE_ALLOWED={'1' if allowed else '0'}",
+                        f"logger() {{ echo \"$*\" >> '{work}/journal.log'; }}",
                         "PROJECT_NETWORK_TABLE=t PROJECT_NETWORK_CHAIN=c",
                         "PROJECT_NETWORK_BOOT_RECONCILE_ATTEMPTS=1",
                         "PROJECT_NETWORK_BOOT_RECONCILE_DELAY_SECONDS=0",
@@ -3576,7 +3603,7 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                         "}",
                         functions,
                         "if project_network_policy_unenforceable; then echo UNENFORCEABLE; else echo ENFORCED; fi",
-                        'cat "$PROJECT_NETWORK_CAPABILITY_FILE" 2>/dev/null || echo NOCACHE',
+                        'cut -d" " -f1 "$PROJECT_NETWORK_CAPABILITY_FILE" 2>/dev/null || echo NOCACHE',
                         'if [ "$MODE" = enoent ]; then',
                         "  ensure_project_network_rule 11111111-1111-4111-8111-111111111111",
                         "  reconcile_project_network_limits",
@@ -3586,23 +3613,53 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 result = subprocess.run(
                     ["bash", "-c", harness], capture_output=True, text=True
                 )
-                self.assertEqual(result.returncode, 0, result.stderr)
-                return result.stdout, work
+                if allowed:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                return result.stdout, work, result
 
-            # The kernel lacks the expressions: policy off, cached, and project
-            # starts install no rules; the pasta limits still apply.
-            out, work = run_probe("enoent")
+            # Standalone host, kernel lacks the expressions: policy off, cached,
+            # project starts install no rules; the pasta limits still apply,
+            # and the degraded state is reported once.
+            out, work, result = run_probe("enoent")
             self.assertEqual(out, "UNENFORCEABLE\nunsupported\n")
             self.assertNotIn("add rule project", (work / "nft.log").read_text())
             self.assertEqual((work / "limits.log").read_text(), "applied\n")
+            journal = (work / "journal.log").read_text()
+            self.assertEqual(journal.count("project network policy is OFF"), 1)
+            self.assertIn("WARNING: project network policy is OFF", result.stderr)
+            # The cache is bound to this boot and kernel.
+            identity = subprocess.run(
+                ["bash", "-c", "printf '%s %s' \"$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)\" \"$(uname -r)\""],
+                capture_output=True, text=True,
+            ).stdout
+            self.assertEqual(
+                (work / "capability").read_text(), f"unsupported {identity}\n"
+            )
+            # Any other host fails closed: the probe result refuses the project
+            # start (before any rule or process change) and reports it.
+            out, work, result = run_probe("enoent", allowed=False, label="cloud")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(out, "")
+            self.assertIn("DENY project-network-policy-unenforceable", result.stderr)
+            self.assertFalse((work / "limits.log").exists())
+            self.assertIn(
+                "project starts are refused", (work / "journal.log").read_text()
+            )
             # An operational failure (timeout) keeps enforcing and is not cached.
-            out, _ = run_probe("timeout")
+            out, _, _ = run_probe("timeout")
             self.assertEqual(out, "ENFORCED\nNOCACHE\n")
             # A kernel with both expressions enforces the policy.
-            out, work = run_probe("supported")
+            out, work, _ = run_probe("supported")
             self.assertEqual(out, "ENFORCED\nsupported\n")
             self.assertIn("fib daddr type local", (work / "nft.log").read_text())
-            self.assertNotIn("project-network-policy-unenforceable", script)
+            # The fallback is off unless the install profile allows it.
+            self.assertIn('PROJECT_NETWORK_UNENFORCEABLE_ALLOWED="0"', script)
+            self.assertIn(
+                'PROJECT_NETWORK_UNENFORCEABLE_ALLOWED="1"',
+                bootstrap_storage_wrapper_for(
+                    bootstrap.standalone_privileged_wrapper_config("star-user")
+                ),
+            )
 
     def test_storage_wrapper_uses_xattr_overlay_mounts_and_project_rustic_commands(
         self,
