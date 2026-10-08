@@ -48,7 +48,11 @@ async function withTerminalClient({
 }) {
   const resolvedProject = await resolveProjectFromArgOrContext(
     ctx,
-    projectIdentifier,
+    // Inside a project, default to that project (as other project commands
+    // do), so agents need not pass -w.
+    `${projectIdentifier ?? ""}`.trim() ||
+      `${process.env.COCALC_PROJECT_ID ?? ""}`.trim() ||
+      undefined,
   );
   assertProjectTerminalRuntimeAvailable({ project: resolvedProject });
   const { project, client } = await resolveProjectConatClient(

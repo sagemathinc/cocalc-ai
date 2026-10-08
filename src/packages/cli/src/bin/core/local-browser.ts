@@ -313,6 +313,9 @@ export async function launchBrowser({
   // that must not outlive this process: its stderr is a pipe to us.
   captureStderr?: boolean;
 }): Promise<LaunchedBrowser> {
+  // A reused (persistent) profile still has the previous browser's port file;
+  // we must wait for this browser's.
+  rmSync(posix.join(profileDir, "DevToolsActivePort"), { force: true });
   // Own process group: Ctrl-C reaches us, and we decide the teardown order.
   const child = spawn(executable, args, {
     stdio: captureStderr ? ["ignore", "ignore", "pipe"] : "ignore",

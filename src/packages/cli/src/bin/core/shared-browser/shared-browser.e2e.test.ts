@@ -160,3 +160,37 @@ test(
     }
   },
 );
+
+test(
+  "a persistent profile relaunches (the old DevTools port file is ignored)",
+  {
+    skip: executable ? false : "no Chrome/Chromium installed",
+    timeout: 120_000,
+  },
+  async () => {
+    const { mkdtempSync, rmSync } = require("node:fs");
+    const { tmpdir } = require("node:os");
+    const { join } = require("node:path");
+    const profileDir = mkdtempSync(join(tmpdir(), "cocalc-browser-persist-"));
+    try {
+      for (let run = 0; run < 2; run++) {
+        const browser = await launchBrowser({
+          executable: executable!,
+          profileDir,
+          args: sharedBrowserChromeArgs(profileDir),
+        });
+        try {
+          const version = await (
+            await fetch(`http://127.0.0.1:${browser.port}/json/version`)
+          ).json();
+          assert.match(version.Browser, /Chrome/);
+        } finally {
+          // Like a project stop: the port file stays behind.
+          await browser.stop();
+        }
+      }
+    } finally {
+      rmSync(profileDir, { recursive: true, force: true });
+    }
+  },
+);
