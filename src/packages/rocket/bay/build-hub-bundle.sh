@@ -194,6 +194,8 @@ validate_file "$OUT/runtime/control-plane/http-api-dist/pages/api/v2/index.js"
 validate_file "$OUT/runtime/migrate-schema/index.js"
 validate_file "$OUT/runtime/sqlite-mirror/index.js"
 validate_file "$OUT/scripts/bay-systemd/install-scaffold.sh"
+# The disposable drill and bay-restore both run this engine.
+validate_file "$OUT/scripts/bay-systemd/bin/bay-restore-engine.py"
 validate_file "$OUT/scripts/bay-systemd/needrestart/cocalc-bay.conf"
 validate_file "$OUT/scripts/bay-systemd/systemd/cocalc-bay-hub@.service"
 validate_file "$OUT/bay-hub-manifest.json"
