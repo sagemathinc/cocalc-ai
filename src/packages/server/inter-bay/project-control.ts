@@ -14,8 +14,6 @@ import type {
   ProjectControlAssignHostRequest,
   ProjectControlAcceptRehomeRequest,
   ProjectControlBackupRequest,
-  ProjectControlClearEntitlementOverrideRequest,
-  ProjectControlGetEntitlementOverrideRequest,
   ProjectControlGetRootfsStatesRequest,
   ProjectControlHardDeleteStatusRequest,
   ProjectControlHardDeleteStatusResponse,
@@ -62,7 +60,6 @@ import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-loc
 import { setProjectUsageAccountId } from "@cocalc/server/membership/project-usage";
 import {
   clearProjectEntitlementOverrideLocal,
-  getProjectEntitlementOverrideLocal,
   setProjectEntitlementOverrideLocal,
 } from "@cocalc/server/membership/project-entitlement-overrides";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
@@ -177,14 +174,6 @@ async function assertCurrentProjectOwnership({
   }
 }
 
-export async function handleProjectControlGetEntitlementOverride({
-  project_id,
-  epoch,
-}: ProjectControlGetEntitlementOverrideRequest): Promise<ProjectEntitlementOverride | null> {
-  await assertCurrentProjectOwnership({ project_id, epoch });
-  return (await getProjectEntitlementOverrideLocal(project_id)) ?? null;
-}
-
 export async function handleProjectControlGetRootfsStates({
   project_id,
   account_id,
@@ -213,6 +202,15 @@ export async function handleProjectControlSetRootfsImage({
 }
 
 export async function handleProjectControlSetEntitlementOverride({
+  epoch,
+  ...opts
+}: ProjectControlSetEntitlementOverrideRequest): Promise<ProjectEntitlementOverride> {
+  await assertCurrentProjectOwnership({ project_id: opts.project_id, epoch });
+  return await setProjectDiskQuotaOverrideOnOwningBay(opts);
+}
+
+/** Set a minimum disk quota override on this, the project's owning bay. */
+export async function setProjectDiskQuotaOverrideOnOwningBay({
   project_id,
   actor_account_id,
   disk_quota_mb,
@@ -220,9 +218,10 @@ export async function handleProjectControlSetEntitlementOverride({
   expires_at,
   source,
   metadata,
-  epoch,
-}: ProjectControlSetEntitlementOverrideRequest): Promise<ProjectEntitlementOverride> {
-  await assertCurrentProjectOwnership({ project_id, epoch });
+}: Omit<
+  ProjectControlSetEntitlementOverrideRequest,
+  "epoch"
+>): Promise<ProjectEntitlementOverride> {
   if (
     typeof disk_quota_mb !== "number" ||
     !Number.isFinite(disk_quota_mb) ||
@@ -253,13 +252,16 @@ export async function handleProjectControlSetEntitlementOverride({
   return override;
 }
 
-export async function handleProjectControlClearEntitlementOverride({
+/** Clear a project's entitlement override on this, its owning bay. */
+export async function clearProjectEntitlementOverrideOnOwningBay({
   project_id,
   actor_account_id,
   reason,
-  epoch,
-}: ProjectControlClearEntitlementOverrideRequest): Promise<void> {
-  await assertCurrentProjectOwnership({ project_id, epoch });
+}: {
+  project_id: string;
+  actor_account_id: string;
+  reason: string;
+}): Promise<void> {
   await clearProjectEntitlementOverrideLocal({
     project_id,
     actor_account_id,

@@ -62,10 +62,8 @@ import {
   createInterBayProjectControlActiveOpHandler,
   createInterBayProjectControlBackupHandler,
   createInterBayProjectControlCheckStartAdmissionHandler,
-  createInterBayProjectControlClearEntitlementOverrideHandler,
   createInterBayBayDirectoryHandlers,
   createInterBayDirectoryHandlers,
-  createInterBayProjectControlGetEntitlementOverrideHandler,
   createInterBayProjectControlGetRootfsStatesHandler,
   createInterBayProjectControlHardDeleteStatusHandler,
   createInterBayProjectControlHandler,
@@ -425,9 +423,7 @@ import {
   handleProjectControlActiveOperation,
   handleProjectControlBackup,
   handleProjectControlCheckStartAdmission,
-  handleProjectControlClearEntitlementOverride,
   handleProjectControlAcceptRehome,
-  handleProjectControlGetEntitlementOverride,
   handleProjectControlGetRootfsStates,
   handleProjectControlHardDeleteStatus,
   handleProjectControlSetUsageAccount,
@@ -445,23 +441,11 @@ import {
   handleProjectControlStop,
 } from "@cocalc/server/inter-bay/project-control";
 import {
-  handleProjectSecretsApproveCourseRecipients,
   handleProjectSecretsCopy,
   handleProjectSecretsExportForCopy,
-  handleProjectSecretsGetCoursePolicy,
-  handleProjectSecretsGetCourseSyncStatus,
   handleProjectSecretsImportForCopy,
   handleProjectSecretsInstallCourseManaged,
-  handleProjectSecretsListCourseShareable,
-  handleProjectSecretsPreviewCourseSync,
   handleProjectSecretsRemoveCourseManaged,
-  handleProjectSecretsRevokeCoursePolicy,
-  handleProjectSecretsRevokeCourseRecipients,
-  handleProjectSecretsSetCourseGrants,
-  handleProjectSecretsSetCoursePolicy,
-  handleProjectSecretsSetCourseSharing,
-  handleProjectSecretsStartCourseCleanup,
-  handleProjectSecretsStartCourseSync,
   handleProjectSecretsValidateCourseTarget,
 } from "@cocalc/server/inter-bay/project-secrets";
 import {
@@ -2397,12 +2381,8 @@ async function startProjectControlStartService(): Promise<void> {
     rehome: async (opts) => await handleProjectControlRehome(opts),
     acceptRehome: async (opts) => await handleProjectControlAcceptRehome(opts),
     activeOp: async (opts) => await handleProjectControlActiveOperation(opts),
-    getProjectEntitlementOverride: async (opts) =>
-      await handleProjectControlGetEntitlementOverride(opts),
     setProjectEntitlementOverride: async (opts) =>
       await handleProjectControlSetEntitlementOverride(opts),
-    clearProjectEntitlementOverride: async (opts) =>
-      await handleProjectControlClearEntitlementOverride(opts),
   };
   const bay_id = getConfiguredBayId();
   logger.debug("starting inter-bay listener", {
@@ -2512,19 +2492,7 @@ async function startProjectControlStartService(): Promise<void> {
       parallel: true,
       impl,
     }),
-    createInterBayProjectControlGetEntitlementOverrideHandler({
-      client,
-      bay_id,
-      parallel: true,
-      impl,
-    }),
     createInterBayProjectControlSetEntitlementOverrideHandler({
-      client,
-      bay_id,
-      parallel: true,
-      impl,
-    }),
-    createInterBayProjectControlClearEntitlementOverrideHandler({
       client,
       bay_id,
       parallel: true,
@@ -2573,30 +2541,6 @@ async function startProjectSecretsService(): Promise<void> {
       await handleProjectSecretsExportForCopy(opts),
     importForCopy: async (opts) =>
       await handleProjectSecretsImportForCopy(opts),
-    listCourseShareable: async (opts) =>
-      await handleProjectSecretsListCourseShareable(opts),
-    getCoursePolicy: async (opts) =>
-      await handleProjectSecretsGetCoursePolicy(opts),
-    previewCourseSync: async (opts) =>
-      await handleProjectSecretsPreviewCourseSync(opts),
-    setCourseSharing: async (opts) =>
-      await handleProjectSecretsSetCourseSharing(opts),
-    setCoursePolicy: async (opts) =>
-      await handleProjectSecretsSetCoursePolicy(opts),
-    setCourseGrants: async (opts) =>
-      await handleProjectSecretsSetCourseGrants(opts),
-    approveCourseRecipients: async (opts) =>
-      await handleProjectSecretsApproveCourseRecipients(opts),
-    revokeCourseRecipients: async (opts) =>
-      await handleProjectSecretsRevokeCourseRecipients(opts),
-    startCourseSync: async (opts) =>
-      await handleProjectSecretsStartCourseSync(opts),
-    startCourseCleanup: async (opts) =>
-      await handleProjectSecretsStartCourseCleanup(opts),
-    getCourseSyncStatus: async (opts) =>
-      await handleProjectSecretsGetCourseSyncStatus(opts),
-    revokeCoursePolicy: async (opts) =>
-      await handleProjectSecretsRevokeCoursePolicy(opts),
     installCourseManaged: async (opts) =>
       await handleProjectSecretsInstallCourseManaged(opts),
     removeCourseManaged: async (opts) =>

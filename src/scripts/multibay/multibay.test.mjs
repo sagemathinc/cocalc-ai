@@ -385,6 +385,51 @@ describe("project secrets across bays", () => {
   });
 });
 
+describe("course secrets across bays", () => {
+  // bob's project, on the attached bay, acts as the course project; alice, a
+  // collaborator homed on the seed, manages its course secret policy.
+  const NAME = "COURSE_TOKEN";
+  const course = {
+    course_id: "c0c0c0c0-0000-4000-8000-00000000c0c0",
+    course_path: "multibay.course",
+  };
+
+  it("lets a collaborator on the other bay share a secret with the course", async () => {
+    await alice.client.call("projects.setProjectSecret", {
+      project_id: bob.project,
+      name: NAME,
+      value: "for-students",
+    });
+    await alice.client.call("projects.setProjectSecretCourseSharing", {
+      project_id: bob.project,
+      name: NAME,
+      allow: true,
+    });
+    const shareable = await alice.client.call(
+      "projects.listCourseShareableSecrets",
+      { course_project_id: bob.project },
+    );
+    assert.ok(shareable.some((secret) => secret.name === NAME));
+  });
+
+  it("lets a collaborator on the other bay enable and revoke the course policy", async () => {
+    await alice.client.call("projects.setCourseSecretPolicy", {
+      course_project_id: bob.project,
+      ...course,
+      enabled: true,
+    });
+    const policy = await alice.client.call("projects.getCourseSecretPolicy", {
+      course_project_id: bob.project,
+      ...course,
+    });
+    assert.equal(policy?.policy?.enabled, true);
+    await alice.client.call("projects.revokeCourseSecretPolicy", {
+      course_project_id: bob.project,
+      ...course,
+    });
+  });
+});
+
 describe("access requests across bays", () => {
   // The project lives on the seed; its owner (bob) and the requesters are
   // homed on either bay, so requests and their management cross bays.
@@ -636,6 +681,56 @@ describe("account-home facts on the owning bay", () => {
         manage_users_owner_only: true,
       }),
       /Only project owners and administrators/,
+    );
+  });
+});
+
+describe("admin entitlement overrides across bays", () => {
+  // An admin homed on the seed manages a disk quota override on bob's
+  // project, which lives on the attached bay.
+  let admin;
+
+  it("lets an admin on the other bay set, read and clear an override", async () => {
+    admin = await createAccount(cluster, { home_bay_id: SEED, name: "ivy" });
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+         [${JSON.stringify(admin.account_id)}]);`,
+    );
+    admin.client = await client(admin);
+    const set = await admin.client.call(
+      "projects.setAdminProjectEntitlementOverride",
+      {
+        project_id: bob.project,
+        disk_quota_mb: 12345,
+        reason: "multibay test",
+      },
+    );
+    assert.ok(set);
+    const read = await admin.client.call(
+      "projects.getAdminProjectEntitlementOverride",
+      { project_id: bob.project },
+    );
+    assert.equal(
+      read?.override?.project_defaults?.disk_quota?.value ??
+        read?.project_defaults?.disk_quota?.value,
+      12345,
+    );
+    await admin.client.call("projects.clearAdminProjectEntitlementOverride", {
+      project_id: bob.project,
+      reason: "multibay test done",
+    });
+  });
+
+  it("refuses a non-admin on the other bay", async () => {
+    await assert.rejects(
+      alice.client.call("projects.getAdminProjectEntitlementOverride", {
+        project_id: bob.project,
+      }),
+      /must be an admin/,
     );
   });
 });

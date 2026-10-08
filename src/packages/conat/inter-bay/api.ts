@@ -230,12 +230,7 @@ import type {
   ProjectRootfsConfig,
   ProjectRootfsPublishConfig,
   ProjectRunQuota,
-  CourseSecretPolicyState,
   CourseSecretRecipientPreview,
-  CourseSecretSyncPreview,
-  CourseSecretSyncRun,
-  CourseSecretSyncStatusResult,
-  ProjectSecretMetadata,
   ProjectSnapshotSchedule,
   CopyProjectSecretsResult,
 } from "@cocalc/conat/hub/api/projects";
@@ -523,11 +518,6 @@ export interface ProjectControlActiveOperationRequest {
   epoch?: number;
 }
 
-export interface ProjectControlGetEntitlementOverrideRequest {
-  project_id: string;
-  epoch?: number;
-}
-
 export interface ProjectControlSetEntitlementOverrideRequest {
   project_id: string;
   actor_account_id?: string | null;
@@ -536,13 +526,6 @@ export interface ProjectControlSetEntitlementOverrideRequest {
   expires_at?: Date | string | null;
   source?: string | null;
   metadata?: Record<string, unknown>;
-  epoch?: number;
-}
-
-export interface ProjectControlClearEntitlementOverrideRequest {
-  project_id: string;
-  actor_account_id?: string | null;
-  reason: string;
   epoch?: number;
 }
 
@@ -2629,9 +2612,7 @@ export type ProjectControlMethod =
   | "rehome"
   | "accept-rehome"
   | "active-op"
-  | "get-project-entitlement-override"
-  | "set-project-entitlement-override"
-  | "clear-project-entitlement-override";
+  | "set-project-entitlement-override";
 export type DirectoryMethod =
   | "resolve-project-bay"
   | "resolve-host-bay"
@@ -3057,18 +3038,6 @@ export type ProjectSecretsMethod =
   | "copy"
   | "export-for-copy"
   | "import-for-copy"
-  | "list-course-shareable"
-  | "get-course-policy"
-  | "preview-course-sync"
-  | "set-course-sharing"
-  | "set-course-policy"
-  | "set-course-grants"
-  | "approve-course-recipients"
-  | "revoke-course-recipients"
-  | "start-course-sync"
-  | "start-course-cleanup"
-  | "get-course-sync-status"
-  | "revoke-course-policy"
   | "install-course-managed"
   | "remove-course-managed";
 export type ExternalCredentialMethod =
@@ -3194,15 +3163,9 @@ export interface InterBayProjectControlApi {
   activeOp: (
     opts: ProjectControlActiveOperationRequest,
   ) => Promise<ProjectActiveOperationSummary | null>;
-  getProjectEntitlementOverride: (
-    opts: ProjectControlGetEntitlementOverrideRequest,
-  ) => Promise<ProjectEntitlementOverride | null>;
   setProjectEntitlementOverride: (
     opts: ProjectControlSetEntitlementOverrideRequest,
   ) => Promise<ProjectEntitlementOverride>;
-  clearProjectEntitlementOverride: (
-    opts: ProjectControlClearEntitlementOverrideRequest,
-  ) => Promise<void>;
 }
 
 export interface InterBayProjectReferenceApi {
@@ -3250,104 +3213,6 @@ export interface InterBayProjectSecretsApi {
     overwrite?: boolean;
     epoch?: number;
   }) => Promise<CopyProjectSecretsResult>;
-  listCourseShareable: (opts: {
-    account_id: string;
-    course_project_id: string;
-    epoch?: number;
-  }) => Promise<ProjectSecretMetadata[]>;
-  getCoursePolicy: (opts: {
-    account_id: string;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    epoch?: number;
-  }) => Promise<CourseSecretPolicyState | null>;
-  previewCourseSync: (opts: {
-    account_id: string;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    target_project_ids: string[];
-    epoch?: number;
-  }) => Promise<CourseSecretSyncPreview>;
-  setCourseSharing: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    project_id: string;
-    name: string;
-    allow: boolean;
-    epoch?: number;
-  }) => Promise<ProjectSecretMetadata>;
-  setCoursePolicy: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    enabled: boolean;
-    epoch?: number;
-  }) => Promise<CourseSecretPolicyState>;
-  setCourseGrants: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    names: string[];
-    epoch?: number;
-  }) => Promise<CourseSecretPolicyState>;
-  approveCourseRecipients: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    recipients: Array<{
-      target_project_id: string;
-      student_account_id?: string | null;
-    }>;
-    epoch?: number;
-  }) => Promise<CourseSecretPolicyState>;
-  revokeCourseRecipients: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    target_project_ids: string[];
-    epoch?: number;
-  }) => Promise<CourseSecretPolicyState>;
-  startCourseSync: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    epoch?: number;
-  }) => Promise<CourseSecretSyncRun>;
-  startCourseCleanup: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    epoch?: number;
-  }) => Promise<CourseSecretSyncRun>;
-  getCourseSyncStatus: (opts: {
-    account_id: string;
-    course_project_id: string;
-    course_id: string;
-    run_id?: string;
-    epoch?: number;
-  }) => Promise<CourseSecretSyncStatusResult | null>;
-  revokeCoursePolicy: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    epoch?: number;
-  }) => Promise<CourseSecretPolicyState>;
   installCourseManaged: (opts: {
     project_id: string;
     course_project_id: string;
@@ -5407,18 +5272,6 @@ const PROJECT_SECRETS_METHOD_SPECS = [
   { name: "copy", method: "copy" },
   { name: "exportForCopy", method: "export-for-copy" },
   { name: "importForCopy", method: "import-for-copy" },
-  { name: "listCourseShareable", method: "list-course-shareable" },
-  { name: "getCoursePolicy", method: "get-course-policy" },
-  { name: "previewCourseSync", method: "preview-course-sync" },
-  { name: "setCourseSharing", method: "set-course-sharing" },
-  { name: "setCoursePolicy", method: "set-course-policy" },
-  { name: "setCourseGrants", method: "set-course-grants" },
-  { name: "approveCourseRecipients", method: "approve-course-recipients" },
-  { name: "revokeCourseRecipients", method: "revoke-course-recipients" },
-  { name: "startCourseSync", method: "start-course-sync" },
-  { name: "startCourseCleanup", method: "start-course-cleanup" },
-  { name: "getCourseSyncStatus", method: "get-course-sync-status" },
-  { name: "revokeCoursePolicy", method: "revoke-course-policy" },
   { name: "installCourseManaged", method: "install-course-managed" },
   { name: "removeCourseManaged", method: "remove-course-managed" },
 ] as const satisfies ReadonlyArray<{
@@ -5974,15 +5827,6 @@ export function createInterBayProjectControlClient({
     ...serviceClientOptions({ client, timeout }),
     subject: projectControlSubject({ dest_bay, method: "active-op" }),
   });
-  const getProjectEntitlementOverrideClient = createServiceClient<
-    Pick<InterBayProjectControlApi, "getProjectEntitlementOverride">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectControlSubject({
-      dest_bay,
-      method: "get-project-entitlement-override",
-    }),
-  });
   const setProjectEntitlementOverrideClient = createServiceClient<
     Pick<InterBayProjectControlApi, "setProjectEntitlementOverride">
   >({
@@ -5990,15 +5834,6 @@ export function createInterBayProjectControlClient({
     subject: projectControlSubject({
       dest_bay,
       method: "set-project-entitlement-override",
-    }),
-  });
-  const clearProjectEntitlementOverrideClient = createServiceClient<
-    Pick<InterBayProjectControlApi, "clearProjectEntitlementOverride">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectControlSubject({
-      dest_bay,
-      method: "clear-project-entitlement-override",
     }),
   });
   return {
@@ -6025,16 +5860,8 @@ export function createInterBayProjectControlClient({
     rehome: async (opts) => await rehomeClient.rehome(opts),
     acceptRehome: async (opts) => await acceptRehomeClient.acceptRehome(opts),
     activeOp: async (opts) => await activeOpClient.activeOp(opts),
-    getProjectEntitlementOverride: async (opts) =>
-      await getProjectEntitlementOverrideClient.getProjectEntitlementOverride(
-        opts,
-      ),
     setProjectEntitlementOverride: async (opts) =>
       await setProjectEntitlementOverrideClient.setProjectEntitlementOverride(
-        opts,
-      ),
-    clearProjectEntitlementOverride: async (opts) =>
-      await clearProjectEntitlementOverrideClient.clearProjectEntitlementOverride(
         opts,
       ),
   };
@@ -13223,30 +13050,6 @@ export function createInterBayProjectControlActiveOpHandler({
   });
 }
 
-export function createInterBayProjectControlGetEntitlementOverrideHandler({
-  bay_id,
-  impl,
-  ...options
-}: ServiceHandlerOptions & {
-  bay_id: string;
-  impl: InterBayProjectControlApi;
-}): ConatService {
-  return createServiceHandler<
-    Pick<InterBayProjectControlApi, "getProjectEntitlementOverride">
-  >({
-    ...options,
-    service: "inter-bay-project-control",
-    subject: projectControlSubject({
-      dest_bay: bay_id,
-      method: "get-project-entitlement-override",
-    }),
-    impl: {
-      getProjectEntitlementOverride: async (opts) =>
-        await impl.getProjectEntitlementOverride(opts),
-    },
-  });
-}
-
 export function createInterBayProjectControlSetEntitlementOverrideHandler({
   bay_id,
   impl,
@@ -13267,30 +13070,6 @@ export function createInterBayProjectControlSetEntitlementOverrideHandler({
     impl: {
       setProjectEntitlementOverride: async (opts) =>
         await impl.setProjectEntitlementOverride(opts),
-    },
-  });
-}
-
-export function createInterBayProjectControlClearEntitlementOverrideHandler({
-  bay_id,
-  impl,
-  ...options
-}: ServiceHandlerOptions & {
-  bay_id: string;
-  impl: InterBayProjectControlApi;
-}): ConatService {
-  return createServiceHandler<
-    Pick<InterBayProjectControlApi, "clearProjectEntitlementOverride">
-  >({
-    ...options,
-    service: "inter-bay-project-control",
-    subject: projectControlSubject({
-      dest_bay: bay_id,
-      method: "clear-project-entitlement-override",
-    }),
-    impl: {
-      clearProjectEntitlementOverride: async (opts) =>
-        await impl.clearProjectEntitlementOverride(opts),
     },
   });
 }
