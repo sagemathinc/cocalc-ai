@@ -46,18 +46,21 @@ async function withTerminalClient({
   resolveProjectFromArgOrContext: ProjectCommandDeps["resolveProjectFromArgOrContext"];
   resolveProjectConatClient: ProjectCommandDeps["resolveProjectConatClient"];
 }) {
-  const resolvedProject = await resolveProjectFromArgOrContext(
-    ctx,
-    // Inside a project, default to that project (as other project commands
-    // do), so agents need not pass -w.
-    `${projectIdentifier ?? ""}`.trim() ||
-      `${process.env.COCALC_PROJECT_ID ?? ""}`.trim() ||
-      undefined,
-  );
-  assertProjectTerminalRuntimeAvailable({ project: resolvedProject });
+  const explicit = `${projectIdentifier ?? ""}`.trim();
+  const here = `${process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+  // Inside the target project it is running, and its own credential cannot
+  // look projects up at the hub; the conat client finds it directly.
+  if (!here || (explicit && explicit !== here)) {
+    const resolvedProject = await resolveProjectFromArgOrContext(
+      ctx,
+      projectIdentifier,
+    );
+    assertProjectTerminalRuntimeAvailable({ project: resolvedProject });
+    projectIdentifier = resolvedProject.project_id;
+  }
   const { project, client } = await resolveProjectConatClient(
     ctx,
-    resolvedProject.project_id,
+    projectIdentifier,
   );
   const terminal = terminalClient({
     project_id: project.project_id,
