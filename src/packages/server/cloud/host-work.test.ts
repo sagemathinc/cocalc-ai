@@ -3097,16 +3097,12 @@ describe("spot recovery fallback ladder", () => {
     loadGcpCatalogPricesMock.mockResolvedValue(prices);
   });
 
-  it("walks Spot, standard, then a cheaper core-equivalent family", async () => {
+  it("tries Spot on a cheaper core-equivalent family before standard", async () => {
     const hostId = "1a7b2c3d-0000-4000-8000-000000000001";
-    const failures = [
-      "ZONE_RESOURCE_POOL_EXHAUSTED: no t2d spot",
-      "QUOTA_EXCEEDED: Quota 'T2D_CPUS' exceeded.  Limit: 24.0 in region us-south1.",
-    ];
-    const startHost = jest.fn(async () => {
-      const failure = failures.shift();
-      if (failure) throw new Error(failure);
-    });
+    const startHost = jest
+      .fn<Promise<void>, any[]>()
+      .mockRejectedValueOnce(new Error("ZONE_RESOURCE_POOL_EXHAUSTED: no t2d spot"))
+      .mockResolvedValue(undefined);
     const setMachineType = jest.fn(async () => undefined);
     const setPricingModel = jest.fn(async () => undefined);
     getProviderContextMock.mockResolvedValue({
@@ -3124,29 +3120,62 @@ describe("spot recovery fallback ladder", () => {
 
     await start(hostId);
 
-    expect(startHost).toHaveBeenCalledTimes(3);
+    expect(startHost).toHaveBeenCalledTimes(2);
     // n2d is cheaper on Spot than n2 here, and c2d has no price: n2d first.
     expect(setMachineType).toHaveBeenLastCalledWith(
       expect.anything(),
       "n2d-standard-32",
       {},
     );
-    expect(setPricingModel.mock.calls.map((call) => call[1])).toEqual([
-      "on_demand",
-      "spot",
-    ]);
+    expect(setPricingModel.mock.calls.map((call) => call[1])).toEqual(["spot"]);
     const metadata = await hostMetadata(hostId);
     expect(metadata.effective_pricing_model).toBe("spot");
     expect(metadata.spot_recovery_state).toMatchObject({
       active_machine_type: "n2d-standard-32",
-      fallback_rungs_tried: expect.arrayContaining([
-        "spot:t2d-standard-16",
-        "on_demand:t2d-standard-16",
-      ]),
+      fallback_rungs_tried: expect.arrayContaining(["spot:t2d-standard-16"]),
     });
     const actions = (await events(hostId)).map((e) => e.action);
-    expect(actions).toContain("fallback_rung_failed");
     expect(actions).toContain("spot_restore_alternate_machine_type");
+    expect(actions).not.toContain("spot_restore_fallback_standard");
+  });
+
+  it("uses standard only when no Spot option can start", async () => {
+    const hostId = "1a7b2c3d-0000-4000-8000-00000000000a";
+    let pricing = "spot";
+    const startHost = jest.fn(async () => {
+      if (pricing === "spot") throw new Error("ZONE_RESOURCE_POOL_EXHAUSTED");
+    });
+    const setMachineType = jest.fn(async () => undefined);
+    getProviderContextMock.mockResolvedValue({
+      entry: {
+        provider: {
+          startHost,
+          setMachineType,
+          setPricingModel: jest.fn(async (_runtime: any, next: string) => {
+            pricing = next;
+          }),
+          getStatus: jest.fn(async () => "running"),
+        },
+      },
+      creds: {},
+    });
+    await spotHost(hostId);
+
+    await start(hostId);
+
+    // Spot on t2d, n2d, n2 and c2d, then standard on the desired type.
+    expect(startHost).toHaveBeenCalledTimes(5);
+    expect(setMachineType).toHaveBeenLastCalledWith(
+      expect.anything(),
+      "t2d-standard-16",
+      {},
+    );
+    const metadata = await hostMetadata(hostId);
+    expect(metadata.effective_pricing_model).toBe("on_demand");
+    expect(metadata.spot_recovery_state).toMatchObject({
+      phase: "running_standard_fallback",
+      active_machine_type: "t2d-standard-16",
+    });
   });
 
   it("skips options without regional quota instead of failing on them", async () => {
@@ -3275,7 +3304,6 @@ describe("spot recovery fallback ladder", () => {
     const startHost = jest
       .fn<Promise<void>, any[]>()
       .mockRejectedValueOnce(new Error("ZONE_RESOURCE_POOL_EXHAUSTED"))
-      .mockRejectedValueOnce(new Error("QUOTA_EXCEEDED: Quota 'T2D_CPUS'"))
       .mockResolvedValue(undefined);
     const setMachineType = jest.fn(async () => undefined);
     getProviderContextMock.mockResolvedValue({

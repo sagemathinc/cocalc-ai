@@ -202,10 +202,12 @@ export function rungKey(rung: LadderRung): string {
   return `${rung.pricing}:${rung.machine_type}`;
 }
 
-// Order: Spot on the desired type, standard on the desired type, Spot
-// alternates, standard alternates. Rungs already tried in this outage are
-// skipped, so the first pass starts after the failed Spot attempt and a
-// retry pass (tried reset) can still come back on Spot.
+// Order: Spot on the desired type, Spot alternates, standard on the desired
+// type, standard alternates. Priced per physical core, Spot on another
+// family is almost always far cheaper than standard on the desired type, so
+// standard is only used when no Spot option can start. Rungs already tried
+// in this outage are skipped, so the first pass starts after the failed Spot
+// attempt and a retry pass (tried reset) can still come back on Spot.
 export function buildFallbackLadder(opts: {
   desired_machine_type: string;
   spot_alternates: string[];
@@ -215,11 +217,11 @@ export function buildFallbackLadder(opts: {
   const tried = new Set(opts.tried ?? []);
   const rungs: LadderRung[] = [
     { pricing: "spot", machine_type: opts.desired_machine_type },
-    { pricing: "on_demand", machine_type: opts.desired_machine_type },
     ...opts.spot_alternates.map((machine_type) => ({
       pricing: "spot" as const,
       machine_type,
     })),
+    { pricing: "on_demand", machine_type: opts.desired_machine_type },
     ...opts.standard_alternates.map((machine_type) => ({
       pricing: "on_demand" as const,
       machine_type,

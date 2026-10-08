@@ -123,7 +123,7 @@ describe("core-equivalent machine shapes", () => {
 });
 
 describe("buildFallbackLadder", () => {
-  it("orders Spot desired, standard desired, Spot alternates, standard alternates", () => {
+  it("orders Spot desired, Spot alternates, standard desired, standard alternates", () => {
     expect(
       buildFallbackLadder({
         desired_machine_type: "t2d-standard-16",
@@ -132,8 +132,8 @@ describe("buildFallbackLadder", () => {
         tried: ["spot:t2d-standard-16"],
       }),
     ).toEqual([
-      { pricing: "on_demand", machine_type: "t2d-standard-16" },
       { pricing: "spot", machine_type: "n2d-standard-32" },
+      { pricing: "on_demand", machine_type: "t2d-standard-16" },
       { pricing: "on_demand", machine_type: "n2d-standard-32" },
     ]);
   });
