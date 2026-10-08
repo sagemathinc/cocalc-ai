@@ -3215,12 +3215,14 @@ describe("spot recovery fallback ladder", () => {
     const startHost = jest.fn(async () => {
       throw new Error("ZONE_RESOURCE_POOL_EXHAUSTED_WITH_DETAILS");
     });
+    const setMachineType = jest.fn(async () => undefined);
+    const setPricingModel = jest.fn(async () => undefined);
     getProviderContextMock.mockResolvedValue({
       entry: {
         provider: {
           startHost,
-          setMachineType: jest.fn(async () => undefined),
-          setPricingModel: jest.fn(async () => undefined),
+          setMachineType,
+          setPricingModel,
           getStatus: jest.fn(async () => "running"),
         },
       },
@@ -3229,6 +3231,19 @@ describe("spot recovery fallback ladder", () => {
     await spotHost(hostId);
 
     await expect(start(hostId)).resolves.toBeUndefined();
+
+    // The next pass starts from the top: desired type, on Spot.
+    expect(setMachineType).toHaveBeenLastCalledWith(
+      expect.anything(),
+      "t2d-standard-16",
+      {},
+    );
+    expect(setPricingModel).toHaveBeenLastCalledWith(
+      expect.anything(),
+      "spot",
+      {},
+    );
+    expect((await hostMetadata(hostId)).effective_pricing_model).toBe("spot");
 
     // Spot + standard on t2d, then Spot and standard on n2d, n2 and c2d.
     expect(startHost).toHaveBeenCalledTimes(8);

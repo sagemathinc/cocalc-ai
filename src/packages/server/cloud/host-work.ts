@@ -2198,7 +2198,35 @@ async function handleStart(row: any) {
         }
       }
       // Every option is out of capacity or quota right now. Retry all of them
-      // later, with backoff, and tell an admin: this host is down.
+      // later, with backoff, and tell an admin: this host is down. Put the
+      // instance back on its desired type and pricing so the next pass starts
+      // from the top of the ladder, not from the last option tried.
+      try {
+        if (currentMachineType !== desiredMachineType) {
+          await entry.provider.setMachineType!(
+            runtimeForStart,
+            desiredMachineType,
+            creds,
+          );
+          currentMachineType = desiredMachineType;
+        }
+        await entry.provider.setPricingModel!(
+          runtimeForStart,
+          desiredPricing,
+          creds,
+        );
+        effectivePricingForStart = desiredPricing;
+        nextRecoveryState = {
+          ...(nextRecoveryState ?? { phase: "retrying_spot" }),
+          phase: "retrying_spot",
+          active_machine_type: desiredMachineType,
+        };
+      } catch (resetErr) {
+        logger.warn("spot recovery: unable to reset to the desired type", {
+          host_id: row.id,
+          err: `${resetErr}`,
+        });
+      }
       const cycle = (nextRecoveryState?.fallback_ladder_cycle ?? 0) + 1;
       const delayMs = exhaustedLadderRetryDelayMs(cycle);
       const retryAt = new Date(Date.now() + delayMs);
