@@ -83,3 +83,34 @@ describe("useHostActions deletion protection", () => {
     consoleError.mockRestore();
   });
 });
+
+describe("useHostActions machine updates", () => {
+  function actionsWith(updateHostMachine: jest.Mock) {
+    return useHostActions({
+      hub: {
+        hosts: {
+          startHost: jest.fn(),
+          stopHost: jest.fn(),
+          deleteHost: jest.fn(),
+          updateHostMachine,
+        },
+      },
+      setHosts: jest.fn(),
+      refresh: jest.fn().mockResolvedValue([]),
+      browser_id: "browser-1",
+    } as any);
+  }
+
+  it("gives disk and shared scratch resizes a long RPC timeout", async () => {
+    const updateHostMachine = jest.fn().mockResolvedValue(undefined);
+    const actions = actionsWith(updateHostMachine);
+
+    await actions.updateHostMachine("host-1", { disk_gb: 300 });
+    await actions.updateHostMachine("host-1", { shared_disk_gb: 100 });
+    await actions.updateHostMachine("host-1", { pricing_model: "spot" });
+
+    expect(updateHostMachine.mock.calls.map((call) => call[0].timeout)).toEqual(
+      [120_000, 120_000, undefined],
+    );
+  });
+});
