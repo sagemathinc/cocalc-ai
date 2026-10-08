@@ -128,10 +128,10 @@ control. Star is one machine: it is not high availability or scale-out.
 
 Star is for people you invite: signing up requires a registration link. Every
 project has internet access; Star does not include the network restrictions
-that public CoCalc sites apply to free accounts. There are no per-account
-limits either: anyone can create as many projects as they like, each with up
-to 8 GB of memory and a 20 GB disk quota. Only the machine itself limits how
-many run at once.
+that public CoCalc sites apply to free accounts, nor their free-tier project
+limits: anyone can create as many projects as they like, and each project gets
+8 GB of memory and a 20 GB disk quota by default. Only the machine itself
+limits how many run at once.
 
 ## Product boundaries
 
