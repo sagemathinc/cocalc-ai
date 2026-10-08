@@ -16,18 +16,15 @@ export const PROJECT_OWNED_BY_ANOTHER_BAY_ERROR =
   "project belongs to another bay";
 export const PROJECT_NOT_FOUND_ERROR = "project not found";
 export type LocalProjectCollaboratorAccessStatus =
-  | "local-collaborator"
-  | "wrong-bay"
-  | "not-collaborator"
-  | "missing-project";
+  "local-collaborator" | "wrong-bay" | "not-collaborator" | "missing-project";
 export type LocalProjectAccessStatus =
-  | "local-project-user"
-  | "wrong-bay"
-  | "not-project-user"
-  | "missing-project";
+  "local-project-user" | "wrong-bay" | "not-project-user" | "missing-project";
 
+// Uncached: these are membership and ownership checks, so a cached answer
+// would let a newly added collaborator be refused, or a removed one keep
+// access, until it expires. Each is a primary-key lookup.
 function pool() {
-  return getPool("long");
+  return getPool();
 }
 
 export async function assertLocalProjectOwnership({

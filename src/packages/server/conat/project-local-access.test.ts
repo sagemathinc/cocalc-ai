@@ -16,6 +16,30 @@ describe("project local access", () => {
     queryMock = jest.fn(async () => ({ rows: [] }));
   });
 
+  it("reads membership uncached, so a new collaborator is let in at once", async () => {
+    const getPool = (await import("@cocalc/database/pool"))
+      .default as unknown as jest.Mock;
+    getPool.mockClear();
+    queryMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        rows: [{ group: null, owning_bay_id: "bay-0" }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ group: "collaborator", owning_bay_id: "bay-0" }],
+      });
+    const { hasLocalProjectCollaboratorAccess } =
+      await import("./project-local-access");
+    const check = () =>
+      hasLocalProjectCollaboratorAccess({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      });
+    await expect(check()).resolves.toBe(false);
+    await expect(check()).resolves.toBe(true);
+    expect(getPool.mock.calls.every((args) => args[0] == null)).toBe(true);
+  });
+
   it("grants local collaborator access", async () => {
     queryMock = jest.fn(async () => ({
       rows: [{ group: "collaborator", owning_bay_id: "bay-0" }],
