@@ -73,3 +73,20 @@ test("safe error fields, causes and ordinary values are kept", () => {
   circular.self = circular;
   expect(() => myFormat("circular", circular)).not.toThrow();
 });
+
+test("repeated references, cycles and deep nesting never expose an error", () => {
+  const err = Object.assign(new Error("bad"), { header: "SENTINEL" });
+  expect(myFormat("x", { first: err, again: err })).not.toContain("SENTINEL");
+  expect(myFormat("x", [err, [err]])).not.toContain("SENTINEL");
+  const value: any = { err };
+  value.self = value;
+  expect(myFormat("x", value)).not.toContain("SENTINEL");
+  const cyclicError: any = Object.assign(new Error("loop"), {
+    header: "SENTINEL",
+  });
+  cyclicError.cause = cyclicError;
+  expect(myFormat("x", { cyclicError })).not.toContain("SENTINEL");
+  let deep: any = { err };
+  for (let i = 0; i < 20; i++) deep = { deep };
+  expect(myFormat("x", deep)).not.toContain("SENTINEL");
+});

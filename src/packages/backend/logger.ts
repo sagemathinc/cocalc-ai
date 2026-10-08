@@ -80,31 +80,46 @@ const SAFE_ERROR_FIELDS = [
 ] as const;
 const MAX_SANITIZE_DEPTH = 6;
 
-export function sanitizeForLog(value: unknown, depth = 0, seen = new Set()) {
+// Never returns an original object that could hold an Error: repeated
+// references and cycles reuse the sanitized clone, and anything deeper than
+// the limit becomes a marker string.
+export function sanitizeForLog(
+  value: unknown,
+  depth = 0,
+  clones: WeakMap<object, unknown> = new WeakMap(),
+): unknown {
   if (value == null || typeof value != "object") return value;
-  if (seen.has(value) || depth > MAX_SANITIZE_DEPTH) return value;
-  seen.add(value);
+  if (clones.has(value)) return clones.get(value);
   if (value instanceof Error) {
     const safe: Record<string, unknown> = {};
+    clones.set(value, safe);
     for (const key of SAFE_ERROR_FIELDS) {
       const field = (value as any)[key];
       if (field != null && typeof field != "object") safe[key] = field;
     }
     if (value.stack) safe.stack = value.stack;
     if ((value as any).cause != null) {
-      safe.cause = sanitizeForLog((value as any).cause, depth + 1, seen);
+      safe.cause = sanitizeForLog((value as any).cause, depth + 1, clones);
     }
     return safe;
   }
-  if (Array.isArray(value)) {
-    return value.map((x) => sanitizeForLog(x, depth + 1, seen));
-  }
-  if (Object.getPrototypeOf(value) !== Object.prototype) {
+  if (
+    Object.getPrototypeOf(value) !== Object.prototype &&
+    !Array.isArray(value)
+  ) {
     return value; // Buffers, Maps, dates, class instances: as before
   }
+  if (depth >= MAX_SANITIZE_DEPTH) return "[Truncated]";
+  if (Array.isArray(value)) {
+    const out: unknown[] = [];
+    clones.set(value, out);
+    for (const x of value) out.push(sanitizeForLog(x, depth + 1, clones));
+    return out;
+  }
   const out: Record<string, unknown> = {};
+  clones.set(value, out);
   for (const [key, x] of Object.entries(value)) {
-    out[key] = sanitizeForLog(x, depth + 1, seen);
+    out[key] = sanitizeForLog(x, depth + 1, clones);
   }
   return out;
 }
