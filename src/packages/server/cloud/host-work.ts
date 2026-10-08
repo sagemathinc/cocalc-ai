@@ -77,6 +77,7 @@ import {
   machineShape,
   rungFitsQuota,
   rungKey,
+  type GcpMachineTypeEntry,
   type LadderRung,
 } from "./fallback-ladder";
 import {
@@ -2055,10 +2056,23 @@ async function handleStart(row: any) {
       // site-funded hosts use them (as for configured Spot alternates).
       if (hostFundingMode(row) === "site-funded") {
         try {
-          const [available, prices] = await Promise.all([
-            loadGcpZoneMachineTypes(zone),
-            loadGcpCatalogPrices(),
-          ]);
+          // Live list first: the cached catalog only has user-selectable
+          // types, which leaves out whole families (e.g. c2d, n2-standard).
+          let available: GcpMachineTypeEntry[] = [];
+          try {
+            available =
+              (await entry.provider.listZoneMachineTypes?.(zone, creds)) ?? [];
+          } catch (listErr) {
+            logger.warn("spot recovery: unable to list zone machine types", {
+              host_id: row.id,
+              zone,
+              err: `${listErr}`,
+            });
+          }
+          if (!available.length) {
+            available = await loadGcpZoneMachineTypes(zone);
+          }
+          const prices = await loadGcpCatalogPrices();
           for (const type of available) {
             if (type?.name && Number(type.guestCpus) > 0) {
               vcpusByType.set(type.name, Number(type.guestCpus));

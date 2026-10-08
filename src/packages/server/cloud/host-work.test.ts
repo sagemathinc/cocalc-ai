@@ -3266,6 +3266,44 @@ describe("spot recovery fallback ladder", () => {
     );
   });
 
+  it("plans from the zone's live machine types, not only the user catalog", async () => {
+    const hostId = "1a7b2c3d-0000-4000-8000-000000000005";
+    // The cached catalog only lists user-selectable types: no c2d at all.
+    loadGcpZoneMachineTypesMock.mockResolvedValue([
+      { name: "t2d-standard-16", guestCpus: 16, memoryMb: 65536 },
+    ]);
+    const startHost = jest
+      .fn<Promise<void>, any[]>()
+      .mockRejectedValueOnce(new Error("ZONE_RESOURCE_POOL_EXHAUSTED"))
+      .mockRejectedValueOnce(new Error("QUOTA_EXCEEDED: Quota 'T2D_CPUS'"))
+      .mockResolvedValue(undefined);
+    const setMachineType = jest.fn(async () => undefined);
+    getProviderContextMock.mockResolvedValue({
+      entry: {
+        provider: {
+          startHost,
+          setMachineType,
+          setPricingModel: jest.fn(async () => undefined),
+          getStatus: jest.fn(async () => "running"),
+          listZoneMachineTypes: jest.fn(async () => [
+            { name: "t2d-standard-16", guestCpus: 16, memoryMb: 65536 },
+            { name: "c2d-highcpu-32", guestCpus: 32, memoryMb: 65536 },
+          ]),
+        },
+      },
+      creds: {},
+    });
+    await spotHost(hostId);
+
+    await start(hostId);
+
+    expect(setMachineType).toHaveBeenLastCalledWith(
+      expect.anything(),
+      "c2d-highcpu-32",
+      {},
+    );
+  });
+
   it("does not offer other families to account-funded hosts", async () => {
     const hostId = "1a7b2c3d-0000-4000-8000-000000000004";
     const startHost = jest.fn(async () => {

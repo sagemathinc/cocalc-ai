@@ -4,6 +4,7 @@ import {
   GlobalOperationsClient,
   ImagesClient,
   InstancesClient,
+  MachineTypesClient,
   RegionsClient,
   ZoneOperationsClient,
 } from "@google-cloud/compute";
@@ -1473,6 +1474,40 @@ export class GcpProvider implements CloudProvider {
       }
     }
     return headroom;
+  }
+
+  async listZoneMachineTypes(
+    zone: string,
+    creds: any,
+  ): Promise<
+    Array<{
+      name: string;
+      guestCpus?: number;
+      memoryMb?: number;
+      isSharedCpu?: boolean;
+    }>
+  > {
+    const credentials = parseCredentials(creds ?? {});
+    const client = new MachineTypesClient(credentials);
+    const result: Array<{
+      name: string;
+      guestCpus?: number;
+      memoryMb?: number;
+      isSharedCpu?: boolean;
+    }> = [];
+    for await (const type of client.listAsync({
+      project: credentials.projectId,
+      zone,
+    })) {
+      if (!type?.name || type.deprecated?.state) continue;
+      result.push({
+        name: type.name,
+        guestCpus: Number(type.guestCpus ?? 0) || undefined,
+        memoryMb: Number(type.memoryMb ?? 0) || undefined,
+        isSharedCpu: !!type.isSharedCpu,
+      });
+    }
+    return result;
   }
 
   async instanceUsesGvnic(runtime: HostRuntime, creds: any): Promise<boolean> {
