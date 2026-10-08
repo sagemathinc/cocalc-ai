@@ -299,15 +299,21 @@ snapshot during rollback.
 
 The pgBackRest repository is encrypted with `COCALC_BAY_PGBACKREST_CIPHER_PASS`.
 That value, the backup R2 credentials, the SQLite repository password, and the
-session and cluster secrets all live only in `/etc/cocalc/bay-secrets.env` on
-the bay. If the bay VM is lost, the backups cannot be restored without them.
-Only the site master key is kept elsewhere (1Password).
+session and cluster secrets live only in `/etc/cocalc/bay-secrets.env` on the
+bay. The bay secrets directory (`$SECRETS`, e.g. `/mnt/cocalc/bays/bay-0/secrets`)
+holds the project-host auth key pair that every project host trusts, the
+project backup shared secret, the Conat password, the host-owner SSH key, and
+the Cloudflare tunnel credentials. If the bay VM is lost, a replacement cannot
+restore the backups or reconnect to the project hosts without them. Only the
+site master key is kept elsewhere (1Password).
 
 `cocalc-bay-config-escrow.timer` runs `bay-config-escrow-run` daily as root:
 
 - it seals `bay.env`, `bay-local.env`, `bay-overlay.env`, `bay-topology.env`,
-  `bay-workers.env` and `bay-secrets.env` with AES-256-GCM, using a key derived
-  from the site master key (HKDF purpose `bay-config-escrow:v1`);
+  `bay-workers.env` and `bay-secrets.env` (root `etc-cocalc`) and the secrets
+  directory tree (root `bay-secrets`, without the downloadable `cloudflared`
+  binary and pid files) with AES-256-GCM, using a key derived from the site
+  master key (HKDF purpose `bay-config-escrow:v1`);
 - it uploads the result to
   `s3://$COCALC_BAY_PGBACKREST_S3_BUCKET/cocalc-escrow/<bay-id>/bay-config.v1.json`,
   plus a dated copy under `history/`;
@@ -333,8 +339,13 @@ curl --aws-sigv4 aws:amz:auto:s3 --user "$R2_ACCESS_KEY:$R2_SECRET_KEY" \
   "https://<account>.r2.cloudflarestorage.com/<bucket>/cocalc-escrow/<bay-id>/bay-config.v1.json"
 node src/scripts/bay-systemd/bin/bay-config-escrow.mjs info --in bay-config.v1.json
 node src/scripts/bay-systemd/bin/bay-config-escrow.mjs open \
-  --master-key site-master-key --in bay-config.v1.json --out-dir /etc/cocalc
+  --master-key site-master-key --in bay-config.v1.json --chown \
+  --map etc-cocalc=/etc/cocalc --map bay-secrets=/mnt/cocalc/bays/<bay-id>/secrets
 ```
+
+Use `--out-dir DIR` instead of `--map` to inspect the files first; each root
+is written to `DIR/<root>/`. `--chown` (as root) restores the recorded owner,
+`cocalc-bay` for the secrets directory, once that user exists.
 
 `open` refuses to overwrite existing files unless `--force` is given. A wrong
 master key is reported as such, and any modification of the escrow fails
