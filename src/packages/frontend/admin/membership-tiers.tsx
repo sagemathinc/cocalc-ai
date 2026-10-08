@@ -55,9 +55,10 @@ import type {
 } from "@cocalc/conat/hub/api/purchases";
 import { currency } from "@cocalc/util/misc";
 import {
-  applyMembershipTierTemplateFallbacks,
-  TIER_TEMPLATES,
+  applyMembershipTierTemplateFallbacks as applyTemplateFallbacks,
+  membershipTierTemplates,
 } from "@cocalc/util/membership-tier-templates";
+import { cocalc_setup_profile } from "@cocalc/frontend/components/constants";
 import { normalizeMembershipTierCourseAllowedDomains } from "@cocalc/util/membership-tier-domains";
 import {
   analyzeMembershipTierPricingRisk,
@@ -86,6 +87,16 @@ const REMOVED_PROJECT_DEFAULT_KEYS = [
   "ephemeral_state",
   "ephemeral_disk",
 ] as const;
+// The built-in tiers for this site, which stored tiers inherit missing
+// settings from (on CoCalc Star, a free tier without per-account limits).
+const TIER_TEMPLATES = membershipTierTemplates(cocalc_setup_profile);
+
+function applyMembershipTierTemplateFallbacks<
+  T extends Parameters<typeof applyTemplateFallbacks>[0],
+>(tier: T): T {
+  return applyTemplateFallbacks(tier, TIER_TEMPLATES);
+}
+
 const MEMBERSHIP_TIER_EXPORT_TYPE = "cocalc.membership_tiers";
 const MEMBERSHIP_TIER_EXPORT_VERSION = 1;
 const TEMPLATE_KEYS = [

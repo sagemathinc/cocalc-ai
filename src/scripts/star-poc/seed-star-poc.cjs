@@ -71,6 +71,17 @@ function requireBootstrapToken() {
   }
 }
 
+function requireMembershipTierTemplates() {
+  try {
+    return require("@cocalc/util/membership-tier-templates");
+  } catch (err) {
+    return requireFallback(
+      err,
+      "packages/util/dist/membership-tier-templates.js",
+    );
+  }
+}
+
 function verifyBundledImports() {
   requireDatabaseDev();
   requireDatabaseSchema();
@@ -78,6 +89,7 @@ function verifyBundledImports() {
   requireProjectHosts();
   requireBootstrapAdmin();
   requireBootstrapToken();
+  requireMembershipTierTemplates();
   console.log(JSON.stringify({ ok: true, helper: "seed-star-poc" }));
 }
 
@@ -173,6 +185,45 @@ async function main() {
   }
 
   await Promise.all(settings);
+
+  // Star's free tier, stored once so the admin can edit it like any other
+  // tier; later installs and upgrades never overwrite the admin's changes.
+  const { STAR_FREE_TIER_TEMPLATE: freeTier } =
+    requireMembershipTierTemplates();
+  await pool.query(
+    `INSERT INTO membership_tiers
+       (id, label, store_visible, store_description, store_highlights,
+        site_license_pool_description, team_visible, course_store_visible,
+        course_allowed_domains, priority, price_monthly, price_yearly,
+        trial_days, project_defaults, ai_limits, features, usage_limits,
+        pricing_model, disabled, notes, created, updated)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+             $14::JSONB, $15::JSONB, $16::JSONB, $17::JSONB, $18::JSONB,
+             $19, $20, NOW(), NOW())
+     ON CONFLICT (id) DO NOTHING`,
+    [
+      freeTier.id,
+      freeTier.label,
+      freeTier.store_visible,
+      freeTier.store_description ?? null,
+      [...(freeTier.store_highlights ?? [])],
+      freeTier.site_license_pool_description ?? null,
+      freeTier.team_visible ?? false,
+      freeTier.course_store_visible ?? false,
+      [...(freeTier.course_allowed_domains ?? [])],
+      freeTier.priority,
+      freeTier.price_monthly,
+      freeTier.price_yearly,
+      freeTier.trial_days ?? null,
+      JSON.stringify(freeTier.project_defaults ?? {}),
+      JSON.stringify(freeTier.ai_limits ?? {}),
+      JSON.stringify(freeTier.features ?? {}),
+      JSON.stringify(freeTier.usage_limits ?? {}),
+      JSON.stringify(freeTier.pricing_model ?? null),
+      freeTier.disabled ?? false,
+      freeTier.notes ?? null,
+    ],
+  );
 
   await upsertProjectHost({
     id: hostId,

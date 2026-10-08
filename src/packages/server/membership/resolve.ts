@@ -16,7 +16,6 @@ import {
 import { listActiveMembershipGrantsForAccount } from "./grants";
 import getLogger from "@cocalc/backend/logger";
 import { normalizeMembershipEffectiveLimits } from "./effective-limits";
-import { TIER_TEMPLATES } from "@cocalc/util/membership-tier-templates";
 import { getMembershipUsageStatusForAccount } from "./usage-status";
 import {
   applyAccountEntitlementOverride,
@@ -608,121 +607,6 @@ async function getMembershipDetailsUsageStatus({
   }
 }
 
-// CoCalc Star is a self-hosted server without billing: membership tiers do
-// not limit what one account may do there, only the machine-wide cap on
-// running projects does. Every usage limit is classified below, and a test
-// keeps the classification exhaustive.
-
-// Removed: consumers treat a missing limit as no limit, or (agent turn
-// admission) fall back to the server-wide operational defaults.
-export const STAR_UNLIMITED_USAGE_LIMITS = [
-  "max_projects",
-  "max_sponsored_running_projects",
-  "total_storage_soft_bytes",
-  "total_storage_hard_bytes",
-  "egress_5h_bytes",
-  "egress_7d_bytes",
-  "cpu_5h_seconds",
-  "cpu_7d_seconds",
-  "browser_idle_timeout_seconds",
-  "public_directory_shares",
-  "project_max_collaborators_and_pending_invites",
-  "course_max_students_and_pending_invites",
-  "acp_max_queued_per_account",
-  "acp_max_queued_per_thread",
-  "acp_max_created_5h_per_account",
-  "acp_max_created_7d_per_account",
-  "acp_max_running_per_account",
-  "acp_max_running_per_project",
-  "acp_max_active_automations_per_project",
-  "blob_account_total_bytes",
-  "blob_account_count",
-  "blob_project_total_bytes",
-  "blob_project_count",
-  "rootfs_count",
-  "rootfs_total_storage_gb",
-  "rootfs_max_storage_gb",
-] as const;
-
-// Set from the most generous built-in tier: a missing value would mean a
-// small default (or, for OCI images, disallowed) rather than no limit.
-export const STAR_GENEROUS_USAGE_LIMITS = [
-  "max_named_agents",
-  "max_agent_network_members",
-  "max_snapshots_per_project",
-  "max_backups_per_project",
-  "rootfs_oci_images",
-] as const;
-
-// Kept as configured: not allowances of a membership tier. Scheduling
-// priority; egress policy (Star never network-blocks projects, see
-// run-quota.ts); spending limits (Star has no billing); and anti-spam email
-// limits (outgoing email is the admin's own configuration).
-export const STAR_RETAINED_USAGE_LIMITS = [
-  "shared_compute_priority",
-  "egress_policy",
-  "dedicated_host_egress_policy",
-  "credit_spend_limit_5h_usd",
-  "credit_spend_limit_7d_usd",
-  "prepaid_host_usage_limit_5h_usd",
-  "prepaid_host_usage_limit_7d_usd",
-  "notification_email_send_limit_5h",
-  "notification_email_send_limit_7d",
-  "invite_email_send_enabled",
-  "invite_email_daily_count",
-  "invite_email_hourly_count",
-  "invite_email_recipients_per_batch",
-  "invite_email_pending_per_project",
-  "invite_email_pending_per_course",
-  "invite_email_resend_cooldown_minutes",
-  "invite_email_custom_message_max_chars",
-  "invite_email_allow_project_title",
-  "invite_email_allow_course_title",
-  "invite_email_allow_urls",
-  "invite_email_link_copy_enabled",
-] as const;
-
-// Per-project sizes on Star (MB): at least this much, or the tier's own
-// larger defaults. Still bounded by the machine's project pool.
-export const STAR_PROJECT_DEFAULTS = { memory: 8000, disk_quota: 20000 };
-
-export function applySetupProfileMembershipLimits(
-  membership: MembershipResolution,
-  setupProfile: string | undefined = process.env.COCALC_SETUP_PROFILE,
-): MembershipResolution {
-  if (`${setupProfile ?? ""}`.trim() !== "star") return membership;
-  const generous = TIER_TEMPLATES.admin.usage_limits as Record<string, unknown>;
-  function unlimited<T extends object | undefined>(limits: T): T {
-    if (limits == null) return limits;
-    const next: Record<string, unknown> = { ...limits };
-    for (const key of STAR_UNLIMITED_USAGE_LIMITS) delete next[key];
-    for (const key of STAR_GENEROUS_USAGE_LIMITS) next[key] = generous[key];
-    return next as T;
-  }
-  return {
-    ...membership,
-    entitlements: membership.entitlements && {
-      ...membership.entitlements,
-      usage_limits: unlimited(membership.entitlements.usage_limits),
-      project_defaults: starProjectDefaults(
-        membership.entitlements.project_defaults,
-      ),
-    },
-    effective_limits: unlimited(membership.effective_limits),
-  };
-}
-
-function starProjectDefaults(
-  defaults: Record<string, unknown> | undefined,
-): Record<string, unknown> {
-  const next: Record<string, unknown> = { ...defaults };
-  for (const [key, minimum] of Object.entries(STAR_PROJECT_DEFAULTS)) {
-    const current = Number(next[key]);
-    next[key] = Number.isFinite(current) ? Math.max(current, minimum) : minimum;
-  }
-  return next;
-}
-
 export async function resolveMembershipDetailsForAccount(
   account_id: string,
   opts?: {
@@ -732,12 +616,10 @@ export async function resolveMembershipDetailsForAccount(
   const { candidates, selected } =
     await buildMembershipResolutionForAccount(account_id);
   const override = await getActiveAccountEntitlementOverride(account_id);
-  const effectiveSelected = applySetupProfileMembershipLimits(
-    applyAccountEntitlementOverride({
-      membership: selected,
-      override,
-    }),
-  );
+  const effectiveSelected = applyAccountEntitlementOverride({
+    membership: selected,
+    override,
+  });
   const usage_status = await getMembershipDetailsUsageStatus({
     account_id,
     resolution: effectiveSelected,
@@ -769,7 +651,5 @@ export async function resolveMembershipForAccount(
     account_id,
     options?.client,
   );
-  return applySetupProfileMembershipLimits(
-    applyAccountEntitlementOverride({ membership: selected, override }),
-  );
+  return applyAccountEntitlementOverride({ membership: selected, override });
 }

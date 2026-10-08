@@ -112,7 +112,8 @@ has internet access; Star does not include the network restrictions that public
 CoCalc sites apply to free accounts, nor their free-tier project limits:
 anyone can create as many projects as they like, and each project gets 8 GB of
 memory and a 20 GB disk quota by default. Only the machine itself limits how
-many run at once.
+many run at once. An admin can change these by editing the Free membership
+tier in the admin settings.
 
 ## Settings
 

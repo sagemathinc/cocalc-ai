@@ -6,7 +6,7 @@ import type {
 import { moneyRound2Up, toDecimal } from "@cocalc/util/money";
 import {
   applyMembershipTierTemplateFallbacks,
-  TIER_TEMPLATES,
+  membershipTierTemplates,
 } from "@cocalc/util/membership-tier-templates";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
@@ -79,6 +79,12 @@ type ActiveMembershipSubscription = {
   status: string;
 };
 
+// The built-in tiers, which stored tiers inherit missing settings from. On a
+// CoCalc Star server the free tier has no per-account limits.
+function builtInTierTemplates() {
+  return membershipTierTemplates(process.env.COCALC_SETUP_PROFILE);
+}
+
 export async function getMembershipTiers({
   includeDisabled = true,
   storeVisibleOnly = false,
@@ -104,7 +110,10 @@ export async function getMembershipTiers({
   );
   let tiers = (rows as MembershipTierRecord[]).map(
     (tier) =>
-      applyMembershipTierTemplateFallbacks(tier) as MembershipTierRecord,
+      applyMembershipTierTemplateFallbacks(
+        tier,
+        builtInTierTemplates(),
+      ) as MembershipTierRecord,
   );
   if (!includeDisabled) {
     tiers = tiers.filter((tier) => !tier.disabled);
@@ -216,7 +225,7 @@ export function membershipTierMapFromTiers(
     includeDisabled?: boolean;
   } = {},
 ): Record<string, MembershipTierRecord> {
-  const builtInTiers = Object.values(TIER_TEMPLATES).filter(
+  const builtInTiers = Object.values(builtInTierTemplates()).filter(
     (tier) => includeDisabled || !(tier as MembershipTierRecord).disabled,
   ) as MembershipTierRecord[];
   const configuredTiers = includeDisabled
@@ -252,11 +261,12 @@ export async function getMembershipTierById({
   );
   const tier = rows[0] as MembershipTierRecord | undefined;
   if (tier == null) {
-    return TIER_TEMPLATES[id as keyof typeof TIER_TEMPLATES] as
-      | MembershipTierRecord
-      | undefined;
+    return builtInTierTemplates()[id] as MembershipTierRecord | undefined;
   }
-  return applyMembershipTierTemplateFallbacks(tier) as MembershipTierRecord;
+  return applyMembershipTierTemplateFallbacks(
+    tier,
+    builtInTierTemplates(),
+  ) as MembershipTierRecord;
 }
 
 export function getMembershipPrice(

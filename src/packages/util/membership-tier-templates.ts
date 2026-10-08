@@ -879,14 +879,17 @@ function mergeTemplateObject(
 
 export function applyMembershipTierTemplateFallbacks<
   T extends TierTemplateFields,
->(tier: T): T {
-  const template = TIER_TEMPLATES[tier.id as keyof typeof TIER_TEMPLATES];
+>(
+  tier: T,
+  templates: Readonly<Record<string, TierTemplateFields>> = TIER_TEMPLATES,
+): T {
+  const template = templates[tier.id ?? ""];
   if (template == null) return tier;
   const templateFields = template as TierTemplateFields;
   return {
     ...tier,
-    label: tier.label ?? template.label,
-    store_visible: tier.store_visible ?? template.store_visible,
+    label: tier.label ?? templateFields.label,
+    store_visible: tier.store_visible ?? templateFields.store_visible,
     store_description:
       tier.store_description ?? templateFields.store_description,
     store_highlights:
@@ -899,7 +902,7 @@ export function applyMembershipTierTemplateFallbacks<
       templateFields.site_license_pool_description,
     team_visible: tier.team_visible ?? templateFields.team_visible,
     course_store_visible:
-      tier.course_store_visible ?? template.course_store_visible,
+      tier.course_store_visible ?? templateFields.course_store_visible,
     course_allowed_domains:
       tier.course_allowed_domains ??
       (templateFields.course_allowed_domains == null
@@ -910,9 +913,9 @@ export function applyMembershipTierTemplateFallbacks<
       tier.course_duration_days ?? templateFields.course_duration_days,
     course_grace_days:
       tier.course_grace_days ?? templateFields.course_grace_days,
-    priority: tier.priority ?? template.priority,
-    price_monthly: tier.price_monthly ?? template.price_monthly,
-    price_yearly: tier.price_yearly ?? template.price_yearly,
+    priority: tier.priority ?? templateFields.priority,
+    price_monthly: tier.price_monthly ?? templateFields.price_monthly,
+    price_yearly: tier.price_yearly ?? templateFields.price_yearly,
     trial_days: tier.trial_days ?? templateFields.trial_days,
     disabled: tier.disabled ?? templateFields.disabled,
     notes: tier.notes ?? templateFields.notes,
@@ -921,11 +924,120 @@ export function applyMembershipTierTemplateFallbacks<
       tier.pricing_model,
     ),
     project_defaults: mergeTemplateObject(
-      template.project_defaults,
+      templateFields.project_defaults,
       tier.project_defaults,
     ),
-    ai_limits: mergeTemplateObject(template.ai_limits, tier.ai_limits),
-    features: mergeTemplateObject(template.features, tier.features),
-    usage_limits: mergeTemplateObject(template.usage_limits, tier.usage_limits),
+    ai_limits: mergeTemplateObject(templateFields.ai_limits, tier.ai_limits),
+    features: mergeTemplateObject(templateFields.features, tier.features),
+    usage_limits: mergeTemplateObject(
+      templateFields.usage_limits,
+      tier.usage_limits,
+    ),
   };
+}
+
+// CoCalc Star is a self-hosted server without billing, so its free tier does
+// not limit what one account may do: only the machine does. The admin can
+// edit this tier like any other; a limit left blank stays unlimited because
+// blank fields inherit from this template. Every usage limit is classified
+// below, and a test keeps the classification exhaustive.
+
+// Absent: consumers treat a missing limit as no limit, or (agent turn
+// admission) fall back to the server-wide operational defaults.
+export const STAR_UNLIMITED_USAGE_LIMITS = [
+  "max_projects",
+  "max_sponsored_running_projects",
+  "total_storage_soft_bytes",
+  "total_storage_hard_bytes",
+  "egress_5h_bytes",
+  "egress_7d_bytes",
+  "cpu_5h_seconds",
+  "cpu_7d_seconds",
+  "browser_idle_timeout_seconds",
+  "public_directory_shares",
+  "project_max_collaborators_and_pending_invites",
+  "course_max_students_and_pending_invites",
+  "acp_max_queued_per_account",
+  "acp_max_queued_per_thread",
+  "acp_max_created_5h_per_account",
+  "acp_max_created_7d_per_account",
+  "acp_max_running_per_account",
+  "acp_max_running_per_project",
+  "acp_max_active_automations_per_project",
+  "blob_account_total_bytes",
+  "blob_account_count",
+  "blob_project_total_bytes",
+  "blob_project_count",
+  "rootfs_count",
+  "rootfs_total_storage_gb",
+  "rootfs_max_storage_gb",
+] as const;
+
+// From the most generous built-in tier: a missing value would mean a small
+// default (or, for OCI images, disallowed) rather than no limit.
+export const STAR_GENEROUS_USAGE_LIMITS = [
+  "max_named_agents",
+  "max_agent_network_members",
+  "max_snapshots_per_project",
+  "max_backups_per_project",
+  "rootfs_oci_images",
+] as const;
+
+// As in the free tier: not allowances. Scheduling priority; egress policy
+// (Star never network-blocks projects); spending limits (Star has no
+// billing); and anti-spam limits on the admin's own outgoing email.
+export const STAR_RETAINED_USAGE_LIMITS = [
+  "shared_compute_priority",
+  "egress_policy",
+  "dedicated_host_egress_policy",
+  "credit_spend_limit_5h_usd",
+  "credit_spend_limit_7d_usd",
+  "prepaid_host_usage_limit_5h_usd",
+  "prepaid_host_usage_limit_7d_usd",
+  "notification_email_send_limit_5h",
+  "notification_email_send_limit_7d",
+  "invite_email_send_enabled",
+  "invite_email_daily_count",
+  "invite_email_hourly_count",
+  "invite_email_recipients_per_batch",
+  "invite_email_pending_per_project",
+  "invite_email_pending_per_course",
+  "invite_email_resend_cooldown_minutes",
+  "invite_email_custom_message_max_chars",
+  "invite_email_allow_project_title",
+  "invite_email_allow_course_title",
+  "invite_email_allow_urls",
+  "invite_email_link_copy_enabled",
+] as const;
+
+function starFreeTierTemplate() {
+  const { free, admin } = TIER_TEMPLATES;
+  const usage_limits: Record<string, unknown> = { ...free.usage_limits };
+  for (const key of STAR_UNLIMITED_USAGE_LIMITS) delete usage_limits[key];
+  for (const key of STAR_GENEROUS_USAGE_LIMITS) {
+    usage_limits[key] = admin.usage_limits[key];
+  }
+  return {
+    ...free,
+    project_defaults: {
+      ...free.project_defaults,
+      memory: 8000,
+      disk_quota: 20000,
+    },
+    usage_limits,
+    notes:
+      "CoCalc Star default tier: no per-account limits; 8 GB memory and a 20 GB disk per project.",
+  };
+}
+
+export const STAR_FREE_TIER_TEMPLATE = starFreeTierTemplate();
+
+// Built-in tier templates for a site's setup profile.
+export function membershipTierTemplates(
+  setupProfile?: string | null,
+): Readonly<Record<string, TierTemplateFields>> {
+  if (`${setupProfile ?? ""}`.trim().toLowerCase() !== "star") {
+    return TIER_TEMPLATES;
+  }
+  return { ...TIER_TEMPLATES, free: STAR_FREE_TIER_TEMPLATE };
 }
