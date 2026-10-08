@@ -6,6 +6,10 @@ import {
   refreshCloudVmWorkLease,
   requeueStaleCloudVmWork,
 } from "@cocalc/server/cloud";
+import {
+  enqueueCloudVmFollowUpWork,
+  enqueueCloudVmWorkOnce,
+} from "@cocalc/server/cloud/db";
 import { before, after, getPool } from "@cocalc/server/test";
 
 beforeAll(async () => {
@@ -233,5 +237,82 @@ describe("cloud vm work queue", () => {
       locked_by: "worker-a",
       fresh: true,
     });
+  });
+
+  it("dedups follow-up work atomically under concurrent enqueues", async () => {
+    // The handler's own item is in_progress and must not count as a duplicate.
+    const running = await enqueueCloudVmWork({ vm_id: "vm-1", action: "start" });
+    await claimCloudVmWork({ worker_id: "worker-a", limit: 1 });
+
+    const at = (s: number) => new Date(Date.now() + s * 1000);
+    const ids = await Promise.all(
+      Array.from({ length: 8 }, (_, i) =>
+        enqueueCloudVmFollowUpWork({
+          vm_id: "vm-1",
+          action: "start",
+          payload: { i },
+          not_before: at(60 + i),
+        }),
+      ),
+    );
+    expect(ids.filter(Boolean)).toHaveLength(1);
+
+    const later = at(600);
+    await expect(
+      enqueueCloudVmFollowUpWork({
+        vm_id: "vm-1",
+        action: "start",
+        payload: { last: true },
+        not_before: later,
+      }),
+    ).resolves.toBeUndefined();
+
+    const { rows } = await getPool().query(
+      "SELECT id, state, payload, not_before FROM cloud_vm_work ORDER BY created_at",
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ id: running, state: "in_progress" });
+    expect(rows[1]).toMatchObject({ state: "queued", payload: { last: true } });
+    expect(new Date(rows[1].not_before).getTime()).toBe(later.getTime());
+  });
+
+  it("enqueues once against queued or in-progress work, keeping the earliest time", async () => {
+    const at = (s: number) => new Date(Date.now() + s * 1000);
+    const ids = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        enqueueCloudVmWorkOnce({
+          vm_id: "vm-1",
+          action: "start",
+          not_before: at(300),
+        }),
+      ),
+    );
+    expect(ids.filter(Boolean)).toHaveLength(1);
+
+    const earlier = at(30);
+    await enqueueCloudVmWorkOnce({
+      vm_id: "vm-1",
+      action: "start",
+      not_before: earlier,
+    });
+    await enqueueCloudVmWorkOnce({
+      vm_id: "vm-1",
+      action: "start",
+      not_before: at(900),
+    });
+    let { rows } = await getPool().query(
+      "SELECT state, not_before FROM cloud_vm_work",
+    );
+    expect(rows).toHaveLength(1);
+    expect(new Date(rows[0].not_before).getTime()).toBe(earlier.getTime());
+
+    await getPool().query(
+      "UPDATE cloud_vm_work SET state='in_progress', not_before=NULL",
+    );
+    await expect(
+      enqueueCloudVmWorkOnce({ vm_id: "vm-1", action: "start" }),
+    ).resolves.toBeUndefined();
+    ({ rows } = await getPool().query("SELECT state FROM cloud_vm_work"));
+    expect(rows).toEqual([{ state: "in_progress" }]);
   });
 });

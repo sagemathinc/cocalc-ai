@@ -3386,4 +3386,117 @@ describe("spot recovery fallback ladder", () => {
     expect(setMachineType).not.toHaveBeenCalled();
     expect(startHost).toHaveBeenCalledTimes(2);
   });
+
+  // A provider whose start outcome depends on the instance's current
+  // configuration: no T2D Spot capacity, no standard T2D quota.
+  function configuredProvider(opts: {
+    setMachineTypeError?: (type: string) => string | undefined;
+  } = {}) {
+    const current = { type: "t2d-standard-16", pricing: "spot" };
+    const startHost = jest.fn(async () => {
+      if (current.type === "t2d-standard-16") {
+        throw new Error(
+          current.pricing === "spot"
+            ? "ZONE_RESOURCE_POOL_EXHAUSTED"
+            : "QUOTA_EXCEEDED: Quota 'T2D_CPUS' exceeded.",
+        );
+      }
+    });
+    const setMachineType = jest.fn(async (_runtime: any, type: string) => {
+      const error = opts.setMachineTypeError?.(type);
+      if (error) throw new Error(error);
+      current.type = type;
+    });
+    const setPricingModel = jest.fn(async (_runtime: any, pricing: string) => {
+      current.pricing = pricing;
+    });
+    getProviderContextMock.mockResolvedValue({
+      entry: {
+        provider: {
+          startHost,
+          setMachineType,
+          setPricingModel,
+          getStatus: jest.fn(async () => "running"),
+        },
+      },
+      creds: {},
+    });
+    return { current, startHost, setMachineType };
+  }
+
+  async function startAgain(hostId: string) {
+    await getPool().query("UPDATE project_hosts SET status='off' WHERE id=$1", [
+      hostId,
+    ]);
+    await start(hostId);
+  }
+
+  it("keeps configured Spot alternates when machine-type discovery fails", async () => {
+    const hostId = "1a7b2c3d-0000-4000-8000-000000000007";
+    loadGcpZoneMachineTypesMock.mockResolvedValue([]);
+    loadGcpCatalogPricesMock.mockRejectedValue(new Error("catalog unavailable"));
+    const { current } = configuredProvider();
+    await spotHost(hostId);
+    await getPool().query(
+      `UPDATE project_hosts SET metadata = jsonb_set(metadata, '{spot_recovery_policy}', '{"alternate_spot_machine_types":["n2d-standard-32"]}') WHERE id=$1`,
+      [hostId],
+    );
+
+    await start(hostId);
+
+    expect(current).toEqual({ type: "n2d-standard-32", pricing: "spot" });
+    expect((await hostMetadata(hostId)).spot_recovery_state).toMatchObject({
+      active_machine_type: "n2d-standard-32",
+    });
+  });
+
+  it("retries an option whose machine-type switch failed transiently", async () => {
+    const hostId = "1a7b2c3d-0000-4000-8000-000000000008";
+    let flaky = 1;
+    const { current } = configuredProvider({
+      setMachineTypeError: (type) =>
+        type === "n2d-standard-32" && flaky-- > 0 ? "socket hang up" : undefined,
+    });
+    await spotHost(hostId);
+
+    await start(hostId);
+
+    let state = (await hostMetadata(hostId)).spot_recovery_state;
+    expect(state.fallback_rungs_tried).not.toContain("spot:n2d-standard-32");
+    expect(state).toMatchObject({
+      transient_rung: "spot:n2d-standard-32",
+      transient_retries: 1,
+    });
+    const { rows } = await getPool().query(
+      "SELECT 1 FROM cloud_vm_work WHERE vm_id=$1 AND action='start' AND state='queued'",
+      [hostId],
+    );
+    expect(rows).toHaveLength(1);
+
+    // The follow-up gets back to the same option instead of skipping it.
+    await startAgain(hostId);
+
+    expect(current).toEqual({ type: "n2d-standard-32", pricing: "spot" });
+    state = (await hostMetadata(hostId)).spot_recovery_state;
+    expect(state.active_machine_type).toBe("n2d-standard-32");
+  });
+
+  it("moves on from an option that keeps failing transiently", async () => {
+    const hostId = "1a7b2c3d-0000-4000-8000-000000000009";
+    const { current } = configuredProvider({
+      setMachineTypeError: (type) =>
+        type === "n2d-standard-32" ? "socket hang up" : undefined,
+    });
+    await spotHost(hostId);
+
+    await start(hostId);
+    for (let pass = 1; pass < 5 && current.type === "t2d-standard-16"; pass++) {
+      await startAgain(hostId);
+    }
+
+    // Four retries of n2d, then the next option (n2) on Spot.
+    expect(current).toEqual({ type: "n2-standard-32", pricing: "spot" });
+    const state = (await hostMetadata(hostId)).spot_recovery_state;
+    expect(state.fallback_rungs_tried).toContain("spot:n2d-standard-32");
+  });
 });

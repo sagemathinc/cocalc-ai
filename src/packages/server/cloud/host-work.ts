@@ -75,8 +75,10 @@ import {
   classifyStartFailure,
   exhaustedLadderRetryDelayMs,
   machineShape,
+  MAX_TRANSIENT_RETRIES_PER_OPTION,
   rungFitsQuota,
   rungKey,
+  transientRetriesFor,
   type GcpMachineTypeEntry,
   type LadderRung,
 } from "./fallback-ladder";
@@ -2065,6 +2067,9 @@ async function handleStart(row: any) {
       // Other machine families change the host's hardware and cost, so only
       // site-funded hosts use them (as for configured Spot alternates).
       if (hostFundingMode(row) === "site-funded") {
+        // Configured alternates never depend on catalog discovery, which is
+        // most likely to fail exactly when the provider API is struggling.
+        spotAlternates = [...recoveryPolicy.alternate_spot_machine_types];
         try {
           // Live list first: the cached catalog only has user-selectable
           // types, which leaves out whole families (e.g. c2d, n2-standard).
@@ -2111,10 +2116,7 @@ async function handleStart(row: any) {
                 region,
                 pricing,
               }).map(({ machine_type }) => machine_type);
-            spotAlternates = [
-              ...recoveryPolicy.alternate_spot_machine_types,
-              ...pick("spot"),
-            ];
+            spotAlternates = [...spotAlternates, ...pick("spot")];
             standardAlternates = pick("on_demand");
           }
         } catch (catalogErr) {
@@ -2203,7 +2205,15 @@ async function handleStart(row: any) {
           return "started";
         } catch (rungErr) {
           const kind = classifyStartFailure(rungErr);
-          tried.add(key);
+          const retries = transientRetriesFor(nextRecoveryState, key) + 1;
+          // A transient failure (possibly while switching to this option,
+          // before it was persisted) leaves the option pending for the retry,
+          // up to a limit.
+          const retryOption =
+            kind === "transient" && retries <= MAX_TRANSIENT_RETRIES_PER_OPTION;
+          if (!retryOption) {
+            tried.add(key);
+          }
           await logCloudVmEvent({
             vm_id: row.id,
             action: "fallback_rung_failed",
@@ -2212,14 +2222,14 @@ async function handleStart(row: any) {
             runtime: { ...rung, kind },
             error: `${rungErr}`,
           });
-          if (kind === "transient") {
+          if (retryOption) {
             // Retry this option with growing backoff; the host is still down.
-            const retries = (nextRecoveryState?.transient_retries ?? 0) + 1;
             nextRecoveryState = {
               ...(nextRecoveryState ?? { phase: "retrying_spot" }),
               phase: "retrying_spot",
               fallback_rungs_tried: [...tried],
               transient_retries: retries,
+              transient_rung: key,
             };
             return await scheduleRetry(`${key}:${rungErr}`, retries);
           }
@@ -2522,7 +2532,10 @@ async function handleStart(row: any) {
             state: nextRecoveryState,
             policy: recoveryPolicy,
             now: new Date(),
-          })
+          }) ||
+          (startMode !== "spot" &&
+            transientRetriesFor(nextRecoveryState, rungKey(failedRung)) >=
+              MAX_TRANSIENT_RETRIES_PER_OPTION)
         ) {
           await logCloudVmEvent({
             vm_id: row.id,
@@ -2554,11 +2567,13 @@ async function handleStart(row: any) {
           // recovery rather than become a "return to Spot" next time.
           let backoffStep: number | undefined;
           if (startMode !== "spot") {
-            backoffStep = (nextRecoveryState?.transient_retries ?? 0) + 1;
+            const key = rungKey(failedRung);
+            backoffStep = transientRetriesFor(nextRecoveryState, key) + 1;
             nextRecoveryState = {
               ...(nextRecoveryState ?? { phase: "retrying_spot" }),
               phase: "retrying_spot",
               transient_retries: backoffStep,
+              transient_rung: key,
             };
           }
           await scheduleSpotRetry({

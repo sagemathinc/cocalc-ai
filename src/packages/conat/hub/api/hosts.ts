@@ -180,6 +180,8 @@ export interface HostSpotRecoveryState {
   fallback_ladder_cycle?: number;
   // Consecutive transient failures while retrying a fallback option.
   transient_retries?: number;
+  // The option ("pricing:machine_type") that transient_retries counts for.
+  transient_rung?: string;
 }
 
 export interface HostBillingEnforcement {

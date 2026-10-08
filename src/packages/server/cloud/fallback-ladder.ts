@@ -254,6 +254,19 @@ export function rungFitsQuota(opts: {
   return available >= opts.vcpus;
 }
 
+// Unrecognized errors classify as transient, so a broken option must not be
+// retried forever: after this many transient failures in a row (about 4
+// minutes of backoff) the ladder moves on to the next option.
+export const MAX_TRANSIENT_RETRIES_PER_OPTION = 4;
+
+// Transient failures so far for this option (counts reset per option).
+export function transientRetriesFor(
+  state: { transient_rung?: string; transient_retries?: number } | undefined,
+  key: string,
+): number {
+  return state?.transient_rung === key ? (state?.transient_retries ?? 0) : 0;
+}
+
 // Backoff for a fully exhausted ladder: retry everything, since capacity and
 // quota change over minutes. 2, 4, 8, then every 10 minutes.
 export function exhaustedLadderRetryDelayMs(cycle: number): number {

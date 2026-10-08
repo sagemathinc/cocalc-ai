@@ -246,6 +246,7 @@ export function normalizeSpotRecoveryState(
   const triedRungs = normalizeStringArray((value as any).fallback_rungs_tried);
   const ladderCycle = parsePositiveInt((value as any).fallback_ladder_cycle);
   const transientRetries = parsePositiveInt((value as any).transient_retries);
+  const transientRung = `${(value as any).transient_rung ?? ""}`.trim();
   return {
     phase,
     ...(normalizeIsoTimestamp((value as any).outage_started_at)
@@ -322,6 +323,7 @@ export function normalizeSpotRecoveryState(
     ...(transientRetries != null
       ? { transient_retries: transientRetries }
       : {}),
+    ...(transientRung ? { transient_rung: transientRung } : {}),
   };
 }
 
@@ -496,6 +498,7 @@ export function recordProviderSpotPreemption(opts: {
     fallback_rungs_tried: _fallbackRungsTried,
     fallback_ladder_cycle: _fallbackLadderCycle,
     transient_retries: _transientRetries,
+    transient_rung: _transientRung,
     ...persistent
   } = previous;
   return {
