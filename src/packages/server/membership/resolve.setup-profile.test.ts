@@ -13,6 +13,7 @@ import { TIER_TEMPLATES } from "@cocalc/util/membership-tier-templates";
 import { normalizeMembershipEffectiveLimits } from "./effective-limits";
 import {
   applySetupProfileMembershipLimits,
+  STAR_PROJECT_DEFAULTS,
   STAR_GENEROUS_USAGE_LIMITS,
   STAR_RETAINED_USAGE_LIMITS,
   STAR_UNLIMITED_USAGE_LIMITS,
@@ -29,7 +30,10 @@ function freeMembership(): MembershipResolution {
   return {
     class: "free",
     source: "free",
-    entitlements: { usage_limits },
+    entitlements: {
+      usage_limits,
+      project_defaults: structuredClone(TIER_TEMPLATES.free.project_defaults),
+    },
     effective_limits: normalizeMembershipEffectiveLimits(usage_limits),
   } as MembershipResolution;
 }
@@ -75,6 +79,34 @@ describe("applySetupProfileMembershipLimits", () => {
     expect(membership.entitlements.usage_limits?.max_projects).toBe(
       TIER_TEMPLATES.free.usage_limits.max_projects,
     );
+  });
+
+  it("gives Star projects moderate sizes without shrinking larger tiers", () => {
+    const free = applySetupProfileMembershipLimits(freeMembership(), "star");
+    expect(free.entitlements.project_defaults).toEqual({
+      ...TIER_TEMPLATES.free.project_defaults,
+      ...STAR_PROJECT_DEFAULTS,
+    });
+    const admin = applySetupProfileMembershipLimits(
+      {
+        ...freeMembership(),
+        class: "admin",
+        entitlements: {
+          project_defaults: structuredClone(
+            TIER_TEMPLATES.admin.project_defaults,
+          ),
+        },
+      } as MembershipResolution,
+      "star",
+    );
+    expect(admin.entitlements.project_defaults).toEqual(
+      TIER_TEMPLATES.admin.project_defaults,
+    );
+    const none = applySetupProfileMembershipLimits(
+      { ...freeMembership(), entitlements: {} } as MembershipResolution,
+      "star",
+    );
+    expect(none.entitlements.project_defaults).toEqual(STAR_PROJECT_DEFAULTS);
   });
 
   it("keeps membership limits on every other site", () => {

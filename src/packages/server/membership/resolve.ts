@@ -682,6 +682,10 @@ export const STAR_RETAINED_USAGE_LIMITS = [
   "invite_email_link_copy_enabled",
 ] as const;
 
+// Per-project sizes on Star (MB): at least this much, or the tier's own
+// larger defaults. Still bounded by the machine's project pool.
+export const STAR_PROJECT_DEFAULTS = { memory: 8000, disk_quota: 20000 };
+
 export function applySetupProfileMembershipLimits(
   membership: MembershipResolution,
   setupProfile: string | undefined = process.env.COCALC_SETUP_PROFILE,
@@ -700,9 +704,23 @@ export function applySetupProfileMembershipLimits(
     entitlements: membership.entitlements && {
       ...membership.entitlements,
       usage_limits: unlimited(membership.entitlements.usage_limits),
+      project_defaults: starProjectDefaults(
+        membership.entitlements.project_defaults,
+      ),
     },
     effective_limits: unlimited(membership.effective_limits),
   };
+}
+
+function starProjectDefaults(
+  defaults: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...defaults };
+  for (const [key, minimum] of Object.entries(STAR_PROJECT_DEFAULTS)) {
+    const current = Number(next[key]);
+    next[key] = Number.isFinite(current) ? Math.max(current, minimum) : minimum;
+  }
+  return next;
 }
 
 export async function resolveMembershipDetailsForAccount(
