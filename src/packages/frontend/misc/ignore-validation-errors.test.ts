@@ -20,4 +20,20 @@ describe("ignoreValidationErrors", () => {
       failed.then(() => undefined, ignoreValidationErrors),
     ).rejects.toThrow("network down");
   });
+
+  it.each([
+    [
+      "an Error carrying errorFields",
+      Object.assign(new Error("boom"), { errorFields: [] }),
+    ],
+    ["errorFields that is not an array", { errorFields: "title" }],
+    [
+      "errorFields entries without errors",
+      { errorFields: [{ name: ["title"] }] },
+    ],
+    ["null", null],
+    ["a string", "failed"],
+  ])("rethrows %s", (_label, err) => {
+    expect(() => ignoreValidationErrors(err)).toThrow();
+  });
 });

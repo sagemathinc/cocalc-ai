@@ -21,6 +21,10 @@ import dayjs, { type Dayjs } from "dayjs";
 import utc from "dayjs/plugin/utc";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Virtuoso } from "react-virtuoso";
+import {
+  virtuosoItemContent,
+  virtuosoItemKey,
+} from "@cocalc/frontend/components/virtuoso-item";
 
 import type {
   ActiveUserMapDetails,
@@ -220,13 +224,15 @@ function UserList({
     <div aria-label="Active users" role="list">
       <Virtuoso
         data={users}
-        computeItemKey={(_, user) => user.account_id}
+        computeItemKey={virtuosoItemKey(
+          (_, user: ActiveUserMapDetailUser) => user.account_id,
+        )}
         components={{
           EmptyPlaceholder: () => (
             <Text type="secondary">No users in this group.</Text>
           ),
         }}
-        itemContent={(_, user) => (
+        itemContent={virtuosoItemContent((_, user: ActiveUserMapDetailUser) => (
           <div
             role="listitem"
             style={{
@@ -263,7 +269,7 @@ function UserList({
               </Button>
             </div>
           </div>
-        )}
+        ))}
         style={{ height: "clamp(180px, 45vh, 720px)" }}
       />
     </div>

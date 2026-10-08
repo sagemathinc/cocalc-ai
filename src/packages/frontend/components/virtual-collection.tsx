@@ -5,6 +5,7 @@
 import { createContext, forwardRef, useContext } from "react";
 import type { HTMLAttributes, ReactNode } from "react";
 import { Virtuoso, VirtuosoGrid } from "react-virtuoso";
+import { virtuosoItemContent, virtuosoItemKey } from "./virtuoso-item";
 
 export const VirtualCollectionContext = createContext<
   { scrollParent?: HTMLElement; loadMore: () => void } | undefined
@@ -46,12 +47,10 @@ export function VirtualCollectionItems<T>({
 }) {
   const props = {
     data: items,
-    // react-virtuoso can call these with an undefined item while the data
-    // shrinks; key such a row by index instead of crashing in itemId.
-    computeItemKey: (index: number, item: T | undefined) =>
-      item == null ? `index-${index}` : itemId(item),
-    itemContent: (_index: number, item: T | undefined) =>
-      item == null ? null : renderItem(item),
+    computeItemKey: virtuosoItemKey((_index: number, item: T) => itemId(item)),
+    itemContent: virtuosoItemContent((_index: number, item: T) =>
+      renderItem(item),
+    ),
     customScrollParent: scrollParent,
     useWindowScroll: !scrollParent,
     increaseViewportBy: 300,
