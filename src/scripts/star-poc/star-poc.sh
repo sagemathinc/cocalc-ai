@@ -198,6 +198,11 @@ doctor() {
     else
       ok "project-host does not force COCALC_PODMAN_RUNTIME_DIR"
     fi
+    # The ACP worker reads the host identity from this database; without it
+    # the main process keeps its own copy inside the release directory and
+    # agents report the host as disconnected.
+    check "project-host state database is in the data directory" \
+      test "${COCALC_LITE_SQLITE_FILENAME:-}" = "${COCALC_DATA:-unset}/sqlite.db"
     check "project-host tools bundle exists" test -d "${COCALC_PROJECT_TOOLS:-}"
     check "project-host tools bundle has dropbear" test -x "${COCALC_PROJECT_TOOLS:-}/dropbear"
     check "project-host tools bundle has node" test -x "${COCALC_PROJECT_TOOLS:-}/node"
