@@ -1,0 +1,303 @@
+#!/usr/bin/env bash
+# Restore this bay's PostgreSQL (pgBackRest, point in time) and Conat SQLite
+# (rustic) from R2, with the same engine the weekly disposable drill runs
+# (bay-restore-engine.py), then swap the result into place. See RESTORE.md.
+#
+#   bay-restore restore (--latest | --target-time TIME) [options]
+#   bay-restore cutover --work-dir DIR [--yes]
+#
+# restore options:
+#   --latest              recover every archived transaction (lost host)
+#   --target-time TIME    recover to TIME, e.g. "2026-10-08 03:00:00+00"
+#                         (undoing a bad migration or deletion)
+#   --backup-set LABEL    pgBackRest backup set (default: chosen by pgBackRest)
+#   --sqlite-snapshot ID  Conat snapshot (default: newest at or before TIME)
+#   --work-dir DIR        default: $COCALC_BAY_ROOT/restore-<UTC time>; must be
+#                         on the same filesystem as the live data
+#   --skip-sqlite-check   do not quick_check every Conat database first
+#   --no-cutover          restore and verify only; swap later with cutover
+#   --yes                 do not ask before the cutover
+#
+# The live data is never modified until cutover, which stops the bay, moves
+# the live postgres and sync directories to DIR/pre-restore/, moves the
+# restored ones into place, and starts the bay. Cutover stops the timers and
+# any running backup jobs first, and restarts the timers only once the bay is
+# healthy. Exit status 2: the bay is running on the restored data, but the
+# required new full backup could not be started.
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "${SCRIPT_DIR}/lib.sh"
+
+: "${COCALC_BAY_USER:=cocalc-bay}"
+: "${COCALC_BAY_GROUP:=$COCALC_BAY_USER}"
+: "${COCALC_BAY_PGBACKREST_BIN:=/usr/local/bin/pgbackrest}"
+: "${COCALC_BAY_SQLITE_RUSTIC_BIN:=/usr/local/bin/rustic}"
+: "${COCALC_BAY_PGBACKREST_REPO_PATH:=/pgbackrest/${COCALC_BAY_ID}}"
+: "${COCALC_BAY_SQLITE_RUSTIC_ROOT:=rustic/bay-sqlite/${COCALC_BAY_ID}}"
+: "${COCALC_BAY_SQLITE_SOURCE_DIR:=${COCALC_SYNC:-${COCALC_BAY_ROOT}/sync}}"
+: "${COCALC_BAY_POSTGRES_USER:=cocalc-bay}"
+: "${COCALC_BAY_POSTGRES_DB:=cocalc-bay}"
+# The config generator below reads these from its environment.
+export COCALC_BAY_USER COCALC_BAY_GROUP COCALC_BAY_PGBACKREST_BIN COCALC_BAY_SQLITE_RUSTIC_BIN \
+  COCALC_BAY_PGBACKREST_REPO_PATH COCALC_BAY_SQLITE_RUSTIC_ROOT COCALC_BAY_SQLITE_SOURCE_DIR \
+  COCALC_BAY_POSTGRES_USER COCALC_BAY_POSTGRES_DB
+PYTHON="${PYTHON:-python3}"
+ENGINE="${SCRIPT_DIR}/bay-restore-engine.py"
+
+die() {
+  echo "bay-restore: $*" >&2
+  exit 1
+}
+
+usage() {
+  sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+}
+
+json_get() {
+  "$PYTHON" -c 'import json,sys
+value = json.load(open(sys.argv[1]))
+for key in sys.argv[2].split("."):
+    value = (value or {}).get(key)
+print("" if value is None else value)' "$1" "$2"
+}
+
+confirm() {
+  [[ "${ASSUME_YES:-0}" == 1 ]] && return 0
+  local answer
+  read -r -p "$1 Type 'yes' to continue: " answer
+  [[ "$answer" == yes ]] || die "cancelled"
+}
+
+same_filesystem() {
+  [[ "$(stat -c %d "$1")" == "$(stat -c %d "$2")" ]]
+}
+
+free_port() {
+  local port
+  for port in $(seq 55432 55500); do
+    if ! ss -Hltn "sport = :${port}" 2>/dev/null | grep -q .; then
+      echo "$port"
+      return
+    fi
+  done
+  die "no free local port for the temporary PostgreSQL"
+}
+
+cmd_restore() {
+  local latest=0 target_time="" backup_set="" snapshot="" work_dir="" quick_check=true cutover=1
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --latest) latest=1; shift ;;
+      --target-time) target_time="$2"; shift 2 ;;
+      --backup-set) backup_set="$2"; shift 2 ;;
+      --sqlite-snapshot) snapshot="$2"; shift 2 ;;
+      --work-dir) work_dir="$2"; shift 2 ;;
+      --skip-sqlite-check) quick_check=false; shift ;;
+      --no-cutover) cutover=0; shift ;;
+      --yes) ASSUME_YES=1; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "unknown restore option: $1" ;;
+    esac
+  done
+  if [[ "$latest" == 1 && -n "$target_time" ]] || [[ "$latest" == 0 && -z "$target_time" ]]; then
+    die "choose exactly one of --latest or --target-time TIME"
+  fi
+  if [[ -n "$target_time" ]]; then
+    target_time="$(date -u -d "$target_time" '+%Y-%m-%d %H:%M:%S+00')" ||
+      die "cannot parse --target-time"
+  fi
+  for name in COCALC_BAY_ID COCALC_BAY_ROOT COCALC_BAY_POSTGRES_DATA_DIR \
+    COCALC_BAY_PGBACKREST_S3_BUCKET COCALC_BAY_PGBACKREST_S3_ENDPOINT \
+    COCALC_BAY_PGBACKREST_S3_ACCESS_KEY COCALC_BAY_PGBACKREST_S3_SECRET_KEY \
+    COCALC_BAY_PGBACKREST_CIPHER_PASS COCALC_BAY_SQLITE_RUSTIC_PASSWORD; do
+    [[ -n "${!name:-}" ]] || die "missing ${name}; restore /etc/cocalc from the configuration escrow first (RESTORE.md)"
+  done
+  [[ -f "$ENGINE" ]] || die "restore engine missing: $ENGINE"
+  id "$COCALC_BAY_USER" >/dev/null 2>&1 || die "bay user ${COCALC_BAY_USER} does not exist"
+
+  [[ -n "$work_dir" ]] || work_dir="${COCALC_BAY_ROOT}/restore-$(date -u +%Y%m%dT%H%M%SZ)"
+  mkdir -p "$work_dir"
+  chmod 0711 "$work_dir"
+  local data_parent sync_parent
+  data_parent="$(dirname "$COCALC_BAY_POSTGRES_DATA_DIR")"
+  sync_parent="$(dirname "$COCALC_BAY_SQLITE_SOURCE_DIR")"
+  mkdir -p "$data_parent" "$sync_parent"
+  same_filesystem "$work_dir" "$data_parent" ||
+    die "--work-dir must be on the filesystem of ${data_parent}, so cutover is a rename"
+  same_filesystem "$work_dir" "$sync_parent" ||
+    die "--work-dir must be on the filesystem of ${sync_parent}, so cutover is a rename"
+
+  local stanza endpoint config
+  stanza="cocalc-${COCALC_BAY_ID//[^A-Za-z0-9_-]/-}"
+  endpoint="${COCALC_BAY_PGBACKREST_S3_ENDPOINT%/}"
+  [[ "$endpoint" == http://* || "$endpoint" == https://* ]] || endpoint="https://${endpoint}"
+  config="${work_dir}/engine-config.json"
+  (
+    umask 077
+    TARGET_TIME="$target_time" BACKUP_SET="$backup_set" SNAPSHOT="$snapshot" \
+      WORK_DIR="$work_dir" QUICK_CHECK="$quick_check" STANZA="$stanza" ENDPOINT="$endpoint" \
+      LOCAL_PORT="$(free_port)" "$PYTHON" - > "$config" <<'EOF'
+import json, os
+e = os.environ
+config = {
+    "execution": "local",
+    "work_dir": e["WORK_DIR"],
+    "result_path": os.path.join(e["WORK_DIR"], "result.json"),
+    "run_id": "local-" + os.path.basename(e["WORK_DIR"]),
+    "bay_id": e["COCALC_BAY_ID"],
+    "repository_type": "pgbackrest",
+    "restore_mode": "pitr",
+    "require_conat": True,
+    "sqlite_quick_check": e["QUICK_CHECK"] == "true",
+    "r2_endpoint": e["ENDPOINT"],
+    "r2_bucket": e["COCALC_BAY_PGBACKREST_S3_BUCKET"],
+    "r2_access_key_id": e["COCALC_BAY_PGBACKREST_S3_ACCESS_KEY"],
+    "r2_secret_access_key": e["COCALC_BAY_PGBACKREST_S3_SECRET_KEY"],
+    "r2_session_token": "",
+    "pgbackrest_repo_path": e["COCALC_BAY_PGBACKREST_REPO_PATH"],
+    "pgbackrest_cipher_pass": e["COCALC_BAY_PGBACKREST_CIPHER_PASS"],
+    "pgbackrest_stanza": e["STANZA"],
+    "pgbackrest_bin": e["COCALC_BAY_PGBACKREST_BIN"],
+    "rustic_bin": e["COCALC_BAY_SQLITE_RUSTIC_BIN"],
+    "rustic_repo_root": e["COCALC_BAY_SQLITE_RUSTIC_ROOT"],
+    "rustic_repo_password": e["COCALC_BAY_SQLITE_RUSTIC_PASSWORD"],
+    "bay_user": e["COCALC_BAY_USER"],
+    "bay_group": e["COCALC_BAY_GROUP"],
+    "postgres_user": e["COCALC_BAY_POSTGRES_USER"],
+    "postgres_database": e["COCALC_BAY_POSTGRES_DB"],
+    "local_port": int(e["LOCAL_PORT"]),
+    "worker_timeout_seconds": 86400,
+}
+for key, name in (("target_time", "TARGET_TIME"), ("backup_set_id", "BACKUP_SET"), ("snapshot_id", "SNAPSHOT")):
+    if e.get(name):
+        config[key] = e[name]
+print(json.dumps(config, indent=2))
+EOF
+  )
+  chmod 0600 "$config"
+
+  echo "bay-restore: restoring ${COCALC_BAY_ID} into ${work_dir} ($( [[ -n "$target_time" ]] && echo "to $target_time" || echo "to the latest archived state" ))"
+  echo "bay-restore: the live bay is not touched until cutover; log: ${work_dir}/engine.log"
+  set +e
+  "$PYTHON" "$ENGINE" --config "$config" 2>&1 | tee "${work_dir}/engine.log"
+  set -e
+  [[ -f "${work_dir}/result.json" ]] || die "the restore engine produced no result; see ${work_dir}/engine.log"
+  if [[ "$(json_get "${work_dir}/result.json" status)" != passed ]]; then
+    die "restore failed at stage $(json_get "${work_dir}/result.json" stage): $(json_get "${work_dir}/result.json" error)
+The live bay was not modified. Details: ${work_dir}/engine.log"
+  fi
+  summary "$work_dir"
+  if [[ "$cutover" == 0 ]]; then
+    echo "bay-restore: verified restore ready. Swap it in with:"
+    echo "  sudo ${SCRIPT_DIR}/bay-restore cutover --work-dir ${work_dir}"
+    return
+  fi
+  cmd_cutover --work-dir "$work_dir"
+}
+
+summary() {
+  local result="$1/result.json"
+  echo "bay-restore: verified restore in $1"
+  echo "  backup set:      $(json_get "$result" postgres.backup_label)"
+  echo "  target:          $(json_get "$result" postgres.target_time)"
+  echo "  recovered to:    $(json_get "$result" postgres.recovered_to)"
+  echo "  Conat snapshot:  $(json_get "$result" conat.snapshot_id) ($(json_get "$result" conat.snapshot_time))"
+  echo "  Conat databases: $(json_get "$result" conat.database_count) checked=$(json_get "$result" conat.quick_check_passed)"
+  echo "  stage seconds:   $(json_get "$result" stage_seconds)"
+}
+
+cmd_cutover() {
+  local work_dir=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --work-dir) work_dir="$2"; shift 2 ;;
+      --yes) ASSUME_YES=1; shift ;;
+      *) die "unknown cutover option: $1" ;;
+    esac
+  done
+  [[ -n "$work_dir" && -f "${work_dir}/result.json" ]] || die "cutover needs --work-dir of a finished restore"
+  [[ "$(json_get "${work_dir}/result.json" status)" == passed ]] || die "that restore did not pass"
+  [[ "$(json_get "${work_dir}/result.json" postgres.cluster_state)" == "shut down" ]] ||
+    die "the restored cluster was not left cleanly shut down"
+  [[ -d "${work_dir}/postgres" && -d "${work_dir}/sync" ]] || die "restored directories missing (already cut over?)"
+  local data="$COCALC_BAY_POSTGRES_DATA_DIR" sync="$COCALC_BAY_SQLITE_SOURCE_DIR"
+  local aside="${work_dir}/pre-restore"
+  summary "$work_dir"
+  confirm "This stops ${COCALC_BAY_ID}, moves ${data} and ${sync} to ${aside}/, and starts the bay on the restored data."
+
+  local timers jobs unit
+  timers="$(systemctl list-units --type=timer --state=active --no-legend --plain 'cocalc-bay-*' | awk '{print $1}')"
+  echo "bay-restore: stopping the bay"
+  # Timers first, so nothing new starts; then any backup, prune or status
+  # job already running, which is not part of cocalc-bay.target and could
+  # otherwise read the data directories while they are being swapped.
+  printf '%s\n' $timers > "${work_dir}/stopped-timers"
+  # shellcheck disable=SC2086
+  [[ -z "$timers" ]] || systemctl stop $timers
+  jobs="$(systemctl list-units --type=service --all --no-legend --plain \
+    'cocalc-bay-pgbackrest-backup@*.service' 'cocalc-bay-pgbackrest-status.service' \
+    'cocalc-bay-sqlite-backup.service' 'cocalc-bay-sqlite-prune.service' |
+    awk '$3 == "active" || $3 == "activating" || $3 == "reloading" {print $1}')"
+  # shellcheck disable=SC2086
+  [[ -z "$jobs" ]] || systemctl stop $jobs
+  for unit in $jobs; do
+    if systemctl is-active --quiet "$unit"; then
+      die "${unit} did not stop; nothing was moved. Timers stopped: ${work_dir}/stopped-timers"
+    fi
+  done
+  systemctl stop cocalc-bay.target
+  systemctl stop cocalc-bay-postgres.service || true
+  if systemctl is-active --quiet cocalc-bay-postgres.service; then
+    die "cocalc-bay-postgres did not stop; nothing was moved"
+  fi
+
+  mkdir -p "$aside"
+  [[ -e "$data" ]] && mv "$data" "${aside}/postgres"
+  [[ -e "$sync" ]] && mv "$sync" "${aside}/sync"
+  mv "${work_dir}/postgres" "$data"
+  mv "${work_dir}/sync" "$sync"
+  chown "${COCALC_BAY_USER}:${COCALC_BAY_GROUP}" "$data" "$sync"
+  chmod 0700 "$data"
+  date -u +%FT%TZ > "${work_dir}/cutover-at"
+
+  echo "bay-restore: starting the bay on the restored data"
+  systemctl start cocalc-bay.target
+  local healthy=0
+  for _ in $(seq 1 60); do
+    if "${SCRIPT_DIR}/bay-health" >/dev/null 2>&1; then
+      healthy=1
+      break
+    fi
+    sleep 10
+  done
+  if [[ "$healthy" != 1 ]]; then
+    # Leave backups and the other timers stopped, so nothing backs up or
+    # prunes from a bay that may be broken while it is diagnosed.
+    die "the bay did not report healthy within 10 minutes; check 'systemctl status cocalc-bay.target' and ${SCRIPT_DIR}/bay-health. The previous data is in ${aside}/. The timers listed in ${work_dir}/stopped-timers were left stopped; start them once the bay is healthy."
+  fi
+  # shellcheck disable=SC2086
+  [[ -z "$timers" ]] || systemctl start $timers
+  echo "bay-restore: ${COCALC_BAY_ID} is running on the restored data."
+  echo "  The previous data is kept in ${aside}/; delete it once you are satisfied."
+  # A restore to a point in time starts a new timeline: take a fresh full
+  # backup so later restores do not depend on the pre-restore history.
+  local error
+  if ! error="$(systemctl start --no-block "cocalc-bay-pgbackrest-backup@full.service" 2>&1)"; then
+    echo "bay-restore: WARNING: could not start a full pgBackRest backup: ${error}" >&2
+    echo "  Until one succeeds, later restores still depend on the pre-restore backups." >&2
+    echo "  Start it with: systemctl start cocalc-bay-pgbackrest-backup@full.service" >&2
+    exit 2
+  fi
+  echo "  A new full pgBackRest backup was started (cocalc-bay-pgbackrest-backup@full)."
+}
+
+[[ "$(id -u)" == 0 ]] || die "run as root"
+command="${1:-}"
+shift || true
+case "$command" in
+  restore) cmd_restore "$@" ;;
+  cutover) cmd_cutover "$@" ;;
+  -h|--help|"") usage ;;
+  *) die "unknown command: $command" ;;
+esac
