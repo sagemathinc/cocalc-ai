@@ -2283,6 +2283,10 @@ describe("bay-backup runner", () => {
     process.env.COCALC_BAY_STATE_DIR = stateDir;
     process.env.COCALC_BAY_PGBACKREST_ENABLED = "1";
     process.env.COCALC_BAY_SQLITE_BACKUP_ENABLED = "1";
+    process.env.COCALC_BAY_CONFIG_ESCROW_STATUS_FILE = join(
+      stateDir,
+      "config-escrow-status.json",
+    );
     const now = new Date().toISOString();
     writeFileSync(
       join(stateDir, "pgbackrest-status.json"),
@@ -2325,6 +2329,28 @@ describe("bay-backup runner", () => {
     await expect(
       runBayBackupHealthCheck({ send_alert: false }),
     ).resolves.toEqual([]);
+
+    // A SQLite-only bay needs the escrow too (its R2 keys and repository
+    // password are in bay-secrets.env).
+    process.env.COCALC_BAY_PGBACKREST_ENABLED = "0";
+    writeFileSync(
+      join(stateDir, "config-escrow-status.json"),
+      JSON.stringify({
+        level: "warning",
+        sealed_at: now,
+        error: "sealed and verified, but pruning old history copies failed",
+      }),
+    );
+    await expect(
+      runBayBackupHealthCheck({ send_alert: false }),
+    ).resolves.toEqual([
+      "configuration escrow: sealed and verified, but pruning old history copies failed",
+    ]);
+    process.env.COCALC_BAY_PGBACKREST_ENABLED = "1";
+    writeFileSync(
+      join(stateDir, "config-escrow-status.json"),
+      JSON.stringify({ level: "ok", sealed_at: now }),
+    );
 
     writeFileSync(
       join(stateDir, "pgbackrest-restore-test-status.json"),

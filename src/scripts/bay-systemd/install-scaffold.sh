@@ -7,6 +7,9 @@ CURRENT_DIR="/opt/cocalc/bay/current"
 ENV_DIR="/etc/cocalc"
 SYSTEMD_DIR="/etc/systemd/system"
 SBIN_DIR="/usr/local/sbin"
+# Programs that root runs (the escrow job). Unlike the release tree, which
+# belongs to the bay account, this directory and its files are root-owned.
+LIBEXEC_DIR="/usr/local/libexec/cocalc-bay"
 SUDOERS_DIR="/etc/sudoers.d"
 NEEDRESTART_DIR="/etc/needrestart/conf.d"
 OVERLAY_MODE="none"
@@ -24,6 +27,7 @@ Options:
   --env-dir <dir>           env dir inside the target rootfs
   --systemd-dir <dir>       systemd dir inside the target rootfs
   --sbin-dir <dir>          root helper dir inside the target rootfs
+  --libexec-dir <dir>       root-owned program dir inside the target rootfs
   --sudoers-dir <dir>       sudoers dir inside the target rootfs
   --overlay current-cocalc  install the current CoCalc overlay as bay-overlay.env
   --overlay rocket-bundle   install the Rocket bay bundle overlay as bay-overlay.env
@@ -52,6 +56,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --sbin-dir)
       SBIN_DIR="$2"
+      shift 2
+      ;;
+    --libexec-dir)
+      LIBEXEC_DIR="$2"
       shift 2
       ;;
     --sudoers-dir)
@@ -97,6 +105,7 @@ TARGET_BIN_DIR="${TARGET_CURRENT_DIR}/bin"
 TARGET_ENV_DIR="$(prefix_path "$ENV_DIR")"
 TARGET_SYSTEMD_DIR="$(prefix_path "$SYSTEMD_DIR")"
 TARGET_SBIN_DIR="$(prefix_path "$SBIN_DIR")"
+TARGET_LIBEXEC_DIR="$(prefix_path "$LIBEXEC_DIR")"
 TARGET_SUDOERS_DIR="$(prefix_path "$SUDOERS_DIR")"
 TARGET_NEEDRESTART_DIR="$(prefix_path "$NEEDRESTART_DIR")"
 
@@ -106,6 +115,11 @@ mkdir -p "$TARGET_BIN_DIR" "$TARGET_ENV_DIR" "$TARGET_SYSTEMD_DIR" \
 install -m 0755 "${SCRIPT_DIR}/bin/"* "$TARGET_BIN_DIR/"
 install -m 0644 "${SCRIPT_DIR}/systemd/"* "$TARGET_SYSTEMD_DIR/"
 install -m 0755 "${SCRIPT_DIR}/sbin/"* "$TARGET_SBIN_DIR/"
+install -d -m 0755 "$TARGET_LIBEXEC_DIR"
+for file in "${SCRIPT_DIR}/libexec/"*; do
+  [[ "$file" == *.test.sh ]] && continue
+  install -m 0755 "$file" "$TARGET_LIBEXEC_DIR/"
+done
 install -m 0440 "${SCRIPT_DIR}/sudoers/"* "$TARGET_SUDOERS_DIR/"
 install -m 0644 "${SCRIPT_DIR}/needrestart/cocalc-bay.conf" \
   "${TARGET_NEEDRESTART_DIR}/cocalc-bay.conf"
@@ -186,6 +200,7 @@ Installed bay scaffold:
   env dir:      ${TARGET_ENV_DIR}
   systemd dir:  ${TARGET_SYSTEMD_DIR}
   sbin dir:     ${TARGET_SBIN_DIR}
+  libexec dir:  ${TARGET_LIBEXEC_DIR}
   sudoers dir:  ${TARGET_SUDOERS_DIR}
   needrestart:  ${TARGET_NEEDRESTART_DIR}/cocalc-bay.conf
   overlay:      ${OVERLAY_MODE}

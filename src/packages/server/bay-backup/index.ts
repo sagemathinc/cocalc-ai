@@ -946,6 +946,20 @@ export async function runBayBackupHealthCheck({
   const stateDir =
     `${process.env.COCALC_BAY_STATE_DIR ?? ""}`.trim() || join(data, "state");
   const checks: Promise<string | undefined>[] = [];
+  // Without bay-secrets.env (cipher passphrase, R2 keys, SQLite repository
+  // password) neither backup can be restored after losing the bay, so its
+  // sealed copy must stay current. The root escrow unit writes this status in
+  // its own root-owned state directory.
+  checks.push(
+    backupStatusIssue({
+      label: "configuration escrow",
+      path:
+        `${process.env.COCALC_BAY_CONFIG_ESCROW_STATUS_FILE ?? ""}`.trim() ||
+        "/var/lib/cocalc-bay-config-escrow/status.json",
+      timestamp_field: "sealed_at",
+      maximum_age_ms: 3 * 24 * 60 * 60_000,
+    }),
+  );
   if (pgEnabled) {
     checks.push(
       backupStatusIssue({
@@ -955,18 +969,6 @@ export async function runBayBackupHealthCheck({
           join(stateDir, "pgbackrest-status.json"),
         timestamp_field: "generated_at",
         maximum_age_ms: 15 * 60_000,
-      }),
-    );
-    // Without bay-secrets.env (cipher passphrase, R2 keys) the pgBackRest
-    // repository cannot be restored; its sealed copy must stay current.
-    checks.push(
-      backupStatusIssue({
-        label: "configuration escrow",
-        path:
-          `${process.env.COCALC_BAY_CONFIG_ESCROW_STATUS_FILE ?? ""}`.trim() ||
-          join(stateDir, "config-escrow-status.json"),
-        timestamp_field: "sealed_at",
-        maximum_age_ms: 3 * 24 * 60 * 60_000,
       }),
     );
   }
