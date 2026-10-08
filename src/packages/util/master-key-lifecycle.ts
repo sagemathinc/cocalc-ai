@@ -34,7 +34,11 @@ export const SITE_MASTER_KEY_BACKUP_KIND = "cocalc-site-master-key-backup";
 export type SiteMasterKeyPurpose =
   | "secret-settings:v1"
   | "project-backup-repo-secrets:v1"
-  | "project-secrets:v1";
+  | "project-secrets:v1"
+  // Sealed bay configuration in R2; derived identically by
+  // src/scripts/bay-systemd/bin/bay-config-escrow.mjs, which must run with
+  // no dependencies on a fresh machine during a restore.
+  | "bay-config-escrow:v1";
 
 export type LegacyMasterKeyId =
   | "legacy-secret-settings"

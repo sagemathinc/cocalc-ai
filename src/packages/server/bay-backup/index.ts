@@ -957,6 +957,18 @@ export async function runBayBackupHealthCheck({
         maximum_age_ms: 15 * 60_000,
       }),
     );
+    // Without bay-secrets.env (cipher passphrase, R2 keys) the pgBackRest
+    // repository cannot be restored; its sealed copy must stay current.
+    checks.push(
+      backupStatusIssue({
+        label: "configuration escrow",
+        path:
+          `${process.env.COCALC_BAY_CONFIG_ESCROW_STATUS_FILE ?? ""}`.trim() ||
+          join(stateDir, "config-escrow-status.json"),
+        timestamp_field: "sealed_at",
+        maximum_age_ms: 3 * 24 * 60 * 60_000,
+      }),
+    );
   }
   if (sqliteEnabled) {
     checks.push(

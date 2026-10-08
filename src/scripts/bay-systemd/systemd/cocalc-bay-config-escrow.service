@@ -1,0 +1,19 @@
+[Unit]
+Description=Seal the CoCalc Bay configuration with the site master key and keep it in R2
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Root: it reads /etc/cocalc/bay-secrets.env and the site master key, both 0600 root.
+User=root
+WorkingDirectory=/opt/cocalc/bay/current
+EnvironmentFile=/etc/cocalc/bay.env
+EnvironmentFile=-/etc/cocalc/bay-workers.env
+EnvironmentFile=-/etc/cocalc/bay-overlay.env
+EnvironmentFile=-/etc/cocalc/bay-topology.env
+EnvironmentFile=-/etc/cocalc/bay-secrets.env
+EnvironmentFile=-/etc/cocalc/bay-local.env
+ExecStart=/opt/cocalc/bay/current/bin/bay-config-escrow-run
+TimeoutStartSec=10min
+Nice=10

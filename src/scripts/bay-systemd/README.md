@@ -295,6 +295,51 @@ pgBackRest. Restore the legacy interval only if an operator intentionally wants
 to resume the old scheduler. Do not delete either new repository or any legacy
 snapshot during rollback.
 
+### Configuration Escrow
+
+The pgBackRest repository is encrypted with `COCALC_BAY_PGBACKREST_CIPHER_PASS`.
+That value, the backup R2 credentials, the SQLite repository password, and the
+session and cluster secrets all live only in `/etc/cocalc/bay-secrets.env` on
+the bay. If the bay VM is lost, the backups cannot be restored without them.
+Only the site master key is kept elsewhere (1Password).
+
+`cocalc-bay-config-escrow.timer` runs `bay-config-escrow-run` daily as root:
+
+- it seals `bay.env`, `bay-local.env`, `bay-overlay.env`, `bay-topology.env`,
+  `bay-workers.env` and `bay-secrets.env` with AES-256-GCM, using a key derived
+  from the site master key (HKDF purpose `bay-config-escrow:v1`);
+- it uploads the result to
+  `s3://$COCALC_BAY_PGBACKREST_S3_BUCKET/cocalc-escrow/<bay-id>/bay-config.v1.json`,
+  plus a dated copy under `history/`;
+- it reads the copy back and verifies that it decrypts to the live files;
+- it writes `state/config-escrow-status.json`. The bay backup health check
+  alerts when that file is missing, failed, or older than three days.
+
+The master key itself is never escrowed. Enable the timer once, and run it
+again after any change to `/etc/cocalc/*.env`:
+
+```sh
+systemctl enable --now cocalc-bay-config-escrow.timer
+systemctl start cocalc-bay-config-escrow.service
+cat /mnt/cocalc/bays/<bay-id>/state/config-escrow-status.json
+```
+
+To recover the files on any machine with Node.js and a checkout of this
+repository, given the site master key and read access to the bucket:
+
+```sh
+curl --aws-sigv4 aws:amz:auto:s3 --user "$R2_ACCESS_KEY:$R2_SECRET_KEY" \
+  -o bay-config.v1.json \
+  "https://<account>.r2.cloudflarestorage.com/<bucket>/cocalc-escrow/<bay-id>/bay-config.v1.json"
+node src/scripts/bay-systemd/bin/bay-config-escrow.mjs info --in bay-config.v1.json
+node src/scripts/bay-systemd/bin/bay-config-escrow.mjs open \
+  --master-key site-master-key --in bay-config.v1.json --out-dir /etc/cocalc
+```
+
+`open` refuses to overwrite existing files unless `--force` is given. A wrong
+master key is reported as such, and any modification of the escrow fails
+authentication. Tests: `bash src/scripts/bay-systemd/bin/bay-config-escrow.test.sh`.
+
 ## GCP Bootstrap Service Account
 
 Run this in a trusted admin `gcloud` shell to create or update the project

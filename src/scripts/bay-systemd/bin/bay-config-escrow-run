@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# Seal this bay's /etc/cocalc configuration with the site master key and keep
+# the copy in R2 next to the backups, then read it back and prove it decrypts
+# to the live files. See bay-config-escrow.mjs and RESTORE.md.
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "${SCRIPT_DIR}/lib.sh"
+
+: "${COCALC_BAY_CONFIG_DIR:=/etc/cocalc}"
+: "${COCALC_SITE_MASTER_KEY_PATH:=${COCALC_BAY_CONFIG_DIR}/site-master-key}"
+: "${COCALC_BAY_CONFIG_ESCROW_STATUS_FILE:=${COCALC_BAY_STATE_DIR}/config-escrow-status.json}"
+: "${COCALC_BAY_CONFIG_ESCROW_PREFIX:=cocalc-escrow/${COCALC_BAY_ID}}"
+: "${COCALC_BAY_NODE_BIN:=$(command -v node || true)}"
+: "${CURL_BIN:=curl}"
+# The configuration a replacement bay needs. Never the master key itself.
+ESCROW_FILES=(bay.env bay-local.env bay-overlay.env bay-topology.env bay-workers.env bay-secrets.env)
+
+status_tmp=""
+work=""
+cleanup() {
+  [[ -n "$work" ]] && rm -rf "$work"
+  [[ -n "$status_tmp" ]] && rm -f "$status_tmp"
+  return 0
+}
+trap cleanup EXIT
+
+write_status() {
+  local level="$1" detail="$2"
+  status_tmp="${COCALC_BAY_CONFIG_ESCROW_STATUS_FILE}.tmp.$$"
+  mkdir -p "$(dirname "$COCALC_BAY_CONFIG_ESCROW_STATUS_FILE")"
+  LEVEL="$level" DETAIL="$detail" BUCKET="${COCALC_BAY_PGBACKREST_S3_BUCKET:-}" \
+    KEY="${COCALC_BAY_CONFIG_ESCROW_PREFIX}/bay-config.v1.json" \
+    "$COCALC_BAY_NODE_BIN" -e '
+      const detail = process.env.DETAIL;
+      const status = {
+        level: process.env.LEVEL,
+        generated_at: new Date().toISOString(),
+        bucket: process.env.BUCKET || null,
+        object_key: process.env.KEY,
+      };
+      if (process.env.LEVEL === "ok") Object.assign(status, JSON.parse(detail));
+      else status.error = detail.slice(0, 2000);
+      process.stdout.write(JSON.stringify(status, null, 2) + "\n");
+    ' > "$status_tmp"
+  chmod 0644 "$status_tmp"
+  mv -f "$status_tmp" "$COCALC_BAY_CONFIG_ESCROW_STATUS_FILE"
+  status_tmp=""
+}
+
+fail() {
+  bay_log "config escrow failed: $1"
+  write_status error "$1" || true
+  exit 1
+}
+
+for name in COCALC_BAY_ID COCALC_BAY_PGBACKREST_S3_BUCKET COCALC_BAY_PGBACKREST_S3_ENDPOINT \
+  COCALC_BAY_PGBACKREST_S3_ACCESS_KEY COCALC_BAY_PGBACKREST_S3_SECRET_KEY; do
+  [[ -n "${!name:-}" ]] || fail "missing required environment variable: $name"
+done
+[[ -x "$COCALC_BAY_NODE_BIN" ]] || fail "node is not executable: ${COCALC_BAY_NODE_BIN:-unset}"
+[[ -r "$COCALC_SITE_MASTER_KEY_PATH" ]] || fail "site master key is not readable: $COCALC_SITE_MASTER_KEY_PATH"
+
+files=()
+for name in "${ESCROW_FILES[@]}"; do
+  [[ -f "${COCALC_BAY_CONFIG_DIR}/${name}" ]] && files+=("${COCALC_BAY_CONFIG_DIR}/${name}")
+done
+[[ -f "${COCALC_BAY_CONFIG_DIR}/bay-secrets.env" ]] || fail "bay-secrets.env is missing from ${COCALC_BAY_CONFIG_DIR}"
+
+endpoint="${COCALC_BAY_PGBACKREST_S3_ENDPOINT%/}"
+[[ "$endpoint" == http://* || "$endpoint" == https://* ]] || endpoint="https://${endpoint}"
+base="${endpoint}/${COCALC_BAY_PGBACKREST_S3_BUCKET}/${COCALC_BAY_CONFIG_ESCROW_PREFIX}"
+
+umask 077
+work="$(mktemp -d)"
+escrow="${work}/bay-config.v1.json"
+r2() {
+  # Credentials go to curl on stdin, never on its command line.
+  local quoted="${COCALC_BAY_PGBACKREST_S3_ACCESS_KEY}:${COCALC_BAY_PGBACKREST_S3_SECRET_KEY}"
+  quoted="${quoted//\\/\\\\}"
+  quoted="${quoted//\"/\\\"}"
+  printf 'user = "%s"\n' "$quoted" |
+    "$CURL_BIN" --config - --silent --show-error --fail --retry 3 \
+      --max-time 120 --aws-sigv4 "aws:amz:auto:s3" "$@"
+}
+
+sealed="$("$COCALC_BAY_NODE_BIN" "${SCRIPT_DIR}/bay-config-escrow.mjs" seal \
+  --master-key "$COCALC_SITE_MASTER_KEY_PATH" --bay-id "$COCALC_BAY_ID" \
+  --out "$escrow" "${files[@]}" 2>&1)" || fail "seal: $sealed"
+r2 --upload-file "$escrow" "${base}/bay-config.v1.json" >/dev/null 2>"${work}/err" ||
+  fail "upload: $(head -c 500 "${work}/err")"
+# One copy per day, so a bad seal can never replace the only good one.
+r2 --upload-file "$escrow" "${base}/history/$(date -u +%F).json" >/dev/null 2>"${work}/err" ||
+  fail "upload history copy: $(head -c 500 "${work}/err")"
+r2 --output "${work}/readback.json" "${base}/bay-config.v1.json" 2>"${work}/err" ||
+  fail "read back: $(head -c 500 "${work}/err")"
+verified="$("$COCALC_BAY_NODE_BIN" "${SCRIPT_DIR}/bay-config-escrow.mjs" verify \
+  --master-key "$COCALC_SITE_MASTER_KEY_PATH" --in "${work}/readback.json" "${files[@]}" 2>&1)" ||
+  fail "verify: $verified"
+
+detail="$(SEALED="$sealed" BYTES="$(wc -c < "$escrow")" "$COCALC_BAY_NODE_BIN" -e '
+  const sealed = JSON.parse(process.env.SEALED);
+  process.stdout.write(JSON.stringify({
+    sealed_at: sealed.created_at,
+    file_names: sealed.sealed,
+    bytes: Number(process.env.BYTES),
+    verified: true,
+  }));
+')"
+write_status ok "$detail"
+bay_log "config escrow sealed and verified: ${base}/bay-config.v1.json"

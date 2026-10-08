@@ -2298,6 +2298,30 @@ describe("bay-backup runner", () => {
     );
 
     const { runBayBackupHealthCheck } = await import("./index");
+    // The repository is unrestorable without its sealed configuration.
+    await expect(
+      runBayBackupHealthCheck({ send_alert: false }),
+    ).resolves.toEqual([
+      expect.stringContaining("configuration escrow: status file is missing"),
+    ]);
+    writeFileSync(
+      join(stateDir, "config-escrow-status.json"),
+      JSON.stringify({
+        level: "ok",
+        sealed_at: new Date(Date.now() - 4 * 24 * 60 * 60_000).toISOString(),
+      }),
+    );
+    await expect(
+      runBayBackupHealthCheck({ send_alert: false }),
+    ).resolves.toEqual([
+      expect.stringMatching(
+        /^configuration escrow: status is \d+ minutes old$/,
+      ),
+    ]);
+    writeFileSync(
+      join(stateDir, "config-escrow-status.json"),
+      JSON.stringify({ level: "ok", sealed_at: now }),
+    );
     await expect(
       runBayBackupHealthCheck({ send_alert: false }),
     ).resolves.toEqual([]);
