@@ -7,6 +7,8 @@ import {
   AgentMessageStatus,
   AttachedSteerStatusList,
   describeLastActivity,
+  hasOpenToolWork,
+  QUIET_ACTIVITY_MS,
   reconcileAvailableSubagentEvents,
   resolveActivityDurationLabel,
   resolveLiveRunStartMs,
@@ -123,9 +125,64 @@ describe("describeLastActivity", () => {
       lastActivityAtMs: 1000,
       now: 1000 + STALE_ACTIVITY_MS,
     });
-    expect(stale.label).toBe("2:00 ago");
+    expect(stale.label).toBe("Thinking · 15:00");
     expect(stale.ageMs).toBe(STALE_ACTIVITY_MS);
     expect(stale.stale).toBe(true);
+  });
+
+  it("says what a quiet turn is doing instead of warning", () => {
+    // Eight minutes of thinking before the first step is normal.
+    const thinking = describeLastActivity({
+      generating: true,
+      lastActivityAtMs: 0,
+      now: 8 * 60 * 1000,
+    });
+    expect(thinking).toEqual({
+      label: "Thinking · 8:00",
+      ageMs: 8 * 60 * 1000,
+      stale: false,
+      quiet: "thinking",
+    });
+    expect(
+      describeLastActivity({
+        generating: true,
+        lastActivityAtMs: 0,
+        now: QUIET_ACTIVITY_MS,
+        toolRunning: true,
+      }).label,
+    ).toBe("Running a command · 0:10");
+  });
+});
+
+describe("hasOpenToolWork", () => {
+  const update = (data: object): any => ({
+    type: "event",
+    event: { type: "harness", kind: "update", source: "acp", data },
+  });
+  it("tracks ACP tool calls and terminals until they finish", () => {
+    const started = update({
+      sessionUpdate: "tool_call",
+      toolCallId: "a",
+      status: "in_progress",
+    });
+    expect(hasOpenToolWork([])).toBe(false);
+    expect(hasOpenToolWork([started])).toBe(true);
+    expect(
+      hasOpenToolWork([
+        started,
+        update({
+          sessionUpdate: "tool_call_update",
+          toolCallId: "a",
+          status: "completed",
+        }),
+      ]),
+    ).toBe(false);
+    const terminal = (phase: string): any => ({
+      type: "event",
+      event: { type: "terminal", terminalId: "t", phase },
+    });
+    expect(hasOpenToolWork([terminal("start")])).toBe(true);
+    expect(hasOpenToolWork([terminal("start"), terminal("exit")])).toBe(false);
   });
 });
 
@@ -140,7 +197,7 @@ describe("AgentMessageStatus", () => {
       React.createElement(AgentActivityChip, {
         generating: true,
         durationLabel: "0:10",
-        lastActivityAtMs: 4000,
+        lastActivityAtMs: Date.now() - 1000,
         startedAtMs: 1000,
         date: 1000,
         onOpen,
