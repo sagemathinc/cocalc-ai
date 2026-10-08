@@ -5000,6 +5000,23 @@ def lease_connected():
     finally:
         probe.close()
 
+# Rootless Podman moves itself into a scope of the runtime user's systemd
+# session when it does not own its cgroup, i.e. out of the job's root-owned
+# scope. Without a reachable user bus it stays; with cgroupfs it needs none.
+NO_USER_BUS = "unix:path=/dev/null/cocalc-no-user-bus"
+
+def launcher_config(config):
+    args, env = config["args"], config["env"]
+    if (not isinstance(args, list) or not args or args[0] != "exec" or
+        not all(isinstance(x, str) and "\0" not in x for x in args) or
+        not isinstance(env, dict) or
+        not all(isinstance(k, str) and isinstance(v, str) and
+                re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) and "\0" not in v
+                for k, v in env.items())):
+        raise ValueError("invalid launcher configuration")
+    # Enforced here, not trusted from the caller.
+    return args, dict(env, DBUS_SESSION_BUS_ADDRESS=NO_USER_BUS)
+
 def supervise(project, job, owner, timeout_ms):
     admitted = time.monotonic()
     if not re.fullmatch(UUID, project) or not re.fullmatch(UUID, job):
@@ -5014,15 +5031,7 @@ def supervise(project, job, owner, timeout_ms):
     owner_start = identity(owner)
     with lifecycle_lock():
         generation = active_state(project)["generation"]
-    config = config_from_stdin()
-    args, env = config["args"], config["env"]
-    if (not isinstance(args, list) or not args or args[0] != "exec" or
-        not all(isinstance(x, str) and "\0" not in x for x in args) or
-        not isinstance(env, dict) or
-        not all(isinstance(k, str) and isinstance(v, str) and
-                re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) and "\0" not in v
-                for k, v in env.items())):
-        raise ValueError("invalid launcher configuration")
+    args, env = launcher_config(config_from_stdin())
     parent = POOL / ("project-" + project)
     deadline = admitted + timeout_ms / 1000
     # Kernel-owned directory name is durable reaper metadata, including the

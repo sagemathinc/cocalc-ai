@@ -3430,6 +3430,31 @@ class ProjectIoPolicyHelperTest(unittest.TestCase):
 
 
 class BootstrapWrapperScriptTest(unittest.TestCase):
+    def test_managed_job_helper_forces_no_user_bus(self) -> None:
+        import types
+
+        helper = types.ModuleType("managed_project_job_helper")
+        exec(compile(bootstrap.MANAGED_PROJECT_JOB_HELPER, "helper", "exec"), helper.__dict__)
+        args, env = helper.launcher_config(
+            {
+                "args": ["exec", "-i", "project-x", "true"],
+                "env": {
+                    "PATH": "/usr/bin",
+                    "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1001/bus",
+                },
+            }
+        )
+        self.assertEqual(args, ["exec", "-i", "project-x", "true"])
+        self.assertEqual(
+            env,
+            {
+                "PATH": "/usr/bin",
+                "DBUS_SESSION_BUS_ADDRESS": "unix:path=/dev/null/cocalc-no-user-bus",
+            },
+        )
+        with self.assertRaises(ValueError):
+            helper.launcher_config({"args": ["run"], "env": {}})
+
     def test_standalone_wrapper_uses_explicit_runtime_user(self) -> None:
         cfg = bootstrap.standalone_privileged_wrapper_config("star-user")
         captured: dict[str, str] = {}

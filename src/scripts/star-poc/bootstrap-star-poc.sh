@@ -885,7 +885,6 @@ PROJECT_RUNNER_NAME=0
 COCALC_ALLOW_INSECURE_HTTP_MODE=true
 DEBUG_CONSOLE=no
 DEBUG=cocalc:error:*,cocalc:warn:*
-DEBUG_FILE=${STAR_PROJECT_HOST_DATA}/logs/project-host.log
 COCALC_PROJECT_HOST_LOG=${STAR_PROJECT_HOST_DATA}/log
 ${container_runtime_env}
 EOF
