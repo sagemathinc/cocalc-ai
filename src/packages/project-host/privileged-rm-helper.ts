@@ -68,7 +68,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   return { command, root, targetPath, recursive, force };
 }
 
-export function runPrivilegedRmHelper(argv: string[]): void {
+export async function runPrivilegedRmHelper(argv: string[]): Promise<void> {
   const { command, root, targetPath, recursive, force } = parseArgs(argv);
   const realRoot = fs.realpathSync(root);
   const rootStat = fs.statSync(realRoot);
@@ -79,17 +79,21 @@ export function runPrivilegedRmHelper(argv: string[]): void {
   }
   const { SandboxRoot } = require("@cocalc/openat2") as {
     SandboxRoot: new (root: string) => {
-      rm(path: string, recursive?: boolean, force?: boolean): void;
+      rm(
+        path: string,
+        recursive?: boolean,
+        force?: boolean,
+      ): void | Promise<void>;
       rmdir(path: string): void;
     };
   };
   const sandbox = new SandboxRoot(realRoot);
   if (command === "rm") {
-    sandbox.rm(targetPath, recursive, force);
+    await sandbox.rm(targetPath, recursive, force);
     return;
   }
   if (recursive) {
-    sandbox.rm(targetPath, true, false);
+    await sandbox.rm(targetPath, true, false);
     return;
   }
   sandbox.rmdir(targetPath);

@@ -126,8 +126,12 @@ interface OpenAt2SandboxRoot {
   symlink?(target: string, newPath: string): void;
   chmod(path: string, mode: number): void;
   truncate(path: string, len: number): void;
-  copyFile(src: string, dest: string, mode?: number | null): void;
-  copyFileNoReplace(src: string, dest: string): void;
+  copyFile(
+    src: string,
+    dest: string,
+    mode?: number | null,
+  ): void | Promise<void>;
+  copyFileNoReplace(src: string, dest: string): void | Promise<void>;
   openRead?(path: string): number;
   openWrite?(
     path: string,
@@ -136,7 +140,11 @@ interface OpenAt2SandboxRoot {
     append?: boolean | null,
     mode?: number | null,
   ): number;
-  rm?(path: string, recursive?: boolean | null, force?: boolean | null): void;
+  rm?(
+    path: string,
+    recursive?: boolean | null,
+    force?: boolean | null,
+  ): void | Promise<void>;
   utimes?(path: string, atimeNs: number, mtimeNs: number): void;
 }
 
@@ -658,6 +666,7 @@ export class SandboxedFilesystem {
         20: "ENOTDIR",
         21: "EISDIR",
         22: "EINVAL",
+        38: "ENOSYS",
         39: "ENOTEMPTY",
         40: "ELOOP",
       }[errno];
@@ -666,6 +675,21 @@ export class SandboxedFilesystem {
       }
     }
     return { message };
+  }
+
+  private throwIfOpenAt2Unavailable(
+    sandboxBasePath: string,
+    operation: string,
+    err: unknown,
+  ): void {
+    const { code } = this.parseOpenAt2Error(err);
+    if (code === "ENOSYS") {
+      throw this.makeOpenAt2RequiredError(
+        sandboxBasePath,
+        `native ${operation} reported ${code}`,
+        err,
+      );
+    }
   }
 
   private invalidateOpenAt2Root(basePath: string): void {
@@ -732,12 +756,14 @@ export class SandboxedFilesystem {
         );
       } catch (err) {
         const { code } = this.parseOpenAt2Error(err);
+        this.throwIfOpenAt2Unavailable(
+          openAt2Target.sandboxBasePath,
+          "openWrite",
+          err,
+        );
         if (this.shouldRetryOpenAt2PathError(err) && attempt === 0) {
           this.invalidateOpenAt2Root(openAt2Target.sandboxBasePath);
           continue;
-        }
-        if (code === "ENOSYS" || code === "EINVAL") {
-          return null;
         }
         if (code === "ENOENT" && missingAsEtagMismatch) {
           const e: NodeJS.ErrnoException = new Error(
@@ -820,6 +846,7 @@ export class SandboxedFilesystem {
     root: OpenAt2SandboxRoot;
     srcRel: string;
     destRel: string;
+    sandboxBasePath: string;
   } | null> {
     const [srcResolved, destResolved] = await Promise.all([
       this.resolvePathInSandbox(src),
@@ -843,7 +870,12 @@ export class SandboxedFilesystem {
     if (srcRel == null || destRel == null) {
       return null;
     }
-    return { root, srcRel, destRel };
+    return {
+      root,
+      srcRel,
+      destRel,
+      sandboxBasePath: srcResolved.sandboxBasePath,
+    };
   }
 
   private async getPrivilegedDeleteTarget(
@@ -1596,7 +1628,7 @@ export class SandboxedFilesystem {
     const openAt2Target = await this.getOpenAt2DualPathTarget(src, dest);
     if (openAt2Target != null) {
       try {
-        openAt2Target.root.copyFile(
+        await openAt2Target.root.copyFile(
           openAt2Target.srcRel,
           openAt2Target.destRel,
         );
@@ -1813,7 +1845,7 @@ export class SandboxedFilesystem {
     }
 
     try {
-      target.root.copyFileNoReplace(target.srcRel, target.destRel);
+      await target.root.copyFileNoReplace(target.srcRel, target.destRel);
       return;
     } catch (err) {
       if (this.parseOpenAt2Error(err).code !== "EEXIST") {
@@ -2248,7 +2280,15 @@ export class SandboxedFilesystem {
     ) {
       try {
         openReadFd = openAt2Target.root.openRead(openAt2Target.rel);
-      } catch {
+      } catch (err) {
+        this.throwIfOpenAt2Unavailable(
+          openAt2Target.sandboxBasePath,
+          "openRead",
+          err,
+        );
+        if (this.parseOpenAt2Error(err).code === "EINVAL") {
+          this.throwOpenAt2PathError(path, err);
+        }
         // Preserve Node-compatible read error shape/messages by falling back
         // to the existing verified-handle path implementation.
       }
@@ -2571,6 +2611,11 @@ export class SandboxedFilesystem {
           return;
         } catch (err) {
           const { code } = this.parseOpenAt2Error(err);
+          this.throwIfOpenAt2Unavailable(
+            openAt2Target.sandboxBasePath,
+            "renameNoReplace",
+            err,
+          );
           if (code === "EXDEV") {
             const exdev: NodeJS.ErrnoException =
               err instanceof Error
@@ -2580,9 +2625,7 @@ export class SandboxedFilesystem {
             exdev.path = dest;
             throw exdev;
           }
-          if (code !== "ENOSYS" && code !== "EINVAL") {
-            this.throwOpenAt2PathError(src, err);
-          }
+          this.throwOpenAt2PathError(src, err);
         }
       } else if (overwrite) {
         try {
@@ -2593,6 +2636,11 @@ export class SandboxedFilesystem {
           return;
         } catch (err) {
           const { code } = this.parseOpenAt2Error(err);
+          this.throwIfOpenAt2Unavailable(
+            openAt2Target.sandboxBasePath,
+            "rename",
+            err,
+          );
           if (code === "EXDEV") {
             const exdev: NodeJS.ErrnoException =
               err instanceof Error
@@ -2602,9 +2650,7 @@ export class SandboxedFilesystem {
             exdev.path = dest;
             throw exdev;
           }
-          if (code !== "ENOSYS" && code !== "EINVAL") {
-            this.throwOpenAt2PathError(src, err);
-          }
+          this.throwOpenAt2PathError(src, err);
         }
       }
     }
@@ -2670,14 +2716,16 @@ export class SandboxedFilesystem {
         // Keep non-recursive rm semantics from Node fs (including directory
         // error behavior) while using openat2 hardening for recursive removal.
         try {
-          openAt2Target.root.rm(openAt2Target.rel, recursive, force);
+          await openAt2Target.root.rm(openAt2Target.rel, recursive, force);
           void this.notifySyncFsLocalDelete(inputPath);
           return;
         } catch (err) {
-          const { code } = this.parseOpenAt2Error(err);
-          if (code !== "ENOSYS" && code !== "EINVAL") {
-            this.throwOpenAt2PathError(inputPath, err);
-          }
+          this.throwIfOpenAt2Unavailable(
+            openAt2Target.sandboxBasePath,
+            "rm",
+            err,
+          );
+          this.throwOpenAt2PathError(inputPath, err);
         }
       }
       await this.preflightExistingSource(inputPath, absPath);
@@ -2930,6 +2978,11 @@ export class SandboxedFilesystem {
           openReadFd = openAt2Target.root.openRead(openAt2Target.rel);
         } catch (err) {
           const { code } = this.parseOpenAt2Error(err);
+          this.throwIfOpenAt2Unavailable(
+            openAt2Target.sandboxBasePath,
+            "openRead",
+            err,
+          );
           if (code === "ENOENT") {
             const e: NodeJS.ErrnoException = new Error(
               "Mismatched base version for patch write",
@@ -2938,9 +2991,7 @@ export class SandboxedFilesystem {
             e.path = p;
             throw e;
           }
-          if (code !== "ENOSYS" && code !== "EINVAL") {
-            this.throwOpenAt2PathError(path, err);
-          }
+          this.throwOpenAt2PathError(path, err);
         }
       }
       if (openReadFd != null) {

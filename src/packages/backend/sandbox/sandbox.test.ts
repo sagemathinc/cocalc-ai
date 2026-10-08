@@ -1285,6 +1285,105 @@ describeIfLinux("openat2 motivation regressions", () => {
     expect(await fs.exists("moved.txt")).toBe(false);
   });
 
+  it.each(["ENOSYS", "EINVAL"])(
+    "writeFile should fail closed when openat2 openWrite reports %s",
+    async (code) => {
+      const sandboxRoot = join(
+        tempDir,
+        `test-openat2-write-unavailable-${code.toLowerCase()}`,
+      );
+      await mkdir(sandboxRoot);
+      const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+      const openAt2Root = (fs as any).getOpenAt2Root?.();
+      if (openAt2Root == null || typeof openAt2Root.openWrite !== "function") {
+        return;
+      }
+
+      openAt2Root.openWrite = () => {
+        throw new Error(`${code}: simulated openat2 unavailability`);
+      };
+
+      const write = expect(fs.writeFile("new.txt", "unsafe fallback")).rejects;
+      if (code === "ENOSYS") {
+        await write.toThrow("openat2 is required in safe mode");
+      } else {
+        await write.toMatchObject({ code: "EINVAL" });
+      }
+      await expect(stat(join(sandboxRoot, "new.txt"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
+
+  it("readFile should fail closed when openat2 openRead is unavailable", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-read-unavailable");
+    await mkdir(sandboxRoot);
+    await writeFile(join(sandboxRoot, "inside.txt"), "inside");
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    const openAt2Root = (fs as any).getOpenAt2Root?.();
+    if (openAt2Root == null || typeof openAt2Root.openRead !== "function") {
+      return;
+    }
+
+    openAt2Root.openRead = () => {
+      throw new Error("ENOSYS: simulated openat2 unavailability");
+    };
+
+    await expect(fs.readFile("inside.txt", "utf8")).rejects.toThrow(
+      "openat2 is required in safe mode",
+    );
+  });
+
+  it("move should fail closed when openat2 renameNoReplace is unavailable", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-move-unavailable");
+    await mkdir(sandboxRoot);
+    await writeFile(join(sandboxRoot, "inside.txt"), "inside");
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    const openAt2Root = (fs as any).getOpenAt2Root?.();
+    if (
+      openAt2Root == null ||
+      typeof openAt2Root.renameNoReplace !== "function"
+    ) {
+      return;
+    }
+
+    openAt2Root.renameNoReplace = () => {
+      throw new Error("EINVAL: simulated openat2 unavailability");
+    };
+
+    await expect(fs.move("inside.txt", "moved.txt")).rejects.toMatchObject({
+      code: "EINVAL",
+    });
+    expect(await readFile(join(sandboxRoot, "inside.txt"), "utf8")).toBe(
+      "inside",
+    );
+    await expect(stat(join(sandboxRoot, "moved.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("rm should fail closed when openat2 recursive removal is unavailable", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-rm-unavailable");
+    await mkdir(join(sandboxRoot, "tree"), { recursive: true });
+    await writeFile(join(sandboxRoot, "tree", "inside.txt"), "inside");
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    const openAt2Root = (fs as any).getOpenAt2Root?.();
+    if (openAt2Root == null || typeof openAt2Root.rm !== "function") {
+      return;
+    }
+
+    openAt2Root.rm = async () => {
+      throw new Error("ENOSYS: simulated openat2 unavailability");
+    };
+
+    await expect(fs.rm("tree", { recursive: true })).rejects.toThrow(
+      "openat2 is required in safe mode",
+    );
+    expect(
+      await readFile(join(sandboxRoot, "tree", "inside.txt"), "utf8"),
+    ).toBe("inside");
+  });
+
   it("rm recursive should not mutate outside sandbox when target is swapped to symlink", async () => {
     const sandboxRoot = join(tempDir, "test-openat2-rm-race");
     const outsideRoot = join(tempDir, "test-openat2-rm-race-outside");
