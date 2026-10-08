@@ -87,6 +87,29 @@ persist_state() {
   # Caddy's ACME account and TLS certificates; without this every upgrade
   # would request new certificates and could hit Let's Encrypt rate limits.
   persist_dir /var/lib/caddy "${STATE_DIR}/caddy" caddy:caddy
+  persist_podman_storage
+}
+
+# The Star user's Podman storage must not be on the container's own overlay
+# filesystem: the kernel cannot stack another overlay on it, which e.g. the
+# Claude subscription sandbox (--rootfs ...:O) needs. In the volume it also
+# survives upgrades. The image's storage is disposable and is not copied (the
+# installer reloads what it needs); never chown -R it, since Podman maps
+# subordinate ids inside.
+persist_podman_storage() {
+  local user="${COCALC_STAR_USER:-cocalc-star}"
+  local home
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [ -n "$home" ] || return 0
+  local path="${home}/.local/share/containers"
+  local target="${STATE_DIR}/containers"
+  install -d -o "$user" -g "$user" -m 0700 "$target"
+  if [ -L "$path" ] && [ "$(readlink "$path")" = "$target" ]; then
+    return 0
+  fi
+  install -d -o "$user" -g "$user" "${home}/.local" "${home}/.local/share"
+  rm -rf "$path"
+  ln -s "$target" "$path"
 }
 
 load_apparmor_profile() {

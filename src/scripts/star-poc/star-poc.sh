@@ -275,6 +275,9 @@ doctor() {
     else
       rootfs_path="$prepared_rootfs"
       check "rootless podman can run cached rootfs" as_star_user podman run --rm --runtime "$runtime_crun" --userns=keep-id:uid=2001,gid=2001 --user 0:0 --rootfs "$rootfs_path" /bin/true
+      # The Claude subscription sandbox runs a read-only cached rootfs with an
+      # overlay; this fails when Podman's storage is itself on overlayfs.
+      check "rootless podman can overlay a cached rootfs" as_star_user podman run --rm --runtime "$runtime_crun" --read-only --userns=keep-id --rootfs "${rootfs_path}:O" /bin/true
       # Base images without sudo (e.g. buildpack-deps) have nothing to check.
       if [ -e "${rootfs_path}/etc/sudo.conf" ]; then
         check "cached rootfs preserves root-owned sudo files" as_star_user podman run --rm --runtime "$runtime_crun" --userns=keep-id:uid=2001,gid=2001 --user 0:0 --rootfs "$rootfs_path" /bin/bash -lc 'test "$(stat -c %u /etc/sudo.conf)" = 0 && test "$(stat -c %u /etc/sudoers)" = 0 && test "$(stat -c %u /etc/sudoers.d)" = 0 && test -z "$(find /etc/sudoers.d -mindepth 1 -maxdepth 1 ! -uid 0 -print -quit)" && test "$(stat -Lc %u /usr/bin/sudo)" = 0 && test -u /usr/bin/sudo'
