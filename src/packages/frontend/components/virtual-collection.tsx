@@ -46,8 +46,12 @@ export function VirtualCollectionItems<T>({
 }) {
   const props = {
     data: items,
-    computeItemKey: (_index: number, item: T) => itemId(item),
-    itemContent: (_index: number, item: T) => renderItem(item),
+    // react-virtuoso can call these with an undefined item while the data
+    // shrinks; key such a row by index instead of crashing in itemId.
+    computeItemKey: (index: number, item: T | undefined) =>
+      item == null ? `index-${index}` : itemId(item),
+    itemContent: (_index: number, item: T | undefined) =>
+      item == null ? null : renderItem(item),
     customScrollParent: scrollParent,
     useWindowScroll: !scrollParent,
     increaseViewportBy: 300,

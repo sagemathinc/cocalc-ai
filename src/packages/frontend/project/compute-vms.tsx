@@ -138,6 +138,7 @@ import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { CloudServerOutlined, EnvironmentOutlined } from "@ant-design/icons";
 import { VM_PREVIEW_CATALOG } from "./compute-vms-preview";
+import { ignoreValidationErrors } from "@cocalc/frontend/misc/ignore-validation-errors";
 
 const { Paragraph, Text, Title } = Typography;
 const COPYABLE_PROPS = {
@@ -763,7 +764,10 @@ export function VmCreateModal({
       return;
     void form
       .validateFields()
-      .then((values) => setConfirmedDraft(withResolvedSshKey(values)));
+      .then(
+        (values) => setConfirmedDraft(withResolvedSshKey(values)),
+        ignoreValidationErrors,
+      );
   };
 
   return (
@@ -788,7 +792,9 @@ export function VmCreateModal({
               loading={saving}
               disabled={creationBlocked || saving || !price}
               onClick={() =>
-                void form.validateFields().then((values) => onCreate(values))
+                void form
+                  .validateFields()
+                  .then((values) => onCreate(values), ignoreValidationErrors)
               }
             >
               Apply recommendation
@@ -2118,7 +2124,9 @@ export function VolumeCreateModal({
         disabled: !diskEstimate || fundingUnavailable || !!fundingProblem,
       }}
       onCancel={onCancel}
-      onOk={() => void form.validateFields().then(onCreate)}
+      onOk={() =>
+        void form.validateFields().then(onCreate, ignoreValidationErrors)
+      }
       width={650}
     >
       <Form<VolumeDraft>
@@ -2363,7 +2371,9 @@ export function VolumeResizeModal({
           (!!volumeCourseSource(volume) && sponsoredHomeVolumes !== true),
       }}
       onCancel={onCancel}
-      onOk={() => void form.validateFields().then(onResize)}
+      onOk={() =>
+        void form.validateFields().then(onResize, ignoreValidationErrors)
+      }
     >
       {volume && <VolumeFundingStatus volume={volume} />}
       {volume &&
@@ -2472,7 +2482,9 @@ function VmTtlModal({
       okText="Save deadline"
       confirmLoading={saving}
       onCancel={onCancel}
-      onOk={() => void form.validateFields().then(onSave)}
+      onOk={() =>
+        void form.validateFields().then(onSave, ignoreValidationErrors)
+      }
     >
       <Alert
         showIcon
