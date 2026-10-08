@@ -134,8 +134,10 @@ my agents** to keep it in their own Agents list.
 Participants work in the same conversation and project. Sharing does not make
 an independent copy of the files or software environment. Inviting someone who
 is not already a collaborator also invites them to its project. Each person can
-start turns and send guidance. Human-started turns are billed to the person who
-starts them.
+start turns and send guidance. A turn uses the initiating participant's payment
+selection: this may draw on a connected subscription, an account API key, a
+shared project key, or available CoCalc membership funding. Check the selected
+funding source before sending.
 
 ## Choose payment methods across your agents
 
@@ -144,6 +146,9 @@ You can leave a provider unchanged, select a connected credential, or have the
 selected agents follow your account default. **Make this my default** changes
 that provider's default as well; other agents following the default use it too.
 Codex and Claude have separate choices.
+
+For Claude, **Project secret (ANTHROPIC_API_KEY)** uses a configured project
+key. Agents with project-managed credentials are not changed by this control.
 
 These choices belong to your account and are stored on the server, so a browser
 reload does not discard them. For shared agents, another participant's choice
