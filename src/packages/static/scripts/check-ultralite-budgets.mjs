@@ -309,7 +309,8 @@ const surfaces = [
     // it measures 507.3 KiB, 509.1 KiB with the 2026-10-07 release (#947),
     // 509.2 KiB with throttled conat busy warnings (#960), and about 509.8 KiB
     // with the agent connectors (#899: their site settings, grant table schema
-    // and hub API auth entries, which this route loads). The limit is a guard
+    // and hub API auth entries, which this route loads), plus the durable
+    // project-feed outbox (#948). The limit is a guard
     // against regressions, not a hard constraint: raised to 515 KiB (William,
     // 2026-10-08) pending a size optimization pass.
     max: 515 * KiB,
