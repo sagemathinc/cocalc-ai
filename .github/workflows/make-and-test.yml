@@ -34,19 +34,19 @@ jobs:
       jest_cache_key: ${{ steps.jest-cache-key.outputs.key }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # A PR merge commit and its parents suffice for base...HEAD planning.
           fetch-depth: ${{ github.event_name == 'pull_request' && '2' || '1' }}
 
       - name: install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 11.5.2
           run_install: false
 
       - name: Node.js 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "24"
 
@@ -76,16 +76,16 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 11.5.2
           run_install: false
 
       - name: Node.js 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "24"
           cache: pnpm
@@ -115,7 +115,7 @@ jobs:
             "${test_tools[@]}"
 
       - name: Upload workspace build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: workspace-build
           path: src/workspace-build.tar
@@ -128,16 +128,16 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 11.5.2
           run_install: false
 
       - name: Node.js 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "24"
           cache: pnpm
@@ -174,16 +174,16 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 11.5.2
           run_install: false
 
       - name: Node.js 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "24"
           cache: pnpm
@@ -203,7 +203,7 @@ jobs:
         run: pnpm -C src/packages install --frozen-lockfile
 
       - name: Download workspace build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: workspace-build
           path: src
@@ -212,7 +212,7 @@ jobs:
         run: tar --extract --file src/workspace-build.tar --directory src
 
       - name: Cache Jest transforms
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: src/.cache/jest
           # Jest hashes each source file itself. Reuse one immutable baseline
@@ -225,7 +225,7 @@ jobs:
 
       - name: Cache pip
         if: matrix.lane == 'rest'
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/pip
           key: pip-${{ runner.os }}-py3-${{ hashFiles('src/requirements.txt') }}
@@ -264,7 +264,7 @@ jobs:
 
       - name: Upload test attempts and timings
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: test-reports-${{ matrix.lane }}
           path: src/.cache/test-reports
@@ -282,16 +282,16 @@ jobs:
     timeout-minutes: 25
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 11.5.2
           run_install: false
 
       - name: Node.js 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "24"
           cache: pnpm
@@ -309,7 +309,7 @@ jobs:
         run: pnpm -C src/packages install --frozen-lockfile
 
       - name: Download workspace build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: workspace-build
           path: src
@@ -327,7 +327,7 @@ jobs:
 
       - name: Upload cluster logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: multibay-logs
           path: |
