@@ -548,11 +548,12 @@ describe("projects.copyProjectFiles", () => {
 
   it("scales the apply deadline with the destinations on a host", async () => {
     const { copyApplyTimeout } = await import("./copy");
-    expect(copyApplyTimeout(1, 30 * 60_000)).toBe(6 * 60_000);
-    expect(copyApplyTimeout(10, 30 * 60_000)).toBe(15 * 60_000);
+    // The base covers the host's validation and extraction (5 min each).
+    expect(copyApplyTimeout(1, 30 * 60_000)).toBe(11 * 60_000);
+    expect(copyApplyTimeout(10, 30 * 60_000)).toBe(20 * 60_000);
     // never longer than the operation's own deadline
     expect(copyApplyTimeout(50, 30 * 60_000)).toBe(30 * 60_000);
-    expect(copyApplyTimeout(50, 0)).toBe(55 * 60_000);
+    expect(copyApplyTimeout(50, 0)).toBe(60 * 60_000);
   });
 
   it("falls back to the queued backup path when the bounded archive is too large", async () => {

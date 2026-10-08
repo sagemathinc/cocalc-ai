@@ -86,8 +86,11 @@ const COPY_STEP_DEFAULT_TIMEOUT_MS = {
   probe: 30_000,
   flush: 10 * 60_000,
   archive: 10 * 60_000,
-  // Base for one host's apply call; see copyApplyTimeout.
-  apply: 5 * 60_000,
+  // Base for one host's apply call; see copyApplyTimeout. It covers the
+  // host's two one-time phases before any destination (archive listing
+  // validation, then extraction), each bounded by the project-host's
+  // PATH_COPY_ARCHIVE_TIMEOUT_MS (5 minutes).
+  apply: 10 * 60_000,
 } as const;
 const COPY_APPLY_PER_DEST_DEFAULT_TIMEOUT_MS = 60_000;
 
