@@ -539,7 +539,7 @@ describe("projects.copyProjectFiles", () => {
     expect(timeouts).toEqual(
       expect.arrayContaining([
         ["dest", 30_000],
-        ["dest", 6 * 60_000],
+        ["dest", 11 * 60_000],
         ["src", 10 * 60_000],
       ]),
     );
