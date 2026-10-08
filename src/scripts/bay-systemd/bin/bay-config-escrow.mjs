@@ -4,24 +4,32 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-// Escrow of a bay's /etc/cocalc configuration, sealed with the site master key.
+// Escrow of a bay's configuration and secrets, sealed with the site master key.
 //
-// The bay's backups are useless without bay-secrets.env: it holds the
-// pgBackRest repository cipher passphrase, the backup R2 credentials, the
-// SQLite repository password, and the session/cluster secrets. Only the site
-// master key is kept off the bay (in 1Password). This file seals the bay
-// configuration with a key derived from that master key, so the copy kept next
-// to the backups in R2 is all a restore needs besides the master key.
+// A bay's backups are useless without its configuration: /etc/cocalc/
+// bay-secrets.env holds the pgBackRest cipher passphrase, the backup R2
+// credentials and the SQLite repository password, and the bay secrets
+// directory holds the project-host auth key pair, the project backup shared
+// secret, the Conat password and the Cloudflare tunnel credentials. Only the
+// site master key is kept off the bay (in 1Password). This file seals the rest
+// with a key derived from that master key, so the copy kept next to the
+// backups in R2 is all a restore needs besides the master key.
 //
 // Built-ins only: it must run from a plain repository checkout on a fresh
 // machine, with no install step. R2 transfers are done by the caller
 // (bay-config-escrow-run, or curl --aws-sigv4 during a restore).
 //
+// Each included file belongs to a named root, e.g. etc-cocalc (/etc/cocalc)
+// or bay-secrets (the bay SECRETS directory), and is stored by its path
+// relative to that root.
+//
 // Usage:
-//   bay-config-escrow.mjs seal --master-key FILE --bay-id ID --out ESCROW FILE...
-//   bay-config-escrow.mjs open --master-key FILE --in ESCROW --out-dir DIR [--force]
-//   bay-config-escrow.mjs verify --master-key FILE --in ESCROW FILE...
-//   bay-config-escrow.mjs info --in ESCROW
+//   seal   --master-key FILE --bay-id ID --out ESCROW --include ROOT=PATH...
+//          [--exclude GLOB...]   (PATH is a file or a directory tree)
+//   verify --master-key FILE --in ESCROW --include ROOT=PATH... [--exclude GLOB...]
+//   open   --master-key FILE --in ESCROW (--out-dir DIR | --map ROOT=DIR...)
+//          [--force] [--chown]
+//   info   --in ESCROW
 
 import {
   createCipheriv,
@@ -33,16 +41,19 @@ import {
 } from "node:crypto";
 import {
   chmodSync,
+  chownSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   renameSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
-import { hostname } from "node:os";
+import { execFileSync } from "node:child_process";
+import { hostname, userInfo } from "node:os";
 import { pathToFileURL } from "node:url";
 
 export const ESCROW_KIND = "cocalc-bay-config-escrow";
@@ -51,7 +62,9 @@ export const ESCROW_VERSION = 1;
 // @cocalc/util/master-key-lifecycle.
 export const ESCROW_PURPOSE = "bay-config-escrow:v1";
 const MAX_FILE_BYTES = 1024 * 1024;
-const FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const MAX_FILES = 2000;
+const ROOT_NAME = /^[a-z][a-z0-9-]{0,31}$/;
+const PATH_PART = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,254}$/;
 
 export function parseMasterKey(contents) {
   const key = Buffer.from(`${contents}`.trim(), "base64");
@@ -96,6 +109,90 @@ function header(envelope) {
   );
 }
 
+/** A safe relative path: no absolute paths, "..", or empty components. */
+export function checkRelativePath(path) {
+  const parts = `${path}`.split("/");
+  if (parts.length > 16 || parts.some((part) => !PATH_PART.test(part))) {
+    throw new Error(`invalid escrow path: ${JSON.stringify(path)}`);
+  }
+  return parts.join("/");
+}
+
+function checkRoot(root) {
+  if (!ROOT_NAME.test(`${root}`)) {
+    throw new Error(`invalid escrow root: ${JSON.stringify(root)}`);
+  }
+  return root;
+}
+
+function globToRegExp(glob) {
+  const escaped = glob
+    .split("*")
+    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+    .join("[^/]*");
+  return new RegExp(`^${escaped}$`);
+}
+
+function ownerName(uid) {
+  try {
+    return execFileSync("id", ["-nu", String(uid)], {
+      encoding: "utf8",
+    }).trim();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Regular files under each include, by root and relative path. Symbolic links
+ * and other special files are refused rather than followed.
+ */
+export function collectFiles(includes, excludes = []) {
+  const patterns = excludes.map(globToRegExp);
+  const owners = new Map();
+  const files = [];
+  const add = (root, path, full, stat) => {
+    if (patterns.some((pattern) => pattern.test(path))) return;
+    if (!stat.isFile()) {
+      throw new Error(`refusing to escrow a non-regular file: ${full}`);
+    }
+    if (stat.size > MAX_FILE_BYTES) {
+      throw new Error(`escrow file too large (${stat.size} bytes): ${full}`);
+    }
+    if (!owners.has(stat.uid)) owners.set(stat.uid, ownerName(stat.uid));
+    files.push({
+      root,
+      path: checkRelativePath(path),
+      mode: stat.mode & 0o777,
+      owner: owners.get(stat.uid),
+      content: readFileSync(full),
+    });
+  };
+  const walk = (root, dir, prefix) => {
+    for (const name of readdirSync(dir).sort()) {
+      const full = join(dir, name);
+      const path = prefix ? `${prefix}/${name}` : name;
+      const stat = lstatSync(full);
+      if (stat.isDirectory()) walk(root, full, path);
+      else add(root, path, full, stat);
+    }
+  };
+  for (const { root, path } of includes) {
+    checkRoot(root);
+    const stat = lstatSync(path);
+    if (stat.isDirectory()) walk(root, path, "");
+    else add(root, basename(path), path, stat);
+  }
+  if (files.length > MAX_FILES) throw new Error("too many files to escrow");
+  const seen = new Set();
+  for (const { root, path } of files) {
+    const key = `${root}/${path}`;
+    if (seen.has(key)) throw new Error(`duplicate escrow path: ${key}`);
+    seen.add(key);
+  }
+  return files;
+}
+
 export function seal({
   masterKey,
   bayId,
@@ -117,18 +214,14 @@ export function seal({
     host,
   };
   const payload = {
-    files: files.map(({ name, mode, content }) => {
-      if (!FILE_NAME.test(name))
-        throw new Error(`invalid escrow file name: ${name}`);
-      if (content.length > MAX_FILE_BYTES)
-        throw new Error(`escrow file too large: ${name}`);
-      return {
-        name,
-        mode: mode & 0o777,
-        sha256: createHash("sha256").update(content).digest("hex"),
-        content: content.toString("base64"),
-      };
-    }),
+    files: files.map(({ root, path, mode, owner, content }) => ({
+      root: checkRoot(root),
+      path: checkRelativePath(path),
+      mode: mode & 0o777,
+      owner: owner ?? null,
+      sha256: createHash("sha256").update(content).digest("hex"),
+      content: content.toString("base64"),
+    })),
   };
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", escrowKey, iv);
@@ -139,8 +232,8 @@ export function seal({
   ]);
   return {
     ...envelope,
-    // Names only, for operators; contents and hashes stay encrypted.
-    file_names: payload.files.map(({ name }) => name),
+    // Paths only, for operators; contents and hashes stay encrypted.
+    file_names: payload.files.map(({ root, path }) => `${root}/${path}`),
     iv: iv.toString("base64"),
     tag: cipher.getAuthTag().toString("base64"),
     ciphertext: ciphertext.toString("base64"),
@@ -176,35 +269,46 @@ export function open({ masterKey, envelope }) {
     );
   }
   const { files } = JSON.parse(plaintext.toString("utf8"));
-  return files.map(({ name, mode, sha256, content }) => {
-    if (!FILE_NAME.test(name))
-      throw new Error(`invalid escrow file name: ${name}`);
+  return files.map(({ root, path, mode, owner, sha256, content }) => {
     const data = Buffer.from(content, "base64");
     if (createHash("sha256").update(data).digest("hex") !== sha256) {
-      throw new Error(`escrow file ${name} failed its checksum`);
+      throw new Error(`escrow file ${root}/${path} failed its checksum`);
     }
-    return { name, mode, content: data };
+    return {
+      root: checkRoot(root),
+      path: checkRelativePath(path),
+      mode: mode & 0o777,
+      owner: owner ?? null,
+      content: data,
+    };
   });
 }
 
-function readFiles(paths) {
-  return paths.map((path) => ({
-    name: basename(path),
-    mode: statSync(path).mode,
-    content: readFileSync(path),
-  }));
-}
-
 function parseArgs(argv) {
-  const options = { files: [] };
+  const options = { include: [], exclude: [], map: [] };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === "--force") options.force = true;
-    else if (arg.startsWith("--"))
+    if (arg === "--force" || arg === "--chown") options[arg.slice(2)] = true;
+    else if (arg === "--include" || arg === "--exclude" || arg === "--map") {
+      options[arg.slice(2)].push(argv[++i]);
+    } else if (arg.startsWith("--")) {
       options[arg.slice(2).replace(/-/g, "_")] = argv[++i];
-    else options.files.push(arg);
+    } else {
+      throw new Error(`unexpected argument: ${arg}`);
+    }
   }
   return options;
+}
+
+function parsePairs(values, what) {
+  return values.map((value) => {
+    const index = `${value}`.indexOf("=");
+    if (index <= 0) throw new Error(`expected ${what} as ROOT=PATH: ${value}`);
+    return {
+      root: checkRoot(value.slice(0, index)),
+      path: value.slice(index + 1),
+    };
+  });
 }
 
 function writeAtomic(path, data, mode) {
@@ -212,6 +316,16 @@ function writeAtomic(path, data, mode) {
   writeFileSync(tmp, data, { mode });
   chmodSync(tmp, mode);
   renameSync(tmp, path);
+}
+
+function uidGid(user) {
+  try {
+    const uid = Number(execFileSync("id", ["-u", user], { encoding: "utf8" }));
+    const gid = Number(execFileSync("id", ["-g", user], { encoding: "utf8" }));
+    return { uid, gid };
+  } catch {
+    return undefined;
+  }
 }
 
 function main() {
@@ -222,16 +336,20 @@ function main() {
     if (!options.master_key) throw new Error("--master-key FILE is required");
     return parseMasterKey(readFileSync(options.master_key, "utf8"));
   };
+  const live = () => {
+    if (options.include.length === 0)
+      throw new Error("at least one --include ROOT=PATH is required");
+    return collectFiles(
+      parsePairs(options.include, "--include"),
+      options.exclude,
+    );
+  };
   if (command === "seal") {
-    if (!options.out || options.files.length === 0) {
-      throw new Error(
-        "usage: seal --master-key FILE --bay-id ID --out ESCROW FILE...",
-      );
-    }
+    if (!options.out) throw new Error("seal requires --out ESCROW");
     const envelope = seal({
       masterKey: masterKey(),
       bayId: options.bay_id,
-      files: readFiles(options.files),
+      files: live(),
     });
     writeAtomic(options.out, JSON.stringify(envelope, null, 2) + "\n", 0o600);
     console.log(
@@ -240,53 +358,73 @@ function main() {
         created_at: envelope.created_at,
       }),
     );
-  } else if (command === "open") {
-    if (!options.in || !options.out_dir) {
-      throw new Error(
-        "usage: open --master-key FILE --in ESCROW --out-dir DIR [--force]",
-      );
-    }
-    const files = open({ masterKey: masterKey(), envelope: readEnvelope() });
-    mkdirSync(options.out_dir, { recursive: true, mode: 0o755 });
-    for (const { name } of files) {
-      if (!options.force && existsSync(join(options.out_dir, name))) {
-        throw new Error(
-          `refusing to overwrite ${join(options.out_dir, name)}; pass --force`,
-        );
-      }
-    }
-    for (const { name, mode, content } of files) {
-      writeAtomic(join(options.out_dir, name), content, mode || 0o600);
-    }
-    console.log(
-      JSON.stringify({
-        restored: files.map(({ name }) => name),
-        out_dir: options.out_dir,
-      }),
-    );
   } else if (command === "verify") {
     // The sealed copy must decrypt to exactly the live files.
+    const key = ({ root, path }) => `${root}/${path}`;
     const sealed = new Map(
       open({ masterKey: masterKey(), envelope: readEnvelope() }).map((file) => [
-        file.name,
+        key(file),
         file,
       ]),
     );
-    const live = readFiles(options.files);
+    const current = live();
     const problems = [];
-    for (const file of live) {
-      const copy = sealed.get(file.name);
-      if (!copy) problems.push(`${file.name}: missing from escrow`);
-      else if (!copy.content.equals(file.content))
-        problems.push(`${file.name}: differs`);
+    for (const file of current) {
+      const copy = sealed.get(key(file));
+      if (!copy) problems.push(`${key(file)}: missing from escrow`);
+      else if (!copy.content.equals(file.content) || copy.mode !== file.mode) {
+        problems.push(`${key(file)}: differs`);
+      }
     }
     for (const name of sealed.keys()) {
-      if (!live.some((file) => file.name === name))
+      if (!current.some((file) => key(file) === name))
         problems.push(`${name}: not a live file`);
     }
     if (problems.length)
       throw new Error(`escrow does not match: ${problems.join("; ")}`);
     console.log(JSON.stringify({ verified: [...sealed.keys()] }));
+  } else if (command === "open") {
+    const files = open({ masterKey: masterKey(), envelope: readEnvelope() });
+    const mapped = new Map(
+      parsePairs(options.map, "--map").map(({ root, path }) => [root, path]),
+    );
+    if (!options.out_dir && mapped.size === 0) {
+      throw new Error("open requires --out-dir DIR or --map ROOT=DIR");
+    }
+    const baseOf = (file) => {
+      const base =
+        mapped.get(file.root) ??
+        (options.out_dir ? join(options.out_dir, file.root) : null);
+      if (!base)
+        throw new Error(
+          `no destination for root ${file.root}; add --map ${file.root}=DIR`,
+        );
+      return base;
+    };
+    const destination = (file) => join(baseOf(file), ...file.path.split("/"));
+    for (const file of files) {
+      if (!options.force && existsSync(destination(file))) {
+        throw new Error(
+          `refusing to overwrite ${destination(file)}; pass --force`,
+        );
+      }
+    }
+    const canChown = options.chown && userInfo().uid === 0;
+    for (const file of files) {
+      const target = destination(file);
+      mkdirSync(join(target, ".."), { recursive: true, mode: 0o700 });
+      writeAtomic(target, file.content, file.mode || 0o600);
+      const ids = canChown && file.owner ? uidGid(file.owner) : undefined;
+      if (ids) {
+        // The file and the directories it created below its root.
+        chownSync(target, ids.uid, ids.gid);
+        const parts = file.path.split("/").slice(0, -1);
+        for (let i = 1; i <= parts.length; i++) {
+          chownSync(join(baseOf(file), ...parts.slice(0, i)), ids.uid, ids.gid);
+        }
+      }
+    }
+    console.log(JSON.stringify({ restored: files.map(destination) }, null, 2));
   } else if (command === "info") {
     const { kind, version, bay_id, created_at, host, file_names } =
       readEnvelope();
@@ -299,7 +437,7 @@ function main() {
     );
   } else {
     throw new Error(
-      "usage: bay-config-escrow.mjs seal|open|verify|info ... (see the file header)",
+      "usage: bay-config-escrow.mjs seal|verify|open|info ... (see the file header)",
     );
   }
 }

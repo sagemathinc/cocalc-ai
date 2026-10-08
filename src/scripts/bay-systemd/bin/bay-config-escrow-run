@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Seal this bay's /etc/cocalc configuration with the site master key and keep
+# Seal this bay's configuration and secrets with the site master key and keep
 # the copy in R2 next to the backups, then read it back and prove it decrypts
 # to the live files. See bay-config-escrow.mjs and RESTORE.md.
 set -euo pipefail
@@ -13,8 +13,13 @@ source "${SCRIPT_DIR}/lib.sh"
 : "${COCALC_BAY_CONFIG_ESCROW_PREFIX:=cocalc-escrow/${COCALC_BAY_ID}}"
 : "${COCALC_BAY_NODE_BIN:=$(command -v node || true)}"
 : "${CURL_BIN:=curl}"
-# The configuration a replacement bay needs. Never the master key itself.
+: "${COCALC_BAY_SECRETS_DIR:=${SECRETS:-${COCALC_BAY_ROOT}/secrets}}"
+# What a replacement bay needs: its /etc/cocalc configuration and its secrets
+# directory (project-host auth keys, backup shared secret, Conat password,
+# tunnel credentials, ...). Never the master key itself, and not the
+# re-downloadable cloudflared binary or runtime pid files.
 ESCROW_FILES=(bay.env bay-local.env bay-overlay.env bay-topology.env bay-workers.env bay-secrets.env)
+ESCROW_EXCLUDES=(--exclude 'launchpad-cloudflare/bin/*' --exclude '*.pid' --exclude '*/*.pid')
 
 status_tmp=""
 work=""
@@ -61,11 +66,13 @@ done
 [[ -x "$COCALC_BAY_NODE_BIN" ]] || fail "node is not executable: ${COCALC_BAY_NODE_BIN:-unset}"
 [[ -r "$COCALC_SITE_MASTER_KEY_PATH" ]] || fail "site master key is not readable: $COCALC_SITE_MASTER_KEY_PATH"
 
-files=()
+includes=()
 for name in "${ESCROW_FILES[@]}"; do
-  [[ -f "${COCALC_BAY_CONFIG_DIR}/${name}" ]] && files+=("${COCALC_BAY_CONFIG_DIR}/${name}")
+  [[ -f "${COCALC_BAY_CONFIG_DIR}/${name}" ]] && includes+=(--include "etc-cocalc=${COCALC_BAY_CONFIG_DIR}/${name}")
 done
 [[ -f "${COCALC_BAY_CONFIG_DIR}/bay-secrets.env" ]] || fail "bay-secrets.env is missing from ${COCALC_BAY_CONFIG_DIR}"
+[[ -d "$COCALC_BAY_SECRETS_DIR" ]] || fail "bay secrets directory is missing: ${COCALC_BAY_SECRETS_DIR}"
+includes+=(--include "bay-secrets=${COCALC_BAY_SECRETS_DIR}" "${ESCROW_EXCLUDES[@]}")
 
 endpoint="${COCALC_BAY_PGBACKREST_S3_ENDPOINT%/}"
 [[ "$endpoint" == http://* || "$endpoint" == https://* ]] || endpoint="https://${endpoint}"
@@ -86,7 +93,7 @@ r2() {
 
 sealed="$("$COCALC_BAY_NODE_BIN" "${SCRIPT_DIR}/bay-config-escrow.mjs" seal \
   --master-key "$COCALC_SITE_MASTER_KEY_PATH" --bay-id "$COCALC_BAY_ID" \
-  --out "$escrow" "${files[@]}" 2>&1)" || fail "seal: $sealed"
+  --out "$escrow" "${includes[@]}" 2>&1)" || fail "seal: $sealed"
 r2 --upload-file "$escrow" "${base}/bay-config.v1.json" >/dev/null 2>"${work}/err" ||
   fail "upload: $(head -c 500 "${work}/err")"
 # One copy per day, so a bad seal can never replace the only good one.
@@ -95,7 +102,7 @@ r2 --upload-file "$escrow" "${base}/history/$(date -u +%F).json" >/dev/null 2>"$
 r2 --output "${work}/readback.json" "${base}/bay-config.v1.json" 2>"${work}/err" ||
   fail "read back: $(head -c 500 "${work}/err")"
 verified="$("$COCALC_BAY_NODE_BIN" "${SCRIPT_DIR}/bay-config-escrow.mjs" verify \
-  --master-key "$COCALC_SITE_MASTER_KEY_PATH" --in "${work}/readback.json" "${files[@]}" 2>&1)" ||
+  --master-key "$COCALC_SITE_MASTER_KEY_PATH" --in "${work}/readback.json" "${includes[@]}" 2>&1)" ||
   fail "verify: $verified"
 
 detail="$(SEALED="$sealed" BYTES="$(wc -c < "$escrow")" "$COCALC_BAY_NODE_BIN" -e '
