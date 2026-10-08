@@ -489,6 +489,73 @@ describe("projects.copyProjectFiles", () => {
     expect(flushJupyterNotebooksToDiskMock).toHaveBeenCalledTimes(1);
   });
 
+  it("bounds each remote step and names the failing step and host", async () => {
+    queryMock = makeProjectQuery({ src: "h1", dest: "h2" });
+    const archive = {
+      format: "cocalc-path-copy-tar-gzip-v1",
+      archive: Buffer.from("tar"),
+      sha256: "sha",
+      bytes: 3,
+      uncompressed_bytes: 12,
+      file_count: 1,
+      roots: [{ archive_path: "a.txt", source_path: "a.txt" }],
+    };
+    getProjectFileServerClientMock = jest.fn(async ({ project_id }) => {
+      if (project_id === "src") {
+        return {
+          cp: (...args: any[]) => cpMock(...args),
+          createPathCopyArchive: jest.fn(async () => archive),
+          getBackupFiles: (...args: any[]) => getBackupFilesMock(...args),
+          deleteBackup: (...args: any[]) => deleteBackupMock(...args),
+          getBackups: jest.fn(async () => []),
+        };
+      }
+      return {
+        applyPathCopyArchive: jest.fn(async ({ dests }) => {
+          if (dests.length === 0) {
+            throw new Error("unsupported path copy archive format");
+          }
+          throw Object.assign(new Error("timeout"), { code: 408 });
+        }),
+      };
+    });
+
+    const { copyProjectFiles } = await import("./copy");
+    const err = await copyProjectFiles({
+      account_id: "acct",
+      timeout_ms: 30 * 60 * 1000,
+      src: { project_id: "src", path: "/root/a.txt" },
+      dests: [{ project_id: "dest", path: "/root/b.txt" }],
+    }).catch((err) => err);
+
+    expect(`${err?.message}`).toMatch(
+      /^copy apply on host h2 for project dest failed after \d+s: timeout$/,
+    );
+    expect(err.code).toBe(408);
+    const timeouts = getProjectFileServerClientMock.mock.calls.map(([opts]) => [
+      opts.project_id,
+      opts.timeout,
+    ]);
+    expect(timeouts).toEqual(
+      expect.arrayContaining([
+        ["dest", 30_000],
+        ["dest", 11 * 60_000],
+        ["src", 10 * 60_000],
+      ]),
+    );
+    expect(upsertMock).not.toHaveBeenCalled();
+  });
+
+  it("scales the apply deadline with the destinations on a host", async () => {
+    const { copyApplyTimeout } = await import("./copy");
+    // The base covers the host's validation and extraction (5 min each).
+    expect(copyApplyTimeout(1, 30 * 60_000)).toBe(11 * 60_000);
+    expect(copyApplyTimeout(10, 30 * 60_000)).toBe(20 * 60_000);
+    // never longer than the operation's own deadline
+    expect(copyApplyTimeout(50, 30 * 60_000)).toBe(30 * 60_000);
+    expect(copyApplyTimeout(50, 0)).toBe(60 * 60_000);
+  });
+
   it("falls back to the queued backup path when the bounded archive is too large", async () => {
     queryMock = makeProjectQuery({ src: "h1", dest: "h2" });
     getBackupFilesMock.mockResolvedValue([{ name: "a.txt" }]);

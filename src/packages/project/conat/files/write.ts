@@ -27,6 +27,7 @@ import {
 import type { FileWriteStream } from "@cocalc/conat/files/write-stream";
 import { finished } from "node:stream/promises";
 import { randomId } from "@cocalc/conat/names";
+import { partialUploadPath } from "@cocalc/util/partial-upload";
 import { rimraf } from "rimraf";
 import { getIdentity } from "../connection";
 import { projectFilePath } from "./path";
@@ -35,7 +36,7 @@ async function createWriteStream(path: string) {
   // console.log("createWriteStream", { path });
   path = projectFilePath(path);
   await ensureContainingDirectoryExists(path);
-  const partial = path + `.partialupload-${randomId()}`;
+  const partial = partialUploadPath(path, randomId());
   const stream: FileWriteStream = fs_createWriteStream(partial);
   stream.remove = async () => {
     await finished(stream, { cleanup: true }).catch(() => undefined);
