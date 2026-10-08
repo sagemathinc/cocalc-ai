@@ -52,6 +52,8 @@ Commands:
                          Mark hub-side running project state stopped when the
                          corresponding project container is not running.
   bootstrap-link         Print the bootstrap registration link, if still present.
+  admin-link             Create a new single-use link for creating an admin
+                         account (valid for 24 hours).
   https --domain <name>  Configure Caddy automatic HTTPS for a public domain.
   uninstall              Stop and remove Star service hooks; preserve data by default.
 
@@ -132,12 +134,16 @@ doctor() {
   }
 
   check() {
-    local desc="$1"
+    local desc="$1" output
     shift
-    if "$@" >/dev/null 2>&1; then
+    if output="$("$@" 2>&1)"; then
       ok "$desc"
     else
       fail "$desc"
+      # Show why, without the noise of a full log.
+      if [ -n "$output" ]; then
+        printf '%s\n' "$output" | grep -v 'level=warning' | tail -n 5 | sed 's/^/         /' >&2
+      fi
     fi
   }
 
@@ -192,6 +198,11 @@ doctor() {
     else
       ok "project-host does not force COCALC_PODMAN_RUNTIME_DIR"
     fi
+    # The ACP worker reads the host identity from this database; without it
+    # the main process keeps its own copy inside the release directory and
+    # agents report the host as disconnected.
+    check "project-host state database is in the data directory" \
+      test "${COCALC_LITE_SQLITE_FILENAME:-}" = "${COCALC_DATA:-unset}/sqlite.db"
     check "project-host tools bundle exists" test -d "${COCALC_PROJECT_TOOLS:-}"
     check "project-host tools bundle has dropbear" test -x "${COCALC_PROJECT_TOOLS:-}/dropbear"
     check "project-host tools bundle has node" test -x "${COCALC_PROJECT_TOOLS:-}/node"
@@ -253,8 +264,25 @@ doctor() {
     check "cached rootfs has project secrets mountpoint" test -d "${rootfs_path}/run/secrets/cocalc"
     check "cached rootfs has project tools mountpoint" test -d "${rootfs_path}/opt/cocalc/bin2"
     check "cached rootfs has project source mountpoint" test -d "${rootfs_path}/opt/cocalc/src"
-    check "rootless podman can run cached rootfs" as_star_user podman run --rm --runtime "$runtime_crun" --userns=keep-id:uid=2001,gid=2001 --user 0:0 --rootfs "$rootfs_path" /bin/true
-    check "cached rootfs preserves root-owned sudo files" as_star_user podman run --rm --runtime "$runtime_crun" --userns=keep-id:uid=2001,gid=2001 --user 0:0 --rootfs "$rootfs_path" /bin/bash -lc 'test "$(stat -c %u /etc/sudo.conf)" = 0 && test "$(stat -c %u /etc/sudoers)" = 0 && test "$(stat -c %u /etc/sudoers.d)" = 0 && test -z "$(find /etc/sudoers.d -mindepth 1 -maxdepth 1 ! -uid 0 -print -quit)" && test "$(stat -Lc %u /usr/bin/sudo)" = 0 && test -u /usr/bin/sudo'
+    # Only cache entries that were prepared for rootless use (ownership
+    # remapped, runtime files such as run/.containerenv written) can run under
+    # rootless Podman; a freshly unpacked entry is prepared when first used.
+    local prepared_rootfs
+    prepared_rootfs="$(find "$rootfs_cache_dir" -mindepth 3 -maxdepth 3 -path '*/run/.containerenv' ! -path "$rootfs_cache_dir/.*" 2>/dev/null | sort | head -1 || true)"
+    prepared_rootfs="${prepared_rootfs%/run/.containerenv}"
+    if [ -z "$prepared_rootfs" ]; then
+      printf 'skip   rootless podman checks: no cached rootfs has been prepared yet\n'
+    else
+      rootfs_path="$prepared_rootfs"
+      check "rootless podman can run cached rootfs" as_star_user podman run --rm --runtime "$runtime_crun" --userns=keep-id:uid=2001,gid=2001 --user 0:0 --rootfs "$rootfs_path" /bin/true
+      # The Claude subscription sandbox runs a read-only cached rootfs with an
+      # overlay; this fails when Podman's storage is itself on overlayfs.
+      check "rootless podman can overlay a cached rootfs" as_star_user podman run --rm --runtime "$runtime_crun" --read-only --userns=keep-id --rootfs "${rootfs_path}:O" /bin/true
+      # Base images without sudo (e.g. buildpack-deps) have nothing to check.
+      if [ -e "${rootfs_path}/etc/sudo.conf" ]; then
+        check "cached rootfs preserves root-owned sudo files" as_star_user podman run --rm --runtime "$runtime_crun" --userns=keep-id:uid=2001,gid=2001 --user 0:0 --rootfs "$rootfs_path" /bin/bash -lc 'test "$(stat -c %u /etc/sudo.conf)" = 0 && test "$(stat -c %u /etc/sudoers)" = 0 && test "$(stat -c %u /etc/sudoers.d)" = 0 && test -z "$(find /etc/sudoers.d -mindepth 1 -maxdepth 1 ! -uid 0 -print -quit)" && test "$(stat -Lc %u /usr/bin/sudo)" = 0 && test -u /usr/bin/sudo'
+      fi
+    fi
   else
     local image_name="$STAR_DEFAULT_ROOTFS_IMAGE"
     case "$image_name" in
@@ -820,10 +848,38 @@ bootstrap_link() {
   }
   url="$(json_string_field "$result" bootstrap_url)"
   [ -n "$url" ] || {
-    log "bootstrap link is not present in $result"
+    local admin_link_command="$0 admin-link"
+    if [ -e /.dockerenv ]; then
+      admin_link_command="docker exec cocalc-star star admin-link"
+    fi
+    log "the first-admin link was already used; run '$admin_link_command' to create a new admin link"
     exit 1
   }
   print_access_instructions "$url"
+}
+
+admin_link() {
+  local script="scripts/star-poc/seed-star-poc.cjs" output url base
+  if [ -f "$SRC_ROOT/scripts/star-poc/build/seed-star-poc/index.cjs" ]; then
+    script="scripts/star-poc/build/seed-star-poc/index.cjs"
+  fi
+  output="$(
+    sudo -Hiu "$STAR_USER" bash -c "set -a && source /etc/cocalc/star/hub.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && NODE_PATH='$SRC_ROOT/packages/node_modules' STAR_SEED_MODE=admin-link STAR_BASE_URL='$STAR_BASE_URL' node '$script'"
+  )" || {
+    log "failed to create an admin link"
+    exit 1
+  }
+  url="$(printf '%s\n' "$output" | tail -n 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["admin_url"])')"
+  base="${STAR_ACCESS_URL:-${STAR_PUBLIC_URL:-}}"
+  if [ -n "$base" ]; then
+    url="$(url_with_base "$url" "$base")"
+  fi
+  cat <<EOF
+
+Open this URL within 24 hours to create an admin account (single use):
+  ${url}
+
+EOF
 }
 
 access() {
@@ -1294,6 +1350,9 @@ case "${1:-}" in
     ;;
   bootstrap-link)
     bootstrap_link
+    ;;
+  admin-link)
+    admin_link
     ;;
   https)
     shift

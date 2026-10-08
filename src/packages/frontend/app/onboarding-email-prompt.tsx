@@ -48,6 +48,9 @@ export function OnboardingEmailPrompt(): React.JSX.Element | null {
   const activeTopTab = useTypedRedux("page", "active_top_tab");
   const fullscreen = useTypedRedux("page", "fullscreen");
   const projectMap = useTypedRedux("projects", "project_map");
+  // Offering emailed guides only makes sense where the site sends email
+  // (not, e.g., a default CoCalc Star server).
+  const siteSendsEmail = !!useTypedRedux("customize", "email_enabled");
   const [visible, setVisible] = useState(false);
   const eligibilityRef = useRef<Eligibility>("unknown");
 
@@ -84,6 +87,7 @@ export function OnboardingEmailPrompt(): React.JSX.Element | null {
     }
     if (
       lite ||
+      !siteSendsEmail ||
       !accountReady ||
       !isLoggedIn ||
       impersonation != null ||
@@ -110,6 +114,7 @@ export function OnboardingEmailPrompt(): React.JSX.Element | null {
     isLoggedIn,
     marketingEnabled,
     projectMap,
+    siteSendsEmail,
   ]);
 
   function respond(enabled: boolean): void {
