@@ -110,8 +110,20 @@ for package in "${PACKAGES[@]}"; do
   fi
   unset version filename sha256
 done
-find "$WORK/root" -name '*.so*' \( -type f -o -type l \) \
-  -exec cp -a {} "$INSTALL/lib/" \;
+# Flatten into lib/: copy the real files, then point each symlink at the
+# file it resolves to (some, like NSS's, are relative to other directories).
+find "$WORK/root" -name '*.so*' -type f -exec cp -a {} "$INSTALL/lib/" \;
+find "$WORK/root" -name '*.so*' -type l | while read -r link; do
+  target="$(basename "$(readlink -f "$link")")"
+  name="$(basename "$link")"
+  [ "$target" = "$name" ] || ln -sfn "$target" "$INSTALL/lib/$name"
+done
+for lib in "$INSTALL"/lib/*; do
+  if [ ! -e "$lib" ]; then
+    echo "Bundled Chromium has a dangling library link: $lib" >&2
+    exit 1
+  fi
+done
 
 # Every library the browser loads must be bundled or part of glibc/libgcc.
 missing=""

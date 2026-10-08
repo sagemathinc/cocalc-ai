@@ -115,6 +115,7 @@ export async function runSharedBrowserService({
     executable,
     profileDir: profile.path,
     args: sharedBrowserChromeArgs(profile.path),
+    captureStderr: true,
   });
   const watchdog = startCleanupWatchdog({
     browser: browser.child.pid!,
@@ -149,6 +150,10 @@ export async function runSharedBrowserService({
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const)
     process.on(signal, () => void stop(signal));
   // The app manager restarts the service on the next use.
-  void browser.exited.then(() => stop("the browser exited"));
+  void browser.exited.then(() =>
+    stop(
+      `the browser exited (code ${browser.child.exitCode ?? browser.child.signalCode})\n${browser.stderrTail()}`,
+    ),
+  );
   await new Promise(() => {});
 }

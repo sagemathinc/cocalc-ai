@@ -284,24 +284,44 @@ export interface LaunchedBrowser {
   port: number;
   exited: Promise<void>;
   stop: () => Promise<void>;
+  /** The last lines Chromium wrote to stderr (with captureStderr). */
+  stderrTail: () => string;
 }
+
+const STDERR_TAIL_BYTES = 4096;
 
 export async function launchBrowser({
   executable,
   args,
   profileDir,
   timeoutMs = 30_000,
+  captureStderr = false,
 }: {
   executable: string;
   args: string[];
   profileDir: string;
   timeoutMs?: number;
+  // Keep Chromium's last stderr lines to explain a crash.  Only for a browser
+  // that must not outlive this process: its stderr is a pipe to us.
+  captureStderr?: boolean;
 }): Promise<LaunchedBrowser> {
   // Own process group: Ctrl-C reaches us, and we decide the teardown order.
   const child = spawn(executable, args, {
-    stdio: "ignore",
+    stdio: captureStderr ? ["ignore", "ignore", "pipe"] : "ignore",
     detached: process.platform !== "win32",
   });
+  let tail = "";
+  let truncated = false;
+  child.stderr?.on("data", (chunk: Buffer) => {
+    tail += chunk.toString();
+    if (tail.length > STDERR_TAIL_BYTES) {
+      tail = tail.slice(-STDERR_TAIL_BYTES);
+      truncated = true;
+    }
+  });
+  // Without a partial first line.
+  const stderrTail = () =>
+    (truncated ? tail.slice(tail.indexOf("\n") + 1) : tail).trim();
   let hasExited = false;
   const exited = new Promise<void>((resolve) => {
     child.once("exit", () => {
@@ -325,10 +345,12 @@ export async function launchBrowser({
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (hasExited) {
-      throw new Error(`${executable} exited before DevTools started`);
+      throw new Error(
+        `${executable} exited before DevTools started${stderrTail() ? `: ${stderrTail()}` : ""}`,
+      );
     }
     const port = readDevToolsPort(profileDir);
-    if (port != null) return { child, port, exited, stop };
+    if (port != null) return { child, port, exited, stop, stderrTail };
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   await stop();
