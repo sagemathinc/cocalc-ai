@@ -19,6 +19,7 @@ const REJECTION_REASONS = new Map([
   ["project-restarted", "the project restarted"],
   ["invalid-request", "the request was invalid"],
   ["admission-failed", "the project host could not admit it"],
+  ["cancelled", "it was cancelled while waiting for the project host"],
 ]);
 
 function notStartedMessage(reason?: string): string {

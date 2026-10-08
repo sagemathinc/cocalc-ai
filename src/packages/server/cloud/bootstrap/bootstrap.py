@@ -4601,8 +4601,20 @@ class LifecycleBusy(RuntimeError):
 class AdmissionBlocked(RuntimeError):
     pass
 
+class AdmissionCancelled(RuntimeError):
+    pass
+
+def stdin_closed():
+    # The runtime cancels by ending stdin, then SIGKILLs 20s later, while
+    # admission may wait much longer for the lifecycle lock. Detect the hangup
+    # without reading: the job configuration may still be queued unread.
+    hangup = select.POLLHUP | select.POLLERR | getattr(select, "POLLRDHUP", 0)
+    poller = select.poll()
+    poller.register(0, select.POLLIN | getattr(select, "POLLRDHUP", 0))
+    return any(events & hangup for _, events in poller.poll(0))
+
 @contextmanager
-def lifecycle_lock(wait=15):
+def lifecycle_lock(wait=15, cancelled=None):
     fd = os.open(LOCK, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
     try:
         if os.fstat(fd).st_uid != 0:
@@ -4613,6 +4625,8 @@ def lifecycle_lock(wait=15):
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
             except BlockingIOError:
+                if cancelled is not None and cancelled():
+                    raise AdmissionCancelled("cancelled while waiting for the lifecycle lock")
                 if time.monotonic() >= until:
                     raise LifecycleBusy("project lifecycle busy")
                 time.sleep(0.05)
@@ -5082,6 +5096,8 @@ def rejection_reason(error):
         return "project-not-running"
     if isinstance(error, ProjectRestarted):
         return "project-restarted"
+    if isinstance(error, AdmissionCancelled):
+        return "cancelled"
     if isinstance(error, ValueError):
         return "invalid-request"
     return "admission-failed"
@@ -5109,7 +5125,7 @@ def supervise(project, job, owner, timeout_ms):
         if Path(f"/proc/{owner}").stat().st_uid != account.pw_uid:
             raise ValueError("job owner is not the runtime user")
         owner_start = identity(owner)
-        with lifecycle_lock(admission_wait(deadline)):
+        with lifecycle_lock(admission_wait(deadline), cancelled=stdin_closed):
             generation = active_state(project)["generation"]
         args, env = launcher_config(config_from_stdin())
     except Exception as error:
@@ -5143,7 +5159,8 @@ def supervise(project, job, owner, timeout_ms):
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     try:
-        with lifecycle_lock(admission_wait(deadline)):
+        with lifecycle_lock(admission_wait(deadline),
+                            cancelled=lambda: stopped or stdin_closed()):
             reap_project_locked(project)
             if active_state(project)["generation"] != generation:
                 raise ProjectRestarted("project generation changed before admission")

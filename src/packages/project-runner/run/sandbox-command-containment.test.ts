@@ -147,6 +147,22 @@ test("a refused admission is an ordinary failure, not a cleanup fence", async ()
   expect(mockExecFile).not.toHaveBeenCalled();
 });
 
+test("cancelling while admission waits is a refusal, not a cleanup fence", async () => {
+  jest.useFakeTimers();
+  const confirmed = jest.fn();
+  const { child, controller, result, frame } = fixture(confirmed);
+  controller.abort();
+  // The helper sees stdin end during its lock wait and refuses, well before
+  // the 20 s SIGKILL fallback.
+  expect(child.stdin.writableEnded).toBe(true);
+  frame({ type: "rejected", reason: "cancelled" });
+  child.emit("close", 1);
+  const value = await result;
+  expect(value).toMatchObject({ code: null, cleanupConfirmed: true });
+  expect(value.stderr).toContain("cancelled");
+  expect(confirmed).toHaveBeenCalledTimes(1);
+});
+
 test("a rejection cannot follow or precede other frames, and must be known", async () => {
   jest.useFakeTimers();
   const cases = [
