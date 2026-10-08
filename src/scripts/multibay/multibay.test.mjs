@@ -528,6 +528,70 @@ describe("email invites across bays", () => {
     });
   });
 
+  it("lets an invitee open and accept the link through the web pages", async () => {
+    // The /invites/<token> page uses HTTP endpoints, not the hub API, so the
+    // seed must forward them to the bay that owns the invite.
+    const hank = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "hank",
+    });
+    hank.client = await client(hank);
+    const sent = await alice.client.call(
+      "projects.inviteCollaboratorWithoutAccount",
+      {
+        opts: {
+          project_id: project,
+          title: "email invites",
+          link2proj: "",
+          to: hank.email_address,
+          email: "",
+          send_email: false,
+          invite_base_url: "https://multibay.test",
+        },
+      },
+    );
+    const { invite_url } = await alice.client.call(
+      "projects.copyEmailProjectInviteLink",
+      {
+        invite_id: sent.invites[0]?.invite_id,
+        invite_base_url: "https://multibay.test",
+      },
+    );
+    const link = decodeURIComponent(invite_url.split("/invites/")[1] ?? "");
+    const post = async (endpoint, body, cookie) => {
+      const res = await fetch(
+        `${cluster.url(SEED)}/api/v2/projects/${endpoint}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(cookie ? { Cookie: `remember_me=${cookie}` } : {}),
+          },
+          body: JSON.stringify(body),
+        },
+      );
+      return await res.json();
+    };
+    const anonymous = await post("preview-email-invite", { token: link });
+    assert.match(`${anonymous.error}`, /Sign in/);
+    const preview = await post(
+      "preview-email-invite",
+      { token: link },
+      hank.client.cookie,
+    );
+    assert.equal(preview.error, undefined);
+    assert.equal(preview.invite?.project_id, project);
+    const accepted = await post(
+      "respond-email-invite",
+      { token: link, action: "accept" },
+      hank.client.cookie,
+    );
+    assert.equal(accepted.error, undefined);
+    await eventually(() => listed(hank.client, project), {
+      what: "the project in hank's list",
+    });
+  });
+
   it("lets the owner remove the new collaborator", async () => {
     await bob.client.call("projects.removeCollaborator", {
       opts: { project_id: project, account_id: gina.account_id },
