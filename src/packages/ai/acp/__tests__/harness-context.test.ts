@@ -7,6 +7,7 @@ import {
   harnessHasSessionGuidance,
   harnessPrompt,
   harnessSessionGuidance,
+  joinTurnContext,
 } from "../harness-context";
 import { artifactPublicationGuidance } from "../publication-guidance";
 
@@ -74,6 +75,14 @@ test("a turn carries the current memory list", () => {
 test("native harness commands pass through unchanged", () => {
   expect(harnessPrompt({ ...request(true), prompt: "/compact" })).toBe(
     "/compact",
+  );
+});
+
+test("turn context blocks join, skipping empty ones", () => {
+  expect(joinTurnContext(undefined, " ")).toBeUndefined();
+  expect(joinTurnContext("[Agent memory]", undefined)).toBe("[Agent memory]");
+  expect(joinTurnContext("[Agent memory]", "[CLI connectors]")).toBe(
+    "[Agent memory]\n\n[CLI connectors]",
   );
 });
 

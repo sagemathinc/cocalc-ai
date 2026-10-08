@@ -9,6 +9,7 @@ let requireDangerousSessionAuthMock: jest.Mock;
 let upsertExternalCredentialMock: jest.Mock;
 let getExternalCredentialMock: jest.Mock;
 let revokeExternalCredentialMock: jest.Mock;
+let listMock: jest.Mock;
 
 jest.mock("./dangerous-session-auth", () => ({
   __esModule: true,
@@ -21,7 +22,7 @@ jest.mock("@cocalc/server/external-credentials/routing", () => ({
   getExternalCredentialRouted: (...args: any[]) =>
     getExternalCredentialMock(...args),
   hasExternalCredentialRouted: jest.fn(async () => false),
-  listAccountExternalCredentialsRouted: jest.fn(async () => []),
+  listAccountExternalCredentialsRouted: (...args: any[]) => listMock(...args),
   revokeAccountExternalCredentialRouted: (...args: any[]) =>
     revokeExternalCredentialMock(...args),
   revokeExternalCredentialBySelectorRouted: (...args: any[]) =>
@@ -47,6 +48,7 @@ describe("external credential dangerous-session auth", () => {
       id: "credential-1",
     }));
     revokeExternalCredentialMock = jest.fn(async () => true);
+    listMock = jest.fn(async () => []);
   });
 
   it("requires fresh auth before storing an account OpenAI API key", async () => {
@@ -121,5 +123,45 @@ describe("external credential dangerous-session auth", () => {
       require_second_factor: false,
     });
     expect(revokeExternalCredentialMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "github-token-cleanup",
+    "github-cli-connection",
+    "cloudflare-oauth-login",
+  ])(
+    "refuses to revoke connector credential %s outside Disconnect",
+    async (kind) => {
+      requireDangerousSessionAuthMock = jest.fn(async () => undefined);
+      listMock = jest.fn(async () => [
+        { id: "credential-1", provider: "github", kind },
+      ]);
+      const { revokeExternalCredential } = await import("./system");
+      await expect(
+        revokeExternalCredential({
+          account_id: ACCOUNT_ID,
+          id: "credential-1",
+        }),
+      ).rejects.toThrow("Settings > Connectors");
+      expect(revokeExternalCredentialMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("still revokes other credentials, and lists only them", async () => {
+    requireDangerousSessionAuthMock = jest.fn(async () => undefined);
+    listMock = jest.fn(async () => [
+      { id: "credential-1", provider: "openai", kind: "openai-api-key" },
+      { id: "credential-2", provider: "github", kind: "github-cli-connection" },
+    ]);
+    const { revokeExternalCredential, listExternalCredentials } =
+      await import("./system");
+    await expect(
+      revokeExternalCredential({ account_id: ACCOUNT_ID, id: "credential-1" }),
+    ).resolves.toEqual({ revoked: true });
+    expect(
+      (await listExternalCredentials({ account_id: ACCOUNT_ID })).map(
+        ({ id }) => id,
+      ),
+    ).toEqual(["credential-1"]);
   });
 });

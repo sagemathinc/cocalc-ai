@@ -85,7 +85,7 @@ export interface HarnessProcess {
    * Managed CoCalc connector: issue the agent's scoped credential for one
    * turn (if its connector is enabled) and revoke it when the turn ends.
    */
-  beginConnectorTurn?(chat: AcpChatContext): Promise<void>;
+  beginConnectorTurn?(chat: AcpChatContext): Promise<string | void>;
   endConnectorTurn?(): Promise<void>;
   /** Launcher must terminate the execution boundary, including descendants. */
   stop(): Promise<void>;
@@ -445,8 +445,8 @@ export class AcpHarnessClient {
     );
   }
   /** Issue this turn's CoCalc connector credential, if the launcher supports it. */
-  async beginConnectorTurn(chat: AcpChatContext): Promise<void> {
-    await this.process.beginConnectorTurn?.(chat);
+  async beginConnectorTurn(chat: AcpChatContext): Promise<string | void> {
+    return await this.process.beginConnectorTurn?.(chat);
   }
 
   /** Revoke the current turn's CoCalc connector credential. */

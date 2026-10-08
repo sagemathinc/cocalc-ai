@@ -113,6 +113,9 @@ beforeEach(async () => {
     setAgentSessionKey: jest.fn(),
     beginConnectorTurn: beginConnectorTurn,
     endConnectorTurn: endConnectorTurn,
+    applyCliConnectorEnv: (env: Record<string, string>) => {
+      env.PATH = `/tmp/scoped/cli/bin:${env.PATH}`;
+    },
     close: closeLease,
   } as any);
   jest.mocked(createClaudeProjectToolBridge).mockResolvedValue({
@@ -173,6 +176,7 @@ test("registered subscription agent gets its identity only in project tools", as
           COCALC_CODEX_THREAD_ID: conversation.threadId,
           COCALC_AGENT_IDENTITY_FILE: "/tmp/scoped/identity.json",
           COCALC_CONNECTOR_API_KEY_FILE: "/tmp/scoped/connector-key",
+          PATH: expect.stringMatching(/^\/tmp\/scoped\/cli\/bin:/),
           COCALC_BEARER_TOKEN: "",
           COCALC_AGENT_TOKEN: "",
         }),

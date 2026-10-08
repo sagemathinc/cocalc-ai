@@ -93,3 +93,12 @@ ${turnEssentials(request.chat?.workbench === true, context)}${request.agent_memo
 
 ${request.prompt}`;
 }
+
+// Joins optional blocks of per-turn prompt context.
+export function joinTurnContext(...parts: unknown[]): string | undefined {
+  const text = parts
+    .map((part) => (typeof part === "string" ? part.trim() : ""))
+    .filter(Boolean)
+    .join("\n\n");
+  return text || undefined;
+}

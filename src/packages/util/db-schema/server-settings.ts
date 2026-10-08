@@ -170,6 +170,7 @@ export interface Customize {
   cookieBannerText?: string;
   strategies?: Strategy[];
   openaiEnabled?: boolean;
+  cliConnectors?: ("github" | "cloudflare")[];
   googleVertexaiEnabled?: boolean;
   mistralEnabled?: boolean;
   anthropicEnabled?: boolean;

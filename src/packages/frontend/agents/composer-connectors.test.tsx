@@ -18,8 +18,29 @@ import {
   supportsCocalcConnector,
 } from "./composer-connectors";
 import { AgentFileAttachment } from "../chat/agent-file-attachment";
+import { refreshCliConnectors } from "./cli-connectors";
 
 // rc-util's constant test ID aliases dropdown and modal Escape registrations.
+// The site has both connectors set up unless a test says otherwise, and the
+// agent's project has internet access.
+const mockSiteConnectors: Record<string, boolean> = {
+  cli_connector_github_enabled: true,
+  cli_connector_cloudflare_enabled: true,
+};
+let mockRunQuota: any = { network: true };
+jest.mock("@cocalc/frontend/project/use-project-run-quota", () => ({
+  useProjectRunQuota: () => ({ runQuota: mockRunQuota }),
+}));
+jest.mock("@cocalc/frontend/app-framework", () => {
+  const actual = jest.requireActual("@cocalc/frontend/app-framework");
+  return {
+    ...actual,
+    useTypedRedux: (store: string, key: string) =>
+      store === "customize" && key in mockSiteConnectors
+        ? mockSiteConnectors[key]
+        : actual.useTypedRedux(store, key),
+  };
+});
 jest.mock("@rc-component/util/lib/hooks/useId", () => ({
   __esModule: true,
   ...jest.requireActual("@rc-component/util/lib/hooks/useId"),
@@ -29,7 +50,18 @@ jest.mock("@rc-component/util/lib/hooks/useId", () => ({
   },
 }));
 
+const SETUP = {
+  github: { available: true, app_url: "https://github.com/apps/cocalc-test" },
+  cloudflare: { available: false },
+};
 const mockApi = {
+  listCliConnections: jest.fn(),
+  listCliConnectorGrants: jest.fn(),
+  getCliConnectorSetup: jest.fn(),
+  startCliConnectorSignIn: jest.fn(),
+  pollCliConnectorSignIn: jest.fn(),
+  saveCliConnectorGrant: jest.fn(),
+  disconnectCliConnection: jest.fn(),
   getCocalcConnectorConfig: jest.fn(),
   saveCocalcConnectorConfig: jest.fn(),
   removeCocalcConnectorConfig: jest.fn(),
@@ -125,6 +157,13 @@ async function openFromChip(
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockSiteConnectors.cli_connector_github_enabled = true;
+  mockSiteConnectors.cli_connector_cloudflare_enabled = true;
+  mockRunQuota = { network: true };
+  mockApi.listCliConnections.mockResolvedValue([]);
+  mockApi.listCliConnectorGrants.mockResolvedValue([]);
+  mockApi.getCliConnectorSetup.mockResolvedValue(SETUP);
+  refreshCliConnectors();
   mockError = undefined;
   mockDirectory = {
     enabled: true,
@@ -227,6 +266,96 @@ test("the connectors chip opens CoCalc access and reflects saved disable", async
       agent_id: agent.endpoint.agent_id,
     }),
   );
+});
+
+async function plusMenuItems(user: ReturnType<typeof userEvent.setup>) {
+  const plus = screen.getByRole("button", { name: "Add files and more" });
+  plus.focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(
+      screen.getByRole("menuitem", { name: /^Agent Networks/ }),
+    ).toBeVisible(),
+  );
+  return screen.getAllByRole("menuitem").map((item) => item.textContent);
+}
+
+test("connectors the site has not set up are not shown or loaded", async () => {
+  mockSiteConnectors.cli_connector_github_enabled = false;
+  mockSiteConnectors.cli_connector_cloudflare_enabled = false;
+  const user = userEvent.setup();
+  render(<Controls />);
+  const items = await plusMenuItems(user);
+  expect(items.some((text) => /GitHub|Cloudflare/.test(`${text}`))).toBe(false);
+  expect(mockApi.listCliConnections).not.toHaveBeenCalled();
+  expect(mockApi.listCliConnectorGrants).not.toHaveBeenCalled();
+  expect(mockApi.getCliConnectorSetup).not.toHaveBeenCalled();
+});
+
+test("only the connectors the site set up are shown", async () => {
+  mockSiteConnectors.cli_connector_cloudflare_enabled = false;
+  const user = userEvent.setup();
+  render(<Controls />);
+  const items = await plusMenuItems(user);
+  expect(items.some((text) => /^GitHub/.test(`${text}`))).toBe(true);
+  expect(items.some((text) => /^Cloudflare/.test(`${text}`))).toBe(false);
+});
+
+test("a project without internet access says so", async () => {
+  mockRunQuota = { network: false };
+  const user = userEvent.setup();
+  render(<Controls />);
+  await plusMenuItems(user);
+  expect(
+    screen.getByRole("menuitem", { name: /^GitHub.*Needs internet access/ }),
+  ).toBeVisible();
+});
+
+test("GitHub on for the agent shows in the chip and opens its dialog", async () => {
+  mockApi.getCocalcConnectorConfig.mockResolvedValue(null);
+  mockApi.listCliConnections.mockResolvedValue([
+    {
+      connection_id: "conn-1",
+      connector: "github",
+      description: "@octo",
+      created: new Date(),
+      last_used: null,
+    },
+  ]);
+  mockApi.listCliConnectorGrants.mockResolvedValue([
+    {
+      grant_id: "grant-1",
+      account_id: "account",
+      agent_id: agent.endpoint.agent_id,
+      source_project_id: agent.endpoint.project_id,
+      connector: "github",
+      connection_id: "conn-1",
+      scope: {},
+      revision: 1,
+      enabled: true,
+      created_at: new Date(),
+      updated_at: new Date(),
+    },
+  ]);
+  refreshCliConnectors();
+  const user = userEvent.setup();
+  render(<Controls />);
+  expect(
+    await screen.findByRole("button", {
+      name: "Connectors for @builder: GitHub @octo",
+    }),
+  ).toHaveTextContent("1");
+  await openFromChip(user, /^GitHub/);
+  const dialog = await screen.findByRole("dialog", {
+    name: "GitHub for @builder",
+  });
+  await waitFor(() =>
+    expect(within(dialog).getByRole("switch")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    ),
+  );
+  expect(within(dialog).getByRole("radio", { name: "@octo" })).toBeChecked();
 });
 
 test("network icon tracks assigned tags, preserves details, and disappears after removal", async () => {

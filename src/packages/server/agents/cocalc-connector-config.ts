@@ -232,7 +232,7 @@ export async function saveCocalcConnectorConfig({
   return result;
 }
 
-async function authorizeConfigChange(opts: {
+export async function authorizeConfigChange(opts: {
   account_id: string;
   session_hash?: string;
   agent_id: string;
