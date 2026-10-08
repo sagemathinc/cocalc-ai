@@ -76,6 +76,16 @@ On the bay host (for prod: `gcloud compute ssh ubuntu@prod-bay-0
 5. After cutover: check the site, then `cocalc bay backups bay-0` (a fresh full
    pgBackRest backup was started automatically, because a point-in-time
    restore starts a new timeline). Delete `<work-dir>` once satisfied.
+   - If the bay did not become healthy, cutover leaves the backup timers
+     stopped (listed in `<work-dir>/stopped-timers`) so nothing backs up a
+     broken bay; start them once it is healthy.
+   - Exit status 2 means the bay is up but the full backup could not be
+     started; start `cocalc-bay-pgbackrest-backup@full.service` by hand.
+   - Deletions recorded after the recovery point (accounts, projects,
+     data-subject requests) are not in the restored database. Deletion replay
+     is not automated yet: list them from the support/admin records and
+     reapply them before telling users the site is back, as the Data
+     Management Policy requires.
 
 To undo a cutover: `sudo systemctl stop cocalc-bay.target`, move
 `/mnt/cocalc/bays/bay-0/{postgres,sync}` aside, move
@@ -133,27 +143,34 @@ that state still exists on the hosts and in project backups.
 
 5. **Recover the configuration and secrets from the escrow.** The bay seals
    `/etc/cocalc/*.env` and its secrets directory into R2 daily
-   (`cocalc-bay-config-escrow.timer`). With the R2 read access from the human:
+   (`cocalc-bay-config-escrow.timer`). The bay's own R2 keys are inside the
+   escrow, so fetching it needs separate read access: the read-only R2 token
+   kept in 1Password next to the master key (or one minted with the
+   Cloudflare login).
 
    ```sh
    umask 077
    printf 'user = "%s:%s"\n' "$R2_ACCESS_KEY_ID" "$R2_SECRET_ACCESS_KEY" > /root/r2.curl
-   curl --config /root/r2.curl --aws-sigv4 aws:amz:auto:s3 --fail -o /root/bay-config.v1.json \
+   curl --config /root/r2.curl --aws-sigv4 aws:amz:auto:s3 --fail --max-filesize 8388608 \
+     -o /root/bay-config.v1.json \
      "$R2_ENDPOINT/$R2_BUCKET/cocalc-escrow/bay-0/bay-config.v1.json"
    rm /root/r2.curl
    NODE="$(ls /opt/cocalc/nvm/versions/node/*/bin/node | tail -1)"   # from step 3
-   "$NODE" src/scripts/bay-systemd/bin/bay-config-escrow.mjs info --in /root/bay-config.v1.json
-   # The bay root belongs to the bay user; the secrets directory is created in it.
-   sudo install -d -o cocalc-bay -g cocalc-bay -m 0755 /mnt/cocalc/bays /mnt/cocalc/bays/bay-0 \
-     /mnt/cocalc/bays/bay-0/secrets
-   sudo "$NODE" src/scripts/bay-systemd/bin/bay-config-escrow.mjs open \
+   sudo "$NODE" src/scripts/bay-systemd/libexec/bay-config-escrow.mjs info \
+     --in /root/bay-config.v1.json --master-key /etc/cocalc/site-master-key
+   # The parent of each destination must exist; open creates the secrets
+   # directory itself with its recorded owner and mode.
+   sudo install -d -m 0755 /mnt/cocalc/bays
+   sudo install -d -o cocalc-bay -g cocalc-bay -m 0755 /mnt/cocalc/bays/bay-0
+   sudo "$NODE" src/scripts/bay-systemd/libexec/bay-config-escrow.mjs open \
      --master-key /etc/cocalc/site-master-key --in /root/bay-config.v1.json --chown \
      --map etc-cocalc=/etc/cocalc --map bay-secrets=/mnt/cocalc/bays/bay-0/secrets
    ```
 
-   `info` shows when it was sealed; dated copies are under
-   `cocalc-escrow/bay-0/history/` if an older one is needed. A wrong master key
-   is reported as such.
+   `info` shows when it was sealed; dated copies from the last 30 days are
+   under `cocalc-escrow/bay-0/history/` if an older one is needed. A wrong
+   master key is reported as such. `open` never follows a symbolic link in a
+   destination and refuses to overwrite existing files without `--force`.
 
 6. **Install the release** without starting it (the escrowed env files are
    kept; only missing ones are generated):
@@ -189,7 +206,11 @@ that state still exists on the hosts and in project backups.
    README.md ("Activation Order") and `cocalc-bay-config-escrow.timer`; stop or
    delete the old VM if it still exists, so two bays never run the same tunnel
    or archive into the same repository; run a disposable drill
-   (`cocalc bay restore-test bay-0 --disposable-gcp`).
+   (`cocalc bay restore-test bay-0 --disposable-gcp`); replay deletions as in
+   mode A, step 5.
+10. **Rotate the live credentials** the escrow contained, as described under
+    "Rotation" in README.md ("Configuration Escrow"): the escrow was opened,
+    so treat its contents as exposed.
 
 ## Testing this procedure
 
@@ -197,4 +218,4 @@ that state still exists on the hosts and in project backups.
 - `test/bay-restore-e2e.sh` runs `bay-restore` end to end on a disposable
   Ubuntu 24.04 VM against a local TLS S3 server: a point-in-time restore,
   cutover, and a restore of the latest state.
-- `bin/bay-config-escrow.test.sh` tests the escrow.
+- `libexec/bay-config-escrow.test.sh` tests the escrow.

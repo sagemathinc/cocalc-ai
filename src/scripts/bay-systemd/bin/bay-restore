@@ -20,7 +20,10 @@
 #
 # The live data is never modified until cutover, which stops the bay, moves
 # the live postgres and sync directories to DIR/pre-restore/, moves the
-# restored ones into place, and starts the bay.
+# restored ones into place, and starts the bay. Cutover stops the timers and
+# any running backup jobs first, and restarts the timers only once the bay is
+# healthy. Exit status 2: the bay is running on the restored data, but the
+# required new full backup could not be started.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
@@ -223,11 +226,26 @@ cmd_cutover() {
   summary "$work_dir"
   confirm "This stops ${COCALC_BAY_ID}, moves ${data} and ${sync} to ${aside}/, and starts the bay on the restored data."
 
-  local timers
-  timers="$(systemctl list-units --type=timer --state=active --no-legend 'cocalc-bay-*' | awk '{print $1}')"
+  local timers jobs unit
+  timers="$(systemctl list-units --type=timer --state=active --no-legend --plain 'cocalc-bay-*' | awk '{print $1}')"
   echo "bay-restore: stopping the bay"
+  # Timers first, so nothing new starts; then any backup, prune or status
+  # job already running, which is not part of cocalc-bay.target and could
+  # otherwise read the data directories while they are being swapped.
+  printf '%s\n' $timers > "${work_dir}/stopped-timers"
   # shellcheck disable=SC2086
   [[ -z "$timers" ]] || systemctl stop $timers
+  jobs="$(systemctl list-units --type=service --all --no-legend --plain \
+    'cocalc-bay-pgbackrest-backup@*.service' 'cocalc-bay-pgbackrest-status.service' \
+    'cocalc-bay-sqlite-backup.service' 'cocalc-bay-sqlite-prune.service' |
+    awk '$3 == "active" || $3 == "activating" || $3 == "reloading" {print $1}')"
+  # shellcheck disable=SC2086
+  [[ -z "$jobs" ]] || systemctl stop $jobs
+  for unit in $jobs; do
+    if systemctl is-active --quiet "$unit"; then
+      die "${unit} did not stop; nothing was moved. Timers stopped: ${work_dir}/stopped-timers"
+    fi
+  done
   systemctl stop cocalc-bay.target
   systemctl stop cocalc-bay-postgres.service || true
   if systemctl is-active --quiet cocalc-bay-postgres.service; then
@@ -253,16 +271,24 @@ cmd_cutover() {
     fi
     sleep 10
   done
+  if [[ "$healthy" != 1 ]]; then
+    # Leave backups and the other timers stopped, so nothing backs up or
+    # prunes from a bay that may be broken while it is diagnosed.
+    die "the bay did not report healthy within 10 minutes; check 'systemctl status cocalc-bay.target' and ${SCRIPT_DIR}/bay-health. The previous data is in ${aside}/. The timers listed in ${work_dir}/stopped-timers were left stopped; start them once the bay is healthy."
+  fi
   # shellcheck disable=SC2086
   [[ -z "$timers" ]] || systemctl start $timers
-  if [[ "$healthy" != 1 ]]; then
-    die "the bay did not report healthy within 10 minutes; check 'systemctl status cocalc-bay.target' and ${SCRIPT_DIR}/bay-health. The previous data is in ${aside}/"
-  fi
-  # A restore to a point in time starts a new timeline: take a fresh full
-  # backup so later restores do not depend on the pre-restore history.
-  systemctl start --no-block "cocalc-bay-pgbackrest-backup@full.service" 2>/dev/null || true
   echo "bay-restore: ${COCALC_BAY_ID} is running on the restored data."
   echo "  The previous data is kept in ${aside}/; delete it once you are satisfied."
+  # A restore to a point in time starts a new timeline: take a fresh full
+  # backup so later restores do not depend on the pre-restore history.
+  local error
+  if ! error="$(systemctl start --no-block "cocalc-bay-pgbackrest-backup@full.service" 2>&1)"; then
+    echo "bay-restore: WARNING: could not start a full pgBackRest backup: ${error}" >&2
+    echo "  Until one succeeds, later restores still depend on the pre-restore backups." >&2
+    echo "  Start it with: systemctl start cocalc-bay-pgbackrest-backup@full.service" >&2
+    exit 2
+  fi
   echo "  A new full pgBackRest backup was started (cocalc-bay-pgbackrest-backup@full)."
 }
 
