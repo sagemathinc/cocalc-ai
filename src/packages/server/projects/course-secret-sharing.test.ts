@@ -12,8 +12,13 @@ jest.mock("@cocalc/backend/data", () => ({
 
 jest.mock("@cocalc/util/master-key-lifecycle", () => ({
   __esModule: true,
+  ...jest.requireActual("@cocalc/util/master-key-lifecycle"),
   deriveSiteMasterKey: (key: Buffer) => key,
+  deriveSiteMasterKeyring: (keyring: any[]) => keyring,
   getOrCreateSiteMasterKey: async () => Buffer.alloc(32, 12),
+  getSiteMasterKeyring: async () => [
+    { id: "smk_test", role: "active", key: Buffer.alloc(32, 12) },
+  ],
 }));
 
 import {

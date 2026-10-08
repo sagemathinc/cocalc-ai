@@ -178,4 +178,40 @@ describe("project secrets runtime cache", () => {
       expect.objectContaining({ accepted: true, cached_generation: 2 }),
     );
   });
+
+  it("still decrypts values cached under the previous key after a key rotation", () => {
+    const other_project_id = "b8a1f0c2-5d1e-4f37-9a52-1c6e0d4f7a19";
+    const oldKey = Buffer.alloc(32, 21);
+    const newKey = Buffer.alloc(32, 22);
+    const sync = (id: string, key: Buffer, value: string) =>
+      syncProjectSecretsCache({
+        project_id: id,
+        cache: {
+          key_base64: key.toString("base64"),
+          generation: 1,
+          entries: [
+            {
+              name: "TOKEN",
+              encrypted_value: encryptProjectSecretValue({
+                project_id: id,
+                name: "TOKEN",
+                value,
+                key,
+              }),
+              value_bytes: value.length,
+            },
+          ],
+        },
+      });
+    sync(project_id, oldKey, "before");
+    // Another project syncs after the rotation; this one has not yet.
+    sync(other_project_id, newKey, "after");
+
+    expect(getCachedProjectSecretsForRuntime({ project_id })).toEqual({
+      TOKEN: "before",
+    });
+    expect(
+      getCachedProjectSecretsForRuntime({ project_id: other_project_id }),
+    ).toEqual({ TOKEN: "after" });
+  });
 });

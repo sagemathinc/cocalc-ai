@@ -3,7 +3,7 @@ import {
   impersonationReason,
   impersonationSupportContext,
 } from "@cocalc/util/impersonation-audit";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { ADMIN_SEARCH_LIMIT } from "@cocalc/util/db-schema/accounts";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS } from "@cocalc/util/membership-entitlement-overrides";
@@ -16,8 +16,11 @@ import {
   signOutSession,
 } from "../core/support-as-user";
 import {
+  activateSiteMasterKey,
   createSiteMasterKeyBackup,
   getOrCreateSiteMasterKey,
+  retireSiteMasterKey,
+  stageNextSiteMasterKey,
   getSiteMasterKeyStatus,
   readSiteMasterKeyBackupFile,
   restoreSiteMasterKeyBackup,
@@ -3854,9 +3857,123 @@ Merge comments are private unless their corresponding --*-comment-public flag is
     });
 
   adminMasterKey
+    .command("reencrypt")
+    .description(
+      "re-encrypt everything the site master key protects under the active key (after a rotation, or from legacy keys); dry-run by default; safe while running",
+    )
+    .option("--execute", "apply database updates; otherwise only report")
+    .action(async (opts: { execute?: boolean }) => {
+      const { runMasterKeyMigration } = await loadMasterKeyMigration();
+      console.log(
+        JSON.stringify(
+          await runMasterKeyMigration({ execute: !!opts.execute }),
+          null,
+          2,
+        ),
+      );
+    });
+
+  const rotate = adminMasterKey
+    .command("rotate")
+    .description(
+      "rotate the local site master key (on a bay use cocalc-bay-master-key, which also restarts services): prepare, then activate, reencrypt, retire",
+    );
+
+  rotate
+    .command("prepare")
+    .description(
+      "stage a new site master key in the keyring (not used until activated) and write a backup of it",
+    )
+    .requiredOption("--export <path>", "new file for the backup of the new key")
+    .option(
+      "--passphrase-env <name>",
+      "read backup encryption passphrase from this environment variable",
+    )
+    .option(
+      "--passphrase-file <path>",
+      "read backup encryption passphrase from this file",
+    )
+    .option("--plaintext", "write an unencrypted backup file")
+    .action(
+      async (opts: {
+        export: string;
+        passphraseEnv?: string;
+        passphraseFile?: string;
+        plaintext?: boolean;
+      }) => {
+        const key = randomBytes(32);
+        const backup = await createSiteMasterKeyBackup({
+          key,
+          passphrase: opts.plaintext
+            ? undefined
+            : await requirePassphraseOption(opts),
+          plaintext: !!opts.plaintext,
+        });
+        // The backup first, so a staged key always has one.
+        await writeFile(opts.export, `${JSON.stringify(backup, null, 2)}\n`, {
+          mode: 0o600,
+          flag: "wx",
+        });
+        const { id } = await stageNextSiteMasterKey({ key });
+        console.log(
+          JSON.stringify(
+            {
+              staged: id,
+              backup: opts.export,
+              next: `store the backup separately, restart every service that uses the key, then: cocalc admin master-key rotate activate ${id} --backed-up`,
+            },
+            null,
+            2,
+          ),
+        );
+      },
+    );
+
+  rotate
+    .command("activate <key-id>")
+    .description(
+      "make a staged (or, to roll back, a retired) key the active key; the previous key is kept as retired",
+    )
+    .option(
+      "--backed-up",
+      "confirms the key is backed up and every service restarted since prepare",
+    )
+    .action(async (keyId: string, opts: { backedUp?: boolean }) => {
+      if (!opts.backedUp) {
+        throw new Error(
+          "activate requires --backed-up: back up the key and restart every service that uses it first",
+        );
+      }
+      console.log(JSON.stringify(await activateSiteMasterKey(keyId), null, 2));
+    });
+
+  rotate
+    .command("retire <key-id>")
+    .description(
+      "remove a retired key from the keyring once no data is encrypted under it; keep an offline copy while older backups exist",
+    )
+    .option("--force", "skip the database check")
+    .action(async (keyId: string, opts: { force?: boolean }) => {
+      if (!opts.force) {
+        const { rowsUnderKey, runMasterKeyMigration } =
+          await loadMasterKeyMigration();
+        const remaining = rowsUnderKey(
+          await runMasterKeyMigration({ execute: false }),
+          keyId,
+        );
+        if (Object.keys(remaining).length > 0) {
+          throw new Error(
+            `rows are still encrypted under ${keyId}: ${JSON.stringify(remaining)}; run reencrypt --execute first`,
+          );
+        }
+      }
+      console.log(JSON.stringify(await retireSiteMasterKey(keyId), null, 2));
+    });
+
+  adminMasterKey
     .command("migrate")
     .description(
-      "offline migration from legacy master keys to the single site master key; dry-run by default",
+      "offline migration from legacy master keys to the single site master key; dry-run by default (see also reencrypt)",
     )
     .option("--execute", "apply database updates; otherwise only report")
     .option(

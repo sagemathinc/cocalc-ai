@@ -33,6 +33,10 @@ NEEDRESTART_CONFIG="${TARGET_ROOT}/etc/needrestart/conf.d/cocalc-bay.conf"
 [[ -f "$LOCAL_ENV" ]]
 [[ "$(stat -c '%a' "$LOCAL_ENV")" == "644" ]]
 [[ -f "$NEEDRESTART_CONFIG" ]]
+[[ -f "${TARGET_ROOT}/etc/cocalc/site-master-key.keyring" ]]
+[[ "$(stat -c '%a' "${TARGET_ROOT}/etc/cocalc/site-master-key.keyring")" == "600" ]]
+grep -qx 'LoadCredential=site-master-key.keyring:/etc/cocalc/site-master-key.keyring' \
+  "${TARGET_ROOT}/etc/systemd/system/cocalc-bay-hub@.service"
 [[ "$(stat -c '%a' "$NEEDRESTART_CONFIG")" == "644" ]]
 grep -Fqx '$nrconf{override_rc}{qr(^cocalc-bay-.*\.service$)} = 0;' \
   "$NEEDRESTART_CONFIG"

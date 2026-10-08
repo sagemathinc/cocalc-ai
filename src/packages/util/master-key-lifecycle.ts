@@ -7,6 +7,7 @@ import {
   createCipheriv,
   createDecipheriv,
   createHash,
+  createHmac,
   hkdfSync,
   randomBytes,
   scryptSync,
@@ -16,11 +17,14 @@ import {
   access,
   chmod,
   mkdir,
+  open,
   readFile,
+  rename,
   stat,
+  unlink,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 export const SITE_MASTER_KEY_ID = "site-master-key";
 export const SITE_MASTER_KEY_FILENAME = "site-master-key";
@@ -30,6 +34,11 @@ export const SITE_MASTER_KEY_REQUIRE_ENV = "COCALC_REQUIRE_SITE_MASTER_KEY";
 export const SYSTEMD_CREDENTIALS_DIRECTORY_ENV = "CREDENTIALS_DIRECTORY";
 export const LEGACY_SECRET_SETTINGS_KEY_ENV = "COCALC_SECRET_SETTINGS_KEY_PATH";
 export const SITE_MASTER_KEY_BACKUP_KIND = "cocalc-site-master-key-backup";
+// Keys other than the active one: a staged next key during a rotation and
+// retired keys that existing ciphertexts may still need. Stored next to the
+// active key (or as a systemd credential of this name).
+export const SITE_MASTER_KEYRING_CREDENTIAL_NAME = "site-master-key.keyring";
+export const SITE_MASTER_KEYRING_ENV = "COCALC_SITE_MASTER_KEYRING_PATH";
 
 export type SiteMasterKeyPurpose =
   | "secret-settings:v1"
@@ -76,8 +85,32 @@ export interface MasterKeyFileStatus extends MasterKeyFile {
   warning?: string;
 }
 
+export type SiteMasterKeyRole = "active" | "next" | "retired";
+
+/** One key of the site keyring. The key id is derived from the key and is not secret. */
+export interface SiteMasterKeyEntry {
+  id: string;
+  key: Buffer;
+  role: SiteMasterKeyRole;
+  added_at?: string;
+}
+
+export interface SiteMasterKeyringStatus {
+  path: string;
+  read_only: boolean;
+  exists: boolean;
+  strict_permissions: boolean;
+  keys: {
+    id: string;
+    role: Exclude<SiteMasterKeyRole, "active">;
+    added_at?: string;
+  }[];
+  warning?: string;
+}
+
 export interface SiteMasterKeyStatus {
-  site_master_key: MasterKeyFileStatus;
+  site_master_key: MasterKeyFileStatus & { key_id?: string };
+  keyring: SiteMasterKeyringStatus;
   legacy_keys: MasterKeyFileStatus[];
   needs_initialization: boolean;
   backup_required: boolean;
@@ -90,6 +123,8 @@ interface PlainSiteMasterKeyBackup {
   encrypted: false;
   key: {
     id: typeof SITE_MASTER_KEY_ID;
+    // Which key this is (siteMasterKeyId); absent in older backups.
+    key_id?: string;
     original_path: string;
     sha256: string;
     value_base64: string;
@@ -339,6 +374,342 @@ export function deriveSiteMasterKey(
   return Buffer.from(derived);
 }
 
+/**
+ * A stable, non-secret identifier for a site master key, so people and
+ * ciphertexts can say which key they mean without revealing it.
+ */
+export function siteMasterKeyId(siteMasterKey: Buffer): string {
+  if (siteMasterKey.length !== 32) {
+    throw new Error("site master key must be 32 bytes");
+  }
+  return `smk_${createHmac("sha256", siteMasterKey)
+    .update("cocalc-site-master-key-id:v1")
+    .digest("base64url")
+    .slice(0, 16)}`;
+}
+
+export function resolveSiteMasterKeyringFile(
+  opts: SiteMasterKeyPathOptions & { keyringPath?: string } = {},
+): { path: string; read_only: boolean } {
+  const optionPath = normalizePath(opts.keyringPath);
+  if (optionPath) return { path: optionPath, read_only: false };
+  const site = resolveSiteMasterKeyFile(opts);
+  if (site.source === "systemd-credential") {
+    return {
+      path: join(dirname(site.path), SITE_MASTER_KEYRING_CREDENTIAL_NAME),
+      read_only: true,
+    };
+  }
+  const envPath = normalizePath(process.env[SITE_MASTER_KEYRING_ENV]);
+  if (envPath) return { path: envPath, read_only: false };
+  return { path: `${site.path}.keyring`, read_only: false };
+}
+
+const KEYRING_ROLES = new Set(["next", "retired"]);
+
+/**
+ * Parse a keyring file: one key per line, "<base64 key> <role> [key id]
+ * [added at]", where role is "next" or "retired". Blank lines and lines
+ * starting with "#" are ignored. A recorded key id must match the key.
+ */
+export function parseSiteMasterKeyring(
+  contents: string,
+  path = "keyring",
+): SiteMasterKeyEntry[] {
+  const entries: SiteMasterKeyEntry[] = [];
+  const seen = new Set<string>();
+  contents.split("\n").forEach((raw, index) => {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) return;
+    const [value, role, recordedId, added_at] = line.split(/\s+/);
+    const where = `${path}:${index + 1}`;
+    if (!KEYRING_ROLES.has(role)) {
+      throw new Error(`${where}: role must be "next" or "retired"`);
+    }
+    const key = parseKeyContents({ contents: value, path: where });
+    const id = siteMasterKeyId(key);
+    if (recordedId && recordedId !== id) {
+      throw new Error(
+        `${where}: key id ${recordedId} does not match its key (${id})`,
+      );
+    }
+    if (seen.has(id)) throw new Error(`${where}: duplicate key ${id}`);
+    seen.add(id);
+    entries.push({
+      id,
+      key,
+      role: role as SiteMasterKeyRole,
+      ...(added_at ? { added_at } : {}),
+    });
+  });
+  return entries;
+}
+
+export function formatSiteMasterKeyring(entries: SiteMasterKeyEntry[]): string {
+  const lines = [
+    "# CoCalc site master keyring: keys other than the active one.",
+    "# <base64 key> <next|retired> <key id> <added at>. Keep this file 0600.",
+  ];
+  for (const entry of entries) {
+    if (entry.role === "active") {
+      throw new Error("the active key does not belong in the keyring file");
+    }
+    lines.push(
+      [
+        entry.key.toString("base64"),
+        entry.role,
+        siteMasterKeyId(entry.key),
+        entry.added_at ?? new Date().toISOString(),
+      ].join(" "),
+    );
+  }
+  return lines.join("\n") + "\n";
+}
+
+export async function readSiteMasterKeyring(
+  opts: SiteMasterKeyPathOptions & { keyringPath?: string } = {},
+): Promise<SiteMasterKeyEntry[]> {
+  const { path } = resolveSiteMasterKeyringFile(opts);
+  let contents: string;
+  try {
+    contents = await readFile(path, "utf8");
+  } catch (err: any) {
+    if (err?.code === "ENOENT") return [];
+    throw err;
+  }
+  return parseSiteMasterKeyring(contents, path);
+}
+
+/**
+ * Every site master key this process may use: the active key first (the only
+ * one used to encrypt), then the keyring's next and retired keys (used only to
+ * decrypt and to match keyed hashes).
+ */
+export async function getSiteMasterKeyring(
+  opts: SiteMasterKeyPathOptions & { keyringPath?: string } = {},
+): Promise<SiteMasterKeyEntry[]> {
+  const active = await getOrCreateSiteMasterKey(opts);
+  const activeId = siteMasterKeyId(active);
+  return [
+    { id: activeId, key: active, role: "active" },
+    ...(await readSiteMasterKeyring(opts)).filter(
+      (entry) => entry.id !== activeId,
+    ),
+  ];
+}
+
+// Write a 0600 file by creating a new file next to it and renaming it over
+// the old one, so a reader or a crash never sees a partial key file.
+async function writeFileAtomic(path: string, contents: string): Promise<void> {
+  const temporary = join(
+    dirname(path),
+    `.${basename(path)}.${randomBytes(6).toString("hex")}`,
+  );
+  const handle = await open(temporary, "wx", 0o600);
+  try {
+    await handle.writeFile(contents);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  try {
+    await chmod(temporary, 0o600);
+    await rename(temporary, path);
+  } catch (err) {
+    await unlink(temporary).catch(() => {});
+    throw err;
+  }
+}
+
+type RotationPaths = SiteMasterKeyPathOptions & { keyringPath?: string };
+
+function writableRotationFiles(opts: RotationPaths) {
+  const site = resolveSiteMasterKeyFile(opts);
+  const keyring = resolveSiteMasterKeyringFile(opts);
+  if (site.read_only || keyring.read_only) {
+    throw new Error(
+      `the site master key is loaded from a read-only systemd credential (${site.path}); run key rotation with ${SITE_MASTER_KEY_ENV} set to the real key file, e.g. /etc/cocalc/site-master-key`,
+    );
+  }
+  return { site, keyring };
+}
+
+async function readActiveKey(path: string): Promise<Buffer> {
+  const key = await readOptionalMasterKeyFile(path);
+  if (!key) throw new Error(`no site master key at ${path}`);
+  return key;
+}
+
+export interface SiteMasterKeyRotationStep {
+  active_id: string;
+  keyring: { id: string; role: Exclude<SiteMasterKeyRole, "active"> }[];
+}
+
+async function rotationState(
+  opts: RotationPaths,
+): Promise<SiteMasterKeyRotationStep> {
+  const { site } = writableRotationFiles(opts);
+  const activeId = siteMasterKeyId(await readActiveKey(site.path));
+  return {
+    active_id: activeId,
+    keyring: (await readSiteMasterKeyring(opts))
+      .filter((entry) => entry.id !== activeId)
+      .map(({ id, role }) => ({
+        id,
+        role: role as Exclude<SiteMasterKeyRole, "active">,
+      })),
+  };
+}
+
+/**
+ * Rotation step 1: create a new key and add it to the keyring as "next". It is
+ * not used to encrypt anything until it is activated; once services restart
+ * with it in the keyring they can decrypt what it will encrypt. The caller
+ * must back it up (e.g. with exportSiteMasterKeyBackup) before activating.
+ */
+export async function stageNextSiteMasterKey(
+  opts: RotationPaths & { key?: Buffer } = {},
+): Promise<{ id: string; key: Buffer }> {
+  const { site, keyring } = writableRotationFiles(opts);
+  const active = await readActiveKey(site.path);
+  const entries = await readSiteMasterKeyring(opts);
+  const staged = entries.find((entry) => entry.role === "next");
+  if (staged) {
+    throw new Error(
+      `a next key (${staged.id}) is already staged; activate it or remove it from ${keyring.path} first`,
+    );
+  }
+  // A caller may generate the key itself, to back it up before staging it.
+  const key = opts.key ?? randomBytes(32);
+  if (key.length !== 32) throw new Error("site master key must be 32 bytes");
+  if (key.equals(active)) throw new Error("the new key equals the active key");
+  const entry: SiteMasterKeyEntry = {
+    id: siteMasterKeyId(key),
+    key,
+    role: "next",
+    added_at: new Date().toISOString(),
+  };
+  await writeFileAtomic(
+    keyring.path,
+    formatSiteMasterKeyring([...entries, entry]),
+  );
+  return { id: entry.id, key };
+}
+
+/**
+ * Rotation step 2 (and rollback): make the keyring key `id` (the staged next
+ * key, or a retired key to roll back) the active key; the previously active
+ * key becomes "retired". Each write is atomic and the order keeps every key
+ * on disk at all times: first the keyring gains the old key as retired, then
+ * the active file changes, then the new active key leaves the keyring. If
+ * interrupted, running it again completes it.
+ */
+export async function activateSiteMasterKey(
+  id: string,
+  opts: RotationPaths = {},
+): Promise<SiteMasterKeyRotationStep & { previous_id?: string }> {
+  const { site, keyring } = writableRotationFiles(opts);
+  const active = await readActiveKey(site.path);
+  const activeId = siteMasterKeyId(active);
+  let entries = await readSiteMasterKeyring(opts);
+  const target = entries.find((entry) => entry.id === id);
+  if (!target) {
+    if (activeId === id) return await rotationState(opts);
+    throw new Error(`key ${id} is not in the keyring at ${keyring.path}`);
+  }
+  if (activeId !== id) {
+    const now = new Date().toISOString();
+    if (!entries.some((entry) => entry.id === activeId)) {
+      entries = [
+        ...entries,
+        { id: activeId, key: active, role: "retired", added_at: now },
+      ];
+      await writeFileAtomic(keyring.path, formatSiteMasterKeyring(entries));
+    }
+    await writeFileAtomic(site.path, target.key.toString("base64"));
+  }
+  await writeFileAtomic(
+    keyring.path,
+    formatSiteMasterKeyring(entries.filter((entry) => entry.id !== id)),
+  );
+  return {
+    ...(await rotationState(opts)),
+    ...(activeId !== id ? { previous_id: activeId } : {}),
+  };
+}
+
+/**
+ * Rotation step 3: remove a retired key from the online keyring, once nothing
+ * encrypted under it is still needed. Keep an offline copy for as long as
+ * backups made before the rotation are retained.
+ */
+export async function retireSiteMasterKey(
+  id: string,
+  opts: RotationPaths = {},
+): Promise<SiteMasterKeyRotationStep> {
+  const { site, keyring } = writableRotationFiles(opts);
+  if (siteMasterKeyId(await readActiveKey(site.path)) === id) {
+    throw new Error(`${id} is the active key`);
+  }
+  const entries = await readSiteMasterKeyring(opts);
+  const target = entries.find((entry) => entry.id === id);
+  if (!target)
+    throw new Error(`key ${id} is not in the keyring at ${keyring.path}`);
+  if (target.role !== "retired") {
+    throw new Error(`key ${id} is ${target.role}, not retired`);
+  }
+  await writeFileAtomic(
+    keyring.path,
+    formatSiteMasterKeyring(entries.filter((entry) => entry.id !== id)),
+  );
+  return await rotationState(opts);
+}
+
+/** A purpose key derived from one keyring entry. */
+export interface DerivedSiteKey {
+  id: string;
+  key: Buffer;
+  role: SiteMasterKeyRole;
+}
+
+export function deriveSiteMasterKeyring(
+  keyring: SiteMasterKeyEntry[],
+  purpose: SiteMasterKeyPurpose,
+): DerivedSiteKey[] {
+  return keyring.map(({ id, key, role }) => ({
+    id,
+    role,
+    key: deriveSiteMasterKey(key, purpose),
+  }));
+}
+
+/**
+ * Try `decrypt` with each key, the one named by `preferredId` first. Returns
+ * the result and the key that worked; throws the first error if none did.
+ * AES-GCM authentication makes a wrong key fail rather than return garbage.
+ */
+export function decryptWithAnyKey<T>(
+  keys: DerivedSiteKey[],
+  decrypt: (key: Buffer) => T,
+  preferredId?: string,
+): { value: T; key: DerivedSiteKey } {
+  const ordered = preferredId
+    ? [
+        ...keys.filter((key) => key.id === preferredId),
+        ...keys.filter((key) => key.id !== preferredId),
+      ]
+    : keys;
+  let firstError: unknown;
+  for (const key of ordered) {
+    try {
+      return { value: decrypt(key.key), key };
+    } catch (err) {
+      firstError ??= err;
+    }
+  }
+  throw firstError ?? new Error("no site master key available");
+}
+
 async function getMasterKeyFileStatus(
   file: MasterKeyFile,
 ): Promise<MasterKeyFileStatus> {
@@ -391,11 +762,77 @@ async function getMasterKeyFileStatus(
   }
 }
 
+async function getKeyringStatus(
+  opts: SiteMasterKeyPathOptions,
+): Promise<SiteMasterKeyringStatus> {
+  const { path, read_only } = resolveSiteMasterKeyringFile(opts);
+  let mode: number | undefined;
+  try {
+    mode = (await stat(path)).mode;
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") {
+      return {
+        path,
+        read_only,
+        exists: false,
+        strict_permissions: false,
+        keys: [],
+        warning: `not accessible: ${err}`,
+      };
+    }
+  }
+  if (mode == null) {
+    return {
+      path,
+      read_only,
+      exists: false,
+      strict_permissions: true,
+      keys: [],
+    };
+  }
+  const strict = hasStrictPermissions(mode);
+  try {
+    const keys = (await readSiteMasterKeyring(opts)).map(
+      ({ id, role, added_at }) => ({
+        id,
+        role: role as Exclude<SiteMasterKeyRole, "active">,
+        ...(added_at ? { added_at } : {}),
+      }),
+    );
+    return {
+      path,
+      read_only,
+      exists: true,
+      strict_permissions: strict,
+      keys,
+      ...(strict
+        ? {}
+        : { warning: "file is readable or writable by group/other users" }),
+    };
+  } catch (err) {
+    return {
+      path,
+      read_only,
+      exists: true,
+      strict_permissions: strict,
+      keys: [],
+      warning: `invalid keyring: ${err}`,
+    };
+  }
+}
+
 export async function getSiteMasterKeyStatus(
   opts: SiteMasterKeyPathOptions = {},
 ): Promise<SiteMasterKeyStatus> {
   const siteFile = resolveSiteMasterKeyFile(opts);
-  const site = await getMasterKeyFileStatus(siteFile);
+  const site: SiteMasterKeyStatus["site_master_key"] =
+    await getMasterKeyFileStatus(siteFile);
+  if (site.key_valid) {
+    try {
+      site.key_id = siteMasterKeyId(await readMasterKeyFile(siteFile.path));
+    } catch {}
+  }
+  const keyring = await getKeyringStatus(opts);
   const legacy = await Promise.all(
     resolveLegacyMasterKeyFiles(opts)
       .filter((file) => file.path !== siteFile.path)
@@ -403,6 +840,7 @@ export async function getSiteMasterKeyStatus(
   );
   return {
     site_master_key: site,
+    keyring,
     legacy_keys: legacy,
     needs_initialization: !site.exists,
     backup_required: site.exists,
@@ -487,10 +925,13 @@ export async function createSiteMasterKeyBackup({
   passphrase,
   plaintext = false,
   paths,
+  key: givenKey,
 }: {
   passphrase?: string;
   plaintext?: boolean;
   paths?: SiteMasterKeyPathOptions;
+  // A specific key, e.g. a newly staged next key; default: the active key.
+  key?: Buffer;
 } = {}): Promise<SiteMasterKeyBackup> {
   if (!plaintext && !passphrase) {
     throw new Error(
@@ -498,7 +939,7 @@ export async function createSiteMasterKeyBackup({
     );
   }
   const file = resolveSiteMasterKeyFile(paths);
-  const key = await getOrCreateSiteMasterKey(paths);
+  const key = givenKey ?? (await getOrCreateSiteMasterKey(paths));
   const plain: PlainSiteMasterKeyBackup = {
     kind: SITE_MASTER_KEY_BACKUP_KIND,
     version: 1,
@@ -506,6 +947,7 @@ export async function createSiteMasterKeyBackup({
     encrypted: false,
     key: {
       id: SITE_MASTER_KEY_ID,
+      key_id: siteMasterKeyId(key),
       original_path: file.path,
       sha256: sha256(key),
       value_base64: key.toString("base64"),

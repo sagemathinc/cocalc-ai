@@ -14,14 +14,19 @@ import {
   replaceCachedProjectSecrets,
 } from "./sqlite/project-secrets";
 
-let projectSecretsKey: Buffer | undefined;
+// The hub sends the current key with every sync. After a site master key
+// rotation, values cached for projects that have not re-synced yet are still
+// under the previous key, so the last few keys are kept (newest first) and
+// tried in turn; AES-GCM authentication rejects a wrong key.
+const MAX_PROJECT_SECRETS_KEYS = 4;
+let projectSecretsKeys: Buffer[] = [];
 
 export function hasProjectSecretsCacheKey(): boolean {
-  return projectSecretsKey != null;
+  return projectSecretsKeys.length > 0;
 }
 
 export function resetProjectSecretsCacheKeyForTesting(): void {
-  projectSecretsKey = undefined;
+  projectSecretsKeys = [];
 }
 
 export function setProjectSecretsCacheKey(key_base64: string): void {
@@ -29,7 +34,30 @@ export function setProjectSecretsCacheKey(key_base64: string): void {
   if (key.length !== 32) {
     throw new Error("invalid project secrets cache key");
   }
-  projectSecretsKey = key;
+  projectSecretsKeys = [
+    key,
+    ...projectSecretsKeys.filter((other) => !other.equals(key)),
+  ].slice(0, MAX_PROJECT_SECRETS_KEYS);
+}
+
+function decryptCached({
+  project_id,
+  name,
+  encrypted,
+}: {
+  project_id: string;
+  name: string;
+  encrypted: Parameters<typeof decryptProjectSecretValue>[0]["encrypted"];
+}): string {
+  let firstError: unknown;
+  for (const key of projectSecretsKeys) {
+    try {
+      return decryptProjectSecretValue({ project_id, name, encrypted, key });
+    } catch (err) {
+      firstError ??= err;
+    }
+  }
+  throw firstError;
 }
 
 export function syncProjectSecretsCache({
@@ -87,18 +115,17 @@ export function getCachedProjectSecretsForRuntime({
 }: {
   project_id: string;
 }): Record<string, string> | undefined {
-  if (!projectSecretsKey) {
+  if (projectSecretsKeys.length === 0) {
     return undefined;
   }
   const rows = getCachedProjectSecrets(project_id);
   return Object.fromEntries(
     rows.map((row) => [
       row.name,
-      decryptProjectSecretValue({
+      decryptCached({
         project_id,
         name: row.name,
         encrypted: row.encrypted_value,
-        key: projectSecretsKey!,
       }),
     ]),
   );

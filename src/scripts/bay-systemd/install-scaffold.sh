@@ -149,6 +149,12 @@ fi
 if [[ ! -e "${TARGET_ENV_DIR}/bay-local.env" ]]; then
   install -m 0644 /dev/null "${TARGET_ENV_DIR}/bay-local.env"
 fi
+# Staged and retired site master keys during a key rotation (see
+# sbin/cocalc-bay-master-key). Services load it as a credential, so it must
+# exist; empty means no keys besides the active one.
+if [[ ! -e "${TARGET_ENV_DIR}/site-master-key.keyring" ]]; then
+  install -m 0600 /dev/null "${TARGET_ENV_DIR}/site-master-key.keyring"
+fi
 
 if [[ "$OVERLAY_MODE" == "current-cocalc" ]]; then
   install -m 0644 "${SCRIPT_DIR}/env/bay-current-cocalc-overlay.env.example" \

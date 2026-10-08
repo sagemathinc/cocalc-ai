@@ -104,10 +104,11 @@ jest.mock("@cocalc/server/bay-public-origin", () => ({
   }),
 }));
 
-jest.mock("@cocalc/database/settings/secret-settings", () => ({
-  __esModule: true,
-  getSecretSettingsKey: jest.fn(async () => Buffer.alloc(32, 1)),
-}));
+jest.mock("@cocalc/database/settings/secret-settings", () =>
+  require("@cocalc/database/settings/secret-settings-test-mock").secretSettingsMock(
+    Buffer.alloc(32, 1),
+  ),
+);
 
 jest.mock("@cocalc/database/postgres/account-collaborator-index", () => ({
   __esModule: true,

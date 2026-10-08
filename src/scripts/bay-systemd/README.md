@@ -305,6 +305,103 @@ pgBackRest. Restore the legacy interval only if an operator intentionally wants
 to resume the old scheduler. Do not delete either new repository or any legacy
 snapshot during rollback.
 
+## Site Master Key Rotation
+
+The site master key (`/etc/cocalc/site-master-key`) wraps every
+application-level secret in the database:
+
+- secret server settings;
+- second factors;
+- external credentials;
+- project backup repository secrets;
+- project secrets;
+- invites, registration tokens and connector tokens;
+- the configuration escrow, where installed.
+
+Rotate it after a recovery that used it, when someone with access leaves, or
+whenever it may have been exposed.
+
+A rotation never makes data unreadable, because a key is never dropped while
+anything needs it:
+
+- `/etc/cocalc/site-master-key.keyring` (0600, root) holds a **staged next
+  key** and **retired keys**.
+- Every service loads the keyring as a systemd credential.
+- New data is always encrypted with the active key.
+- Decryption, and matching of keyed hashes, accept any key in the keyring.
+- Key ids (`smk_…`) are derived from the keys and are not secret; use them to
+  name the keys in 1Password.
+
+Run each step on the bay as root with `cocalc-bay-master-key`, which
+`install-scaffold.sh` installs root-owned in `/usr/local/sbin`. With several
+bays sharing one site key, finish each key-file step on every bay before the
+next step.
+
+1. **Stage a new key:**
+
+   ```sh
+   cocalc-bay-master-key prepare --export /root/new-site-master-key
+   ```
+
+   This writes the new key to the export file and to the keyring, as `next`.
+   Nothing encrypts with it yet. Store the file's contents in 1Password under
+   the printed key id, then delete the file.
+2. **Restart the services:** `cocalc-bay-master-key restart`. This restarts
+   the hub workers one at a time, then Conat, frontdoor, billing and
+   cloudflared. Every process can now decrypt what the new key will encrypt.
+3. **Activate it:**
+
+   ```sh
+   cocalc-bay-master-key activate <new key id> --backed-up
+   cocalc-bay-master-key restart
+   ```
+
+   The previous key stays in the keyring as `retired`. If the configuration
+   escrow is installed, run `systemctl start cocalc-bay-config-escrow.service`
+   so the escrow is sealed with the new key.
+4. **Re-encrypt:**
+
+   ```sh
+   cocalc-bay-master-key reencrypt            # dry run: rows per key id
+   cocalc-bay-master-key reencrypt --execute
+   cocalc-bay-master-key doctor
+   ```
+
+   This runs as `cocalc-bay`, with the keys as credentials. Every update is
+   compare-and-swap, so it is safe while the site runs and can be run again.
+   It also:
+   - recomputes invite email hashes;
+   - makes project hosts re-sync rewrapped project secrets.
+5. **Retire the old key** at least 24 hours later, after in-flight email
+   sign-in challenges and connector turns have expired:
+
+   ```sh
+   cocalc-bay-master-key retire <old key id>
+   cocalc-bay-master-key restart
+   ```
+
+   `retire` refuses while any row is still encrypted under that key.
+   - Keep the old key in 1Password, marked retired, for as long as backups
+     made before the rotation exist. That means the pgBackRest retention, the
+     escrow history and offsite copies: at most four calendar months.
+   - To restore such a backup, put the old key back in the keyring as
+     `retired`, then run `reencrypt --execute`.
+
+**Rollback** before step 5: run `activate <old key id> --backed-up` and
+restart. Both keys are still online, so nothing is lost.
+
+Project hosts keep the last few project-secret keys they were sent, so they
+can still start a project from cached secrets across the change.
+`cocalc admin master-key rotate prepare|activate|retire` and
+`cocalc admin master-key reencrypt` do the same for a non-bay deployment.
+
+Tests:
+
+- `bash src/scripts/bay-systemd/cocalc-bay-master-key.test.sh`
+- `master-key-lifecycle.test.ts` in `packages/util`
+- `settings/master-key-migration.test.ts` in `packages/database`, which runs a
+  full rotation over every store
+
 ## GCP Bootstrap Service Account
 
 Run this in a trusted admin `gcloud` shell to create or update the project

@@ -22,10 +22,12 @@ import {
   parseR2Region,
 } from "@cocalc/util/consts";
 import {
-  deriveSiteMasterKey,
-  getOrCreateSiteMasterKey,
+  decryptWithAnyKey,
+  deriveSiteMasterKeyring,
+  getSiteMasterKeyring,
   readOptionalMasterKeyFile,
   resolveLegacyMasterKeyFiles,
+  type DerivedSiteKey,
 } from "@cocalc/util/master-key-lifecycle";
 import { createBucket, deleteObject, listBuckets, R2BucketInfo } from "./r2";
 import { ensureCopySchema } from "@cocalc/server/projects/copy-db";
@@ -1282,7 +1284,7 @@ async function getProjectBackupRepoSecret(
   }
   return await decryptBackupSecretWithMigration({
     repo: { id: repo.id, secret: repo.secret },
-    masterKey: await getBackupMasterKey(),
+    keys: await getBackupMasterKeys(),
   });
 }
 
@@ -1307,18 +1309,24 @@ export async function getProjectBackupConfigForRepo({
 }
 
 const backupSharedSecretPath = join(secrets, "backup-shared-secret");
-let backupMasterKey: Buffer | undefined;
+let backupMasterKeys: DerivedSiteKey[] | undefined;
 let legacyBackupMasterKey: Buffer | undefined;
 let legacyBackupMasterKeyLoaded = false;
 let backupSharedSecret: string | undefined;
 
-async function getBackupMasterKey(): Promise<Buffer> {
-  if (backupMasterKey) return backupMasterKey;
-  backupMasterKey = deriveSiteMasterKey(
-    await getOrCreateSiteMasterKey({ secretsDir: secrets }),
+// The active key first (used to encrypt), then any staged or retired keys of
+// a site master key rotation (used only to decrypt).
+async function getBackupMasterKeys(): Promise<DerivedSiteKey[]> {
+  if (backupMasterKeys) return backupMasterKeys;
+  backupMasterKeys = deriveSiteMasterKeyring(
+    await getSiteMasterKeyring({ secretsDir: secrets }),
     "project-backup-repo-secrets:v1",
   );
-  return backupMasterKey;
+  return backupMasterKeys;
+}
+
+async function getBackupMasterKey(): Promise<Buffer> {
+  return (await getBackupMasterKeys())[0].key;
 }
 
 async function getLegacyBackupMasterKey(): Promise<Buffer | undefined> {
@@ -1400,11 +1408,12 @@ async function storeMigratedBackupRepoSecret({
 
 async function decryptBackupSecretWithMigration({
   repo,
-  masterKey,
+  keys,
 }: {
   repo: ProjectBackupRepoWithSecret;
-  masterKey: Buffer;
+  keys: DerivedSiteKey[];
 }): Promise<string> {
+  const masterKey = keys[0].key;
   if (!repo.secret.startsWith("v1:")) {
     await storeMigratedBackupRepoSecret({
       repo,
@@ -1414,7 +1423,15 @@ async function decryptBackupSecretWithMigration({
     return repo.secret;
   }
   try {
-    return decryptBackupSecret(repo.secret, masterKey);
+    const { value: secret, key } = decryptWithAnyKey(keys, (candidate) =>
+      decryptBackupSecret(repo.secret, candidate),
+    );
+    // Rewrap a secret still under a retired key (not one under the staged
+    // next key: a process that already switched to it wrote that).
+    if (key.role === "retired") {
+      await storeMigratedBackupRepoSecret({ repo, secret, masterKey });
+    }
+    return secret;
   } catch (err) {
     const legacyKey = await getLegacyBackupMasterKey();
     if (!legacyKey) throw err;

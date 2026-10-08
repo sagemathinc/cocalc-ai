@@ -51,6 +51,7 @@ import {
   createEmailAuthLinkToken,
   decryptEmailAuthRegistrationToken,
   emailAuthDigest,
+  emailAuthDigestCandidates,
   emailAuthSecretMatches,
   encryptEmailAuthRegistrationToken,
   maskEmailAddress,
@@ -293,14 +294,17 @@ async function registrationTokenMatchesChallenge({
   }
 }
 
+// Lookups by keyed hash take the hash under every site key in the keyring
+// (see emailAuthDigestCandidates), so challenges created just before a key
+// rotation are still found.
 async function assertStartRateLimit({
   db,
-  email_lookup_hash,
-  request_ip_hash,
+  email_lookup_hashes,
+  request_ip_hashes,
 }: {
   db: Queryable;
-  email_lookup_hash: string;
-  request_ip_hash?: string;
+  email_lookup_hashes: string[];
+  request_ip_hashes?: string[];
 }): Promise<void> {
   const { rows } = await db.query<{
     email_count: number;
@@ -308,18 +312,20 @@ async function assertStartRateLimit({
   }>(
     `
       SELECT
-        COUNT(*) FILTER (WHERE email_lookup_hash=$1)::INTEGER AS email_count,
         COUNT(*) FILTER (
-          WHERE $2::CHAR(64) IS NOT NULL AND request_ip_hash=$2
+          WHERE email_lookup_hash = ANY($1::CHAR(64)[])
+        )::INTEGER AS email_count,
+        COUNT(*) FILTER (
+          WHERE request_ip_hash = ANY($2::CHAR(64)[])
         )::INTEGER AS ip_count
       FROM ${TABLE}
       WHERE created_at > NOW() - INTERVAL '1 hour'
         AND (
-          email_lookup_hash=$1 OR
-          ($2::CHAR(64) IS NOT NULL AND request_ip_hash=$2)
+          email_lookup_hash = ANY($1::CHAR(64)[]) OR
+          request_ip_hash = ANY($2::CHAR(64)[])
         )
     `,
-    [email_lookup_hash, request_ip_hash ?? null],
+    [email_lookup_hashes, request_ip_hashes ?? []],
   );
   if (
     Number(rows[0]?.email_count ?? 0) >= STARTS_PER_EMAIL_PER_HOUR ||
@@ -421,6 +427,12 @@ export async function startEmailAuthChallengeDirect(
     }),
     getClusterAccountByEmailDirect(email),
   ]);
+  const [emailLookupHashes, requestIpHashes] = await Promise.all([
+    emailAuthDigestCandidates({ kind: "email", value: email }),
+    opts.request_ip
+      ? emailAuthDigestCandidates({ kind: "ip", value: opts.request_ip })
+      : [],
+  ]);
   if (
     opts.expected_account_id &&
     account?.account_id !== opts.expected_account_id
@@ -491,7 +503,7 @@ export async function startEmailAuthChallengeDirect(
         `
           SELECT *
             FROM ${TABLE}
-           WHERE email_lookup_hash=$1
+           WHERE email_lookup_hash = ANY($1::CHAR(64)[])
              AND purpose=$2
              AND state='pending'
              AND expires_at > NOW()
@@ -499,7 +511,7 @@ export async function startEmailAuthChallengeDirect(
            LIMIT 1
            FOR UPDATE
         `,
-        [emailLookupHash, purpose],
+        [emailLookupHashes, purpose],
       )
     ).rows[0];
     if (
@@ -523,8 +535,8 @@ export async function startEmailAuthChallengeDirect(
     }
     await assertStartRateLimit({
       db,
-      email_lookup_hash: emailLookupHash,
-      request_ip_hash: requestIpHash,
+      email_lookup_hashes: emailLookupHashes,
+      request_ip_hashes: requestIpHashes,
     });
     await db.query(
       `
@@ -533,12 +545,12 @@ export async function startEmailAuthChallengeDirect(
                superseded_at=NOW(),
                registration_token_encrypted=NULL,
                updated_at=NOW()
-         WHERE email_lookup_hash=$1
+         WHERE email_lookup_hash = ANY($1::CHAR(64)[])
            AND purpose=$2
            AND state='pending'
            AND expires_at > NOW()
       `,
-      [emailLookupHash, purpose],
+      [emailLookupHashes, purpose],
     );
     const expiresAt = new Date(Date.now() + CHALLENGE_TTL_MS);
     const resendAvailableAt = new Date(Date.now() + RESEND_DELAY_MS);
