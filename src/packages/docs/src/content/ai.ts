@@ -123,6 +123,77 @@ underlying files, software, or complete project view.
 This example shows a reviewable image result beside the conversation. The
 underlying file remains in the project.
 
+## Share an agent with people
+
+Open the agent's actions menu and choose **Share with people…**. Select the
+people to invite, then choose **Invite**. Existing project collaborators receive
+a notification linking to the agent. Other people receive a project invitation;
+after accepting it, they open the agent from the invitation and choose **Add to
+my agents** to keep it in their own Agents list.
+
+Participants work in the same conversation and project. Sharing does not make
+an independent copy of the files or software environment. Inviting someone who
+is not already a collaborator also invites them to its project. Each person can
+start turns and send guidance. Human-started turns are billed to the person who
+starts them.
+
+## Choose payment methods across your agents
+
+On the **Agents** page, select your agents and choose **Set payment method**.
+You can leave a provider unchanged, select a connected credential, or have the
+selected agents follow your account default. **Make this my default** changes
+that provider's default as well; other agents following the default use it too.
+Codex and Claude have separate choices.
+
+These choices belong to your account and are stored on the server, so a browser
+reload does not discard them. For shared agents, another participant's choice
+does not replace yours. Credentials, provider access, project permissions, and
+usage limits still apply. Agent Network permission and payment authorization
+are separate; see [Use Claude Code](/docs/ai/claude-code) and
+[Agent Networks guidance](/docs/ai/agent-features).
+
+## Start fresh without removing your work
+
+Choose **Start fresh conversation…** in the agent's actions menu. **Clear
+context** keeps the same thread and its earlier messages, with a **Context
+cleared** marker; the next turn does not use the earlier conversation as its
+context. **Start new thread** instead keeps the old conversation in another
+thread. Both retain the agent's files, name, networks, appearance, and settings.
+
+Only the account that originally registered the agent can use **Start new
+thread**. Everyone following that shared agent then sees its new conversation.
+
+This does not delete messages, undo file changes, or reset the software
+environment. Finish or cancel running and queued work, and disable scheduled
+work before continuing.
+
+## Copy an agent from the CLI
+
+From a terminal signed in to CoCalc, inspect the command's current options:
+
+~~~sh
+cocalc agent create --help
+~~~
+
+To copy an existing named agent and leave a prepared request for review:
+
+~~~sh
+cocalc agent create review-next --from review --draft-file next-request.md
+~~~
+
+Replace **review** with your existing agent's name, choose an unused name for
+the copy, and put the proposed request in the local file **next-request.md**.
+The copy has a forked conversation in the same project and chat file, with an
+independent agent session. Its files and installed software are still shared
+with the original. The draft is not sent: open the new agent, review its
+settings and request, then send it when ready. The command rejects a name you
+already use or a source agent it cannot find.
+
+Check the command output for warnings: the agent can be created even if its
+payment selection or draft could not be copied. If naming fails after the fork
+is created, the error identifies its unnamed thread; inspect that thread before
+retrying.
+
 ## Bring existing work into Agents
 
 Only registered named agents are listed under **Agents**; existing project chats

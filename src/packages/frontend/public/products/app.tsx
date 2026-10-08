@@ -956,7 +956,7 @@ function CocalcStarPage() {
               Docker Desktop
             </a>{" "}
             on macOS or Windows, or Docker Engine on Linux, and start it. Give
-            Docker at least 4 CPUs, 8 GB of memory, and 50 GB of disk.
+            Docker 4 CPUs, 16 GB of memory, and 50 GB of disk.
           </Paragraph>
           <Paragraph style={{ margin: 0 }}>
             2. Run this in a terminal (on Windows, in PowerShell):

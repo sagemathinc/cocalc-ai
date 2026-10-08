@@ -6,10 +6,10 @@
 export const COCALC_STAR_BODY = `
 ## What CoCalc Star is
 
-CoCalc Star is a complete CoCalc site in one Docker container: Jupyter, LaTeX,
-terminals, chat, agents, and real-time collaboration for a lab, course, or
-small team. It is free, and it runs anywhere Docker runs: Docker Desktop on
-macOS and Windows, or Docker Engine on Linux.
+CoCalc Star runs a shared CoCalc site in one Docker container, with agent chat,
+project files, terminals, and real-time collaboration. Built-in editors include
+Jupyter and LaTeX. It is free, and it runs anywhere Docker runs: Docker Desktop
+on macOS and Windows, or Docker Engine on Linux.
 
 All of its state (accounts, projects, settings, certificates) lives in one
 Docker volume. Upgrading means running a newer image with the same volume;
@@ -18,8 +18,8 @@ removing the container and the volume removes all of its data.
 ## Quick start on your own computer
 
 1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-   (macOS or Windows) or Docker Engine (Linux) and start it. Give Docker at
-   least 4 CPUs, 8 GB of memory, and 50 GB of disk.
+   (macOS or Windows) or Docker Engine (Linux) and start it. Allocate 4 CPUs,
+   16 GB of memory, and 50 GB of disk to Docker.
 2. In a terminal (on Windows, in PowerShell), run:
 
 ~~~sh
@@ -174,8 +174,8 @@ and terminals end to end.
 
 When helping someone install Star:
 
-1. Confirm Docker is installed and running (\`docker info\`), with at least
-   4 CPUs, 8 GB of memory, and 50 GB of disk available to it.
+1. Confirm Docker is installed and running (\`docker info\`), with 4 CPUs,
+   16 GB of memory, and 50 GB of disk allocated to it.
 2. Use the one-line \`docker run\` commands above unchanged; they work in macOS
    and Linux shells and in Windows PowerShell.
 3. For a public server, the domain must already resolve to the server and
