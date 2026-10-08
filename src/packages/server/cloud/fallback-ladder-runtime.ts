@@ -54,6 +54,9 @@ export interface StartFaultRule {
   host_id?: string;
   pricing?: LadderRung["pricing"];
   machine_type?: string;
+  // Where to fail: the start itself (default), or switching the instance to
+  // machine_type before a fallback option starts.
+  stage?: "start" | "set_machine_type";
   error: string;
 }
 
@@ -61,6 +64,7 @@ export function injectedStartFault(opts: {
   host_id: string;
   pricing: LadderRung["pricing"];
   machine_type: string;
+  stage?: StartFaultRule["stage"];
 }): string | undefined {
   const path = `${process.env.COCALC_SPOT_RECOVERY_FAULTS_FILE ?? ""}`.trim();
   if (!path) return undefined;
@@ -82,7 +86,8 @@ export function injectedStartFault(opts: {
       typeof rule.error === "string" &&
       (!rule.host_id || rule.host_id === opts.host_id) &&
       (!rule.pricing || rule.pricing === opts.pricing) &&
-      (!rule.machine_type || rule.machine_type === opts.machine_type),
+      (!rule.machine_type || rule.machine_type === opts.machine_type) &&
+      (rule.stage ?? "start") === (opts.stage ?? "start"),
   );
   if (!rule) return undefined;
   logger.warn("injecting spot recovery start fault", { ...opts, rule });

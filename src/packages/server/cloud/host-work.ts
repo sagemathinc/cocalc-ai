@@ -2160,6 +2160,13 @@ async function handleStart(row: any) {
         }
         try {
           if (rung.machine_type !== currentMachineType) {
+            const fault = injectedStartFault({
+              host_id: row.id,
+              pricing: rung.pricing,
+              machine_type: rung.machine_type,
+              stage: "set_machine_type",
+            });
+            if (fault) throw new Error(`injected machine type fault: ${fault}`);
             await entry.provider.setMachineType!(
               runtimeForStart,
               rung.machine_type,
