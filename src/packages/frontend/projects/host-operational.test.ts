@@ -158,6 +158,53 @@ describe("projects host operational display state", () => {
     });
   });
 
+  it("keeps the outage start after the replacement VM starts heartbeating", () => {
+    // los-angeles-1, 2026-10-08: the Standard VM was already sending
+    // heartbeats, so filtering by last_seen left "Recovery is in progress"
+    // with no indication of when the 4-minute recovery started.
+    expect(
+      getHostRecoveryDisplay(
+        {
+          desired_state: "running",
+          desired_pricing_model: "spot",
+          effective_pricing_model: "on_demand",
+          recovery_phase: "running_standard_fallback",
+          last_seen: "2026-10-08T20:13:40.000Z",
+          spot_recovery_state: {
+            phase: "running_standard_fallback",
+            outage_started_at: "2026-10-08T20:11:05.000Z",
+            verification_started_at: "2026-10-08T20:12:20.000Z",
+          },
+        },
+        new Date("2026-10-08T20:14:00.000Z").getTime(),
+      ),
+    ).toMatchObject({
+      active: true,
+      title: "Project host is restarting on guaranteed capacity",
+      startedAt: "2026-10-08T20:11:05.000Z",
+    });
+  });
+
+  it("uses the current start attempt when the outage start is stale", () => {
+    expect(
+      getHostRecoveryDisplay(
+        {
+          desired_state: "running",
+          desired_pricing_model: "spot",
+          effective_pricing_model: "on_demand",
+          recovery_phase: "running_standard_fallback",
+          last_seen: "2026-10-08T20:13:40.000Z",
+          spot_recovery_state: {
+            phase: "running_standard_fallback",
+            outage_started_at: "2026-10-08T09:00:00.000Z",
+            verification_started_at: "2026-10-08T20:12:20.000Z",
+          },
+        },
+        new Date("2026-10-08T20:14:00.000Z").getTime(),
+      ),
+    ).toMatchObject({ startedAt: "2026-10-08T20:12:20.000Z" });
+  });
+
   it("does not describe idle spot hosts as recovering", () => {
     expect(
       getHostRecoveryDisplay({

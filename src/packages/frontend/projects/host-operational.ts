@@ -2,6 +2,7 @@ import { COMPUTE_STATES } from "@cocalc/util/compute-states";
 
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
 const DEFAULT_RECOVERY_ESTIMATE_MS = 3 * 60 * 1000;
+const STALE_OUTAGE_START_MS = 30 * 60 * 1000;
 export const HOST_UNAVAILABLE_BANNER_GRACE_MS = 5_000;
 
 type HostInfoLike = {
@@ -122,13 +123,39 @@ export function getHostRecoveryDisplay(
     : 3;
   const lastSeenMs = timestamp(read(hostInfo, "last_seen"));
   const clientStartedAtMs = timestamp(clientUnavailableSince);
+  // The replacement VM heartbeats before recovery finishes, so last_seen
+  // passes the outage start while the banner is still up: that must not hide
+  // when the outage started. An outage start much older than the current
+  // start attempt (e.g. a restart during a Standard hold) is stale.
+  const outageStartedAtMs = isSpotRecovery
+    ? timestamp(read(recovery, "outage_started_at"))
+    : undefined;
+  const attemptStartedAtMs = isSpotRecovery
+    ? timestamp(read(recovery, "verification_started_at"))
+    : undefined;
+  let spotStartedAtMs = outageStartedAtMs ?? attemptStartedAtMs;
+  if (
+    outageStartedAtMs != null &&
+    attemptStartedAtMs != null &&
+    attemptStartedAtMs - outageStartedAtMs > STALE_OUTAGE_START_MS
+  ) {
+    spotStartedAtMs = attemptStartedAtMs;
+  }
+  if (
+    spotStartedAtMs != null &&
+    attemptStartedAtMs == null &&
+    lastSeenMs != null &&
+    spotStartedAtMs < lastSeenMs &&
+    now - spotStartedAtMs > STALE_OUTAGE_START_MS
+  ) {
+    spotStartedAtMs = undefined;
+  }
   const serverStartedAtCandidates = [
-    isSpotRecovery ? read(recovery, "outage_started_at") : undefined,
-    read(hostInfo, "unavailable_since"),
-  ]
-    .map(timestamp)
-    .filter((value): value is number => value != null && value <= now)
-    .filter((value) => lastSeenMs == null || value >= lastSeenMs);
+    ...(spotStartedAtMs != null ? [spotStartedAtMs] : []),
+    ...[timestamp(read(hostInfo, "unavailable_since"))].filter(
+      (value) => value != null && (lastSeenMs == null || value >= lastSeenMs),
+    ),
+  ].filter((value): value is number => value != null && value <= now);
   // Once this browser witnesses a disconnect, its timestamp is the stable
   // identity of this incident. Provider recovery state can retain an older
   // outage while a Standard fallback hold remains active; accepting that value
