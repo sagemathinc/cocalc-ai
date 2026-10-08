@@ -6,14 +6,10 @@ let resolveProjectBayMock: jest.Mock;
 let resolveProjectCollabInviteDirectoryMock: jest.Mock;
 let projectDetailsGetMock: jest.Mock;
 let projectReferenceGetMock: jest.Mock;
-let inviteWithoutAccountMock: jest.Mock;
-let copyEmailLinkMock: jest.Mock;
-let redeemEmailMock: jest.Mock;
-let previewEmailMock: jest.Mock;
-let respondEmailMock: jest.Mock;
 let loadProjectReadDetailsDirectMock: jest.Mock;
 let assertClusterAccountTrustedForProductAccessMock: jest.Mock;
 let applyAccountProjectFeedRemoveOnHomeBayMock: jest.Mock;
+let forwardHubApiCallMock: jest.Mock;
 
 jest.setTimeout(15_000);
 
@@ -55,14 +51,6 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
     projectReference: jest.fn(() => ({
       get: (...args: any[]) => projectReferenceGetMock(...args),
     })),
-    projectCollabInvite: jest.fn(() => ({
-      inviteWithoutAccount: (...args: any[]) =>
-        inviteWithoutAccountMock(...args),
-      copyEmailLink: (...args: any[]) => copyEmailLinkMock(...args),
-      redeemEmail: (...args: any[]) => redeemEmailMock(...args),
-      previewEmail: (...args: any[]) => previewEmailMock(...args),
-      respondEmail: (...args: any[]) => respondEmailMock(...args),
-    })),
   })),
 }));
 
@@ -76,6 +64,11 @@ jest.mock("@cocalc/server/projects/details", () => ({
   __esModule: true,
   loadProjectReadDetailsDirect: (...args: any[]) =>
     loadProjectReadDetailsDirectMock(...args),
+}));
+
+jest.mock("./edge-routing", () => ({
+  __esModule: true,
+  forwardHubApiCall: (...args: any[]) => forwardHubApiCallMock(...args),
 }));
 
 jest.mock("@cocalc/server/account/project-feed", () => ({
@@ -125,70 +118,12 @@ describe("remote project detail reads", () => {
         [ACCOUNT_ID]: { group: "collaborator" },
       },
     }));
-    inviteWithoutAccountMock = jest.fn(async () => ({
-      email_sent: false,
-      email_available: true,
-      manual_delivery_required: true,
-      email_blocked_reason: "send_disabled_by_request",
-      invites: [
-        {
-          invite_id: "77777777-7777-4777-8777-777777777777",
-          project_id: PROJECT_ID,
-          inviter_account_id: ACCOUNT_ID,
-          invitee_account_id: null,
-          invite_source: "email",
-          status: "pending",
-          created: "2026-05-18T00:00:00.000Z",
-          updated: "2026-05-18T00:00:00.000Z",
-        },
-      ],
-    }));
-    copyEmailLinkMock = jest.fn(async () => ({
-      invite_id: "77777777-7777-4777-8777-777777777777",
-      invite_url: "https://example.com/invites/t",
-      expires: "2026-06-01T00:00:00.000Z",
-    }));
-    redeemEmailMock = jest.fn(async () => ({
-      invite_id: "77777777-7777-4777-8777-777777777777",
-      project_id: PROJECT_ID,
-      inviter_account_id: "33333333-3333-4333-8333-333333333333",
-      invitee_account_id: null,
-      accepted_account_id: ACCOUNT_ID,
-      invite_source: "email",
-      status: "accepted",
-      created: "2026-05-18T00:00:00.000Z",
-      updated: "2026-05-18T00:00:00.000Z",
-      responded: "2026-05-18T01:00:00.000Z",
-    }));
-    previewEmailMock = jest.fn(async () => ({
-      invite_id: "77777777-7777-4777-8777-777777777777",
-      project_id: PROJECT_ID,
-      project_title: "Remote Project",
-      inviter_account_id: "33333333-3333-4333-8333-333333333333",
-      invitee_account_id: null,
-      invite_source: "email",
-      status: "pending",
-      message: "Please join",
-      created: "2026-05-18T00:00:00.000Z",
-      updated: "2026-05-18T00:00:00.000Z",
-    }));
-    respondEmailMock = jest.fn(async () => ({
-      invite_id: "77777777-7777-4777-8777-777777777777",
-      project_id: PROJECT_ID,
-      inviter_account_id: "33333333-3333-4333-8333-333333333333",
-      invitee_account_id: null,
-      invite_source: "email",
-      status: "declined",
-      responder_action: "decline",
-      created: "2026-05-18T00:00:00.000Z",
-      updated: "2026-05-18T00:00:00.000Z",
-      responded: "2026-05-18T01:00:00.000Z",
-    }));
     loadProjectReadDetailsDirectMock = jest.fn();
     assertClusterAccountTrustedForProductAccessMock = jest.fn(
       async () => undefined,
     );
     applyAccountProjectFeedRemoveOnHomeBayMock = jest.fn(async () => undefined);
+    forwardHubApiCallMock = jest.fn(async () => ({ invite_id: "forwarded" }));
   });
 
   it("routes getProjectCreated through the owning bay", async () => {
@@ -227,199 +162,132 @@ describe("remote project detail reads", () => {
     });
   });
 
-  it("routes email-token invite creation through the owning bay", async () => {
-    const { inviteCollaboratorWithoutAccount } = await import("./projects");
-    const opts = {
-      project_id: PROJECT_ID,
-      title: "Remote Project",
-      link2proj: "",
-      to: "student@example.com",
-      email: "",
-      send_email: false,
-    };
-    const result = await inviteCollaboratorWithoutAccount({
-      account_id: ACCOUNT_ID,
-      opts,
-    });
-
-    expect(inviteWithoutAccountMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      opts,
-    });
-    expect(result.email_sent).toBe(false);
-    expect(result.invites[0].created).toEqual(
-      new Date("2026-05-18T00:00:00.000Z"),
+  it("leaves course secret APIs to edge routing", async () => {
+    // These run on the course project's owning bay; see edge-routing.test.ts
+    // and the two-bay suite.
+    const { getHubApiRoute, hubApiRouteKey } =
+      await import("@cocalc/conat/hub/api/routes");
+    for (const name of [
+      "listCourseShareableSecrets",
+      "getCourseSecretPolicy",
+      "previewCourseSecretSync",
+      "setCourseSecretPolicy",
+      "setCourseSecretGrants",
+      "approveCourseSecretRecipients",
+      "revokeCourseSecretRecipients",
+      "startCourseSecretSync",
+      "startCourseSecretCleanup",
+      "getCourseSecretSyncStatus",
+      "revokeCourseSecretPolicy",
+    ]) {
+      const route = getHubApiRoute(`projects.${name}`);
+      expect([name, route?.owner]).toEqual([name, "project"]);
+      expect(hubApiRouteKey(route!, [{ course_project_id: PROJECT_ID }])).toBe(
+        PROJECT_ID,
+      );
+    }
+    const sharing = getHubApiRoute("projects.setProjectSecretCourseSharing")!;
+    expect(hubApiRouteKey(sharing, [{ project_id: PROJECT_ID }])).toBe(
+      PROJECT_ID,
     );
+    for (const name of [
+      "getAdminProjectEntitlementOverride",
+      "setAdminProjectEntitlementOverride",
+      "clearAdminProjectEntitlementOverride",
+    ]) {
+      expect([name, getHubApiRoute(`projects.${name}`)?.owner]).toEqual([
+        name,
+        "project",
+      ]);
+    }
+    // Copying secrets involves two projects: it stays an explicit workflow.
+    expect(getHubApiRoute("projects.copyProjectSecrets")).toBeUndefined();
   });
 
-  it("routes email invite copy-link through the owning bay", async () => {
-    const { copyEmailProjectInviteLink } = await import("./projects");
-    const result = await copyEmailProjectInviteLink({
-      account_id: ACCOUNT_ID,
-      project_id: PROJECT_ID,
-      invite_id: "77777777-7777-4777-8777-777777777777",
+  it("leaves collaborator invite APIs to edge routing", async () => {
+    // These run on the bay that owns the project (or the email invite, found
+    // in the invite directory); see edge-routing.test.ts and the two-bay suite.
+    const { getHubApiRoute } = await import("@cocalc/conat/hub/api/routes");
+    const owners = Object.fromEntries(
+      [
+        "createCollabInvite",
+        "inviteCollaboratorWithoutAccount",
+        "listCollabInvites",
+        "respondCollabInvite",
+        "removeCollaborator",
+        "copyEmailProjectInviteLink",
+        "redeemEmailProjectInvite",
+        "previewEmailProjectInvite",
+        "respondEmailProjectInvite",
+      ].map((name) => [name, getHubApiRoute(`projects.${name}`)?.owner]),
+    );
+    expect(owners).toEqual({
+      createCollabInvite: "project",
+      inviteCollaboratorWithoutAccount: "project",
+      listCollabInvites: "project",
+      respondCollabInvite: "project",
+      removeCollaborator: "project",
+      copyEmailProjectInviteLink: "collab-invite",
+      redeemEmailProjectInvite: "collab-invite",
+      previewEmailProjectInvite: "collab-invite",
+      respondEmailProjectInvite: "collab-invite",
     });
-
-    expect(copyEmailLinkMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      project_id: PROJECT_ID,
-      invite_id: "77777777-7777-4777-8777-777777777777",
-    });
-    expect(result.expires).toEqual(new Date("2026-06-01T00:00:00.000Z"));
   });
 
-  it("routes email invite redemption through the owning bay", async () => {
-    const { redeemEmailProjectInvite } = await import("./projects");
-    const result = await redeemEmailProjectInvite({
-      account_id: ACCOUNT_ID,
-      project_id: PROJECT_ID,
-      invite_id: "77777777-7777-4777-8777-777777777777",
-      token: "token-1",
-    });
-
-    expect(redeemEmailMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      project_id: PROJECT_ID,
-      invite_id: "77777777-7777-4777-8777-777777777777",
-      token: "token-1",
-    });
-    expect(
-      assertClusterAccountTrustedForProductAccessMock,
-    ).not.toHaveBeenCalled();
-    expect(resolveProjectCollabInviteDirectoryMock).toHaveBeenCalledWith({
-      invite_id: "77777777-7777-4777-8777-777777777777",
-      token_hash: expect.any(String),
-    });
-    expect(result.responded).toEqual(new Date("2026-05-18T01:00:00.000Z"));
-  });
-
-  it("routes email invite preview through the owning bay", async () => {
-    const { previewEmailProjectInvite } = await import("./projects");
-    const result = await previewEmailProjectInvite({
-      account_id: ACCOUNT_ID,
-      project_id: PROJECT_ID,
-      invite_id: "77777777-7777-4777-8777-777777777777",
-      token: "token-1",
-    });
-
-    expect(previewEmailMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      project_id: PROJECT_ID,
-      invite_id: "77777777-7777-4777-8777-777777777777",
-      token: "token-1",
-    });
-    expect(resolveProjectCollabInviteDirectoryMock).toHaveBeenCalledWith({
-      invite_id: "77777777-7777-4777-8777-777777777777",
-      token_hash: expect.any(String),
-    });
-    expect(result.created).toEqual(new Date("2026-05-18T00:00:00.000Z"));
-    expect(result.message).toBe("Please join");
-  });
-
-  it("routes email invite decline/block responses through the owning bay", async () => {
-    const { respondEmailProjectInvite } = await import("./projects");
-    const result = await respondEmailProjectInvite({
-      account_id: ACCOUNT_ID,
-      action: "decline",
-      project_id: PROJECT_ID,
-      invite_id: "77777777-7777-4777-8777-777777777777",
-      token: "token-1",
-    });
-
-    expect(respondEmailMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      action: "decline",
-      project_id: PROJECT_ID,
-      invite_id: "77777777-7777-4777-8777-777777777777",
-      token: "token-1",
-    });
-    expect(
-      assertClusterAccountTrustedForProductAccessMock,
-    ).not.toHaveBeenCalled();
-    expect(resolveProjectCollabInviteDirectoryMock).toHaveBeenCalledWith({
-      invite_id: "77777777-7777-4777-8777-777777777777",
-      token_hash: expect.any(String),
-    });
-    expect(result.responded).toEqual(new Date("2026-05-18T01:00:00.000Z"));
-    expect(result.status).toBe("declined");
-  });
-
-  it("uses the central invite directory for email invite preview", async () => {
-    resolveProjectBayMock = jest.fn(async () => null);
-    resolveProjectCollabInviteDirectoryMock = jest.fn(async () => ({
-      invite_id: "77777777-7777-4777-8777-777777777777",
-      project_id: PROJECT_ID,
-      owning_bay_id: "bay-7",
-      token_hash: "hash",
-    }));
-
-    const { previewEmailProjectInvite } = await import("./projects");
+  it("forwards email invite links opened on another bay to the invite's bay", async () => {
+    // The /invites/<token> HTTP endpoints call these wrappers directly, not
+    // through the hub API's edge routing.
+    const { previewEmailProjectInvite, respondEmailProjectInvite } =
+      await import("./projects");
     await expect(
-      previewEmailProjectInvite({
+      previewEmailProjectInvite({ account_id: ACCOUNT_ID, token: "token-1" }),
+    ).resolves.toEqual({ invite_id: "forwarded" });
+    await expect(
+      respondEmailProjectInvite({
         account_id: ACCOUNT_ID,
-        project_id: PROJECT_ID,
-        invite_id: "77777777-7777-4777-8777-777777777777",
+        action: "accept",
         token: "token-1",
       }),
-    ).resolves.toEqual(
-      expect.objectContaining({
-        invite_id: "77777777-7777-4777-8777-777777777777",
-        project_id: PROJECT_ID,
-      }),
-    );
-    expect(resolveProjectBayMock).not.toHaveBeenCalled();
-    expect(resolveProjectCollabInviteDirectoryMock).toHaveBeenCalledWith({
-      invite_id: "77777777-7777-4777-8777-777777777777",
-      token_hash: expect.any(String),
-    });
-    expect(previewEmailMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      project_id: PROJECT_ID,
-      invite_id: "77777777-7777-4777-8777-777777777777",
-      token: "token-1",
-    });
+    ).resolves.toEqual({ invite_id: "forwarded" });
+    expect(forwardHubApiCallMock.mock.calls).toEqual([
+      [
+        "bay-7",
+        {
+          name: "projects.previewEmailProjectInvite",
+          account_id: ACCOUNT_ID,
+          args: [
+            {
+              invite_id: "77777777-7777-4777-8777-777777777777",
+              token: "token-1",
+              project_id: PROJECT_ID,
+            },
+          ],
+        },
+      ],
+      [
+        "bay-7",
+        {
+          name: "projects.respondEmailProjectInvite",
+          account_id: ACCOUNT_ID,
+          args: [
+            {
+              action: "accept",
+              invite_id: "77777777-7777-4777-8777-777777777777",
+              token: "token-1",
+              project_id: PROJECT_ID,
+            },
+          ],
+        },
+      ],
+    ]);
   });
 
-  it("routes token-only email invite preview through the central directory", async () => {
-    resolveProjectBayMock = jest.fn(async () => null);
-
+  it("asks anonymous visitors to sign in for an invite on another bay", async () => {
     const { previewEmailProjectInvite } = await import("./projects");
-    const result = await previewEmailProjectInvite({
-      account_id: ACCOUNT_ID,
-      token: "token-1",
-    });
-
-    expect(resolveProjectBayMock).not.toHaveBeenCalled();
-    expect(resolveProjectCollabInviteDirectoryMock).toHaveBeenCalledWith({
-      token_hash: expect.any(String),
-    });
-    expect(previewEmailMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      project_id: PROJECT_ID,
-      invite_id: "77777777-7777-4777-8777-777777777777",
-      token: "token-1",
-    });
-    expect(result.project_id).toBe(PROJECT_ID);
-  });
-
-  it("routes email invite accept responses without requiring product-access trust", async () => {
-    const { respondEmailProjectInvite } = await import("./projects");
-    await respondEmailProjectInvite({
-      account_id: ACCOUNT_ID,
-      action: "accept",
-      token: "token-1",
-    });
-
-    expect(
-      assertClusterAccountTrustedForProductAccessMock,
-    ).not.toHaveBeenCalled();
-    expect(respondEmailMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      action: "accept",
-      project_id: PROJECT_ID,
-      invite_id: "77777777-7777-4777-8777-777777777777",
-      token: "token-1",
-    });
+    await expect(
+      previewEmailProjectInvite({ token: "token-1" }),
+    ).rejects.toThrow("Sign in to open this project invite.");
+    expect(forwardHubApiCallMock).not.toHaveBeenCalled();
   });
 
   it("leaves project access request APIs to edge routing", async () => {

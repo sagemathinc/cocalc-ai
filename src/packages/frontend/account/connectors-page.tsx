@@ -23,6 +23,7 @@ import {
   useNamedAgents,
 } from "@cocalc/frontend/agents/api";
 import { activeNetworkMembers } from "@cocalc/frontend/agents/agent-network-utils";
+import { CliConnectorSection } from "@cocalc/frontend/agents/cli-connectors";
 import { CocalcConnector } from "@cocalc/frontend/agents/cocalc-connector";
 import { cocalcAccessSummary } from "@cocalc/frontend/agents/composer-connectors";
 import { useAgentNetworkActions } from "@cocalc/frontend/agents/use-agent-network-actions";
@@ -41,6 +42,8 @@ export const CONNECTORS_SETTINGS_PAGE = {
   }),
   controls: [
     COCALC_ACCESS,
+    "GitHub",
+    "Cloudflare",
     AGENT_NETWORKS,
     "Pause all messaging",
     "Revoke all networks",
@@ -73,6 +76,8 @@ export function ConnectorsPage() {
         .
       </Typography.Paragraph>
       <CocalcAccessSection />
+      <CliConnectorSection connector="github" />
+      <CliConnectorSection connector="cloudflare" />
       <AgentNetworksSection />
     </>
   );

@@ -129,6 +129,45 @@ describe("project storage info service", () => {
     });
   });
 
+  it("keeps overview usable when the environment tree is unreadable", async () => {
+    const stream = makeStream();
+    const duMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: Buffer.from("120 /root/cache\n120 /root\n"),
+        stderr: Buffer.alloc(0),
+        code: 0,
+      })
+      .mockRejectedValueOnce(
+        new Error(
+          "EACCES: permission denied, realpath 'root/.local/share/cocalc/rootfs'",
+        ),
+      );
+    dstreamMock.mockResolvedValue(stream);
+    fileServerClientMock.mockReturnValue({
+      getQuota: jest.fn(async () => ({
+        used: 50,
+        size: 100,
+        qgroupid: "0/2",
+        scope: "subvolume",
+      })),
+    });
+    fsClientMock.mockReturnValue({ du: duMock });
+
+    const { handleProjectStorageOverviewRequest } =
+      await import("./storage-info-service");
+    const overview = await handleProjectStorageOverviewRequest.call(
+      {
+        subject: "project.11111111-1111-4111-8111-111111111111.storage-info.-",
+      },
+      { home: "/root" },
+      {} as any,
+    );
+
+    expect(overview.live.bytes).toBe(120);
+    expect(overview.visible.map((bucket) => bucket.key)).toEqual(["home"]);
+  });
+
   it("keeps overview usable with a quota-based estimate when live scan times out cold", async () => {
     const stream = makeStream();
     const duMock = jest

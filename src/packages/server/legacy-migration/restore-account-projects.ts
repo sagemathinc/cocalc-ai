@@ -18,6 +18,7 @@ import type {
   LegacyMigrationProjectSummary,
 } from "@cocalc/conat/hub/api/legacy-migration";
 import { isValidUUID } from "@cocalc/util/misc";
+import { getProject } from "@cocalc/server/projects/control";
 import { importProjects, listProjects, retryProjectRestore } from ".";
 
 const DEFAULT_LIMIT = 2000;
@@ -509,6 +510,9 @@ async function restoreOne({
   }
   let phase = "restored";
   if (options.startAfterRestore) {
+    // A restored project has no run quota yet; compute it from membership as
+    // an ordinary start does.
+    await getProject(result.project_id).computeQuota(accountId);
     await startProjectOnHost(result.project_id, { account_id: accountId });
     phase = "started";
     if (options.stopAfterStart) {

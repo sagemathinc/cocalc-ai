@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "${SCRIPT_DIR}/lib.sh"
+
+# Restart cloudflared when its tunnel stops carrying traffic while the local
+# origin is healthy. Crashes are handled by systemd (Restart=on-failure); this
+# covers a process that stays up but is broken, e.g. one tunnel connection whose
+# edge cancels every stream ("stream N canceled by remote") while the other
+# connections keep working, so only a fraction of public requests hang.
+
+: "${COCALC_BAY_CLOUDFLARED_WATCHDOG_ENABLED:=1}"
+: "${COCALC_BAY_CLOUDFLARED_METRICS_URL:=http://127.0.0.1:20241}"
+: "${COCALC_BAY_CLOUDFLARED_WATCHDOG_WINDOW_S:=60}"
+: "${COCALC_BAY_CLOUDFLARED_WATCHDOG_MIN_FAILURES:=20}"
+: "${COCALC_BAY_CLOUDFLARED_WATCHDOG_CONCENTRATION_PCT:=80}"
+: "${COCALC_BAY_CLOUDFLARED_WATCHDOG_FAILURE_THRESHOLD:=3}"
+: "${COCALC_BAY_CLOUDFLARED_WATCHDOG_RESTART_TIMEOUT_S:=60}"
+: "${COCALC_BAY_CLOUDFLARED_WATCHDOG_RESTART_COOLDOWN_S:=900}"
+: "${COCALC_BAY_CLOUDFLARED_WATCHDOG_READY_TIMEOUT_S:=30}"
+
+case "$COCALC_BAY_CLOUDFLARED_WATCHDOG_ENABLED" in
+  0|false|no) exit 0 ;;
+esac
+
+UNIT="cocalc-bay-cloudflared.service"
+STATE_DIR="${COCALC_BAY_RUN_DIR}/cloudflared-watchdog"
+mkdir -p "$STATE_DIR"
+chmod 0750 "$STATE_DIR"
+failure_file="${STATE_DIR}/failures"
+restart_file="${STATE_DIR}/last-restart"
+last_seen_file="${STATE_DIR}/last-journal-timestamp"
+
+exec 9>"${STATE_DIR}/watchdog.lock"
+if ! flock -n 9; then
+  exit 0
+fi
+
+# An inactive unit is either intentionally disabled (direct Cloudflare-proxied
+# ingress) or crashed, which systemd restarts on its own.
+if ! systemctl is-active --quiet "$UNIT"; then
+  rm -f "$failure_file"
+  exit 0
+fi
+
+ready_connections() {
+  local body
+  if ! body="$(curl --silent --show-error \
+      --max-time "${COCALC_BAY_HEALTH_TIMEOUT_S}" \
+      "${COCALC_BAY_CLOUDFLARED_METRICS_URL}/ready" 2>&1)"; then
+    return 1
+  fi
+  python3 -c '
+import json
+import sys
+try:
+    value = json.load(sys.stdin)["readyConnections"]
+except Exception:
+    raise SystemExit(1)
+if not isinstance(value, int) or value < 0:
+    raise SystemExit(1)
+print(value)
+' <<<"$body"
+}
+
+if ! ready="$(ready_connections)"; then
+  bay_log "cloudflared watchdog could not read ${COCALC_BAY_CLOUDFLARED_METRICS_URL}/ready"
+  exit 0
+fi
+
+now="$(date +%s)"
+since=$((now - COCALC_BAY_CLOUDFLARED_WATCHDOG_WINDOW_S))
+# Only count failures logged by the current process.
+active_since="$(systemctl show "$UNIT" --property=ActiveEnterTimestamp --value 2>/dev/null || true)"
+if [[ -n "$active_since" ]] && active_epoch="$(date -d "$active_since" +%s 2>/dev/null)" && \
+    ((active_epoch > since)); then
+  since="$active_epoch"
+fi
+# Each journal line counts toward at most one check: a strike needs new
+# failures, so one short burst cannot be re-read into several strikes.
+last_seen="$(cat "$last_seen_file" 2>/dev/null || printf '0')"
+if [[ ! "$last_seen" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+  last_seen=0
+fi
+if ((${last_seen%.*} > since)); then
+  since="${last_seen%.*}"
+fi
+
+# Output: "<total failures> <connIndex with most failures> <its failures>
+# <timestamp of the newest journal line read>".
+read -r total top_conn top_failures newest < <(
+  journalctl --unit "$UNIT" --since "@${since}" --output short-unix --no-pager 2>/dev/null | \
+    awk -v since="$since" -v last_seen="$last_seen" '
+      BEGIN { after = since + 0; if (last_seen + 0 > after) after = last_seen + 0; newest = 0 }
+      $1 ~ /^[0-9]+(\.[0-9]+)?$/ {
+        t = $1 + 0
+        if (t <= after) next
+        if (t > newest) { newest = t; newest_text = $1 }
+        if (/Request failed/ && match($0, /connIndex=[0-9]+/)) {
+          conn = substr($0, RSTART + 10, RLENGTH - 10)
+          count[conn]++
+          total++
+        }
+      }
+      END {
+        top = "-"; best = 0
+        for (conn in count) if (count[conn] > best) { best = count[conn]; top = conn }
+        printf "%d %s %d %s\n", total, top, best, (newest > 0 ? newest_text : "-")
+      }
+    '
+)
+if [[ "$newest" != "-" ]]; then
+  printf '%s\n' "$newest" > "$last_seen_file"
+fi
+
+reason=""
+# Strikes only accumulate while the same degradation persists; e.g. failures
+# dominated by a different connection in each check are not one bad edge.
+key=""
+if ((ready == 0)); then
+  reason="no ready tunnel connections"
+  key="no-ready"
+elif ((ready >= 2 && \
+    top_failures >= COCALC_BAY_CLOUDFLARED_WATCHDOG_MIN_FAILURES && \
+    top_failures * 100 >= total * COCALC_BAY_CLOUDFLARED_WATCHDOG_CONCENTRATION_PCT)); then
+  # Failures spread over every connection point at the origin or at clients;
+  # a restart would not help. Failures pinned to one connection mean that
+  # connection's edge path is broken.
+  reason="tunnel connIndex=${top_conn} failed ${top_failures} of ${total} proxied requests since $(date -u -d "@${since}" +%H:%M:%SZ) (${ready} ready connections)"
+  key="conn:${top_conn}"
+fi
+
+if [[ -z "$reason" ]]; then
+  rm -f "$failure_file"
+  exit 0
+fi
+
+# Restarting the tunnel cannot fix a broken origin and would drop every
+# websocket, so leave origin failures to the hub watchdog and front door.
+if ! http_check "$(frontdoor_url)"; then
+  rm -f "$failure_file"
+  bay_log "cloudflared watchdog will not restart ${UNIT}: frontdoor is unhealthy (${reason})"
+  exit 0
+fi
+
+last_restart="$(cat "$restart_file" 2>/dev/null || printf '0')"
+if [[ "$last_restart" =~ ^[0-9]+$ ]] && \
+    ((now - last_restart < COCALC_BAY_CLOUDFLARED_WATCHDOG_RESTART_COOLDOWN_S)); then
+  bay_log "cloudflared watchdog in restart cooldown: ${reason}"
+  exit 0
+fi
+
+previous_key=""
+failures=0
+if [[ -f "$failure_file" ]]; then
+  read -r previous_key failures < "$failure_file" || true
+fi
+if [[ "$previous_key" != "$key" || ! "$failures" =~ ^[0-9]+$ ]]; then
+  failures=0
+fi
+failures=$((failures + 1))
+printf '%s %s\n' "$key" "$failures" > "$failure_file"
+if ((failures < COCALC_BAY_CLOUDFLARED_WATCHDOG_FAILURE_THRESHOLD)); then
+  bay_log "cloudflared watchdog observed degraded tunnel (${failures}/${COCALC_BAY_CLOUDFLARED_WATCHDOG_FAILURE_THRESHOLD}): ${reason}"
+  exit 0
+fi
+
+edges="$(curl --silent --max-time "${COCALC_BAY_HEALTH_TIMEOUT_S}" \
+  "${COCALC_BAY_CLOUDFLARED_METRICS_URL}/metrics" 2>/dev/null | \
+  sed -n 's/^cloudflared_tunnel_server_locations{connection_id="\([0-9]*\)",edge_location="\([^"]*\)"}.*/\1=\2/p' | \
+  tr '\n' ' ' || true)"
+bay_log "cloudflared watchdog restarting ${UNIT}: ${reason}; edges: ${edges:-unknown}"
+# Record the attempt before entering systemctl so a failed or hung restart
+# still respects the cooldown.
+printf '%s\n' "$now" > "$restart_file"
+systemctl reset-failed "$UNIT" >/dev/null 2>&1 || true
+if ! timeout "${COCALC_BAY_CLOUDFLARED_WATCHDOG_RESTART_TIMEOUT_S}" \
+    systemctl restart "$UNIT"; then
+  bay_log "cloudflared watchdog failed to restart ${UNIT}"
+  exit 0
+fi
+rm -f "$failure_file"
+
+deadline=$((SECONDS + COCALC_BAY_CLOUDFLARED_WATCHDOG_READY_TIMEOUT_S))
+while :; do
+  if ready="$(ready_connections)" && ((ready > 0)); then
+    bay_log "cloudflared watchdog restarted ${UNIT}; ${ready} ready tunnel connections"
+    exit 0
+  fi
+  if ((SECONDS >= deadline)); then
+    bay_log "cloudflared watchdog restarted ${UNIT} but no tunnel connection became ready within ${COCALC_BAY_CLOUDFLARED_WATCHDOG_READY_TIMEOUT_S}s"
+    exit 0
+  fi
+  sleep 1
+done

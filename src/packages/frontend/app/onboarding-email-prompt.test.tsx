@@ -59,6 +59,7 @@ function setDefaultValues(): void {
   values["page.active_top_tab"] = "projects";
   values["page.fullscreen"] = undefined;
   values["projects.project_map"] = Map();
+  values["customize.email_enabled"] = true;
 }
 
 describe("OnboardingEmailPrompt", () => {
@@ -104,6 +105,17 @@ describe("OnboardingEmailPrompt", () => {
         }),
       }),
     );
+    expect(screen.queryByText("Get productive with CoCalc faster")).toBeNull();
+  });
+
+  it("does not offer email guides when the site cannot send email", () => {
+    values["customize.email_enabled"] = false;
+    const view = render(<OnboardingEmailPrompt />);
+    values["projects.project_map"] = Map([[PROJECT_ID, Map()]]);
+    values["page.active_top_tab"] = PROJECT_ID;
+    view.rerender(<OnboardingEmailPrompt />);
+    act(() => jest.advanceTimersByTime(1_200));
+
     expect(screen.queryByText("Get productive with CoCalc faster")).toBeNull();
   });
 

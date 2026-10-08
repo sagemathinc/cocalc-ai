@@ -34,6 +34,41 @@ export interface InterBayAgentConnectorApi {
       Parameters<AgentApi["removeCocalcConnectorConfig"]>[0]
     >,
   ): ReturnType<AgentApi["removeCocalcConnectorConfig"]>;
+  listCliConnections(
+    opts: RequiredAccount<
+      NonNullable<Parameters<AgentApi["listCliConnections"]>[0]>
+    >,
+  ): ReturnType<AgentApi["listCliConnections"]>;
+  getCliSetup(
+    opts: RequiredAccount<
+      NonNullable<Parameters<AgentApi["getCliConnectorSetup"]>[0]>
+    >,
+  ): ReturnType<AgentApi["getCliConnectorSetup"]>;
+  startCliSignIn(
+    opts: RequiredAccount<Parameters<AgentApi["startCliConnectorSignIn"]>[0]>,
+  ): ReturnType<AgentApi["startCliConnectorSignIn"]>;
+  pollCliSignIn(
+    opts: RequiredAccount<Parameters<AgentApi["pollCliConnectorSignIn"]>[0]>,
+  ): ReturnType<AgentApi["pollCliConnectorSignIn"]>;
+  completeCliSignIn(
+    opts: RequiredAccount<
+      Parameters<AgentApi["completeCliConnectorSignIn"]>[0]
+    >,
+  ): ReturnType<AgentApi["completeCliConnectorSignIn"]>;
+  disconnectCliConnection(
+    opts: RequiredAccount<Parameters<AgentApi["disconnectCliConnection"]>[0]>,
+  ): ReturnType<AgentApi["disconnectCliConnection"]>;
+  listCliGrants(
+    opts: RequiredAccount<
+      NonNullable<Parameters<AgentApi["listCliConnectorGrants"]>[0]>
+    >,
+  ): ReturnType<AgentApi["listCliConnectorGrants"]>;
+  saveCliGrant(
+    opts: RequiredAccount<Parameters<AgentApi["saveCliConnectorGrant"]>[0]>,
+  ): ReturnType<AgentApi["saveCliConnectorGrant"]>;
+  beginCliTurn(
+    opts: RequiredHost<Parameters<AgentApi["beginCliConnectorTurn"]>[0]>,
+  ): ReturnType<AgentApi["beginCliConnectorTurn"]>;
   begin(
     opts: RequiredHost<Parameters<AgentApi["beginCocalcConnectorTurn"]>[0]>,
   ): ReturnType<AgentApi["beginCocalcConnectorTurn"]>;

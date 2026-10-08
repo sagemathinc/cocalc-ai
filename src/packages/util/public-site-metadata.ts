@@ -605,7 +605,7 @@ function productRouteMetadata(
       return {
         canonicalPath: publicPath("products/cocalc-star", options),
         description:
-          "CoCalc Star is the single-VM appliance path for a small shared CoCalc site on one public Ubuntu VM.",
+          "CoCalc Star is a free, shared CoCalc site in one Docker container, on macOS, Windows, or Linux.",
         imagePath: publicPath(PRODUCT_SOCIAL_IMAGE, options),
         title: pageTitle("CoCalc Star", siteName),
       };
@@ -630,7 +630,7 @@ function productRouteMetadata(
       return {
         canonicalPath: publicPath("products", options),
         description:
-          "Compare the five CoCalc product paths: hosted CoCalc.ai, local CoCalc Plus, single-VM CoCalc Star, CoCalc Launchpad, and CoCalc Rocket.",
+          "Compare the five CoCalc product paths: hosted CoCalc.ai, local CoCalc Plus, self-hosted CoCalc Star in Docker, CoCalc Launchpad, and CoCalc Rocket.",
         imagePath: publicPath(PRODUCT_SOCIAL_IMAGE, options),
         title: pageTitle("Ways to Run CoCalc", siteName),
       };

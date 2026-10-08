@@ -192,6 +192,7 @@ class PersistStreamClient extends EventEmitter {
   private changefeedActive = false;
   private reconnecting = false;
   private gettingMissed = false;
+  private catchingUp?: Promise<void>;
   private changesWhenGettingMissed: ChangefeedEvent[] = [];
   private reconnectTimer?: ReturnType<typeof setTimeout>;
   private stableReconnectTimer?: ReturnType<typeof setTimeout>;
@@ -476,12 +477,78 @@ class PersistStreamClient extends EventEmitter {
     return Math.max(1, Math.min(DEFAULT_RECOVERY_TIMEOUT, timeout));
   };
 
+  /**
+   * Fetch anything after the last received update over the existing
+   * connection, without re-subscribing or changing the recovery state. For a
+   * caller that suspects a missed live update; normally finds nothing. Does
+   * nothing unless the connection is ready, so real recovery stays with the
+   * normal path. Unlike recoverNow({ force: true }), it is cheap enough to
+   * call every few seconds.
+   */
+  catchUp = async ({
+    timeout = RECOVERY_ATTEMPT_TIMEOUT,
+    after,
+  }: {
+    timeout?: number;
+    /** Last seq the caller already has, e.g. from its bootstrap read, which
+     * does not pass through this client's changefeed. */
+    after?: number;
+  } = {}): Promise<void> => {
+    if (
+      this.isClosed() ||
+      this.state != "ready" ||
+      this.changefeeds.length == 0 ||
+      this.catchingUp != null ||
+      this.gettingMissed ||
+      this.reconnecting ||
+      this.recoveryState !== "ready" ||
+      this.socket == null ||
+      this.socket.state === "closed" ||
+      this.socket.state === "disconnected"
+    ) {
+      return;
+    }
+    if (after != null && after > (this.lastSeq ?? 0)) {
+      // Without this the first catch-up after a bootstrap would replay the
+      // whole retained stream.
+      this.lastSeq = after;
+    }
+    // Live updates that arrive meanwhile are held and emitted after the
+    // fetched ones, exactly as during recovery.
+    this.gettingMissed = true;
+    this.changesWhenGettingMissed.length = 0;
+    this.catchingUp = (async () => {
+      try {
+        this.changefeedEmit(
+          await this.getAll({
+            start_seq: this.lastSeq,
+            timeout,
+            changefeed: true,
+          }),
+        );
+      } finally {
+        this.gettingMissed = false;
+        for (const updates of this.changesWhenGettingMissed) {
+          this.changefeedEmit(updates);
+        }
+        this.changesWhenGettingMissed.length = 0;
+      }
+    })();
+    try {
+      await this.catchingUp;
+    } finally {
+      this.catchingUp = undefined;
+    }
+  };
+
   private getMissed0 = async (
     opts: {
       priority?: "foreground" | "background";
       reason?: string;
     } = {},
   ) => {
+    // Recovery takes over the missed-update buffer: let a catch-up finish.
+    await this.catchingUp?.catch(() => {});
     if (this.changefeeds.length == 0 || this.state != "ready") {
       return;
     }

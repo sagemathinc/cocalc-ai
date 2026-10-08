@@ -106,3 +106,54 @@ it("exports persisted notebook patch times alongside account-filtered visible-pa
     await service.close();
   }
 });
+
+it("finds absolute-path notebook history and access when asked with a home-relative path", async () => {
+  // Browsers open the syncdb and record activity under /home/user/...; the
+  // course export asks with home-relative paths (support #20952/#20955).
+  const teacher = "00000000-0000-4000-8000-000000000001";
+  const student = "00000000-0000-4000-8000-000000000002";
+  const project_id = "11111111-1111-4111-8111-111111111111";
+  const relative = "lectures/absolute-history.ipynb";
+  const absolute = `/home/user/${relative}`;
+  const host = connect();
+  const browser = connect();
+  const service = await initProjectDocumentActivityService(host);
+  try {
+    const patches = await dstream({
+      client: browser,
+      project_id,
+      name: patchesStreamName({ path: syncdbPath(absolute) }),
+      noInventory: true,
+      noAutosave: true,
+    });
+    let editTimes: (number | undefined)[];
+    try {
+      patches.publish({ synthetic: "notebook edit" });
+      await patches.save();
+      await wait({ until: () => patches.times().length === 1 });
+      editTimes = patches.times().map((t) => t?.valueOf());
+    } finally {
+      await patches.close();
+    }
+    await markFile({
+      client: browser,
+      account_id: student,
+      project_id,
+      path: absolute,
+      action: "open",
+    });
+    const result = await getFileUseTimes({
+      client: browser,
+      account_id: teacher,
+      project_id,
+      path: relative,
+      target_account_id: student,
+      access_times: true,
+      edit_times: true,
+    });
+    expect(result.edit_times).toEqual(editTimes!);
+    expect(result.access_times).toHaveLength(1);
+  } finally {
+    await service.close();
+  }
+});

@@ -3484,10 +3484,10 @@ export class ChatStreamWriter {
       acp_log_store: this.logStoreName,
       acp_log_key: this.logKey,
       acp_log_subject: this.logSubject,
-      acp_live_log_stream: generating ? this.liveLogStreamName : undefined,
-      acp_live_preview_stream: generating
-        ? this.livePreviewStreamName
-        : undefined,
+      // Cleared fields must be null, not undefined: undefined is dropped from
+      // the JSON patch, so other clients would keep the old value.
+      acp_live_log_stream: generating ? this.liveLogStreamName : null,
+      acp_live_preview_stream: generating ? this.livePreviewStreamName : null,
       acp_thread_id: this.threadId,
       acp_automation_id: this.metadata.automation_id,
       acp_started_at_ms:
@@ -3506,7 +3506,9 @@ export class ChatStreamWriter {
       message_id: this.metadata.message_id,
       thread_id: this.metadata.thread_id,
       parent_message_id: (this.metadata as any).parent_message_id,
-      inline_code_links: generating ? undefined : this.resolveInlineCodeLinks(),
+      inline_code_links: generating
+        ? null
+        : (this.resolveInlineCodeLinks() ?? null),
     } as any);
     if ((this.metadata as any).parent_message_id) {
       (message as any).parent_message_id = (
@@ -3538,10 +3540,10 @@ export class ChatStreamWriter {
       acp_log_store: this.logStoreName,
       acp_log_key: this.logKey,
       acp_log_subject: this.logSubject,
-      acp_live_log_stream: generating ? this.liveLogStreamName : undefined,
-      acp_live_preview_stream: generating
-        ? this.livePreviewStreamName
-        : undefined,
+      // Cleared fields must be null, not undefined: undefined is dropped from
+      // the JSON patch, so other clients would keep the old value.
+      acp_live_log_stream: generating ? this.liveLogStreamName : null,
+      acp_live_preview_stream: generating ? this.livePreviewStreamName : null,
       acp_thread_id: this.threadId,
       acp_started_at_ms:
         Number(this.metadata.started_at_ms) > 0

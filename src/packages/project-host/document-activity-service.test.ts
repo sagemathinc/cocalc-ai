@@ -377,12 +377,103 @@ describe("notebook usage export", () => {
       });
       expect(result.edit_times).toEqual([Date.parse(editTime)]);
       expect(result.access_times).toBeUndefined();
-      expect(dstreamMock).toHaveBeenCalledTimes(1);
+      // The empty canonical absolute stream, then the relative one that has
+      // history; the legacy /root fallback is not needed.
+      expect(dstreamMock).toHaveBeenCalledTimes(2);
       expect(dstreamMock).toHaveBeenCalledWith(
         expect.objectContaining({ name }),
       );
     },
   );
+
+  it("matches browser-recorded absolute paths when asked with relative ones", async () => {
+    // Browsers record activity and open notebooks as /home/user/...; the
+    // course export asks with home-relative paths (support #20952/#20955).
+    const { client, markFile, getFileUseTimes } = await service();
+    const absolute = `/home/user/${path}`;
+    streams.set(
+      `${project_id}:patchflow//home/user/lectures/.example.ipynb.sage-jupyter2`,
+      makeStream([{ time: editTime }]),
+    );
+    await markFile({
+      client,
+      account_id: student,
+      project_id,
+      path: absolute,
+      action: "open",
+    });
+    const relative = await getFileUseTimes({
+      client,
+      account_id: teacher,
+      project_id,
+      path,
+      target_account_id: student,
+      access_times: true,
+      edit_times: true,
+    });
+    expect(relative.access_times).toHaveLength(1);
+    expect(relative.edit_times).toEqual([Date.parse(editTime)]);
+    const viaAbsolute = await getFileUseTimes({
+      client,
+      account_id: teacher,
+      project_id,
+      path: absolute,
+      target_account_id: student,
+      access_times: true,
+      edit_times: true,
+    });
+    expect(viaAbsolute.access_times).toHaveLength(1);
+    expect(viaAbsolute.edit_times).toEqual([Date.parse(editTime)]);
+  });
+
+  it("reads only the canonical absolute history when it exists", async () => {
+    const { client, getFileUseTimes } = await service();
+    const absoluteName =
+      "patchflow//home/user/lectures/.example.ipynb.sage-jupyter2";
+    streams.set(`${project_id}:${patchName}`, makeStream([{ time: editTime }]));
+    streams.set(
+      `${project_id}:${absoluteName}`,
+      makeStream([{ time: editTime }, { time: editTime }]),
+    );
+    const result = await getFileUseTimes({
+      client,
+      account_id: teacher,
+      project_id,
+      path: "./lectures//example.ipynb",
+      edit_times: true,
+      access_times: false,
+    });
+    expect(result.edit_times).toEqual([Date.parse(editTime)]);
+    expect(dstreamMock).toHaveBeenCalledTimes(1);
+    expect(dstreamMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: absoluteName }),
+    );
+  });
+
+  it("falls back to legacy /root history and maps /root paths", async () => {
+    const { client, getFileUseTimes } = await service();
+    const legacyName = "patchflow//root/lectures/.example.ipynb.sage-jupyter2";
+    streams.set(
+      `${project_id}:${legacyName}`,
+      makeStream([{ time: editTime }]),
+    );
+    const result = await getFileUseTimes({
+      client,
+      account_id: teacher,
+      project_id,
+      path,
+      edit_times: true,
+      access_times: false,
+    });
+    expect(result.edit_times).toEqual([Date.parse(editTime)]);
+    const { fileUsePathVariants } = await import("./document-activity-service");
+    expect(fileUsePathVariants("/root/lectures/example.ipynb")).toEqual([
+      "/home/user/lectures/example.ipynb",
+      "lectures/example.ipynb",
+      "/root/lectures/example.ipynb",
+    ]);
+    expect(fileUsePathVariants("/tmp/x.ipynb")).toEqual(["/tmp/x.ipynb"]);
+  });
 
   it("does not invent history for an unrecorded file", async () => {
     const { client, getFileUseTimes } = await service();

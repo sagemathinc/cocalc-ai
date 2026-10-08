@@ -11,6 +11,13 @@ import { sendIdentityMessage } from "../../core/agent-message";
 import { sendExternalAgentMessage } from "../../core/external-agent-message";
 import { resolveBroadcastTargets } from "../../core/agent-destination";
 import {
+  createAgentFromCopy,
+  listNamedAgentsSummary,
+  removeNamedAgent,
+} from "../../core/agent-create";
+import { akv } from "@cocalc/conat/sync/akv";
+import { CHAT_DRAFT_STORE } from "@cocalc/chat";
+import {
   agentSendExitCode,
   agentSendSummary,
   sendAgentMessage,
@@ -323,6 +330,105 @@ export function registerAgentCommands(
         await sendIdentityMessage({ action: "whoami" }, globals.api),
       );
     });
+  agent
+    .command("create <name>")
+    .description(
+      "create a named agent by copying an existing one (forked context, like Copy agent), optionally leaving an unsent draft message in its composer",
+    )
+    .requiredOption(
+      "--from <agent>",
+      "existing agent to copy, by @name or agent id",
+    )
+    .option("--description <text>", "agent description")
+    .option("--draft <text>", "unsent first message to leave in the composer")
+    .option("--draft-file <path>", "read the unsent draft from a UTF-8 file")
+    .option("--stdin", "read the unsent draft from standard input")
+    .addHelpText(
+      "after",
+      `
+The new agent appears in Agents next to the others. Its thread is a fork of
+the source agent's thread, in the same project and chat file, with an
+independent copy of the agent session. Nothing is sent: a draft is left in
+the composer for you to review and send.
+
+  cocalc agent create star-release --from support --draft-file plan.md`,
+    )
+    .action(async (name, opts, cmd) =>
+      deps.withContext(
+        cmd,
+        `${prefix} create`,
+        async (ctx) => {
+          const sources = [opts.draft, opts.draftFile, opts.stdin].filter(
+            (value) => value != null && value !== false,
+          );
+          if (sources.length > 1) {
+            throw new Error("use only one of --draft, --draft-file or --stdin");
+          }
+          const draft = opts.stdin
+            ? (await readStdin()).toString("utf8")
+            : opts.draftFile
+              ? (await readMessageFile(opts.draftFile)).toString("utf8")
+              : opts.draft;
+          return await createAgentFromCopy(
+            {
+              hub: ctx.hub,
+              accountId: ctx.accountId,
+              forkThread: (fork) =>
+                deps.projectChatThreadForkData({ ctx, ...fork }),
+              setDraft: async (key, value, ttl) => {
+                const store = akv<any>({
+                  account_id: ctx.accountId,
+                  name: CHAT_DRAFT_STORE,
+                  client: ctx.remote.client,
+                });
+                try {
+                  await store.set(key, value, { ttl });
+                  // Read it back so success means the composer will see it.
+                  const saved = await store.get(key);
+                  if (saved?.text !== (value as any)?.text) {
+                    throw new Error("the draft could not be saved");
+                  }
+                } finally {
+                  store.close?.();
+                }
+              },
+            },
+            {
+              name,
+              from: opts.from,
+              description: opts.description,
+              draft,
+            },
+          );
+        },
+        // Naming agents needs the signed-in account, not a project credential.
+        {},
+      ),
+    );
+  agent
+    .command("names")
+    .description("list your named agents (the Agents sidebar)")
+    .action(async (_opts, cmd) =>
+      deps.withContext(
+        cmd,
+        `${prefix} names`,
+        async (ctx) => await listNamedAgentsSummary(ctx.hub),
+        {},
+      ),
+    );
+  agent
+    .command("remove <name>")
+    .description(
+      "remove a named agent from Agents (its conversation and artifacts are preserved)",
+    )
+    .action(async (name, _opts, cmd) =>
+      deps.withContext(
+        cmd,
+        `${prefix} remove`,
+        async (ctx) => await removeNamedAgent(ctx.hub, name),
+        {},
+      ),
+    );
   agent
     .command("register")
     .requiredOption("--path <path>", "chat path")

@@ -69,6 +69,7 @@ import {
   getProjectRuntimeConfiguration,
 } from "@cocalc/server/launchpad/project-runtime";
 import { resolveProjectCollabInviteDirectory } from "@cocalc/server/projects/collab-invite-directory";
+import { getProjectEntitlementOverrideLocal } from "@cocalc/server/membership/project-entitlement-overrides";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
 import { posix } from "path";
 import type {
@@ -218,7 +219,6 @@ import type {
   ProjectCollabInviteDirection,
   ProjectCollabInviteStatus,
   ProjectCopySource,
-  ProjectInviteEmailBlockedReason,
   ProjectRunQuota,
   WorkspaceSshConnectionInfo,
 } from "@cocalc/conat/hub/api/projects";
@@ -294,7 +294,6 @@ import {
   upsertProjectRootfsBuildStatus,
 } from "@cocalc/server/rootfs/build-index";
 import { loadProjectReadDetailsDirect } from "@cocalc/server/projects/details";
-import { fromWire as collabInviteFromWire } from "@cocalc/server/projects/collab-invite-inbox";
 import { savePlacement } from "@cocalc/server/project-host/control";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import getName from "@cocalc/server/accounts/get-name";
@@ -1880,16 +1879,9 @@ export async function getAdminProjectEntitlementOverride({
   if (!(await isAdmin(account_id))) {
     throw new Error("must be an admin");
   }
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null) {
-    throw new Error(`project ${project_id} not found`);
-  }
-  return await getInterBayBridge()
-    .projectControl(ownership.bay_id)
-    .getProjectEntitlementOverride({
-      project_id,
-      epoch: ownership.epoch,
-    });
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  await resolveRequiredProjectBay(project_id);
+  return (await getProjectEntitlementOverrideLocal(project_id)) ?? null;
 }
 
 export async function setAdminProjectEntitlementOverride({
@@ -1924,21 +1916,19 @@ export async function setAdminProjectEntitlementOverride({
   ) {
     throw new Error("disk_quota_mb must be a nonnegative finite number");
   }
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null) {
-    throw new Error(`project ${project_id} not found`);
-  }
-  return await getInterBayBridge()
-    .projectControl(ownership.bay_id)
-    .setProjectEntitlementOverride({
-      project_id,
-      actor_account_id: account_id,
-      disk_quota_mb,
-      reason,
-      expires_at,
-      source: "admin",
-      epoch: ownership.epoch,
-    });
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  await resolveRequiredProjectBay(project_id);
+  // Loaded on use: project-control imports this module.
+  const { setProjectDiskQuotaOverrideOnOwningBay } =
+    await import("@cocalc/server/inter-bay/project-control");
+  return await setProjectDiskQuotaOverrideOnOwningBay({
+    project_id,
+    actor_account_id: account_id,
+    disk_quota_mb,
+    reason,
+    expires_at,
+    source: "admin",
+  });
 }
 
 export async function clearAdminProjectEntitlementOverride({
@@ -1962,18 +1952,16 @@ export async function clearAdminProjectEntitlementOverride({
     browser_id,
     session_hash,
   });
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null) {
-    throw new Error(`project ${project_id} not found`);
-  }
-  await getInterBayBridge()
-    .projectControl(ownership.bay_id)
-    .clearProjectEntitlementOverride({
-      project_id,
-      actor_account_id: account_id,
-      reason,
-      epoch: ownership.epoch,
-    });
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  await resolveRequiredProjectBay(project_id);
+  // Loaded on use: project-control imports this module.
+  const { clearProjectEntitlementOverrideOnOwningBay } =
+    await import("@cocalc/server/inter-bay/project-control");
+  await clearProjectEntitlementOverrideOnOwningBay({
+    project_id,
+    actor_account_id: account_id,
+    reason,
+  });
 }
 
 export async function getProjectRootfs({
@@ -2634,16 +2622,7 @@ export async function listCourseShareableSecrets({
   course_project_id: string;
 }): Promise<ProjectSecretMetadata[]> {
   const actor = requireAccountId(account_id);
-  const ownership = await resolveRequiredProjectBay(course_project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .listCourseShareable({
-        account_id: actor,
-        course_project_id,
-        epoch: ownership.epoch,
-      });
-  }
+  // Routed to the course project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollab({ account_id: actor, project_id: course_project_id });
   return await listCourseShareableSecretsInDb({
     project_id: course_project_id,
@@ -2662,18 +2641,7 @@ export async function getCourseSecretPolicy({
   course_path: string;
 }): Promise<CourseSecretPolicyState | null> {
   const actor = requireAccountId(account_id);
-  const ownership = await resolveRequiredProjectBay(course_project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .getCoursePolicy({
-        account_id: actor,
-        course_project_id,
-        course_id,
-        course_path,
-        epoch: ownership.epoch,
-      });
-  }
+  // Routed to the course project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollab({ account_id: actor, project_id: course_project_id });
   return await getCourseSecretPolicyStateInDb({
     course_project_id,
@@ -2696,19 +2664,7 @@ export async function previewCourseSecretSync({
   target_project_ids: string[];
 }): Promise<CourseSecretSyncPreview> {
   const actor = requireAccountId(account_id);
-  const ownership = await resolveRequiredProjectBay(course_project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .previewCourseSync({
-        account_id: actor,
-        course_project_id,
-        course_id,
-        course_path,
-        target_project_ids,
-        epoch: ownership.epoch,
-      });
-  }
+  // Routed to the course project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollab({ account_id: actor, project_id: course_project_id });
   return await previewCourseSecretSyncLocal({
     course_project_id,
@@ -2756,19 +2712,7 @@ export async function setProjectSecretCourseSharing({
     browser_id,
     session_hash,
   });
-  const ownership = await resolveRequiredProjectBay(project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .setCourseSharing({
-        account_id: auth.actor,
-        session_hash: auth.session_hash,
-        project_id,
-        name,
-        allow,
-        epoch: ownership.epoch,
-      });
-  }
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollab({ account_id: auth.actor, project_id });
   const result = await setProjectSecretCourseSharingInDb({
     project_id,
@@ -2796,17 +2740,7 @@ export async function setCourseSecretPolicy(
   opts: CoursePolicyMutationAuth & { enabled: boolean },
 ): Promise<CourseSecretPolicyState> {
   const auth = await freshCourseSecretMutation(opts);
-  const ownership = await resolveRequiredProjectBay(opts.course_project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .setCoursePolicy({
-        ...opts,
-        account_id: auth.actor,
-        session_hash: auth.session_hash,
-        epoch: ownership.epoch,
-      });
-  }
+  // Routed to the course project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollab({
     account_id: auth.actor,
     project_id: opts.course_project_id,
@@ -2821,17 +2755,7 @@ export async function setCourseSecretGrants(
   opts: CoursePolicyMutationAuth & { names: string[] },
 ): Promise<CourseSecretPolicyState> {
   const auth = await freshCourseSecretMutation(opts);
-  const ownership = await resolveRequiredProjectBay(opts.course_project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .setCourseGrants({
-        ...opts,
-        account_id: auth.actor,
-        session_hash: auth.session_hash,
-        epoch: ownership.epoch,
-      });
-  }
+  // Routed to the course project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollab({
     account_id: auth.actor,
     project_id: opts.course_project_id,
@@ -2848,17 +2772,7 @@ export async function approveCourseSecretRecipients(
   },
 ): Promise<CourseSecretPolicyState> {
   const auth = await freshCourseSecretMutation(opts);
-  const ownership = await resolveRequiredProjectBay(opts.course_project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .approveCourseRecipients({
-        ...opts,
-        account_id: auth.actor,
-        session_hash: auth.session_hash,
-        epoch: ownership.epoch,
-      });
-  }
+  // Routed to the course project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollab({
     account_id: auth.actor,
     project_id: opts.course_project_id,
@@ -2873,17 +2787,7 @@ export async function revokeCourseSecretRecipients(
   opts: CoursePolicyMutationAuth & { target_project_ids: string[] },
 ): Promise<CourseSecretPolicyState> {
   const auth = await freshCourseSecretMutation(opts);
-  const ownership = await resolveRequiredProjectBay(opts.course_project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .revokeCourseRecipients({
-        ...opts,
-        account_id: auth.actor,
-        session_hash: auth.session_hash,
-        epoch: ownership.epoch,
-      });
-  }
+  // Routed to the course project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollab({
     account_id: auth.actor,
     project_id: opts.course_project_id,
@@ -2899,19 +2803,7 @@ async function startCourseSecretOperation(
   mode: "sync" | "cleanup",
 ): Promise<CourseSecretSyncRun> {
   const auth = await freshCourseSecretMutation(opts);
-  const ownership = await resolveRequiredProjectBay(opts.course_project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    const client = getInterBayBridge().projectSecrets(ownership.bay_id);
-    const routed = {
-      ...opts,
-      account_id: auth.actor,
-      session_hash: auth.session_hash,
-      epoch: ownership.epoch,
-    };
-    return mode === "sync"
-      ? await client.startCourseSync(routed)
-      : await client.startCourseCleanup(routed);
-  }
+  // Routed to the course project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollab({
     account_id: auth.actor,
     project_id: opts.course_project_id,
@@ -2947,18 +2839,7 @@ export async function getCourseSecretSyncStatus({
   run_id?: string;
 }): Promise<CourseSecretSyncStatusResult | null> {
   const actor = requireAccountId(account_id);
-  const ownership = await resolveRequiredProjectBay(course_project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .getCourseSyncStatus({
-        account_id: actor,
-        course_project_id,
-        course_id,
-        run_id,
-        epoch: ownership.epoch,
-      });
-  }
+  // Routed to the course project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollab({ account_id: actor, project_id: course_project_id });
   return await getCourseSecretRunStatusInDb({
     course_project_id,
@@ -2971,17 +2852,7 @@ export async function revokeCourseSecretPolicy(
   opts: CoursePolicyMutationAuth,
 ): Promise<CourseSecretPolicyState> {
   const auth = await freshCourseSecretMutation(opts);
-  const ownership = await resolveRequiredProjectBay(opts.course_project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .revokeCoursePolicy({
-        ...opts,
-        account_id: auth.actor,
-        session_hash: auth.session_hash,
-        epoch: ownership.epoch,
-      });
-  }
+  // Routed to the course project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollab({
     account_id: auth.actor,
     project_id: opts.course_project_id,
@@ -4003,6 +3874,7 @@ export async function createCollabInvite({
   invite_role?: "collaborator" | "viewer";
   read_policy?: ProjectViewerReadPolicy | null;
 }) {
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   let trusted_admin = false;
   if (direct) {
     if (!account_id) {
@@ -4013,9 +3885,7 @@ export async function createCollabInvite({
       browser_id,
       session_hash,
     });
-    // Account-authenticated hub calls run on the actor's home bay, where
-    // account groups are authoritative. The owning bay trusts this result only
-    // through the internal inter-bay request below.
+    // isAdmin asks the actor's home bay, so this holds on the owning bay.
     trusted_admin = await isAdmin(account_id);
     if (!trusted_admin) {
       await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
@@ -4023,45 +3893,16 @@ export async function createCollabInvite({
   } else {
     await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
   }
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null) {
-    throw new Error(`project ${project_id} not found`);
-  }
-  if (ownership.bay_id === getConfiguredBayId()) {
-    return await createCollabInviteLocal({
-      account_id,
-      project_id,
-      invitee_account_id,
-      message,
-      direct,
-      trusted_admin,
-      invite_role,
-      read_policy,
-    });
-  }
-  // This account-authenticated handler runs at the inviter's home. The project
-  // owner may have no local row for that account and cannot repeat this check.
-  await assertAccountTrustedForProductAccess(
-    account_id!,
-    "invite collaborators",
-  );
-  const result = await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .create({
-      account_id: account_id!,
-      project_id,
-      invitee_account_id,
-      message,
-      direct,
-      trusted_admin,
-      trusted_product_access_checked: true,
-      invite_role,
-      read_policy,
-    });
-  return {
-    created: result.created,
-    invite: collabInviteFromWire(result.invite),
-  };
+  return await createCollabInviteLocal({
+    account_id,
+    project_id,
+    invitee_account_id,
+    message,
+    direct,
+    trusted_admin,
+    invite_role,
+    read_policy,
+  });
 }
 
 export async function inviteCollaboratorWithoutAccount({
@@ -4088,6 +3929,7 @@ export async function inviteCollaboratorWithoutAccount({
     read_policy?: ProjectViewerReadPolicy | null;
   };
 }) {
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   if (!account_id) {
     throw new Error("user must be signed in");
   }
@@ -4095,27 +3937,7 @@ export async function inviteCollaboratorWithoutAccount({
     account_id,
     project_id: opts.project_id,
   });
-  const ownership = await resolveProjectBay(opts.project_id);
-  if (ownership == null) {
-    throw new Error(`project ${opts.project_id} not found`);
-  }
-  if (ownership.bay_id === getConfiguredBayId()) {
-    return await inviteCollaboratorWithoutAccountLocal({ account_id, opts });
-  }
-  const result = await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .inviteWithoutAccount({
-      account_id,
-      opts,
-    });
-  return {
-    email_sent: result.email_sent,
-    email_available: result.email_available,
-    manual_delivery_required: result.manual_delivery_required,
-    email_blocked_reason:
-      result.email_blocked_reason as ProjectInviteEmailBlockedReason | null,
-    invites: result.invites.map((invite) => collabInviteFromWire(invite)),
-  };
+  return await inviteCollaboratorWithoutAccountLocal({ account_id, opts });
 }
 
 export async function listCollabInvites({
@@ -4133,37 +3955,16 @@ export async function listCollabInvites({
   limit?: number;
   projectWide?: boolean;
 }) {
-  if (!project_id) {
-    return await listCollabInvitesLocal({
-      account_id,
-      direction,
-      status,
-      limit,
-      projectWide,
-    });
-  }
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
-    return await listCollabInvitesLocal({
-      account_id,
-      project_id,
-      direction,
-      status,
-      limit,
-      projectWide,
-    });
-  }
-  const result = await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .list({
-      account_id: account_id!,
-      project_id,
-      direction,
-      status,
-      limit,
-      projectWide,
-    });
-  return result.map((invite) => collabInviteFromWire(invite));
+  // With a project id this is routed to the project's owning bay (see
+  // @cocalc/conat/hub/api/routes); without one it lists this account's inbox.
+  return await listCollabInvitesLocal({
+    account_id,
+    ...(project_id ? { project_id } : {}),
+    direction,
+    status,
+    limit,
+    projectWide,
+  });
 }
 
 export async function repairAcceptedCourseStudentInviteAccounts({
@@ -4395,13 +4196,8 @@ export async function removeCollaborator({
     project_id;
   };
 }) {
-  const ownership = await resolveProjectBay(opts.project_id);
-  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
-    return await removeCollaboratorLocal({ account_id: account_id!, opts });
-  }
-  await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .removeCollaborator({ account_id: account_id!, opts });
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  return await removeCollaboratorLocal({ account_id: account_id!, opts });
 }
 
 export async function setProjectUserRole({
@@ -4413,11 +4209,6 @@ export async function setProjectUserRole({
 }) {
   // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   return await setProjectUserRoleLocal({ account_id: account_id!, opts });
-}
-
-function isCollabInviteNotFound(err: unknown, invite_id: string): boolean {
-  const message = err instanceof Error ? err.message : `${err}`;
-  return message.includes(`invite '${invite_id}' not found`);
 }
 
 async function resolveProjectBayForEmailInvite({
@@ -4471,7 +4262,6 @@ export async function getProjectCollaboratorInviteUsage({
 export async function respondCollabInvite({
   account_id,
   invite_id,
-  project_id,
   action,
 }: {
   account_id?: string;
@@ -4479,42 +4269,10 @@ export async function respondCollabInvite({
   project_id?: string;
   action: ProjectCollabInviteAction;
 }) {
-  try {
-    return await respondCollabInviteLocal({ account_id, invite_id, action });
-  } catch (err) {
-    if (!isCollabInviteNotFound(err, invite_id)) {
-      throw err;
-    }
-    if (!account_id) {
-      throw err;
-    }
-    if (!project_id) {
-      throw err;
-    }
-    const ownership = await resolveProjectBay(project_id);
-    if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
-      throw err;
-    }
-    if (action === "accept") {
-      // The owning bay cannot inspect account-home verification state. Only
-      // attest after checking it here; the inter-bay service trusts this bit.
-      await assertAccountTrustedForProductAccess(
-        account_id,
-        "accept collaboration invites",
-      );
-    }
-    const include_email = await isAdmin(account_id);
-    const result = await getInterBayBridge()
-      .projectCollabInvite(ownership.bay_id)
-      .respond({
-        account_id,
-        invite_id,
-        action,
-        include_email,
-        trusted_product_access_checked: action === "accept",
-      });
-    return collabInviteFromWire(result);
-  }
+  // With a project id this is routed to the project's owning bay (see
+  // @cocalc/conat/hub/api/routes), which holds the invite. Without one, the
+  // invitee's projected inbox copy forwards the response to that bay.
+  return await respondCollabInviteLocal({ account_id, invite_id, action });
 }
 
 export async function getProjectAccessLandingInfo({
@@ -4620,30 +4378,45 @@ export async function copyEmailProjectInviteLink({
   project_id?: string;
   invite_base_url?: string;
 }) {
-  const ownership = await resolveProjectBayForEmailInvite({ invite_id });
-  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
-    return await copyEmailProjectInviteLinkLocal({
-      account_id,
-      invite_id: ownership?.invite_id ?? invite_id,
-      project_id: project_id ?? ownership?.project_id,
-      invite_base_url,
-    });
-  }
+  // Routed to the invite's owning bay (see @cocalc/conat/hub/api/routes).
+  const entry = await resolveProjectBayForEmailInvite({ invite_id });
+  return await copyEmailProjectInviteLinkLocal({
+    account_id,
+    invite_id: entry?.invite_id ?? invite_id,
+    project_id: project_id ?? entry?.project_id,
+    invite_base_url,
+  });
+}
+
+/**
+ * The /invites/<token> HTTP endpoints call the email-invite wrappers below
+ * directly rather than through the hub API's edge routing, so when the
+ * invite lives on another bay, forward the call there from here. A hub API
+ * call has already been routed, so it finds the invite owned here.
+ */
+async function forwardEmailInviteIfRemote({
+  name,
+  entry,
+  account_id,
+  opts,
+}: {
+  name: string;
+  entry: Awaited<ReturnType<typeof resolveProjectBayForEmailInvite>>;
+  account_id?: string;
+  opts: Record<string, unknown>;
+}): Promise<{ result: any } | undefined> {
+  const bay_id = entry?.bay_id;
+  if (!bay_id || bay_id === getConfiguredBayId()) return;
   if (!account_id) {
-    throw new Error("user must be signed in");
+    // Forwarded hub API calls must carry an account.
+    throw new Error("Sign in to open this project invite.");
   }
-  const result = await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .copyEmailLink({
-      account_id,
-      invite_id: ownership.invite_id,
-      project_id: project_id ?? ownership.project_id,
-      invite_base_url,
-    });
+  const { forwardHubApiCall } = await import("./edge-routing");
+  const args = Object.fromEntries(
+    Object.entries(opts).filter(([, value]) => value != null),
+  );
   return {
-    invite_id: result.invite_id,
-    invite_url: result.invite_url,
-    expires: result.expires ? new Date(result.expires) : null,
+    result: await forwardHubApiCall(bay_id, { name, args: [args], account_id }),
   };
 }
 
@@ -4666,31 +4439,32 @@ export async function redeemEmailProjectInvite({
   token: string;
   project_id?: string;
 }) {
+  // Routed to the invite's owning bay (see @cocalc/conat/hub/api/routes).
   assertEmailInviteAcceptSignedIn(account_id);
-  const ownership = await resolveProjectBayForEmailInvite({
+  const entry = await resolveProjectBayForEmailInvite({
     invite_id,
     token,
   });
   if (!invite_id) {
-    requireResolvedEmailInvite(ownership);
+    requireResolvedEmailInvite(entry);
   }
-  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
-    return await redeemEmailProjectInviteLocal({
-      account_id,
-      invite_id: ownership?.invite_id ?? invite_id!,
+  const forwarded = await forwardEmailInviteIfRemote({
+    name: "projects.redeemEmailProjectInvite",
+    entry,
+    account_id,
+    opts: {
+      invite_id: entry?.invite_id ?? invite_id,
       token,
-      project_id: project_id ?? ownership?.project_id,
-    });
-  }
-  const result = await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .redeemEmail({
-      account_id,
-      invite_id: ownership.invite_id,
-      token,
-      project_id: project_id ?? ownership.project_id,
-    });
-  return collabInviteFromWire(result);
+      project_id: project_id ?? entry?.project_id,
+    },
+  });
+  if (forwarded) return forwarded.result;
+  return await redeemEmailProjectInviteLocal({
+    account_id,
+    invite_id: entry?.invite_id ?? invite_id!,
+    token,
+    project_id: project_id ?? entry?.project_id,
+  });
 }
 
 export async function previewEmailProjectInvite({
@@ -4704,30 +4478,31 @@ export async function previewEmailProjectInvite({
   token: string;
   project_id?: string;
 }) {
-  const ownership = await resolveProjectBayForEmailInvite({
+  // Routed to the invite's owning bay (see @cocalc/conat/hub/api/routes).
+  const entry = await resolveProjectBayForEmailInvite({
     invite_id,
     token,
   });
   if (!invite_id) {
-    requireResolvedEmailInvite(ownership);
+    requireResolvedEmailInvite(entry);
   }
-  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
-    return await previewEmailProjectInviteLocal({
-      account_id,
-      invite_id: ownership?.invite_id ?? invite_id!,
+  const forwarded = await forwardEmailInviteIfRemote({
+    name: "projects.previewEmailProjectInvite",
+    entry,
+    account_id,
+    opts: {
+      invite_id: entry?.invite_id ?? invite_id,
       token,
-      project_id: project_id ?? ownership?.project_id,
-    });
-  }
-  const result = await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .previewEmail({
-      account_id,
-      invite_id: ownership.invite_id,
-      token,
-      project_id: project_id ?? ownership.project_id,
-    });
-  return collabInviteFromWire(result);
+      project_id: project_id ?? entry?.project_id,
+    },
+  });
+  if (forwarded) return forwarded.result;
+  return await previewEmailProjectInviteLocal({
+    account_id,
+    invite_id: entry?.invite_id ?? invite_id!,
+    token,
+    project_id: project_id ?? entry?.project_id,
+  });
 }
 
 export async function respondEmailProjectInvite({
@@ -4743,38 +4518,36 @@ export async function respondEmailProjectInvite({
   token: string;
   project_id?: string;
 }) {
+  // Routed to the invite's owning bay (see @cocalc/conat/hub/api/routes).
   if (action === "accept") {
     assertEmailInviteAcceptSignedIn(account_id);
   }
-  const ownership = await resolveProjectBayForEmailInvite({
+  const entry = await resolveProjectBayForEmailInvite({
     invite_id,
     token,
   });
   if (!invite_id) {
-    requireResolvedEmailInvite(ownership);
+    requireResolvedEmailInvite(entry);
   }
-  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
-    return await respondEmailProjectInviteLocal({
-      account_id,
+  const forwarded = await forwardEmailInviteIfRemote({
+    name: "projects.respondEmailProjectInvite",
+    entry,
+    account_id,
+    opts: {
       action,
-      invite_id: ownership?.invite_id ?? invite_id!,
+      invite_id: entry?.invite_id ?? invite_id,
       token,
-      project_id: project_id ?? ownership?.project_id,
-    });
-  }
-  if (!account_id) {
-    throw new Error("user must be signed in");
-  }
-  const result = await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .respondEmail({
-      account_id,
-      action,
-      invite_id: ownership.invite_id,
-      token,
-      project_id: project_id ?? ownership.project_id,
-    });
-  return collabInviteFromWire(result);
+      project_id: project_id ?? entry?.project_id,
+    },
+  });
+  if (forwarded) return forwarded.result;
+  return await respondEmailProjectInviteLocal({
+    account_id,
+    action,
+    invite_id: entry?.invite_id ?? invite_id!,
+    token,
+    project_id: project_id ?? entry?.project_id,
+  });
 }
 
 export async function exec({
@@ -5434,8 +5207,7 @@ async function runProjectStartLikeAction({
     await runStart();
   } else if (foreground_wait_ms != null && foreground_wait_ms > 0) {
     type ForegroundStartResult =
-      | { status: "succeeded" }
-      | { status: "failed"; error: unknown };
+      { status: "succeeded" } | { status: "failed"; error: unknown };
     const completion: Promise<ForegroundStartResult> = runStart().then(
       () => ({ status: "succeeded" }),
       (error) => ({ status: "failed", error }),

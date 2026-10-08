@@ -20,7 +20,7 @@ export const SELF_HOSTING_ENTRIES: DocsEntry[] = [
     id: "self-hosting.cocalc-star",
     image: docsIcon(
       "/public/docs/project-hosts-684faa4c.webp",
-      "A CoCalc Star server running projects on a public VM",
+      "A CoCalc Star site running projects in one Docker container",
     ),
     lastReviewed: "2026-09-11",
     searchKeywords:
@@ -28,7 +28,7 @@ export const SELF_HOSTING_ENTRIES: DocsEntry[] = [
     slug: "self-hosting/cocalc-star",
     status: "ready",
     summary:
-      "Install CoCalc Star on a public Ubuntu VM, complete first-admin setup, and identify connections and retained state before maintenance.",
+      "Install CoCalc Star with one Docker command on macOS, Windows, or Linux; create the first admin; upgrade, back up, and remove it.",
     title: "Install CoCalc Star",
   },
   {
@@ -38,14 +38,14 @@ export const SELF_HOSTING_ENTRIES: DocsEntry[] = [
     id: "self-hosting.cocalc-star-local-vm",
     image: docsIcon(
       "/public/docs/project-hosts-684faa4c.webp",
-      "A local laptop VM running CoCalc Star through localhost port forwarding",
+      "CoCalc Star running on a laptop or workstation with Docker Desktop",
     ),
     lastReviewed: "2026-06-07",
     slug: "self-hosting/cocalc-star-local-vm",
     status: "ready",
     summary:
-      "Install CoCalc Star inside a local Ubuntu VM for private, fast, offline-friendly work on your own computer.",
-    title: "CoCalc Star on a local VM",
+      "Run CoCalc Star on your own computer with Docker Desktop for private, fast, offline-friendly work.",
+    title: "CoCalc Star on your own computer",
   },
   {
     audiences: ["agents", "researchers", "teams"],

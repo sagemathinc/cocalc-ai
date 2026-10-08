@@ -183,7 +183,11 @@ function StripePaymentInner({
       try {
         const x = await getPaymentMethods({ limit: 1 });
         setHasPaymentMethods(x.data.length > 0);
-      } catch (_err) {}
+      } catch (err) {
+        // Never leave the purchase spinning forever: show why it failed.
+        setHasPaymentMethods(false);
+        setError(`Unable to load your payment methods: ${err}`);
+      }
     })();
   }, [stripeEnabled]);
 

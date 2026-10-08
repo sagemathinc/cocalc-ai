@@ -242,7 +242,41 @@ export function InlineSteerStatusRow({
   return <AttachedSteerStatusList attachedSteers={[steer]} />;
 }
 
-export const STALE_ACTIVITY_MS = 2 * 60 * 1000;
+// Agents can think for many minutes before a step on hard problems, so only
+// a long silence is worth a warning color.
+export const STALE_ACTIVITY_MS = 15 * 60 * 1000;
+// Shorter gaps are ordinary pauses between streamed updates.
+export const QUIET_ACTIVITY_MS = 10 * 1000;
+
+/** Whether the log shows a tool call or command that has not finished. */
+export function hasOpenToolWork(
+  events: readonly AcpStreamMessage[] | null | undefined,
+): boolean {
+  const open = new Map<string, boolean>();
+  for (const message of events ?? []) {
+    if (message?.type !== "event") continue;
+    const event = message.event as any;
+    if (event?.type === "harness" && event.kind === "update") {
+      const update = event.data;
+      if (
+        (update?.sessionUpdate === "tool_call" ||
+          update?.sessionUpdate === "tool_call_update") &&
+        typeof update.toolCallId === "string" &&
+        typeof update.status === "string"
+      )
+        open.set(
+          `tool:${update.toolCallId}`,
+          update.status === "pending" || update.status === "in_progress",
+        );
+    } else if (event?.type === "terminal" && event.terminalId) {
+      if (event.phase === "start")
+        open.set(`terminal:${event.terminalId}`, true);
+      else if (event.phase === "exit")
+        open.set(`terminal:${event.terminalId}`, false);
+    }
+  }
+  return [...open.values()].some(Boolean);
+}
 
 function formatTimestampTitle(ms: number): string {
   return new Date(ms).toLocaleString();
@@ -287,11 +321,18 @@ export function describeLastActivity({
   generating,
   lastActivityAtMs,
   now = Date.now(),
+  toolRunning = false,
 }: {
   generating: boolean;
   lastActivityAtMs?: number;
   now?: number;
-}): { label?: string; ageMs?: number; stale: boolean } {
+  toolRunning?: boolean;
+}): {
+  label?: string;
+  ageMs?: number;
+  stale: boolean;
+  quiet?: "thinking" | "tool";
+} {
   if (!generating) {
     return { label: undefined, ageMs: undefined, stale: false };
   }
@@ -302,11 +343,18 @@ export function describeLastActivity({
     return { label: "Starting...", ageMs: undefined, stale: false };
   }
   const ageMs = Math.max(0, now - lastActivityAtMs);
-  return {
-    label: `${formatElapsed(ageMs)} ago`,
-    ageMs,
-    stale: ageMs >= STALE_ACTIVITY_MS,
-  };
+  const stale = ageMs >= STALE_ACTIVITY_MS;
+  if (ageMs >= QUIET_ACTIVITY_MS) {
+    // Say what a quiet turn is doing, like Claude Code's "Thinking…".
+    const quiet = toolRunning ? "tool" : "thinking";
+    return {
+      label: `${quiet === "tool" ? "Running a command" : "Thinking"} · ${formatElapsed(ageMs)}`,
+      ageMs,
+      stale,
+      quiet,
+    };
+  }
+  return { label: `${formatElapsed(ageMs)} ago`, ageMs, stale };
 }
 
 interface AgentMessageStatusProps {
@@ -358,6 +406,7 @@ interface AgentActivityChipProps {
   style?: CSSProperties;
   liveStatus?: CodexLiveLogStatus;
   activeSubagents?: number;
+  toolRunning?: boolean;
 }
 
 export function AgentActivityChip({
@@ -371,6 +420,7 @@ export function AgentActivityChip({
   liveStatus = "idle",
   activeSubagents = 0,
   agentLabel = "Codex",
+  toolRunning = false,
 }: AgentActivityChipProps) {
   const runStartMs = resolveLiveRunStartMs({ startedAtMs, date });
   const lastActivityInfo = useMemo(
@@ -379,8 +429,9 @@ export function AgentActivityChip({
         generating,
         lastActivityAtMs,
         now: Date.now(),
+        toolRunning,
       }),
-    [generating, lastActivityAtMs, durationLabel],
+    [generating, lastActivityAtMs, durationLabel, toolRunning],
   );
   const lastActivityColor = lastActivityInfo.stale
     ? UI_COLORS.warning
@@ -501,6 +552,11 @@ export function AgentActivityChip({
               typeof lastActivityAtMs === "number" &&
               Number.isFinite(lastActivityAtMs) ? (
                 <span>
+                  {lastActivityInfo.quiet === "thinking"
+                    ? "No new output yet: the agent is thinking. On hard problems this can take several minutes before its next step. "
+                    : lastActivityInfo.quiet === "tool"
+                      ? "Waiting for a command or tool call to finish. "
+                      : ""}
                   Last backend activity{" "}
                   <TimeAgo date={new Date(lastActivityAtMs)} /> at{" "}
                   {formatTimestampTitle(lastActivityAtMs)}
@@ -820,6 +876,7 @@ export function AgentMessageStatus({
           onOpen={openActivity}
           liveStatus={activityLiveStatus}
           activeSubagents={activeSubagents}
+          toolRunning={hasOpenToolWork(effectiveLogEvents)}
         />
         {activityToggle && (
           <Button

@@ -8,6 +8,7 @@ import {
   getSitePublicOriginForRequest,
 } from "@cocalc/server/bay-public-origin";
 import { isLocale } from "@cocalc/util/i18n/const";
+import { impersonationSessionMaxAgeMs } from "@cocalc/util/impersonation-audit";
 import {
   issueHomeBayRetryToken,
   verifyHomeBayRetryToken,
@@ -147,7 +148,7 @@ async function doIt({ req, res }) {
       req,
       res,
       account_id,
-      maxAge: 12 * 3600 * 1000,
+      maxAge: impersonationSessionMaxAgeMs(grant.metadata),
       home_bay_id,
       session: {
         authenticated_at: new Date(),

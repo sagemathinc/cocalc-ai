@@ -1,6 +1,8 @@
 import {
   impersonationReason,
   impersonationSupportContext,
+  impersonationSessionMaxAgeMs,
+  impersonationSessionTtlSeconds,
 } from "./impersonation-audit";
 
 describe("impersonation audit context", () => {
@@ -50,5 +52,26 @@ describe("impersonation audit context", () => {
       support_ticket_id: undefined,
       consent_reference: undefined,
     });
+  });
+});
+
+describe("impersonation session lifetime", () => {
+  it("validates an optional shorter session TTL", () => {
+    expect(impersonationSessionTtlSeconds(undefined)).toBeUndefined();
+    expect(impersonationSessionTtlSeconds(180)).toBe(180);
+    expect(() => impersonationSessionTtlSeconds(59)).toThrow(/60 to 43200/);
+    expect(() => impersonationSessionTtlSeconds(43201)).toThrow();
+    expect(() => impersonationSessionTtlSeconds(1.5)).toThrow();
+  });
+
+  it("caps the session at the grant TTL and never extends it", () => {
+    expect(impersonationSessionMaxAgeMs({})).toBe(12 * 3600 * 1000);
+    expect(impersonationSessionMaxAgeMs({ session_ttl_seconds: 180 })).toBe(
+      180_000,
+    );
+    // A corrupt stored value falls back to the minimum, not to 12 hours.
+    expect(
+      impersonationSessionMaxAgeMs({ session_ttl_seconds: 99999999 }),
+    ).toBe(60_000);
   });
 });

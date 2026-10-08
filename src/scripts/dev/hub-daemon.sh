@@ -14,6 +14,11 @@ CONFIG_FILE="${COCALC_HUB_DAEMON_CONFIG:-$CONFIG_FILE_DEFAULT}"
 mkdir -p "$STATE_DIR"
 
 PID_FILE="$STATE_DIR/hub.pid"
+# The singleton billing executor of the seed bay, when billing authority is
+# enabled (production runs it as its own service, bay-billing-worker).
+BILLING_PID_FILE="$STATE_DIR/billing-worker.pid"
+BILLING_LOG="$STATE_DIR/billing-worker.log"
+BILLING_LOCK="$STATE_DIR/billing-executor.lock"
 HUB_CLUSTER_SCRIPT="$SCRIPT_DIR/hub-cluster.js"
 HUB_CLUSTER_BAY_COUNT=0
 HUB_CLUSTER_PRIMARY_BAY_INDEX=0
@@ -1144,6 +1149,79 @@ is_running() {
   return 1
 }
 
+billing_authority_enabled() {
+  case "$(printf "%s" "${COCALC_BILLING_AUTHORITY_ENABLED:-0}" | tr '[:upper:]' '[:lower:]')" in
+    1 | true | yes) return 0 ;;
+  esac
+  return 1
+}
+
+billing_worker_running() {
+  local pid
+  pid="$(cat "$BILLING_PID_FILE" 2>/dev/null || true)"
+  [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1
+}
+
+# Called with the seed hub's environment. Billing authority needs exactly one
+# executor holding a renewed lease; without it every billing write fails with
+# "billing authority is not ready" (503). It waits for the seed hub's Conat
+# server, then runs under a process-lifetime flock, like bay-billing-worker.
+start_billing_worker() {
+  if ! billing_authority_enabled || [ "$COCALC_CLUSTER_ROLE" = "attached" ]; then
+    return 0
+  fi
+  case "$HUB_CMD" in
+    *packages/hub/bin/start.sh*) ;;
+    *)
+      echo "billing authority is enabled, but HUB_CMD is custom; start the billing worker yourself" >&2
+      return 0
+      ;;
+  esac
+  if billing_worker_running; then
+    return 0
+  fi
+  local conat_url
+  conat_url="$(local_hub_url "$HUB_BIND_HOST" "$HUB_PORT")"
+  rotate_log_file "$BILLING_LOG"
+  local cmd="until curl -fsS -o /dev/null --max-time 2 '$conat_url'; do sleep 1; done
+exec 9>'$BILLING_LOCK'
+flock -n 9 || { echo 'another billing worker holds $BILLING_LOCK'; exit 75; }
+export COCALC_BILLING_SINGLETON_LOCKED=1 COCALC_HUB_BILLING_WORKER=1
+export COCALC_BILLING_WORKER_CONAT_SERVER='$conat_url'
+exec $HUB_CMD"
+  if command -v setsid >/dev/null 2>&1; then
+    nohup setsid bash -c "$cmd" >>"$BILLING_LOG" 2>&1 < /dev/null &
+  else
+    nohup bash -c "$cmd" >>"$BILLING_LOG" 2>&1 < /dev/null &
+  fi
+  echo $! >"$BILLING_PID_FILE"
+  echo "billing worker started (pid $!; log $BILLING_LOG)"
+}
+
+stop_billing_worker() {
+  if ! billing_worker_running; then
+    rm -f "$BILLING_PID_FILE"
+    return 0
+  fi
+  local pid i
+  pid="$(cat "$BILLING_PID_FILE")"
+  # It leads its own session (setsid): signal the whole group.
+  kill -TERM -- "-$pid" >/dev/null 2>&1 || kill -TERM "$pid" >/dev/null 2>&1 || true
+  for i in $(seq 1 30); do
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+  if kill -0 "$pid" >/dev/null 2>&1; then
+    kill -KILL -- "-$pid" >/dev/null 2>&1 || kill -KILL "$pid" >/dev/null 2>&1 || true
+    echo "billing worker killed"
+  else
+    echo "billing worker stopped"
+  fi
+  rm -f "$BILLING_PID_FILE"
+}
+
 start_daemon() {
   load_config
   local primary_data_dir
@@ -1261,6 +1339,7 @@ start_daemon() {
         nohup bash -c "$HUB_CMD" >>"$HUB_STDOUT_LOG" 2>&1 < /dev/null &
       fi
       echo $! >"$PID_FILE"
+      start_billing_worker
     )
 
     local running_pid=""
@@ -1389,6 +1468,7 @@ refresh_stack() {
 stop_daemon() {
   local keep_cloudflared="${1:-0}"
   load_config
+  stop_billing_worker
   stop_attached_bays
   local stopped=0
   if ! is_running; then
@@ -1438,6 +1518,11 @@ show_status() {
     echo "running (pid $(cat "$PID_FILE"))"
   else
     echo "stopped"
+  fi
+  if billing_worker_running; then
+    echo "billing worker: running (pid $(cat "$BILLING_PID_FILE"); log $BILLING_LOG)"
+  elif billing_authority_enabled; then
+    echo "billing worker: NOT running (billing authority is enabled; billing writes will fail)"
   fi
   echo "config: $CONFIG_FILE"
   echo "state:  $STATE_DIR"

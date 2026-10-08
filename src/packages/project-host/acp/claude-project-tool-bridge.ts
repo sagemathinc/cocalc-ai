@@ -137,6 +137,8 @@ export interface ClaudeProjectToolBridge {
   directory: string;
   cancel(): Promise<void>;
   resume(): void;
+  /** End pending job waits now (new user guidance is waiting). */
+  releaseWaits(): void;
   close(): Promise<void>;
   setAsyncQuestionHandler: NonNullable<
     HarnessProcess["setAsyncQuestionHandler"]
@@ -308,6 +310,7 @@ export async function createClaudeProjectToolBridge(
       setAsyncQuestionHandler: (handler) => {
         asyncQuestion = handler;
       },
+      releaseWaits: () => jobs.releaseWaits(),
       resume: () => {
         if (!fenced) {
           paused = false;

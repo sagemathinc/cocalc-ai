@@ -106,7 +106,7 @@ interface ActiveTurnRef {
   thread_id: string;
 }
 
-async function assertLiveTurn({
+export async function assertLiveTurn({
   account_id,
   host_id,
   source_project_id,
@@ -154,7 +154,7 @@ async function assertLiveTurn({
   });
 }
 
-async function assertTrustedSource({
+export async function assertTrustedSource({
   account_id,
   host_id,
   source_project_id,

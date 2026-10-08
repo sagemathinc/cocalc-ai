@@ -41,3 +41,40 @@ export function impersonationSupportContext(opts: {
   }
   return { support_ticket_id, consent_reference: consent };
 }
+
+export const IMPERSONATION_SESSION_MAX_TTL_SECONDS = 12 * 3600;
+export const IMPERSONATION_SESSION_MIN_TTL_SECONDS = 60;
+
+/** Validate an optional shorter lifetime for the impersonation session. */
+export function impersonationSessionTtlSeconds(
+  value: unknown,
+): number | undefined {
+  if (value == null) return undefined;
+  const seconds = Number(value);
+  if (
+    !Number.isSafeInteger(seconds) ||
+    seconds < IMPERSONATION_SESSION_MIN_TTL_SECONDS ||
+    seconds > IMPERSONATION_SESSION_MAX_TTL_SECONDS
+  ) {
+    throw new Error(
+      `session_ttl_seconds must be an integer from ${IMPERSONATION_SESSION_MIN_TTL_SECONDS} to ${IMPERSONATION_SESSION_MAX_TTL_SECONDS}`,
+    );
+  }
+  return seconds;
+}
+
+/** Session lifetime for a consumed grant: the grant's TTL, at most 12 hours. */
+export function impersonationSessionMaxAgeMs(
+  metadata?: Record<string, unknown> | null,
+): number {
+  try {
+    const seconds = impersonationSessionTtlSeconds(
+      metadata?.session_ttl_seconds,
+    );
+    if (seconds != null) return seconds * 1000;
+  } catch {
+    // An invalid stored value never extends the session.
+    return IMPERSONATION_SESSION_MIN_TTL_SECONDS * 1000;
+  }
+  return IMPERSONATION_SESSION_MAX_TTL_SECONDS * 1000;
+}

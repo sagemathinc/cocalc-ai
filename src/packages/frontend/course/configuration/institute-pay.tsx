@@ -33,7 +33,12 @@ import {
   isPurchaseAllowed,
   processPaymentIntents,
   purchaseMembershipPackage,
+  purchaseMembershipPackages,
 } from "@cocalc/frontend/purchases/api";
+import {
+  educatorTermProduct,
+  useEducatorOffers,
+} from "@cocalc/frontend/account/educator-offers-data";
 import MoneyStatistic from "@cocalc/frontend/purchases/money-statistic";
 import type {
   MembershipPackageDetails,
@@ -305,6 +310,24 @@ function PurchaseCourseSeatsModal({
   const numPaymentsRef = useRef<number | null>(null);
   const [chargeAmount, setChargeAmount] = useState<number>(0);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
+  // Educational offer: let an eligible instructor add their own membership for
+  // the term to the same checkout as the students' seats.
+  const { offers } = useEducatorOffers();
+  const educatorTier = offers?.eligibility.eligible
+    ? offers.tiers.find((tier) => tier.term_price != null)
+    : undefined;
+  const [includeEducatorTerm, setIncludeEducatorTerm] =
+    useState<boolean>(false);
+  const [termQuote, setTermQuote] = useState<MembershipPackageQuote | null>(
+    null,
+  );
+  const termProduct = useMemo(
+    () =>
+      includeEducatorTerm && educatorTier
+        ? educatorTermProduct(educatorTier)
+        : null,
+    [includeEducatorTerm, educatorTier],
+  );
 
   const product = useMemo(
     () => ({
@@ -340,16 +363,21 @@ function PurchaseCourseSeatsModal({
       setQuoteLoading(true);
       setQuoteError("");
       try {
-        const nextQuote = await getMembershipPackageQuote(product);
+        const [nextQuote, nextTermQuote] = await Promise.all([
+          getMembershipPackageQuote(product),
+          termProduct ? getMembershipPackageQuote(termProduct) : null,
+        ]);
+        const combinedTotal = toDecimal(nextQuote.total_price)
+          .add(toDecimal(nextTermQuote?.total_price ?? 0))
+          .toNumber();
         const purchaseAllowed = await isPurchaseAllowed(
           "membership",
-          nextQuote.total_price,
+          combinedTotal,
         );
         if (!canceled) {
           setQuote(nextQuote);
-          setChargeAmount(
-            purchaseAllowed.chargeAmount ?? nextQuote.total_price ?? 0,
-          );
+          setTermQuote(nextTermQuote);
+          setChargeAmount(purchaseAllowed.chargeAmount ?? combinedTotal);
         }
       } catch (err) {
         if (!canceled) {
@@ -366,9 +394,11 @@ function PurchaseCourseSeatsModal({
     return () => {
       canceled = true;
     };
-  }, [open, product, seatCount]);
+  }, [open, product, seatCount, termProduct]);
 
-  const totalValue = toDecimal(quote?.total_price ?? 0);
+  const seatsValue = toDecimal(quote?.total_price ?? 0);
+  const termValue = toDecimal(termProduct ? (termQuote?.total_price ?? 0) : 0);
+  const totalValue = seatsValue.add(termValue);
   const chargeAmountValue = toDecimal(chargeAmount);
   const lineItems: LineItem[] = [];
   if (quote) {
@@ -376,8 +406,14 @@ function PurchaseCourseSeatsModal({
       description: `${seatCount} course seat${seatCount === 1 ? "" : "s"} (${currency(
         quote.seat_price,
       )} each)`,
-      amount: moneyRound2Up(totalValue).toNumber(),
+      amount: moneyRound2Up(seatsValue).toNumber(),
     });
+    if (termProduct && termQuote && educatorTier) {
+      lineItems.push({
+        description: `Your ${educatorTier.label} membership for one ${educatorTier.term_days}-day term`,
+        amount: moneyRound2Up(termValue).toNumber(),
+      });
+    }
     if (chargeAmountValue.lt(totalValue)) {
       lineItems.push({
         description: "Apply account credit toward course seats",
@@ -396,7 +432,16 @@ function PurchaseCourseSeatsModal({
     setDisabled(true);
     try {
       const completed = await runFreshAuthAction(async () => {
-        await purchaseMembershipPackage(product);
+        if (termProduct) {
+          await purchaseMembershipPackages({
+            products: [
+              { type: "membership-package", ...product } as any,
+              termProduct,
+            ],
+          });
+        } else {
+          await purchaseMembershipPackage(product);
+        }
         await onPurchased();
         setPlace("done");
       });
@@ -480,11 +525,24 @@ function PurchaseCourseSeatsModal({
             />
           </div>
         </div>
+        {educatorTier ? (
+          <Checkbox
+            checked={includeEducatorTerm}
+            onChange={(e) => setIncludeEducatorTerm(e.target.checked)}
+          >
+            Also buy my own {educatorTier.label} membership for this term (
+            {currency(Number(educatorTier.term_price))} for{" "}
+            {educatorTier.term_days} days, educational pricing)
+          </Checkbox>
+        ) : null}
         {quoteLoading && <Spin />}
         {quote && (
           <>
             <Space wrap>
-              <MoneyStatistic title="Total price" value={quote.total_price} />
+              <MoneyStatistic
+                title="Total price"
+                value={totalValue.toNumber()}
+              />
               <MoneyStatistic title="Seat price" value={quote.seat_price} />
               <Statistic
                 title="Seats after purchase"
@@ -531,12 +589,21 @@ function PurchaseCourseSeatsModal({
             }
             lineItems={lineItems}
             purpose={MEMBERSHIP_PACKAGE_PURCHASE}
-            metadata={{
-              membership_package_product: JSON.stringify({
-                type: "membership-package",
-                ...product,
-              }),
-            }}
+            metadata={
+              termProduct
+                ? {
+                    membership_package_products: JSON.stringify([
+                      { type: "membership-package", ...product },
+                      termProduct,
+                    ]),
+                  }
+                : {
+                    membership_package_product: JSON.stringify({
+                      type: "membership-package",
+                      ...product,
+                    }),
+                  }
+            }
             onFinished={async (total) => {
               if (!total) {
                 await completePurchase();

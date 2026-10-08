@@ -319,7 +319,7 @@ describe("PublicApp", () => {
       expect(canonicalHref()).toBe("https://cocalc.ai/products/cocalc-star"),
     );
     expect(headMeta('meta[name="description"]')).toContain(
-      "single-VM appliance",
+      "one Docker container",
     );
 
     rerender(
@@ -2156,7 +2156,7 @@ describe("PublicApp", () => {
 
     expect(screen.getAllByText("Install CoCalc Star")).toHaveLength(2);
     expect(
-      screen.getByText("Run a shared CoCalc site on one Ubuntu VM."),
+      screen.getByText("Run your own CoCalc with one Docker command."),
     ).not.toBeNull();
   });
 

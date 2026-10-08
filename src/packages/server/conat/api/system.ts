@@ -1,4 +1,5 @@
 import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
+import { isCliConnectorCredentialKind } from "@cocalc/util/ai/cli-connectors";
 import getCustomize from "@cocalc/database/settings/customize";
 export { getCustomize };
 import getPool from "@cocalc/database/pool";
@@ -308,6 +309,7 @@ import {
 import { createImpersonationGrantLocal } from "@cocalc/server/auth/impersonation";
 import {
   impersonationReason,
+  impersonationSessionTtlSeconds,
   impersonationSupportContext,
 } from "@cocalc/util/impersonation-audit";
 import { upsertAccountImpersonationGrantDirectory } from "@cocalc/server/auth/impersonation-grant-directory";
@@ -5572,6 +5574,7 @@ export async function createImpersonationGrant({
   support_ticket_id,
   consent_reference,
   lang_temp,
+  session_ttl_seconds,
 }: {
   account_id?: string;
   browser_id?: string;
@@ -5581,6 +5584,7 @@ export async function createImpersonationGrant({
   support_ticket_id?: number;
   consent_reference?: string;
   lang_temp?: string | null;
+  session_ttl_seconds?: number;
 }): Promise<{
   grant_id: string;
   subject_account_id: string;
@@ -5610,6 +5614,7 @@ export async function createImpersonationGrant({
     support_ticket_id,
     consent_reference,
   });
+  const sessionTtlSeconds = impersonationSessionTtlSeconds(session_ttl_seconds);
   const location = await resolveAccountHomeBay({
     account_id,
     user_account_id: subjectAccountId,
@@ -5635,6 +5640,9 @@ export async function createImpersonationGrant({
             ? "admin-ui"
             : "admin-cli",
       ...supportContext,
+      ...(sessionTtlSeconds != null
+        ? { session_ttl_seconds: sessionTtlSeconds }
+        : {}),
       browser_id: cleanedBrowserId || undefined,
       cli_session_hash: cleanedSessionHash || undefined,
     },
@@ -6799,13 +6807,16 @@ export async function listExternalCredentials({
   if (!account_id) {
     throw Error("must be signed in");
   }
-  return await listAccountExternalCredentialsRouted({
-    owner_account_id: account_id,
-    provider,
-    kind,
-    scope: scope as any,
-    includeRevoked: !!include_revoked,
-  });
+  // Connector credentials have their own views (Settings > Connectors).
+  return (
+    await listAccountExternalCredentialsRouted({
+      owner_account_id: account_id,
+      provider,
+      kind,
+      scope: scope as any,
+      includeRevoked: !!include_revoked,
+    })
+  ).filter((credential) => !isCliConnectorCredentialKind(credential.kind));
 }
 
 export async function revokeExternalCredential({
@@ -6831,6 +6842,19 @@ export async function revokeExternalCredential({
     session_hash,
     require_second_factor: false,
   });
+  // Connector credentials are removed only through Disconnect, which also
+  // revokes them at the provider (and keeps them until that is confirmed).
+  const target = (
+    await listAccountExternalCredentialsRouted({
+      owner_account_id: account_id,
+      includeRevoked: false,
+    })
+  ).find((credential) => credential.id === id);
+  if (target && isCliConnectorCredentialKind(target.kind)) {
+    throw Error(
+      "Remove this connection in Settings > Connectors (Disconnect), which also revokes it at the provider.",
+    );
+  }
   const revoked = await revokeAccountExternalCredentialRouted({
     id,
     owner_account_id: account_id,

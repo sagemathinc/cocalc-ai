@@ -225,6 +225,7 @@ describe("hub API argument transforms", () => {
     expect(getHubApiAccountTargetMethods()).toEqual([
       "agent.authorizeRpcAdmission",
       "agent.authorizeRpcExecution",
+      "agent.beginCliConnectorTurn",
       "agent.beginCocalcConnectorTurn",
       "agent.endCocalcConnectorTurn",
       "agent.endIdentityRun",
@@ -261,6 +262,7 @@ describe("hub API argument transforms", () => {
     "agent.beginCocalcConnectorTurn",
     "agent.renewCocalcConnectorTurn",
     "agent.endCocalcConnectorTurn",
+    "agent.beginCliConnectorTurn",
     "agent.resolvePaymentSelection",
     "agent.reportRuntime",
     "apiKeys.getViewerReadPolicy",
@@ -293,6 +295,8 @@ describe("hub API argument transforms", () => {
     "agent.resolveAgentNetworkProposal",
     "agent.setPersonalMessagingState",
     "agent.disableIdentity",
+    "agent.startCliConnectorSignIn",
+    "agent.saveCliConnectorGrant",
   ])("requires a human and binds %s to the actual session", async (name) => {
     const args = await transformArgs({
       name,

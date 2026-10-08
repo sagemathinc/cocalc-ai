@@ -5,6 +5,7 @@
 import { createContext, forwardRef, useContext } from "react";
 import type { HTMLAttributes, ReactNode } from "react";
 import { Virtuoso, VirtuosoGrid } from "react-virtuoso";
+import { virtuosoItemContent, virtuosoItemKey } from "./virtuoso-item";
 
 export const VirtualCollectionContext = createContext<
   { scrollParent?: HTMLElement; loadMore: () => void } | undefined
@@ -46,8 +47,10 @@ export function VirtualCollectionItems<T>({
 }) {
   const props = {
     data: items,
-    computeItemKey: (_index: number, item: T) => itemId(item),
-    itemContent: (_index: number, item: T) => renderItem(item),
+    computeItemKey: virtuosoItemKey((_index: number, item: T) => itemId(item)),
+    itemContent: virtuosoItemContent((_index: number, item: T) =>
+      renderItem(item),
+    ),
     customScrollParent: scrollParent,
     useWindowScroll: !scrollParent,
     increaseViewportBy: 300,

@@ -79,12 +79,14 @@ import type {
   MembershipAnalyticsOverviewBay,
   MembershipAnalyticsOverviewQuery,
   MembershipAnalyticsRevenueRow,
+  EducatorOffers,
 } from "@cocalc/conat/hub/api/purchases";
 import {
   resolveMembershipDetailsForAccount,
   resolveMembershipForAccount,
 } from "@cocalc/server/membership/resolve";
 import { getMembershipTrialOffers as getMembershipTrialOffers0 } from "@cocalc/server/membership/trial-offers";
+import { getEducatorOffers as getEducatorOffers0 } from "@cocalc/server/membership/educator/offers";
 import {
   listConfiguredBays,
   listConfiguredBaysAuthoritative,
@@ -311,6 +313,14 @@ export async function setAutoBalance({
 
 export async function getMembership({ account_id }) {
   return await resolveMembershipForAccount(account_id);
+}
+
+export async function getEducatorOffers({
+  account_id,
+}: {
+  account_id?: string;
+}): Promise<EducatorOffers> {
+  return await getEducatorOffers0(requireAccount(account_id));
 }
 
 export async function getMembershipTrialOffers({ account_id }) {
@@ -2146,6 +2156,7 @@ export async function revokeMembershipPackageSeat({
       package_id,
       account_id: target_account_id,
       email_address: target_email_address,
+      trusted_admin: isAdminActor,
     }),
   };
 }

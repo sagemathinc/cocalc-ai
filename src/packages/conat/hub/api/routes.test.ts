@@ -38,6 +38,19 @@ describe("hub API routes", () => {
     expect(hubApiRouteKey(route, [])).toBeUndefined();
   });
 
+  it("finds an email invite by id or link token", () => {
+    const route = getHubApiRoute("projects.redeemEmailProjectInvite")!;
+    expect(route.owner).toBe("collab-invite");
+    expect(hubApiRouteKey(route, [{ invite_id: PROJECT, token: "t" }])).toEqual(
+      { invite_id: PROJECT, token: "t" },
+    );
+    expect(hubApiRouteKey(route, [{ token: "t" }])).toEqual({ token: "t" });
+    // Neither a valid id nor a bounded token: unroutable.
+    expect(hubApiRouteKey(route, [{ invite_id: "x" }])).toBeUndefined();
+    expect(hubApiRouteKey(route, [{ token: "t".repeat(513) }])).toBeUndefined();
+    expect(hubApiRouteKey(route, [{ token: 7 }])).toBeUndefined();
+  });
+
   it("does not route other methods or prototype names", () => {
     expect(getHubApiRoute("projects.createProject")).toBeUndefined();
     expect(getHubApiRoute("toString")).toBeUndefined();
