@@ -1,4 +1,15 @@
 import { spawn } from "node:child_process";
+import {
+  cliConnectorTurnContext,
+  type CliConnectorTurnToken,
+} from "@cocalc/util/ai/cli-connectors";
+import {
+  applyCliConnectorEnv,
+  siteCliConnectors,
+  sweepStaleCliConnectorTokens,
+  syncCliConnectorTokens,
+  writeCliConnectorTools,
+} from "./cli-connector-files";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
@@ -596,8 +607,11 @@ export type ProjectCliTokenLease = {
   setConnectorKey: (secret: string) => Promise<void>;
   clearConnectorKey: () => Promise<void>;
   getAgentIdentity: () => { agent_id: string; run_id: string } | undefined;
-  beginConnectorTurn: (chat: AcpChatContext) => Promise<void>;
+  // Resolves to prompt context naming the CLI connectors this turn can use.
+  beginConnectorTurn: (chat: AcpChatContext) => Promise<string | undefined>;
   endConnectorTurn: () => Promise<void>;
+  // PATH wrappers and git helper for CLI connectors (gh, git, cf).
+  applyCliConnectorEnv: (env: Record<string, string | undefined>) => void;
   close: () => Promise<void>;
 };
 
@@ -656,6 +670,21 @@ export async function createProjectCliTokenLease({
 
   await fs.mkdir(hostDir, { recursive: true, mode: 0o700 });
   await fs.chmod(hostDir, 0o700);
+  // Connectors are entirely dormant unless the site set one up.
+  const cliConnectors = await siteCliConnectors(hubApi.system?.getCustomize);
+  const cliActive = cliConnectors.length > 0;
+  if (cliActive) await writeCliConnectorTools(hostDir, cliConnectors);
+  const sweepStaleTokens = () =>
+    sweepStaleCliConnectorTokens({
+      runtimeDir: dirname(hostDir),
+      ownLeaseName: leaseName,
+    }).catch((err) =>
+      logger.warn("could not sweep stale CLI connector tokens", {
+        projectId,
+        err: `${err}`,
+      }),
+    );
+  void sweepStaleTokens();
 
   const writeToken = async (token: string): Promise<void> => {
     const tempPath = join(hostDir, `.token-${randomUUID()}.tmp`);
@@ -713,12 +742,68 @@ export async function createProjectCliTokenLease({
         await fs.rm(tempPath, { force: true });
       }
     });
+  // CLI connector tokens (gh, cf) for the current turn. The hub rechecks the
+  // grants and the live turn on every renewal; a token it no longer returns
+  // is removed at once.
+  let cliTimer: NodeJS.Timeout | undefined;
+  let cliTokens: CliConnectorTurnToken[] = [];
+  const setCliTokens = (
+    tokens: CliConnectorTurnToken[],
+    stillCurrent = () => true,
+  ) =>
+    queueConnectorOperation(async () => {
+      if (closed || !stillCurrent()) tokens = [];
+      // Fail closed: the prompt names only connectors whose files were all
+      // written; any failure leaves no token files at all.
+      cliTokens = [];
+      await syncCliConnectorTokens(hostDir, tokens);
+      cliTokens = tokens;
+    });
+  const beginCliTurn = async (
+    request: Parameters<typeof hubApi.agent.beginCliConnectorTurn>[0],
+    stillCurrent: () => boolean,
+  ): Promise<void> => {
+    const tokens = await hubApi.agent.beginCliConnectorTurn(request);
+    await setCliTokens(tokens ?? [], stillCurrent);
+    if (!tokens?.length || closed || !stillCurrent()) return;
+    let renewalPending = false;
+    cliTimer = setInterval(() => {
+      if (closed || renewalPending || !stillCurrent()) return;
+      void sweepStaleTokens();
+      renewalPending = true;
+      void hubApi.agent
+        .beginCliConnectorTurn(request)
+        .then((next) => setCliTokens(next ?? [], stillCurrent))
+        .catch(async (error) => {
+          // Any failure removes the tokens: the hub could not confirm the
+          // grant is still on. The next successful renewal restores them.
+          logger.warn("CLI connector renewal failed", {
+            projectId,
+            err: `${error}`,
+          });
+          await setCliTokens([], stillCurrent);
+        })
+        .catch((error) =>
+          logger.error("CLI connector tokens could not be removed", {
+            projectId,
+            err: `${error}`,
+          }),
+        )
+        .finally(() => {
+          renewalPending = false;
+        });
+    }, 60_000);
+    cliTimer.unref();
+  };
   const endConnectorTurn = async (): Promise<void> => {
     ++connectorGeneration;
     if (connectorTimer) clearInterval(connectorTimer);
     connectorTimer = undefined;
+    if (cliTimer) clearInterval(cliTimer);
+    cliTimer = undefined;
     const active = connectorTurn;
     connectorTurn = undefined;
+    await setCliTokens([]);
     await clearConnectorKey();
     if (!active) return;
     await hubApi.agent.endCocalcConnectorTurn({
@@ -729,7 +814,15 @@ export async function createProjectCliTokenLease({
       turn_id: active.turn_id,
     });
   };
-  const beginConnectorTurn = async (chat: AcpChatContext): Promise<void> => {
+  const beginConnectorTurn = async (
+    chat: AcpChatContext,
+  ): Promise<string | undefined> => {
+    await beginConnectorTurnCredentials(chat);
+    return cliConnectorTurnContext(cliTokens);
+  };
+  const beginConnectorTurnCredentials = async (
+    chat: AcpChatContext,
+  ): Promise<void> => {
     const ending = endConnectorTurn();
     const startGeneration = connectorGeneration;
     const stillCurrent = () => startGeneration === connectorGeneration;
@@ -758,6 +851,25 @@ export async function createProjectCliTokenLease({
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     const hex = bytes.toString("hex");
     const idempotency_key = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    if (cliActive)
+      try {
+        await beginCliTurn(
+          {
+            account_id: resolvedAccountId,
+            agent_id: identity.agent_id,
+            source_project_id: projectId,
+            run_id: identity.run_id,
+            turn_ref,
+          },
+          stillCurrent,
+        );
+      } catch (error) {
+        // The turn still runs; gh and cf just act without a connector token.
+        logger.warn("CLI connector tokens unavailable for this turn", {
+          projectId,
+          err: `${error}`,
+        });
+      }
     const issued = await hubApi.agent.beginCocalcConnectorTurn({
       account_id: resolvedAccountId,
       agent_id: identity.agent_id,
@@ -932,6 +1044,9 @@ export async function createProjectCliTokenLease({
     getAgentIdentity: () => identityLease?.currentRun,
     beginConnectorTurn,
     endConnectorTurn,
+    applyCliConnectorEnv: (env) => {
+      if (cliActive) applyCliConnectorEnv(env, containerDir);
+    },
     setAgentSessionKey: async (nextAgentSessionKey: string) => {
       const identityReady = prepareIdentity();
       await endConnectorTurn();
@@ -2079,7 +2194,7 @@ type SpawnCodexAppServerInProjectRuntimeResult = {
   handleAppServerRequest?: CodexAppServerRequestHandler;
   runtimeEnv?: Record<string, string>;
   setAgentSessionKey?: (agentSessionKey: string) => Promise<void>;
-  beginConnectorTurn?: (chat: AcpChatContext) => Promise<void>;
+  beginConnectorTurn?: (chat: AcpChatContext) => Promise<string | undefined>;
   endConnectorTurn?: () => Promise<void>;
   siteFundedTurn?: CodexSiteFundedTurnRuntime;
 };
@@ -2276,6 +2391,10 @@ async function spawnCodexAppServerInProjectRuntime({
     runtimeEnv.COCALC_API_URL,
   );
   applyProjectRuntimeCliEnv(runtimeEnv, accountId);
+  if (cliTokenLease?.connectorContainerPath) {
+    cliTokenLease.applyCliConnectorEnv(execEnv);
+    cliTokenLease.applyCliConnectorEnv(runtimeEnv);
+  }
   try {
     restrictedEgress = await addRestrictedCodexEgress({
       projectId,

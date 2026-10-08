@@ -845,9 +845,14 @@ describe("project env helpers", () => {
     },
   );
 
-  it("checks inviter trust at home before routing a direct invite to the project owner", async () => {
+  it("lets the owning bay check inviter trust itself for a direct invite", async () => {
+    // Routed to the owning bay, which asks the inviter's home bay about
+    // product-access trust and admin status; nothing is attested by the edge.
     isAdminMock.mockResolvedValue(true);
-    resolveProjectBayMock.mockResolvedValue({ bay_id: "bay-7", epoch: 3 });
+    const collaborators = await import("@cocalc/server/projects/collaborators");
+    const create = jest
+      .spyOn(collaborators, "createCollabInvite")
+      .mockResolvedValueOnce({ created: true, invite: {} } as any);
     const { createCollabInvite } = await import("./projects");
     await createCollabInvite({
       account_id: ACCOUNT_ID,
@@ -856,68 +861,61 @@ describe("project env helpers", () => {
       invitee_account_id: TARGET_PROJECT_ID,
       direct: true,
     });
-    expect(assertAccountTrustedForProductAccessMock).toHaveBeenCalledWith(
-      ACCOUNT_ID,
-      "invite collaborators",
-    );
-    expect(projectCollabInviteBayMock).toHaveBeenCalledWith("bay-7");
-    expect(interBayCreateCollabInviteMock).toHaveBeenCalledWith(
+    expect(requireDangerousProjectMutationAuthMock).toHaveBeenCalled();
+    expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
         account_id: ACCOUNT_ID,
         project_id: PROJECT_ID,
         trusted_admin: true,
-        trusted_product_access_checked: true,
       }),
     );
-    expect(
-      assertAccountTrustedForProductAccessMock.mock.invocationCallOrder[0],
-    ).toBeLessThan(interBayCreateCollabInviteMock.mock.invocationCallOrder[0]);
-    expect(requireDangerousProjectMutationAuthMock).toHaveBeenCalled();
+    // No trust attestation: the canonical function performs the check.
+    expect(create.mock.calls[0][1]).toBeUndefined();
+    expect(assertAccountTrustedForProductAccessMock).not.toHaveBeenCalled();
+    expect(projectCollabInviteBayMock).not.toHaveBeenCalled();
+    create.mockRestore();
   });
 
-  it("does not trust a client-supplied trust attestation or forward when the home check fails", async () => {
+  it("ignores a client-supplied trust attestation", async () => {
     isAdminMock.mockResolvedValue(true);
-    resolveProjectBayMock.mockResolvedValue({ bay_id: "bay-7", epoch: 3 });
-    assertAccountTrustedForProductAccessMock.mockRejectedValue(
-      new Error("account trust denied"),
-    );
+    const collaborators = await import("@cocalc/server/projects/collaborators");
+    const create = jest
+      .spyOn(collaborators, "createCollabInvite")
+      .mockResolvedValueOnce({ created: true, invite: {} } as any);
     const { createCollabInvite } = await import("./projects");
-    await expect(
-      createCollabInvite({
-        account_id: ACCOUNT_ID,
-        project_id: PROJECT_ID,
-        invitee_account_id: TARGET_PROJECT_ID,
-        direct: true,
-        trusted_product_access_checked: true,
-      } as any),
-    ).rejects.toThrow("account trust denied");
-    expect(interBayCreateCollabInviteMock).not.toHaveBeenCalled();
+    await createCollabInvite({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      invitee_account_id: TARGET_PROJECT_ID,
+      direct: true,
+      trusted_product_access_checked: true,
+    } as any);
+    expect(create.mock.calls[0][0]).not.toHaveProperty(
+      "trusted_product_access_checked",
+    );
+    expect(create.mock.calls[0][1]).toBeUndefined();
+    create.mockRestore();
   });
 
-  it("checks recipient trust at home before forwarding a remote invite acceptance", async () => {
+  it("lets the owning bay check recipient trust when accepting an invite", async () => {
     const collaborators = await import("@cocalc/server/projects/collaborators");
-    const localResponse = jest
+    const respond = jest
       .spyOn(collaborators, "respondCollabInvite")
-      .mockRejectedValueOnce(new Error("invite 'invite' not found"));
-    resolveProjectBayMock.mockResolvedValue({ bay_id: "bay-7", epoch: 3 });
-    assertAccountTrustedForProductAccessMock.mockRejectedValueOnce(
-      new Error("account trust denied"),
-    );
+      .mockResolvedValueOnce({ invite_id: "invite" } as any);
     const { respondCollabInvite } = await import("./projects");
-
-    await expect(
-      respondCollabInvite({
-        account_id: ACCOUNT_ID,
-        invite_id: "invite",
-        project_id: PROJECT_ID,
-        action: "accept",
-      }),
-    ).rejects.toThrow("account trust denied");
-    expect(assertAccountTrustedForProductAccessMock).toHaveBeenCalledWith(
-      ACCOUNT_ID,
-      "accept collaboration invites",
-    );
-    expect(interBayRespondCollabInviteMock).not.toHaveBeenCalled();
-    localResponse.mockRestore();
+    await respondCollabInvite({
+      account_id: ACCOUNT_ID,
+      invite_id: "invite",
+      project_id: PROJECT_ID,
+      action: "accept",
+    });
+    expect(respond).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      invite_id: "invite",
+      action: "accept",
+    });
+    expect(assertAccountTrustedForProductAccessMock).not.toHaveBeenCalled();
+    expect(projectCollabInviteBayMock).not.toHaveBeenCalled();
+    respond.mockRestore();
   });
 });

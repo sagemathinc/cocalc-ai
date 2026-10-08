@@ -45,7 +45,11 @@ for (const name of ALLOW) {
 
 // Seeds that once failed, with the step count that reproduced it. Add one
 // for every bug the fuzzer finds, next to the fix.
-const REGRESSION_SEEDS = [];
+const REGRESSION_SEEDS = [
+  // A collaborator's project list missed a change: a forward to the other
+  // bay timed out and was dropped (now retried from the outbox).
+  { seed: 1102, steps: 30 },
+];
 
 const cluster = new MultibayCluster({ bayIds: ["bay-0", "bay-1"] });
 

@@ -15,6 +15,19 @@ describe("shouldShowWrongAccountListingError", () => {
     ).toBe(true);
   });
 
+  it("returns false for archived projects, which show the Start notice", () => {
+    const error = {
+      code: "403",
+      message: "permission denied publishing to 'fs.project-...'",
+    };
+    expect(shouldShowWrongAccountListingError(error, { archived: true })).toBe(
+      false,
+    );
+    expect(shouldShowWrongAccountListingError(error, { archived: false })).toBe(
+      true,
+    );
+  });
+
   it("returns false for transient connection errors", () => {
     expect(shouldShowWrongAccountListingError({ code: 408 })).toBe(false);
     expect(shouldShowWrongAccountListingError({ code: "408" })).toBe(false);

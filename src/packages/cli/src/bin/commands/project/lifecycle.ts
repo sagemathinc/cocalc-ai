@@ -13,6 +13,7 @@ import {
 } from "@cocalc/util/consts/backups";
 
 import type { ProjectCommandDeps } from "../project";
+import { selectSnapshotsToDelete } from "../../core/snapshot-delete";
 import { apiKeyForProject } from "../../core/managed-connector-auth";
 import { requestScopedProjectProxy } from "../../core/scoped-project-proxy";
 
@@ -524,6 +525,66 @@ export function registerProjectLifecycleCommands(
         }));
       });
     });
+
+  snapshot
+    .command("delete")
+    .description(
+      "delete project snapshots, e.g. to release space held by deleted files (requires fresh auth)",
+    )
+    .option("-w, --project <project>", "project id or name")
+    .option(
+      "--name <name>",
+      "snapshot to delete (repeatable)",
+      (value: string, prev: string[] = []) => [...prev, value],
+    )
+    .option(
+      "--all-except <name>",
+      "delete every snapshot except this one (repeatable)",
+      (value: string, prev: string[] = []) => [...prev, value],
+    )
+    .option("--dry-run", "only list the snapshots that would be deleted")
+    .action(
+      async (
+        opts: {
+          project?: string;
+          name?: string[];
+          allExcept?: string[];
+          dryRun?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project snapshot delete", async (ctx) => {
+          const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
+          const snapshots = await ctx.hub.projects.allSnapshotUsage({
+            project_id: ws.project_id,
+          });
+          const targets = selectSnapshotsToDelete({
+            existing: snapshots.map((snap) => snap.name),
+            names: opts.name,
+            allExcept: opts.allExcept,
+          });
+          const deleted: string[] = [];
+          if (!opts.dryRun) {
+            for (const name of targets) {
+              await ctx.hub.projects.deleteSnapshot({
+                project_id: ws.project_id,
+                name,
+              });
+              deleted.push(name);
+            }
+          }
+          return {
+            project_id: ws.project_id,
+            dry_run: !!opts.dryRun,
+            deleted: opts.dryRun ? [] : deleted,
+            would_delete: opts.dryRun ? targets : undefined,
+            kept: snapshots
+              .map((snap) => snap.name)
+              .filter((name) => !targets.includes(name)),
+          };
+        });
+      },
+    );
 
   snapshot
     .command("restore")

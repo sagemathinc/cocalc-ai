@@ -79,6 +79,83 @@ function positiveIntegerEnv(name: string, fallback: number): number {
   return fallback;
 }
 
+// Each remote step has its own deadline, so one RPC that never answers (e.g. a
+// host this hub cannot currently reach) fails that step quickly instead of
+// holding the whole operation for COPY_FILES_TIMEOUT_MS.
+const COPY_STEP_DEFAULT_TIMEOUT_MS = {
+  probe: 30_000,
+  flush: 10 * 60_000,
+  archive: 10 * 60_000,
+  // Base for one host's apply call; see copyApplyTimeout. It covers the
+  // host's two one-time phases before any destination (archive listing
+  // validation, then extraction), each bounded by the project-host's
+  // PATH_COPY_ARCHIVE_TIMEOUT_MS (5 minutes).
+  apply: 10 * 60_000,
+} as const;
+const COPY_APPLY_PER_DEST_DEFAULT_TIMEOUT_MS = 60_000;
+
+type CopyRemoteStep = keyof typeof COPY_STEP_DEFAULT_TIMEOUT_MS;
+
+export function copyStepTimeout(
+  step: CopyRemoteStep,
+  timeout_ms: number,
+): number {
+  const stepTimeout = positiveIntegerEnv(
+    `COCALC_COPY_${step.toUpperCase()}_TIMEOUT_MS`,
+    COPY_STEP_DEFAULT_TIMEOUT_MS[step],
+  );
+  return timeout_ms > 0 ? Math.min(stepTimeout, timeout_ms) : stepTimeout;
+}
+
+// A host applies the archive to all of its destinations sequentially in one
+// call, so a class with many students on one host needs proportionally more
+// time. Timing out early would report failure while the host keeps writing.
+export function copyApplyTimeout(destinations: number, timeout_ms: number) {
+  const perDest = positiveIntegerEnv(
+    "COCALC_COPY_APPLY_PER_DEST_TIMEOUT_MS",
+    COPY_APPLY_PER_DEST_DEFAULT_TIMEOUT_MS,
+  );
+  return Math.min(
+    copyStepTimeout("apply", 0) + perDest * Math.max(1, destinations),
+    timeout_ms > 0 ? timeout_ms : Infinity,
+  );
+}
+
+// Name the step and host in the error: it is what ends up in the operation's
+// error column, which is often the only record of why a copy failed.
+async function runCopyStep<T>(
+  {
+    step,
+    host_id,
+    project_id,
+  }: { step: CopyRemoteStep; host_id?: string; project_id: string },
+  fn: () => Promise<T>,
+): Promise<T> {
+  const start = Date.now();
+  try {
+    return await fn();
+  } catch (err) {
+    const elapsed_s = Math.round((Date.now() - start) / 1000);
+    logger.warn("copy step failed", {
+      step,
+      host_id,
+      project_id,
+      elapsed_s,
+      err: `${err}`,
+    });
+    const where = host_id ? ` on host ${host_id}` : "";
+    const wrapped = new Error(
+      `copy ${step}${where} for project ${project_id} failed after ${elapsed_s}s: ${
+        (err as any)?.message ?? err
+      }`,
+    );
+    if ((err as any)?.code != null) {
+      (wrapped as any).code = (err as any).code;
+    }
+    throw wrapped;
+  }
+}
+
 async function createBackupAndWait({
   account_id,
   project_id,
@@ -541,7 +618,7 @@ async function probeApplyPathCopyArchive({
       });
       return false;
     }
-    logger.info("copyProjectFiles: fast archive probe failed on host", {
+    logger.warn("copyProjectFiles: fast archive probe failed on host", {
       host_id,
       err: `${err}`,
     });
@@ -581,6 +658,7 @@ function buildFastArchiveDestinations({
 async function tryFastRemoteCopyArchive({
   srcProjectClient,
   src_project_id,
+  src_host_id,
   rootPlans,
   remoteDests,
   options,
@@ -591,6 +669,7 @@ async function tryFastRemoteCopyArchive({
 }: {
   srcProjectClient: Fileserver;
   src_project_id: string;
+  src_host_id: string;
   rootPlans: ArchiveRootPlan[] | undefined;
   remoteDests: CopyDestWithHost[];
   options?: CopyOptions;
@@ -622,14 +701,20 @@ async function tryFastRemoteCopyArchive({
   }
   const destClients = new Map<string, Fileserver>();
   for (const [host_id, group] of destsByHost.entries()) {
-    const client = await getProjectFileServerClient({
+    const probeClient = await getProjectFileServerClient({
       project_id: group[0].project_id,
-      timeout: timeout_ms,
+      timeout: copyStepTimeout("probe", timeout_ms),
     });
-    if (!(await probeApplyPathCopyArchive({ client, host_id }))) {
+    if (!(await probeApplyPathCopyArchive({ client: probeClient, host_id }))) {
       return { used: false };
     }
-    destClients.set(host_id, client);
+    destClients.set(
+      host_id,
+      await getProjectFileServerClient({
+        project_id: group[0].project_id,
+        timeout: copyApplyTimeout(group.length, timeout_ms),
+      }),
+    );
   }
   if (shouldAbort && (await shouldAbort())) {
     throw copyCanceledError();
@@ -644,21 +729,29 @@ async function tryFastRemoteCopyArchive({
       ...limits,
     },
   });
+  const archiveClient = await getProjectFileServerClient({
+    project_id: src_project_id,
+    timeout: copyStepTimeout("archive", timeout_ms),
+  });
   let archive;
   try {
-    archive = await srcProjectClient.createPathCopyArchive({
-      project_id: src_project_id,
-      roots: rootPlans.map(
-        (root): PathCopyArchiveRoot => ({
-          archive_path: root.archivePath,
-          source_path: root.backupSrcPath,
+    archive = await runCopyStep(
+      { step: "archive", host_id: src_host_id, project_id: src_project_id },
+      async () =>
+        await archiveClient.createPathCopyArchive({
+          project_id: src_project_id,
+          roots: rootPlans.map(
+            (root): PathCopyArchiveRoot => ({
+              archive_path: root.archivePath,
+              source_path: root.backupSrcPath,
+            }),
+          ),
+          options: options?.dereference
+            ? { dereference: options.dereference }
+            : undefined,
+          ...limits,
         }),
-      ),
-      options: options?.dereference
-        ? { dereference: options.dereference }
-        : undefined,
-      ...limits,
-    });
+    );
   } catch (err) {
     if (
       isFastPathLimitError(err) ||
@@ -693,16 +786,20 @@ async function tryFastRemoteCopyArchive({
       throw copyCanceledError();
     }
     const client = destClients.get(host_id)!;
-    const result = await client.applyPathCopyArchive({
-      archive,
-      dests: buildFastArchiveDestinations({
-        dests: group,
-        rootPlans,
-        singleExactDest,
-        exactDest: exact_dest,
-      }),
-      options,
-    });
+    const result = await runCopyStep(
+      { step: "apply", host_id, project_id: group[0].project_id },
+      async () =>
+        await client.applyPathCopyArchive({
+          archive,
+          dests: buildFastArchiveDestinations({
+            dests: group,
+            rootPlans,
+            singleExactDest,
+            exactDest: exact_dest,
+          }),
+          options,
+        }),
+    );
     applied += result.applied;
   }
   return {
@@ -756,7 +853,7 @@ async function assertExactCopyDestinationsSupported({
     Array.from(projectByHost.entries()).map(async ([host_id, project_id]) => {
       const client = await getProjectFileServerClient({
         project_id,
-        timeout: timeout_ms,
+        timeout: copyStepTimeout("probe", timeout_ms),
       });
       if (typeof client.getCopyCapabilities !== "function") {
         throw new Error(
@@ -764,7 +861,10 @@ async function assertExactCopyDestinationsSupported({
         );
       }
       try {
-        const capabilities = await client.getCopyCapabilities({ project_id });
+        const capabilities = await runCopyStep(
+          { step: "probe", host_id, project_id },
+          async () => await client.getCopyCapabilities({ project_id }),
+        );
         if (capabilities.exact_replace !== true) {
           throw new Error("exact replacement is unavailable");
         }
@@ -1136,11 +1236,19 @@ export async function copyProjectFiles({
       );
     }
     try {
-      const flushed = await srcProjectClient.flushJupyterNotebooksToDisk({
+      const flushClient = await getProjectFileServerClient({
         project_id: src.project_id,
-        paths: backupSrcPaths,
-        actor_account_id: account_id,
+        timeout: copyStepTimeout("flush", timeout_ms),
       });
+      const flushed = await runCopyStep(
+        { step: "flush", host_id: srcHostId, project_id: src.project_id },
+        async () =>
+          await flushClient.flushJupyterNotebooksToDisk({
+            project_id: src.project_id,
+            paths: backupSrcPaths,
+            actor_account_id: account_id,
+          }),
+      );
       sourceVersions = flushed.notebooks;
     } catch (err) {
       if (isUnknownServiceMethodError(err, "flushJupyterNotebooksToDisk")) {
@@ -1188,6 +1296,7 @@ export async function copyProjectFiles({
       const fastCopy = await tryFastRemoteCopyArchive({
         srcProjectClient,
         src_project_id: src.project_id,
+        src_host_id: srcHostId,
         rootPlans: buildArchiveRootPlans(sourcePlans),
         remoteDests,
         options,

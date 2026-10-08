@@ -61,7 +61,71 @@ export function trimLogFileSize() {
   }
 }
 
-function myFormat(...args): string {
+// Errors are logged through a strict allowlist. Library errors can carry
+// sensitive enumerable fields: Stripe's signature verification error has the
+// webhook's Stripe-Signature header and raw body (`header`, `payload`), and
+// other SDK errors carry `raw` responses and request headers. With warn/error
+// logging on in production (journald), none of that may be written.
+const SAFE_ERROR_FIELDS = [
+  "name",
+  "message",
+  "code",
+  "status",
+  "statusCode",
+  "type",
+  "requestId",
+  "request_id",
+  "errno",
+  "syscall",
+] as const;
+const MAX_SANITIZE_DEPTH = 6;
+
+// Never returns an original object that could hold an Error: repeated
+// references and cycles reuse the sanitized clone, and anything deeper than
+// the limit becomes a marker string.
+export function sanitizeForLog(
+  value: unknown,
+  depth = 0,
+  clones: WeakMap<object, unknown> = new WeakMap(),
+): unknown {
+  if (value == null || typeof value != "object") return value;
+  if (clones.has(value)) return clones.get(value);
+  if (value instanceof Error) {
+    const safe: Record<string, unknown> = {};
+    clones.set(value, safe);
+    for (const key of SAFE_ERROR_FIELDS) {
+      const field = (value as any)[key];
+      if (field != null && typeof field != "object") safe[key] = field;
+    }
+    if (value.stack) safe.stack = value.stack;
+    if ((value as any).cause != null) {
+      safe.cause = sanitizeForLog((value as any).cause, depth + 1, clones);
+    }
+    return safe;
+  }
+  if (
+    Object.getPrototypeOf(value) !== Object.prototype &&
+    !Array.isArray(value)
+  ) {
+    return value; // Buffers, Maps, dates, class instances: as before
+  }
+  if (depth >= MAX_SANITIZE_DEPTH) return "[Truncated]";
+  if (Array.isArray(value)) {
+    const out: unknown[] = [];
+    clones.set(value, out);
+    for (const x of value) out.push(sanitizeForLog(x, depth + 1, clones));
+    return out;
+  }
+  const out: Record<string, unknown> = {};
+  clones.set(value, out);
+  for (const [key, x] of Object.entries(value)) {
+    out[key] = sanitizeForLog(x, depth + 1, clones);
+  }
+  return out;
+}
+
+export function myFormat(...rawArgs): string {
+  const args = rawArgs.map((x) => sanitizeForLog(x));
   if (args.length > 1 && typeof args[0] == "string" && !args[0].includes("%")) {
     const v: string[] = [];
     for (const x of args) {

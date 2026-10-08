@@ -7,6 +7,7 @@ const resolveProjectBay = jest.fn();
 const forward = jest.fn();
 const createInterBayHubApiClient = jest.fn(() => ({ call: forward }));
 const isAccountBannedCached = jest.fn(() => false);
+const resolveProjectCollabInviteDirectory = jest.fn();
 
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => "bay-0",
@@ -22,6 +23,12 @@ jest.mock("@cocalc/conat/inter-bay/hub-api", () => ({
 }));
 jest.mock("@cocalc/server/accounts/security-state", () => ({
   isAccountBannedCached,
+}));
+jest.mock("@cocalc/server/projects/collab-invite-directory", () => ({
+  resolveProjectCollabInviteDirectory,
+}));
+jest.mock("@cocalc/server/projects/collaborators", () => ({
+  hashProjectCollabInviteToken: async (token: string) => `hash:${token}`,
 }));
 
 import {
@@ -164,5 +171,44 @@ describe("handleForwardedHubApiCall on the owning bay", () => {
       error: "not a collaborator",
       attrs: { code: 403 },
     });
+  });
+});
+
+describe("routing an email invite", () => {
+  const INVITE = "77777777-7777-4777-8777-777777777777";
+  const call = (args: any[]) => ({
+    name: "projects.redeemEmailProjectInvite",
+    args,
+    account_id: ACCOUNT,
+  });
+
+  it("forwards to the bay the invite directory names, by id or token", async () => {
+    resolveProjectCollabInviteDirectory.mockResolvedValue({
+      invite_id: INVITE,
+      owning_bay_id: "bay-1",
+    });
+    forward.mockResolvedValue({ ok: true, result: { redeemed: true } });
+    expect(await executeHubApiCall(call([{ token: "tok" }]))).toEqual({
+      redeemed: true,
+    });
+    expect(resolveProjectCollabInviteDirectory).toHaveBeenCalledWith({
+      token_hash: "hash:tok",
+    });
+    expect(createInterBayHubApiClient).toHaveBeenCalledWith(
+      expect.objectContaining({ bay_id: "bay-1" }),
+    );
+    expect(resolveProjectBay).not.toHaveBeenCalled();
+  });
+
+  it("runs here when the invite is unknown or owned here", async () => {
+    resolveProjectCollabInviteDirectory.mockResolvedValueOnce(null);
+    await executeHubApiCall(call([{ invite_id: INVITE, token: "tok" }]));
+    resolveProjectCollabInviteDirectory.mockResolvedValueOnce({
+      invite_id: INVITE,
+      owning_bay_id: "bay-0",
+    });
+    await executeHubApiCall(call([{ invite_id: INVITE, token: "tok" }]));
+    expect(local).toHaveBeenCalledTimes(2);
+    expect(forward).not.toHaveBeenCalled();
   });
 });

@@ -134,6 +134,9 @@ jest.mock("@cocalc/lite/hub/api", () => ({
     projects: {
       start: jest.fn(),
     },
+    system: {
+      getCustomize: jest.fn(),
+    },
     hosts: {
       issueProjectHostAgentAuthToken: jest.fn(),
     },
@@ -143,6 +146,7 @@ jest.mock("@cocalc/lite/hub/api", () => ({
       beginCocalcConnectorTurn: jest.fn(),
       renewCocalcConnectorTurn: jest.fn(),
       endCocalcConnectorTurn: jest.fn(),
+      beginCliConnectorTurn: jest.fn(),
     },
   },
 }));
@@ -199,6 +203,12 @@ describe("initCodexProjectRunner", () => {
     hubApi.agent.beginCocalcConnectorTurn.mockReset();
     hubApi.agent.renewCocalcConnectorTurn.mockReset();
     hubApi.agent.endCocalcConnectorTurn.mockReset();
+    hubApi.agent.beginCliConnectorTurn.mockReset().mockResolvedValue([]);
+    // By default the site has the GitHub connector set up.
+    hubApi.system.getCustomize
+      .mockReset()
+      .mockResolvedValue({ cliConnectors: ["github"] });
+    require("./codex/cli-connector-files").resetSiteCliConnectorsCache();
     spawnMock.mockReset();
     execFileMock.mockReset();
     execMock.mockReset();
@@ -600,6 +610,176 @@ describe("initCodexProjectRunner", () => {
       }
     },
   );
+
+  it("is dormant when the site has no connector set up", async () => {
+    hubApi.system.getCustomize.mockResolvedValue({ cliConnectors: [] });
+    spawnMock.mockImplementation(() => new FakeProc());
+    execFileMock.mockImplementation((_cmd, _args, _opts, cb) =>
+      cb(null, "true\n", ""),
+    );
+    const home = await mkTempDir("codex-project-cli-dormant-");
+    filesystem.localPath.mockResolvedValue({ home });
+    auth.resolveCodexAuthRuntime.mockResolvedValue({
+      source: "account-api-key",
+      contextId: "cli-connector-dormant",
+      env: { OPENAI_API_KEY: "test-key" },
+    });
+    hubApi.agent.issueIdentity.mockImplementation(async ({ run_id }) => ({
+      agent_id: "registered-agent",
+      run_id,
+      token: "identity-token",
+      expires_at: Date.now() + 600000,
+    }));
+    hubApi.agent.beginCocalcConnectorTurn.mockResolvedValue(undefined);
+    const { initCodexProjectRunner } = await import("./codex/codex-project");
+    initCodexProjectRunner();
+    const spawned = await getCodexProjectSpawner()!.spawnCodexAppServer!({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      cwd: "/home/user",
+      env: {
+        COCALC_CODEX_CHAT_PATH: "/home/user/send.chat",
+        COCALC_CODEX_THREAD_ID: "thread-1",
+      },
+    });
+    try {
+      // No wrappers on PATH, in the process or its environment.
+      expect(spawned.runtimeEnv!.PATH ?? "").not.toMatch(/\/cli\/bin/);
+      expect(spawnMock.mock.calls.at(-1)![1].join(" ")).not.toMatch(
+        /\/cli\/bin/,
+      );
+      const context = await spawned.beginConnectorTurn!({
+        project_id: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+        path: "/home/user/send.chat",
+        message_date: "2026-09-25T00:00:00.000Z",
+        message_id: "message-1",
+        thread_id: "thread-1",
+        sender_id: "00000000-0000-4000-8000-000000000001",
+      });
+      // No per-turn request and no prompt block.
+      expect(hubApi.agent.beginCliConnectorTurn).not.toHaveBeenCalled();
+      expect(context).toBeUndefined();
+    } finally {
+      for (const listener of spawned.proc.listeners("exit")) await listener(0);
+    }
+  });
+
+  it("delivers CLI connector tokens only while the hub keeps granting them", async () => {
+    spawnMock.mockImplementation(() => new FakeProc());
+    execFileMock.mockImplementation((_cmd, _args, _opts, cb) =>
+      cb(null, "true\n", ""),
+    );
+    const home = await mkTempDir("codex-project-cli-connector-");
+    filesystem.localPath.mockResolvedValue({ home });
+    auth.resolveCodexAuthRuntime.mockResolvedValue({
+      source: "account-api-key",
+      contextId: "cli-connector-test",
+      env: { OPENAI_API_KEY: "test-key" },
+    });
+    hubApi.agent.issueIdentity.mockImplementation(async ({ run_id }) => ({
+      agent_id: "registered-agent",
+      run_id,
+      token: "identity-token",
+      expires_at: Date.now() + 600000,
+    }));
+    // No managed CoCalc connector for this agent; only GitHub.
+    hubApi.agent.beginCocalcConnectorTurn.mockResolvedValue(undefined);
+    const github = {
+      connector: "github",
+      token: "gho_cli_token",
+      expires_at: Date.now() + 900000,
+      description: "@octo",
+    };
+    hubApi.agent.beginCliConnectorTurn.mockResolvedValue([github]);
+    const intervalSpy = jest.spyOn(global, "setInterval");
+    const { initCodexProjectRunner } = await import("./codex/codex-project");
+    initCodexProjectRunner();
+    const spawned = await getCodexProjectSpawner()!.spawnCodexAppServer!({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      cwd: "/home/user",
+      env: {
+        COCALC_CODEX_CHAT_PATH: "/home/user/send.chat",
+        COCALC_CODEX_THREAD_ID: "thread-1",
+      },
+    });
+    try {
+      const bin = spawned.runtimeEnv!.PATH.split(":")[0];
+      expect(bin).toMatch(/\/cli\/bin$/);
+      expect(spawned.runtimeEnv!.GIT_CONFIG_COUNT).toBeUndefined();
+      expect(spawnMock.mock.calls.at(-1)![1]).toContainEqual(
+        expect.stringMatching(/^PATH=.*\/cli\/bin:/),
+      );
+      const tokenFile = path
+        .join(bin, "..", "github-token")
+        .replace("/home/user", home);
+      const context = await spawned.beginConnectorTurn!({
+        project_id: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+        path: "/home/user/send.chat",
+        message_date: "2026-09-25T00:00:00.000Z",
+        message_id: "message-1",
+        thread_id: "thread-1",
+        sender_id: "00000000-0000-4000-8000-000000000001",
+      });
+      expect(context).toContain("GitHub (@octo)");
+      expect(hubApi.agent.beginCliConnectorTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agent_id: "registered-agent",
+          turn_ref: expect.objectContaining({ message_id: "message-1" }),
+        }),
+      );
+      expect(await fs.readFile(tokenFile, "utf8")).toBe("gho_cli_token\n");
+      expect((await fs.stat(tokenFile)).mode & 0o777).toBe(0o600);
+      expect(spawnMock.mock.calls.at(-1)![1].join(" ")).not.toContain(
+        "gho_cli_token",
+      );
+
+      const renew = intervalSpy.mock.calls.find(
+        ([, ms]) => ms === 60_000,
+      )?.[0] as () => void;
+      // Renewal finishes with real file work; wait for its observable result.
+      const exists = () =>
+        fs.stat(tokenFile).then(
+          () => true,
+          () => false,
+        );
+      const renewTo = async (result: () => Promise<any>, present: boolean) => {
+        const calls = hubApi.agent.beginCliConnectorTurn.mock.calls.length;
+        hubApi.agent.beginCliConnectorTurn.mockImplementationOnce(result);
+        renew();
+        const deadline = Date.now() + 2000;
+        while (
+          hubApi.agent.beginCliConnectorTurn.mock.calls.length === calls ||
+          (await exists()) !== present
+        ) {
+          if (Date.now() > deadline) throw Error("renewal not observed");
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        // Let the renewal settle so the next one is not skipped as pending.
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      };
+      // Even a transient hub failure removes the token until the hub
+      // confirms the grant again.
+      await renewTo(async () => {
+        throw new Error("timeout");
+      }, false);
+      await renewTo(async () => [github], true);
+      // The user turned GitHub off: the next renewal removes it.
+      await renewTo(async () => [], false);
+      // Turned back on, then a refusal (e.g. the turn ended) removes it.
+      await renewTo(async () => [github], true);
+      await renewTo(async () => {
+        throw new Error("turn is no longer live");
+      }, false);
+
+      await renewTo(async () => [github], true);
+      await spawned.endConnectorTurn!();
+      expect(await exists()).toBe(false);
+    } finally {
+      intervalSpy.mockRestore();
+      for (const listener of spawned.proc.listeners("exit")) await listener(0);
+    }
+  });
 
   it.each(["failure", "ended", "replacement-success", "replacement-failure"])(
     "handles delayed managed renewal (%s)",

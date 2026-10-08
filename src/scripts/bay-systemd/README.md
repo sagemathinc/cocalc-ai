@@ -55,6 +55,16 @@ when the `syslog` user cannot write `/dev/console`. Use
 `--skip-system-logging` only if the VM has an externally managed logging
 policy.
 
+Bay services (hub workers, router, persist and so on) log errors and warnings to
+journald: each release sets `DEBUG=cocalc:error:*,cocalc:warn:*`,
+`DEBUG_CONSOLE=yes` and an empty `DEBUG_FILE` in `bay.env`. The logger writes
+nothing when `DEBUG` is unset. When `NODE_ENV` is not `production`, which bay
+services do not set, it would also append to an unrotated `$LOGS/log` file
+unless `DEBUG_FILE` is empty. To change the level, for example to add
+`cocalc:info:server:projects:*` while investigating, set `DEBUG` in
+`bay-local.env` and restart the affected units. A release warns if the journald
+cap is missing.
+
 2. Install the shared site master key before starting bay services:
 
 ```sh
@@ -405,6 +415,23 @@ Rollback reverses the last two steps: restore the saved tunnel CNAME, set the
 ingress mode to `cloudflare-tunnel`, and start the cloudflared service. Do not
 delete the load-balancer resources during an incident; they are inert when DNS
 does not reference them and remain useful for diagnosis.
+
+In tunnel mode, `cocalc-bay-cloudflared-watchdog.timer` checks the tunnel every
+30 seconds. A single tunnel connection can stay registered while its edge
+cancels every stream: cloudflared logs `Request failed ... canceled by remote`
+for one `connIndex`, and only part of the public traffic hangs. The watchdog
+restarts `cocalc-bay-cloudflared.service` in either of two cases:
+
+- in three consecutive checks, each with new failures since the previous
+  check, at least 80% of those failures come from one connection (and at least
+  20 of them), with two or more connections ready;
+- no tunnel connection is ready.
+
+In both cases the local frontdoor must be healthy. Failures spread over all
+connections point at the origin or at clients, so they never trigger a restart.
+Restarts have a 15-minute cooldown and are logged with the edge locations in
+the watchdog unit's journal. Set `COCALC_BAY_CLOUDFLARED_WATCHDOG_ENABLED=0` to
+disable it.
 
 For frontend/static-only changes, build a smaller artifact locally:
 

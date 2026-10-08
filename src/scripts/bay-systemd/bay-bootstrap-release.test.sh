@@ -232,4 +232,32 @@ mkdir -p "${VALIDATION_RELEASE}/runtime/control-plane/cdn/pdfjs-dist/cmaps"
 touch "${VALIDATION_RELEASE}/runtime/control-plane/cdn/pdfjs-dist/cmaps/UniJIS-UTF16-H.bcmap"
 validate_release
 
+# Bay services log errors and warnings to the console (journald), never to a
+# file, on full and hub-only releases alike.
+ENV_DIR="${TMP_ROOT}/etc-cocalc"
+mkdir -p "$ENV_DIR"
+printf 'FOO=1\nDEBUG=cocalc:*\nDEBUG_FILE=/tmp/x.log\n' >"${ENV_DIR}/bay.env"
+JOURNALD_CAP_FILE="${TMP_ROOT}/missing-journald-cap.conf" \
+  configure_bay_logging_env 2>"${TMP_ROOT}/logging-env.err"
+expected_env=$'FOO=1\nDEBUG=cocalc:error:*,cocalc:warn:*\nDEBUG_FILE=\nDEBUG_CONSOLE=yes'
+if [[ "$(cat "${ENV_DIR}/bay.env")" != "$expected_env" ]]; then
+  echo "bay logging env was not written as expected:" >&2
+  cat "${ENV_DIR}/bay.env" >&2
+  exit 1
+fi
+grep -q 'journald has no CoCalc size cap' "${TMP_ROOT}/logging-env.err"
+touch "${TMP_ROOT}/journald-cap.conf"
+JOURNALD_CAP_FILE="${TMP_ROOT}/journald-cap.conf" \
+  configure_bay_logging_env 2>"${TMP_ROOT}/logging-env.err"
+if [[ -s "${TMP_ROOT}/logging-env.err" ]]; then
+  echo "journald cap warning printed although the cap exists" >&2
+  exit 1
+fi
+if ! awk '/^  if \[\[ -n "\$HUB_BUNDLE_PATH" \]\]; then$/ { hub = 1 }
+    hub && /configure_bay_logging_env/ { found = 1 }
+    hub && /exit 0/ { exit !found }' "${SCRIPT_DIR}/bay-bootstrap-release.sh"; then
+  echo "hub-only releases do not configure bay logging" >&2
+  exit 1
+fi
+
 echo "bay release pruning and CDN retention tests passed"

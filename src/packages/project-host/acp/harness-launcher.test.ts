@@ -454,6 +454,9 @@ function connectorLease() {
     connectorContainerPath: "/tmp/scoped/connector-key",
     beginConnectorTurn,
     endConnectorTurn,
+    applyCliConnectorEnv: (env: Record<string, string>) => {
+      env.PATH = `/tmp/scoped/cli/bin:${env.PATH}`;
+    },
     close: mockCloseLease,
   });
   return { beginConnectorTurn, endConnectorTurn };
@@ -470,6 +473,9 @@ test("qualified Claude Code reads the agent's CoCalc connector key only from its
     "COCALC_CONNECTOR_API_KEY_FILE=/tmp/scoped/connector-key",
   );
   expect(args.join(" ")).not.toContain("/stale/connector-key");
+  expect(args).toContainEqual(
+    expect.stringMatching(/^PATH=\/tmp\/scoped\/cli\/bin:/),
+  );
   const chat = { project_id: binding.projectId, path: "a.chat" } as any;
   await handle.beginConnectorTurn!(chat);
   expect(beginConnectorTurn).toHaveBeenCalledWith(chat);

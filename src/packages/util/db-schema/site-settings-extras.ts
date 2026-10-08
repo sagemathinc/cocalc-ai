@@ -350,6 +350,12 @@ export type SiteSettingsExtrasKeys =
   | "github_project_id"
   | "github_username"
   | "github_token"
+  | "agent_connectors_heading"
+  | "github_connector_client_id"
+  | "github_connector_client_secret"
+  | "github_connector_app_url"
+  | "cloudflare_connector_client_id"
+  | "cloudflare_connector_client_secret"
   | "github_block"
   | "prometheus_metrics"
   | "prometheus_metrics_allowlist"
@@ -407,6 +413,20 @@ export type SiteSettingsExtrasKeys =
 export type SettingsExtras = Record<SiteSettingsExtrasKeys, Config>;
 
 // not public, but admins can edit them
+// Agent connector settings (admin docs: Set up agent connectors).
+function connectorSetting(name: string, extra: Partial<Config> = {}): Config {
+  return {
+    name,
+    desc: "",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["AI"],
+    group: "AI & Agents",
+    subgroup: "Agent Connectors",
+    ...extra,
+  };
+}
+
 export const EXTRAS: SettingsExtras = {
   launch_emergency_heading: {
     name: "Launch Emergency Controls",
@@ -975,6 +995,27 @@ export const EXTRAS: SettingsExtras = {
     group: "Payments & Billing",
     subgroup: "Licensing",
   },
+  agent_connectors_heading: connectorSetting("Agent Connectors", {
+    desc: "See the admin docs: Set up agent connectors.",
+    type: "header",
+  }),
+  github_connector_client_id: connectorSetting("GitHub App Client ID", {
+    desc: "Blank turns the GitHub connector off.",
+  }),
+  github_connector_client_secret: connectorSetting("GitHub App Client Secret", {
+    password: true,
+  }),
+  github_connector_app_url: connectorSetting("GitHub App Public Link", {
+    desc: "https://github.com/apps/<name>",
+  }),
+  cloudflare_connector_client_id: connectorSetting(
+    "Cloudflare OAuth Client ID",
+    { desc: "Blank turns the Cloudflare connector off." },
+  ),
+  cloudflare_connector_client_secret: connectorSetting(
+    "Cloudflare OAuth Client Secret",
+    { password: true },
+  ),
   openai_section: {
     name: "OpenAI / Codex Configuration",
     desc: "",

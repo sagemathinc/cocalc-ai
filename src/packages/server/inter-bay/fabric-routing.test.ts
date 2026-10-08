@@ -220,25 +220,12 @@ describe("inter-bay fabric routing", () => {
       }
     })();
     const projectSecretsListSub = await serviceClient.subscribe(
-      "bay.bay-1.rpc.project-secrets.list-course-shareable",
+      "bay.bay-1.rpc.project-secrets.validate-course-target",
       { queue: "0" },
     );
     const projectSecretsListPromise = (async () => {
       for await (const mesg of projectSecretsListSub) {
-        mesg.respond(
-          [
-            {
-              project_id: "proj-1",
-              name: "API_TOKEN",
-              value_bytes: 12,
-              created_by: "acct-1",
-              updated_by: "acct-1",
-              created_at: "2026-05-13T00:00:00.000Z",
-              updated_at: "2026-05-13T00:00:00.000Z",
-            },
-          ],
-          { noThrow: true },
-        );
+        mesg.respond({ eligible: true, reason: "eligible" }, { noThrow: true });
         return mesg.data;
       }
     })();
@@ -308,22 +295,13 @@ describe("inter-bay fabric routing", () => {
         },
       });
     await expect(
-      getInterBayBridge().projectSecrets("bay-1").listCourseShareable({
-        account_id: "acct-1",
-        course_project_id: "proj-1",
+      getInterBayBridge().projectSecrets("bay-1").validateCourseTarget({
+        project_id: "proj-1",
+        course_project_id: "course-1",
+        course_path: "course.course",
         epoch: 3,
       }),
-    ).resolves.toEqual([
-      {
-        project_id: "proj-1",
-        name: "API_TOKEN",
-        value_bytes: 12,
-        created_by: "acct-1",
-        updated_by: "acct-1",
-        created_at: "2026-05-13T00:00:00.000Z",
-        updated_at: "2026-05-13T00:00:00.000Z",
-      },
-    ]);
+    ).resolves.toEqual({ eligible: true, reason: "eligible" });
 
     await expect(directoryPromise).resolves.toEqual({
       name: "resolveProjectBay",
@@ -376,8 +354,15 @@ describe("inter-bay fabric routing", () => {
       ],
     });
     await expect(projectSecretsListPromise).resolves.toEqual({
-      name: "listCourseShareable",
-      args: [{ account_id: "acct-1", course_project_id: "proj-1", epoch: 3 }],
+      name: "validateCourseTarget",
+      args: [
+        {
+          project_id: "proj-1",
+          course_project_id: "course-1",
+          course_path: "course.course",
+          epoch: 3,
+        },
+      ],
     });
     getInterBayFabricClient().close();
     projectControlSub.close();
