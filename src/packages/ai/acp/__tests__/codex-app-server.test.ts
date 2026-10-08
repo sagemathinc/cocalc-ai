@@ -583,8 +583,11 @@ describe("CodexAppServerAgent", () => {
 
   it("publishes retained runtime ownership until the app-server is disposed", async () => {
     const ownershipChanged = jest.fn(async () => {});
-    const beginConnectorTurn = jest.fn(async () => {});
+    const beginConnectorTurn = jest.fn(
+      async () => "[CLI connectors]\n- GitHub (@octo)\n[/CLI connectors]",
+    );
     const endConnectorTurn = jest.fn(async () => {});
+    let turnInput = "";
     const proc = new FakeCodexAppServerProc((fake, message) => {
       switch (message.method) {
         case "initialize":
@@ -594,6 +597,7 @@ describe("CodexAppServerAgent", () => {
           fake.sendResponse(message.id, { thread: { id: "thr-owned" } });
           break;
         case "turn/start":
+          turnInput = JSON.stringify(message.params?.input);
           fake.sendResponse(message.id, { turn: { id: "turn-owned" } });
           setImmediate(() => {
             fake.sendNotification("turn/completed", {
@@ -632,6 +636,9 @@ describe("CodexAppServerAgent", () => {
       prompt: "say hello",
       stream: async () => {},
       chat: { path: "a.chat" } as any,
+      runtime_env: {
+        COCALC_PROJECT_ID: "00000000-0000-4000-8000-000000000000",
+      },
       config: { workingDirectory: "/tmp/project" },
     });
 
@@ -639,6 +646,11 @@ describe("CodexAppServerAgent", () => {
       expect.objectContaining({ path: "a.chat" }),
     );
     expect(endConnectorTurn).toHaveBeenCalledTimes(1);
+    // The connector context reaches the prompt, before the user's message.
+    expect(turnInput).toContain("- GitHub (@octo)");
+    expect(turnInput.indexOf("@octo")).toBeLessThan(
+      turnInput.indexOf("say hello"),
+    );
 
     expect(ownershipChanged).toHaveBeenCalledWith({
       state: "owned",

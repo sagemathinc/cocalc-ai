@@ -451,10 +451,10 @@ describe("public/docs", () => {
     expect(
       screen.getByRole("heading", { name: "Install CoCalc Star" }),
     ).not.toBeNull();
-    expect(screen.getByText(/single-VM CoCalc appliance/)).not.toBeNull();
     expect(
-      screen.getByText(/github.com\/sagemathinc\/cocalc-ai/),
+      screen.getByText(/complete CoCalc site in one Docker container/),
     ).not.toBeNull();
+    expect(screen.getAllByText(/sagemathinc\/star/).length).toBeGreaterThan(0);
   });
 
   it("renders docs markdown code blocks with the Slate code renderer", async () => {

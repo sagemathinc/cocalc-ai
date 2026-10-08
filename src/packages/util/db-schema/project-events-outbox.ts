@@ -23,6 +23,11 @@ Table({
         query: "(project_id, created_at DESC, event_id DESC)",
       },
       {
+        name: "project_events_outbox_remote_feed_pending_idx",
+        query:
+          "(remote_feed_next_attempt_at, created_at) WHERE remote_feed_pending",
+      },
+      {
         name: "project_events_outbox_collaborator_history_idx",
         query:
           "(project_id, created_at DESC, event_id DESC) WHERE event_type IN ('project.created', 'project.membership_changed', 'project.deleted')",
@@ -68,6 +73,30 @@ Table({
     collaborator_index_published_at: {
       type: "timestamp",
       desc: "When this outbox event was successfully applied to the account collaborator index.",
+    },
+    remote_feed_pending: {
+      type: "boolean",
+      pg_default: "FALSE",
+      not_null: true,
+      desc: "Still to forward to other bays.",
+    },
+    remote_feed_published_at: {
+      type: "timestamp",
+      desc: "When forwarded to other bays.",
+    },
+    remote_feed_attempts: {
+      type: "integer",
+      pg_default: "0",
+      not_null: true,
+      desc: "Failed forwards.",
+    },
+    remote_feed_next_attempt_at: {
+      type: "timestamp",
+      desc: "Retry not before.",
+    },
+    remote_feed_last_error: {
+      type: "string",
+      desc: "Last forward error.",
     },
   },
 });

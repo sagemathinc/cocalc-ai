@@ -9,11 +9,14 @@ import type {
 } from "@cocalc/conat/ai/acp/types";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import {
+  CHAT_PRIMARY_KEYS,
+  CHAT_STRING_COLS,
   CHAT_THREAD_META_ROW_DATE,
   getLiveResponseBlocks,
   getLiveResponseMarkdown,
   threadConfigSenderId,
 } from "@cocalc/chat";
+import { immer_from_str } from "@cocalc/sync/editor/immer-db";
 import {
   acpTestInternals,
   ChatStreamWriter,
@@ -1331,7 +1334,62 @@ describe("ChatStreamWriter", () => {
     expect(final.acp_log_subject).toBe(
       "project.p.acp-log.thread-7.assistant-msg-7",
     );
-    expect(final.acp_live_log_stream).toBeUndefined();
+    expect(final.acp_live_log_stream).toBeNull();
+    expect(final.acp_live_preview_stream).toBeNull();
+    (writer as any).dispose?.(true);
+  });
+
+  it("clears the live streams so that other replicas drop them too", async () => {
+    const { syncdb, sets } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+    await writer.handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 0,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    const chatSets = sets.filter(
+      (row: any) => row.event === "chat" && row.message_id === "msg-0",
+    );
+    const placeholder: any = chatSets[0];
+    const final: any = chatSets[chatSets.length - 1];
+    expect(placeholder?.acp_live_log_stream).toBeTruthy();
+    expect(placeholder?.acp_live_preview_stream).toBeTruthy();
+    expect(final?.generating).toBe(false);
+    // "done" has no inline code links, so the final update clears stale ones.
+    expect(final?.inline_code_links).toBeNull();
+
+    // The writer's own document, and a replica that only sees the patch as it
+    // travels over the wire (JSON), must end up with the same value. The base
+    // row also carries stale inline code links from an earlier write.
+    const base = immer_from_str(
+      `${JSON.stringify({
+        ...placeholder,
+        inline_code_links: [{ code: "x.py", path: "x.py" }],
+      })}\n`,
+      [...CHAT_PRIMARY_KEYS],
+      [...CHAT_STRING_COLS],
+    );
+    const author = base.set(final);
+    const wire = JSON.parse(JSON.stringify(base.make_patch(author)));
+    const replica = base.apply_patch(wire);
+    const replicaRow = replica.get_one({ message_id: "msg-0" });
+    expect(replicaRow.acp_live_log_stream).toBeUndefined();
+    expect(replicaRow.acp_live_preview_stream).toBeUndefined();
+    expect(replicaRow.inline_code_links).toBeUndefined();
+    expect(replica.to_str()).toBe(author.to_str());
+    expect(replica.hash()).toBe(author.hash());
     (writer as any).dispose?.(true);
   });
 

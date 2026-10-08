@@ -374,6 +374,29 @@ describe("scheduled backup replacement", () => {
     expect(snapshots.map((item) => item.id)).toEqual(["new"]);
   });
 
+  it("passes a scheduled backup's runner through to the backup", async () => {
+    const { rustic, snapshots } = volume();
+    const runner = jest.fn();
+    const backup = jest.fn(async (opts) => {
+      expect(opts.runner).toBe(runner);
+      const created = {
+        id: "new",
+        time: new Date("2026-09-23T00:00:00.000Z"),
+        tags: opts.tags,
+        summary: {},
+        snapshotGeneration: 1,
+      };
+      snapshots.push(created);
+      return created;
+    });
+    (rustic as any).backup = backup;
+    await rustic.update(
+      { frequent: 0, daily: 1, weekly: 0, monthly: 0 },
+      { limit: 1, runner },
+    );
+    expect(backup).toHaveBeenCalledTimes(1);
+  });
+
   it("uses the normal limit when no replacement slot is needed", async () => {
     const { rustic, snapshots } = volume();
     snapshots.pop();
@@ -924,6 +947,58 @@ describe("SubvolumeRustic.backup", () => {
       expect.arrayContaining(["--parent", "snap-parent"]),
       expect.any(Object),
     );
+  });
+
+  it("backs up through the runner when one is given", async () => {
+    const rustic = new SubvolumeRustic({
+      name: "project-1",
+      path: "/mnt/test/project-1",
+      filesystem: { opts: { mount: "/mnt/test" } },
+      fs: { rusticRepo: "/repo", rustic: jest.fn() },
+    } as any);
+    const oversized_files = {
+      max_file_bytes: 1_000_000_000,
+      count: 1,
+      files: [{ path: "huge.img", size: 2_000_000_000_000 }],
+    };
+    const runner = jest.fn(async () => ({
+      time: "2026-04-30T21:00:00.000Z",
+      id: "snap-runner",
+      summary: {},
+      oversized_files,
+    }));
+
+    const created = await rustic.backup({ runner, tags: ["cocalc-automatic"] });
+
+    expect(runner).toHaveBeenCalledWith(
+      expect.objectContaining({
+        host: "project-1",
+        tags: ["cocalc-automatic"],
+      }),
+    );
+    expect(backupFsRusticMock).not.toHaveBeenCalled();
+    expect(created).toEqual(
+      expect.objectContaining({ id: "snap-runner", oversized_files }),
+    );
+  });
+
+  it("backs up unprivileged when the runner is unavailable", async () => {
+    const rustic = new SubvolumeRustic({
+      name: "project-1",
+      path: "/mnt/test/project-1",
+      filesystem: { opts: { mount: "/mnt/test" } },
+      fs: { rusticRepo: "/repo", rustic: jest.fn() },
+    } as any);
+    const runner = jest.fn(async () => null);
+
+    const created = await rustic.backup({ runner });
+
+    expect(runner).toHaveBeenCalledTimes(1);
+    expect(backupFsRusticMock).toHaveBeenCalledWith(
+      expect.arrayContaining(["backup"]),
+      expect.any(Object),
+    );
+    expect(created.id).toBe("snap-1");
   });
 
   it("deletes the temporary snapshot if its generation cannot be read", async () => {

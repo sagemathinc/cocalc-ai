@@ -3,7 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 
-import { useRef, useState } from "react";
+import { lazy, Suspense, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import { ApartmentOutlined, ApiOutlined } from "@ant-design/icons";
 import { Alert, Button, Dropdown, Modal, Spin } from "antd";
@@ -12,9 +12,24 @@ import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import type { CocalcConnectorConfig } from "@cocalc/conat/hub/api/agent";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
+import type { IconName } from "@cocalc/frontend/components/icon";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { lite } from "@cocalc/frontend/lite";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
+import type { CliConnector } from "@cocalc/util/ai/cli-connectors";
+import {
+  agentGrant,
+  cliConnectorSummary,
+  useCliConnectors,
+  useProjectHasNetwork,
+} from "./cli-connectors-store";
+
+// Loaded only when a GitHub or Cloudflare dialog is opened.
+const CliConnectorAgentModal = lazy(() =>
+  import("./cli-connectors").then((module) => ({
+    default: module.CliConnectorAgentModal,
+  })),
+);
 import { CocalcConnector } from "./cocalc-connector";
 import { AgentNetworkTagsEditor } from "./agent-network-tags-editor";
 import { AgentNetworkDetailsModal } from "./agent-network-details-modal";
@@ -165,6 +180,44 @@ function NamedAgentConnectors({
   const chipRef = useRef<HTMLButtonElement>(null);
   const [networksOpen, setNetworksOpen] = useState(false);
   const [detailsId, setDetailsId] = useState<string>();
+  const [cliOpen, setCliOpen] = useState<CliConnector>();
+  const {
+    data: cli,
+    error: cliError,
+    enabled: cliEnabled,
+  } = useCliConnectors();
+  const hasNetwork = useProjectHasNetwork(agent.endpoint.project_id, {
+    enabled: cliEnabled.length > 0,
+  });
+  const cliItem = (connector: CliConnector, label: string, icon: IconName) => {
+    const status = !supportsCocalcAccess
+      ? "Codex and Claude only"
+      : cliError
+        ? "Unable to load"
+        : hasNetwork === false
+          ? "Needs internet access"
+          : cli
+            ? cliConnectorSummary(cli, agent, connector)
+            : "";
+    return {
+      key: `${connector}-connector`,
+      label,
+      extra: status ? (
+        <Status text={status} warning={!!cliError || hasNetwork === false} />
+      ) : undefined,
+      disabled: !supportsCocalcAccess,
+      icon: (
+        <span aria-hidden>
+          <Icon name={icon} />
+        </span>
+      ),
+      onClick: () => setCliOpen(connector),
+    };
+  };
+  const cliOn = cliEnabled.filter(
+    (connector) =>
+      supportsCocalcAccess && agentGrant(cli, agent, connector)?.enabled,
+  );
   const networks = directory?.networks ?? [];
   const assigned = networks.filter(
     (network) =>
@@ -216,6 +269,13 @@ function NamedAgentConnectors({
             ),
             onClick: cocalc?.onOpen,
           },
+          // Only connectors this site has set up.
+          ...(cliEnabled.includes("github")
+            ? [cliItem("github", "GitHub", "github")]
+            : []),
+          ...(cliEnabled.includes("cloudflare")
+            ? [cliItem("cloudflare", "Cloudflare", "cloud")]
+            : []),
           {
             key: "agent-networks",
             label: "Agent Networks",
@@ -240,9 +300,13 @@ function NamedAgentConnectors({
     const cocalcConfigured = supportsCocalcAccess && cocalc?.config != null;
     const cocalcOn = cocalcConfigured && cocalc?.config?.enabled === true;
     const networksOn = assigned.length > 0 && !paused;
-    const active = Number(cocalcOn) + Number(networksOn);
+    const active = Number(cocalcOn) + cliOn.length + Number(networksOn);
     const parts = [
       ...(cocalcConfigured ? [`CoCalc access ${cocalcStatus}`] : []),
+      ...cliOn.map(
+        (connector) =>
+          `${connector === "github" ? "GitHub" : "Cloudflare"} ${cliConnectorSummary(cli, agent, connector)}`,
+      ),
       ...(assigned.length > 0 ? [`Agent Networks ${networksStatus}`] : []),
     ];
     return (
@@ -254,7 +318,7 @@ function NamedAgentConnectors({
           <ConnectorsChip
             label={`Connectors for @${agent.name}: ${parts.join("; ")}`}
             active={active}
-            warning={!!cocalc?.loadError || !!error}
+            warning={!!cocalc?.loadError || !!error || !!cliError}
             items={connectors}
             chipRef={chipRef}
           />
@@ -310,6 +374,19 @@ function NamedAgentConnectors({
             <Spin aria-label="Loading Agent Networks" />
           )}
         </Modal>
+      )}
+      {cliOpen && (
+        <Suspense fallback={null}>
+          <CliConnectorAgentModal
+            agent={agent}
+            connector={cliOpen}
+            open
+            onClose={() => {
+              setCliOpen(undefined);
+              chipRef.current?.focus();
+            }}
+          />
+        </Suspense>
       )}
       <AgentNetworkDetailsModal
         network={networks.find(

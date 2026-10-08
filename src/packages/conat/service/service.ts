@@ -28,6 +28,7 @@ import {
 } from "@cocalc/conat/admission/limits";
 
 const DEFAULT_TIMEOUT = 10 * 1000;
+const BUSY_WARNING_INTERVAL_MS = 10 * 1000;
 
 const logger = getLogger("conat:service");
 
@@ -185,6 +186,10 @@ export class ConatService extends EventEmitter {
   public readonly name: string;
   private sub?;
   private readonly activeHandlers = new Set<Promise<void>>();
+  // Rejections under load are counted by recordServiceAdmissionDenial; the log
+  // only needs a periodic line, not one per rejected request.
+  private lastBusyWarning = 0;
+  private suppressedBusyWarnings = 0;
 
   constructor(options: Options) {
     super();
@@ -309,11 +314,21 @@ export class ConatService extends EventEmitter {
       account_id: this.options.account_id,
       key: this.name,
     });
-    logger.warn(message, {
-      subject: this.subject,
-      active: this.activeHandlers.size,
-      max: maximum,
-    });
+    const now = Date.now();
+    if (now - this.lastBusyWarning >= BUSY_WARNING_INTERVAL_MS) {
+      logger.warn(message, {
+        subject: this.subject,
+        active: this.activeHandlers.size,
+        max: maximum,
+        ...(this.suppressedBusyWarnings > 0
+          ? { suppressed: this.suppressedBusyWarnings }
+          : {}),
+      });
+      this.lastBusyWarning = now;
+      this.suppressedBusyWarnings = 0;
+    } else {
+      this.suppressedBusyWarnings += 1;
+    }
     void mesg.respond(
       { error: message, code: 503 },
       {

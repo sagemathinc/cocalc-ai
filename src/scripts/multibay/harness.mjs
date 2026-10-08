@@ -51,6 +51,7 @@ export class AccountClient {
        });
        return value;`,
     );
+    this.cookie = cookie;
     this.client = connect({
       address: this.cluster.url(this.bay),
       noCache: true,

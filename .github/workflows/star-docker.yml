@@ -1,0 +1,195 @@
+name: CoCalc Star Docker image
+
+# Builds the CoCalc Star Docker image natively for amd64 and arm64 and tests
+# each image the way users run it. On a manual run with publish enabled, the
+# tested images are pushed as sagemathinc/star:<release-id> (a multi-platform
+# image), and with promote_latest, sagemathinc/star:latest (what the install
+# instructions use) is moved to the new release.
+#
+# Users run this image with --privileged, so publishing is a host-root
+# supply-chain boundary. The Docker Hub credentials exist only in the protected
+# GitHub environment `cocalc-star-release` (restricted to the main branch, with
+# required reviewers), which only the publish job uses. The build jobs, which
+# also run for pull requests, never see them.
+
+on:
+  # Build and test (never publish) when a pull request changes Star packaging.
+  pull_request:
+    paths:
+      - ".github/workflows/star-docker.yml"
+      - "src/scripts/star/**"
+      - "src/scripts/star-poc/**"
+      - "src/packages/backend/podman/build-runtime-bundle.sh"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Push the tested images to Docker Hub (needs approval of the cocalc-star-release environment)"
+        required: true
+        default: true
+        type: boolean
+      promote_latest:
+        description: "Also point sagemathinc/star:latest at this release"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: star-docker-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  REPOSITORY: sagemathinc/star
+
+jobs:
+  release-id:
+    runs-on: ubuntu-24.04
+    outputs:
+      id: ${{ steps.id.outputs.id }}
+    steps:
+      - id: id
+        run: echo "id=$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: release-id
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            release_arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            release_arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    env:
+      RELEASE_ID: ${{ needs.release-id.outputs.id }}
+      IMAGE: sagemathinc/star:${{ needs.release-id.outputs.id }}-${{ matrix.arch }}
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          docker system prune -af >/dev/null
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      - name: install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
+          run_install: false
+
+      - name: Node.js 26
+        uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+
+      - name: Build the runtime release artifact
+        run: |
+          COCALC_STAR_RELEASE_ARCH=${{ matrix.release_arch }} \
+          STAR_RELEASE_ID="$RELEASE_ID" \
+            src/scripts/star/build-github-release-assets.sh dist/star/github
+
+      - name: Build the image
+        run: |
+          src/scripts/star/docker-preview/multiarch.sh build \
+            --repository "$REPOSITORY" \
+            --release-id "$RELEASE_ID" \
+            --release-artifact "dist/star/github/cocalc-star-runtime-linux-${{ matrix.release_arch }}.tar.gz"
+          rm -rf dist
+          df -h /
+
+      - name: Test a fresh install
+        run: src/scripts/star/docker-preview/ci-smoke.sh "$IMAGE"
+
+      - name: Test upgrading from the current latest image
+        run: |
+          # Images older than this workflow cannot be driven by ci-smoke.sh;
+          # they lack the release-id file, so skip them.
+          if docker pull "$REPOSITORY:latest" &&
+            docker run --rm --entrypoint cat "$REPOSITORY:latest" \
+              /usr/local/share/cocalc-star-docker/release-id; then
+            src/scripts/star/docker-preview/ci-smoke.sh "$IMAGE" \
+              --upgrade-from "$REPOSITORY:latest"
+          else
+            echo "latest is not an image built by this workflow; skipping the upgrade test"
+          fi
+
+      # Every run keeps its tested images for a few days, so an unpublished
+      # build can be tried with `docker load -i star-<arch>.tar.gz` (e.g. on a
+      # Mac or Windows machine with Docker Desktop), and so publishing pushes
+      # exactly the images that passed these tests.
+      - name: Save the tested image
+        run: docker save "$IMAGE" | gzip -1 > "star-${{ matrix.arch }}.tar.gz"
+
+      - name: Upload the tested image
+        uses: actions/upload-artifact@v4
+        with:
+          name: star-image-${{ matrix.arch }}
+          path: star-${{ matrix.arch }}.tar.gz
+          retention-days: 5
+          compression-level: 0
+
+  publish:
+    needs: [release-id, build]
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    runs-on: ubuntu-24.04
+    environment: cocalc-star-release
+    env:
+      RELEASE_ID: ${{ needs.release-id.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Download the tested images
+        uses: actions/download-artifact@v4
+        with:
+          pattern: star-image-*
+          merge-multiple: true
+
+      - name: Load the tested images
+        run: |
+          for arch in amd64 arm64; do
+            docker load -i "star-${arch}.tar.gz"
+            rm "star-${arch}.tar.gz"
+          done
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push the tested images and the multi-platform release
+        run: |
+          for arch in amd64 arm64; do
+            docker push "$REPOSITORY:$RELEASE_ID-$arch"
+          done
+          src/scripts/star/docker-preview/multiarch.sh index \
+            --repository "$REPOSITORY" --release-id "$RELEASE_ID"
+          src/scripts/star/docker-preview/multiarch.sh inspect \
+            --repository "$REPOSITORY" --release-id "$RELEASE_ID"
+
+      - name: Point latest at this release
+        if: inputs.promote_latest
+        run: |
+          src/scripts/star/docker-preview/multiarch.sh promote \
+            --repository "$REPOSITORY" --release-id "$RELEASE_ID" --yes
+
+      - name: Summary
+        run: |
+          {
+            echo "### CoCalc Star ${RELEASE_ID}"
+            echo
+            echo "- \`${REPOSITORY}:${RELEASE_ID}\` (linux/amd64, linux/arm64)"
+            if [ "${{ inputs.promote_latest }}" = "true" ]; then
+              echo "- \`${REPOSITORY}:latest\` now points at this release"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

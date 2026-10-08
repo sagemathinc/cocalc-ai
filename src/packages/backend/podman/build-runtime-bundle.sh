@@ -64,9 +64,20 @@ if [[ "${1:-}" != "--inner" ]]; then
   cp "$0" "$TMP/build.sh"
   chmod 755 "$TMP/build.sh"
 
+  # Rootful Docker leaves the build tree owned by root, which the host-side
+  # cleanup cannot remove. Rootless podman and rootless Docker already map
+  # container root to the invoking user, where a chown would map to a
+  # subordinate UID instead.
+  WORK_OWNER=""
+  if [[ "$ENGINE" == "docker" ]] &&
+    ! docker info --format '{{.SecurityOptions}}' 2>/dev/null | grep -q rootless; then
+    WORK_OWNER="$(id -u):$(id -g)"
+  fi
+
   "$ENGINE" run --rm \
     --platform "linux/$ARCH" \
     -e COCALC_RUNTIME_BUILD_INNER=1 \
+    -e WORK_OWNER="$WORK_OWNER" \
     -e PODMAN_VERSION="$PODMAN_VERSION" \
     -e CONMON_VERSION="$CONMON_VERSION" \
     -e CRUN_VERSION="$CRUN_VERSION" \
@@ -95,6 +106,12 @@ fi
 if [[ "${1:-}" != "--inner" || "${COCALC_RUNTIME_BUILD_INNER:-}" != "1" ]]; then
   echo "internal container runtime builder invocation is invalid" >&2
   exit 2
+fi
+
+# Hand the build tree back even when a step fails, so the host-side cleanup
+# can always remove it.
+if [[ -n "${WORK_OWNER:-}" ]]; then
+  trap 'chown -R "$WORK_OWNER" /work' EXIT
 fi
 
 export DEBIAN_FRONTEND=noninteractive

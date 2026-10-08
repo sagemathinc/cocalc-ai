@@ -178,12 +178,22 @@ require_root() {
 }
 
 install_packages() {
+  local -a packages=(
+    bash ca-certificates curl git jq openssl build-essential python3
+    podman btrfs-progs uidmap slirp4netns passt catatonit fuse-overlayfs
+    caddy xz-utils rsync sudo postgresql postgresql-client libpq-dev nftables
+  )
   export DEBIAN_FRONTEND=noninteractive
-  apt_get update
-  apt_get install -y \
-    bash ca-certificates curl git jq openssl build-essential python3 \
-    podman btrfs-progs uidmap slirp4netns passt catatonit fuse-overlayfs \
-    caddy xz-utils rsync sudo postgresql postgresql-client libpq-dev
+  # Skip apt entirely when everything is present (e.g. the Docker image), so
+  # reinstalls and upgrades work offline.
+  if ! dpkg-query -W -f='${Status}\n' "${packages[@]}" 2>/dev/null |
+    grep -qv '^install ok installed$' &&
+    [ "$(dpkg-query -W -f='${Status}\n' "${packages[@]}" 2>/dev/null | wc -l)" -eq "${#packages[@]}" ]; then
+    log "required packages are already installed"
+  else
+    apt_get update
+    apt_get install -y "${packages[@]}"
+  fi
   systemctl disable --now postgresql >/dev/null 2>&1 || true
 }
 
@@ -366,7 +376,7 @@ install_node() {
     return
   fi
   as_star_user 'curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash'
-  as_star_user 'source "$HOME/.nvm/nvm.sh" && nvm install 26 && nvm alias default 26 && if command -v corepack >/dev/null 2>&1; then corepack enable; else npm install -g pnpm@10.33.0; fi'
+  as_star_user 'source "$HOME/.nvm/nvm.sh" && nvm install 26 && nvm alias default 26 && if command -v corepack >/dev/null 2>&1; then corepack enable; else npm install -g pnpm@11.25.0; fi'
 }
 
 ensure_exact_subid_file() {
@@ -417,7 +427,7 @@ build_source() {
     log "skipping build because STAR_BUILD=0"
     return
   fi
-  as_star_user "cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 && export COCALC_SETUP_PROFILE=star && if command -v corepack >/dev/null 2>&1; then corepack enable; fi && if ! command -v pnpm >/dev/null 2>&1; then npm install -g pnpm@10.33.0; fi && ./workspaces.py install && pnpm --filter @cocalc/app-notebook build && ./workspaces.py build --dev && pnpm python-api"
+  as_star_user "cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 && export COCALC_SETUP_PROFILE=star && if command -v corepack >/dev/null 2>&1; then corepack enable; fi && if ! command -v pnpm >/dev/null 2>&1; then npm install -g pnpm@11.25.0; fi && ./workspaces.py install && pnpm --filter @cocalc/app-notebook build && ./workspaces.py build --dev && pnpm python-api"
   as_star_user "cd '$SRC_ROOT/packages/project' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 && pnpm build:bundle"
 }
 
@@ -853,6 +863,7 @@ MASTER_CONAT_SERVER=${STAR_BASE_URL}
 COCALC_PROJECT_HOST_MASTER_CONAT_TOKEN_PATH=${STAR_PROJECT_HOST_DATA}/secrets/master-conat-token
 COCALC_DATA=${STAR_PROJECT_HOST_DATA}
 DATA=${STAR_PROJECT_HOST_DATA}
+COCALC_LITE_SQLITE_FILENAME=${STAR_PROJECT_HOST_DATA}/sqlite.db
 TMPDIR=${STAR_PROJECT_HOST_DATA}/tmp
 COCALC_RUSTIC=${STAR_PROJECT_HOST_DATA}/rustic
 COCALC_FILE_SERVER_MOUNTPOINT=/mnt/cocalc
@@ -873,6 +884,7 @@ PORT=9002
 PROJECT_RUNNER_NAME=0
 COCALC_ALLOW_INSECURE_HTTP_MODE=true
 DEBUG_CONSOLE=no
+DEBUG=cocalc:error:*,cocalc:warn:*
 COCALC_PROJECT_HOST_LOG=${STAR_PROJECT_HOST_DATA}/log
 ${container_runtime_env}
 EOF

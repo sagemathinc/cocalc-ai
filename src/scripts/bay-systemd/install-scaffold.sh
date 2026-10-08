@@ -175,8 +175,10 @@ if [[ "$DAEMON_RELOAD" -eq 1 ]]; then
   fi
   systemctl daemon-reload
   systemctl enable cocalc-bay-hub-watchdog.timer
+  systemctl enable cocalc-bay-cloudflared-watchdog.timer
   if systemctl is-active --quiet cocalc-bay.target; then
     systemctl start cocalc-bay-hub-watchdog.timer
+    systemctl start cocalc-bay-cloudflared-watchdog.timer
   fi
 fi
 

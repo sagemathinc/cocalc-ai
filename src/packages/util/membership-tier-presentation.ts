@@ -583,6 +583,14 @@ function buildMembershipTierDetailGroups({
     value: formatLimitCount(usageLimits.blob_project_count),
   });
 
+  if (typeof features.project_network === "boolean") {
+    add({
+      group: "network",
+      key: "project_network",
+      label: "Project internet access",
+      value: formatBoolean(features.project_network),
+    });
+  }
   add({
     group: "dedicated-hosts",
     key: "create_hosts",

@@ -103,6 +103,10 @@ export class ClaudeSubscriptionLoginService {
   private sessions = new Map<string, LoginSession>();
   private closed = false;
   private starting = new Set<Promise<unknown>>();
+  // Starts for one account run one after another, from reconnect validation
+  // through session registration, so that the newest start always replaces
+  // the older ones. Different accounts start in parallel.
+  private accountStarts = new Map<string, Promise<unknown>>();
 
   async close(): Promise<void> {
     this.closed = true;
@@ -152,7 +156,17 @@ export class ClaudeSubscriptionLoginService {
   ): Promise<ClaudeSubscriptionLoginStatus> {
     if (this.closed)
       return Promise.reject(Error("Claude sign-in service is closed"));
-    const started = this.startSession(projectId, accountId, credentialId);
+    const previous = this.accountStarts.get(accountId) ?? Promise.resolve();
+    const started = previous
+      .catch(() => {})
+      .then(() => this.startSession(projectId, accountId, credentialId));
+    this.accountStarts.set(accountId, started);
+    void started
+      .finally(() => {
+        if (this.accountStarts.get(accountId) === started)
+          this.accountStarts.delete(accountId);
+      })
+      .catch(() => {});
     this.starting.add(started);
     void started.finally(() => this.starting.delete(started)).catch(() => {});
     return started;
@@ -174,14 +188,25 @@ export class ClaudeSubscriptionLoginService {
         credentialId,
       });
     }
+    const existing = [...this.sessions.values()].filter(
+      (session) => session.accountId === accountId,
+    );
+    // A submitted code is being exchanged with the provider; let it finish.
     if (
-      [...this.sessions.values()].some(
+      existing.some(
         (session) =>
-          session.accountId === accountId &&
-          (session.state === "pending" || session.state === "verifying"),
+          session.state === "verifying" ||
+          (session.state === "pending" && session.codeSubmitted),
       )
     )
       throw Error("Claude sign-in is already in progress for this account");
+    // A pending sign-in without a submitted code only waits for the user, who
+    // abandoned it (e.g. closed the dialog) and cannot get back to it, so a
+    // new sign-in replaces it instead of being refused until it times out.
+    for (const session of existing) {
+      if (session.state === "pending" && !session.codeSubmitted)
+        this.cancel(session.id, session.projectId, accountId);
+    }
     const home = await mkdtemp(join(tmpdir(), CLAUDE_LOGIN_PREFIX));
     const id = randomUUID();
     let child: ChildProcess;

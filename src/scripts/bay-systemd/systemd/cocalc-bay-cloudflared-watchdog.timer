@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodically recover a degraded CoCalc Bay Cloudflare Tunnel
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=30s
+AccuracySec=1s
+Unit=cocalc-bay-cloudflared-watchdog.service
+
+[Install]
+WantedBy=timers.target

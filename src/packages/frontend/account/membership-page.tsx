@@ -43,6 +43,10 @@ import { UseBalance } from "./balance-toward-subs";
 
 const { Paragraph, Text } = Typography;
 
+const EducatorOffersCard = lazy(async () => ({
+  default: (await import("./educator-offers")).EducatorOffersCard,
+}));
+
 const ClaimableMembershipPackagesPanel = lazy(async () => ({
   default: (await import("./membership-package-manager"))
     .ClaimableMembershipPackagesPanel,
@@ -487,6 +491,10 @@ function MembershipSettingsContent() {
           />
         </Suspense>
       </Modal>
+
+      <Suspense fallback={null}>
+        <EducatorOffersCard onChanged={refreshMembership} />
+      </Suspense>
 
       <MembershipPurchaseModal
         currentClassOverride={purchaseCurrentClass}

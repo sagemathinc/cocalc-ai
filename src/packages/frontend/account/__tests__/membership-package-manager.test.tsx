@@ -128,6 +128,7 @@ jest.mock("@cocalc/frontend/components/time-ago", () => ({
 
 jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
   FreshAuthModal: () => <div data-testid="fresh-auth-modal" />,
+  isFreshAuthRequiredError: () => false,
   useFreshAuthAction: () => ({
     freshAuthModalProps: {},
     runFreshAuthAction,
@@ -892,6 +893,116 @@ describe("membership package managers", () => {
         target_email_address: "newuser@example.com",
       });
     });
+  });
+
+  it("assigns seats to a pasted email list, skipping existing seats", async () => {
+    getTeamLicense.mockResolvedValue(
+      makeTeamLicenseOverview([
+        makeTeamPackage({
+          seat_count: 5,
+          active_assignment_count: 1,
+          available_seat_count: 4,
+          assignments: [
+            {
+              id: "assignment-1",
+              package_id: "team-1",
+              email_address: "existing@example.edu",
+              assigned_at: new Date(),
+            },
+          ],
+        }),
+      ]),
+    );
+    assignMembershipPackageSeat.mockImplementation(async (opts) => {
+      if (opts.target_email_address === "bad@example.edu") {
+        throw new Error("seat limit reached");
+      }
+      return { id: "a", package_id: "team-1", assigned_at: new Date() };
+    });
+
+    render(<TeamPackageManager tiers={TIERS} />);
+    await waitFor(() => {
+      expect(screen.getAllByText("Assign seat").length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByText("Assign seat")[0]);
+    fireEvent.click(await screen.findByText("Email list"));
+    fireEvent.change(screen.getByLabelText("Email addresses"), {
+      target: {
+        value:
+          "ta1@example.edu\nEXISTING@example.edu, bad@example.edu; ta1@example.edu",
+      },
+    });
+    expect(screen.getByRole("status").textContent).toMatch(
+      /2 seats will be assigned; 1 already have a seat; 1 listed more than once/,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Assign 2 seats" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Assigned 1 seat; 1 failed and remain in the list/),
+      ).toBeTruthy();
+    });
+    expect(assignMembershipPackageSeat.mock.calls.map(([o]) => o)).toEqual([
+      { package_id: "team-1", target_email_address: "ta1@example.edu" },
+      { package_id: "team-1", target_email_address: "bad@example.edu" },
+    ]);
+    expect(
+      screen.getByText(/bad@example.edu: Error: seat limit reached/),
+    ).toBeTruthy();
+    expect(
+      (screen.getByLabelText("Email addresses") as HTMLTextAreaElement).value,
+    ).toBe("bad@example.edu");
+
+    // A second batch is planned against the seats used by the first one.
+    fireEvent.change(screen.getByLabelText("Email addresses"), {
+      target: {
+        value:
+          "ta1@example.edu, ta2@example.edu, ta3@example.edu, ta4@example.edu, ta5@example.edu",
+      },
+    });
+    expect(screen.getByRole("status").textContent).toMatch(
+      /3 seats will be assigned; 1 already have a seat; 1 do not fit \(3 free seats/,
+    );
+  });
+
+  it("supports the email-list mode from the keyboard and restores focus", async () => {
+    const user = userEvent.setup();
+    getTeamLicense.mockResolvedValue(
+      makeTeamLicenseOverview([
+        makeTeamPackage({
+          seat_count: 5,
+          active_assignment_count: 0,
+          available_seat_count: 5,
+          assignments: [],
+        }),
+      ]),
+    );
+    render(<TeamPackageManager tiers={TIERS} />);
+    await waitFor(() => {
+      expect(screen.getAllByText("Assign seat").length).toBeGreaterThan(0);
+    });
+    const trigger = screen
+      .getAllByText("Assign seat")[0]
+      .closest("button") as HTMLButtonElement;
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    const dialog = await screen.findByRole("dialog");
+    const listOption = within(dialog).getByRole("radio", {
+      name: "Email list",
+    });
+    listOption.focus();
+    await user.keyboard(" ");
+    const textarea = await within(dialog).findByLabelText("Email addresses");
+    await user.click(textarea);
+    await user.keyboard("ta1@example.edu");
+    await user.tab();
+    expect(
+      within(dialog).getByRole("button", { name: "Assign 1 seat" }),
+    ).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(trigger).toHaveFocus());
   });
 
   it("provisions an admin site license without a user-selected bay", async () => {

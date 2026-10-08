@@ -47,11 +47,28 @@ command -v git >/dev/null 2>&1 || die "git is required"
 command -v tar >/dev/null 2>&1 || die "tar is required"
 
 use_node_26() {
+  # Prefer nvm's Node 26, but accept a Node 26 already on PATH (e.g. from
+  # actions/setup-node on a CI runner that also ships nvm without Node 26).
   if [ -s "$HOME/.nvm/nvm.sh" ]; then
     # shellcheck disable=SC1091
     source "$HOME/.nvm/nvm.sh"
-    nvm use 26 >/dev/null
+    nvm use 26 >/dev/null 2>&1 || true
   fi
+  case "$(node --version 2>/dev/null)" in
+    v26.*) ;;
+    *) die "Node.js 26 is required; found $(node --version 2>/dev/null || echo none)" ;;
+  esac
+}
+
+# Run ncc outside src, like scripts/control-plane-bundle/build-bundle.sh.
+# Inside a package, ncc/ts-loader picks up that package's tsconfig and
+# type-checks workspace sources resolved through the bundler resolver, which
+# fails with TS6059 rootDir errors. The helpers should consume built JS.
+star_ncc_build() {
+  (
+    cd "$REPO_ROOT"
+    "$SRC_ROOT/scripts/ncc.sh" build --no-cache "$@"
+  )
 }
 
 clean_generated_bundle_workspaces() {
@@ -77,8 +94,10 @@ build_runtime() {
     if command -v corepack >/dev/null 2>&1; then
       corepack enable
     fi
-    if ! command -v pnpm >/dev/null 2>&1; then
-      npm install -g pnpm@10.33.0
+    # The workspace and pinned third-party sources (e.g. reflect) need pnpm 11;
+    # pnpm 10 tries to self-switch and fails on some filesystems.
+    if ! pnpm --version 2>/dev/null | grep -q "^1[1-9]\."; then
+      npm install -g pnpm@11.25.0
     fi
     clean_generated_bundle_workspaces
     ./workspaces.py install
@@ -153,19 +172,19 @@ build_star_helper_bundles() {
       "$STAR_HELPER_BUILD_DIR/seed-star-poc" \
       "$STAR_HELPER_BUILD_DIR/ensure-rootfs-cache" \
       "$STAR_HELPER_BUILD_DIR/publish-default-rootfs"
-    pnpm --filter @cocalc/launchpad exec "$SRC_ROOT/scripts/ncc.sh" build \
+    star_ncc_build \
       "$SRC_ROOT/packages/server/build/star-helper-entrypoints/seed-star-poc.cjs" \
       -o "$STAR_HELPER_BUILD_DIR/seed-star-poc" \
       --external bufferutil \
       --external utf-8-validate \
       --license licenses.txt
-    pnpm --filter @cocalc/launchpad exec "$SRC_ROOT/scripts/ncc.sh" build \
+    star_ncc_build \
       "$SRC_ROOT/packages/server/build/star-helper-entrypoints/publish-default-rootfs.cjs" \
       -o "$STAR_HELPER_BUILD_DIR/publish-default-rootfs" \
       --external bufferutil \
       --external utf-8-validate \
       --license licenses.txt
-    pnpm --filter @cocalc/project-host exec "$SRC_ROOT/scripts/ncc.sh" build \
+    star_ncc_build \
       "$SRC_ROOT/packages/project-host/build/star-helper-entrypoints/ensure-rootfs-cache.cjs" \
       -o "$STAR_HELPER_BUILD_DIR/ensure-rootfs-cache" \
       --external bufferutil \
@@ -252,7 +271,7 @@ fs.writeFileSync(entry, lines.join("\n"));
 console.error(`[star-runtime-build] generated ${entry} with ${files.length} routes`);
 NODE
     rm -rf "$out_dir"
-    pnpm --filter @cocalc/launchpad exec "$SRC_ROOT/scripts/ncc.sh" build \
+    star_ncc_build \
       "$entry" \
       -o "$out_dir" \
       --external bufferutil \

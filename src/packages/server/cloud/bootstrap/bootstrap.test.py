@@ -20,6 +20,25 @@ from unittest import mock
 import bootstrap
 
 
+def bootstrap_storage_wrapper_for(cfg) -> str:
+    """The cocalc-runtime-storage script install_privileged_wrappers writes."""
+    captured: dict[str, str] = {}
+    original = (bootstrap.text_write_atomic, bootstrap.os.chmod, bootstrap.os.chown)
+
+    def capture_write(path, data, **_kwargs):
+        captured[str(path)] = data
+        return len(data)
+
+    try:
+        bootstrap.text_write_atomic = capture_write
+        bootstrap.os.chmod = lambda *_args, **_kwargs: None
+        bootstrap.os.chown = lambda *_args, **_kwargs: None
+        bootstrap.install_privileged_wrappers(cfg)
+    finally:
+        bootstrap.text_write_atomic, bootstrap.os.chmod, bootstrap.os.chown = original
+    return captured["/usr/local/sbin/cocalc-runtime-storage"]
+
+
 def make_cfg(tmpdir: str) -> bootstrap.BootstrapConfig:
     base = Path(tmpdir)
     return bootstrap.BootstrapConfig(
@@ -3430,6 +3449,31 @@ class ProjectIoPolicyHelperTest(unittest.TestCase):
 
 
 class BootstrapWrapperScriptTest(unittest.TestCase):
+    def test_managed_job_helper_forces_no_user_bus(self) -> None:
+        import types
+
+        helper = types.ModuleType("managed_project_job_helper")
+        exec(compile(bootstrap.MANAGED_PROJECT_JOB_HELPER, "helper", "exec"), helper.__dict__)
+        args, env = helper.launcher_config(
+            {
+                "args": ["exec", "-i", "project-x", "true"],
+                "env": {
+                    "PATH": "/usr/bin",
+                    "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1001/bus",
+                },
+            }
+        )
+        self.assertEqual(args, ["exec", "-i", "project-x", "true"])
+        self.assertEqual(
+            env,
+            {
+                "PATH": "/usr/bin",
+                "DBUS_SESSION_BUS_ADDRESS": "unix:path=/dev/null/cocalc-no-user-bus",
+            },
+        )
+        with self.assertRaises(ValueError):
+            helper.launcher_config({"args": ["run"], "env": {}})
+
     def test_standalone_wrapper_uses_explicit_runtime_user(self) -> None:
         cfg = bootstrap.standalone_privileged_wrapper_config("star-user")
         captured: dict[str, str] = {}
@@ -3462,6 +3506,160 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             ],
             "disabled",
         )
+
+    def test_storage_wrapper_project_network_policy_is_off_without_socket_cgroup_match(
+        self,
+    ) -> None:
+        # Kernels without nftables socket cgroupv2 matching (Docker Desktop's
+        # LinuxKit VM) cannot express per-project rules. A standalone (CoCalc
+        # Star) host runs without the policy; any other host fails closed.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(
+                make_cfg(tmpdir),
+                container_runtime_bundle=bootstrap.BundleSpec(
+                    "", None, "", "", "", ""
+                ),
+            )
+            captured: dict[str, str] = {}
+            original_text_write_atomic = bootstrap.text_write_atomic
+            original_chmod = bootstrap.os.chmod
+            original_chown = bootstrap.os.chown
+
+            def capture_write(path, data, **_kwargs):
+                captured[str(path)] = data
+                return len(data)
+
+            try:
+                bootstrap.text_write_atomic = capture_write
+                bootstrap.os.chmod = lambda *_args, **_kwargs: None
+                bootstrap.os.chown = lambda *_args, **_kwargs: None
+                bootstrap.install_privileged_wrappers(cfg)
+            finally:
+                bootstrap.text_write_atomic = original_text_write_atomic
+                bootstrap.os.chmod = original_chmod
+                bootstrap.os.chown = original_chown
+
+            script = captured["/usr/local/sbin/cocalc-runtime-storage"]
+
+            def body(name: str) -> str:
+                return (
+                    f"{name}() {{"
+                    + script.split(f"\n{name}() {{", 1)[1].split("\n}\n", 1)[0]
+                    + "\n}\n"
+                )
+
+            functions = "".join(
+                body(name)
+                for name in (
+                    "project_network_kernel_identity",
+                    "project_network_capability",
+                    "report_project_network_degraded",
+                    "project_network_policy_unenforceable",
+                    "ensure_project_network_rule",
+                    "reconcile_project_network_limits",
+                )
+            )
+
+            def run_probe(
+                mode: str, allowed: bool = True, label: str = ""
+            ) -> tuple[str, Path, subprocess.CompletedProcess]:
+                work = Path(tmpdir) / (label or mode)
+                (work / "pool").mkdir(parents=True)
+                harness = "\n".join(
+                    [
+                        "set -euo pipefail",
+                        'deny() { echo "DENY $*" >&2; exit 3; }',
+                        "is_project_uuid() { return 0; }",
+                        "require_project_network_tools() { :; }",
+                        "configure_project_pool_hierarchy() { :; }",
+                        "configure_project_network_table() { :; }",
+                        "project_network_pool_cgroup_path() { echo cocalc-project-pool; }",
+                        "emit_project_network_rules() { echo 'add rule project'; }",
+                        "emit_project_metadata_rules() { :; }",
+                        "emit_project_startup_network_rules() { :; }",
+                        "render_project_network_rules() { echo 'add rule project'; }",
+                        "project_network_policy() { echo disabled; }",
+                        f"apply_project_network_process_limits() {{ echo applied >> '{work}/limits.log'; }}",
+                        f"PROJECT_POOL_CGROUP_DEFAULT='{work}/pool'",
+                        f"PROJECT_NETWORK_CAPABILITY_FILE='{work}/capability'",
+                        f"PROJECT_NETWORK_DEGRADED_FILE='{work}/degraded'",
+                        f"PROJECT_NETWORK_UNENFORCEABLE_ALLOWED={'1' if allowed else '0'}",
+                        f"logger() {{ echo \"$*\" >> '{work}/journal.log'; }}",
+                        "PROJECT_NETWORK_TABLE=t PROJECT_NETWORK_CHAIN=c",
+                        "PROJECT_NETWORK_BOOT_RECONCILE_ATTEMPTS=1",
+                        "PROJECT_NETWORK_BOOT_RECONCILE_DELAY_SECONDS=0",
+                        f"MODE={mode}",
+                        "run_project_network_nft() {",
+                        '  local input=""',
+                        '  if [ "${1:-}" = -f ]; then input="$(cat)"; fi',
+                        f'  printf "%s\\n" "$* $input" >> \'{work}/nft.log\'',
+                        '  if grep -q "socket cgroupv2" <<< "$input"; then',
+                        '    case "$MODE" in',
+                        '      enoent) echo "Error: Could not process rule: No such file or directory" >&2; return 1 ;;',
+                        "      timeout) return 124 ;;",
+                        "    esac",
+                        "  fi",
+                        "  return 0",
+                        "}",
+                        functions,
+                        "if project_network_policy_unenforceable; then echo UNENFORCEABLE; else echo ENFORCED; fi",
+                        'cut -d" " -f1 "$PROJECT_NETWORK_CAPABILITY_FILE" 2>/dev/null || echo NOCACHE',
+                        'if [ "$MODE" = enoent ]; then',
+                        "  ensure_project_network_rule 11111111-1111-4111-8111-111111111111",
+                        "  reconcile_project_network_limits",
+                        "fi",
+                    ]
+                )
+                result = subprocess.run(
+                    ["bash", "-c", harness], capture_output=True, text=True
+                )
+                if allowed:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                return result.stdout, work, result
+
+            # Standalone host, kernel lacks the expressions: policy off, cached,
+            # project starts install no rules; the pasta limits still apply,
+            # and the degraded state is reported once.
+            out, work, result = run_probe("enoent")
+            self.assertEqual(out, "UNENFORCEABLE\nunsupported\n")
+            self.assertNotIn("add rule project", (work / "nft.log").read_text())
+            self.assertEqual((work / "limits.log").read_text(), "applied\n")
+            journal = (work / "journal.log").read_text()
+            self.assertEqual(journal.count("project network policy is OFF"), 1)
+            self.assertIn("WARNING: project network policy is OFF", result.stderr)
+            # The cache is bound to this boot and kernel.
+            identity = subprocess.run(
+                ["bash", "-c", "printf '%s %s' \"$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)\" \"$(uname -r)\""],
+                capture_output=True, text=True,
+            ).stdout
+            self.assertEqual(
+                (work / "capability").read_text(), f"unsupported {identity}\n"
+            )
+            # Any other host fails closed: the probe result refuses the project
+            # start (before any rule or process change) and reports it.
+            out, work, result = run_probe("enoent", allowed=False, label="cloud")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(out, "")
+            self.assertIn("DENY project-network-policy-unenforceable", result.stderr)
+            self.assertFalse((work / "limits.log").exists())
+            self.assertIn(
+                "project starts are refused", (work / "journal.log").read_text()
+            )
+            # An operational failure (timeout) keeps enforcing and is not cached.
+            out, _, _ = run_probe("timeout")
+            self.assertEqual(out, "ENFORCED\nNOCACHE\n")
+            # A kernel with both expressions enforces the policy.
+            out, work, _ = run_probe("supported")
+            self.assertEqual(out, "ENFORCED\nsupported\n")
+            self.assertIn("fib daddr type local", (work / "nft.log").read_text())
+            # The fallback is off unless the install profile allows it.
+            self.assertIn('PROJECT_NETWORK_UNENFORCEABLE_ALLOWED="0"', script)
+            self.assertIn(
+                'PROJECT_NETWORK_UNENFORCEABLE_ALLOWED="1"',
+                bootstrap_storage_wrapper_for(
+                    bootstrap.standalone_privileged_wrapper_config("star-user")
+                ),
+            )
 
     def test_storage_wrapper_uses_xattr_overlay_mounts_and_project_rustic_commands(
         self,
@@ -7168,6 +7366,89 @@ class StarInstallScriptTest(unittest.TestCase):
         )
         self.assertIn("last_seen >= :'restart_at'::timestamptz", script)
 
+
+
+class ManagedProjectJobOutputRelayTest(unittest.TestCase):
+    def helper(self):
+        namespace = {"__name__": "managed_project_job_helper_test"}
+        exec(bootstrap.MANAGED_PROJECT_JOB_HELPER, namespace)
+        return namespace
+
+    def small_pipe(self):
+        import fcntl
+        read_fd, write_fd = os.pipe()
+        fcntl.fcntl(write_fd, 1031, 4096)  # F_SETPIPE_SZ
+        os.set_blocking(write_fd, False)
+        self.addCleanup(lambda: [os.close(fd) for fd in (read_fd, write_fd)])
+        return read_fd, write_fd
+
+    def test_fast_output_to_a_slow_runtime_is_delivered_intact(self) -> None:
+        import base64
+        import threading
+        ns = self.helper()
+        read_fd, write_fd = self.small_pipe()
+        relay = ns["OutputRelay"](write_fd)
+        received = bytearray()
+        done = threading.Event()
+
+        def slow_runtime():
+            while True:
+                chunk = os.read(read_fd, 1024)
+                if not chunk:
+                    break
+                received.extend(chunk)
+                if b'"exit"' in received[-64:]:
+                    break
+                time.sleep(0.0005)
+            done.set()
+
+        reader = threading.Thread(target=slow_runtime, daemon=True)
+        reader.start()
+        # 2 MB of one-line output, as from grep matching minified bundles:
+        # far more than the old 256 KB transport limit.
+        line = (b"x" * (2 * 1024 * 1024 - 1)) + b"\n"
+        peak = 0
+        until = time.monotonic() + 60
+        for i in range(0, len(line), 4096):
+            relay.wait_below_high_water(until)
+            relay.emit({"type": "output", "stream": "stdout",
+                        "data": base64.b64encode(line[i:i + 4096]).decode("ascii")})
+            peak = max(peak, len(relay.pending))
+            relay.flush()
+        relay.emit({"type": "exit", "code": 0, "cleanup": True})
+        while relay.pending:
+            relay.wait_below_high_water(until)
+            relay.flush()
+            time.sleep(0.001)
+        self.assertTrue(done.wait(30))
+        frames = [json.loads(frame) for frame in received.decode().splitlines()]
+        self.assertEqual(frames[-1], {"type": "exit", "code": 0, "cleanup": True})
+        output = b"".join(base64.b64decode(frame["data"]) for frame in frames[:-1])
+        self.assertEqual(output, line)
+        # Queued frames stay bounded by the high-water mark plus one frame.
+        self.assertLess(peak, ns["OUTPUT_HIGH_WATER"] + 8 * 1024)
+
+    def test_a_runtime_that_never_reads_fails_after_the_deadline(self) -> None:
+        ns = self.helper()
+        _, write_fd = self.small_pipe()
+        relay = ns["OutputRelay"](write_fd)
+        while not relay.full:
+            relay.emit({"type": "output", "stream": "stdout", "data": "A" * 4096})
+            relay.flush()
+        started = time.monotonic()
+        with self.assertRaisesRegex(RuntimeError, "job output transport stalled"):
+            relay.wait_below_high_water(time.monotonic() + 0.3)
+        self.assertLess(time.monotonic() - started, 5)
+
+    def test_supervisor_stops_reading_command_output_while_the_runtime_lags(self) -> None:
+        source = bootstrap.MANAGED_PROJECT_JOB_HELPER
+        loop = source[source.index("while not stopped:"):source.index("if stopped:\n            result = 130")]
+        paused = loop[loop.index("if relay.full:"):loop.index("else:")]
+        # While paused only the lease (fd 0) is read; output pipes are not.
+        self.assertIn("select.select([0], [relay.fd], [], 0.05)", paused)
+        self.assertNotIn("sel.select", paused)
+        self.assertNotIn("emit_output", paused)
+        self.assertNotIn("256 * 1024", source)
 
 
 if __name__ == "__main__":

@@ -107,6 +107,7 @@ import {
   getUserFacingListingError,
   shouldShowWrongAccountListingError,
 } from "./listing-error";
+import { ArchivedProjectNotice } from "./archived-project-notice";
 import { afterNextPaint } from "@cocalc/frontend/monitoring/ux-latency-trace";
 import { recordDirectoryListingPaint } from "@cocalc/frontend/project/listing/ux-latency";
 
@@ -840,7 +841,11 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
     project_is_running = false;
   }
 
-  if (shouldShowWrongAccountListingError(displayListingError)) {
+  if (
+    shouldShowWrongAccountListingError(displayListingError, {
+      archived: project_is_archived,
+    })
+  ) {
     return (
       <div style={{ margin: "30px auto", textAlign: "center" }}>
         <ShowError
@@ -1240,40 +1245,13 @@ Wait for this host to become available again, then refresh.`}
               />
             )}
 
-            {shouldShowArchivedProjectWarning && canUseProjectRuntime && (
-              <Alert
-                type="info"
-                showIcon
-                style={{ margin: "16px auto", maxWidth: "760px" }}
-                title={`This ${projectLabelLower} is archived.`}
-                description={
-                  <>
-                    {archiveReasonText && (
-                      <div style={{ marginBottom: "4px" }}>
-                        <strong>{archiveReasonText}</strong>
-                      </div>
-                    )}
-                    <FormattedMessage
-                      id="project.explorer.archived_project.warning"
-                      defaultMessage={
-                        "Archived projects do not count toward active storage. <a>Start this project</a> to restore it from backup and make the filesystem available again. Once restored, it will count toward your global storage quota."
-                      }
-                      values={{
-                        a: (chunks) => (
-                          <a
-                            onClick={(e) => {
-                              e.preventDefault();
-                              redux
-                                .getActions("projects")
-                                .start_project(project_id);
-                            }}
-                          >
-                            {chunks}
-                          </a>
-                        ),
-                      }}
-                    />
-                  </>
+            {shouldShowArchivedProjectWarning && (
+              <ArchivedProjectNotice
+                projectLabelLower={projectLabelLower}
+                archiveReasonText={archiveReasonText}
+                canStart={canUseProjectRuntime}
+                onStart={() =>
+                  redux.getActions("projects").start_project(project_id)
                 }
               />
             )}

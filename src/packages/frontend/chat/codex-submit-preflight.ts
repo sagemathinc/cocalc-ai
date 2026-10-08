@@ -46,7 +46,7 @@ export function assertCodexFundingModelReady({
   if (paymentSource.source === "none") {
     throw new Error(
       paymentSource.unavailableReason ||
-        "Configure a payment source before starting this turn.",
+        "Sign in with ChatGPT (or add an OpenAI API key) in Settings → AI before starting this turn.",
     );
   }
   if (preference !== "auto" && paymentSource.source !== preference) {

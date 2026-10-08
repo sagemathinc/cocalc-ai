@@ -108,7 +108,13 @@ export function StudentAssignmentInfo({
   const [recopy, set_recopy] = useRecopy();
   const [selected_update_open, set_selected_update_open] =
     useState<boolean>(false);
-  const [commentDraft, setCommentDraft] = useState(comments || "");
+  const [commentDraft, setCommentDraftState] = useState(comments || "");
+  // The latest draft, readable from blur/save handlers without a stale closure.
+  const commentDraftRef = useRef(comments || "");
+  const setCommentDraft = (value: string) => {
+    commentDraftRef.current = value;
+    setCommentDraftState(value);
+  };
   const assignment_id = assignment.get("assignment_id");
   const student_id = student.get("student_id");
   const uploadPath = `.course/feedback/${assignment_id}/${student_id}`;
@@ -174,6 +180,12 @@ export function StudentAssignmentInfo({
 
   function stop_editing() {
     actions.assignments.clear_edited_feedback(assignment_id, student_id);
+  }
+
+  function save_comment_draft() {
+    if (commentDraftRef.current !== (comments || "")) {
+      save_comment(commentDraftRef.current);
+    }
   }
 
   function save_grade(value: string) {
@@ -273,7 +285,7 @@ export function StudentAssignmentInfo({
           placeholder="Optional markdown comments..."
           value={commentDraft}
           onChange={setCommentDraft}
-          onBlur={() => save_comment(commentDraft)}
+          onBlur={save_comment_draft}
           onShiftEnter={(value) => {
             save_comment(value);
             stop_editing();
@@ -377,7 +389,14 @@ export function StudentAssignmentInfo({
   function render_save_button() {
     if (!is_editing) return;
     return (
-      <Button key="save" size={size} onClick={() => stop_editing()}>
+      <Button
+        key="save"
+        size={size}
+        onClick={() => {
+          save_comment_draft();
+          stop_editing();
+        }}
+      >
         Save
       </Button>
     );

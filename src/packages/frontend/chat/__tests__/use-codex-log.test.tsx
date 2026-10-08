@@ -104,6 +104,8 @@ class FakeDstream extends EventEmitter {
   recoverNow = jest.fn(async () => {
     this.setRecoveryState("ready");
   });
+  // Over the existing connection: no recovery-state events.
+  catchUp = jest.fn(async () => {});
 
   push(message: any, transportSeq = message?.seq) {
     this.messages = [...this.messages, message];
@@ -621,9 +623,10 @@ describe("useCodexLog", () => {
       jest.advanceTimersByTime(6_000);
       await Promise.resolve();
     });
-    expect(stream.recoverNow).toHaveBeenCalledWith(
-      expect.objectContaining({ reason: "codex_preview_catch_up" }),
-    );
+    expect(stream.catchUp).toHaveBeenCalled();
+    // A quiet agent is normal: never a forced re-subscribe, which showed
+    // "Stream reconnecting" every few seconds while the agent was thinking.
+    expect(stream.recoverNow).not.toHaveBeenCalled();
     await waitFor(() =>
       expect(screen.getByTestId("live-response").textContent).toBe(
         "Starting the sleep now.",

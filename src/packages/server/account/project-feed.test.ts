@@ -29,6 +29,7 @@ jest.mock("@cocalc/database", () => ({
 jest.mock("@cocalc/database/postgres/project-events-outbox", () => ({
   loadProjectOutboxPayload: (...args: any[]) =>
     loadProjectOutboxPayloadMock(...args),
+  setProjectOutboxRemoteFeedEnabled: jest.fn(),
 }));
 
 jest.mock("@cocalc/database/postgres/account-project-index-projector", () => ({

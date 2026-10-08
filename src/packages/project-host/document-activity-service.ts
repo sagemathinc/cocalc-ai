@@ -4,6 +4,7 @@
  */
 
 import TTL from "@isaacs/ttlcache";
+import { posix } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import type { Client } from "@cocalc/conat/core/client";
 import {
@@ -18,6 +19,10 @@ import { isProjectCollaboratorGroup } from "@cocalc/conat/auth/subject-policy";
 import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import { isValidUUID } from "@cocalc/util/misc";
 import { syncdbPath } from "@cocalc/util/jupyter/names";
+import {
+  DEFAULT_PROJECT_RUNTIME_HOME,
+  PROJECT_RUNTIME_HOME_ALIASES,
+} from "@cocalc/util/project-runtime";
 
 const logger = getLogger("project-host:document-activity");
 
@@ -381,6 +386,39 @@ export async function handleListRecentRequest(
   return rows.slice(0, normalizeLimit(opts?.limit));
 }
 
+// Browsers record document activity and open sync documents with absolute
+// paths ("/home/user/lectures/a.ipynb"), while callers such as the course
+// file-use export ask with home-relative paths ("lectures/a.ipynb"). Return
+// the spellings of the same file, canonical absolute first.
+export function fileUsePathVariants(path: string): string[] {
+  const normalized = posix.normalize(path);
+  // Home-relative form of the path, if it is under any known runtime home.
+  let relative: string | undefined;
+  if (!normalized.startsWith("/")) {
+    relative = normalized;
+  } else {
+    for (const home of PROJECT_RUNTIME_HOME_ALIASES) {
+      if (normalized.startsWith(`${home}/`)) {
+        relative = normalized.slice(home.length + 1);
+        break;
+      }
+    }
+  }
+  if (relative == null) {
+    return [normalized];
+  }
+  // Canonical current home first, then the relative spelling, then legacy
+  // homes (e.g. /root), so the normal case needs a single patch stream.
+  const variants = [
+    posix.join(DEFAULT_PROJECT_RUNTIME_HOME, relative),
+    relative,
+    ...PROJECT_RUNTIME_HOME_ALIASES.filter(
+      (home) => home !== DEFAULT_PROJECT_RUNTIME_HOME,
+    ).map((home) => posix.join(home, relative!)),
+  ];
+  return [...new Set(variants)];
+}
+
 export async function handleGetFileUseTimesRequest(
   this: { subject?: string },
   opts: {
@@ -405,6 +443,7 @@ export async function handleGetFileUseTimesRequest(
     : account_id;
   const limit = Math.max(1, Math.min(10_000, Math.floor(opts?.limit ?? 1000)));
   const resp: FileUseTimesResponse = { target_account_id };
+  const paths = fileUsePathVariants(path);
 
   if (opts?.access_times ?? true) {
     const stream = await getAccessStream({ client, project_id });
@@ -412,7 +451,10 @@ export async function handleGetFileUseTimesRequest(
     const messages = stream.getAll();
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       const event = messages[i];
-      if (event?.path !== path || event?.account_id !== target_account_id) {
+      if (
+        !paths.includes(event?.path) ||
+        event?.account_id !== target_account_id
+      ) {
         continue;
       }
       const when = Date.parse(`${event.time ?? ""}`);
@@ -430,18 +472,33 @@ export async function handleGetFileUseTimesRequest(
   if (opts?.edit_times) {
     // Notebook patches belong to the syncdb, but access events use the visible
     // filename above. Patch times are document-wide, not per-account edits.
-    const editPath = path.endsWith(".ipynb") ? syncdbPath(path) : path;
-    const patchStream = await dstream({
-      project_id,
-      name: patchesStreamName({ path: editPath }),
-      noAutosave: true,
-      noInventory: true,
-      client,
-    });
-    try {
-      resp.edit_times = patchStream.times().map((x) => x?.valueOf());
-    } finally {
-      patchStream.close();
+    // Read the canonical (absolute) history first; only fall back to the
+    // other spelling when it has none, so the normal case opens one stream.
+    resp.edit_times = [];
+    for (const variant of paths) {
+      const editPath = variant.endsWith(".ipynb")
+        ? syncdbPath(variant)
+        : variant;
+      const patchStream = await dstream({
+        project_id,
+        name: patchesStreamName({ path: editPath }),
+        noAutosave: true,
+        noInventory: true,
+        client,
+      });
+      let times: number[];
+      try {
+        times = patchStream
+          .times()
+          .map((t) => t?.valueOf())
+          .filter((ms): ms is number => ms != null);
+      } finally {
+        patchStream.close();
+      }
+      if (times.length > 0) {
+        resp.edit_times = [...new Set(times)].sort((a, b) => a - b);
+        break;
+      }
     }
   }
 

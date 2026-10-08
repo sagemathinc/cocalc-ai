@@ -19,13 +19,11 @@ beforeEach(() => {
   local
     .mockReset()
     .mockResolvedValue({ project_id: "p", bay_id: "home", status: "unknown" });
-  remote
-    .mockReset()
-    .mockResolvedValue({
-      project_id: "p",
-      bay_id: "owner",
-      status: "hard-deleted",
-    });
+  remote.mockReset().mockResolvedValue({
+    project_id: "p",
+    bay_id: "owner",
+    status: "hard-deleted",
+  });
 });
 it("recognizes deletion on a different owning bay", async () => {
   await expect(agentProjectWasDeleted("p")).resolves.toBe(true);

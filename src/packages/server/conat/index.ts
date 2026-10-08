@@ -1,3 +1,4 @@
+import { startProjectFeedRemoteMaintenance } from "@cocalc/server/projections/project-feed-remote-maintenance";
 import getLogger from "@cocalc/backend/logger";
 import { initAPI } from "./api";
 import { loadConatConfiguration } from "./configuration";
@@ -177,6 +178,7 @@ export function startConatApiBackgroundWorkers(): void {
     );
   }
   startAccountNotificationIndexProjectionMaintenance();
+  startProjectFeedRemoteMaintenance();
   startNotificationEmailOutboxMaintenance();
   startMembershipSideEffectsMaintenance();
   startSiteLicenseAffiliationReleaseMaintenance();

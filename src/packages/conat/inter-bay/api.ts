@@ -218,7 +218,6 @@ import type {
   CourseStudentInviteAccountRepairInput,
   CourseStudentInviteAccountRepairRow,
   ProjectCollabInviteAction,
-  ProjectCollabInviteDirection,
   ProjectCollabInviteRow,
   ProjectCollabInviteStatus,
   ProjectCourseInfo,
@@ -231,12 +230,7 @@ import type {
   ProjectRootfsConfig,
   ProjectRootfsPublishConfig,
   ProjectRunQuota,
-  CourseSecretPolicyState,
   CourseSecretRecipientPreview,
-  CourseSecretSyncPreview,
-  CourseSecretSyncRun,
-  CourseSecretSyncStatusResult,
-  ProjectSecretMetadata,
   ProjectSnapshotSchedule,
   CopyProjectSecretsResult,
 } from "@cocalc/conat/hub/api/projects";
@@ -269,10 +263,6 @@ import type {
   SoftwareLicenseTier,
 } from "@cocalc/util/db-schema/software-licenses";
 import type { MoneyValue } from "@cocalc/util/money";
-import type {
-  ProjectUserRole,
-  ProjectViewerReadPolicy,
-} from "@cocalc/util/project-access";
 import type { RootfsImageManifest } from "@cocalc/util/rootfs-images";
 import type {
   SiteFundedCodexAdmission,
@@ -528,11 +518,6 @@ export interface ProjectControlActiveOperationRequest {
   epoch?: number;
 }
 
-export interface ProjectControlGetEntitlementOverrideRequest {
-  project_id: string;
-  epoch?: number;
-}
-
 export interface ProjectControlSetEntitlementOverrideRequest {
   project_id: string;
   actor_account_id?: string | null;
@@ -541,13 +526,6 @@ export interface ProjectControlSetEntitlementOverrideRequest {
   expires_at?: Date | string | null;
   source?: string | null;
   metadata?: Record<string, unknown>;
-  epoch?: number;
-}
-
-export interface ProjectControlClearEntitlementOverrideRequest {
-  project_id: string;
-  actor_account_id?: string | null;
-  reason: string;
   epoch?: number;
 }
 
@@ -1224,9 +1202,7 @@ export interface AccountLocalGetDedicatedHostAdmissionSnapshotRequest {
 export interface AccountLocalGetDedicatedHostPolicySnapshotRequest {
   account_id: string;
   funding_mode_override?:
-    | "account-prepaid"
-    | "account-postpaid"
-    | "site-funded";
+    "account-prepaid" | "account-postpaid" | "site-funded";
 }
 
 export interface AccountLocalReconcileDedicatedHostPurchaseSessionRequest {
@@ -1281,11 +1257,7 @@ export interface AccountLocalRecordDedicatedHostMeteredUsageResult {
 }
 
 export type ProjectRuntimeSlotState =
-  | "starting"
-  | "running"
-  | "released"
-  | "expired"
-  | "failed";
+  "starting" | "running" | "released" | "expired" | "failed";
 
 export interface ProjectRuntimeSlotWire {
   sponsor_account_id: string;
@@ -2252,6 +2224,9 @@ export interface MembershipTierCatalogRecord {
   course_price?: number;
   course_duration_days?: number;
   course_grace_days?: number;
+  instructor_purchase_visible?: boolean;
+  instructor_term_price?: number | string | null;
+  instructor_term_days?: number | null;
   project_defaults?: Record<string, unknown>;
   ai_limits?: Record<string, unknown>;
   features?: Record<string, unknown>;
@@ -2506,101 +2481,6 @@ export interface ProjectCollabInviteRespondRequest {
   trusted_product_access_checked?: boolean;
 }
 
-export interface ProjectCollabInviteCreateRequest {
-  account_id: string;
-  project_id: string;
-  invitee_account_id: string;
-  message?: string;
-  direct?: boolean;
-  /** Internal result of an admin check performed on the actor's home bay. */
-  trusted_admin?: boolean;
-  /** Internal attestation from the inviter's account home, never client input. */
-  trusted_product_access_checked?: boolean;
-  invite_role?: Exclude<ProjectUserRole, "owner">;
-  read_policy?: ProjectViewerReadPolicy | null;
-}
-
-export interface ProjectCollabInviteCreateResultWire {
-  created: boolean;
-  invite: ProjectCollabInviteWire;
-}
-
-export interface ProjectCollabInviteWithoutAccountRequest {
-  account_id: string;
-  opts: {
-    project_id: string;
-    title: string;
-    link2proj: string;
-    replyto?: string;
-    replyto_name?: string;
-    to: string;
-    email: string;
-    subject?: string;
-    message?: string;
-    send_email?: boolean;
-    invite_context?: Record<string, unknown>;
-    invite_scope?: string;
-    require_email_match?: boolean;
-    invite_role?: Exclude<ProjectUserRole, "owner">;
-    invite_base_url?: string;
-    read_policy?: ProjectViewerReadPolicy | null;
-  };
-}
-
-export interface ProjectCollabInviteWithoutAccountResultWire {
-  invites: ProjectCollabInviteWire[];
-  email_sent: boolean;
-  email_available: boolean;
-  manual_delivery_required: boolean;
-  email_blocked_reason?: string | null;
-}
-
-export interface ProjectCollabInviteCopyEmailLinkRequest {
-  account_id: string;
-  invite_id: string;
-  project_id?: string;
-  invite_base_url?: string;
-}
-
-export interface ProjectCollabInviteEmailLinkWire {
-  invite_id: string;
-  invite_url: string;
-  expires?: string | null;
-}
-
-export interface ProjectCollabInviteRedeemEmailRequest {
-  account_id: string;
-  invite_id: string;
-  token: string;
-  project_id?: string;
-  trusted_product_access_checked?: boolean;
-}
-
-export interface ProjectCollabInvitePreviewEmailRequest {
-  account_id?: string;
-  invite_id: string;
-  token: string;
-  project_id?: string;
-}
-
-export interface ProjectCollabInviteRespondEmailRequest {
-  account_id: string;
-  action: ProjectCollabInviteAction;
-  invite_id: string;
-  token: string;
-  project_id?: string;
-  trusted_product_access_checked?: boolean;
-}
-
-export interface ProjectCollabInviteListRequest {
-  account_id: string;
-  project_id?: string;
-  direction?: ProjectCollabInviteDirection;
-  status?: ProjectCollabInviteStatus;
-  limit?: number;
-  projectWide?: boolean;
-}
-
 export interface ProjectAcceptedCourseStudentInviteAccountRepairRequest {
   account_id: string;
   course_project_id: string;
@@ -2673,14 +2553,6 @@ export interface ProjectCourseReconfigureOperationRequest {
   op_id: string;
 }
 
-export interface ProjectRemoveCollaboratorRequest {
-  account_id: string;
-  opts: {
-    account_id: string;
-    project_id: string;
-  };
-}
-
 export interface ProjectOwnershipTransferRequest {
   account_id: string;
   project_id: string;
@@ -2740,9 +2612,7 @@ export type ProjectControlMethod =
   | "rehome"
   | "accept-rehome"
   | "active-op"
-  | "get-project-entitlement-override"
-  | "set-project-entitlement-override"
-  | "clear-project-entitlement-override";
+  | "set-project-entitlement-override";
 export type DirectoryMethod =
   | "resolve-project-bay"
   | "resolve-host-bay"
@@ -3087,11 +2957,7 @@ export type AccountLocalMethod =
   | "public-directory-share-grant-temporary-viewer-access"
   | "public-directory-share-get-temporary-viewer-read-policy";
 export type AuthTokenMethod =
-  | "requires-token"
-  | "validate"
-  | "redeem"
-  | "disable"
-  | "delete";
+  "requires-token" | "validate" | "redeem" | "disable" | "delete";
 export type BayRegistryMethod = "register" | "list";
 export type BayOpsMethod =
   | "get-load"
@@ -3172,18 +3038,6 @@ export type ProjectSecretsMethod =
   | "copy"
   | "export-for-copy"
   | "import-for-copy"
-  | "list-course-shareable"
-  | "get-course-policy"
-  | "preview-course-sync"
-  | "set-course-sharing"
-  | "set-course-policy"
-  | "set-course-grants"
-  | "approve-course-recipients"
-  | "revoke-course-recipients"
-  | "start-course-sync"
-  | "start-course-cleanup"
-  | "get-course-sync-status"
-  | "revoke-course-policy"
   | "install-course-managed"
   | "remove-course-managed";
 export type ExternalCredentialMethod =
@@ -3309,15 +3163,9 @@ export interface InterBayProjectControlApi {
   activeOp: (
     opts: ProjectControlActiveOperationRequest,
   ) => Promise<ProjectActiveOperationSummary | null>;
-  getProjectEntitlementOverride: (
-    opts: ProjectControlGetEntitlementOverrideRequest,
-  ) => Promise<ProjectEntitlementOverride | null>;
   setProjectEntitlementOverride: (
     opts: ProjectControlSetEntitlementOverrideRequest,
   ) => Promise<ProjectEntitlementOverride>;
-  clearProjectEntitlementOverride: (
-    opts: ProjectControlClearEntitlementOverrideRequest,
-  ) => Promise<void>;
 }
 
 export interface InterBayProjectReferenceApi {
@@ -3365,104 +3213,6 @@ export interface InterBayProjectSecretsApi {
     overwrite?: boolean;
     epoch?: number;
   }) => Promise<CopyProjectSecretsResult>;
-  listCourseShareable: (opts: {
-    account_id: string;
-    course_project_id: string;
-    epoch?: number;
-  }) => Promise<ProjectSecretMetadata[]>;
-  getCoursePolicy: (opts: {
-    account_id: string;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    epoch?: number;
-  }) => Promise<CourseSecretPolicyState | null>;
-  previewCourseSync: (opts: {
-    account_id: string;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    target_project_ids: string[];
-    epoch?: number;
-  }) => Promise<CourseSecretSyncPreview>;
-  setCourseSharing: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    project_id: string;
-    name: string;
-    allow: boolean;
-    epoch?: number;
-  }) => Promise<ProjectSecretMetadata>;
-  setCoursePolicy: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    enabled: boolean;
-    epoch?: number;
-  }) => Promise<CourseSecretPolicyState>;
-  setCourseGrants: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    names: string[];
-    epoch?: number;
-  }) => Promise<CourseSecretPolicyState>;
-  approveCourseRecipients: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    recipients: Array<{
-      target_project_id: string;
-      student_account_id?: string | null;
-    }>;
-    epoch?: number;
-  }) => Promise<CourseSecretPolicyState>;
-  revokeCourseRecipients: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    target_project_ids: string[];
-    epoch?: number;
-  }) => Promise<CourseSecretPolicyState>;
-  startCourseSync: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    epoch?: number;
-  }) => Promise<CourseSecretSyncRun>;
-  startCourseCleanup: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    epoch?: number;
-  }) => Promise<CourseSecretSyncRun>;
-  getCourseSyncStatus: (opts: {
-    account_id: string;
-    course_project_id: string;
-    course_id: string;
-    run_id?: string;
-    epoch?: number;
-  }) => Promise<CourseSecretSyncStatusResult | null>;
-  revokeCoursePolicy: (opts: {
-    account_id: string;
-    session_hash?: string | null;
-    course_project_id: string;
-    course_id: string;
-    course_path: string;
-    epoch?: number;
-  }) => Promise<CourseSecretPolicyState>;
   installCourseManaged: (opts: {
     project_id: string;
     course_project_id: string;
@@ -5269,9 +5019,6 @@ export interface InterBayAuthTokenApi {
 export interface InterBayProjectCollabInviteApi {
   upsertInbox: (opts: ProjectCollabInviteInboxUpsertRequest) => Promise<void>;
   deleteInbox: (opts: ProjectCollabInviteInboxDeleteRequest) => Promise<void>;
-  list: (
-    opts: ProjectCollabInviteListRequest,
-  ) => Promise<ProjectCollabInviteWire[]>;
   repairAcceptedCourseStudentInviteAccounts: (
     opts: ProjectAcceptedCourseStudentInviteAccountRepairRequest,
   ) => Promise<CourseStudentInviteAccountRepairRow[]>;
@@ -5293,7 +5040,6 @@ export interface InterBayProjectCollabInviteApi {
   cancelCourseReconfigureOperation: (
     opts: ProjectCourseReconfigureOperationRequest,
   ) => Promise<void>;
-  removeCollaborator: (opts: ProjectRemoveCollaboratorRequest) => Promise<void>;
   leaveOrDeleteProjects: (
     opts: ProjectLeaveOrDeleteProjectsRequest,
   ) => Promise<ProjectLeaveOrDeleteProjectsResult[]>;
@@ -5303,24 +5049,6 @@ export interface InterBayProjectCollabInviteApi {
   setProjectsHidden: (
     opts: ProjectSetHiddenRequest,
   ) => Promise<ProjectHiddenResult[]>;
-  create: (
-    opts: ProjectCollabInviteCreateRequest,
-  ) => Promise<ProjectCollabInviteCreateResultWire>;
-  inviteWithoutAccount: (
-    opts: ProjectCollabInviteWithoutAccountRequest,
-  ) => Promise<ProjectCollabInviteWithoutAccountResultWire>;
-  copyEmailLink: (
-    opts: ProjectCollabInviteCopyEmailLinkRequest,
-  ) => Promise<ProjectCollabInviteEmailLinkWire>;
-  redeemEmail: (
-    opts: ProjectCollabInviteRedeemEmailRequest,
-  ) => Promise<ProjectCollabInviteWire>;
-  previewEmail: (
-    opts: ProjectCollabInvitePreviewEmailRequest,
-  ) => Promise<ProjectCollabInviteWire>;
-  respondEmail: (
-    opts: ProjectCollabInviteRespondEmailRequest,
-  ) => Promise<ProjectCollabInviteWire>;
   respond: (
     opts: ProjectCollabInviteRespondRequest,
   ) => Promise<ProjectCollabInviteWire>;
@@ -5544,18 +5272,6 @@ const PROJECT_SECRETS_METHOD_SPECS = [
   { name: "copy", method: "copy" },
   { name: "exportForCopy", method: "export-for-copy" },
   { name: "importForCopy", method: "import-for-copy" },
-  { name: "listCourseShareable", method: "list-course-shareable" },
-  { name: "getCoursePolicy", method: "get-course-policy" },
-  { name: "previewCourseSync", method: "preview-course-sync" },
-  { name: "setCourseSharing", method: "set-course-sharing" },
-  { name: "setCoursePolicy", method: "set-course-policy" },
-  { name: "setCourseGrants", method: "set-course-grants" },
-  { name: "approveCourseRecipients", method: "approve-course-recipients" },
-  { name: "revokeCourseRecipients", method: "revoke-course-recipients" },
-  { name: "startCourseSync", method: "start-course-sync" },
-  { name: "startCourseCleanup", method: "start-course-cleanup" },
-  { name: "getCourseSyncStatus", method: "get-course-sync-status" },
-  { name: "revokeCoursePolicy", method: "revoke-course-policy" },
   { name: "installCourseManaged", method: "install-course-managed" },
   { name: "removeCourseManaged", method: "remove-course-managed" },
 ] as const satisfies ReadonlyArray<{
@@ -6111,15 +5827,6 @@ export function createInterBayProjectControlClient({
     ...serviceClientOptions({ client, timeout }),
     subject: projectControlSubject({ dest_bay, method: "active-op" }),
   });
-  const getProjectEntitlementOverrideClient = createServiceClient<
-    Pick<InterBayProjectControlApi, "getProjectEntitlementOverride">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectControlSubject({
-      dest_bay,
-      method: "get-project-entitlement-override",
-    }),
-  });
   const setProjectEntitlementOverrideClient = createServiceClient<
     Pick<InterBayProjectControlApi, "setProjectEntitlementOverride">
   >({
@@ -6127,15 +5834,6 @@ export function createInterBayProjectControlClient({
     subject: projectControlSubject({
       dest_bay,
       method: "set-project-entitlement-override",
-    }),
-  });
-  const clearProjectEntitlementOverrideClient = createServiceClient<
-    Pick<InterBayProjectControlApi, "clearProjectEntitlementOverride">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectControlSubject({
-      dest_bay,
-      method: "clear-project-entitlement-override",
     }),
   });
   return {
@@ -6162,16 +5860,8 @@ export function createInterBayProjectControlClient({
     rehome: async (opts) => await rehomeClient.rehome(opts),
     acceptRehome: async (opts) => await acceptRehomeClient.acceptRehome(opts),
     activeOp: async (opts) => await activeOpClient.activeOp(opts),
-    getProjectEntitlementOverride: async (opts) =>
-      await getProjectEntitlementOverrideClient.getProjectEntitlementOverride(
-        opts,
-      ),
     setProjectEntitlementOverride: async (opts) =>
       await setProjectEntitlementOverrideClient.setProjectEntitlementOverride(
-        opts,
-      ),
-    clearProjectEntitlementOverride: async (opts) =>
-      await clearProjectEntitlementOverrideClient.clearProjectEntitlementOverride(
         opts,
       ),
   };
@@ -12613,54 +12303,6 @@ export function createInterBayProjectCollabInviteClient({
     ...serviceClientOptions({ client, timeout }),
     subject: projectCollabInviteSubject({ dest_bay, method: "delete-inbox" }),
   });
-  const createClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "create">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({ dest_bay, method: "create" }),
-  });
-  const inviteWithoutAccountClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "inviteWithoutAccount">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({
-      dest_bay,
-      method: "invite-without-account",
-    }),
-  });
-  const copyEmailLinkClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "copyEmailLink">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({
-      dest_bay,
-      method: "copy-email-link",
-    }),
-  });
-  const redeemEmailClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "redeemEmail">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({ dest_bay, method: "redeem-email" }),
-  });
-  const previewEmailClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "previewEmail">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({ dest_bay, method: "preview-email" }),
-  });
-  const respondEmailClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "respondEmail">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({ dest_bay, method: "respond-email" }),
-  });
-  const listClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "list">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({ dest_bay, method: "list" }),
-  });
   const repairAcceptedCourseStudentInviteAccountsClient = createServiceClient<
     Pick<
       InterBayProjectCollabInviteApi,
@@ -12727,15 +12369,6 @@ export function createInterBayProjectCollabInviteClient({
       method: "cancel-course-reconfigure-operation",
     }),
   });
-  const removeCollaboratorClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "removeCollaborator">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({
-      dest_bay,
-      method: "remove-collaborator",
-    }),
-  });
   const transferProjectOwnershipClient = createServiceClient<
     Pick<InterBayProjectCollabInviteApi, "transferProjectOwnership">
   >({
@@ -12772,7 +12405,6 @@ export function createInterBayProjectCollabInviteClient({
   return {
     upsertInbox: async (opts) => await upsertInboxClient.upsertInbox(opts),
     deleteInbox: async (opts) => await deleteInboxClient.deleteInbox(opts),
-    list: async (opts) => await listClient.list(opts),
     repairAcceptedCourseStudentInviteAccounts: async (opts) =>
       await repairAcceptedCourseStudentInviteAccountsClient.repairAcceptedCourseStudentInviteAccounts(
         opts,
@@ -12797,22 +12429,12 @@ export function createInterBayProjectCollabInviteClient({
       await cancelCourseReconfigureOperationClient.cancelCourseReconfigureOperation(
         opts,
       ),
-    removeCollaborator: async (opts) =>
-      await removeCollaboratorClient.removeCollaborator(opts),
     leaveOrDeleteProjects: async (opts) =>
       await leaveOrDeleteProjectsClient.leaveOrDeleteProjects(opts),
     transferProjectOwnership: async (opts) =>
       await transferProjectOwnershipClient.transferProjectOwnership(opts),
     setProjectsHidden: async (opts) =>
       await setProjectsHiddenClient.setProjectsHidden(opts),
-    create: async (opts) => await createClient.create(opts),
-    inviteWithoutAccount: async (opts) =>
-      await inviteWithoutAccountClient.inviteWithoutAccount(opts),
-    copyEmailLink: async (opts) =>
-      await copyEmailLinkClient.copyEmailLink(opts),
-    redeemEmail: async (opts) => await redeemEmailClient.redeemEmail(opts),
-    previewEmail: async (opts) => await previewEmailClient.previewEmail(opts),
-    respondEmail: async (opts) => await respondEmailClient.respondEmail(opts),
     respond: async (opts) => await respondClient.respond(opts),
   };
 }
@@ -12893,88 +12515,6 @@ export function createInterBayProjectCollabInviteHandlers({
       }),
       impl: {
         deleteInbox: async (opts) => await impl.deleteInbox(opts),
-      },
-    }),
-    createServiceHandler<Pick<InterBayProjectCollabInviteApi, "create">>({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "create",
-      }),
-      impl: {
-        create: async (opts) => await impl.create(opts),
-      },
-    }),
-    createServiceHandler<
-      Pick<InterBayProjectCollabInviteApi, "inviteWithoutAccount">
-    >({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "invite-without-account",
-      }),
-      impl: {
-        inviteWithoutAccount: async (opts) =>
-          await impl.inviteWithoutAccount(opts),
-      },
-    }),
-    createServiceHandler<Pick<InterBayProjectCollabInviteApi, "copyEmailLink">>(
-      {
-        ...options,
-        service: "inter-bay-project-collab-invite",
-        subject: projectCollabInviteSubject({
-          dest_bay: bay_id,
-          method: "copy-email-link",
-        }),
-        impl: {
-          copyEmailLink: async (opts) => await impl.copyEmailLink(opts),
-        },
-      },
-    ),
-    createServiceHandler<Pick<InterBayProjectCollabInviteApi, "redeemEmail">>({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "redeem-email",
-      }),
-      impl: {
-        redeemEmail: async (opts) => await impl.redeemEmail(opts),
-      },
-    }),
-    createServiceHandler<Pick<InterBayProjectCollabInviteApi, "previewEmail">>({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "preview-email",
-      }),
-      impl: {
-        previewEmail: async (opts) => await impl.previewEmail(opts),
-      },
-    }),
-    createServiceHandler<Pick<InterBayProjectCollabInviteApi, "respondEmail">>({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "respond-email",
-      }),
-      impl: {
-        respondEmail: async (opts) => await impl.respondEmail(opts),
-      },
-    }),
-    createServiceHandler<Pick<InterBayProjectCollabInviteApi, "list">>({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "list",
-      }),
-      impl: {
-        list: async (opts) => await impl.list(opts),
       },
     }),
     createServiceHandler<
@@ -13076,19 +12616,6 @@ export function createInterBayProjectCollabInviteHandlers({
       impl: {
         cancelCourseReconfigureOperation: async (opts) =>
           await impl.cancelCourseReconfigureOperation(opts),
-      },
-    }),
-    createServiceHandler<
-      Pick<InterBayProjectCollabInviteApi, "removeCollaborator">
-    >({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "remove-collaborator",
-      }),
-      impl: {
-        removeCollaborator: async (opts) => await impl.removeCollaborator(opts),
       },
     }),
     createServiceHandler<
@@ -13523,30 +13050,6 @@ export function createInterBayProjectControlActiveOpHandler({
   });
 }
 
-export function createInterBayProjectControlGetEntitlementOverrideHandler({
-  bay_id,
-  impl,
-  ...options
-}: ServiceHandlerOptions & {
-  bay_id: string;
-  impl: InterBayProjectControlApi;
-}): ConatService {
-  return createServiceHandler<
-    Pick<InterBayProjectControlApi, "getProjectEntitlementOverride">
-  >({
-    ...options,
-    service: "inter-bay-project-control",
-    subject: projectControlSubject({
-      dest_bay: bay_id,
-      method: "get-project-entitlement-override",
-    }),
-    impl: {
-      getProjectEntitlementOverride: async (opts) =>
-        await impl.getProjectEntitlementOverride(opts),
-    },
-  });
-}
-
 export function createInterBayProjectControlSetEntitlementOverrideHandler({
   bay_id,
   impl,
@@ -13567,30 +13070,6 @@ export function createInterBayProjectControlSetEntitlementOverrideHandler({
     impl: {
       setProjectEntitlementOverride: async (opts) =>
         await impl.setProjectEntitlementOverride(opts),
-    },
-  });
-}
-
-export function createInterBayProjectControlClearEntitlementOverrideHandler({
-  bay_id,
-  impl,
-  ...options
-}: ServiceHandlerOptions & {
-  bay_id: string;
-  impl: InterBayProjectControlApi;
-}): ConatService {
-  return createServiceHandler<
-    Pick<InterBayProjectControlApi, "clearProjectEntitlementOverride">
-  >({
-    ...options,
-    service: "inter-bay-project-control",
-    subject: projectControlSubject({
-      dest_bay: bay_id,
-      method: "clear-project-entitlement-override",
-    }),
-    impl: {
-      clearProjectEntitlementOverride: async (opts) =>
-        await impl.clearProjectEntitlementOverride(opts),
     },
   });
 }

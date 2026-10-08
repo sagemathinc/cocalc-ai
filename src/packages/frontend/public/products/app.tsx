@@ -284,7 +284,7 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
           title: "CoCalc Plus",
         },
         {
-          detail: "A shared CoCalc site on one public Ubuntu VM.",
+          detail: "A free shared CoCalc site in one Docker container.",
           href: publicPath("products/cocalc-star"),
           title: "CoCalc Star",
         },
@@ -894,23 +894,33 @@ function CocalcRocketPage() {
 }
 
 function CocalcStarPage() {
-  const installCommand =
-    "curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star.sh | sudo bash";
+  // One-line commands: they work unchanged in macOS and Linux terminals and in
+  // Windows PowerShell, where backslash line continuations do not.
+  const tryCommand =
+    "docker run -d --name cocalc-star --restart unless-stopped --privileged --cgroupns=host -v cocalc-star:/var/lib/cocalc -p 8170:80 -e COCALC_STAR_HTTP_PORT=8170 sagemathinc/star";
+  const serverCommand =
+    "docker run -d --name cocalc-star --restart unless-stopped --privileged --cgroupns=host -v cocalc-star:/var/lib/cocalc -p 443:443 -p 80:80 -e COCALC_STAR_DOMAIN=star.example.com sagemathinc/star";
+  const logsCommand = "docker logs -f cocalc-star";
+  const upgradeCommands =
+    "docker pull sagemathinc/star\ndocker rm -f cocalc-star\n# then run the same docker run command you installed with";
+  const removeCommands =
+    "docker rm -f cocalc-star\ndocker volume rm cocalc-star\ndocker rmi sagemathinc/star";
+  const adminLinkCommand = "docker exec cocalc-star star admin-link";
   const detailItems = [
     {
-      body: "Small groups that want collaborators in one browser-based CoCalc instance on a public VM.",
+      body: "Labs, courses, and small teams that want their own shared CoCalc: Jupyter, LaTeX, terminals, and collaboration on their own hardware.",
       icon: "star",
       title: "Who it fits",
     },
     {
-      body: "Runs on one fresh public Ubuntu VM with ports 80 and 443 open. The installer sets up the CoCalc instance, HTTPS, onboarding, and the first admin flow.",
+      body: "One Docker container and one Docker volume on macOS, Windows, or Linux. Every project runs in its own isolated container inside it.",
       icon: "servers",
       title: "How it runs",
     },
     {
-      body: "Use Star when you want a shared CoCalc site on your own VM without manually assembling DNS, TLS, port forwarding, and cloud-provider-specific setup.",
+      body: "Free. Upgrades are a new image, and removing the container and volume removes all of its data.",
       icon: "cloud",
-      title: "When to choose it",
+      title: "Easy to try, easy to undo",
     },
   ] satisfies ProductDetailPoint[];
 
@@ -932,8 +942,8 @@ function CocalcStarPage() {
             label: "View CoCalc Rocket",
           },
         ]}
-        title="Run a shared CoCalc site on one Ubuntu VM."
-        body="The installer sets up HTTPS and onboarding, so collaborators can start together."
+        title="Run your own CoCalc with one Docker command."
+        body="CoCalc Star is free and runs anywhere Docker runs. Try it on your laptop, or put it on a server with automatic HTTPS."
       />
       <ProductSharedProjectNote />
       <ProductDetailGrid items={detailItems} label="CoCalc Star positioning" />
@@ -941,40 +951,74 @@ function CocalcStarPage() {
         <ProductDetailCard icon="star" title="Install CoCalc Star">
           <div id="install-cocalc-star" />
           <Paragraph style={{ margin: 0 }}>
-            On a fresh Ubuntu 24.04 VM with ports 80 and 443 open, run:
-          </Paragraph>
-          <CodeBlock ariaLabel="Install command" code={installCommand} />
-          <Flex gap={12} wrap>
-            <Button href="https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star.sh">
-              Open install script
-            </Button>
-            <Button href="https://github.com/sagemathinc/cocalc-ai/releases/tag/cocalc-star-stable">
-              Stable channel
-            </Button>
-            <Button href={appPath("docs/self-hosting/cocalc-star")}>
-              Read Star setup guide
-            </Button>
-          </Flex>
-          <Paragraph style={{ margin: 0 }}>
-            The installer automatically detects the VM's public IP address, sets
-            up a secure HTTPS certificate, and shows a web onboarding page
-            before continuing.
+            1. Install{" "}
+            <a href="https://www.docker.com/products/docker-desktop/">
+              Docker Desktop
+            </a>{" "}
+            on macOS or Windows, or Docker Engine on Linux, and start it. Give
+            Docker at least 4 CPUs, 8 GB of memory, and 50 GB of disk.
           </Paragraph>
           <Paragraph style={{ margin: 0 }}>
-            The setup guide covers the firewall, onboarding, first admin,
-            project-start, and invite-user checks.
+            2. Run this in a terminal (on Windows, in PowerShell):
+          </Paragraph>
+          <CodeBlock ariaLabel="Install command" code={tryCommand} />
+          <Paragraph style={{ margin: 0 }}>
+            3. Follow the first start, which takes a few minutes:
+          </Paragraph>
+          <CodeBlock ariaLabel="Follow the first start" code={logsCommand} />
+          <Paragraph style={{ margin: 0 }}>
+            When it prints a link starting with{" "}
+            <Text code>http://localhost:8170</Text>, open it to create your
+            admin account.
           </Paragraph>
         </ProductDetailCard>
-        <ProductDetailCard icon="servers" title="Boundary: one public VM">
+        <ProductDetailCard icon="servers" title="On a server with a domain">
+          <Paragraph style={{ margin: 0 }}>
+            Point a DNS name at a Linux server with Docker and open port 443,
+            then run the same command with your domain. HTTPS certificates are
+            obtained and renewed automatically.
+          </Paragraph>
+          <CodeBlock ariaLabel="Server install command" code={serverCommand} />
+          <Paragraph style={{ margin: 0 }}>
+            Lost the admin link, or someone else used it? Create a new one:
+          </Paragraph>
+          <CodeBlock ariaLabel="New admin link" code={adminLinkCommand} />
+        </ProductDetailCard>
+        <ProductDetailCard icon="cloud" title="Upgrade">
+          <Paragraph style={{ margin: 0 }}>
+            All accounts, projects, settings, and certificates live in the{" "}
+            <Text code>cocalc-star</Text> volume. To upgrade, replace the
+            container:
+          </Paragraph>
+          <CodeBlock ariaLabel="Upgrade commands" code={upgradeCommands} />
+          <Paragraph style={{ margin: 0 }}>
+            Running projects stop during the upgrade and can be started again
+            right away.
+          </Paragraph>
+        </ProductDetailCard>
+        <ProductDetailCard icon="star" title="Remove it completely">
+          <Paragraph style={{ margin: 0 }}>
+            Star writes no files outside Docker. This deletes CoCalc Star and
+            all of its data:
+          </Paragraph>
+          <CodeBlock ariaLabel="Remove commands" code={removeCommands} />
           <ProductNotesList
             items={[
-              "Use Star for one public VM, one local compute host, and a small shared site.",
-              "Star is not a high-availability or scale-out private-cloud deployment.",
+              "On Linux hosts with AppArmor, a small kernel profile for Star's bundled container runtime stays loaded until the host restarts; the setup guide shows how to unload it sooner.",
+              "Star is one machine: it is not a high-availability or scale-out deployment.",
               "Use Launchpad or Rocket when private deployment or institutional rollout is the real decision.",
             ]}
           />
         </ProductDetailCard>
       </PublicGrid>
+      <Flex gap={12} wrap>
+        <Button href="https://hub.docker.com/r/sagemathinc/star">
+          Docker Hub
+        </Button>
+        <Button href={appPath("docs/self-hosting/cocalc-star")}>
+          Read Star setup guide
+        </Button>
+      </Flex>
     </Flex>
   );
 }
@@ -1056,7 +1100,7 @@ function CocalcLaunchpadPage() {
             items={[
               "Launchpad is customer-operated and sized for a pilot, lab, workshop, department, or platform team.",
               "The customer or administrator owns infrastructure, recovery, and ongoing operations.",
-              "Use Star if one public Ubuntu VM is enough.",
+              "Use Star if one machine running Docker is enough.",
               "Use Rocket when governance, support, and broader private-cloud planning are the main decision.",
             ]}
           />

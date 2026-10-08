@@ -435,6 +435,14 @@ export class DStream<T = any> extends EventEmitter {
     await this.stream.resumeRecovery(opts);
   };
 
+  /** Cheap fetch of missed updates, without reconnecting. */
+  catchUp = async (opts: { timeout?: number } = {}): Promise<void> => {
+    if (this.isClosed()) {
+      return;
+    }
+    await this.stream.catchUp(opts);
+  };
+
   recoverNow = async (
     opts: {
       epoch?: number;

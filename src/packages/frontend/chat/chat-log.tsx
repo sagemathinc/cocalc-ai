@@ -30,6 +30,10 @@ import { Button, Divider } from "antd";
 import { isContextClearedMarker } from "@cocalc/chat";
 import type { AcpAttentionRecord } from "@cocalc/conat/ai/acp/types";
 import { VirtuosoHandle } from "react-virtuoso";
+import {
+  virtuosoItemContent,
+  virtuosoItemKey,
+} from "@cocalc/frontend/components/virtuoso-item";
 import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { DivTempHeight } from "@cocalc/frontend/jupyter/div-temp-height";
@@ -2081,12 +2085,15 @@ export function MessageList({
       ),
     },
   ];
-  const renderVirtuosoItem = useCallback(
-    (_index: number, row: ChatVirtualRow) => row.render(),
+  const renderVirtuosoItem = useMemo(
+    () =>
+      virtuosoItemContent((_index: number, row: ChatVirtualRow) =>
+        row.render(),
+      ),
     [],
   );
-  const computeVirtuosoItemKey = useCallback(
-    (_index: number, row: ChatVirtualRow) => row.key,
+  const computeVirtuosoItemKey = useMemo(
+    () => virtuosoItemKey((_index: number, row: ChatVirtualRow) => row.key),
     [],
   );
   const handleVirtuosoRangeChanged = useCallback(

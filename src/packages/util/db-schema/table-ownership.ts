@@ -426,7 +426,11 @@ export const TABLE_OWNERSHIP = {
   }),
 
   ...entries(
-    ["agent_cocalc_connector_configs", "agent_cocalc_connector_turns"],
+    [
+      "agent_cocalc_connector_configs",
+      "agent_cocalc_connector_turns",
+      "agent_connector_grants",
+    ],
     {
       ownership: "account-home",
       authority: "account_id",

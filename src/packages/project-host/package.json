@@ -54,7 +54,7 @@
     "@cocalc/sync": "workspace:*",
     "@cocalc/util": "workspace:*",
     "@isaacs/ttlcache": "^1.4.1",
-    "compression": "^1.8.1",
+    "compression": "^1.8.2",
     "express": "^5.2.1",
     "formidable": "^3.5.4",
     "micro-key-producer": "^0.8.2"

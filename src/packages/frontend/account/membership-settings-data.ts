@@ -23,6 +23,7 @@ export interface MembershipTier extends MembershipTierWithPresentation {
   id: string;
   label?: string;
   store_visible?: boolean;
+  instructor_purchase_visible?: boolean;
   site_license_pool_description?: string;
   priority?: number;
   price_monthly?: number;
