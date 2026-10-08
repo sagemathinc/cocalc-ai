@@ -6,12 +6,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   statfsSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -49,7 +49,15 @@ export function defaultLocalBrowserSystem(): LocalBrowserSystem {
     platform: process.platform,
     env: process.env,
     home: homedir(),
-    exists: existsSync,
+    // A browser is an executable file: on PATH, a directory with a browser's
+    // name (such as CoCalc's own bin2/cocalc-chromium) must not match.
+    exists: (path) => {
+      try {
+        return statSync(path).isFile();
+      } catch {
+        return false;
+      }
+    },
     statfsType: (path) => {
       try {
         return statfsSync(path).type;

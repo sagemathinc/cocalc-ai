@@ -131,8 +131,8 @@ install_chromium() {
     bash "$CHROMIUM_INSTALLER" "$arch" "$stage/bin"
     cocalc_tools_save_cache "$cache_dir" "$stage"
   fi
-  rm -rf "$work_dir/bin/chromium"
-  mv "$stage/bin/chromium" "$work_dir/bin/chromium"
+  rm -rf "$work_dir/bin/cocalc-chromium"
+  mv "$stage/bin/cocalc-chromium" "$work_dir/bin/cocalc-chromium"
   rm -rf "$stage"
 }
 

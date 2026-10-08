@@ -43,10 +43,17 @@ export function AppArtifact({
           `The app "${app.id}" is not set up in this project (it may have been removed).`,
         );
       }
-      const status = await api.apps.ensureRunning(app.id, {
-        timeout: 60_000,
-        interval: 500,
-      });
+      let status;
+      try {
+        status = await api.apps.ensureRunning(app.id, {
+          timeout: 60_000,
+          interval: 500,
+        });
+      } catch (err) {
+        // A bare "timeout" says nothing: show why the app is not running.
+        const detail = await appFailureDetail(api, app.id);
+        throw Error(detail ? `${err}\n\n${detail}` : `${err}`);
+      }
       const url = await getProjectAppOpenUrl({
         getSpec: async () => spec,
         project_id: projectId,
@@ -74,9 +81,14 @@ export function AppArtifact({
           type="warning"
           showIcon
           title={`Could not open ${title}`}
-          description={error}
+          description={<div style={{ whiteSpace: "pre-wrap" }}>{error}</div>}
           action={
-            <Button onClick={() => setAttempt((n) => n + 1)}>Retry</Button>
+            <Button
+              style={{ marginLeft: 16 }}
+              onClick={() => setAttempt((n) => n + 1)}
+            >
+              Retry
+            </Button>
           }
         />
       </Flex>
@@ -98,4 +110,15 @@ export function AppArtifact({
       style={{ border: 0, width: "100%", height: "100%", display: "block" }}
     />
   );
+}
+
+// The end of what a failed app wrote to stderr, e.g. why its browser exited.
+async function appFailureDetail(api, id: string): Promise<string> {
+  try {
+    const status = await api.apps.statusApp(id);
+    const stderr = `${status?.stderr ?? ""}`.trim();
+    return stderr.length > 600 ? `...${stderr.slice(-600)}` : stderr;
+  } catch {
+    return "";
+  }
 }

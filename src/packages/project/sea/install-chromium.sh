@@ -2,9 +2,9 @@
 set -Eeuo pipefail
 
 # Install a pinned headless Chromium for one architecture into
-# <dest>/chromium, for the shared browser (`cocalc project browser start`).
+# <dest>/cocalc-chromium, for the shared browser (`cocalc project browser start`).
 # This is part of the project tools bundle, so every project has a working
-# browser at /opt/cocalc/bin2/chromium/chromium with nothing to install.
+# browser at /opt/cocalc/bin2/cocalc-chromium/chromium with nothing to install.
 #
 # The browser is Playwright's chromium-headless-shell build (no GTK, Pango or
 # Cairo). The shared libraries it needs beyond glibc are taken from Ubuntu
@@ -54,7 +54,8 @@ BASE_LIBS=" libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1 \
 libresolv.so.2 libgcc_s.so.1 libz.so.1 ld-linux-x86-64.so.2 \
 ld-linux-aarch64.so.1 "
 
-INSTALL="$DEST/chromium"
+# Not "chromium": bin2 is on PATH, and a directory must not shadow a browser.
+INSTALL="$DEST/cocalc-chromium"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 rm -rf "$INSTALL"

@@ -7,6 +7,8 @@ import {
   BUNDLED_CHROMIUM,
   findSharedBrowserChrome,
   sharedBrowserChromeArgs,
+  sharedBrowserProfileDir,
+  sharedBrowserTarget,
 } from "./service";
 
 test("while the human drives, page actions are held but housekeeping passes", () => {
@@ -85,10 +87,10 @@ test("the bundled chromium is preferred unless a browser is chosen", () => {
   assert.equal(
     findSharedBrowserChrome(
       undefined,
-      sys(["/x/bin/chromium/chromium", BUNDLED_CHROMIUM]),
+      sys(["/x/bin/cocalc-chromium/chromium", BUNDLED_CHROMIUM]),
       "/x/bin/cocalc-cli.js",
     ),
-    "/x/bin/chromium/chromium",
+    "/x/bin/cocalc-chromium/chromium",
   );
   assert.equal(
     findSharedBrowserChrome(undefined, sys([system]), script),
@@ -116,4 +118,33 @@ test("the select hook only acts while the human drives", () => {
   assert.match(selectScript(true), /__cocalcHumanDriving = true/);
   assert.match(selectScript(false), /__cocalcHumanDriving = false/);
   assert.match(pickSelectExpression(2), /selectedIndex = 2/);
+});
+
+test("a .browser file names its own browser; no file means the project's", () => {
+  const where = { cwd: "/home/user/work", home: "/home/user" };
+  assert.deepEqual(sharedBrowserTarget(undefined, where), {
+    appId: "cocalc-browser",
+    file: null,
+  });
+  const a = sharedBrowserTarget("a.browser", where);
+  assert.equal(a.file, "/home/user/work/a.browser");
+  assert.match(a.appId, /^cocalc-browser-[0-9a-f]{16}$/);
+  // The same file, however it is written, is the same browser.
+  for (const same of [
+    "/home/user/work/a.browser",
+    "~/work/a.browser",
+    "./x/../a.browser",
+  ])
+    assert.equal(sharedBrowserTarget(same, where).appId, a.appId);
+  assert.notEqual(sharedBrowserTarget("b.browser", where).appId, a.appId);
+  // App ids pass through (e.g. from `status`).
+  assert.deepEqual(sharedBrowserTarget(a.appId, where), {
+    appId: a.appId,
+    file: null,
+  });
+  assert.throws(() => sharedBrowserTarget("a.txt", where), /\.browser file/);
+  assert.equal(
+    sharedBrowserProfileDir(a.appId, "/home/user"),
+    `/home/user/.local/share/cocalc/browser-profiles/${a.appId}`,
+  );
 });

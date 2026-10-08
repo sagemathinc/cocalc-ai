@@ -31,7 +31,11 @@ import {
   startReverseTunnel,
   type ReverseTunnel,
 } from "../../core/reverse-tunnel";
-import { runSharedBrowserService } from "../../core/shared-browser/service";
+import {
+  runSharedBrowserService,
+  sharedBrowserProfileDir,
+  sharedBrowserTarget,
+} from "../../core/shared-browser/service";
 import { registerSharedBrowserCommands } from "./shared-browser";
 import type { ProjectCommandDeps } from "../project";
 import {
@@ -418,6 +422,10 @@ export function registerProjectBrowserCommands(
     .option("--cdp-port <port>", "loopback port for agents' CDP", "9222")
     .option("--chrome <path>", "browser executable")
     .option(
+      "--browser <file>",
+      "serve the browser of this .browser file, with a persistent profile",
+    )
+    .option(
       "--profile-storage <where>",
       "disk (default: a temporary directory under /tmp) or memory (/dev/shm, often too small in containers); either way deleted on exit",
       "disk",
@@ -427,13 +435,18 @@ export function registerProjectBrowserCommands(
         port?: string;
         cdpPort: string;
         chrome?: string;
+        browser?: string;
         profileStorage?: string;
       }) => {
+        const target = sharedBrowserTarget(opts.browser);
         await runSharedBrowserService({
           port: parsePort(opts.port ?? process.env.PORT ?? "0", true),
           cdpPort: parsePort(opts.cdpPort),
           chrome: opts.chrome,
           profileStorage: parseStorage(opts.profileStorage),
+          profileDir: target.file
+            ? sharedBrowserProfileDir(target.appId)
+            : undefined,
         });
       },
     );

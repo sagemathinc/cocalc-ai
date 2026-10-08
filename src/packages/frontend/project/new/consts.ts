@@ -8,6 +8,7 @@ export const NEW_FILETYPE_ICONS = {
   sage: "sagemath-bold",
   tex: "tex-file",
   x11: "window-restore",
+  browser: "global",
   md: "markdown",
   board: "layout",
   term: "terminal",

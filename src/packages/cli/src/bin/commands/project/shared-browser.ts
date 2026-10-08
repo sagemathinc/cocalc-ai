@@ -2,52 +2,28 @@
  * `cocalc project browser start|status|stop|ask-human`: the shared browser
  * an agent drives over CDP while a human watches and can take over in a
  * chat card.  The browser itself runs as the project app `cocalc-browser`
- * (`cocalc project browser serve`).
+ * (`cocalc project browser serve`); each `.browser` file has its own
+ * (`--browser <file>`).
  */
 import { Command } from "commander";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-
-import { SharedBrowserPage } from "../../core/shared-browser/agent-page";
+import { dirname, join, resolve } from "node:path";
 
 import {
+  sharedBrowserAppSpec,
+  sharedBrowserTitle,
+} from "@cocalc/util/shared-browser";
+import { SharedBrowserPage } from "../../core/shared-browser/agent-page";
+import {
   findSharedBrowserChrome,
-  SHARED_BROWSER_APP_ID,
+  sharedBrowserTarget,
 } from "../../core/shared-browser/service";
 import type { SharedBrowserState } from "../../core/shared-browser/server";
 import type { ProjectCommandDeps } from "../project";
 
-const CARD_TITLE = "Shared browser";
 const CARD_TEXT =
   "A browser in this project that the agent drives and you can watch. Take over at any time; the agent waits until you hand back.";
-
-export function sharedBrowserAppSpec({
-  exec,
-  args,
-}: {
-  exec: string;
-  args: string[];
-}) {
-  return {
-    version: 1,
-    id: SHARED_BROWSER_APP_ID,
-    title: CARD_TITLE,
-    kind: "service",
-    command: { exec, args },
-    lifecycle: { mode: "managed" },
-    network: { listen_host: "127.0.0.1", protocol: "http" },
-    proxy: {
-      base_path: `/apps/${SHARED_BROWSER_APP_ID}`,
-      strip_prefix: true,
-      websocket: true,
-      open_mode: "proxy",
-      health_path: "/healthz",
-      readiness_timeout_s: 30,
-    },
-    wake: { enabled: true, keep_warm_s: 30 * 60, startup_timeout_s: 45 },
-  };
-}
 
 // Inside the target project, run the service with exactly this CLI; from
 // elsewhere, with the project's own `cocalc`.
@@ -57,11 +33,8 @@ export function serveCommand(targetProjectId: string): {
 } {
   const here = process.env.COCALC_PROJECT_ID === targetProjectId;
   return here && process.argv[1]
-    ? {
-        exec: process.execPath,
-        args: [process.argv[1], "project", "browser", "serve"],
-      }
-    : { exec: "cocalc", args: ["project", "browser", "serve"] };
+    ? { exec: process.execPath, args: [process.argv[1]] }
+    : { exec: "cocalc", args: [] };
 }
 
 async function serviceState(port?: number): Promise<SharedBrowserState | null> {
@@ -85,6 +58,16 @@ async function post(port: number, path: string, body: object) {
   return (await res.json()) as SharedBrowserState;
 }
 
+const BROWSER_FLAG = "-b, --browser <file>";
+const BROWSER_HELP =
+  "a .browser file's browser instead of the project's shared browser";
+
+// Opening the file shows its browser, so `start --browser` creates it.
+async function touchBrowserFile(file: string) {
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(file, "", { flag: "a" });
+}
+
 type ChatTarget = { path?: string; threadId?: string; messageDate?: string };
 
 function chatTarget(opts: ChatTarget): Required<ChatTarget> | null {
@@ -103,10 +86,11 @@ export function registerSharedBrowserCommands(
   const { withContext, resolveProjectProjectApi, projectChatArtifactData } =
     deps;
 
-  const running = async (ctx: any, project?: string) => {
+  const running = async (ctx: any, project?: string, browser?: string) => {
     const { project: p, api } = await resolveProjectProjectApi(ctx, project);
-    const status = await api.apps.statusApp(SHARED_BROWSER_APP_ID);
-    return { project: p, api, status };
+    const target = sharedBrowserTarget(browser);
+    const status = await api.apps.statusApp(target.appId);
+    return { project: p, api, status, target };
   };
 
   browser
@@ -115,6 +99,10 @@ export function registerSharedBrowserCommands(
       "start (or reuse) the shared browser and show it in a chat card; prints the CDP endpoint agents use (Playwright connectOverCDP, Puppeteer connect, chrome-devtools-mcp --browser-url)",
     )
     .option("-w, --project <project>", "project id or name")
+    .option(
+      "-b, --browser <file>",
+      "the browser of this .browser file (created if missing; keeps its logins) instead of the project's shared browser",
+    )
     .option(
       "--path <path>",
       "chat for the card (default: $COCALC_CODEX_CHAT_PATH)",
@@ -134,13 +122,19 @@ export function registerSharedBrowserCommands(
           ctx,
           opts.project,
         );
+        const target = sharedBrowserTarget(opts.browser);
+        const here = process.env.COCALC_PROJECT_ID === project.project_id;
         // Fail early with an install hint instead of a startup timeout.
-        if (process.env.COCALC_PROJECT_ID === project.project_id)
-          findSharedBrowserChrome(undefined);
+        if (here) findSharedBrowserChrome(undefined);
+        if (here && target.file) await touchBrowserFile(target.file);
         await api.apps.upsertAppSpec(
-          sharedBrowserAppSpec(serveCommand(project.project_id)),
+          sharedBrowserAppSpec({
+            ...serveCommand(project.project_id),
+            appId: target.appId,
+            file: target.file,
+          }),
         );
-        const status = await api.apps.ensureRunning(SHARED_BROWSER_APP_ID, {
+        const status = await api.apps.ensureRunning(target.appId, {
           timeout: 60_000,
           interval: 500,
         });
@@ -148,32 +142,32 @@ export function registerSharedBrowserCommands(
 
         let card: { artifact_id: string; reused: boolean } | null = null;
         let cardNote: string | undefined;
-        const target = chatTarget(opts);
-        if (opts.card !== false && target) {
+        const chat = chatTarget(opts);
+        if (opts.card !== false && chat) {
           const common = {
             ctx,
             experimental: true,
             projectIdentifier: project.project_id,
-            path: target.path,
-            threadId: target.threadId,
+            path: chat.path,
+            threadId: chat.threadId,
           };
           const existing = ((await projectChatArtifactData({
             ...common,
             action: "list",
           })) ?? []) as any[];
           const found = existing.find(
-            (a) => a.kind === "app" && a.app?.id === SHARED_BROWSER_APP_ID,
+            (a) => a.kind === "app" && a.app?.id === target.appId,
           );
           if (found) card = { artifact_id: found.artifact_id, reused: true };
           else {
             const published = await projectChatArtifactData({
               ...common,
               action: "publish",
-              messageDate: target.messageDate,
+              messageDate: chat.messageDate,
               payload: {
-                title: CARD_TITLE,
+                title: sharedBrowserTitle(target.file),
                 markdown: CARD_TEXT,
-                app: { id: SHARED_BROWSER_APP_ID },
+                app: { id: target.appId },
               },
             });
             card = { artifact_id: published.artifact_id, reused: false };
@@ -184,7 +178,8 @@ export function registerSharedBrowserCommands(
         }
         return {
           project_id: project.project_id,
-          app_id: SHARED_BROWSER_APP_ID,
+          app_id: target.appId,
+          ...(target.file ? { browser: target.file } : {}),
           cdp: state?.cdp ?? null,
           driver: state?.driver ?? null,
           card,
@@ -199,13 +194,19 @@ export function registerSharedBrowserCommands(
     .command("status")
     .description("show the shared browser: driver, tabs, CDP endpoint")
     .option("-w, --project <project>", "project id or name")
+    .option(BROWSER_FLAG, BROWSER_HELP)
     .action(async (opts: any, command: Command) => {
       await withContext(command, "project browser status", async (ctx: any) => {
-        const { project, status } = await running(ctx, opts.project);
+        const { project, status, target } = await running(
+          ctx,
+          opts.project,
+          opts.browser,
+        );
         const state =
           status.state === "running" ? await serviceState(status.port) : null;
         return {
           project_id: project.project_id,
+          app_id: target.appId,
           state: status.state,
           ...(state
             ? {
@@ -224,15 +225,18 @@ export function registerSharedBrowserCommands(
 
   browser
     .command("stop")
-    .description("stop the shared browser (the profile is deleted)")
+    .description(
+      "stop the shared browser (the project's browser deletes its profile; a .browser file's browser keeps it)",
+    )
     .option("-w, --project <project>", "project id or name")
+    .option(BROWSER_FLAG, BROWSER_HELP)
     .action(async (opts: any, command: Command) => {
       await withContext(command, "project browser stop", async (ctx: any) => {
         const { project, api } = await resolveProjectProjectApi(
           ctx,
           opts.project,
         );
-        await api.apps.stopApp(SHARED_BROWSER_APP_ID);
+        await api.apps.stopApp(sharedBrowserTarget(opts.browser).appId);
         return { project_id: project.project_id, stopped: true };
       });
     });
@@ -241,9 +245,10 @@ export function registerSharedBrowserCommands(
   const onPage = async <T>(
     ctx: any,
     project: string | undefined,
+    browser: string | undefined,
     fn: (page: SharedBrowserPage) => Promise<T>,
   ): Promise<T> => {
-    const { status } = await running(ctx, project);
+    const { status } = await running(ctx, project, browser);
     const state =
       status.state === "running" ? await serviceState(status.port) : null;
     if (!state)
@@ -265,14 +270,15 @@ export function registerSharedBrowserCommands(
     browser
       .command(name)
       .description(description)
-      .option("-w, --project <project>", "project id or name");
+      .option("-w, --project <project>", "project id or name")
+      .option(BROWSER_FLAG, BROWSER_HELP);
 
   pageCommand(
     "goto <url>",
     "open a URL (or host, or search words) in the shared browser's current tab and wait for it to load",
   ).action(async (url: string, opts: any, command: Command) => {
     await withContext(command, "project browser goto", (ctx: any) =>
-      onPage(ctx, opts.project, (page) => page.goto(url)),
+      onPage(ctx, opts.project, opts.browser, (page) => page.goto(url)),
     );
   });
 
@@ -284,7 +290,9 @@ export function registerSharedBrowserCommands(
     )
     .action(async (opts: any, command: Command) => {
       await withContext(command, "project browser text", (ctx: any) =>
-        onPage(ctx, opts.project, (page) => page.text(Number(opts.max))),
+        onPage(ctx, opts.project, opts.browser, (page) =>
+          page.text(Number(opts.max)),
+        ),
       );
     });
 
@@ -305,9 +313,14 @@ export function registerSharedBrowserCommands(
           }
           if (!code?.trim())
             throw Error("an expression or --stdin is required");
-          return await onPage(ctx, opts.project, async (page) => ({
-            value: (await page.evaluate(code!)) ?? null,
-          }));
+          return await onPage(
+            ctx,
+            opts.project,
+            opts.browser,
+            async (page) => ({
+              value: (await page.evaluate(code!)) ?? null,
+            }),
+          );
         });
       },
     );
@@ -317,7 +330,7 @@ export function registerSharedBrowserCommands(
     "click the element matching a CSS selector with the mouse",
   ).action(async (selector: string, opts: any, command: Command) => {
     await withContext(command, "project browser click", (ctx: any) =>
-      onPage(ctx, opts.project, (page) => page.click(selector)),
+      onPage(ctx, opts.project, opts.browser, (page) => page.click(selector)),
     );
   });
 
@@ -328,7 +341,7 @@ export function registerSharedBrowserCommands(
     .option("--selector <css>", "focus this element first")
     .action(async (text: string, opts: any, command: Command) => {
       await withContext(command, "project browser type", (ctx: any) =>
-        onPage(ctx, opts.project, async (page) => {
+        onPage(ctx, opts.project, opts.browser, async (page) => {
           await page.type(text, opts.selector);
           return { typed: text.length };
         }),
@@ -340,7 +353,7 @@ export function registerSharedBrowserCommands(
     "press one key: a character, Enter, Tab, Escape, Backspace, Delete, Space, Arrow keys, Home, End, PageUp or PageDown",
   ).action(async (key: string, opts: any, command: Command) => {
     await withContext(command, "project browser press", (ctx: any) =>
-      onPage(ctx, opts.project, (page) => page.press(key)),
+      onPage(ctx, opts.project, opts.browser, (page) => page.press(key)),
     );
   });
 
@@ -355,7 +368,7 @@ export function registerSharedBrowserCommands(
           const out = resolve(
             opts.out ?? join(tmpdir(), `cocalc-browser-${Date.now()}.png`),
           );
-          return await onPage(ctx, opts.project, async (page) => {
+          return await onPage(ctx, opts.project, opts.browser, async (page) => {
             await writeFile(out, await page.screenshot(!!opts.fullPage));
             return { path: out, ...(await page.location()) };
           });
@@ -369,6 +382,7 @@ export function registerSharedBrowserCommands(
       "ask the human to take over the shared browser (e.g. to log in), shown in the card; with --wait, return once they hand back",
     )
     .option("-w, --project <project>", "project id or name")
+    .option(BROWSER_FLAG, BROWSER_HELP)
     .requiredOption("--message <text>", "what you need the human to do")
     .option("--wait", "wait until the human has taken over and handed back")
     .option("--timeout <minutes>", "give up waiting after this long", "30")
@@ -377,7 +391,7 @@ export function registerSharedBrowserCommands(
         command,
         "project browser ask-human",
         async (ctx: any) => {
-          const { status } = await running(ctx, opts.project);
+          const { status } = await running(ctx, opts.project, opts.browser);
           if (status.state !== "running" || !status.port)
             throw Error(
               "the shared browser is not running; run `cocalc project browser start`",
