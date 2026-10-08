@@ -4388,6 +4388,38 @@ export async function copyEmailProjectInviteLink({
   });
 }
 
+/**
+ * The /invites/<token> HTTP endpoints call the email-invite wrappers below
+ * directly rather than through the hub API's edge routing, so when the
+ * invite lives on another bay, forward the call there from here. A hub API
+ * call has already been routed, so it finds the invite owned here.
+ */
+async function forwardEmailInviteIfRemote({
+  name,
+  entry,
+  account_id,
+  opts,
+}: {
+  name: string;
+  entry: Awaited<ReturnType<typeof resolveProjectBayForEmailInvite>>;
+  account_id?: string;
+  opts: Record<string, unknown>;
+}): Promise<{ result: any } | undefined> {
+  const bay_id = entry?.bay_id;
+  if (!bay_id || bay_id === getConfiguredBayId()) return;
+  if (!account_id) {
+    // Forwarded hub API calls must carry an account.
+    throw new Error("Sign in to open this project invite.");
+  }
+  const { forwardHubApiCall } = await import("./edge-routing");
+  const args = Object.fromEntries(
+    Object.entries(opts).filter(([, value]) => value != null),
+  );
+  return {
+    result: await forwardHubApiCall(bay_id, { name, args: [args], account_id }),
+  };
+}
+
 function assertEmailInviteAcceptSignedIn(
   account_id: string | undefined,
 ): asserts account_id is string {
@@ -4416,6 +4448,17 @@ export async function redeemEmailProjectInvite({
   if (!invite_id) {
     requireResolvedEmailInvite(entry);
   }
+  const forwarded = await forwardEmailInviteIfRemote({
+    name: "projects.redeemEmailProjectInvite",
+    entry,
+    account_id,
+    opts: {
+      invite_id: entry?.invite_id ?? invite_id,
+      token,
+      project_id: project_id ?? entry?.project_id,
+    },
+  });
+  if (forwarded) return forwarded.result;
   return await redeemEmailProjectInviteLocal({
     account_id,
     invite_id: entry?.invite_id ?? invite_id!,
@@ -4443,6 +4486,17 @@ export async function previewEmailProjectInvite({
   if (!invite_id) {
     requireResolvedEmailInvite(entry);
   }
+  const forwarded = await forwardEmailInviteIfRemote({
+    name: "projects.previewEmailProjectInvite",
+    entry,
+    account_id,
+    opts: {
+      invite_id: entry?.invite_id ?? invite_id,
+      token,
+      project_id: project_id ?? entry?.project_id,
+    },
+  });
+  if (forwarded) return forwarded.result;
   return await previewEmailProjectInviteLocal({
     account_id,
     invite_id: entry?.invite_id ?? invite_id!,
@@ -4475,6 +4529,18 @@ export async function respondEmailProjectInvite({
   if (!invite_id) {
     requireResolvedEmailInvite(entry);
   }
+  const forwarded = await forwardEmailInviteIfRemote({
+    name: "projects.respondEmailProjectInvite",
+    entry,
+    account_id,
+    opts: {
+      action,
+      invite_id: entry?.invite_id ?? invite_id,
+      token,
+      project_id: project_id ?? entry?.project_id,
+    },
+  });
+  if (forwarded) return forwarded.result;
   return await respondEmailProjectInviteLocal({
     account_id,
     action,
