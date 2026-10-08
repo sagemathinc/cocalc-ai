@@ -945,11 +945,14 @@ async function scheduleSpotRetry(opts: {
   state?: HostSpotRecoveryState;
   reason: string;
   now?: Date;
+  // Backoff step when the Spot attempt counter does not advance (retries of
+  // fallback options); defaults to the attempt counter.
+  backoff_step?: number;
 }) {
   const now = opts.now ?? new Date();
   const attempt = Math.max(1, Number(opts.state?.attempt ?? 0));
   const delayMs = computeSpotRetryDelayMs({
-    attempt,
+    attempt: Math.max(1, Number(opts.backoff_step ?? attempt)),
     policy: opts.policy,
   });
   const nextRetryAt = new Date(now.getTime() + delayMs);
@@ -1741,6 +1744,9 @@ async function handleStart(row: any) {
       desiredPricing === "spot" &&
       currentEffectivePricing === "on_demand" &&
       !spotStandardHoldIsActive(currentRecoveryState) &&
+      // A host still recovering from an outage is not a stopped fallback host
+      // being started again: keep recovering instead of "returning" to Spot.
+      currentRecoveryState?.phase !== "retrying_spot" &&
       (row.status === "off" ||
         row.status === "stopped" ||
         runtimeProviderStatusIsStopped(runtime));
@@ -2010,7 +2016,10 @@ async function handleStart(row: any) {
     }): Promise<"started" | "scheduled" | "handled"> => {
       const now = () => new Date().toISOString();
       const desiredMachineType = `${machine.machine_type ?? ""}`.trim();
-      const scheduleRetry = async (retryReason: string) => {
+      const scheduleRetry = async (
+        retryReason: string,
+        backoffStep?: number,
+      ) => {
         try {
           await scheduleSpotRetry({
             row,
@@ -2018,6 +2027,7 @@ async function handleStart(row: any) {
             policy: recoveryPolicy!,
             state: nextRecoveryState,
             reason: retryReason,
+            backoff_step: backoffStep,
           });
         } catch (retryErr) {
           logger.warn("spot recovery: failed to schedule retry", {
@@ -2203,11 +2213,15 @@ async function handleStart(row: any) {
             error: `${rungErr}`,
           });
           if (kind === "transient") {
+            // Retry this option with growing backoff; the host is still down.
+            const retries = (nextRecoveryState?.transient_retries ?? 0) + 1;
             nextRecoveryState = {
               ...(nextRecoveryState ?? { phase: "retrying_spot" }),
+              phase: "retrying_spot",
               fallback_rungs_tried: [...tried],
+              transient_retries: retries,
             };
-            return await scheduleRetry(`${key}:${rungErr}`);
+            return await scheduleRetry(`${key}:${rungErr}`, retries);
           }
         }
       }
@@ -2535,12 +2549,25 @@ async function handleStart(row: any) {
             provider: providerId,
             error: `${err}`,
           });
+          // Only Spot starts advance the attempt counter; retries of other
+          // start modes need their own backoff, and must stay an outage
+          // recovery rather than become a "return to Spot" next time.
+          let backoffStep: number | undefined;
+          if (startMode !== "spot") {
+            backoffStep = (nextRecoveryState?.transient_retries ?? 0) + 1;
+            nextRecoveryState = {
+              ...(nextRecoveryState ?? { phase: "retrying_spot" }),
+              phase: "retrying_spot",
+              transient_retries: backoffStep,
+            };
+          }
           await scheduleSpotRetry({
             row,
             provider: providerId,
             policy: recoveryPolicy,
             state: nextRecoveryState,
             reason: `${err}`,
+            backoff_step: backoffStep,
           });
           await bumpReconcile(providerId, DEFAULT_INTERVALS.running_ms);
           return;

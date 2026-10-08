@@ -3304,6 +3304,60 @@ describe("spot recovery fallback ladder", () => {
     );
   });
 
+  it("backs off transient fallback failures without treating them as a return to Spot", async () => {
+    // Staging T5: a transient error on the standard rung retried every ~20s
+    // as a "return to Spot" with a fixed 15s backoff.
+    const hostId = "1a7b2c3d-0000-4000-8000-000000000006";
+    // As injected on staging: Spot has no capacity, standard is flaky.
+    let pricing = "spot";
+    const startHost = jest.fn(async () => {
+      throw new Error(
+        pricing === "spot" ? "ZONE_RESOURCE_POOL_EXHAUSTED" : "socket hang up",
+      );
+    });
+    getProviderContextMock.mockResolvedValue({
+      entry: {
+        provider: {
+          startHost,
+          setMachineType: jest.fn(async () => undefined),
+          setPricingModel: jest.fn(async (_runtime: any, next: string) => {
+            pricing = next;
+          }),
+          getStatus: jest.fn(async () => "off"),
+        },
+      },
+      creds: {},
+    });
+    loadGcpZoneMachineTypesMock.mockResolvedValue([]);
+    await spotHost(hostId);
+    const delays: number[] = [];
+    for (let pass = 0; pass < 2; pass++) {
+      const before = Date.now();
+      await getPool().query(
+        "UPDATE project_hosts SET status='off' WHERE id=$1",
+        [hostId],
+      );
+      await start(hostId);
+      const { rows } = await getPool().query(
+        "SELECT not_before FROM cloud_vm_work WHERE vm_id=$1 AND action='start' AND state='queued'",
+        [hostId],
+      );
+      expect(rows).toHaveLength(1);
+      delays.push(new Date(rows[0].not_before).getTime() - before);
+      await getPool().query("DELETE FROM cloud_vm_work WHERE vm_id=$1", [
+        hostId,
+      ]);
+    }
+    expect(delays[0]).toBeGreaterThanOrEqual(14_000);
+    expect(delays[1]).toBeGreaterThanOrEqual(29_000);
+    const actions = (await events(hostId)).map((e) => e.action);
+    expect(actions).not.toContain("spot_return_started");
+    expect((await hostMetadata(hostId)).spot_recovery_state).toMatchObject({
+      phase: "retrying_spot",
+      transient_retries: 2,
+    });
+  });
+
   it("does not offer other families to account-funded hosts", async () => {
     const hostId = "1a7b2c3d-0000-4000-8000-000000000004";
     const startHost = jest.fn(async () => {

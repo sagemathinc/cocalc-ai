@@ -178,6 +178,8 @@ export interface HostSpotRecoveryState {
   // that already failed during this outage, and full passes over all of them.
   fallback_rungs_tried?: string[];
   fallback_ladder_cycle?: number;
+  // Consecutive transient failures while retrying a fallback option.
+  transient_retries?: number;
 }
 
 export interface HostBillingEnforcement {
