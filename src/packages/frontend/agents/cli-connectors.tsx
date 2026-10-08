@@ -46,7 +46,10 @@ import {
   agentGrant,
   refreshCliConnectors,
   useCliConnectors,
+  useProjectHasNetwork,
 } from "./cli-connectors-store";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { joinUrlPath } from "@cocalc/util/url-path";
 
 export * from "./cli-connectors-store";
 
@@ -349,6 +352,9 @@ export function CliConnectorAgentModal({
     (connection) => connection.connector === connector,
   );
   const available = data?.setup[connector].available === true;
+  const hasNetwork = useProjectHasNetwork(agent.endpoint.project_id, {
+    enabled: open,
+  });
   const [enabled, setEnabled] = useState(false);
   const [connectionId, setConnectionId] = useState<string>();
   const [connecting, setConnecting] = useState(false);
@@ -432,10 +438,32 @@ export function CliConnectorAgentModal({
               act as you during this agent&apos;s turns. Anything else running
               in the project during a turn can use the same access.
             </Typography.Paragraph>
+            {hasNetwork === false && (
+              <Alert
+                type="warning"
+                showIcon
+                title="This agent's project has no internet access"
+                description={
+                  <>
+                    {label} cannot be reached from it, so this connector cannot
+                    work there. Free projects do not have network access;{" "}
+                    <a
+                      href={joinUrlPath(appBasePath, "settings", "membership")}
+                    >
+                      upgrade your membership
+                    </a>{" "}
+                    to give your projects internet access.
+                  </>
+                }
+              />
+            )}
             <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <Switch
                 checked={enabled}
                 aria-label={`Use ${label}`}
+                // Turning on is pointless without internet access; turning
+                // off always works.
+                disabled={hasNetwork === false && !enabled}
                 onChange={setEnabled}
               />
               Use {label}
@@ -528,7 +556,7 @@ export function CliConnectorSection({
   connector: CliConnector;
 }) {
   const { label } = CLI_CONNECTOR_INFO[connector];
-  const { data, error } = useCliConnectors();
+  const { data, error, enabled } = useCliConnectors();
   const { directory } = useNamedAgents();
   const [connecting, setConnecting] = useState(false);
   const [managing, setManaging] = useState<NamedAgent>();
@@ -640,6 +668,8 @@ export function CliConnectorSection({
     },
     [rows, label],
   );
+  // Nothing at all until the site sets this connector up.
+  if (!enabled.includes(connector)) return null;
   return (
     <Panel header={label}>
       <Typography.Paragraph type="secondary">

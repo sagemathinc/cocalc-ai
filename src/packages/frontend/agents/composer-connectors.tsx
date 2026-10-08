@@ -21,6 +21,7 @@ import {
   agentGrant,
   cliConnectorSummary,
   useCliConnectors,
+  useProjectHasNetwork,
 } from "./cli-connectors-store";
 
 // Loaded only when a GitHub or Cloudflare dialog is opened.
@@ -180,19 +181,30 @@ function NamedAgentConnectors({
   const [networksOpen, setNetworksOpen] = useState(false);
   const [detailsId, setDetailsId] = useState<string>();
   const [cliOpen, setCliOpen] = useState<CliConnector>();
-  const { data: cli, error: cliError } = useCliConnectors();
+  const {
+    data: cli,
+    error: cliError,
+    enabled: cliEnabled,
+  } = useCliConnectors();
+  const hasNetwork = useProjectHasNetwork(agent.endpoint.project_id, {
+    enabled: cliEnabled.length > 0,
+  });
   const cliItem = (connector: CliConnector, label: string, icon: IconName) => {
     const status = !supportsCocalcAccess
       ? "Codex and Claude only"
       : cliError
         ? "Unable to load"
-        : cli
-          ? cliConnectorSummary(cli, agent, connector)
-          : "";
+        : hasNetwork === false
+          ? "Needs internet access"
+          : cli
+            ? cliConnectorSummary(cli, agent, connector)
+            : "";
     return {
       key: `${connector}-connector`,
       label,
-      extra: status ? <Status text={status} warning={!!cliError} /> : undefined,
+      extra: status ? (
+        <Status text={status} warning={!!cliError || hasNetwork === false} />
+      ) : undefined,
       disabled: !supportsCocalcAccess,
       icon: (
         <span aria-hidden>
@@ -202,7 +214,7 @@ function NamedAgentConnectors({
       onClick: () => setCliOpen(connector),
     };
   };
-  const cliOn = (["github", "cloudflare"] as const).filter(
+  const cliOn = cliEnabled.filter(
     (connector) =>
       supportsCocalcAccess && agentGrant(cli, agent, connector)?.enabled,
   );
@@ -257,8 +269,13 @@ function NamedAgentConnectors({
             ),
             onClick: cocalc?.onOpen,
           },
-          cliItem("github", "GitHub", "github"),
-          cliItem("cloudflare", "Cloudflare", "cloud"),
+          // Only connectors this site has set up.
+          ...(cliEnabled.includes("github")
+            ? [cliItem("github", "GitHub", "github")]
+            : []),
+          ...(cliEnabled.includes("cloudflare")
+            ? [cliItem("cloudflare", "Cloudflare", "cloud")]
+            : []),
           {
             key: "agent-networks",
             label: "Agent Networks",

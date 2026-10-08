@@ -58,6 +58,8 @@ export function isCliConnectorCredentialKind(kind: unknown): boolean {
   );
 }
 
+export { enabledCliConnectors } from "./cli-connectors-enabled";
+
 export function isCliConnector(value: unknown): value is CliConnector {
   return (
     typeof value === "string" &&

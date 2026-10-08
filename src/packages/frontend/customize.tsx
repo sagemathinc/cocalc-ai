@@ -191,6 +191,8 @@ export interface CustomizeState {
   project_rootfs_default_image_gpu?: string;
   project_rootfs_prepull_images?: string;
   rootfs_scan_enabled?: boolean;
+  cli_connector_github_enabled?: boolean;
+  cli_connector_cloudflare_enabled?: boolean;
   compute_vm_enabled?: boolean;
   "project_hosts_google-cloud_enabled"?: boolean;
   project_hosts_gcp_surcharge_percent?: number;

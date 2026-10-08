@@ -3,6 +3,8 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  resetSiteCliConnectorsCache,
+  siteCliConnectors,
   STALE_CLI_TOKEN_MS,
   sweepStaleCliConnectorTokens,
   applyCliConnectorEnv,
@@ -218,5 +220,35 @@ describe("sweeping tokens of dead leases", () => {
         ownLeaseName: "x",
       }),
     ).resolves.toBe(0);
+  });
+});
+
+describe("site connectors", () => {
+  beforeEach(() => resetSiteCliConnectorsCache());
+
+  it("writes only the wrappers of connectors the site set up", async () => {
+    const only = await fs.mkdtemp(join(tmpdir(), "cli-only-cf-"));
+    try {
+      await writeCliConnectorTools(only, ["cloudflare"]);
+      expect((await fs.readdir(join(only, "cli", "bin"))).sort()).toEqual([
+        "cf",
+        "wrangler",
+      ]);
+    } finally {
+      await fs.rm(only, { recursive: true, force: true });
+    }
+  });
+
+  it("reads the site's connectors, and treats errors as none", async () => {
+    await expect(
+      siteCliConnectors(async () => ({ cliConnectors: ["github", "evil"] })),
+    ).resolves.toEqual(["github"]);
+    resetSiteCliConnectorsCache();
+    await expect(
+      siteCliConnectors(async () => {
+        throw Error("hub down");
+      }),
+    ).resolves.toEqual([]);
+    await expect(siteCliConnectors(undefined)).resolves.toEqual([]);
   });
 });

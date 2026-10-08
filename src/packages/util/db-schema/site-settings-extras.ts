@@ -413,6 +413,20 @@ export type SiteSettingsExtrasKeys =
 export type SettingsExtras = Record<SiteSettingsExtrasKeys, Config>;
 
 // not public, but admins can edit them
+// Agent connector settings (admin docs: Set up agent connectors).
+function connectorSetting(name: string, extra: Partial<Config> = {}): Config {
+  return {
+    name,
+    desc: "",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["AI"],
+    group: "AI & Agents",
+    subgroup: "Agent Connectors",
+    ...extra,
+  };
+}
+
 export const EXTRAS: SettingsExtras = {
   launch_emergency_heading: {
     name: "Launch Emergency Controls",
@@ -981,65 +995,27 @@ export const EXTRAS: SettingsExtras = {
     group: "Payments & Billing",
     subgroup: "Licensing",
   },
-  agent_connectors_heading: {
-    name: "Agent Connectors",
-    desc: "Services agents use as the user. See the admin docs: Set up agent connectors.",
-    default: "",
+  agent_connectors_heading: connectorSetting("Agent Connectors", {
+    desc: "See the admin docs: Set up agent connectors.",
     type: "header",
-    tags: ["AI", "GitHub"],
-    group: "AI & Agents",
-    subgroup: "Agent Connectors",
-  },
-  github_connector_client_id: {
-    name: "GitHub Connector: App Client ID",
-    desc: "Client ID of this site's GitHub App. Blank turns the connector off.",
-    default: "",
-    to_val: to_trimmed_str,
-    tags: ["AI", "GitHub"],
-    group: "AI & Agents",
-    subgroup: "Agent Connectors",
-  },
-  github_connector_client_secret: {
-    name: "GitHub Connector: App Client Secret",
-    desc: "Client secret of that app; only the hub uses it.",
-    default: "",
+  }),
+  github_connector_client_id: connectorSetting("GitHub App Client ID", {
+    desc: "Blank turns the GitHub connector off.",
+  }),
+  github_connector_client_secret: connectorSetting("GitHub App Client Secret", {
     password: true,
-    to_val: to_trimmed_str,
-    tags: ["AI", "GitHub", "Security"],
-    group: "AI & Agents",
-    subgroup: "Agent Connectors",
-  },
-  github_connector_app_url: {
-    name: "GitHub Connector: App Public Link",
-    desc: "The app's page, https://github.com/apps/<name>.",
-    default: "",
-    to_val: to_trimmed_str,
-    valid: (value: string) =>
-      value === "" ||
-      /^https:\/\/github\.com\/apps\/[a-z0-9-]+\/?$/.test(value),
-    tags: ["AI", "GitHub"],
-    group: "AI & Agents",
-    subgroup: "Agent Connectors",
-  },
-  cloudflare_connector_client_id: {
-    name: "Cloudflare Connector: OAuth Client ID",
-    desc: "Client ID of this site's Cloudflare OAuth client. Blank turns the connector off.",
-    default: "",
-    to_val: to_trimmed_str,
-    tags: ["AI", "Cloudflare"],
-    group: "AI & Agents",
-    subgroup: "Agent Connectors",
-  },
-  cloudflare_connector_client_secret: {
-    name: "Cloudflare Connector: OAuth Client Secret",
-    desc: "Client secret of that client; only the hub uses it.",
-    default: "",
-    password: true,
-    to_val: to_trimmed_str,
-    tags: ["AI", "Cloudflare", "Security"],
-    group: "AI & Agents",
-    subgroup: "Agent Connectors",
-  },
+  }),
+  github_connector_app_url: connectorSetting("GitHub App Public Link", {
+    desc: "https://github.com/apps/<name>",
+  }),
+  cloudflare_connector_client_id: connectorSetting(
+    "Cloudflare OAuth Client ID",
+    { desc: "Blank turns the Cloudflare connector off." },
+  ),
+  cloudflare_connector_client_secret: connectorSetting(
+    "Cloudflare OAuth Client Secret",
+    { password: true },
+  ),
   openai_section: {
     name: "OpenAI / Codex Configuration",
     desc: "",

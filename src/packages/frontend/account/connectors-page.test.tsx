@@ -31,6 +31,16 @@ const mockApi = {
 let mockAgents: { directory?: NamedAgentDirectory; error?: string };
 let mockNetworks: { directory?: AgentNetworkDirectory; error?: string };
 const mockRefreshNetworks = jest.fn();
+// The site has both connectors set up unless a test says otherwise, and the
+// agent's project has internet access.
+const mockSiteConnectors: Record<string, boolean> = {
+  cli_connector_github_enabled: true,
+  cli_connector_cloudflare_enabled: true,
+};
+let mockRunQuota: any = { network: true };
+jest.mock("@cocalc/frontend/project/use-project-run-quota", () => ({
+  useProjectRunQuota: () => ({ runQuota: mockRunQuota }),
+}));
 jest.mock("@cocalc/frontend/agents/api", () => ({
   personalAgentApi: () => mockApi,
   useNamedAgents: () => mockAgents,
@@ -64,7 +74,10 @@ jest.mock("@cocalc/frontend/agents/external-installations", () => ({
 }));
 jest.mock("@cocalc/frontend/app-framework", () => ({
   ...jest.requireActual("@cocalc/frontend/app-framework"),
-  useTypedRedux: () => "account",
+  useTypedRedux: (store: string, key: string) =>
+    store === "customize" && key in mockSiteConnectors
+      ? mockSiteConnectors[key]
+      : "account",
 }));
 jest.mock("@cocalc/frontend/docs/navigation", () => ({
   openProjectDocs: jest.fn(),
@@ -123,6 +136,8 @@ const network = (title: string, state: "active" | "paused" | "closed") => ({
 });
 
 beforeEach(() => {
+  mockSiteConnectors.cli_connector_github_enabled = true;
+  mockSiteConnectors.cli_connector_cloudflare_enabled = true;
   jest.clearAllMocks();
   mockApi.listCliConnections.mockResolvedValue([]);
   mockApi.listCliConnectorGrants.mockResolvedValue([]);
@@ -330,4 +345,14 @@ test("network changes go through fresh authentication", async () => {
   );
   await waitFor(() => expect(mockApi.updateAgentNetwork).toHaveBeenCalled());
   expect(mockFreshAuth).toHaveBeenCalledTimes(1);
+});
+
+test("shows no GitHub or Cloudflare sections until the site sets them up", async () => {
+  mockSiteConnectors.cli_connector_github_enabled = false;
+  mockSiteConnectors.cli_connector_cloudflare_enabled = false;
+  render(<ConnectionsPage />);
+  expect(await screen.findByText("Agent Networks")).toBeVisible();
+  expect(screen.queryByText("GitHub")).toBeNull();
+  expect(screen.queryByText("Cloudflare")).toBeNull();
+  expect(mockApi.listCliConnections).not.toHaveBeenCalled();
 });

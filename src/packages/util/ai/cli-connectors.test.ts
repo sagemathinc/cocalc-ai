@@ -44,3 +44,23 @@ test("provider descriptions lose control and bidi characters, and are short", ()
 test("Workers alone never grants DNS changes", () => {
   expect(cloudflareScopes(["workers"])).not.toContain("dns_records:edit");
 });
+
+test("a connector is enabled only with both its client id and secret", () => {
+  const { enabledCliConnectors } = require("./cli-connectors");
+  expect(enabledCliConnectors({})).toEqual([]);
+  expect(
+    enabledCliConnectors({
+      github_connector_client_id: "Iv23x",
+      cloudflare_connector_client_id: "cf",
+      cloudflare_connector_client_secret: " ",
+    }),
+  ).toEqual([]);
+  expect(
+    enabledCliConnectors({
+      github_connector_client_id: "Iv23x",
+      github_connector_client_secret: "s",
+      cloudflare_connector_client_id: "cf",
+      cloudflare_connector_client_secret: "t",
+    }),
+  ).toEqual(["github", "cloudflare"]);
+});

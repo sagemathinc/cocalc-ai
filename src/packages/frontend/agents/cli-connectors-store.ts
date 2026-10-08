@@ -15,7 +15,47 @@ import type {
   CliConnectorSetup,
 } from "@cocalc/conat/hub/api/agent";
 import type { CliConnector } from "@cocalc/util/ai/cli-connectors";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
+import { PLATFORM_MODE_SINGLE_NODE } from "@cocalc/util/db-schema/site-defaults";
 import { personalAgentApi } from "./api";
+
+/**
+ * Whether the project can reach the internet (undefined while unknown).
+ * Free projects have none, so gh, git and cf there cannot reach GitHub or
+ * Cloudflare and the connectors cannot work.
+ */
+export function useProjectHasNetwork(
+  project_id: string,
+  { enabled = true }: { enabled?: boolean } = {},
+): boolean | undefined {
+  const singleNode =
+    useTypedRedux("customize", "platform_mode") === PLATFORM_MODE_SINGLE_NODE;
+  const { runQuota } = useProjectRunQuota(project_id, {
+    enabled: enabled && !singleNode,
+  });
+  if (!enabled) return undefined;
+  // Single-node sites do not limit project networking.
+  if (singleNode) return true;
+  if (runQuota == null) return undefined;
+  const network = (runQuota as any)?.network;
+  return !(network === false || network === 0);
+}
+
+/**
+ * The connectors this site has set up. Until an admin sets one up, nothing
+ * about connectors is shown and nothing is loaded.
+ */
+export function useEnabledCliConnectors(): CliConnector[] {
+  const github =
+    useTypedRedux("customize", "cli_connector_github_enabled") === true;
+  const cloudflare =
+    useTypedRedux("customize", "cli_connector_cloudflare_enabled") === true;
+  return [
+    ...(github ? (["github"] as const) : []),
+    ...(cloudflare ? (["cloudflare"] as const) : []),
+  ];
+}
 
 export interface CliConnectorData {
   connections: CliConnection[];
@@ -52,7 +92,11 @@ function loadCliConnectors(): Promise<CliConnectorData> {
 export function useCliConnectors(): {
   data?: CliConnectorData;
   error?: string;
+  /** The connectors the site has set up; empty means none at all. */
+  enabled: CliConnector[];
 } {
+  const enabled = useEnabledCliConnectors();
+  const active = enabled.length > 0;
   const [state, setState] = useState<{
     data?: CliConnectorData;
     error?: string;
@@ -66,6 +110,7 @@ export function useCliConnectors(): {
     };
   }, []);
   useEffect(() => {
+    if (!active) return;
     let cancelled = false;
     loadCliConnectors().then(
       (data) => {
@@ -78,8 +123,8 @@ export function useCliConnectors(): {
     return () => {
       cancelled = true;
     };
-  }, [version]);
-  return state;
+  }, [version, active]);
+  return { ...state, enabled };
 }
 
 export function agentGrant(

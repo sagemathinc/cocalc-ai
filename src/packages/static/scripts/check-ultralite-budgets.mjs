@@ -307,8 +307,10 @@ const surfaces = [
     // The released connector/runtime integration measures 504.3 KiB Brotli;
     // with the Claude Code train, workspace stack and sync hardening (#872)
     // it measures 507.3 KiB, and 509.1 KiB with the 2026-10-07 release
-    // (#947). Raised by 0.15 KiB pending a size optimization pass.
-    max: 509.15 * KiB,
+    // (#947). Raised by 0.15 KiB pending a size optimization pass. The agent
+    // connectors (#899: their site settings, grant table schema and hub API
+    // auth entries, which this route loads) add about 0.6 KiB.
+    max: 509.8 * KiB,
   },
   {
     label: "Essential Docs",

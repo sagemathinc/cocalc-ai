@@ -95,13 +95,15 @@ const WRAPPERS: {
     name: "cf",
     connector: "cloudflare",
     envVar: "CLOUDFLARE_API_TOKEN",
-    missing: "Install Cloudflare's cf CLI.",
+    missing:
+      "Install it with: npm install -g --prefix ~/.local cf (the project needs internet access)",
   },
   {
     name: "wrangler",
     connector: "cloudflare",
     envVar: "CLOUDFLARE_API_TOKEN",
-    missing: "Install it with: npm install -g wrangler",
+    missing:
+      "Install it with: npm install -g --prefix ~/.local wrangler (the project needs internet access)",
   },
 ];
 
@@ -133,25 +135,65 @@ fi
 exec "$real" "$@"
 `;
 
-export async function writeCliConnectorTools(hostDir: string): Promise<void> {
+/** Writes the wrappers of the given (site-enabled) connectors only. */
+export async function writeCliConnectorTools(
+  hostDir: string,
+  connectors: readonly CliConnector[] = CLI_CONNECTORS,
+): Promise<void> {
   const dir = join(hostDir, CLI_CONNECTOR_DIR);
   const bin = join(dir, "bin");
   await fs.mkdir(bin, { recursive: true, mode: 0o700 });
   await fs.chmod(dir, 0o700);
   await fs.chmod(bin, 0o700);
   for (const { name, connector, envVar, missing } of WRAPPERS) {
+    if (!connectors.includes(connector)) continue;
     await fs.writeFile(
       join(bin, name),
       wrapperScript({ command: name, envVar, connector, missing }),
       { mode: 0o700 },
     );
   }
+  if (!connectors.includes("github")) return;
   await fs.writeFile(
     join(bin, GIT_CREDENTIAL_HELPER_NAME),
     GIT_CREDENTIAL_HELPER,
     { mode: 0o700 },
   );
   await fs.writeFile(join(bin, "git"), GIT_WRAPPER, { mode: 0o700 });
+}
+
+let siteConnectorsCache: { at: number; connectors: CliConnector[] } | undefined;
+
+/**
+ * The connectors the site has set up, cached briefly. With none (the default
+ * on a new site), agents get no wrappers, no PATH change and no per-turn
+ * connector request. Errors count as none: dormant is the safe default.
+ */
+export async function siteCliConnectors(
+  getCustomize: ((fields: string[]) => Promise<any>) | undefined,
+  now = Date.now(),
+): Promise<CliConnector[]> {
+  if (siteConnectorsCache && now - siteConnectorsCache.at < 60_000) {
+    return siteConnectorsCache.connectors;
+  }
+  let connectors: CliConnector[] = [];
+  try {
+    const customize = await getCustomize?.(["cliConnectors"]);
+    const listed = customize?.cliConnectors;
+    connectors = Array.isArray(listed)
+      ? CLI_CONNECTORS.filter((connector) => listed.includes(connector))
+      : [];
+  } catch {
+    // Not cached: the next lease asks again.
+    return [];
+  }
+  siteConnectorsCache = { at: now, connectors };
+  return connectors;
+}
+
+/** For tests. */
+export function resetSiteCliConnectorsCache(): void {
+  siteConnectorsCache = undefined;
 }
 
 // Puts the wrappers (gh, git, cf, wrangler) first on PATH.

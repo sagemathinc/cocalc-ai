@@ -25,6 +25,26 @@ const mockApi = {
   disconnectCliConnection: jest.fn(),
 };
 let mockAgents: { directory?: NamedAgentDirectory; error?: string };
+// The site has both connectors set up unless a test says otherwise, and the
+// agent's project has internet access.
+const mockSiteConnectors: Record<string, boolean> = {
+  cli_connector_github_enabled: true,
+  cli_connector_cloudflare_enabled: true,
+};
+let mockRunQuota: any = { network: true };
+jest.mock("@cocalc/frontend/project/use-project-run-quota", () => ({
+  useProjectRunQuota: () => ({ runQuota: mockRunQuota }),
+}));
+jest.mock("@cocalc/frontend/app-framework", () => {
+  const actual = jest.requireActual("@cocalc/frontend/app-framework");
+  return {
+    ...actual,
+    useTypedRedux: (store: string, key: string) =>
+      store === "customize" && key in mockSiteConnectors
+        ? mockSiteConnectors[key]
+        : actual.useTypedRedux(store, key),
+  };
+});
 jest.mock("./api", () => ({
   personalAgentApi: () => mockApi,
   useNamedAgents: () => mockAgents,
@@ -73,6 +93,9 @@ const grant = (agent_id: string, connection_id: string, enabled = true) => ({
 });
 
 beforeEach(() => {
+  mockSiteConnectors.cli_connector_github_enabled = true;
+  mockSiteConnectors.cli_connector_cloudflare_enabled = true;
+  mockRunQuota = { network: true };
   jest.clearAllMocks();
   mockAgents = {
     directory: {
@@ -344,6 +367,28 @@ describe("Settings > Connectors section", () => {
 });
 
 describe("per-agent dialog", () => {
+  it("explains a project without internet access and will not turn on", async () => {
+    mockRunQuota = { network: false };
+    render(
+      <CliConnectorAgentModal
+        agent={agent("writer", "writer-id") as any}
+        connector="github"
+        open
+        onClose={() => {}}
+      />,
+    );
+    const dialog = await screen.findByRole("dialog");
+    const title = await within(dialog).findByText(
+      "This agent's project has no internet access",
+    );
+    // The dialog fades in.
+    await waitFor(() => expect(title).toBeVisible());
+    expect(
+      within(dialog).getByRole("link", { name: "upgrade your membership" }),
+    ).toHaveAttribute("href", expect.stringContaining("settings/membership"));
+    expect(within(dialog).getByRole("switch")).toBeDisabled();
+  });
+
   it("turns GitHub on with the chosen account", async () => {
     mockApi.saveCliConnectorGrant.mockResolvedValue(
       grant("writer-id", "conn-1"),

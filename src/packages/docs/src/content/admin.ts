@@ -2035,6 +2035,16 @@ tokens; CoCalc keeps the sign-in on its servers and refreshes them there.
 Admin settings are in **Admin -> Site Settings**, group **AI & Agents**,
 section **Agent Connectors**.
 
+Nothing about connectors appears for users, and agents get no connector
+tools, until you set a connector up below. A connector is set up when both
+its client ID and client secret are entered.
+
+Connectors need the project to reach the internet. Projects without network
+access (on cocalc.ai, free projects) cannot use them; users see that, with a
+link to upgrade. \`gh\` and \`git\` are in the default project image.
+\`cf\` and \`wrangler\` are not; agents install them on first use with
+\`npm install -g --prefix ~/.local cf wrangler\`.
+
 ## GitHub
 
 ### What the GitHub connector does

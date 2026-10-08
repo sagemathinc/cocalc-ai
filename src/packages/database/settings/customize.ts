@@ -11,6 +11,7 @@ import { copy_with } from "@cocalc/util/misc";
 import type { Customize } from "@cocalc/util/db-schema/server-settings";
 import { publicSignupEmailDomainPolicy } from "@cocalc/util/accounts/signup-email-domain-policy";
 import { hasStripeBillingConfiguration } from "@cocalc/util/stripe/billing";
+import { enabledCliConnectors } from "@cocalc/util/ai/cli-connectors";
 export type { Customize };
 
 const fallback = (a?: string, b?: string): string =>
@@ -123,6 +124,9 @@ export default async function getCustomize(
 
       // public info about SSO strategies
       strategies,
+
+      // Agent connectors this site has set up (names only).
+      cliConnectors: enabledCliConnectors(settings as Record<string, unknown>),
 
       verifyEmailAddresses: settings.verify_emails && settings.email_enabled,
       cookieBannerEnabled: settings.cookie_banner_enabled,

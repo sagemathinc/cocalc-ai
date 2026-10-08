@@ -134,6 +134,9 @@ jest.mock("@cocalc/lite/hub/api", () => ({
     projects: {
       start: jest.fn(),
     },
+    system: {
+      getCustomize: jest.fn(),
+    },
     hosts: {
       issueProjectHostAgentAuthToken: jest.fn(),
     },
@@ -201,6 +204,11 @@ describe("initCodexProjectRunner", () => {
     hubApi.agent.renewCocalcConnectorTurn.mockReset();
     hubApi.agent.endCocalcConnectorTurn.mockReset();
     hubApi.agent.beginCliConnectorTurn.mockReset().mockResolvedValue([]);
+    // By default the site has the GitHub connector set up.
+    hubApi.system.getCustomize
+      .mockReset()
+      .mockResolvedValue({ cliConnectors: ["github"] });
+    require("./codex/cli-connector-files").resetSiteCliConnectorsCache();
     spawnMock.mockReset();
     execFileMock.mockReset();
     execMock.mockReset();
@@ -602,6 +610,59 @@ describe("initCodexProjectRunner", () => {
       }
     },
   );
+
+  it("is dormant when the site has no connector set up", async () => {
+    hubApi.system.getCustomize.mockResolvedValue({ cliConnectors: [] });
+    spawnMock.mockImplementation(() => new FakeProc());
+    execFileMock.mockImplementation((_cmd, _args, _opts, cb) =>
+      cb(null, "true\n", ""),
+    );
+    const home = await mkTempDir("codex-project-cli-dormant-");
+    filesystem.localPath.mockResolvedValue({ home });
+    auth.resolveCodexAuthRuntime.mockResolvedValue({
+      source: "account-api-key",
+      contextId: "cli-connector-dormant",
+      env: { OPENAI_API_KEY: "test-key" },
+    });
+    hubApi.agent.issueIdentity.mockImplementation(async ({ run_id }) => ({
+      agent_id: "registered-agent",
+      run_id,
+      token: "identity-token",
+      expires_at: Date.now() + 600000,
+    }));
+    hubApi.agent.beginCocalcConnectorTurn.mockResolvedValue(undefined);
+    const { initCodexProjectRunner } = await import("./codex/codex-project");
+    initCodexProjectRunner();
+    const spawned = await getCodexProjectSpawner()!.spawnCodexAppServer!({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      cwd: "/home/user",
+      env: {
+        COCALC_CODEX_CHAT_PATH: "/home/user/send.chat",
+        COCALC_CODEX_THREAD_ID: "thread-1",
+      },
+    });
+    try {
+      // No wrappers on PATH, in the process or its environment.
+      expect(spawned.runtimeEnv!.PATH ?? "").not.toMatch(/\/cli\/bin/);
+      expect(spawnMock.mock.calls.at(-1)![1].join(" ")).not.toMatch(
+        /\/cli\/bin/,
+      );
+      const context = await spawned.beginConnectorTurn!({
+        project_id: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+        path: "/home/user/send.chat",
+        message_date: "2026-09-25T00:00:00.000Z",
+        message_id: "message-1",
+        thread_id: "thread-1",
+        sender_id: "00000000-0000-4000-8000-000000000001",
+      });
+      // No per-turn request and no prompt block.
+      expect(hubApi.agent.beginCliConnectorTurn).not.toHaveBeenCalled();
+      expect(context).toBeUndefined();
+    } finally {
+      for (const listener of spawned.proc.listeners("exit")) await listener(0);
+    }
+  });
 
   it("delivers CLI connector tokens only while the hub keeps granting them", async () => {
     spawnMock.mockImplementation(() => new FakeProc());

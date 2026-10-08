@@ -21,6 +21,26 @@ import { AgentFileAttachment } from "../chat/agent-file-attachment";
 import { refreshCliConnectors } from "./cli-connectors";
 
 // rc-util's constant test ID aliases dropdown and modal Escape registrations.
+// The site has both connectors set up unless a test says otherwise, and the
+// agent's project has internet access.
+const mockSiteConnectors: Record<string, boolean> = {
+  cli_connector_github_enabled: true,
+  cli_connector_cloudflare_enabled: true,
+};
+let mockRunQuota: any = { network: true };
+jest.mock("@cocalc/frontend/project/use-project-run-quota", () => ({
+  useProjectRunQuota: () => ({ runQuota: mockRunQuota }),
+}));
+jest.mock("@cocalc/frontend/app-framework", () => {
+  const actual = jest.requireActual("@cocalc/frontend/app-framework");
+  return {
+    ...actual,
+    useTypedRedux: (store: string, key: string) =>
+      store === "customize" && key in mockSiteConnectors
+        ? mockSiteConnectors[key]
+        : actual.useTypedRedux(store, key),
+  };
+});
 jest.mock("@rc-component/util/lib/hooks/useId", () => ({
   __esModule: true,
   ...jest.requireActual("@rc-component/util/lib/hooks/useId"),
@@ -137,6 +157,9 @@ async function openFromChip(
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockSiteConnectors.cli_connector_github_enabled = true;
+  mockSiteConnectors.cli_connector_cloudflare_enabled = true;
+  mockRunQuota = { network: true };
   mockApi.listCliConnections.mockResolvedValue([]);
   mockApi.listCliConnectorGrants.mockResolvedValue([]);
   mockApi.getCliConnectorSetup.mockResolvedValue(SETUP);
@@ -243,6 +266,49 @@ test("the connectors chip opens CoCalc access and reflects saved disable", async
       agent_id: agent.endpoint.agent_id,
     }),
   );
+});
+
+async function plusMenuItems(user: ReturnType<typeof userEvent.setup>) {
+  const plus = screen.getByRole("button", { name: "Add files and more" });
+  plus.focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(
+      screen.getByRole("menuitem", { name: /^Agent Networks/ }),
+    ).toBeVisible(),
+  );
+  return screen.getAllByRole("menuitem").map((item) => item.textContent);
+}
+
+test("connectors the site has not set up are not shown or loaded", async () => {
+  mockSiteConnectors.cli_connector_github_enabled = false;
+  mockSiteConnectors.cli_connector_cloudflare_enabled = false;
+  const user = userEvent.setup();
+  render(<Controls />);
+  const items = await plusMenuItems(user);
+  expect(items.some((text) => /GitHub|Cloudflare/.test(`${text}`))).toBe(false);
+  expect(mockApi.listCliConnections).not.toHaveBeenCalled();
+  expect(mockApi.listCliConnectorGrants).not.toHaveBeenCalled();
+  expect(mockApi.getCliConnectorSetup).not.toHaveBeenCalled();
+});
+
+test("only the connectors the site set up are shown", async () => {
+  mockSiteConnectors.cli_connector_cloudflare_enabled = false;
+  const user = userEvent.setup();
+  render(<Controls />);
+  const items = await plusMenuItems(user);
+  expect(items.some((text) => /^GitHub/.test(`${text}`))).toBe(true);
+  expect(items.some((text) => /^Cloudflare/.test(`${text}`))).toBe(false);
+});
+
+test("a project without internet access says so", async () => {
+  mockRunQuota = { network: false };
+  const user = userEvent.setup();
+  render(<Controls />);
+  await plusMenuItems(user);
+  expect(
+    screen.getByRole("menuitem", { name: /^GitHub.*Needs internet access/ }),
+  ).toBeVisible();
 });
 
 test("GitHub on for the agent shows in the chip and opens its dialog", async () => {
