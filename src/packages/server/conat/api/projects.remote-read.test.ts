@@ -9,6 +9,7 @@ let projectReferenceGetMock: jest.Mock;
 let loadProjectReadDetailsDirectMock: jest.Mock;
 let assertClusterAccountTrustedForProductAccessMock: jest.Mock;
 let applyAccountProjectFeedRemoveOnHomeBayMock: jest.Mock;
+let forwardHubApiCallMock: jest.Mock;
 
 jest.setTimeout(15_000);
 
@@ -65,6 +66,11 @@ jest.mock("@cocalc/server/projects/details", () => ({
     loadProjectReadDetailsDirectMock(...args),
 }));
 
+jest.mock("./edge-routing", () => ({
+  __esModule: true,
+  forwardHubApiCall: (...args: any[]) => forwardHubApiCallMock(...args),
+}));
+
 jest.mock("@cocalc/server/account/project-feed", () => ({
   __esModule: true,
   applyAccountProjectFeedRemoveOnHomeBay: (...args: any[]) =>
@@ -117,6 +123,7 @@ describe("remote project detail reads", () => {
       async () => undefined,
     );
     applyAccountProjectFeedRemoveOnHomeBayMock = jest.fn(async () => undefined);
+    forwardHubApiCallMock = jest.fn(async () => ({ invite_id: "forwarded" }));
   });
 
   it("routes getProjectCreated through the owning bay", async () => {
@@ -183,6 +190,62 @@ describe("remote project detail reads", () => {
       previewEmailProjectInvite: "collab-invite",
       respondEmailProjectInvite: "collab-invite",
     });
+  });
+
+  it("forwards email invite links opened on another bay to the invite's bay", async () => {
+    // The /invites/<token> HTTP endpoints call these wrappers directly, not
+    // through the hub API's edge routing.
+    const { previewEmailProjectInvite, respondEmailProjectInvite } =
+      await import("./projects");
+    await expect(
+      previewEmailProjectInvite({ account_id: ACCOUNT_ID, token: "token-1" }),
+    ).resolves.toEqual({ invite_id: "forwarded" });
+    await expect(
+      respondEmailProjectInvite({
+        account_id: ACCOUNT_ID,
+        action: "accept",
+        token: "token-1",
+      }),
+    ).resolves.toEqual({ invite_id: "forwarded" });
+    expect(forwardHubApiCallMock.mock.calls).toEqual([
+      [
+        "bay-7",
+        {
+          name: "projects.previewEmailProjectInvite",
+          account_id: ACCOUNT_ID,
+          args: [
+            {
+              invite_id: "77777777-7777-4777-8777-777777777777",
+              token: "token-1",
+              project_id: PROJECT_ID,
+            },
+          ],
+        },
+      ],
+      [
+        "bay-7",
+        {
+          name: "projects.respondEmailProjectInvite",
+          account_id: ACCOUNT_ID,
+          args: [
+            {
+              action: "accept",
+              invite_id: "77777777-7777-4777-8777-777777777777",
+              token: "token-1",
+              project_id: PROJECT_ID,
+            },
+          ],
+        },
+      ],
+    ]);
+  });
+
+  it("asks anonymous visitors to sign in for an invite on another bay", async () => {
+    const { previewEmailProjectInvite } = await import("./projects");
+    await expect(
+      previewEmailProjectInvite({ token: "token-1" }),
+    ).rejects.toThrow("Sign in to open this project invite.");
+    expect(forwardHubApiCallMock).not.toHaveBeenCalled();
   });
 
   it("leaves project access request APIs to edge routing", async () => {

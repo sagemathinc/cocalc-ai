@@ -107,10 +107,21 @@ export async function executeHubApiCall(call: HubApiCall): Promise<any> {
   const owner = await ownerBay(route, call.args);
   const here = getConfiguredBayId();
   if (owner == null || owner === here) return await requireExecutor()(call);
+  return await forwardHubApiCall(owner, call);
+}
+
+/**
+ * Forward an authenticated, authorized hub API call to the bay that owns its
+ * data, which re-checks the route and runs it there.
+ */
+export async function forwardHubApiCall(
+  bay_id: string,
+  call: HubApiCall,
+): Promise<any> {
   const response: ForwardedResult = await createInterBayHubApiClient({
     client: getInterBayFabricClient(),
-    bay_id: owner,
-  }).call({ ...call, source_bay_id: here });
+    bay_id,
+  }).call({ ...call, source_bay_id: getConfiguredBayId() });
   if (response.ok) return response.result;
   // The same error the owning bay raised, as if the call had run here.
   throw Object.assign(new Error(response.error), response.attrs);
