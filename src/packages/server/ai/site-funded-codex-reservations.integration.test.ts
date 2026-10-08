@@ -74,6 +74,23 @@ function poolReservation(opts: ReturnType<typeof options>): number {
   );
 }
 
+describe("site-funded Codex reservation tables", () => {
+  it("are set up once per process, not on every reservation call", async () => {
+    // ALTER TABLE takes an ACCESS EXCLUSIVE lock even when nothing changes.
+    const query = jest.spyOn(getPool(), "query");
+    try {
+      await ensureSiteFundedCodexReservationTables();
+      await getSiteFundedCodexPoolStatus();
+      const ddl = query.mock.calls.filter(([sql]) =>
+        /\b(ALTER|CREATE) (TABLE|INDEX)\b/.test(String(sql)),
+      );
+      expect(ddl).toEqual([]);
+    } finally {
+      query.mockRestore();
+    }
+  });
+});
+
 describe("site-funded Codex reservations", () => {
   beforeEach(async () => {
     await getPool().query("DELETE FROM site_ai_turn_reservations");

@@ -25,6 +25,10 @@ const setOtherSettings = jest.fn();
 let planChooserRequested = false;
 let siteLicenseReminderDismissals: Record<string, number> = {};
 
+jest.mock("../educator-offers", () => ({
+  EducatorOffersCard: () => null,
+}));
+
 jest.mock("../membership-settings-data", () => ({
   useMembershipSettingsData: () => useMembershipSettingsData(),
 }));

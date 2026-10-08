@@ -9,7 +9,7 @@
   ],
   "devDependencies": {
     "codemirror": "^5.65.18",
-    "katex": "^0.16.21",
+    "katex": "^0.19.0",
     "pdfjs-dist": "^4.6.82"
   },
   "scripts": {

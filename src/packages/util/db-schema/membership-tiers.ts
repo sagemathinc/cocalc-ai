@@ -40,6 +40,9 @@ Table({
           course_price: null,
           course_duration_days: null,
           course_grace_days: null,
+          instructor_purchase_visible: null,
+          instructor_term_price: null,
+          instructor_term_days: null,
           project_defaults: null,
           ai_limits: null,
           features: null,
@@ -130,6 +133,19 @@ Table({
     course_duration_days: {
       type: "number",
       desc: "Duration in days for one-time course student memberships.",
+    },
+    instructor_purchase_visible: {
+      type: "boolean",
+      desc: "Whether eligible educators (verified academic email or admin approval) can buy this tier for themselves, by subscription or for one fixed term, even if it is not otherwise visible for purchase.",
+    },
+    instructor_term_price: {
+      type: "number",
+      desc: "One-time price in USD for one fixed instructor term of this tier. Null disables term purchases.",
+      pg_type: "numeric(20,10)",
+    },
+    instructor_term_days: {
+      type: "number",
+      desc: "Length in days of one instructor term purchase.",
     },
     course_grace_days: {
       type: "number",

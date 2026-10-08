@@ -133,7 +133,7 @@ export type CodexProjectSpawner = {
     handleAppServerRequest?: CodexAppServerRequestHandler;
     runtimeEnv?: Record<string, string>;
     setAgentSessionKey?: (agentSessionKey: string) => Promise<void>;
-    beginConnectorTurn?: (chat: AcpChatContext) => Promise<void>;
+    beginConnectorTurn?: (chat: AcpChatContext) => Promise<string | void>;
     endConnectorTurn?: () => Promise<void>;
     siteFundedTurn?: CodexSiteFundedTurnRuntime;
     credentialId?: string;

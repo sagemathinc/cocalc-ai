@@ -474,13 +474,22 @@ describe("account_collaborator_index projector", () => {
       default_bay_id: LOCAL_BAY_ID,
     });
 
-    await expect(
-      drainAccountCollaboratorIndexProjection({
-        bay_id: LOCAL_BAY_ID,
-        limit: 10,
-        dry_run: false,
-      }),
-    ).resolves.toMatchObject({
+    const membershipDrain = await drainAccountCollaboratorIndexProjection({
+      bay_id: LOCAL_BAY_ID,
+      limit: 10,
+      dry_run: false,
+    });
+    // A and C were already collaborators with identical row content, so the
+    // membership change must not republish that pair.
+    expect(
+      membershipDrain.feed_events.filter(
+        (event) =>
+          event.type === "collaborator.upsert" &&
+          event.account_id === ACCOUNT_A &&
+          event.collaborator.account_id === ACCOUNT_C,
+      ),
+    ).toEqual([]);
+    expect(membershipDrain).toMatchObject({
       applied_events: 1,
       feed_events: expect.arrayContaining([
         expect.objectContaining({

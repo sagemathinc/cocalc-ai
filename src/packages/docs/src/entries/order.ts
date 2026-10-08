@@ -29,6 +29,7 @@ export const DOCS_ENTRY_IDS = [
   "admin.membership-licenses",
   "admin.managed-egress",
   "admin.sso",
+  "admin.agent-connectors",
   "projects.create-project",
   "ai.my-agents",
   "ai.agent-features",

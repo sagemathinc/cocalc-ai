@@ -13,6 +13,7 @@ import {
   ADMIN_CRM_OUTREACH_BODY,
   ADMIN_CRM_OUTREACH_UI_BODY,
   ADMIN_CRM_UI_BODY,
+  ADMIN_AGENT_CONNECTORS_BODY,
   ADMIN_MANAGED_EGRESS_BODY,
   ADMIN_MEMBERSHIP_AND_LICENSES_BODY,
   ADMIN_NEWS_BODY,
@@ -473,6 +474,27 @@ export const ADMIN_ENTRIES: DocsEntry[] = [
     summary:
       "Configure SSO providers and domain policies without locking users out.",
     title: "Configure SSO providers and domains",
+    visibility: "admin",
+  },
+  {
+    audiences: ["agents", "teams"],
+    body: ADMIN_AGENT_CONNECTORS_BODY.trim(),
+    category: "Admin",
+    id: "admin.agent-connectors",
+    image: docsIcon(
+      "/public/docs/http-api-5067e8ed.webp",
+      "GitHub and Cloudflare connections that let agents use gh, git and cf as their user",
+    ),
+    lastReviewed: "2026-10-05",
+    noActionReason:
+      "Setup happens on GitHub and in Admin -> Site Settings; the site settings page has the executable destination.",
+    searchKeywords:
+      "agent connectors github app cloudflare cf wrangler gh git device flow client id client secret oauth self-hosted",
+    slug: "admin/agent-connectors",
+    status: "ready",
+    summary:
+      "Set up GitHub and Cloudflare so users' agents can use gh, git and cf as them.",
+    title: "Set up agent connectors (GitHub, Cloudflare)",
     visibility: "admin",
   },
 ];

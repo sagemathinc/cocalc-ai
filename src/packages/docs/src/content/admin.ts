@@ -2018,3 +2018,216 @@ verify that the provider works, that at least one admin has an alternate access
 path, and that support knows how users should recover if their institutional
 identity is unavailable.
 `;
+
+export const ADMIN_AGENT_CONNECTORS_BODY = String.raw`
+## What agent connectors do
+
+Connectors let a user's agents run command-line tools against outside
+services as that user, during the agent's turns only:
+
+- **GitHub:** \`gh\` and \`git\` over https://github.com.
+- **Cloudflare:** \`cf\` and \`wrangler\`.
+
+Each user signs in once from **Settings -> Connectors**, then turns a
+connector on for individual agents from the connectors list (+) in that
+agent's message box. Agents only ever get the provider's short-lived access
+tokens; CoCalc keeps the sign-in on its servers and refreshes them there.
+Admin settings are in **Admin -> Site Settings**, group **AI & Agents**,
+section **Agent Connectors**.
+
+Nothing about connectors appears for users, and agents get no connector
+tools, until you set a connector up below. A connector is set up when both
+its client ID and client secret are entered.
+
+Connectors need the project to reach the internet. Projects without network
+access (on cocalc.ai, free projects) cannot use them; users see that, with a
+link to upgrade. \`gh\` and \`git\` are in the default project image.
+\`cf\` and \`wrangler\` are not; agents install them on first use with
+\`npm install -g --prefix ~/.local cf wrangler\`.
+
+## GitHub
+
+### What the GitHub connector does
+
+The GitHub connector lets a user's agents run \`gh\` and \`git\` with GitHub
+as that user, during the agent's turns only. Each user signs in to GitHub
+once from **Settings -> Connectors**, then turns GitHub on for individual
+agents.
+
+Agents get GitHub's own short-lived user tokens (they expire after 8 hours).
+CoCalc refreshes them on the hub; the long-lived refresh token never enters a
+project. Access is always the intersection of the repositories where the user
+installed your site's GitHub App and the user's own GitHub permissions, so an
+agent can never do more than its user can.
+
+Each CoCalc site uses its own GitHub App. Setup takes about 10 minutes and
+needs a GitHub organization or account that will own the app.
+
+### 1. Create the GitHub App
+
+On GitHub, open the owner's settings: **Settings -> Developer settings ->
+GitHub Apps -> New GitHub App** (for an organization:
+\`https://github.com/organizations/<org>/settings/apps\`).
+
+- **GitHub App name:** a name your users recognize, such as your site's name.
+  Names are global on GitHub. Users see it when they approve sign-in.
+- **Homepage URL:** your site's URL.
+- **Callback URL:** leave empty if GitHub allows it; otherwise use your site's
+  URL. The connector uses the device flow, which never calls it.
+- **Expire user authorization tokens:** checked (the default).
+- **Request user authorization (OAuth) during installation:** unchecked.
+- **Enable Device Flow:** checked. This is the "approve a code in your
+  browser" sign-in the connector uses.
+- **Setup URL:** empty. **Redirect on update:** unchecked.
+- **Webhook -> Active:** unchecked.
+
+### 2. Permissions
+
+Repository permissions (leave everything else at "No access"):
+
+| Permission | Access | Why |
+| --- | --- | --- |
+| Contents | Read and write | Clone, push and create branches. |
+| Pull requests | Read and write | Create, comment on and review pull requests. |
+| Issues | Read and write | Work with issues. |
+| Metadata | Read-only | Required by GitHub. |
+| Actions | Read-only | Read CI runs. |
+| Checks | Read-only | Read check results on pull requests. |
+| Commit statuses | Read-only | Read CI status on commits. |
+| Workflows | Read and write | Optional: lets agents change files in \`.github/workflows\`; pushes that touch them fail without it. |
+
+Account permissions: **Email addresses: Read-only** (optional; lets CoCalc set
+a matching git author email). Organization permissions: none.
+
+Grant only what your users' agents need. Users can still restrict the app to
+selected repositories when they install it.
+
+### 3. Who can install it
+
+Choose **Any account**, so every user of your site can install the app on
+their own repositories. Then click **Create GitHub App**.
+
+### 4. Collect the values CoCalc needs
+
+On the app's settings page:
+
+1. Copy the **Client ID**. It starts with \`Iv23\` and is not secret.
+2. Copy the app's **public link**, \`https://github.com/apps/<name>\`.
+3. Under **Client secrets**, click **Generate a new client secret** and copy it
+   at once; GitHub shows it only once.
+
+You do not need a private key: agents act as their users, so CoCalc never
+authenticates as the app itself.
+
+### 5. Enter them in CoCalc
+
+Open **Admin -> Site Settings**, group **AI & Agents**, section **Agent
+Connectors**, and set:
+
+| Setting | Value |
+| --- | --- |
+| GitHub Connector: App Client ID | the Client ID |
+| GitHub Connector: App Client Secret | the client secret |
+| GitHub Connector: App Public Link | the public link |
+
+Paste the client secret only into this setting. Do not send it in chat, email
+or tickets, and do not give it to an agent. Only the hub uses it, to refresh
+user tokens. Leaving the Client ID blank turns the GitHub connector off.
+
+### 6. Check it
+
+With a non-admin account:
+
+1. Install the app on one test repository from its public link (**Install ->
+   Only select repositories**).
+2. In **Settings -> Connectors -> GitHub**, connect GitHub and approve the code
+   at \`https://github.com/login/device\`.
+3. Turn GitHub on for one agent from the connectors list (+) in its message
+   box, and ask it to run \`gh repo view <owner>/<repo>\` and push a branch.
+
+### Rotating and revoking
+
+- **Rotate the client secret:** generate a new one on GitHub, update the site
+  setting, then delete the old secret on GitHub. Existing user connections
+  keep working.
+- **A user stops access:** Disconnect in **Settings -> Connectors** turns the
+  connector off for agents at once and revokes the tokens at GitHub. If
+  GitHub cannot be reached, CoCalc keeps the encrypted tokens only to retry
+  that revocation when the user next connects GitHub. Users can also revoke
+  on GitHub under **Settings -> Applications -> Authorized GitHub Apps**.
+- **Turn the connector off for the whole site:** clear the Client ID. To also
+  invalidate every user token, revoke them on GitHub by suspending or deleting
+  the app.
+
+## Cloudflare
+
+### What the Cloudflare connector does
+
+The Cloudflare connector lets agents deploy Workers and Pages sites and manage
+R2 storage and DNS with \`cf\` and \`wrangler\`. Users approve it on
+dash.cloudflare.com, where the consent screen shows your site's name. When
+connecting, each user chooses what agents may do (Workers & sites, R2
+storage, DNS); CoCalc requests only those scopes. Access tokens last about an
+hour and are refreshed by CoCalc's servers with your client's secret.
+
+Each CoCalc site registers its own Cloudflare OAuth client. Cloudflare
+supports only the authorization-code flow for third-party clients.
+
+### 1. Create the OAuth client
+
+In the Cloudflare dashboard of the account that will own the client, go to
+**Manage Account -> OAuth clients -> Create client** (you need the Super
+Administrator, Administrator or OAuth Client Write role), and set:
+
+- **Client name:** your site's name; users see it when they approve.
+- **Response type:** \`code\`. **Grant types:** authorization code and
+  refresh token (CoCalc refreshes users' tokens; without it, sign-ins fail).
+- **Token authentication method:** \`client_secret_basic\`.
+- **Redirect URL:** \`https://<your site>/settings/connectors\`, exactly
+  (including any base path your site uses).
+- **Scopes:** mark \`account:read\` and \`user:read\` required. Add these as
+  optional, so users can choose: \`workers:write\`, \`workers_scripts:write\`,
+  \`workers_routes:write\` (Workers & sites); \`workers-r2.read\`,
+  \`workers-r2.write\`, \`workers-r2-bucket-item.read\`,
+  \`workers-r2-bucket-item.write\` (R2 storage); \`zone.read\`,
+  \`dns_records:read\`, \`dns_records:edit\` (DNS). Include \`offline_access\`
+  if it is offered: CoCalc refuses sign-ins without a refresh token.
+
+Save the **Client ID** and **Client Secret**; Cloudflare shows the secret only
+once.
+
+### 2. Private or public
+
+A new client is **private**: only members of the Cloudflare account that owns
+it can sign in. That is enough for a team that shares one Cloudflare account.
+To let every user of your site connect their own Cloudflare account, make the
+client **public**. That is permanent, and needs a logo, a client URL and
+domain verification of that URL (a \`TXT\` record).
+
+### 3. Enter it in CoCalc
+
+In **Admin -> Site Settings -> AI & Agents -> Agent Connectors**, set
+**Cloudflare Connector: OAuth Client ID** and **Cloudflare Connector: OAuth
+Client Secret**. Paste the secret only there. Leaving the Client ID blank
+turns the Cloudflare connector off.
+
+### 4. Check it
+
+With a non-admin account, connect Cloudflare in **Settings -> Connectors**,
+choose **Workers & sites**, approve on Cloudflare, and confirm you return to
+the Connectors page with the account listed. Turn Cloudflare on for one agent
+and ask it to run \`cf whoami\` (installing \`cf\` with
+\`npm i -g --prefix ~/.local cf\` if the project does not have it).
+
+### Rotating and revoking
+
+- **Rotate the client secret:** create a new secret in the client's menu,
+  update the site setting, then delete the old secret. Connections keep
+  working.
+- **A user stops access:** Disconnect in **Settings -> Connectors** turns the
+  connector off for agents at once and revokes the tokens at Cloudflare. If
+  Cloudflare cannot be reached, CoCalc keeps the encrypted tokens only to
+  retry that revocation when the user next connects Cloudflare.
+- **Turn the connector off for the whole site:** clear the Client ID. Tokens
+  already given to a running turn expire within an hour.
+`;

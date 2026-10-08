@@ -235,6 +235,15 @@ star_prepare_container_runtime_activation() {
     return 0
   fi
 
+  # A system Podman may be installed (e.g. in the Docker image) while the Star
+  # user has never run it. Querying it would create state with the system
+  # Podman's defaults, and fails before the user has a runtime directory.
+  local star_home
+  star_home="$(getent passwd "$star_user" | cut -d: -f6)"
+  if [ -n "$star_home" ] && [ ! -d "${star_home}/.local/share/containers/storage" ]; then
+    return 0
+  fi
+
   existing_database_backend="$(
     star_podman_info_field "$current_runtime" "$star_user" DatabaseBackend
   )" || return

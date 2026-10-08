@@ -141,7 +141,24 @@ function reservationFromRow(row: any): SiteFundedCodexReservation {
   };
 }
 
+let reservationTablesReady: Promise<void> | undefined;
+
+// Create the tables once per process. The setup includes ALTER TABLE, which
+// takes an ACCESS EXCLUSIVE lock even when every column already exists, so
+// running it on every reservation, heartbeat and status read queued all of
+// those queries behind any open transaction on site_ai_turn_reservations
+// (production outage 2026-10-06).
 export async function ensureSiteFundedCodexReservationTables(): Promise<void> {
+  reservationTablesReady ??= createSiteFundedCodexReservationTables().catch(
+    (err) => {
+      reservationTablesReady = undefined;
+      throw err;
+    },
+  );
+  await reservationTablesReady;
+}
+
+async function createSiteFundedCodexReservationTables(): Promise<void> {
   const statements = [
     `
     CREATE TABLE IF NOT EXISTS site_ai_funding_periods (

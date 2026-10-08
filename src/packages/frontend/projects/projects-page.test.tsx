@@ -25,6 +25,7 @@ let mockEmailVerificationRequired = false;
 let mockActiveTopTab: string | undefined;
 let mockProjectMap: any = mockEmptyMap;
 let mockOtherSettings: any = mockCompletedOnboardingSettings;
+let mockSiteProvidesAI = true;
 let mockAccountId: string | undefined;
 let mockAccountCreated: string | undefined;
 let mockInviteState: any = {
@@ -266,6 +267,7 @@ beforeEach(() => {
   mockActiveTopTab = undefined;
   mockProjectMap = mockEmptyMap;
   mockOtherSettings = mockCompletedOnboardingSettings;
+  mockSiteProvidesAI = true;
   mockAccountId = undefined;
   mockAccountCreated = undefined;
   mockInviteState = { incoming: [], loading: false, loaded: true, error: "" };
@@ -292,6 +294,8 @@ beforeEach(() => {
       return mockOtherSettings;
     if (store === "account" && key === "account_id") return mockAccountId;
     if (store === "account" && key === "created") return mockAccountCreated;
+    if (store === "customize" && key === "openai_enabled")
+      return mockSiteProvidesAI;
     return undefined;
   });
 });
@@ -382,6 +386,19 @@ test("AI-disabled accounts retain project onboarding", async () => {
   mockAccountId = "new-account";
   mockAccountCreated = new Date().toISOString();
   mockOtherSettings = ImmutableMap({ openai_disabled: true });
+
+  render(<ProjectsPage />);
+
+  expect(await screen.findByTestId("first-run-onboarding")).toBeTruthy();
+  expect(mockLoadTarget).not.toHaveBeenCalled();
+});
+
+test("sites without their own AI integration start new users on projects", async () => {
+  mockActiveTopTab = "projects";
+  mockAccountId = "new-account";
+  mockAccountCreated = new Date().toISOString();
+  mockOtherSettings = mockEmptyMap;
+  mockSiteProvidesAI = false;
 
   render(<ProjectsPage />);
 

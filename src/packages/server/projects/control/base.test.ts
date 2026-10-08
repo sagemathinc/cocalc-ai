@@ -347,3 +347,23 @@ describe("BaseProject local ownership", () => {
     expect(runnerStatus).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("project network access", () => {
+  it("follows the tier's explicit setting, else a positive priority", async () => {
+    const { withCocalcAiRuntimeSemantics } = await import("./base");
+    expect(
+      withCocalcAiRuntimeSemantics({ shared_compute_priority: 0 }).network,
+    ).toBe(false);
+    expect(
+      withCocalcAiRuntimeSemantics({ shared_compute_priority: 2 }).network,
+    ).toBe(true);
+    expect(
+      withCocalcAiRuntimeSemantics({ shared_compute_priority: 0 }, true)
+        .network,
+    ).toBe(true);
+    expect(
+      withCocalcAiRuntimeSemantics({ shared_compute_priority: 2 }, false)
+        .network,
+    ).toBe(false);
+  });
+});

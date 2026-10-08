@@ -279,6 +279,54 @@ Table({
 });
 
 Table({
+  name: "agent_connector_grants",
+  rules: {
+    primary_key: "grant_id",
+    pg_custom_indexes: [
+      {
+        name: "agent_connector_grants_owner_agent_connector_key",
+        unique: true,
+        query: "(account_id,agent_id,source_project_id,connector)",
+      },
+    ],
+  },
+  fields: {
+    grant_id: required("uuid", "Stable grant ID."),
+    account_id: required("uuid", "Human who owns this grant."),
+    agent_id: required("uuid", "Registered native agent."),
+    source_project_id: required("uuid", "Project containing the agent."),
+    connector: required(
+      "string",
+      "CLI connector kind, e.g. github or cloudflare.",
+    ),
+    connection_id: {
+      type: "uuid",
+      desc: "Account connection (external credential) this agent may use.",
+    },
+    scope: {
+      type: "map",
+      pg_type: "JSONB",
+      not_null: true,
+      desc: "Connector-specific limits; no credential is stored.",
+    },
+    revision: {
+      type: "integer",
+      not_null: true,
+      pg_default: "1",
+      desc: "Monotonic grant revision.",
+    },
+    enabled: {
+      type: "boolean",
+      not_null: true,
+      pg_default: "false",
+      desc: "Whether a future verified turn may receive a token.",
+    },
+    created_at: created("Grant creation time."),
+    updated_at: created("Last grant update."),
+  },
+});
+
+Table({
   name: "agent_cocalc_connector_turns",
   rules: {
     primary_key: "turn_id",

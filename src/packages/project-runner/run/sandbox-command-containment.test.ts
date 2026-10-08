@@ -1,6 +1,9 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { runContainedSandboxCommand } from "./sandbox-command-containment";
+import {
+  containedPodmanEnv,
+  runContainedSandboxCommand,
+} from "./sandbox-command-containment";
 
 const mockSpawn = jest.fn();
 const mockExecFile = jest.fn();
@@ -186,7 +189,11 @@ test("recovery requires an exact trusted proof and retries errors without secret
     });
     return { stdin };
   });
-  for (let i = 0; i < 6; i++) {
+  // The first check runs soon after the job, then every 30 seconds.
+  await jest.advanceTimersByTimeAsync(5_000);
+  expect(mockExecFile).toHaveBeenCalledTimes(1);
+  expect(confirmed).not.toHaveBeenCalled();
+  for (let i = 0; i < 5; i++) {
     await jest.advanceTimersByTimeAsync(30_000);
     expect(confirmed).not.toHaveBeenCalled();
   }
@@ -251,4 +258,11 @@ test("recovery polling never overlaps a stalled privileged query", async () => {
   await jest.advanceTimersByTimeAsync(30_000);
   expect(confirmed).toHaveBeenCalledTimes(1);
   expect(mockExecFile).toHaveBeenCalledTimes(1);
+});
+
+test("contained Podman cannot move itself into the user's systemd session", () => {
+  expect(containedPodmanEnv()).toEqual({
+    PATH: "/usr/bin",
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/dev/null/cocalc-no-user-bus",
+  });
 });

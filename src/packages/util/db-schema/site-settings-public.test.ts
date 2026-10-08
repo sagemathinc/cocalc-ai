@@ -156,4 +156,14 @@ describe("buildPublicSiteSettings", () => {
       allowed_domains: ["@example.edu", "*.school.edu"],
     });
   });
+
+  it("exposes which agent connectors are set up, never their secrets", () => {
+    const { configuration } = buildPublicSiteSettings({
+      github_connector_client_id: "Iv23x",
+      github_connector_client_secret: "very-secret",
+    });
+    expect(configuration.cli_connector_github_enabled).toBe(true);
+    expect(configuration.cli_connector_cloudflare_enabled).toBe(false);
+    expect(JSON.stringify(configuration)).not.toContain("very-secret");
+  });
 });

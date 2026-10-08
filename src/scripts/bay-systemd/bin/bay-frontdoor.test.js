@@ -3,20 +3,27 @@
 
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
+const http = require("node:http");
 const test = require("node:test");
 
 process.env.COCALC_BAY_FRONTDOOR_UNHEALTHY_THRESHOLD = "3";
 process.env.COCALC_BAY_FRONTDOOR_APPLICATION_TIMEOUT_WINDOW_MS = "60000";
 process.env.COCALC_BAY_PUBLIC_INGRESS_MODE = "cloudflare-proxy";
+process.env.COCALC_BAY_FRONTDOOR_APP_PROBE_TIMEOUT_MS = "200";
+process.env.COCALC_BAY_FRONTDOOR_APP_PROBE_UNHEALTHY_THRESHOLD = "3";
 
 const {
+  checkWorkerApplication,
+  computeAppProbeIsolation,
   formatHealthError,
   isContentAddressedStaticRequest,
   isImmutableStaticStatus,
   isPubliclyCacheable,
   isTopLevelDocumentNavigation,
+  nextAppProbeIsolation,
   prepareResponseHeaders,
   proxyRequestHeaders,
+  recordWorkerAppProbe,
   recordWorkerApplicationTimeout,
   recordWorkerHealth,
   recentApplicationTimeouts,
@@ -395,4 +402,196 @@ test("application timeout observations remain bounded", () => {
   assert.equal(worker.applicationTimeouts.length, 1024);
   assert.equal(worker.applicationTimeouts[0], 10_076);
   assert.equal(worker.applicationTimeouts.at(-1), 11_099);
+});
+
+function probeWorker(id, { healthy = true, appProbeFailures = 0 } = {}) {
+  return {
+    id,
+    healthy,
+    appProbeFailures,
+    appProbeLastOk: 0,
+    appProbeLastError: "",
+    appProbeIsolated: false,
+  };
+}
+
+test("isolates one worker that fails application probes while peers pass", () => {
+  const workers = [
+    probeWorker(1, { appProbeFailures: 3 }),
+    probeWorker(2),
+    probeWorker(3),
+    probeWorker(4),
+  ];
+  assert.deepEqual([...computeAppProbeIsolation(workers)], [1]);
+});
+
+test("does not isolate before the application probe threshold", () => {
+  const workers = [
+    probeWorker(1, { appProbeFailures: 2 }),
+    probeWorker(2),
+    probeWorker(3),
+  ];
+  assert.equal(computeAppProbeIsolation(workers).size, 0);
+});
+
+test("never isolates workers when application probe failures are shared", () => {
+  const allFailing = [1, 2, 3, 4].map((id) =>
+    probeWorker(id, { appProbeFailures: 5 }),
+  );
+  assert.equal(computeAppProbeIsolation(allFailing).size, 0);
+
+  const half = [
+    probeWorker(1, { appProbeFailures: 5 }),
+    probeWorker(2, { appProbeFailures: 5 }),
+    probeWorker(3),
+    probeWorker(4),
+  ];
+  assert.equal(computeAppProbeIsolation(half).size, 0);
+});
+
+test("never isolates the only worker", () => {
+  assert.equal(
+    computeAppProbeIsolation([probeWorker(1, { appProbeFailures: 10 })]).size,
+    0,
+  );
+});
+
+test("counts only ready, undrained peers as passing", () => {
+  const workers = [
+    probeWorker(1, { appProbeFailures: 3 }),
+    probeWorker(2, { healthy: false }),
+    probeWorker(3),
+    probeWorker(4),
+  ];
+  assert.equal(
+    computeAppProbeIsolation(workers, { drained: new Set([4]) }).size,
+    0,
+  );
+  assert.deepEqual([...computeAppProbeIsolation(workers)], [1]);
+});
+
+test("respects the minimum healthy worker count when isolating", () => {
+  const workers = [
+    probeWorker(1, { appProbeFailures: 3 }),
+    probeWorker(2),
+    probeWorker(3),
+  ];
+  assert.equal(computeAppProbeIsolation(workers, { minHealthy: 3 }).size, 0);
+  assert.deepEqual(
+    [...computeAppProbeIsolation(workers, { minHealthy: 2 })],
+    [1],
+  );
+});
+
+test("a passing application probe clears accumulated failures", () => {
+  const worker = probeWorker(1);
+  recordWorkerAppProbe(worker, false, "timeout", 1_000);
+  recordWorkerAppProbe(worker, false, "timeout", 2_000);
+  assert.equal(worker.appProbeFailures, 2);
+  assert.equal(worker.appProbeLastError, "timeout");
+  recordWorkerAppProbe(worker, true, "", 3_000);
+  assert.equal(worker.appProbeFailures, 0);
+  assert.equal(worker.appProbeLastOk, 3_000);
+  assert.equal(worker.appProbeLastError, "");
+});
+
+async function withServer(handler, fn) {
+  const server = http.createServer(handler);
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    return await fn(server.address().port);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+test("application probe fails against a worker whose route hangs", async () => {
+  await withServer(
+    () => {
+      // Accept the request and never answer, like a wedged hub route.
+    },
+    async (port) => {
+      const worker = { ...probeWorker(1), host: "127.0.0.1", port };
+      await checkWorkerApplication(worker);
+      assert.equal(worker.appProbeFailures, 1);
+      assert.match(worker.appProbeLastError, /app probe timeout/);
+    },
+  );
+});
+
+test("application probe passes against a responsive worker", async () => {
+  await withServer(
+    (req, res) => {
+      assert.equal(req.headers["x-cocalc-bay-frontdoor-probe"], "1");
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("{}");
+    },
+    async (port) => {
+      const worker = {
+        ...probeWorker(1, { appProbeFailures: 2 }),
+        host: "127.0.0.1",
+        port,
+      };
+      await checkWorkerApplication(worker);
+      assert.equal(worker.appProbeFailures, 0);
+      assert.ok(worker.appProbeLastOk > 0);
+    },
+  );
+});
+
+test("application probe treats server errors as failures", async () => {
+  await withServer(
+    (_req, res) => {
+      res.writeHead(500);
+      res.end("boom");
+    },
+    async (port) => {
+      const worker = { ...probeWorker(1), host: "127.0.0.1", port };
+      await checkWorkerApplication(worker);
+      assert.equal(worker.appProbeFailures, 1);
+      assert.equal(worker.appProbeLastError, "app probe status 500");
+    },
+  );
+});
+
+test("isolation persists through drain and readiness loss until a probe passes", () => {
+  const workers = [
+    probeWorker(1, { appProbeFailures: 3 }),
+    probeWorker(2),
+    probeWorker(3),
+  ];
+  const [wedged] = workers;
+  wedged.appProbeIsolated = nextAppProbeIsolation(
+    wedged,
+    computeAppProbeIsolation(workers),
+  );
+  assert.equal(wedged.appProbeIsolated, true);
+
+  // Drained during a watchdog restart: no longer counted, still isolated.
+  const whileDrained = computeAppProbeIsolation(workers, {
+    drained: new Set([1]),
+  });
+  assert.equal(whileDrained.has(1), false);
+  assert.equal(nextAppProbeIsolation(wedged, whileDrained), true);
+
+  // Readiness lost: same.
+  wedged.healthy = false;
+  assert.equal(
+    nextAppProbeIsolation(wedged, computeAppProbeIsolation(workers)),
+    true,
+  );
+
+  // Only a passing application probe re-admits it.
+  wedged.healthy = true;
+  recordWorkerAppProbe(wedged, true, "", 10_000);
+  assert.equal(
+    nextAppProbeIsolation(wedged, computeAppProbeIsolation(workers)),
+    false,
+  );
+});
+
+test("a never-isolated worker is not isolated by stale failures alone", () => {
+  const worker = probeWorker(1, { appProbeFailures: 5 });
+  assert.equal(nextAppProbeIsolation(worker, new Set()), false);
 });

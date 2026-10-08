@@ -8,7 +8,9 @@ import {
   publicSignupEmailDomainPolicy,
   SIGNUP_EMAIL_DOMAIN_POLICY_SETTING_KEYS,
 } from "../accounts/signup-email-domain-policy";
+import { EDUCATOR_EMAIL_POLICY_SETTING_KEYS } from "../accounts/educator-email-policy";
 import { hasStripeBillingConfiguration } from "../stripe/billing";
+import { enabledCliConnectors } from "../ai/cli-connectors-enabled";
 import { version as FRONTEND_VERSION } from "../smc-version";
 
 export const PUBLIC_SITE_SETTINGS_KEYS = Object.freeze(
@@ -49,7 +51,10 @@ export function buildPublicSiteSettings(
   const version: VersionSettings = {};
 
   for (const key of PUBLIC_SITE_SETTINGS_KEYS) {
-    if (SIGNUP_EMAIL_DOMAIN_POLICY_SETTING_KEYS.has(key)) {
+    if (
+      SIGNUP_EMAIL_DOMAIN_POLICY_SETTING_KEYS.has(key) ||
+      EDUCATOR_EMAIL_POLICY_SETTING_KEYS.has(key)
+    ) {
       continue;
     }
     if (!(key in all)) {
@@ -100,6 +105,12 @@ export function buildPublicSiteSettings(
   // Expose only the coarse feature flag. Scanner image/cache settings remain
   // admin-only, but the browser needs this to hide scan affordances.
   configuration.rootfs_scan_enabled = to_bool(all.rootfs_scan_enabled);
+
+  // Which agent connectors are set up (names only, never their secrets).
+  const connectors = enabledCliConnectors(all);
+  configuration.cli_connector_github_enabled = connectors.includes("github");
+  configuration.cli_connector_cloudflare_enabled =
+    connectors.includes("cloudflare");
 
   return { configuration, version };
 }

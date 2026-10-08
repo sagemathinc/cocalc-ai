@@ -21,6 +21,10 @@ import React, {
   useState,
 } from "react";
 import { TableVirtuoso, type TableVirtuosoHandle } from "react-virtuoso";
+import {
+  virtuosoItemContent,
+  virtuosoItemKey,
+} from "@cocalc/frontend/components/virtuoso-item";
 import { useIntl } from "react-intl";
 
 import {
@@ -1512,6 +1516,10 @@ export function FileListing({
       toggleExpandDir,
     ],
   );
+  const virtualItemContent = useMemo(
+    () => virtuosoItemContent(itemContent),
+    [itemContent],
+  );
 
   const simpleTableRows = useMemo(() => {
     return virtualData.map((entry, index) => {
@@ -1762,15 +1770,16 @@ export function FileListing({
               ref={virtuosoRef}
               style={{ flex: 1, minHeight: 0, scrollbarGutter: "stable" }}
               data={virtualData}
-              computeItemKey={(_index, entry) =>
-                isPeekEntry(entry)
-                  ? `__peek__${entry._peekForName}`
-                  : entry.fullPath
-              }
+              computeItemKey={virtuosoItemKey(
+                (_index: number, entry: VirtualEntry) =>
+                  isPeekEntry(entry)
+                    ? `__peek__${entry._peekForName}`
+                    : entry.fullPath,
+              )}
               overscan={200}
               components={TABLE_COMPONENTS}
               fixedHeaderContent={fixedHeaderContent}
-              itemContent={itemContent}
+              itemContent={virtualItemContent}
             />
           )}
         </div>

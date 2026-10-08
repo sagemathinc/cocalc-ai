@@ -149,16 +149,22 @@ function runQuotaForRestartComparison(
   return rest;
 }
 
-function withCocalcAiRuntimeSemantics(run_quota: Quota): Quota {
+export function withCocalcAiRuntimeSemantics(
+  run_quota: Quota,
+  project_network?: boolean,
+): Quota {
   const sharedComputePriority = Number(run_quota.shared_compute_priority);
   return {
     ...run_quota,
-    // Free accounts have priority 0. All paid, admin, and site-license tiers
-    // have a positive priority. Derive network access from the resolved runtime
-    // account after sponsorship/course attribution instead of the legacy site
-    // default, which historically enabled internet for every project.
+    // A tier may set project internet access explicitly (CoCalc Star's free
+    // tier allows it). Otherwise: free accounts have priority 0, and all paid,
+    // admin, and site-license tiers have a positive priority. Derive network
+    // access from the resolved runtime account after sponsorship/course
+    // attribution instead of the legacy site default, which historically
+    // enabled internet for every project.
     network:
-      Number.isFinite(sharedComputePriority) && sharedComputePriority > 0,
+      project_network ??
+      (Number.isFinite(sharedComputePriority) && sharedComputePriority > 0),
     member_host: true,
   };
 }
@@ -702,7 +708,10 @@ export class BaseProject extends EventEmitter {
         nextRunQuota,
         host_id,
       );
-      nextRunQuota = withCocalcAiRuntimeSemantics(nextRunQuota);
+      nextRunQuota = withCocalcAiRuntimeSemantics(
+        nextRunQuota,
+        runtimeScheduling.project_network,
+      );
     }
 
     if (nextRunQuota == null) {

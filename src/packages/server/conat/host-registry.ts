@@ -33,6 +33,7 @@ import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/pr
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { appendProjectLogRowBestEffort } from "@cocalc/server/projects/project-log";
 import { startProjectOnHost } from "@cocalc/server/project-host/control";
+import { getProject } from "@cocalc/server/projects/control";
 import { loadProjectRuntimeSponsor } from "@cocalc/server/projects/runtime-sponsor-db";
 import {
   heartbeatProjectRuntimeSlot,
@@ -755,6 +756,18 @@ async function recoverProjectAfterHostRestart({
       },
     });
     reserved = true;
+    // Like an ordinary start, use the current membership rather than the
+    // quota stored when the project last started (e.g. before an upgrade).
+    try {
+      await getProject(project.project_id).computeQuota(
+        project.owner_account_id,
+      );
+    } catch (err) {
+      logger.warn("host restart recovery: keeping the stored run quota", {
+        project_id: project.project_id,
+        err: `${err}`,
+      });
+    }
     await startProjectOnHost(project.project_id, {
       account_id: project.owner_account_id,
       ignore_recent_state_snapshot: true,

@@ -16,6 +16,16 @@ describe("built CDN assets", () => {
     }
   });
 
+  it("ships KaTeX CSS and fonts matching the frontend renderer", () => {
+    const version = require("katex/package.json").version;
+    expect(obj.versions.katex).toBe(version);
+    for (const directory of ["katex", `katex-${version}`]) {
+      for (const asset of ["katex.min.css", "fonts/KaTeX_Main-Regular.woff2"]) {
+        expect(existsSync(join(path, directory, asset))).toBe(true);
+      }
+    }
+  });
+
   it("contains packed PDF.js CMaps at unversioned and versioned paths", () => {
     const cmap = "Adobe-Japan1-UCS2.bcmap";
     expect(existsSync(join(path, "pdfjs-dist", "cmaps", cmap))).toBe(true);

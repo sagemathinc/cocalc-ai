@@ -10,7 +10,13 @@ import {
   isProjectHostTemporarilyUnavailable,
 } from "@cocalc/frontend/project/listing/project-host-errors";
 
-export function shouldShowWrongAccountListingError(error: unknown): boolean {
+export function shouldShowWrongAccountListingError(
+  error: unknown,
+  { archived = false }: { archived?: boolean } = {},
+): boolean {
+  // An archived project has no filesystem to list until it is started, so a
+  // 403 there is expected; the archived notice (with Start) explains it.
+  if (archived) return false;
   return (
     `${(error as any)?.code ?? ""}`.trim() === "403" &&
     !isTransientProjectHostListingError(error)

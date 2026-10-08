@@ -1674,6 +1674,9 @@ class BootstrapConfig:
     bootstrap_done_paths: list[str]
     container_runtime_bundle: BundleSpec | None = None
     allow_loopback_rustic_rest: bool = False
+    # Standalone (CoCalc Star) hosts only: run without the per-project network
+    # policy when the kernel cannot express it, instead of refusing projects.
+    allow_unenforceable_project_network: bool = False
 
 
 @dataclass(frozen=True)
@@ -1685,6 +1688,9 @@ class PrivilegedWrapperConfig:
     project_io_policy: dict[str, Any]
     container_runtime_bundle: BundleSpec | None = None
     allow_loopback_rustic_rest: bool = False
+    # Standalone (CoCalc Star) hosts only: run without the per-project network
+    # policy when the kernel cannot express it, instead of refusing projects.
+    allow_unenforceable_project_network: bool = False
 
 
 def _require(condition: bool, message: str) -> None:
@@ -1799,6 +1805,7 @@ def standalone_privileged_wrapper_config(
         project_io_capacity=capacity,
         project_io_policy=build_project_io_policy(capacity),
         allow_loopback_rustic_rest=True,
+        allow_unenforceable_project_network=True,
     )
 
 
@@ -4570,6 +4577,7 @@ import os
 from pathlib import Path
 import pwd
 import re
+import select
 import selectors
 import signal
 import sys
@@ -5000,6 +5008,56 @@ def lease_connected():
     finally:
         probe.close()
 
+# Frames queued for the runtime before the helper stops reading the command's
+# output. The command then blocks on its own pipe writes until the runtime
+# catches up (backpressure), instead of fast output failing the whole job.
+OUTPUT_HIGH_WATER = 64 * 1024
+# After the command's processes are gone, how long remaining output and the
+# exit frame may wait for a slow runtime before cleanup is reported unconfirmed.
+OUTPUT_FINAL_DRAIN_SECONDS = 30
+
+class OutputRelay:
+    """Newline-delimited JSON frames to the runtime over a non-blocking fd."""
+    def __init__(self, fd=1):
+        self.fd = fd
+        self.pending = bytearray()
+    def emit(self, value):
+        self.pending.extend(json.dumps(value, separators=(",", ":")).encode() + b"\n")
+    @property
+    def full(self):
+        return len(self.pending) >= OUTPUT_HIGH_WATER
+    def flush(self):
+        if self.pending:
+            try:
+                del self.pending[:os.write(self.fd, self.pending)]
+            except BlockingIOError:
+                pass
+    def wait_below_high_water(self, until):
+        """Block, at most until `until`, while too much output is queued."""
+        while self.full:
+            remaining = until - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError("job output transport stalled")
+            select.select([], [self.fd], [], min(remaining, 0.5))
+            self.flush()
+
+# Rootless Podman moves itself into a scope of the runtime user's systemd
+# session when it does not own its cgroup, i.e. out of the job's root-owned
+# scope. Without a reachable user bus it stays; with cgroupfs it needs none.
+NO_USER_BUS = "unix:path=/dev/null/cocalc-no-user-bus"
+
+def launcher_config(config):
+    args, env = config["args"], config["env"]
+    if (not isinstance(args, list) or not args or args[0] != "exec" or
+        not all(isinstance(x, str) and "\0" not in x for x in args) or
+        not isinstance(env, dict) or
+        not all(isinstance(k, str) and isinstance(v, str) and
+                re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) and "\0" not in v
+                for k, v in env.items())):
+        raise ValueError("invalid launcher configuration")
+    # Enforced here, not trusted from the caller.
+    return args, dict(env, DBUS_SESSION_BUS_ADDRESS=NO_USER_BUS)
+
 def supervise(project, job, owner, timeout_ms):
     admitted = time.monotonic()
     if not re.fullmatch(UUID, project) or not re.fullmatch(UUID, job):
@@ -5014,15 +5072,7 @@ def supervise(project, job, owner, timeout_ms):
     owner_start = identity(owner)
     with lifecycle_lock():
         generation = active_state(project)["generation"]
-    config = config_from_stdin()
-    args, env = config["args"], config["env"]
-    if (not isinstance(args, list) or not args or args[0] != "exec" or
-        not all(isinstance(x, str) and "\0" not in x for x in args) or
-        not isinstance(env, dict) or
-        not all(isinstance(k, str) and isinstance(v, str) and
-                re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) and "\0" not in v
-                for k, v in env.items())):
-        raise ValueError("invalid launcher configuration")
+    args, env = launcher_config(config_from_stdin())
     parent = POOL / ("project-" + project)
     deadline = admitted + timeout_ms / 1000
     # Kernel-owned directory name is durable reaper metadata, including the
@@ -5032,23 +5082,15 @@ def supervise(project, job, owner, timeout_ms):
     completed = False
     pipes = []
     sel = selectors.DefaultSelector()
-    pending = bytearray()
+    relay = OutputRelay(1)
+    emit, flush = relay.emit, relay.flush
     background_warning = BackgroundWarningTracker()
     stopped = False
     result = 1
+    final_until = None
     def stop(*_):
         nonlocal stopped
         stopped = True
-    def emit(value):
-        pending.extend(json.dumps(value, separators=(",", ":")).encode() + b"\n")
-        if len(pending) > 256 * 1024:
-            raise RuntimeError("job output transport stalled")
-    def flush():
-        if pending:
-            try:
-                del pending[:os.write(1, pending)]
-            except BlockingIOError:
-                pass
     def emit_output(stream, chunk):
         background_warning.observe(stream, chunk)
         emit({"type": "output", "stream": stream,
@@ -5100,16 +5142,26 @@ def supervise(project, job, owner, timeout_ms):
                 except (BrokenPipeError, BlockingIOError):
                     pass
                 last_beat = now
-            for key, _ in sel.select(0.05):
-                chunk = os.read(key.fd, 4096)
-                if key.data == "lease":
-                    if not chunk:
+            if relay.full:
+                # Backpressure: leave the command's pipes unread, so it blocks
+                # on its writes, until the runtime reads the queued frames.
+                # Lease, heartbeat, deadline and exit checks continue.
+                readable, _, _ = select.select([0], [relay.fd], [], 0.05)
+                if readable:
+                    if not os.read(0, 4096):
                         stopped = True
                     last_lease = time.monotonic()
-                elif chunk:
-                    emit_output(key.data, chunk)
-                else:
-                    sel.unregister(key.fd)
+            else:
+                for key, _ in sel.select(0.05):
+                    chunk = os.read(key.fd, 4096)
+                    if key.data == "lease":
+                        if not chunk:
+                            stopped = True
+                        last_lease = time.monotonic()
+                    elif chunk:
+                        emit_output(key.data, chunk)
+                    else:
+                        sel.unregister(key.fd)
             flush()
             pid, status = os.waitpid(child, os.WNOHANG)
             if pid:
@@ -5122,6 +5174,7 @@ def supervise(project, job, owner, timeout_ms):
     finally:
         # Even success kills detached leftovers. Do not report success until
         # populated=0 AND rmdir confirm that there is no remaining authority.
+        final_until = time.monotonic() + OUTPUT_FINAL_DRAIN_SECONDS
         try:
             with lifecycle_lock():
                 leftovers = live_scope_processes(scope) if completed and not stopped else 0
@@ -5140,6 +5193,7 @@ def supervise(project, job, owner, timeout_ms):
                     chunk = os.read(fd, 4096)
                     if not chunk:
                         break
+                    relay.wait_below_high_water(final_until)
                     emit_output("stdout" if pair is pipes[1] else "stderr", chunk)
                     flush()
             if leftovers and not background_warning.seen:
@@ -5153,8 +5207,8 @@ def supervise(project, job, owner, timeout_ms):
             raise RuntimeError("job containment cleanup not confirmed") from None
         finally:
             sel.close()
-            until = time.monotonic() + 1
-            while pending and time.monotonic() < until:
+            until = max(time.monotonic() + 1, final_until or 0)
+            while relay.pending and time.monotonic() < until:
                 try:
                     flush()
                 except BrokenPipeError:
@@ -7106,7 +7160,9 @@ host_service_cgroup_ready() {
   [ -d "$HOST_SERVICE_CGROUP_DEFAULT" ] || return 1
   [ "$(cat "${HOST_SERVICE_CGROUP_DEFAULT}/cpu.max" 2>/dev/null || true)" = "max 100000" ] || return 1
   [ "$(cat "${HOST_SERVICE_CGROUP_DEFAULT}/cpu.weight" 2>/dev/null || true)" = "$HOST_SERVICE_CGROUP_CPU_WEIGHT" ] || return 1
-  [ "$(awk '$1 == "default" {print $2}' "${HOST_SERVICE_CGROUP_DEFAULT}/io.weight" 2>/dev/null || true)" = "$HOST_SERVICE_CGROUP_IO_WEIGHT" ] || return 1
+  if [ -e "${HOST_SERVICE_CGROUP_DEFAULT}/io.weight" ]; then
+    [ "$(awk '$1 == "default" {print $2}' "${HOST_SERVICE_CGROUP_DEFAULT}/io.weight" 2>/dev/null || true)" = "$HOST_SERVICE_CGROUP_IO_WEIGHT" ] || return 1
+  fi
   [ "$(cat "${HOST_SERVICE_CGROUP_DEFAULT}/memory.max" 2>/dev/null || true)" = "max" ] || return 1
   [ "$(cat "${HOST_SERVICE_CGROUP_DEFAULT}/pids.max" 2>/dev/null || true)" = "max" ] || return 1
 }
@@ -7301,21 +7357,32 @@ project_startup_cgroup_ready() {
   [ -w "${PROJECT_STARTUP_CREATE_CGROUP_DEFAULT}/cgroup.procs" ] || return 1
   [ -z "$(cat "${PROJECT_STARTUP_CGROUP_DEFAULT}/cgroup.procs" 2>/dev/null || true)" ] || return 1
   for controller in cpu memory pids io; do
+    if [ "$controller" = io ] && ! grep -qw io /sys/fs/cgroup/cgroup.controllers; then
+      continue
+    fi
     grep -qw "$controller" "${PROJECT_STARTUP_CGROUP_DEFAULT}/cgroup.subtree_control" || return 1
   done
   [ "$(cat "${PROJECT_STARTUP_CGROUP_DEFAULT}/cpu.max" 2>/dev/null || true)" = "$PROJECT_STARTUP_CGROUP_CPU_MAX" ] || return 1
   [ "$(cat "${PROJECT_STARTUP_CGROUP_DEFAULT}/cpu.weight" 2>/dev/null || true)" = "$PROJECT_STARTUP_CGROUP_CPU_WEIGHT" ] || return 1
-  [ "$(awk '$1 == "default" {print $2}' "${PROJECT_STARTUP_CGROUP_DEFAULT}/io.weight" 2>/dev/null || true)" = "$PROJECT_STARTUP_CGROUP_IO_WEIGHT" ] || return 1
+  if [ -e "${PROJECT_STARTUP_CGROUP_DEFAULT}/io.weight" ]; then
+    [ "$(awk '$1 == "default" {print $2}' "${PROJECT_STARTUP_CGROUP_DEFAULT}/io.weight" 2>/dev/null || true)" = "$PROJECT_STARTUP_CGROUP_IO_WEIGHT" ] || return 1
+  fi
   [ "$(cat "${PROJECT_STARTUP_CGROUP_DEFAULT}/memory.high" 2>/dev/null || true)" = "$PROJECT_STARTUP_CGROUP_MEMORY_HIGH" ] || return 1
   [ "$(cat "${PROJECT_STARTUP_CGROUP_DEFAULT}/memory.max" 2>/dev/null || true)" = "$PROJECT_STARTUP_CGROUP_MEMORY_MAX" ] || return 1
-  [ "$(cat "${PROJECT_STARTUP_CGROUP_DEFAULT}/memory.swap.max" 2>/dev/null || true)" = "0" ] || return 1
+  if [ -e "${PROJECT_STARTUP_CGROUP_DEFAULT}/memory.swap.max" ]; then
+    [ "$(cat "${PROJECT_STARTUP_CGROUP_DEFAULT}/memory.swap.max" 2>/dev/null || true)" = "0" ] || return 1
+  fi
   [ "$(cat "${PROJECT_STARTUP_CGROUP_DEFAULT}/pids.max" 2>/dev/null || true)" = "$PROJECT_STARTUP_CGROUP_PIDS_MAX" ] || return 1
   [ "$(cat "${PROJECT_STARTUP_CREATE_CGROUP_DEFAULT}/cpu.max" 2>/dev/null || true)" = "max 100000" ] || return 1
   [ "$(cat "${PROJECT_STARTUP_CREATE_CGROUP_DEFAULT}/cpu.weight" 2>/dev/null || true)" = "$PROJECT_STARTUP_CGROUP_CPU_WEIGHT" ] || return 1
-  [ "$(awk '$1 == "default" {print $2}' "${PROJECT_STARTUP_CREATE_CGROUP_DEFAULT}/io.weight" 2>/dev/null || true)" = "$PROJECT_STARTUP_CGROUP_IO_WEIGHT" ] || return 1
+  if [ -e "${PROJECT_STARTUP_CREATE_CGROUP_DEFAULT}/io.weight" ]; then
+    [ "$(awk '$1 == "default" {print $2}' "${PROJECT_STARTUP_CREATE_CGROUP_DEFAULT}/io.weight" 2>/dev/null || true)" = "$PROJECT_STARTUP_CGROUP_IO_WEIGHT" ] || return 1
+  fi
   [ "$(cat "${PROJECT_STARTUP_CREATE_CGROUP_DEFAULT}/memory.high" 2>/dev/null || true)" = "$PROJECT_STARTUP_CREATE_CGROUP_MEMORY_HIGH" ] || return 1
   [ "$(cat "${PROJECT_STARTUP_CREATE_CGROUP_DEFAULT}/memory.max" 2>/dev/null || true)" = "$PROJECT_STARTUP_CREATE_CGROUP_MEMORY_MAX" ] || return 1
-  [ "$(cat "${PROJECT_STARTUP_CREATE_CGROUP_DEFAULT}/memory.swap.max" 2>/dev/null || true)" = "0" ] || return 1
+  if [ -e "${PROJECT_STARTUP_CREATE_CGROUP_DEFAULT}/memory.swap.max" ]; then
+    [ "$(cat "${PROJECT_STARTUP_CREATE_CGROUP_DEFAULT}/memory.swap.max" 2>/dev/null || true)" = "0" ] || return 1
+  fi
   [ "$(cat "${PROJECT_STARTUP_CREATE_CGROUP_DEFAULT}/pids.max" 2>/dev/null || true)" = "$PROJECT_STARTUP_CGROUP_PIDS_MAX" ] || return 1
   return 0
 }
@@ -7418,6 +7485,9 @@ project_pool_hierarchy_ready() {
   [ -d "$(project_legacy_cgroup)" ] || return 1
   [ -r "${PROJECT_POOL_CGROUP_DEFAULT}/cgroup.subtree_control" ] || return 1
   for controller in cpu memory pids io; do
+    if [ "$controller" = io ] && ! grep -qw io /sys/fs/cgroup/cgroup.controllers; then
+      continue
+    fi
     grep -qw "$controller" "${PROJECT_POOL_CGROUP_DEFAULT}/cgroup.subtree_control" || return 1
   done
   return 0
@@ -7949,9 +8019,107 @@ configure_project_network_table() {
   fi
 }
 
+# Per-project network policy (metadata block, egress rate limits, disabled
+# network) identifies a project's traffic with the nftables `socket cgroupv2`
+# match, and the disabled policy also needs `fib daddr type local`. Some
+# kernels lack these expressions (e.g. Docker Desktop's LinuxKit VM has neither
+# nft_socket nor nft_fib_inet). Only a deterministic "expression unavailable"
+# result counts; any other nft failure leaves the policy enforced and is
+# retried later. The result is cached for this boot and kernel only.
+PROJECT_NETWORK_CAPABILITY_FILE="/run/cocalc-project-network-capability"
+PROJECT_NETWORK_DEGRADED_FILE="/run/cocalc-project-network-degraded"
+# The policy is an anti-abuse measure for public sites with untrusted accounts.
+# Only a host installed with the standalone (CoCalc Star) profile may run
+# without it on such a kernel; everywhere else project starts and network
+# reconciliation fail closed.
+PROJECT_NETWORK_UNENFORCEABLE_ALLOWED="__ALLOW_UNENFORCEABLE_PROJECT_NETWORK__"
+
+project_network_kernel_identity() {
+  printf '%s %s' "$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)" "$(uname -r)"
+}
+
+# Prints supported, unsupported or unknown.
+project_network_capability() {
+  local identity cached probe_table pool_path level output status=0
+  identity="$(project_network_kernel_identity)"
+  cached="$(cat "$PROJECT_NETWORK_CAPABILITY_FILE" 2>/dev/null || true)"
+  case "$cached" in
+    "supported $identity") echo supported; return 0 ;;
+    "unsupported $identity") echo unsupported; return 0 ;;
+  esac
+  require_project_network_tools
+  configure_project_pool_hierarchy
+  if [ ! -d "$PROJECT_POOL_CGROUP_DEFAULT" ]; then
+    echo unknown
+    return 0
+  fi
+  pool_path="$(project_network_pool_cgroup_path)"
+  level="$(awk -F/ '{print NF}' <<< "$pool_path")"
+  probe_table="cocalc_capability_probe_$$_${RANDOM}"
+  # A control rule proves that nft works at all, so that a failure below can
+  # only come from the expressions being probed.
+  if ! printf 'add table inet %s\\nadd chain inet %s probe { type filter hook output priority filter; policy accept; }\\nadd rule inet %s probe meta l4proto tcp counter\\n' \\
+    "$probe_table" "$probe_table" "$probe_table" |
+    run_project_network_nft -f - >/dev/null 2>&1; then
+    run_project_network_nft delete table inet "$probe_table" >/dev/null 2>&1 || true
+    echo unknown
+    return 0
+  fi
+  output="$(
+    printf 'add rule inet %s probe socket cgroupv2 level %s "%s" counter\\nadd rule inet %s probe fib daddr type local counter\\n' \\
+      "$probe_table" "$level" "$pool_path" "$probe_table" |
+      run_project_network_nft -f - 2>&1
+  )" || status=$?
+  run_project_network_nft delete table inet "$probe_table" >/dev/null 2>&1 || true
+  if [ "$status" -eq 0 ]; then
+    printf 'supported %s\\n' "$identity" > "$PROJECT_NETWORK_CAPABILITY_FILE"
+    echo supported
+    return 0
+  fi
+  # The kernel rejects an expression whose module it lacks with ENOENT. The
+  # pool cgroup path exists (checked above), so that is the only cause here.
+  if [ "$status" -eq 1 ] &&
+    grep -q 'Could not process rule: No such file or directory' <<< "$output"; then
+    printf 'unsupported %s\\n' "$identity" > "$PROJECT_NETWORK_CAPABILITY_FILE"
+    echo unsupported
+    return 0
+  fi
+  echo unknown
+}
+
+# Reported once per boot, kernel and outcome, to the journal and stderr.
+report_project_network_degraded() {
+  local state="$1" message="$2" marker
+  marker="${state} $(project_network_kernel_identity)"
+  if [ "$(cat "$PROJECT_NETWORK_DEGRADED_FILE" 2>/dev/null || true)" != "$marker" ]; then
+    printf '%s\\n' "$marker" > "$PROJECT_NETWORK_DEGRADED_FILE" || true
+    logger -t cocalc-runtime-storage -p user.warning "$message" || true
+    echo "WARNING: $message" >&2
+  fi
+}
+
+# Succeeds when the policy is unenforceable and this host may run without it;
+# refuses (deny) when it is unenforceable anywhere else.
+project_network_policy_unenforceable() {
+  local capability
+  capability="$(project_network_capability)"
+  [ "$capability" = unsupported ] || return 1
+  if [ "$PROJECT_NETWORK_UNENFORCEABLE_ALLOWED" != 1 ]; then
+    report_project_network_degraded blocked \\
+      "project network policy cannot be enforced: this kernel lacks the nftables socket cgroupv2 or fib expressions; project starts are refused"
+    deny "project-network-policy-unenforceable" "kernel lacks nftables socket cgroupv2 or fib expressions"
+  fi
+  report_project_network_degraded off \\
+    "project network policy is OFF: this kernel lacks the nftables socket cgroupv2 or fib expressions (allowed on this standalone host)"
+  return 0
+}
+
 ensure_project_network_rule() {
   local project_id="$1"
   is_project_uuid "$project_id" || deny "project-id-invalid" "$project_id"
+  if project_network_policy_unenforceable; then
+    return 0
+  fi
   # Listing a cgroup/socket rule chain can take many seconds on a busy host.
   # Project creation must not depend on that read path: append containment
   # rules atomically, then let the periodic full reconciliation remove any
@@ -8049,11 +8217,16 @@ project_cgroup_has_processes() {
 }
 
 verify_project_network_limits() {
-  local project_id="$1" marker rules metadata_ipv4_count metadata_ipv6_count startup_established_count startup_deny_count tcp_count udp_count disabled_dns_count disabled_local_count disabled_established_count disabled_reject_count policy pid found=0 limits
+  local project_id="$1" unenforceable marker rules metadata_ipv4_count metadata_ipv6_count startup_established_count startup_deny_count tcp_count udp_count disabled_dns_count disabled_local_count disabled_established_count disabled_reject_count policy pid found=0 limits
   is_project_uuid "$project_id" || deny "project-id-invalid" "$project_id"
   require_project_network_tools
   marker="$(project_network_rule_marker "$project_id")"
-  if ! rules="$(run_project_network_nft list chain inet "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" 2>/dev/null)"; then
+  policy="$(project_network_policy "$project_id")"
+  unenforceable=0
+  if project_network_policy_unenforceable; then
+    unenforceable=1
+    rules=""
+  elif ! rules="$(run_project_network_nft list chain inet "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" 2>/dev/null)"; then
     echo "project network nftables chain is missing" >&2
     return 1
   fi
@@ -8067,19 +8240,23 @@ verify_project_network_limits() {
   disabled_local_count="$(grep -Fc "comment \\\"${marker}-disabled-local\\\"" <<< "$rules" || true)"
   disabled_established_count="$(grep -Fc "comment \\\"${marker}-disabled-established\\\"" <<< "$rules" || true)"
   disabled_reject_count="$(grep -Fc "comment \\\"${marker}-disabled-reject\\\"" <<< "$rules" || true)"
-  policy="$(project_network_policy "$project_id")"
-  if [ "$metadata_ipv4_count" -ne 1 ] || [ "$metadata_ipv6_count" -ne 1 ] || [ "$startup_established_count" -ne 1 ] || [ "$startup_deny_count" -ne 1 ]; then
-    echo "project shared network rules are missing or duplicated: metadata_ipv4=${metadata_ipv4_count} metadata_ipv6=${metadata_ipv6_count} startup_established=${startup_established_count} startup_deny=${startup_deny_count}" >&2
-    return 1
-  fi
-  if [ "$policy" = "disabled" ]; then
-    if [ "$tcp_count" -ne 0 ] || [ "$udp_count" -ne 0 ] || [ "$disabled_dns_count" -ne 1 ] || [ "$disabled_local_count" -ne 1 ] || [ "$disabled_established_count" -ne 1 ] || [ "$disabled_reject_count" -ne 1 ]; then
-      echo "disabled project network rules are missing or duplicated: dns=${disabled_dns_count} local=${disabled_local_count} established=${disabled_established_count} reject=${disabled_reject_count} tcp=${tcp_count} udp=${udp_count}" >&2
+  # Where the kernel cannot express the rules (see
+  # project_network_policy_unenforceable) none are installed, so only the
+  # pasta limits below are verified.
+  if [ "$unenforceable" -eq 0 ]; then
+    if [ "$metadata_ipv4_count" -ne 1 ] || [ "$metadata_ipv6_count" -ne 1 ] || [ "$startup_established_count" -ne 1 ] || [ "$startup_deny_count" -ne 1 ]; then
+      echo "project shared network rules are missing or duplicated: metadata_ipv4=${metadata_ipv4_count} metadata_ipv6=${metadata_ipv6_count} startup_established=${startup_established_count} startup_deny=${startup_deny_count}" >&2
       return 1
     fi
-  elif [ "$tcp_count" -ne 1 ] || [ "$udp_count" -ne 1 ] || [ "$disabled_dns_count" -ne 0 ] || [ "$disabled_local_count" -ne 0 ] || [ "$disabled_established_count" -ne 0 ] || [ "$disabled_reject_count" -ne 0 ]; then
-    echo "normal project network rules are missing or duplicated: tcp=${tcp_count} udp=${udp_count} dns=${disabled_dns_count} local=${disabled_local_count} established=${disabled_established_count} reject=${disabled_reject_count}" >&2
-    return 1
+    if [ "$policy" = "disabled" ]; then
+      if [ "$tcp_count" -ne 0 ] || [ "$udp_count" -ne 0 ] || [ "$disabled_dns_count" -ne 1 ] || [ "$disabled_local_count" -ne 1 ] || [ "$disabled_established_count" -ne 1 ] || [ "$disabled_reject_count" -ne 1 ]; then
+        echo "disabled project network rules are missing or duplicated: dns=${disabled_dns_count} local=${disabled_local_count} established=${disabled_established_count} reject=${disabled_reject_count} tcp=${tcp_count} udp=${udp_count}" >&2
+        return 1
+      fi
+    elif [ "$tcp_count" -ne 1 ] || [ "$udp_count" -ne 1 ] || [ "$disabled_dns_count" -ne 0 ] || [ "$disabled_local_count" -ne 0 ] || [ "$disabled_established_count" -ne 0 ] || [ "$disabled_reject_count" -ne 0 ]; then
+      echo "normal project network rules are missing or duplicated: tcp=${tcp_count} udp=${udp_count} dns=${disabled_dns_count} local=${disabled_local_count} established=${disabled_established_count} reject=${disabled_reject_count}" >&2
+      return 1
+    fi
   fi
   while IFS= read -r pid; do
     [ -n "$pid" ] || continue
@@ -8137,17 +8314,27 @@ apply_project_network_process_limits() {
 }
 
 reconcile_project_network_limits() {
-  local attempt snapshot rules
+  local attempt snapshot rules applied
   # During early boot, systemd may still be settling the cgroup v2 tree. nft
   # resolves socket cgroup paths while parsing the batch and rejects rules
   # whose paths are not visible yet. Recreate the hierarchy on every attempt
   # and give it time to become stable instead of aborting host bootstrap.
   for attempt in $(seq 1 "$PROJECT_NETWORK_BOOT_RECONCILE_ATTEMPTS"); do
     configure_project_pool_hierarchy
-    configure_project_network_table
-    snapshot="$(run_project_network_nft -a list chain inet "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN")"
-    rules="$(render_project_network_rules "$snapshot")"
-    if printf '%s\\n' "$rules" | run_project_network_nft -f -; then
+    applied=0
+    if ! project_network_policy_unenforceable; then
+      configure_project_network_table
+      snapshot="$(run_project_network_nft -a list chain inet "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN")"
+      rules="$(render_project_network_rules "$snapshot")"
+      if printf '%s\\n' "$rules" | run_project_network_nft -f -; then
+        applied=1
+      fi
+    else
+      # The kernel cannot express the rules; the pasta process limits still
+      # apply.
+      applied=1
+    fi
+    if [ "$applied" = 1 ]; then
       apply_project_network_process_limits
       return 0
     fi
@@ -10612,6 +10799,10 @@ esac
         "__PROJECT_POOL_CGROUP__", DEFAULT_PROJECT_POOL_CGROUP
     )
     storage_wrapper = storage_wrapper.replace("__RUNTIME_USER__", cfg.ssh_user)
+    storage_wrapper = storage_wrapper.replace(
+        "__ALLOW_UNENFORCEABLE_PROJECT_NETWORK__",
+        "1" if cfg.allow_unenforceable_project_network else "0",
+    )
     storage_wrapper = storage_wrapper.replace(
         "__CONTAINER_RUNTIME_REQUIRED__",
         "1" if cfg.container_runtime_bundle is not None else "0",

@@ -17,6 +17,18 @@ const recoveries = new Map<string, Recovery>();
 let recoveryTimer: ReturnType<typeof setInterval> | undefined;
 let recovering = false;
 
+// Rootless Podman moves itself into a new systemd scope of the user's session
+// when it does not own its cgroup. Where the user's systemd can do that (e.g.
+// CoCalc Star in Docker), the command would leave its job scope and fail the
+// containment check. Without a reachable user bus Podman stays put; it needs
+// no bus otherwise, since it uses the cgroupfs manager.
+export function containedPodmanEnv(): NodeJS.ProcessEnv {
+  return {
+    ...podmanEnv(),
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/dev/null/cocalc-no-user-bus",
+  };
+}
+
 function retainRecovery(recovery: Recovery) {
   recoveries.set(recovery.scope, recovery);
   if (recoveryTimer) return;
@@ -24,10 +36,13 @@ function retainRecovery(recovery: Recovery) {
   // It outlives controllers and never retains scripts, credentials or output.
   recoveryTimer = setInterval(() => void recover(), 30_000);
   recoveryTimer.unref();
+  // Most leftovers exit within seconds of being killed: check once soon, so a
+  // fenced agent session reopens quickly instead of after a full interval.
+  setTimeout(() => void recover(), 5_000).unref();
 }
 
 async function recover(): Promise<void> {
-  if (recovering) return;
+  if (recovering || recoveries.size === 0) return;
   recovering = true;
   const batch = [...recoveries.values()].slice(0, 64);
   // Rotate unresolved entries so a busy scope cannot starve later recoveries.
@@ -155,7 +170,9 @@ export function runContainedSandboxCommand({
       force = setTimeout(() => child.kill("SIGKILL"), 20_000);
     };
     child.stdin.on("error", stop);
-    child.stdin.write(JSON.stringify({ args, env: podmanEnv() }) + "\n");
+    child.stdin.write(
+      JSON.stringify({ args, env: containedPodmanEnv() }) + "\n",
+    );
     const heartbeat = setInterval(() => {
       if (!stopping && !child.stdin.destroyed && !child.stdin.writableEnded)
         child.stdin.write(".\n");

@@ -65,14 +65,12 @@ Environment:
   COCALC_STAR_DOCKER_CACHE_ALLOW_DEGRADED=1
   COCALC_STAR_DOCKER_CONTEXT_ROOT
 
-The generated image expects rootful Docker and systemd support at runtime, e.g.
+The generated image expects rootful Docker with cgroup v2 at runtime, e.g.
 
-  docker run --privileged --cgroupns=host \\
-    --security-opt seccomp=unconfined \\
-    --tmpfs /run --tmpfs /run/lock \\
-    -v /sys/fs/cgroup:/sys/fs/cgroup:rw \\
-    -v cocalc-star-data:/var/lib/cocalc \\
-    -p 8170:80 cocalc/star:preview
+  docker run -d --name cocalc-star --restart unless-stopped \
+    --privileged --cgroupns=host \
+    -v cocalc-star:/var/lib/cocalc \
+    -p 8170:80 -e COCALC_STAR_HTTP_PORT=8170 cocalc/star:preview
 EOF
 }
 
@@ -168,6 +166,17 @@ else
   [ -f "$RELEASE_ARTIFACT" ] || die "release artifact does not exist: $RELEASE_ARTIFACT"
 fi
 
+# The embedded release directory is named cocalc-star-<release-id>. Record
+# that id in the image so first boot can tell an upgrade from a restart.
+if [[ "$IMAGE_RELEASE_ID" == "unknown" ]]; then
+  artifact_top="$(set +o pipefail; tar -tzf "$RELEASE_ARTIFACT" 2>/dev/null | head -1)"
+  artifact_top="${artifact_top%%/*}"
+  if [[ "$artifact_top" == cocalc-star-* ]]; then
+    IMAGE_RELEASE_ID="${artifact_top#cocalc-star-}"
+  fi
+fi
+log "image release id: ${IMAGE_RELEASE_ID}"
+
 context=""
 cleanup() {
   if [[ -n "$context" && "$KEEP_CONTEXT" -eq 1 ]]; then
@@ -190,6 +199,7 @@ make_context() {
   cp "$SCRIPT_DIR/cocalc-star-docker-init.sh" "$context/cocalc-star-docker-init.sh"
   cp "$SCRIPT_DIR/cocalc-star-docker-entrypoint.sh" "$context/cocalc-star-docker-entrypoint.sh"
   cp "$SCRIPT_DIR/cocalc-star-docker-init.service" "$context/cocalc-star-docker-init.service"
+  cp "$SCRIPT_DIR/cocalc-star-podman.apparmor" "$context/cocalc-star-podman.apparmor"
   cp "$RELEASE_ARTIFACT" "$context/cocalc-star-release.tar.gz"
   if [[ -n "$rootfs_cache" ]]; then
     cp "$rootfs_cache" "$context/cocalc-star-rootfs-cache.tar.gz"
@@ -410,10 +420,9 @@ Built ${TAG}
 RootFS cache: ${ROOTFS_CACHE_ARTIFACT:-not embedded}
 
 Run locally with:
-  ${DOCKER_DISPLAY} run --privileged --cgroupns=host \\
-    --security-opt seccomp=unconfined \\
-    --tmpfs /run --tmpfs /run/lock \\
-    -v /sys/fs/cgroup:/sys/fs/cgroup:rw \\
-    -v cocalc-star-data:/var/lib/cocalc \\
-    -p 8170:80 ${TAG}
+  ${DOCKER_DISPLAY} run -d --name cocalc-star --restart unless-stopped \\
+    --privileged --cgroupns=host \\
+    -v cocalc-star:/var/lib/cocalc \\
+    -p 80:80 ${TAG}
+  ${DOCKER_DISPLAY} logs -f cocalc-star
 EOF

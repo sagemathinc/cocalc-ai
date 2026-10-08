@@ -57,9 +57,10 @@ import {
   CHAT_THREAD_META_ROW_DATE,
   addToHistory,
   threadConfigRecordKey,
-  resolveHarnessSessionId,
   CONTEXT_CLEARED_FIELD,
-  messagesSinceContextCleared,
+  planThreadFork,
+  buildForkedThread,
+  type ThreadForkSource,
   type ChatThreadAnchor,
   type ChatThreadResolvedMeta,
   type CodexThreadConfig,
@@ -84,7 +85,6 @@ import {
 import {
   toISOString,
   toMsString,
-  newest_content,
   orderLinearThreadMessages,
   stableDraftKeyFromThreadKey,
 } from "./utils";
@@ -96,7 +96,6 @@ import {
 import {
   field,
   historyArray,
-  isAcpAutomationMessage,
   dateValue,
   editingArray,
   parentMessageId,
@@ -3184,172 +3183,72 @@ export class ChatActions extends Actions<ChatState> {
     const sourceMetadata = this.getThreadMetadata(sourceThreadId, {
       threadId: sourceThreadId,
     });
-    const sourceRuntime =
-      sourceMetadata.agent_runtime == null
-        ? undefined
-        : parseAcpHarnessRuntime(sourceMetadata.agent_runtime);
+    const threadConfig = this.getThreadConfigRecordById(sourceThreadId);
+    const source: ThreadForkSource = {
+      threadId: sourceThreadId,
+      config: {
+        ...((threadConfig?.toJS?.() ?? threadConfig) || {}),
+        ...sourceMetadata,
+        acp_config:
+          sourceMetadata.acp_config ?? this.getCodexConfig(sourceThreadId),
+      },
+      messages: (this.getMessagesInThread(sourceThreadId) ?? []) as any[],
+      latestChatDateMs: sourceMetadata.latest_chat_date_ms,
+      rootDateIso: this.getThreadRootDateIso(sourceThreadId),
+    };
+    const plan = planThreadFork({ source, isAI });
     const harnessCredential =
-      sourceRuntime?.profile.id === "claude-code"
+      plan.kind === "harness" && plan.runtime.profile.id === "claude-code"
         ? readHarnessCredentialSelection({
             accountId: this.redux.getStore("account").get_account_id(),
-            projectId: this.store.get("project_id"),
+            projectId,
             threadKey: sourceThreadId,
           })
         : undefined;
-    const threadMessages = this.getMessagesInThread(sourceThreadId) ?? [];
-    const rootMessage =
-      threadMessages.find((msg) => !parentMessageId(msg)) ?? threadMessages[0];
-    const rootIso =
-      toISOString(dateValue(rootMessage)) ??
-      this.getThreadRootDateIso(sourceThreadId) ??
-      toISOString(sourceMetadata.latest_chat_date_ms);
-    const latestMessage =
-      threadMessages.length > 0
-        ? threadMessages[threadMessages.length - 1]
-        : null;
-    const latestIso =
-      toISOString(latestMessage ? dateValue(latestMessage) : undefined) ??
-      toISOString(sourceMetadata.latest_chat_date_ms);
-
-    const sourceConfig = sourceRuntime
-      ? undefined
-      : (sourceMetadata.acp_config ?? this.getCodexConfig(sourceThreadId));
-    const inferredSourceSessionId = (() => {
-      const current = messagesSinceContextCleared(threadMessages).messages;
-      for (let i = current.length - 1; i >= 0; i -= 1) {
-        if (isAcpAutomationMessage(current[i])) continue;
-        const sessionId = field<string>(current[i], "acp_thread_id");
-        if (typeof sessionId === "string" && sessionId.trim().length > 0) {
-          return sessionId.trim();
-        }
-      }
-      return undefined;
-    })();
-    const shouldForkAcp =
-      isAI || sourceMetadata.agent_kind === "acp" || sourceConfig != null;
-    let nextConfig: CodexThreadConfig | undefined = undefined;
-    let forkedHarnessSessionId: string | undefined;
-    if (sourceRuntime) {
-      const sessionId = resolveHarnessSessionId(
-        sourceMetadata.agent_session_id,
-        inferredSourceSessionId,
-      );
-      if (!sessionId)
-        throw Error("This agent has no saved context to copy yet");
+    let forkedSessionId: string | undefined;
+    if (plan.kind === "harness") {
       await this.syncdb.save();
       const result = await webapp_client.conat_client.controlAcp({
-        project_id: this.store.get("project_id"),
+        project_id: projectId,
         path: this.store.get("path"),
         thread_id: sourceThreadId,
         user_message_id: sourceThreadId,
         action: "fork_harness_v1",
-        expected_session_id: sessionId,
-        expected_runtime: sourceRuntime,
+        expected_session_id: plan.sessionId,
+        expected_runtime: plan.runtime,
         harness_credential: harnessCredential,
       });
-      if (
-        !result.ok ||
-        !result.forked_session_id ||
-        result.forked_session_id === sessionId
-      )
+      if (!result.ok) {
         throw Error("The harness did not return an independent copied session");
-      forkedHarnessSessionId = result.forked_session_id;
-    } else if (shouldForkAcp) {
-      const sourceSessionId = normalizeCodexSessionId(sourceConfig?.sessionId);
-      const config =
-        !sourceSessionId && inferredSourceSessionId
-          ? { ...(sourceConfig ?? {}), sessionId: inferredSourceSessionId }
-          : sourceConfig;
-      const configSessionId = normalizeCodexSessionId(config?.sessionId);
-      if (configSessionId && this.store) {
-        const project_id = this.store.get("project_id");
-        if (!project_id) {
-          throw new Error("Missing project id for ACP fork");
-        }
-        const { sessionId } = await webapp_client.conat_client.forkAcpSession({
-          project_id,
-          sessionId: configSessionId,
-        });
-        nextConfig = { ...config, sessionId };
-      } else if (config) {
-        nextConfig = { ...config };
       }
-    }
-    if (nextConfig && !sourceRuntime && !nextConfig.model) {
-      nextConfig.model = DEFAULT_CODEX_MODEL_NAME;
+      forkedSessionId = result.forked_session_id;
+    } else if (plan.kind === "codex") {
+      const { sessionId } = await webapp_client.conat_client.forkAcpSession({
+        project_id: projectId,
+        sessionId: plan.sessionId,
+      });
+      forkedSessionId = sessionId;
     }
 
-    const now = webapp_client.server_time();
-    const newRootIso = now.toISOString();
     const sender_id = this.redux.getStore("account").get_account_id();
-    const newMessage: ChatMessage = {
-      sender_id,
-      event: "chat",
-      schema_version: CURRENT_CHAT_MESSAGE_VERSION,
-      message_id: uuid(),
-      thread_id: uuid(),
-      history: [
-        {
-          author_id: sender_id,
-          content: "",
-          date: newRootIso,
-        },
-      ],
-      date: newRootIso,
-      editing: [],
-    };
-    (newMessage as any).name = title;
-    if (rootIso) {
-      (newMessage as any).forked_from_root_date = rootIso;
-    }
-    (newMessage as any).forked_from_title =
-      sourceTitle?.trim() ||
-      field<string>(rootMessage, "name") ||
-      sourceMetadata.name ||
-      (rootMessage ? newest_content(rootMessage).trim() : "") ||
-      "Untitled thread";
-    if (latestIso) {
-      (newMessage as any).forked_from_latest_message_date = latestIso;
-    }
-    const newThreadId =
-      `${field<string>(newMessage, "thread_id") ?? ""}`.trim();
-    if (!newThreadId) {
-      throw new Error("Failed to create thread id for fork");
-    }
-    this.setSyncdb(newMessage);
-    const configPatch: Record<string, unknown> = {
-      name: title,
-      thread_color: sourceMetadata.thread_color ?? null,
-      thread_accent_color: sourceMetadata.thread_accent_color ?? null,
-      thread_icon: sourceMetadata.thread_icon ?? null,
-      thread_image: sourceMetadata.thread_image ?? null,
-      agent_kind:
-        nextConfig != null
-          ? "acp"
-          : (sourceMetadata.agent_kind ?? (isAI ? "acp" : "none")),
-      agent_model:
-        nextConfig?.model ??
-        sourceMetadata.agent_model ??
-        (shouldForkAcp ? DEFAULT_CODEX_MODEL_NAME : null),
-      agent_mode:
-        nextConfig != null
-          ? "interactive"
-          : (sourceMetadata.agent_mode ?? (isAI ? "interactive" : null)),
-      acp_config: nextConfig ?? null,
-      ...(sourceRuntime
-        ? {
-            agent_runtime: sourceRuntime,
-            agent_session_id: forkedHarnessSessionId,
-            agent_runtime_controls:
-              sourceMetadata.agent_runtime_controls ?? null,
-            agent_model: sourceMetadata.agent_model ?? null,
-          }
-        : {}),
-    };
+    const forked = buildForkedThread({
+      source,
+      plan,
+      forkedSessionId,
+      title,
+      sourceTitle,
+      isAI,
+      senderId: sender_id,
+      now: webapp_client.server_time(),
+      messageId: uuid(),
+      threadId: uuid(),
+    });
+    const newThreadId = forked.threadId;
+    this.setSyncdb(forked.rootMessage as ChatMessage);
     if (
-      !this.setThreadConfigRecord(newThreadId, configPatch, {
+      !this.setThreadConfigRecord(newThreadId, forked.configPatch, {
         threadId: newThreadId,
-        date: newRootIso,
+        date: forked.rootMessage.date,
       })
     ) {
       return newThreadId;
@@ -3357,27 +3256,24 @@ export class ChatActions extends Actions<ChatState> {
     this.syncdb.commit();
     void this.saveSyncdb();
 
-    if (sourceRuntime && harnessCredential) {
+    if (plan.kind === "harness" && harnessCredential) {
       writeHarnessCredentialSelection({
         accountId: sender_id,
         projectId,
         threadKey: newThreadId,
         credential: harnessCredential,
       });
-    } else if (!sourceRuntime && shouldForkAcp) {
-      const projectId = this.store.get("project_id");
-      if (projectId) {
-        // The fork keeps this account's ChatGPT subscription choice.
-        void copyPaymentSelection({
-          accountId: sender_id,
-          from: { project_id: projectId, thread_id: sourceThreadId },
-          to: {
-            project_id: projectId,
-            thread_id: newThreadId,
-            path: this.store.get("path"),
-          },
-        });
-      }
+    } else if (forked.copyPaymentSelection) {
+      // The fork keeps this account's ChatGPT subscription choice.
+      void copyPaymentSelection({
+        accountId: sender_id,
+        from: { project_id: projectId, thread_id: sourceThreadId },
+        to: {
+          project_id: projectId,
+          thread_id: newThreadId,
+          path: this.store.get("path"),
+        },
+      });
     }
 
     if (selectNewThread) {

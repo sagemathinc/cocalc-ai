@@ -27,6 +27,9 @@ export interface MembershipTierMutationQuery {
   course_price?: number | null;
   course_duration_days?: number | null;
   course_grace_days?: number | null;
+  instructor_purchase_visible?: boolean | null;
+  instructor_term_price?: number | null;
+  instructor_term_days?: number | null;
   project_defaults?;
   ai_limits?;
   features?;
@@ -642,6 +645,9 @@ export async function upsertMembershipTier(
     course_price,
     course_duration_days,
     course_grace_days,
+    instructor_purchase_visible,
+    instructor_term_price,
+    instructor_term_days,
     project_defaults,
     ai_limits,
     features,
@@ -685,6 +691,9 @@ export async function upsertMembershipTier(
                 "course_price",
                 "course_duration_days",
                 "course_grace_days",
+                "instructor_purchase_visible",
+                "instructor_term_price",
+                "instructor_term_days",
                 "project_defaults",
                 "ai_limits",
                 "features",
@@ -696,7 +705,7 @@ export async function upsertMembershipTier(
                 "created",
                 "updated"
               )
-              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::JSONB,$18::JSONB,$19::JSONB,$20::JSONB,$21::JSONB,$22,$23,$24::JSONB,NOW(),NOW())
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::JSONB,$21::JSONB,$22::JSONB,$23::JSONB,$24::JSONB,$25,$26,$27::JSONB,NOW(),NOW())
               ON CONFLICT (id)
               DO UPDATE SET
                 "label" = EXCLUDED.label,
@@ -714,6 +723,9 @@ export async function upsertMembershipTier(
                 "course_price" = EXCLUDED.course_price,
                 "course_duration_days" = EXCLUDED.course_duration_days,
                 "course_grace_days" = EXCLUDED.course_grace_days,
+                "instructor_purchase_visible" = EXCLUDED.instructor_purchase_visible,
+                "instructor_term_price" = EXCLUDED.instructor_term_price,
+                "instructor_term_days" = EXCLUDED.instructor_term_days,
                 "project_defaults" = EXCLUDED.project_defaults,
                 "ai_limits" = EXCLUDED.ai_limits,
                 "features" = EXCLUDED.features,
@@ -740,6 +752,9 @@ export async function upsertMembershipTier(
       course_price ?? null,
       course_duration_days ?? null,
       course_grace_days ?? null,
+      instructor_purchase_visible ?? false,
+      instructor_term_price ?? null,
+      instructor_term_days ?? null,
       toJsonParam(project_defaults),
       toJsonParam(ai_limits),
       toJsonParam(features),

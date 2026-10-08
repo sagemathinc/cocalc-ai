@@ -97,11 +97,12 @@ test("64 abandoned bridges recover only exact confirmed reservations after close
     await expect(
       controller(65).start({ script: "no extra slot" }),
     ).rejects.toThrow("capacity reached");
-    // A recovered controller remains permanently closed/fenced.
+    // A proof lifts the fence, but a closed controller stays closed; one
+    // without a proof stays fenced.
     controllers[0].resume();
     await expect(
       controllers[0].start({ script: "no reopening" }),
-    ).rejects.toThrow("cleanup is unconfirmed");
+    ).rejects.toThrow("Project tool is closed");
     controllers[1].resume();
     await expect(
       controllers[1].start({ script: "unresolved" }),

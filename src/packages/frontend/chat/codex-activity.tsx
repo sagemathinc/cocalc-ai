@@ -43,6 +43,12 @@ import { projectFileTargetFromHref } from "./project-file-target";
 import { HarnessToolRow, updateHarnessTool } from "./harness-tool";
 import type { HarnessToolEntry } from "./harness-tool";
 import {
+  HarnessPlanRow,
+  harnessPlanToMarkdown,
+  updateHarnessPlan,
+} from "./harness-plan";
+import type { HarnessPlanEntry } from "./harness-plan";
+import {
   ActivityCodeBlock,
   MAX_TERMINAL_PAGE_CHARS,
   stripAnsi,
@@ -57,6 +63,7 @@ type SubagentEvent = Extract<AcpStreamEvent, { type: "subagent" }>;
 type SubagentActivityItem = SubagentEvent & { seq: number; time?: number };
 type ActivityEntry =
   | HarnessToolEntry
+  | HarnessPlanEntry
   | {
       kind: "reasoning";
       id: string;
@@ -674,6 +681,8 @@ function ActivityRow({
   const secondarySize = Math.max(11, fontSize - 2);
   const timestamp = formatEntryTimestamp(entry.time);
   switch (entry.kind) {
+    case "harness-plan":
+      return <HarnessPlanRow entry={entry} fontSize={fontSize} />;
     case "harness-tool":
       return (
         <HarnessToolRow
@@ -992,6 +1001,7 @@ function normalizeEvents(
   let fallbackId = 0;
   const terminals = new Map<string, ActivityEntry & { kind: "terminal" }>();
   const harnessTools = new Map<string, HarnessToolEntry>();
+  const harnessPlan: { current?: HarnessPlanEntry } = {};
   const subagents = new Map<string, SubagentActivityItem>();
   let sawTerminalFinalizer = false;
   for (const message of events) {
@@ -1061,6 +1071,7 @@ function normalizeEvents(
       }
       const entry = createEventEntry({
         harnessTools,
+        harnessPlan,
         event: message.event,
         seq,
         time,
@@ -1293,6 +1304,7 @@ function coalesceStatusEntries(entries: ActivityEntry[]): ActivityEntry[] {
 
 function createEventEntry({
   harnessTools,
+  harnessPlan,
   event,
   seq,
   time,
@@ -1300,6 +1312,7 @@ function createEventEntry({
   terminals,
 }: {
   harnessTools: Map<string, HarnessToolEntry>;
+  harnessPlan: { current?: HarnessPlanEntry };
   event: AcpStreamEvent;
   seq: number;
   time?: number;
@@ -1307,6 +1320,8 @@ function createEventEntry({
   terminals: Map<string, ActivityEntry & { kind: "terminal" }>;
 }): ActivityEntry | undefined {
   if (event?.type === "harness") {
+    const plan = updateHarnessPlan(event, harnessPlan, seq, time);
+    if (plan !== false) return plan;
     return updateHarnessTool(event, harnessTools, seq, time);
   }
   if (event?.type === "goal") {
@@ -2391,6 +2406,9 @@ function activityEntriesToMarkdown(entries: ActivityEntry[]): string {
   const lines: string[] = [];
   for (const entry of entries) {
     switch (entry.kind) {
+      case "harness-plan":
+        lines.push(harnessPlanToMarkdown(entry));
+        break;
       case "harness-tool":
         lines.push(
           `- ACP tool: ${entry.title} (${entry.status})\n\n${entry.output}`,

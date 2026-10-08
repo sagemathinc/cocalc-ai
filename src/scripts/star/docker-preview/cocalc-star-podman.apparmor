@@ -1,0 +1,12 @@
+abi <abi/4.0>,
+include <tunables/global>
+
+# CoCalc Star runs project containers with a managed rootless Podman under
+# /opt/cocalc/container-runtime. Hosts that restrict unprivileged user
+# namespaces (Ubuntu 23.10+) only exempt the distribution's /usr/bin/podman, so
+# grant the managed binary the same userns permission as that profile does.
+profile cocalc-star-podman /opt/cocalc/container-runtime/*/bin/podman flags=(unconfined) {
+  userns,
+
+  include if exists <local/cocalc-star-podman>
+}

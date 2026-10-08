@@ -116,11 +116,25 @@ function commonText(a: string, b: string): string {
     .join("");
 }
 
+// The lines of s, each with its "\n": the same as s.split(/(?<=\n)/), but
+// without a lookbehind. This module runs in browsers, and Safari before 16.4
+// cannot even parse a lookbehind, so the whole bundle chunk failed to load.
+export function splitLinesKeepingNewlines(s: string): string[] {
+  const lines: string[] = [];
+  let start = 0;
+  for (let i = s.indexOf("\n"); i !== -1; i = s.indexOf("\n", start)) {
+    lines.push(s.slice(start, i + 1));
+    start = i + 1;
+  }
+  if (start < s.length || lines.length === 0) lines.push(s.slice(start));
+  return lines;
+}
+
 // The longest common subsequence of the lines of a and b (empty if too
 // large to compute cheaply).
 function commonLines(a: string, b: string): string {
-  const x = a.split(/(?<=\n)/);
-  const y = b.split(/(?<=\n)/);
+  const x = splitLinesKeepingNewlines(a);
+  const y = splitLinesKeepingNewlines(b);
   if (x.length * y.length > 250_000) return "";
   const best: number[][] = Array.from({ length: x.length + 1 }, () =>
     Array.from({ length: y.length + 1 }, () => 0),

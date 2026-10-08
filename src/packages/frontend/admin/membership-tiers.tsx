@@ -55,9 +55,10 @@ import type {
 } from "@cocalc/conat/hub/api/purchases";
 import { currency } from "@cocalc/util/misc";
 import {
-  applyMembershipTierTemplateFallbacks,
-  TIER_TEMPLATES,
+  applyMembershipTierTemplateFallbacks as applyTemplateFallbacks,
+  membershipTierTemplates,
 } from "@cocalc/util/membership-tier-templates";
+import { cocalc_setup_profile } from "@cocalc/frontend/components/constants";
 import { normalizeMembershipTierCourseAllowedDomains } from "@cocalc/util/membership-tier-domains";
 import {
   analyzeMembershipTierPricingRisk,
@@ -86,6 +87,16 @@ const REMOVED_PROJECT_DEFAULT_KEYS = [
   "ephemeral_state",
   "ephemeral_disk",
 ] as const;
+// The built-in tiers for this site, which stored tiers inherit missing
+// settings from (on CoCalc Star, a free tier without per-account limits).
+const TIER_TEMPLATES = membershipTierTemplates(cocalc_setup_profile);
+
+function applyMembershipTierTemplateFallbacks<
+  T extends Parameters<typeof applyTemplateFallbacks>[0],
+>(tier: T): T {
+  return applyTemplateFallbacks(tier, TIER_TEMPLATES);
+}
+
 const MEMBERSHIP_TIER_EXPORT_TYPE = "cocalc.membership_tiers";
 const MEMBERSHIP_TIER_EXPORT_VERSION = 1;
 const TEMPLATE_KEYS = [
@@ -209,6 +220,9 @@ interface Tier {
   course_price?: number;
   course_duration_days?: number;
   course_grace_days?: number;
+  instructor_purchase_visible?: boolean;
+  instructor_term_price?: number;
+  instructor_term_days?: number;
   project_defaults?: any;
   ai_limits?: any;
   features?: any;
@@ -439,6 +453,12 @@ function tierToFormValues(tier: Partial<Tier>) {
     feature_project_host_tier: normalizedOptionalNumber(
       tier.features?.project_host_tier,
     ),
+    feature_project_network:
+      tier.features?.project_network === true
+        ? "allow"
+        : tier.features?.project_network === false
+          ? "block"
+          : "default",
     feature_private_app_hostnames_per_project: normalizedOptionalNumber(
       tier.features?.private_app_hostnames_per_project,
     ),
@@ -541,6 +561,15 @@ function buildMembershipTierPayload(values): AdminMembershipTierPayload {
     values.project_default_disk_quota_mb,
   );
   setOrDeleteBoolean(features, "create_hosts", values.feature_create_hosts);
+  setOrDeleteBoolean(
+    features,
+    "project_network",
+    values.feature_project_network === "allow"
+      ? true
+      : values.feature_project_network === "block"
+        ? false
+        : undefined,
+  );
   setOrDeleteNumber(
     features,
     "project_host_tier",
@@ -700,6 +729,9 @@ function buildMembershipTierPayload(values): AdminMembershipTierPayload {
       "course_price",
       "course_duration_days",
       "course_grace_days",
+      "instructor_purchase_visible",
+      "instructor_term_price",
+      "instructor_term_days",
       "project_defaults",
       "ai_limits",
       "features",
@@ -1715,6 +1747,43 @@ export function MembershipTiers() {
                   </Col>
                   <Col {...wideFieldCol}>
                     <Form.Item
+                      name="instructor_purchase_visible"
+                      label="Instructor purchase"
+                      valuePropName="checked"
+                      extra="Educational offer: educators with a verified academic email (or an address on the Educator email allow list in site settings) can buy this tier for themselves, by subscription or for one term, even if it is not shown in the public store."
+                    >
+                      <Checkbox>Available for instructor purchase</Checkbox>
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="instructor_term_price"
+                      label="Instructor term price"
+                      extra="Leave empty to offer subscriptions only."
+                    >
+                      <InputNumber
+                        min={0}
+                        step={1}
+                        prefix="$"
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="instructor_term_days"
+                      label="Instructor term days"
+                    >
+                      <InputNumber
+                        min={1}
+                        step={1}
+                        precision={0}
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...wideFieldCol}>
+                    <Form.Item
                       name="store_description"
                       label="Public description"
                       extra="Short public sentence shown on pricing and purchase cards."
@@ -1768,6 +1837,11 @@ export function MembershipTiers() {
                   get("feature_private_app_hostnames_per_project"),
                   " private app URLs",
                 ),
+                get("feature_project_network") === "allow"
+                  ? "internet access"
+                  : get("feature_project_network") === "block"
+                    ? "no internet access"
+                    : undefined,
               ),
             ),
             children: (
@@ -1869,6 +1943,24 @@ export function MembershipTiers() {
                         step={1}
                         precision={0}
                         style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="feature_project_network"
+                      label="Project internet access"
+                      extra={fieldHelp(
+                        "Default: only tiers with a positive shared compute priority.",
+                      )}
+                    >
+                      <Select
+                        style={compactInputStyle}
+                        options={[
+                          { value: "default", label: "Default" },
+                          { value: "allow", label: "Always" },
+                          { value: "block", label: "Never" },
+                        ]}
                       />
                     </Form.Item>
                   </Col>

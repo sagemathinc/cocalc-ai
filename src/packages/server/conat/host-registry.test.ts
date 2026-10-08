@@ -14,6 +14,7 @@ let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
 let resolveMembershipForAccountMock: jest.Mock;
 let appendProjectLogRowBestEffortMock: jest.Mock;
 let startProjectOnHostMock: jest.Mock;
+let computeQuotaMock: jest.Mock;
 let loadProjectRuntimeSponsorMock: jest.Mock;
 let reserveProjectRuntimeSlotMock: jest.Mock;
 let heartbeatProjectRuntimeSlotMock: jest.Mock;
@@ -65,6 +66,12 @@ jest.mock("@cocalc/server/membership/resolve", () => ({
 
 jest.mock("@cocalc/server/project-host/control", () => ({
   startProjectOnHost: (...args: any[]) => startProjectOnHostMock(...args),
+}));
+
+jest.mock("@cocalc/server/projects/control", () => ({
+  getProject: (project_id: string) => ({
+    computeQuota: (...args: any[]) => computeQuotaMock(project_id, ...args),
+  }),
 }));
 
 jest.mock("@cocalc/server/projects/runtime-sponsor-db", () => ({
@@ -176,6 +183,7 @@ describe("host-registry automatic convergence retry", () => {
       effective_limits: { shared_compute_priority: 0 },
     }));
     startProjectOnHostMock = jest.fn(async () => undefined);
+    computeQuotaMock = jest.fn(async () => undefined);
     loadProjectRuntimeSponsorMock = jest.fn(async (project_id: string) => ({
       sponsor_account_id: `sponsor-${project_id}`,
       owning_bay_id: "bay-0",
@@ -1049,6 +1057,10 @@ describe("host-registry automatic convergence retry", () => {
       throw new Error(`unexpected query: ${sql}`);
     });
 
+    // A failure to recompute the quota keeps the stored one.
+    computeQuotaMock = jest.fn(async (project_id: string) => {
+      if (project_id === "proj-low") throw new Error("quota unavailable");
+    });
     const { startHostRestartRecoveryForHost } = await import("./host-registry");
     await startHostRestartRecoveryForHost({
       host_id: "host-1",
@@ -1064,6 +1076,16 @@ describe("host-registry automatic convergence retry", () => {
       "proj-high",
       "proj-low",
     ]);
+    // The current membership, not the quota stored before the restart.
+    expect(computeQuotaMock.mock.calls).toEqual([
+      ["proj-high", "owner-high"],
+      ["proj-low", "owner-low"],
+    ]);
+    for (const index of [0, 1]) {
+      expect(computeQuotaMock.mock.invocationCallOrder[index]).toBeLessThan(
+        startProjectOnHostMock.mock.invocationCallOrder[index],
+      );
+    }
     expect(startProjectOnHostMock).toHaveBeenNthCalledWith(1, "proj-high", {
       account_id: "owner-high",
       ignore_recent_state_snapshot: true,

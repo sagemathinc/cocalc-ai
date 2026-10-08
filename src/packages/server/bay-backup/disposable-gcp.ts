@@ -107,7 +107,9 @@ export function isRetryableDisposablePitrWalFailure(
   return (
     worker.status === "failed" &&
     worker.stage === "postgres-pitr" &&
-    /\bWAL replay stalled on segment\b/i.test(`${worker.error ?? ""}`)
+    /\bWAL replay stalled on segment [0-9A-F]{24} for \d+ seconds\b/i.test(
+      `${worker.error ?? ""}`,
+    )
   );
 }
 
@@ -235,6 +237,7 @@ import glob
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -803,7 +806,12 @@ exit "$last_exit"
                 last_archive_get = archive_state
                 segment = archive_state.get("segment")
                 status = archive_state.get("status")
-                if status == "succeeded":
+                # PostgreSQL can legitimately fail timeline-history probes,
+                # including 00000001.history. They do not measure WAL progress;
+                # keep the overall recovery deadline and sentinel checks as the
+                # recovery gates instead of timing out on a stale history probe.
+                is_wal_segment = re.fullmatch(r"[0-9A-F]{24}", segment or "") is not None
+                if status == "succeeded" or not is_wal_segment:
                     stalled_wal_segment = None
                     stalled_wal_since = None
                 elif segment:

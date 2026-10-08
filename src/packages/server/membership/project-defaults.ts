@@ -10,6 +10,8 @@ export type MembershipIoClass = "standard" | "member" | "premium";
 export type MembershipRuntimeScheduling = {
   io_class: MembershipIoClass;
   shared_compute_priority: number;
+  // The tier's explicit project internet access, when it sets one.
+  project_network?: boolean;
 };
 
 export function normalizeSharedComputePriority(priority: unknown): number {
@@ -92,10 +94,14 @@ export async function getMembershipRuntimeSchedulingForAccount(
 ): Promise<MembershipRuntimeScheduling> {
   if (!account_id) return runtimeSchedulingFromSharedComputePriority(0);
   const resolution = await resolveRuntimeMembership(account_id);
-  return runtimeSchedulingFromSharedComputePriority(
+  const scheduling = runtimeSchedulingFromSharedComputePriority(
     resolution.effective_limits?.shared_compute_priority ??
       resolution.entitlements?.usage_limits?.shared_compute_priority,
   );
+  const project_network = resolution.entitlements?.features?.project_network;
+  return typeof project_network === "boolean"
+    ? { ...scheduling, project_network }
+    : scheduling;
 }
 
 export async function getMembershipBrowserIdleTimeoutForAccount(

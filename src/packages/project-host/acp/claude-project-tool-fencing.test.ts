@@ -90,13 +90,14 @@ describe.each(["unconfirmed", "missing", "rejected"])(
               (await request(bridge.directory, next, nextArgs)).stderr,
             ).toContain("cleanup is unconfirmed");
           }
-          // Trusted late proof releases capacity, but never restores this session.
+          expect(execute).toHaveBeenCalledTimes(1);
+          // A trusted late proof that the job's processes are gone reopens
+          // the session: the next tool runs again (and here fences again,
+          // because this executor never confirms cleanup).
           confirm();
           bridge.resume();
-          expect(
-            (await request(bridge.directory, "memory_list", {})).stderr,
-          ).toContain("cleanup is unconfirmed");
-          expect(execute).toHaveBeenCalledTimes(1);
+          await request(bridge.directory, "memory_list", {});
+          expect(execute).toHaveBeenCalledTimes(2);
         } finally {
           confirm();
           await bridge.close();
@@ -380,8 +381,11 @@ test("synchronous tools hold host capacity after close until exact late cleanup 
     await expect(healthy.tool()).rejects.toThrow("capacity reached");
     healthy.runs[0].finish(ok);
     await admitted;
+    // The proof lifts the fence, but a closed controller stays closed.
     fixtures[0].jobs.resume();
-    await expect(fixtures[0].tool()).rejects.toThrow("cleanup is unconfirmed");
+    await expect(fixtures[0].tool()).rejects.toThrow("Project tool is closed");
+    fixtures[1].jobs.resume();
+    await expect(fixtures[1].tool()).rejects.toThrow("cleanup is unconfirmed");
   } finally {
     for (const f of fixtures) await f.close();
   }

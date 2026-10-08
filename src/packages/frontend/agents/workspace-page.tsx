@@ -317,6 +317,12 @@ import {
   suggestedAgentProjectTitle,
 } from "./new-agent-defaults";
 import { assertCodexFundingModelReady } from "@cocalc/frontend/chat/codex-submit-preflight";
+import {
+  NewAgentCodexPaymentControl,
+  newAgentPaymentSourceEnabled,
+  shouldDefaultToClaude,
+  shouldPrepareProjectForClaude,
+} from "./new-agent-codex-payment";
 import { MembershipDetailsModal } from "@cocalc/frontend/project/start-button";
 import { showCodexProjectStartFailure } from "@cocalc/frontend/chat/codex-project-start-failure";
 import { getProjectStartPolicyBlockFromError } from "@cocalc/frontend/projects/runtime-start-policy";
@@ -617,6 +623,9 @@ function NewAgentPanel({
       return "acp";
     }
   });
+  // Whether the runtime came from the source agent or the user's choice,
+  // rather than the Codex default.
+  const runtimeChosen = useRef(sourceRuntime != null);
   const [harnessSettings, setHarnessSettings] =
     useState<HarnessSessionSettings>(() => {
       try {
@@ -711,6 +720,9 @@ function NewAgentPanel({
     Promise<{ projectId: string; title: string }> | undefined
   >(undefined);
   const automaticProjectAttempted = useRef(false);
+  // An automatic project created before the request (for Claude's sign-in),
+  // which is named from the request on submit.
+  const projectBeforeRequest = useRef<string | undefined>(undefined);
   const automaticProjectCreated = useRef<
     { projectId: string; title: string } | undefined
   >(
@@ -812,7 +824,11 @@ function NewAgentPanel({
   } = useCodexPaymentSource({
     projectId,
     preference: paymentPreference,
-    enabled: !!projectId && runtimeKind === "codex-native",
+    enabled: newAgentPaymentSourceEnabled({
+      codex: runtimeKind === "codex-native",
+      projectId,
+      projectsLoaded: !!projectMap,
+    }),
     credentialId:
       paymentPreference === "subscription" ? config.credentialId : undefined,
   } as Parameters<typeof useCodexPaymentSource>[0] & {
@@ -1222,7 +1238,8 @@ function NewAgentPanel({
           project_title:
             projectTitleOverride ??
             (projectMap?.getIn([created.projectId, "title"]) as
-              string | undefined),
+              | string
+              | undefined),
           thread_title: candidate,
         });
       };
@@ -1297,10 +1314,11 @@ function NewAgentPanel({
         targetProjectId = createdProject.projectId;
       }
       if (
-        isFirstRun &&
+        (isFirstRun || projectBeforeRequest.current === targetProjectId) &&
         request &&
         automaticProjectCreated.current?.projectId === targetProjectId
       ) {
+        projectBeforeRequest.current = undefined;
         const finalTitle = suggestedAgentProjectTitle(request);
         if (finalTitle !== automaticProjectCreated.current.title) {
           void redux
@@ -1603,6 +1621,78 @@ function NewAgentPanel({
         : option.description,
     }));
   });
+  // Without a connected ChatGPT plan, offer to sign in right here: on a site
+  // without CoCalc-funded AI (e.g. CoCalc Star) that is the way to use Codex.
+  const chatGPTSignInAvailable =
+    !lite &&
+    paymentSource != null &&
+    subscriptions.length === 0 &&
+    !paymentSource.hasSubscription;
+  const paymentUnconfigured =
+    chatGPTSignInAvailable && paymentSource?.source === "none";
+  useEffect(() => {
+    const candidate = (claudeConnected: boolean) =>
+      runtimeKind === "codex-native" &&
+      shouldDefaultToClaude({
+        firstRun: isFirstRun,
+        codexUnconfigured: paymentUnconfigured,
+        runtimeChosen: runtimeChosen.current,
+        claudeConnected,
+      });
+    if (!candidate(true)) return;
+    let disposed = false;
+    void webapp_client.conat_client.hub.system
+      .listExternalCredentials({ provider: "anthropic", scope: "account" })
+      .then((rows) => {
+        if (disposed) return;
+        if (
+          candidate(
+            rows.some(
+              (row) =>
+                !row.revoked &&
+                (row.kind === "anthropic-api-key" ||
+                  row.kind === CLAUDE_SUBSCRIPTION_KIND),
+            ),
+          )
+        )
+          setRuntimeKind("claude-code");
+      })
+      .catch(() => {
+        /* Keep the Codex default. */
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [isFirstRun, paymentUnconfigured, runtimeKind, boundAccount.accountId]);
+
+  function chooseRuntime(kind: NewAgentRuntimeKind) {
+    runtimeChosen.current = true;
+    setRuntimeKind(kind);
+    if (kind === "claude-code") void prepareProjectForClaude();
+  }
+
+  // Claude signs in through a project, so someone without any project gets
+  // their workspace now rather than when the agent is created.
+  async function prepareProjectForClaude() {
+    if (
+      !shouldPrepareProjectForClaude({
+        projectId,
+        projectsLoaded: !!projectMap,
+        emailVerificationRequired: !!emailVerificationRequired,
+        projectPending: !!automaticProjectPromise.current,
+      })
+    )
+      return;
+    setBusy(true);
+    try {
+      const created = await ensureAutomaticProject(firstRequest, false);
+      projectBeforeRequest.current = created.projectId;
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setBusy(false);
+    }
+  }
   const selectedPaymentValue =
     paymentPreference === "subscription" && config.credentialId
       ? `subscription:${config.credentialId}`
@@ -1917,7 +2007,7 @@ function NewAgentPanel({
             <NewAgentRuntimeSelect
               value={runtimeKind}
               disabled={busy || !!pending}
-              onChange={setRuntimeKind}
+              onChange={chooseRuntime}
             />
             {runtimeKind === "codex-native" && (
               <span
@@ -2007,44 +2097,32 @@ function NewAgentPanel({
                   </ComposerPillButton>
                 </Dropdown>
                 <Text type="secondary">·</Text>
-                <Dropdown
-                  menu={{
-                    items: paymentOptions.map(({ value, label, disabled }) => ({
-                      key: value,
-                      label,
-                      disabled,
-                    })),
-                    selectedKeys: [selectedPaymentValue],
-                    onClick: ({ key }) => {
-                      if (key.startsWith("subscription:")) {
-                        setConfig((current) => ({
-                          ...current,
-                          paymentSource: "subscription",
-                          credentialId: key.slice("subscription:".length),
-                        }));
-                      } else {
-                        setConfig((current) => ({
-                          ...current,
-                          paymentSource: key as CodexPaymentSourcePreference,
-                          credentialId: undefined,
-                        }));
-                      }
-                    },
+                <NewAgentCodexPaymentControl
+                  options={paymentOptions}
+                  selectedValue={selectedPaymentValue}
+                  selectedLabel={selectedPaymentLabel}
+                  signInAvailable={chatGPTSignInAvailable}
+                  unconfigured={paymentUnconfigured}
+                  disabled={busy || !!pending}
+                  loading={!!paymentSourceLoading}
+                  onSignIn={() => setSignInOpen(true)}
+                  onUseClaude={() => chooseRuntime("claude-code")}
+                  onSelect={(key) => {
+                    if (key.startsWith("subscription:")) {
+                      setConfig((current) => ({
+                        ...current,
+                        paymentSource: "subscription",
+                        credentialId: key.slice("subscription:".length),
+                      }));
+                    } else {
+                      setConfig((current) => ({
+                        ...current,
+                        paymentSource: key as CodexPaymentSourcePreference,
+                        credentialId: undefined,
+                      }));
+                    }
                   }}
-                  trigger={["click"]}
-                >
-                  <ComposerPillButton
-                    aria-label={`Change payment source. Current source: ${selectedPaymentLabel}`}
-                    disabled={busy || !!pending || paymentSourceLoading}
-                    style={{
-                      maxWidth: 120,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {selectedPaymentLabel}
-                  </ComposerPillButton>
-                </Dropdown>
+                />
               </span>
             )}
             {runtimeKind === "codex-native" && (
@@ -3460,7 +3538,8 @@ export function MyAgentsWorkspacePage({
   const { directory: networkDirectory, error: networkError } =
     useAgentNetworks();
   const accountId = useTypedRedux("account", "account_id") as
-    string | undefined;
+    | string
+    | undefined;
   const searchNavigation = useNavigationIntent(
     active && !contentOpen,
     accountId,
@@ -3525,7 +3604,8 @@ export function MyAgentsWorkspacePage({
     setMobileList(false);
   }
   const activeAgentId = useTypedRedux("page", "active_agent_id") as
-    string | undefined;
+    | string
+    | undefined;
   const [creating, setCreating] = useState(activeAgentId === "new");
   const [creatingSourceAgentId, setCreatingSourceAgentId] = useState<string>();
   const [copyingAgent, setCopyingAgent] = useState<NamedAgent>();
@@ -4386,7 +4466,8 @@ export function MyAgentsWorkspacePage({
     const projectTitle = agentProjectTitle(
       agent,
       liveProjects?.getIn([agent.endpoint.project_id, "title"]) as
-        string | undefined,
+        | string
+        | undefined,
     );
     // Only one sidebar entry is current: Projects, the Library or an agent.
     const active =
