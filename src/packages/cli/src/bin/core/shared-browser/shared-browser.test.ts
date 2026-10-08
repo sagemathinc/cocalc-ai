@@ -3,7 +3,11 @@ import { test } from "node:test";
 
 import { pickSelectExpression, selectScript } from "./page-script";
 import { HELD_WHILE_HUMAN_DRIVES, normalizeUrl } from "./server";
-import { sharedBrowserChromeArgs } from "./service";
+import {
+  BUNDLED_CHROMIUM,
+  findSharedBrowserChrome,
+  sharedBrowserChromeArgs,
+} from "./service";
 
 test("while the human drives, page actions are held but housekeeping passes", () => {
   for (const method of [
@@ -62,6 +66,50 @@ test("chromium runs headless, unthrottled and container-friendly", () => {
   ])
     assert.ok(args.includes(flag), flag);
   assert.equal(args.at(-1), "about:blank");
+});
+
+test("the bundled chromium is preferred unless a browser is chosen", () => {
+  const system = "/usr/bin/chromium";
+  const sys = (present: string[], env: Record<string, string> = {}) => ({
+    platform: "linux" as NodeJS.Platform,
+    env: { PATH: "/usr/bin", ...env },
+    home: "/home/user",
+    exists: (path: string) => present.includes(path),
+  });
+  const script = "/opt/cocalc/bin2/cocalc-cli.js";
+  assert.equal(
+    findSharedBrowserChrome(undefined, sys([BUNDLED_CHROMIUM, system]), script),
+    BUNDLED_CHROMIUM,
+  );
+  // A tools build elsewhere uses its own copy.
+  assert.equal(
+    findSharedBrowserChrome(
+      undefined,
+      sys(["/x/bin/chromium/chromium", BUNDLED_CHROMIUM]),
+      "/x/bin/cocalc-cli.js",
+    ),
+    "/x/bin/chromium/chromium",
+  );
+  assert.equal(
+    findSharedBrowserChrome(undefined, sys([system]), script),
+    system,
+  );
+  assert.equal(
+    findSharedBrowserChrome(system, sys([BUNDLED_CHROMIUM, system]), script),
+    system,
+  );
+  assert.equal(
+    findSharedBrowserChrome(
+      undefined,
+      sys([BUNDLED_CHROMIUM, system], { COCALC_CHROME: system }),
+      script,
+    ),
+    system,
+  );
+  assert.throws(
+    () => findSharedBrowserChrome(undefined, sys([]), script),
+    /No Chromium found/,
+  );
 });
 
 test("the select hook only acts while the human drives", () => {

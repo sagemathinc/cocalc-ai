@@ -9,19 +9,51 @@ import {
   findChrome,
   launchBrowser,
   startCleanupWatchdog,
+  type LocalBrowserSystem,
   type ProfileStorage,
 } from "../local-browser";
+import { dirname, join } from "node:path";
+
 import { SharedBrowserServer } from "./server";
 
 export const SHARED_BROWSER_APP_ID = "cocalc-browser";
 
 export const INSTALL_CHROMIUM_HINT =
-  "Chromium is not installed in this project. Install it with: cocalc rootfs recipe run cocalc/chromium --here";
+  "No Chromium found: this project's CoCalc tools predate the bundled browser. Restart the project after the host's tools are updated, or install one with: cocalc rootfs recipe run cocalc/chromium --here";
+
+// The headless Chromium in the project tools bundle (see
+// project/sea/install-chromium.sh), next to this CLI in /opt/cocalc/bin2.
+export const BUNDLED_CHROMIUM = "/opt/cocalc/bin2/chromium/chromium";
+
+export function bundledChromiumCandidates(
+  script: string | undefined = process.argv[1],
+): string[] {
+  const candidates = [BUNDLED_CHROMIUM];
+  if (script) {
+    const sibling = join(dirname(script), "chromium", "chromium");
+    if (sibling !== BUNDLED_CHROMIUM) candidates.unshift(sibling);
+  }
+  return candidates;
+}
 
 export function findSharedBrowserChrome(
   chrome: string | undefined,
-  sys = defaultLocalBrowserSystem(),
+  sys: Pick<
+    LocalBrowserSystem,
+    "platform" | "env" | "home" | "exists"
+  > = defaultLocalBrowserSystem(),
+  script: string | undefined = process.argv[1],
 ): string {
+  // An explicit choice wins; otherwise prefer the bundled browser, which is
+  // the one we test, over whatever the image happens to have.
+  if (!chrome && !`${sys.env.COCALC_CHROME ?? ""}`.trim()) {
+    if (sys.platform === "linux") {
+      const bundled = bundledChromiumCandidates(script).find((path) =>
+        sys.exists(path),
+      );
+      if (bundled) return bundled;
+    }
+  }
   try {
     return findChrome(chrome, sys);
   } catch (err) {

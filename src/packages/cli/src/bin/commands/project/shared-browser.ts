@@ -5,6 +5,11 @@
  * (`cocalc project browser serve`).
  */
 import { Command } from "commander";
+import { writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+
+import { SharedBrowserPage } from "../../core/shared-browser/agent-page";
 
 import {
   findSharedBrowserChrome,
@@ -185,7 +190,7 @@ export function registerSharedBrowserCommands(
           card,
           ...(cardNote ? { note: cardNote } : {}),
           usage:
-            "Connect with CDP at `cdp` (e.g. Playwright chromium.connectOverCDP(cdp) and use its existing context and page). While the human has taken over, page actions wait until they hand back. To ask the human to take over (logins, CAPTCHAs): cocalc project browser ask-human --message '...' --wait",
+            "Act on the page with `cocalc project browser goto|text|click|type|press|eval|screenshot`, or connect any CDP client to `cdp` (e.g. Playwright chromium.connectOverCDP(cdp) and use its existing context and page). While the human has taken over, page actions wait until they hand back. To ask the human to take over (logins, CAPTCHAs): cocalc project browser ask-human --message '...' --wait",
         };
       });
     });
@@ -230,6 +235,132 @@ export function registerSharedBrowserCommands(
         await api.apps.stopApp(SHARED_BROWSER_APP_ID);
         return { project_id: project.project_id, stopped: true };
       });
+    });
+
+  // Built-in page actions for agents without a CDP client library.
+  const onPage = async <T>(
+    ctx: any,
+    project: string | undefined,
+    fn: (page: SharedBrowserPage) => Promise<T>,
+  ): Promise<T> => {
+    const { status } = await running(ctx, project);
+    const state =
+      status.state === "running" ? await serviceState(status.port) : null;
+    if (!state)
+      throw Error(
+        "the shared browser is not running here; run `cocalc project browser start` in the project first",
+      );
+    if (state.driver === "human")
+      console.error(
+        "The human is driving the shared browser; waiting until they hand back...",
+      );
+    const page = await SharedBrowserPage.open(state.cdp, state.active);
+    try {
+      return await fn(page);
+    } finally {
+      page.close();
+    }
+  };
+  const pageCommand = (name: string, description: string) =>
+    browser
+      .command(name)
+      .description(description)
+      .option("-w, --project <project>", "project id or name");
+
+  pageCommand(
+    "goto <url>",
+    "open a URL (or host, or search words) in the shared browser's current tab and wait for it to load",
+  ).action(async (url: string, opts: any, command: Command) => {
+    await withContext(command, "project browser goto", (ctx: any) =>
+      onPage(ctx, opts.project, (page) => page.goto(url)),
+    );
+  });
+
+  pageCommand("text", "print the current tab's URL, title and visible text")
+    .option(
+      "--max <chars>",
+      "truncate the text to this many characters",
+      "20000",
+    )
+    .action(async (opts: any, command: Command) => {
+      await withContext(command, "project browser text", (ctx: any) =>
+        onPage(ctx, opts.project, (page) => page.text(Number(opts.max))),
+      );
+    });
+
+  pageCommand(
+    "eval [expression]",
+    "evaluate JavaScript in the current tab (promises are awaited) and print the JSON result",
+  )
+    .option("--stdin", "read the expression from stdin")
+    .action(
+      async (expression: string | undefined, opts: any, command: Command) => {
+        await withContext(command, "project browser eval", async (ctx: any) => {
+          let code = expression;
+          if (opts.stdin) {
+            const chunks: Buffer[] = [];
+            for await (const chunk of process.stdin)
+              chunks.push(Buffer.from(chunk));
+            code = Buffer.concat(chunks).toString("utf8");
+          }
+          if (!code?.trim())
+            throw Error("an expression or --stdin is required");
+          return await onPage(ctx, opts.project, async (page) => ({
+            value: (await page.evaluate(code!)) ?? null,
+          }));
+        });
+      },
+    );
+
+  pageCommand(
+    "click <selector>",
+    "click the element matching a CSS selector with the mouse",
+  ).action(async (selector: string, opts: any, command: Command) => {
+    await withContext(command, "project browser click", (ctx: any) =>
+      onPage(ctx, opts.project, (page) => page.click(selector)),
+    );
+  });
+
+  pageCommand(
+    "type <text>",
+    "type text into the focused element (or --selector after focusing it)",
+  )
+    .option("--selector <css>", "focus this element first")
+    .action(async (text: string, opts: any, command: Command) => {
+      await withContext(command, "project browser type", (ctx: any) =>
+        onPage(ctx, opts.project, async (page) => {
+          await page.type(text, opts.selector);
+          return { typed: text.length };
+        }),
+      );
+    });
+
+  pageCommand(
+    "press <key>",
+    "press one key: a character, Enter, Tab, Escape, Backspace, Delete, Space, Arrow keys, Home, End, PageUp or PageDown",
+  ).action(async (key: string, opts: any, command: Command) => {
+    await withContext(command, "project browser press", (ctx: any) =>
+      onPage(ctx, opts.project, (page) => page.press(key)),
+    );
+  });
+
+  pageCommand("screenshot", "save a PNG of the current tab")
+    .option("--out <path>", "where to save it (default: a new file in /tmp)")
+    .option("--full-page", "the whole page, not just the visible part")
+    .action(async (opts: any, command: Command) => {
+      await withContext(
+        command,
+        "project browser screenshot",
+        async (ctx: any) => {
+          const out = resolve(
+            opts.out ?? join(tmpdir(), `cocalc-browser-${Date.now()}.png`),
+          );
+          return await onPage(ctx, opts.project, async (page) => {
+            await writeFile(out, await page.screenshot(!!opts.fullPage));
+            return { path: out, ...(await page.location()) };
+          });
+        },
+      );
     });
 
   browser

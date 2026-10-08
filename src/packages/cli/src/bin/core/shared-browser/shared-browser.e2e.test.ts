@@ -10,6 +10,7 @@ import {
   findChrome,
   launchBrowser,
 } from "../local-browser";
+import { SharedBrowserPage } from "./agent-page";
 import { SharedBrowserServer } from "./server";
 import { sharedBrowserChromeArgs } from "./service";
 
@@ -95,6 +96,64 @@ test(
     } finally {
       await agent.close().catch(() => {});
       await human.close().catch(() => {});
+      await server.close();
+      await browser.stop();
+      await profile.cleanup();
+    }
+  },
+);
+
+const FORM =
+  "data:text/html,<title>form</title><input id=q><button id=go onclick=\"document.title='clicked '+q.value\">Go</button>" +
+  "<form onsubmit=\"document.title='submitted';return false\"><input id=s></form><p>Hello text</p>";
+
+test(
+  "the built-in agent actions drive the page and wait while the human drives",
+  {
+    skip: executable ? false : "no Chrome/Chromium installed",
+    timeout: 120_000,
+  },
+  async () => {
+    const profile = await createProfileDir("disk", sys);
+    const browser = await launchBrowser({
+      executable: executable!,
+      profileDir: profile.path,
+      args: sharedBrowserChromeArgs(profile.path),
+    });
+    const version = await (
+      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
+    ).json();
+    const server = new SharedBrowserServer({
+      chromeWebSocketUrl: version.webSocketDebuggerUrl,
+      host: "127.0.0.1",
+      port: 0,
+      cdpPort: 0,
+    });
+    const { cdpPort } = await server.start();
+    const page = await SharedBrowserPage.open(`http://127.0.0.1:${cdpPort}`);
+    try {
+      assert.equal((await page.goto(FORM)).title, "form");
+      await page.type("a(b)'c", "#q");
+      assert.equal((await page.click("#go")).title, "clicked a(b)'c");
+      await page.type("x", "#s");
+      assert.equal((await page.press("Enter")).title, "submitted");
+      assert.equal(await page.evaluate("Promise.resolve(6 * 7)"), 42);
+      await assert.rejects(page.evaluate("nope()"), /nope is not defined/);
+      assert.match((await page.text()).text, /Hello text/);
+      const png = await page.screenshot();
+      assert.equal(png.subarray(1, 4).toString(), "PNG");
+      await assert.rejects(page.click("#missing"), /no element matches/);
+
+      server.setDriver("human");
+      let done = false;
+      const held = page.evaluate("1").then(() => (done = true));
+      await new Promise((r) => setTimeout(r, 700));
+      assert.equal(done, false, "an agent action waits while the human drives");
+      server.setDriver("agent");
+      await held;
+      assert.equal(done, true);
+    } finally {
+      page.close();
       await server.close();
       await browser.stop();
       await profile.cleanup();
