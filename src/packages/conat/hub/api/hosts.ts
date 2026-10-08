@@ -174,6 +174,10 @@ export interface HostSpotRecoveryState {
   active_machine_type?: string;
   machine_type_attempt_started_at?: string;
   spot_machine_types_tried?: string[];
+  // Recovery options ("spot:n2d-standard-32", "on_demand:t2d-standard-16")
+  // that already failed during this outage, and full passes over all of them.
+  fallback_rungs_tried?: string[];
+  fallback_ladder_cycle?: number;
 }
 
 export interface HostBillingEnforcement {

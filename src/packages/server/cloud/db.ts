@@ -217,6 +217,50 @@ export async function enqueueCloudVmWorkOnce(row: {
   return rowCount ? id : undefined;
 }
 
+// Like enqueueCloudVmWorkOnce, for a handler scheduling its own follow-up:
+// the item running that handler is in_progress, so it must not count as a
+// duplicate (otherwise the follow-up is silently dropped). An already queued
+// item of the same action is moved to this time instead.
+export async function enqueueCloudVmFollowUpWork(row: {
+  vm_id: string;
+  action: string;
+  payload?: Record<string, any>;
+  not_before: Date | string;
+}): Promise<string | undefined> {
+  const id = randomUUID();
+  const notBefore = normalizeNotBefore(row.not_before);
+  const { rowCount } = await pool().query(
+    `
+      INSERT INTO cloud_vm_work
+        (id, vm_id, action, payload, state, not_before, created_at, updated_at)
+      SELECT $1,$2,$3,$4,'queued',$5,NOW(),NOW()
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM cloud_vm_work
+        WHERE vm_id=$2
+          AND action=$3
+          AND state='queued'
+      )
+    `,
+    [id, row.vm_id, row.action, row.payload ?? {}, notBefore],
+  );
+  if (!rowCount) {
+    await pool().query(
+      `
+        UPDATE cloud_vm_work
+        SET not_before = $3,
+            payload = $4,
+            updated_at = NOW()
+        WHERE vm_id=$1
+          AND action=$2
+          AND state='queued'
+      `,
+      [row.vm_id, row.action, notBefore, row.payload ?? {}],
+    );
+  }
+  return rowCount ? id : undefined;
+}
+
 export async function requeueStaleCloudVmWork(
   opts: {
     older_than_ms?: number;

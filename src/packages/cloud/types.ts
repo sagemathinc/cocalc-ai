@@ -138,6 +138,15 @@ export interface CloudProvider {
     creds: any,
     opts?: { stableForMs?: number },
   ): Promise<boolean>;
+  // Free regional quota by metric (limit - usage), e.g. T2D_CPUS. Used to
+  // skip recovery options that would fail with QUOTA_EXCEEDED anyway.
+  regionalQuotaHeadroom?(
+    region: string,
+    creds: any,
+  ): Promise<Record<string, number>>;
+  // Whether the instance's network interface is gVNIC, which some machine
+  // families require and which cannot be changed on an existing instance.
+  instanceUsesGvnic?(runtime: HostRuntime, creds: any): Promise<boolean>;
   restartHost?(runtime: HostRuntime, creds: any): Promise<void>;
   hardRestartHost?(runtime: HostRuntime, creds: any): Promise<void>;
   ensureStartupScript?(runtime: HostRuntime, creds: any): Promise<void>;

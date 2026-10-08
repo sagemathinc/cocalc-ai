@@ -12590,7 +12590,16 @@ EOF
     echo "Podman runroot validation failed: expected=${desired_runroot} reported=${reported_runroot}" >&2
     return 1
   fi
-  podman_ps_once "${runtime_dir}" "${cgroup_manager}"
+  podman_ps_once "${runtime_dir}" "${cgroup_manager}" || return "$?"
+  # Cgroup io.max does not survive a reboot. Restore the project I/O policy
+  # before project-host starts: its startup conformance check fails closed
+  # on a missing limit, which cost an extra project-host restart per boot.
+  # Best effort; the regular reconcile and that check still enforce it.
+  if [ -x /usr/local/sbin/cocalc-runtime-storage ]; then
+    timeout --kill-after=5s 90s /usr/local/sbin/cocalc-runtime-storage \
+      reconcile-project-io-policy >&2 ||
+      echo "warning: unable to restore project I/O policy before project-host start" >&2
+  fi
 }
 
 preflight_podman_runtime() {
@@ -13980,6 +13989,75 @@ exit 0
     os.chmod("/etc/cron.d/cocalc-nvidia-cdi", 0o644)
 
 
+def project_host_restart_fingerprint(cfg: BootstrapConfig) -> str:
+    """Digest of what a running project-host stack loaded at startup.
+
+    The boot-time reconcile rewrites everything; it must only restart the
+    stack (which systemd already started at boot) when one of these changed.
+    """
+    digest = hashlib.sha256()
+
+    def add(label: str, value: str) -> None:
+        digest.update(f"{label}\0{value}\0".encode("utf-8", "surrogateescape"))
+
+    def add_file(path: Path | str) -> None:
+        try:
+            data = Path(path).read_bytes()
+        except FileNotFoundError:
+            add(str(path), "missing")
+            return
+        except OSError as exc:
+            # Unknown is a change: never skip a restart on a read failure.
+            add(str(path), f"unreadable:{os.urandom(8).hex()}:{exc.errno}")
+            return
+        add(str(path), hashlib.sha256(data).hexdigest())
+
+    for bundle in (
+        cfg.project_host_bundle,
+        cfg.project_bundle,
+        cfg.tools_bundle,
+        cfg.container_runtime_bundle,
+    ):
+        if bundle is None:
+            continue
+        add("bundle", os.path.realpath(bundle.current) if bundle.current else "")
+    add("node", f"{cfg.node_version}")
+    bin_dir = project_host_runtime_root(cfg) / "bin"
+    try:
+        for entry in sorted(bin_dir.iterdir()):
+            if entry.is_file():
+                add_file(entry)
+    except FileNotFoundError:
+        add(str(bin_dir), "missing")
+    env_path = Path(cfg.env_file)
+    add_file(env_path)
+    add_file(env_path.with_name(
+        env_path.name[:-4] + ".local.env"
+        if env_path.name.endswith(".env")
+        else "project-host.local.env"
+    ))
+    add_file("/mnt/cocalc/data/secrets/master-conat-token")
+    containers = Path(runtime_home(cfg)) / ".config" / "containers"
+    add_file(containers / "storage.conf")
+    add_file(containers / "containers.conf")
+    return digest.hexdigest()
+
+
+def project_host_running(cfg: BootstrapConfig) -> bool:
+    ctl_path = project_host_runtime_root(cfg) / "bin" / "ctl"
+    if not ctl_path.exists():
+        return False
+    status = run_cmd(
+        cfg,
+        [str(ctl_path), "status"],
+        "project-host status",
+        check=False,
+        as_user=cfg.ssh_user,
+        cwd=runtime_home(cfg),
+    )
+    return status.returncode == 0
+
+
 def start_project_host(cfg: BootstrapConfig) -> None:
     ctl_path = str(project_host_runtime_root(cfg) / "bin" / "ctl")
     ctl_cwd = runtime_home(cfg)
@@ -14105,10 +14183,15 @@ def run_provision(cfg: BootstrapConfig) -> int:
         raise
 
 
-def run_reconcile(cfg: BootstrapConfig) -> int:
+def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int:
     log_line(cfg, "bootstrap: starting reconcile")
     report_bootstrap_status(cfg, "running", "Reconciling host software")
     record_operation_start(cfg, "reconcile")
+    # At boot, systemd has already started the stack; restarting it again
+    # minutes later interrupted users and freshly resumed agent turns.
+    fingerprint_before = (
+        project_host_restart_fingerprint(cfg) if restart_if_changed else None
+    )
     try:
         ensure_runtime_user(cfg)
         ensure_bootstrap_paths(cfg)
@@ -14151,8 +14234,21 @@ def run_reconcile(cfg: BootstrapConfig) -> int:
         configure_cloudflared_with_options(cfg, install_package=False)
         configure_critical_service_oom_protection(cfg)
         configure_autostart(cfg)
-        report_bootstrap_status(cfg, "running", "Restarting project-host services")
-        start_project_host(cfg)
+        if (
+            fingerprint_before is not None
+            and project_host_restart_fingerprint(cfg) == fingerprint_before
+            and project_host_running(cfg)
+        ):
+            log_line(
+                cfg,
+                "bootstrap: project-host software unchanged and running; "
+                "leaving the running stack alone",
+            )
+        else:
+            report_bootstrap_status(
+                cfg, "running", "Restarting project-host services"
+            )
+            start_project_host(cfg)
         record_operation_success(cfg, "reconcile")
         report_bootstrap_status(cfg, "done", "Host software reconciled")
         log_line(cfg, "bootstrap: reconcile completed successfully")
@@ -14244,6 +14340,11 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--bootstrap-dir")
     parser.add_argument("--config", help=argparse.SUPPRESS)
     parser.add_argument(
+        "--restart-if-changed",
+        action="store_true",
+        help="reconcile: keep a running project-host unless its software changed",
+    )
+    parser.add_argument(
         "--only",
         help="Comma-separated subset (container_runtime_bundle, project_bundle, project_host_bundle, tools_bundle, cloudflared)",
     )
@@ -14299,6 +14400,8 @@ def main(argv: list[str]) -> int:
         if args.mode == "reconcile":
             with bootstrap_operation_lock(cfg):
                 cfg = load_config(bootstrap_dir)
+                if args.restart_if_changed:
+                    return run_reconcile(cfg, restart_if_changed=True)
                 return run_reconcile(cfg)
         if args.mode == "helpers":
             with bootstrap_operation_lock(cfg):

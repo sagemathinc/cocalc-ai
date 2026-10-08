@@ -8,6 +8,7 @@ import {
   ensureCloudflareTunnelForHost,
 } from "./cloudflare-tunnel";
 import {
+  enqueueCloudVmFollowUpWork,
   enqueueCloudVmWork,
   enqueueCloudVmWorkOnce,
   logCloudVmEvent,
@@ -66,6 +67,27 @@ import {
   hostPublicRouteMigrationInProgress,
   migrateHostPublicRouteInternal,
 } from "./public-route";
+import adminAlert from "@cocalc/server/messages/admin-alert";
+import {
+  allowedRecoveryFamilies,
+  alternateMachineTypes,
+  buildFallbackLadder,
+  classifyStartFailure,
+  exhaustedLadderRetryDelayMs,
+  machineShape,
+  rungFitsQuota,
+  rungKey,
+  type LadderRung,
+} from "./fallback-ladder";
+import {
+  injectedStartFault,
+  loadGcpCatalogPrices,
+  loadGcpZoneMachineTypes,
+} from "./fallback-ladder-runtime";
+import {
+  SPOT_RETURN_QUIET_MINUTES,
+  spotReturnDecision,
+} from "./spot-return-timing";
 
 const logger = getLogger("server:cloud:host-work");
 const pool = () => getPool();
@@ -79,6 +101,7 @@ const HOST_SHUTDOWN_PROVIDER_WAIT_MS = 90_000;
 const HOST_SHUTDOWN_PROVIDER_POLL_MS = 5_000;
 const HOST_ROOTFS_PREPULL_RPC_TIMEOUT_MS = 30 * 60 * 1000;
 const MIN_SPOT_RECOVERY_IDLE_HISTORY_MS = 5 * 60 * 1000;
+const SPOT_RETURN_PROBE_REUSE_MS = 90 * 60 * 1000;
 
 type ProviderReadyObservation = {
   mapped_status?: "running" | "starting" | "off" | "stopped" | "error";
@@ -802,6 +825,7 @@ async function scheduleSpotProbe(opts: {
   provider?: string;
   not_before: Date;
   after_current_probe?: boolean;
+  payload?: Record<string, any>;
 }) {
   const enqueue = opts.after_current_probe
     ? enqueueCloudVmWork
@@ -811,9 +835,34 @@ async function scheduleSpotProbe(opts: {
     action: "probe_spot",
     not_before: opts.not_before,
     payload: {
+      ...(opts.payload ?? {}),
       provider: opts.provider,
     },
   });
+}
+
+// Projects on the host with user or agent activity recently: a return to
+// Spot restarts the host, so only do it unannounced when nothing is going on.
+async function countRecentlyActiveHostProjects(
+  hostId: string,
+): Promise<number> {
+  try {
+    const { rows } = await pool().query(
+      `SELECT COUNT(*)::int AS active
+         FROM projects
+        WHERE host_id=$1
+          AND last_edited > NOW() - ($2 || ' minutes')::interval`,
+      [hostId, `${SPOT_RETURN_QUIET_MINUTES}`],
+    );
+    return Number(rows[0]?.active ?? 0);
+  } catch (err) {
+    logger.warn("spot return: unable to read host activity", {
+      host_id: hostId,
+      err: `${err}`,
+    });
+    // Unknown activity is not quiet.
+    return 1;
+  }
 }
 
 function shouldFallbackToStandard(opts: {
@@ -888,17 +937,6 @@ function activeAlternateSpotMachineType(
   return { active, desired };
 }
 
-function isSpotCapacityError(err: unknown): boolean {
-  const message = `${err ?? ""}`.toUpperCase();
-  return [
-    "ZONE_RESOURCE_POOL_EXHAUSTED",
-    "RESOURCE_POOL_EXHAUSTED",
-    "RESOURCE_NOT_READY",
-    "INSUFFICIENT CAPACITY",
-    "STOCKOUT",
-  ].some((pattern) => message.includes(pattern));
-}
-
 async function scheduleSpotRetry(opts: {
   row: any;
   provider?: string;
@@ -932,7 +970,7 @@ async function scheduleSpotRetry(opts: {
     metadata: nextMetadata,
     last_seen: null,
   });
-  await enqueueCloudVmWorkOnce({
+  await enqueueCloudVmFollowUpWork({
     vm_id: opts.row.id,
     action: "start",
     not_before: nextRetryAt,
@@ -1748,8 +1786,14 @@ async function handleStart(row: any) {
           nextRecoveryState?.fallback_started_at ?? new Date().toISOString(),
       };
     } else if (managedSpotRecovery && startMode === "return_to_spot") {
+      // A return to Spot is a fresh attempt: earlier failures do not apply.
+      const {
+        fallback_rungs_tried: _tried,
+        fallback_ladder_cycle: _cycle,
+        ...returning
+      } = nextRecoveryState ?? { phase: "returning_to_spot" as const };
       nextRecoveryState = {
-        ...(nextRecoveryState ?? { phase: "returning_to_spot" }),
+        ...returning,
         phase: "returning_to_spot",
         outage_started_at:
           nextRecoveryState?.outage_started_at ?? new Date().toISOString(),
@@ -1939,6 +1983,266 @@ async function handleStart(row: any) {
         err,
       });
     }
+    const startProviderHost = async () => {
+      const fault = injectedStartFault({
+        host_id: row.id,
+        pricing: effectivePricingForStart,
+        machine_type:
+          nextRecoveryState?.active_machine_type ??
+          runtimeMachineType(runtime) ??
+          `${machine.machine_type ?? ""}`.trim(),
+      });
+      if (fault) throw new Error(`injected start fault: ${fault}`);
+      await entry.provider.startHost(runtimeForStart, creds);
+    };
+    // When the attempted Spot start (or a return to Spot) fails for lack of
+    // capacity or quota, walk: standard on the desired type, then Spot and
+    // standard on core-equivalent types of other families. Never throws: the
+    // host is either starting on some rung, or a full retry is scheduled.
+    // "handled" means provisioning took over (Nebius recreate).
+    const startViaFallbackLadder = async ({
+      failed,
+      reason,
+    }: {
+      failed: LadderRung;
+      reason: string;
+    }): Promise<"started" | "scheduled" | "handled"> => {
+      const now = () => new Date().toISOString();
+      const desiredMachineType = `${machine.machine_type ?? ""}`.trim();
+      const scheduleRetry = async (retryReason: string) => {
+        try {
+          await scheduleSpotRetry({
+            row,
+            provider: providerId,
+            policy: recoveryPolicy!,
+            state: nextRecoveryState,
+            reason: retryReason,
+          });
+        } catch (retryErr) {
+          logger.warn("spot recovery: failed to schedule retry", {
+            host_id: row.id,
+            err: `${retryErr}`,
+          });
+        }
+        return "scheduled" as const;
+      };
+      if (providerId !== "gcp" || !recoveryPolicy || !desiredMachineType) {
+        try {
+          if ((await promoteToStandardFallback(reason)) === "recreated") {
+            return "handled";
+          }
+          await startProviderHost();
+          return "started";
+        } catch (fallbackErr) {
+          await logCloudVmEvent({
+            vm_id: row.id,
+            action: "spot_restore_retry_failed",
+            status: "failure",
+            provider: providerId,
+            error: `${fallbackErr}`,
+          });
+          return await scheduleRetry(`standard-start-failed:${fallbackErr}`);
+        }
+      }
+      const tried = new Set(nextRecoveryState?.fallback_rungs_tried ?? []);
+      tried.add(rungKey(failed));
+      const zone = `${runtime?.zone ?? machine.zone ?? ""}`.trim();
+      const region = `${row.region ?? ""}`.trim();
+      const vcpusByType = new Map<string, number>();
+      let spotAlternates: string[] = [];
+      let standardAlternates: string[] = [];
+      // Other machine families change the host's hardware and cost, so only
+      // site-funded hosts use them (as for configured Spot alternates).
+      if (hostFundingMode(row) === "site-funded") {
+        try {
+          const [available, prices] = await Promise.all([
+            loadGcpZoneMachineTypes(zone),
+            loadGcpCatalogPrices(),
+          ]);
+          for (const type of available) {
+            if (type?.name && Number(type.guestCpus) > 0) {
+              vcpusByType.set(type.name, Number(type.guestCpus));
+            }
+          }
+          const desired = machineShape(
+            available.find((type) => type?.name === desiredMachineType),
+          );
+          if (desired) {
+            let gvnic = false;
+            try {
+              gvnic = !!(await entry.provider.instanceUsesGvnic?.(
+                runtime,
+                creds,
+              ));
+            } catch {
+              // Assume virtio: never offer a family the NIC cannot run.
+            }
+            const families = allowedRecoveryFamilies({ gvnic });
+            const pick = (pricing: HostPricingModel) =>
+              alternateMachineTypes({
+                desired,
+                available,
+                families,
+                prices,
+                region,
+                pricing,
+              }).map(({ machine_type }) => machine_type);
+            spotAlternates = [
+              ...recoveryPolicy.alternate_spot_machine_types,
+              ...pick("spot"),
+            ];
+            standardAlternates = pick("on_demand");
+          }
+        } catch (catalogErr) {
+          logger.warn("spot recovery: unable to plan alternate machine types", {
+            host_id: row.id,
+            err: `${catalogErr}`,
+          });
+        }
+      }
+      let headroom: Record<string, number> | undefined;
+      try {
+        headroom = await entry.provider.regionalQuotaHeadroom?.(region, creds);
+      } catch (quotaErr) {
+        logger.warn("spot recovery: unable to read regional quota", {
+          host_id: row.id,
+          region,
+          err: `${quotaErr}`,
+        });
+      }
+      let currentMachineType = failed.machine_type;
+      for (const rung of buildFallbackLadder({
+        desired_machine_type: desiredMachineType,
+        spot_alternates: spotAlternates,
+        standard_alternates: standardAlternates,
+        tried: [...tried],
+      })) {
+        const key = rungKey(rung);
+        const vcpus =
+          vcpusByType.get(rung.machine_type) ??
+          Number(machine.metadata?.cpu ?? 0);
+        if (!rungFitsQuota({ rung, vcpus, headroom })) {
+          tried.add(key);
+          await logCloudVmEvent({
+            vm_id: row.id,
+            action: "fallback_rung_skipped",
+            status: "skipped",
+            provider: providerId,
+            runtime: { ...rung, reason: "quota", vcpus },
+          });
+          continue;
+        }
+        try {
+          if (rung.machine_type !== currentMachineType) {
+            await entry.provider.setMachineType!(
+              runtimeForStart,
+              rung.machine_type,
+              creds,
+            );
+            currentMachineType = rung.machine_type;
+          }
+          await entry.provider.setPricingModel!(
+            runtimeForStart,
+            rung.pricing,
+            creds,
+          );
+          effectivePricingForStart = rung.pricing;
+          nextRecoveryState = {
+            ...(nextRecoveryState ?? { phase: "retrying_spot" }),
+            phase:
+              rung.pricing === "on_demand"
+                ? "running_standard_fallback"
+                : "retrying_spot",
+            outage_started_at: nextRecoveryState?.outage_started_at ?? now(),
+            ...(rung.pricing === "on_demand"
+              ? {
+                  fallback_started_at:
+                    nextRecoveryState?.fallback_started_at ?? now(),
+                }
+              : {}),
+            active_machine_type: rung.machine_type,
+            machine_type_attempt_started_at: now(),
+            fallback_rungs_tried: [...tried],
+          };
+          await updateRecoveryRecord(nextRecoveryState);
+          await startProviderHost();
+          await logCloudVmEvent({
+            vm_id: row.id,
+            action:
+              rung.pricing === "on_demand"
+                ? "spot_restore_fallback_standard"
+                : "spot_restore_alternate_machine_type",
+            status: "success",
+            provider: providerId,
+            runtime: { ...rung, reason },
+          });
+          return "started";
+        } catch (rungErr) {
+          const kind = classifyStartFailure(rungErr);
+          tried.add(key);
+          await logCloudVmEvent({
+            vm_id: row.id,
+            action: "fallback_rung_failed",
+            status: "failure",
+            provider: providerId,
+            runtime: { ...rung, kind },
+            error: `${rungErr}`,
+          });
+          if (kind === "transient") {
+            nextRecoveryState = {
+              ...(nextRecoveryState ?? { phase: "retrying_spot" }),
+              fallback_rungs_tried: [...tried],
+            };
+            return await scheduleRetry(`${key}:${rungErr}`);
+          }
+        }
+      }
+      // Every option is out of capacity or quota right now. Retry all of them
+      // later, with backoff, and tell an admin: this host is down.
+      const cycle = (nextRecoveryState?.fallback_ladder_cycle ?? 0) + 1;
+      const delayMs = exhaustedLadderRetryDelayMs(cycle);
+      const retryAt = new Date(Date.now() + delayMs);
+      nextRecoveryState = {
+        ...(nextRecoveryState ?? { phase: "retrying_spot" }),
+        fallback_rungs_tried: [],
+        fallback_ladder_cycle: cycle,
+        next_retry_at: retryAt.toISOString(),
+      };
+      await logCloudVmEvent({
+        vm_id: row.id,
+        action: "fallback_ladder_exhausted",
+        status: "failure",
+        provider: providerId,
+        runtime: { tried: [...tried], cycle, retry_at: retryAt.toISOString() },
+        error: reason,
+      });
+      try {
+        await updateRecoveryRecord(nextRecoveryState);
+        await enqueueCloudVmFollowUpWork({
+          vm_id: row.id,
+          action: "start",
+          not_before: retryAt,
+          payload: { source: "fallback_ladder_retry", provider: providerId },
+        });
+      } catch (scheduleErr) {
+        logger.warn("spot recovery: failed to schedule ladder retry", {
+          host_id: row.id,
+          err: `${scheduleErr}`,
+        });
+      }
+      void adminAlert({
+        subject: `Project host ${row.name ?? row.id} cannot start: every recovery option failed`,
+        body: [
+          `Host ${row.id} in ${zone} could not start on any machine type or pricing model.`,
+          `Tried: ${[...tried].join(", ") || "(none)"}`,
+          `Last error: ${reason}`,
+          `Retrying all options at ${retryAt.toISOString()} (pass ${cycle}).`,
+        ].join("\n\n"),
+        dedupBySubject: true,
+        dedupMinutes: 60,
+      });
+      return "scheduled";
+    };
     try {
       if (managedSpotRecovery && startMode === "return_to_spot") {
         if (providerId === "nebius") {
@@ -2128,9 +2432,16 @@ async function handleStart(row: any) {
         }
       }
 
-      await entry.provider.startHost(runtimeForStart, creds);
+      await startProviderHost();
     } catch (err) {
       if (managedSpotRecovery && recoveryPolicy) {
+        const failedRung: LadderRung = {
+          pricing: effectivePricingForStart,
+          machine_type:
+            nextRecoveryState?.active_machine_type ??
+            runtimeMachineType(runtime) ??
+            `${machine.machine_type ?? ""}`.trim(),
+        };
         if (startMode === "return_to_spot") {
           await logCloudVmEvent({
             vm_id: row.id,
@@ -2139,15 +2450,18 @@ async function handleStart(row: any) {
             provider: providerId,
             error: `${err}`,
           });
-          if (
-            (await promoteToStandardFallback(`spot-return-failed:${err}`)) ===
-            "recreated"
-          ) {
+          const outcome = await startViaFallbackLadder({
+            failed: failedRung,
+            reason: `spot-return-failed:${err}`,
+          });
+          if (outcome !== "started") {
+            if (outcome === "scheduled") {
+              await bumpReconcile(providerId, DEFAULT_INTERVALS.running_ms);
+            }
             return;
           }
-          await entry.provider.startHost(runtimeForStart, creds);
         } else if (
-          isSpotCapacityError(err) ||
+          classifyStartFailure(err) !== "transient" ||
           shouldFallbackToStandard({
             state: nextRecoveryState,
             policy: recoveryPolicy,
@@ -2161,34 +2475,15 @@ async function handleStart(row: any) {
             provider: providerId,
             error: `${err}`,
           });
-          if (await promoteToAlternateSpotMachineType()) {
-            try {
-              await entry.provider.startHost(runtimeForStart, creds);
-            } catch (alternateErr) {
-              await logCloudVmEvent({
-                vm_id: row.id,
-                action: "spot_restore_alternate_machine_type_failed",
-                status: "failure",
-                provider: providerId,
-                error: `${alternateErr}`,
-              });
-              if (
-                (await promoteToStandardFallback(
-                  `alternate-spot-start-failed:${alternateErr}`,
-                )) === "recreated"
-              ) {
-                return;
-              }
-              await entry.provider.startHost(runtimeForStart, creds);
+          const outcome = await startViaFallbackLadder({
+            failed: failedRung,
+            reason: `${failedRung.pricing}-start-failed:${err}`,
+          });
+          if (outcome !== "started") {
+            if (outcome === "scheduled") {
+              await bumpReconcile(providerId, DEFAULT_INTERVALS.running_ms);
             }
-          } else {
-            if (
-              (await promoteToStandardFallback(`spot-start-failed:${err}`)) ===
-              "recreated"
-            ) {
-              return;
-            }
-            await entry.provider.startHost(runtimeForStart, creds);
+            return;
           }
         } else {
           await logCloudVmEvent({
@@ -3337,30 +3632,44 @@ async function handleProbeSpot(row: any) {
     region: host.region,
   });
   if (!entry.provider.probeSpotAvailability) return;
-  const probingState: HostSpotRecoveryState = {
-    ...(state ?? { phase: "probing_spot" }),
-    phase: "probing_spot",
-    last_probe_at: new Date().toISOString(),
-  };
-  const probingMetadata = withPricingAndRecoveryMetadata(host.metadata, {
-    desired_pricing_model: desiredPricingModel(host),
-    effective_pricing_model: currentEffectivePricing,
-    spot_recovery_state: probingState,
-  });
-  await updateHostRow(host.id, { metadata: probingMetadata });
-  await logCloudVmEvent({
-    vm_id: host.id,
-    action: "spot_probe_started",
-    status: "success",
-    provider: providerId,
-  });
-  const spec = {
-    ...(await buildHostSpec({ ...host, metadata: probingMetadata })),
-    pricing_model: "spot" as const,
-  };
-  const available = await entry.provider.probeSpotAvailability(spec, creds, {
-    stableForMs: SPOT_PROBE_STABLE_MS,
-  });
+  // A deferred return re-checks timing without paying for another probe VM,
+  // as long as the last probe succeeded recently.
+  const lastProbeMs = state?.last_probe_at
+    ? Date.parse(state.last_probe_at)
+    : NaN;
+  const reuseRecentProbe =
+    row.payload?.recheck_after_success === true &&
+    state?.last_probe_result === "success" &&
+    Number.isFinite(lastProbeMs) &&
+    Date.now() - lastProbeMs < SPOT_RETURN_PROBE_REUSE_MS;
+  let probingState: HostSpotRecoveryState = state ?? { phase: "probing_spot" };
+  let available = true;
+  if (!reuseRecentProbe) {
+    probingState = {
+      ...(state ?? { phase: "probing_spot" }),
+      phase: "probing_spot",
+      last_probe_at: new Date().toISOString(),
+    };
+    const probingMetadata = withPricingAndRecoveryMetadata(host.metadata, {
+      desired_pricing_model: desiredPricingModel(host),
+      effective_pricing_model: currentEffectivePricing,
+      spot_recovery_state: probingState,
+    });
+    await updateHostRow(host.id, { metadata: probingMetadata });
+    await logCloudVmEvent({
+      vm_id: host.id,
+      action: "spot_probe_started",
+      status: "success",
+      provider: providerId,
+    });
+    const spec = {
+      ...(await buildHostSpec({ ...host, metadata: probingMetadata })),
+      pricing_model: "spot" as const,
+    };
+    available = await entry.provider.probeSpotAvailability(spec, creds, {
+      stableForMs: SPOT_PROBE_STABLE_MS,
+    });
+  }
   if (!available) {
     const failedState: HostSpotRecoveryState = {
       ...probingState,
@@ -3390,10 +3699,55 @@ async function handleProbeSpot(row: any) {
     });
     return;
   }
+  const probeAt = reuseRecentProbe
+    ? (state?.last_probe_at ?? new Date().toISOString())
+    : new Date().toISOString();
+  // Returning restarts the host: a planned interruption. Wait for a quiet
+  // moment or the overnight window, bounded by the fallback runtime cap.
+  const timing = spotReturnDecision({
+    now: new Date(),
+    region: host.region,
+    fallback_started_at: alternateMachineType
+      ? state?.machine_type_attempt_started_at
+      : state?.fallback_started_at,
+    max_fallback_runtime_ms: maxStandardRuntimeMs(policy),
+    recently_active_projects: await countRecentlyActiveHostProjects(host.id),
+  });
+  if (!timing.return_now) {
+    const deferredState: HostSpotRecoveryState = {
+      ...probingState,
+      phase: alternateMachineType ? "idle" : "running_standard_fallback",
+      last_probe_at: probeAt,
+      last_probe_result: "success",
+    };
+    delete deferredState.last_probe_error;
+    await updateHostRow(host.id, {
+      metadata: withPricingAndRecoveryMetadata(host.metadata, {
+        desired_pricing_model: desiredPricingModel(host),
+        effective_pricing_model: currentEffectivePricing,
+        spot_recovery_state: deferredState,
+      }),
+    });
+    await logCloudVmEvent({
+      vm_id: host.id,
+      action: "spot_return_deferred",
+      status: "success",
+      provider: providerId,
+      runtime: { recheck_at: timing.recheck_at.toISOString() },
+    });
+    await scheduleSpotProbe({
+      row: host,
+      provider: providerId,
+      not_before: timing.recheck_at,
+      after_current_probe: true,
+      payload: { recheck_after_success: true },
+    });
+    return;
+  }
   const successState: HostSpotRecoveryState = {
     ...(probingState ?? { phase: "returning_to_spot" }),
     phase: "returning_to_spot",
-    last_probe_at: new Date().toISOString(),
+    last_probe_at: probeAt,
     last_probe_result: "success",
   };
   delete successState.last_probe_error;
@@ -3412,6 +3766,7 @@ async function handleProbeSpot(row: any) {
     action: "spot_probe_succeeded",
     status: "success",
     provider: providerId,
+    runtime: { return_reason: timing.reason },
   });
   await enqueueCloudVmWorkOnce({
     vm_id: host.id,

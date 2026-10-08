@@ -75,6 +75,23 @@ jest.mock("./public-route", () => {
   };
 });
 
+const loadGcpZoneMachineTypesMock = jest.fn(async (): Promise<any[]> => []);
+const loadGcpCatalogPricesMock = jest.fn(async (): Promise<any> => undefined);
+const adminAlertMock = jest.fn(async () => undefined);
+
+jest.mock("./fallback-ladder-runtime", () => ({
+  loadGcpZoneMachineTypes: (...args: any[]) =>
+    (loadGcpZoneMachineTypesMock as any)(...args),
+  loadGcpCatalogPrices: (...args: any[]) =>
+    (loadGcpCatalogPricesMock as any)(...args),
+  injectedStartFault: () => undefined,
+}));
+
+jest.mock("@cocalc/server/messages/admin-alert", () => ({
+  __esModule: true,
+  default: (...args: any[]) => (adminAlertMock as any)(...args),
+}));
+
 beforeAll(async () => {
   await before({ noConat: true });
 }, 15000);
@@ -2277,6 +2294,117 @@ describe("cloud host start failures", () => {
     expect(workRows.rows).toEqual([{ action: "start", state: "queued" }]);
   });
 
+  it("defers a return to Spot while the host is busy, then returns without re-probing", async () => {
+    const hostId = "5f0a1c2e-7d3b-4e8a-9c1f-2b6d8e4a7c10";
+    const projectId = "5f0a1c2e-7d3b-4e8a-9c1f-000000000001";
+    const probeSpotAvailability = jest.fn().mockResolvedValue(true);
+    getProviderContextMock.mockResolvedValue({
+      entry: { provider: { probeSpotAvailability } },
+      creds: {},
+    });
+    await upsertProjectHost({
+      id: hostId,
+      name: "Busy standard fallback host",
+      // No known UTC offset: no overnight window, so only quiet or the cap.
+      region: "test-region1",
+      status: "running",
+      last_seen: new Date() as any,
+      metadata: {
+        owner: "acct-owner",
+        billing: { funding_mode: "site-funded" },
+        pricing_model: "spot",
+        desired_pricing_model: "spot",
+        effective_pricing_model: "on_demand",
+        interruption_restore_policy: "immediate",
+        machine: {
+          cloud: "gcp",
+          zone: "test-region1-c",
+          machine_type: "t2d-standard-16",
+          disk_gb: 200,
+          disk_type: "balanced",
+          storage_mode: "persistent",
+        },
+        runtime: {
+          provider: "gcp",
+          instance_id: `cocalc-host-${hostId}`,
+          metadata: { machine_type: "t2d-standard-16" },
+        },
+        spot_recovery_state: {
+          phase: "running_standard_fallback",
+          fallback_started_at: new Date(Date.now() - 30 * 60_000).toISOString(),
+        },
+      },
+    });
+    await getPool().query(
+      "INSERT INTO projects (project_id, host_id, last_edited) VALUES ($1, $2, NOW())",
+      [projectId, hostId],
+    );
+
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers.probe_spot({
+      id: "probe-busy-1",
+      vm_id: hostId,
+      action: "probe_spot",
+      payload: { provider: "gcp" },
+    } as any);
+
+    let host = await getPool().query(
+      "SELECT status, metadata FROM project_hosts WHERE id=$1",
+      [hostId],
+    );
+    expect(host.rows[0].status).toBe("running");
+    expect(host.rows[0].metadata.spot_recovery_state).toMatchObject({
+      phase: "running_standard_fallback",
+      last_probe_result: "success",
+    });
+    let work = await getPool().query(
+      "SELECT action, payload FROM cloud_vm_work WHERE vm_id=$1 AND state='queued'",
+      [hostId],
+    );
+    expect(work.rows).toEqual([
+      {
+        action: "probe_spot",
+        payload: { provider: "gcp", recheck_after_success: true },
+      },
+    ]);
+    const deferred = await getPool().query(
+      "SELECT action FROM cloud_vm_log WHERE vm_id=$1 AND action='spot_return_deferred'",
+      [hostId],
+    );
+    expect(deferred.rows).toHaveLength(1);
+
+    // Activity stops; the re-check reuses the recent successful probe.
+    await getPool().query(
+      "UPDATE projects SET last_edited = NOW() - interval '2 hours' WHERE project_id=$1",
+      [projectId],
+    );
+    await getPool().query("DELETE FROM cloud_vm_work WHERE vm_id=$1", [hostId]);
+    await cloudHostHandlers.probe_spot({
+      id: "probe-busy-2",
+      vm_id: hostId,
+      action: "probe_spot",
+      payload: { provider: "gcp", recheck_after_success: true },
+    } as any);
+
+    expect(probeSpotAvailability).toHaveBeenCalledTimes(1);
+    host = await getPool().query(
+      "SELECT status, metadata FROM project_hosts WHERE id=$1",
+      [hostId],
+    );
+    expect(host.rows[0].status).toBe("starting");
+    expect(host.rows[0].metadata.spot_recovery_state.phase).toBe(
+      "returning_to_spot",
+    );
+    work = await getPool().query(
+      "SELECT action FROM cloud_vm_work WHERE vm_id=$1 AND state='queued'",
+      [hostId],
+    );
+    expect(work.rows).toEqual([{ action: "start" }]);
+    await getPool().query("DELETE FROM projects WHERE project_id=$1", [
+      projectId,
+    ]);
+  });
+
   it("does not probe Spot before a rapid-preemption standard hold expires", async () => {
     const hostId = "788826be-0c90-497d-b92a-3be610f6374c";
     const currentWorkId = "b274393f-aa99-4f73-919e-b863cc3066eb";
@@ -2862,5 +2990,293 @@ describe("cloud host start failures", () => {
       phase: "running_standard_fallback",
       standard_hold_until: holdUntil,
     });
+  });
+});
+
+describe("spot recovery fallback ladder", () => {
+  const zoneTypes = [
+    { name: "t2d-standard-16", guestCpus: 16, memoryMb: 65536 },
+    { name: "n2d-standard-32", guestCpus: 32, memoryMb: 131072 },
+    { name: "n2-standard-32", guestCpus: 32, memoryMb: 131072 },
+    { name: "c2d-highcpu-32", guestCpus: 32, memoryMb: 65536 },
+    {
+      name: "e2-standard-16",
+      guestCpus: 16,
+      memoryMb: 65536,
+      isSharedCpu: false,
+    },
+  ];
+  const rate = (value: number) => ({ "us-south1": value });
+  const prices = {
+    families: {
+      t2d: {
+        cpu: rate(0.03),
+        ram: rate(0.004),
+        spot_cpu: rate(0.011),
+        spot_ram: rate(0.0015),
+      },
+      n2d: {
+        cpu: rate(0.03),
+        ram: rate(0.004),
+        spot_cpu: rate(0.012),
+        spot_ram: rate(0.0016),
+      },
+      n2: {
+        cpu: rate(0.035),
+        ram: rate(0.005),
+        spot_cpu: rate(0.02),
+        spot_ram: rate(0.003),
+      },
+    },
+  };
+
+  async function spotHost(hostId: string, state: Record<string, any> = {}) {
+    await upsertProjectHost({
+      id: hostId,
+      name: `ladder ${hostId.slice(0, 8)}`,
+      region: "us-south1",
+      status: "starting",
+      metadata: {
+        owner: "acct-owner",
+        billing: { funding_mode: "site-funded" },
+        pricing_model: "spot",
+        desired_pricing_model: "spot",
+        effective_pricing_model: "spot",
+        interruption_restore_policy: "immediate",
+        machine: {
+          cloud: "gcp",
+          zone: "us-south1-c",
+          machine_type: "t2d-standard-16",
+          disk_gb: 200,
+          disk_type: "balanced",
+          storage_mode: "persistent",
+        },
+        runtime: {
+          provider: "gcp",
+          zone: "us-south1-c",
+          instance_id: `cocalc-host-${hostId}`,
+          metadata: { machine_type: "t2d-standard-16" },
+        },
+        spot_recovery_state: {
+          phase: "retrying_spot",
+          outage_started_at: new Date().toISOString(),
+          ...state,
+        },
+      },
+    });
+  }
+
+  async function start(hostId: string) {
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers.start({
+      id: `start-${hostId}`,
+      vm_id: hostId,
+      action: "start",
+      payload: { provider: "gcp", source: "shutdown_notice" },
+    } as any);
+  }
+
+  async function hostMetadata(hostId: string) {
+    const { rows } = await getPool().query(
+      "SELECT metadata FROM project_hosts WHERE id=$1",
+      [hostId],
+    );
+    return rows[0].metadata;
+  }
+
+  async function events(hostId: string) {
+    const { rows } = await getPool().query(
+      "SELECT action, status, runtime FROM cloud_vm_log WHERE vm_id=$1 ORDER BY ts, id",
+      [hostId],
+    );
+    return rows;
+  }
+
+  beforeEach(() => {
+    loadGcpZoneMachineTypesMock.mockResolvedValue(zoneTypes);
+    loadGcpCatalogPricesMock.mockResolvedValue(prices);
+  });
+
+  it("walks Spot, standard, then a cheaper core-equivalent family", async () => {
+    const hostId = "1a7b2c3d-0000-4000-8000-000000000001";
+    const failures = [
+      "ZONE_RESOURCE_POOL_EXHAUSTED: no t2d spot",
+      "QUOTA_EXCEEDED: Quota 'T2D_CPUS' exceeded.  Limit: 24.0 in region us-south1.",
+    ];
+    const startHost = jest.fn(async () => {
+      const failure = failures.shift();
+      if (failure) throw new Error(failure);
+    });
+    const setMachineType = jest.fn(async () => undefined);
+    const setPricingModel = jest.fn(async () => undefined);
+    getProviderContextMock.mockResolvedValue({
+      entry: {
+        provider: {
+          startHost,
+          setMachineType,
+          setPricingModel,
+          getStatus: jest.fn(async () => "running"),
+        },
+      },
+      creds: {},
+    });
+    await spotHost(hostId);
+
+    await start(hostId);
+
+    expect(startHost).toHaveBeenCalledTimes(3);
+    // n2d is cheaper on Spot than n2 here, and c2d has no price: n2d first.
+    expect(setMachineType).toHaveBeenLastCalledWith(
+      expect.anything(),
+      "n2d-standard-32",
+      {},
+    );
+    expect(setPricingModel.mock.calls.map((call) => call[1])).toEqual([
+      "on_demand",
+      "spot",
+    ]);
+    const metadata = await hostMetadata(hostId);
+    expect(metadata.effective_pricing_model).toBe("spot");
+    expect(metadata.spot_recovery_state).toMatchObject({
+      active_machine_type: "n2d-standard-32",
+      fallback_rungs_tried: expect.arrayContaining([
+        "spot:t2d-standard-16",
+        "on_demand:t2d-standard-16",
+      ]),
+    });
+    const actions = (await events(hostId)).map((e) => e.action);
+    expect(actions).toContain("fallback_rung_failed");
+    expect(actions).toContain("spot_restore_alternate_machine_type");
+  });
+
+  it("skips options without regional quota instead of failing on them", async () => {
+    const hostId = "1a7b2c3d-0000-4000-8000-000000000002";
+    const startHost = jest
+      .fn<Promise<void>, any[]>()
+      .mockRejectedValueOnce(new Error("ZONE_RESOURCE_POOL_EXHAUSTED"))
+      .mockResolvedValue(undefined);
+    const setMachineType = jest.fn(async () => undefined);
+    const setPricingModel = jest.fn(async () => undefined);
+    getProviderContextMock.mockResolvedValue({
+      entry: {
+        provider: {
+          startHost,
+          setMachineType,
+          setPricingModel,
+          getStatus: jest.fn(async () => "running"),
+          // No Spot quota left and no standard T2D quota: only standard N2D.
+          regionalQuotaHeadroom: jest.fn(async () => ({
+            PREEMPTIBLE_CPUS: 0,
+            T2D_CPUS: 8,
+            N2D_CPUS: 3000,
+            N2_CPUS: 0,
+            C2D_CPUS: 0,
+          })),
+        },
+      },
+      creds: {},
+    });
+    await spotHost(hostId);
+
+    await start(hostId);
+
+    expect(startHost).toHaveBeenCalledTimes(2);
+    expect(setMachineType).toHaveBeenCalledWith(
+      expect.anything(),
+      "n2d-standard-32",
+      {},
+    );
+    expect(setPricingModel).toHaveBeenLastCalledWith(
+      expect.anything(),
+      "on_demand",
+      {},
+    );
+    const metadata = await hostMetadata(hostId);
+    expect(metadata.effective_pricing_model).toBe("on_demand");
+    expect(metadata.spot_recovery_state).toMatchObject({
+      phase: "running_standard_fallback",
+      active_machine_type: "n2d-standard-32",
+    });
+    const skipped = (await events(hostId)).filter(
+      (e) => e.action === "fallback_rung_skipped",
+    );
+    expect(
+      skipped.map((e) => `${e.runtime.pricing}:${e.runtime.machine_type}`),
+    ).toEqual(
+      expect.arrayContaining([
+        "on_demand:t2d-standard-16",
+        "spot:n2d-standard-32",
+      ]),
+    );
+  });
+
+  it("never throws: schedules a full retry and alerts when every option fails", async () => {
+    const hostId = "1a7b2c3d-0000-4000-8000-000000000003";
+    const startHost = jest.fn(async () => {
+      throw new Error("ZONE_RESOURCE_POOL_EXHAUSTED_WITH_DETAILS");
+    });
+    getProviderContextMock.mockResolvedValue({
+      entry: {
+        provider: {
+          startHost,
+          setMachineType: jest.fn(async () => undefined),
+          setPricingModel: jest.fn(async () => undefined),
+          getStatus: jest.fn(async () => "running"),
+        },
+      },
+      creds: {},
+    });
+    await spotHost(hostId);
+
+    await expect(start(hostId)).resolves.toBeUndefined();
+
+    // Spot + standard on t2d, then Spot and standard on n2d, n2 and c2d.
+    expect(startHost).toHaveBeenCalledTimes(8);
+    const { rows } = await getPool().query(
+      "SELECT payload, not_before FROM cloud_vm_work WHERE vm_id=$1 AND action='start' AND state='queued'",
+      [hostId],
+    );
+    expect(rows.map((row) => row.payload.source)).toContain(
+      "fallback_ladder_retry",
+    );
+    const metadata = await hostMetadata(hostId);
+    expect(metadata.spot_recovery_state).toMatchObject({
+      fallback_ladder_cycle: 1,
+      fallback_rungs_tried: [],
+    });
+    expect(adminAlertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: expect.stringContaining("every recovery option failed"),
+      }),
+    );
+  });
+
+  it("does not offer other families to account-funded hosts", async () => {
+    const hostId = "1a7b2c3d-0000-4000-8000-000000000004";
+    const startHost = jest.fn(async () => {
+      throw new Error("ZONE_RESOURCE_POOL_EXHAUSTED");
+    });
+    const setMachineType = jest.fn(async () => undefined);
+    getProviderContextMock.mockResolvedValue({
+      entry: {
+        provider: {
+          startHost,
+          setMachineType,
+          setPricingModel: jest.fn(async () => undefined),
+          getStatus: jest.fn(async () => "running"),
+        },
+      },
+      creds: {},
+    });
+    await spotHost(hostId);
+    await getPool().query(
+      `UPDATE project_hosts SET metadata = jsonb_set(metadata, '{billing,funding_mode}', '"account-prepaid"') WHERE id=$1`,
+      [hostId],
+    );
+
+    await start(hostId);
+
+    expect(setMachineType).not.toHaveBeenCalled();
+    expect(startHost).toHaveBeenCalledTimes(2);
   });
 });

@@ -61,6 +61,7 @@ const DEFAULT_FORENSICS_ROOT = "/var/lib/cocalc-project-host-forensics";
 const PROJECT_HOST_LOG_HISTORY_DIR = "log-history";
 const PROJECT_HOST_LOG_HISTORY_PREFIX = "project-host-";
 const CONAT_PERSIST_LOG_HISTORY_PREFIX = "conat-persist-";
+const HOST_AGENT_LOG_HISTORY_PREFIX = "host-agent-";
 const DEFAULT_PROJECT_HOST_ROOTCTL =
   "/usr/local/sbin/cocalc-project-host-rootctl";
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
@@ -3003,12 +3004,19 @@ export function startHostAgent(index = 0): void {
     );
   }
   fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  // Keep the previous agent's log: deleting it lost the only record of why
+  // the whole stack was restarted.
   try {
-    if (fs.existsSync(agentLogPath)) {
-      fs.unlinkSync(agentLogPath);
-    }
+    archivePreviousComponentLog(
+      dataDir,
+      agentLogPath,
+      HOST_AGENT_LOG_HISTORY_PREFIX,
+    );
   } catch (err) {
-    console.error(`warning: unable to truncate log at ${agentLogPath}:`, err);
+    console.error(
+      `warning: unable to archive existing log at ${agentLogPath}; preserving it by appending:`,
+      err,
+    );
   }
   const stdout = fs.openSync(agentLogPath, "a");
   const stderr = fs.openSync(agentLogPath, "a");

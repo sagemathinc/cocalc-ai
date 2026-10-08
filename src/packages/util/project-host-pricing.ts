@@ -66,6 +66,7 @@ export type GcpPricingFamily =
   | "n2d"
   | "c3"
   | "c3d"
+  | "c2d"
   | "g2";
 
 export type GcpPriceRateMap = Record<string, number>;
