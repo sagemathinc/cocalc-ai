@@ -7,6 +7,7 @@ Wants=cocalc-bay-peer-health.service
 Wants=cocalc-bay-hub-workers.target
 Wants=cocalc-bay-billing.service
 Wants=cocalc-bay-hub-watchdog.timer
+Wants=cocalc-bay-cloudflared-watchdog.timer
 After=network-online.target
 
 [Install]

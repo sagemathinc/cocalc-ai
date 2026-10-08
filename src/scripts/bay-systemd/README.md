@@ -406,6 +406,23 @@ ingress mode to `cloudflare-tunnel`, and start the cloudflared service. Do not
 delete the load-balancer resources during an incident; they are inert when DNS
 does not reference them and remain useful for diagnosis.
 
+In tunnel mode, `cocalc-bay-cloudflared-watchdog.timer` checks the tunnel every
+30 seconds. A single tunnel connection can stay registered while its edge
+cancels every stream: cloudflared logs `Request failed ... canceled by remote`
+for one `connIndex`, and only part of the public traffic hangs. The watchdog
+restarts `cocalc-bay-cloudflared.service` in either of two cases:
+
+- in three consecutive checks, each with new failures since the previous
+  check, at least 80% of those failures come from one connection (and at least
+  20 of them), with two or more connections ready;
+- no tunnel connection is ready.
+
+In both cases the local frontdoor must be healthy. Failures spread over all
+connections point at the origin or at clients, so they never trigger a restart.
+Restarts have a 15-minute cooldown and are logged with the edge locations in
+the watchdog unit's journal. Set `COCALC_BAY_CLOUDFLARED_WATCHDOG_ENABLED=0` to
+disable it.
+
 For frontend/static-only changes, build a smaller artifact locally:
 
 ```sh

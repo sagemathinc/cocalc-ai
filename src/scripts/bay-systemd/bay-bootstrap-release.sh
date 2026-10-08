@@ -1229,6 +1229,7 @@ EOF
   run systemctl enable cocalc-bay-frontdoor.service
   run systemctl enable cocalc-bay-cloudflared.service
   run systemctl enable cocalc-bay-hub-watchdog.timer
+  run systemctl enable cocalc-bay-cloudflared-watchdog.timer
   if [[ "$ENABLE_WORKERS" -eq 1 ]]; then
     for worker_id in $(seq 1 "$WORKER_COUNT"); do
       run systemctl enable "cocalc-bay-hub@${worker_id}.service"
@@ -1241,6 +1242,7 @@ EOF
     run systemctl start cocalc-bay-frontdoor.service
     run systemctl start cocalc-bay-cloudflared.service
     run systemctl start cocalc-bay-hub-watchdog.timer
+    run systemctl start cocalc-bay-cloudflared-watchdog.timer
   fi
   prune_old_releases
 
