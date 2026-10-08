@@ -144,7 +144,7 @@ export interface ChatMessage {
   message_id?: string;
   thread_id?: string;
   parent_message_id?: string;
-  inline_code_links?: InlineCodeLink[];
+  inline_code_links?: InlineCodeLink[] | null;
 }
 
 export interface HistoryEntryInput {
@@ -191,7 +191,7 @@ export interface BuildChatMessageOptions {
   message_id?: string;
   thread_id?: string;
   parent_message_id?: string;
-  inline_code_links?: InlineCodeLink[];
+  inline_code_links?: InlineCodeLink[] | null;
 }
 
 export function buildChatMessage(
