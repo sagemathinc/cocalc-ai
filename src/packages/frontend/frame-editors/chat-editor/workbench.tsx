@@ -45,6 +45,7 @@ import { ActionListArtifact } from "./action-list-artifact";
 import { CommitArtifact } from "./commit-artifact";
 import { ArtifactIdentity } from "@cocalc/frontend/chat/artifact-card";
 import { AppArtifact } from "@cocalc/frontend/chat/app-artifact";
+import { TerminalArtifact } from "./terminal-artifact";
 import { ArtifactNameControl } from "@cocalc/frontend/agents/artifact-name-control";
 import { path_split, set } from "@cocalc/util/misc";
 const AppearanceEditor = lazyWithRetry(
@@ -177,13 +178,15 @@ function ResolvedWorkbenchSurface(props: WorkbenchProps) {
                 title={record.title}
                 theme={theme}
                 icon={
-                  record.kind === "app"
-                    ? "global"
-                    : record.kind === "github-pr" || record.kind === "commit"
-                      ? "git"
-                      : record.kind === "actions"
-                        ? "tasks"
-                        : "file"
+                  record.kind === "terminal"
+                    ? "terminal"
+                    : record.kind === "app"
+                      ? "global"
+                      : record.kind === "github-pr" || record.kind === "commit"
+                        ? "git"
+                        : record.kind === "actions"
+                          ? "tasks"
+                          : "file"
                 }
               />
             ) : (
@@ -291,16 +294,17 @@ export function Workbench(props: WorkbenchProps) {
   );
 }
 
-function WorkbenchDocument({
-  actions: frameActions,
-  desc,
-  read_only: destinationReadOnly,
-  font_size,
-  project_id: destinationProjectId,
-  path: destinationPath,
-  id,
-  source,
-}: WorkbenchProps) {
+function WorkbenchDocument(props: WorkbenchProps) {
+  const {
+    actions: frameActions,
+    desc,
+    read_only: destinationReadOnly,
+    font_size,
+    project_id: destinationProjectId,
+    path: destinationPath,
+    id,
+    source,
+  } = props;
   const actions = frameActions as Actions;
   const destinationChat = actions.getChatActions(desc.get("data-origin"));
   // A foreign descriptor is explicit even within the same chat or project.
@@ -401,10 +405,12 @@ function WorkbenchDocument({
         file: pub.snapshot.file,
         commit: pub.snapshot.commit,
         app: pub.snapshot.app,
+        terminal: pub.snapshot.terminal,
         theme: pub.snapshot.theme,
       };
       if (pub.snapshot.commit) artifact.kind = "commit";
       if (pub.snapshot.app) artifact.kind = "app";
+      if (pub.snapshot.terminal) artifact.kind = "terminal";
     }
   } catch {
     return <Alert type="warning" title="Artifact unavailable" />;
@@ -503,6 +509,17 @@ function WorkbenchDocument({
           localComments={!source}
         />
       </ContextualReply>
+    );
+  if (artifact.kind === "terminal" && artifact.terminal)
+    return (
+      <TerminalArtifact
+        key={`${artifact.thread_id}:${artifact.artifact_id}`}
+        frameProps={props}
+        termPath={artifact.terminal.path}
+        // The session is in the artifact's project; this frame's terminals
+        // connect to the frame's project.
+        sameProject={project_id === destinationProjectId}
+      />
     );
   if (artifact.kind === "app" && artifact.app)
     return (

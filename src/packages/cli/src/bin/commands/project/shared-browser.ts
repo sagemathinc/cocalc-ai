@@ -15,6 +15,7 @@ import {
   sharedBrowserTitle,
 } from "@cocalc/util/shared-browser";
 import { SharedBrowserPage } from "../../core/shared-browser/agent-page";
+import { chatTarget, NO_CARD_NOTE, publishCardOnce } from "./chat-card";
 import {
   findSharedBrowserChrome,
   sharedBrowserTarget,
@@ -68,23 +69,11 @@ async function touchBrowserFile(file: string) {
   await writeFile(file, "", { flag: "a" });
 }
 
-type ChatTarget = { path?: string; threadId?: string; messageDate?: string };
-
-function chatTarget(opts: ChatTarget): Required<ChatTarget> | null {
-  const path = opts.path ?? process.env.COCALC_CODEX_CHAT_PATH;
-  const threadId = opts.threadId ?? process.env.COCALC_CODEX_THREAD_ID;
-  const messageDate = opts.messageDate ?? process.env.COCALC_CODEX_MESSAGE_DATE;
-  return path && threadId && messageDate
-    ? { path, threadId, messageDate }
-    : null;
-}
-
 export function registerSharedBrowserCommands(
   browser: Command,
   deps: ProjectCommandDeps,
 ): void {
-  const { withContext, resolveProjectProjectApi, projectChatArtifactData } =
-    deps;
+  const { withContext, resolveProjectProjectApi } = deps;
 
   const running = async (ctx: any, project?: string, browser?: string) => {
     const { project: p, api } = await resolveProjectProjectApi(ctx, project);
@@ -143,39 +132,20 @@ export function registerSharedBrowserCommands(
         let card: { artifact_id: string; reused: boolean } | null = null;
         let cardNote: string | undefined;
         const chat = chatTarget(opts);
-        if (opts.card !== false && chat) {
-          const common = {
+        if (opts.card !== false && chat)
+          card = await publishCardOnce({
+            deps,
             ctx,
-            experimental: true,
-            projectIdentifier: project.project_id,
-            path: chat.path,
-            threadId: chat.threadId,
-          };
-          const existing = ((await projectChatArtifactData({
-            ...common,
-            action: "list",
-          })) ?? []) as any[];
-          const found = existing.find(
-            (a) => a.kind === "app" && a.app?.id === target.appId,
-          );
-          if (found) card = { artifact_id: found.artifact_id, reused: true };
-          else {
-            const published = await projectChatArtifactData({
-              ...common,
-              action: "publish",
-              messageDate: chat.messageDate,
-              payload: {
-                title: sharedBrowserTitle(target.file),
-                markdown: CARD_TEXT,
-                app: { id: target.appId },
-              },
-            });
-            card = { artifact_id: published.artifact_id, reused: false };
-          }
-        } else if (opts.card !== false) {
-          cardNote =
-            "No card published: pass --path, --thread-id and --message-date for the current chat turn.";
-        }
+            projectId: project.project_id,
+            chat,
+            matches: (a) => a.kind === "app" && a.app?.id === target.appId,
+            payload: {
+              title: sharedBrowserTitle(target.file),
+              markdown: CARD_TEXT,
+              app: { id: target.appId },
+            },
+          });
+        else if (opts.card !== false) cardNote = NO_CARD_NOTE;
         return {
           project_id: project.project_id,
           app_id: target.appId,

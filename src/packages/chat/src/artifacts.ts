@@ -7,9 +7,12 @@ import { validateArtifactCommit } from "./artifact-commit";
 import type { ArtifactCommit } from "./artifact-commit";
 import { validateArtifactApp } from "./artifact-app";
 import type { ArtifactApp } from "./artifact-app";
+import { validateArtifactTerminal } from "./artifact-terminal";
+import type { ArtifactTerminal } from "./artifact-terminal";
 export * from "./artifact-appearance";
 export * from "./artifact-commit";
 export * from "./artifact-app";
+export * from "./artifact-terminal";
 export * from "./artifact-github";
 import {
   validateProposedActions,
@@ -75,10 +78,18 @@ export interface ArtifactRecord extends ArtifactTarget {
   sender_id: string;
   date: string;
   schema_version: 1;
-  kind: "markdown" | "file" | "github-pr" | "actions" | "commit" | "app";
+  kind:
+    | "markdown"
+    | "file"
+    | "github-pr"
+    | "actions"
+    | "commit"
+    | "app"
+    | "terminal";
   theme?: EntityTheme;
   commit?: ArtifactCommit;
   app?: ArtifactApp;
+  terminal?: ArtifactTerminal;
   actions?: ProposedAction[];
   github_pr?: ArtifactGitHubPR;
   file?: ArtifactFile;
@@ -98,6 +109,7 @@ export interface ArtifactPublication extends ArtifactTarget {
     theme?: EntityTheme;
     commit?: ArtifactCommit;
     app?: ArtifactApp;
+    terminal?: ArtifactTerminal;
     title: string;
     markdown: string;
     file?: ArtifactFile;
@@ -226,9 +238,15 @@ export function validateArtifact(value: unknown): ArtifactRecord {
   if (
     row?.event !== "chat-artifact" ||
     row.schema_version !== 1 ||
-    !["markdown", "file", "github-pr", "actions", "commit", "app"].includes(
-      row.kind,
-    )
+    ![
+      "markdown",
+      "file",
+      "github-pr",
+      "actions",
+      "commit",
+      "app",
+      "terminal",
+    ].includes(row.kind)
   ) {
     throw Error("unsupported or missing artifact");
   }
@@ -254,6 +272,9 @@ export function validateArtifact(value: unknown): ArtifactRecord {
       : {}),
     ...(row.kind === "file" ? { file: validateArtifactFile(row.file) } : {}),
     ...(row.kind === "app" ? { app: validateArtifactApp(row.app) } : {}),
+    ...(row.kind === "terminal"
+      ? { terminal: validateArtifactTerminal(row.terminal) }
+      : {}),
     title: text(row.title, "title", 256),
     input: text(row.input, "Markdown", ARTIFACT_TEXT_LIMIT),
   };
@@ -274,6 +295,7 @@ export function validateArtifactPublication(
       row.snapshot?.actions,
       row.snapshot?.commit,
       row.snapshot?.app,
+      row.snapshot?.terminal,
     ].filter((x) => x !== undefined).length > 1
   )
     throw Error("artifact publication cannot mix object types");
@@ -315,6 +337,9 @@ export function validateArtifactPublication(
       ...(row.snapshot?.app === undefined
         ? {}
         : { app: validateArtifactApp(row.snapshot.app) }),
+      ...(row.snapshot?.terminal === undefined
+        ? {}
+        : { terminal: validateArtifactTerminal(row.snapshot.terminal) }),
     },
   });
 }
@@ -334,6 +359,8 @@ export function artifactBase(record: ArtifactRecord): string {
     return JSON.stringify([record.title, record.input, record.github_pr]);
   if (record.kind === "app")
     return JSON.stringify([record.title, record.input, record.app]);
+  if (record.kind === "terminal")
+    return JSON.stringify([record.title, record.input, record.terminal]);
   return JSON.stringify(
     record.kind === "file"
       ? [record.title, record.input, record.file]
@@ -350,6 +377,7 @@ export interface PublishArtifactInput extends ArtifactTarget {
   theme?: EntityTheme;
   commit?: ArtifactCommit;
   app?: ArtifactApp;
+  terminal?: ArtifactTerminal;
   actions?: ProposedAction[];
   operation_id: string;
   message_id: string;
@@ -380,9 +408,14 @@ export function publishArtifact(
         ? validateArtifact(current).theme
         : undefined);
   if (
-    [input.file, input.github_pr, input.actions, input.commit, input.app].filter(
-      (x) => x !== undefined,
-    ).length > 1
+    [
+      input.file,
+      input.github_pr,
+      input.actions,
+      input.commit,
+      input.app,
+      input.terminal,
+    ].filter((x) => x !== undefined).length > 1
   )
     throw Error("artifact cannot mix object types");
   const artifact = validateArtifact({
@@ -390,20 +423,23 @@ export function publishArtifact(
     artifact_id: input.artifact_id,
     schema_version: 1,
     kind:
-      input.app !== undefined
-        ? "app"
-        : input.commit !== undefined
-        ? "commit"
-        : input.actions !== undefined
-          ? "actions"
-          : input.github_pr !== undefined
-            ? "github-pr"
-            : input.file === undefined
-              ? "markdown"
-              : "file",
+      input.terminal !== undefined
+        ? "terminal"
+        : input.app !== undefined
+          ? "app"
+          : input.commit !== undefined
+            ? "commit"
+            : input.actions !== undefined
+              ? "actions"
+              : input.github_pr !== undefined
+                ? "github-pr"
+                : input.file === undefined
+                  ? "markdown"
+                  : "file",
     github_pr: input.github_pr,
     commit: input.commit,
     app: input.app,
+    terminal: input.terminal,
     theme,
     actions: input.actions,
     file: input.file,
@@ -423,6 +459,7 @@ export function publishArtifact(
       ...(artifact.theme ? { theme: artifact.theme } : {}),
       ...(artifact.commit ? { commit: artifact.commit } : {}),
       ...(artifact.app ? { app: artifact.app } : {}),
+      ...(artifact.terminal ? { terminal: artifact.terminal } : {}),
       ...(artifact.file ? { file: artifact.file } : {}),
       ...(artifact.github_pr ? { github_pr: artifact.github_pr } : {}),
       ...(artifact.actions ? { actions: artifact.actions } : {}),

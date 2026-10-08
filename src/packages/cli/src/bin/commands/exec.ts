@@ -270,9 +270,17 @@ export interface ArtifactObject {
   thread_id: string;
   title: string;
   input: string;
-  kind: "markdown" | "file" | "actions" | "github-pr" | "commit" | "app";
+  kind:
+    | "markdown"
+    | "file"
+    | "actions"
+    | "github-pr"
+    | "commit"
+    | "app"
+    | "terminal";
   file?: { path: string };
   app?: { id: string };
+  terminal?: { path: string };
   actions?: ArtifactAction[];
   github_pr?: ArtifactGitHubPR;
 }

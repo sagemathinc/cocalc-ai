@@ -155,6 +155,7 @@ export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
           const cwd = currentNode.get("cwd");
           const workingDirectory =
             typeof cwd === "string" && cwd.trim() ? cwd.trim() : undefined;
+          const explicitTermPath = currentNode.get("data-termPath");
           const terminal = new Terminal(
             actions,
             this._node_number(id),
@@ -164,7 +165,12 @@ export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
             args,
             workingDirectory,
             terminalThemeOverride,
-            { autoStartProjectOnFirstConnect: true },
+            {
+              autoStartProjectOnFirstConnect: true,
+              ...(typeof explicitTermPath === "string" && explicitTermPath
+                ? { termPath: explicitTermPath }
+                : {}),
+            },
           );
           // Construction opens xterm in the original caller's parent. That
           // caller may have gone away while the shared constructor loaded.

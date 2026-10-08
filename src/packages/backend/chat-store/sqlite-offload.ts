@@ -1623,6 +1623,7 @@ export async function searchChatArtifacts(
       data.commit?.sha,
       data.github_pr?.repository,
       data.app?.id,
+      data.terminal?.path,
     ]
       .join("\n")
       .toLowerCase();
@@ -1636,22 +1637,30 @@ export async function searchChatArtifacts(
       operation_id: publication.operation_id,
       artifact_kind:
         (typeof data.kind === "string" &&
-        ["markdown", "file", "commit", "github-pr", "actions", "app"].includes(
-          data.kind,
-        )
+        [
+          "markdown",
+          "file",
+          "commit",
+          "github-pr",
+          "actions",
+          "app",
+          "terminal",
+        ].includes(data.kind)
           ? data.kind
           : undefined) ??
-        (data.app
-          ? "app"
-          : data.file
-            ? "file"
-            : data.commit
-              ? "commit"
-              : data.github_pr
-                ? "github-pr"
-                : data.actions
-                  ? "actions"
-                  : "markdown"),
+        (data.terminal
+          ? "terminal"
+          : data.app
+            ? "app"
+            : data.file
+              ? "file"
+              : data.commit
+                ? "commit"
+                : data.github_pr
+                  ? "github-pr"
+                  : data.actions
+                    ? "actions"
+                    : "markdown"),
       message_id:
         typeof publication.message_id === "string"
           ? publication.message_id.slice(0, 200)

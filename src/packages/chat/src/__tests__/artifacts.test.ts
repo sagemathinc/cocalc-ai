@@ -7,6 +7,7 @@ import {
   validateArtifactFeedback,
   artifactFeedbackPrompt,
   validateArtifactApp,
+  validateArtifactTerminal,
   validateArtifactFile,
   withoutArtifactStorageDate,
 } from "../artifacts";
@@ -66,6 +67,32 @@ test("app publications embed a project app by id and cannot mix object types", (
       operation_id: "mixed",
       app: { id: "cocalc-browser" },
       file: { path: "/home/user/x" },
+    }),
+  ).toThrow(/mix/);
+});
+
+test.each(["", "  ", "a\nb", "x".repeat(1025)])(
+  "rejects invalid terminal path %s",
+  (path) => {
+    expect(() => validateArtifactTerminal({ path })).toThrow();
+  },
+);
+
+test("terminal publications show a terminal session and cannot mix object types", () => {
+  const db = store();
+  const terminal = { path: "/home/user/.a.chat-t.term" };
+  const initial = { ...input, terminal };
+  const first = publishArtifact(db, initial);
+  expect(first.artifact.kind).toBe("terminal");
+  expect(first.artifact.terminal).toEqual(terminal);
+  expect(first.publication.snapshot.terminal).toEqual(terminal);
+  expect(readArtifact(db, initial).artifact.terminal).toEqual(terminal);
+  expect(() =>
+    publishArtifact(db, {
+      ...input,
+      operation_id: "mixed",
+      terminal,
+      app: { id: "cocalc-browser" },
     }),
   ).toThrow(/mix/);
 });

@@ -1,6 +1,6 @@
 ---
 name: cocalc
-description: Use when working with CoCalc-native documents and workflows, including agent memory (saved notes that persist across sessions and projects); chat workbench artifacts (documents, file previews, proposed action reviews, GitHub PR cards); complete project-side document builds; live tasks, chats, boards, slides and notebooks; a shared web browser the agent drives and the human can take over; document history; and CoCalc export/import workflows.
+description: Use when working with CoCalc-native documents and workflows, including agent memory (saved notes that persist across sessions and projects); chat workbench artifacts (documents, file previews, proposed action reviews, GitHub PR cards); complete project-side document builds; live tasks, chats, boards, slides and notebooks; a shared web browser and terminal the agent drives and the human can take over; document history; and CoCalc export/import workflows.
 ---
 
 # CoCalc
@@ -697,6 +697,23 @@ the browser or its last page.
 - `cocalc project browser status` lists tabs and the driver;
   `cocalc project browser stop` stops it and deletes the profile.
 - Pages on the project's own servers are reachable as `http://localhost:<port>`.
+
+## Shared Terminal: Work Where The Human Can Watch
+
+When the human should see what you run (long builds, servers, interactive
+programs), work in a shared terminal shown live in a chat card. The human can
+type in it too.
+
+```bash
+cocalc project terminal start --path <chat> --thread-id <thread> \
+  --message-date <this turn's message date>
+cocalc project terminal write <id> --enter 'make test'
+cocalc project terminal history <id> --max-chars 4000
+```
+
+`start` is idempotent: one terminal per chat thread, and the card is
+published once. It prints the session `id`. While the human is typing,
+`write` returns `written: false`; wait and retry instead of using `--force`.
 
 ## Browser Exec Is For UI Work
 

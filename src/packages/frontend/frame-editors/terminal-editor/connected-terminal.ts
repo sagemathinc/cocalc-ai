@@ -154,6 +154,9 @@ interface TerminalTransmit {
 
 export interface TerminalOptions {
   autoStartProjectOnFirstConnect?: boolean;
+  // Attach to this terminal session instead of the frame's own, e.g. the
+  // session an agent works in, shown in a chat terminal card.
+  termPath?: string;
 }
 
 export interface TerminalConnectOptions {
@@ -461,7 +464,8 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     const cmd = this.command ? "-" + replace_all(this.command, "/", "-") : "";
     // This is the one and only place number is used.
     // It's very important though.
-    this.termPath = termPath({ path: this.path, number, cmd });
+    this.termPath =
+      options?.termPath?.trim() || termPath({ path: this.path, number, cmd });
     this.id = id;
 
     this.terminal = new XTerminal(this.get_xtermjs_options());
