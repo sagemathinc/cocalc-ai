@@ -166,7 +166,14 @@ delete the profile. Take a backup first, verify every step, and report
 exactly what changed.
 
 To release space held by deleted files, take a fresh snapshot, confirm a
-recent backup, then delete the older snapshots:
+recent backup, then delete the older snapshots. These commands run as your
+CLI profile, not as the customer: with the admin profile they are admin
+actions, allowed by the admin bypass and audited as the administrator, and
+the impersonated browser session does not carry over to the CLI (`admin
+support as-user` only allows read-only inspection). Run them only with the
+operator's explicit approval, say in the proposal that the change is made by
+an administrator, and otherwise make it in the impersonated browser session
+(Snapshots panel):
 
 ```bash
 cocalc project snapshot create -w <project-id> --name cleanup-YYYY-MM-DD
