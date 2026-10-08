@@ -1365,12 +1365,19 @@ describe("ChatStreamWriter", () => {
     const placeholder: any = chatSets[0];
     const final: any = chatSets[chatSets.length - 1];
     expect(placeholder?.acp_live_log_stream).toBeTruthy();
+    expect(placeholder?.acp_live_preview_stream).toBeTruthy();
     expect(final?.generating).toBe(false);
+    // "done" has no inline code links, so the final update clears stale ones.
+    expect(final?.inline_code_links).toBeNull();
 
     // The writer's own document, and a replica that only sees the patch as it
-    // travels over the wire (JSON), must end up with the same value.
+    // travels over the wire (JSON), must end up with the same value. The base
+    // row also carries stale inline code links from an earlier write.
     const base = immer_from_str(
-      `${JSON.stringify(placeholder)}\n`,
+      `${JSON.stringify({
+        ...placeholder,
+        inline_code_links: [{ code: "x.py", path: "x.py" }],
+      })}\n`,
       [...CHAT_PRIMARY_KEYS],
       [...CHAT_STRING_COLS],
     );
@@ -1380,6 +1387,8 @@ describe("ChatStreamWriter", () => {
     const replicaRow = replica.get_one({ message_id: "msg-0" });
     expect(replicaRow.acp_live_log_stream).toBeUndefined();
     expect(replicaRow.acp_live_preview_stream).toBeUndefined();
+    expect(replicaRow.inline_code_links).toBeUndefined();
+    expect(replica.to_str()).toBe(author.to_str());
     expect(replica.hash()).toBe(author.hash());
     (writer as any).dispose?.(true);
   });
