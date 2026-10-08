@@ -87,7 +87,7 @@ describe("runProjectFeedRemotePass", () => {
   });
 
   afterEach(async () => {
-    await getPool().query("TRUNCATE project_events_outbox");
+    await getPool().query("TRUNCATE project_events_outbox, projects CASCADE");
   });
 
   afterAll(async () => {
@@ -322,6 +322,46 @@ describe("runProjectFeedRemotePass", () => {
     expect(
       (await outboxRows()).every((row) => row.remote_feed_pending === false),
     ).toBe(true);
+  });
+
+  it("does not let a project that is backing off take a slot from a ready one", async () => {
+    await appendEvent({ users: { [ALICE]: { group: "owner" } }, title: "A" });
+    forwardRemoteProjectFeedEvents.mockRejectedValueOnce(new Error("down"));
+    await runProjectFeedRemotePass({ bay_id: "bay-0" });
+    // A newer change to the project that is backing off, and an unrelated
+    // project that is ready.
+    await appendEvent({ users: { [ALICE]: { group: "owner" } }, title: "A2" });
+    await appendEvent({
+      project_id: OTHER_PROJECT_ID,
+      users: { [ALICE]: { group: "owner" } },
+      title: "other",
+    });
+
+    await expect(
+      runProjectFeedRemotePass({ bay_id: "bay-0", limit: 1 }),
+    ).resolves.toMatchObject({ projects: 1, forwarded_projects: 1 });
+    expect(forwardRemoteProjectFeedEvents.mock.calls[1][0].payload.title).toBe(
+      "other",
+    );
+  });
+
+  it("stops forwarding a project once another bay owns it", async () => {
+    await getPool().query(
+      "INSERT INTO projects (project_id, owning_bay_id) VALUES ($1, 'bay-2')",
+      [PROJECT_ID],
+    );
+    await appendEvent({ users: { [ALICE]: { group: "owner" } }, title: "A" });
+
+    await expect(
+      runProjectFeedRemotePass({ bay_id: "bay-0" }),
+    ).resolves.toMatchObject({ projects: 1, retired_projects: 1 });
+    expect(forwardRemoteProjectFeedEvents).not.toHaveBeenCalled();
+    const [row] = await outboxRows();
+    expect(row).toMatchObject({
+      remote_feed_pending: false,
+      remote_feed_published_at: null,
+    });
+    expect(row.remote_feed_last_error).toContain("bay-2");
   });
 
   it("caps backoff", () => {

@@ -83,6 +83,7 @@ export interface ProjectFeedRemotePassResult {
   projects: number;
   forwarded_projects: number;
   failed_projects: number;
+  retired_projects: number;
   events: number;
 }
 
@@ -200,7 +201,45 @@ async function forwardProject(
 }
 
 type ProjectOutcome =
-  { outcome: "forwarded" | "failed"; events: number } | { outcome: "skipped" };
+  | { outcome: "forwarded" | "failed" | "retired"; events: number }
+  | { outcome: "skipped" };
+
+/**
+ * The bay that owns the project now, if not this one. After a rehome the
+ * new owning bay forwards the project's state; a retry from here would
+ * overwrite it with this bay's older snapshot.
+ */
+async function ownedElsewhere(
+  client: PoolClient,
+  project_id: string,
+  bay_id: string,
+): Promise<string | undefined> {
+  const { rows } = await client.query<{ owning_bay_id: string }>(
+    `SELECT COALESCE(NULLIF(BTRIM(owning_bay_id), ''), $2) AS owning_bay_id
+       FROM projects
+      WHERE project_id = $1`,
+    [project_id, bay_id],
+  );
+  const owner = rows[0]?.owning_bay_id;
+  return owner != null && owner !== bay_id ? owner : undefined;
+}
+
+async function retireProject(
+  events: ClaimedEvent[],
+  owner: string,
+): Promise<void> {
+  await getPool().query(
+    `UPDATE project_events_outbox
+        SET remote_feed_pending = FALSE,
+            remote_feed_next_attempt_at = NULL,
+            remote_feed_last_error = $2
+      WHERE event_id = ANY($1::UUID[])`,
+    [
+      events.map((event) => event.event_id),
+      `not forwarded: the project is now owned by ${owner}`,
+    ],
+  );
+}
 
 async function forwardOneProject(
   bay_id: string,
@@ -211,6 +250,11 @@ async function forwardOneProject(
     async (client): Promise<ProjectOutcome> => {
       const events = await loadProjectEvents(client, project_id);
       if (events == null) return { outcome: "skipped" };
+      const owner = await ownedElsewhere(client, project_id, bay_id);
+      if (owner != null) {
+        await retireProject(events, owner);
+        return { outcome: "retired", events: events.length };
+      }
       try {
         await forwardProject(bay_id, events);
         await finishProject(events);
@@ -273,14 +317,18 @@ export async function runProjectFeedRemotePass(opts?: {
     projects: 0,
     forwarded_projects: 0,
     failed_projects: 0,
+    retired_projects: 0,
     events: 0,
   };
   const { rows } = await getPool().query<{ project_id: string }>(
     `SELECT project_id
        FROM project_events_outbox
       WHERE remote_feed_pending
-        AND (remote_feed_next_attempt_at IS NULL OR remote_feed_next_attempt_at <= NOW())
       GROUP BY project_id
+      -- A project with an event still backing off is not ready, even if it
+      -- has newer events: it must not take a slot from a ready project.
+      HAVING BOOL_AND(remote_feed_next_attempt_at IS NULL
+                      OR remote_feed_next_attempt_at <= NOW())
       ORDER BY MIN(created_at)
       LIMIT $1`,
     [opts?.limit ?? PROJECTS_PER_TICK],
@@ -297,8 +345,10 @@ export async function runProjectFeedRemotePass(opts?: {
       result.events += outcome.events;
       if (outcome.outcome === "forwarded") {
         result.forwarded_projects += 1;
-      } else {
+      } else if (outcome.outcome === "failed") {
         result.failed_projects += 1;
+      } else {
+        result.retired_projects += 1;
       }
     }
   };
