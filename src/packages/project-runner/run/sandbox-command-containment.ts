@@ -12,6 +12,20 @@ import type { SandboxExecResult } from "./sandbox-exec";
 const HELPER = "/usr/local/sbin/cocalc-runtime-storage";
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const SCOPE = new RegExp(`^job-(\\d+)-(\\d+)-(\\d+)-(\\d+)-(\\d+)-(${UUID})$`);
+// Fixed admission refusals from the helper; its free-form diagnostics stay private.
+const REJECTION_REASONS = new Map([
+  ["host-busy", "the project host was busy with maintenance"],
+  ["project-not-running", "the project is not running or is restarting"],
+  ["project-restarted", "the project restarted"],
+  ["invalid-request", "the request was invalid"],
+  ["admission-failed", "the project host could not admit it"],
+]);
+
+function notStartedMessage(reason?: string): string {
+  const why =
+    REJECTION_REASONS.get(reason ?? "") ?? "the project host refused it";
+  return `Project command was not started because ${why}. Nothing ran; try again.`;
+}
 type Recovery = { project_id: string; scope: string; confirmed: () => void };
 const recoveries = new Map<string, Recovery>();
 let recoveryTimer: ReturnType<typeof setInterval> | undefined;
@@ -155,6 +169,10 @@ export function runContainedSandboxCommand({
     let invalid = false;
     let proof: { code: number } | undefined;
     let scope: string | undefined;
+    // The helper publishes the scope before it launches anything, so a helper
+    // that exits on its own without one never started the command.
+    let framed = false;
+    let rejected: string | undefined;
     let buffer = "";
     let force: ReturnType<typeof setTimeout> | undefined;
     const decoders = {
@@ -190,7 +208,18 @@ export function runContainedSandboxCommand({
           const frame = JSON.parse(buffer.slice(0, index));
           buffer = buffer.slice(index + 1);
           if (proof) throw Error("Data after cleanup proof");
-          if (frame.type === "scope" && typeof frame.scope === "string") {
+          if (rejected !== undefined) throw Error("Data after rejection");
+          if (
+            frame.type === "rejected" &&
+            !framed &&
+            typeof frame.reason === "string" &&
+            REJECTION_REASONS.has(frame.reason)
+          ) {
+            rejected = frame.reason;
+          } else if (
+            frame.type === "scope" &&
+            typeof frame.scope === "string"
+          ) {
             if (frame.scope.length > 256) throw Error("Oversized job scope");
             const match = SCOPE.exec(frame.scope);
             if (
@@ -223,6 +252,7 @@ export function runContainedSandboxCommand({
             }
             proof = { code: frame.code };
           } else throw Error("Invalid helper frame");
+          framed = true;
         }
       } catch {
         invalid = true;
@@ -234,11 +264,31 @@ export function runContainedSandboxCommand({
     });
     signal.addEventListener("abort", stop, { once: true });
     if (signal.aborted) stop();
-    child.once("close", () => {
+    child.once("close", (code: number | null) => {
       clearInterval(heartbeat);
       clearTimeout(deadline);
       clearTimeout(force);
       signal.removeEventListener("abort", stop);
+      // Not started: the helper refused admission, or exited by itself (not
+      // killed by the fallback above) before publishing a scope. Without a
+      // scope there was no execution authority, so nothing needs recovery.
+      // An old helper reports a busy lifecycle lock this way, with no frame.
+      if (
+        !invalid &&
+        buffer.length === 0 &&
+        scope === undefined &&
+        proof === undefined &&
+        (rejected !== undefined || (!framed && code !== null && code !== 0))
+      ) {
+        onCleanupConfirmed?.();
+        resolve({
+          stdout: "",
+          stderr: notStartedMessage(rejected),
+          code: null,
+          cleanupConfirmed: true,
+        });
+        return;
+      }
       const confirmed = proof !== undefined && !invalid && buffer.length === 0;
       if (onCleanupConfirmed) {
         if (confirmed) onCleanupConfirmed();

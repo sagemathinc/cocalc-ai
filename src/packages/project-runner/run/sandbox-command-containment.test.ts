@@ -129,6 +129,60 @@ test("missing helper cannot fall back to unsupervised execution", async () => {
   expect(mockSpawn).toHaveBeenCalledTimes(1);
 });
 
+test("a refused admission is an ordinary failure, not a cleanup fence", async () => {
+  jest.useFakeTimers();
+  for (const frames of [[{ type: "rejected", reason: "host-busy" }], []]) {
+    const confirmed = jest.fn();
+    const { child, result, frame } = fixture(confirmed);
+    for (const value of frames) frame(value);
+    // A current helper says why; an old one exits nonzero with no frame.
+    child.emit("close", 1);
+    const value = await result;
+    expect(value).toMatchObject({ code: null, cleanupConfirmed: true });
+    expect(value.stderr).toMatch(/not started.*Nothing ran; try again/);
+    if (frames.length) expect(value.stderr).toContain("busy");
+    expect(confirmed).toHaveBeenCalledTimes(1);
+  }
+  await jest.advanceTimersByTimeAsync(60_000);
+  expect(mockExecFile).not.toHaveBeenCalled();
+});
+
+test("a rejection cannot follow or precede other frames, and must be known", async () => {
+  jest.useFakeTimers();
+  const cases = [
+    (frame, scope) => {
+      frame({ type: "scope", scope });
+      frame({ type: "rejected", reason: "host-busy" });
+    },
+    (frame) => {
+      frame({ type: "rejected", reason: "host-busy" });
+      frame({ type: "exit", code: 0, cleanup: true });
+    },
+    (frame) => frame({ type: "rejected", reason: "anything the helper says" }),
+    (frame) => {
+      frame({ type: "output", stream: "stderr", data: "" });
+      frame({ type: "rejected", reason: "host-busy" });
+    },
+  ];
+  for (const write of cases) {
+    // No recovery callback: a retained scope would leak into later tests.
+    const { child, result, frame, scope } = fixture();
+    write(frame, scope);
+    child.emit("close", 1);
+    expect(await result).toMatchObject({ cleanupConfirmed: false });
+  }
+});
+
+test("only a helper that exited by itself without a scope proves nothing ran", async () => {
+  for (const close of [[0], [null, "SIGKILL"]]) {
+    const confirmed = jest.fn();
+    const { child, result } = fixture(confirmed);
+    child.emit("close", ...close);
+    expect(await result).toMatchObject({ cleanupConfirmed: false });
+    expect(confirmed).not.toHaveBeenCalled();
+  }
+});
+
 test("cancellation before admission needs no scope and does not spawn", async () => {
   const abort = new AbortController();
   abort.abort();

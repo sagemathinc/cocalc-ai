@@ -179,6 +179,65 @@ class ManagedJobTests(unittest.TestCase):
             launch.assert_not_called()
             kill.assert_called_once()
 
+    def refused_admission(self, stack, lock=None, state=None):
+        # Shared fixture for admission failures before the scope exists.
+        # `lock` and `state` build side effects from this module instance.
+        m = helper()
+        def patch(obj, name, **kwargs):
+            return stack.enter_context(mock.patch.object(obj, name, **kwargs))
+        patch(m.pwd, "getpwnam", return_value=types.SimpleNamespace(pw_uid=1000, pw_gid=1000))
+        patch(m, "Path").return_value.stat.return_value.st_uid = 1000
+        pool = patch(m, "POOL", new=mock.MagicMock())
+        pool.__truediv__.return_value.__truediv__.return_value.name = "job-fixture"
+        patch(m, "identity", return_value="1")
+        patch(m, "alive", return_value=True)
+        lock = patch(m, "lifecycle_lock", side_effect=lock(m) if lock else lambda *_: nullcontext())
+        patch(m, "active_state", side_effect=state(m) if state else lambda _: {"generation": "g"})
+        patch(m, "config_from_stdin", return_value={"args": ["exec"], "env": {}})
+        patch(m, "reap_project_locked")
+        patch(m, "lease_connected", return_value=True)
+        launch = patch(m, "launch_locked")
+        kill = patch(m, "kill_scope")
+        patch(m.signal, "signal")
+        patch(m.os, "set_blocking")
+        frames = bytearray()
+        patch(m.os, "write", side_effect=lambda _, data: (frames.extend(data), len(data))[1])
+        return m, lock, launch, kill, frames
+
+    def test_refused_admission_reports_a_fixed_reason_and_launches_nothing(self):
+        def raising(error):
+            def side_effect(*_):
+                raise error
+            return side_effect
+        def restarted(_m):
+            states = iter([{"generation": "g"}, {"generation": "h"}])
+            return lambda _: next(states)
+        for name, overrides, reason in [
+            ("busy", {"lock": lambda m: raising(m.LifecycleBusy("project lifecycle busy"))}, "host-busy"),
+            ("stopped", {"state": lambda m: raising(m.AdmissionBlocked("blocked"))}, "project-not-running"),
+            ("restarted", {"state": restarted}, "project-restarted"),
+        ]:
+            with self.subTest(name), ExitStack() as stack:
+                m, lock, launch, kill, frames = self.refused_admission(stack, **overrides)
+                with self.assertRaises(RuntimeError):
+                    m.supervise(str(uuid.uuid4()), str(uuid.uuid4()), 99, 10000)
+                launch.assert_not_called()
+                # Nothing was created, so cleanup needs no second lock wait.
+                kill.assert_not_called()
+                events = [json.loads(line) for line in frames.splitlines()]
+                self.assertEqual(events, [{"type": "rejected", "reason": reason}])
+
+    def test_admission_waits_out_long_maintenance_within_the_job_deadline(self):
+        with ExitStack() as stack:
+            m, lock, launch, _kill, _frames = self.refused_admission(stack)
+            launch.side_effect = RuntimeError("stop after admission")
+            with self.assertRaises(RuntimeError):
+                m.supervise(str(uuid.uuid4()), str(uuid.uuid4()), 99, 3600000)
+            waits = [call.args[0] for call in lock.call_args_list[:2]]
+            self.assertTrue(all(110 < wait <= m.ADMISSION_LOCK_WAIT_SECONDS for wait in waits), waits)
+        self.assertLessEqual(m.admission_wait(time.monotonic() + 5), 5)
+        self.assertEqual(m.admission_wait(time.monotonic() - 1), 0)
+
     def test_background_warning_tracker_handles_every_chunk_boundary(self):
         m = helper()
         note = m.BackgroundWarningTracker.note
