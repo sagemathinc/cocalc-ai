@@ -450,6 +450,12 @@ function tierToFormValues(tier: Partial<Tier>) {
     feature_project_host_tier: normalizedOptionalNumber(
       tier.features?.project_host_tier,
     ),
+    feature_project_network:
+      tier.features?.project_network === true
+        ? "allow"
+        : tier.features?.project_network === false
+          ? "block"
+          : "default",
     feature_private_app_hostnames_per_project: normalizedOptionalNumber(
       tier.features?.private_app_hostnames_per_project,
     ),
@@ -552,6 +558,15 @@ function buildMembershipTierPayload(values): AdminMembershipTierPayload {
     values.project_default_disk_quota_mb,
   );
   setOrDeleteBoolean(features, "create_hosts", values.feature_create_hosts);
+  setOrDeleteBoolean(
+    features,
+    "project_network",
+    values.feature_project_network === "allow"
+      ? true
+      : values.feature_project_network === "block"
+        ? false
+        : undefined,
+  );
   setOrDeleteNumber(
     features,
     "project_host_tier",
@@ -1779,6 +1794,11 @@ export function MembershipTiers() {
                   get("feature_private_app_hostnames_per_project"),
                   " private app URLs",
                 ),
+                get("feature_project_network") === "allow"
+                  ? "internet access"
+                  : get("feature_project_network") === "block"
+                    ? "no internet access"
+                    : undefined,
               ),
             ),
             children: (
@@ -1880,6 +1900,24 @@ export function MembershipTiers() {
                         step={1}
                         precision={0}
                         style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="feature_project_network"
+                      label="Project internet access"
+                      extra={fieldHelp(
+                        "Default: only tiers with a positive shared compute priority.",
+                      )}
+                    >
+                      <Select
+                        style={compactInputStyle}
+                        options={[
+                          { value: "default", label: "Default" },
+                          { value: "allow", label: "Always" },
+                          { value: "block", label: "Never" },
+                        ]}
                       />
                     </Form.Item>
                   </Col>

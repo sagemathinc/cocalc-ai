@@ -3,10 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import {
-  applyHostRuntimePolicy,
-  applySetupProfileNetworkPolicy,
-} from "./run-quota";
+import { applyHostRuntimePolicy } from "./run-quota";
 
 describe("applyHostRuntimePolicy", () => {
   it("uses maximum safe host RAM by default on a private host", () => {
@@ -62,27 +59,5 @@ describe("applyHostRuntimePolicy", () => {
         host,
       }),
     ).toMatchObject({ memory_limit: 50_000 });
-  });
-});
-
-describe("applySetupProfileNetworkPolicy", () => {
-  it("always grants network access on CoCalc Star", () => {
-    expect(
-      applySetupProfileNetworkPolicy({ network: false }, "star"),
-    ).toMatchObject({ network: true });
-    expect(applySetupProfileNetworkPolicy({}, " star ")).toMatchObject({
-      network: true,
-    });
-  });
-
-  it("leaves the network quota alone elsewhere", () => {
-    expect(
-      applySetupProfileNetworkPolicy({ network: false }, undefined),
-    ).toEqual({ network: false });
-    expect(
-      applySetupProfileNetworkPolicy({ network: false }, "rocket"),
-    ).toEqual({
-      network: false,
-    });
   });
 });

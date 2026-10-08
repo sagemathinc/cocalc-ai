@@ -1024,9 +1024,12 @@ function starFreeTierTemplate() {
       memory: 8000,
       disk_quota: 20000,
     },
+    // Blocking project network access is an anti-abuse measure for public
+    // sites; a Star server only admits users it invited.
+    features: { ...free.features, project_network: true },
     usage_limits,
     notes:
-      "CoCalc Star default tier: no per-account limits; 8 GB memory and a 20 GB disk per project.",
+      "CoCalc Star default tier: no per-account limits; internet access, 8 GB memory and a 20 GB disk per project.",
   };
 }
 

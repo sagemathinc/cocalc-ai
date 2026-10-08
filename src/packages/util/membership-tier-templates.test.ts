@@ -334,6 +334,8 @@ describe("CoCalc Star free tier", () => {
       disk_quota: 20000,
     });
     expect(STAR_FREE_TIER_TEMPLATE.id).toBe("free");
+    expect(STAR_FREE_TIER_TEMPLATE.features.project_network).toBe(true);
+    expect(TIER_TEMPLATES.free.features).not.toHaveProperty("project_network");
   });
 
   it("is the free template only on Star", () => {
